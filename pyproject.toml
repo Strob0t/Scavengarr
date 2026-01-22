@@ -1,0 +1,40 @@
+[tool.poetry]
+name = "scavengarr"
+version = "0.1.0"
+description = "Torznab OnClick Indexer"
+packages = [{include = "scavengarr", from = "src"}]
+
+[tool.poetry.scripts]
+start = "src.scavengarr.application.cli:start"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.dependencies]
+python = "^3.12,<3.14"
+fastapi = "^0.128.0"
+uvicorn = {extras = ["standard"], version = "^0.32.0"}
+playwright = "^1.47"
+scrapy = "^2.14.1"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^9.0.2"
+fastmcp = "<3"
+requests = "^2.32.5"
+crewai = "^1.8.1"
+crewai-tools = { version = "^1.8.1", extras = ["mcp"] }
+openinference-instrumentation-crewai = "^0.1.17"
+ruff = "^0.14.13"
+pre-commit = "^4.5.1"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "C90", "I"]  # I = Import sorting (isort-Äquivalent)
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

@@ -8,6 +8,7 @@ __pycache__/
 
 # Distribution / packaging
 .Python
+.devdata/
 build/
 develop-eggs/
 dist/
@@ -21,10 +22,13 @@ sdist/
 var/
 wheels/
 share/python-wheels/
+.tools/
 *.egg-info/
 .installed.cfg
 *.egg
 MANIFEST
+.llm-context
+.continue
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -142,7 +146,9 @@ env/
 venv/
 ENV/
 env.bak/
+.env.devcontainer
 venv.bak/
+!.env.example
 
 # Spyder project settings
 .spyderproject
@@ -182,9 +188,9 @@ cython_debug/
 .abstra/
 
 # Visual Studio Code
-#  Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 
+#  Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore
 #  that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
-#  and can be added to the global gitignore or merged into this file. However, if you prefer, 
+#  and can be added to the global gitignore or merged into this file. However, if you prefer,
 #  you could uncomment the following to ignore the entire vscode folder
 # .vscode/
 

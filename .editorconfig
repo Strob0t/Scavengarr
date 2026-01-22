@@ -1,0 +1,57 @@
+# EditorConfig is awesome: https://editorconfig.org
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# Default indentation (Python-first repo)
+indent_style = space
+indent_size = 4
+
+# Match Black's default line length (project uses black line-length = 88) [web:220]
+max_line_length = 88
+
+# --- Python ---
+[*.py]
+indent_style = space
+indent_size = 4
+
+# --- Tests / Fixtures (optional: keep as default, but could loosen) ---
+[tests/**/*.py]
+indent_style = space
+indent_size = 4
+
+# --- TOML (pyproject.toml etc.) ---
+[*.toml]
+indent_style = space
+indent_size = 2
+
+# --- YAML / JSON (plugins, CI, configs) ---
+[*.{yml,yaml,json}]
+indent_style = space
+indent_size = 2
+
+# --- Shell scripts ---
+[*.{sh,bash}]
+indent_style = space
+indent_size = 2
+
+# --- Markdown / Docs ---
+# Keep trailing whitespace because Markdown line breaks can depend on it. [web:227]
+[*.{md,mdx}]
+trim_trailing_whitespace = false
+indent_style = space
+indent_size = 2
+max_line_length = off
+
+# --- Makefile ---
+[Makefile]
+indent_style = tab
+
+# --- Generated / lockfiles ---
+[poetry.lock]
+indent_style = space
+indent_size = 2
