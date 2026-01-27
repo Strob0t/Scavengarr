@@ -1,14 +1,14 @@
 services:
-  ollama:
-    image: ollama/ollama:latest
-    container_name: ai-ollama
-    #devices:
-    #  - /dev/kfd
-    #  - /dev/dri
-    ports: ["11434:11434"]
-    volumes:
-      - ./.devdata/ollama:/root/.ollama
-    networks: [mcp-network]
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: ai-ollama
+  #   #devices:
+  #   #  - /dev/kfd
+  #   #  - /dev/dri
+  #   ports: ["11434:11434"]
+  #   volumes:
+  #     - ./.devdata/ollama:/root/.ollama
+  #   networks: [mcp-network]
 
   docs-mcp-server:
     image: ghcr.io/arabold/docs-mcp-server:latest
@@ -16,35 +16,38 @@ services:
     ports:
       - "6280:6280" # Docs MCP für LLM-Context
     volumes:
-      - ./docs:/docs:ro # optional: lokale HTML/Markdown Doku als Quelle
+      - ./:/docs:ro # optional: lokale HTML/Markdown Doku als Quelle
       - ./.devdata/docs_mcp_data:/data # persistente DB/Index
     environment:
-      - OPENAI_API_BASE=http://ollama:11434/v1
-      - OPENAI_API_KEY=ollama
-      - DOCS_MCP_EMBEDDING_MODEL=nomic-embed-text
+      # - OPENAI_API_BASE=http://ollama:11434/v1
+      # - OPENAI_API_KEY=ollama
+      # - DOCS_MCP_EMBEDDING_MODEL=nomic-embed-text
+      - OPENAI_API_BASE=http://192.168.88.21:1234/v1
+      - OPENAI_API_KEY=lmstudio
+      - DOCS_MCP_EMBEDDING_MODEL=text-embedding-qwen3-embedding-8b
       - DOCS_MCP_TELEMETRY=false
     command: ["--protocol", "http", "--host", "0.0.0.0", "--port", "6280"]
-    depends_on:
-      - ollama
+    # depends_on:
+    #   - ollama
     networks:
       - mcp-network
 
-  filesystem-mcp-gw:
-    image: supercorp/supergateway:latest
-    container_name: ai-filesystem
-    command:
-      - "--stdio"
-      - "npx"
-      - "@modelcontextprotocol/server-filesystem"
-      - "/workspace"
-      - "--allow-create"
-      - "--allow-delete"
-    volumes:
-      - .:/workspace:rw
-    ports:
-      - "8000:8000"
-    networks:
-      - mcp-network
+  # filesystem-mcp-gw:
+  #   image: supercorp/supergateway:latest
+  #   container_name: ai-filesystem
+  #   command:
+  #     - "--stdio"
+  #     - "npx"
+  #     - "@modelcontextprotocol/server-filesystem"
+  #     - "/workspace"
+  #     - "--allow-create"
+  #     - "--allow-delete"
+  #   volumes:
+  #     - .:/workspace:rw
+  #   ports:
+  #     - "8000:8000"
+  #   networks:
+  #     - mcp-network
 
   llm-context-sse:
     image: node:20-bookworm-slim

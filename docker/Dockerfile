@@ -1,5 +1,11 @@
+FROM python:3.12-slim AS builder
+RUN pip install poetry
+COPY pyproject.toml poetry.lock ./
+RUN poetry export -f requirements.txt --output requirements.txt --without-hashes
+
 FROM python:3.12-slim
-COPY ./ /app
-WORKDIR /app
-RUN which poetry || pipx install poetry; export PATH=\"$HOME/.local/bin:$PATH\"; poetry config virtualenvs.in-project true; [ -f pyproject.toml ] && poetry install
-CMD ["uvicorn", "src.scavengarrapplication.main:app", "--host", "0.0.0.0", "--port", "7979"]
+COPY --from=builder requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+RUN playwright install chromium --with-deps
+COPY src/ /app/src/
+CMD ["uvicorn", "scavengarr.main:app", "--host", "0.0.0.0"]

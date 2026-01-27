@@ -1,8 +1,92 @@
+from __future__ import annotations
+
+import argparse
 import os
+from pathlib import Path
+from typing import Any, Iterable, Optional
+import sys
+import structlog
 import uvicorn
 
+from scavengarr.application.main import build_app
+from scavengarr.infrastructure.config import load_config
+from scavengarr.logging.setup import configure_logging
 
-def start() -> None:
-    host = os.getenv("HOST", "0.0.0.0")
-    port = int(os.getenv("PORT", "7979"))
-    uvicorn.run("scavengarr.application.main:app", host=host, port=port)
+log = structlog.get_logger(__name__)
+
+
+def _parse_args(argv: Optional[Iterable[str]]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="scavengarr")
+
+    parser.add_argument("--host", default=None,
+                        help="Bind host (overrides HOST env).")
+    parser.add_argument(
+        "--port",
+        default=None,
+        type=int,
+        help="Bind port (overrides PORT env).",
+    )
+
+    # Config wiring flags (no business logic)
+    parser.add_argument("--config", default=None,
+                        help="Path to YAML config file.")
+    parser.add_argument("--dotenv", default=None, help="Path to .env file.")
+    parser.add_argument("--plugin-dir", default=None,
+                        help="Override plugins directory.")
+    parser.add_argument(
+        "--log-level",
+        default=None,
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Override log level.",
+    )
+    parser.add_argument(
+        "--log-format",
+        default=None,
+        choices=["json", "console"],
+        help="Override log format.",
+    )
+
+    return parser.parse_args(list(argv) if argv is not None else None)
+
+
+def start(argv: Optional[Iterable[str]] = None) -> None:
+    """
+    Process entrypoint.
+
+    Best practice: Load config exactly once here, then build the FastAPI app with it.
+    """
+
+    if argv is None:
+        argv = sys.argv[1:]
+
+    args = _parse_args(argv)
+
+    host = args.host or os.getenv("HOST", "0.0.0.0")
+    port = int(args.port or os.getenv("PORT", "7979"))
+
+    config_path = Path(args.config) if args.config else None
+    dotenv_path = Path(args.dotenv) if args.dotenv else None
+
+    cli_overrides: dict[str, Any] = {}
+    if args.plugin_dir:
+        cli_overrides["plugin_dir"] = args.plugin_dir
+    if args.log_level:
+        cli_overrides["log_level"] = args.log_level
+    if args.log_format:
+        cli_overrides["log_format"] = args.log_format
+
+    config = load_config(
+        config_path=config_path,
+        dotenv_path=dotenv_path,
+        cli_overrides=cli_overrides,
+    )
+
+    log_config = configure_logging(config)
+
+    app = build_app(config)
+    uvicorn.run(app, host=host, port=port,
+                log_config=log_config,)
+
+
+if __name__ == "__main__":
+    raise SystemExit(start())

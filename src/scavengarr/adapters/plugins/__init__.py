@@ -1,1 +1,0 @@
-# Initialization for plugins package

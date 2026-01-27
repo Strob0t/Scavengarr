@@ -1,0 +1,250 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Literal, Optional
+
+from pydantic import (
+    AliasChoices,
+    AliasPath,
+    BaseModel,
+    Field,
+    field_validator,
+    model_validator,
+)
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+Environment = Literal["dev", "test", "prod"]
+LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
+LogFormat = Literal["json", "console"]
+
+
+def _normalize_path(value: Any) -> Path:
+    """
+    Normalize a path-like value without causing filesystem side-effects.
+
+    This function MUST NOT create directories or files.
+    """
+    if isinstance(value, Path):
+        return value.expanduser()
+    if isinstance(value, str):
+        return Path(value).expanduser()
+    raise TypeError(f"Expected path-like value, got: {type(value)!r}")
+
+
+class AppConfig(BaseModel):
+    """
+    Canonical application configuration (validated, final).
+
+    Note:
+    - YAML is expected to be sectioned (plugins/http/playwright/logging/cache).
+    - Environment variables are handled by EnvOverrides(BaseSettings) to allow strict
+      precedence control (defaults < YAML < ENV < CLI) in load.py.
+    """
+
+    # General
+    app_name: str = Field(default="scavengarr",
+                          description="Application name.")
+    environment: Environment = Field(
+        default="dev",
+        description="Runtime environment (affects defaults like log format).",
+    )
+
+    # Plugins (YAML section: plugins.plugin_dir)
+    plugin_dir: Path = Field(
+        default=Path("./plugins"),
+        validation_alias=AliasChoices(
+            "plugin_dir",
+            AliasPath("plugins", "plugin_dir"),
+        ),
+        description="Directory containing YAML/Python plugins.",
+    )
+
+    # HTTP / Scrapy engine (YAML section: http.*)
+    http_timeout_seconds: float = Field(
+        default=30.0,
+        validation_alias=AliasChoices(
+            "http_timeout_seconds",
+            AliasPath("http", "timeout_seconds"),
+        ),
+        description="HTTP timeout in seconds for static scraping.",
+    )
+    http_follow_redirects: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "http_follow_redirects",
+            AliasPath("http", "follow_redirects"),
+        ),
+        description="Whether HTTP client follows redirects.",
+    )
+    http_user_agent: str = Field(
+        default="Scavengarr/0.1.0 (+https://github.com/Strob0t/Scavengarr)",
+        validation_alias=AliasChoices(
+            "http_user_agent",
+            AliasPath("http", "user_agent"),
+        ),
+        description="User-Agent for outgoing HTTP requests.",
+    )
+
+    # Playwright (YAML section: playwright.*)
+    playwright_headless: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "playwright_headless",
+            AliasPath("playwright", "headless"),
+        ),
+        description="Run Playwright headless.",
+    )
+    playwright_timeout_ms: int = Field(
+        default=30_000,
+        validation_alias=AliasChoices(
+            "playwright_timeout_ms",
+            AliasPath("playwright", "timeout_ms"),
+        ),
+        description="Playwright timeout in milliseconds.",
+    )
+
+    # Logging (YAML section: logging.*)
+    log_level: LogLevel = Field(
+        default="INFO",
+        validation_alias=AliasChoices(
+            "log_level",
+            AliasPath("logging", "level"),
+        ),
+        description="Log level.",
+    )
+    log_format: Optional[LogFormat] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "log_format",
+            AliasPath("logging", "format"),
+        ),
+        description="Log renderer format (console/json). If unset, derived from environment.",
+    )
+
+    # Cache (disk-only placeholder) (YAML section: cache.*)
+    cache_dir: Path = Field(
+        default=Path("./.cache/scavengarr"),
+        validation_alias=AliasChoices(
+            "cache_dir",
+            AliasPath("cache", "dir"),
+        ),
+        description="Cache directory (disk).",
+    )
+    cache_ttl_seconds: int = Field(
+        default=3600,
+        validation_alias=AliasChoices(
+            "cache_ttl_seconds",
+            AliasPath("cache", "ttl_seconds"),
+        ),
+        description="Cache TTL in seconds.",
+    )
+
+    @field_validator("plugin_dir", "cache_dir", mode="before")
+    @classmethod
+    def _validate_paths(cls, v: Any) -> Path:
+        return _normalize_path(v)
+
+    @field_validator("http_timeout_seconds")
+    @classmethod
+    def _validate_http_timeout(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("http_timeout_seconds must be > 0")
+        return v
+
+    @field_validator("playwright_timeout_ms")
+    @classmethod
+    def _validate_playwright_timeout(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("playwright_timeout_ms must be > 0")
+        return v
+
+    @field_validator("cache_ttl_seconds")
+    @classmethod
+    def _validate_cache_ttl(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("cache_ttl_seconds must be >= 0")
+        return v
+
+    @model_validator(mode="after")
+    def _derive_defaults(self) -> "AppConfig":
+        # Default log format: console in dev/test, json in prod.
+        if self.log_format is None:
+            self.log_format = "json" if self.environment == "prod" else "console"
+        return self
+
+    def to_sectioned_dict(self) -> dict[str, Any]:
+        """
+        Dump configuration in the sectioned shape used by config.yaml/docs.
+        """
+        return {
+            "app_name": self.app_name,
+            "environment": self.environment,
+            "plugins": {"plugin_dir": str(self.plugin_dir)},
+            "http": {
+                "timeout_seconds": self.http_timeout_seconds,
+                "follow_redirects": self.http_follow_redirects,
+                "user_agent": self.http_user_agent,
+            },
+            "playwright": {
+                "headless": self.playwright_headless,
+                "timeout_ms": self.playwright_timeout_ms,
+            },
+            "logging": {"level": self.log_level, "format": self.log_format},
+            "cache": {"dir": str(self.cache_dir), "ttl_seconds": self.cache_ttl_seconds},
+        }
+
+
+class EnvOverrides(BaseSettings):
+    """
+    Environment-variable overrides (all optional).
+
+    Intended usage:
+    - load.py creates EnvOverrides() to read SCAVENGARR_* variables,
+      converts to dict of set values, merges into YAML/defaults, then validates AppConfig.
+
+    Supported env var examples (flat, explicit):
+    - SCAVENGARR_PLUGIN_DIR
+    - SCAVENGARR_HTTP_TIMEOUT_SECONDS
+    - SCAVENGARR_PLAYWRIGHT_HEADLESS
+    - SCAVENGARR_LOG_LEVEL
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="SCAVENGARR_",
+        extra="ignore",
+        case_sensitive=False,
+    )
+
+    app_name: Optional[str] = None
+    environment: Optional[Environment] = None
+
+    plugin_dir: Optional[Path] = None
+
+    http_timeout_seconds: Optional[float] = None
+    http_follow_redirects: Optional[bool] = None
+    http_user_agent: Optional[str] = None
+
+    playwright_headless: Optional[bool] = None
+    playwright_timeout_ms: Optional[int] = None
+
+    log_level: Optional[LogLevel] = None
+    log_format: Optional[LogFormat] = None
+
+    cache_dir: Optional[Path] = None
+    cache_ttl_seconds: Optional[int] = None
+
+    @field_validator("plugin_dir", "cache_dir", mode="before")
+    @classmethod
+    def _validate_paths(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        return _normalize_path(v)
+
+    def to_update_dict(self) -> dict[str, Any]:
+        """
+        Return only values that were actually provided (non-None), for merging.
+        """
+        data = self.model_dump(exclude_none=True)
+        # Ensure Paths are Path objects in update dict (caller can stringify if needed)
+        return data

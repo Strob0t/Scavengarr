@@ -1,0 +1,75 @@
+.
+├── AGENTS.md
+├── ARCHITECTURE.md
+├── Dockerfile
+├── LICENSE
+├── README.md
+├── docker
+│   ├── Dockerfile
+│   └── otel-config.yaml
+├── docker-compose.yml
+├── docs
+├── flake.lock
+├── flake.nix
+├── openspec
+│   ├── AGENTS.md
+│   ├── changes
+│   │   ├── add-config-system
+│   │   │   ├── design.md
+│   │   │   ├── proposal.md
+│   │   │   ├── specs
+│   │   │   │   └── configuration
+│   │   │   │       └── spec.md
+│   │   │   └── tasks.md
+│   │   ├── add-plugin-loader
+│   │   │   ├── design.md
+│   │   │   ├── proposal.md
+│   │   │   ├── specs
+│   │   │   │   └── plugin-system
+│   │   │   │       └── spec.md
+│   │   │   └── tasks.md
+│   │   └── archive
+│   └── project.md
+├── plugins
+│   ├── boerse-im.yaml
+│   └── my-gully.py
+├── poetry.lock
+├── pyproject.toml
+├── src
+│   └── scavengarr
+│       ├── adapters
+│       │   ├── auth
+│       │   ├── plugins
+│       │   │   └── __init__.py
+│       │   ├── scraping
+│       │   └── torznab
+│       ├── application
+│       │   ├── __init__.py
+│       │   ├── __pycache__
+│       │   │   ├── __init__.cpython-312.pyc
+│       │   │   ├── cli.cpython-312.pyc
+│       │   │   └── main.cpython-312.pyc
+│       │   ├── api
+│       │   ├── cli.py
+│       │   └── main.py
+│       ├── core
+│       │   ├── domain
+│       │   ├── ports
+│       │   └── usecases
+│       ├── infrastructure
+│       │   ├── cache
+│       │   └── config
+│       │       ├── __init__.py
+│       │       └── defaults.py
+│       ├── logging_config.py
+│       └── plugins
+├── temp_user_task_input.txt
+├── tests
+│   ├── e2e
+│   ├── integration
+│   ├── test_config_system.py
+│   └── unit
+│       └── plugins
+└── tree.txt
+
+36 directories, 37 files

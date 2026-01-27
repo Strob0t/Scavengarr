@@ -1,0 +1,3 @@
+---BEGIN TASK---
+{"change_id":"add-config-system","task":"Implementiere das OpenSpec change add-config-system"}
+---END TASK---
