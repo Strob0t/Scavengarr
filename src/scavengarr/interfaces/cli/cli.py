@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from pathlib import Path
 from typing import Any, Iterable, Optional
-import sys
+
 import structlog
 import uvicorn
 
-from scavengarr.application.main import build_app
 from scavengarr.infrastructure.config import load_config
-from scavengarr.logging.setup import configure_logging
+from scavengarr.infrastructure.logging.setup import configure_logging
+from scavengarr.interfaces.main import build_app
 
 log = structlog.get_logger(__name__)
 
@@ -18,8 +19,12 @@ log = structlog.get_logger(__name__)
 def _parse_args(argv: Optional[Iterable[str]]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="scavengarr")
 
-    parser.add_argument("--host", default=None,
-                        help="Bind host (overrides HOST env).")
+    # Server options
+    parser.add_argument(
+        "--host",
+        default=None,
+        help="Bind host (overrides HOST env).",
+    )
     parser.add_argument(
         "--port",
         default=None,
@@ -28,11 +33,21 @@ def _parse_args(argv: Optional[Iterable[str]]) -> argparse.Namespace:
     )
 
     # Config wiring flags (no business logic)
-    parser.add_argument("--config", default=None,
-                        help="Path to YAML config file.")
-    parser.add_argument("--dotenv", default=None, help="Path to .env file.")
-    parser.add_argument("--plugin-dir", default=None,
-                        help="Override plugins directory.")
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="Path to YAML config file.",
+    )
+    parser.add_argument(
+        "--dotenv",
+        default=None,
+        help="Path to .env file.",
+    )
+    parser.add_argument(
+        "--plugin-dir",
+        default=None,
+        help="Override plugins directory.",
+    )
     parser.add_argument(
         "--log-level",
         default=None,
@@ -46,7 +61,7 @@ def _parse_args(argv: Optional[Iterable[str]]) -> argparse.Namespace:
         help="Override log format.",
     )
 
-    return parser.parse_args(list(argv) if argv is not None else None)
+    return parser.parse_args(argv)
 
 
 def start(argv: Optional[Iterable[str]] = None) -> None:
@@ -83,9 +98,12 @@ def start(argv: Optional[Iterable[str]] = None) -> None:
 
     log_config = configure_logging(config)
 
-    app = build_app(config)
-    uvicorn.run(app, host=host, port=port,
-                log_config=log_config,)
+    uvicorn.run(
+        build_app(config),
+        host=host,
+        port=port,
+        log_config=log_config,
+    )
 
 
 if __name__ == "__main__":

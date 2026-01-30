@@ -1,29 +1,33 @@
 # Scavengarr
-graph TD
-  subgraph "Unified Process"
-    direction TB
-    CLI[CLI] --> SR[SearchService]
-    HTTP[FastAPI] --> SR
-    SR --> PLM[PluginManager]
-    SR --> BP[BrowserPool]
-    BP --> CS[Cache Service]
-    SR --> TR[TorznabRenderer]
-    TR --> HTTP
-  end
 
-  graph TD
-  subgraph "Coordinator (FastAPI)"
-    HTTP_C[FastAPI] --> RPC_C[RPC‑Client]
-    RPC_C -.->|HTTP/WS| RPC_W
-    RPC_C --> EB_C[EventBus]
-  end
+Scavengarr is a Prowlarr-compatible Torznab/Newznab indexer that accepts search requests via HTTP and returns Torznab XML results.
+Project docs and important files: `.devcontainer/`, `docker-compose.yml`, `.env.example`, `ARCHITECTURE.md`, `AGENTS.md`.
 
-  subgraph "Worker"
-    RPC_W[RPC‑Server] --> PLM_W[PluginManager]
-    RPC_W --> BP_W[BrowserPool]
-    RPC_W --> CS_W[Cache Service]
-    RPC_W --> SR_W[SearchService]
-    SR_W --> TR_W[TorznabRenderer]
-  end
+## Project status
 
-  RPC_C <===> RPC_W
+This is an early-stage project and most of the code is “vibe coded”.  
+There are no tests yet.
+
+## Dev Container (recommended)
+
+Prerequisites:
+- Docker (Docker Desktop / Docker Engine)
+- VS Code + “Dev Containers” extension
+- Git
+
+Steps:
+1. Clone the repo and open it in VS Code.
+2. Run: `Dev Containers: Reopen in Container`.
+
+## Running locally
+
+Common options:
+- Using Docker Compose: `docker compose up --build` (see `docker-compose.yml`).
+- Running directly in the dev container (example):
+  - `poetry run start --factory --host 0.0.0.0 --port 7979`
+
+## Configuration & plugins
+
+- Put local env vars into a `.env` file (see `.env.example`).
+- Plugins live in the `plugins/` directory in this repo (examples/dev plugins).
+- For deeper design details, read `ARCHITECTURE.md`.

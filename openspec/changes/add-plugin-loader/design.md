@@ -21,7 +21,7 @@ Scavengarr requires a plugin system to support diverse torrent trackers without 
 ## Decisions
 
 ### Decision 1: Dual-Mode Plugin System (YAML + Python)
-**Rationale**: 
+**Rationale**:
 - **YAML**: Covers 80% of trackers with standard HTML tables and simple auth
 - **Python**: Handles edge-cases requiring dynamic logic:
   - OAuth token refresh flows
@@ -39,7 +39,7 @@ Scavengarr requires a plugin system to support diverse torrent trackers without 
 - Lua/JavaScript DSL: Adds language complexity; worse DX than Python for Python developers
 
 ### Decision 2: Pydantic for YAML Validation
-**Rationale**: 
+**Rationale**:
 - Auto-generated JSON schema for documentation
 - Field validators for URL/regex/semver validation
 - Rich error messages with field paths (`scraping.selectors.title: field required`)

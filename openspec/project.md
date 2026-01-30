@@ -6,7 +6,7 @@ Scavengarr is a **self-hosted, container-ready indexer** that emulates the Torzn
 ## Tech Stack
 - **Language**: Python 3.12 (enforced via `pyproject.toml`)
 - **Framework**: FastAPI (ASGI) for the web server
-- **Scraping**: 
+- **Scraping**:
   - **ScrapyEngine** (MVP): `httpx` (async HTTP) + `parsel` (CSS selectors) for static HTML sites
   - **PlaywrightEngine** (future): Playwright (headless browser) for JavaScript-rendered sites
 - **Configuration**: Pydantic Settings with precedence hierarchy (CLI → ENV → YAML → `.env` → defaults)
@@ -85,7 +85,7 @@ Understanding of torrent tracker site structures (HTML tables, RSS feeds, JSON A
 
 ## Important Constraints
 - **Python 3.12 only**: No support for 3.11 or 3.13+ (enforced via `pyproject.toml`)
-- **Privacy & security**: 
+- **Privacy & security**:
   - Never log secrets in plaintext (passwords, API keys, cookies)
   - SSL verification always enabled (`verify=True`)
   - Timeout enforcement (30s default) to prevent hanging requests
@@ -147,8 +147,8 @@ These are fixed across all OpenSpec changes and AI implementations:
 
 ***
 
-**Last Updated**: 2026-01-25  
-**Author**: Scavengarr Team  
+**Last Updated**: 2026-01-25
+**Author**: Scavengarr Team
 **OpenSpec Version**: `add-config-system`, `add-plugin-loader`, `add-scrapy-engine` integrated
 
 ***

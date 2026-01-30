@@ -29,7 +29,8 @@
         "ms-python.pytest",
         "ms-python.black-formatter",
         "redhat.vscode-yaml",
-        "Continue.continue"
+        "Continue.continue",
+        "charliermarsh.ruff"
       ],
       "settings": {
         "dev.containers.mountWaylandSocket": false,

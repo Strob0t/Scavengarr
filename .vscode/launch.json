@@ -6,12 +6,28 @@
             "name": "Scavengarr (CLI entrypoint, Port 7979)",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/src/scavengarr/application/cli.py",
+            "program": "${workspaceFolder}/src/scavengarr/interfaces/cli/cli.py",
             "args": [
                 "--host",
                 "0.0.0.0",
                 "--port",
                 "7979",
+                "--log-format",
+                "console",
+                "--log-level",
+                "DEBUG"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "logToFile": true,
+            "jinja": true
+        },
+        {
+            "name": "test.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/scavengarr/interfaces/test.py",
+            "args": [
                 "--log-format",
                 "console",
                 "--log-level",

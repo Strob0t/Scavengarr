@@ -1,22 +1,28 @@
-from __future__ import annotations
-
 from .base import PluginProtocol, SearchResult
 from .exceptions import (
     DuplicatePluginError,
-    PluginError,
     PluginLoadError,
     PluginNotFoundError,
     PluginValidationError,
 )
-from .registry import PluginRegistry
+from .schema import (
+    AuthConfig,
+    NestedSelector,
+    ScrapingConfig,
+    ScrapingStage,
+    YamlPluginDefinition,
+)
 
 __all__ = [
+    "AuthConfig",
     "DuplicatePluginError",
-    "PluginError",
     "PluginLoadError",
     "PluginNotFoundError",
     "PluginProtocol",
-    "PluginRegistry",
     "PluginValidationError",
+    "ScrapingConfig",
     "SearchResult",
+    "YamlPluginDefinition",
+    "NestedSelector",
+    "ScrapingStage",
 ]

@@ -191,7 +191,7 @@ auth:
 ```
   - [ ] `valid-python.py`:
 ```python
-from scavengarr.plugins.base import SearchResult
+from scavengarr.domain.plugins.base import SearchResult
 
 class TestPythonPlugin:
     async def search(self, query: str, category: int | None = None) -> list[SearchResult]:

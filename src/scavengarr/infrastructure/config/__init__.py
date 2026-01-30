@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .schema import AppConfig, EnvOverrides
 from .load import load_config
+from .schema import AppConfig, EnvOverrides
 
 __all__ = ["AppConfig", "EnvOverrides", "load_config"]

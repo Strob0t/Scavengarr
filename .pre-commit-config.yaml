@@ -1,5 +1,4 @@
 repos:
-  # Basis-Hooks: Whitespace, EOF newline, YAML check
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
@@ -7,10 +6,17 @@ repos:
       - id: trailing-whitespace
       - id: check-yaml
 
-  # Ruff: erst lint/fix, dann format (Reihenfolge wichtig bei --fix)
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.14.13
     hooks:
+      # 1) Nur Imports sortieren (I001 / I)
+      - id: ruff-check
+        name: ruff (sort imports)
+        args: ["--select", "I", "--fix"]
+
+      # 2) Rest lint/fix
       - id: ruff-check
         args: ["--fix", "--exit-non-zero-on-fix"]
+
+      # 3) Formatter zuletzt
       - id: ruff-format

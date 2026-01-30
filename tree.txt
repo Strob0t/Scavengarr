@@ -4,6 +4,10 @@
 ├── Dockerfile
 ├── LICENSE
 ├── README.md
+├── cache
+│   ├── cache.db
+│   ├── cache.db-shm
+│   └── cache.db-wal
 ├── docker
 │   ├── Dockerfile
 │   └── otel-config.yaml
@@ -31,45 +35,130 @@
 │   │   └── archive
 │   └── project.md
 ├── plugins
-│   ├── boerse-im.yaml
-│   └── my-gully.py
+│   ├── __pycache__
+│   │   └── my-gully.cpython-312.pyc
+│   └── filmpalast.to.yaml
 ├── poetry.lock
 ├── pyproject.toml
 ├── src
 │   └── scavengarr
 │       ├── adapters
-│       │   ├── auth
-│       │   ├── plugins
-│       │   │   └── __init__.py
 │       │   ├── scraping
+│       │   │   ├── __init__.py
+│       │   │   ├── __pycache__
+│       │   │   │   ├── __init__.cpython-312.pyc
+│       │   │   │   └── scrapy_adapter.cpython-312.pyc
+│       │   │   └── scrapy_adapter.py
 │       │   └── torznab
 │       ├── application
-│       │   ├── __init__.py
 │       │   ├── __pycache__
 │       │   │   ├── __init__.cpython-312.pyc
+│       │   │   ├── app_state.cpython-312.pyc
 │       │   │   ├── cli.cpython-312.pyc
 │       │   │   └── main.cpython-312.pyc
-│       │   ├── api
-│       │   ├── cli.py
-│       │   └── main.py
-│       ├── core
-│       │   ├── domain
-│       │   ├── ports
-│       │   └── usecases
-│       ├── infrastructure
-│       │   ├── cache
-│       │   └── config
+│       │   └── use_cases
 │       │       ├── __init__.py
-│       │       └── defaults.py
-│       ├── logging_config.py
-│       └── plugins
-├── temp_user_task_input.txt
+│       │       ├── __pycache__
+│       │       │   ├── __init__.cpython-312.pyc
+│       │       │   ├── torznab_caps.cpython-312.pyc
+│       │       │   ├── torznab_indexers.cpython-312.pyc
+│       │       │   └── torznab_search.cpython-312.pyc
+│       │       ├── torznab_caps.py
+│       │       ├── torznab_indexers.py
+│       │       └── torznab_search.py
+│       ├── domain
+│       │   ├── __init__.py
+│       │   ├── __pycache__
+│       │   │   └── __init__.cpython-312.pyc
+│       │   ├── entities
+│       │   │   ├── __init__.py
+│       │   │   ├── __pycache__
+│       │   │   │   ├── __init__.cpython-312.pyc
+│       │   │   │   └── torznab.cpython-312.pyc
+│       │   │   └── torznab.py
+│       │   ├── plugins
+│       │   │   ├── __init__.py
+│       │   │   ├── __pycache__
+│       │   │   │   ├── __init__.cpython-312.pyc
+│       │   │   │   ├── base.cpython-312.pyc
+│       │   │   │   ├── exceptions.cpython-312.pyc
+│       │   │   │   └── schema.cpython-312.pyc
+│       │   │   ├── base.py
+│       │   │   ├── exceptions.py
+│       │   │   └── schema.py
+│       │   └── ports
+│       │       ├── __init__.py
+│       │       ├── __pycache__
+│       │       │   ├── __init__.cpython-312.pyc
+│       │       │   ├── plugin_registry.cpython-312.pyc
+│       │       │   └── search_engine.cpython-312.pyc
+│       │       ├── plugin_registry.py
+│       │       └── search_engine.py
+│       ├── infrastructure
+│       │   ├── __pycache__
+│       │   │   └── composition.cpython-312.pyc
+│       │   ├── cache
+│       │   ├── composition.py
+│       │   ├── config
+│       │   │   ├── __init__.py
+│       │   │   ├── __pycache__
+│       │   │   │   ├── __init__.cpython-312.pyc
+│       │   │   │   ├── defaults.cpython-312.pyc
+│       │   │   │   ├── load.cpython-312.pyc
+│       │   │   │   └── schema.cpython-312.pyc
+│       │   │   ├── defaults.py
+│       │   │   ├── load.py
+│       │   │   └── schema.py
+│       │   ├── logging
+│       │   │   ├── __init__.py
+│       │   │   ├── __pycache__
+│       │   │   │   ├── __init__.cpython-312.pyc
+│       │   │   │   └── setup.cpython-312.pyc
+│       │   │   └── setup.py
+│       │   ├── plugins
+│       │   │   ├── __init__.py
+│       │   │   ├── __pycache__
+│       │   │   │   ├── __init__.cpython-312.pyc
+│       │   │   │   ├── loader.cpython-312.pyc
+│       │   │   │   └── registry.cpython-312.pyc
+│       │   │   ├── loader.py
+│       │   │   └── registry.py
+│       │   └── torznab
+│       │       ├── __pycache__
+│       │       │   └── httpx_scrapy_engine.cpython-312.pyc
+│       │       └── httpx_scrapy_engine.py
+│       └── interfaces
+│           ├── __init__.py
+│           ├── __pycache__
+│           │   ├── __init__.cpython-312.pyc
+│           │   ├── app_state.cpython-312.pyc
+│           │   └── main.cpython-312.pyc
+│           ├── api
+│           │   ├── __init__.py
+│           │   ├── __pycache__
+│           │   │   └── __init__.cpython-312.pyc
+│           │   └── torznab
+│           │       ├── __init__.py
+│           │       ├── __pycache__
+│           │       │   ├── __init__.cpython-312.pyc
+│           │       │   ├── presenter.cpython-312.pyc
+│           │       │   └── router.cpython-312.pyc
+│           │       ├── presenter.py
+│           │       └── router.py
+│           ├── app_state.py
+│           ├── cli
+│           │   ├── __init__.py
+│           │   ├── __pycache__
+│           │   │   ├── __init__.cpython-312.pyc
+│           │   │   └── cli.cpython-312.pyc
+│           │   └── cli.py
+│           ├── main.py
+│           └── test.py
 ├── tests
 │   ├── e2e
 │   ├── integration
-│   ├── test_config_system.py
 │   └── unit
 │       └── plugins
 └── tree.txt
 
-36 directories, 37 files
+57 directories, 105 files

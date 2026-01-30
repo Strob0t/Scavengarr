@@ -251,7 +251,7 @@ The system SHALL initialize the plugin registry on application startup.
 - Manual validation: Error-prone, no type hints
 
 ### Decision 3: Protocol-Based Python Plugin Validation
-**Rationale**: 
+**Rationale**:
 - Python `typing.Protocol` provides structural typing without inheritance
 - Plugins don't need to import/extend base classes (loose coupling)
 - Duck-typing validation: "If it has a `search` method with correct signature, it's valid"

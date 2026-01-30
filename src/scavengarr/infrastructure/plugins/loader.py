@@ -10,9 +10,12 @@ import structlog
 import yaml
 from pydantic import ValidationError
 
-from .base import PluginProtocol
-from .exceptions import PluginLoadError, PluginValidationError
-from .schema import YamlPluginDefinition
+from scavengarr.domain.plugins import (
+    PluginLoadError,
+    PluginProtocol,
+    PluginValidationError,
+    YamlPluginDefinition,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -66,8 +69,7 @@ def _import_module_from_path(path: Path) -> ModuleType:
         spec.loader.exec_module(module)  # type: ignore[union-attr]
     except SyntaxError as e:
         tb = traceback.format_exc()
-        raise PluginLoadError(
-            f"SyntaxError while importing {path}:\n{tb}") from e
+        raise PluginLoadError(f"SyntaxError while importing {path}:\n{tb}") from e
     except Exception as e:
         tb = traceback.format_exc()
         raise PluginLoadError(f"Error while importing {path}:\n{tb}") from e
@@ -84,9 +86,12 @@ def load_python_plugin(path: Path) -> PluginProtocol:
         plugin: Any = getattr(module, "plugin")
         if not hasattr(plugin, "search"):
             raise PluginLoadError("Plugin must have 'search' method")
-        if not hasattr(plugin, "name") or not isinstance(plugin.name, str) or not plugin.name:
-            raise PluginLoadError(
-                "Plugin must have non-empty 'name' attribute")
+        if (
+            not hasattr(plugin, "name")
+            or not isinstance(plugin.name, str)
+            or not plugin.name
+        ):
+            raise PluginLoadError("Plugin must have non-empty 'name' attribute")
 
         return plugin
     except PluginLoadError as e:

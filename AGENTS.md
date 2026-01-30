@@ -124,14 +124,14 @@ Enforced by `commitlint` (configured in `pyproject.toml`).
   - Classes & Exceptions: `PascalCase` (e.g., `PluginRegistry`, `NetworkError`)
   - Functions, methods, variables: `snake_case` (e.g., `load_config`, `plugin_dir`)
   - Constants: `UPPER_SNAKE_CASE` (e.g., `DEFAULT_TIMEOUT`, `CACHE_TTL`)
-- **Type hints**: 
+- **Type hints**:
   - Use full type annotations **everywhere** (functions, methods, class attributes)
   - Prefer PEP 585 (`list[str]`) over typing module (`List[str]`)
   - Use `from __future__ import annotations` for forward references
-- **Docstrings**: 
+- **Docstrings**:
   - Google style, mandatory for all **public** modules, classes, functions, and methods
   - Include examples for complex functions (see `add-plugin-loader` tasks)
-- **Error handling**: 
+- **Error handling**:
   - Catch exceptions at API/CLI boundaries, log with `structlog.get_logger().error()`, re‑raise or return HTTP error
   - Never silently swallow exceptions (`except: pass` is forbidden)
 
@@ -147,7 +147,7 @@ logger = structlog.get_logger()
 
 class PluginDefinition(BaseModel):
     """YAML plugin schema definition.
-    
+
     Attributes:
         name: Plugin identifier (lowercase, alphanumeric + hyphens).
         base_url: Site base URL for scraping.
@@ -157,17 +157,17 @@ class PluginDefinition(BaseModel):
 
 def load_yaml_plugin(path: Path) -> PluginDefinition:
     """Load and validate a YAML plugin file.
-    
+
     Args:
         path: Absolute path to .yaml file.
-        
+
     Returns:
         Validated PluginDefinition instance.
-        
+
     Raises:
         PluginLoadError: If file is missing or malformed.
         PluginValidationError: If schema validation fails.
-        
+
     Example:
         >>> plugin = load_yaml_plugin(Path("./plugins/1337x.yaml"))
         >>> plugin.name
@@ -191,7 +191,7 @@ def load_yaml_plugin(path: Path) -> PluginDefinition:
 - **Location**: Any `.yaml` file in plugin directory (e.g., `plugins/1337x.yaml`)
 - **Schema**: Validated against `PluginDefinition` Pydantic model (see `src/scavengarr/plugins/schema.py`)
 - **Required fields**: `name`, `description`, `version`, `author`, `base_url`, `scraping` (with `mode`, `selectors`/`locators`)
-- **Modes**: 
+- **Modes**:
   - `scrapy`: Static HTML scraping (CSS selectors)
   - `playwright`: JavaScript-rendered sites (Playwright locators, future)
 
@@ -203,7 +203,7 @@ def load_yaml_plugin(path: Path) -> PluginDefinition:
 
 ### Plugin Registry API
 ```python
-from scavengarr.plugins import PluginRegistry, PluginNotFoundError
+from scavengarr.domain.plugins import PluginRegistry, PluginNotFoundError
 
 # Initialize (done once at app startup)
 registry = PluginRegistry(plugin_dir=Path("./plugins"))
@@ -334,10 +334,10 @@ import structlog
 logger = structlog.get_logger()
 
 # Good: Structured context
-logger.info("scraping_completed", 
-    plugin_name="1337x", 
-    query="ubuntu", 
-    results_count=25, 
+logger.info("scraping_completed",
+    plugin_name="1337x",
+    query="ubuntu",
+    results_count=25,
     duration_ms=342
 )
 
@@ -390,16 +390,16 @@ from scavengarr.config.load import load_config
 
 def test_defaults_only_loads_builtin_config(tmp_path, monkeypatch):
     """Scenario: Defaults only (add-config-system spec.md)
-    
+
     WHEN no CLI args, env vars, YAML, or .env are provided
     THEN the system uses built-in defaults for all config fields
     """
     # Arrange: Clear all env vars
     monkeypatch.delenv("SCAVENGARR_PLUGIN_DIR", raising=False)
-    
+
     # Act
     config = load_config(config_path=None, dotenv_path=None, cli_overrides={})
-    
+
     # Assert
     assert config.plugin_dir == Path("./plugins")
     assert config.log_level == "INFO"
@@ -492,8 +492,8 @@ Before providing code to the user, verify:
 
 ***
 
-**Last Updated**: 2026-01-25  
-**Author**: Scavengarr Team  
+**Last Updated**: 2026-01-25
+**Author**: Scavengarr Team
 **OpenSpec Changes Integrated**: `add-config-system`, `add-plugin-loader`, `add-scrapy-engine`
 
 ***

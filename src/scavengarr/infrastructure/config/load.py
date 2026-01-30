@@ -10,7 +10,6 @@ from dotenv import load_dotenv
 from .defaults import DEFAULT_CONFIG
 from .schema import AppConfig, EnvOverrides
 
-
 _SECTION_KEYS: set[str] = {"plugins", "http", "playwright", "logging", "cache"}
 
 
@@ -23,11 +22,7 @@ def _deep_merge(base: dict[str, Any], override: Mapping[str, Any]) -> dict[str, 
     - otherwise => override wins
     """
     for key, value in override.items():
-        if (
-            key in base
-            and isinstance(base[key], dict)
-            and isinstance(value, Mapping)
-        ):
+        if key in base and isinstance(base[key], dict) and isinstance(value, Mapping):
             _deep_merge(base[key], value)
         else:
             base[key] = value
@@ -87,8 +82,7 @@ def _read_yaml_config(config_path: Path) -> dict[str, Any]:
     if parsed is None:
         return {}
     if not isinstance(parsed, dict):
-        raise ValueError(
-            f"Config YAML must be a mapping, got: {type(parsed)!r}")
+        raise ValueError(f"Config YAML must be a mapping, got: {type(parsed)!r}")
     return parsed
 
 

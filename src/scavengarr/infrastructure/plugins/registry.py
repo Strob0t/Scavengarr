@@ -7,10 +7,14 @@ from typing import Literal
 import structlog
 import yaml
 
-from .base import PluginProtocol
-from .exceptions import DuplicatePluginError, PluginNotFoundError
+from scavengarr.domain.plugins import (
+    DuplicatePluginError,
+    PluginNotFoundError,
+    PluginProtocol,
+    YamlPluginDefinition,
+)
+
 from .loader import load_python_plugin, load_yaml_plugin
-from .schema import YamlPluginDefinition
 
 log = structlog.get_logger(__name__)
 
@@ -54,13 +58,11 @@ class PluginRegistry:
         self._refs = []
 
         if not self._plugin_dir.exists():
-            log.warning("plugin_directory_not_found",
-                        directory=str(self._plugin_dir))
+            log.warning("plugin_directory_not_found", directory=str(self._plugin_dir))
             return
 
         if not self._plugin_dir.is_dir():
-            log.warning("plugin_directory_not_found",
-                        directory=str(self._plugin_dir))
+            log.warning("plugin_directory_not_found", directory=str(self._plugin_dir))
             return
 
         for path in sorted(self._plugin_dir.iterdir(), key=lambda p: p.name):
@@ -117,19 +119,19 @@ class PluginRegistry:
             if ref.plugin_type == "yaml":
                 plugin = load_yaml_plugin(ref.path)
                 self._yaml_cache[plugin.name] = plugin
-                log.info("plugin_loaded", plugin_name=plugin.name,
-                         plugin_type="yaml")
+                log.info("plugin_loaded", plugin_name=plugin.name, plugin_type="yaml")
                 return plugin
 
             plugin = load_python_plugin(ref.path)
             self._python_cache[plugin.name] = plugin
-            log.info("plugin_loaded", plugin_name=plugin.name,
-                     plugin_type="python")
+            log.info("plugin_loaded", plugin_name=plugin.name, plugin_type="python")
             return plugin
 
         raise PluginNotFoundError(f"Plugin '{name}' not found")
 
-    def get_by_mode(self, mode: Literal["scrapy", "playwright"]) -> list[YamlPluginDefinition]:
+    def get_by_mode(
+        self, mode: Literal["scrapy", "playwright"]
+    ) -> list[YamlPluginDefinition]:
         """
         Return YAML plugins filtered by scraping mode.
         Python plugins are intentionally excluded.

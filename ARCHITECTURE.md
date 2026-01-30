@@ -1,16 +1,16 @@
 # Scavengarr – Prowlarr‑compatible Torznab/Newznab Indexer Architecture
 
 ## System Overview
-Scavengarr is a **self‑hosted, container‑ready indexer** that emulates the Torznab/Newznab API used by Prowlarr and other Arr‑applications.  
+Scavengarr is a **self‑hosted, container‑ready indexer** that emulates the Torznab/Newznab API used by Prowlarr and other Arr‑applications.
 It scrapes torrent sites via **dual-mode scraping engines** (Scrapy for static HTML, Playwright for JavaScript-heavy pages), normalises results, and serves them through Torznab endpoints (`caps`, `search`, `tvsearch`, `movie`, …).
 
 ### Key Responsibilities
 * **Plugin-driven scraping** – YAML (declarative) and Python (imperative) plugins define site-specific scraping rules without modifying core code
-* **Dual-engine support** – Scrapy engine for fast static HTML scraping, Playwright engine for JS-rendered sites  
-* **Authentication handling** – Basic, form-login, token, and cookie-based auth, configurable per-plugin  
-* **Result normalisation** – Transform raw HTML tables, JSON feeds, or RSS into the Torznab XML schema  
-* **Cache & scaling** – Disk-based cache (`diskcache`) with optional Redis support (future), horizontal scaling via optional worker processes  
-* **Type-safe configuration** – Pydantic-based config system with deterministic precedence (CLI → ENV → YAML → defaults)  
+* **Dual-engine support** – Scrapy engine for fast static HTML scraping, Playwright engine for JS-rendered sites
+* **Authentication handling** – Basic, form-login, token, and cookie-based auth, configurable per-plugin
+* **Result normalisation** – Transform raw HTML tables, JSON feeds, or RSS into the Torznab XML schema
+* **Cache & scaling** – Disk-based cache (`diskcache`) with optional Redis support (future), horizontal scaling via optional worker processes
+* **Type-safe configuration** – Pydantic-based config system with deterministic precedence (CLI → ENV → YAML → defaults)
 * **Deployment flexibility** – All‑in‑One Docker image, or split-mode with separate scraper workers (K8s‑ready)
 
 ***
@@ -49,13 +49,13 @@ It scrapes torrent sites via **dual-mode scraping engines** (Scrapy for static H
 ***
 
 ## Configuration System
-Scavengarr loads configuration **once per process** via `load_config()` in `src/scavengarr/config/load.py`.  
+Scavengarr loads configuration **once per process** via `load_config()` in `src/scavengarr/config/load.py`.
 Configuration is validated against a **Pydantic Settings model** (`AppConfig`) and merges the following layers (high → low precedence):
 
-1. **CLI arguments** (`--config`, `--plugin-dir`, `--log-level`, …)  
-2. **Environment variables** (`SCAVENGARR_*` prefix)  
-3. **User‑provided YAML file** (path via `--config`, default: `./config.yaml`)  
-4. **`.env` file** (optional, loaded via `python-dotenv`)  
+1. **CLI arguments** (`--config`, `--plugin-dir`, `--log-level`, …)
+2. **Environment variables** (`SCAVENGARR_*` prefix)
+3. **User‑provided YAML file** (path via `--config`, default: `./config.yaml`)
+4. **`.env` file** (optional, loaded via `python-dotenv`)
 5. **Built‑in defaults** (defined in `src/scavengarr/config/defaults.py`)
 
 ### Key Configuration Fields (MVP)
@@ -64,23 +64,23 @@ class AppConfig(BaseSettings):
     # General
     app_name: str = "scavengarr"
     environment: Literal["dev", "test", "prod"] = "dev"
-    
+
     # Plugins
     plugin_dir: Path = "./plugins"
-    
+
     # HTTP (Scrapy engine)
     http_timeout_seconds: float = 30
     http_follow_redirects: bool = True
     http_user_agent: str = "Scavengarr/0.1.0 (+https://github.com/Strob0t/Scavengarr)"
-    
+
     # Playwright (future)
     playwright_headless: bool = True
     playwright_timeout_ms: int = 30_000
-    
+
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     log_format: Literal["json", "console"] = "console"  # auto: dev=console, prod=json
-    
+
     # Cache
     cache_dir: Path = "./.cache/scavengarr"
     cache_ttl_seconds: int = 3600
@@ -142,7 +142,7 @@ categories:
 
 ### Python Plugin Protocol
 ```python
-from scavengarr.plugins.base import SearchResult
+from scavengarr.domain.plugins.base import SearchResult
 
 class MyCustomPlugin:
     async def search(self, query: str, category: int | None = None) -> list[SearchResult]:
@@ -230,7 +230,7 @@ graph TD
   subgraph "Unified Process"
     direction TB
     subgraph "Interfaces"
-      CLI[CLI Typer] 
+      CLI[CLI Typer]
       HTTP[FastAPI HTTP]
     end
     subgraph "Core Services"
@@ -255,8 +255,8 @@ graph TD
   end
 ```
 
-* **No worker processes** – all scraping happens in-process  
-* **Startup**: Load config → Initialize PluginRegistry → Discover plugins → Start FastAPI  
+* **No worker processes** – all scraping happens in-process
+* **Startup**: Load config → Initialize PluginRegistry → Discover plugins → Start FastAPI
 * **Request flow**: HTTP → SearchService → PluginRegistry.get() → ScrapyEngine.scrape() → TorznabRenderer → HTTP Response
 
 ### Distributed Mode (Coordinator + Worker)
@@ -279,9 +279,9 @@ graph TD
   RPC_C <==> RPC_W
 ```
 
-* **Coordinator** handles HTTP requests, delegates scraping to workers via RPC  
-* **Workers** execute heavy scraping, share Redis cache  
-* **Auto-detection**: Presence of `SCAVENGARR_WORKER_URL` env var enables distributed mode  
+* **Coordinator** handles HTTP requests, delegates scraping to workers via RPC
+* **Workers** execute heavy scraping, share Redis cache
+* **Auto-detection**: Presence of `SCAVENGARR_WORKER_URL` env var enables distributed mode
 
 ***
 
@@ -323,7 +323,7 @@ flowchart TD
 ```
 
 ### Scrapy Engine Details
-1. **URL Construction**: `base_url` + `search_path.format(query=encoded_query)`  
+1. **URL Construction**: `base_url` + `search_path.format(query=encoded_query)`
    Example: `https://1337x.to/search/ubuntu/1/`
 2. **HTTP Request**: `httpx.AsyncClient()` with 30s timeout, custom User-Agent
 3. **HTML Parsing**: `parsel.Selector(text=response.text)`
@@ -517,6 +517,6 @@ All logs use **structured logging** (`structlog`) with context fields.
 
 ***
 
-**Last Updated**: 2026-01-25  
-**Author**: Scavengarr Team  
+**Last Updated**: 2026-01-25
+**Author**: Scavengarr Team
 **OpenSpec Version**: Changes `add-config-system`, `add-plugin-loader`, `add-scrapy-engine` integrated

@@ -13,7 +13,6 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 Environment = Literal["dev", "test", "prod"]
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 LogFormat = Literal["json", "console"]
@@ -43,8 +42,7 @@ class AppConfig(BaseModel):
     """
 
     # General
-    app_name: str = Field(default="scavengarr",
-                          description="Application name.")
+    app_name: str = Field(default="scavengarr", description="Application name.")
     environment: Environment = Field(
         default="dev",
         description="Runtime environment (affects defaults like log format).",
@@ -191,7 +189,10 @@ class AppConfig(BaseModel):
                 "timeout_ms": self.playwright_timeout_ms,
             },
             "logging": {"level": self.log_level, "format": self.log_format},
-            "cache": {"dir": str(self.cache_dir), "ttl_seconds": self.cache_ttl_seconds},
+            "cache": {
+                "dir": str(self.cache_dir),
+                "ttl_seconds": self.cache_ttl_seconds,
+            },
         }
 
 

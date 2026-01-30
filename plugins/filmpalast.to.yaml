@@ -1,0 +1,46 @@
+# plugins/filmpalast.to.yaml
+name: "filmpalast"
+version: "1.0.0"
+base_url: "https://filmpalast.to"
+
+scraping:
+  mode: "scrapy"
+  start_stage: "search_results"
+  max_depth: 4
+  delay_seconds: 2.0
+
+  stages:
+    - name: "search_results"
+      type: "list"
+      url_pattern: "/search/title/{query}"
+      selectors:
+        link: "a[href*='/stream/']"
+        title: "h2.bgDark"
+      field_attributes:
+        link: ["href"]
+      next_stage: "movie_detail"
+
+    - name: "movie_detail"
+      type: "detail"
+      url_pattern: "/stream/{movie_id}"
+      selectors:
+        title: "h2.bgDark"        
+        release_name: "span#release_text"        
+        description: "span[itemprop='description']"        
+        download_links:
+          container: "div#grap-stream-list"
+          item_group: "ul.currentStreamLinks"
+          items: "li"
+          fields:
+            hoster_name: "p.hostName, p"
+            link: "a.button.iconPlay, a.button"
+          field_attributes:
+            link: ["data-player-url", "href", "onclick"]
+
+auth:
+  type: "none"
+
+http:
+  timeout_seconds: 15.0
+  follow_redirects: true
+  user_agent: "Scavengarr/1.0"
