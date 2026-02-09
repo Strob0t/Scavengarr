@@ -21,9 +21,8 @@ from scavengarr.domain.entities import (
     TorznabUnsupportedPlugin,
 )
 from scavengarr.domain.entities.torznab import TorznabItem
+from scavengarr.infrastructure.torznab.presenter import render_caps_xml, render_rss_xml
 from scavengarr.interfaces.app_state import AppState
-
-from .presenter import render_caps_xml, render_rss_xml
 
 log = structlog.get_logger(__name__)
 
