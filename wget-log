@@ -1,7 +1,0 @@
---2026-02-04 00:41:02--  http://localhost:7979/api/v1/torznab/filmpalast?t=search
-Resolving localhost (localhost)... ::1, 127.0.0.1
-Connecting to localhost (localhost)|::1|:7979... failed: Connection refused.
-Connecting to localhost (localhost)|127.0.0.1|:7979... connected.
-HTTP request sent, awaiting response... 500 Internal Server Error
-2026-02-04 00:41:05 ERROR 500: Internal Server Error.
-
