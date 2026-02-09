@@ -33,7 +33,7 @@ class SearchResult:
     # Torznab-spezifisch
     category: int = 2000  # Default: Movies
     grabs: int = 0
-    download_volume_factor: float = 0.0  # Direct Download = kein Upload nötig
+    download_volume_factor: float = 0.0  # Direct Download = no upload required
     upload_volume_factor: float = 0.0
 
 

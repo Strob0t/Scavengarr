@@ -21,14 +21,14 @@ def build_app(config: AppConfig) -> FastAPI:
         title="Scavengarr",
         description="Prowlarr-compatible Torznab/Newznab indexer",
         version="0.1.0",
-        lifespan=lifespan,  # ✅ Lifespan übernimmt DI
+        lifespan=lifespan,  # ✅ Lifespan handles DI
     )
 
-    # ✅ NUR Config in State speichern
+    # ✅ ONLY store Config in State
     app.state = AppState()
     app.state.config = config
 
-    # ✅ Routers registrieren (keine Dependencies nötig)
+    # ✅ Register routers (no dependencies needed)
     from scavengarr.interfaces.api.download.router import router as download_router
     from scavengarr.interfaces.api.torznab import router as torznab_router
 

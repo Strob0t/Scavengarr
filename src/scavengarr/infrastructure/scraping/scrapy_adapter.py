@@ -100,7 +100,7 @@ class StageScraper:
                 # Text-Extraktion
                 data[field] = elem.get_text(strip=True)
 
-        # Custom fields (alle als text)
+        # Custom fields (all as text)
         for field, selector in self.selectors.custom.items():
             elem = soup.select_one(selector)
             if elem:
@@ -387,7 +387,7 @@ class ScrapyAdapter:
         # Diskcache for visited URLs
         self.cache = cache
 
-        # FIX: Use Set for visited URLs (nicht dict.keys())
+        # FIX: Use Set for visited URLs (not dict.keys())
         self.visited_urls: Set[str] = set()
 
         logger.info(

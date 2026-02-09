@@ -98,7 +98,7 @@ async def torznab_indexers(request: Request) -> dict:
     state = cast(AppState, request.app.state)
     uc = TorznabIndexersUseCase(plugins=state.plugins)
 
-    # JSON ist absichtlich: für “Discovery/Automation” (nicht Torznab-Standard).
+    # JSON is intentional: for "Discovery/Automation" (not Torznab standard).
     return {"indexers": uc.execute()}
 
 

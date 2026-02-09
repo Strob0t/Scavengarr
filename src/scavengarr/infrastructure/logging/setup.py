@@ -202,8 +202,8 @@ def _enable_async_logging(config: AppConfig) -> None:
         """QueueHandler, der structlog event_dicts (record.msg als dict) NICHT kaputtformatiert."""
 
         def prepare(self, record: logging.LogRecord) -> logging.LogRecord:
-            # QueueHandler.prepare() würde normalerweise record.msg = record.getMessage() machen.
-            # Das zerstört dict-msg für structlog + ProcessorFormatter.
+            # QueueHandler.prepare() would normally do record.msg = record.getMessage().
+            # This destroys dict-msg for structlog + ProcessorFormatter.
             return copy.copy(record)
 
     queue_handler = _StructlogPreservingQueueHandler(q)

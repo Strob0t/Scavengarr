@@ -82,7 +82,7 @@ class NestedSelector(BaseModel):
         if not self.fields:
             raise ValueError("nested selector requires at least one field")
 
-        # Link/URL fields MÜSSEN in field_attributes definiert sein
+        # Link/URL fields MUST be defined in field_attributes
         for field_name in self.fields.keys():
             if field_name.endswith("link") or field_name.endswith("url"):
                 if field_name not in self.field_attributes:
