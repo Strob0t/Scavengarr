@@ -309,5 +309,3 @@ class HttpxScrapySearchEngine:
                     return first
 
         return None
-
-

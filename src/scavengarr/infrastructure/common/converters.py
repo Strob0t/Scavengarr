@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 
 def to_int(raw: str | int | None) -> int | None:
     """Convert string or int to int, return None if invalid.
