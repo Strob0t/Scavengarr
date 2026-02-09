@@ -1,5 +1,6 @@
 # src/scavengarr/infrastructure/plugins/validation_schema.py
 """Pydantic validation models for plugin YAML files (Infrastructure layer)."""
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
@@ -42,10 +43,6 @@ class PaginationConfig(BaseModel):
         if self.max_pages < 1:
             raise ValueError("max_pages must be >= 1")
         return self
-
-
-
-
 
 
 class NestedSelector(BaseModel):

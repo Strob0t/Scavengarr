@@ -1,5 +1,6 @@
 # src/scavengarr/infrastructure/plugins/adapters.py
 """Adapters to convert between Infrastructure (Pydantic) and Domain models."""
+
 from __future__ import annotations
 
 from scavengarr.domain.plugins import plugin_schema as domain

@@ -1,5 +1,6 @@
 # src/scavengarr/domain/plugins/plugin_schema.py
 """Pure domain models for plugin configuration (framework-free)."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
