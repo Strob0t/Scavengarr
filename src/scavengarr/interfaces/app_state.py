@@ -1,17 +1,41 @@
+"""Application state container for FastAPI dependency injection."""
+
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import httpx
-from diskcache import Cache
 from starlette.datastructures import State
 
-from scavengarr.domain.ports.search_engine import SearchEnginePort
+from scavengarr.application.factories import CrawlJobFactory  # CHANGED
 from scavengarr.infrastructure.config import AppConfig
-from scavengarr.infrastructure.plugins import PluginRegistry
+
+if TYPE_CHECKING:
+    from scavengarr.domain.ports import (
+        CachePort,
+        CrawlJobRepository,
+        PluginRegistryPort,
+        SearchEnginePort,
+    )
 
 
 class AppState(State):
+    """FastAPI application state with all DI resources.
+
+    Lifecycle managed by composition.py::lifespan().
+    """
+
+    # Configuration
     config: AppConfig
-    plugins: PluginRegistry
+
+    # Infrastructure
+    cache: CachePort
     http_client: httpx.AsyncClient
+
+    # Domain Ports
+    plugins: PluginRegistryPort
     search_engine: SearchEnginePort
-    cache: Cache
+    crawljob_repo: CrawlJobRepository
+
+    # Application Services
+    crawljob_factory: CrawlJobFactory  # CHANGED: From crawljob_service

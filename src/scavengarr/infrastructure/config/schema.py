@@ -31,6 +31,43 @@ def _normalize_path(value: Any) -> Path:
     raise TypeError(f"Expected path-like value, got: {type(value)!r}")
 
 
+class CacheConfig(BaseSettings):
+    """Cache-Konfiguration (Backend-agnostisch)."""
+
+    backend: Literal["diskcache", "redis"] = Field(
+        default="diskcache",
+        description="Cache-Backend: 'diskcache' (SQLite) oder 'redis'",
+    )
+
+    # Diskcache-Settings
+    directory: Path = Field(
+        default=Path("./cache/scavengarr"),
+        alias="dir",
+        description="Diskcache SQLite-DB-Pfad",
+    )
+
+    # Redis-Settings
+    redis_url: str = Field(
+        default="redis://localhost:6379/0",
+        description="Redis-Connection-URL (nur wenn backend=redis)",
+    )
+
+    # Shared Settings
+    ttl_seconds: int = Field(
+        default=3600,
+        description="Standard-TTL für Cache-Einträge (Sekunden)",
+    )
+    max_concurrent: int = Field(
+        default=10,
+        description="Max. parallele Cache-Ops (Semaphore-Limit)",
+    )
+
+    model_config = SettingsConfigDict(
+        env_prefix="CACHE_",  # Env-Vars: CACHE_BACKEND, CACHE_REDIS_URL, ...
+        case_sensitive=False,
+    )
+
+
 class AppConfig(BaseModel):
     """
     Canonical application configuration (validated, final).
@@ -84,6 +121,20 @@ class AppConfig(BaseModel):
         description="User-Agent for outgoing HTTP requests.",
     )
 
+    # Link validation toggle
+    validate_download_links: bool = Field(
+        default=True,
+        description="Enable download link validation (HEAD requests)",
+    )
+    validation_timeout_seconds: float = Field(
+        default=5.0,
+        description="Timeout per link validation (seconds)",
+    )
+    validation_max_concurrent: int = Field(
+        default=20,
+        description="Max parallel link validations",
+    )
+
     # Playwright (YAML section: playwright.*)
     playwright_headless: bool = Field(
         default=True,
@@ -121,6 +172,8 @@ class AppConfig(BaseModel):
     )
 
     # Cache (disk-only placeholder) (YAML section: cache.*)
+    cache: CacheConfig = Field(default_factory=CacheConfig)
+
     cache_dir: Path = Field(
         default=Path("./.cache/scavengarr"),
         validation_alias=AliasChoices(

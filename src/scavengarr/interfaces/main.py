@@ -13,26 +13,34 @@ log = structlog.get_logger(__name__)
 
 
 def build_app(config: AppConfig) -> FastAPI:
-    """Build FastAPI app mit Lifespan (wie deine aktuelle main.py)."""
+    """Build FastAPI app - NUR Konfiguration, KEINE Ressourcen-Initialisierung.
+
+    Ressourcen (HTTP-Client, Cache, Plugins) werden in lifespan() erstellt.
+    """
     app = FastAPI(
         title="Scavengarr",
         description="Prowlarr-compatible Torznab/Newznab indexer",
         version="0.1.0",
-        lifespan=lifespan,
+        lifespan=lifespan,  # ✅ Lifespan übernimmt DI
     )
+
+    # ✅ NUR Config in State speichern
     app.state = AppState()
     app.state.config = config
 
-    # Register routers
+    # ✅ Routers registrieren (keine Dependencies nötig)
+    from scavengarr.interfaces.api.download.router import router as download_router
     from scavengarr.interfaces.api.torznab import router as torznab_router
 
+    app.include_router(download_router)
     app.include_router(torznab_router, prefix="")
 
-    # Health check endpoint
+    # ✅ Health-Check (stateless)
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
+    # ✅ Logging-Middleware (stateless)
     @app.middleware("http")
     async def log_requests(request: Request, call_next):
         start = time.perf_counter()

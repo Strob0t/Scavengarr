@@ -61,7 +61,7 @@ async def _lightweight_http_probe(
     """
     Lightweight reachability probe:
     - Prefer HEAD (no body)
-    - Fallback to GET with Range + stream=True (don’t read body) when HEAD is unsupported
+    - Fallback to GET with Range + stream=True (dont read body) when HEAD is unsupported
     """
     checked_url = _origin_url(base_url)
 
@@ -109,6 +109,7 @@ async def torznab_plugin_api(
     plugin_name: str,
     t: str = Query(..., description="Torznab action: caps|search"),
     q: str | None = Query(None, description="Search query"),
+    cat: str = Query("", description="Category filter"),
     extended: int | None = Query(None, description="Prowlarr extended search flag"),
 ) -> Response:
     state = cast(AppState, request.app.state)
@@ -143,6 +144,7 @@ async def torznab_plugin_api(
                         description="plugin has no base_url"
                         if not _is_prod(state)
                         else None,
+                        scavengarr_base_url=str(request.base_url),
                     )
                     return _xml(rendered.payload, status_code=422)
 
@@ -171,6 +173,7 @@ async def torznab_plugin_api(
                         title=f"{state.config.app_name} ({plugin_name})",
                         items=[test_item],
                         description=None,
+                        scavengarr_base_url=str(request.base_url),
                     )
                     return _xml(rendered.payload, status_code=200)
 
@@ -180,6 +183,7 @@ async def torznab_plugin_api(
                     description=(error or "indexer not reachable")
                     if not _is_prod(state)
                     else None,
+                    scavengarr_base_url=str(request.base_url),
                 )
                 # 503 makes Prowlarr "Test" fail when the indexer is down (desired)
                 return _xml(rendered.payload, status_code=503)
@@ -191,12 +195,16 @@ async def torznab_plugin_api(
                 description="Missing query parameter 'q'"
                 if not _is_prod(state)
                 else None,
+                scavengarr_base_url=str(request.base_url),
             )
             return _xml(rendered.payload, status_code=200)
 
         # Normal search flow (q present)
         search_uc = TorznabSearchUseCase(
-            plugins=state.plugins, engine=state.search_engine
+            plugins=state.plugins,
+            engine=state.search_engine,
+            crawljob_factory=state.crawljob_factory,
+            crawljob_repo=state.crawljob_repo,
         )
         items = await search_uc.execute(
             TorznabQuery(action="search", query=q, plugin_name=plugin_name)
@@ -204,6 +212,7 @@ async def torznab_plugin_api(
         rendered = render_rss_xml(
             title=f"{state.config.app_name} ({plugin_name})",
             items=items,
+            scavengarr_base_url=str(request.base_url),
         )
         return _xml(rendered.payload, status_code=200)
 
@@ -212,6 +221,7 @@ async def torznab_plugin_api(
             title=f"{state.config.app_name} ({plugin_name})",
             items=[],
             description=str(e) if not _is_prod(state) else None,
+            scavengarr_base_url=str(request.base_url),
         )
         return _xml(rendered.payload, status_code=400)
 
@@ -220,6 +230,7 @@ async def torznab_plugin_api(
             title=f"{state.config.app_name} ({plugin_name})",
             items=[],
             description="plugin not found" if not _is_prod(state) else None,
+            scavengarr_base_url=str(request.base_url),
         )
         return _xml(rendered.payload, status_code=404)
 
@@ -228,6 +239,7 @@ async def torznab_plugin_api(
             title=f"{state.config.app_name} ({plugin_name})",
             items=[],
             description="no plugins available" if not _is_prod(state) else None,
+            scavengarr_base_url=str(request.base_url),
         )
         return _xml(rendered.payload, status_code=503)
 
@@ -236,6 +248,7 @@ async def torznab_plugin_api(
             title=f"{state.config.app_name} ({plugin_name})",
             items=[],
             description=str(e) if not _is_prod(state) else None,
+            scavengarr_base_url=str(request.base_url),
         )
         return _xml(rendered.payload, status_code=422)
 
@@ -246,6 +259,7 @@ async def torznab_plugin_api(
             title=f"{state.config.app_name} ({plugin_name})",
             items=[],
             description=str(e) if not _is_prod(state) else None,
+            scavengarr_base_url=str(request.base_url),
         )
         return _xml(rendered.payload, status_code=status)
 
@@ -256,6 +270,7 @@ async def torznab_plugin_api(
             title=f"{state.config.app_name} ({plugin_name})",
             items=[],
             description="internal error" if not _is_prod(state) else None,
+            scavengarr_base_url=str(request.base_url),
         )
         log.exception("torznab_unhandled_error", plugin_name=plugin_name, t=t)
         return _xml(rendered.payload, status_code=status)

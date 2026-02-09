@@ -1,5 +1,13 @@
+"""Torznab search use case with CrawlJob generation and link validation."""
+
 from __future__ import annotations
 
+from dataclasses import replace as dataclass_replace
+from typing import cast
+
+import structlog
+
+from scavengarr.application.factories import CrawlJobFactory
 from scavengarr.domain.entities import (
     TorznabBadRequest,
     TorznabExternalError,
@@ -9,17 +17,59 @@ from scavengarr.domain.entities import (
     TorznabUnsupportedPlugin,
 )
 from scavengarr.domain.ports import PluginRegistryPort
+from scavengarr.domain.ports.crawljob_repository import CrawlJobRepository
 from scavengarr.domain.ports.search_engine import SearchEnginePort
+
+log = structlog.get_logger(__name__)
 
 
 class TorznabSearchUseCase:
+    """Executes Torznab search queries with link validation and CrawlJob generation.
+
+    Flow:
+        1. Validate query and plugin
+        2. Execute search via SearchEngine (includes link validation)
+        3. Convert each SearchResult → CrawlJob (via Factory)
+        4. Store CrawlJobs in repository
+        5. Return enriched TorznabItems with job_id fields
+    """
+
     def __init__(
-        self, *, plugins: PluginRegistryPort, engine: SearchEnginePort
-    ) -> None:
-        self._plugins = plugins
-        self._engine = engine
+        self,
+        plugins: PluginRegistryPort,
+        engine: SearchEnginePort,
+        crawljob_factory: CrawlJobFactory,  # CHANGED: Factory instead of Service
+        crawljob_repo: CrawlJobRepository,
+    ):
+        """Initialize use case with dependencies.
+
+        Args:
+            plugins: Plugin registry for discovering indexers.
+            engine: Search engine (with link validation).
+            crawljob_factory: Factory for creating CrawlJobs from SearchResults.
+            crawljob_repo: Repository for storing CrawlJobs.
+        """
+        self.plugins: PluginRegistryPort = plugins
+        self.engine: SearchEnginePort = engine
+        self.crawljob_factory: CrawlJobFactory = crawljob_factory  # CHANGED
+        self.crawljob_repo: CrawlJobRepository = crawljob_repo
 
     async def execute(self, q: TorznabQuery) -> list[TorznabItem]:
+        """Execute Torznab search with link validation and CrawlJob generation.
+
+        Args:
+            q: TorznabQuery with action, plugin_name, query, category, etc.
+
+        Returns:
+            List of TorznabItems with enriched job_id fields.
+
+        Raises:
+            TorznabBadRequest: Invalid query parameters.
+            TorznabPluginNotFound: Plugin does not exist.
+            TorznabUnsupportedPlugin: Plugin has unsupported scraping mode.
+            TorznabExternalError: Search engine failure.
+        """
+        # === 1) Validate Query ===
         if q.action != "search":
             raise TorznabBadRequest("TorznabSearchUseCase only supports action=search")
         if not q.query:
@@ -27,13 +77,14 @@ class TorznabSearchUseCase:
         if not q.plugin_name:
             raise TorznabBadRequest("Missing plugin name")
 
-        self._plugins.discover()
+        # === 2) Plugin Discovery and Validation ===
+        self.plugins.discover()
         try:
-            plugin = self._plugins.get(q.plugin_name)
+            plugin = self.plugins.get(q.plugin_name)
         except Exception as e:
             raise TorznabPluginNotFound(q.plugin_name) from e
 
-        # For now we support YAML plugins with scraping.mode == "scrapy".
+        # Validate scraping mode (only 'scrapy' supported)
         try:
             mode = plugin.scraping.mode  # type: ignore[attr-defined]
         except Exception as e:
@@ -43,22 +94,85 @@ class TorznabSearchUseCase:
         if mode != "scrapy":
             raise TorznabUnsupportedPlugin(f"Unsupported scraping.mode: {mode}")
 
+        # === 3) Execute Search (includes link validation) ===
         try:
-            results = await self._engine.search(plugin, q.query)
+            # NOTE: SearchEngine.search() now returns validated SearchResult objects
+            raw_results: list = await self.engine.search(
+                plugin,
+                q.query,
+                category=q.category,  # Pass category if available
+            )
         except TorznabExternalError:
             raise
         except Exception as e:
-            raise TorznabExternalError(str(e)) from e
+            raise TorznabExternalError(f"Search engine error: {str(e)}") from e
 
-        items: list[TorznabItem] = []
-        for r in results:
-            items.append(
-                TorznabItem(
-                    title=getattr(r, "title"),
-                    download_url=getattr(r, "download_link"),
-                    seeders=getattr(r, "seeders", None),
-                    peers=getattr(r, "leechers", None),
-                    size=getattr(r, "size", None),
-                )
+        if not raw_results:
+            log.info(
+                "torznab_search_no_results",
+                plugin=q.plugin_name,
+                query=q.query,
             )
+            return []
+
+        # === 4) Transform Results → CrawlJobs → TorznabItems ===
+        items: list[TorznabItem] = []
+        for raw_result in raw_results:
+            try:
+                # 4a) Build base TorznabItem from SearchResult
+                base_item = TorznabItem(
+                    title=cast(str, getattr(raw_result, "title", "Unknown")),
+                    download_url=cast(str, getattr(raw_result, "download_link", "")),
+                    seeders=cast(int | None, getattr(raw_result, "seeders", None)),
+                    peers=cast(int | None, getattr(raw_result, "leechers", None)),
+                    size=cast(str | None, getattr(raw_result, "size", None)),
+                    source_url=cast(
+                        str | None, getattr(raw_result, "source_url", None)
+                    ),
+                    release_name=cast(
+                        str | None, getattr(raw_result, "release_name", None)
+                    ),
+                    description=cast(
+                        str | None, getattr(raw_result, "description", None)
+                    ),
+                    category=cast(int, getattr(raw_result, "category", 2000)),
+                )
+
+                # 4b) Generate CrawlJob from SearchResult (NEW: via Factory)
+                crawljob = self.crawljob_factory.create_from_search_result(raw_result)
+
+                # 4c) Store CrawlJob in repository
+                await self.crawljob_repo.save(crawljob)
+
+                # 4d) Enrich TorznabItem with job_id
+                enriched_item = dataclass_replace(base_item, job_id=crawljob.job_id)
+                items.append(enriched_item)
+
+                log.debug(
+                    "crawljob_generated",
+                    plugin=q.plugin_name,
+                    query=q.query,
+                    job_id=enriched_item.job_id,
+                    title=enriched_item.title,
+                    validated_url_count=len(crawljob.validated_urls),  # NEW
+                )
+
+            except Exception as e:
+                # Skip result if CrawlJob generation fails (e.g., invalid data)
+                log.warning(
+                    "crawljob_generation_failed",
+                    plugin=q.plugin_name,
+                    query=q.query,
+                    result_title=getattr(raw_result, "title", "unknown"),
+                    error=str(e),
+                )
+                continue
+
+        log.info(
+            "torznab_search_completed",
+            plugin=q.plugin_name,
+            query=q.query,
+            raw_result_count=len(raw_results),
+            crawljob_count=len(items),
+        )
         return items

@@ -26,6 +26,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "cache": {
         "dir": "./.cache/scavengarr",
+        "backend": "diskcache",
         "ttl_seconds": 3600,
     },
 }

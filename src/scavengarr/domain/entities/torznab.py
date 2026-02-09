@@ -8,15 +8,26 @@ TorznabAction = Literal["caps", "search"]
 
 @dataclass(frozen=True)
 class TorznabQuery:
-    action: TorznabAction
-    plugin_name: str
-    query: str | None = None
+    action: str  # "search", "caps", etc.
+    plugin_name: str  # Plugin identifier (e.g., "filmpalast")
+    query: str  # Search query string
+
+    # Optional filters
+    category: int | None = None  # ✅ ADD THIS: Torznab category (2000=Movies, 5000=TV)
+
+    # Extended search parameters (Prowlarr)
+    extended: int | None = None  # 1 = extended search mode
+
+    # Pagination (future)
+    offset: int | None = None
+    limit: int | None = None
 
 
 @dataclass(frozen=True)
 class TorznabItem:
     title: str
     download_url: str
+    job_id: str | None = None
     seeders: int | None = None
     peers: int | None = None
     size: str | None = None

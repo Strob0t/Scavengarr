@@ -1,5 +1,4 @@
-"""
-Torznab XML presenter.
+"""Torznab XML presenter.
 
 Renders Torznab-compliant RSS/XML feeds according to:
 - Torznab specification: http://torznab.com/schemas/2015/feed
@@ -31,6 +30,14 @@ class TorznabRendered:
 
 
 def render_caps_xml(caps: TorznabCaps) -> TorznabRendered:
+    """Render Torznab capabilities XML.
+
+    Args:
+        caps: TorznabCaps entity with server metadata.
+
+    Returns:
+        TorznabRendered with XML payload.
+    """
     root = ET.Element("caps")
 
     server = ET.SubElement(root, "server")
@@ -68,7 +75,25 @@ def render_rss_xml(
     title: str,
     items: list[TorznabItem],
     description: str | None = None,
+    scavengarr_base_url: str,
 ) -> TorznabRendered:
+    """Render Torznab RSS 2.0 XML with CrawlJob download URLs.
+
+    Key changes for Phase 3:
+        - <link> points to /api/v1/download/{job_id}
+        - <enclosure url> points to same CrawlJob URL
+        - <enclosure type> changed to application/x-crawljob
+        - <guid> remains original download_url (for deduplication)
+
+    Args:
+        title: RSS channel title.
+        items: List of TorznabItems (with job_id field).
+        description: Optional channel description.
+        scavengarr_base_url: Base URL for constructing download links.
+
+    Returns:
+        TorznabRendered with RSS XML payload.
+    """
     rss = ET.Element("rss", attrib={"version": "2.0"})
     channel = ET.SubElement(rss, "channel")
 
@@ -76,32 +101,41 @@ def render_rss_xml(
     ET.SubElement(channel, "description").text = (
         description or "Scavengarr Torznab feed"
     )
-    ET.SubElement(channel, "link").text = "http://localhost"
+    ET.SubElement(channel, "link").text = scavengarr_base_url
     ET.SubElement(channel, "language").text = "en-us"
 
     for it in items:
         item = ET.SubElement(channel, "item")
 
-        release = (
-            getattr(it, "release_name", None)
-            or getattr(it, "real_name", None)
-            or getattr(it, "release", None)
-        )
+        # === Title (prefer release_name over title) ===
+        release = getattr(it, "release_name", None)
         rendered_title = release or it.title
         ET.SubElement(item, "title").text = rendered_title
 
-        ET.SubElement(item, "guid").text = it.download_url
+        # === GUID (original download_url for deduplication) ===
+        # Sonarr/Radarr use guid to detect duplicates across indexers
+        guid_elem = ET.SubElement(item, "guid", isPermaLink="false")
+        guid_elem.text = it.download_url
 
-        link_url = getattr(it, "source_url", None) or it.download_url
-        ET.SubElement(item, "link").text = link_url
+        # === Link (NEW: points to CrawlJob download endpoint) ===
+        if hasattr(it, "job_id") and it.job_id:
+            # Phase 3: Use /api/v1/download/{job_id}
+            crawljob_url = f"{scavengarr_base_url}api/v1/download/{it.job_id}"
+        else:
+            # Fallback: direct link (shouldn't happen after Phase 2)
+            crawljob_url = it.download_url
 
-        # Prefer a real description if available, fallback to title.
+        ET.SubElement(item, "link").text = crawljob_url
+
+        # === Description ===
         desc = getattr(it, "description", None) or it.title
         ET.SubElement(item, "description").text = desc
 
+        # === PubDate ===
         pub = ET.SubElement(item, "pubDate")
         pub.text = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S +0000")
 
+        # === Torznab Attributes ===
         category = getattr(it, "category", 2000)
         _add_torznab_attr(item, "category", str(category))
 
@@ -114,29 +148,54 @@ def render_rss_xml(
         grabs = getattr(it, "grabs", 0)
         _add_torznab_attr(item, "grabs", str(grabs))
 
-        download_factor = getattr(it, "download_volume_factor", 0)
-        upload_factor = getattr(it, "upload_volume_factor", 0)
+        download_factor = getattr(it, "download_volume_factor", 0.0)
+        upload_factor = getattr(it, "upload_volume_factor", 0.0)
         _add_torznab_attr(item, "downloadvolumefactor", str(download_factor))
         _add_torznab_attr(item, "uploadvolumefactor", str(upload_factor))
 
         _add_torznab_attr(item, "minimumratio", "0")
         _add_torznab_attr(item, "minimumseedtime", "0")
 
+        # === Enclosure (NEW: CrawlJob download URL) ===
         enclosure = ET.SubElement(item, "enclosure")
-        enclosure.set("url", it.download_url)
+        enclosure.set(
+            "url", crawljob_url
+        )  # Changed: points to /api/v1/download/{job_id}
         enclosure.set("length", str(size_bytes))
-        enclosure.set("type", "application/x-bittorrent")
+        enclosure.set(
+            "type", "application/x-crawljob"
+        )  # Changed: from application/x-bittorrent
 
     return TorznabRendered(ET.tostring(rss, encoding="utf-8", xml_declaration=True))
 
 
 def _add_torznab_attr(parent: ET.Element, name: str, value: str) -> None:
+    """Add Torznab attribute element.
+
+    Args:
+        parent: Parent XML element.
+        name: Attribute name.
+        value: Attribute value.
+    """
     attr = ET.SubElement(parent, f"{{{_TORZNAB_NS}}}attr")
     attr.set("name", name)
     attr.set("value", value)
 
 
 def _parse_size_to_bytes(size_str: str) -> int:
+    """Parse size string to bytes.
+
+    Supports formats:
+        - "1234" (raw bytes)
+        - "4.5 GB"
+        - "500 MB"
+
+    Args:
+        size_str: Size string.
+
+    Returns:
+        Size in bytes (int).
+    """
     if not size_str:
         return 0
 
@@ -157,4 +216,5 @@ def _parse_size_to_bytes(size_str: str) -> int:
         "GB": 1024**3,
         "TB": 1024**4,
     }
+
     return int(value * multipliers.get(unit, 1))
