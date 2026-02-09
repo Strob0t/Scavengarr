@@ -3,9 +3,9 @@ import asyncio
 import httpx
 import yaml
 from diskcache import Cache
-from scavengarr.domain.plugins.plugin_schema import YamlPluginDefinition
 
-from scavengarr.adapters.scraping.scrapy_adapter import ScrapyAdapter
+from scavengarr.domain.plugins.plugin_schema import YamlPluginDefinition
+from scavengarr.infrastructure.scraping import ScrapyAdapter
 
 
 async def example_fastapi_usage():

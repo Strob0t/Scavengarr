@@ -7,7 +7,7 @@ from typing import Any
 import httpx
 import structlog
 
-from scavengarr.adapters.scraping import ScrapyAdapter
+from scavengarr.infrastructure.scraping import ScrapyAdapter
 from scavengarr.domain.entities import TorznabExternalError
 from scavengarr.domain.plugins import SearchResult
 from scavengarr.domain.ports import CachePort
