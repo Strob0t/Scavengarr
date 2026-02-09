@@ -5,7 +5,7 @@ Project docs and important files: `.devcontainer/`, `docker-compose.yml`, `.env.
 
 ## Project status
 
-This is an early-stage project and most of the code is “vibe coded”.  
+This is an early-stage project and most of the code is “vibe coded”.
 There are no tests yet.
 
 ## Dev Container (recommended)

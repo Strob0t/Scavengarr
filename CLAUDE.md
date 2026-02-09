@@ -16,8 +16,8 @@ This section defines the day-to-day workflow rules for contributions to Scavenga
 | `main` | Production branch (merge via PR only). |
 
 Rules:
-- Never commit directly to `master`.
-- Never merge into `master` without an explicit user request.
+- Never commit directly to `main`.
+- Never merge into `main` without an explicit user request.
 
 ### Commit rules
 
@@ -28,7 +28,7 @@ poetry run pre-commit run --all-files
 poetry run pytest
 ```
 
-`pre-commit` is part of the dev toolchain and a `.pre-commit-config.yaml` exists in the repository. 
+`pre-commit` is part of the dev toolchain and a `.pre-commit-config.yaml` exists in the repository.
 
 Rules:
 - Fix all errors before committing (warnings can be acceptable depending on the check).
@@ -42,37 +42,37 @@ git push origin staging
 ```
 
 Never:
-- Commit to `master`.
-- Merge to `master` on your own.
+- Commit to `main`.
+- Merge to `main` on your own.
 - Accumulate multiple changes without committing.
 - Commit without running `poetry run pre-commit run --all-files`.
 
-### Merge to master (only when the user requests it)
+### Merge to main (only when the user requests it)
 
-When the user explicitly requests a release/merge to `master`:
+When the user explicitly requests a release/merge to `main`:
 
-1. Bump the version in `pyproject.toml` (PATCH +1 by default unless the change warrants MINOR/MAJOR). 
+1. Bump the version in `pyproject.toml` (PATCH +1 by default unless the change warrants MINOR/MAJOR).
 2. Update the changelog (see “Version & changelog” below).
 3. Commit & push to `staging`.
 4. Create and merge a PR:
 
 ```bash
-gh pr create --base master --head staging --title "..." --body "..."
+gh pr create --base main --head staging --title "..." --body "..."
 gh pr merge --merge
 ```
 
-5. Sync `staging` back with `master`:
+5. Sync `staging` back with `main`:
 
 ```bash
 git fetch origin
-git merge origin/master
+git merge origin/main
 git push origin staging
 ```
 
 ### Version & changelog
 
-- Version source of truth: `pyproject.toml`. 
-- Version bump policy: bump only when merging to `master` (default: PATCH +1).
+- Version source of truth: `pyproject.toml`.
+- Version bump policy: bump only when merging to `main` (default: PATCH +1).
 - Changelog policy: keep a single changelog at repository root (recommended name: `CHANGELOG.md`), newest entry at the top, include `version`, `date`, and `changes[]`.
 
 If you decide to track known issues, keep them in the changelog under a `KNOWN_ISSUES` section (current bugs only).
@@ -80,9 +80,9 @@ If you decide to track known issues, keep them in the changelog under a `KNOWN_I
 ### Documentation
 
 When changing behavior or adding features, update the relevant documentation:
-- `ARCHITECTURE.md` when architecture or constraints change.
-- `README.md` when setup/run instructions change. 
-- OpenSpec documents under `openspec/changes/...` when the change is specified or tracked there. 
+- `CLAUDE.md` when architecture or constraints change.
+- `README.md` when setup/run instructions change.
+- OpenSpec documents under `openspec/changes/...` when the change is specified or tracked there.
 
 ***
 
@@ -114,17 +114,17 @@ The system scrapes sources via two engines (Scrapy for static HTML, Playwright f
 └────────────────────────────────────────────────┘
 ```
 
-Dependency rule: inner layers never know about outer layers.  
-✅ Application imports Domain  
-✅ Infrastructure implements Domain Protocols  
+Dependency rule: inner layers never know about outer layers.
+✅ Application imports Domain
+✅ Infrastructure implements Domain Protocols
 ❌ Domain NEVER imports FastAPI, httpx, diskcache
 
 ***
 
 ## 4. Architecture layers (organization)
 
-Note: this structure is the target architecture; parts of the current organization may be discarded.  
-Currently, Clean Architecture namespace blocks exist as top-level packages under `src/scavengarr/` (including `domain/`, `application/`, `infrastructure/`, `interfaces/`). 
+Note: this structure is the target architecture; parts of the current organization may be discarded.
+Currently, Clean Architecture namespace blocks exist as top-level packages under `src/scavengarr/` (including `domain/`, `application/`, `infrastructure/`, `interfaces/`).
 
 ### Domain (enterprise business rules)
 - Entities: long-lived business objects with identity (e.g., SearchResult, CrawlJob, query objects).
@@ -160,8 +160,8 @@ Rule: Interfaces contain no business rules, only input/output.
 
 ## 5. Technology stack (dependencies)
 
-The source of truth for dependencies is `pyproject.toml`.   
-Scavengarr uses FastAPI/Uvicorn, Scrapy, Playwright, structlog, diskcache, Typer, pydantic-settings, httpx, and optionally Redis. 
+The source of truth for dependencies is `pyproject.toml`.
+Scavengarr uses FastAPI/Uvicorn, Scrapy, Playwright, structlog, diskcache, Typer, pydantic-settings, httpx, and optionally Redis.
 
 ### Dependency principles
 - Keep third-party dependencies minimal: prefer stdlib, then established libraries, only then custom code.
@@ -282,7 +282,7 @@ categories:
 
 ## 10. Link validation strategy (non-blocking)
 
-Link validation is I/O-dominant and must run in parallel.  
+Link validation is I/O-dominant and must run in parallel.
 Rule: no sequential URL checking in loops when parallelism is possible.
 
 ### Recommended policies
@@ -294,7 +294,7 @@ Rule: no sequential URL checking in loops when parallelism is possible.
 
 ## 11. CrawlJob system (multi-link packaging)
 
-CrawlJob is a domain concept: a job bundles multiple validated links into a `.crawljob` artifact.  
+CrawlJob is a domain concept: a job bundles multiple validated links into a `.crawljob` artifact.
 The system provides a stable download endpoint that delivers a `.crawljob` file for a job.
 
 ### Rules
@@ -380,9 +380,9 @@ def add_item(item: str, items: list[str] | None = None) -> list[str]:
 ## 14. Development workflow (AI-agent friendly)
 
 ### Quick commands (examples)
-- `poetry install` 
-- `poetry run pytest` 
-- `poetry run ruff check .` and `poetry run ruff format .` 
+- `poetry install`
+- `poetry run pytest`
+- `poetry run ruff check .` and `poetry run ruff format .`
 
 ### Checkpoint commits
 - Commit after each isolated subtask (audit trail).

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from scavengarr.domain.plugins.schema import YamlPluginDefinition
+from scavengarr.domain.plugins.plugin_schema import YamlPluginDefinition
 
 
 @runtime_checkable

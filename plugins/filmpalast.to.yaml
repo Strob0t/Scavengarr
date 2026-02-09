@@ -24,9 +24,9 @@ scraping:
       type: "detail"
       url_pattern: "/stream/{movie_id}"
       selectors:
-        title: "h2.bgDark"        
-        release_name: "span#release_text"        
-        description: "span[itemprop='description']"        
+        title: "h2.bgDark"
+        release_name: "span#release_text"
+        description: "span[itemprop='description']"
         download_links:
           container: "div#grap-stream-list"
           item_group: "ul.currentStreamLinks"

@@ -1,13 +1,13 @@
 # Python Performance Best Practices
 
-**Version 1.0.0**  
-Target: High‑throughput Python backends and scrapers (FastAPI, httpx, diskcache, structlog, Playwright/scraping engines)  
+**Version 1.0.0**
+Target: High‑throughput Python backends and scrapers (FastAPI, httpx, diskcache, structlog, Playwright/scraping engines)
 February 2026
 
-> **Note**  
-> This document is mainly for agents and LLMs to follow when maintaining,  
-> generating, or refactoring Python codebases with async I/O (FastAPI, httpx,  
-> scraping pipelines). Humans may also find it useful, but guidance here is  
+> **Note**
+> This document is mainly for agents and LLMs to follow when maintaining,
+> generating, or refactoring Python codebases with async I/O (FastAPI, httpx,
+> scraping pipelines). Humans may also find it useful, but guidance here is
 > optimized for automation and consistency by AI‑assisted workflows.
 
 ***
@@ -123,7 +123,7 @@ async def compute_endpoint(x: int):
     return {"result": result}
 ```
 
-> **Scavengarr hint**  
+> **Scavengarr hint**
 > Any HTML parsing or RSS serialization that is CPU‑heavy should either be:
 > - fast enough to stay in the event loop, **or**
 > - moved into `run_in_executor` if profiling shows it dominates request time.
@@ -190,7 +190,7 @@ async def fetch_page(request: Request, url: str) -> str:
     return resp.text
 ```
 
-> **Scavengarr hint**  
+> **Scavengarr hint**
 > Ensure all scraping engines and reachability checks use the **injected** `httpx.AsyncClient` from your `AppState`, never create a new client inside scraping functions.
 
 ***
@@ -234,7 +234,7 @@ async def fetch_many(urls: list[str], client: httpx.AsyncClient, max_concurrency
     return await asyncio.gather(*tasks)
 ```
 
-> **Scavengarr hint**  
+> **Scavengarr hint**
 > Apply **per‑site** concurrency limits (e.g. 5–10 parallel requests per tracker) and per‑process global limits (e.g. `max_connections=100` in httpx). This is especially important in multi‑stage scraping engines.
 
 ***
@@ -311,12 +311,12 @@ async def healthz():
     return {"ok": True, "cached": bool(cache.get("health"))}
 ```
 
-> **Scavengarr hint**  
+> **Scavengarr hint**
 > Your composition root should create:
 > - `AppConfig`
 > - shared `httpx.AsyncClient`
 > - `Cache` (diskcache)
-> - plugin registry + scraping engine  
+> - plugin registry + scraping engine
 > and attach them to `AppState` once. Endpoints should only read `request.app.state`.
 
 ***
@@ -444,7 +444,7 @@ class Scraper:
         return resp.text
 ```
 
-> **Scavengarr hint**  
+> **Scavengarr hint**
 > Apply this pattern both in **list pages** and **detail pages** within your multi‑stage scraping engine to avoid revisiting the same torrents/releases across queries.
 
 ***
@@ -850,16 +850,16 @@ Use built‑ins like `sum`, `min`, `max`, `any`, and `all` instead of handwritte
 
 For any performance work on a FastAPI + httpx + diskcache + structlog service:
 
-1. **Start with Section 1 and 2 (CRITICAL)**  
+1. **Start with Section 1 and 2 (CRITICAL)**
    - Ensure event loop is non‑blocking.
    - Share HTTP clients and caches.
    - Move heavy initialization to lifespan or composition root.
 
-2. **For scraping pipelines**, apply Section 3 and 4:  
+2. **For scraping pipelines**, apply Section 3 and 4:
    - Deduplicate URLs, bound concurrency, and implement retries/backoff.
    - Use diskcache and targeted caching for expensive but stable operations.
 
-3. **Instrument and profile** before micro‑optimizing:  
+3. **Instrument and profile** before micro‑optimizing:
    - Add structured logs with timings.
    - Use profilers to confirm hotspots.
 

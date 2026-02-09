@@ -2,32 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
 import httpx
 import structlog
 
-from scavengarr.adapters.scraping import ScrapyAdapter
 from scavengarr.domain.entities import TorznabExternalError
+from scavengarr.domain.plugins import SearchResult
 from scavengarr.domain.ports import CachePort
+from scavengarr.infrastructure.scraping import ScrapyAdapter
 from scavengarr.infrastructure.validation import HttpLinkValidator
 
 log = structlog.get_logger(__name__)
-
-
-@dataclass(frozen=True)
-class SearchResult:
-    """Search result from scrapy engine."""
-
-    title: str
-    download_link: str
-    seeders: int | None = None
-    leechers: int | None = None
-    size: str | None = None
-    release_name: str | None = None
-    description: str | None = None
-    source_url: str | None = None
 
 
 class HttpxScrapySearchEngine:
@@ -275,6 +261,14 @@ class HttpxScrapySearchEngine:
             release_name=release_name,
             description=description,
             source_url=source_url,
+            published_date=item.get("published_date"),
+            download_links=item.get("download_links"),
+            scraped_from_stage=stage_name,
+            metadata={},
+            category=2000,  # Default: Movies
+            grabs=0,
+            download_volume_factor=0.0,
+            upload_volume_factor=0.0,
         )
 
     def _extract_download_link(self, item: dict) -> str | None:

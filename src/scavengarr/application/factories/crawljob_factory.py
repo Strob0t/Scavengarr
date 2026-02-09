@@ -3,14 +3,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING
 
 import structlog
 
 from scavengarr.domain.entities.crawljob import BooleanStatus, CrawlJob, Priority
-
-if TYPE_CHECKING:
-    from scavengarr.infrastructure.torznab.httpx_scrapy_engine import SearchResult
+from scavengarr.domain.plugins import SearchResult
 
 log = structlog.get_logger(__name__)
 

@@ -1,10 +1,8 @@
 # src/scavengarr/plugins/base.py
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Protocol
-
-from pydantic import BaseModel
 
 
 @dataclass
@@ -30,7 +28,7 @@ class SearchResult:
     scraped_from_stage: Optional[str] = None
 
     # Metadata
-    metadata: Dict[str, Any] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
     # Torznab-spezifisch
     category: int = 2000  # Default: Movies
@@ -39,7 +37,8 @@ class SearchResult:
     upload_volume_factor: float = 0.0
 
 
-class StageResult(BaseModel):
+@dataclass
+class StageResult:
     """
     Internal result from a single scraping stage.
 
@@ -50,7 +49,7 @@ class StageResult(BaseModel):
     stage_name: str
     depth: int
     data: Dict[str, Any]
-    links: List[str] = []
+    links: List[str] = field(default_factory=list)
 
 
 class PluginProtocol(Protocol):
