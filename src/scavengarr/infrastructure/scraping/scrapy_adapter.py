@@ -26,6 +26,7 @@ from scavengarr.domain.plugins import (
     SearchResult,
     YamlPluginDefinition,
 )
+from scavengarr.infrastructure.common.converters import to_int
 
 logger = structlog.get_logger(__name__)
 
@@ -665,8 +666,8 @@ class ScrapyAdapter:
                 search_result = SearchResult(
                     title=data.get("title") or data.get("release_name", "Unknown"),
                     download_link=data.get("download_link", ""),
-                    seeders=self._parse_int(data.get("seeders")),
-                    leechers=self._parse_int(data.get("leechers")),
+                    seeders=to_int(data.get("seeders")),
+                    leechers=to_int(data.get("leechers")),
                     size=data.get("size"),
                     published_date=data.get("published_date"),
                     # Multi-stage specific
@@ -697,15 +698,3 @@ class ScrapyAdapter:
                 search_results.append(search_result)
 
         return search_results
-
-    def _parse_int(self, value: Any) -> Optional[int]:
-        """Parse string to int, return None on failure."""
-        if value is None:
-            return None
-
-        try:
-            # Remove commas/spaces (e.g., "1,234" -> 1234)
-            clean = str(value).replace(",", "").replace(" ", "")
-            return int(clean)
-        except ValueError:
-            return None

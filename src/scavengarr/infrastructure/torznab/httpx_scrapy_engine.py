@@ -10,6 +10,7 @@ import structlog
 from scavengarr.domain.entities import TorznabExternalError
 from scavengarr.domain.plugins import SearchResult
 from scavengarr.domain.ports import CachePort
+from scavengarr.infrastructure.common.converters import to_int
 from scavengarr.infrastructure.scraping import ScrapyAdapter
 from scavengarr.infrastructure.validation import HttpLinkValidator
 
@@ -246,8 +247,8 @@ class HttpxScrapySearchEngine:
             return None
 
         # Extract optional metadata
-        seeders = _to_int(item.get("seeders"))
-        leechers = _to_int(item.get("leechers"))
+        seeders = to_int(item.get("seeders"))
+        leechers = to_int(item.get("leechers"))
         size = item.get("size")
         description = item.get("description")
         source_url = item.get("source_url")
@@ -310,29 +311,3 @@ class HttpxScrapySearchEngine:
         return None
 
 
-def _to_int(raw: str | int | None) -> int | None:
-    """Convert string or int to int, return None if invalid.
-
-    Args:
-        raw: Input value (str, int, or None).
-
-    Returns:
-        Integer or None if conversion fails.
-    """
-    if raw is None:
-        return None
-
-    if isinstance(raw, int):
-        return raw
-
-    if isinstance(raw, str):
-        # Extract digits only (handles "1,234" -> 1234)
-        txt = "".join(ch for ch in raw if ch.isdigit())
-        if not txt:
-            return None
-        try:
-            return int(txt)
-        except ValueError:
-            return None
-
-    return None
