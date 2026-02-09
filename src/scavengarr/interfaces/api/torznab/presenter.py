@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from xml.etree import ElementTree as ET
 
 from scavengarr.domain.entities import TorznabCaps, TorznabItem
+from scavengarr.infrastructure.common.parsers import parse_size_to_bytes
 
 _TORZNAB_NS = "http://torznab.com/schemas/2015/feed"
 _ATOM_NS = "http://www.w3.org/2005/Atom"
@@ -139,7 +140,7 @@ def render_rss_xml(
         category = getattr(it, "category", 2000)
         _add_torznab_attr(item, "category", str(category))
 
-        size_bytes = _parse_size_to_bytes(it.size) if it.size else 0
+        size_bytes = parse_size_to_bytes(it.size) if it.size else 0
         _add_torznab_attr(item, "size", str(size_bytes))
 
         _add_torznab_attr(item, "seeders", str(it.seeders or 0))
@@ -180,41 +181,3 @@ def _add_torznab_attr(parent: ET.Element, name: str, value: str) -> None:
     attr = ET.SubElement(parent, f"{{{_TORZNAB_NS}}}attr")
     attr.set("name", name)
     attr.set("value", value)
-
-
-def _parse_size_to_bytes(size_str: str) -> int:
-    """Parse size string to bytes.
-
-    Supports formats:
-        - "1234" (raw bytes)
-        - "4.5 GB"
-        - "500 MB"
-
-    Args:
-        size_str: Size string.
-
-    Returns:
-        Size in bytes (int).
-    """
-    if not size_str:
-        return 0
-
-    if size_str.isdigit():
-        return int(size_str)
-
-    match = re.match(r"([\d.]+)\s*([KMGT]?B)", size_str.upper().strip())
-    if not match:
-        return 0
-
-    value = float(match.group(1))
-    unit = match.group(2)
-
-    multipliers = {
-        "B": 1,
-        "KB": 1024,
-        "MB": 1024**2,
-        "GB": 1024**3,
-        "TB": 1024**4,
-    }
-
-    return int(value * multipliers.get(unit, 1))
