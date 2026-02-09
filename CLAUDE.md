@@ -143,9 +143,14 @@ Rule: Application knows ports (protocols) but not concrete adapters.
 ### Infrastructure (interface adapters)
 - Plugins: discovery/loading/validation for YAML & Python plugins.
 - Scraping adapters: Scrapy/Playwright implementations of ScrapingEngine.
+- Search engine: orchestrates multi-stage scraping, link validation, and result conversion.
 - Validation: HTTP link validator (HEAD/GET strategies, redirects, parallelism).
 - Cache: diskcache adapter (Redis optional only if already present).
-- Torznab rendering/presentation: XML generation, field mapping, attribute handling.
+- Persistence: repository implementations (CrawlJob cache repository).
+- Torznab: presenter for XML generation, field mapping, attribute handling.
+- Configuration: YAML/ENV/CLI loading with precedence, validation via Pydantic.
+- Logging: structured logging setup (structlog + stdlib, async queue handler).
+- Common utilities: parsers, converters, extractors for data transformation.
 
 Rule: Infrastructure may use external libraries but must connect to Application via ports.
 
