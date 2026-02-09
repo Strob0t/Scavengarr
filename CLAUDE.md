@@ -1,4 +1,4 @@
-# ARCHITECTURE.md
+# CLAUDE.md
 
 Instructions for developers and AI assistants (Claude, GPT, etc.) working on Scavengarr.
 

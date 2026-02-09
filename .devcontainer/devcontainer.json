@@ -30,6 +30,7 @@
         "ms-python.black-formatter",
         "redhat.vscode-yaml",
         "Continue.continue",
+        "anthropic.claude-code",
         "charliermarsh.ruff"
       ],
       "settings": {
