@@ -15,9 +15,7 @@ from scavengarr.infrastructure.persistence.crawljob_cache import (
     CacheCrawlJobRepository,
 )
 from scavengarr.infrastructure.plugins import PluginRegistry
-from scavengarr.infrastructure.torznab.httpx_scrapy_engine import (
-    HttpxScrapySearchEngine,
-)
+from scavengarr.infrastructure.torznab.search_engine import HttpxScrapySearchEngine
 from scavengarr.interfaces.app_state import AppState
 
 log = structlog.get_logger(__name__)
