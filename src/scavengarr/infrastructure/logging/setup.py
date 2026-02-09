@@ -199,7 +199,7 @@ def _enable_async_logging(config: AppConfig) -> None:
     q: queue.Queue[logging.LogRecord] = queue.Queue()  # unbounded; non-dropping
 
     class _StructlogPreservingQueueHandler(QueueHandler):
-        """QueueHandler, der structlog event_dicts (record.msg als dict) NICHT kaputtformatiert."""
+        """QueueHandler that preserves structlog event_dicts (record.msg as dict) without breaking them."""
 
         def prepare(self, record: logging.LogRecord) -> logging.LogRecord:
             # QueueHandler.prepare() would normally do record.msg = record.getMessage().
