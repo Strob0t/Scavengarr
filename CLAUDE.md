@@ -16,8 +16,8 @@ This section defines the day-to-day workflow rules for contributions to Scavenga
 | `main` | Production branch (merge via PR only). |
 
 Rules:
-- Never commit directly to `master`.
-- Never merge into `master` without an explicit user request.
+- Never commit directly to `main`.
+- Never merge into `main` without an explicit user request.
 
 ### Commit rules
 
@@ -42,14 +42,14 @@ git push origin staging
 ```
 
 Never:
-- Commit to `master`.
-- Merge to `master` on your own.
+- Commit to `main`.
+- Merge to `main` on your own.
 - Accumulate multiple changes without committing.
 - Commit without running `poetry run pre-commit run --all-files`.
 
-### Merge to master (only when the user requests it)
+### Merge to main (only when the user requests it)
 
-When the user explicitly requests a release/merge to `master`:
+When the user explicitly requests a release/merge to `main`:
 
 1. Bump the version in `pyproject.toml` (PATCH +1 by default unless the change warrants MINOR/MAJOR). 
 2. Update the changelog (see “Version & changelog” below).
@@ -57,22 +57,22 @@ When the user explicitly requests a release/merge to `master`:
 4. Create and merge a PR:
 
 ```bash
-gh pr create --base master --head staging --title "..." --body "..."
+gh pr create --base main --head staging --title "..." --body "..."
 gh pr merge --merge
 ```
 
-5. Sync `staging` back with `master`:
+5. Sync `staging` back with `main`:
 
 ```bash
 git fetch origin
-git merge origin/master
+git merge origin/main
 git push origin staging
 ```
 
 ### Version & changelog
 
 - Version source of truth: `pyproject.toml`. 
-- Version bump policy: bump only when merging to `master` (default: PATCH +1).
+- Version bump policy: bump only when merging to `main` (default: PATCH +1).
 - Changelog policy: keep a single changelog at repository root (recommended name: `CHANGELOG.md`), newest entry at the top, include `version`, `date`, and `changes[]`.
 
 If you decide to track known issues, keep them in the changelog under a `KNOWN_ISSUES` section (current bugs only).
@@ -80,7 +80,7 @@ If you decide to track known issues, keep them in the changelog under a `KNOWN_I
 ### Documentation
 
 When changing behavior or adding features, update the relevant documentation:
-- `ARCHITECTURE.md` when architecture or constraints change.
+- `CLAUDE.md` when architecture or constraints change.
 - `README.md` when setup/run instructions change. 
 - OpenSpec documents under `openspec/changes/...` when the change is specified or tracked there. 
 

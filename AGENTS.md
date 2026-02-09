@@ -27,7 +27,7 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 - **Tooling**: `ruff` (lint+format), `mypy`, `pytest`, `pre-commit`, `structlog`
 - **Critical Documentation**:
   - 📖 **Read `README.md`** first for project overview, setup, and usage.
-  - 🏗️ **Read `ARCHITECTURE.md`** before making any design‑level changes (updated 2026-01-25).
+  - 🏗️ **Read `CLAUDE.md`** before making any design‑level changes (updated 2026-01-25).
   - 📋 **Check `openspec/changes/<change-id>/`** when implementing features – OpenSpec changes are the single source of truth.
 
 ***
@@ -293,7 +293,7 @@ See `src/scavengarr/config/schema.py:AppConfig` for canonical fields:
 
 ### File Targets
 - **`README.md`**: User‑facing (installation, configuration, usage examples)
-- **`ARCHITECTURE.md`**: Developer‑facing (system design, component interaction, OpenSpec integration)
+- **`CLAUDE.md`**: Developer‑facing (system design, component interaction, OpenSpec integration)
 - **`AGENTS.md`** (this file): AI assistant instructions (contracts, workflows, quality gates)
 - **`docs/*.md`**: In‑depth technical write‑ups for subsystems (e.g., plugin validation, caching strategy)
 
@@ -305,7 +305,7 @@ See `src/scavengarr/config/schema.py:AppConfig` for canonical fields:
 
 ### When to Update Docs
 - **README.md**: When user-facing behavior changes (new CLI flags, config options, setup steps)
-- **ARCHITECTURE.md**: When new modules/components are added, or core architecture changes
+- **CLAUDE.md**: When new modules/components are added, or core architecture changes
 - **AGENTS.md**: When canonical contracts change (new entry point, new env var prefix, new dependency)
 
 ***
@@ -431,7 +431,7 @@ For each task in `tasks.md`:
 3. **Implement minimal code** to pass tests (GREEN)
 4. **Refactor** code while keeping tests green (REFACTOR)
 5. **Check off task** in `tasks.md` (add `[x]`)
-6. **Update docs** if task modifies contracts (ARCHITECTURE.md, README.md, AGENTS.md)
+6. **Update docs** if task modifies contracts (CLAUDE.md, README.md, AGENTS.md)
 
 ### Phase 3: Validation (Before PR)
 1. Run all quality gates (ruff, mypy, pytest, coverage)
@@ -440,7 +440,7 @@ For each task in `tasks.md`:
 4. Verify every scenario in `spec.md` has a corresponding test
 
 ### Phase 4: Documentation (After Implementation)
-1. Update `ARCHITECTURE.md` if new components were added
+1. Update `CLAUDE.md` if new components were added
 2. Update `AGENTS.md` if canonical contracts changed
 3. Update `README.md` if user-facing behavior changed
 4. Add inline code comments for complex logic (not obvious logic)
@@ -488,7 +488,7 @@ Before providing code to the user, verify:
 - [ ] My code has no side effects in pure functions (`load_config`, `load_plugin`)
 - [ ] My code logs structured events with `structlog` (no plaintext secrets)
 - [ ] My code handles errors gracefully (custom exceptions, logging)
-- [ ] I updated docs if contracts changed (ARCHITECTURE.md, AGENTS.md, README.md)
+- [ ] I updated docs if contracts changed (CLAUDE.md, AGENTS.md, README.md)
 
 ***
 

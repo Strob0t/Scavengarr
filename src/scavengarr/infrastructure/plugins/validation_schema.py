@@ -1,4 +1,5 @@
-# src/scavengarr/plugins/schema.py
+# src/scavengarr/infrastructure/plugins/validation_schema.py
+"""Pydantic validation models for plugin YAML files (Infrastructure layer)."""
 from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
@@ -43,10 +44,8 @@ class PaginationConfig(BaseModel):
         return self
 
 
-# src/scavengarr/plugins/schema.py
 
 
-# src/scavengarr/plugins/schema.py
 
 
 class NestedSelector(BaseModel):
@@ -327,13 +326,11 @@ class ScrapingConfig(BaseModel):
 # === Main Plugin Definition ===
 
 
-class YamlPluginDefinition(BaseModel):
+class YamlPluginDefinitionPydantic(BaseModel):
     """
-    Declarative YAML plugin.
+    Pydantic validation model for YAML plugins.
 
-    All plugin info lives in this file: name/version/base_url/scraping/auth.
-
-    Supports both legacy single-stage and new multi-stage scraping.
+    After validation, this is converted to domain.plugins.plugin_schema.YamlPluginDefinition.
     """
 
     name: str = Field(pattern=PLUGIN_NAME_RE)
@@ -352,7 +349,7 @@ class YamlPluginDefinition(BaseModel):
         return v.strip()
 
     @model_validator(mode="after")
-    def _default_auth(self) -> "YamlPluginDefinition":
+    def _default_auth(self) -> "YamlPluginDefinitionPydantic":
         if self.auth is None:
             self.auth = AuthConfig(type="none")
         return self

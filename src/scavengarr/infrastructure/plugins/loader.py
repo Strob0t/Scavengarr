@@ -14,13 +14,18 @@ from scavengarr.domain.plugins import (
     PluginLoadError,
     PluginProtocol,
     PluginValidationError,
-    YamlPluginDefinition,
+)
+from scavengarr.domain.plugins.plugin_schema import YamlPluginDefinition
+from scavengarr.infrastructure.plugins.adapters import to_domain_plugin_definition
+from scavengarr.infrastructure.plugins.validation_schema import (
+    YamlPluginDefinitionPydantic,
 )
 
 log = structlog.get_logger(__name__)
 
 
 def load_yaml_plugin(path: Path) -> YamlPluginDefinition:
+    """Load and validate YAML plugin, returning domain model."""
     try:
         raw = path.read_text(encoding="utf-8")
         data = yaml.safe_load(raw)
@@ -28,7 +33,12 @@ def load_yaml_plugin(path: Path) -> YamlPluginDefinition:
             raise PluginValidationError("YAML file is empty")
         if not isinstance(data, dict):
             raise PluginValidationError("YAML root must be a mapping/object")
-        return YamlPluginDefinition.model_validate(data)
+
+        # Validate with Pydantic (Infrastructure)
+        pydantic_model = YamlPluginDefinitionPydantic.model_validate(data)
+
+        # Convert to domain model
+        return to_domain_plugin_definition(pydantic_model)
     except (OSError, UnicodeDecodeError) as e:
         log.error(
             "plugin_load_failed",

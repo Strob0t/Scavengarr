@@ -1,28 +1,39 @@
-from .base import PluginProtocol, SearchResult
+from .base import PluginProtocol, SearchResult, StageResult
 from .exceptions import (
     DuplicatePluginError,
     PluginLoadError,
     PluginNotFoundError,
     PluginValidationError,
 )
-from .schema import (
+from .plugin_schema import (
     AuthConfig,
+    HttpOverrides,
     NestedSelector,
+    PaginationConfig,
+    PlaywrightLocators,
     ScrapingConfig,
     ScrapingStage,
+    ScrapySelectors,
+    StageSelectors,
     YamlPluginDefinition,
 )
 
 __all__ = [
     "AuthConfig",
     "DuplicatePluginError",
+    "HttpOverrides",
+    "NestedSelector",
+    "PaginationConfig",
+    "PlaywrightLocators",
     "PluginLoadError",
     "PluginNotFoundError",
     "PluginProtocol",
     "PluginValidationError",
     "ScrapingConfig",
-    "SearchResult",
-    "YamlPluginDefinition",
-    "NestedSelector",
     "ScrapingStage",
+    "ScrapySelectors",
+    "SearchResult",
+    "StageResult",
+    "StageSelectors",
+    "YamlPluginDefinition",
 ]
