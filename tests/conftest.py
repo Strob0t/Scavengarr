@@ -124,6 +124,7 @@ def mock_search_engine() -> AsyncMock:
     """Mock SearchEnginePort."""
     engine = AsyncMock()
     engine.search = AsyncMock(return_value=[])
+    engine.validate_results = AsyncMock(return_value=[])
     return engine
 
 

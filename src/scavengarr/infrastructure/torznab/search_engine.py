@@ -141,6 +141,18 @@ class HttpxScrapySearchEngine:
             )
             raise TorznabExternalError(f"scrapy search failed: {e!s}") from e
 
+    async def validate_results(
+        self, results: list[SearchResult],
+    ) -> list[SearchResult]:
+        """Validate download links on pre-built SearchResults.
+
+        Used by Python plugins that do their own scraping and return
+        SearchResult lists directly. Delegates to _filter_valid_links().
+        """
+        if self._validate_links:
+            return await self._filter_valid_links(results)
+        return results
+
     def _convert_stage_results(
         self,
         stage_results: dict[str, list[dict]],

@@ -190,6 +190,33 @@ class TestConvertStageResults:
         assert results == []
 
 
+class TestValidateResults:
+    async def test_validation_enabled_delegates_to_filter(self) -> None:
+        engine = _make_engine(validate_links=True)
+        engine._link_validator.validate_batch = AsyncMock(
+            return_value={"https://good.com/dl": True},
+        )
+        results = [
+            SearchResult(title="Good", download_link="https://good.com/dl"),
+        ]
+        validated = await engine.validate_results(results)
+        assert len(validated) == 1
+        assert validated[0].title == "Good"
+
+    async def test_validation_disabled_returns_unchanged(self) -> None:
+        engine = _make_engine(validate_links=False)
+        results = [
+            SearchResult(title="Movie", download_link="https://example.com/dl"),
+        ]
+        validated = await engine.validate_results(results)
+        assert validated is results
+
+    async def test_empty_list(self) -> None:
+        engine = _make_engine(validate_links=True)
+        validated = await engine.validate_results([])
+        assert validated == []
+
+
 def _result(
     title: str = "Movie",
     download_link: str = "https://primary.com/dl",

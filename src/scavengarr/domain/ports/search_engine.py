@@ -14,3 +14,7 @@ class SearchEnginePort(Protocol):
     async def search(
         self, plugin: PluginRegistryPort, query: str
     ) -> list[SearchResult]: ...
+
+    async def validate_results(
+        self, results: list[SearchResult]
+    ) -> list[SearchResult]: ...
