@@ -1,4 +1,4 @@
-"""Tests for HttpxScrapySearchEngine conversion/extraction methods."""
+"""Tests for HttpxScrapySearchEngine conversion/extraction/filtering methods."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 
+from scavengarr.domain.plugins import SearchResult
 from scavengarr.infrastructure.torznab.search_engine import (
     HttpxScrapySearchEngine,
 )
@@ -187,3 +188,120 @@ class TestConvertStageResults:
         engine = _make_engine()
         results = engine._convert_stage_results({})
         assert results == []
+
+
+def _result(
+    title: str = "Movie",
+    download_link: str = "https://primary.com/dl",
+    download_links: list[dict[str, str]] | None = None,
+) -> SearchResult:
+    """Create a minimal SearchResult for filter tests."""
+    return SearchResult(
+        title=title,
+        download_link=download_link,
+        download_links=download_links,
+    )
+
+
+class TestFilterValidLinks:
+    async def test_primary_valid_keeps_result(self) -> None:
+        engine = _make_engine(validate_links=True)
+        engine._link_validator.validate_batch = AsyncMock(
+            return_value={"https://primary.com/dl": True},
+        )
+        results = [_result()]
+        filtered = await engine._filter_valid_links(results)
+        assert len(filtered) == 1
+        assert filtered[0].download_link == "https://primary.com/dl"
+
+    async def test_primary_invalid_no_alternatives_drops(self) -> None:
+        engine = _make_engine(validate_links=True)
+        engine._link_validator.validate_batch = AsyncMock(
+            return_value={"https://primary.com/dl": False},
+        )
+        results = [_result()]
+        filtered = await engine._filter_valid_links(results)
+        assert len(filtered) == 0
+
+    async def test_primary_invalid_alternative_valid_promotes(self) -> None:
+        engine = _make_engine(validate_links=True)
+        engine._link_validator.validate_batch = AsyncMock(
+            return_value={"https://primary.com/dl": False},
+        )
+        engine._link_validator.validate = AsyncMock(return_value=True)
+
+        results = [
+            _result(
+                download_links=[
+                    {"hoster": "Veev", "link": "https://primary.com/dl"},
+                    {"hoster": "Dood", "link": "https://alt.com/dl"},
+                ],
+            ),
+        ]
+        filtered = await engine._filter_valid_links(results)
+        assert len(filtered) == 1
+        assert filtered[0].download_link == "https://alt.com/dl"
+
+    async def test_primary_invalid_all_alternatives_invalid_drops(
+        self,
+    ) -> None:
+        engine = _make_engine(validate_links=True)
+        engine._link_validator.validate_batch = AsyncMock(
+            return_value={"https://primary.com/dl": False},
+        )
+        engine._link_validator.validate = AsyncMock(return_value=False)
+
+        results = [
+            _result(
+                download_links=[
+                    {"hoster": "Veev", "link": "https://primary.com/dl"},
+                    {"hoster": "Dood", "link": "https://alt.com/dl"},
+                ],
+            ),
+        ]
+        filtered = await engine._filter_valid_links(results)
+        assert len(filtered) == 0
+
+    async def test_skips_primary_link_in_alternatives(self) -> None:
+        engine = _make_engine(validate_links=True)
+        engine._link_validator.validate_batch = AsyncMock(
+            return_value={"https://primary.com/dl": False},
+        )
+        # validate() is called only for non-primary alternatives
+        engine._link_validator.validate = AsyncMock(return_value=True)
+
+        results = [
+            _result(
+                download_links=[
+                    {"hoster": "Veev", "link": "https://primary.com/dl"},
+                    {"hoster": "Dood", "link": "https://alt.com/dl"},
+                ],
+            ),
+        ]
+        await engine._filter_valid_links(results)
+        # Should only validate the alternative, not the already-failed primary
+        engine._link_validator.validate.assert_called_once_with(
+            "https://alt.com/dl",
+        )
+
+    async def test_multiple_results_mixed_validity(self) -> None:
+        engine = _make_engine(validate_links=True)
+        engine._link_validator.validate_batch = AsyncMock(
+            return_value={
+                "https://good.com/dl": True,
+                "https://bad.com/dl": False,
+            },
+        )
+
+        results = [
+            _result(title="Good", download_link="https://good.com/dl"),
+            _result(title="Bad", download_link="https://bad.com/dl"),
+        ]
+        filtered = await engine._filter_valid_links(results)
+        assert len(filtered) == 1
+        assert filtered[0].title == "Good"
+
+    async def test_empty_results(self) -> None:
+        engine = _make_engine(validate_links=True)
+        filtered = await engine._filter_valid_links([])
+        assert filtered == []

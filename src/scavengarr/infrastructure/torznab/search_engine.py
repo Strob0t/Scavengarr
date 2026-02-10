@@ -187,47 +187,96 @@ class HttpxScrapySearchEngine:
         self,
         results: list[SearchResult],
     ) -> list[SearchResult]:
-        """Validate download links and filter out dead links.
+        """Validate download links and promote alternatives for dead primaries.
+
+        Flow:
+            1. Batch-validate all primary download_link URLs.
+            2. For results where primary fails, try alternative links
+               from download_links (stop at first valid).
+            3. Drop results only when NO link is valid.
 
         Args:
             results: Raw search results from scraper.
 
         Returns:
-            Only results with reachable download links.
+            Results with reachable download links.
         """
-        # Extract all download links
         urls = [r.download_link for r in results if r.download_link]
 
         if not urls:
             log.warning("no_download_links_to_validate")
-            return results  # No links to validate
+            return results
 
-        # Batch validation (parallel HEAD requests)
+        # 1) Batch-validate all primary links
         validation_map = await self._link_validator.validate_batch(urls)
 
-        # Filter results: keep only valid links
-        valid_results = [
-            r
-            for r in results
-            if r.download_link and validation_map.get(r.download_link, False)
-        ]
+        # 2) Keep valid primaries, try alternatives for invalid ones
+        valid_results: list[SearchResult] = []
+        for r in results:
+            if not r.download_link:
+                continue
 
-        # Log filtered results
-        if len(valid_results) < len(results):
-            invalid_links = [
-                r.download_link
-                for r in results
-                if r.download_link and not validation_map.get(r.download_link, False)
-            ]
+            if validation_map.get(r.download_link, False):
+                valid_results.append(r)
+            elif await self._try_promote_alternative(r):
+                valid_results.append(r)
+
+        # 3) Log filtered results
+        filtered = len(results) - len(valid_results)
+        if filtered > 0:
             log.info(
                 "links_filtered",
                 total=len(results),
                 valid=len(valid_results),
-                invalid=len(results) - len(valid_results),
-                sample_invalid=invalid_links[:3],  # Log first 3 dead links
+                invalid=filtered,
             )
 
         return valid_results
+
+    async def _try_promote_alternative(
+        self,
+        result: SearchResult,
+    ) -> bool:
+        """Try to replace a dead primary link with a valid alternative.
+
+        Iterates result.download_links, skips the failed primary,
+        validates alternatives sequentially (stops at first valid),
+        and mutates result.download_link to the valid alternative.
+
+        Args:
+            result: SearchResult with a dead primary download_link.
+
+        Returns:
+            True if an alternative was promoted, False otherwise.
+        """
+        if not result.download_links:
+            return False
+
+        failed_primary = result.download_link
+
+        for entry in result.download_links:
+            # Extract URL from dict or string entry
+            if isinstance(entry, dict):
+                url = entry.get("link", "")
+            elif isinstance(entry, str):
+                url = entry
+            else:
+                continue
+
+            if not url or url == failed_primary:
+                continue
+
+            if await self._link_validator.validate(url):
+                log.info(
+                    "alternative_link_promoted",
+                    title=result.title,
+                    failed=failed_primary,
+                    promoted=url,
+                )
+                result.download_link = url
+                return True
+
+        return False
 
     def _convert_to_result(
         self,
