@@ -4,8 +4,8 @@ Scrapes boerse.sx (vBulletin 3.8.12 forum) with:
 - Domain fallback across multiple mirrors
 - Playwright for Cloudflare JS challenge bypass
 - vBulletin form-based authentication (MD5 password hash)
-- POST-based search with redirect to results
-- Link anonymizer handling (actual URL in <a> text, not href)
+- Quick-search via #lsa_input form (includes securitytoken)
+- Download link extraction from post content (keeplinks.org containers)
 - Bounded concurrency for thread scraping
 
 Credentials via env vars: SCAVENGARR_BOERSE_USERNAME / SCAVENGARR_BOERSE_PASSWORD
@@ -18,6 +18,7 @@ import hashlib
 import os
 import re
 from html.parser import HTMLParser
+from urllib.parse import urlparse
 
 import structlog
 from playwright.async_api import (
@@ -40,35 +41,76 @@ _DOMAINS = [
     "https://boerse.kz",
 ]
 
-_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0.0.0 Safari/537.36"
+)
 
 _MAX_CONCURRENT_PAGES = 3
 
+# Hosts that are internal (not download links)
+_INTERNAL_HOSTS = {"boerse.am", "boerse.sx", "boerse.im", "boerse.ai", "boerse.kz"}
 
-class _LinkParser(HTMLParser):
-    """Extract <a> tags whose visible text starts with http (anonymizer pattern)."""
+# Known link-protection / container services
+_LINK_CONTAINER_HOSTS = {"keeplinks.org", "keeplinks.eu"}
 
-    def __init__(self) -> None:
+
+class _PostLinkParser(HTMLParser):
+    """Extract download links from vBulletin post content.
+
+    Captures external links from ``[id^="post_message"]`` divs.
+    Links to known link-protection containers (keeplinks.org) or
+    external hosters are collected; internal boerse links are skipped.
+    The hoster name is derived from the anchor text when available.
+    """
+
+    def __init__(self, base_domain: str) -> None:
         super().__init__()
-        self.links: list[str] = []
+        self.links: list[dict[str, str]] = []
+        self._base_domain = base_domain
+        self._in_post = False
         self._in_a = False
+        self._current_href = ""
         self._current_text = ""
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag == "a":
-            self._in_a = True
-            self._current_text = ""
+    def handle_starttag(
+        self, tag: str, attrs: list[tuple[str, str | None]]
+    ) -> None:
+        attr_dict = dict(attrs)
+        if tag == "div":
+            div_id = attr_dict.get("id", "")
+            if div_id.startswith("post_message"):
+                self._in_post = True
+        if tag == "a" and self._in_post:
+            href = attr_dict.get("href", "")
+            if href and href.startswith("http"):
+                self._in_a = True
+                self._current_href = href
+                self._current_text = ""
 
     def handle_data(self, data: str) -> None:
         if self._in_a:
             self._current_text += data
 
     def handle_endtag(self, tag: str) -> None:
+        if tag == "div" and self._in_post:
+            self._in_post = False
         if tag == "a" and self._in_a:
             self._in_a = False
+            href = self._current_href
             text = self._current_text.strip()
-            if text.startswith("http"):
-                self.links.append(text)
+
+            # Skip internal boerse links
+            host = (urlparse(href).hostname or "").replace("www.", "")
+            if host in _INTERNAL_HOSTS or not host:
+                return
+
+            # Derive hoster name from anchor text
+            hoster = _hoster_from_text(text) or _hoster_from_url(href)
+
+            if href not in [entry["link"] for entry in self.links]:
+                self.links.append({"hoster": hoster, "link": href})
 
 
 class _ThreadLinkParser(HTMLParser):
@@ -79,7 +121,9 @@ class _ThreadLinkParser(HTMLParser):
         self.thread_urls: list[str] = []
         self._base_url = base_url
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+    def handle_starttag(
+        self, tag: str, attrs: list[tuple[str, str | None]]
+    ) -> None:
         if tag != "a":
             return
         attr_dict = dict(attrs)
@@ -101,22 +145,21 @@ class _ThreadTitleParser(HTMLParser):
         super().__init__()
         self.title: str | None = None
         self._in_title_tag = False
-        self._depth = 0
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attr_dict = dict(attrs)
-        cls = attr_dict.get("class", "")  # noqa: F841
-        # vBulletin thread title is typically in the page <title> or a specific class
+    def handle_starttag(
+        self, tag: str, attrs: list[tuple[str, str | None]]
+    ) -> None:
         if tag == "title":
             self._in_title_tag = True
-            self._depth = 0
 
     def handle_data(self, data: str) -> None:
         if self._in_title_tag and self.title is None:
             text = data.strip()
             if text:
-                # Strip " - boerse.am" suffix from <title>
-                text = re.sub(r"\s*-\s*boerse\.\w+$", "", text)
+                # Strip " - Boerse.AM (...)" suffix from <title>
+                text = re.sub(
+                    r"\s*-\s*[Bb]oerse\.\w+.*$", "", text
+                )
                 if text:
                     self.title = text
 
@@ -143,8 +186,12 @@ class BoersePlugin:
         if self._browser is not None:
             return
         self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(headless=True)
-        self._context = await self._browser.new_context(user_agent=_USER_AGENT)
+        self._browser = await self._playwright.chromium.launch(
+            headless=True,
+        )
+        self._context = await self._browser.new_context(
+            user_agent=_USER_AGENT,
+        )
 
     async def _wait_for_cloudflare(self, page: Page) -> None:
         """If Cloudflare challenge is detected, wait for it to resolve."""
@@ -172,55 +219,70 @@ class BoersePlugin:
             )
 
         assert self._context is not None
-        md5_pass = hashlib.md5(password.encode()).hexdigest()  # noqa: S324
+        md5_pass = hashlib.md5(  # noqa: S324
+            password.encode(),
+        ).hexdigest()
 
         for domain in self._domains:
             try:
                 page = await self._context.new_page()
                 try:
+                    # Load homepage to get the real login form
                     await page.goto(
-                        f"{domain}/login.php?do=login",
+                        domain,
                         wait_until="domcontentloaded",
                     )
                     await self._wait_for_cloudflare(page)
 
-                    # Submit vBulletin login via JS (fills hidden form fields)
-                    await page.evaluate(
-                        """([user, md5]) => {
-                            const form = document.createElement('form');
-                            form.method = 'POST';
-                            form.action = '/login.php?do=login';
-                            const fields = {
-                                vb_login_username: user,
-                                vb_login_password: '',
-                                vb_login_md5password: md5,
-                                do: 'login',
-                                s: '',
-                                securitytoken: 'guest',
-                            };
-                            for (const [k, v] of Object.entries(fields)) {
-                                const input = document.createElement('input');
-                                input.type = 'hidden';
-                                input.name = k;
-                                input.value = v;
-                                form.appendChild(input);
-                            }
-                            document.body.appendChild(form);
-                            form.submit();
-                        }""",
-                        [username, md5_pass],
-                    )
-                    await page.wait_for_load_state("domcontentloaded")
-                    await self._wait_for_cloudflare(page)
+                    # Fill and submit the existing login form
+                    async with page.expect_navigation(
+                        wait_until="domcontentloaded",
+                        timeout=15_000,
+                    ):
+                        await page.evaluate(
+                            """([user, md5]) => {
+                                const f = document.querySelector(
+                                    'form[action*="login"]'
+                                );
+                                if (!f) throw new Error('no login form');
+                                const u = f.querySelector(
+                                    'input[name="vb_login_username"]'
+                                );
+                                const p = f.querySelector(
+                                    'input[name="vb_login_password"]'
+                                );
+                                const m = f.querySelector(
+                                    'input[name="vb_login_md5password"]'
+                                );
+                                if (u) u.value = user;
+                                if (p) p.value = '';
+                                if (m) m.value = md5;
+                                f.submit();
+                            }""",
+                            [username, md5_pass],
+                        )
 
-                    # Check login success via cookies
-                    cookies = await self._context.cookies()
-                    if any(c["name"] == "bb_userid" for c in cookies):
+                    # Wait for redirect to complete
+                    try:
+                        await page.wait_for_load_state(
+                            "networkidle", timeout=10_000
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
+
+                    # Verify login: check for welcome message
+                    body = await page.evaluate(
+                        "() => document.body.innerText"
+                    )
+                    if username.lower() in body.lower():
                         self.base_url = domain
                         self._logged_in = True
-                        log.info("boerse_login_success", domain=domain)
+                        log.info(
+                            "boerse_login_success", domain=domain
+                        )
                         await page.close()
                         return
+
                 finally:
                     if not page.is_closed():
                         await page.close()
@@ -236,43 +298,40 @@ class BoersePlugin:
         raise RuntimeError("All boerse domains failed during login")
 
     async def _search_threads(self, query: str) -> list[str]:
-        """Navigate to search, submit query, extract thread URLs."""
+        """Navigate to search.php, fill the form, extract thread URLs."""
         assert self._context is not None
 
         page = await self._context.new_page()
         try:
+            # Load the search page (contains real form with securitytoken)
             await page.goto(
-                f"{self.base_url}/search.php?do=process",
+                f"{self.base_url}/search.php",
                 wait_until="domcontentloaded",
             )
             await self._wait_for_cloudflare(page)
 
-            # Submit search form via JS
-            await page.evaluate(
-                """(query) => {
-                    const form = document.createElement('form');
-                    form.method = 'POST';
-                    form.action = '/search.php?do=process';
-                    const fields = {
-                        do: 'process',
-                        query: query,
-                        titleonly: '1',
-                        showposts: '0',
-                    };
-                    for (const [k, v] of Object.entries(fields)) {
-                        const input = document.createElement('input');
-                        input.type = 'hidden';
-                        input.name = k;
-                        input.value = v;
-                        form.appendChild(input);
-                    }
-                    document.body.appendChild(form);
-                    form.submit();
-                }""",
-                query,
-            )
-            await page.wait_for_load_state("domcontentloaded")
-            await self._wait_for_cloudflare(page)
+            # Fill the quick-search input (#lsa_input) and submit
+            await page.fill("#lsa_input", query)
+
+            async with page.expect_navigation(
+                wait_until="domcontentloaded", timeout=15_000
+            ):
+                await page.evaluate(
+                    """() => {
+                        const input = document.getElementById(
+                            'lsa_input'
+                        );
+                        input.closest('form').submit();
+                    }"""
+                )
+
+            # Wait for results page to fully load
+            try:
+                await page.wait_for_load_state(
+                    "networkidle", timeout=10_000
+                )
+            except Exception:  # noqa: BLE001
+                pass
 
             html = await page.content()
             parser = _ThreadLinkParser(self.base_url)
@@ -306,23 +365,20 @@ class BoersePlugin:
         title_parser.feed(html)
         title = title_parser.title or "Unknown"
 
-        # Extract download links (anonymizer pattern)
-        link_parser = _LinkParser()
+        # Extract download links from post content
+        base_domain = urlparse(self.base_url).hostname or ""
+        link_parser = _PostLinkParser(base_domain)
         link_parser.feed(html)
 
         if not link_parser.links:
             return None
 
-        primary_link = link_parser.links[0]
-        download_links = [
-            {"hoster": _hoster_from_url(link), "link": link}
-            for link in link_parser.links
-        ]
+        primary_link = link_parser.links[0]["link"]
 
         return SearchResult(
             title=title,
             download_link=primary_link,
-            download_links=download_links,
+            download_links=link_parser.links,
             source_url=url,
             category=2000,
         )
@@ -365,13 +421,29 @@ class BoersePlugin:
         self._logged_in = False
 
 
+def _hoster_from_text(text: str) -> str:
+    """Derive hoster name from anchor text.
+
+    Handles patterns like 'RapidGator' or 'download via ddownload.com'.
+    """
+    if not text:
+        return ""
+    # "download via rapidgator.net" → "rapidgator"
+    m = re.search(r"via\s+(\S+)", text, re.IGNORECASE)
+    if m:
+        host = m.group(1).rstrip(".")
+        parts = host.replace("www.", "").split(".")
+        return parts[0].lower() if parts else ""
+    # Plain hoster name like "RapidGator", "DDownload"
+    if not text.startswith("http") and len(text.split()) <= 2:
+        return text.strip().lower()
+    return ""
+
+
 def _hoster_from_url(url: str) -> str:
     """Extract hoster name from URL domain."""
     try:
-        from urllib.parse import urlparse
-
         host = urlparse(url).hostname or ""
-        # Strip www. and TLD
         parts = host.replace("www.", "").split(".")
         return parts[0] if parts else "unknown"
     except Exception:  # noqa: BLE001

@@ -25,9 +25,11 @@ def _load_boerse_module() -> ModuleType:
 # Load once at module level for parser tests
 _boerse = _load_boerse_module()
 _BoersePlugin = _boerse.BoersePlugin
-_LinkParser = _boerse._LinkParser
+_PostLinkParser = _boerse._PostLinkParser
 _ThreadLinkParser = _boerse._ThreadLinkParser
+_ThreadTitleParser = _boerse._ThreadTitleParser
 _hoster_from_url = _boerse._hoster_from_url
+_hoster_from_text = _boerse._hoster_from_text
 
 
 _TEST_CREDENTIALS = {
@@ -41,16 +43,25 @@ def _make_plugin() -> object:
     return _BoersePlugin()
 
 
-def _make_mock_page(content: str = "<html></html>") -> AsyncMock:
+def _make_mock_page(
+    content: str = "<html></html>",
+    body_text: str = "",
+) -> AsyncMock:
     """Create a mock Playwright Page."""
     page = AsyncMock()
     page.goto = AsyncMock()
     page.wait_for_function = AsyncMock()
     page.wait_for_load_state = AsyncMock()
-    page.evaluate = AsyncMock()
+    page.evaluate = AsyncMock(return_value=body_text)
+    page.fill = AsyncMock()
     page.content = AsyncMock(return_value=content)
     page.close = AsyncMock()
     page.is_closed = MagicMock(return_value=False)
+    # Support async context manager for expect_navigation
+    nav_cm = AsyncMock()
+    nav_cm.__aenter__ = AsyncMock(return_value=None)
+    nav_cm.__aexit__ = AsyncMock(return_value=False)
+    page.expect_navigation = MagicMock(return_value=nav_cm)
     return page
 
 
@@ -90,9 +101,8 @@ class TestLogin:
     async def test_login_success(self) -> None:
         plugin = _make_plugin()
 
-        login_page = _make_mock_page()
-        cookies = [{"name": "bb_userid", "value": "12345"}]
-        context = _make_mock_context(pages=[login_page], cookies=cookies)
+        login_page = _make_mock_page(body_text="Willkommen testuser")
+        context = _make_mock_context(pages=[login_page])
         browser = _make_mock_browser(context)
         pw = _make_mock_playwright(browser)
 
@@ -105,21 +115,20 @@ class TestLogin:
             await plugin._ensure_session()
 
         assert plugin._logged_in is True
-        login_page.evaluate.assert_awaited_once()
+        login_page.evaluate.assert_awaited()
         login_page.close.assert_awaited()
 
     async def test_login_domain_fallback(self) -> None:
         plugin = _make_plugin()
 
-        # First page (boerse.am) → goto raises, second page (boerse.sx) → succeeds
+        # First page (boerse.am) → goto raises
         fail_page = _make_mock_page()
         fail_page.goto = AsyncMock(side_effect=Exception("unreachable"))
-        # is_closed returns False so cleanup tries page.close
         fail_page.is_closed = MagicMock(return_value=False)
 
-        ok_page = _make_mock_page()
-        cookies = [{"name": "bb_userid", "value": "12345"}]
-        context = _make_mock_context(pages=[fail_page, ok_page], cookies=cookies)
+        # Second page (boerse.sx) → succeeds
+        ok_page = _make_mock_page(body_text="Willkommen testuser")
+        context = _make_mock_context(pages=[fail_page, ok_page])
         browser = _make_mock_browser(context)
         pw = _make_mock_playwright(browser)
 
@@ -137,7 +146,6 @@ class TestLogin:
     async def test_login_all_domains_fail(self) -> None:
         plugin = _make_plugin()
 
-        # All pages raise on goto
         pages = [_make_mock_page() for _ in range(5)]
         for p in pages:
             p.goto = AsyncMock(side_effect=Exception("unreachable"))
@@ -159,7 +167,6 @@ class TestLogin:
     async def test_missing_credentials_raises(self) -> None:
         plugin = _make_plugin()
 
-        # Set up browser mocks so _ensure_browser() succeeds
         context = _make_mock_context()
         browser = _make_mock_browser(context)
         pw = _make_mock_playwright(browser)
@@ -185,7 +192,6 @@ class TestLogin:
         plugin._logged_in = True
 
         await plugin._ensure_session()
-        # No new pages should be created — session was already active
         context.new_page.assert_not_awaited()
 
 
@@ -201,9 +207,12 @@ class TestSearch:
         """
 
         thread_html = """
-        <html><head><title>SpongeBob S01 - boerse.am</title></head><body>
-        <a href="https://boerse.am/abc123" target="_blank">https://veev.to/dl/spongebob</a>
-        <a href="https://boerse.am/def456" target="_blank">https://dood.to/dl/spongebob</a>
+        <html><head><title>SpongeBob S01 - Boerse.AM (Boerse.AI)</title></head>
+        <body>
+        <div id="post_message_123">
+        <a href="https://www.keeplinks.org/p53/abc123" target="_blank">RapidGator</a>
+        <a href="https://www.keeplinks.org/p53/def456" target="_blank">DDownload</a>
+        </div>
         </body></html>
         """
 
@@ -224,8 +233,10 @@ class TestSearch:
 
         assert len(results) == 2
         assert results[0].title == "SpongeBob S01"
-        assert results[0].download_link == "https://veev.to/dl/spongebob"
+        assert "keeplinks.org" in results[0].download_link
         assert len(results[0].download_links) == 2
+        assert results[0].download_links[0]["hoster"] == "rapidgator"
+        assert results[0].download_links[1]["hoster"] == "ddownload"
 
     async def test_search_no_threads(self) -> None:
         plugin = _make_plugin()
@@ -241,12 +252,39 @@ class TestSearch:
         results = await plugin.search("nonexistent")
         assert results == []
 
+    async def test_search_thread_without_links_skipped(self) -> None:
+        plugin = _make_plugin()
+
+        search_html = """
+        <html><body>
+        <a href="https://boerse.am/showthread.php?t=123">Thread</a>
+        </body></html>
+        """
+
+        # Thread with no download links in post content
+        thread_html = """
+        <html><head><title>Empty Thread - Boerse.AM</title></head>
+        <body><div id="post_message_1">Just text, no links.</div></body></html>
+        """
+
+        search_page = _make_mock_page(search_html)
+        thread_page = _make_mock_page(thread_html)
+
+        context = _make_mock_context(pages=[search_page, thread_page])
+
+        plugin._browser = _make_mock_browser(context)
+        plugin._context = context
+        plugin._logged_in = True
+        plugin.base_url = "https://boerse.am"
+
+        results = await plugin.search("test")
+        assert results == []
+
 
 class TestCloudflareWait:
     async def test_cloudflare_wait_passes_when_no_challenge(self) -> None:
         plugin = _make_plugin()
         page = _make_mock_page()
-        # wait_for_function succeeds immediately (no Cloudflare)
         await plugin._wait_for_cloudflare(page)
         page.wait_for_function.assert_awaited_once()
 
@@ -255,7 +293,6 @@ class TestCloudflareWait:
         page = _make_mock_page()
         page.wait_for_function = AsyncMock(side_effect=TimeoutError("timeout"))
 
-        # Should not raise — timeout is swallowed
         await plugin._wait_for_cloudflare(page)
 
 
@@ -283,32 +320,84 @@ class TestCleanup:
         assert plugin._playwright is None
 
 
-class TestDownloadLinkExtraction:
-    def test_anonymized_links_extracted(self) -> None:
+class TestPostLinkParser:
+    def test_keeplinks_extracted(self) -> None:
         html = """
-        <a href="https://boerse.am/abc123" target="_blank">https://veev.to/actual-file</a>
-        <a href="https://boerse.am/def456" target="_blank">https://dood.to/another-file</a>
-        <a href="/some/internal/link">Click here</a>
+        <div id="post_message_123">
+        <a href="https://www.keeplinks.org/p53/abc" target="_blank">RapidGator</a>
+        <a href="https://www.keeplinks.org/p53/def" target="_blank">DDownload</a>
+        </div>
         """
 
-        parser = _LinkParser()
+        parser = _PostLinkParser("boerse.am")
         parser.feed(html)
 
         assert len(parser.links) == 2
-        assert parser.links[0] == "https://veev.to/actual-file"
-        assert parser.links[1] == "https://dood.to/another-file"
+        assert parser.links[0]["link"] == "https://www.keeplinks.org/p53/abc"
+        assert parser.links[0]["hoster"] == "rapidgator"
+        assert parser.links[1]["hoster"] == "ddownload"
 
-    def test_non_http_text_ignored(self) -> None:
+    def test_download_via_text_pattern(self) -> None:
+        html = (
+            '<div id="post_message_456">'
+            '<a href="https://www.keeplinks.org/p16/abc">'
+            "download via ddownload.com</a>"
+            '<a href="https://www.keeplinks.org/p16/def">'
+            "download via rapidgator.net</a>"
+            "</div>"
+        )
+
+        parser = _PostLinkParser("boerse.am")
+        parser.feed(html)
+
+        assert len(parser.links) == 2
+        assert parser.links[0]["hoster"] == "ddownload"
+        assert parser.links[1]["hoster"] == "rapidgator"
+
+    def test_internal_links_skipped(self) -> None:
         html = """
-        <a href="https://boerse.am/abc">Click for download</a>
-        <a href="https://boerse.am/def">ftp://something</a>
+        <div id="post_message_789">
+        <a href="https://boerse.am/showthread.php?t=123">Internal thread</a>
+        <a href="https://www.keeplinks.org/p53/abc" target="_blank">RapidGator</a>
+        </div>
         """
 
-        parser = _LinkParser()
+        parser = _PostLinkParser("boerse.am")
         parser.feed(html)
-        assert len(parser.links) == 0
 
-    def test_thread_link_parser(self) -> None:
+        assert len(parser.links) == 1
+        assert parser.links[0]["hoster"] == "rapidgator"
+
+    def test_links_outside_post_div_ignored(self) -> None:
+        html = """
+        <a href="https://external.com/file" target="_blank">Outside</a>
+        <div id="post_message_100">
+        <a href="https://www.keeplinks.org/p53/abc" target="_blank">Inside</a>
+        </div>
+        """
+
+        parser = _PostLinkParser("boerse.am")
+        parser.feed(html)
+
+        assert len(parser.links) == 1
+        assert "keeplinks.org" in parser.links[0]["link"]
+
+    def test_duplicate_links_deduplicated(self) -> None:
+        html = """
+        <div id="post_message_200">
+        <a href="https://www.keeplinks.org/p53/abc" target="_blank">RapidGator</a>
+        <a href="https://www.keeplinks.org/p53/abc" target="_blank">RapidGator</a>
+        </div>
+        """
+
+        parser = _PostLinkParser("boerse.am")
+        parser.feed(html)
+
+        assert len(parser.links) == 1
+
+
+class TestThreadLinkParser:
+    def test_thread_links_extracted(self) -> None:
         html = """
         <a href="showthread.php?t=123">Thread 1</a>
         <a href="/threads/456-some-thread">Thread 2</a>
@@ -322,7 +411,34 @@ class TestDownloadLinkExtraction:
         assert parser.thread_urls[0] == "https://boerse.am/showthread.php?t=123"
         assert parser.thread_urls[1] == "https://boerse.am/threads/456-some-thread"
 
+
+class TestTitleParser:
+    def test_title_stripped(self) -> None:
+        parser = _ThreadTitleParser()
+        parser.feed(
+            "<title>SpongeBob S01 - Boerse.AM (Boerse.AI/IM)</title>"
+        )
+        assert parser.title == "SpongeBob S01"
+
+    def test_title_lowercase_boerse(self) -> None:
+        parser = _ThreadTitleParser()
+        parser.feed("<title>Movie Title - boerse.am</title>")
+        assert parser.title == "Movie Title"
+
+
+class TestHosterHelpers:
     def test_hoster_from_url(self) -> None:
-        assert _hoster_from_url("https://veev.to/dl/file") == "veev"
-        assert _hoster_from_url("https://www.dood.to/dl/file") == "dood"
-        assert _hoster_from_url("https://voe.sx/embed/abc") == "voe"
+        assert _hoster_from_url("https://www.keeplinks.org/p53/abc") == "keeplinks"
+        assert _hoster_from_url("https://rapidgator.net/file/abc") == "rapidgator"
+
+    def test_hoster_from_text_via_pattern(self) -> None:
+        assert _hoster_from_text("download via ddownload.com") == "ddownload"
+        assert _hoster_from_text("download via rapidgator.net") == "rapidgator"
+
+    def test_hoster_from_text_plain_name(self) -> None:
+        assert _hoster_from_text("RapidGator") == "rapidgator"
+        assert _hoster_from_text("DDownload") == "ddownload"
+
+    def test_hoster_from_text_empty(self) -> None:
+        assert _hoster_from_text("") == ""
+        assert _hoster_from_text("https://example.com") == ""
