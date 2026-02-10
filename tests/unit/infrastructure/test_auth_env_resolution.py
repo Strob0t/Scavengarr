@@ -30,9 +30,7 @@ class TestAuthEnvResolution:
         assert auth.password == "secret123"
 
     def test_both_env_fields_resolve(self) -> None:
-        with patch.dict(
-            os.environ, {"TEST_USER": "alice", "TEST_PASS": "secret123"}
-        ):
+        with patch.dict(os.environ, {"TEST_USER": "alice", "TEST_PASS": "secret123"}):
             auth = AuthConfig(
                 type="basic",
                 username_env="TEST_USER",
@@ -60,9 +58,7 @@ class TestAuthEnvResolution:
         assert auth.username is None
 
     def test_env_resolution_enables_form_auth(self) -> None:
-        with patch.dict(
-            os.environ, {"FORM_USER": "alice", "FORM_PASS": "secret"}
-        ):
+        with patch.dict(os.environ, {"FORM_USER": "alice", "FORM_PASS": "secret"}):
             auth = AuthConfig(
                 type="form",
                 username_env="FORM_USER",

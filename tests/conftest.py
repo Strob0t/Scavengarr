@@ -140,13 +140,17 @@ def mock_crawljob_repo() -> AsyncMock:
 class FakePythonPlugin:
     """Minimal fake Python plugin (has search, no scraping attribute)."""
 
-    def __init__(self, name: str = "boerse", base_url: str = "https://boerse.am") -> None:
+    def __init__(
+        self, name: str = "boerse", base_url: str = "https://boerse.am"
+    ) -> None:
         self.name = name
         self.base_url = base_url
         self._results: list[Any] = []
 
     async def search(
-        self, query: str, category: int | None = None,
+        self,
+        query: str,
+        category: int | None = None,
     ) -> list[Any]:
         return self._results
 

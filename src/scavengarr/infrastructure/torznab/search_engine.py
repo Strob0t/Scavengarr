@@ -142,7 +142,8 @@ class HttpxScrapySearchEngine:
             raise TorznabExternalError(f"scrapy search failed: {e!s}") from e
 
     async def validate_results(
-        self, results: list[SearchResult],
+        self,
+        results: list[SearchResult],
     ) -> list[SearchResult]:
         """Validate download links on pre-built SearchResults.
 

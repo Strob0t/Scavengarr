@@ -47,7 +47,9 @@ class _FakePythonPlugin:
         self._results: list[Any] = []
 
     async def search(
-        self, query: str, category: int | None = None,
+        self,
+        query: str,
+        category: int | None = None,
     ) -> list[Any]:
         return self._results
 
@@ -250,7 +252,9 @@ class TestPythonPluginDispatch:
 
         uc = _make_uc(registry, mock_search_engine, mock_crawljob_repo)
         q = TorznabQuery(
-            action="search", plugin_name="boerse", query="SpongeBob",
+            action="search",
+            plugin_name="boerse",
+            query="SpongeBob",
         )
         items = await uc.execute(q)
 
@@ -274,7 +278,9 @@ class TestPythonPluginDispatch:
 
         uc = _make_uc(registry, mock_search_engine, mock_crawljob_repo)
         q = TorznabQuery(
-            action="search", plugin_name="boerse", query="nothing",
+            action="search",
+            plugin_name="boerse",
+            query="nothing",
         )
         items = await uc.execute(q)
         assert items == []
@@ -297,7 +303,9 @@ class TestPythonPluginDispatch:
 
         uc = _make_uc(registry, mock_search_engine, mock_crawljob_repo)
         q = TorznabQuery(
-            action="search", plugin_name="boerse", query="test",
+            action="search",
+            plugin_name="boerse",
+            query="test",
         )
         with pytest.raises(TorznabExternalError, match="Python plugin"):
             await uc.execute(q)
@@ -320,7 +328,9 @@ class TestPythonPluginDispatch:
 
         uc = _make_uc(registry, mock_search_engine, mock_crawljob_repo)
         q = TorznabQuery(
-            action="search", plugin_name="boerse", query="test",
+            action="search",
+            plugin_name="boerse",
+            query="test",
         )
         await uc.execute(q)
         mock_search_engine.validate_results.assert_awaited_once()

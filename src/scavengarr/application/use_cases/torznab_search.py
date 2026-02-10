@@ -109,25 +109,25 @@ class TorznabSearchUseCase:
         return await self._build_torznab_items(raw_results, q)
 
     async def _execute_python_plugin(
-        self, plugin: Any, q: TorznabQuery,
+        self,
+        plugin: Any,
+        q: TorznabQuery,
     ) -> list[Any]:
         """Execute search via Python plugin and validate results."""
         try:
             raw_results = await plugin.search(q.query, category=q.category)
         except Exception as e:
-            raise TorznabExternalError(
-                f"Python plugin search error: {e!s}"
-            ) from e
+            raise TorznabExternalError(f"Python plugin search error: {e!s}") from e
 
         try:
             return await self.engine.validate_results(raw_results)
         except Exception as e:
-            raise TorznabExternalError(
-                f"Result validation error: {e!s}"
-            ) from e
+            raise TorznabExternalError(f"Result validation error: {e!s}") from e
 
     async def _execute_yaml_plugin(
-        self, plugin: Any, q: TorznabQuery,
+        self,
+        plugin: Any,
+        q: TorznabQuery,
     ) -> list[Any]:
         """Execute search via YAML plugin through the Scrapy engine."""
         try:
@@ -151,7 +151,9 @@ class TorznabSearchUseCase:
             raise TorznabExternalError(f"Search engine error: {e!s}") from e
 
     async def _build_torznab_items(
-        self, raw_results: list[Any], q: TorznabQuery,
+        self,
+        raw_results: list[Any],
+        q: TorznabQuery,
     ) -> list[TorznabItem]:
         """Transform SearchResults into TorznabItems with CrawlJob generation."""
         items: list[TorznabItem] = []
