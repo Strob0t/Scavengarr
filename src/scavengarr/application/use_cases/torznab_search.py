@@ -69,7 +69,7 @@ class TorznabSearchUseCase:
             TorznabUnsupportedPlugin: Plugin has unsupported scraping mode.
             TorznabExternalError: Search engine failure.
         """
-        # === 1) Validate Query ===
+        # Validate query
         if q.action != "search":
             raise TorznabBadRequest("TorznabSearchUseCase only supports action=search")
         if not q.query:
@@ -77,13 +77,12 @@ class TorznabSearchUseCase:
         if not q.plugin_name:
             raise TorznabBadRequest("Missing plugin name")
 
-        # === 2) Plugin Validation ===
+        # Resolve plugin
         try:
             plugin = self.plugins.get(q.plugin_name)
         except Exception as e:
             raise TorznabPluginNotFound(q.plugin_name) from e
 
-        # Validate scraping mode (only 'scrapy' supported)
         try:
             mode = plugin.scraping.mode  # type: ignore[attr-defined]
         except Exception as e:
@@ -93,13 +92,12 @@ class TorznabSearchUseCase:
         if mode != "scrapy":
             raise TorznabUnsupportedPlugin(f"Unsupported scraping.mode: {mode}")
 
-        # === 3) Execute Search (includes link validation) ===
+        # Execute search (includes link validation)
         try:
-            # NOTE: SearchEngine.search() now returns validated SearchResult objects
             raw_results: list = await self.engine.search(
                 plugin,
                 q.query,
-                category=q.category,  # Pass category if available
+                category=q.category,
             )
         except TorznabExternalError:
             raise
@@ -114,11 +112,10 @@ class TorznabSearchUseCase:
             )
             return []
 
-        # === 4) Transform Results → CrawlJobs → TorznabItems ===
+        # Transform results: SearchResult -> CrawlJob -> TorznabItem
         items: list[TorznabItem] = []
         for raw_result in raw_results:
             try:
-                # 4a) Build base TorznabItem from SearchResult
                 base_item = TorznabItem(
                     title=cast(str, getattr(raw_result, "title", "Unknown")),
                     download_url=cast(str, getattr(raw_result, "download_link", "")),
@@ -137,13 +134,8 @@ class TorznabSearchUseCase:
                     category=cast(int, getattr(raw_result, "category", 2000)),
                 )
 
-                # 4b) Generate CrawlJob from SearchResult (NEW: via Factory)
                 crawljob = self.crawljob_factory.create_from_search_result(raw_result)
-
-                # 4c) Store CrawlJob in repository
                 await self.crawljob_repo.save(crawljob)
-
-                # 4d) Enrich TorznabItem with job_id
                 enriched_item = dataclass_replace(base_item, job_id=crawljob.job_id)
                 items.append(enriched_item)
 
@@ -153,11 +145,10 @@ class TorznabSearchUseCase:
                     query=q.query,
                     job_id=enriched_item.job_id,
                     title=enriched_item.title,
-                    validated_url_count=len(crawljob.validated_urls),  # NEW
+                    validated_url_count=len(crawljob.validated_urls),
                 )
 
             except Exception as e:
-                # Skip result if CrawlJob generation fails (e.g., invalid data)
                 log.warning(
                     "crawljob_generation_failed",
                     plugin=q.plugin_name,

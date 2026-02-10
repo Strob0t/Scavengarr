@@ -79,12 +79,6 @@ def render_rss_xml(
 ) -> TorznabRendered:
     """Render Torznab RSS 2.0 XML with CrawlJob download URLs.
 
-    Key changes for Phase 3:
-        - <link> points to /api/v1/download/{job_id}
-        - <enclosure url> points to same CrawlJob URL
-        - <enclosure type> changed to application/x-crawljob
-        - <guid> remains original download_url (for deduplication)
-
     Args:
         title: RSS channel title.
         items: List of TorznabItems (with job_id field).
@@ -107,35 +101,26 @@ def render_rss_xml(
     for it in items:
         item = ET.SubElement(channel, "item")
 
-        # === Title (prefer release_name over title) ===
         release = getattr(it, "release_name", None)
-        rendered_title = release or it.title
-        ET.SubElement(item, "title").text = rendered_title
+        ET.SubElement(item, "title").text = release or it.title
 
-        # === GUID (original download_url for deduplication) ===
-        # Sonarr/Radarr use guid to detect duplicates across indexers
+        # GUID uses original URL for deduplication across indexers
         guid_elem = ET.SubElement(item, "guid", isPermaLink="false")
         guid_elem.text = it.download_url
 
-        # === Link (NEW: points to CrawlJob download endpoint) ===
         if hasattr(it, "job_id") and it.job_id:
-            # Phase 3: Use /api/v1/download/{job_id}
             crawljob_url = f"{scavengarr_base_url}api/v1/download/{it.job_id}"
         else:
-            # Fallback: direct link (shouldn't happen after Phase 2)
             crawljob_url = it.download_url
 
         ET.SubElement(item, "link").text = crawljob_url
 
-        # === Description ===
         desc = getattr(it, "description", None) or it.title
         ET.SubElement(item, "description").text = desc
 
-        # === PubDate ===
         pub = ET.SubElement(item, "pubDate")
         pub.text = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S +0000")
 
-        # === Torznab Attributes ===
         category = getattr(it, "category", 2000)
         _add_torznab_attr(item, "category", str(category))
 
@@ -156,15 +141,10 @@ def render_rss_xml(
         _add_torznab_attr(item, "minimumratio", "0")
         _add_torznab_attr(item, "minimumseedtime", "0")
 
-        # === Enclosure (NEW: CrawlJob download URL) ===
         enclosure = ET.SubElement(item, "enclosure")
-        enclosure.set(
-            "url", crawljob_url
-        )  # Changed: points to /api/v1/download/{job_id}
+        enclosure.set("url", crawljob_url)
         enclosure.set("length", str(size_bytes))
-        enclosure.set(
-            "type", "application/x-crawljob"
-        )  # Changed: from application/x-bittorrent
+        enclosure.set("type", "application/x-crawljob")
 
     return TorznabRendered(ET.tostring(rss, encoding="utf-8", xml_declaration=True))
 

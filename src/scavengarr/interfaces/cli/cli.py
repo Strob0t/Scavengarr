@@ -1,3 +1,5 @@
+"""CLI entry point: argument parsing and uvicorn startup."""
+
 from __future__ import annotations
 
 import argparse

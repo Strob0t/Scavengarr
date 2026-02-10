@@ -1,3 +1,5 @@
+"""Plugin system exceptions."""
+
 from __future__ import annotations
 
 

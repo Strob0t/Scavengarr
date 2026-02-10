@@ -1,3 +1,5 @@
+"""Torznab API endpoints (caps, search, health, indexers)."""
+
 from __future__ import annotations
 
 from typing import cast
@@ -98,7 +100,6 @@ async def torznab_indexers(request: Request) -> dict:
     state = cast(AppState, request.app.state)
     uc = TorznabIndexersUseCase(plugins=state.plugins)
 
-    # JSON is intentional: for "Discovery/Automation" (not Torznab standard).
     return {"indexers": uc.execute()}
 
 
@@ -127,11 +128,9 @@ async def torznab_plugin_api(
         if t != "search":
             raise TorznabUnsupportedAction(f"Unsupported action t={t!r}")
 
-        # Special: Prowlarr "Test" calls t=search&extended=1 without q.
-        # If extended=1: only succeed (HTTP 200) when the indexer domain is reachable.
+        # Prowlarr test mode: extended=1 without query -> reachability probe
         if not q:
             if extended == 1:
-                # Load plugin to get base_url (single source of truth)
                 plugin = state.plugins.get(plugin_name)
                 base_url = str(getattr(plugin, "base_url", "") or "")
 
@@ -156,7 +155,6 @@ async def torznab_plugin_api(
                 )
 
                 if reachable:
-                    # Return ONE deterministic test item so Prowlarr "Test" passes.
                     test_item = TorznabItem(
                         title=f"{state.config.app_name} ({plugin_name}) - reachable",
                         download_url=_checked_url,
@@ -183,10 +181,8 @@ async def torznab_plugin_api(
                     else None,
                     scavengarr_base_url=str(request.base_url),
                 )
-                # 503 makes Prowlarr "Test" fail when the indexer is down (desired)
                 return _xml(rendered.payload, status_code=503)
 
-            # Default behavior for missing q (no extended): return valid empty RSS, not 400.
             rendered = render_rss_xml(
                 title=f"{state.config.app_name} ({plugin_name})",
                 items=[],
@@ -197,7 +193,6 @@ async def torznab_plugin_api(
             )
             return _xml(rendered.payload, status_code=200)
 
-        # Normal search flow (q present)
         search_uc = TorznabSearchUseCase(
             plugins=state.plugins,
             engine=state.search_engine,
@@ -251,7 +246,6 @@ async def torznab_plugin_api(
         return _xml(rendered.payload, status_code=422)
 
     except TorznabExternalError as e:
-        # "prod": stable for Prowlarr -> empty RSS (200)
         status = 200 if _is_prod(state) else 502
         rendered = render_rss_xml(
             title=f"{state.config.app_name} ({plugin_name})",
@@ -262,7 +256,6 @@ async def torznab_plugin_api(
         return _xml(rendered.payload, status_code=status)
 
     except Exception:
-        # Unknown error: prod -> empty RSS (200), dev/test -> 500 with hint
         status = 200 if _is_prod(state) else 500
         rendered = render_rss_xml(
             title=f"{state.config.app_name} ({plugin_name})",
@@ -276,10 +269,7 @@ async def torznab_plugin_api(
 
 @router.get("/api/v1/torznab/{plugin_name}/health")
 async def torznab_plugin_health(request: Request, plugin_name: str) -> JSONResponse:
-    """
-    Lightweight reachability check for the plugin's domain/base_url.
-    Uses the plugin registry directly because TorznabIndexersUseCase does not expose base_url.
-    """
+    """Lightweight reachability check for the plugin's base_url."""
     state = cast(AppState, request.app.state)
 
     try:
@@ -294,7 +284,6 @@ async def torznab_plugin_health(request: Request, plugin_name: str) -> JSONRespo
             },
         )
     except Exception as e:
-        # keep endpoint resilient
         return JSONResponse(
             status_code=500 if not _is_prod(state) else 200,
             content={

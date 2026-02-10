@@ -1,4 +1,5 @@
-# src/scavengarr/plugins/base.py
+"""Domain models and protocols for the plugin system."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

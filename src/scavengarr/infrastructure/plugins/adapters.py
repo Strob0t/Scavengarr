@@ -1,5 +1,4 @@
-# src/scavengarr/infrastructure/plugins/adapters.py
-"""Adapters to convert between Infrastructure (Pydantic) and Domain models."""
+"""Adapters to convert Pydantic validation models to domain models."""
 
 from __future__ import annotations
 

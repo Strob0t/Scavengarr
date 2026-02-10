@@ -1,3 +1,5 @@
+"""CrawlJob repository backed by CachePort (diskcache/redis)."""
+
 from __future__ import annotations
 
 import pickle
@@ -26,7 +28,6 @@ class CacheCrawlJobRepository(CrawlJobRepository):
     async def save(self, job: CrawlJob) -> None:
         """Save CrawlJob in cache with TTL."""
         key = f"crawljob:{job.job_id}"
-        # CachePort accepts Any -> store pickled directly
         await self.cache.set(key, pickle.dumps(job), ttl=self.ttl)
         log.debug("crawljob_saved", job_id=job.job_id, ttl=self.ttl)
 

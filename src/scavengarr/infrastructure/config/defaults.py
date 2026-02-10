@@ -1,12 +1,12 @@
+"""Hardcoded default configuration values."""
+
 from __future__ import annotations
 
 from typing import Any
 
 DEFAULT_CONFIG: dict[str, Any] = {
-    # General
     "app_name": "scavengarr",
     "environment": "dev",
-    # Sections
     "plugins": {
         "plugin_dir": "./plugins",
     },
@@ -21,8 +21,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "logging": {
         "level": "INFO",
-        # log format default is derived from environment in schema.py if unset
-        "format": None,
+        "format": None,  # Derived from environment in schema.py
     },
     "cache": {
         "dir": "./.cache/scavengarr",

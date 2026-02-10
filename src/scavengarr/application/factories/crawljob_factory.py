@@ -54,12 +54,8 @@ class CrawlJobFactory:
         now = datetime.now(timezone.utc)
         expires_at = now + timedelta(hours=self.default_ttl_hours)
 
-        # Extract metadata from SearchResult
         package_name = result.title or "Scavengarr Download"
         comment = self._build_comment(result)
-
-        # Build text field (newline-separated links)
-        # For now, single link per job. Future: support multi-part archives.
         text = result.download_link
 
         crawl_job = CrawlJob(
@@ -98,12 +94,6 @@ class CrawlJobFactory:
 
         if result.description:
             parts.append(result.description)
-
-        # if result.seeders is not None:
-        #     parts.append(f"Seeders: {result.seeders}")
-
-        # if result.leechers is not None:
-        #     parts.append(f"Leechers: {result.leechers}")
 
         if result.size:
             parts.append(f"Size: {result.size}")

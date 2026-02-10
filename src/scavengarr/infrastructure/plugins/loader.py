@@ -1,3 +1,5 @@
+"""Plugin loading from YAML and Python files."""
+
 from __future__ import annotations
 
 import importlib.util

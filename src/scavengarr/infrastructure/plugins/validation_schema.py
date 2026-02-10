@@ -1,5 +1,4 @@
-# src/scavengarr/infrastructure/plugins/validation_schema.py
-"""Pydantic validation models for plugin YAML files (Infrastructure layer)."""
+"""Pydantic validation models for plugin YAML files."""
 
 from __future__ import annotations
 
@@ -71,7 +70,7 @@ class NestedSelector(BaseModel):
         description="For link/url fields: list of HTML attributes to try (in order)",
     )
 
-    # Optional: Multi-value fields (für zukünftige Features)
+    # Fields that may contain multiple values per item
     multi_value_fields: Optional[List[str]] = Field(
         default=None,
         description="Fields that should collect multiple values as list instead of overwriting",

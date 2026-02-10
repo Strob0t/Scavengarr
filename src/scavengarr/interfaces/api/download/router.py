@@ -22,34 +22,18 @@ async def download_crawljob(
 ) -> Response:
     """Serve .crawljob file for JDownloader integration.
 
-    This endpoint is called by Sonarr/Radarr when they click the download link
-    from Torznab search results. The response is a .crawljob file containing
-    validated download links in JDownloader format.
-
-    Flow:
-        1. Sonarr/Radarr receives Torznab XML with <link>/api/v1/download/{job_id}</link>
-        2. They make GET request to this endpoint
-        3. We lookup CrawlJob from repository (cache)
-        4. Check if expired
-        5. Generate .crawljob file content
-        6. Return as downloadable file
-
-    Args:
-        job_id: Unique CrawlJob identifier (UUID4).
-        request: FastAPI request object (for accessing app state).
-
-    Returns:
-        Response with .crawljob file content and appropriate headers.
+    Called by Sonarr/Radarr when processing Torznab search results.
+    Looks up the CrawlJob from cache, checks expiry, and returns the
+    serialized .crawljob file as a download.
 
     Raises:
         HTTPException(404): CrawlJob not found or expired.
-        HTTPException(500): Internal error (e.g., repository failure).
+        HTTPException(500): Repository or serialization failure.
     """
     state = cast(AppState, request.app.state)
 
     log.info("download_request", job_id=job_id)
 
-    # === 1) Lookup CrawlJob from Repository ===
     try:
         crawl_job = await state.crawljob_repo.get(job_id)
     except Exception as e:
@@ -63,7 +47,6 @@ async def download_crawljob(
             detail="Failed to retrieve CrawlJob from repository",
         ) from e
 
-    # === 2) Check if CrawlJob Exists ===
     if crawl_job is None:
         log.warning("crawljob_not_found", job_id=job_id)
         raise HTTPException(
@@ -71,7 +54,6 @@ async def download_crawljob(
             detail=f"CrawlJob not found: {job_id}",
         )
 
-    # === 3) Check if CrawlJob is Expired ===
     if crawl_job.is_expired():
         log.warning(
             "crawljob_expired",
@@ -83,7 +65,6 @@ async def download_crawljob(
             detail=f"CrawlJob expired: {job_id}",
         )
 
-    # === 4) Generate .crawljob File Content ===
     try:
         crawljob_content = crawl_job.to_crawljob_format()
     except Exception as e:
@@ -97,8 +78,6 @@ async def download_crawljob(
             detail="Failed to generate .crawljob file",
         ) from e
 
-    # === 5) Build Filename ===
-    # Sanitize package_name for filename (remove special chars)
     safe_filename = "".join(
         c if c.isalnum() or c in (" ", "-", "_") else "_"
         for c in crawl_job.package_name
@@ -114,7 +93,6 @@ async def download_crawljob(
         size_bytes=len(crawljob_content),
     )
 
-    # === 6) Return as Downloadable File ===
     return Response(
         content=crawljob_content,
         media_type="application/x-crawljob",
@@ -133,20 +111,7 @@ async def get_crawljob_info(
     job_id: str,
     request: Request,
 ) -> dict:
-    """Get CrawlJob metadata without downloading the file.
-
-    Useful for debugging or checking expiry status.
-
-    Args:
-        job_id: CrawlJob identifier.
-        request: FastAPI request.
-
-    Returns:
-        JSON with CrawlJob metadata.
-
-    Raises:
-        HTTPException(404): CrawlJob not found.
-    """
+    """Return CrawlJob metadata as JSON (for debugging/inspection)."""
     state = cast(AppState, request.app.state)
 
     try:

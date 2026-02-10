@@ -1,3 +1,5 @@
+"""Plugin registry with lazy loading and in-memory caching."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

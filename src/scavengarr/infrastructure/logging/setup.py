@@ -1,3 +1,5 @@
+"""Structlog + stdlib logging with async QueueHandler emission."""
+
 from __future__ import annotations
 
 import atexit
@@ -21,7 +23,6 @@ BASE_LOGGING_CONFIG: dict[str, Any] = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
-        # NOTE: We attach our structlog ProcessorFormatter later.
         "default": {
             "()": "uvicorn.logging.DefaultFormatter",
             "fmt": "%(levelprefix)s %(message)s",
@@ -53,7 +54,6 @@ BASE_LOGGING_CONFIG: dict[str, Any] = {
 
 
 def _drop_color_message(_: Any, __: Any, event_dict: dict[str, Any]) -> dict[str, Any]:
-    # Uvicorn often appends "color_message"; this causes unnecessarily duplicated logs.
     event_dict.pop("color_message", None)
     return event_dict
 
@@ -70,7 +70,6 @@ def _add_record_created_timestamp_utc(
     record = event_dict.get("_record")
     if isinstance(record, logging.LogRecord):
         dt = datetime.fromtimestamp(record.created, tz=timezone.utc)
-        # ISO-8601, stable & comparable (UTC)
         event_dict["timestamp"] = dt.isoformat().replace("+00:00", "Z")
     return event_dict
 
@@ -88,7 +87,7 @@ def build_logging_config(config: AppConfig) -> dict[str, Any]:
     - Apply config.log_level to all loggers already present in BASE_LOGGING_CONFIG.
     - Everything else is controlled via root logger level/handlers.
     """
-    cfg = copy.deepcopy(BASE_LOGGING_CONFIG)  # starts with uvicorn defaults [file:10]
+    cfg = copy.deepcopy(BASE_LOGGING_CONFIG)
 
     if config.log_format == "json":
         renderer: structlog.typing.Processor = structlog.processors.JSONRenderer()
@@ -117,13 +116,11 @@ def build_logging_config(config: AppConfig) -> dict[str, Any]:
 
     level = config.log_level
 
-    # ✅ Dynamic: apply level to all preconfigured loggers (no hardcoded names)
     cfg.setdefault("loggers", {})
     for _, logger_cfg in cfg["loggers"].items():
         if isinstance(logger_cfg, dict):
             logger_cfg["level"] = level
 
-    # Root controls everything else (libraries you didn't explicitly configure)
     cfg["root"] = {"handlers": ["default"], "level": level}
 
     return cfg
@@ -150,7 +147,6 @@ def _enable_async_logging(config: AppConfig) -> None:
 
     _stop_async_listener()
 
-    # Renderer depends on config (same as in build_logging_config)
     if config.log_format == "json":
         renderer: structlog.typing.Processor = structlog.processors.JSONRenderer()
     else:
@@ -196,14 +192,13 @@ def _enable_async_logging(config: AppConfig) -> None:
     stderr_handler.setFormatter(processor_formatter)
     stderr_handler.addFilter(_MinLevelFilter(logging.ERROR))  # ERROR/CRITICAL -> stderr
 
-    q: queue.Queue[logging.LogRecord] = queue.Queue()  # unbounded; non-dropping
+    q: queue.Queue[logging.LogRecord] = queue.Queue()
 
     class _StructlogPreservingQueueHandler(QueueHandler):
         """QueueHandler that preserves structlog event_dicts (record.msg as dict) without breaking them."""
 
         def prepare(self, record: logging.LogRecord) -> logging.LogRecord:
-            # QueueHandler.prepare() would normally do record.msg = record.getMessage().
-            # This destroys dict-msg for structlog + ProcessorFormatter.
+            # Preserve dict-msg for structlog ProcessorFormatter
             return copy.copy(record)
 
     queue_handler = _StructlogPreservingQueueHandler(q)
@@ -213,12 +208,11 @@ def _enable_async_logging(config: AppConfig) -> None:
     root.addHandler(queue_handler)
     root.setLevel(config.log_level)
 
-    # Ensure all relevant loggers propagate into root (so they go through the queue)
     for name in list(logging.root.manager.loggerDict.keys()):
-        l = logging.getLogger(name)
-        l.handlers.clear()
-        l.propagate = True
-        l.setLevel(config.log_level)
+        logger = logging.getLogger(name)
+        logger.handlers.clear()
+        logger.propagate = True
+        logger.setLevel(config.log_level)
 
     _QUEUE_LISTENER = QueueListener(
         q, stdout_handler, stderr_handler, respect_handler_level=True
@@ -238,7 +232,6 @@ def configure_logging(config: AppConfig) -> dict[str, Any]:
         processors=[
             _drop_color_message,
             structlog.contextvars.merge_contextvars,
-            # Timestamp at log-call time for structlog-originated events
             structlog.processors.TimeStamper(fmt="iso", utc=True),
             structlog.stdlib.add_logger_name,
             structlog.stdlib.add_log_level,
@@ -251,8 +244,6 @@ def configure_logging(config: AppConfig) -> dict[str, Any]:
 
     cfg = build_logging_config(config)
 
-    # Optional: keep dictConfig so other libs expecting it won't break,
-    # but we will rewire emission to async queue right after.
     logging.config.dictConfig(cfg)
 
     _enable_async_logging(config)

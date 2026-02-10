@@ -1,3 +1,5 @@
+"""Configuration loading with layered precedence (defaults < YAML < ENV < CLI)."""
+
 from __future__ import annotations
 
 from copy import deepcopy
@@ -43,18 +45,15 @@ def _normalize_layer(data: Mapping[str, Any]) -> dict[str, Any]:
     """
     out: dict[str, Any] = {}
 
-    # Pass through already sectioned blocks
     for section in _SECTION_KEYS:
         if section in data and isinstance(data[section], Mapping):
             out[section] = dict(data[section])
 
-    # General
     if "app_name" in data:
         out["app_name"] = data["app_name"]
     if "environment" in data:
         out["environment"] = data["environment"]
 
-    # Flat -> section mappings
     flat_map: dict[str, tuple[str, str]] = {
         "plugin_dir": ("plugins", "plugin_dir"),
         "http_timeout_seconds": ("http", "timeout_seconds"),
@@ -100,7 +99,6 @@ def load_config(
     """
     cli_overrides = cli_overrides or {}
 
-    # Load .env first so it participates as "env vars" layer.
     if dotenv_path is not None:
         if not dotenv_path.exists():
             raise FileNotFoundError(dotenv_path)
@@ -121,5 +119,4 @@ def load_config(
     cli_layer = _normalize_layer(cli_overrides)
     _deep_merge(base, cli_layer)
 
-    # Validate final merged config (single source of truth).
     return AppConfig.model_validate(base)

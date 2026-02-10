@@ -1,3 +1,5 @@
+"""FastAPI application factory."""
+
 from __future__ import annotations
 
 import time
@@ -21,26 +23,22 @@ def build_app(config: AppConfig) -> FastAPI:
         title="Scavengarr",
         description="Prowlarr-compatible Torznab/Newznab indexer",
         version="0.1.0",
-        lifespan=lifespan,  # ✅ Lifespan handles DI
+        lifespan=lifespan,
     )
 
-    # ✅ ONLY store Config in State
     app.state = AppState()
     app.state.config = config
 
-    # ✅ Register routers (no dependencies needed)
     from scavengarr.interfaces.api.download.router import router as download_router
     from scavengarr.interfaces.api.torznab import router as torznab_router
 
     app.include_router(download_router)
     app.include_router(torznab_router, prefix="")
 
-    # ✅ Health-Check (stateless)
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
-    # ✅ Logging-Middleware (stateless)
     @app.middleware("http")
     async def log_requests(request: Request, call_next):
         start = time.perf_counter()

@@ -1,3 +1,5 @@
+"""Composition root: dependency injection via FastAPI lifespan."""
+
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
@@ -35,7 +37,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     state = cast(AppState, app.state)
     config = state.config
 
-    # ========== 1) Cache (MUST be first - other components depend on it) ==========
+    # 1) Cache (must be first - other components depend on it)
     cache = create_cache(
         backend=config.cache.backend,
         directory=str(config.cache.directory),
@@ -44,16 +46,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         max_concurrent=config.cache.max_concurrent,
     )
 
-    await cache.__aenter__()  # Open cache (context manager)
+    await cache.__aenter__()
     state.cache = cache
     log.info("cache_initialized", backend=config.cache.backend)
 
-    # Dev-Mode: Clear cache on startup (optional)
     if config.environment == "dev":
         await cache.clear()
         log.debug("cache_cleared", environment="dev")
 
-    # ========== 2) HTTP Client (shared resource) ==========
+    # 2) HTTP client
     state.http_client = httpx.AsyncClient(
         timeout=httpx.Timeout(config.http_timeout_seconds),
         headers={"User-Agent": config.http_user_agent},
@@ -61,12 +62,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     log.info("http_client_initialized")
 
-    # ========== 3) Plugin Registry ==========
+    # 3) Plugin registry
     state.plugins = PluginRegistry(plugin_dir=config.plugin_dir)
     state.plugins.discover()
     log.info("plugins_discovered", count=len(state.plugins.list_names()))
 
-    # ========== 4) Search Engine (uses http_client + cache) ==========
+    # 4) Search engine
     state.search_engine = HttpxScrapySearchEngine(
         http_client=state.http_client,
         cache=state.cache,
@@ -76,27 +77,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     log.info("search_engine_initialized")
 
-    # ========== 5) CrawlJob Repository (uses cache) ==========
+    # 5) CrawlJob repository
     state.crawljob_repo = CacheCrawlJobRepository(
         cache=state.cache,
-        ttl_seconds=3600,  # Job-specific TTL (1 hour)
+        ttl_seconds=3600,
     )
     log.info("crawljob_repo_initialized")
 
-    # ========== 6) CrawlJob Factory ==========
+    # 6) CrawlJob factory
     state.crawljob_factory = CrawlJobFactory(
-        default_ttl_hours=1,  # CrawlJobs expire after 1 hour
-        auto_start=True,  # Enable JDownloader auto-start by default
-        default_priority=Priority.DEFAULT,  # Default download priority
+        default_ttl_hours=1,
+        auto_start=True,
+        default_priority=Priority.DEFAULT,
     )
     log.info("crawljob_factory_initialized")
 
     log.info("app_startup_complete")
 
     try:
-        yield  # ✅ App runs here
+        yield
     finally:
-        # ========== Cleanup (reverse order) ==========
         await state.http_client.aclose()
         log.info("http_client_closed")
 
