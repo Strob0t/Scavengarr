@@ -31,13 +31,15 @@ _ThreadLinkParser = _boerse._ThreadLinkParser
 _hoster_from_url = _boerse._hoster_from_url
 
 
+_TEST_CREDENTIALS = {
+    "SCAVENGARR_BOERSE_USERNAME": "testuser",
+    "SCAVENGARR_BOERSE_PASSWORD": "testpass",
+}
+
+
 def _make_plugin() -> object:
-    """Create BoersePlugin with test credentials."""
-    with patch.dict(os.environ, {
-        "SCAVENGARR_BOERSE_USERNAME": "testuser",
-        "SCAVENGARR_BOERSE_PASSWORD": "testpass",
-    }):
-        return _BoersePlugin()
+    """Create BoersePlugin instance."""
+    return _BoersePlugin()
 
 
 def _mock_response(
@@ -64,7 +66,10 @@ class TestLogin:
         mock_client.post = AsyncMock(return_value=_mock_response(200))
         mock_client.aclose = AsyncMock()
 
-        with patch.object(_boerse.httpx, "AsyncClient", return_value=mock_client):
+        with (
+            patch.dict(os.environ, _TEST_CREDENTIALS),
+            patch.object(_boerse.httpx, "AsyncClient", return_value=mock_client),
+        ):
             await plugin._ensure_session()
 
         assert plugin._logged_in is True
@@ -89,7 +94,10 @@ class TestLogin:
         mock_client.post = AsyncMock(side_effect=_post_side_effect)
         mock_client.aclose = AsyncMock()
 
-        with patch.object(_boerse.httpx, "AsyncClient", return_value=mock_client):
+        with (
+            patch.dict(os.environ, _TEST_CREDENTIALS),
+            patch.object(_boerse.httpx, "AsyncClient", return_value=mock_client),
+        ):
             await plugin._ensure_session()
 
         assert plugin._logged_in is True
@@ -104,7 +112,10 @@ class TestLogin:
         mock_client.cookies = httpx.Cookies()
         mock_client.aclose = AsyncMock()
 
-        with patch.object(_boerse.httpx, "AsyncClient", return_value=mock_client):
+        with (
+            patch.dict(os.environ, _TEST_CREDENTIALS),
+            patch.object(_boerse.httpx, "AsyncClient", return_value=mock_client),
+        ):
             with pytest.raises(RuntimeError, match="All boerse domains failed"):
                 await plugin._ensure_session()
 
@@ -166,7 +177,9 @@ class TestSearch:
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.post = AsyncMock(
-            return_value=_mock_response(200, text="<html><body>No results</body></html>")
+            return_value=_mock_response(
+                200, text="<html><body>No results</body></html>"
+            )
         )
 
         plugin._client = mock_client

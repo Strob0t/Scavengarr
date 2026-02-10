@@ -122,14 +122,14 @@ class BoersePlugin:
 
     def __init__(self) -> None:
         self._domains = list(_DOMAINS)
-        self._username = os.environ.get("SCAVENGARR_BOERSE_USERNAME", "")
-        self._password = os.environ.get("SCAVENGARR_BOERSE_PASSWORD", "")
         self._client: httpx.AsyncClient | None = None
         self._logged_in = False
         self.base_url = self._domains[0]
 
     async def search(
-        self, query: str, category: int | None = None,
+        self,
+        query: str,
+        category: int | None = None,
     ) -> list[SearchResult]:
         """Search boerse.sx and return results with download links."""
         await self._ensure_session()
@@ -147,7 +147,10 @@ class BoersePlugin:
         if self._logged_in and self._client is not None:
             return
 
-        if not self._username or not self._password:
+        username = os.environ.get("SCAVENGARR_BOERSE_USERNAME", "")
+        password = os.environ.get("SCAVENGARR_BOERSE_PASSWORD", "")
+
+        if not username or not password:
             raise RuntimeError(
                 "Missing credentials: set SCAVENGARR_BOERSE_USERNAME "
                 "and SCAVENGARR_BOERSE_PASSWORD"
@@ -163,7 +166,7 @@ class BoersePlugin:
         )
 
         md5_pass = hashlib.md5(  # noqa: S324
-            self._password.encode()
+            password.encode()
         ).hexdigest()
 
         for domain in self._domains:
@@ -171,7 +174,7 @@ class BoersePlugin:
                 resp = await self._client.post(
                     f"{domain}/login.php?do=login",
                     data={
-                        "vb_login_username": self._username,
+                        "vb_login_username": username,
                         "vb_login_password": "",
                         "vb_login_md5password": md5_pass,
                         "do": "login",
