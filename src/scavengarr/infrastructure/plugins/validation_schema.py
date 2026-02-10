@@ -348,14 +348,25 @@ class YamlPluginDefinitionPydantic(BaseModel):
 
     name: str = Field(pattern=PLUGIN_NAME_RE)
     version: str = Field(pattern=SEMVER_RE)
-    base_url: HttpUrl
-    mirror_urls: Optional[List[HttpUrl]] = None
+    base_url: List[HttpUrl]
 
     scraping: ScrapingConfig
     auth: Optional[AuthConfig] = None
 
     # Optional per-plugin overrides for HTTP behaviour
     http: Optional[HttpOverrides] = None
+
+    @field_validator("base_url", mode="before")
+    @classmethod
+    def _normalize_base_url(cls, v: object) -> list[object]:
+        """Accept a single URL string or a list of URL strings."""
+        if isinstance(v, str):
+            return [v]
+        if isinstance(v, list):
+            if len(v) == 0:
+                raise ValueError("base_url must contain at least one URL")
+            return v
+        return [v]
 
     @field_validator("name")
     @classmethod
