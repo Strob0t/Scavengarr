@@ -68,6 +68,9 @@ class StageSelectors:
     # Nested extractors
     download_links: NestedSelector | None = None
 
+    # Row-based extraction (iterate over multiple result rows)
+    rows: str | None = None
+
     # Custom fields (extensible)
     custom: dict[str, str] = field(default_factory=dict)
 
@@ -95,6 +98,8 @@ class ScrapingStage:
     next_stage: str | None = None
     pagination: PaginationConfig | None = None
     conditions: dict[str, Any] | None = None
+    query_transform: str | None = None
+    field_attributes: dict[str, list[str]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

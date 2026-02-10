@@ -59,6 +59,7 @@ def to_domain_stage_selectors(
         download_links=to_domain_nested_selector(pydantic.download_links)
         if pydantic.download_links
         else None,
+        rows=pydantic.rows,
         custom=pydantic.custom,
     )
 
@@ -78,6 +79,8 @@ def to_domain_scraping_stage(
         if pydantic.pagination
         else None,
         conditions=pydantic.conditions,
+        query_transform=pydantic.query_transform,
+        field_attributes=pydantic.field_attributes,
     )
 
 

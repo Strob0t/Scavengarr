@@ -123,6 +123,9 @@ class StageSelectors(BaseModel):
     # Nested extractors
     download_links: Optional[NestedSelector] = None
 
+    # Row-based extraction (iterate over multiple result rows)
+    rows: Optional[str] = None
+
     # Custom fields (extensible)
     custom: Dict[str, str] = Field(default_factory=dict)
 
@@ -141,6 +144,7 @@ class StageSelectors(BaseModel):
                 self.size,
                 self.published_date,
                 self.download_links,
+                self.rows,
                 self.custom,
             ]
         )
@@ -180,15 +184,21 @@ class ScrapingStage(BaseModel):
     # Conditions for processing (optional)
     conditions: Optional[Dict[str, Any]] = None
 
+    # Query transformation (e.g., "slugify")
+    query_transform: Optional[str] = None
+
+    # Field attribute extraction at stage level
+    field_attributes: Dict[str, List[str]] = Field(default_factory=dict)
+
     @model_validator(mode="after")
     def _validate_stage(self) -> "ScrapingStage":
         # Must have either url or url_pattern
         if not self.url and not self.url_pattern:
             raise ValueError("stage must define either 'url' or 'url_pattern'")
 
-        # List stages should have link selector
-        if self.type == "list" and not self.selectors.link:
-            raise ValueError("list stage should define 'link' selector")
+        # List stages should have link selector OR rows selector
+        if self.type == "list" and not self.selectors.link and not self.selectors.rows:
+            raise ValueError("list stage should define 'link' or 'rows' selector")
 
         return self
 

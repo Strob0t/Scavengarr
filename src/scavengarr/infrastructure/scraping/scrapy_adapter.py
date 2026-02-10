@@ -12,6 +12,7 @@ Supports cascading scrape pipelines with:
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
@@ -29,6 +30,28 @@ from scavengarr.domain.plugins import (
 from scavengarr.infrastructure.common.converters import to_int
 
 logger = structlog.get_logger(__name__)
+
+
+def _slugify(query: str) -> str:
+    """Convert a search query to a URL slug.
+
+    Lowercase, strip non-alphanumeric (except hyphens/spaces),
+    collapse whitespace into single hyphens.
+    """
+    slug = query.lower().strip()
+    slug = re.sub(r"[^a-z0-9\s-]", "", slug)
+    slug = re.sub(r"[\s-]+", "-", slug)
+    return slug.strip("-")
+
+
+def _apply_query_transform(query: str, transform: str) -> str:
+    """Dispatch to query transform functions.
+
+    Raises ValueError for unknown transforms.
+    """
+    if transform == "slugify":
+        return _slugify(query)
+    raise ValueError(f"Unknown query_transform: {transform!r}")
 
 
 class StageScraper:
@@ -57,6 +80,11 @@ class StageScraper:
 
         if self.stage.url_pattern:
             try:
+                if self.stage.query_transform and "query" in url_params:
+                    url_params = {**url_params}  # don't mutate original
+                    url_params["query"] = _apply_query_transform(
+                        url_params["query"], self.stage.query_transform
+                    )
                 path = self.stage.url_pattern.format(**url_params)
                 return urljoin(self.base_url, path)
             except KeyError as e:
@@ -84,7 +112,7 @@ class StageScraper:
             "published_date": (self.selectors.published_date, "text"),
         }
 
-        for field, (selector, extract_type) in simple_fields.items():
+        for field, (selector, default_mode) in simple_fields.items():
             if not selector:
                 continue
 
@@ -92,10 +120,10 @@ class StageScraper:
             if not elem:
                 continue
 
-            if extract_type == "attribute":
-                # Use field_attributes from stage config
-                attrs = self._get_field_attributes(field)
-                data[field] = self._extract_from_attributes(elem, attrs, field)
+            # Check stage-level field_attributes for this field
+            attrs = self._get_field_attributes(field)
+            if attrs or default_mode == "attribute":
+                data[field] = self._extract_from_attributes(elem, attrs or [], field)
             else:
                 # Text extraction
                 data[field] = elem.get_text(strip=True)
@@ -113,6 +141,26 @@ class StageScraper:
             )
 
         return data
+
+    def extract_rows(self, soup: BeautifulSoup) -> list[dict[str, Any]]:
+        """Extract multiple result rows if `rows` selector is set.
+
+        If no `rows` selector, falls back to single-item extraction via
+        ``extract_data()``.
+        """
+        if not self.selectors.rows:
+            return [self.extract_data(soup)]
+
+        results: list[dict[str, Any]] = []
+        for row in soup.select(self.selectors.rows):
+            data = self.extract_data(row)
+            if (
+                data.get("title")
+                or data.get("download_link")
+                or data.get("download_links")
+            ):
+                results.append(data)
+        return results
 
     def _get_field_attributes(self, field_name: str) -> list[str]:
         """
@@ -245,7 +293,6 @@ class StageScraper:
         """
         Extract value with smart parsing for special attributes.
         """
-        import re
 
         for attr in attributes:
             value = elem.get(attr)
@@ -561,22 +608,21 @@ class ScrapyAdapter:
         if not soup:
             return {}
 
-        # Extract data
-        data = stage.extract_data(soup)
+        # Extract data (supports multi-row via `rows` selector)
+        items = stage.extract_rows(soup)
+        for item in items:
+            item["source_url"] = url
+        items = [item for item in items if stage.should_process(item)]
 
-        # Add source URL to data
-        data["source_url"] = url
-
-        # Check conditions
-        if not stage.should_process(data):
-            logger.debug("stage_conditions_not_met", stage=stage_name, data=data)
+        if not items:
+            logger.debug("stage_no_valid_items", stage=stage_name)
             return {}
 
         # Extract links to next stage
         links = stage.extract_links(soup)
 
-        # FIX: Return Dict[stage_name, List[items]]
-        results: dict[str, list[dict[str, Any]]] = {stage_name: [data]}
+        # Return Dict[stage_name, List[items]]
+        results: dict[str, list[dict[str, Any]]] = {stage_name: items}
 
         # Pagination (if enabled)
         if stage_config.pagination and stage_config.pagination.enabled:
@@ -652,12 +698,13 @@ class ScrapyAdapter:
             if not soup:
                 break
 
-            # Extract data from paginated page
-            data = stage.extract_data(soup)
-            data["source_url"] = next_url
-
-            if stage.should_process(data):
-                results[stage.name].append(data)
+            # Extract data from paginated page (supports multi-row)
+            items = stage.extract_rows(soup)
+            for item in items:
+                item["source_url"] = next_url
+            results[stage.name].extend(
+                item for item in items if stage.should_process(item)
+            )
 
         return results
 
