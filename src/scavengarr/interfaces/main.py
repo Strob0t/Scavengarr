@@ -13,9 +13,9 @@ log = structlog.get_logger(__name__)
 
 
 def build_app(config: AppConfig) -> FastAPI:
-    """Build FastAPI app - NUR Konfiguration, KEINE Ressourcen-Initialisierung.
+    """Build FastAPI app - configuration ONLY, NO resource initialization.
 
-    Ressourcen (HTTP-Client, Cache, Plugins) werden in lifespan() erstellt.
+    Resources (HTTP client, cache, plugins) are created in lifespan().
     """
     app = FastAPI(
         title="Scavengarr",

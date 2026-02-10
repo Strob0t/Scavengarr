@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import httpx
 from starlette.datastructures import State
 
-from scavengarr.application.factories import CrawlJobFactory  # CHANGED
+from scavengarr.application.factories import CrawlJobFactory
 from scavengarr.infrastructure.config import AppConfig
 
 if TYPE_CHECKING:
@@ -38,4 +38,4 @@ class AppState(State):
     crawljob_repo: CrawlJobRepository
 
     # Application Services
-    crawljob_factory: CrawlJobFactory  # CHANGED: From crawljob_service
+    crawljob_factory: CrawlJobFactory

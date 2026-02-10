@@ -1,4 +1,4 @@
-"""Diskcache-Adapter - SQLite-basierter Cache ohne Daemon-Prozess."""
+"""Diskcache adapter - SQLite-based cache without daemon process."""
 
 from __future__ import annotations
 
@@ -14,16 +14,16 @@ log = structlog.get_logger(__name__)
 
 
 class DiskcacheAdapter:
-    """Async-Wrapper für diskcache.Cache (sync-only Library).
+    """Async wrapper for diskcache.Cache (sync-only library).
 
-    - Nutzt `asyncio.to_thread` für I/O (kein Blocking der Event-Loop).
-    - Semaphore verhindert zu viele parallele Disk-Writes (SQLite Lock-Contention).
-    - Implementiert Context-Manager (`async with`).
+    - Uses `asyncio.to_thread` for I/O (no blocking of the event loop).
+    - Semaphore prevents too many parallel disk writes (SQLite lock contention).
+    - Implements context manager (`async with`).
 
     Args:
-        directory: SQLite-DB-Pfad (default: `./cache`).
-        ttl_seconds: Standard-TTL für `set()` ohne explizite Angabe.
-        max_concurrent: Max. parallele Disk-Ops (default: 10, tunable).
+        directory: SQLite DB path (default: `./cache`).
+        ttl_seconds: Default TTL for `set()` without explicit value.
+        max_concurrent: Max parallel disk ops (default: 10, tunable).
     """
 
     def __init__(
@@ -46,7 +46,7 @@ class DiskcacheAdapter:
 
     # --- Context Manager ---
     async def __aenter__(self) -> DiskcacheAdapter:
-        """Öffne SQLite-Cache (lazy, beim ersten Zugriff)."""
+        """Open SQLite cache (lazy, on first access)."""
         if self._cache is None:
             self._cache = await asyncio.to_thread(
                 DiskCache,
@@ -56,7 +56,7 @@ class DiskcacheAdapter:
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
-        """Cleanup: schließe Cache, räume Locks auf."""
+        """Cleanup: close cache, release locks."""
         await self.aclose()
 
     async def aclose(self) -> None:
@@ -65,9 +65,9 @@ class DiskcacheAdapter:
             self._cache = None
             log.info("diskcache_closed", directory=str(self.directory))
 
-    # --- CachePort-Implementierung ---
+    # --- CachePort implementation ---
     async def get(self, key: str) -> Optional[Any]:
-        """Lese aus Cache (sync-Disk-I/O → to_thread)."""
+        """Read from cache (sync disk I/O -> to_thread)."""
         if self._cache is None:
             raise RuntimeError(
                 "Cache not initialized. Use 'async with cache:' or await cache.__aenter__()"
@@ -83,7 +83,7 @@ class DiskcacheAdapter:
             return value
 
     async def set(self, key: str, value: Any, *, ttl: int | None = None) -> None:
-        """Schreibe in Cache mit TTL (Standard: self.default_ttl)."""
+        """Write to cache with TTL (default: self.default_ttl)."""
         if self._cache is None:
             raise RuntimeError("Cache not initialized.")
 
@@ -104,7 +104,7 @@ class DiskcacheAdapter:
             )
 
     async def delete(self, key: str) -> bool:
-        """Lösche Key. True = erfolgreich gelöscht."""
+        """Delete key. True = successfully deleted."""
         if self._cache is None:
             return False
 
@@ -114,17 +114,17 @@ class DiskcacheAdapter:
             return deleted
 
     async def exists(self, key: str) -> bool:
-        """Check ob Key existiert."""
+        """Check if key exists."""
         if self._cache is None:
             return False
 
         async with self._semaphore:
-            # diskcache.Cache.__contains__ prüft Existenz + Expiry
+            # diskcache.Cache.__contains__ checks existence + expiry
             exists = await asyncio.to_thread(lambda: key in self._cache)
             return exists
 
     async def clear(self) -> None:
-        """Lösche ALLE Keys."""
+        """Delete ALL keys."""
         if self._cache is None:
             return
 

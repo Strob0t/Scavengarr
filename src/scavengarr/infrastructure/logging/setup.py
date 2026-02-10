@@ -21,7 +21,7 @@ BASE_LOGGING_CONFIG: dict[str, Any] = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
-        # NOTE: Wir hängen später unseren structlog ProcessorFormatter dran.
+        # NOTE: We attach our structlog ProcessorFormatter later.
         "default": {
             "()": "uvicorn.logging.DefaultFormatter",
             "fmt": "%(levelprefix)s %(message)s",
@@ -53,7 +53,7 @@ BASE_LOGGING_CONFIG: dict[str, Any] = {
 
 
 def _drop_color_message(_: Any, __: Any, event_dict: dict[str, Any]) -> dict[str, Any]:
-    # Uvicorn hängt oft "color_message" an; das macht Logs unnötig doppelt.
+    # Uvicorn often appends "color_message"; this causes unnecessarily duplicated logs.
     event_dict.pop("color_message", None)
     return event_dict
 
@@ -150,7 +150,7 @@ def _enable_async_logging(config: AppConfig) -> None:
 
     _stop_async_listener()
 
-    # Renderer abhängig von config (wie in build_logging_config)
+    # Renderer depends on config (same as in build_logging_config)
     if config.log_format == "json":
         renderer: structlog.typing.Processor = structlog.processors.JSONRenderer()
     else:

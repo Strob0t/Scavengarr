@@ -72,7 +72,7 @@ class StageScraper:
         """
         data: Dict[str, Any] = {}
 
-        # Simple selectors - mit expliziter Attribut-Konfiguration
+        # Simple selectors - with explicit attribute configuration
         simple_fields = {
             "title": (self.selectors.title, "text"),
             "description": (self.selectors.description, "text"),
@@ -93,7 +93,7 @@ class StageScraper:
                 continue
 
             if extract_type == "attribute":
-                # Nutze field_attributes aus Stage-Config
+                # Use field_attributes from stage config
                 attrs = self._get_field_attributes(field)
                 data[field] = self._extract_from_attributes(elem, attrs, field)
             else:
@@ -252,9 +252,9 @@ class StageScraper:
             if not value:
                 continue
 
-            # Special: onclick enthält oft JS-Code mit URL
+            # Special: onclick often contains JS code with URL
             if attr == "onclick":
-                # Extrahiere URL aus onclick="embedy('https://...')"
+                # Extract URL from onclick="embedy('https://...')"
                 match = re.search(r'https?://[^\'")\s]+', value)
                 if match:
                     url = match.group(0)
@@ -266,7 +266,7 @@ class StageScraper:
                     )
                     return url
 
-            # Normal: Direkter Attribut-Wert
+            # Normal: Direct attribute value
             elif value:
                 logger.debug(
                     "attribute_extracted",

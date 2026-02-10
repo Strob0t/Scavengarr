@@ -1,4 +1,4 @@
-"""Cache-Factory - Erstellt Adapter basierend auf Config."""
+"""Cache factory - Creates adapter based on config."""
 
 from __future__ import annotations
 
@@ -18,28 +18,28 @@ CacheBackend = Literal["diskcache", "redis"]
 def create_cache(
     backend: CacheBackend = "diskcache",
     *,
-    # Diskcache-Config
+    # Diskcache config
     directory: str = "./cache",
-    # Redis-Config
+    # Redis config
     redis_url: str = "redis://localhost:6379/0",
-    # Shared Config
+    # Shared config
     ttl_seconds: int = 3600,
-    max_concurrent: int = 10,  # für diskcache, Redis hat höheres Limit (50)
+    max_concurrent: int = 10,  # for diskcache; Redis has higher limit (50)
 ) -> CachePort:
-    """Factory-Funktion: Erstellt Cache-Adapter je nach Backend.
+    """Factory function: Creates cache adapter based on backend.
 
     Args:
-        backend: "diskcache" (SQLite) oder "redis".
-        directory: Diskcache-Pfad.
-        redis_url: Redis-Connection-String.
-        ttl_seconds: Standard-TTL für beide Backends.
-        max_concurrent: Semaphore-Limit (diskcache: 10, Redis: 50 im Adapter).
+        backend: "diskcache" (SQLite) or "redis".
+        directory: Diskcache path.
+        redis_url: Redis connection string.
+        ttl_seconds: Default TTL for both backends.
+        max_concurrent: Semaphore limit (diskcache: 10, Redis: 50 in adapter).
 
     Returns:
-        CachePort-Implementierung (DiskcacheAdapter oder RedisAdapter).
+        CachePort implementation (DiskcacheAdapter or RedisAdapter).
 
     Raises:
-        ValueError: Wenn `backend` unbekannt.
+        ValueError: If `backend` is unknown.
     """
     if backend == "diskcache":
         log.info(
@@ -60,12 +60,12 @@ def create_cache(
             backend=backend,
             url=redis_url,
             ttl=ttl_seconds,
-            max_concurrent=50,  # Redis hat eigenes Limit
+            max_concurrent=50,  # Redis has its own limit
         )
         return RedisAdapter(
             url=redis_url,
             ttl_seconds=ttl_seconds,
-            max_concurrent=50,  # Override für Redis
+            max_concurrent=50,  # Override for Redis
         )
     else:
         raise ValueError(

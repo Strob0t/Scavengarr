@@ -1,4 +1,4 @@
-"""Cache Port - Interface für Backend-agnostische Caching-Strategien."""
+"""Cache Port - Interface for backend-agnostic caching strategies."""
 
 from __future__ import annotations
 
@@ -6,39 +6,39 @@ from typing import Any, Optional, Protocol
 
 
 class CachePort(Protocol):
-    """Port für async Key-Value-Cache mit TTL-Support.
+    """Port for async key-value cache with TTL support.
 
-    Implementierungen:
-      - DiskcacheAdapter (SQLite-basiert, kein Daemon)
-      - RedisAdapter (Redis Async Client)
+    Implementations:
+      - DiskcacheAdapter (SQLite-based, no daemon)
+      - RedisAdapter (Redis async client)
 
-    Jeder Adapter MUSS async Context-Manager-Semantik unterstützen:
+    Each adapter MUST support async context-manager semantics:
         async with cache:
             await cache.set("key", value)
     """
 
     async def get(self, key: str) -> Optional[Any]:
-        """Rufe Wert ab. None = nicht vorhanden / expired."""
+        """Retrieve value. None = not found / expired."""
         ...
 
     async def set(self, key: str, value: Any, *, ttl: int | None = None) -> None:
-        """Setze Wert mit optionalem TTL (Sekunden)."""
+        """Set value with optional TTL (seconds)."""
         ...
 
     async def delete(self, key: str) -> bool:
-        """Lösche Key. True = gelöscht, False = existierte nicht."""
+        """Delete key. True = deleted, False = did not exist."""
         ...
 
     async def exists(self, key: str) -> bool:
-        """Check ob Key existiert (nicht expired)."""
+        """Check if key exists (not expired)."""
         ...
 
     async def clear(self) -> None:
-        """Lösche ALLE Keys (z. B. für Admin-Endpoint)."""
+        """Delete ALL keys (e.g. for admin endpoint)."""
         ...
 
     async def aclose(self) -> None:
-        """Cleanup-Hook (z. B. Redis Connection schließen)."""
+        """Cleanup hook (e.g. close Redis connection)."""
         ...
 
     # Context-Manager Support (optional, implemented by adapters)

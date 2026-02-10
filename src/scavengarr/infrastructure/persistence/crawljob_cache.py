@@ -13,26 +13,26 @@ log = structlog.get_logger(__name__)
 
 
 class CacheCrawlJobRepository(CrawlJobRepository):
-    """Stores CrawlJobs via CachePort (Redis oder Diskcache)."""
+    """Stores CrawlJobs via CachePort (Redis or Diskcache)."""
 
     def __init__(self, cache: CachePort, ttl_seconds: int = 3600):
         """
         Args:
-            cache: CachePort-Implementierung (injiziert von Factory).
-            ttl_seconds: Standard-TTL für CrawlJobs.
+            cache: CachePort implementation (injected by factory).
+            ttl_seconds: Default TTL for CrawlJobs.
         """
-        self.cache = cache  # ✅ Nutzt abstrakten Port
+        self.cache = cache
         self.ttl = ttl_seconds
 
     async def save(self, job: CrawlJob) -> None:
-        """Speichere CrawlJob im Cache mit TTL."""
+        """Save CrawlJob in cache with TTL."""
         key = f"crawljob:{job.job_id}"
-        # CachePort akzeptiert Any → pickle direkt speichern
+        # CachePort accepts Any -> store pickled directly
         await self.cache.set(key, pickle.dumps(job), ttl=self.ttl)
         log.debug("crawljob_saved", job_id=job.job_id, ttl=self.ttl)
 
     async def get(self, job_id: str) -> Optional[CrawlJob]:
-        """Lade CrawlJob aus Cache."""
+        """Load CrawlJob from cache."""
         key = f"crawljob:{job_id}"
         data = await self.cache.get(key)
         if data is None:

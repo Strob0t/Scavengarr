@@ -38,7 +38,7 @@ class TorznabSearchUseCase:
         self,
         plugins: PluginRegistryPort,
         engine: SearchEnginePort,
-        crawljob_factory: CrawlJobFactory,  # CHANGED: Factory instead of Service
+        crawljob_factory: CrawlJobFactory,
         crawljob_repo: CrawlJobRepository,
     ):
         """Initialize use case with dependencies.
@@ -51,7 +51,7 @@ class TorznabSearchUseCase:
         """
         self.plugins: PluginRegistryPort = plugins
         self.engine: SearchEnginePort = engine
-        self.crawljob_factory: CrawlJobFactory = crawljob_factory  # CHANGED
+        self.crawljob_factory: CrawlJobFactory = crawljob_factory
         self.crawljob_repo: CrawlJobRepository = crawljob_repo
 
     async def execute(self, q: TorznabQuery) -> list[TorznabItem]:

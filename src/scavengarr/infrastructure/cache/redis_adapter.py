@@ -14,16 +14,16 @@ log = structlog.get_logger(__name__)
 
 
 class RedisAdapter:
-    """Async Redis Cache mit Connection-Pooling via Semaphore.
+    """Async Redis cache with connection pooling via semaphore.
 
-    - Nutzt `redis.asyncio.Redis` (async-native, kein to_thread nötig).
-    - Semaphore limitiert parallele Redis-Ops (verhindert Connection-Exhaustion).
-    - Serialisierung via pickle (konsistent mit Diskcache-Adapter).
+    - Uses `redis.asyncio.Redis` (async-native, no to_thread needed).
+    - Semaphore limits parallel Redis ops (prevents connection exhaustion).
+    - Serialization via pickle (consistent with Diskcache adapter).
 
     Args:
-        url: Redis-URL (z. B. `redis://localhost:6379/0`).
-        ttl_seconds: Standard-TTL.
-        max_concurrent: Max. parallele Redis-Ops (default: 50, tunable).
+        url: Redis URL (e.g. `redis://localhost:6379/0`).
+        ttl_seconds: Default TTL.
+        max_concurrent: Max parallel Redis ops (default: 50, tunable).
     """
 
     def __init__(
@@ -46,12 +46,12 @@ class RedisAdapter:
 
     # --- Context Manager ---
     async def __aenter__(self) -> RedisAdapter:
-        """Initialisiere Redis-Client (Connection-Pool)."""
+        """Initialize Redis client (connection pool)."""
         if self._client is None:
             self._client = await Redis.from_url(
                 self.url,
                 encoding="utf-8",
-                decode_responses=False,  # wir serialisieren binär
+                decode_responses=False,  # we serialize binary
             )
             # Health-Check: PING
             try:
@@ -66,15 +66,15 @@ class RedisAdapter:
         await self.aclose()
 
     async def aclose(self) -> None:
-        """Cleanup: schließe Redis-Connection-Pool."""
+        """Cleanup: close Redis connection pool."""
         if self._client is not None:
             await self._client.aclose()
             self._client = None
             log.info("redis_closed")
 
-    # --- CachePort-Implementierung ---
+    # --- CachePort implementation ---
     async def get(self, key: str) -> Optional[Any]:
-        """GET mit pickle-Deserialisierung."""
+        """GET with pickle deserialization."""
         if self._client is None:
             raise RuntimeError("Redis not initialized. Use 'async with cache:'")
 
@@ -92,7 +92,7 @@ class RedisAdapter:
                 return None
 
     async def set(self, key: str, value: Any, *, ttl: int | None = None) -> None:
-        """SET mit pickle-Serialisierung + TTL."""
+        """SET with pickle serialization + TTL."""
         if self._client is None:
             raise RuntimeError("Redis not initialized.")
 
@@ -144,7 +144,7 @@ class RedisAdapter:
                 return False
 
     async def clear(self) -> None:
-        """FLUSHDB (lösche ALLE Keys in aktueller DB)."""
+        """FLUSHDB (delete ALL keys in current DB)."""
         if self._client is None:
             return
 

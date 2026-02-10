@@ -32,38 +32,38 @@ def _normalize_path(value: Any) -> Path:
 
 
 class CacheConfig(BaseSettings):
-    """Cache-Konfiguration (Backend-agnostisch)."""
+    """Cache configuration (backend-agnostic)."""
 
     backend: Literal["diskcache", "redis"] = Field(
         default="diskcache",
-        description="Cache-Backend: 'diskcache' (SQLite) oder 'redis'",
+        description="Cache backend: 'diskcache' (SQLite) or 'redis'",
     )
 
-    # Diskcache-Settings
+    # Diskcache settings
     directory: Path = Field(
         default=Path("./cache/scavengarr"),
         alias="dir",
-        description="Diskcache SQLite-DB-Pfad",
+        description="Diskcache SQLite DB path",
     )
 
-    # Redis-Settings
+    # Redis settings
     redis_url: str = Field(
         default="redis://localhost:6379/0",
-        description="Redis-Connection-URL (nur wenn backend=redis)",
+        description="Redis connection URL (only when backend=redis)",
     )
 
-    # Shared Settings
+    # Shared settings
     ttl_seconds: int = Field(
         default=3600,
-        description="Standard-TTL für Cache-Einträge (Sekunden)",
+        description="Default TTL for cache entries (seconds)",
     )
     max_concurrent: int = Field(
         default=10,
-        description="Max. parallele Cache-Ops (Semaphore-Limit)",
+        description="Max parallel cache ops (semaphore limit)",
     )
 
     model_config = SettingsConfigDict(
-        env_prefix="CACHE_",  # Env-Vars: CACHE_BACKEND, CACHE_REDIS_URL, ...
+        env_prefix="CACHE_",  # Env vars: CACHE_BACKEND, CACHE_REDIS_URL, ...
         case_sensitive=False,
     )
 
