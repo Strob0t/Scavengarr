@@ -72,6 +72,19 @@ class TestAuthConfig:
         assert a.username is None
         assert a.password is None
 
+    def test_env_fields_default_none(self) -> None:
+        a = AuthConfig()
+        assert a.username_env is None
+        assert a.password_env is None
+
+    def test_env_fields_stored(self) -> None:
+        a = AuthConfig(
+            username_env="MY_USER_ENV",
+            password_env="MY_PASS_ENV",
+        )
+        assert a.username_env == "MY_USER_ENV"
+        assert a.password_env == "MY_PASS_ENV"
+
 
 class TestHttpOverrides:
     def test_defaults_all_none(self) -> None:

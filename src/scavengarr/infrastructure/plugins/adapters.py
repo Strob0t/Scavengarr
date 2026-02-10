@@ -118,6 +118,8 @@ def to_domain_auth_config(pydantic: infra.AuthConfig) -> domain.AuthConfig:
         username_field=pydantic.username_field,
         password_field=pydantic.password_field,
         submit_selector=pydantic.submit_selector,
+        username_env=pydantic.username_env,
+        password_env=pydantic.password_env,
     )
 
 

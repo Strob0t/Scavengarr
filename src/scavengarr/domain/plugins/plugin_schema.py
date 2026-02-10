@@ -131,6 +131,8 @@ class AuthConfig:
     username_field: str | None = None
     password_field: str | None = None
     submit_selector: str | None = None
+    username_env: str | None = None
+    password_env: str | None = None
 
 
 @dataclass(frozen=True)

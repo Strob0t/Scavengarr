@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
@@ -229,6 +230,22 @@ class AuthConfig(BaseModel):
     username_field: Optional[str] = None
     password_field: Optional[str] = None
     submit_selector: Optional[str] = None
+
+    username_env: Optional[str] = None
+    password_env: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _resolve_env_credentials(self) -> "AuthConfig":
+        """Resolve credentials from env vars when *_env fields are set."""
+        if self.username_env and not self.username:
+            val = os.environ.get(self.username_env)
+            if val:
+                self.username = val
+        if self.password_env and not self.password:
+            val = os.environ.get(self.password_env)
+            if val:
+                self.password = val
+        return self
 
     @model_validator(mode="after")
     def _validate_auth_requirements(self) -> "AuthConfig":
