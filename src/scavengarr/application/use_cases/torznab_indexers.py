@@ -23,6 +23,8 @@ class TorznabIndexersUseCase:
                 version = getattr(p, "version", None)
                 scraping = getattr(p, "scraping", None)
                 mode = getattr(scraping, "mode", None) if scraping is not None else None
+                if mode is None:
+                    mode = getattr(p, "mode", None)
             except Exception:
                 pass  # Resilient: broken plugins still appear with minimal info
 

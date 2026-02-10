@@ -57,6 +57,26 @@ class TestTorznabIndexersUseCase:
         assert result[0]["version"] is None
         assert result[0]["mode"] is None
 
+    def test_python_plugin_with_direct_mode(self) -> None:
+        """Python plugins expose mode directly, not via scraping."""
+        plugin = MagicMock()
+        plugin.name = "boerse"
+        plugin.version = "1.0.0"
+        plugin.mode = "playwright"
+        plugin.scraping = None
+
+        registry = MagicMock()
+        registry.list_names.return_value = ["boerse"]
+        registry.get.return_value = plugin
+
+        uc = TorznabIndexersUseCase(plugins=registry)
+        result = uc.execute()
+
+        assert len(result) == 1
+        assert result[0]["name"] == "boerse"
+        assert result[0]["version"] == "1.0.0"
+        assert result[0]["mode"] == "playwright"
+
     def test_multiple_plugins(self) -> None:
         plugin_a = _FakePlugin(name="pluginA", version="1.0")
         plugin_b = _FakePlugin(name="pluginB", version="2.0")

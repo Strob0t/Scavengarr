@@ -214,6 +214,8 @@ class BoersePlugin:
     """Python plugin for boerse.sx forum using Playwright."""
 
     name = "boerse"
+    version = "1.0.0"
+    mode = "playwright"
 
     def __init__(self) -> None:
         self._domains = list(_DOMAINS)

@@ -101,6 +101,16 @@ def _make_mock_playwright(browser: AsyncMock | None = None) -> AsyncMock:
 _SESSION_COOKIES = [{"name": "bbsessionhash", "value": "abc123"}]
 
 
+class TestPluginAttributes:
+    def test_version_attribute(self) -> None:
+        plugin = _make_plugin()
+        assert plugin.version == "1.0.0"
+
+    def test_mode_attribute(self) -> None:
+        plugin = _make_plugin()
+        assert plugin.mode == "playwright"
+
+
 class TestLogin:
     async def test_login_success(self) -> None:
         plugin = _make_plugin()
