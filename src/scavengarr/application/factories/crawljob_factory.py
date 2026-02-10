@@ -56,13 +56,17 @@ class CrawlJobFactory:
 
         package_name = result.title or "Scavengarr Download"
         comment = self._build_comment(result)
-        text = result.download_link
+
+        validated_urls = (
+            result.validated_links if result.validated_links else [result.download_link]
+        )
+        text = "\r\n".join(validated_urls)
 
         crawl_job = CrawlJob(
             text=text,
             package_name=package_name,
             comment=comment,
-            validated_urls=[result.download_link],
+            validated_urls=validated_urls,
             source_url=result.source_url,
             created_at=now,
             expires_at=expires_at,

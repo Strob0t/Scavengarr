@@ -187,41 +187,34 @@ class HttpxScrapySearchEngine:
         self,
         results: list[SearchResult],
     ) -> list[SearchResult]:
-        """Validate download links and promote alternatives for dead primaries.
+        """Batch-validate ALL URLs and collect valid links per result.
 
         Flow:
-            1. Batch-validate all primary download_link URLs.
-            2. For results where primary fails, try alternative links
-               from download_links (stop at first valid).
-            3. Drop results only when NO link is valid.
+            1. Collect all unique URLs across all results (primaries + alternatives).
+            2. Single validate_batch() call for everything.
+            3. For each result, assemble validated_links and promote if needed.
+            4. Drop results with zero valid links.
 
         Args:
             results: Raw search results from scraper.
 
         Returns:
-            Results with reachable download links.
+            Results with validated_links populated and reachable download_link.
         """
-        urls = [r.download_link for r in results if r.download_link]
+        all_urls = self._collect_all_urls(results)
 
-        if not urls:
+        if not all_urls:
             log.warning("no_download_links_to_validate")
             return results
 
-        # 1) Batch-validate all primary links
-        validation_map = await self._link_validator.validate_batch(urls)
+        validation_map = await self._link_validator.validate_batch(list(all_urls))
 
-        # 2) Keep valid primaries, try alternatives for invalid ones
-        valid_results: list[SearchResult] = []
-        for r in results:
-            if not r.download_link:
-                continue
+        valid_results = [
+            r
+            for r in results
+            if r.download_link and self._apply_validation(r, validation_map)
+        ]
 
-            if validation_map.get(r.download_link, False):
-                valid_results.append(r)
-            elif await self._try_promote_alternative(r):
-                valid_results.append(r)
-
-        # 3) Log filtered results
         filtered = len(results) - len(valid_results)
         if filtered > 0:
             log.info(
@@ -233,50 +226,105 @@ class HttpxScrapySearchEngine:
 
         return valid_results
 
-    async def _try_promote_alternative(
-        self,
-        result: SearchResult,
-    ) -> bool:
-        """Try to replace a dead primary link with a valid alternative.
-
-        Iterates result.download_links, skips the failed primary,
-        validates alternatives sequentially (stops at first valid),
-        and mutates result.download_link to the valid alternative.
+    def _collect_all_urls(self, results: list[SearchResult]) -> set[str]:
+        """Collect all unique URLs from results (primaries + alternatives).
 
         Args:
-            result: SearchResult with a dead primary download_link.
+            results: Search results to extract URLs from.
 
         Returns:
-            True if an alternative was promoted, False otherwise.
+            Set of unique URL strings.
         """
-        if not result.download_links:
+        all_urls: set[str] = set()
+        for r in results:
+            if r.download_link:
+                all_urls.add(r.download_link)
+            if r.download_links:
+                for entry in r.download_links:
+                    url = self._extract_url_from_entry(entry)
+                    if url:
+                        all_urls.add(url)
+        return all_urls
+
+    def _apply_validation(
+        self,
+        result: SearchResult,
+        validation_map: dict[str, bool],
+    ) -> bool:
+        """Apply validation results to a single SearchResult.
+
+        Populates validated_links, promotes alternative if primary is dead.
+
+        Args:
+            result: SearchResult to process.
+            validation_map: URL -> validity mapping.
+
+        Returns:
+            True if result has at least one valid link, False otherwise.
+        """
+        valid_links = self._collect_valid_links(result, validation_map)
+        if not valid_links:
             return False
 
-        failed_primary = result.download_link
+        if not validation_map.get(result.download_link, False):
+            log.info(
+                "alternative_link_promoted",
+                title=result.title,
+                failed=result.download_link,
+                promoted=valid_links[0],
+            )
+            result.download_link = valid_links[0]
 
-        for entry in result.download_links:
-            # Extract URL from dict or string entry
-            if isinstance(entry, dict):
-                url = entry.get("link", "")
-            elif isinstance(entry, str):
-                url = entry
-            else:
-                continue
+        result.validated_links = valid_links
+        return True
 
-            if not url or url == failed_primary:
-                continue
+    def _collect_valid_links(
+        self,
+        result: SearchResult,
+        validation_map: dict[str, bool],
+    ) -> list[str]:
+        """Collect all valid URLs for a result (primary first, then alternatives).
 
-            if await self._link_validator.validate(url):
-                log.info(
-                    "alternative_link_promoted",
-                    title=result.title,
-                    failed=failed_primary,
-                    promoted=url,
-                )
-                result.download_link = url
-                return True
+        Args:
+            result: SearchResult to collect links for.
+            validation_map: URL -> validity mapping from batch validation.
 
-        return False
+        Returns:
+            Ordered list of valid URLs (deduplicated).
+        """
+        valid: list[str] = []
+        seen: set[str] = set()
+
+        # Primary first
+        if result.download_link and validation_map.get(result.download_link, False):
+            valid.append(result.download_link)
+            seen.add(result.download_link)
+
+        # Then alternatives from download_links
+        if result.download_links:
+            for entry in result.download_links:
+                url = self._extract_url_from_entry(entry)
+                if url and url not in seen and validation_map.get(url, False):
+                    valid.append(url)
+                    seen.add(url)
+
+        return valid
+
+    @staticmethod
+    def _extract_url_from_entry(entry: dict[str, str] | str | object) -> str | None:
+        """Extract URL from a download_links entry (dict or string).
+
+        Args:
+            entry: A download_links list element.
+
+        Returns:
+            URL string or None.
+        """
+        if isinstance(entry, dict):
+            return entry.get("link", "") or None
+        if isinstance(entry, str):
+            return entry or None
+        return None
 
     def _convert_to_result(
         self,

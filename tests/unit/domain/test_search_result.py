@@ -30,6 +30,7 @@ class TestSearchResult:
         assert r.download_links is None
         assert r.source_url is None
         assert r.scraped_from_stage is None
+        assert r.validated_links is None
 
     def test_default_torznab_fields(self) -> None:
         r = SearchResult(

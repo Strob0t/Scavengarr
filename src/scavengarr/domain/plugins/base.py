@@ -28,6 +28,9 @@ class SearchResult:
     source_url: str | None = None
     scraped_from_stage: str | None = None
 
+    # Post-validation: all valid URLs (primary + alternatives)
+    validated_links: list[str] | None = None
+
     # Metadata
     metadata: dict[str, Any] = field(default_factory=dict)
 

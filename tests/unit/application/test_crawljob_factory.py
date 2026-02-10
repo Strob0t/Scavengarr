@@ -86,6 +86,45 @@ class TestCrawlJobFactoryCreate:
         assert job.package_name == "Scavengarr Download"
 
 
+class TestMultiLinkCrawlJob:
+    def test_multi_link_text(self, crawljob_factory: CrawlJobFactory) -> None:
+        result = SearchResult(
+            title="Movie",
+            download_link="https://a.com/dl",
+            validated_links=[
+                "https://a.com/dl",
+                "https://b.com/dl",
+                "https://c.com/dl",
+            ],
+            metadata={},
+        )
+        job = crawljob_factory.create_from_search_result(result)
+        assert job.text == "https://a.com/dl\r\nhttps://b.com/dl\r\nhttps://c.com/dl"
+
+    def test_multi_link_validated_urls(self, crawljob_factory: CrawlJobFactory) -> None:
+        result = SearchResult(
+            title="Movie",
+            download_link="https://a.com/dl",
+            validated_links=["https://a.com/dl", "https://b.com/dl"],
+            metadata={},
+        )
+        job = crawljob_factory.create_from_search_result(result)
+        assert job.validated_urls == ["https://a.com/dl", "https://b.com/dl"]
+
+    def test_fallback_to_download_link_when_no_validated_links(
+        self, crawljob_factory: CrawlJobFactory
+    ) -> None:
+        result = SearchResult(
+            title="Movie",
+            download_link="https://a.com/dl",
+            validated_links=None,
+            metadata={},
+        )
+        job = crawljob_factory.create_from_search_result(result)
+        assert job.text == "https://a.com/dl"
+        assert job.validated_urls == ["https://a.com/dl"]
+
+
 class TestBuildComment:
     def test_with_description_and_size(self, crawljob_factory: CrawlJobFactory) -> None:
         result = SearchResult(
