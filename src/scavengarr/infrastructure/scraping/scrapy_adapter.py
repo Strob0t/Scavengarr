@@ -535,18 +535,24 @@ class ScrapyAdapter:
             if stage_name in paginated:
                 results[stage_name].extend(paginated[stage_name])
 
-        # Recurse to next stage
+        # Recurse to next stage (parallel, bounded by max_links)
         if stage_config.next_stage and links:
             next_stage_name = stage_config.next_stage
 
             # Limit links to prevent memory overflow
             max_links = 10
-            for link in links[:max_links]:
-                sub_results = await self.scrape_stage(
-                    next_stage_name, url=link, depth=depth + 1
-                )
+            limited_links = links[:max_links]
 
-                # Merge sub_results
+            # Parallel execution of next-stage scraping
+            sub_results_list = await asyncio.gather(
+                *(
+                    self.scrape_stage(next_stage_name, url=link, depth=depth + 1)
+                    for link in limited_links
+                )
+            )
+
+            # Merge all sub_results
+            for sub_results in sub_results_list:
                 for sub_stage, sub_items in sub_results.items():
                     if sub_stage not in results:
                         results[sub_stage] = []
