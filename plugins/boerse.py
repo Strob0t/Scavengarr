@@ -49,18 +49,37 @@ _USER_AGENT = (
 
 _MAX_CONCURRENT_PAGES = 3
 
+# Torznab category → vBulletin forum ID mapping.
+# Default is "30" (Videoboerse: movies, series, docs).
+_CATEGORY_FORUM_MAP: dict[int, str] = {
+    2000: "30",  # Movies  → Videoboerse
+    5000: "30",  # TV      → Videoboerse
+    3000: "25",  # Audio   → Audioboerse
+    7000: "21",  # Books   → Dokumente
+    1000: "16",  # Console → Spiele Boerse
+    4000: "16",  # PC      → Spiele Boerse
+}
+
 # Hosts that are internal (not download links)
 _INTERNAL_HOSTS = {
-    "boerse.am", "boerse.sx", "boerse.im", "boerse.ai", "boerse.kz",
+    "boerse.am",
+    "boerse.sx",
+    "boerse.im",
+    "boerse.ai",
+    "boerse.kz",
 }
 
 # Known link-protection / container services.
 # Only links from these domains are treated as download links.
 _LINK_CONTAINER_HOSTS = {
-    "keeplinks.org", "keeplinks.eu",
-    "share-links.biz", "share-links.org",
-    "filecrypt.cc", "filecrypt.co",
-    "safelinks.to", "protectlinks.com",
+    "keeplinks.org",
+    "keeplinks.eu",
+    "share-links.biz",
+    "share-links.org",
+    "filecrypt.cc",
+    "filecrypt.co",
+    "safelinks.to",
+    "protectlinks.com",
 }
 
 
@@ -77,18 +96,21 @@ class _PostLinkParser(HTMLParser):
         self.links: list[dict[str, str]] = []
         self._base_domain = base_domain
         self._in_post = False
+        self._div_depth = 0
         self._in_a = False
         self._current_href = ""
         self._current_text = ""
 
-    def handle_starttag(
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attr_dict = dict(attrs)
         if tag == "div":
-            div_id = attr_dict.get("id", "")
-            if div_id.startswith("post_message"):
-                self._in_post = True
+            if self._in_post:
+                self._div_depth += 1
+            else:
+                div_id = attr_dict.get("id", "")
+                if div_id.startswith("post_message"):
+                    self._in_post = True
+                    self._div_depth = 0
         if tag == "a" and self._in_post:
             href = attr_dict.get("href", "")
             if href and href.startswith("http"):
@@ -102,7 +124,10 @@ class _PostLinkParser(HTMLParser):
 
     def handle_endtag(self, tag: str) -> None:
         if tag == "div" and self._in_post:
-            self._in_post = False
+            if self._div_depth > 0:
+                self._div_depth -= 1
+            else:
+                self._in_post = False
         if tag == "a" and self._in_a:
             self._in_a = False
             href = self._current_href
@@ -133,9 +158,7 @@ class _ThreadLinkParser(HTMLParser):
         self._base_url = base_url
         self._seen_ids: set[str] = set()
 
-    def handle_starttag(
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag != "a":
             return
         attr_dict = dict(attrs)
@@ -169,9 +192,7 @@ class _ThreadTitleParser(HTMLParser):
         self.title: str | None = None
         self._in_title_tag = False
 
-    def handle_starttag(
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == "title":
             self._in_title_tag = True
 
@@ -180,9 +201,7 @@ class _ThreadTitleParser(HTMLParser):
             text = data.strip()
             if text:
                 # Strip " - Boerse.AM (...)" suffix from <title>
-                text = re.sub(
-                    r"\s*-\s*[Bb]oerse\.\w+.*$", "", text
-                )
+                text = re.sub(r"\s*-\s*[Bb]oerse\.\w+.*$", "", text)
                 if text:
                     self.title = text
 
@@ -287,22 +306,17 @@ class BoersePlugin:
 
                     # Wait for redirect to complete
                     try:
-                        await page.wait_for_load_state(
-                            "networkidle", timeout=10_000
-                        )
+                        await page.wait_for_load_state("networkidle", timeout=10_000)
                     except Exception:  # noqa: BLE001
                         pass
 
-                    # Verify login: check for welcome message
-                    body = await page.evaluate(
-                        "() => document.body.innerText"
-                    )
-                    if username.lower() in body.lower():
+                    # Verify login: check for session cookie
+                    cookies = await self._context.cookies()
+                    has_session = any(c["name"] == "bbsessionhash" for c in cookies)
+                    if has_session:
                         self.base_url = domain
                         self._logged_in = True
-                        log.info(
-                            "boerse_login_success", domain=domain
-                        )
+                        log.info("boerse_login_success", domain=domain)
                         await page.close()
                         return
 
@@ -320,39 +334,82 @@ class BoersePlugin:
 
         raise RuntimeError("All boerse domains failed during login")
 
-    async def _search_threads(self, query: str) -> list[str]:
-        """Navigate to search.php, fill the form, extract thread URLs."""
+    async def _search_threads(self, query: str, forum_id: str = "30") -> list[str]:
+        """Navigate to search.php, fill the full form, extract thread URLs.
+
+        Uses the full ``#searchform`` with forum filtering instead of the
+        quick-search ``#lsa_input`` which returns less targeted results.
+
+        Args:
+            query: Search term.
+            forum_id: vBulletin forum ID to search in.
+                      Default ``"30"`` = Videoboerse (movies/series).
+        """
         assert self._context is not None
 
         page = await self._context.new_page()
         try:
-            # Load the search page (contains real form with securitytoken)
             await page.goto(
                 f"{self.base_url}/search.php",
                 wait_until="domcontentloaded",
             )
             await self._wait_for_cloudflare(page)
 
-            # Fill the quick-search input (#lsa_input) and submit
-            await page.fill("#lsa_input", query)
+            # Fill the full search form (#searchform)
+            await page.evaluate(
+                """([q, fid]) => {
+                    const form = document.getElementById('searchform');
+                    if (!form) throw new Error('no searchform');
+
+                    // Set search query
+                    form.querySelector(
+                        'input[name="query"]'
+                    ).value = q;
+
+                    // Title-only search
+                    form.querySelector(
+                        'select[name="titleonly"]'
+                    ).value = '1';
+
+                    // Select forum
+                    const sel = form.querySelector(
+                        'select[name="forumchoice[]"]'
+                    );
+                    for (const o of sel.options) o.selected = false;
+                    for (const o of sel.options) {
+                        if (o.value === fid) {
+                            o.selected = true;
+                            break;
+                        }
+                    }
+
+                    // Include child forums
+                    const cb = form.querySelector(
+                        'input[name="childforums"]'
+                    );
+                    if (cb) cb.checked = true;
+
+                    // Show threads (not individual posts)
+                    for (const r of form.querySelectorAll(
+                        'input[name="showposts"]'
+                    )) {
+                        r.checked = (r.value === '0');
+                    }
+                }""",
+                [query, forum_id],
+            )
 
             async with page.expect_navigation(
                 wait_until="domcontentloaded", timeout=15_000
             ):
                 await page.evaluate(
                     """() => {
-                        const input = document.getElementById(
-                            'lsa_input'
-                        );
-                        input.closest('form').submit();
+                        document.getElementById('searchform').submit();
                     }"""
                 )
 
-            # Wait for results page to fully load
             try:
-                await page.wait_for_load_state(
-                    "networkidle", timeout=10_000
-                )
+                await page.wait_for_load_state("networkidle", timeout=10_000)
             except Exception:  # noqa: BLE001
                 pass
 
@@ -413,7 +470,9 @@ class BoersePlugin:
     ) -> list[SearchResult]:
         """Search boerse.sx and return results with download links."""
         await self._ensure_session()
-        thread_urls = await self._search_threads(query)
+
+        forum_id = _CATEGORY_FORUM_MAP.get(category or 2000, "30")
+        thread_urls = await self._search_threads(query, forum_id)
 
         if not thread_urls:
             return []

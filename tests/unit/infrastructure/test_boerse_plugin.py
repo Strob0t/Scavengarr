@@ -30,6 +30,7 @@ _ThreadLinkParser = _boerse._ThreadLinkParser
 _ThreadTitleParser = _boerse._ThreadTitleParser
 _hoster_from_url = _boerse._hoster_from_url
 _hoster_from_text = _boerse._hoster_from_text
+_CATEGORY_FORUM_MAP = _boerse._CATEGORY_FORUM_MAP
 
 
 _TEST_CREDENTIALS = {
@@ -97,12 +98,15 @@ def _make_mock_playwright(browser: AsyncMock | None = None) -> AsyncMock:
     return pw
 
 
+_SESSION_COOKIES = [{"name": "bbsessionhash", "value": "abc123"}]
+
+
 class TestLogin:
     async def test_login_success(self) -> None:
         plugin = _make_plugin()
 
-        login_page = _make_mock_page(body_text="Willkommen testuser")
-        context = _make_mock_context(pages=[login_page])
+        login_page = _make_mock_page(body_text="Danke testuser")
+        context = _make_mock_context(pages=[login_page], cookies=_SESSION_COOKIES)
         browser = _make_mock_browser(context)
         pw = _make_mock_playwright(browser)
 
@@ -127,8 +131,10 @@ class TestLogin:
         fail_page.is_closed = MagicMock(return_value=False)
 
         # Second page (boerse.sx) → succeeds
-        ok_page = _make_mock_page(body_text="Willkommen testuser")
-        context = _make_mock_context(pages=[fail_page, ok_page])
+        ok_page = _make_mock_page(body_text="Danke testuser")
+        context = _make_mock_context(
+            pages=[fail_page, ok_page], cookies=_SESSION_COOKIES
+        )
         browser = _make_mock_browser(context)
         pw = _make_mock_playwright(browser)
 
@@ -411,6 +417,59 @@ class TestPostLinkParser:
 
         assert len(parser.links) == 1
 
+    def test_nested_divs_do_not_exit_post_early(self) -> None:
+        """Download links after nested spoiler divs must still be found.
+
+        This mirrors real boerse.sx thread structure where container links
+        appear *after* spoiler / code divs inside the post_message div.
+        """
+        html = """
+        <div id="post_message_999">
+          <div align="center">
+            <b>Release Title 2025</b><br>
+            <div class="wrap-spoiler">
+              <div class="pre-spoiler">Spoiler</div>
+              <div>
+                <div class="body-spoiler" style="display:none;">
+                  <div style="padding:10px;">
+                    <div style="margin:20px;">NFO content</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <a href="https://www.keeplinks.org/p40/abc123">DDownload</a>
+            <a href="https://www.keeplinks.org/p40/def456">RapidGator</a>
+          </div>
+        </div>
+        """
+
+        parser = _PostLinkParser("boerse.am")
+        parser.feed(html)
+
+        assert len(parser.links) == 2
+        assert parser.links[0]["hoster"] == "ddownload"
+        assert parser.links[1]["hoster"] == "rapidgator"
+
+    def test_multiple_posts_all_parsed(self) -> None:
+        """Links from multiple post_message divs should all be collected."""
+        html = """
+        <div id="post_message_1">
+          <div align="center">
+            <a href="https://www.keeplinks.org/p40/aaa">Post1</a>
+          </div>
+        </div>
+        <div id="post_message_2">
+          <div align="center">
+            <a href="https://www.keeplinks.org/p40/bbb">Post2</a>
+          </div>
+        </div>
+        """
+
+        parser = _PostLinkParser("boerse.am")
+        parser.feed(html)
+
+        assert len(parser.links) == 2
+
 
 class TestThreadLinkParser:
     def test_thread_links_extracted(self) -> None:
@@ -456,9 +515,7 @@ class TestThreadLinkParser:
 class TestTitleParser:
     def test_title_stripped(self) -> None:
         parser = _ThreadTitleParser()
-        parser.feed(
-            "<title>SpongeBob S01 - Boerse.AM (Boerse.AI/IM)</title>"
-        )
+        parser.feed("<title>SpongeBob S01 - Boerse.AM (Boerse.AI/IM)</title>")
         assert parser.title == "SpongeBob S01"
 
     def test_title_lowercase_boerse(self) -> None:
@@ -483,3 +540,20 @@ class TestHosterHelpers:
     def test_hoster_from_text_empty(self) -> None:
         assert _hoster_from_text("") == ""
         assert _hoster_from_text("https://example.com") == ""
+
+
+class TestCategoryForumMapping:
+    def test_movies_maps_to_videoboerse(self) -> None:
+        assert _CATEGORY_FORUM_MAP[2000] == "30"
+
+    def test_tv_maps_to_videoboerse(self) -> None:
+        assert _CATEGORY_FORUM_MAP[5000] == "30"
+
+    def test_audio_maps_to_audioboerse(self) -> None:
+        assert _CATEGORY_FORUM_MAP[3000] == "25"
+
+    def test_books_maps_to_dokumente(self) -> None:
+        assert _CATEGORY_FORUM_MAP[7000] == "21"
+
+    def test_default_fallback(self) -> None:
+        assert _CATEGORY_FORUM_MAP.get(9999, "30") == "30"
