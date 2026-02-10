@@ -82,7 +82,10 @@ If you decide to track known issues, keep them in the changelog under a `KNOWN_I
 When changing behavior or adding features, update the relevant documentation:
 - `CLAUDE.md` when architecture or constraints change.
 - `README.md` when setup/run instructions change.
-- `docs/` for detailed documentation (architecture, API, plugins, config, deployment).
+- `docs/features/` for feature documentation (plugins, API, config, scraping, validation).
+- `docs/architecture/` for architecture docs (clean-architecture.md, codeplan.md).
+- `docs/plans/` for planned features (playwright-engine, more-plugins, integration-tests, search-caching).
+- `CHANGELOG.md` when adding notable changes.
 - OpenSpec documents under `openspec/changes/...` when the change is specified or tracked there.
 
 ***
@@ -168,6 +171,14 @@ Rule: Interfaces contain no business rules, only input/output.
 
 The source of truth for dependencies is `pyproject.toml`.
 Scavengarr uses FastAPI/Uvicorn, Scrapy, Playwright, structlog, diskcache, Typer, pydantic-settings, httpx, and optionally Redis.
+
+### Package documentation (docs-mcp-server)
+
+When writing code that uses packages from `pyproject.toml`, use the **docs-mcp-server** MCP tools to look up current API documentation:
+- `search_docs(library, query)` — search indexed docs for a package
+- `scrape_docs(url, library)` — index new package docs if not yet available
+
+This ensures code is written against the actual API of the installed package versions.
 
 ### Dependency principles
 - Keep third-party dependencies minimal: prefer stdlib, then established libraries, only then custom code.
@@ -317,7 +328,7 @@ The system provides a stable download endpoint that delivers a `.crawljob` file 
 - Integration: HTTP router ↔ use case ↔ adapter with HTTP mocking.
 - Optional E2E: real plugin fixtures, but deterministic (no external sites in CI).
 
-### Current test suite (160 tests)
+### Current test suite (235 tests)
 
 ```
 tests/
@@ -341,6 +352,9 @@ tests/
       test_link_validator.py           # HTTP HEAD/GET validation
       test_search_engine.py            # Multi-stage result conversion, dedup
       test_crawljob_cache.py           # Cache repository (pickle storage)
+      test_auth_env_resolution.py      # AuthConfig env var resolution
+      test_boerse_plugin.py            # Boerse Python plugin unit tests
+      test_scrapy_fallback.py          # ScrapyAdapter mirror fallback
 ```
 
 Important mock patterns:
@@ -464,16 +478,21 @@ def add_item(item: str, items: list[str] | None = None) -> list[str]:
 
 | Area | Path (example/pattern) |
 |---|---|
-| Dependencies & tooling | `pyproject.toml`  |
-| Pre-commit configuration | `.pre-commit-config.yaml`  |
-| Domain entities/ports | `src/scavengarr/domain/...`  |
-| Use cases | `src/scavengarr/application/...`  |
-| Adapters (scraping/cache/plugins) | `src/scavengarr/infrastructure/...`  |
-| HTTP router / CLI | `src/scavengarr/interfaces/...`  |
-| Tests | `tests/unit/{domain,application,infrastructure}/...`  |
-| Documentation | `docs/`  |
-| Plugins (examples) | `plugins/`  |
-| OpenSpec change specs | `openspec/changes/...`  |
+| Dependencies & tooling | `pyproject.toml` |
+| Pre-commit configuration | `.pre-commit-config.yaml` |
+| Changelog | `CHANGELOG.md` |
+| Domain entities/ports | `src/scavengarr/domain/...` |
+| Use cases | `src/scavengarr/application/...` |
+| Adapters (scraping/cache/plugins) | `src/scavengarr/infrastructure/...` |
+| HTTP router / CLI | `src/scavengarr/interfaces/...` |
+| Tests | `tests/unit/{domain,application,infrastructure}/...` |
+| Feature documentation | `docs/features/` (README.md is the index) |
+| Architecture documentation | `docs/architecture/` (clean-architecture.md, codeplan.md) |
+| Future plans | `docs/plans/` (playwright-engine, more-plugins, integration-tests, search-caching) |
+| Refactor history | `docs/refactor/COMPLETED/` |
+| Python best practices | `docs/PYTHON-BEST-PRACTICES.md` |
+| Plugins (examples) | `plugins/` (filmpalast.to.yaml, boerse.py) |
+| OpenSpec change specs | `openspec/changes/...` |
 
 ### Adding a new YAML plugin
 1. Place the YAML file in the plugin dir (configurable via `SCAVENGARR_PLUGIN_DIR`).
