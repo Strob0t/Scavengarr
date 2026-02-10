@@ -50,18 +50,25 @@ _USER_AGENT = (
 _MAX_CONCURRENT_PAGES = 3
 
 # Hosts that are internal (not download links)
-_INTERNAL_HOSTS = {"boerse.am", "boerse.sx", "boerse.im", "boerse.ai", "boerse.kz"}
+_INTERNAL_HOSTS = {
+    "boerse.am", "boerse.sx", "boerse.im", "boerse.ai", "boerse.kz",
+}
 
-# Known link-protection / container services
-_LINK_CONTAINER_HOSTS = {"keeplinks.org", "keeplinks.eu"}
+# Known link-protection / container services.
+# Only links from these domains are treated as download links.
+_LINK_CONTAINER_HOSTS = {
+    "keeplinks.org", "keeplinks.eu",
+    "share-links.biz", "share-links.org",
+    "filecrypt.cc", "filecrypt.co",
+    "safelinks.to", "protectlinks.com",
+}
 
 
 class _PostLinkParser(HTMLParser):
     """Extract download links from vBulletin post content.
 
-    Captures external links from ``[id^="post_message"]`` divs.
-    Links to known link-protection containers (keeplinks.org) or
-    external hosters are collected; internal boerse links are skipped.
+    Only captures links to known link-protection containers
+    (keeplinks.org, share-links.biz, etc.) from post_message divs.
     The hoster name is derived from the anchor text when available.
     """
 
@@ -101,9 +108,9 @@ class _PostLinkParser(HTMLParser):
             href = self._current_href
             text = self._current_text.strip()
 
-            # Skip internal boerse links
+            # Only accept links from known container services
             host = (urlparse(href).hostname or "").replace("www.", "")
-            if host in _INTERNAL_HOSTS or not host:
+            if not _is_container_host(host):
                 return
 
             # Derive hoster name from anchor text
@@ -114,12 +121,17 @@ class _PostLinkParser(HTMLParser):
 
 
 class _ThreadLinkParser(HTMLParser):
-    """Extract thread links from vBulletin search results page."""
+    """Extract thread links from vBulletin search results page.
+
+    Normalizes URLs by thread ID to avoid duplicates from
+    highlight/goto/post variants of the same thread.
+    """
 
     def __init__(self, base_url: str) -> None:
         super().__init__()
         self.thread_urls: list[str] = []
         self._base_url = base_url
+        self._seen_ids: set[str] = set()
 
     def handle_starttag(
         self, tag: str, attrs: list[tuple[str, str | None]]
@@ -130,8 +142,19 @@ class _ThreadLinkParser(HTMLParser):
         href = attr_dict.get("href", "")
         if not href:
             return
-        # vBulletin thread links: showthread.php?t=... or /threads/...
-        if "showthread.php" in href or "/threads/" in href:
+        if "showthread.php" not in href and "/threads/" not in href:
+            return
+
+        # Extract thread ID from showthread.php?t=NNN
+        m = re.search(r"[?&]t=(\d+)", href)
+        if m:
+            tid = m.group(1)
+            if tid in self._seen_ids:
+                return
+            self._seen_ids.add(tid)
+            url = f"{self._base_url}/showthread.php?t={tid}"
+            self.thread_urls.append(url)
+        elif "/threads/" in href:
             if not href.startswith("http"):
                 href = f"{self._base_url}/{href.lstrip('/')}"
             if href not in self.thread_urls:
@@ -419,6 +442,11 @@ class BoersePlugin:
             await self._playwright.stop()
             self._playwright = None
         self._logged_in = False
+
+
+def _is_container_host(host: str) -> bool:
+    """Check if a hostname belongs to a known link container."""
+    return any(host.endswith(c) for c in _LINK_CONTAINER_HOSTS)
 
 
 def _hoster_from_text(text: str) -> str:

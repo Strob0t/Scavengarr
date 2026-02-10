@@ -354,25 +354,14 @@ class TestPostLinkParser:
         assert parser.links[0]["hoster"] == "ddownload"
         assert parser.links[1]["hoster"] == "rapidgator"
 
-    def test_internal_links_skipped(self) -> None:
+    def test_non_container_links_skipped(self) -> None:
         html = """
         <div id="post_message_789">
-        <a href="https://boerse.am/showthread.php?t=123">Internal thread</a>
-        <a href="https://www.keeplinks.org/p53/abc" target="_blank">RapidGator</a>
-        </div>
-        """
-
-        parser = _PostLinkParser("boerse.am")
-        parser.feed(html)
-
-        assert len(parser.links) == 1
-        assert parser.links[0]["hoster"] == "rapidgator"
-
-    def test_links_outside_post_div_ignored(self) -> None:
-        html = """
-        <a href="https://external.com/file" target="_blank">Outside</a>
-        <div id="post_message_100">
-        <a href="https://www.keeplinks.org/p53/abc" target="_blank">Inside</a>
+        <a href="https://boerse.am/showthread.php?t=123">Internal</a>
+        <a href="https://www.imdb.com/title/tt123">IMDB</a>
+        <a href="https://www.youtube.com/watch?v=abc">Trailer</a>
+        <a href="https://fastpic.org/view/123">Preview</a>
+        <a href="https://www.keeplinks.org/p53/abc">RapidGator</a>
         </div>
         """
 
@@ -381,6 +370,33 @@ class TestPostLinkParser:
 
         assert len(parser.links) == 1
         assert "keeplinks.org" in parser.links[0]["link"]
+
+    def test_links_outside_post_div_ignored(self) -> None:
+        html = """
+        <a href="https://www.keeplinks.org/p53/out">Outside</a>
+        <div id="post_message_100">
+        <a href="https://www.keeplinks.org/p53/abc">Inside</a>
+        </div>
+        """
+
+        parser = _PostLinkParser("boerse.am")
+        parser.feed(html)
+
+        assert len(parser.links) == 1
+        assert parser.links[0]["link"].endswith("/abc")
+
+    def test_share_links_biz_accepted(self) -> None:
+        html = """
+        <div id="post_message_400">
+        <a href="http://share-links.biz/_abc123">share-online</a>
+        </div>
+        """
+
+        parser = _PostLinkParser("boerse.am")
+        parser.feed(html)
+
+        assert len(parser.links) == 1
+        assert "share-links.biz" in parser.links[0]["link"]
 
     def test_duplicate_links_deduplicated(self) -> None:
         html = """
@@ -410,6 +426,31 @@ class TestThreadLinkParser:
         assert len(parser.thread_urls) == 2
         assert parser.thread_urls[0] == "https://boerse.am/showthread.php?t=123"
         assert parser.thread_urls[1] == "https://boerse.am/threads/456-some-thread"
+
+    def test_duplicate_thread_ids_deduplicated(self) -> None:
+        html = """
+        <a href="showthread.php?t=123">Normal</a>
+        <a href="showthread.php?t=123&highlight=SpongeBob">Highlighted</a>
+        <a href="showthread.php?goto=newpost&t=123">New post</a>
+        """
+
+        parser = _ThreadLinkParser("https://boerse.am")
+        parser.feed(html)
+
+        assert len(parser.thread_urls) == 1
+        assert parser.thread_urls[0] == "https://boerse.am/showthread.php?t=123"
+
+    def test_post_links_without_thread_id_skipped(self) -> None:
+        html = """
+        <a href="showthread.php?p=456#post456">Post link</a>
+        <a href="showthread.php?t=123">Thread link</a>
+        """
+
+        parser = _ThreadLinkParser("https://boerse.am")
+        parser.feed(html)
+
+        assert len(parser.thread_urls) == 1
+        assert "t=123" in parser.thread_urls[0]
 
 
 class TestTitleParser:
