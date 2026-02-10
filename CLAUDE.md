@@ -82,6 +82,7 @@ If you decide to track known issues, keep them in the changelog under a `KNOWN_I
 When changing behavior or adding features, update the relevant documentation:
 - `CLAUDE.md` when architecture or constraints change.
 - `README.md` when setup/run instructions change.
+- `docs/` for detailed documentation (architecture, API, plugins, config, deployment).
 - OpenSpec documents under `openspec/changes/...` when the change is specified or tracked there.
 
 ***
@@ -316,6 +317,36 @@ The system provides a stable download endpoint that delivers a `.crawljob` file 
 - Integration: HTTP router ↔ use case ↔ adapter with HTTP mocking.
 - Optional E2E: real plugin fixtures, but deterministic (no external sites in CI).
 
+### Current test suite (160 tests)
+
+```
+tests/
+  conftest.py                          # Shared fixtures (entities, mock ports)
+  unit/
+    domain/
+      test_crawljob.py                 # CrawlJob entity, enums, serialization
+      test_torznab_entities.py         # TorznabQuery/Item/Caps, exceptions
+      test_search_result.py            # SearchResult, StageResult
+      test_plugin_schema.py            # YamlPluginDefinition, stage config
+    application/
+      test_crawljob_factory.py         # SearchResult → CrawlJob conversion
+      test_torznab_caps.py             # Capabilities use case
+      test_torznab_indexers.py         # Indexer listing use case
+      test_torznab_search.py           # Search use case (validation, error paths)
+    infrastructure/
+      test_converters.py               # to_int()
+      test_parsers.py                  # parse_size_to_bytes()
+      test_extractors.py               # extract_download_link()
+      test_presenter.py                # Torznab XML rendering (caps + RSS)
+      test_link_validator.py           # HTTP HEAD/GET validation
+      test_search_engine.py            # Multi-stage result conversion, dedup
+      test_crawljob_cache.py           # Cache repository (pickle storage)
+```
+
+Important mock patterns:
+- `PluginRegistryPort` is **synchronous** → use `MagicMock` (not `AsyncMock`).
+- `SearchEnginePort`, `CrawlJobRepository`, `CachePort` are **async** → use `AsyncMock`.
+
 ### TDD loop (mandatory for agents)
 1. Write test first (precise acceptance, small scope).
 2. Run test (must be red).
@@ -334,9 +365,39 @@ Zen of Python (PEP 20): explicit is better than implicit; simple is better than 
 - Functional over OOP: prefer functions/small modules over deep class hierarchies (fewer side effects).
 - Dependency injection: dependencies explicit via constructors/factory functions.
 
+### Typing standards (modern Python 3.10+ syntax, MANDATORY)
+
+ALWAYS use modern syntax everywhere (classes, functions, variables, return types, parameters):
+
+```python
+from __future__ import annotations   # ALWAYS include in every file
+
+# ✅ correct
+def process(items: list[str], default: int | None = None) -> dict[str, int]: ...
+
+# ❌ wrong (legacy typing)
+from typing import List, Optional, Dict
+def process(items: List[str], default: Optional[int] = None) -> Dict[str, int]: ...
+```
+
+| Modern syntax | Legacy (forbidden) |
+|---|---|
+| `T \| None` | `Optional[T]` |
+| `list[T]` | `List[T]` |
+| `dict[K, V]` | `Dict[K, V]` |
+| `set[T]` | `Set[T]` |
+| `tuple[T, ...]` | `Tuple[T, ...]` |
+| `collections.abc.Iterable` | `typing.Iterable` |
+
+Additional rules:
+- Fully type all function signatures (parameters + return types).
+- Only import from `typing`: `Any`, `Protocol`, `Literal`, `TypeVar`, `runtime_checkable`.
+- All ports/interfaces use `Protocol` (not `ABC`).
+- Use `@dataclass` for entities and value objects (`frozen=True` for immutables).
+
 ### Dignified Python (safety rules)
 - No mutable default arguments (`def f(x=[]): ...` is forbidden).
-- Don’t swallow exceptions (`except: pass` is forbidden); log + re-raise or cleanly map.
+- Don't swallow exceptions (`except: pass` is forbidden); log + re-raise or cleanly map.
 - Take type hints seriously: use `Literal` for fixed values; casts only with runtime checks.
 
 ### Async/await: non-blocking I/O is mandatory
@@ -409,6 +470,9 @@ def add_item(item: str, items: list[str] | None = None) -> list[str]:
 | Use cases | `src/scavengarr/application/...`  |
 | Adapters (scraping/cache/plugins) | `src/scavengarr/infrastructure/...`  |
 | HTTP router / CLI | `src/scavengarr/interfaces/...`  |
+| Tests | `tests/unit/{domain,application,infrastructure}/...`  |
+| Documentation | `docs/`  |
+| Plugins (examples) | `plugins/`  |
 | OpenSpec change specs | `openspec/changes/...`  |
 
 ### Adding a new YAML plugin
