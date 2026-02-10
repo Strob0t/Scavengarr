@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional, Protocol
+from typing import Any, Protocol
 
 
 class CachePort(Protocol):
@@ -17,7 +17,7 @@ class CachePort(Protocol):
             await cache.set("key", value)
     """
 
-    async def get(self, key: str) -> Optional[Any]:
+    async def get(self, key: str) -> Any:
         """Retrieve value. None = not found / expired."""
         ...
 

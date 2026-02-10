@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Protocol
+from typing import Any, Protocol
 
 
 @dataclass
@@ -12,25 +12,25 @@ class SearchResult:
     title: str
     download_link: str
 
-    # Torznab-Standard-Felder
-    seeders: Optional[int] = None
-    leechers: Optional[int] = None
-    size: Optional[str] = None
+    # Torznab standard fields
+    seeders: int | None = None
+    leechers: int | None = None
+    size: str | None = None
 
-    # Erweiterte Felder
-    release_name: Optional[str] = None
-    description: Optional[str] = None
-    published_date: Optional[str] = None
+    # Extended fields
+    release_name: str | None = None
+    description: str | None = None
+    published_date: str | None = None
 
     # Multi-stage specific
-    download_links: Optional[List[Dict[str, str]]] = None
-    source_url: Optional[str] = None
-    scraped_from_stage: Optional[str] = None
+    download_links: list[dict[str, str]] | None = None
+    source_url: str | None = None
+    scraped_from_stage: str | None = None
 
     # Metadata
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    # Torznab-spezifisch
+    # Torznab-specific
     category: int = 2000  # Default: Movies
     grabs: int = 0
     download_volume_factor: float = 0.0  # Direct Download = no upload required
@@ -48,8 +48,8 @@ class StageResult:
     url: str
     stage_name: str
     depth: int
-    data: Dict[str, Any]
-    links: List[str] = field(default_factory=list)
+    data: dict[str, Any]
+    links: list[str] = field(default_factory=list)
 
 
 class PluginProtocol(Protocol):
@@ -58,7 +58,7 @@ class PluginProtocol(Protocol):
 
     A Python plugin must export a module-level variable named `plugin` that:
     - has a `name: str` attribute
-    - implements: async def search(self, query: str, category: int | None = None) -> list[SearchResult]
+    - implements: async def search(query, category) -> list[SearchResult]
     """
 
     name: str
@@ -84,7 +84,7 @@ class MultiStagePluginProtocol(Protocol):
     async def scrape_stage(
         self,
         stage_name: str,
-        url: Optional[str] = None,
+        url: str | None = None,
         depth: int = 0,
         **url_params: Any,
     ) -> list[StageResult]: ...

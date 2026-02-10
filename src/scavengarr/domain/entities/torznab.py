@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Literal
 
 TorznabAction = Literal["caps", "search"]
 
@@ -13,7 +13,7 @@ class TorznabQuery:
     query: str  # Search query string
 
     # Optional filters
-    category: int | None = None  # ✅ ADD THIS: Torznab category (2000=Movies, 5000=TV)
+    category: int | None = None  # Torznab category (2000=Movies, 5000=TV)
 
     # Extended search parameters (Prowlarr)
     extended: int | None = None  # 1 = extended search mode
@@ -32,9 +32,9 @@ class TorznabItem:
     peers: int | None = None
     size: str | None = None
     # Extended fields
-    release_name: Optional[str] = None
-    description: Optional[str] = None
-    source_url: Optional[str] = None  # Detail page URL
+    release_name: str | None = None
+    description: str | None = None
+    source_url: str | None = None  # Detail page URL
     # Torznab-specific
     category: int = 2000  # Default: Movies
     grabs: int = 0

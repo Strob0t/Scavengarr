@@ -12,7 +12,7 @@ Supports cascading scrape pipelines with:
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 from urllib.parse import urljoin
 
 import httpx
@@ -47,7 +47,7 @@ class StageScraper:
         self.name = stage.name
         self.selectors = stage.selectors
 
-    def build_url(self, url: Optional[str] = None, **url_params: Any) -> str:
+    def build_url(self, url: str | None = None, **url_params: Any) -> str:
         """Build URL from template or use provided URL."""
         if url:
             return url
@@ -66,11 +66,11 @@ class StageScraper:
 
         raise ValueError(f"Stage '{self.name}': No URL or url_pattern defined")
 
-    def extract_data(self, soup: BeautifulSoup) -> Dict[str, Any]:
+    def extract_data(self, soup: BeautifulSoup) -> dict[str, Any]:
         """
         Extract data from page using selectors.
         """
-        data: Dict[str, Any] = {}
+        data: dict[str, Any] = {}
 
         # Simple selectors - with explicit attribute configuration
         simple_fields = {
@@ -97,7 +97,7 @@ class StageScraper:
                 attrs = self._get_field_attributes(field)
                 data[field] = self._extract_from_attributes(elem, attrs, field)
             else:
-                # Text-Extraktion
+                # Text extraction
                 data[field] = elem.get_text(strip=True)
 
         # Custom fields (all as text)
@@ -114,7 +114,7 @@ class StageScraper:
 
         return data
 
-    def _get_field_attributes(self, field_name: str) -> List[str]:
+    def _get_field_attributes(self, field_name: str) -> list[str]:
         """
         Get attribute list for a field from stage config.
         Returns empty list if not configured (causes warning in _extract_from_attributes).
@@ -125,7 +125,7 @@ class StageScraper:
 
     def _extract_nested(
         self, soup: BeautifulSoup, nested_config: NestedSelector
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Generic nested extraction with optional grouping.
 
@@ -186,7 +186,7 @@ class StageScraper:
 
     def _extract_item_fields(
         self, item, nested_config: NestedSelector
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Extract all configured fields from a single item element.
         """
@@ -212,10 +212,10 @@ class StageScraper:
 
     def _merge_item_data(
         self,
-        target: Dict[str, Any],
-        source: Dict[str, Any],
-        multi_value_fields: List[str],
-    ) -> Dict[str, Any]:
+        target: dict[str, Any],
+        source: dict[str, Any],
+        multi_value_fields: list[str],
+    ) -> dict[str, Any]:
         """
         Merge source data into target with multi-value field support.
 
@@ -240,8 +240,8 @@ class StageScraper:
         return target
 
     def _extract_from_attributes(
-        self, elem, attributes: List[str], field_name: str
-    ) -> Optional[str]:
+        self, elem, attributes: list[str], field_name: str
+    ) -> str | None:
         """
         Extract value with smart parsing for special attributes.
         """
@@ -286,7 +286,7 @@ class StageScraper:
         )
         return None
 
-    def extract_links(self, soup: BeautifulSoup) -> List[str]:
+    def extract_links(self, soup: BeautifulSoup) -> list[str]:
         """
         Extract links to next stage (for list stages).
         Uses selectors.link to find all elements.
@@ -302,7 +302,7 @@ class StageScraper:
 
         return links
 
-    def should_process(self, data: Dict[str, Any]) -> bool:
+    def should_process(self, data: dict[str, Any]) -> bool:
         """
         Check if stage conditions are met.
 
@@ -373,7 +373,7 @@ class ScrapyAdapter:
         self.retry_backoff_base = retry_backoff_base
 
         # Build stage executors
-        self.stages: Dict[str, StageScraper] = {}
+        self.stages: dict[str, StageScraper] = {}
         for stage_config in plugin.scraping.stages or []:
             self.stages[stage_config.name] = StageScraper(stage_config, self.base_url)
 
@@ -387,8 +387,8 @@ class ScrapyAdapter:
         # Diskcache for visited URLs
         self.cache = cache
 
-        # FIX: Use Set for visited URLs (not dict.keys())
-        self.visited_urls: Set[str] = set()
+        # FIX: Use set for visited URLs (not dict.keys())
+        self.visited_urls: set[str] = set()
 
         logger.info(
             "scrapy_adapter_initialized",
@@ -397,7 +397,7 @@ class ScrapyAdapter:
             total_stages=len(self.stages),
         )
 
-    async def _fetch_page(self, url: str) -> Optional[BeautifulSoup]:
+    async def _fetch_page(self, url: str) -> BeautifulSoup | None:
         """
         Fetch page with rate limiting, retry logic, and loop detection.
         Returns BeautifulSoup object or None on failure.
@@ -479,10 +479,10 @@ class ScrapyAdapter:
     async def scrape_stage(
         self,
         stage_name: str,
-        url: Optional[str] = None,
+        url: str | None = None,
         depth: int = 0,
         **url_params: Any,
-    ) -> Dict[str, List[Dict[str, Any]]]:
+    ) -> dict[str, list[dict[str, Any]]]:
         """
         Execute single stage (recursively).
 
@@ -527,7 +527,7 @@ class ScrapyAdapter:
         links = stage.extract_links(soup)
 
         # FIX: Return Dict[stage_name, List[items]]
-        results: Dict[str, List[Dict[str, Any]]] = {stage_name: [data]}
+        results: dict[str, list[dict[str, Any]]] = {stage_name: [data]}
 
         # Pagination (if enabled)
         if stage_config.pagination and stage_config.pagination.enabled:
@@ -570,12 +570,12 @@ class ScrapyAdapter:
 
     async def _handle_pagination(
         self, stage: StageScraper, soup: BeautifulSoup, depth: int
-    ) -> Dict[str, List[Dict[str, Any]]]:
+    ) -> dict[str, list[dict[str, Any]]]:
         """
         Handle pagination for list stages.
         Follows "next page" links up to max_pages.
         """
-        results: Dict[str, List[Dict[str, Any]]] = {stage.name: []}
+        results: dict[str, list[dict[str, Any]]] = {stage.name: []}
         pagination = stage.stage.pagination
 
         if not pagination or not pagination.enabled:
@@ -614,7 +614,7 @@ class ScrapyAdapter:
 
     async def scrape(
         self, query: str, **params: Any
-    ) -> Dict[str, List[Dict[str, Any]]]:
+    ) -> dict[str, list[dict[str, Any]]]:
         """
         Start multi-stage scraping pipeline.
 
@@ -657,8 +657,8 @@ class ScrapyAdapter:
         return results
 
     def normalize_results(
-        self, stage_results: Dict[str, List[Dict[str, Any]]]
-    ) -> List[SearchResult]:
+        self, stage_results: dict[str, list[dict[str, Any]]]
+    ) -> list[SearchResult]:
         """
         Convert stage results to SearchResult.
         Merges data from multiple stages (e.g., title from list + release_name from detail).

@@ -3,8 +3,9 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any
 
 import structlog
 import uvicorn
@@ -16,7 +17,7 @@ from scavengarr.interfaces.main import build_app
 log = structlog.get_logger(__name__)
 
 
-def _parse_args(argv: Optional[Iterable[str]]) -> argparse.Namespace:
+def _parse_args(argv: Iterable[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="scavengarr")
 
     # Server options
@@ -64,7 +65,7 @@ def _parse_args(argv: Optional[Iterable[str]]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def start(argv: Optional[Iterable[str]] = None) -> None:
+def start(argv: Iterable[str] | None = None) -> None:
     """
     Process entrypoint.
 

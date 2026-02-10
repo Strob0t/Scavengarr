@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Optional
 from uuid import uuid4
 
 
@@ -68,19 +67,19 @@ class CrawlJob:
 
     # === Display Metadata ===
     package_name: str = "Scavengarr Download"
-    filename: Optional[str] = None
-    comment: Optional[str] = None
+    filename: str | None = None
+    comment: str | None = None
 
     # === Validation Metadata (Scavengarr-specific) ===
     validated_urls: list[str] = field(default_factory=list)
-    source_url: Optional[str] = None
+    source_url: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     expires_at: datetime = field(
         default_factory=lambda: datetime.now(timezone.utc) + timedelta(hours=1)
     )
 
     # === Download Configuration ===
-    download_folder: Optional[str] = None
+    download_folder: str | None = None
     chunks: int = 0  # 0 = use JDownloader default
     priority: Priority = Priority.DEFAULT
 
@@ -93,7 +92,7 @@ class CrawlJob:
 
     # === Archive/Security ===
     extract_passwords: list[str] = field(default_factory=list)
-    download_password: Optional[str] = None
+    download_password: str | None = None
 
     # === Advanced Options ===
     deep_analyse_enabled: bool = False

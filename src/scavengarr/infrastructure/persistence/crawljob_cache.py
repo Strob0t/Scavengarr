@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pickle
-from typing import Optional
 
 import structlog
 
@@ -31,7 +30,7 @@ class CacheCrawlJobRepository(CrawlJobRepository):
         await self.cache.set(key, pickle.dumps(job), ttl=self.ttl)
         log.debug("crawljob_saved", job_id=job.job_id, ttl=self.ttl)
 
-    async def get(self, job_id: str) -> Optional[CrawlJob]:
+    async def get(self, job_id: str) -> CrawlJob | None:
         """Load CrawlJob from cache."""
         key = f"crawljob:{job_id}"
         data = await self.cache.get(key)

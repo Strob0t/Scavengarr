@@ -4,16 +4,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Literal
 
 
 @dataclass(frozen=True)
 class HttpOverrides:
     """HTTP configuration overrides."""
 
-    timeout_seconds: Optional[float] = None
-    follow_redirects: Optional[bool] = None
-    user_agent: Optional[str] = None
+    timeout_seconds: float | None = None
+    follow_redirects: bool | None = None
+    user_agent: str | None = None
 
 
 @dataclass(frozen=True)
@@ -21,7 +21,7 @@ class PaginationConfig:
     """Pagination configuration for list stages."""
 
     enabled: bool = False
-    selector: Optional[str] = None
+    selector: str | None = None
     max_pages: int = 1
 
 
@@ -33,10 +33,10 @@ class NestedSelector:
 
     container: str
     items: str
-    fields: Dict[str, str] = field(default_factory=dict)
-    item_group: Optional[str] = None
-    field_attributes: Dict[str, List[str]] = field(default_factory=dict)
-    multi_value_fields: Optional[List[str]] = None
+    fields: dict[str, str] = field(default_factory=dict)
+    item_group: str | None = None
+    field_attributes: dict[str, list[str]] = field(default_factory=dict)
+    multi_value_fields: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -51,25 +51,25 @@ class StageSelectors:
     """
 
     # For list stages: extract links to next stage
-    link: Optional[str] = None
+    link: str | None = None
 
     # Simple extractors
-    title: Optional[str] = None
-    description: Optional[str] = None
-    release_name: Optional[str] = None
+    title: str | None = None
+    description: str | None = None
+    release_name: str | None = None
 
     # Torrent-specific (from original schema)
-    download_link: Optional[str] = None
-    seeders: Optional[str] = None
-    leechers: Optional[str] = None
-    size: Optional[str] = None
-    published_date: Optional[str] = None
+    download_link: str | None = None
+    seeders: str | None = None
+    leechers: str | None = None
+    size: str | None = None
+    published_date: str | None = None
 
     # Nested extractors
-    download_links: Optional[NestedSelector] = None
+    download_links: NestedSelector | None = None
 
     # Custom fields (extensible)
-    custom: Dict[str, str] = field(default_factory=dict)
+    custom: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -90,11 +90,11 @@ class ScrapingStage:
     name: str
     type: Literal["list", "detail"]
     selectors: StageSelectors
-    url: Optional[str] = None
-    url_pattern: Optional[str] = None
-    next_stage: Optional[str] = None
-    pagination: Optional[PaginationConfig] = None
-    conditions: Optional[Dict[str, Any]] = None
+    url: str | None = None
+    url_pattern: str | None = None
+    next_stage: str | None = None
+    pagination: PaginationConfig | None = None
+    conditions: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -104,9 +104,9 @@ class ScrapySelectors:
     row: str
     title: str
     download_link: str
-    seeders: Optional[str] = None
-    leechers: Optional[str] = None
-    size: Optional[str] = None
+    seeders: str | None = None
+    leechers: str | None = None
+    size: str | None = None
 
 
 @dataclass(frozen=True)
@@ -116,8 +116,8 @@ class PlaywrightLocators:
     row: str
     title: str
     download_link: str
-    seeders: Optional[str] = None
-    leechers: Optional[str] = None
+    seeders: str | None = None
+    leechers: str | None = None
 
 
 @dataclass(frozen=True)
@@ -125,12 +125,12 @@ class AuthConfig:
     """Authentication configuration."""
 
     type: Literal["none", "basic", "form", "cookie"] = "none"
-    username: Optional[str] = None
-    password: Optional[str] = None
-    login_url: Optional[str] = None
-    username_field: Optional[str] = None
-    password_field: Optional[str] = None
-    submit_selector: Optional[str] = None
+    username: str | None = None
+    password: str | None = None
+    login_url: str | None = None
+    username_field: str | None = None
+    password_field: str | None = None
+    submit_selector: str | None = None
 
 
 @dataclass(frozen=True)
@@ -140,13 +140,13 @@ class ScrapingConfig:
     mode: Literal["scrapy", "playwright"]
 
     # === Legacy Playwright ===
-    search_url_template: Optional[str] = None
-    wait_for_selector: Optional[str] = None
-    locators: Optional[PlaywrightLocators] = None
+    search_url_template: str | None = None
+    wait_for_selector: str | None = None
+    locators: PlaywrightLocators | None = None
 
     # === Scrapy Pipeline ===
-    stages: Optional[List[ScrapingStage]] = None
-    start_stage: Optional[str] = None
+    stages: list[ScrapingStage] | None = None
+    start_stage: str | None = None
     max_depth: int = 5
     delay_seconds: float = 1.5
 
@@ -165,5 +165,5 @@ class YamlPluginDefinition:
     version: str
     base_url: str
     scraping: ScrapingConfig
-    auth: Optional[AuthConfig] = None
-    http: Optional[HttpOverrides] = None
+    auth: AuthConfig | None = None
+    http: HttpOverrides | None = None
