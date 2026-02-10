@@ -85,9 +85,7 @@ class TestNoMirrors:
 class TestMirrorFallback:
     @pytest.mark.asyncio
     async def test_mirror_fallback_on_connect_error(self) -> None:
-        adapter = _make_adapter(
-            _make_plugin(mirror_urls=["https://filmpalast.sx"])
-        )
+        adapter = _make_adapter(_make_plugin(mirror_urls=["https://filmpalast.sx"]))
 
         html = b"<html><body>OK</body></html>"
         mock_response = MagicMock(spec=httpx.Response)
@@ -109,9 +107,7 @@ class TestMirrorFallback:
     @pytest.mark.asyncio
     async def test_all_mirrors_fail(self) -> None:
         adapter = _make_adapter(
-            _make_plugin(
-                mirror_urls=["https://filmpalast.sx", "https://filmpalast.im"]
-            )
+            _make_plugin(mirror_urls=["https://filmpalast.sx", "https://filmpalast.im"])
         )
 
         adapter.client.get = AsyncMock(side_effect=httpx.ConnectError("down"))
@@ -152,9 +148,7 @@ class TestMirrorFallback:
 
 class TestSwitchDomain:
     def test_switch_domain_updates_all_stages(self) -> None:
-        adapter = _make_adapter(
-            _make_plugin(mirror_urls=["https://filmpalast.sx"])
-        )
+        adapter = _make_adapter(_make_plugin(mirror_urls=["https://filmpalast.sx"]))
 
         assert adapter.base_url == "https://filmpalast.to"
         assert adapter.stages["search"].base_url == "https://filmpalast.to"
