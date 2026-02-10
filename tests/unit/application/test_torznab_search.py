@@ -38,6 +38,20 @@ class _FakePlugin:
             self.scraping = _FakeScrapingConfig()
 
 
+class _FakePythonPlugin:
+    """Python plugin: has search(), no scraping attribute."""
+
+    def __init__(self) -> None:
+        self.name = "boerse"
+        self.base_url = "https://boerse.am"
+        self._results: list[Any] = []
+
+    async def search(
+        self, query: str, category: int | None = None,
+    ) -> list[Any]:
+        return self._results
+
+
 def _make_uc(
     registry: MagicMock | AsyncMock,
     engine: AsyncMock,
@@ -215,3 +229,98 @@ class TestSearchExecution:
         )
         with pytest.raises(TorznabExternalError):
             await uc.execute(q)
+
+
+class TestPythonPluginDispatch:
+    async def test_happy_path(
+        self,
+        mock_search_engine: AsyncMock,
+        mock_crawljob_repo: AsyncMock,
+    ) -> None:
+        result = SearchResult(
+            title="SpongeBob",
+            download_link="https://example.com/dl",
+        )
+        py_plugin = _FakePythonPlugin()
+        py_plugin._results = [result]
+
+        registry = MagicMock()
+        registry.get.return_value = py_plugin
+        mock_search_engine.validate_results.return_value = [result]
+
+        uc = _make_uc(registry, mock_search_engine, mock_crawljob_repo)
+        q = TorznabQuery(
+            action="search", plugin_name="boerse", query="SpongeBob",
+        )
+        items = await uc.execute(q)
+
+        assert len(items) == 1
+        assert items[0].title == "SpongeBob"
+        assert items[0].job_id is not None
+        mock_search_engine.validate_results.assert_awaited_once_with([result])
+        mock_search_engine.search.assert_not_awaited()
+
+    async def test_empty_results(
+        self,
+        mock_search_engine: AsyncMock,
+        mock_crawljob_repo: AsyncMock,
+    ) -> None:
+        py_plugin = _FakePythonPlugin()
+        py_plugin._results = []
+
+        registry = MagicMock()
+        registry.get.return_value = py_plugin
+        mock_search_engine.validate_results.return_value = []
+
+        uc = _make_uc(registry, mock_search_engine, mock_crawljob_repo)
+        q = TorznabQuery(
+            action="search", plugin_name="boerse", query="nothing",
+        )
+        items = await uc.execute(q)
+        assert items == []
+
+    async def test_search_error_raises_external_error(
+        self,
+        mock_search_engine: AsyncMock,
+        mock_crawljob_repo: AsyncMock,
+    ) -> None:
+        py_plugin = _FakePythonPlugin()
+
+        # Make the search method raise
+        async def _failing_search(query: str, category: int | None = None) -> list:
+            raise RuntimeError("login failed")
+
+        py_plugin.search = _failing_search  # type: ignore[assignment]
+
+        registry = MagicMock()
+        registry.get.return_value = py_plugin
+
+        uc = _make_uc(registry, mock_search_engine, mock_crawljob_repo)
+        q = TorznabQuery(
+            action="search", plugin_name="boerse", query="test",
+        )
+        with pytest.raises(TorznabExternalError, match="Python plugin"):
+            await uc.execute(q)
+
+    async def test_validate_results_called(
+        self,
+        mock_search_engine: AsyncMock,
+        mock_crawljob_repo: AsyncMock,
+    ) -> None:
+        result = SearchResult(
+            title="Movie",
+            download_link="https://example.com/dl",
+        )
+        py_plugin = _FakePythonPlugin()
+        py_plugin._results = [result]
+
+        registry = MagicMock()
+        registry.get.return_value = py_plugin
+        mock_search_engine.validate_results.return_value = [result]
+
+        uc = _make_uc(registry, mock_search_engine, mock_crawljob_repo)
+        q = TorznabQuery(
+            action="search", plugin_name="boerse", query="test",
+        )
+        await uc.execute(q)
+        mock_search_engine.validate_results.assert_awaited_once()

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace as dataclass_replace
-from typing import cast
+from typing import Any, cast
 
 import structlog
 
@@ -21,6 +21,15 @@ from scavengarr.domain.ports.crawljob_repository import CrawlJobRepository
 from scavengarr.domain.ports.search_engine import SearchEnginePort
 
 log = structlog.get_logger(__name__)
+
+
+def _is_python_plugin(plugin: Any) -> bool:
+    """Detect Python plugins (have search() method, no scraping config)."""
+    return (
+        hasattr(plugin, "search")
+        and callable(plugin.search)
+        and not hasattr(plugin, "scraping")
+    )
 
 
 class TorznabSearchUseCase:
@@ -83,26 +92,11 @@ class TorznabSearchUseCase:
         except Exception as e:
             raise TorznabPluginNotFound(q.plugin_name) from e
 
-        try:
-            mode = plugin.scraping.mode  # type: ignore[attr-defined]
-        except Exception as e:
-            raise TorznabUnsupportedPlugin(
-                "Plugin does not expose scraping.mode"
-            ) from e
-        if mode != "scrapy":
-            raise TorznabUnsupportedPlugin(f"Unsupported scraping.mode: {mode}")
-
-        # Execute search (includes link validation)
-        try:
-            raw_results: list = await self.engine.search(
-                plugin,
-                q.query,
-                category=q.category,
-            )
-        except TorznabExternalError:
-            raise
-        except Exception as e:
-            raise TorznabExternalError(f"Search engine error: {str(e)}") from e
+        # Python plugin path: has search() method, no scraping config
+        if _is_python_plugin(plugin):
+            raw_results = await self._execute_python_plugin(plugin, q)
+        else:
+            raw_results = await self._execute_yaml_plugin(plugin, q)
 
         if not raw_results:
             log.info(
@@ -112,7 +106,54 @@ class TorznabSearchUseCase:
             )
             return []
 
-        # Transform results: SearchResult -> CrawlJob -> TorznabItem
+        return await self._build_torznab_items(raw_results, q)
+
+    async def _execute_python_plugin(
+        self, plugin: Any, q: TorznabQuery,
+    ) -> list[Any]:
+        """Execute search via Python plugin and validate results."""
+        try:
+            raw_results = await plugin.search(q.query, category=q.category)
+        except Exception as e:
+            raise TorznabExternalError(
+                f"Python plugin search error: {e!s}"
+            ) from e
+
+        try:
+            return await self.engine.validate_results(raw_results)
+        except Exception as e:
+            raise TorznabExternalError(
+                f"Result validation error: {e!s}"
+            ) from e
+
+    async def _execute_yaml_plugin(
+        self, plugin: Any, q: TorznabQuery,
+    ) -> list[Any]:
+        """Execute search via YAML plugin through the Scrapy engine."""
+        try:
+            mode = plugin.scraping.mode
+        except Exception as e:
+            raise TorznabUnsupportedPlugin(
+                "Plugin does not expose scraping.mode"
+            ) from e
+        if mode != "scrapy":
+            raise TorznabUnsupportedPlugin(f"Unsupported scraping.mode: {mode}")
+
+        try:
+            return await self.engine.search(
+                plugin,
+                q.query,
+                category=q.category,
+            )
+        except TorznabExternalError:
+            raise
+        except Exception as e:
+            raise TorznabExternalError(f"Search engine error: {e!s}") from e
+
+    async def _build_torznab_items(
+        self, raw_results: list[Any], q: TorznabQuery,
+    ) -> list[TorznabItem]:
+        """Transform SearchResults into TorznabItems with CrawlJob generation."""
         items: list[TorznabItem] = []
         for raw_result in raw_results:
             try:
