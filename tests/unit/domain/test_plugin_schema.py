@@ -131,9 +131,7 @@ class TestYamlPluginDefinition:
                     ScrapingStage(
                         name="search_results",
                         type="list",
-                        selectors=StageSelectors(
-                            link="a[href*='/stream/']"
-                        ),
+                        selectors=StageSelectors(link="a[href*='/stream/']"),
                         next_stage="detail",
                     ),
                 ],

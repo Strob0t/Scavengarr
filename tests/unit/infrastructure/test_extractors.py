@@ -17,10 +17,12 @@ class TestExtractDownloadLink:
         assert result == "https://example.com/dl"
 
     def test_prefers_link_over_url(self) -> None:
-        result = extract_download_link({
-            "link": "https://link.com",
-            "url": "https://url.com",
-        })
+        result = extract_download_link(
+            {
+                "link": "https://link.com",
+                "url": "https://url.com",
+            }
+        )
         assert result == "https://link.com"
 
     def test_empty_dict_returns_none(self) -> None:

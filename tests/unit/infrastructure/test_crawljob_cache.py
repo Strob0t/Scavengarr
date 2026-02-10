@@ -45,17 +45,13 @@ class TestCacheCrawlJobRepository:
         result = await repo.get("nonexistent-id")
         assert result is None
 
-    async def test_get_handles_corrupt_data(
-        self, mock_cache: AsyncMock
-    ) -> None:
+    async def test_get_handles_corrupt_data(self, mock_cache: AsyncMock) -> None:
         mock_cache.get = AsyncMock(return_value=b"not-valid-pickle")
         repo = CacheCrawlJobRepository(cache=mock_cache)
         result = await repo.get("some-id")
         assert result is None
 
-    async def test_custom_ttl(
-        self, mock_cache: AsyncMock, crawljob: CrawlJob
-    ) -> None:
+    async def test_custom_ttl(self, mock_cache: AsyncMock, crawljob: CrawlJob) -> None:
         repo = CacheCrawlJobRepository(cache=mock_cache, ttl_seconds=7200)
         await repo.save(crawljob)
         call_kwargs = mock_cache.set.call_args[1]

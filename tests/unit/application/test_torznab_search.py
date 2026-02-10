@@ -64,9 +64,7 @@ class TestQueryValidation:
             mock_search_engine,
             mock_crawljob_repo,
         )
-        q = TorznabQuery(
-            action="caps", plugin_name="filmpalast", query="test"
-        )
+        q = TorznabQuery(action="caps", plugin_name="filmpalast", query="test")
         with pytest.raises(TorznabBadRequest, match="action=search"):
             await uc.execute(q)
 
@@ -81,9 +79,7 @@ class TestQueryValidation:
             mock_search_engine,
             mock_crawljob_repo,
         )
-        q = TorznabQuery(
-            action="search", plugin_name="filmpalast", query=""
-        )
+        q = TorznabQuery(action="search", plugin_name="filmpalast", query="")
         with pytest.raises(TorznabBadRequest, match="Missing query"):
             await uc.execute(q)
 
@@ -98,9 +94,7 @@ class TestQueryValidation:
             mock_search_engine,
             mock_crawljob_repo,
         )
-        q = TorznabQuery(
-            action="search", plugin_name="", query="iron man"
-        )
+        q = TorznabQuery(action="search", plugin_name="", query="iron man")
         with pytest.raises(TorznabBadRequest, match="Missing plugin"):
             await uc.execute(q)
 
@@ -127,9 +121,7 @@ class TestPluginValidation:
         mock_search_engine: AsyncMock,
         mock_crawljob_repo: AsyncMock,
     ) -> None:
-        plugin = _FakePlugin(
-            scraping=_FakeScrapingConfig(mode="playwright")
-        )
+        plugin = _FakePlugin(scraping=_FakeScrapingConfig(mode="playwright"))
         registry = MagicMock()
         registry.get.return_value = plugin
         uc = _make_uc(registry, mock_search_engine, mock_crawljob_repo)
@@ -215,9 +207,7 @@ class TestSearchExecution:
     ) -> None:
         engine = AsyncMock()
         engine.search.side_effect = RuntimeError("connection failed")
-        uc = _make_uc(
-            mock_plugin_registry, engine, mock_crawljob_repo
-        )
+        uc = _make_uc(mock_plugin_registry, engine, mock_crawljob_repo)
         q = TorznabQuery(
             action="search",
             plugin_name="filmpalast",

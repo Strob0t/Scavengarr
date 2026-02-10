@@ -43,12 +43,8 @@ class TestSearchResult:
         assert r.upload_volume_factor == 0.0
 
     def test_metadata_dict_independence(self) -> None:
-        r1 = SearchResult(
-            title="T", download_link="http://x", metadata={"a": 1}
-        )
-        r2 = SearchResult(
-            title="T", download_link="http://x", metadata={"b": 2}
-        )
+        r1 = SearchResult(title="T", download_link="http://x", metadata={"a": 1})
+        r2 = SearchResult(title="T", download_link="http://x", metadata={"b": 2})
         assert r1.metadata != r2.metadata
 
     def test_full_creation(self) -> None:

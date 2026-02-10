@@ -21,26 +21,20 @@ from scavengarr.domain.entities import (
 
 class TestTorznabQuery:
     def test_creation_with_required_fields(self) -> None:
-        q = TorznabQuery(
-            action="search", plugin_name="test", query="hello"
-        )
+        q = TorznabQuery(action="search", plugin_name="test", query="hello")
         assert q.action == "search"
         assert q.plugin_name == "test"
         assert q.query == "hello"
 
     def test_optional_fields_default_to_none(self) -> None:
-        q = TorznabQuery(
-            action="search", plugin_name="test", query="hello"
-        )
+        q = TorznabQuery(action="search", plugin_name="test", query="hello")
         assert q.category is None
         assert q.extended is None
         assert q.offset is None
         assert q.limit is None
 
     def test_frozen_immutability(self) -> None:
-        q = TorznabQuery(
-            action="search", plugin_name="test", query="hello"
-        )
+        q = TorznabQuery(action="search", plugin_name="test", query="hello")
         with pytest.raises(AttributeError):
             q.query = "changed"  # type: ignore[misc]
 
@@ -93,9 +87,7 @@ class TestTorznabCaps:
 
 class TestTorznabIndexInfo:
     def test_creation(self) -> None:
-        info = TorznabIndexInfo(
-            name="filmpalast", version="1.0.0", mode="scrapy"
-        )
+        info = TorznabIndexInfo(name="filmpalast", version="1.0.0", mode="scrapy")
         assert info.name == "filmpalast"
         assert info.version == "1.0.0"
         assert info.mode == "scrapy"

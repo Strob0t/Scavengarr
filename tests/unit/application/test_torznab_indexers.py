@@ -63,9 +63,7 @@ class TestTorznabIndexersUseCase:
 
         registry = MagicMock()
         registry.list_names.return_value = ["pluginA", "pluginB"]
-        registry.get.side_effect = lambda n: (
-            plugin_a if n == "pluginA" else plugin_b
-        )
+        registry.get.side_effect = lambda n: plugin_a if n == "pluginA" else plugin_b
 
         uc = TorznabIndexersUseCase(plugins=registry)
         result = uc.execute()

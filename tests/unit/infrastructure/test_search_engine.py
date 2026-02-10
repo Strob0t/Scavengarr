@@ -26,16 +26,12 @@ class TestExtractDownloadLink:
     def test_direct_download_link_field(self) -> None:
         engine = _make_engine()
         item = {"download_link": "https://example.com/dl"}
-        assert engine._extract_download_link(item) == (
-            "https://example.com/dl"
-        )
+        assert engine._extract_download_link(item) == ("https://example.com/dl")
 
     def test_link_field(self) -> None:
         engine = _make_engine()
         item = {"link": "https://example.com/dl"}
-        assert engine._extract_download_link(item) == (
-            "https://example.com/dl"
-        )
+        assert engine._extract_download_link(item) == ("https://example.com/dl")
 
     def test_nested_download_links_dict_list(self) -> None:
         engine = _make_engine()
@@ -45,9 +41,7 @@ class TestExtractDownloadLink:
                 {"hoster": "Dood", "link": "https://dood.to/dl/1"},
             ]
         }
-        assert engine._extract_download_link(item) == (
-            "https://veev.to/dl/1"
-        )
+        assert engine._extract_download_link(item) == ("https://veev.to/dl/1")
 
     def test_nested_download_links_string_list(self) -> None:
         engine = _make_engine()
@@ -57,9 +51,7 @@ class TestExtractDownloadLink:
                 "https://example.com/dl/2",
             ]
         }
-        assert engine._extract_download_link(item) == (
-            "https://example.com/dl/1"
-        )
+        assert engine._extract_download_link(item) == ("https://example.com/dl/1")
 
     def test_empty_download_links(self) -> None:
         engine = _make_engine()

@@ -50,9 +50,7 @@ class TestRenderCapsXml:
         assert limits.get("default") == "50"
 
     def test_xml_contains_categories(self) -> None:
-        caps = TorznabCaps(
-            server_title="t", server_version="1.0"
-        )
+        caps = TorznabCaps(server_title="t", server_version="1.0")
         rendered = render_caps_xml(caps)
         root = ET.fromstring(rendered.payload)
         categories = root.find("categories")
@@ -63,9 +61,7 @@ class TestRenderCapsXml:
         assert "8000" in cat_ids
 
     def test_xml_contains_search_support(self) -> None:
-        caps = TorznabCaps(
-            server_title="t", server_version="1.0"
-        )
+        caps = TorznabCaps(server_title="t", server_version="1.0")
         rendered = render_caps_xml(caps)
         root = ET.fromstring(rendered.payload)
         searching = root.find("searching")

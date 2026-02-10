@@ -53,16 +53,12 @@ class TestValidate:
         assert await validator.validate("https://example.com") is False
 
     async def test_timeout_is_invalid(self) -> None:
-        client = _mock_client(
-            side_effect=httpx.TimeoutException("timeout")
-        )
+        client = _mock_client(side_effect=httpx.TimeoutException("timeout"))
         validator = HttpLinkValidator(client)
         assert await validator.validate("https://example.com") is False
 
     async def test_http_error_is_invalid(self) -> None:
-        client = _mock_client(
-            side_effect=httpx.HTTPError("connection refused")
-        )
+        client = _mock_client(side_effect=httpx.HTTPError("connection refused"))
         validator = HttpLinkValidator(client)
         assert await validator.validate("https://example.com") is False
 

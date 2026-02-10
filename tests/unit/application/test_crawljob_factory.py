@@ -87,9 +87,7 @@ class TestCrawlJobFactoryCreate:
 
 
 class TestBuildComment:
-    def test_with_description_and_size(
-        self, crawljob_factory: CrawlJobFactory
-    ) -> None:
+    def test_with_description_and_size(self, crawljob_factory: CrawlJobFactory) -> None:
         result = SearchResult(
             title="T",
             download_link="http://x",
@@ -103,9 +101,7 @@ class TestBuildComment:
         assert "Size: 4.5 GB" in comment
         assert "Source: https://example.com/movie/1" in comment
 
-    def test_with_no_metadata(
-        self, crawljob_factory: CrawlJobFactory
-    ) -> None:
+    def test_with_no_metadata(self, crawljob_factory: CrawlJobFactory) -> None:
         result = SearchResult(
             title="T",
             download_link="http://x",
@@ -114,9 +110,7 @@ class TestBuildComment:
         comment = crawljob_factory._build_comment(result)
         assert comment == "Downloaded via Scavengarr"
 
-    def test_parts_joined_with_pipe(
-        self, crawljob_factory: CrawlJobFactory
-    ) -> None:
+    def test_parts_joined_with_pipe(self, crawljob_factory: CrawlJobFactory) -> None:
         result = SearchResult(
             title="T",
             download_link="http://x",
