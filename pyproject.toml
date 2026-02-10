@@ -41,6 +41,10 @@ crewai-tools = {extras = ["mcp"], version = "^1.8.1"}
 openinference-instrumentation-crewai = "^0.1.17"
 mcp = ">=1.16.0,<1.17.0"
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
 [tool.ruff]
 target-version = "py312"
 line-length = 88
