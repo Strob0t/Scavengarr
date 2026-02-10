@@ -132,7 +132,6 @@ async def torznab_plugin_api(
         if not q:
             if extended == 1:
                 # Load plugin to get base_url (single source of truth)
-                state.plugins.discover()
                 plugin = state.plugins.get(plugin_name)
                 base_url = str(getattr(plugin, "base_url", "") or "")
 
@@ -284,7 +283,6 @@ async def torznab_plugin_health(request: Request, plugin_name: str) -> JSONRespo
     state = cast(AppState, request.app.state)
 
     try:
-        state.plugins.discover()
         plugin = state.plugins.get(plugin_name)
     except TorznabPluginNotFound:
         return JSONResponse(

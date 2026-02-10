@@ -9,7 +9,6 @@ class TorznabIndexersUseCase:
         self._plugins = plugins
 
     def execute(self) -> list[dict]:
-        self._plugins.discover()
         out: list[dict] = []
 
         for name in self._plugins.list_names():

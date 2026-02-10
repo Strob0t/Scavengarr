@@ -77,8 +77,7 @@ class TorznabSearchUseCase:
         if not q.plugin_name:
             raise TorznabBadRequest("Missing plugin name")
 
-        # === 2) Plugin Discovery and Validation ===
-        self.plugins.discover()
+        # === 2) Plugin Validation ===
         try:
             plugin = self.plugins.get(q.plugin_name)
         except Exception as e:

@@ -19,7 +19,6 @@ class TorznabCapsUseCase:
         self._server_version = server_version
 
     def execute(self) -> TorznabCaps:
-        self._plugins.discover()
         try:
             plugin = self._plugins.get(self._plugin_name)
         except Exception as e:
