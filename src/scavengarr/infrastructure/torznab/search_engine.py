@@ -147,18 +147,31 @@ class HttpxScrapySearchEngine:
     ) -> list[SearchResult]:
         """Convert multi-stage scraped items to SearchResult objects.
 
+        Deduplicates by (title, download_link) to prevent duplicates
+        from intermediate stages or concurrent scraping.
+
         Args:
             stage_results: Dict mapping stage_name -> list of scraped items.
 
         Returns:
-            Flat list of SearchResult objects.
+            Flat list of unique SearchResult objects.
         """
         results: list[SearchResult] = []
+        seen: set[tuple[str, str]] = set()
 
         for stage_name, items in stage_results.items():
             for item in items:
                 result = self._convert_to_result(item, stage_name)
                 if result:
+                    key = (result.title, result.download_link)
+                    if key in seen:
+                        log.debug(
+                            "duplicate_result_skipped",
+                            stage=stage_name,
+                            title=result.title,
+                        )
+                        continue
+                    seen.add(key)
                     results.append(result)
                 else:
                     log.debug(

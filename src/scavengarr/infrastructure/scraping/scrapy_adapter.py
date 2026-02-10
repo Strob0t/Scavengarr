@@ -288,17 +288,22 @@ class StageScraper:
 
     def extract_links(self, soup: BeautifulSoup) -> list[str]:
         """
-        Extract links to next stage (for list stages).
+        Extract unique links to next stage (for list stages).
         Uses selectors.link to find all elements.
+        Deduplicates while preserving order.
         """
         if not self.selectors.link:
             return []
 
-        links = []
+        seen: set[str] = set()
+        links: list[str] = []
         for elem in soup.select(self.selectors.link):
             href = elem.get("href")
             if href:
-                links.append(urljoin(self.base_url, href))
+                full_url = urljoin(self.base_url, href)
+                if full_url not in seen:
+                    seen.add(full_url)
+                    links.append(full_url)
 
         return links
 
@@ -402,10 +407,12 @@ class ScrapyAdapter:
         Fetch page with rate limiting, retry logic, and loop detection.
         Returns BeautifulSoup object or None on failure.
         """
-        # Loop detection via Set
+        # Loop detection via Set — mark BEFORE yielding control
+        # to prevent duplicate fetches from concurrent asyncio tasks.
         if url in self.visited_urls:
             logger.debug("url_already_visited", url=url)
             return None
+        self.visited_urls.add(url)
 
         # Exponential backoff retry
         for attempt in range(self.max_retries):
@@ -422,9 +429,6 @@ class ScrapyAdapter:
 
                 response = await self.client.get(url)
                 response.raise_for_status()
-
-                # Mark URL as visited
-                self.visited_urls.add(url)
 
                 logger.info("page_fetched", url=url, status_code=response.status_code)
 
