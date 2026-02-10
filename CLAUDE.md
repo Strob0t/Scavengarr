@@ -494,7 +494,23 @@ def add_item(item: str, items: list[str] | None = None) -> list[str]:
 | Plugins (examples) | `plugins/` (filmpalast.to.yaml, boerse.py) |
 | OpenSpec change specs | `openspec/changes/...` |
 
-### Adding a new YAML plugin
+### Adding a new plugin (general workflow)
+
+**Step 1: Thorough site analysis (MANDATORY before writing any code)**
+- Use Playwright MCP to visit and inspect all relevant pages (search, categories, detail pages, download pages)
+- Document HTML structure precisely (selectors, tables, link patterns, pagination)
+- Check for JS dependencies (Cloudflare, dynamic loading, SPAs)
+- Identify auth mechanisms (login, cookies, tokens)
+- Map URL patterns (search, detail, download)
+
+**Step 2: Decide YAML vs Python**
+- Default: YAML plugin (Scrapy) — faster, simpler, preferred
+- Python plugin only when YAML is technically impossible (Cloudflare/JS challenge, complex logic, auth, API calls, non-standard table structures)
+- Justification for Python plugin must be stated explicitly in the plan
+
+**Step 3: Implement**
+
+#### Adding a new YAML plugin
 1. Place the YAML file in the plugin dir (configurable via `SCAVENGARR_PLUGIN_DIR`).
 2. Set minimal fields: `name`, `base_url`, `scraping.mode`, `stages[]`, `categories`.
 3. Stage 1 outputs `detail_url` (or directly a terminal `download_url`), stage 2+ outputs `download_url`.

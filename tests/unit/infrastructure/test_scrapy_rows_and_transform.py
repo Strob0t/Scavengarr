@@ -14,7 +14,6 @@ from scavengarr.infrastructure.scraping.scrapy_adapter import (
     _slugify,
 )
 
-
 # -- _slugify tests -----------------------------------------------------------
 
 
@@ -184,7 +183,9 @@ class TestExtractRows:
             assert r.get("title")
 
     def test_empty_table(self) -> None:
-        html = "<html><body><table class='results'><tbody></tbody></table></body></html>"
+        html = (
+            "<html><body><table class='results'><tbody></tbody></table></body></html>"
+        )
         scraper = _make_rows_scraper(
             rows="table.results tbody tr",
             field_attributes={"title": ["title"], "download_link": ["href"]},
