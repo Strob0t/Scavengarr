@@ -8,17 +8,18 @@ from typing import Protocol
 class LinkValidatorPort(Protocol):
     """Validates if download links are reachable/alive.
 
-    Implementations check HTTP status codes (HEAD requests).
+    Implementations try HEAD first, then fall back to GET on failure.
+    Some streaming hosters block HEAD but respond to GET.
     """
 
     async def validate(self, url: str) -> bool:
-        """Check if URL is reachable.
+        """Check if URL is reachable (HEAD first, GET fallback).
 
         Args:
             url: Download link to validate.
 
         Returns:
-            True if URL returns 2xx/3xx, False if 4xx/5xx/timeout.
+            True if URL returns 2xx/3xx on HEAD or GET, False otherwise.
         """
         ...
 

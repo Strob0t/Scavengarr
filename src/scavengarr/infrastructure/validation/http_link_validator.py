@@ -1,4 +1,4 @@
-"""HTTP-based link validator using HEAD requests."""
+"""HTTP-based link validator using HEAD requests with GET fallback."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import asyncio
 from typing import TYPE_CHECKING
 
 import structlog
-from httpx import AsyncClient, HTTPError, TimeoutException
+from httpx import HTTPError, TimeoutException
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -15,11 +15,11 @@ log = structlog.get_logger(__name__)
 
 
 class HttpLinkValidator:
-    """Validates download links via HTTP HEAD requests.
+    """Validates download links via HTTP HEAD with GET fallback.
 
-    - Sends HEAD request (no body download) to check availability.
-    - Considers 2xx/3xx as valid, 4xx/5xx/timeout as invalid.
-    - Uses semaphore to limit concurrent requests (avoid rate-limits).
+    Some streaming hosters (veev.to, savefiles.com) return 403 on HEAD
+    but 200 on GET. This validator tries HEAD first, then falls back
+    to GET on any failure.
 
     Args:
         http_client: Shared httpx.AsyncClient (injected).
@@ -38,41 +38,67 @@ class HttpLinkValidator:
         self._semaphore = asyncio.Semaphore(max_concurrent)
 
     async def validate(self, url: str) -> bool:
-        """Validate single URL.
+        """Validate single URL (HEAD first, GET fallback).
 
         Returns:
-            True if reachable (2xx/3xx), False otherwise.
+            True if reachable (2xx/3xx) via HEAD or GET, False otherwise.
         """
         async with self._semaphore:
-            try:
-                # HEAD request (no body, fast)
-                response = await self.http_client.head(
-                    url,
-                    timeout=self.timeout,
-                    follow_redirects=True,  # Follow redirects to final destination
-                )
-                is_valid = response.status_code < 400
+            if await self._try_head(url):
+                return True
+            return await self._try_get(url)
 
-                log.debug(
-                    "link_validated",
-                    url=url,
-                    status_code=response.status_code,
-                    valid=is_valid,
-                )
-                return is_valid
+    async def _try_head(self, url: str) -> bool:
+        """Try HEAD request. Returns True if 2xx/3xx."""
+        try:
+            response = await self.http_client.head(
+                url,
+                timeout=self.timeout,
+                follow_redirects=True,
+            )
+            is_valid = response.status_code < 400
 
-            except TimeoutException:
-                log.warning("link_validation_timeout", url=url, timeout=self.timeout)
-                return False
+            log.debug(
+                "link_head_result",
+                url=url,
+                status_code=response.status_code,
+                valid=is_valid,
+            )
+            return is_valid
 
-            except HTTPError as e:
-                log.warning("link_validation_error", url=url, error=str(e))
-                return False
+        except (TimeoutException, HTTPError, Exception) as e:
+            log.debug("link_head_failed", url=url, error=str(e))
+            return False
 
-            except Exception as e:
-                # Catch-all for DNS errors, connection refused, etc.
-                log.error("link_validation_unexpected_error", url=url, error=str(e))
-                return False
+    async def _try_get(self, url: str) -> bool:
+        """Try GET request as fallback. Returns True if 2xx/3xx."""
+        try:
+            response = await self.http_client.get(
+                url,
+                timeout=self.timeout,
+                follow_redirects=True,
+            )
+            is_valid = response.status_code < 400
+
+            log.debug(
+                "link_get_fallback_result",
+                url=url,
+                status_code=response.status_code,
+                valid=is_valid,
+            )
+            return is_valid
+
+        except TimeoutException:
+            log.warning("link_validation_timeout", url=url, timeout=self.timeout)
+            return False
+
+        except HTTPError as e:
+            log.warning("link_validation_error", url=url, error=str(e))
+            return False
+
+        except Exception as e:
+            log.error("link_validation_unexpected_error", url=url, error=str(e))
+            return False
 
     async def validate_batch(self, urls: list[str]) -> dict[str, bool]:
         """Validate multiple URLs concurrently.
