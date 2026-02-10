@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import httpx
 import structlog
@@ -372,6 +372,9 @@ class ScrapyAdapter:
         self.plugin_name = str(getattr(plugin, "name", "unknown"))
 
         self.base_url = str(plugin.base_url)
+        self._mirror_urls: list[str] = (
+            [str(u) for u in plugin.mirror_urls] if plugin.mirror_urls else []
+        )
         self.delay = delay_seconds
         self.max_depth = max_depth
         self.max_retries = max_retries
@@ -476,9 +479,51 @@ class ScrapyAdapter:
                     await asyncio.sleep(backoff)
                 else:
                     logger.error("max_retries_exceeded", url=url, error=str(e))
+                    mirror_result = await self._try_mirrors(url)
+                    if mirror_result is not None:
+                        return mirror_result
                     return None
 
         return None
+
+    async def _try_mirrors(self, url: str) -> BeautifulSoup | None:
+        """Try mirror URLs when the primary domain is unreachable."""
+        if not self._mirror_urls:
+            return None
+
+        for mirror in self._mirror_urls:
+            if mirror == self.base_url:
+                continue
+
+            new_url = self._replace_domain(url, mirror)
+            logger.info("trying_mirror", mirror=mirror, url=new_url)
+
+            try:
+                await asyncio.sleep(self.delay)
+                resp = await self.client.get(new_url)
+                resp.raise_for_status()
+                self._switch_domain(mirror)
+                logger.info("mirror_fallback_success", mirror=mirror)
+                return BeautifulSoup(resp.content, "html.parser")
+            except (httpx.RequestError, httpx.HTTPStatusError) as e:
+                logger.warning("mirror_failed", mirror=mirror, error=str(e))
+                continue
+
+        logger.error("all_mirrors_exhausted", url=url)
+        return None
+
+    def _switch_domain(self, new_base_url: str) -> None:
+        """Update base_url on adapter and all stage scrapers."""
+        self.base_url = new_base_url
+        for stage in self.stages.values():
+            stage.base_url = new_base_url
+
+    @staticmethod
+    def _replace_domain(url: str, new_base_url: str) -> str:
+        """Swap scheme+netloc in *url* with those from *new_base_url*."""
+        old = urlsplit(url)
+        new = urlsplit(new_base_url)
+        return urlunsplit((new.scheme, new.netloc, old.path, old.query, old.fragment))
 
     async def scrape_stage(
         self,
