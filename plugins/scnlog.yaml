@@ -1,0 +1,43 @@
+# plugins/scnlog.yaml
+name: "scnlog"
+version: "1.0.0"
+base_url: "https://scnlog.me"
+
+scraping:
+  mode: "scrapy"
+  start_stage: "search_results"
+  max_depth: 4
+  delay_seconds: 2.0
+
+  stages:
+    - name: "search_results"
+      type: "list"
+      url_pattern: "/?s={query}"
+      selectors:
+        rows: "div.hentry"
+        title: "div.title h1 a"
+        link: "div.title h1 a"
+      field_attributes:
+        link: ["href"]
+      next_stage: "detail_page"
+
+    - name: "detail_page"
+      type: "detail"
+      url: "/"
+      selectors:
+        title: "div.title h1"
+        download_links:
+          container: "div.download"
+          items: "p"
+          fields:
+            hoster_name: "a.external"
+            link: "a.external"
+          field_attributes:
+            link: ["href"]
+
+auth:
+  type: "none"
+
+http:
+  timeout_seconds: 15.0
+  follow_redirects: true
