@@ -25,6 +25,7 @@ ruff = "^0.14.14"
 pydantic-settings = ">=2.10.1,<2.11.0"
 python-dotenv = ">=1.1.1,<1.2.0"
 httpx = "^0.28.1"
+lxml = ">=4.9,<6"
 redis = {version = "^7.1.0", extras = ["redis"]}
 
 [tool.poetry.group.dev.dependencies]

@@ -482,7 +482,7 @@ class ScrapyAdapter:
 
                 logger.info("page_fetched", url=url, status_code=response.status_code)
 
-                return BeautifulSoup(response.content, "html.parser")
+                return BeautifulSoup(response.content, "lxml")
 
             except httpx.HTTPStatusError as e:
                 logger.warning(
