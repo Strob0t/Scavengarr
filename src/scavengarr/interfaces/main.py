@@ -5,9 +5,9 @@ import time
 import structlog
 from fastapi import FastAPI, Request
 
-from scavengarr.infrastructure.composition import lifespan
 from scavengarr.infrastructure.config import AppConfig
 from scavengarr.interfaces.app_state import AppState
+from scavengarr.interfaces.composition import lifespan
 
 log = structlog.get_logger(__name__)
 

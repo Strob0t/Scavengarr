@@ -7,9 +7,8 @@ import httpx
 import structlog
 from fastapi import FastAPI
 
-# CHANGED: Import CrawlJobFactory instead of CrawlJobService
 from scavengarr.application.factories import CrawlJobFactory
-from scavengarr.domain.entities.crawljob import Priority  # NEW: For factory config
+from scavengarr.domain.entities.crawljob import Priority
 from scavengarr.infrastructure.cache.cache_factory import create_cache
 from scavengarr.infrastructure.persistence.crawljob_cache import (
     CacheCrawlJobRepository,
@@ -84,8 +83,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     log.info("crawljob_repo_initialized")
 
-    # ========== 6) CrawlJob Factory (NEW - Phase 2) ==========
-    # CHANGED: Replace CrawlJobService with CrawlJobFactory
+    # ========== 6) CrawlJob Factory ==========
     state.crawljob_factory = CrawlJobFactory(
         default_ttl_hours=1,  # CrawlJobs expire after 1 hour
         auto_start=True,  # Enable JDownloader auto-start by default
