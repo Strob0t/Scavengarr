@@ -65,6 +65,14 @@ if ! command -v openspec >/dev/null 2>&1; then
   exit 1
 fi
 
+echo "[devcontainer] Installing Claude Code CLI globally via npm..."
+sudo npm install -g @anthropic-ai/claude-code@latest
+
+if ! command -v claude >/dev/null 2>&1; then
+  echo "[devcontainer] ERROR: claude CLI not found after npm install -g @anthropic-ai/claude-code@latest"
+  exit 1
+fi
+
 echo "[devcontainer] Ensuring Poetry is installed..."
 if ! command -v poetry >/dev/null 2>&1; then
   pipx install poetry
