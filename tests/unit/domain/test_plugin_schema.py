@@ -166,3 +166,28 @@ class TestYamlPluginDefinition:
         )
         assert plugin.auth is None
         assert plugin.http is None
+
+    def test_mirror_urls_default_none(self) -> None:
+        plugin = YamlPluginDefinition(
+            name="test",
+            version="0.1",
+            base_url="http://x",
+            scraping=ScrapingConfig(mode="scrapy"),
+        )
+        assert plugin.mirror_urls is None
+
+    def test_mirror_urls_explicit_list(self) -> None:
+        plugin = YamlPluginDefinition(
+            name="filmpalast",
+            version="1.0.0",
+            base_url="https://filmpalast.to",
+            scraping=ScrapingConfig(mode="scrapy"),
+            mirror_urls=[
+                "https://filmpalast.sx",
+                "https://filmpalast.im",
+            ],
+        )
+        assert plugin.mirror_urls == [
+            "https://filmpalast.sx",
+            "https://filmpalast.im",
+        ]

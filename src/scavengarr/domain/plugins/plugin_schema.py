@@ -167,5 +167,6 @@ class YamlPluginDefinition:
     version: str
     base_url: str
     scraping: ScrapingConfig
+    mirror_urls: list[str] | None = None
     auth: AuthConfig | None = None
     http: HttpOverrides | None = None

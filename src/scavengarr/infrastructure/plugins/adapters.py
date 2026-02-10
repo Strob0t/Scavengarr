@@ -152,6 +152,9 @@ def to_domain_plugin_definition(
         version=pydantic.version,
         base_url=str(pydantic.base_url),  # Convert HttpUrl to string
         scraping=to_domain_scraping_config(pydantic.scraping),
+        mirror_urls=[str(u) for u in pydantic.mirror_urls]
+        if pydantic.mirror_urls
+        else None,
         auth=to_domain_auth_config(pydantic.auth) if pydantic.auth else None,
         http=to_domain_http_overrides(pydantic.http) if pydantic.http else None,
     )

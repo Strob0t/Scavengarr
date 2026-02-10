@@ -349,6 +349,7 @@ class YamlPluginDefinitionPydantic(BaseModel):
     name: str = Field(pattern=PLUGIN_NAME_RE)
     version: str = Field(pattern=SEMVER_RE)
     base_url: HttpUrl
+    mirror_urls: Optional[List[HttpUrl]] = None
 
     scraping: ScrapingConfig
     auth: Optional[AuthConfig] = None
