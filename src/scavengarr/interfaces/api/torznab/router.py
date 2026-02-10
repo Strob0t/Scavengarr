@@ -252,7 +252,7 @@ async def torznab_plugin_api(
         return _xml(rendered.payload, status_code=422)
 
     except TorznabExternalError as e:
-        # "prod": stabil für Prowlarr -> leeres RSS (200)
+        # "prod": stable for Prowlarr -> empty RSS (200)
         status = 200 if _is_prod(state) else 502
         rendered = render_rss_xml(
             title=f"{state.config.app_name} ({plugin_name})",
@@ -263,7 +263,7 @@ async def torznab_plugin_api(
         return _xml(rendered.payload, status_code=status)
 
     except Exception:
-        # Unknown error: prod -> leeres RSS (200), dev/test -> 500 mit Hinweis
+        # Unknown error: prod -> empty RSS (200), dev/test -> 500 with hint
         status = 200 if _is_prod(state) else 500
         rendered = render_rss_xml(
             title=f"{state.config.app_name} ({plugin_name})",
@@ -273,13 +273,6 @@ async def torznab_plugin_api(
         )
         log.exception("torznab_unhandled_error", plugin_name=plugin_name, t=t)
         return _xml(rendered.payload, status_code=status)
-
-
-@router.get("/api/v1/torznab/indexers")
-async def torznab_indexers(request: Request) -> dict:
-    state = cast(AppState, request.app.state)
-    uc = TorznabIndexersUseCase(plugins=state.plugins)
-    return {"indexers": uc.execute()}
 
 
 @router.get("/api/v1/torznab/{plugin_name}/health")
