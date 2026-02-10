@@ -2,9 +2,11 @@
 
 Scrapes boerse.sx (vBulletin 3.8.12 forum) with:
 - Domain fallback across multiple mirrors
+- Playwright for Cloudflare JS challenge bypass
 - vBulletin form-based authentication (MD5 password hash)
 - POST-based search with redirect to results
 - Link anonymizer handling (actual URL in <a> text, not href)
+- Bounded concurrency for thread scraping
 
 Credentials via env vars: SCAVENGARR_BOERSE_USERNAME / SCAVENGARR_BOERSE_PASSWORD
 """
@@ -17,8 +19,14 @@ import os
 import re
 from html.parser import HTMLParser
 
-import httpx
 import structlog
+from playwright.async_api import (
+    Browser,
+    BrowserContext,
+    Page,
+    Playwright,
+    async_playwright,
+)
 
 from scavengarr.domain.plugins.base import SearchResult
 
@@ -33,6 +41,8 @@ _DOMAINS = [
 ]
 
 _USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+
+_MAX_CONCURRENT_PAGES = 3
 
 
 class _LinkParser(HTMLParser):
@@ -95,7 +105,7 @@ class _ThreadTitleParser(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attr_dict = dict(attrs)
-        cls = attr_dict.get("class", "")
+        cls = attr_dict.get("class", "")  # noqa: F841
         # vBulletin thread title is typically in the page <title> or a specific class
         if tag == "title":
             self._in_title_tag = True
@@ -116,35 +126,40 @@ class _ThreadTitleParser(HTMLParser):
 
 
 class BoersePlugin:
-    """Python plugin for boerse.sx forum."""
+    """Python plugin for boerse.sx forum using Playwright."""
 
     name = "boerse"
 
     def __init__(self) -> None:
         self._domains = list(_DOMAINS)
-        self._client: httpx.AsyncClient | None = None
+        self._playwright: Playwright | None = None
+        self._browser: Browser | None = None
+        self._context: BrowserContext | None = None
         self._logged_in = False
         self.base_url = self._domains[0]
 
-    async def search(
-        self,
-        query: str,
-        category: int | None = None,
-    ) -> list[SearchResult]:
-        """Search boerse.sx and return results with download links."""
-        await self._ensure_session()
-        thread_urls = await self._search_threads(query)
+    async def _ensure_browser(self) -> None:
+        """Launch Chromium if not already running."""
+        if self._browser is not None:
+            return
+        self._playwright = await async_playwright().start()
+        self._browser = await self._playwright.chromium.launch(headless=True)
+        self._context = await self._browser.new_context(user_agent=_USER_AGENT)
 
-        if not thread_urls:
-            return []
-
-        tasks = [self._scrape_thread(url) for url in thread_urls]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        return [r for r in results if isinstance(r, SearchResult)]
+    async def _wait_for_cloudflare(self, page: Page) -> None:
+        """If Cloudflare challenge is detected, wait for it to resolve."""
+        try:
+            await page.wait_for_function(
+                "() => !document.title.includes('Just a moment')",
+                timeout=15_000,
+            )
+        except Exception:  # noqa: BLE001
+            pass  # proceed anyway — page may still be usable
 
     async def _ensure_session(self) -> None:
-        """Ensure we have an authenticated httpx session."""
-        if self._logged_in and self._client is not None:
+        """Ensure we have an authenticated Playwright session."""
+        await self._ensure_browser()
+        if self._logged_in:
             return
 
         username = os.environ.get("SCAVENGARR_BOERSE_USERNAME", "")
@@ -156,85 +171,135 @@ class BoersePlugin:
                 "and SCAVENGARR_BOERSE_PASSWORD"
             )
 
-        if self._client is not None:
-            await self._client.aclose()
-
-        self._client = httpx.AsyncClient(
-            follow_redirects=True,
-            timeout=httpx.Timeout(15.0),
-            headers={"User-Agent": _USER_AGENT},
-        )
-
-        md5_pass = hashlib.md5(  # noqa: S324
-            password.encode()
-        ).hexdigest()
+        assert self._context is not None
+        md5_pass = hashlib.md5(password.encode()).hexdigest()  # noqa: S324
 
         for domain in self._domains:
             try:
-                resp = await self._client.post(
-                    f"{domain}/login.php?do=login",
-                    data={
-                        "vb_login_username": username,
-                        "vb_login_password": "",
-                        "vb_login_md5password": md5_pass,
-                        "do": "login",
-                        "s": "",
-                        "securitytoken": "guest",
-                    },
-                )
-                # Success: bb_userid cookie set or redirect to forum index
-                cookies = {c.name for c in self._client.cookies.jar}
-                if "bb_userid" in cookies or resp.status_code == 200:
-                    self.base_url = domain
-                    self._logged_in = True
-                    log.info("boerse_login_success", domain=domain)
-                    return
+                page = await self._context.new_page()
+                try:
+                    await page.goto(
+                        f"{domain}/login.php?do=login",
+                        wait_until="domcontentloaded",
+                    )
+                    await self._wait_for_cloudflare(page)
 
-            except (httpx.ConnectError, httpx.TimeoutException) as e:
+                    # Submit vBulletin login via JS (fills hidden form fields)
+                    await page.evaluate(
+                        """([user, md5]) => {
+                            const form = document.createElement('form');
+                            form.method = 'POST';
+                            form.action = '/login.php?do=login';
+                            const fields = {
+                                vb_login_username: user,
+                                vb_login_password: '',
+                                vb_login_md5password: md5,
+                                do: 'login',
+                                s: '',
+                                securitytoken: 'guest',
+                            };
+                            for (const [k, v] of Object.entries(fields)) {
+                                const input = document.createElement('input');
+                                input.type = 'hidden';
+                                input.name = k;
+                                input.value = v;
+                                form.appendChild(input);
+                            }
+                            document.body.appendChild(form);
+                            form.submit();
+                        }""",
+                        [username, md5_pass],
+                    )
+                    await page.wait_for_load_state("domcontentloaded")
+                    await self._wait_for_cloudflare(page)
+
+                    # Check login success via cookies
+                    cookies = await self._context.cookies()
+                    if any(c["name"] == "bb_userid" for c in cookies):
+                        self.base_url = domain
+                        self._logged_in = True
+                        log.info("boerse_login_success", domain=domain)
+                        await page.close()
+                        return
+                finally:
+                    if not page.is_closed():
+                        await page.close()
+
+            except Exception as exc:  # noqa: BLE001
                 log.warning(
                     "boerse_domain_unreachable",
                     domain=domain,
-                    error=str(e),
+                    error=str(exc),
                 )
                 continue
 
         raise RuntimeError("All boerse domains failed during login")
 
     async def _search_threads(self, query: str) -> list[str]:
-        """POST search and extract thread URLs from results."""
-        assert self._client is not None
+        """Navigate to search, submit query, extract thread URLs."""
+        assert self._context is not None
 
+        page = await self._context.new_page()
         try:
-            resp = await self._client.post(
+            await page.goto(
                 f"{self.base_url}/search.php?do=process",
-                data={
-                    "do": "process",
-                    "query": query,
-                    "titleonly": "1",
-                    "showposts": "0",
-                },
+                wait_until="domcontentloaded",
             )
-        except (httpx.ConnectError, httpx.TimeoutException):
+            await self._wait_for_cloudflare(page)
+
+            # Submit search form via JS
+            await page.evaluate(
+                """(query) => {
+                    const form = document.createElement('form');
+                    form.method = 'POST';
+                    form.action = '/search.php?do=process';
+                    const fields = {
+                        do: 'process',
+                        query: query,
+                        titleonly: '1',
+                        showposts: '0',
+                    };
+                    for (const [k, v] of Object.entries(fields)) {
+                        const input = document.createElement('input');
+                        input.type = 'hidden';
+                        input.name = k;
+                        input.value = v;
+                        form.appendChild(input);
+                    }
+                    document.body.appendChild(form);
+                    form.submit();
+                }""",
+                query,
+            )
+            await page.wait_for_load_state("domcontentloaded")
+            await self._wait_for_cloudflare(page)
+
+            html = await page.content()
+            parser = _ThreadLinkParser(self.base_url)
+            parser.feed(html)
+            return parser.thread_urls
+        except Exception:
             self._logged_in = False
             raise
-
-        parser = _ThreadLinkParser(self.base_url)
-        parser.feed(resp.text)
-        return parser.thread_urls
+        finally:
+            if not page.is_closed():
+                await page.close()
 
     async def _scrape_thread(self, url: str) -> SearchResult | None:
         """Scrape a single thread page for title and download links."""
-        assert self._client is not None
+        assert self._context is not None
 
+        page = await self._context.new_page()
         try:
-            resp = await self._client.get(url)
-        except (httpx.ConnectError, httpx.TimeoutException):
-            return None
+            await page.goto(url, wait_until="domcontentloaded")
+            await self._wait_for_cloudflare(page)
 
-        if resp.status_code != 200:
+            html = await page.content()
+        except Exception:  # noqa: BLE001
             return None
-
-        html = resp.text
+        finally:
+            if not page.is_closed():
+                await page.close()
 
         # Extract title
         title_parser = _ThreadTitleParser()
@@ -262,6 +327,43 @@ class BoersePlugin:
             category=2000,
         )
 
+    async def search(
+        self,
+        query: str,
+        category: int | None = None,
+    ) -> list[SearchResult]:
+        """Search boerse.sx and return results with download links."""
+        await self._ensure_session()
+        thread_urls = await self._search_threads(query)
+
+        if not thread_urls:
+            return []
+
+        sem = asyncio.Semaphore(_MAX_CONCURRENT_PAGES)
+
+        async def _bounded_scrape(url: str) -> SearchResult | None:
+            async with sem:
+                return await self._scrape_thread(url)
+
+        results = await asyncio.gather(
+            *[_bounded_scrape(url) for url in thread_urls],
+            return_exceptions=True,
+        )
+        return [r for r in results if isinstance(r, SearchResult)]
+
+    async def cleanup(self) -> None:
+        """Close browser and Playwright resources."""
+        if self._context is not None:
+            await self._context.close()
+            self._context = None
+        if self._browser is not None:
+            await self._browser.close()
+            self._browser = None
+        if self._playwright is not None:
+            await self._playwright.stop()
+            self._playwright = None
+        self._logged_in = False
+
 
 def _hoster_from_url(url: str) -> str:
     """Extract hoster name from URL domain."""
@@ -272,7 +374,7 @@ def _hoster_from_url(url: str) -> str:
         # Strip www. and TLD
         parts = host.replace("www.", "").split(".")
         return parts[0] if parts else "unknown"
-    except Exception:
+    except Exception:  # noqa: BLE001
         return "unknown"
 
 

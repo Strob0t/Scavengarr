@@ -1,4 +1,4 @@
-"""Tests for the boerse.sx Python plugin."""
+"""Tests for the boerse.sx Python plugin (Playwright-based)."""
 
 from __future__ import annotations
 
@@ -6,9 +6,8 @@ import importlib.util
 import os
 from pathlib import Path
 from types import ModuleType
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
 import pytest
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "boerse.py"
@@ -42,101 +41,152 @@ def _make_plugin() -> object:
     return _BoersePlugin()
 
 
-def _mock_response(
-    status_code: int = 200,
-    text: str = "",
-) -> httpx.Response:
-    """Create a mock httpx.Response."""
-    return httpx.Response(
-        status_code=status_code,
-        text=text,
-        request=httpx.Request("GET", "https://example.com"),
-    )
+def _make_mock_page(content: str = "<html></html>") -> AsyncMock:
+    """Create a mock Playwright Page."""
+    page = AsyncMock()
+    page.goto = AsyncMock()
+    page.wait_for_function = AsyncMock()
+    page.wait_for_load_state = AsyncMock()
+    page.evaluate = AsyncMock()
+    page.content = AsyncMock(return_value=content)
+    page.close = AsyncMock()
+    page.is_closed = MagicMock(return_value=False)
+    return page
+
+
+def _make_mock_context(
+    pages: list[AsyncMock] | None = None,
+    cookies: list[dict[str, str]] | None = None,
+) -> AsyncMock:
+    """Create a mock BrowserContext that yields pages in order."""
+    context = AsyncMock()
+    if pages:
+        context.new_page = AsyncMock(side_effect=pages)
+    else:
+        context.new_page = AsyncMock(return_value=_make_mock_page())
+    context.cookies = AsyncMock(return_value=cookies or [])
+    context.close = AsyncMock()
+    return context
+
+
+def _make_mock_browser(context: AsyncMock | None = None) -> AsyncMock:
+    """Create a mock Browser."""
+    browser = AsyncMock()
+    browser.new_context = AsyncMock(return_value=context or _make_mock_context())
+    browser.close = AsyncMock()
+    return browser
+
+
+def _make_mock_playwright(browser: AsyncMock | None = None) -> AsyncMock:
+    """Create a mock Playwright instance."""
+    pw = AsyncMock()
+    pw.chromium = MagicMock()
+    pw.chromium.launch = AsyncMock(return_value=browser or _make_mock_browser())
+    pw.stop = AsyncMock()
+    return pw
 
 
 class TestLogin:
     async def test_login_success(self) -> None:
         plugin = _make_plugin()
 
-        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        login_page = _make_mock_page()
+        cookies = [{"name": "bb_userid", "value": "12345"}]
+        context = _make_mock_context(pages=[login_page], cookies=cookies)
+        browser = _make_mock_browser(context)
+        pw = _make_mock_playwright(browser)
 
-        jar = httpx.Cookies()
-        jar.set("bb_userid", "12345")
-        mock_client.cookies = jar
-        mock_client.post = AsyncMock(return_value=_mock_response(200))
-        mock_client.aclose = AsyncMock()
-
+        mock_start = AsyncMock(return_value=pw)
         with (
             patch.dict(os.environ, _TEST_CREDENTIALS),
-            patch.object(_boerse.httpx, "AsyncClient", return_value=mock_client),
+            patch.object(_boerse, "async_playwright") as mock_ap,
         ):
+            mock_ap.return_value.start = mock_start
             await plugin._ensure_session()
 
         assert plugin._logged_in is True
-        mock_client.post.assert_awaited_once()
+        login_page.evaluate.assert_awaited_once()
+        login_page.close.assert_awaited()
 
     async def test_login_domain_fallback(self) -> None:
         plugin = _make_plugin()
 
-        call_count = 0
+        # First page (boerse.am) → goto raises, second page (boerse.sx) → succeeds
+        fail_page = _make_mock_page()
+        fail_page.goto = AsyncMock(side_effect=Exception("unreachable"))
+        # is_closed returns False so cleanup tries page.close
+        fail_page.is_closed = MagicMock(return_value=False)
 
-        async def _post_side_effect(url: str, **kwargs: object) -> httpx.Response:
-            nonlocal call_count
-            call_count += 1
-            if "boerse.am" in url:
-                raise httpx.ConnectError("unreachable")
-            return _mock_response(200)
+        ok_page = _make_mock_page()
+        cookies = [{"name": "bb_userid", "value": "12345"}]
+        context = _make_mock_context(pages=[fail_page, ok_page], cookies=cookies)
+        browser = _make_mock_browser(context)
+        pw = _make_mock_playwright(browser)
 
-        mock_client = AsyncMock(spec=httpx.AsyncClient)
-        jar = httpx.Cookies()
-        jar.set("bb_userid", "12345")
-        mock_client.cookies = jar
-        mock_client.post = AsyncMock(side_effect=_post_side_effect)
-        mock_client.aclose = AsyncMock()
-
+        mock_start = AsyncMock(return_value=pw)
         with (
             patch.dict(os.environ, _TEST_CREDENTIALS),
-            patch.object(_boerse.httpx, "AsyncClient", return_value=mock_client),
+            patch.object(_boerse, "async_playwright") as mock_ap,
         ):
+            mock_ap.return_value.start = mock_start
             await plugin._ensure_session()
 
         assert plugin._logged_in is True
         assert plugin.base_url == "https://boerse.sx"
-        assert call_count == 2
 
     async def test_login_all_domains_fail(self) -> None:
         plugin = _make_plugin()
 
-        mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.post = AsyncMock(side_effect=httpx.ConnectError("unreachable"))
-        mock_client.cookies = httpx.Cookies()
-        mock_client.aclose = AsyncMock()
+        # All pages raise on goto
+        pages = [_make_mock_page() for _ in range(5)]
+        for p in pages:
+            p.goto = AsyncMock(side_effect=Exception("unreachable"))
+            p.is_closed = MagicMock(return_value=False)
 
+        context = _make_mock_context(pages=pages, cookies=[])
+        browser = _make_mock_browser(context)
+        pw = _make_mock_playwright(browser)
+
+        mock_start = AsyncMock(return_value=pw)
         with (
             patch.dict(os.environ, _TEST_CREDENTIALS),
-            patch.object(_boerse.httpx, "AsyncClient", return_value=mock_client),
+            patch.object(_boerse, "async_playwright") as mock_ap,
         ):
+            mock_ap.return_value.start = mock_start
             with pytest.raises(RuntimeError, match="All boerse domains failed"):
                 await plugin._ensure_session()
 
     async def test_missing_credentials_raises(self) -> None:
-        with patch.dict(os.environ, {}, clear=True):
+        plugin = _make_plugin()
+
+        # Set up browser mocks so _ensure_browser() succeeds
+        context = _make_mock_context()
+        browser = _make_mock_browser(context)
+        pw = _make_mock_playwright(browser)
+
+        mock_start = AsyncMock(return_value=pw)
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(_boerse, "async_playwright") as mock_ap,
+        ):
+            mock_ap.return_value.start = mock_start
             os.environ.pop("SCAVENGARR_BOERSE_USERNAME", None)
             os.environ.pop("SCAVENGARR_BOERSE_PASSWORD", None)
-            plugin = _BoersePlugin()
 
-        with pytest.raises(RuntimeError, match="Missing credentials"):
-            await plugin._ensure_session()
+            with pytest.raises(RuntimeError, match="Missing credentials"):
+                await plugin._ensure_session()
 
     async def test_session_reuse(self) -> None:
         plugin = _make_plugin()
 
-        mock_client = AsyncMock(spec=httpx.AsyncClient)
-        plugin._client = mock_client
+        context = _make_mock_context()
+        plugin._browser = _make_mock_browser(context)
+        plugin._context = context
         plugin._logged_in = True
 
         await plugin._ensure_session()
-        mock_client.post.assert_not_awaited()
+        # No new pages should be created — session was already active
+        context.new_page.assert_not_awaited()
 
 
 class TestSearch:
@@ -157,11 +207,16 @@ class TestSearch:
         </body></html>
         """
 
-        mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.post = AsyncMock(return_value=_mock_response(200, text=search_html))
-        mock_client.get = AsyncMock(return_value=_mock_response(200, text=thread_html))
+        search_page = _make_mock_page(search_html)
+        thread_page_1 = _make_mock_page(thread_html)
+        thread_page_2 = _make_mock_page(thread_html)
 
-        plugin._client = mock_client
+        context = _make_mock_context(
+            pages=[search_page, thread_page_1, thread_page_2],
+        )
+
+        plugin._browser = _make_mock_browser(context)
+        plugin._context = context
         plugin._logged_in = True
         plugin.base_url = "https://boerse.am"
 
@@ -175,19 +230,57 @@ class TestSearch:
     async def test_search_no_threads(self) -> None:
         plugin = _make_plugin()
 
-        mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.post = AsyncMock(
-            return_value=_mock_response(
-                200, text="<html><body>No results</body></html>"
-            )
-        )
+        search_page = _make_mock_page("<html><body>No results</body></html>")
+        context = _make_mock_context(pages=[search_page])
 
-        plugin._client = mock_client
+        plugin._browser = _make_mock_browser(context)
+        plugin._context = context
         plugin._logged_in = True
         plugin.base_url = "https://boerse.am"
 
         results = await plugin.search("nonexistent")
         assert results == []
+
+
+class TestCloudflareWait:
+    async def test_cloudflare_wait_passes_when_no_challenge(self) -> None:
+        plugin = _make_plugin()
+        page = _make_mock_page()
+        # wait_for_function succeeds immediately (no Cloudflare)
+        await plugin._wait_for_cloudflare(page)
+        page.wait_for_function.assert_awaited_once()
+
+    async def test_cloudflare_wait_timeout_does_not_raise(self) -> None:
+        plugin = _make_plugin()
+        page = _make_mock_page()
+        page.wait_for_function = AsyncMock(side_effect=TimeoutError("timeout"))
+
+        # Should not raise — timeout is swallowed
+        await plugin._wait_for_cloudflare(page)
+
+
+class TestCleanup:
+    async def test_cleanup_closes_resources(self) -> None:
+        plugin = _make_plugin()
+
+        context = _make_mock_context()
+        browser = _make_mock_browser(context)
+        pw = _make_mock_playwright(browser)
+
+        plugin._playwright = pw
+        plugin._browser = browser
+        plugin._context = context
+        plugin._logged_in = True
+
+        await plugin.cleanup()
+
+        context.close.assert_awaited_once()
+        browser.close.assert_awaited_once()
+        pw.stop.assert_awaited_once()
+        assert plugin._logged_in is False
+        assert plugin._context is None
+        assert plugin._browser is None
+        assert plugin._playwright is None
 
 
 class TestDownloadLinkExtraction:
