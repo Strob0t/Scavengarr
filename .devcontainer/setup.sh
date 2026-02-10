@@ -66,7 +66,7 @@ if ! command -v openspec >/dev/null 2>&1; then
 fi
 
 echo "[devcontainer] Installing Claude Code CLI globally via npm..."
-sudo npm install -g @anthropic-ai/claude-code@latest
+npm install -g @anthropic-ai/claude-code@latest
 
 if ! command -v claude >/dev/null 2>&1; then
   echo "[devcontainer] ERROR: claude CLI not found after npm install -g @anthropic-ai/claude-code@latest"
