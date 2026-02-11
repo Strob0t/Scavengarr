@@ -7,7 +7,6 @@ from unittest.mock import patch
 import pytest
 
 from scavengarr.domain.entities.stremio import (
-    RankedStream,
     StreamLanguage,
     StreamQuality,
 )
@@ -172,7 +171,8 @@ class TestConvertSearchResults:
         assert streams[0].language == _MOCK_LANGUAGE
 
     def test_parse_quality_called_with_correct_args(
-        self, _mock_parsers: tuple,
+        self,
+        _mock_parsers: tuple,
     ) -> None:
         mock_q, _mock_l = _mock_parsers
         result = _make_result(
@@ -188,7 +188,8 @@ class TestConvertSearchResults:
         )
 
     def test_parse_language_called_with_correct_args(
-        self, _mock_parsers: tuple,
+        self,
+        _mock_parsers: tuple,
     ) -> None:
         _mock_q, mock_l = _mock_parsers
         result = _make_result(

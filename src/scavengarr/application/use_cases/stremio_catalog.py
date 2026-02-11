@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import logging
+import structlog
 
 from scavengarr.domain.entities.stremio import StremioContentType, StremioMetaPreview
 from scavengarr.domain.ports.tmdb import TmdbClientPort
 
-logger = logging.getLogger(__name__)
+log = structlog.get_logger(__name__)
 
 
 class StremioCatalogUseCase:
@@ -39,10 +39,11 @@ class StremioCatalogUseCase:
                 return await self._tmdb.trending_movies(page=page)
             return await self._tmdb.trending_tv(page=page)
         except Exception:
-            logger.warning(
+            log.warning(
                 "stremio_catalog_trending_error",
+                content_type=content_type,
+                page=page,
                 exc_info=True,
-                extra={"content_type": content_type, "page": page},
             )
             return []
 
@@ -70,13 +71,11 @@ class StremioCatalogUseCase:
                 return await self._tmdb.search_movies(query=query, page=page)
             return await self._tmdb.search_tv(query=query, page=page)
         except Exception:
-            logger.warning(
+            log.warning(
                 "stremio_catalog_search_error",
+                content_type=content_type,
+                query=query,
+                page=page,
                 exc_info=True,
-                extra={
-                    "content_type": content_type,
-                    "query": query,
-                    "page": page,
-                },
             )
             return []

@@ -9,7 +9,6 @@ import pytest
 from scavengarr.application.use_cases.stremio_catalog import StremioCatalogUseCase
 from scavengarr.domain.entities.stremio import StremioMetaPreview
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -98,9 +97,7 @@ class TestTrending:
 
         mock_tmdb.trending_movies.assert_awaited_once_with(page=3)
 
-    async def test_trending_error_returns_empty(
-        self, mock_tmdb: AsyncMock
-    ) -> None:
+    async def test_trending_error_returns_empty(self, mock_tmdb: AsyncMock) -> None:
         mock_tmdb.trending_movies.side_effect = RuntimeError("TMDB down")
         uc = StremioCatalogUseCase(tmdb=mock_tmdb)
 
@@ -108,9 +105,7 @@ class TestTrending:
 
         assert result == []
 
-    async def test_trending_tv_error_returns_empty(
-        self, mock_tmdb: AsyncMock
-    ) -> None:
+    async def test_trending_tv_error_returns_empty(self, mock_tmdb: AsyncMock) -> None:
         mock_tmdb.trending_tv.side_effect = RuntimeError("timeout")
         uc = StremioCatalogUseCase(tmdb=mock_tmdb)
 
@@ -142,9 +137,7 @@ class TestSearch:
 
         assert len(result) == 1
         assert result[0].name == "Haus des Geldes"
-        mock_tmdb.search_tv.assert_awaited_once_with(
-            query="Haus des Geldes", page=1
-        )
+        mock_tmdb.search_tv.assert_awaited_once_with(query="Haus des Geldes", page=1)
         mock_tmdb.search_movies.assert_not_awaited()
 
     async def test_search_pagination(
@@ -170,9 +163,7 @@ class TestSearch:
         assert result == []
         mock_tmdb.search_tv.assert_not_awaited()
 
-    async def test_search_error_returns_empty(
-        self, mock_tmdb: AsyncMock
-    ) -> None:
+    async def test_search_error_returns_empty(self, mock_tmdb: AsyncMock) -> None:
         mock_tmdb.search_movies.side_effect = RuntimeError("API error")
         uc = StremioCatalogUseCase(tmdb=mock_tmdb)
 
@@ -180,9 +171,7 @@ class TestSearch:
 
         assert result == []
 
-    async def test_search_tv_error_returns_empty(
-        self, mock_tmdb: AsyncMock
-    ) -> None:
+    async def test_search_tv_error_returns_empty(self, mock_tmdb: AsyncMock) -> None:
         mock_tmdb.search_tv.side_effect = RuntimeError("timeout")
         uc = StremioCatalogUseCase(tmdb=mock_tmdb)
 
@@ -213,9 +202,7 @@ class TestReturnTypes:
         for item in result:
             assert isinstance(item, StremioMetaPreview)
 
-    async def test_trending_empty_from_tmdb(
-        self, mock_tmdb: AsyncMock
-    ) -> None:
+    async def test_trending_empty_from_tmdb(self, mock_tmdb: AsyncMock) -> None:
         mock_tmdb.trending_movies.return_value = []
         uc = StremioCatalogUseCase(tmdb=mock_tmdb)
 
@@ -223,9 +210,7 @@ class TestReturnTypes:
 
         assert result == []
 
-    async def test_search_no_results_from_tmdb(
-        self, mock_tmdb: AsyncMock
-    ) -> None:
+    async def test_search_no_results_from_tmdb(self, mock_tmdb: AsyncMock) -> None:
         mock_tmdb.search_movies.return_value = []
         uc = StremioCatalogUseCase(tmdb=mock_tmdb)
 

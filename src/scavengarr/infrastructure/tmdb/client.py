@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 import httpx
+import structlog
 
 from scavengarr.domain.entities.stremio import StremioMetaPreview
 from scavengarr.domain.ports.cache import CachePort
 
-logger = logging.getLogger(__name__)
+log = structlog.get_logger(__name__)
 
 _BASE_URL = "https://api.themoviedb.org/3"
 _POSTER_BASE = "https://image.tmdb.org/t/p/w500"
@@ -52,18 +52,18 @@ class HttpxTmdbClient:
         try:
             resp = await self._http.get(url, params=self._params(**extra))
             if resp.status_code == 401:
-                logger.error("TMDB API key invalid (401)")
+                log.error("tmdb_api_key_invalid", status=401)
                 return None
             if resp.status_code == 404:
-                logger.debug("TMDB resource not found: %s", path)
+                log.debug("tmdb_resource_not_found", path=path)
                 return None
             resp.raise_for_status()
             return resp.json()
         except httpx.HTTPStatusError:
-            logger.warning("TMDB HTTP error for %s", path, exc_info=True)
+            log.warning("tmdb_http_error", path=path, exc_info=True)
             return None
         except httpx.HTTPError:
-            logger.warning("TMDB network error for %s", path, exc_info=True)
+            log.warning("tmdb_network_error", path=path, exc_info=True)
             return None
 
     @staticmethod
@@ -85,25 +85,29 @@ class HttpxTmdbClient:
     def _movie_to_preview(self, movie: dict[str, Any]) -> StremioMetaPreview:
         release_date = movie.get("release_date", "")
         return StremioMetaPreview(
-            id=f"tt{movie['id']}" if not str(movie.get("id", "")).startswith("tt") else str(movie["id"]),
+            id=self._extract_imdb_id(movie),
             type="movie",
             name=movie.get("title", movie.get("original_title", "")),
             poster=self._poster_url(movie.get("poster_path")),
             description=movie.get("overview", ""),
             release_info=release_date[:4] if release_date else "",
-            imdb_rating=str(movie.get("vote_average", "")) if movie.get("vote_average") else "",
+            imdb_rating=str(movie.get("vote_average", ""))
+            if movie.get("vote_average")
+            else "",
         )
 
     def _tv_to_preview(self, show: dict[str, Any]) -> StremioMetaPreview:
         first_air = show.get("first_air_date", "")
         return StremioMetaPreview(
-            id=f"tt{show['id']}" if not str(show.get("id", "")).startswith("tt") else str(show["id"]),
+            id=self._extract_imdb_id(show),
             type="series",
             name=show.get("name", show.get("original_name", "")),
             poster=self._poster_url(show.get("poster_path")),
             description=show.get("overview", ""),
             release_info=first_air[:4] if first_air else "",
-            imdb_rating=str(show.get("vote_average", "")) if show.get("vote_average") else "",
+            imdb_rating=str(show.get("vote_average", ""))
+            if show.get("vote_average")
+            else "",
         )
 
     # ------------------------------------------------------------------
@@ -141,6 +145,34 @@ class HttpxTmdbClient:
             return None
         # Movies use "title", TV shows use "name"
         return result.get("title") or result.get("name") or None
+
+    async def get_title_by_tmdb_id(self, tmdb_id: int, media_type: str) -> str | None:
+        """Get the German title for a TMDB numeric ID.
+
+        Used for catalog items that were discovered via TMDB trending/search
+        (which don't include IMDb IDs).
+
+        Args:
+            tmdb_id: TMDB numeric ID.
+            media_type: "movie" or "series" (maps to TMDB "tv").
+
+        Returns:
+            German title or None if not found.
+        """
+        endpoint = "tv" if media_type == "series" else "movie"
+        cache_key = f"tmdb:title:{endpoint}:{tmdb_id}"
+        cached = await self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        data = await self._get(f"/{endpoint}/{tmdb_id}")
+        if data is None:
+            return None
+
+        title = data.get("title") or data.get("name") or None
+        if title:
+            await self._cache.set(cache_key, title, ttl=_TTL_FIND)
+        return title
 
     async def trending_movies(self, page: int = 1) -> list[StremioMetaPreview]:
         """Fetch trending movies (German locale)."""
@@ -189,9 +221,7 @@ class HttpxTmdbClient:
         await self._cache.set(cache_key, previews, ttl=_TTL_SEARCH)
         return previews
 
-    async def search_tv(
-        self, query: str, page: int = 1
-    ) -> list[StremioMetaPreview]:
+    async def search_tv(self, query: str, page: int = 1) -> list[StremioMetaPreview]:
         """Search TV shows by query (German locale)."""
         cache_key = f"tmdb:search:tv:{query}:{page}"
         cached = await self._cache.get(cache_key)

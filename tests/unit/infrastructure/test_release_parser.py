@@ -11,9 +11,7 @@ from scavengarr.infrastructure.stremio.release_parser import (
 
 class TestParseQuality:
     def test_guessit_extracts_1080p_from_release_name(self) -> None:
-        result = parse_quality(
-            release_name="Iron.Man.2008.1080p.BluRay.x264-GROUP"
-        )
+        result = parse_quality(release_name="Iron.Man.2008.1080p.BluRay.x264-GROUP")
         assert result == StreamQuality.HD_1080P
 
     def test_guessit_extracts_720p_from_release_name(self) -> None:
@@ -66,9 +64,7 @@ class TestParseLanguage:
         assert result.is_dubbed is True
 
     def test_guessit_english_subtitle_from_release_name(self) -> None:
-        result = parse_language(
-            release_name="Movie.1080p.English.Subs"
-        )
+        result = parse_language(release_name="Movie.1080p.English.Subs")
         assert result is not None
         assert result.code == "en-sub"
         assert result.is_dubbed is False
@@ -87,9 +83,7 @@ class TestParseLanguage:
 
     def test_fallback_to_plugin_default_language(self) -> None:
         result = parse_language(plugin_default_language="de")
-        assert result == StreamLanguage(
-            code="de", label="German Dub", is_dubbed=True
-        )
+        assert result == StreamLanguage(code="de", label="German Dub", is_dubbed=True)
 
     def test_returns_none_when_nothing_available(self) -> None:
         result = parse_language()

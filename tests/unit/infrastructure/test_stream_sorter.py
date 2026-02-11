@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from scavengarr.domain.entities.stremio import (
     RankedStream,
     StreamLanguage,
@@ -126,9 +124,7 @@ class TestSort:
         assert result[1].quality == StreamQuality.SD
 
     def test_same_language_quality_hoster_tiebreaker(self) -> None:
-        voe = _stream(
-            hoster="voe", quality=StreamQuality.HD_1080P, language=GERMAN_DUB
-        )
+        voe = _stream(hoster="voe", quality=StreamQuality.HD_1080P, language=GERMAN_DUB)
         generic = _stream(
             hoster="unknown", quality=StreamQuality.HD_1080P, language=GERMAN_DUB
         )

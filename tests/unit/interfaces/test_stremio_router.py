@@ -95,6 +95,37 @@ class TestParseStreamId:
         result = _parse_stream_id("series", "tt1234567:abc:5")
         assert result is None
 
+    def test_tmdb_movie_id(self) -> None:
+        result = _parse_stream_id("movie", "tmdb:12345")
+        assert result is not None
+        assert result.imdb_id == "tmdb:12345"
+        assert result.content_type == "movie"
+        assert result.season is None
+        assert result.episode is None
+
+    def test_tmdb_series_id_with_season_episode(self) -> None:
+        result = _parse_stream_id("series", "tmdb:67890:2:10")
+        assert result is not None
+        assert result.imdb_id == "tmdb:67890"
+        assert result.content_type == "series"
+        assert result.season == 2
+        assert result.episode == 10
+
+    def test_tmdb_series_without_season_episode(self) -> None:
+        result = _parse_stream_id("series", "tmdb:67890")
+        assert result is not None
+        assert result.imdb_id == "tmdb:67890"
+        assert result.season is None
+        assert result.episode is None
+
+    def test_tmdb_invalid_content_type(self) -> None:
+        result = _parse_stream_id("channel", "tmdb:12345")
+        assert result is None
+
+    def test_tmdb_series_non_numeric_season(self) -> None:
+        result = _parse_stream_id("series", "tmdb:12345:abc:5")
+        assert result is None
+
 
 class TestManifestEndpoint:
     def test_returns_valid_manifest(self) -> None:
@@ -110,6 +141,8 @@ class TestManifestEndpoint:
         assert "series" in data["types"]
         assert "stream" in data["resources"]
         assert "catalog" in data["resources"]
+        assert "tt" in data["idPrefixes"]
+        assert "tmdb:" in data["idPrefixes"]
 
     def test_cors_headers(self) -> None:
         app = _make_app()
@@ -341,6 +374,50 @@ class TestStreamEndpoint:
         resp = client.get("/stremio/stream/movie/tt1234567.json")
 
         assert resp.headers["access-control-allow-origin"] == "*"
+
+    def test_returns_streams_for_tmdb_movie(self) -> None:
+        tmdb = AsyncMock()
+        tmdb.get_title_by_tmdb_id = AsyncMock(return_value="Der Pate")
+
+        results = [
+            SearchResult(
+                title="Der.Pate.1972.1080p.BluRay",
+                download_link="https://voe.sx/e/xyz789",
+                size="5.0 GB",
+                release_name="Der.Pate.1972.1080p.BluRay.x264-GROUP",
+                metadata={"source_plugin": "hdfilme", "quality": "1080p"},
+            ),
+        ]
+
+        app = _make_app(
+            tmdb_client=tmdb,
+            plugin_names=["hdfilme"],
+            search_results=results,
+        )
+        client = TestClient(app)
+
+        resp = client.get("/stremio/stream/movie/tmdb:238.json")
+
+        assert resp.status_code == 200
+        streams = resp.json()["streams"]
+        assert len(streams) >= 1
+        assert "url" in streams[0]
+        tmdb.get_title_by_tmdb_id.assert_awaited_once_with(238, "movie")
+
+    def test_tmdb_series_resolves_with_season_episode(self) -> None:
+        tmdb = AsyncMock()
+        tmdb.get_title_by_tmdb_id = AsyncMock(return_value="Breaking Bad")
+
+        app = _make_app(
+            tmdb_client=tmdb,
+            plugin_names=["hdfilme"],
+        )
+        client = TestClient(app)
+
+        resp = client.get("/stremio/stream/series/tmdb:1396:3:7.json")
+
+        assert resp.status_code == 200
+        tmdb.get_title_by_tmdb_id.assert_awaited_once_with(1396, "series")
 
     def test_series_search_includes_season_episode(self) -> None:
         tmdb = AsyncMock()

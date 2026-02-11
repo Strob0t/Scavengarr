@@ -230,7 +230,9 @@ class TestFindByImdbId:
     async def test_network_error_returns_none(
         self, client: HttpxTmdbClient, cache: AsyncMock
     ) -> None:
-        respx.get(f"{_BASE}/find/tt0103064").mock(side_effect=httpx.ConnectError("DNS failure"))
+        respx.get(f"{_BASE}/find/tt0103064").mock(
+            side_effect=httpx.ConnectError("DNS failure")
+        )
 
         result = await client.find_by_imdb_id("tt0103064")
 
@@ -291,11 +293,16 @@ class TestTrendingMovies:
         previews = await client.trending_movies()
 
         assert len(previews) == 2
+        assert previews[0].id == "tmdb:550"
         assert previews[0].name == "Fight Club"
         assert previews[0].type == "movie"
-        assert previews[0].poster == "https://image.tmdb.org/t/p/w500/pB8BM7pdSp6B6Ih7QZ4DrQ3PmJK.jpg"
+        assert (
+            previews[0].poster
+            == "https://image.tmdb.org/t/p/w500/pB8BM7pdSp6B6Ih7QZ4DrQ3PmJK.jpg"
+        )
         assert previews[0].release_info == "1999"
         assert previews[0].imdb_rating == "8.4"
+        assert previews[1].id == "tmdb:680"
         assert previews[1].name == "Pulp Fiction"
 
     @respx.mock
@@ -362,6 +369,7 @@ class TestTrendingTv:
         previews = await client.trending_tv()
 
         assert len(previews) == 1
+        assert previews[0].id == "tmdb:94997"
         assert previews[0].name == "Haus des Geldes"
         assert previews[0].type == "series"
         assert previews[0].release_info == "2017"
@@ -393,15 +401,14 @@ class TestSearchMovies:
         results = await client.search_movies("Matrix")
 
         assert len(results) == 1
+        assert results[0].id == "tmdb:603"
         assert results[0].name == "Matrix"
         assert results[0].type == "movie"
 
     @respx.mock
     @pytest.mark.asyncio()
     async def test_query_param(self, client: HttpxTmdbClient, cache: AsyncMock) -> None:
-        route = respx.get(f"{_BASE}/search/movie").respond(
-            json=_SEARCH_MOVIES_RESPONSE
-        )
+        route = respx.get(f"{_BASE}/search/movie").respond(json=_SEARCH_MOVIES_RESPONSE)
 
         await client.search_movies("Iron Man", page=2)
 
@@ -448,6 +455,7 @@ class TestSearchTv:
         results = await client.search_tv("Breaking Bad")
 
         assert len(results) == 1
+        assert results[0].id == "tmdb:1396"
         assert results[0].name == "Breaking Bad"
         assert results[0].type == "series"
 
@@ -460,6 +468,71 @@ class TestSearchTv:
 
         cache.set.assert_awaited_once()
         assert cache.set.call_args[0][0] == "tmdb:search:tv:Breaking Bad:3"
+
+
+# ---------------------------------------------------------------------------
+# get_title_by_tmdb_id
+# ---------------------------------------------------------------------------
+
+
+class TestGetTitleByTmdbId:
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_movie_title(self, client: HttpxTmdbClient, cache: AsyncMock) -> None:
+        respx.get(f"{_BASE}/movie/550").respond(
+            json={"id": 550, "title": "Fight Club", "name": None}
+        )
+
+        result = await client.get_title_by_tmdb_id(550, "movie")
+
+        assert result == "Fight Club"
+        cache.set.assert_awaited_once()
+        assert cache.set.call_args[0][0] == "tmdb:title:movie:550"
+        assert cache.set.call_args[1]["ttl"] == 86_400
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_tv_title(self, client: HttpxTmdbClient, cache: AsyncMock) -> None:
+        respx.get(f"{_BASE}/tv/1396").respond(json={"id": 1396, "name": "Breaking Bad"})
+
+        result = await client.get_title_by_tmdb_id(1396, "series")
+
+        assert result == "Breaking Bad"
+        cache.set.assert_awaited_once()
+        assert cache.set.call_args[0][0] == "tmdb:title:tv:1396"
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_not_found(self, client: HttpxTmdbClient, cache: AsyncMock) -> None:
+        respx.get(f"{_BASE}/movie/999999").respond(status_code=404)
+
+        result = await client.get_title_by_tmdb_id(999999, "movie")
+
+        assert result is None
+        cache.set.assert_not_awaited()
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_cached(self, client: HttpxTmdbClient, cache: AsyncMock) -> None:
+        cache.get.return_value = "Cached Title"
+        route = respx.get(f"{_BASE}/movie/550")
+
+        result = await client.get_title_by_tmdb_id(550, "movie")
+
+        assert result == "Cached Title"
+        assert not route.called
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_no_title_in_response(
+        self, client: HttpxTmdbClient, cache: AsyncMock
+    ) -> None:
+        respx.get(f"{_BASE}/movie/888").respond(json={"id": 888})
+
+        result = await client.get_title_by_tmdb_id(888, "movie")
+
+        assert result is None
+        cache.set.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -491,6 +564,7 @@ class TestEdgeCases:
         previews = await client.trending_movies()
 
         assert len(previews) == 1
+        assert previews[0].id == "tmdb:999"
         assert previews[0].poster == ""
 
     @respx.mock
@@ -522,9 +596,7 @@ class TestEdgeCases:
     async def test_empty_results_list(
         self, client: HttpxTmdbClient, cache: AsyncMock
     ) -> None:
-        respx.get(f"{_BASE}/search/movie").respond(
-            json={"page": 1, "results": []}
-        )
+        respx.get(f"{_BASE}/search/movie").respond(json={"page": 1, "results": []})
 
         result = await client.search_movies("xyznonexistent")
 

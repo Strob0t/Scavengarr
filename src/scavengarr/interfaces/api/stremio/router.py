@@ -50,7 +50,7 @@ def _build_manifest(plugin_names: list[str]) -> dict[str, Any]:
             },
         ],
         "resources": ["catalog", "stream"],
-        "idPrefixes": ["tt"],
+        "idPrefixes": ["tt", "tmdb:"],
         "behaviorHints": {
             "adult": False,
             "configurable": False,
@@ -61,19 +61,39 @@ def _build_manifest(plugin_names: list[str]) -> dict[str, Any]:
 def _parse_stream_id(content_type: str, raw_id: str) -> StremioStreamRequest | None:
     """Parse Stremio stream ID into a StremioStreamRequest.
 
-    Movies: "tt1234567"
-    Series: "tt1234567:1:5" (season 1, episode 5)
+    Movies: "tt1234567" or "tmdb:12345"
+    Series: "tt1234567:1:5" or "tmdb:12345:1:5" (season 1, episode 5)
     """
+    if content_type not in ("movie", "series"):
+        return None
+
+    ct: StremioContentType = cast(StremioContentType, content_type)
+
+    # Handle tmdb:{id} format (from our own catalog)
+    if raw_id.startswith("tmdb:"):
+        parts = raw_id.split(":")
+        tmdb_part = f"tmdb:{parts[1]}"  # "tmdb:12345"
+
+        if ct == "series" and len(parts) == 4:
+            try:
+                season = int(parts[2])
+                episode = int(parts[3])
+            except ValueError:
+                return None
+            return StremioStreamRequest(
+                imdb_id=tmdb_part,
+                content_type=ct,
+                season=season,
+                episode=episode,
+            )
+        return StremioStreamRequest(imdb_id=tmdb_part, content_type=ct)
+
+    # Handle tt* format (real IMDb IDs)
     if not raw_id.startswith("tt"):
         return None
 
     parts = raw_id.split(":")
     imdb_id = parts[0]
-
-    if content_type not in ("movie", "series"):
-        return None
-
-    ct: StremioContentType = cast(StremioContentType, content_type)
 
     if ct == "series" and len(parts) == 3:
         try:
@@ -326,7 +346,7 @@ async def stremio_stream(
     stremio_streams = [
         _format_stremio_stream(
             StremioStream(
-                name=f"{s.source_plugin} {s.quality.name}",
+                name=_build_stream_name(s),
                 description=_build_description(s),
                 url=s.url,
             )
@@ -348,11 +368,20 @@ async def stremio_stream(
 async def _resolve_search_query(
     state: AppState, parsed: StremioStreamRequest
 ) -> str | None:
-    """Resolve a human-readable search query from an IMDb ID via TMDB."""
+    """Resolve a human-readable search query from an IMDb or TMDB ID via TMDB."""
     if not hasattr(state, "tmdb_client") or state.tmdb_client is None:
         return None
 
-    title = await state.tmdb_client.get_german_title(parsed.imdb_id)
+    # Handle tmdb:{id} format — look up directly by TMDB ID
+    if parsed.imdb_id.startswith("tmdb:"):
+        tmdb_id = parsed.imdb_id.removeprefix("tmdb:")
+        title = await state.tmdb_client.get_title_by_tmdb_id(
+            int(tmdb_id),
+            parsed.content_type,
+        )
+    else:
+        title = await state.tmdb_client.get_german_title(parsed.imdb_id)
+
     if not title:
         return None
 
@@ -360,6 +389,21 @@ async def _resolve_search_query(
         return f"{title} S{parsed.season:02d}E{parsed.episode:02d}"
 
     return title
+
+
+def _build_stream_name(stream: Any) -> str:
+    """Build a human-readable name for a Stremio stream entry.
+
+    Replaces underscores in quality enum names with spaces so that
+    ``HD_1080P`` becomes ``HD 1080P`` in the Stremio UI.
+    """
+    quality_label = stream.quality.name.replace("_", " ")
+    name_parts = (
+        [stream.source_plugin, quality_label]
+        if stream.source_plugin
+        else [quality_label]
+    )
+    return " ".join(name_parts)
 
 
 def _build_description(stream: Any) -> str:

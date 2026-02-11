@@ -24,6 +24,10 @@ class TmdbClientPort(Protocol):
         """
         ...
 
+    async def get_title_by_tmdb_id(self, tmdb_id: int, media_type: str) -> str | None:
+        """Get the German title for a TMDB numeric ID."""
+        ...
+
     async def trending_movies(self, page: int = 1) -> list[StremioMetaPreview]:
         """Fetch trending movies (German locale)."""
         ...

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-from scavengarr.domain.entities.stremio import RankedStream, StreamQuality
+from scavengarr.domain.entities.stremio import RankedStream
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.stremio.release_parser import (
     parse_language,
