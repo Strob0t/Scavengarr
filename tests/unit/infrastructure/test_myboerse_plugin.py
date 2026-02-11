@@ -11,16 +11,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-_PLUGIN_PATH = (
-    Path(__file__).resolve().parents[3] / "plugins" / "myboerse.py"
-)
+_PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "myboerse.py"
 
 
 def _load_myboerse_module() -> ModuleType:
     """Load myboerse.py plugin via importlib (same as plugin loader)."""
-    spec = importlib.util.spec_from_file_location(
-        "myboerse_plugin", str(_PLUGIN_PATH)
-    )
+    spec = importlib.util.spec_from_file_location("myboerse_plugin", str(_PLUGIN_PATH))
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -36,6 +32,7 @@ _ThreadPostParser = _myboerse._ThreadPostParser
 _TORZNAB_TO_NODE_IDS = _myboerse._TORZNAB_TO_NODE_IDS
 _NODE_TO_TORZNAB = _myboerse._NODE_TO_TORZNAB
 _FORUM_NAME_MAP = _myboerse._FORUM_NAME_MAP
+_DOMAINS = _myboerse._DOMAINS
 _is_download_link = _myboerse._is_download_link
 _hoster_from_text = _myboerse._hoster_from_text
 _hoster_from_url = _myboerse._hoster_from_url
@@ -65,6 +62,71 @@ class TestPluginAttributes:
     def test_mode_attribute(self) -> None:
         plugin = _make_plugin()
         assert plugin.mode == "httpx"
+
+    def test_domains_list(self) -> None:
+        assert "myboerse.bz" in _DOMAINS
+        assert "myboerse.ws" in _DOMAINS
+        assert "myboerse.me" in _DOMAINS
+        assert _DOMAINS[0] == "myboerse.bz"
+
+
+class TestDomainVerification:
+    async def test_first_domain_reachable(self) -> None:
+        plugin = _make_plugin()
+
+        head_resp = MagicMock()
+        head_resp.status_code = 200
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.head = AsyncMock(return_value=head_resp)
+        plugin._client = mock_client
+
+        await plugin._verify_domain()
+
+        assert plugin._domain_verified is True
+        assert plugin.base_url == f"https://{_DOMAINS[0]}"
+        mock_client.head.assert_awaited_once()
+
+    async def test_fallback_to_second_domain(self) -> None:
+        plugin = _make_plugin()
+
+        ok_resp = MagicMock()
+        ok_resp.status_code = 200
+        fail_exc = httpx.ConnectError("Connection refused")
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.head = AsyncMock(side_effect=[fail_exc, ok_resp])
+        plugin._client = mock_client
+
+        await plugin._verify_domain()
+
+        assert plugin._domain_verified is True
+        assert plugin.base_url == f"https://{_DOMAINS[1]}"
+
+    async def test_all_domains_fail_uses_first(self) -> None:
+        plugin = _make_plugin()
+
+        fail_exc = httpx.ConnectError("Connection refused")
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.head = AsyncMock(side_effect=fail_exc)
+        plugin._client = mock_client
+
+        await plugin._verify_domain()
+
+        assert plugin._domain_verified is True
+        assert plugin.base_url == f"https://{_DOMAINS[0]}"
+
+    async def test_skips_if_already_verified(self) -> None:
+        plugin = _make_plugin()
+        plugin._domain_verified = True
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        plugin._client = mock_client
+
+        await plugin._verify_domain()
+
+        mock_client.head.assert_not_awaited()
 
 
 class TestLoginTokenParser:
@@ -118,9 +180,7 @@ class TestSearchResultParser:
 
         assert len(parser.results) == 2
         assert parser.results[0]["title"] == "Batman Forever UHD"
-        assert (
-            "/threads/batman-forever-uhd.12345/" in parser.results[0]["url"]
-        )
+        assert "/threads/batman-forever-uhd.12345/" in parser.results[0]["url"]
         assert parser.results[0]["forum"] == "HD"
         assert parser.results[1]["title"] == "Inception 4K"
 
@@ -206,10 +266,7 @@ class TestThreadPostParser:
         assert len(parser.links) == 2
         assert parser.links[0]["link"] == "https://hide.cx/container/abc123"
         assert parser.links[0]["hoster"] == "rapidgator"
-        assert (
-            parser.links[1]["link"]
-            == "https://filecrypt.cc/Container/xyz.html"
-        )
+        assert parser.links[1]["link"] == "https://filecrypt.cc/Container/xyz.html"
         assert parser.links[1]["hoster"] == "ddownload"
 
     def test_extracts_xtra_links(self) -> None:
@@ -328,9 +385,7 @@ class TestHelpers:
         assert _is_download_link("https://keeplinks.org/p53/abc") is True
 
     def test_is_download_link_xtra(self) -> None:
-        assert (
-            _is_download_link("https://myboerse.bz/xtra/?x=Batman") is True
-        )
+        assert _is_download_link("https://myboerse.bz/xtra/?x=Batman") is True
 
     def test_is_download_link_rejects_other(self) -> None:
         assert _is_download_link("https://imdb.com/title/tt123") is False
@@ -349,16 +404,10 @@ class TestHelpers:
 
     def test_hoster_from_url(self) -> None:
         assert _hoster_from_url("https://hide.cx/container/abc") == "hide"
-        assert (
-            _hoster_from_url("https://www.keeplinks.org/p53/abc")
-            == "keeplinks"
-        )
+        assert _hoster_from_url("https://www.keeplinks.org/p53/abc") == "keeplinks"
 
     def test_hoster_from_url_xtra(self) -> None:
-        assert (
-            _hoster_from_url("https://myboerse.bz/xtra/?x=Batman")
-            == "myboerse"
-        )
+        assert _hoster_from_url("https://myboerse.bz/xtra/?x=Batman") == "myboerse"
 
     def test_forum_name_to_torznab(self) -> None:
         assert _forum_name_to_torznab("HD") == 2000
@@ -491,18 +540,14 @@ class TestLogin:
 
         with (
             patch.dict(os.environ, _TEST_CREDENTIALS),
-            pytest.raises(
-                RuntimeError, match="Could not extract _xfToken"
-            ),
+            pytest.raises(RuntimeError, match="Could not extract _xfToken"),
         ):
             await plugin._login()
 
     async def test_login_no_session_cookie_raises(self) -> None:
         plugin = _make_plugin()
 
-        login_html = (
-            '<input type="hidden" name="_xfToken" value="token123">'
-        )
+        login_html = '<input type="hidden" name="_xfToken" value="token123">'
 
         mock_jar = MagicMock()
         mock_jar.__iter__ = MagicMock(return_value=iter([]))
@@ -530,6 +575,7 @@ class TestLogin:
     async def test_session_reuse(self) -> None:
         plugin = _make_plugin()
         plugin._logged_in = True
+        plugin._domain_verified = True
         plugin._client = AsyncMock(spec=httpx.AsyncClient)
 
         await plugin._login()
@@ -540,6 +586,7 @@ class TestSearch:
     async def test_search_returns_results(self) -> None:
         plugin = _make_plugin()
         plugin._logged_in = True
+        plugin._domain_verified = True
 
         search_html = """
         <html><body>
@@ -583,6 +630,7 @@ class TestSearch:
     async def test_search_with_category(self) -> None:
         plugin = _make_plugin()
         plugin._logged_in = True
+        plugin._domain_verified = True
 
         search_html = """
         <h3 class="contentRow-title">
@@ -621,6 +669,7 @@ class TestSearch:
     async def test_search_no_results(self) -> None:
         plugin = _make_plugin()
         plugin._logged_in = True
+        plugin._domain_verified = True
 
         empty_html = "<html><body>No results</body></html>"
         search_resp = MagicMock()
@@ -637,6 +686,7 @@ class TestSearch:
     async def test_search_thread_without_links_skipped(self) -> None:
         plugin = _make_plugin()
         plugin._logged_in = True
+        plugin._domain_verified = True
 
         search_html = """
         <h3 class="contentRow-title">
@@ -669,6 +719,7 @@ class TestSearch:
     async def test_search_paginates(self) -> None:
         plugin = _make_plugin()
         plugin._logged_in = True
+        plugin._domain_verified = True
 
         search_html_p1 = """
         <h3 class="contentRow-title">
@@ -715,6 +766,7 @@ class TestSearch:
     async def test_search_with_xtra_links(self) -> None:
         plugin = _make_plugin()
         plugin._logged_in = True
+        plugin._domain_verified = True
 
         search_html = """
         <h3 class="contentRow-title">
@@ -754,6 +806,7 @@ class TestCleanup:
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         plugin._client = mock_client
         plugin._logged_in = True
+        plugin._domain_verified = True
 
         await plugin.cleanup()
 

@@ -9,6 +9,7 @@ Scrapes myboerse.bz (XenForo German DDL forum, Boerse.to successor) with:
 - Download link extraction from thread posts (hide.cx, filecrypt.cc, /xtra/)
 - Bounded concurrency for detail page scraping
 
+Multi-domain support with automatic fallback (myboerse.bz / .ws / .me).
 Credentials via env vars: SCAVENGARR_MYBOERSE_USERNAME / SCAVENGARR_MYBOERSE_PASSWORD
 """
 
@@ -27,7 +28,14 @@ from scavengarr.domain.plugins.base import SearchResult
 
 log = structlog.get_logger(__name__)
 
-_BASE_URL = "https://myboerse.bz"
+# Known domains in priority order (mirrors redirect to primary).
+_DOMAINS = [
+    "myboerse.bz",
+    "myboerse.ws",
+    "myboerse.me",
+]
+
+_BASE_URL = f"https://{_DOMAINS[0]}"
 
 _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -187,9 +195,7 @@ class _LoginTokenParser(HTMLParser):
         super().__init__()
         self.token: str = ""
 
-    def handle_starttag(
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag != "input":
             return
         attr_dict = dict(attrs)
@@ -360,9 +366,7 @@ class _ThreadPostParser(HTMLParser):
         self._current_text = ""
         self._seen_urls: set[str] = set()
 
-    def handle_starttag(
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attr_dict = dict(attrs)
         classes = (attr_dict.get("class") or "").split()
 
@@ -421,6 +425,7 @@ class MyboersePlugin:
     def __init__(self) -> None:
         self._client: httpx.AsyncClient | None = None
         self._logged_in = False
+        self._domain_verified = False
         self.base_url = _BASE_URL
 
     async def _ensure_client(self) -> httpx.AsyncClient:
@@ -432,6 +437,28 @@ class MyboersePlugin:
                 headers={"User-Agent": _USER_AGENT},
             )
         return self._client
+
+    async def _verify_domain(self) -> None:
+        """Find and cache a working domain from the fallback list."""
+        if self._domain_verified:
+            return
+
+        client = await self._ensure_client()
+        for domain in _DOMAINS:
+            url = f"https://{domain}/"
+            try:
+                resp = await client.head(url, timeout=5.0)
+                if resp.status_code == 200:
+                    self.base_url = f"https://{domain}"
+                    self._domain_verified = True
+                    log.info("myboerse_domain_found", domain=domain)
+                    return
+            except Exception:  # noqa: BLE001
+                continue
+
+        self.base_url = f"https://{_DOMAINS[0]}"
+        self._domain_verified = True
+        log.warning("myboerse_no_domain_reachable", fallback=_DOMAINS[0])
 
     async def _login(self) -> None:
         """Authenticate with XenForo using CSRF token."""
@@ -457,9 +484,7 @@ class MyboersePlugin:
         token_parser.feed(resp.text)
 
         if not token_parser.token:
-            raise RuntimeError(
-                "Could not extract _xfToken from login page"
-            )
+            raise RuntimeError("Could not extract _xfToken from login page")
 
         # Step 2: POST login with credentials
         login_resp = await client.post(
@@ -507,9 +532,7 @@ class MyboersePlugin:
             )
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            log.warning(
-                "myboerse_search_failed", query=query, error=str(exc)
-            )
+            log.warning("myboerse_search_failed", query=query, error=str(exc))
             return [], ""
 
         parser = _SearchResultParser(self.base_url)
@@ -523,9 +546,7 @@ class MyboersePlugin:
         )
         return parser.results, parser.next_page_url
 
-    async def _fetch_next_page(
-        self, next_url: str
-    ) -> tuple[list[dict[str, str]], str]:
+    async def _fetch_next_page(self, next_url: str) -> tuple[list[dict[str, str]], str]:
         """Fetch a subsequent search results page by URL."""
         client = await self._ensure_client()
 
@@ -547,9 +568,7 @@ class MyboersePlugin:
 
         return parser.results, parser.next_page_url
 
-    async def _scrape_thread(
-        self, result: dict[str, str]
-    ) -> SearchResult | None:
+    async def _scrape_thread(self, result: dict[str, str]) -> SearchResult | None:
         """Scrape a thread page for download links."""
         client = await self._ensure_client()
 
@@ -595,26 +614,19 @@ class MyboersePlugin:
     ) -> list[SearchResult]:
         """Search myboerse.bz and return results with download links."""
         await self._ensure_client()
+        await self._verify_domain()
         await self._login()
 
         # Map Torznab category to forum node IDs
-        node_ids = (
-            _TORZNAB_TO_NODE_IDS.get(category) if category else None
-        )
+        node_ids = _TORZNAB_TO_NODE_IDS.get(category) if category else None
 
         # Fetch first page
-        first_results, next_url = await self._search_page(
-            query, node_ids
-        )
+        first_results, next_url = await self._search_page(query, node_ids)
         all_results = list(first_results)
 
         # Paginate
         page_num = 1
-        while (
-            next_url
-            and len(all_results) < _MAX_RESULTS
-            and page_num < _MAX_PAGES
-        ):
+        while next_url and len(all_results) < _MAX_RESULTS and page_num < _MAX_PAGES:
             page_num += 1
             more_results, next_url = await self._fetch_next_page(next_url)
             if not more_results:
