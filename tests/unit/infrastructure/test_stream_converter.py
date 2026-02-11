@@ -332,6 +332,17 @@ class TestNormalizeHosterName:
     def test_doodstream(self) -> None:
         assert _normalize_hoster_name("DoodStream") == "doodstream"
 
+    def test_strips_colon_suffix(self) -> None:
+        assert _normalize_hoster_name("Filemoon: HD") == "filemoon"
+
+    def test_strips_colon_suffix_with_quality(self) -> None:
+        assert _normalize_hoster_name("VOE: 720p") == "voe"
+
+    def test_strips_colon_suffix_with_release_name(self) -> None:
+        assert (
+            _normalize_hoster_name("Streamtape: MOVIE.2024.GERMAN.720P") == "streamtape"
+        )
+
     def test_empty_string(self) -> None:
         assert _normalize_hoster_name("") == ""
 
@@ -383,6 +394,16 @@ class TestLinkKeyCompatibility:
         assert len(streams) == 2
         assert streams[0].hoster == "voe"
         assert streams[1].hoster == "filemoon"
+
+    def test_url_whitespace_stripped(self) -> None:
+        result = _make_result(
+            download_links=[
+                {"hoster": "Streamtape", "link": "https://streamtape.com/v/abc\n"},
+            ],
+        )
+        streams = convert_search_results([result])
+        assert len(streams) == 1
+        assert streams[0].url == "https://streamtape.com/v/abc"
 
     def test_empty_link_skipped(self) -> None:
         result = _make_result(

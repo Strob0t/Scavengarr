@@ -41,18 +41,22 @@ def _normalize_hoster_name(raw: str) -> str:
     """Normalize hoster label from plugins to a clean hoster name.
 
     Plugins may provide labels like "VOE (HD)", "Filemoon (720p)",
-    "Streamtape", etc. We strip quality suffixes and lowercase.
+    "Filemoon: HD", "Streamtape", etc. We strip quality suffixes
+    and lowercase.
 
     Examples:
         "VOE (HD)" -> "voe"
         "Filemoon (720p)" -> "filemoon"
+        "Filemoon: HD" -> "filemoon"
         "SuperVideo" -> "supervideo"
         "DoodStream" -> "doodstream"
     """
     import re
 
     # Strip parenthesized quality suffix: "VOE (HD)" -> "VOE"
-    name = re.sub(r"\s*\([^)]*\)\s*$", "", raw).strip().lower()
+    name = re.sub(r"\s*\([^)]*\)\s*$", "", raw).strip()
+    # Strip colon-separated suffix: "Filemoon: HD" -> "Filemoon"
+    name = re.sub(r"\s*:.*$", "", name).strip().lower()
     return name or raw.lower()
 
 
@@ -67,7 +71,7 @@ def _convert_single_result(
     if result.download_links:
         for link in result.download_links:
             # Plugins use "link" key (some older ones use "url")
-            url = link.get("link", "") or link.get("url", "")
+            url = (link.get("link", "") or link.get("url", "")).strip()
             if not url:
                 continue
 
