@@ -21,7 +21,9 @@ def _load_module() -> ModuleType:
 _mod = _load_module()
 _ScnSrcPlugin = _mod.ScnSrcPlugin
 _PostParser = _mod._PostParser
+_DOMAINS = _mod._DOMAINS
 _CATEGORY_PATH_MAP = _mod._CATEGORY_PATH_MAP
+_CATEGORY_NAME_MAP = _mod._CATEGORY_NAME_MAP
 _category_to_torznab = _mod._category_to_torznab
 _clean_wayback_url = _mod._clean_wayback_url
 
@@ -328,6 +330,61 @@ class TestCategoryMapping:
         assert _CATEGORY_PATH_MAP[5000] == "category/tv"
         assert _CATEGORY_PATH_MAP[4000] == "category/games"
 
+    def test_film_subcategories(self) -> None:
+        for sub in (
+            "hd",
+            "bluray",
+            "bdrip",
+            "bdscr",
+            "uhd",
+            "dvdrip",
+            "dvdscr",
+            "cam",
+            "r5",
+            "scr",
+            "telecine",
+            "telesync",
+            "workprint",
+            "3d",
+        ):
+            assert _CATEGORY_NAME_MAP[sub] == 2000, f"{sub} should map to 2000"
+
+    def test_tv_subcategories(self) -> None:
+        for sub in ("miniseries", "ppv", "preair", "uhd-tv", "dvd"):
+            assert _CATEGORY_NAME_MAP[sub] == 5000, f"{sub} should map to 5000"
+        assert _CATEGORY_NAME_MAP["sports-tv"] == 5060
+
+    def test_game_subcategories(self) -> None:
+        for sub in (
+            "iso",
+            "rip",
+            "clone",
+            "dox",
+            "nds",
+            "ps3",
+            "ps4",
+            "psp",
+            "wii",
+            "wiiu",
+            "xbox360",
+        ):
+            assert _CATEGORY_NAME_MAP[sub] == 4000, f"{sub} should map to 4000"
+
+    def test_app_subcategories(self) -> None:
+        for sub in (
+            "applications",
+            "windows-applications",
+            "macosx",
+            "linux",
+            "iphone",
+        ):
+            assert _CATEGORY_NAME_MAP[sub] == 5020, f"{sub} should map to 5020"
+
+    def test_music_subcategories(self) -> None:
+        assert _CATEGORY_NAME_MAP["flac"] == 3040
+        for sub in ("new-music", "concert", "music-videos"):
+            assert _CATEGORY_NAME_MAP[sub] == 3000, f"{sub} should map to 3000"
+
 
 # ---------------------------------------------------------------------------
 # Plugin attributes
@@ -339,10 +396,27 @@ class TestPluginAttributes:
         assert _make_plugin().name == "scnsrc"
 
     def test_version(self) -> None:
-        assert _make_plugin().version == "1.0.0"
+        assert _make_plugin().version == "1.1.0"
 
     def test_mode(self) -> None:
         assert _make_plugin().mode == "playwright"
+
+    def test_domain_not_verified_initially(self) -> None:
+        assert _make_plugin()._domain_verified is False
+
+
+class TestDomains:
+    def test_domains_list_not_empty(self) -> None:
+        assert len(_DOMAINS) >= 3
+
+    def test_primary_domain_first(self) -> None:
+        assert _DOMAINS[0] == "www.scnsrc.me"
+
+    def test_all_known_domains_present(self) -> None:
+        domains_set = set(_DOMAINS)
+        assert "www.scnsrc.me" in domains_set
+        assert "scenesource.me" in domains_set
+        assert "scnsrc.net" in domains_set
 
 
 # ---------------------------------------------------------------------------
@@ -353,6 +427,7 @@ class TestPluginAttributes:
 class TestPluginSearch:
     async def test_search_returns_results(self) -> None:
         plugin = _make_plugin()
+        plugin._domain_verified = True
 
         search_page = _make_mock_page(_SAMPLE_POST_HTML)
         empty_page = _make_mock_page("<html></html>")
@@ -371,6 +446,7 @@ class TestPluginSearch:
 
     async def test_search_no_results(self) -> None:
         plugin = _make_plugin()
+        plugin._domain_verified = True
 
         page = _make_mock_page("<html><body>No results</body></html>")
         context = _make_mock_context(pages=[page])
@@ -383,6 +459,7 @@ class TestPluginSearch:
 
     async def test_search_with_category(self) -> None:
         plugin = _make_plugin()
+        plugin._domain_verified = True
 
         search_page = _make_mock_page(_MULTI_POST_HTML)
         empty_page = _make_mock_page("<html></html>")
@@ -405,6 +482,7 @@ class TestPluginSearch:
 
     async def test_search_multiple_results(self) -> None:
         plugin = _make_plugin()
+        plugin._domain_verified = True
 
         search_page = _make_mock_page(_MULTI_POST_HTML)
         empty_page = _make_mock_page("<html></html>")
@@ -421,6 +499,7 @@ class TestPluginSearch:
 
     async def test_posts_without_links_skipped(self) -> None:
         plugin = _make_plugin()
+        plugin._domain_verified = True
 
         html = """
         <div class="post" id="post-1">
@@ -443,6 +522,7 @@ class TestPluginSearch:
     async def test_search_paginates(self) -> None:
         """Verify pagination fetches multiple pages."""
         plugin = _make_plugin()
+        plugin._domain_verified = True
 
         page1 = _make_mock_page(_MULTI_POST_HTML)
         page2 = _make_mock_page(_SAMPLE_POST_HTML)
@@ -474,6 +554,91 @@ class TestCloudflareWait:
         page = _make_mock_page()
         page.wait_for_function = AsyncMock(side_effect=TimeoutError("timeout"))
         await plugin._wait_for_cloudflare(page)
+
+
+class TestVerifyDomain:
+    async def test_first_domain_succeeds(self) -> None:
+        plugin = _make_plugin()
+
+        ok_page = _make_mock_page()
+        ok_page.title = AsyncMock(return_value="SceneSource - Your source for Games")
+        context = _make_mock_context(pages=[ok_page])
+
+        plugin._browser = _make_mock_browser(context)
+        plugin._context = context
+
+        await plugin._verify_domain()
+
+        assert plugin._domain_verified is True
+        assert plugin.base_url == "https://www.scnsrc.me"
+
+    async def test_fallback_to_second_domain(self) -> None:
+        plugin = _make_plugin()
+
+        # First page: still on Cloudflare challenge
+        cf_page = _make_mock_page()
+        cf_page.title = AsyncMock(return_value="Just a moment...")
+        # Second page: passes challenge
+        ok_page = _make_mock_page()
+        ok_page.title = AsyncMock(return_value="SceneSource - Your source for Games")
+        context = _make_mock_context(pages=[cf_page, ok_page])
+
+        plugin._browser = _make_mock_browser(context)
+        plugin._context = context
+
+        await plugin._verify_domain()
+
+        assert plugin._domain_verified is True
+        assert plugin.base_url == f"https://{_DOMAINS[1]}"
+
+    async def test_all_domains_fail_uses_primary(self) -> None:
+        plugin = _make_plugin()
+
+        # All pages return Cloudflare challenge
+        pages = []
+        for _ in _DOMAINS:
+            p = _make_mock_page()
+            p.title = AsyncMock(return_value="Just a moment...")
+            pages.append(p)
+        context = _make_mock_context(pages=pages)
+
+        plugin._browser = _make_mock_browser(context)
+        plugin._context = context
+
+        await plugin._verify_domain()
+
+        assert plugin._domain_verified is True
+        assert plugin.base_url == f"https://{_DOMAINS[0]}"
+
+    async def test_domain_error_skips_to_next(self) -> None:
+        plugin = _make_plugin()
+
+        # First page: navigation error
+        err_page = _make_mock_page()
+        err_page.goto = AsyncMock(side_effect=Exception("net::ERR_NAME_NOT_RESOLVED"))
+        # Second page: success
+        ok_page = _make_mock_page()
+        ok_page.title = AsyncMock(return_value="SceneSource")
+        context = _make_mock_context(pages=[err_page, ok_page])
+
+        plugin._browser = _make_mock_browser(context)
+        plugin._context = context
+
+        await plugin._verify_domain()
+
+        assert plugin._domain_verified is True
+        assert plugin.base_url == f"https://{_DOMAINS[1]}"
+
+    async def test_verify_domain_cached(self) -> None:
+        """Once verified, subsequent calls are no-ops."""
+        plugin = _make_plugin()
+        plugin._domain_verified = True
+        plugin.base_url = "https://scenesource.me"
+
+        # Should not attempt any navigation
+        await plugin._verify_domain()
+
+        assert plugin.base_url == "https://scenesource.me"
 
 
 class TestCleanup:

@@ -6,6 +6,7 @@ Scrapes scnsrc.me (WordPress scene info blog) with:
 - Category filtering via /category/xxx/?s=query URL prefix
 - Single-stage: all data (title, release name, download links) on listing pages
 - Download links point to torrent search (limetorrents) and usenet (nzbindex)
+- Multi-domain support with automatic fallback (scnsrc.me, scenesource.me, scnsrc.net)
 
 No authentication required.
 """
@@ -29,7 +30,17 @@ from scavengarr.domain.plugins.base import SearchResult
 
 log = structlog.get_logger(__name__)
 
-_BASE_URL = "https://www.scnsrc.me"
+# Known domains in priority order (all serve identical content).
+_DOMAINS = [
+    "www.scnsrc.me",
+    "scnsrc.me",
+    "www.scenesource.me",
+    "scenesource.me",
+    "www.scnsrc.net",
+    "scnsrc.net",
+]
+
+_BASE_URL = f"https://{_DOMAINS[0]}"
 
 _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -52,18 +63,57 @@ _CATEGORY_PATH_MAP: dict[int, str] = {
 
 # Reverse mapping: site category name -> Torznab category ID.
 _CATEGORY_NAME_MAP: dict[str, int] = {
-    "tv": 5000,
+    # Films
     "films": 2000,
     "movies": 2000,
     "hd": 2000,
     "bluray": 2000,
     "bdrip": 2000,
+    "bdscr": 2000,
     "uhd": 2000,
     "dvdrip": 2000,
+    "dvdscr": 2000,
+    "cam": 2000,
+    "r5": 2000,
+    "scr": 2000,
+    "telecine": 2000,
+    "telesync": 2000,
+    "workprint": 2000,
+    "3d": 2000,
+    # TV
+    "tv": 5000,
+    "miniseries": 5000,
+    "ppv": 5000,
+    "preair": 5000,
+    "sports-tv": 5060,
+    "uhd-tv": 5000,
+    "dvd": 5000,
+    # Games
     "games": 4000,
+    "iso": 4000,
+    "rip": 4000,
+    "clone": 4000,
+    "dox": 4000,
+    "nds": 4000,
+    "ps3": 4000,
+    "ps4": 4000,
+    "psp": 4000,
+    "wii": 4000,
+    "wiiu": 4000,
+    "xbox360": 4000,
+    # Applications
     "applications": 5020,
+    "windows-applications": 5020,
+    "macosx": 5020,
+    "linux": 5020,
+    "iphone": 5020,
+    # Music
     "new-music": 3000,
     "music": 3000,
+    "concert": 3000,
+    "flac": 3040,
+    "music-videos": 3000,
+    # Other
     "ebooks": 7000,
     "p2p": 2000,
 }
@@ -265,10 +315,14 @@ def _category_to_torznab(category_name: str) -> int:
 
 
 class ScnSrcPlugin:
-    """Python plugin for scnsrc.me using Playwright."""
+    """Python plugin for scnsrc.me using Playwright.
+
+    Supports multiple domains with automatic fallback:
+    scnsrc.me, scenesource.me, scnsrc.net.
+    """
 
     name = "scnsrc"
-    version = "1.0.0"
+    version = "1.1.0"
     mode = "playwright"
 
     def __init__(self) -> None:
@@ -276,6 +330,7 @@ class ScnSrcPlugin:
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
         self.base_url = _BASE_URL
+        self._domain_verified = False
 
     async def _ensure_browser(self) -> None:
         """Launch Chromium if not already running."""
@@ -288,6 +343,42 @@ class ScnSrcPlugin:
         self._context = await self._browser.new_context(
             user_agent=_USER_AGENT,
         )
+
+    async def _verify_domain(self) -> None:
+        """Find and cache a working domain from the fallback list.
+
+        Tries each domain by navigating with Playwright and waiting for
+        the Cloudflare challenge to resolve.  Caches the first domain
+        that returns a real page (title != 'Just a moment...').
+        """
+        if self._domain_verified:
+            return
+
+        await self._ensure_browser()
+        assert self._context is not None  # noqa: S101
+
+        for domain in _DOMAINS:
+            url = f"https://{domain}/"
+            page = await self._context.new_page()
+            try:
+                await page.goto(url, wait_until="domcontentloaded", timeout=20_000)
+                await self._wait_for_cloudflare(page)
+                title = await page.title()
+                if "just a moment" not in title.lower():
+                    self.base_url = f"https://{domain}"
+                    self._domain_verified = True
+                    log.info("scnsrc_domain_found", domain=domain)
+                    return
+            except Exception:  # noqa: BLE001
+                log.debug("scnsrc_domain_unreachable", domain=domain)
+            finally:
+                if not page.is_closed():
+                    await page.close()
+
+        # Fallback to primary even if verification failed
+        self.base_url = _BASE_URL
+        self._domain_verified = True
+        log.warning("scnsrc_no_domain_verified", fallback=_DOMAINS[0])
 
     async def _wait_for_cloudflare(self, page: Page) -> None:
         """If Cloudflare challenge is detected, wait for it."""
@@ -357,12 +448,13 @@ class ScnSrcPlugin:
         query: str,
         category: int | None = None,
     ) -> list[SearchResult]:
-        """Search scnsrc.me and return results.
+        """Search scnsrc.me (or fallback domain) and return results.
 
         Paginates through WordPress search pages to collect up to
         1000 results.
         """
         await self._ensure_browser()
+        await self._verify_domain()
 
         category_path = _CATEGORY_PATH_MAP.get(category, "") if category else ""
 
