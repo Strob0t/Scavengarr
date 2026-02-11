@@ -182,7 +182,7 @@ class TestSuperVideoResolver:
         assert "/e/" in call_url
 
     @pytest.mark.asyncio
-    async def test_sends_browser_user_agent(self) -> None:
+    async def test_sends_complete_browser_headers(self) -> None:
         html = """sources: [{file:"https://sv1.supervideo.cc/v/abc.mp4"}]"""
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -195,8 +195,17 @@ class TestSuperVideoResolver:
         await resolver.resolve("https://supervideo.cc/e/abc123def456")
 
         _, kwargs = client.get.call_args
-        assert "headers" in kwargs
-        assert "Mozilla" in kwargs["headers"]["User-Agent"]
+        headers = kwargs["headers"]
+        # Complete UA with Chrome and Safari tokens
+        assert "Chrome/" in headers["User-Agent"]
+        assert "Safari/" in headers["User-Agent"]
+        # Accept and Accept-Language for Cloudflare bypass
+        assert "Accept" in headers
+        assert "text/html" in headers["Accept"]
+        assert "Accept-Language" in headers
+        assert "en-US" in headers["Accept-Language"]
+        # Referer matches the embed URL
+        assert "Referer" in headers
 
     @pytest.mark.asyncio
     async def test_returns_none_when_no_source_found(self) -> None:

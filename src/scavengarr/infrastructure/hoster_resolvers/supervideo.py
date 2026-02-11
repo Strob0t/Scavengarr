@@ -16,6 +16,19 @@ from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
 
 log = structlog.get_logger(__name__)
 
+_BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/131.0.0.0 Safari/537.36"
+    ),
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;q=0.9,"
+        "image/avif,image/webp,*/*;q=0.8"
+    ),
+    "Accept-Language": "en-US,en;q=0.5",
+}
+
 
 def _extract_jwplayer_source(html: str) -> str | None:
     """Extract video URL from JWPlayer sources config.
@@ -115,15 +128,13 @@ class SuperVideoResolver:
         embed_url = self._normalize_embed_url(url)
 
         try:
+            # Build per-request headers with dynamic Referer
+            headers = {**_BROWSER_HEADERS, "Referer": embed_url}
             resp = await self._http.get(
                 embed_url,
                 follow_redirects=True,
                 timeout=15,
-                headers={
-                    "User-Agent": (
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                    ),
-                },
+                headers=headers,
             )
             if resp.status_code != 200:
                 log.warning(
