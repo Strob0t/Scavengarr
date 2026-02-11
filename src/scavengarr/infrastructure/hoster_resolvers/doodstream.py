@@ -72,8 +72,7 @@ class DoodStreamResolver:
                 timeout=15,
                 headers={
                     "User-Agent": (
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-                        " AppleWebKit/537.36"
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                     ),
                 },
             )
@@ -176,9 +175,7 @@ class DoodStreamResolver:
                 return True
         if re.search(r"<h1>\s*Oops!\s*Sorry\s*</h1>", html):
             return True
-        if re.search(
-            r"<title>\s*Video not found\s*\|\s*DoodStream", html
-        ):
+        if re.search(r"<title>\s*Video not found\s*\|\s*DoodStream", html):
             return True
         return False
 

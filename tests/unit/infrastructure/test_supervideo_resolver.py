@@ -22,32 +22,22 @@ class TestExtractJwplayerSource:
         });
         """
         assert (
-            _extract_jwplayer_source(html)
-            == "https://cdn.supervideo.cc/v/abc123.mp4"
+            _extract_jwplayer_source(html) == "https://cdn.supervideo.cc/v/abc123.mp4"
         )
 
     def test_sources_with_label(self) -> None:
         html = """
         sources:[{file:"https://cdn.supervideo.cc/v/abc.mp4",label:"720p"}]
         """
-        assert (
-            _extract_jwplayer_source(html)
-            == "https://cdn.supervideo.cc/v/abc.mp4"
-        )
+        assert _extract_jwplayer_source(html) == "https://cdn.supervideo.cc/v/abc.mp4"
 
     def test_file_property_mp4(self) -> None:
         html = """var file = "https://cdn.example.com/video.mp4";"""
-        assert (
-            _extract_jwplayer_source(html)
-            == "https://cdn.example.com/video.mp4"
-        )
+        assert _extract_jwplayer_source(html) == "https://cdn.example.com/video.mp4"
 
     def test_file_property_m3u8(self) -> None:
         html = """source: "https://cdn.example.com/master.m3u8" """
-        assert (
-            _extract_jwplayer_source(html)
-            == "https://cdn.example.com/master.m3u8"
-        )
+        assert _extract_jwplayer_source(html) == "https://cdn.example.com/master.m3u8"
 
     def test_no_match(self) -> None:
         assert _extract_jwplayer_source("<html></html>") is None
@@ -56,17 +46,11 @@ class TestExtractJwplayerSource:
 class TestExtractHtml5Video:
     def test_source_tag(self) -> None:
         html = """<video><source src="https://cdn.example.com/v.mp4"></video>"""
-        assert (
-            _extract_html5_video(html)
-            == "https://cdn.example.com/v.mp4"
-        )
+        assert _extract_html5_video(html) == "https://cdn.example.com/v.mp4"
 
     def test_video_src(self) -> None:
         html = """<video src="https://cdn.example.com/v.mp4"></video>"""
-        assert (
-            _extract_html5_video(html)
-            == "https://cdn.example.com/v.mp4"
-        )
+        assert _extract_html5_video(html) == "https://cdn.example.com/v.mp4"
 
     def test_no_match(self) -> None:
         assert _extract_html5_video("<html></html>") is None
@@ -190,9 +174,7 @@ class TestSuperVideoResolver:
         client.get = AsyncMock(return_value=mock_resp)
 
         resolver = SuperVideoResolver(http_client=client)
-        result = await resolver.resolve(
-            "https://supervideo.cc/abc123def456"
-        )
+        result = await resolver.resolve("https://supervideo.cc/abc123def456")
 
         assert result is not None
         # Verify the URL was normalized to /e/ format

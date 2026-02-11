@@ -264,9 +264,7 @@ class TestVoeResolver:
         import base64
         import json
 
-        video_data = json.dumps(
-            {"file": "https://cdn.voe.sx/engine/hls/master.m3u8"}
-        )
+        video_data = json.dumps({"file": "https://cdn.voe.sx/engine/hls/master.m3u8"})
         # Reverse then base64 encode (the decoder reverses strings starting with "}")
         reversed_data = video_data[::-1]
         b64 = base64.b64encode(reversed_data.encode()).decode()

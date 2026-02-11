@@ -24,10 +24,7 @@ def _build_packed_block(hls_url: str) -> str:
     # A simplified packed block that when unpacked yields JWPlayer config
     # We encode a simple payload: sources:[{file:"<hls_url>"}]
     # Using base 10 for simplicity in testing
-    payload = (
-        "var 1=2('3');1.4({5:[{6:\\'7\\'}],"
-        "8:\\'poster.jpg\\'});"
-    )
+    payload = "var 1=2('3');1.4({5:[{6:\\'7\\'}],8:\\'poster.jpg\\'});"
     keywords = [
         "",  # 0 (empty, keep as "0")
         "player",  # 1
@@ -70,7 +67,9 @@ class TestUnpackPACK:
 
     def test_handles_base36_tokens(self) -> None:
         # Build a payload using higher base
-        payload = "var a=b('c');a.d({e:[{f:\\'https://cdn.example.com/master.m3u8\\'}]})"
+        payload = (
+            "var a=b('c');a.d({e:[{f:\\'https://cdn.example.com/master.m3u8\\'}]})"
+        )
         keywords = [
             "",
             "",
@@ -109,8 +108,7 @@ class TestExtractHlsFromUnpacked:
         });
         """
         assert (
-            _extract_hls_from_unpacked(js)
-            == "https://cdn.example.com/hls/master.m3u8"
+            _extract_hls_from_unpacked(js) == "https://cdn.example.com/hls/master.m3u8"
         )
 
     def test_file_property(self) -> None:
@@ -122,10 +120,7 @@ class TestExtractHlsFromUnpacked:
 
     def test_source_property_mp4(self) -> None:
         js = """source:"https://cdn.example.com/video.mp4" """
-        assert (
-            _extract_hls_from_unpacked(js)
-            == "https://cdn.example.com/video.mp4"
-        )
+        assert _extract_hls_from_unpacked(js) == "https://cdn.example.com/video.mp4"
 
     def test_no_match(self) -> None:
         assert _extract_hls_from_unpacked("var x = 42;") is None
@@ -257,9 +252,7 @@ class TestFilemoonResolver:
         client.get = AsyncMock(return_value=mock_resp)
 
         resolver = FilemoonResolver(http_client=client)
-        result = await resolver.resolve(
-            "https://filemoon.sx/d/abc123def456"
-        )
+        result = await resolver.resolve("https://filemoon.sx/d/abc123def456")
 
         assert result is not None
         # Verify URL was normalized to /e/
@@ -268,7 +261,9 @@ class TestFilemoonResolver:
 
     @pytest.mark.asyncio
     async def test_normalizes_download_path_to_embed(self) -> None:
-        html = '<html><body><script>var x="https://a.com/v.m3u8";</script></body></html>'
+        html = (
+            '<html><body><script>var x="https://a.com/v.m3u8";</script></body></html>'
+        )
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.text = html

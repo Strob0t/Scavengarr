@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 
-from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
+from scavengarr.domain.entities.stremio import ResolvedStream
 from scavengarr.infrastructure.hoster_resolvers.registry import (
     HosterResolverRegistry,
     _extract_hoster_from_url,
@@ -145,7 +145,9 @@ class TestHosterResolverRegistry:
     @pytest.mark.asyncio
     async def test_probe_returns_none_on_network_error(self) -> None:
         http_client = AsyncMock(spec=httpx.AsyncClient)
-        http_client.head = AsyncMock(side_effect=httpx.ConnectError("connection failed"))
+        http_client.head = AsyncMock(
+            side_effect=httpx.ConnectError("connection failed")
+        )
 
         registry = HosterResolverRegistry(http_client=http_client)
         result = await registry.resolve("https://down.example.com/video.mp4")
@@ -161,9 +163,7 @@ class TestHosterResolverRegistry:
         )
 
         registry = HosterResolverRegistry(resolvers=[resolver])
-        result = await registry.resolve(
-            "https://voe.sx/e/abc", hoster="custom"
-        )
+        result = await registry.resolve("https://voe.sx/e/abc", hoster="custom")
 
         assert result is not None
         resolver.resolve.assert_awaited_once()

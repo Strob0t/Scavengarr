@@ -113,7 +113,9 @@ class HosterResolverRegistry:
                     hoster=hoster_name,
                     content_type=content_type,
                 )
-                return ResolvedStream(video_url=str(resp.url), quality=StreamQuality.UNKNOWN)
+                return ResolvedStream(
+                    video_url=str(resp.url), quality=StreamQuality.UNKNOWN
+                )
 
             if "application/vnd.apple.mpegurl" in content_type:
                 log.info(

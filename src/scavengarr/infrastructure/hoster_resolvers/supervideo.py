@@ -170,9 +170,7 @@ class SuperVideoResolver:
         if match:
             fuid = match.group(1)
             # Determine domain from URL
-            domain_match = re.search(
-                r"https?://([^/]+)", url
-            )
+            domain_match = re.search(r"https?://([^/]+)", url)
             domain = domain_match.group(1) if domain_match else "supervideo.cc"
             return f"https://{domain}/e/{fuid}"
 

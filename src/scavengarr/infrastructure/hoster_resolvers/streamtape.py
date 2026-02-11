@@ -8,7 +8,7 @@ Based on JD2 StreamtapeCom.java.
 from __future__ import annotations
 
 import re
-from urllib.parse import urlencode, urlparse
+from urllib.parse import urlparse
 
 import httpx
 import structlog
@@ -107,9 +107,7 @@ class StreamtapeResolver:
         # Determine base domain from the response URL
         resp_host = urlparse(str(resp.url)).hostname or "streamtape.com"
 
-        video_url = (
-            f"https://{resp_host}/get_video?{params_str}&stream=1"
-        )
+        video_url = f"https://{resp_host}/get_video?{params_str}&stream=1"
 
         log.debug("streamtape_resolved", video_url=video_url)
         return ResolvedStream(

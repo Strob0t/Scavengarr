@@ -15,10 +15,10 @@ from scavengarr.infrastructure.stremio.title_matcher import (
     score_title_match,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _sr(title: str, release_name: str | None = None) -> SearchResult:
     """Build a minimal SearchResult for scoring tests."""

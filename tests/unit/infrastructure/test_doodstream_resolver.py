@@ -64,9 +64,7 @@ class TestDoodStreamResolver:
         result = await resolver.resolve("https://dood.re/e/xyz123")
 
         assert result is not None
-        assert result.video_url.startswith(
-            "https://cv.dood.re/dl/abc123_video.mp4?"
-        )
+        assert result.video_url.startswith("https://cv.dood.re/dl/abc123_video.mp4?")
         assert "token=a1b2c3d4e5" in result.video_url
         assert "expiry=" in result.video_url
         assert result.headers == {"Referer": "https://dood.re/e/xyz123"}
@@ -162,11 +160,7 @@ class TestDoodStreamResolver:
 
     @pytest.mark.asyncio
     async def test_returns_none_when_turnstile_captcha(self) -> None:
-        html = (
-            "<html><body>"
-            '<div class="cf-turnstile">challenge</div>'
-            "</body></html>"
-        )
+        html = '<html><body><div class="cf-turnstile">challenge</div></body></html>'
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.text = html
@@ -181,11 +175,7 @@ class TestDoodStreamResolver:
 
     @pytest.mark.asyncio
     async def test_returns_none_when_no_pass_md5(self) -> None:
-        html = (
-            "<html><body><script>"
-            "var player = 'something';"
-            "</script></body></html>"
-        )
+        html = "<html><body><script>var player = 'something';</script></body></html>"
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.text = html
@@ -244,9 +234,7 @@ class TestDoodStreamResolver:
         mock_resp.url = "https://dood.re/e/xyz123"
 
         client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(
-            side_effect=[mock_resp, httpx.ConnectError("fail")]
-        )
+        client.get = AsyncMock(side_effect=[mock_resp, httpx.ConnectError("fail")])
 
         resolver = DoodStreamResolver(http_client=client)
         result = await resolver.resolve("https://dood.re/e/xyz123")
