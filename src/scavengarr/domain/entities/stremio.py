@@ -71,6 +71,14 @@ class StremioMetaPreview:
 
 
 @dataclass(frozen=True)
+class TitleMatchInfo:
+    """Reference title and year for filtering search results."""
+
+    title: str
+    year: int | None = None
+
+
+@dataclass(frozen=True)
 class StremioStreamRequest:
     """Parsed Stremio stream request.
 

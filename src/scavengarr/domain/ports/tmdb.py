@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from scavengarr.domain.entities.stremio import StremioMetaPreview
+from scavengarr.domain.entities.stremio import StremioMetaPreview, TitleMatchInfo
 
 
 class TmdbClientPort(Protocol):
@@ -21,6 +21,13 @@ class TmdbClientPort(Protocol):
         """Get the German title for an IMDb ID.
 
         Returns None if not found.
+        """
+        ...
+
+    async def get_title_and_year(self, imdb_id: str) -> TitleMatchInfo | None:
+        """Get title and release year for an IMDb ID.
+
+        Returns TitleMatchInfo or None if not found.
         """
         ...
 
