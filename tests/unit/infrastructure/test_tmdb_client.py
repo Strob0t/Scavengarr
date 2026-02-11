@@ -536,6 +536,67 @@ class TestGetTitleByTmdbId:
 
 
 # ---------------------------------------------------------------------------
+# get_title_and_year
+# ---------------------------------------------------------------------------
+
+
+class TestGetTitleAndYear:
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_movie_returns_title_and_year(
+        self, client: HttpxTmdbClient, cache: AsyncMock
+    ) -> None:
+        respx.get(f"{_BASE}/find/tt0103064").respond(json=_FIND_MOVIE_RESPONSE)
+
+        result = await client.get_title_and_year("tt0103064")
+
+        assert result is not None
+        assert result.title == "Terminator 2 – Tag der Abrechnung"
+        assert result.year == 1991
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_tv_returns_title_and_year(
+        self, client: HttpxTmdbClient, cache: AsyncMock
+    ) -> None:
+        respx.get(f"{_BASE}/find/tt0944947").respond(json=_FIND_TV_RESPONSE)
+
+        result = await client.get_title_and_year("tt0944947")
+
+        assert result is not None
+        assert result.title == "Game of Thrones"
+        assert result.year == 2011
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_not_found_returns_none(
+        self, client: HttpxTmdbClient, cache: AsyncMock
+    ) -> None:
+        respx.get(f"{_BASE}/find/tt0000000").respond(json=_FIND_EMPTY_RESPONSE)
+
+        result = await client.get_title_and_year("tt0000000")
+
+        assert result is None
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_missing_date_returns_none_year(
+        self, client: HttpxTmdbClient, cache: AsyncMock
+    ) -> None:
+        no_date = {
+            "movie_results": [{"id": 1, "title": "No Date Movie"}],
+            "tv_results": [],
+        }
+        respx.get(f"{_BASE}/find/tt0000001").respond(json=no_date)
+
+        result = await client.get_title_and_year("tt0000001")
+
+        assert result is not None
+        assert result.title == "No Date Movie"
+        assert result.year is None
+
+
+# ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
 

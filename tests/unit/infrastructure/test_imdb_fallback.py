@@ -121,6 +121,32 @@ class TestFindByImdbId:
         assert await client.find_by_imdb_id("tt9999999") is None
 
 
+class TestGetTitleAndYear:
+    @pytest.mark.asyncio
+    async def test_returns_title_and_year(self) -> None:
+        client, _ = _make_client()
+        result = await client.get_title_and_year("tt0371746")
+        assert result is not None
+        assert result.title == "Iron Man"
+        assert result.year == 2008
+
+    @pytest.mark.asyncio
+    async def test_missing_year_field(self) -> None:
+        no_year = json.dumps(
+            {"d": [{"id": "tt0000001", "l": "Some Title"}], "q": "tt0000001", "v": 1}
+        )
+        client, _ = _make_client(response_text=no_year)
+        result = await client.get_title_and_year("tt0000001")
+        assert result is not None
+        assert result.title == "Some Title"
+        assert result.year is None
+
+    @pytest.mark.asyncio
+    async def test_not_found_returns_none(self) -> None:
+        client, _ = _make_client(response_text=_EMPTY_RESPONSE)
+        assert await client.get_title_and_year("tt9999999") is None
+
+
 class TestUnsupportedMethods:
     @pytest.mark.asyncio
     async def test_tmdb_id_returns_none(self) -> None:

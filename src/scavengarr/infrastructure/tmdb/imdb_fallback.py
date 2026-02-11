@@ -7,7 +7,7 @@ from typing import Any
 import httpx
 import structlog
 
-from scavengarr.domain.entities.stremio import StremioMetaPreview
+from scavengarr.domain.entities.stremio import StremioMetaPreview, TitleMatchInfo
 from scavengarr.domain.ports.cache import CachePort
 
 log = structlog.get_logger(__name__)
@@ -91,6 +91,14 @@ class ImdbFallbackClient:
         if title:
             log.info("imdb_title_resolved", imdb_id=imdb_id, title=title)
         return title or None
+
+    async def get_title_and_year(self, imdb_id: str) -> TitleMatchInfo | None:
+        """Return title + year from IMDB Suggest API."""
+        entry = await self._fetch_suggest(imdb_id)
+        if not entry or not entry.get("l"):
+            return None
+        year = entry.get("y") if isinstance(entry.get("y"), int) else None
+        return TitleMatchInfo(title=entry["l"], year=year)
 
     async def get_title_by_tmdb_id(self, tmdb_id: int, media_type: str) -> str | None:
         """Cannot resolve TMDB IDs without TMDB API."""
