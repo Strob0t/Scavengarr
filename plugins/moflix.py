@@ -38,6 +38,17 @@ _MAX_RESULTS = 1000
 _SEARCH_LIMIT = 20  # API hard cap
 
 
+def _pre_filter_by_category(results: list[dict], category: int | None) -> list[dict]:
+    """Filter search results by is_series based on Torznab category."""
+    if category is None:
+        return results
+    if 5000 <= category < 6000:
+        return [r for r in results if r.get("is_series", False)]
+    if 2000 <= category < 3000:
+        return [r for r in results if not r.get("is_series", False)]
+    return results
+
+
 class MoflixPlugin:
     """Python plugin for moflix-stream.xyz using httpx (REST API)."""
 
@@ -113,9 +124,7 @@ class MoflixPlugin:
             )
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            log.warning(
-                "moflix_detail_failed", title_id=title_id, error=str(exc)
-            )
+            log.warning("moflix_detail_failed", title_id=title_id, error=str(exc))
             return None
 
         data = resp.json()
@@ -248,19 +257,7 @@ class MoflixPlugin:
         if not search_results:
             return []
 
-        # Pre-filter by is_series if category is specified
-        if category is not None:
-            if 5000 <= category < 6000:
-                search_results = [
-                    r for r in search_results if r.get("is_series", False)
-                ]
-            elif 2000 <= category < 3000:
-                search_results = [
-                    r
-                    for r in search_results
-                    if not r.get("is_series", False)
-                ]
-
+        search_results = _pre_filter_by_category(search_results, category)
         if not search_results:
             return []
 

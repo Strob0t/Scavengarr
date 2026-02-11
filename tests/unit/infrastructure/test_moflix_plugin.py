@@ -350,9 +350,7 @@ class TestPluginSearch:
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_search_movie_category_filters_series(
-        self, plugin, mock_client
-    ):
+    async def test_search_movie_category_filters_series(self, plugin, mock_client):
         search_resp = _make_json_response(SEARCH_RESPONSE)
         detail_resp = _make_json_response(DETAIL_MOVIE_RESPONSE)
 
@@ -371,9 +369,7 @@ class TestPluginSearch:
         assert results[0].category == 2000
 
     @pytest.mark.asyncio
-    async def test_search_tv_category_filters_movies(
-        self, plugin, mock_client
-    ):
+    async def test_search_tv_category_filters_movies(self, plugin, mock_client):
         search_resp = _make_json_response(SEARCH_RESPONSE)
         detail_resp = _make_json_response(DETAIL_SERIES_RESPONSE)
 
@@ -431,9 +427,7 @@ class TestPluginSearch:
         assert results[0].download_links is None
 
     @pytest.mark.asyncio
-    async def test_search_with_videos_in_download_link(
-        self, plugin, mock_client
-    ):
+    async def test_search_with_videos_in_download_link(self, plugin, mock_client):
         search_resp = _make_json_response(SEARCH_RESPONSE)
         detail_resp = _make_json_response(DETAIL_MOVIE_RESPONSE)
 
