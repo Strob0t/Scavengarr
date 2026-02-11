@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -11,6 +11,7 @@ from scavengarr.infrastructure.hoster_resolvers.supervideo import (
     SuperVideoResolver,
     _extract_html5_video,
     _extract_jwplayer_source,
+    _is_cloudflare_block,
 )
 
 
@@ -54,6 +55,23 @@ class TestExtractHtml5Video:
 
     def test_no_match(self) -> None:
         assert _extract_html5_video("<html></html>") is None
+
+
+class TestIsCloudflareBlock:
+    def test_403_with_just_a_moment(self) -> None:
+        assert _is_cloudflare_block(403, "<title>Just a moment...</title>") is True
+
+    def test_503_with_challenge_platform(self) -> None:
+        assert _is_cloudflare_block(503, '<div id="challenge-platform">') is True
+
+    def test_403_without_cloudflare_markers(self) -> None:
+        assert _is_cloudflare_block(403, "<html>Forbidden</html>") is False
+
+    def test_200_with_just_a_moment(self) -> None:
+        assert _is_cloudflare_block(200, "Just a moment") is False
+
+    def test_404_plain(self) -> None:
+        assert _is_cloudflare_block(404, "Not found") is False
 
 
 class TestSuperVideoResolver:
@@ -144,6 +162,7 @@ class TestSuperVideoResolver:
     async def test_returns_none_on_http_error(self) -> None:
         mock_resp = MagicMock()
         mock_resp.status_code = 404
+        mock_resp.text = "Not found"
 
         client = AsyncMock(spec=httpx.AsyncClient)
         client.get = AsyncMock(return_value=mock_resp)
@@ -219,4 +238,139 @@ class TestSuperVideoResolver:
 
         resolver = SuperVideoResolver(http_client=client)
         result = await resolver.resolve("https://supervideo.cc/e/abc123def456")
+        assert result is None
+
+
+class TestSuperVideoPlaywrightFallback:
+    """Tests for Cloudflare detection and Playwright fallback."""
+
+    @pytest.mark.asyncio
+    async def test_cloudflare_403_triggers_playwright_fallback(self) -> None:
+        """httpx 403 + 'Just a moment' triggers Playwright fallback."""
+        # httpx returns Cloudflare block
+        cf_resp = MagicMock()
+        cf_resp.status_code = 403
+        cf_resp.text = "<title>Just a moment...</title>"
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(return_value=cf_resp)
+
+        # Playwright mock chain
+        mock_page = AsyncMock()
+        mock_page.content = AsyncMock(
+            return_value='sources: [{file:"https://sv1.supervideo.cc/v/abc.mp4"}]'
+        )
+        mock_page.is_closed = MagicMock(return_value=False)
+
+        mock_context = AsyncMock()
+        mock_context.new_page = AsyncMock(return_value=mock_page)
+
+        mock_browser = AsyncMock()
+        mock_browser.new_context = AsyncMock(return_value=mock_context)
+
+        mock_pw = AsyncMock()
+        mock_pw.chromium = AsyncMock()
+        mock_pw.chromium.launch = AsyncMock(return_value=mock_browser)
+
+        with patch(
+            "scavengarr.infrastructure.hoster_resolvers.supervideo.async_playwright"
+        ) as mock_ap:
+            mock_ap.return_value.start = AsyncMock(return_value=mock_pw)
+
+            resolver = SuperVideoResolver(http_client=client)
+            result = await resolver.resolve("https://supervideo.cc/e/abc123def456")
+
+        assert result is not None
+        assert result.video_url == "https://sv1.supervideo.cc/v/abc.mp4"
+        mock_page.goto.assert_awaited_once()
+        mock_page.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_non_cloudflare_404_no_playwright(self) -> None:
+        """httpx 404 without Cloudflare markers does not trigger Playwright."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 404
+        mock_resp.text = "Not found"
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(return_value=mock_resp)
+
+        with patch(
+            "scavengarr.infrastructure.hoster_resolvers.supervideo.async_playwright"
+        ) as mock_ap:
+            resolver = SuperVideoResolver(http_client=client)
+            result = await resolver.resolve("https://supervideo.cc/e/abc123def456")
+
+        assert result is None
+        # Playwright was never called
+        mock_ap.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cleanup_closes_playwright(self) -> None:
+        """cleanup() closes context, browser, and playwright."""
+        client = MagicMock(spec=httpx.AsyncClient)
+        resolver = SuperVideoResolver(http_client=client)
+
+        # Simulate Playwright having been started
+        resolver._context = AsyncMock()
+        resolver._browser = AsyncMock()
+        resolver._playwright = AsyncMock()
+
+        await resolver.cleanup()
+
+        resolver._context is None
+        resolver._browser is None
+        resolver._playwright is None
+
+    @pytest.mark.asyncio
+    async def test_cleanup_noop_when_no_playwright(self) -> None:
+        """cleanup() is safe when Playwright was never started."""
+        client = MagicMock(spec=httpx.AsyncClient)
+        resolver = SuperVideoResolver(http_client=client)
+
+        # Should not raise
+        await resolver.cleanup()
+
+        assert resolver._playwright is None
+        assert resolver._browser is None
+        assert resolver._context is None
+
+    @pytest.mark.asyncio
+    async def test_browser_reuse_on_second_call(self) -> None:
+        """_ensure_browser() short-circuits when browser already exists."""
+        client = MagicMock(spec=httpx.AsyncClient)
+        resolver = SuperVideoResolver(http_client=client)
+
+        mock_browser = AsyncMock()
+        resolver._browser = mock_browser
+
+        with patch(
+            "scavengarr.infrastructure.hoster_resolvers.supervideo.async_playwright"
+        ) as mock_ap:
+            await resolver._ensure_browser()
+
+        # Playwright never called — browser was already set
+        mock_ap.assert_not_called()
+        assert resolver._browser is mock_browser
+
+    @pytest.mark.asyncio
+    async def test_playwright_failure_returns_none(self) -> None:
+        """When Playwright also fails, resolve returns None."""
+        cf_resp = MagicMock()
+        cf_resp.status_code = 403
+        cf_resp.text = "<title>Just a moment...</title>"
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(return_value=cf_resp)
+
+        with patch(
+            "scavengarr.infrastructure.hoster_resolvers.supervideo.async_playwright"
+        ) as mock_ap:
+            mock_ap.return_value.start = AsyncMock(
+                side_effect=RuntimeError("No browser installed")
+            )
+
+            resolver = SuperVideoResolver(http_client=client)
+            result = await resolver.resolve("https://supervideo.cc/e/abc123def456")
+
         assert result is None
