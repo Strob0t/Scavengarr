@@ -27,6 +27,10 @@ scraping:
         link: "div.title h1 a"
       field_attributes:
         link: ["href"]
+      pagination:
+        enabled: true
+        selector: "div.nav a:-soup-contains(\"Next\")"
+        max_pages: 34
       next_stage: "detail_page"
 
     - name: "detail_page"

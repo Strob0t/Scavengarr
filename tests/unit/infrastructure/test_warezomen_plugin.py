@@ -144,7 +144,7 @@ class TestPluginLoading:
         stage = plugin.scraping.stages[0]
         assert stage.pagination is not None
         assert stage.pagination.enabled is True
-        assert stage.pagination.max_pages == 3
+        assert stage.pagination.max_pages == 50
 
 
 # -- Helpers for ScrapyAdapter tests ------------------------------------------
