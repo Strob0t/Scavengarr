@@ -70,6 +70,53 @@ class CacheConfig(BaseSettings):
     )
 
 
+class StremioConfig(BaseModel):
+    """Configuration for Stremio addon and stream sorting.
+
+    All values configurable via YAML (stremio section) or ENV vars.
+    """
+
+    preferred_language: str = Field(
+        default="de",
+        description="Preferred audio language code for stream ranking.",
+    )
+
+    language_scores: dict[str, int] = Field(
+        default={
+            "de": 1000,
+            "de-sub": 500,
+            "en-sub": 200,
+            "en": 150,
+        },
+        description="Language ranking scores (higher = preferred).",
+    )
+    default_language_score: int = Field(
+        default=100,
+        description="Score for unknown/undetected languages.",
+    )
+
+    quality_multiplier: int = Field(
+        default=10,
+        description="Multiplier for quality value in ranking score.",
+    )
+
+    hoster_scores: dict[str, int] = Field(
+        default={
+            "supervideo": 5,
+            "voe": 4,
+            "filemoon": 3,
+            "streamtape": 2,
+            "doodstream": 1,
+        },
+        description="Hoster reliability bonus (tie-breaker).",
+    )
+
+    max_concurrent_plugins: int = Field(
+        default=5,
+        description="Max parallel plugin searches for stream resolution.",
+    )
+
+
 class AppConfig(BaseModel):
     """
     Canonical application configuration (validated, final).
@@ -175,6 +222,15 @@ class AppConfig(BaseModel):
         ),
     )
 
+    # TMDB API key (required for Stremio addon)
+    tmdb_api_key: str | None = Field(
+        default=None,
+        description="TMDB API key for Stremio catalog and title lookup.",
+    )
+
+    # Stremio addon configuration (YAML section: stremio.*)
+    stremio: StremioConfig = Field(default_factory=StremioConfig)
+
     # Cache (disk-only placeholder) (YAML section: cache.*)
     cache: CacheConfig = Field(default_factory=CacheConfig)
 
@@ -250,6 +306,7 @@ class AppConfig(BaseModel):
                 "dir": str(self.cache_dir),
                 "ttl_seconds": self.cache_ttl_seconds,
             },
+            "stremio": self.stremio.model_dump(),
         }
 
 
@@ -292,6 +349,8 @@ class EnvOverrides(BaseSettings):
 
     cache_dir: Optional[Path] = None
     cache_ttl_seconds: Optional[int] = None
+
+    tmdb_api_key: Optional[str] = None
 
     @field_validator("plugin_dir", "cache_dir", mode="before")
     @classmethod

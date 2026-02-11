@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from scavengarr.domain.plugins.base import PluginProtocol
+from scavengarr.domain.plugins.base import PluginProtocol, PluginProvides
 from scavengarr.domain.plugins.plugin_schema import YamlPluginDefinition
 
 
@@ -15,3 +15,4 @@ class PluginRegistryPort(Protocol):
     def discover(self) -> None: ...
     def list_names(self) -> list[str]: ...
     def get(self, name: str) -> YamlPluginDefinition | PluginProtocol: ...
+    def get_by_provides(self, provides: PluginProvides) -> list[str]: ...

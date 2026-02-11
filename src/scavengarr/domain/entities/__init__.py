@@ -1,3 +1,12 @@
+from .stremio import (
+    RankedStream,
+    StreamLanguage,
+    StreamQuality,
+    StremioContentType,
+    StremioMetaPreview,
+    StremioStream,
+    StremioStreamRequest,
+)
 from .torznab import (
     TorznabAction,
     TorznabBadRequest,
@@ -14,6 +23,13 @@ from .torznab import (
 )
 
 __all__ = [
+    "RankedStream",
+    "StreamLanguage",
+    "StreamQuality",
+    "StremioContentType",
+    "StremioMetaPreview",
+    "StremioStream",
+    "StremioStreamRequest",
     "TorznabAction",
     "TorznabBadRequest",
     "TorznabCaps",
