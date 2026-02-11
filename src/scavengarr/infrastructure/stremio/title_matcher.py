@@ -47,45 +47,73 @@ def _sequel_number(title: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
-def score_title_match(
-    result: SearchResult,
-    reference: TitleMatchInfo,
+def _score_single_title(
+    norm_ref: str,
+    norm_res: str,
+    *,
+    reference_year: int | None,
+    result_year: int | None,
 ) -> float:
-    """Score how well *result* matches *reference* (0.0–~1.2).
-
-    Components:
-    - Base: ``SequenceMatcher.ratio()`` on normalised titles (0.0–1.0)
-    - Year bonus: +0.2 if year matches (±1 tolerance)
-    - Year penalty: −0.3 if year present but wrong
-    - Sequel penalty: −0.3 if result has sequel number that reference lacks
-    """
-    norm_ref = _normalize(_strip_year(reference.title))
-    norm_res = _normalize(_strip_year(result.title))
-
+    """Score one normalised reference title against a normalised result title."""
     if not norm_ref or not norm_res:
         return 0.0
 
-    # --- base similarity ---
     score = SequenceMatcher(None, norm_ref, norm_res).ratio()
 
     # --- year handling ---
-    result_year = _extract_year(result.title)
-    if result_year is None and result.release_name:
-        result_year = _extract_year(result.release_name)
-
-    if reference.year is not None and result_year is not None:
-        if abs(reference.year - result_year) <= 1:
+    if reference_year is not None and result_year is not None:
+        if abs(reference_year - result_year) <= 1:
             score += 0.2
         else:
             score -= 0.3
 
-    # --- sequel detection (on year-stripped normalised titles) ---
+    # --- sequel detection ---
     ref_sequel = _sequel_number(norm_ref)
     res_sequel = _sequel_number(norm_res)
     if res_sequel is not None and ref_sequel is None:
         score -= 0.3
 
     return score
+
+
+def score_title_match(
+    result: SearchResult,
+    reference: TitleMatchInfo,
+) -> float:
+    """Score how well *result* matches *reference* (0.0–~1.2).
+
+    When *reference* carries ``alt_titles`` (e.g. the original-language
+    title alongside the German localised title), the best score across
+    all variants is returned.
+
+    Components per title variant:
+    - Base: ``SequenceMatcher.ratio()`` on normalised titles (0.0–1.0)
+    - Year bonus: +0.2 if year matches (±1 tolerance)
+    - Year penalty: −0.3 if year present but wrong
+    - Sequel penalty: −0.3 if result has sequel number that reference lacks
+    """
+    norm_res = _normalize(_strip_year(result.title))
+    if not norm_res:
+        return 0.0
+
+    result_year = _extract_year(result.title)
+    if result_year is None and result.release_name:
+        result_year = _extract_year(result.release_name)
+
+    all_ref_titles = [reference.title] + list(reference.alt_titles)
+    best = 0.0
+    for ref_title in all_ref_titles:
+        norm_ref = _normalize(_strip_year(ref_title))
+        s = _score_single_title(
+            norm_ref,
+            norm_res,
+            reference_year=reference.year,
+            result_year=result_year,
+        )
+        if s > best:
+            best = s
+
+    return best
 
 
 def filter_by_title_match(

@@ -177,6 +177,47 @@ class TestScoreTitleMatch:
         score = score_title_match(_sr("iron man"), ref)
         assert score == pytest.approx(1.0)
 
+    def test_alt_title_english_matches_german_result(self) -> None:
+        """German primary + English alt_title: English result should match."""
+        ref = TitleMatchInfo(
+            title="Die Verurteilten",
+            year=1994,
+            alt_titles=["The Shawshank Redemption"],
+        )
+        score = score_title_match(_sr("The Shawshank Redemption"), ref)
+        assert score >= 1.0
+
+    def test_alt_title_german_result_matches_german_primary(self) -> None:
+        """German primary title: German result should match directly."""
+        ref = TitleMatchInfo(
+            title="Die Verurteilten",
+            year=1994,
+            alt_titles=["The Shawshank Redemption"],
+        )
+        score = score_title_match(_sr("Die Verurteilten"), ref)
+        assert score >= 1.0
+
+    def test_alt_title_best_score_wins(self) -> None:
+        """When primary title is a poor match but alt is exact, score is high."""
+        ref = TitleMatchInfo(
+            title="Completely Different Title",
+            alt_titles=["Iron Man"],
+        )
+        score = score_title_match(_sr("Iron Man"), ref)
+        assert score >= 1.0
+
+    def test_no_alt_titles_behaves_as_before(self) -> None:
+        """Empty alt_titles list should not change scoring."""
+        ref = TitleMatchInfo(title="Iron Man", alt_titles=[])
+        score = score_title_match(_sr("Iron Man"), ref)
+        assert score == pytest.approx(1.0)
+
+    def test_alt_title_sequel_penalty_still_applies(self) -> None:
+        """Sequel penalty applies even when matching against alt title."""
+        ref = TitleMatchInfo(title="Der Eiserne", alt_titles=["Iron Man"])
+        score = score_title_match(_sr("Iron Man 2"), ref)
+        assert score < 0.7
+
 
 # ---------------------------------------------------------------------------
 # filter_by_title_match
@@ -214,3 +255,21 @@ class TestFilterByTitleMatch:
         kept = filter_by_title_match(results, ref, threshold=0.7)
         assert len(kept) == 1
         assert kept[0].title == "Iron Man"
+
+    def test_alt_titles_keeps_cross_language_results(self) -> None:
+        """German primary + English alt: both language results kept."""
+        ref = TitleMatchInfo(
+            title="Die Verurteilten",
+            year=1994,
+            alt_titles=["The Shawshank Redemption"],
+        )
+        results = [
+            _sr("Die Verurteilten"),
+            _sr("The Shawshank Redemption"),
+            _sr("Completely Wrong Movie"),
+        ]
+        kept = filter_by_title_match(results, ref, threshold=0.7)
+        titles = [r.title for r in kept]
+        assert "Die Verurteilten" in titles
+        assert "The Shawshank Redemption" in titles
+        assert "Completely Wrong Movie" not in titles

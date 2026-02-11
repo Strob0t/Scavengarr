@@ -270,6 +270,8 @@ class Movie4kPlugin:
 
         data = resp.json()
         movies = data.get("movies", [])
+        if not isinstance(movies, list):
+            movies = []
         pager = data.get("pager", {})
         total = pager.get("totalItems", 0)
 

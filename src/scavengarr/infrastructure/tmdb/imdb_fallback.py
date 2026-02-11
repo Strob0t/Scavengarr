@@ -93,12 +93,25 @@ class ImdbFallbackClient:
         return title or None
 
     async def get_title_and_year(self, imdb_id: str) -> TitleMatchInfo | None:
-        """Return title + year from IMDB Suggest API."""
+        """Return title + year from IMDB Suggest API.
+
+        The IMDB Suggest API only returns the original (English) title.
+        Without a TMDB API key there is no German title available, so
+        title-match filtering may be less accurate for German-language
+        plugin results.
+        """
         entry = await self._fetch_suggest(imdb_id)
         if not entry or not entry.get("l"):
             return None
         year = entry.get("y") if isinstance(entry.get("y"), int) else None
-        return TitleMatchInfo(title=entry["l"], year=year)
+        title = entry["l"]
+        log.debug(
+            "imdb_fallback_title_resolved",
+            imdb_id=imdb_id,
+            title=title,
+            note="no German title available without TMDB API key",
+        )
+        return TitleMatchInfo(title=title, year=year)
 
     async def get_title_by_tmdb_id(self, tmdb_id: int, media_type: str) -> str | None:
         """Cannot resolve TMDB IDs without TMDB API."""

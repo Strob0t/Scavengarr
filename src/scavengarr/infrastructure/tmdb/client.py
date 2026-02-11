@@ -147,7 +147,12 @@ class HttpxTmdbClient:
         return result.get("title") or result.get("name") or None
 
     async def get_title_and_year(self, imdb_id: str) -> TitleMatchInfo | None:
-        """Get title and release year from TMDB /find endpoint."""
+        """Get title and release year from TMDB /find endpoint.
+
+        The primary title is the German localised title (language=de-DE).
+        When the original title differs, it is included in *alt_titles*
+        so the title matcher can also match against the original language.
+        """
         result = await self.find_by_imdb_id(imdb_id)
         if result is None:
             return None
@@ -156,7 +161,12 @@ class HttpxTmdbClient:
             return None
         date_str = result.get("release_date") or result.get("first_air_date") or ""
         year = int(date_str[:4]) if len(date_str) >= 4 else None
-        return TitleMatchInfo(title=title, year=year)
+
+        # Include original-language title as alternative when it differs
+        original = result.get("original_title") or result.get("original_name") or ""
+        alt_titles = [original] if original and original != title else []
+
+        return TitleMatchInfo(title=title, year=year, alt_titles=alt_titles)
 
     async def get_title_by_tmdb_id(self, tmdb_id: int, media_type: str) -> str | None:
         """Get the German title for a TMDB numeric ID.

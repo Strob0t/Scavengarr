@@ -73,10 +73,16 @@ class StremioMetaPreview:
 
 @dataclass(frozen=True)
 class TitleMatchInfo:
-    """Reference title and year for filtering search results."""
+    """Reference title and year for filtering search results.
+
+    *alt_titles* holds additional language variants (e.g. the original
+    English title when the primary title is German).  The scorer picks
+    the best match across all titles.
+    """
 
     title: str
     year: int | None = None
+    alt_titles: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
