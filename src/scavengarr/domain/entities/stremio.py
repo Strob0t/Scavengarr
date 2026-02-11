@@ -80,6 +80,16 @@ class TitleMatchInfo:
 
 
 @dataclass(frozen=True)
+class CachedStreamLink:
+    """A cached hoster URL for deferred stream resolution."""
+
+    stream_id: str
+    hoster_url: str
+    title: str = ""
+    hoster: str = ""
+
+
+@dataclass(frozen=True)
 class StremioStreamRequest:
     """Parsed Stremio stream request.
 

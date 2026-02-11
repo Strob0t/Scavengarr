@@ -126,6 +126,11 @@ class StremioConfig(BaseModel):
         description="Minimum title similarity score to keep a stream result.",
     )
 
+    stream_link_ttl_seconds: int = Field(
+        default=7200,
+        description="TTL for cached stream links (seconds). Default 2h.",
+    )
+
 
 class AppConfig(BaseModel):
     """
