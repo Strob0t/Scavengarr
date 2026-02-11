@@ -48,6 +48,7 @@ _USER_AGENT = (
 )
 
 _MAX_CONCURRENT_PAGES = 3
+_MAX_RESULTS = 1000
 
 # Torznab category → vBulletin forum ID mapping.
 # Default is "30" (Videoboerse: movies, series, docs).
@@ -150,25 +151,20 @@ class _ThreadLinkParser(HTMLParser):
 
     Normalizes URLs by thread ID to avoid duplicates from
     highlight/goto/post variants of the same thread.
+    Also detects the "Next Page" navigation link for pagination.
     """
 
     def __init__(self, base_url: str) -> None:
         super().__init__()
         self.thread_urls: list[str] = []
+        self.next_page_url: str = ""
         self._base_url = base_url
         self._seen_ids: set[str] = set()
+        self._in_nav_a = False
+        self._nav_a_href = ""
+        self._nav_a_text = ""
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag != "a":
-            return
-        attr_dict = dict(attrs)
-        href = attr_dict.get("href", "")
-        if not href:
-            return
-        if "showthread.php" not in href and "/threads/" not in href:
-            return
-
-        # Extract thread ID from showthread.php?t=NNN
+    def _handle_thread_link(self, href: str) -> None:
         m = re.search(r"[?&]t=(\d+)", href)
         if m:
             tid = m.group(1)
@@ -182,6 +178,35 @@ class _ThreadLinkParser(HTMLParser):
                 href = f"{self._base_url}/{href.lstrip('/')}"
             if href not in self.thread_urls:
                 self.thread_urls.append(href)
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag != "a":
+            return
+        attr_dict = dict(attrs)
+        href = attr_dict.get("href", "")
+        if not href:
+            return
+
+        if "showthread.php" in href or "/threads/" in href:
+            self._handle_thread_link(href)
+
+        # Detect pagination links (search.php?...&page=N)
+        if "search.php" in href and "page=" in href:
+            self._in_nav_a = True
+            self._nav_a_href = href
+            self._nav_a_text = ""
+
+    def handle_data(self, data: str) -> None:
+        if self._in_nav_a:
+            self._nav_a_text += data
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "a" and self._in_nav_a:
+            self._in_nav_a = False
+            text = self._nav_a_text.strip().lower()
+            # vBulletin ">" or "Next" link
+            if text in {">", "next", "»"}:
+                self.next_page_url = self._nav_a_href
 
 
 class _ThreadTitleParser(HTMLParser):
@@ -336,18 +361,28 @@ class BoersePlugin:
 
         raise RuntimeError("All boerse domains failed during login")
 
-    async def _search_threads(self, query: str, forum_id: str = "30") -> list[str]:
-        """Navigate to search.php, fill the full form, extract thread URLs.
+    async def _fetch_page_html(self, url: str) -> str:
+        """Navigate to a URL and return page HTML."""
+        assert self._context is not None  # noqa: S101
 
-        Uses the full ``#searchform`` with forum filtering instead of the
-        quick-search ``#lsa_input`` which returns less targeted results.
+        page = await self._context.new_page()
+        try:
+            await page.goto(url, wait_until="domcontentloaded")
+            await self._wait_for_cloudflare(page)
 
-        Args:
-            query: Search term.
-            forum_id: vBulletin forum ID to search in.
-                      Default ``"30"`` = Videoboerse (movies/series).
-        """
-        assert self._context is not None
+            try:
+                await page.wait_for_load_state("networkidle", timeout=10_000)
+            except Exception:  # noqa: BLE001
+                pass
+
+            return await page.content()
+        finally:
+            if not page.is_closed():
+                await page.close()
+
+    async def _submit_search_form(self, query: str, forum_id: str) -> str:
+        """Submit the vBulletin search form and return results HTML."""
+        assert self._context is not None  # noqa: S101
 
         page = await self._context.new_page()
         try:
@@ -357,23 +392,16 @@ class BoersePlugin:
             )
             await self._wait_for_cloudflare(page)
 
-            # Fill the full search form (#searchform)
             await page.evaluate(
                 """([q, fid]) => {
                     const form = document.getElementById('searchform');
                     if (!form) throw new Error('no searchform');
-
-                    // Set search query
                     form.querySelector(
                         'input[name="query"]'
                     ).value = q;
-
-                    // Title-only search
                     form.querySelector(
                         'select[name="titleonly"]'
                     ).value = '1';
-
-                    // Select forum
                     const sel = form.querySelector(
                         'select[name="forumchoice[]"]'
                     );
@@ -384,14 +412,10 @@ class BoersePlugin:
                             break;
                         }
                     }
-
-                    // Include child forums
                     const cb = form.querySelector(
                         'input[name="childforums"]'
                     );
                     if (cb) cb.checked = true;
-
-                    // Show threads (not individual posts)
                     for (const r of form.querySelectorAll(
                         'input[name="showposts"]'
                     )) {
@@ -415,16 +439,56 @@ class BoersePlugin:
             except Exception:  # noqa: BLE001
                 pass
 
-            html = await page.content()
-            parser = _ThreadLinkParser(self.base_url)
-            parser.feed(html)
-            return parser.thread_urls
+            return await page.content()
         except Exception:
             self._logged_in = False
             raise
         finally:
             if not page.is_closed():
                 await page.close()
+
+    async def _search_threads(self, query: str, forum_id: str = "30") -> list[str]:
+        """Submit search form and paginate through results.
+
+        Collects up to 1000 thread URLs by following "Next Page" links.
+        """
+        html = await self._submit_search_form(query, forum_id)
+
+        all_urls: list[str] = []
+        seen: set[str] = set()
+
+        parser = _ThreadLinkParser(self.base_url)
+        parser.feed(html)
+        for url in parser.thread_urls:
+            if url not in seen:
+                seen.add(url)
+                all_urls.append(url)
+
+        next_url = parser.next_page_url
+        while next_url and len(all_urls) < _MAX_RESULTS:
+            if not next_url.startswith("http"):
+                next_url = f"{self.base_url}/{next_url.lstrip('/')}"
+
+            try:
+                html = await self._fetch_page_html(next_url)
+            except Exception:  # noqa: BLE001
+                break
+
+            parser = _ThreadLinkParser(self.base_url)
+            parser.feed(html)
+
+            new_count = 0
+            for url in parser.thread_urls:
+                if url not in seen:
+                    seen.add(url)
+                    all_urls.append(url)
+                    new_count += 1
+
+            if new_count == 0:
+                break
+            next_url = parser.next_page_url
+
+        return all_urls[:_MAX_RESULTS]
 
     async def _scrape_thread(self, url: str) -> SearchResult | None:
         """Scrape a single thread page for title and download links."""

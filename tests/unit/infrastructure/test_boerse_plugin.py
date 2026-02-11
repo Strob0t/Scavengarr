@@ -268,6 +268,50 @@ class TestSearch:
         results = await plugin.search("nonexistent")
         assert results == []
 
+    async def test_search_paginates(self) -> None:
+        plugin = _make_plugin()
+
+        # Page 1: has threads + "Next Page" link
+        search_html_p1 = """
+        <html><body>
+        <a href="https://boerse.am/showthread.php?t=100">Thread P1</a>
+        <a href="search.php?searchid=99&page=2">></a>
+        </body></html>
+        """
+        # Page 2: has threads, no next page
+        search_html_p2 = """
+        <html><body>
+        <a href="https://boerse.am/showthread.php?t=200">Thread P2</a>
+        </body></html>
+        """
+
+        thread_html = """
+        <html><head><title>Title - Boerse.AM</title></head>
+        <body>
+        <div id="post_message_1">
+        <a href="https://www.keeplinks.org/p53/abc">RapidGator</a>
+        </div>
+        </body></html>
+        """
+
+        search_p1 = _make_mock_page(search_html_p1)
+        search_p2 = _make_mock_page(search_html_p2)
+        thread_1 = _make_mock_page(thread_html)
+        thread_2 = _make_mock_page(thread_html)
+
+        context = _make_mock_context(
+            pages=[search_p1, search_p2, thread_1, thread_2],
+        )
+
+        plugin._browser = _make_mock_browser(context)
+        plugin._context = context
+        plugin._logged_in = True
+        plugin.base_url = "https://boerse.am"
+
+        results = await plugin.search("test")
+
+        assert len(results) == 2
+
     async def test_search_thread_without_links_skipped(self) -> None:
         plugin = _make_plugin()
 
@@ -520,6 +564,25 @@ class TestThreadLinkParser:
 
         assert len(parser.thread_urls) == 1
         assert "t=123" in parser.thread_urls[0]
+
+    def test_next_page_url_detected(self) -> None:
+        html = """
+        <a href="showthread.php?t=123">Thread</a>
+        <a href="search.php?searchid=99&page=2">></a>
+        """
+
+        parser = _ThreadLinkParser("https://boerse.am")
+        parser.feed(html)
+
+        assert parser.next_page_url == "search.php?searchid=99&page=2"
+
+    def test_no_next_page_url(self) -> None:
+        html = '<a href="showthread.php?t=123">Thread</a>'
+
+        parser = _ThreadLinkParser("https://boerse.am")
+        parser.feed(html)
+
+        assert parser.next_page_url == ""
 
 
 class TestTitleParser:
