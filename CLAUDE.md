@@ -508,7 +508,13 @@ def add_item(item: str, items: list[str] | None = None) -> list[str]:
 - Python plugin only when YAML is technically impossible (Cloudflare/JS challenge, complex logic, auth, API calls, non-standard table structures)
 - Justification for Python plugin must be stated explicitly in the plan
 
-**Step 3: Implement**
+**Step 3: Implement (MANDATORY search standards for ALL plugins)**
+
+Every plugin MUST implement the following search features:
+
+1. **Category filtering**: Use the site's category/filter system in the search URL whenever available (dropdown IDs, URL path segments, forum IDs, etc.). Map Torznab categories → site categories and pass them in the search request.
+2. **Pagination up to 1000 items**: Scrape multiple search result pages to collect up to 1000 items total. Parse pagination links/hit counts from the first page to determine how many pages exist, then fetch subsequent pages sequentially until 1000 items or no more results. Define `_MAX_PAGES` based on the site's results-per-page (e.g., 200/page → 5 pages, 50/page → 20 pages, 10/page → 100 pages).
+3. **Bounded concurrency** for detail page scraping: Use `asyncio.Semaphore(3)` to scrape detail pages in parallel without overwhelming the target.
 
 #### Adding a new YAML plugin
 1. Place the YAML file in the plugin dir (configurable via `SCAVENGARR_PLUGIN_DIR`).
