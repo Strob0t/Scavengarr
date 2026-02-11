@@ -17,6 +17,7 @@ if TYPE_CHECKING:
         PluginRegistryPort,
         SearchEnginePort,
     )
+    from scavengarr.domain.ports.tmdb import TmdbClientPort
 
 
 class AppState(State):
@@ -39,3 +40,6 @@ class AppState(State):
 
     # Application Services
     crawljob_factory: CrawlJobFactory
+
+    # Stremio (optional — requires TMDB API key)
+    tmdb_client: TmdbClientPort | None

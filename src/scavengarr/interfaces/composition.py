@@ -16,6 +16,7 @@ from scavengarr.infrastructure.persistence.crawljob_cache import (
     CacheCrawlJobRepository,
 )
 from scavengarr.infrastructure.plugins import PluginRegistry
+from scavengarr.infrastructure.tmdb.client import HttpxTmdbClient
 from scavengarr.infrastructure.torznab.search_engine import HttpxScrapySearchEngine
 from scavengarr.interfaces.app_state import AppState
 
@@ -91,6 +92,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         default_priority=Priority.DEFAULT,
     )
     log.info("crawljob_factory_initialized")
+
+    # 7) TMDB client (optional — requires API key for Stremio addon)
+    if config.tmdb_api_key:
+        state.tmdb_client = HttpxTmdbClient(
+            api_key=config.tmdb_api_key,
+            http_client=state.http_client,
+            cache=state.cache,
+        )
+        log.info("tmdb_client_initialized")
+    else:
+        state.tmdb_client = None
+        log.info("tmdb_client_skipped", reason="no API key configured")
 
     log.info("app_startup_complete")
 

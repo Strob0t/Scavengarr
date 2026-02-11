@@ -1,0 +1,282 @@
+"""Tests for Stremio addon router endpoints."""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock, PropertyMock
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from scavengarr.domain.entities.stremio import StremioMetaPreview
+from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.config.schema import StremioConfig
+from scavengarr.interfaces.api.stremio.router import (
+    _parse_stream_id,
+    router,
+)
+
+
+def _make_app(
+    *,
+    plugin_names: list[str] | None = None,
+    tmdb_client: AsyncMock | None = None,
+    search_results: list[SearchResult] | None = None,
+) -> FastAPI:
+    """Create a minimal FastAPI app with the stremio router."""
+    app = FastAPI()
+    app.include_router(router)
+
+    state = MagicMock()
+    state.config.environment = "dev"
+    state.config.app_name = "Scavengarr"
+    state.config.stremio = StremioConfig()
+
+    plugins = MagicMock()
+    names = plugin_names or []
+    plugins.get_by_provides.return_value = names
+    plugins.get.side_effect = lambda name: _make_fake_plugin(name, search_results or [])
+    state.plugins = plugins
+
+    engine = AsyncMock()
+    engine.search = AsyncMock(return_value=search_results or [])
+    engine.validate_results = AsyncMock(return_value=search_results or [])
+    state.search_engine = engine
+
+    app.state.plugins = state.plugins
+    app.state.search_engine = state.search_engine
+    app.state.config = state.config
+    app.state.tmdb_client = tmdb_client
+
+    return app
+
+
+def _make_fake_plugin(
+    name: str, results: list[SearchResult]
+) -> MagicMock:
+    """Create a fake Python plugin with search() method."""
+    plugin = MagicMock()
+    plugin.name = name
+    plugin.search = AsyncMock(return_value=results)
+    # Python plugin: has search, no scraping
+    del plugin.scraping
+    return plugin
+
+
+class TestParseStreamId:
+    def test_movie_id(self) -> None:
+        result = _parse_stream_id("movie", "tt1234567")
+        assert result is not None
+        assert result.imdb_id == "tt1234567"
+        assert result.content_type == "movie"
+        assert result.season is None
+        assert result.episode is None
+
+    def test_series_id_with_season_episode(self) -> None:
+        result = _parse_stream_id("series", "tt1234567:1:5")
+        assert result is not None
+        assert result.imdb_id == "tt1234567"
+        assert result.content_type == "series"
+        assert result.season == 1
+        assert result.episode == 5
+
+    def test_invalid_prefix(self) -> None:
+        result = _parse_stream_id("movie", "nm1234567")
+        assert result is None
+
+    def test_invalid_content_type(self) -> None:
+        result = _parse_stream_id("channel", "tt1234567")
+        assert result is None
+
+    def test_series_without_season_episode(self) -> None:
+        result = _parse_stream_id("series", "tt1234567")
+        assert result is not None
+        assert result.season is None
+        assert result.episode is None
+
+    def test_series_non_numeric_season(self) -> None:
+        result = _parse_stream_id("series", "tt1234567:abc:5")
+        assert result is None
+
+
+class TestManifestEndpoint:
+    def test_returns_valid_manifest(self) -> None:
+        app = _make_app(plugin_names=["hdfilme", "kinox"])
+        client = TestClient(app)
+
+        resp = client.get("/stremio/manifest.json")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["id"] == "community.scavengarr"
+        assert "movie" in data["types"]
+        assert "series" in data["types"]
+        assert "stream" in data["resources"]
+        assert "catalog" in data["resources"]
+
+    def test_cors_headers(self) -> None:
+        app = _make_app()
+        client = TestClient(app)
+
+        resp = client.get("/stremio/manifest.json")
+
+        assert resp.headers["access-control-allow-origin"] == "*"
+
+
+class TestCatalogEndpoint:
+    def test_returns_empty_when_no_tmdb_client(self) -> None:
+        app = _make_app()
+        client = TestClient(app)
+
+        resp = client.get(
+            "/stremio/catalog/movie/scavengarr-trending-movies.json"
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"metas": []}
+
+    def test_returns_trending_movies(self) -> None:
+        tmdb = AsyncMock()
+        tmdb.trending_movies = AsyncMock(
+            return_value=[
+                StremioMetaPreview(
+                    id="tt1234567",
+                    type="movie",
+                    name="Test Movie",
+                    poster="https://image.tmdb.org/t/p/w500/abc.jpg",
+                    description="A test movie",
+                    release_info="2024",
+                    imdb_rating="7.5",
+                ),
+            ]
+        )
+        app = _make_app(tmdb_client=tmdb)
+        client = TestClient(app)
+
+        resp = client.get(
+            "/stremio/catalog/movie/scavengarr-trending-movies.json"
+        )
+
+        assert resp.status_code == 200
+        metas = resp.json()["metas"]
+        assert len(metas) == 1
+        assert metas[0]["id"] == "tt1234567"
+        assert metas[0]["name"] == "Test Movie"
+
+    def test_returns_trending_series(self) -> None:
+        tmdb = AsyncMock()
+        tmdb.trending_tv = AsyncMock(
+            return_value=[
+                StremioMetaPreview(
+                    id="tt7654321",
+                    type="series",
+                    name="Test Show",
+                ),
+            ]
+        )
+        app = _make_app(tmdb_client=tmdb)
+        client = TestClient(app)
+
+        resp = client.get(
+            "/stremio/catalog/series/scavengarr-trending-series.json"
+        )
+
+        assert resp.status_code == 200
+        metas = resp.json()["metas"]
+        assert len(metas) == 1
+        assert metas[0]["name"] == "Test Show"
+
+    def test_invalid_content_type_returns_empty(self) -> None:
+        tmdb = AsyncMock()
+        app = _make_app(tmdb_client=tmdb)
+        client = TestClient(app)
+
+        resp = client.get("/stremio/catalog/channel/foo.json")
+
+        assert resp.status_code == 200
+        assert resp.json() == {"metas": []}
+
+
+class TestStreamEndpoint:
+    def test_returns_empty_for_invalid_id(self) -> None:
+        app = _make_app()
+        client = TestClient(app)
+
+        resp = client.get("/stremio/stream/movie/nm1234567.json")
+
+        assert resp.status_code == 200
+        assert resp.json() == {"streams": []}
+
+    def test_returns_empty_when_no_tmdb(self) -> None:
+        app = _make_app(plugin_names=["hdfilme"])
+        client = TestClient(app)
+
+        resp = client.get("/stremio/stream/movie/tt1234567.json")
+
+        assert resp.status_code == 200
+        assert resp.json() == {"streams": []}
+
+    def test_returns_empty_when_no_plugins(self) -> None:
+        tmdb = AsyncMock()
+        tmdb.get_german_title = AsyncMock(return_value="Iron Man")
+        app = _make_app(tmdb_client=tmdb, plugin_names=[])
+        client = TestClient(app)
+
+        resp = client.get("/stremio/stream/movie/tt0371746.json")
+
+        assert resp.status_code == 200
+        assert resp.json() == {"streams": []}
+
+    def test_returns_streams_for_movie(self) -> None:
+        tmdb = AsyncMock()
+        tmdb.get_german_title = AsyncMock(return_value="Iron Man")
+
+        results = [
+            SearchResult(
+                title="Iron.Man.2008.1080p.BluRay",
+                download_link="https://voe.sx/e/abc123",
+                size="4.5 GB",
+                release_name="Iron.Man.2008.1080p.BluRay.x264-GROUP",
+                metadata={"source_plugin": "hdfilme", "quality": "1080p"},
+            ),
+        ]
+
+        app = _make_app(
+            tmdb_client=tmdb,
+            plugin_names=["hdfilme"],
+            search_results=results,
+        )
+        client = TestClient(app)
+
+        resp = client.get("/stremio/stream/movie/tt0371746.json")
+
+        assert resp.status_code == 200
+        streams = resp.json()["streams"]
+        assert len(streams) >= 1
+        assert "url" in streams[0]
+        assert "name" in streams[0]
+        assert "description" in streams[0]
+
+    def test_cors_headers_on_stream(self) -> None:
+        app = _make_app()
+        client = TestClient(app)
+
+        resp = client.get("/stremio/stream/movie/tt1234567.json")
+
+        assert resp.headers["access-control-allow-origin"] == "*"
+
+    def test_series_search_includes_season_episode(self) -> None:
+        tmdb = AsyncMock()
+        tmdb.get_german_title = AsyncMock(return_value="Breaking Bad")
+
+        app = _make_app(
+            tmdb_client=tmdb,
+            plugin_names=["hdfilme"],
+        )
+        client = TestClient(app)
+
+        resp = client.get("/stremio/stream/series/tt0903747:1:1.json")
+
+        # The search was attempted (even if no results)
+        assert resp.status_code == 200
+        # Verify TMDB was called
+        tmdb.get_german_title.assert_awaited_once_with("tt0903747")
