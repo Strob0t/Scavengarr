@@ -39,6 +39,7 @@ _USER_AGENT = (
 )
 
 _MAX_CONCURRENT_PAGES = 3
+_MAX_RESULTS = 1000
 
 # Torznab category -> URL path segment mapping.
 _CATEGORY_PATH_MAP: dict[int, str] = {
@@ -246,14 +247,23 @@ class DDLValleyPlugin:
         self,
         query: str,
         category_path: str = "",
+        page_num: int = 1,
     ) -> list[dict[str, str]]:
-        """Search DDLValley and return post URLs with titles."""
+        """Search DDLValley and return post URLs with titles.
+
+        WordPress pagination: ``/page/N/?s=query`` for page >= 2.
+        """
         assert self._context is not None  # noqa: S101
 
         if category_path:
-            url = f"{self.base_url}/{category_path}/?s={query}"
+            base = f"{self.base_url}/{category_path}"
         else:
-            url = f"{self.base_url}/?s={query}"
+            base = self.base_url
+
+        if page_num > 1:
+            url = f"{base}/page/{page_num}/?s={query}"
+        else:
+            url = f"{base}/?s={query}"
 
         page = await self._context.new_page()
         try:
@@ -273,6 +283,7 @@ class DDLValleyPlugin:
                 "ddlvalley_search_results",
                 query=query,
                 category_path=category_path,
+                page=page_num,
                 count=len(parser.posts),
             )
             return parser.posts
@@ -325,14 +336,29 @@ class DDLValleyPlugin:
         query: str,
         category: int | None = None,
     ) -> list[SearchResult]:
-        """Search ddlvalley.me and return results with download links."""
+        """Search ddlvalley.me and return results with download links.
+
+        Paginates through WordPress search pages to collect up to
+        1000 results before scraping detail pages.
+        """
         await self._ensure_browser()
 
         category_path = _CATEGORY_PATH_MAP.get(category, "") if category else ""
-        posts = await self._search_posts(query, category_path)
 
-        if not posts:
+        # Paginate search results (WordPress: ~10 posts/page)
+        all_posts: list[dict[str, str]] = []
+        page_num = 1
+        while len(all_posts) < _MAX_RESULTS:
+            posts = await self._search_posts(query, category_path, page_num)
+            if not posts:
+                break
+            all_posts.extend(posts)
+            page_num += 1
+
+        if not all_posts:
             return []
+
+        all_posts = all_posts[:_MAX_RESULTS]
 
         sem = asyncio.Semaphore(_MAX_CONCURRENT_PAGES)
 
@@ -343,7 +369,7 @@ class DDLValleyPlugin:
                 return await self._scrape_detail(post)
 
         results = await asyncio.gather(
-            *[_bounded_scrape(p) for p in posts],
+            *[_bounded_scrape(p) for p in all_posts],
             return_exceptions=True,
         )
         return [r for r in results if isinstance(r, SearchResult)]

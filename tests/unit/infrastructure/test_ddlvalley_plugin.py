@@ -346,10 +346,13 @@ class TestPluginSearch:
         """
 
         search_page = _make_mock_page(search_html)
+        empty_page = _make_mock_page("<html></html>")
         detail_page_1 = _make_mock_page(detail_html)
         detail_page_2 = _make_mock_page(detail_html)
 
-        context = _make_mock_context(pages=[search_page, detail_page_1, detail_page_2])
+        context = _make_mock_context(
+            pages=[search_page, empty_page, detail_page_1, detail_page_2]
+        )
 
         plugin._browser = _make_mock_browser(context)
         plugin._context = context
@@ -390,9 +393,10 @@ class TestPluginSearch:
         """
 
         search_page = _make_mock_page(search_html)
+        empty_page = _make_mock_page("<html></html>")
         detail_page = _make_mock_page(detail_html)
 
-        context = _make_mock_context(pages=[search_page, detail_page])
+        context = _make_mock_context(pages=[search_page, empty_page, detail_page])
 
         plugin._browser = _make_mock_browser(context)
         plugin._context = context
@@ -423,10 +427,11 @@ class TestPluginSearch:
         search_html = '<h2><a href="/post/">Title</a></h2>'
 
         search_page = _make_mock_page(search_html)
+        empty_page = _make_mock_page("<html></html>")
         error_page = _make_mock_page()
         error_page.goto = AsyncMock(side_effect=Exception("timeout"))
 
-        context = _make_mock_context(pages=[search_page, error_page])
+        context = _make_mock_context(pages=[search_page, empty_page, error_page])
 
         plugin._browser = _make_mock_browser(context)
         plugin._context = context
