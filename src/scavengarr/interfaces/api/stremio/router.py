@@ -242,10 +242,13 @@ async def stremio_play(
     request: Request,
     stream_id: str,
 ) -> JSONResponse | RedirectResponse:
-    """Resolve a cached stream link and redirect to the hoster URL.
+    """Resolve a cached stream link to a playable video URL.
 
-    Stremio calls this URL when the user selects a stream. We look up
-    the cached hoster URL and return a 302 redirect.
+    Flow:
+        1. Look up the cached hoster URL by stream_id.
+        2. Use HosterResolverRegistry to extract the actual video URL.
+        3. Redirect to the resolved video URL (302).
+        4. Return 502 if resolution fails (never redirect to an embed page).
     """
     state = cast(AppState, request.app.state)
 
@@ -266,14 +269,39 @@ async def stremio_play(
             headers=_CORS_HEADERS,
         )
 
+    # Resolve hoster embed URL to actual video URL
+    registry = getattr(state, "hoster_resolver_registry", None)
+    if registry is None:
+        log.warning("stremio_play_no_resolver", stream_id=stream_id)
+        return JSONResponse(
+            status_code=503,
+            content={"error": "hoster resolver not configured"},
+            headers=_CORS_HEADERS,
+        )
+
+    resolved = await registry.resolve(link.hoster_url, hoster=link.hoster)
+    if resolved is None:
+        log.warning(
+            "stremio_play_resolution_failed",
+            stream_id=stream_id,
+            hoster=link.hoster,
+            url=link.hoster_url,
+        )
+        return JSONResponse(
+            status_code=502,
+            content={"error": "could not extract video URL from hoster"},
+            headers=_CORS_HEADERS,
+        )
+
     log.info(
-        "stremio_play_redirect",
+        "stremio_play_resolved",
         stream_id=stream_id,
         hoster=link.hoster,
-        url=link.hoster_url,
+        video_url=resolved.video_url[:80],
+        is_hls=resolved.is_hls,
     )
     return RedirectResponse(
-        url=link.hoster_url,
+        url=resolved.video_url,
         status_code=302,
         headers=_CORS_HEADERS,
     )

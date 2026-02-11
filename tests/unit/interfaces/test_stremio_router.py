@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from scavengarr.domain.entities.stremio import (
     CachedStreamLink,
+    ResolvedStream,
     StremioMetaPreview,
     StremioStream,
 )
@@ -24,6 +25,7 @@ def _make_app(
     stremio_stream_uc: AsyncMock | None = None,
     stremio_catalog_uc: AsyncMock | None = None,
     stream_link_repo: AsyncMock | None = None,
+    hoster_resolver_registry: AsyncMock | MagicMock | None = None,
 ) -> FastAPI:
     """Create a minimal FastAPI app with the stremio router."""
     app = FastAPI()
@@ -38,6 +40,8 @@ def _make_app(
     app.state.stremio_catalog_uc = stremio_catalog_uc
     if stream_link_repo is not None:
         app.state.stream_link_repo = stream_link_repo
+    if hoster_resolver_registry is not None:
+        app.state.hoster_resolver_registry = hoster_resolver_registry
 
     return app
 
@@ -414,7 +418,34 @@ class TestStreamEndpoint:
 
 
 class TestPlayEndpoint:
-    def test_redirects_to_hoster_url(self) -> None:
+    def test_redirects_to_resolved_video_url(self) -> None:
+        link = CachedStreamLink(
+            stream_id="abc123",
+            hoster_url="https://voe.sx/e/test",
+            title="Iron Man",
+            hoster="voe",
+        )
+        resolved = ResolvedStream(
+            video_url="https://delivery.voe.sx/video/abc123.mp4",
+        )
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=link)
+        registry = AsyncMock()
+        registry.resolve = AsyncMock(return_value=resolved)
+
+        app = _make_app(
+            stream_link_repo=repo,
+            hoster_resolver_registry=registry,
+        )
+        client = TestClient(app, follow_redirects=False)
+
+        resp = client.get("/stremio/play/abc123")
+
+        assert resp.status_code == 302
+        assert resp.headers["location"] == "https://delivery.voe.sx/video/abc123.mp4"
+        registry.resolve.assert_called_once_with("https://voe.sx/e/test", hoster="voe")
+
+    def test_returns_502_when_resolution_fails(self) -> None:
         link = CachedStreamLink(
             stream_id="abc123",
             hoster_url="https://voe.sx/e/test",
@@ -423,20 +454,29 @@ class TestPlayEndpoint:
         )
         repo = AsyncMock()
         repo.get = AsyncMock(return_value=link)
+        registry = AsyncMock()
+        registry.resolve = AsyncMock(return_value=None)
 
-        app = _make_app(stream_link_repo=repo)
-        client = TestClient(app, follow_redirects=False)
+        app = _make_app(
+            stream_link_repo=repo,
+            hoster_resolver_registry=registry,
+        )
+        client = TestClient(app)
 
         resp = client.get("/stremio/play/abc123")
 
-        assert resp.status_code == 302
-        assert resp.headers["location"] == "https://voe.sx/e/test"
+        assert resp.status_code == 502
+        assert "could not extract" in resp.json()["error"]
 
     def test_returns_404_for_unknown_stream_id(self) -> None:
         repo = AsyncMock()
         repo.get = AsyncMock(return_value=None)
+        registry = AsyncMock()
 
-        app = _make_app(stream_link_repo=repo)
+        app = _make_app(
+            stream_link_repo=repo,
+            hoster_resolver_registry=registry,
+        )
         client = TestClient(app)
 
         resp = client.get("/stremio/play/nonexistent")
@@ -454,13 +494,58 @@ class TestPlayEndpoint:
         assert resp.status_code == 503
         assert "not configured" in resp.json()["error"]
 
-    def test_cors_headers_on_play(self) -> None:
+    def test_returns_503_when_resolver_not_configured(self) -> None:
+        link = CachedStreamLink(
+            stream_id="abc123",
+            hoster_url="https://voe.sx/e/test",
+            title="Iron Man",
+            hoster="voe",
+        )
         repo = AsyncMock()
-        repo.get = AsyncMock(return_value=None)
-
+        repo.get = AsyncMock(return_value=link)
+        # No hoster_resolver_registry set
         app = _make_app(stream_link_repo=repo)
         client = TestClient(app)
 
         resp = client.get("/stremio/play/abc123")
 
+        assert resp.status_code == 503
+        assert "resolver not configured" in resp.json()["error"]
+
+    def test_cors_headers_on_play(self) -> None:
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=None)
+        registry = AsyncMock()
+
+        app = _make_app(
+            stream_link_repo=repo,
+            hoster_resolver_registry=registry,
+        )
+        client = TestClient(app)
+
+        resp = client.get("/stremio/play/abc123")
+
+        assert resp.headers["access-control-allow-origin"] == "*"
+
+    def test_cors_headers_on_502(self) -> None:
+        link = CachedStreamLink(
+            stream_id="abc123",
+            hoster_url="https://voe.sx/e/test",
+            title="Iron Man",
+            hoster="voe",
+        )
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=link)
+        registry = AsyncMock()
+        registry.resolve = AsyncMock(return_value=None)
+
+        app = _make_app(
+            stream_link_repo=repo,
+            hoster_resolver_registry=registry,
+        )
+        client = TestClient(app)
+
+        resp = client.get("/stremio/play/abc123")
+
+        assert resp.status_code == 502
         assert resp.headers["access-control-allow-origin"] == "*"

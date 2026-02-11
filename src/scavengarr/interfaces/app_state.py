@@ -21,6 +21,7 @@ if TYPE_CHECKING:
         StreamLinkRepository,
     )
     from scavengarr.domain.ports.tmdb import TmdbClientPort
+    from scavengarr.infrastructure.hoster_resolvers import HosterResolverRegistry
 
 
 class AppState(State):
@@ -44,6 +45,9 @@ class AppState(State):
 
     # Application Services
     crawljob_factory: CrawlJobFactory
+
+    # Hoster resolution
+    hoster_resolver_registry: HosterResolverRegistry
 
     # Stremio (optional — requires TMDB API key)
     tmdb_client: TmdbClientPort | None

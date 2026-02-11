@@ -14,6 +14,12 @@ from scavengarr.application.use_cases.stremio_catalog import StremioCatalogUseCa
 from scavengarr.application.use_cases.stremio_stream import StremioStreamUseCase
 from scavengarr.domain.entities.crawljob import Priority
 from scavengarr.infrastructure.cache.cache_factory import create_cache
+from scavengarr.infrastructure.hoster_resolvers import HosterResolverRegistry
+from scavengarr.infrastructure.hoster_resolvers.doodstream import DoodStreamResolver
+from scavengarr.infrastructure.hoster_resolvers.filemoon import FilemoonResolver
+from scavengarr.infrastructure.hoster_resolvers.streamtape import StreamtapeResolver
+from scavengarr.infrastructure.hoster_resolvers.supervideo import SuperVideoResolver
+from scavengarr.infrastructure.hoster_resolvers.voe import VoeResolver
 from scavengarr.infrastructure.persistence.crawljob_cache import (
     CacheCrawlJobRepository,
 )
@@ -117,7 +123,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             reason="no API key, using IMDB suggest API",
         )
 
-    # 8) Stream link repository (for Stremio play endpoint)
+    # 8) Hoster resolver registry (for extracting video URLs from embed pages)
+    state.hoster_resolver_registry = HosterResolverRegistry(
+        resolvers=[
+            VoeResolver(http_client=state.http_client),
+            StreamtapeResolver(http_client=state.http_client),
+            SuperVideoResolver(http_client=state.http_client),
+            DoodStreamResolver(http_client=state.http_client),
+            FilemoonResolver(http_client=state.http_client),
+        ],
+        http_client=state.http_client,
+    )
+    log.info(
+        "hoster_resolver_registry_initialized",
+        hosters=state.hoster_resolver_registry.supported_hosters,
+    )
+
+    # 9) Stream link repository (for Stremio play endpoint)
     state.stream_link_repo = CacheStreamLinkRepository(
         cache=state.cache,
         ttl_seconds=config.stremio.stream_link_ttl_seconds,
@@ -127,7 +149,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         ttl_seconds=config.stremio.stream_link_ttl_seconds,
     )
 
-    # 9) Stremio use cases (always initialized — fallback handles missing key)
+    # 10) Stremio use cases (always initialized — fallback handles missing key)
     state.stremio_stream_uc = StremioStreamUseCase(
         tmdb=state.tmdb_client,
         plugins=state.plugins,
