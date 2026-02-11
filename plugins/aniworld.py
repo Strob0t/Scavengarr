@@ -8,7 +8,8 @@ Scrapes aniworld.to (German anime streaming site) with:
 - Category: always 5070 (Anime) since site is anime-only
 - Bounded concurrency for detail page scraping
 
-No Cloudflare protection. No authentication required.
+Domain fallback: aniworld.to, aniworld.info
+No authentication required.
 """
 
 from __future__ import annotations
@@ -24,7 +25,11 @@ from scavengarr.domain.plugins.base import SearchResult
 
 log = structlog.get_logger(__name__)
 
-_BASE_URL = "https://aniworld.to"
+# Known domains in priority order.
+_DOMAINS = [
+    "aniworld.to",
+    "aniworld.info",
+]
 
 _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -254,7 +259,8 @@ class AniworldPlugin:
 
     def __init__(self) -> None:
         self._client: httpx.AsyncClient | None = None
-        self.base_url = _BASE_URL
+        self.base_url: str = f"https://{_DOMAINS[0]}"
+        self._domain_verified = False
 
     async def _ensure_client(self) -> httpx.AsyncClient:
         """Create httpx client if not already running."""
@@ -265,6 +271,28 @@ class AniworldPlugin:
                 headers={"User-Agent": _USER_AGENT},
             )
         return self._client
+
+    async def _verify_domain(self) -> None:
+        """Find and cache a working domain from the fallback list."""
+        if self._domain_verified:
+            return
+
+        client = await self._ensure_client()
+        for domain in _DOMAINS:
+            url = f"https://{domain}/"
+            try:
+                resp = await client.head(url, timeout=5.0)
+                if resp.status_code == 200:
+                    self.base_url = f"https://{domain}"
+                    self._domain_verified = True
+                    log.info("aniworld_domain_found", domain=domain)
+                    return
+            except Exception:  # noqa: BLE001
+                continue
+
+        self.base_url = f"https://{_DOMAINS[0]}"
+        self._domain_verified = True
+        log.warning("aniworld_no_domain_reachable", fallback=_DOMAINS[0])
 
     async def _ajax_search(self, query: str) -> list[dict[str, str]]:
         """Search via POST /ajax/search endpoint.
@@ -410,8 +438,6 @@ class AniworldPlugin:
         category: int | None = None,
     ) -> list[SearchResult]:
         """Search aniworld.to and return results with hoster links."""
-        await self._ensure_client()
-
         if not query:
             return []
 
@@ -419,6 +445,9 @@ class AniworldPlugin:
         # If a non-anime category is requested, return empty.
         if category is not None and category != 5070:
             return []
+
+        await self._ensure_client()
+        await self._verify_domain()
 
         all_items = await self._ajax_search(query)
         if not all_items:

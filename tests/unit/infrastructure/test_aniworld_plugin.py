@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 from types import ModuleType
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 
@@ -293,6 +293,7 @@ def _make_mock_response(
 class TestSearch:
     async def test_search_returns_results(self) -> None:
         plugin = _make_plugin()
+        plugin._domain_verified = True
 
         search_resp = _make_mock_response(json_data=_AJAX_SEARCH_RESPONSE)
         detail_resp = _make_mock_response(text=_DETAIL_HTML)
@@ -337,6 +338,7 @@ class TestSearch:
 
     async def test_search_anime_category_allowed(self) -> None:
         plugin = _make_plugin()
+        plugin._domain_verified = True
 
         search_resp = _make_mock_response(json_data=_AJAX_SEARCH_RESPONSE[:1])
         detail_resp = _make_mock_response(text=_DETAIL_HTML)
@@ -358,6 +360,7 @@ class TestSearch:
 
     async def test_search_no_results(self) -> None:
         plugin = _make_plugin()
+        plugin._domain_verified = True
 
         search_resp = _make_mock_response(json_data=[])
         mock_client = AsyncMock(spec=httpx.AsyncClient)
@@ -369,6 +372,7 @@ class TestSearch:
 
     async def test_search_detail_without_hosters_skipped(self) -> None:
         plugin = _make_plugin()
+        plugin._domain_verified = True
 
         search_resp = _make_mock_response(json_data=_AJAX_SEARCH_RESPONSE[:1])
         # Detail page with no episode table → no first_episode_url
@@ -384,6 +388,7 @@ class TestSearch:
 
     async def test_search_ajax_error_returns_empty(self) -> None:
         plugin = _make_plugin()
+        plugin._domain_verified = True
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.post = AsyncMock(side_effect=httpx.ConnectError("timeout"))
@@ -391,6 +396,79 @@ class TestSearch:
 
         results = await plugin.search("naruto")
         assert results == []
+
+
+# ---------------------------------------------------------------------------
+# Domain verification tests
+# ---------------------------------------------------------------------------
+
+
+class TestDomainVerification:
+    async def test_first_domain_works(self) -> None:
+        plugin = _make_plugin()
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        mock_client.head = AsyncMock(return_value=resp)
+        plugin._client = mock_client
+
+        await plugin._verify_domain()
+
+        assert plugin._domain_verified is True
+        assert "aniworld.to" in plugin.base_url
+
+    async def test_fallback_to_second_domain(self) -> None:
+        plugin = _make_plugin()
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        call_count = 0
+
+        async def mock_head(url, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise httpx.ConnectError("Connection failed")
+            resp = MagicMock(spec=httpx.Response)
+            resp.status_code = 200
+            return resp
+
+        mock_client.head = AsyncMock(side_effect=mock_head)
+        plugin._client = mock_client
+
+        await plugin._verify_domain()
+
+        assert plugin._domain_verified is True
+        assert "aniworld.info" in plugin.base_url
+        assert call_count == 2
+
+    async def test_all_domains_fail(self) -> None:
+        plugin = _make_plugin()
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.head = AsyncMock(
+            side_effect=httpx.ConnectError("Connection failed")
+        )
+        plugin._client = mock_client
+
+        await plugin._verify_domain()
+
+        assert plugin._domain_verified is True
+        assert _mod._DOMAINS[0] in plugin.base_url
+
+    async def test_skips_if_already_verified(self) -> None:
+        plugin = _make_plugin()
+        plugin._domain_verified = True
+        plugin.base_url = "https://custom.domain"
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        plugin._client = mock_client
+
+        await plugin._verify_domain()
+
+        mock_client.head.assert_not_called()
+        assert plugin.base_url == "https://custom.domain"
+
+
+# ---------------------------------------------------------------------------
+# Cleanup tests
+# ---------------------------------------------------------------------------
 
 
 class TestCleanup:
