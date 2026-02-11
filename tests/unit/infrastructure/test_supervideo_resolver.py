@@ -11,7 +11,9 @@ from scavengarr.infrastructure.hoster_resolvers.supervideo import (
     SuperVideoResolver,
     _extract_html5_video,
     _extract_jwplayer_source,
+    _extract_packed_eval,
     _is_cloudflare_block,
+    _unpack_p_a_c_k,
 )
 
 
@@ -78,6 +80,89 @@ class TestIsCloudflareBlock:
 
     def test_404_plain(self) -> None:
         assert _is_cloudflare_block(404, "Not found") is False
+
+
+class TestUnpackPACK:
+    """Tests for Dean Edwards' p.a.c.k.e.r decoder."""
+
+    def test_decodes_base36_packed_js(self) -> None:
+        """Decode a base-36 packed block with JWPlayer file URL."""
+        # Simplified packed JS: base=10, tokens map digits to words
+        # Body: "file:'1://2.3.4/5/6.7'" with base=10
+        # tokens: ["", "https", "cdn", "example", "com", "hls", "video", "m3u8", ...]
+        packed = (
+            "eval(function(p,a,c,k,e,d)"
+            "{e=function(c){return c.toString(a)};"
+            "while(c--)if(k[c])p=p.replace(new RegExp('\\\\b'+e(c)+'\\\\b','g'),k[c]);"
+            "return p}"
+            "('file:\"1://2.3.4/5/6.7\"',10,8,"
+            "'|https|cdn|example|com|hls|video|m3u8'.split('|')))"
+        )
+        result = _unpack_p_a_c_k(packed)
+        assert result is not None
+        assert 'file:"https://cdn.example.com/hls/video.m3u8"' in result
+
+    def test_returns_none_for_non_packed(self) -> None:
+        assert _unpack_p_a_c_k("var x = 42;") is None
+
+    def test_returns_none_for_invalid_base(self) -> None:
+        """Base out of range (0 or >36) returns None."""
+        packed = "('body',0,0,''.split('|'))"
+        assert _unpack_p_a_c_k(packed) is None
+
+    def test_handles_empty_tokens(self) -> None:
+        """Tokens with empty entries leave original number in place."""
+        packed = "('0 1 2',10,3,'hello||world'.split('|'))"
+        result = _unpack_p_a_c_k(packed)
+        assert result is not None
+        assert "hello" in result
+        assert "world" in result
+        # Token index 1 is empty, so "1" stays as "1"
+        assert "1" in result
+
+
+class TestExtractPackedEval:
+    """Tests for extracting video URLs from packed eval() JS."""
+
+    def test_extracts_url_from_packed_jwplayer(self) -> None:
+        """Full eval() block with JWPlayer file URL in tokens."""
+        html = """<html><script>
+        eval(function(p,a,c,k,e,d){e=function(c){return c.toString(a)};
+        while(c--)if(k[c])p=p.replace(new RegExp('\\b'+e(c)+'\\b','g'),k[c]);
+        return p}('file:\"1://2.3.4/5/6.7\"',10,8,
+        '|https|cdn|example|com|hls|video|m3u8'.split('|')))
+        </script></html>"""
+        result = _extract_packed_eval(html)
+        assert result is not None
+        assert "https://cdn.example.com/hls/video.m3u8" in result
+
+    def test_extracts_literal_url_in_packed_block(self) -> None:
+        """Packed block containing a literal URL (not encoded)."""
+        html = """<html><script>
+        eval(function(p,a,c,k,e,d){return p}(
+        'var player = "https://cdn.example.com/video.mp4"',10,0,
+        ''.split('|')))
+        </script></html>"""
+        result = _extract_packed_eval(html)
+        assert result == "https://cdn.example.com/video.mp4"
+
+    def test_returns_none_when_no_eval_block(self) -> None:
+        html = "<html><body>No packed JS here</body></html>"
+        assert _extract_packed_eval(html) is None
+
+    def test_resolver_uses_packed_eval_fallback(self) -> None:
+        """Integration: resolve() falls through JWPlayer/HTML5 to packed eval."""
+        html = """<html><script>
+        eval(function(p,a,c,k,e,d){e=function(c){return c.toString(a)};
+        while(c--)if(k[c])p=p.replace(new RegExp('\\b'+e(c)+'\\b','g'),k[c]);
+        return p}('file:\"1://2.3.4/5/6.7\"',10,8,
+        '|https|cdn|example|com|hls|video|m3u8'.split('|')))
+        </script></html>"""
+        resolver = SuperVideoResolver(http_client=MagicMock(spec=httpx.AsyncClient))
+        result = resolver._extract_video(html, "https://supervideo.cc/e/test")
+        assert result is not None
+        assert result.is_hls is True
+        assert "m3u8" in result.video_url
 
 
 class TestSuperVideoResolver:

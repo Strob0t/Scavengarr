@@ -99,15 +99,53 @@ def _extract_html5_video(html: str) -> str | None:
     return None
 
 
+def _unpack_p_a_c_k(packed_js: str) -> str | None:
+    """Decode eval(function(p,a,c,k,e,d){...}) packed JavaScript.
+
+    XFS sites use Dean Edwards' packer. The encoded body uses base-N
+    number tokens that map to a word list via split('|').
+    """
+    # Extract body template, base, count, and tokens
+    match = re.search(
+        r"\(\s*'((?:[^'\\]|\\.)*)',\s*(\d+),\s*(\d+),\s*'((?:[^'\\]|\\.)*)'\.split",
+        packed_js,
+        re.DOTALL,
+    )
+    if not match:
+        return None
+
+    body = match.group(1)
+    base = int(match.group(2))
+    tokens = match.group(4).split("|")
+
+    if base < 2 or base > 36:
+        return None
+
+    import string
+
+    chars = (string.digits + string.ascii_lowercase)[:base]
+    pattern = r"\b[" + re.escape(chars) + r"]+\b"
+
+    def replacer(m: re.Match[str]) -> str:
+        word = m.group(0)
+        try:
+            idx = int(word, base)
+        except ValueError:
+            return word
+        return tokens[idx] if idx < len(tokens) and tokens[idx] else word
+
+    return re.sub(pattern, replacer, body)
+
+
 def _extract_packed_eval(html: str) -> str | None:
     """Extract video URL from eval(function(p,a,c,k,e,d) packed JS.
 
     Some XFS sites pack their JWPlayer config in eval() blocks.
-    We look for http URLs ending in common video extensions.
+    We decode the packed JS and then search for video URLs.
     """
     # Find packed JS block
     match = re.search(
-        r"eval\(function\(p,a,c,k,e,d\)\{.*?\.split\('\|'\)\)",
+        r"eval\(function\(p,a,c,k,e,d\)\{.*?\.split\('\|'\)\)\)",
         html,
         re.DOTALL,
     )
@@ -115,16 +153,32 @@ def _extract_packed_eval(html: str) -> str | None:
         return None
 
     packed = match.group(0)
-    # Look for base URL pattern in the packed data
-    # The split('|') section contains tokens
-    tokens_match = re.search(r"'([^']+)'\.split\('\|'\)", packed)
-    if not tokens_match:
+
+    # Try direct URL match first (some packed blocks contain literal URLs)
+    url_match = re.search(
+        r"(https?://[^\s\"'\\]+\.(?:mp4|m3u8)[^\s\"'\\]*)",
+        packed,
+    )
+    if url_match:
+        return url_match.group(1)
+
+    # Decode the packed JS and search in the unpacked output
+    unpacked = _unpack_p_a_c_k(packed)
+    if not unpacked:
         return None
 
-    # Try to find a direct URL in the packed content
+    # Look for file:"..." pattern (JWPlayer sources in unpacked JS)
+    file_match = re.search(
+        r"""file\s*:\s*["'](https?://[^"']+\.(?:mp4|m3u8)[^"']*)""",
+        unpacked,
+    )
+    if file_match:
+        return file_match.group(1)
+
+    # Fallback: any video URL in unpacked content
     url_match = re.search(
-        r"(https?://[^\s\"'\\]+\.(?:mp4|m3u8))",
-        packed,
+        r"(https?://[^\s\"'<>]+\.(?:mp4|m3u8)[^\s\"'<>]*)",
+        unpacked,
     )
     if url_match:
         return url_match.group(1)
@@ -230,7 +284,17 @@ class SuperVideoResolver:
                 except Exception:  # noqa: BLE001
                     pass  # proceed — page may still be usable
 
-                return await page.content()
+                html = await page.content()
+                log.debug(
+                    "supervideo_playwright_page",
+                    url=embed_url,
+                    title=await page.title(),
+                    html_len=len(html),
+                    has_sources="sources" in html,
+                    has_video="<video" in html,
+                    has_jwplayer="jwplayer" in html,
+                )
+                return html
             finally:
                 if not page.is_closed():
                     await page.close()
