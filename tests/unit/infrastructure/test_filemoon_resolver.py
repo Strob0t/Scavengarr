@@ -158,12 +158,11 @@ class TestFilemoonResolver:
         packed = _build_packed_block(hls_url)
         html = f"<html><head></head><body><script>{packed}</script></body></html>"
 
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = html
+        api_resp = _make_api_response({}, status=404)
+        html_resp = _make_html_response(html)
 
         client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
+        client.get = AsyncMock(side_effect=[api_resp, html_resp])
 
         resolver = FilemoonResolver(http_client=client)
         result = await resolver.resolve("https://filemoon.sx/e/abc123def456")
@@ -181,12 +180,11 @@ class TestFilemoonResolver:
         </script>
         </body></html>
         """
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = html
+        api_resp = _make_api_response({}, status=404)
+        html_resp = _make_html_response(html)
 
         client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
+        client.get = AsyncMock(side_effect=[api_resp, html_resp])
 
         resolver = FilemoonResolver(http_client=client)
         result = await resolver.resolve("https://filemoon.sx/e/abc123def456")
@@ -219,12 +217,11 @@ class TestFilemoonResolver:
     @pytest.mark.asyncio
     async def test_returns_none_when_file_not_found(self) -> None:
         html = "<html><body><h1>File Not Found</h1></body></html>"
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = html
+        api_resp = _make_api_response({}, status=404)
+        html_resp = _make_html_response(html)
 
         client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
+        client.get = AsyncMock(side_effect=[api_resp, html_resp])
 
         resolver = FilemoonResolver(http_client=client)
         result = await resolver.resolve("https://filemoon.sx/e/abc123def456")
@@ -233,12 +230,11 @@ class TestFilemoonResolver:
     @pytest.mark.asyncio
     async def test_returns_none_when_file_deleted(self) -> None:
         html = "<html><body><p>This file was deleted.</p></body></html>"
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = html
+        api_resp = _make_api_response({}, status=404)
+        html_resp = _make_html_response(html)
 
         client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
+        client.get = AsyncMock(side_effect=[api_resp, html_resp])
 
         resolver = FilemoonResolver(http_client=client)
         result = await resolver.resolve("https://filemoon.sx/e/abc123def456")
@@ -247,12 +243,11 @@ class TestFilemoonResolver:
     @pytest.mark.asyncio
     async def test_returns_none_when_no_source_found(self) -> None:
         html = "<html><body><h1>Player</h1></body></html>"
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = html
+        api_resp = _make_api_response({}, status=404)
+        html_resp = _make_html_response(html)
 
         client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
+        client.get = AsyncMock(side_effect=[api_resp, html_resp])
 
         resolver = FilemoonResolver(http_client=client)
         result = await resolver.resolve("https://filemoon.sx/e/abc123def456")
@@ -264,12 +259,11 @@ class TestFilemoonResolver:
         packed = _build_packed_block(hls_url)
         html = f"<html><body><script>{packed}</script></body></html>"
 
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = html
+        api_resp = _make_api_response({}, status=404)
+        html_resp = _make_html_response(html)
 
         client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
+        client.get = AsyncMock(side_effect=[api_resp, html_resp])
 
         resolver = FilemoonResolver(http_client=client)
         result = await resolver.resolve("https://filemoon.sx/d/abc123def456")
@@ -284,12 +278,11 @@ class TestFilemoonResolver:
         html = (
             '<html><body><script>var x="https://a.com/v.m3u8";</script></body></html>'
         )
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = html
+        api_resp = _make_api_response({}, status=404)
+        html_resp = _make_html_response(html)
 
         client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
+        client.get = AsyncMock(side_effect=[api_resp, html_resp])
 
         resolver = FilemoonResolver(http_client=client)
         await resolver.resolve("https://filemoon.sx/download/abc123def456")
@@ -307,12 +300,11 @@ class TestFilemoonResolver:
         </script>
         </body></html>
         """
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = html
+        api_resp = _make_api_response({}, status=404)
+        html_resp = _make_html_response(html)
 
         client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
+        client.get = AsyncMock(side_effect=[api_resp, html_resp])
 
         resolver = FilemoonResolver(http_client=client)
         result = await resolver.resolve("https://filemoon.sx/e/abc123def456")
@@ -321,12 +313,11 @@ class TestFilemoonResolver:
     @pytest.mark.asyncio
     async def test_returns_none_on_fake_signup(self) -> None:
         html = '<html><body><div class="fake-signup">Sign up</div></body></html>'
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = html
+        api_resp = _make_api_response({}, status=404)
+        html_resp = _make_html_response(html)
 
         client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
+        client.get = AsyncMock(side_effect=[api_resp, html_resp])
 
         resolver = FilemoonResolver(http_client=client)
         result = await resolver.resolve("https://filemoon.sx/e/abc123def456")
@@ -341,12 +332,11 @@ class TestFilemoonResolver:
         packed_no_trailing = packed.replace(",0,{}))", "))")
         html = f"<html><body><script>{packed_no_trailing}</script></body></html>"
 
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = html
+        api_resp = _make_api_response({}, status=404)
+        html_resp = _make_html_response(html)
 
         client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
+        client.get = AsyncMock(side_effect=[api_resp, html_resp])
 
         resolver = FilemoonResolver(http_client=client)
         result = await resolver.resolve("https://filemoon.sx/e/abc123def456")
@@ -367,12 +357,11 @@ class TestFilemoonResolver:
         )
         html = f"<html><body><script>{packed_ws}</script></body></html>"
 
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = html
+        api_resp = _make_api_response({}, status=404)
+        html_resp = _make_html_response(html)
 
         client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
+        client.get = AsyncMock(side_effect=[api_resp, html_resp])
 
         resolver = FilemoonResolver(http_client=client)
         result = await resolver.resolve("https://filemoon.sx/e/abc123def456")

@@ -1,8 +1,8 @@
 """Filemoon hoster resolver — extracts HLS URLs from filemoon.sx embed pages.
 
 Supports two architectures:
-1. Byse SPA (new): Vite/React frontend that loads video sources via
-   GET /api/videos/{id}/embed/details JSON API.
+1. Byse SPA (new): Vite/React frontend that loads video sources via a
+   challenge/attest/playback API flow with AES-256-GCM encrypted responses.
 2. Legacy XFS: Packed JavaScript (Dean Edwards packer) containing JWPlayer config.
 
 Filemoon domain variants: filemoon.sx, filemoon.to, filemoon.eu, etc.
@@ -10,14 +10,149 @@ Filemoon domain variants: filemoon.sx, filemoon.to, filemoon.eu, etc.
 
 from __future__ import annotations
 
+import base64
+import json
+import os
 import re
+import uuid
 
 import httpx
 import structlog
+from cryptography.hazmat.primitives.asymmetric.ec import (
+    ECDSA,
+    SECP256R1,
+    EllipticCurvePublicNumbers,
+    generate_private_key,
+)
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.hashes import SHA256
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
 
 log = structlog.get_logger(__name__)
+
+_BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+
+
+def _b64url_encode(data: bytes) -> str:
+    """Encode bytes to base64url without padding."""
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def _b64url_decode(s: str) -> bytes:
+    """Decode a base64url string (with or without padding)."""
+    s = s.replace("-", "+").replace("_", "/")
+    padding = 4 - len(s) % 4
+    if padding != 4:
+        s += "=" * padding
+    return base64.b64decode(s)
+
+
+def _decrypt_playback(encrypted: dict) -> dict | None:  # type: ignore[type-arg]
+    """Decrypt AES-256-GCM encrypted playback response from Byse API.
+
+    The key is formed by concatenating base64url-decoded key_parts.
+    """
+    key_parts = encrypted.get("key_parts")
+    if not isinstance(key_parts, list) or not key_parts:
+        return None
+
+    try:
+        # Concatenate base64url-decoded key parts to form the AES key
+        key = b"".join(_b64url_decode(part) for part in key_parts)
+        iv = _b64url_decode(encrypted["iv"])
+        ciphertext = _b64url_decode(encrypted["payload"])
+
+        aesgcm = AESGCM(key)
+        plaintext = aesgcm.decrypt(iv, ciphertext, None)
+        return json.loads(plaintext)
+    except Exception:  # noqa: BLE001
+        log.debug("filemoon_byse_decrypt_failed")
+        return None
+
+
+def _build_attest_body(
+    challenge_id: str,
+    nonce: str,
+    viewer_id: str,
+) -> dict:  # type: ignore[type-arg]
+    """Build the attestation request body with ECDSA signature.
+
+    Generates a P-256 keypair, signs the nonce, and returns the
+    request body matching the Byse SPA fingerprint format.
+    """
+    device_id = uuid.uuid4().hex
+
+    # Generate ECDSA P-256 key pair and sign the nonce
+    private_key = generate_private_key(SECP256R1())
+    nonce_bytes = _b64url_decode(nonce)
+    signature = private_key.sign(nonce_bytes, ECDSA(SHA256()))
+
+    # Export public key coordinates for JWK format
+    pub_numbers: EllipticCurvePublicNumbers = private_key.public_key().public_numbers()
+    x_bytes = pub_numbers.x.to_bytes(32, "big")
+    y_bytes = pub_numbers.y.to_bytes(32, "big")
+
+    return {
+        "viewer_id": viewer_id,
+        "device_id": device_id,
+        "challenge_id": challenge_id,
+        "nonce": nonce,
+        "signature": _b64url_encode(signature),
+        "public_key": {
+            "crv": "P-256",
+            "ext": True,
+            "key_ops": ["verify"],
+            "kty": "EC",
+            "x": _b64url_encode(x_bytes),
+            "y": _b64url_encode(y_bytes),
+        },
+        "client": {
+            "user_agent": _BROWSER_UA,
+            "architecture": "x86",
+            "bitness": "64",
+            "platform": "Windows",
+            "platform_version": "15.0.0",
+            "model": "",
+            "ua_full_version": "131.0.6778.86",
+            "brand_full_versions": [
+                {"brand": "Chromium", "version": "131.0.6778.86"},
+                {"brand": "Not_A Brand", "version": "24.0.0.0"},
+                {"brand": "Google Chrome", "version": "131.0.6778.86"},
+            ],
+            "pixel_ratio": 1,
+            "screen_width": 1920,
+            "screen_height": 1080,
+            "color_depth": 24,
+            "languages": ["en-US", "en"],
+            "timezone": "Europe/Berlin",
+            "hardware_concurrency": 8,
+            "device_memory": 8,
+            "touch_points": 0,
+            "webgl_vendor": "Google Inc. (NVIDIA)",
+            "webgl_renderer": (
+                "ANGLE (NVIDIA, NVIDIA GeForce GTX 1080 Direct3D11"
+                " vs_5_0 ps_5_0, D3D11)"
+            ),
+            "canvas_hash": _b64url_encode(os.urandom(32)),
+            "audio_hash": _b64url_encode(os.urandom(32)),
+            "pointer_type": "fine,hover",
+            "extra": {
+                "vendor": "Google Inc.",
+                "appVersion": (
+                    "5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                    " (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                ),
+            },
+        },
+        "storage": {
+            "cookie": viewer_id,
+            "local_storage": viewer_id,
+            "indexed_db": f"{viewer_id}:{device_id}",
+            "cache_storage": f"{viewer_id}:{device_id}",
+        },
+        "attributes": {"entropy": "high"},
+    }
 
 
 def _unpack_p_a_c_k(packed: str) -> str | None:
@@ -177,7 +312,12 @@ class FilemoonResolver:
         """Extract video URL via Byse SPA API (new Filemoon architecture).
 
         Filemoon migrated to a Vite/React SPA ("Byse Frontend") that loads
-        video sources from: GET /api/videos/{id}/embed/details
+        video sources through a multi-step API flow:
+        1. GET /api/videos/{id}/embed/details → embed_frame_url (CDN domain)
+        2. POST {cdn}/api/videos/access/challenge → challenge_id, nonce
+        3. POST {cdn}/api/videos/access/attest → access token
+        4. POST {cdn}/api/videos/{id}/embed/playback → AES-256-GCM encrypted sources
+        5. Decrypt → JSON with video sources
         """
         video_id = self._extract_video_id(url)
         if not video_id:
@@ -188,18 +328,39 @@ class FilemoonResolver:
             return None
         base_url = base_match.group(1)
 
+        # Step 1: Get embed details (including CDN domain)
+        details = await self._byse_get_details(base_url, video_id, url)
+        if not details:
+            return None
+
+        # Check if sources are directly in the response (some older Byse versions)
+        result = self._parse_byse_sources(details)
+        if result:
+            return result
+
+        # Step 2-5: Full challenge/attest/playback flow
+        embed_frame_url = details.get("embed_frame_url", "")
+        if not embed_frame_url:
+            return None
+
+        cdn_match = re.match(r"(https?://[^/]+)", embed_frame_url)
+        if not cdn_match:
+            return None
+        cdn_base = cdn_match.group(1)
+
+        return await self._byse_challenge_flow(cdn_base, video_id, embed_frame_url)
+
+    async def _byse_get_details(
+        self, base_url: str, video_id: str, referer: str
+    ) -> dict | None:  # type: ignore[type-arg]
+        """Fetch Byse embed details API."""
         api_url = f"{base_url}/api/videos/{video_id}/embed/details"
         try:
             resp = await self._http.get(
                 api_url,
                 follow_redirects=True,
                 timeout=15,
-                headers={
-                    "User-Agent": (
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                    ),
-                    "Referer": url,
-                },
+                headers={"User-Agent": _BROWSER_UA, "Referer": referer},
             )
             if resp.status_code != 200:
                 log.debug(
@@ -208,13 +369,113 @@ class FilemoonResolver:
                     url=api_url,
                 )
                 return None
-
-            data = resp.json()
+            return resp.json()  # type: ignore[no-any-return]
         except Exception:  # noqa: BLE001
             log.debug("filemoon_byse_api_failed", url=api_url)
             return None
 
-        return self._parse_byse_sources(data)
+    async def _byse_challenge_flow(
+        self, cdn_base: str, video_id: str, referer: str
+    ) -> ResolvedStream | None:
+        """Execute the Byse challenge/attest/playback flow."""
+        headers = {"User-Agent": _BROWSER_UA, "Referer": referer}
+
+        # Step 2: Request challenge
+        challenge = await self._byse_post_json(
+            f"{cdn_base}/api/videos/access/challenge", headers=headers
+        )
+        if not challenge:
+            return None
+
+        challenge_id = challenge.get("challenge_id", "")
+        nonce = challenge.get("nonce", "")
+        viewer_id = challenge.get("viewer_hint", uuid.uuid4().hex)
+
+        if not challenge_id or not nonce:
+            log.debug("filemoon_byse_challenge_incomplete")
+            return None
+
+        # Step 3: Attest with ECDSA signature + fingerprint
+        attest_body = _build_attest_body(challenge_id, nonce, viewer_id)
+        attest = await self._byse_post_json(
+            f"{cdn_base}/api/videos/access/attest",
+            headers=headers,
+            body=attest_body,
+        )
+        if not attest:
+            return None
+
+        token = attest.get("token", "")
+        if not token:
+            log.debug("filemoon_byse_attest_no_token")
+            return None
+
+        # Step 4-5: Get encrypted playback and decrypt
+        return await self._byse_get_playback(
+            cdn_base, video_id, headers, referer, token, attest, attest_body
+        )
+
+    async def _byse_get_playback(
+        self,
+        cdn_base: str,
+        video_id: str,
+        headers: dict[str, str],
+        referer: str,
+        token: str,
+        attest: dict,  # type: ignore[type-arg]
+        attest_body: dict,  # type: ignore[type-arg]
+    ) -> ResolvedStream | None:
+        """Fetch and decrypt Byse playback data."""
+        playback_body = {
+            "fingerprint": {
+                "token": token,
+                "viewer_id": attest.get("viewer_id", ""),
+                "device_id": attest.get("device_id", attest_body["device_id"]),
+                "confidence": attest.get("confidence", 0.9),
+            },
+        }
+        playback_data = await self._byse_post_json(
+            f"{cdn_base}/api/videos/{video_id}/embed/playback",
+            headers={**headers, "X-Embed-Parent": referer},
+            body=playback_body,
+        )
+        if not playback_data:
+            return None
+
+        encrypted = playback_data.get("playback")
+        if not isinstance(encrypted, dict):
+            log.debug("filemoon_byse_no_playback_data")
+            return None
+
+        decrypted = _decrypt_playback(encrypted)
+        if not decrypted:
+            return None
+
+        log.debug("filemoon_byse_decrypted", data_keys=list(decrypted.keys()))
+        return self._parse_byse_sources(decrypted)
+
+    async def _byse_post_json(
+        self,
+        url: str,
+        headers: dict[str, str],
+        body: dict | None = None,  # type: ignore[type-arg]
+    ) -> dict | None:  # type: ignore[type-arg]
+        """POST to a Byse API endpoint and return JSON response."""
+        try:
+            kwargs: dict = {  # type: ignore[type-arg]
+                "headers": {**headers, "Content-Type": "application/json"},
+                "timeout": 15,
+            }
+            if body is not None:
+                kwargs["content"] = json.dumps(body)
+            resp = await self._http.post(url, **kwargs)
+            if resp.status_code != 200:
+                log.debug("filemoon_byse_post_failed", url=url, status=resp.status_code)
+                return None
+            return resp.json()  # type: ignore[no-any-return]
+        except Exception:  # noqa: BLE001
+            log.debug("filemoon_byse_post_error", url=url)
+            return None
 
     def _extract_video_id(self, url: str) -> str:
         """Extract video ID from Filemoon URL (e.g., /e/abc123 -> abc123)."""
