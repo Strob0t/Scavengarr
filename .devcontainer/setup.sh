@@ -65,12 +65,13 @@ if ! command -v openspec >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "[devcontainer] Installing Claude Code CLI globally via npm..."
-npm install -g @anthropic-ai/claude-code@latest
-
+# Claude: native install bevorzugt
 if ! command -v claude >/dev/null 2>&1; then
-  echo "[devcontainer] ERROR: claude CLI not found after npm install -g @anthropic-ai/claude-code@latest"
-  exit 1
+  echo "[devcontainer] Installing Claude Code (native)..."
+  curl -sSfL https://cli.anthropic.com/install.sh | sh
+  echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+else
+  echo "[devcontainer] Claude CLI already installed."
 fi
 
 echo "[devcontainer] Ensuring Poetry is installed..."
