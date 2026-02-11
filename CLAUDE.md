@@ -457,7 +457,26 @@ def add_item(item: str, items: list[str] | None = None) -> list[str]:
 
 ***
 
-## 14. Development workflow (AI-agent friendly)
+## 14. Team Agents (parallel work rules)
+
+When using team agents (Task tool with multiple parallel agents), follow these rules:
+
+### Task assignment
+- **1 file = 1 agent** — Never assign two agents to modify the same file. Overlapping file access causes redundant work or conflicts.
+- **Tight, explicit scope** — Define exactly what the agent should do AND what it should not. Vague prompts lead to scope creep (e.g., agent creates router + wiring when only asked to build a converter).
+- **Include project conventions in the prompt** — Agents don't know codebase style automatically. Always specify: `structlog` (not `logging`), typing conventions, ID formats, naming patterns, etc.
+
+### Quality control
+- **Review is mandatory, not optional** — Every agent produces at least one mistake. Always review all agent outputs thoroughly before committing.
+- **Don't trust, verify** — Run full test suite + pre-commit after merging agent outputs, then re-read all modified files.
+- **Don't wait for notifications** — Agent completion notifications arrive asynchronously and often late. Actively check output files instead.
+
+### Key insight
+Agents are a **speed multiplier**, not a **quality multiplier**. Time saved on implementation must be invested in review.
+
+***
+
+## 15. Development workflow (general)
 
 ### Quick commands (examples)
 - `poetry install`
@@ -474,7 +493,7 @@ def add_item(item: str, items: list[str] | None = None) -> list[str]:
 
 ***
 
-## 15. Important files (project navigation)
+## 16. Important files (project navigation)
 
 | Area | Path (example/pattern) |
 |---|---|
