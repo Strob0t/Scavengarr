@@ -58,9 +58,7 @@ def _build_manifest(plugin_names: list[str]) -> dict[str, Any]:
     }
 
 
-def _parse_stream_id(
-    content_type: str, raw_id: str
-) -> StremioStreamRequest | None:
+def _parse_stream_id(content_type: str, raw_id: str) -> StremioStreamRequest | None:
     """Parse Stremio stream ID into a StremioStreamRequest.
 
     Movies: "tt1234567"
@@ -110,8 +108,10 @@ async def _search_plugin(
 ) -> list[SearchResult]:
     """Execute search on a single plugin, returning results or empty on error."""
     try:
-        if hasattr(plugin, "search") and callable(plugin.search) and not hasattr(
-            plugin, "scraping"
+        if (
+            hasattr(plugin, "search")
+            and callable(plugin.search)
+            and not hasattr(plugin, "scraping")
         ):
             raw = await plugin.search(query, category=category)
             return await engine.validate_results(raw)

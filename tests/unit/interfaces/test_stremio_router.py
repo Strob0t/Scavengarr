@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, PropertyMock
+from unittest.mock import AsyncMock, MagicMock
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -50,9 +50,7 @@ def _make_app(
     return app
 
 
-def _make_fake_plugin(
-    name: str, results: list[SearchResult]
-) -> MagicMock:
+def _make_fake_plugin(name: str, results: list[SearchResult]) -> MagicMock:
     """Create a fake Python plugin with search() method."""
     plugin = MagicMock()
     plugin.name = name
@@ -127,9 +125,7 @@ class TestCatalogEndpoint:
         app = _make_app()
         client = TestClient(app)
 
-        resp = client.get(
-            "/stremio/catalog/movie/scavengarr-trending-movies.json"
-        )
+        resp = client.get("/stremio/catalog/movie/scavengarr-trending-movies.json")
 
         assert resp.status_code == 200
         assert resp.json() == {"metas": []}
@@ -152,9 +148,7 @@ class TestCatalogEndpoint:
         app = _make_app(tmdb_client=tmdb)
         client = TestClient(app)
 
-        resp = client.get(
-            "/stremio/catalog/movie/scavengarr-trending-movies.json"
-        )
+        resp = client.get("/stremio/catalog/movie/scavengarr-trending-movies.json")
 
         assert resp.status_code == 200
         metas = resp.json()["metas"]
@@ -176,9 +170,7 @@ class TestCatalogEndpoint:
         app = _make_app(tmdb_client=tmdb)
         client = TestClient(app)
 
-        resp = client.get(
-            "/stremio/catalog/series/scavengarr-trending-series.json"
-        )
+        resp = client.get("/stremio/catalog/series/scavengarr-trending-series.json")
 
         assert resp.status_code == 200
         metas = resp.json()["metas"]
@@ -194,6 +186,92 @@ class TestCatalogEndpoint:
 
         assert resp.status_code == 200
         assert resp.json() == {"metas": []}
+
+
+class TestCatalogSearchEndpoint:
+    def test_search_movies(self) -> None:
+        tmdb = AsyncMock()
+        tmdb.search_movies = AsyncMock(
+            return_value=[
+                StremioMetaPreview(
+                    id="tt0137523",
+                    type="movie",
+                    name="Fight Club",
+                    poster="https://image.tmdb.org/t/p/w500/poster.jpg",
+                ),
+            ]
+        )
+        app = _make_app(tmdb_client=tmdb)
+        client = TestClient(app)
+
+        resp = client.get(
+            "/stremio/catalog/movie/scavengarr-trending-movies/search=Fight Club.json"
+        )
+
+        assert resp.status_code == 200
+        metas = resp.json()["metas"]
+        assert len(metas) == 1
+        assert metas[0]["name"] == "Fight Club"
+
+    def test_search_series(self) -> None:
+        tmdb = AsyncMock()
+        tmdb.search_tv = AsyncMock(
+            return_value=[
+                StremioMetaPreview(
+                    id="tt0903747",
+                    type="series",
+                    name="Breaking Bad",
+                ),
+            ]
+        )
+        app = _make_app(tmdb_client=tmdb)
+        client = TestClient(app)
+
+        url = (
+            "/stremio/catalog/series"
+            "/scavengarr-trending-series/search=Breaking Bad.json"
+        )
+        resp = client.get(url)
+
+        assert resp.status_code == 200
+        metas = resp.json()["metas"]
+        assert len(metas) == 1
+        assert metas[0]["name"] == "Breaking Bad"
+
+    def test_empty_query_returns_empty(self) -> None:
+        tmdb = AsyncMock()
+        app = _make_app(tmdb_client=tmdb)
+        client = TestClient(app)
+
+        resp = client.get(
+            "/stremio/catalog/movie/scavengarr-trending-movies/search= .json"
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"metas": []}
+
+    def test_no_tmdb_returns_empty(self) -> None:
+        app = _make_app()
+        client = TestClient(app)
+
+        resp = client.get(
+            "/stremio/catalog/movie/scavengarr-trending-movies/search=Matrix.json"
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"metas": []}
+
+    def test_cors_headers(self) -> None:
+        tmdb = AsyncMock()
+        tmdb.search_movies = AsyncMock(return_value=[])
+        app = _make_app(tmdb_client=tmdb)
+        client = TestClient(app)
+
+        resp = client.get(
+            "/stremio/catalog/movie/scavengarr-trending-movies/search=Test.json"
+        )
+
+        assert resp.headers["access-control-allow-origin"] == "*"
 
 
 class TestStreamEndpoint:

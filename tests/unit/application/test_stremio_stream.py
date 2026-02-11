@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
+from unittest.mock import AsyncMock, MagicMock
 
 from scavengarr.application.use_cases.stremio_stream import (
     StremioStreamUseCase,
@@ -20,10 +18,10 @@ from scavengarr.domain.entities.stremio import (
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.config.schema import StremioConfig
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_config(**overrides: object) -> StremioConfig:
     defaults = {
@@ -156,7 +154,11 @@ class TestFormatStream:
         )
         result = _format_stream(ranked)
         # Empty hoster should not leave trailing separators
-        assert result.description == "" or "|" not in result.description or result.description.strip()
+        assert (
+            result.description == ""
+            or "|" not in result.description
+            or result.description.strip()
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +200,9 @@ class TestExecute:
         mock_plugin.search = AsyncMock(return_value=[sr])
 
         plugins = MagicMock()
-        plugins.get_by_provides.side_effect = lambda p: ["hdfilme"] if p == "stream" else []
+        plugins.get_by_provides.side_effect = lambda p: (
+            ["hdfilme"] if p == "stream" else []
+        )
         plugins.get.return_value = mock_plugin
 
         uc = _make_use_case(tmdb=tmdb, plugins=plugins)
@@ -217,7 +221,9 @@ class TestExecute:
         mock_plugin.search = AsyncMock(return_value=[])
 
         plugins = MagicMock()
-        plugins.get_by_provides.side_effect = lambda p: ["aniworld"] if p == "stream" else []
+        plugins.get_by_provides.side_effect = lambda p: (
+            ["aniworld"] if p == "stream" else []
+        )
         plugins.get.return_value = mock_plugin
 
         req = _make_request(content_type="series", season=1, episode=5)
@@ -243,7 +249,9 @@ class TestExecute:
         plugin_b.search = AsyncMock(return_value=[sr2])
 
         plugins = MagicMock()
-        plugins.get_by_provides.side_effect = lambda p: ["a", "b"] if p == "stream" else []
+        plugins.get_by_provides.side_effect = lambda p: (
+            ["a", "b"] if p == "stream" else []
+        )
         plugins.get.side_effect = lambda name: {"a": plugin_a, "b": plugin_b}[name]
 
         uc = _make_use_case(tmdb=tmdb, plugins=plugins)
@@ -268,8 +276,12 @@ class TestExecute:
         bad_plugin.search = AsyncMock(side_effect=RuntimeError("boom"))
 
         plugins = MagicMock()
-        plugins.get_by_provides.side_effect = lambda p: ["good", "bad"] if p == "stream" else []
-        plugins.get.side_effect = lambda name: {"good": good_plugin, "bad": bad_plugin}[name]
+        plugins.get_by_provides.side_effect = lambda p: (
+            ["good", "bad"] if p == "stream" else []
+        )
+        plugins.get.side_effect = lambda name: {"good": good_plugin, "bad": bad_plugin}[
+            name
+        ]
 
         uc = _make_use_case(tmdb=tmdb, plugins=plugins)
         result = await uc.execute(_make_request())
@@ -283,7 +295,9 @@ class TestExecute:
         tmdb.get_german_title = AsyncMock(return_value="Movie")
 
         plugins = MagicMock()
-        plugins.get_by_provides.side_effect = lambda p: ["missing"] if p == "stream" else []
+        plugins.get_by_provides.side_effect = lambda p: (
+            ["missing"] if p == "stream" else []
+        )
         plugins.get.side_effect = KeyError("not found")
 
         uc = _make_use_case(tmdb=tmdb, plugins=plugins)
@@ -298,7 +312,9 @@ class TestExecute:
         mock_plugin.search = AsyncMock(return_value=[])
 
         plugins = MagicMock()
-        plugins.get_by_provides.side_effect = lambda p: ["hdfilme"] if p == "stream" else []
+        plugins.get_by_provides.side_effect = lambda p: (
+            ["hdfilme"] if p == "stream" else []
+        )
         plugins.get.return_value = mock_plugin
 
         uc = _make_use_case(tmdb=tmdb, plugins=plugins)
@@ -317,7 +333,9 @@ class TestExecute:
         mock_plugin.search = AsyncMock(return_value=[sr])
 
         plugins = MagicMock()
-        plugins.get_by_provides.side_effect = lambda p: ["myplugin"] if p == "stream" else []
+        plugins.get_by_provides.side_effect = lambda p: (
+            ["myplugin"] if p == "stream" else []
+        )
         plugins.get.return_value = mock_plugin
 
         uc = _make_use_case(tmdb=tmdb, plugins=plugins)
@@ -339,7 +357,9 @@ class TestExecute:
 
         plugins = MagicMock()
         # "stream" returns nothing, but "both" returns one plugin
-        plugins.get_by_provides.side_effect = lambda p: [] if p == "stream" else ["combo"]
+        plugins.get_by_provides.side_effect = lambda p: (
+            [] if p == "stream" else ["combo"]
+        )
         plugins.get.return_value = mock_plugin
 
         uc = _make_use_case(tmdb=tmdb, plugins=plugins)
@@ -348,7 +368,7 @@ class TestExecute:
         assert len(result) == 1
 
     async def test_deduplication_of_plugin_names(self) -> None:
-        """If a plugin appears in both stream and both, it should only be searched once."""
+        """Plugin in both stream and both is searched once."""
         tmdb = AsyncMock()
         tmdb.get_german_title = AsyncMock(return_value="Movie")
 
@@ -361,7 +381,9 @@ class TestExecute:
 
         plugins = MagicMock()
         # Same plugin name returned by both calls
-        plugins.get_by_provides.side_effect = lambda p: ["overlap"] if p in ("stream", "both") else []
+        plugins.get_by_provides.side_effect = lambda p: (
+            ["overlap"] if p in ("stream", "both") else []
+        )
         plugins.get.return_value = mock_plugin
 
         uc = _make_use_case(tmdb=tmdb, plugins=plugins)
@@ -385,13 +407,15 @@ class TestExecute:
         mock_plugin.search = AsyncMock(return_value=[sr])
 
         plugins = MagicMock()
-        plugins.get_by_provides.side_effect = lambda p: ["hdfilme"] if p == "stream" else []
+        plugins.get_by_provides.side_effect = lambda p: (
+            ["hdfilme"] if p == "stream" else []
+        )
         plugins.get.return_value = mock_plugin
 
         uc = _make_use_case(tmdb=tmdb, plugins=plugins)
         result = await uc.execute(_make_request())
 
-        # Should have 2 streams (order depends on sorter, but they should all be present)
+        # Should have 2 streams (order depends on sorter)
         assert len(result) == 2
 
     async def test_plugin_without_search_method_skipped(self) -> None:
@@ -402,7 +426,9 @@ class TestExecute:
         no_search_plugin = MagicMock(spec=[])
 
         plugins = MagicMock()
-        plugins.get_by_provides.side_effect = lambda p: ["nosearch"] if p == "stream" else []
+        plugins.get_by_provides.side_effect = lambda p: (
+            ["nosearch"] if p == "stream" else []
+        )
         plugins.get.return_value = no_search_plugin
 
         uc = _make_use_case(tmdb=tmdb, plugins=plugins)
@@ -419,7 +445,9 @@ class TestExecute:
 
         plugins = MagicMock()
         many_names = [f"plugin_{i}" for i in range(10)]
-        plugins.get_by_provides.side_effect = lambda p: many_names if p == "stream" else []
+        plugins.get_by_provides.side_effect = lambda p: (
+            many_names if p == "stream" else []
+        )
         plugins.get.return_value = mock_plugin
 
         config = _make_config(max_concurrent_plugins=2)

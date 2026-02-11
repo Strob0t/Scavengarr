@@ -1,6 +1,7 @@
 """Stremio stream resolution use case.
 
-IMDb ID -> TMDB title -> parallel plugin search -> convert -> sort -> StremioStream list.
+IMDb ID -> TMDB title -> parallel plugin search
+-> convert -> sort -> StremioStream list.
 """
 
 from __future__ import annotations
@@ -27,7 +28,11 @@ log = structlog.get_logger(__name__)
 def _format_stream(ranked: RankedStream) -> StremioStream:
     """Convert a scored RankedStream into Stremio protocol format."""
     quality_label = ranked.quality.name.replace("_", " ")
-    name_parts = [ranked.source_plugin, quality_label] if ranked.source_plugin else [quality_label]
+    name_parts = (
+        [ranked.source_plugin, quality_label]
+        if ranked.source_plugin
+        else [quality_label]
+    )
     name = " ".join(name_parts)
 
     desc_parts: list[str] = []
