@@ -381,9 +381,9 @@ class TestLogin:
         plugin = _make_plugin()
 
         login_html = (
-            '<html><body><form>'
+            "<html><body><form>"
             '<input type="hidden" name="_xfToken" value="token123">'
-            '</form></body></html>'
+            "</form></body></html>"
         )
 
         mock_jar = MagicMock()
@@ -443,9 +443,7 @@ class TestLogin:
     async def test_login_no_session_cookie_raises(self) -> None:
         plugin = _make_plugin()
 
-        login_html = (
-            '<input type="hidden" name="_xfToken" value="token123">'
-        )
+        login_html = '<input type="hidden" name="_xfToken" value="token123">'
 
         mock_jar = MagicMock()
         mock_jar.__iter__ = MagicMock(return_value=iter([]))
@@ -646,7 +644,9 @@ class TestSearch:
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.post = AsyncMock(return_value=search_resp_p1)
-        mock_client.get = AsyncMock(side_effect=[search_resp_p2, thread_resp, thread_resp])
+        mock_client.get = AsyncMock(
+            side_effect=[search_resp_p2, thread_resp, thread_resp]
+        )
         plugin._client = mock_client
 
         results = await plugin.search("test")

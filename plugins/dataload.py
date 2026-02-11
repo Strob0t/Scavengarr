@@ -472,9 +472,7 @@ class DataloadPlugin:
         login_resp.raise_for_status()
 
         # Verify login: check for xf_user cookie
-        has_session = any(
-            c.name == "xf_user" for c in client.cookies.jar
-        )
+        has_session = any(c.name == "xf_user" for c in client.cookies.jar)
         if not has_session:
             raise RuntimeError("Login failed: no session cookie received")
 
@@ -529,9 +527,7 @@ class DataloadPlugin:
         )
         return parser.results, parser.next_page_url
 
-    async def _fetch_next_page(
-        self, next_url: str
-    ) -> tuple[list[dict[str, str]], str]:
+    async def _fetch_next_page(self, next_url: str) -> tuple[list[dict[str, str]], str]:
         """Fetch a subsequent search results page by URL."""
         client = await self._ensure_client()
 
