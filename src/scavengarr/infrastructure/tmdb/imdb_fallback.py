@@ -1,7 +1,12 @@
-"""IMDB Suggest API fallback — title resolution without an API key."""
+"""IMDB Suggest API fallback — title resolution without an API key.
+
+Uses Wikidata (free, no key) to obtain the German title when possible,
+falling back to the English title from IMDB Suggest.
+"""
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import httpx
@@ -13,6 +18,7 @@ from scavengarr.domain.ports.cache import CachePort
 log = structlog.get_logger(__name__)
 
 _SUGGEST_URL = "https://v2.sg.media-imdb.com/suggestion/t/{imdb_id}.json"
+_WIKIDATA_API = "https://www.wikidata.org/w/api.php"
 _TTL_TITLE = 86_400  # 24 hours
 
 
@@ -22,6 +28,9 @@ class ImdbFallbackClient:
     Implements ``TmdbClientPort`` so it can be used as a drop-in
     replacement when no TMDB API key is configured.  Only title
     resolution works — catalog and trending methods return empty lists.
+
+    German titles are resolved via Wikidata (free, no API key needed)
+    to improve title matching for German streaming plugins.
     """
 
     def __init__(
@@ -68,6 +77,82 @@ class ImdbFallbackClient:
         await self._cache.set(cache_key, entry, ttl=_TTL_TITLE)
         return entry
 
+    async def _fetch_wikidata_german_title(self, imdb_id: str) -> str | None:
+        """Resolve the German title via Wikidata (free, no API key).
+
+        Two-step approach:
+        1. Search for the Wikidata entity by IMDB ID (P345 property).
+        2. Fetch the German label for that entity.
+
+        Returns the German title or None if unavailable.
+        """
+        cache_key = f"wikidata:de:{imdb_id}"
+        cached = await self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            # Step 1: Find Wikidata entity ID by IMDB ID
+            resp = await self._http.get(
+                _WIKIDATA_API,
+                params={
+                    "action": "query",
+                    "list": "search",
+                    "srsearch": f"haswbstatement:P345={imdb_id}",
+                    "format": "json",
+                },
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            search_results = data.get("query", {}).get("search", [])
+            if not search_results:
+                return None
+
+            qid = search_results[0].get("title", "")
+            if not qid:
+                return None
+
+            # Step 2: Get German label
+            resp2 = await self._http.get(
+                _WIKIDATA_API,
+                params={
+                    "action": "wbgetentities",
+                    "ids": qid,
+                    "props": "labels",
+                    "languages": "de",
+                    "format": "json",
+                },
+                timeout=10.0,
+            )
+            resp2.raise_for_status()
+            data2 = resp2.json()
+
+            german_label = (
+                data2.get("entities", {})
+                .get(qid, {})
+                .get("labels", {})
+                .get("de", {})
+                .get("value")
+            )
+            if german_label:
+                await self._cache.set(cache_key, german_label, ttl=_TTL_TITLE)
+                log.info(
+                    "wikidata_german_title_resolved",
+                    imdb_id=imdb_id,
+                    qid=qid,
+                    title=german_label,
+                )
+            return german_label
+        except (httpx.HTTPError, ValueError, KeyError, IndexError):
+            log.debug(
+                "wikidata_german_title_failed",
+                imdb_id=imdb_id,
+                exc_info=True,
+            )
+            return None
+
     # ------------------------------------------------------------------
     # TmdbClientPort implementation
     # ------------------------------------------------------------------
@@ -83,8 +168,13 @@ class ImdbFallbackClient:
         return {"title": title, "name": title, "id": entry.get("id", imdb_id)}
 
     async def get_german_title(self, imdb_id: str) -> str | None:
-        """Return the title for an IMDb ID (English — IMDB has no locale)."""
-        entry = await self._fetch_suggest(imdb_id)
+        """Return the German title via Wikidata, falling back to IMDB (English)."""
+        german, entry = await asyncio.gather(
+            self._fetch_wikidata_german_title(imdb_id),
+            self._fetch_suggest(imdb_id),
+        )
+        if german:
+            return german
         if entry is None:
             return None
         title = entry.get("l")
@@ -93,25 +183,42 @@ class ImdbFallbackClient:
         return title or None
 
     async def get_title_and_year(self, imdb_id: str) -> TitleMatchInfo | None:
-        """Return title + year from IMDB Suggest API.
+        """Return title + year from IMDB Suggest API + Wikidata German title.
 
-        The IMDB Suggest API only returns the original (English) title.
-        Without a TMDB API key there is no German title available, so
-        title-match filtering may be less accurate for German-language
-        plugin results.
+        Runs IMDB Suggest and Wikidata lookups in parallel.  When the
+        German title is available it becomes the primary title (used as
+        search query for German plugins) with the English title as
+        alt_title for cross-language matching.
         """
-        entry = await self._fetch_suggest(imdb_id)
+        entry, german_title = await asyncio.gather(
+            self._fetch_suggest(imdb_id),
+            self._fetch_wikidata_german_title(imdb_id),
+        )
         if not entry or not entry.get("l"):
             return None
+
+        english_title = entry["l"]
         year = entry.get("y") if isinstance(entry.get("y"), int) else None
-        title = entry["l"]
+
+        if german_title and german_title != english_title:
+            log.info(
+                "imdb_fallback_title_with_german",
+                imdb_id=imdb_id,
+                german=german_title,
+                english=english_title,
+            )
+            return TitleMatchInfo(
+                title=german_title,
+                year=year,
+                alt_titles=[english_title],
+            )
+
         log.debug(
-            "imdb_fallback_title_resolved",
+            "imdb_fallback_title_english_only",
             imdb_id=imdb_id,
-            title=title,
-            note="no German title available without TMDB API key",
+            title=english_title,
         )
-        return TitleMatchInfo(title=title, year=year)
+        return TitleMatchInfo(title=english_title, year=year)
 
     async def get_title_by_tmdb_id(self, tmdb_id: int, media_type: str) -> str | None:
         """Cannot resolve TMDB IDs without TMDB API."""

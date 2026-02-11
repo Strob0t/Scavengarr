@@ -556,6 +556,43 @@ class TestGetTitleAndYear:
 
     @respx.mock
     @pytest.mark.asyncio()
+    async def test_movie_includes_original_title_as_alt(
+        self, client: HttpxTmdbClient, cache: AsyncMock
+    ) -> None:
+        """original_title differs from title → included in alt_titles."""
+        respx.get(f"{_BASE}/find/tt0103064").respond(json=_FIND_MOVIE_RESPONSE)
+
+        result = await client.get_title_and_year("tt0103064")
+
+        assert result is not None
+        assert "Terminator 2: Judgment Day" in result.alt_titles
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_same_original_title_no_alt(
+        self, client: HttpxTmdbClient, cache: AsyncMock
+    ) -> None:
+        """When original_title == title, alt_titles is empty."""
+        same_title = {
+            "movie_results": [
+                {
+                    "id": 1,
+                    "title": "Iron Man",
+                    "original_title": "Iron Man",
+                    "release_date": "2008-05-02",
+                }
+            ],
+            "tv_results": [],
+        }
+        respx.get(f"{_BASE}/find/tt0371746").respond(json=same_title)
+
+        result = await client.get_title_and_year("tt0371746")
+
+        assert result is not None
+        assert result.alt_titles == []
+
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_tv_returns_title_and_year(
         self, client: HttpxTmdbClient, cache: AsyncMock
     ) -> None:
