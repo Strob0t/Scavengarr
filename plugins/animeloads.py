@@ -370,6 +370,10 @@ class AnimeLoadsPlugin:
 
         Uses Playwright to bypass DDoS-Guard and extract search results
         from server-rendered HTML pages.
+
+        When *season*/*episode* are provided the results are filtered
+        to TV-like types only (no movies), since the site doesn't
+        support direct episode navigation from search.
         """
         if not query:
             return []
@@ -379,10 +383,22 @@ class AnimeLoadsPlugin:
             if not (2000 <= category < 3000 or 5000 <= category < 6000):
                 return []
 
+        # When season/episode requested, restrict to TV types
+        effective_category = category
+        if season is not None and effective_category is None:
+            effective_category = 5070
+
+        if season is not None or episode is not None:
+            log.info(
+                "animeloads_season_episode_hint",
+                season=season,
+                episode=episode,
+            )
+
         page = await self._new_page()
         try:
             await self._verify_domain(page)
-            return await self._search_all_pages(page, query, category)
+            return await self._search_all_pages(page, query, effective_category)
         finally:
             await page.close()
 

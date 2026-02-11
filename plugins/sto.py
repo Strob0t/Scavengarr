@@ -353,6 +353,15 @@ class _EpisodeHosterParser(HTMLParser):
             )
 
 
+def _episode_number(
+    ep: dict[str, str | list[dict[str, str]]],
+) -> int | None:
+    """Extract the episode number from a scraped episode dict."""
+    url = str(ep.get("url", ""))
+    m = re.search(r"/episode-(\d+)", url)
+    return int(m.group(1)) if m else None
+
+
 class StoPlugin:
     """Python plugin for s.to (SerienStream) using httpx.
 
@@ -647,6 +656,28 @@ class StoPlugin:
             },
         )
 
+    async def _resolve_season_detail(
+        self,
+        slug: str,
+        detail: _SeriesDetailParser,
+        season: int | None,
+    ) -> tuple[int, _SeriesDetailParser] | None:
+        """Determine the target season and return it with its detail data.
+
+        Returns ``None`` when the requested season is unavailable.
+        """
+        target = season if season is not None else detail.seasons[0]
+
+        if season is not None and target not in detail.seasons:
+            return None
+
+        if target != detail.seasons[0]:
+            url = f"{self.base_url}/serie/{slug}/staffel-{target}"
+            season_detail = await self._scrape_series_detail({"url": url, "slug": slug})
+            return target, season_detail
+
+        return target, detail
+
     async def search(
         self,
         query: str,
@@ -677,13 +708,23 @@ class StoPlugin:
             if not slug:
                 continue
 
+            resolved = await self._resolve_season_detail(slug, detail, season)
+            if resolved is None:
+                continue
+            target_season, season_detail = resolved
+
             torznab_cat = _determine_category(detail.genres, category)
-            first_season = detail.seasons[0]
-            episodes = await self._scrape_season_episodes(slug, first_season, detail)
+
+            episodes = await self._scrape_season_episodes(
+                slug, target_season, season_detail
+            )
+
+            if episode is not None:
+                episodes = [ep for ep in episodes if _episode_number(ep) == episode]
 
             for ep in episodes:
                 result = self._build_episode_result(
-                    ep, detail, first_season, torznab_cat
+                    ep, detail, target_season, torznab_cat
                 )
                 if result:
                     search_results.append(result)

@@ -492,6 +492,9 @@ class BurningSeriesPlugin:
         self,
         listing_entry: dict[str, str],
         detail: _SeriesDetailParser,
+        *,
+        season: int | None = None,
+        episode: int | None = None,
     ) -> SearchResult:
         """Build a SearchResult from listing entry + detail page data."""
         title = detail.title or listing_entry["title"]
@@ -499,6 +502,13 @@ class BurningSeriesPlugin:
         slug = listing_entry["slug"]
         genre = listing_entry.get("genre", "")
         source_url = f"{self.base_url}/serie/{slug}"
+
+        # Point to the specific season/episode page when available
+        download_url = source_url
+        if season is not None:
+            download_url = f"{source_url}/{season}"
+            if episode is not None:
+                download_url += f"/{episode}"
 
         # Build display title with year
         display_title = f"{title} ({year})" if year else title
@@ -518,7 +528,7 @@ class BurningSeriesPlugin:
 
         return SearchResult(
             title=display_title,
-            download_link=source_url,
+            download_link=download_url,
             source_url=source_url,
             published_date=re.search(r"\d{4}", year).group(0) if year else None,
             category=category,
@@ -530,12 +540,14 @@ class BurningSeriesPlugin:
         entry: dict[str, str],
         sem: asyncio.Semaphore,
         category: int | None,
+        season: int | None = None,
+        episode: int | None = None,
     ) -> SearchResult | None:
         """Fetch detail page for one series and build result."""
         async with sem:
             detail = await self._fetch_detail(entry["slug"])
 
-        sr = self._build_search_result(entry, detail)
+        sr = self._build_search_result(entry, detail, season=season, episode=episode)
 
         # Post-filter by category range
         if category is not None:
@@ -582,7 +594,10 @@ class BurningSeriesPlugin:
 
         # Fetch detail pages with bounded concurrency
         sem = asyncio.Semaphore(_MAX_CONCURRENT_DETAIL)
-        tasks = [self._process_entry(e, sem, category) for e in matching]
+        tasks = [
+            self._process_entry(e, sem, category, season=season, episode=episode)
+            for e in matching
+        ]
         task_results = await asyncio.gather(*tasks)
 
         results: list[SearchResult] = []

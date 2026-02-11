@@ -332,15 +332,26 @@ class FireaniPlugin:
     async def _scrape_anime(
         self,
         anime: dict[str, Any],
+        season: int | None = None,
+        episode: int | None = None,
     ) -> SearchResult | None:
-        """Fetch detail + first episode links for a single anime result."""
+        """Fetch detail + episode links for a single anime result.
+
+        When *season* and *episode* are given, fetches that specific
+        episode directly instead of resolving the first available one.
+        """
         slug = str(anime.get("slug", ""))
         title = str(anime.get("title", ""))
         if not slug or not title:
             return None
 
-        detail = await self._get_anime_detail(slug)
-        hoster_links = await self._fetch_hoster_links(slug, detail)
+        if season is not None and episode is not None:
+            hoster_links = await self._get_episode_links(
+                slug, str(season), str(episode)
+            )
+        else:
+            detail = await self._get_anime_detail(slug)
+            hoster_links = await self._fetch_hoster_links(slug, detail)
 
         if not hoster_links:
             log.debug("fireani_no_hosters", slug=slug)
@@ -387,7 +398,7 @@ class FireaniPlugin:
 
         async def _bounded(anime: dict[str, Any]) -> SearchResult | None:
             async with sem:
-                return await self._scrape_anime(anime)
+                return await self._scrape_anime(anime, season=season, episode=episode)
 
         gathered = await asyncio.gather(
             *[_bounded(a) for a in all_items],

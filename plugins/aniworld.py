@@ -348,8 +348,18 @@ class AniworldPlugin:
         )
         return results[:_MAX_RESULTS]
 
-    async def _scrape_detail(self, item: dict[str, str]) -> SearchResult | None:
-        """Scrape anime detail page and first episode for hoster links."""
+    async def _scrape_detail(
+        self,
+        item: dict[str, str],
+        season: int | None = None,
+        episode: int | None = None,
+    ) -> SearchResult | None:
+        """Scrape anime detail page and episode for hoster links.
+
+        When *season* and *episode* are given the plugin navigates directly
+        to ``/anime/{slug}/staffel-{season}/episode-{episode}`` instead of
+        scraping the first episode on the detail page.
+        """
         client = await self._ensure_client()
         detail_url = item["link"]
         if not detail_url.startswith("http"):
@@ -370,9 +380,14 @@ class AniworldPlugin:
         detail_parser = _DetailPageParser(self.base_url)
         detail_parser.feed(resp.text)
 
-        # Fetch first episode page for hoster links
+        # Determine which episode page to scrape
         hoster_links: list[dict[str, str]] = []
-        if detail_parser.first_episode_url:
+        if season is not None and episode is not None:
+            # Build a direct episode URL from the detail page slug
+            slug = detail_url.rstrip("/").rsplit("/", 1)[-1]
+            ep_url = f"{self.base_url}/anime/{slug}/staffel-{season}/episode-{episode}"
+            hoster_links = await self._scrape_episode(ep_url)
+        elif detail_parser.first_episode_url:
             hoster_links = await self._scrape_episode(detail_parser.first_episode_url)
 
         if not hoster_links:
@@ -414,14 +429,17 @@ class AniworldPlugin:
         return parser.hoster_links
 
     async def _scrape_all_details(
-        self, items: list[dict[str, str]]
+        self,
+        items: list[dict[str, str]],
+        season: int | None = None,
+        episode: int | None = None,
     ) -> list[SearchResult]:
         """Scrape detail pages with bounded concurrency."""
         sem = asyncio.Semaphore(_MAX_CONCURRENT_DETAIL)
 
         async def _bounded(item: dict[str, str]) -> SearchResult | None:
             async with sem:
-                return await self._scrape_detail(item)
+                return await self._scrape_detail(item, season=season, episode=episode)
 
         gathered = await asyncio.gather(
             *[_bounded(item) for item in items],
@@ -457,7 +475,7 @@ class AniworldPlugin:
         if not all_items:
             return []
 
-        return await self._scrape_all_details(all_items)
+        return await self._scrape_all_details(all_items, season=season, episode=episode)
 
     async def cleanup(self) -> None:
         """Close httpx client."""
