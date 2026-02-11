@@ -167,18 +167,20 @@ class FilemoonResolver:
         return None
 
     def _try_packed_js(self, html: str) -> ResolvedStream | None:
-        """Extract HLS URL from packed JavaScript blocks."""
-        # Find all packed JS blocks — match the full eval(...) call
-        packed_blocks = re.findall(
-            r"eval\(function\(p,a,c,k,e,d\)\{.+?\}\("
-            r"'.+?',\s*\d+,\s*\d+,\s*'[^']*'\.split\('\|'\)"
-            r",\s*\d+\s*,\s*\{\s*\}\s*\)\)",
-            html,
-            re.DOTALL,
-        )
+        """Extract HLS URL from packed JavaScript blocks.
 
-        for packed in packed_blocks:
-            unpacked = _unpack_p_a_c_k(packed)
+        Uses a robust start-marker approach: find eval(function(p,a,c,k,e,d))
+        start positions, extract a chunk, and let _unpack_p_a_c_k() handle
+        parameter extraction. This avoids fragile full-block regex matching
+        that breaks on real-world Filemoon page variations.
+        """
+        for m in re.finditer(
+            r"eval\s*\(\s*function\s*\(\s*p\s*,\s*a\s*,\s*c\s*,\s*k\s*,\s*e\s*,\s*d\s*\)",
+            html,
+        ):
+            # Extract a chunk large enough to contain the full packed block
+            chunk = html[m.start() : m.start() + 65536]
+            unpacked = _unpack_p_a_c_k(chunk)
             if not unpacked:
                 continue
 

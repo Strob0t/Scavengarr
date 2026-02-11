@@ -311,3 +311,52 @@ class TestFilemoonResolver:
         resolver = FilemoonResolver(http_client=client)
         result = await resolver.resolve("https://filemoon.sx/e/abc123def456")
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_packed_js_without_trailing_args(self) -> None:
+        """Real Filemoon pages may omit the trailing ,0,{}) arguments."""
+        hls_url = "https://cdn.filemoon.sx/hls/test/master.m3u8"
+        packed = _build_packed_block(hls_url)
+        # Strip the trailing ,0,{}) and close with just ))
+        packed_no_trailing = packed.replace(",0,{}))", "))")
+        html = f"<html><body><script>{packed_no_trailing}</script></body></html>"
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = html
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(return_value=mock_resp)
+
+        resolver = FilemoonResolver(http_client=client)
+        result = await resolver.resolve("https://filemoon.sx/e/abc123def456")
+
+        assert result is not None
+        assert result.video_url == hls_url
+        assert result.is_hls is True
+
+    @pytest.mark.asyncio
+    async def test_packed_js_with_extra_whitespace(self) -> None:
+        """Packed JS blocks with extra whitespace between function params."""
+        hls_url = "https://cdn.filemoon.sx/hls/ws/master.m3u8"
+        packed = _build_packed_block(hls_url)
+        # Add extra whitespace around function params
+        packed_ws = packed.replace(
+            "eval(function(p,a,c,k,e,d)",
+            "eval( function( p , a , c , k , e , d )",
+        )
+        html = f"<html><body><script>{packed_ws}</script></body></html>"
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = html
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(return_value=mock_resp)
+
+        resolver = FilemoonResolver(http_client=client)
+        result = await resolver.resolve("https://filemoon.sx/e/abc123def456")
+
+        assert result is not None
+        assert result.video_url == hls_url
+        assert result.is_hls is True
