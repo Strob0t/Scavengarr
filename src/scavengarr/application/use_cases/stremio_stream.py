@@ -31,21 +31,52 @@ from scavengarr.infrastructure.stremio.title_matcher import filter_by_title_matc
 log = structlog.get_logger(__name__)
 
 
-def _format_stream(ranked: RankedStream) -> StremioStream:
-    """Convert a scored RankedStream into Stremio protocol format."""
-    if ranked.release_name:
+def _format_stream(
+    ranked: RankedStream,
+    *,
+    reference_title: str = "",
+    year: int | None = None,
+    season: int | None = None,
+    episode: int | None = None,
+) -> StremioStream:
+    """Convert a scored RankedStream into Stremio protocol format.
+
+    When *reference_title* (from TMDB) is available it is always used as
+    the stream name, enriched with year (movies) or season/episode (series).
+    Falls back to release_name → ranked.title → source_plugin + quality.
+
+    The description always starts with the source plugin name so that
+    users can see which site the stream came from.
+    """
+    from scavengarr.domain.entities.stremio import StreamQuality
+
+    quality_label = ranked.quality.name.replace("_", " ")
+    show_quality = ranked.quality != StreamQuality.UNKNOWN
+
+    # --- Build name (reference title has priority) ---
+    title = reference_title or ranked.title
+    if title:
+        if season is not None and episode is not None:
+            name = f"{title} S{season:02d}E{episode:02d}"
+        elif year:
+            name = f"{title} ({year})"
+        else:
+            name = title
+        if show_quality:
+            name = f"{name} {quality_label}"
+    elif ranked.release_name:
         name = ranked.release_name
-    elif ranked.title:
-        name = ranked.title
     else:
-        quality_label = ranked.quality.name.replace("_", " ")
         name = (
             f"{ranked.source_plugin} {quality_label}"
             if ranked.source_plugin
             else quality_label
         )
 
+    # --- Build description (source plugin always first) ---
     desc_parts: list[str] = []
+    if ranked.source_plugin:
+        desc_parts.append(ranked.source_plugin)
     if ranked.language:
         desc_parts.append(ranked.language.label)
     if ranked.hoster:
@@ -187,7 +218,16 @@ class StremioStreamUseCase:
         ranked = convert_search_results(filtered, plugin_languages=plugin_languages)
         sorted_streams = self._sorter.sort(ranked)
 
-        streams = [_format_stream(s) for s in sorted_streams]
+        streams = [
+            _format_stream(
+                s,
+                reference_title=title_info.title if title_info else "",
+                year=title_info.year if title_info else None,
+                season=request.season,
+                episode=request.episode,
+            )
+            for s in sorted_streams
+        ]
 
         # Cache hoster URLs and replace with proxy play links
         if self._stream_link_repo and base_url:

@@ -121,7 +121,33 @@ class TestBuildSearchQuery:
 
 
 class TestFormatStream:
-    def test_release_name_used_as_name(self) -> None:
+    def test_reference_title_used_as_name(self) -> None:
+        """Reference title (from TMDB) is preferred over ranked.title."""
+        ranked = RankedStream(
+            url="https://voe.sx/e/abc",
+            hoster="voe",
+            quality=StreamQuality.HD_1080P,
+            title="Iron Man",
+            source_plugin="hdfilme",
+            rank_score=1500,
+        )
+        result = _format_stream(ranked, reference_title="Iron Man", year=2008)
+        assert result.name == "Iron Man (2008) HD 1080P"
+
+    def test_series_format_with_season_episode(self) -> None:
+        ranked = RankedStream(
+            url="https://voe.sx/e/abc",
+            hoster="voe",
+            quality=StreamQuality.HD_720P,
+            source_plugin="aniworld",
+        )
+        result = _format_stream(
+            ranked, reference_title="Breaking Bad", season=1, episode=5
+        )
+        assert result.name == "Breaking Bad S01E05 HD 720P"
+
+    def test_release_name_fallback_without_reference(self) -> None:
+        """Without reference_title, release_name is used as fallback."""
         lang = StreamLanguage(code="de", label="German Dub", is_dubbed=True)
         ranked = RankedStream(
             url="https://voe.sx/e/abc",
@@ -140,7 +166,8 @@ class TestFormatStream:
         assert "VOE" in result.description
         assert "1.5 GB" in result.description
 
-    def test_title_used_when_no_release_name(self) -> None:
+    def test_title_fallback_without_reference(self) -> None:
+        """Without reference_title or release_name, ranked.title is used."""
         ranked = RankedStream(
             url="https://voe.sx/e/abc",
             hoster="voe",
@@ -149,7 +176,7 @@ class TestFormatStream:
             source_plugin="hdfilme",
         )
         result = _format_stream(ranked)
-        assert result.name == "Iron Man"
+        assert result.name == "Iron Man HD 1080P"
 
     def test_fallback_to_plugin_quality(self) -> None:
         ranked = RankedStream(
@@ -170,13 +197,42 @@ class TestFormatStream:
         result = _format_stream(ranked)
         assert result.name == "HD 720P"
 
-    def test_no_language_or_size(self) -> None:
+    def test_unknown_quality_not_appended(self) -> None:
+        """UNKNOWN quality is not appended to the name."""
+        ranked = RankedStream(
+            url="https://voe.sx/e/abc",
+            hoster="voe",
+            quality=StreamQuality.UNKNOWN,
+            title="Iron Man",
+            source_plugin="hdfilme",
+        )
+        result = _format_stream(ranked, reference_title="Iron Man", year=2008)
+        assert result.name == "Iron Man (2008)"
+        assert "UNKNOWN" not in result.name
+
+    def test_source_plugin_in_description(self) -> None:
+        """source_plugin is always the first element of the description."""
+        lang = StreamLanguage(code="de", label="German Dub", is_dubbed=True)
+        ranked = RankedStream(
+            url="https://voe.sx/e/abc",
+            hoster="voe",
+            quality=StreamQuality.HD_1080P,
+            language=lang,
+            source_plugin="hdfilme",
+        )
+        result = _format_stream(ranked, reference_title="Iron Man")
+        assert result.description.startswith("hdfilme")
+        assert "German Dub" in result.description
+        assert "VOE" in result.description
+
+    def test_description_without_source_plugin(self) -> None:
         ranked = RankedStream(
             url="https://voe.sx/e/abc",
             hoster="voe",
             quality=StreamQuality.UNKNOWN,
         )
         result = _format_stream(ranked)
+        # No source_plugin → description should still work
         assert "VOE" in result.description
 
     def test_empty_hoster(self) -> None:
@@ -186,12 +242,22 @@ class TestFormatStream:
             quality=StreamQuality.SD,
         )
         result = _format_stream(ranked)
-        # Empty hoster should not leave trailing separators
         assert (
             result.description == ""
             or "|" not in result.description
             or result.description.strip()
         )
+
+    def test_reference_title_without_year(self) -> None:
+        """Reference title without year omits the year parenthetical."""
+        ranked = RankedStream(
+            url="https://voe.sx/e/abc",
+            hoster="voe",
+            quality=StreamQuality.HD_1080P,
+            source_plugin="hdfilme",
+        )
+        result = _format_stream(ranked, reference_title="Iron Man")
+        assert result.name == "Iron Man HD 1080P"
 
 
 # ---------------------------------------------------------------------------
@@ -252,6 +318,9 @@ class TestExecute:
 
         assert len(result) >= 1
         assert result[0].url == "https://voe.sx/e/abc"
+        # Name should include reference title from TMDB
+        assert "Iron Man" in result[0].name
+        assert "(2008)" in result[0].name
         tmdb.get_title_and_year.assert_awaited_once_with("tt1234567")
         mock_plugin.search.assert_awaited_once_with(
             "Iron Man", category=2000, season=None, episode=None
