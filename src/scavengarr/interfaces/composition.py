@@ -17,6 +17,9 @@ from scavengarr.infrastructure.cache.cache_factory import create_cache
 from scavengarr.infrastructure.persistence.crawljob_cache import (
     CacheCrawlJobRepository,
 )
+from scavengarr.infrastructure.persistence.stream_link_cache import (
+    CacheStreamLinkRepository,
+)
 from scavengarr.infrastructure.plugins import PluginRegistry
 from scavengarr.infrastructure.tmdb.client import HttpxTmdbClient
 from scavengarr.infrastructure.tmdb.imdb_fallback import ImdbFallbackClient
@@ -114,12 +117,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             reason="no API key, using IMDB suggest API",
         )
 
-    # 8) Stremio use cases (always initialized — fallback handles missing key)
+    # 8) Stream link repository (for Stremio play endpoint)
+    state.stream_link_repo = CacheStreamLinkRepository(
+        cache=state.cache,
+        ttl_seconds=config.stremio.stream_link_ttl_seconds,
+    )
+    log.info(
+        "stream_link_repo_initialized",
+        ttl_seconds=config.stremio.stream_link_ttl_seconds,
+    )
+
+    # 9) Stremio use cases (always initialized — fallback handles missing key)
     state.stremio_stream_uc = StremioStreamUseCase(
         tmdb=state.tmdb_client,
         plugins=state.plugins,
         search_engine=state.search_engine,
         config=config.stremio,
+        stream_link_repo=state.stream_link_repo,
     )
     state.stremio_catalog_uc = StremioCatalogUseCase(tmdb=state.tmdb_client)
 

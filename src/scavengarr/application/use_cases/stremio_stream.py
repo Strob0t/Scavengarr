@@ -7,10 +7,12 @@ IMDb ID -> TMDB title -> parallel plugin search
 from __future__ import annotations
 
 import asyncio
+from uuid import uuid4
 
 import structlog
 
 from scavengarr.domain.entities.stremio import (
+    CachedStreamLink,
     RankedStream,
     StremioStream,
     StremioStreamRequest,
@@ -19,6 +21,7 @@ from scavengarr.domain.entities.stremio import (
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.domain.ports.plugin_registry import PluginRegistryPort
 from scavengarr.domain.ports.search_engine import SearchEnginePort
+from scavengarr.domain.ports.stream_link_repository import StreamLinkRepository
 from scavengarr.domain.ports.tmdb import TmdbClientPort
 from scavengarr.infrastructure.config.schema import StremioConfig
 from scavengarr.infrastructure.stremio.stream_converter import convert_search_results
@@ -89,6 +92,7 @@ class StremioStreamUseCase:
         plugins: PluginRegistryPort,
         search_engine: SearchEnginePort,
         config: StremioConfig,
+        stream_link_repo: StreamLinkRepository | None = None,
     ) -> None:
         self._tmdb = tmdb
         self._plugins = plugins
@@ -97,15 +101,19 @@ class StremioStreamUseCase:
         self._max_concurrent = config.max_concurrent_plugins
         self._plugin_timeout = config.plugin_timeout_seconds
         self._title_match_threshold = config.title_match_threshold
+        self._stream_link_repo = stream_link_repo
 
     async def execute(
         self,
         request: StremioStreamRequest,
+        *,
+        base_url: str = "",
     ) -> list[StremioStream]:
         """Resolve streams for a Stremio request.
 
         Args:
             request: Parsed stream request with IMDb ID and optional season/episode.
+            base_url: Service base URL for generating proxy play links.
 
         Returns:
             Sorted list of StremioStream objects, best first.
@@ -181,6 +189,10 @@ class StremioStreamUseCase:
 
         streams = [_format_stream(s) for s in sorted_streams]
 
+        # Cache hoster URLs and replace with proxy play links
+        if self._stream_link_repo and base_url:
+            streams = await self._cache_and_proxy(streams, sorted_streams, base_url)
+
         log.info(
             "stremio_search_complete",
             imdb_id=request.imdb_id,
@@ -191,6 +203,33 @@ class StremioStreamUseCase:
         )
 
         return streams
+
+    async def _cache_and_proxy(
+        self,
+        streams: list[StremioStream],
+        ranked: list[RankedStream],
+        base_url: str,
+    ) -> list[StremioStream]:
+        """Cache hoster URLs and replace stream URLs with proxy play links."""
+        proxied: list[StremioStream] = []
+        for stream, ranked_s in zip(streams, ranked):
+            stream_id = uuid4().hex
+            link = CachedStreamLink(
+                stream_id=stream_id,
+                hoster_url=ranked_s.url,
+                title=ranked_s.title,
+                hoster=ranked_s.hoster,
+            )
+            await self._stream_link_repo.save(link)
+            proxy_url = f"{base_url}/stremio/play/{stream_id}"
+            proxied.append(
+                StremioStream(
+                    name=stream.name,
+                    description=stream.description,
+                    url=proxy_url,
+                )
+            )
+        return proxied
 
     async def _resolve_title_info(
         self,

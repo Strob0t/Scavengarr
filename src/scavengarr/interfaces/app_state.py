@@ -18,6 +18,7 @@ if TYPE_CHECKING:
         CrawlJobRepository,
         PluginRegistryPort,
         SearchEnginePort,
+        StreamLinkRepository,
     )
     from scavengarr.domain.ports.tmdb import TmdbClientPort
 
@@ -39,6 +40,7 @@ class AppState(State):
     plugins: PluginRegistryPort
     search_engine: SearchEnginePort
     crawljob_repo: CrawlJobRepository
+    stream_link_repo: StreamLinkRepository
 
     # Application Services
     crawljob_factory: CrawlJobFactory

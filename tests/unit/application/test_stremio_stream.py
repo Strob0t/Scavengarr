@@ -75,6 +75,7 @@ def _make_use_case(
     plugins: MagicMock | None = None,
     search_engine: AsyncMock | None = None,
     config: StremioConfig | None = None,
+    stream_link_repo: AsyncMock | None = None,
 ) -> StremioStreamUseCase:
     engine = search_engine or AsyncMock()
     # Default: validate_results returns input unchanged
@@ -86,6 +87,7 @@ def _make_use_case(
         plugins=plugins or MagicMock(),
         search_engine=engine,
         config=config or _make_config(),
+        stream_link_repo=stream_link_repo,
     )
 
 
@@ -709,3 +711,120 @@ class TestTitleMatchFiltering:
         urls = {s.url for s in result}
         assert "https://voe.sx/e/match" in urls
         assert "https://voe.sx/e/nomatch" not in urls
+
+
+# ---------------------------------------------------------------------------
+# Stream link caching + proxy URLs
+# ---------------------------------------------------------------------------
+
+
+class TestStreamLinkProxy:
+    async def test_proxy_urls_generated_with_base_url(self) -> None:
+        """When stream_link_repo and base_url are provided, URLs are proxied."""
+        tmdb = AsyncMock()
+        tmdb.get_title_and_year = AsyncMock(
+            return_value=TitleMatchInfo(title="Iron Man", year=2008)
+        )
+
+        sr = _make_search_result(
+            title="Iron Man",
+            download_links=[{"url": "https://voe.sx/e/abc"}],
+        )
+
+        mock_plugin = AsyncMock()
+        mock_plugin.search = AsyncMock(return_value=[sr])
+        del mock_plugin.scraping
+
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(side_effect=lambda r: r)
+
+        plugins = MagicMock()
+        plugins.get_by_provides.side_effect = lambda p: (
+            ["hdfilme"] if p == "stream" else []
+        )
+        plugins.get.return_value = mock_plugin
+
+        repo = AsyncMock()
+        uc = _make_use_case(
+            tmdb=tmdb,
+            plugins=plugins,
+            search_engine=engine,
+            stream_link_repo=repo,
+        )
+        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        assert len(result) >= 1
+        assert result[0].url.startswith("http://localhost:8080/stremio/play/")
+        assert "voe.sx" not in result[0].url
+        repo.save.assert_awaited()
+
+    async def test_no_proxy_without_base_url(self) -> None:
+        """Without base_url, original hoster URLs are returned."""
+        tmdb = AsyncMock()
+        tmdb.get_title_and_year = AsyncMock(
+            return_value=TitleMatchInfo(title="Iron Man", year=2008)
+        )
+
+        sr = _make_search_result(
+            title="Iron Man",
+            download_links=[{"url": "https://voe.sx/e/abc"}],
+        )
+
+        mock_plugin = AsyncMock()
+        mock_plugin.search = AsyncMock(return_value=[sr])
+        del mock_plugin.scraping
+
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(side_effect=lambda r: r)
+
+        plugins = MagicMock()
+        plugins.get_by_provides.side_effect = lambda p: (
+            ["hdfilme"] if p == "stream" else []
+        )
+        plugins.get.return_value = mock_plugin
+
+        repo = AsyncMock()
+        uc = _make_use_case(
+            tmdb=tmdb,
+            plugins=plugins,
+            search_engine=engine,
+            stream_link_repo=repo,
+        )
+        # No base_url → no proxying
+        result = await uc.execute(_make_request())
+
+        assert len(result) >= 1
+        assert result[0].url == "https://voe.sx/e/abc"
+        repo.save.assert_not_awaited()
+
+    async def test_no_proxy_without_repo(self) -> None:
+        """Without stream_link_repo, original hoster URLs are returned."""
+        tmdb = AsyncMock()
+        tmdb.get_title_and_year = AsyncMock(
+            return_value=TitleMatchInfo(title="Iron Man", year=2008)
+        )
+
+        sr = _make_search_result(
+            title="Iron Man",
+            download_links=[{"url": "https://voe.sx/e/abc"}],
+        )
+
+        mock_plugin = AsyncMock()
+        mock_plugin.search = AsyncMock(return_value=[sr])
+        del mock_plugin.scraping
+
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(side_effect=lambda r: r)
+
+        plugins = MagicMock()
+        plugins.get_by_provides.side_effect = lambda p: (
+            ["hdfilme"] if p == "stream" else []
+        )
+        plugins.get.return_value = mock_plugin
+
+        # No repo → no proxying
+        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
+        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        assert len(result) >= 1
+        assert result[0].url == "https://voe.sx/e/abc"

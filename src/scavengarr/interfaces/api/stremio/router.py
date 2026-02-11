@@ -225,7 +225,7 @@ async def stremio_stream(
     if uc is None:
         return JSONResponse(content={"streams": []}, headers=_CORS_HEADERS)
 
-    streams = await uc.execute(parsed)
+    streams = await uc.execute(parsed, base_url=str(request.base_url).rstrip("/"))
     stremio_streams = [_format_stremio_stream(s) for s in streams]
 
     log.info(
