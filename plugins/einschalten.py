@@ -238,6 +238,8 @@ class EinschaltenPlugin:
         self,
         query: str,
         category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
     ) -> list[SearchResult]:
         """Search einschalten.in and return results with stream links.
 

@@ -438,6 +438,8 @@ class AniworldPlugin:
         self,
         query: str,
         category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
     ) -> list[SearchResult]:
         """Search aniworld.to and return results with hoster links."""
         if not query:

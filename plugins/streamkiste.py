@@ -726,6 +726,8 @@ class StreamkistePlugin:
         self,
         query: str,
         category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
     ) -> list[SearchResult]:
         """Search streamkiste.taxi and return results with stream links."""
         await self._ensure_client()

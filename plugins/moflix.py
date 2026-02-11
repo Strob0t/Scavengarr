@@ -239,6 +239,8 @@ class MoflixPlugin:
         self,
         query: str,
         category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
     ) -> list[SearchResult]:
         """Search moflix-stream.xyz and return results with video embed links.
 

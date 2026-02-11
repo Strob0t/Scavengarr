@@ -411,6 +411,8 @@ class Movie4kPlugin:
         self,
         query: str,
         category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
     ) -> list[SearchResult]:
         """Search movie4k and return results with stream links.
 

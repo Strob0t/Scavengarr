@@ -775,6 +775,8 @@ class KinokingPlugin:
         self,
         query: str,
         category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
     ) -> list[SearchResult]:
         """Search kinoking.cc and return results with hoster links."""
         await self._ensure_client()

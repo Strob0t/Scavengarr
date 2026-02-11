@@ -549,6 +549,8 @@ class BurningSeriesPlugin:
         self,
         query: str,
         category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
     ) -> list[SearchResult]:
         """Search Burning Series by matching series names from the full listing.
 

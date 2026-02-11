@@ -480,6 +480,8 @@ class StreamworldPlugin:
         self,
         query: str,
         category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
     ) -> list[SearchResult]:
         """Search streamworld.ws and return results with stream links."""
         await self._ensure_client()

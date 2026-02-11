@@ -364,6 +364,8 @@ class FireaniPlugin:
         self,
         query: str,
         category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
     ) -> list[SearchResult]:
         """Search fireani.me and return results with streaming links."""
         await self._ensure_client()

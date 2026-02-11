@@ -363,6 +363,8 @@ class AnimeLoadsPlugin:
         self,
         query: str,
         category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
     ) -> list[SearchResult]:
         """Search anime-loads.org and return results with metadata.
 
