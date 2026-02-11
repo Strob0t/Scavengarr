@@ -339,7 +339,14 @@ async def stremio_stream(
         return JSONResponse(content={"streams": []}, headers=headers)
 
     # 4) Convert, rank, and format
-    ranked = convert_search_results(all_results)
+    plugin_languages: dict[str, str] = {}
+    for name in all_names:
+        plugin = state.plugins.get(name)
+        lang = getattr(plugin, "default_language", None)
+        if lang:
+            plugin_languages[name] = lang
+
+    ranked = convert_search_results(all_results, plugin_languages=plugin_languages)
     sorter = StreamSorter(state.config.stremio)
     sorted_streams = sorter.sort(ranked)
 

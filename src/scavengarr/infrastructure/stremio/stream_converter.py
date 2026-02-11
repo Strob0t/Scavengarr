@@ -37,7 +37,10 @@ def _extract_hoster(url: str) -> str:
         return "unknown"
 
 
-def _convert_single_result(result: SearchResult) -> list[RankedStream]:
+def _convert_single_result(
+    result: SearchResult,
+    plugin_default_language: str | None = None,
+) -> list[RankedStream]:
     """Convert a single SearchResult into one or more RankedStreams."""
     streams: list[RankedStream] = []
     source_plugin = str(result.metadata.get("source_plugin", ""))
@@ -56,7 +59,7 @@ def _convert_single_result(result: SearchResult) -> list[RankedStream]:
             language = parse_language(
                 release_name=result.release_name,
                 link_language=link.get("language"),
-                plugin_default_language=None,
+                plugin_default_language=plugin_default_language,
             )
             hoster = link.get("hoster") or _extract_hoster(url)
             size = link.get("size") or result.size
@@ -81,7 +84,7 @@ def _convert_single_result(result: SearchResult) -> list[RankedStream]:
         language = parse_language(
             release_name=result.release_name,
             link_language=None,
-            plugin_default_language=None,
+            plugin_default_language=plugin_default_language,
         )
         hoster = _extract_hoster(result.download_link)
 
@@ -102,8 +105,15 @@ def _convert_single_result(result: SearchResult) -> list[RankedStream]:
 
 def convert_search_results(
     results: list[SearchResult],
+    plugin_languages: dict[str, str] | None = None,
 ) -> list[RankedStream]:
     """Convert plugin SearchResults into RankedStreams for sorting.
+
+    Args:
+        results: Plugin search results to convert.
+        plugin_languages: Mapping of plugin name to default language code.
+            Used as fallback when language can't be determined from the
+            release name or link metadata.
 
     For each SearchResult:
     - If download_links exists and is non-empty, create one RankedStream per link.
@@ -111,7 +121,11 @@ def convert_search_results(
     - If no download_links, create a single RankedStream from download_link.
     - Entries without a valid URL are skipped.
     """
+    langs = plugin_languages or {}
     streams: list[RankedStream] = []
     for result in results:
-        streams.extend(_convert_single_result(result))
+        source = str(result.metadata.get("source_plugin", ""))
+        streams.extend(
+            _convert_single_result(result, plugin_default_language=langs.get(source))
+        )
     return streams

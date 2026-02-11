@@ -221,6 +221,55 @@ class TestConvertSearchResults:
         with pytest.raises(AttributeError):
             streams[0].url = "other"  # type: ignore[misc]
 
+    def test_plugin_default_language_passed_from_mapping(
+        self,
+        _mock_parsers: tuple,
+    ) -> None:
+        _mock_q, mock_l = _mock_parsers
+        result = _make_result(
+            metadata={"source_plugin": "hdfilme"},
+            download_links=[{"url": "https://voe.sx/e/abc"}],
+        )
+        convert_search_results([result], plugin_languages={"hdfilme": "de"})
+        mock_l.assert_called_once_with(
+            release_name=None,
+            link_language=None,
+            plugin_default_language="de",
+        )
+
+    def test_plugin_not_in_languages_map_gets_none(
+        self,
+        _mock_parsers: tuple,
+    ) -> None:
+        _mock_q, mock_l = _mock_parsers
+        result = _make_result(
+            metadata={"source_plugin": "unknown_plugin"},
+            download_links=[{"url": "https://voe.sx/e/abc"}],
+        )
+        convert_search_results([result], plugin_languages={"hdfilme": "de"})
+        mock_l.assert_called_once_with(
+            release_name=None,
+            link_language=None,
+            plugin_default_language=None,
+        )
+
+    def test_plugin_default_language_for_single_download_link(
+        self,
+        _mock_parsers: tuple,
+    ) -> None:
+        _mock_q, mock_l = _mock_parsers
+        result = _make_result(
+            download_link="https://streamtape.com/v/abc",
+            download_links=None,
+            metadata={"source_plugin": "kinoger"},
+        )
+        convert_search_results([result], plugin_languages={"kinoger": "de"})
+        mock_l.assert_called_once_with(
+            release_name=None,
+            link_language=None,
+            plugin_default_language="de",
+        )
+
 
 class TestExtractHoster:
     def test_voe(self) -> None:

@@ -132,7 +132,17 @@ class StremioStreamUseCase:
             )
             return []
 
-        ranked = convert_search_results(all_results)
+        plugin_languages: dict[str, str] = {}
+        for name in all_names:
+            try:
+                plugin = self._plugins.get(name)
+                lang = getattr(plugin, "default_language", None)
+                if isinstance(lang, str):
+                    plugin_languages[name] = lang
+            except Exception:  # noqa: BLE001
+                pass
+
+        ranked = convert_search_results(all_results, plugin_languages=plugin_languages)
         sorted_streams = self._sorter.sort(ranked)
 
         streams = [_format_stream(s) for s in sorted_streams]
