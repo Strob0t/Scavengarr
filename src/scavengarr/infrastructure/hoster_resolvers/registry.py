@@ -61,35 +61,19 @@ class HosterResolverRegistry:
 
         1. Try the specific hoster resolver (URL domain takes priority over hint).
         2. If URL domain has no resolver, follow HTTP redirects and retry.
-        3. Fall back to content-type probing (HEAD request).
-        4. Return None if resolution fails.
+        3. Try hoster hint if different from URL domain (handles redirect domains).
+        4. Fall back to content-type probing (HEAD request).
+        5. Return None if resolution fails.
         """
         # URL domain is authoritative; fall back to plugin-provided hint
         hoster_name = _extract_hoster_from_url(url) or hoster
 
-        # Try specific resolver
+        # 1. Try specific resolver for URL domain
         resolver = self._resolvers.get(hoster_name)
         if resolver is not None:
-            log.info(
-                "hoster_resolve_start",
-                hoster=hoster_name,
-                url=url,
-            )
-            try:
-                result = await resolver.resolve(url)
-                if result is not None:
-                    log.info(
-                        "hoster_resolve_success",
-                        hoster=hoster_name,
-                        is_hls=result.is_hls,
-                    )
-                    return result
-                log.warning("hoster_resolve_failed", hoster=hoster_name, url=url)
-            except Exception:
-                log.exception("hoster_resolve_error", hoster=hoster_name, url=url)
-            return None
+            return await self._try_resolver(resolver, hoster_name, url)
 
-        # No resolver for this domain — try following redirects
+        # 2. No resolver for this domain — try following redirects
         final_url = await self._follow_redirects(url)
         if final_url:
             redirected_hoster = _extract_hoster_from_url(final_url)
@@ -101,30 +85,44 @@ class HosterResolverRegistry:
                     redirected=redirected_hoster,
                     url=final_url,
                 )
-                try:
-                    result = await resolver.resolve(final_url)
-                    if result is not None:
-                        log.info(
-                            "hoster_resolve_success",
-                            hoster=redirected_hoster,
-                            is_hls=result.is_hls,
-                        )
-                        return result
-                    log.warning(
-                        "hoster_resolve_failed",
-                        hoster=redirected_hoster,
-                        url=final_url,
-                    )
-                except Exception:
-                    log.exception(
-                        "hoster_resolve_error",
-                        hoster=redirected_hoster,
-                        url=final_url,
-                    )
-                return None
+                return await self._try_resolver(resolver, redirected_hoster, final_url)
 
-        # Fallback: content-type probing
+        # 3. Try hoster hint if different from URL domain
+        #    Handles rotating redirect domains (e.g., lauradaydo.com for VOE)
+        if hoster and hoster != hoster_name:
+            resolver = self._resolvers.get(hoster)
+            if resolver is not None:
+                log.info(
+                    "hoster_resolve_via_hint",
+                    hint=hoster,
+                    url_domain=hoster_name,
+                    url=url,
+                )
+                return await self._try_resolver(resolver, hoster, url)
+
+        # 4. Fallback: content-type probing
         return await self._probe_content_type(url, hoster_name)
+
+    async def _try_resolver(
+        self,
+        resolver: HosterResolverPort,
+        hoster_name: str,
+        url: str,
+    ) -> ResolvedStream | None:
+        """Attempt resolution with a specific resolver, logging success/failure."""
+        try:
+            result = await resolver.resolve(url)
+            if result is not None:
+                log.info(
+                    "hoster_resolve_success",
+                    hoster=hoster_name,
+                    is_hls=result.is_hls,
+                )
+                return result
+            log.warning("hoster_resolve_failed", hoster=hoster_name, url=url)
+        except Exception:
+            log.exception("hoster_resolve_error", hoster=hoster_name, url=url)
+        return None
 
     async def _follow_redirects(self, url: str) -> str | None:
         """Follow HTTP redirects and return final URL if domain changed.
