@@ -89,7 +89,8 @@ class StageScraper:
                 return urljoin(self.base_url, path)
             except KeyError as e:
                 raise ValueError(
-                    f"Stage '{self.name}': Missing URL parameter {e} for pattern '{self.stage.url_pattern}'"
+                    f"Stage '{self.name}': Missing URL parameter"
+                    f" {e} for pattern '{self.stage.url_pattern}'"
                 )
 
         raise ValueError(f"Stage '{self.name}': No URL or url_pattern defined")
@@ -163,9 +164,10 @@ class StageScraper:
         return results
 
     def _get_field_attributes(self, field_name: str) -> list[str]:
-        """
-        Get attribute list for a field from stage config.
-        Returns empty list if not configured (causes warning in _extract_from_attributes).
+        """Get attribute list for a field from stage config.
+
+        Returns empty list if not configured
+        (causes warning in _extract_from_attributes).
         """
         if not self.stage.field_attributes:
             return []
@@ -410,7 +412,8 @@ class ScrapyAdapter:
     ):
         if plugin.scraping.mode != "scrapy":
             raise ValueError(
-                f"Plugin '{plugin.name}' is not in scrapy mode (mode={plugin.scraping.mode})"
+                f"Plugin '{plugin.name}' is not in scrapy mode"
+                f" (mode={plugin.scraping.mode})"
             )
 
         self.plugin = plugin
@@ -572,6 +575,41 @@ class ScrapyAdapter:
         new = urlsplit(new_base_url)
         return urlunsplit((new.scheme, new.netloc, old.path, old.query, old.fragment))
 
+    async def _follow_next_stage(
+        self,
+        stage_name: str,
+        next_stage_name: str,
+        links: list[str],
+        depth: int,
+        results: dict[str, list[dict[str, Any]]],
+    ) -> None:
+        """Follow links to the next stage in parallel and merge results."""
+        max_links = 10
+        limited_links = links[:max_links]
+
+        sub_results_list = await asyncio.gather(
+            *(
+                self.scrape_stage(
+                    next_stage_name, url=link, depth=depth + 1
+                )
+                for link in limited_links
+            )
+        )
+
+        for sub_results in sub_results_list:
+            for sub_stage, sub_items in sub_results.items():
+                if sub_stage not in results:
+                    results[sub_stage] = []
+                results[sub_stage].extend(sub_items)
+
+        if len(links) > max_links:
+            logger.warning(
+                "links_truncated",
+                stage=stage_name,
+                total_links=len(links),
+                processed=max_links,
+            )
+
     async def scrape_stage(
         self,
         stage_name: str,
@@ -579,14 +617,16 @@ class ScrapyAdapter:
         depth: int = 0,
         **url_params: Any,
     ) -> dict[str, list[dict[str, Any]]]:
-        """
-        Execute single stage (recursively).
+        """Execute single stage (recursively).
 
         Returns Dict[stage_name, List[items]] for aggregation.
         """
         if depth > self.max_depth:
             logger.warning(
-                "max_depth_reached", stage=stage_name, depth=depth, max=self.max_depth
+                "max_depth_reached",
+                stage=stage_name,
+                depth=depth,
+                max=self.max_depth,
             )
             return {}
 
@@ -597,18 +637,20 @@ class ScrapyAdapter:
         stage = self.stages[stage_name]
         stage_config = stage.stage
 
-        # Build URL
         if url is None:
             url = stage.build_url(**url_params)
 
-        logger.info("scrape_stage_start", stage=stage_name, depth=depth, url=url)
+        logger.info(
+            "scrape_stage_start",
+            stage=stage_name,
+            depth=depth,
+            url=url,
+        )
 
-        # Fetch page
         soup = await self._fetch_page(url)
         if not soup:
             return {}
 
-        # Extract data (supports multi-row via `rows` selector)
         items = stage.extract_rows(soup)
         for item in items:
             item["source_url"] = url
@@ -618,48 +660,24 @@ class ScrapyAdapter:
             logger.debug("stage_no_valid_items", stage=stage_name)
             return {}
 
-        # Extract links to next stage
         links = stage.extract_links(soup)
-
-        # Return Dict[stage_name, List[items]]
         results: dict[str, list[dict[str, Any]]] = {stage_name: items}
 
-        # Pagination (if enabled)
         if stage_config.pagination and stage_config.pagination.enabled:
-            paginated = await self._handle_pagination(stage, soup, depth)
+            paginated = await self._handle_pagination(
+                stage, soup, depth
+            )
             if stage_name in paginated:
                 results[stage_name].extend(paginated[stage_name])
 
-        # Recurse to next stage (parallel, bounded by max_links)
         if stage_config.next_stage and links:
-            next_stage_name = stage_config.next_stage
-
-            # Limit links to prevent memory overflow
-            max_links = 10
-            limited_links = links[:max_links]
-
-            # Parallel execution of next-stage scraping
-            sub_results_list = await asyncio.gather(
-                *(
-                    self.scrape_stage(next_stage_name, url=link, depth=depth + 1)
-                    for link in limited_links
-                )
+            await self._follow_next_stage(
+                stage_name,
+                stage_config.next_stage,
+                links,
+                depth,
+                results,
             )
-
-            # Merge all sub_results
-            for sub_results in sub_results_list:
-                for sub_stage, sub_items in sub_results.items():
-                    if sub_stage not in results:
-                        results[sub_stage] = []
-                    results[sub_stage].extend(sub_items)
-
-            if len(links) > max_links:
-                logger.warning(
-                    "links_truncated",
-                    stage=stage_name,
-                    total_links=len(links),
-                    processed=max_links,
-                )
 
         return results
 
@@ -763,9 +781,10 @@ class ScrapyAdapter:
     def normalize_results(
         self, stage_results: dict[str, list[dict[str, Any]]]
     ) -> list[SearchResult]:
-        """
-        Convert stage results to SearchResult.
-        Merges data from multiple stages (e.g., title from list + release_name from detail).
+        """Convert stage results to SearchResult.
+
+        Merges data from multiple stages
+        (e.g., title from list + release_name from detail).
         """
         search_results = []
 

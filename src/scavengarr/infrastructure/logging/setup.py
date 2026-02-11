@@ -30,7 +30,10 @@ BASE_LOGGING_CONFIG: dict[str, Any] = {
         },
         "access": {
             "()": "uvicorn.logging.AccessFormatter",
-            "fmt": '%(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s',
+            "fmt": (
+                "%(levelprefix)s %(client_addr)s"
+                ' - "%(request_line)s" %(status_code)s'
+            ),
         },
     },
     "handlers": {
@@ -62,8 +65,9 @@ def _add_record_created_timestamp_utc(
     _: Any, __: Any, event_dict: dict[str, Any]
 ) -> dict[str, Any]:
     """
-    Ensure timestamps for non-structlog (foreign) LogRecords match the time when the record
-    was created, not the time when the background listener formats it.
+    Ensure timestamps for non-structlog (foreign) LogRecords
+    match the time when the record was created, not the time
+    when the background listener formats it.
 
     ProcessorFormatter sets event_dict["_record"] for foreign records.
     """
@@ -137,7 +141,9 @@ def _stop_async_listener() -> None:
 
 def _enable_async_logging(config: AppConfig) -> None:
     """
-    Route ALL stdlib logging through a QueueHandler; emit via QueueListener in a background thread.
+    Route ALL stdlib logging through a QueueHandler.
+
+    Emit via QueueListener in a background thread.
 
     We bypass dictConfig's handlers for emission to ensure:
     - No blocking I/O on the caller thread (esp. asyncio loop)
@@ -195,7 +201,10 @@ def _enable_async_logging(config: AppConfig) -> None:
     q: queue.Queue[logging.LogRecord] = queue.Queue()
 
     class _StructlogPreservingQueueHandler(QueueHandler):
-        """QueueHandler that preserves structlog event_dicts (record.msg as dict) without breaking them."""
+        """QueueHandler that preserves structlog event_dicts.
+
+        Keeps record.msg as dict without breaking them.
+        """
 
         def prepare(self, record: logging.LogRecord) -> logging.LogRecord:
             # Preserve dict-msg for structlog ProcessorFormatter

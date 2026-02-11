@@ -103,6 +103,157 @@ async def torznab_indexers(request: Request) -> dict:
     return {"indexers": uc.execute()}
 
 
+def _handle_caps(
+    state: AppState,
+    plugin_name: str,
+) -> Response:
+    """Handle t=caps requests."""
+    caps_uc = TorznabCapsUseCase(
+        plugins=state.plugins,
+        app_name=state.config.app_name,
+        plugin_name=plugin_name,
+        server_version="0.1.0",
+    )
+    rendered = render_caps_xml(caps_uc.execute())
+    return _xml(rendered.payload, status_code=200)
+
+
+async def _handle_extended_probe(
+    state: AppState,
+    plugin_name: str,
+    plugin_base_url: str,
+    scavengarr_base_url: str,
+) -> Response:
+    """Handle Prowlarr extended=1 reachability probe."""
+    title = f"{state.config.app_name} ({plugin_name})"
+
+    (
+        reachable,
+        _status_code,
+        error,
+        checked_url,
+    ) = await _lightweight_http_probe(
+        state.http_client,
+        base_url=plugin_base_url,
+        timeout_seconds=5.0,
+    )
+
+    if reachable:
+        test_item = TorznabItem(
+            title=f"{title} - reachable",
+            download_url=checked_url,
+            size="0 B",
+            seeders=0,
+            peers=0,
+            category=2000,
+            download_volume_factor=0.0,
+            upload_volume_factor=0.0,
+        )
+        rendered = render_rss_xml(
+            title=title,
+            items=[test_item],
+            description=None,
+            scavengarr_base_url=scavengarr_base_url,
+        )
+        return _xml(rendered.payload, status_code=200)
+
+    rendered = render_rss_xml(
+        title=title,
+        items=[],
+        description=(error or "indexer not reachable")
+        if not _is_prod(state)
+        else None,
+        scavengarr_base_url=scavengarr_base_url,
+    )
+    return _xml(rendered.payload, status_code=503)
+
+
+async def _handle_search(
+    state: AppState,
+    plugin_name: str,
+    q: str,
+    cat: str,
+    base_url: str,
+) -> Response:
+    """Execute a search query and return RSS XML."""
+    search_uc = TorznabSearchUseCase(
+        plugins=state.plugins,
+        engine=state.search_engine,
+        crawljob_factory=state.crawljob_factory,
+        crawljob_repo=state.crawljob_repo,
+    )
+    category = int(cat.split(",")[0]) if cat else None
+    items = await search_uc.execute(
+        TorznabQuery(
+            action="search",
+            query=q,
+            plugin_name=plugin_name,
+            category=category,
+        )
+    )
+    rendered = render_rss_xml(
+        title=f"{state.config.app_name} ({plugin_name})",
+        items=items,
+        scavengarr_base_url=base_url,
+    )
+    return _xml(rendered.payload, status_code=200)
+
+
+async def _handle_empty_query(
+    state: AppState,
+    plugin_name: str,
+    extended: int | None,
+    title: str,
+    base_url: str,
+) -> Response:
+    """Handle search requests without a query parameter."""
+    if extended == 1:
+        plugin = state.plugins.get(plugin_name)
+        plugin_base = str(
+            getattr(plugin, "base_url", "") or ""
+        )
+        if not plugin_base:
+            rendered = render_rss_xml(
+                title=title,
+                items=[],
+                description="plugin has no base_url"
+                if not _is_prod(state)
+                else None,
+                scavengarr_base_url=base_url,
+            )
+            return _xml(rendered.payload, status_code=422)
+
+        return await _handle_extended_probe(
+            state, plugin_name, plugin_base, base_url
+        )
+
+    rendered = render_rss_xml(
+        title=title,
+        items=[],
+        description="Missing query parameter 'q'"
+        if not _is_prod(state)
+        else None,
+        scavengarr_base_url=base_url,
+    )
+    return _xml(rendered.payload, status_code=200)
+
+
+def _error_xml(
+    title: str,
+    description: str | None,
+    base_url: str,
+    status_code: int,
+) -> Response:
+    """Render an error RSS response."""
+    rendered = render_rss_xml(
+        title=title,
+        items=[],
+        description=description,
+        scavengarr_base_url=base_url,
+    )
+    return _xml(rendered.payload, status_code=status_code)
+
+
 @router.get("/api/v1/torznab/{plugin_name}")
 async def torznab_plugin_api(
     request: Request,
@@ -110,167 +261,69 @@ async def torznab_plugin_api(
     t: str = Query(..., description="Torznab action: caps|search"),
     q: str | None = Query(None, description="Search query"),
     cat: str = Query("", description="Category filter"),
-    extended: int | None = Query(None, description="Prowlarr extended search flag"),
+    extended: int | None = Query(
+        None, description="Prowlarr extended search flag"
+    ),
 ) -> Response:
     state = cast(AppState, request.app.state)
+    title = f"{state.config.app_name} ({plugin_name})"
+    base_url = str(request.base_url)
 
     try:
         if t == "caps":
-            caps_uc = TorznabCapsUseCase(
-                plugins=state.plugins,
-                app_name=state.config.app_name,
-                plugin_name=plugin_name,
-                server_version="0.1.0",
-            )
-            rendered = render_caps_xml(caps_uc.execute())
-            return _xml(rendered.payload, status_code=200)
+            return _handle_caps(state, plugin_name)
 
         if t != "search":
-            raise TorznabUnsupportedAction(f"Unsupported action t={t!r}")
+            raise TorznabUnsupportedAction(
+                f"Unsupported action t={t!r}"
+            )
 
-        # Prowlarr test mode: extended=1 without query -> reachability probe
         if not q:
-            if extended == 1:
-                plugin = state.plugins.get(plugin_name)
-                base_url = str(getattr(plugin, "base_url", "") or "")
-
-                if not base_url:
-                    rendered = render_rss_xml(
-                        title=f"{state.config.app_name} ({plugin_name})",
-                        items=[],
-                        description="plugin has no base_url"
-                        if not _is_prod(state)
-                        else None,
-                        scavengarr_base_url=str(request.base_url),
-                    )
-                    return _xml(rendered.payload, status_code=422)
-
-                (
-                    reachable,
-                    status_code,
-                    error,
-                    _checked_url,
-                ) = await _lightweight_http_probe(
-                    state.http_client, base_url=base_url, timeout_seconds=5.0
-                )
-
-                if reachable:
-                    test_item = TorznabItem(
-                        title=f"{state.config.app_name} ({plugin_name}) - reachable",
-                        download_url=_checked_url,
-                        size="0 B",
-                        seeders=0,
-                        peers=0,
-                        category=2000,
-                        download_volume_factor=0.0,
-                        upload_volume_factor=0.0,
-                    )
-                    rendered = render_rss_xml(
-                        title=f"{state.config.app_name} ({plugin_name})",
-                        items=[test_item],
-                        description=None,
-                        scavengarr_base_url=str(request.base_url),
-                    )
-                    return _xml(rendered.payload, status_code=200)
-
-                rendered = render_rss_xml(
-                    title=f"{state.config.app_name} ({plugin_name})",
-                    items=[],
-                    description=(error or "indexer not reachable")
-                    if not _is_prod(state)
-                    else None,
-                    scavengarr_base_url=str(request.base_url),
-                )
-                return _xml(rendered.payload, status_code=503)
-
-            rendered = render_rss_xml(
-                title=f"{state.config.app_name} ({plugin_name})",
-                items=[],
-                description="Missing query parameter 'q'"
-                if not _is_prod(state)
-                else None,
-                scavengarr_base_url=str(request.base_url),
+            return await _handle_empty_query(
+                state, plugin_name, extended, title, base_url
             )
-            return _xml(rendered.payload, status_code=200)
 
-        search_uc = TorznabSearchUseCase(
-            plugins=state.plugins,
-            engine=state.search_engine,
-            crawljob_factory=state.crawljob_factory,
-            crawljob_repo=state.crawljob_repo,
+        return await _handle_search(
+            state, plugin_name, q, cat, base_url
         )
-        category = int(cat.split(",")[0]) if cat else None
-        items = await search_uc.execute(
-            TorznabQuery(
-                action="search",
-                query=q,
-                plugin_name=plugin_name,
-                category=category,
-            )
-        )
-        rendered = render_rss_xml(
-            title=f"{state.config.app_name} ({plugin_name})",
-            items=items,
-            scavengarr_base_url=str(request.base_url),
-        )
-        return _xml(rendered.payload, status_code=200)
 
     except TorznabBadRequest as e:
-        rendered = render_rss_xml(
-            title=f"{state.config.app_name} ({plugin_name})",
-            items=[],
-            description=str(e) if not _is_prod(state) else None,
-            scavengarr_base_url=str(request.base_url),
-        )
-        return _xml(rendered.payload, status_code=400)
+        desc = str(e) if not _is_prod(state) else None
+        return _error_xml(title, desc, base_url, 400)
 
     except TorznabPluginNotFound:
-        rendered = render_rss_xml(
-            title=f"{state.config.app_name} ({plugin_name})",
-            items=[],
-            description="plugin not found" if not _is_prod(state) else None,
-            scavengarr_base_url=str(request.base_url),
-        )
-        return _xml(rendered.payload, status_code=404)
+        desc = "plugin not found" if not _is_prod(state) else None
+        return _error_xml(title, desc, base_url, 404)
 
     except TorznabNoPluginsAvailable:
-        rendered = render_rss_xml(
-            title=f"{state.config.app_name} ({plugin_name})",
-            items=[],
-            description="no plugins available" if not _is_prod(state) else None,
-            scavengarr_base_url=str(request.base_url),
+        desc = (
+            "no plugins available"
+            if not _is_prod(state)
+            else None
         )
-        return _xml(rendered.payload, status_code=503)
+        return _error_xml(title, desc, base_url, 503)
 
-    except (TorznabUnsupportedAction, TorznabUnsupportedPlugin) as e:
-        rendered = render_rss_xml(
-            title=f"{state.config.app_name} ({plugin_name})",
-            items=[],
-            description=str(e) if not _is_prod(state) else None,
-            scavengarr_base_url=str(request.base_url),
-        )
-        return _xml(rendered.payload, status_code=422)
+    except (
+        TorznabUnsupportedAction,
+        TorznabUnsupportedPlugin,
+    ) as e:
+        desc = str(e) if not _is_prod(state) else None
+        return _error_xml(title, desc, base_url, 422)
 
     except TorznabExternalError as e:
         status = 200 if _is_prod(state) else 502
-        rendered = render_rss_xml(
-            title=f"{state.config.app_name} ({plugin_name})",
-            items=[],
-            description=str(e) if not _is_prod(state) else None,
-            scavengarr_base_url=str(request.base_url),
-        )
-        return _xml(rendered.payload, status_code=status)
+        desc = str(e) if not _is_prod(state) else None
+        return _error_xml(title, desc, base_url, status)
 
     except Exception:
         status = 200 if _is_prod(state) else 500
-        rendered = render_rss_xml(
-            title=f"{state.config.app_name} ({plugin_name})",
-            items=[],
-            description="internal error" if not _is_prod(state) else None,
-            scavengarr_base_url=str(request.base_url),
+        desc = "internal error" if not _is_prod(state) else None
+        log.exception(
+            "torznab_unhandled_error",
+            plugin_name=plugin_name,
+            t=t,
         )
-        log.exception("torznab_unhandled_error", plugin_name=plugin_name, t=t)
-        return _xml(rendered.payload, status_code=status)
+        return _error_xml(title, desc, base_url, status)
 
 
 @router.get("/api/v1/torznab/{plugin_name}/health")

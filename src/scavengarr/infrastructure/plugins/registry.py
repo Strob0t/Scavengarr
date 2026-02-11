@@ -97,7 +97,8 @@ class PluginRegistry:
             if name is None:
                 continue
             if name in names:
-                # list_names should not crash the app; duplicates are surfaced on load_all()
+                # list_names should not crash the app;
+                # duplicates are surfaced on load_all()
                 continue
             names.add(name)
             out.append(name)
@@ -179,8 +180,8 @@ class PluginRegistry:
             loaded_names.add(plugin.name)
 
     def _load_yaml(self, ref: _PluginRef) -> YamlPluginDefinition:
-        # If already cached by name, return it.
-        # But name is only known after parsing; so we parse once and cache by plugin.name.
+        # If already cached by name, return it. But name is
+        # only known after parsing; parse once, cache by name.
         plugin = load_yaml_plugin(ref.path)
         cached = self._yaml_cache.get(plugin.name)
         if cached is not None:
@@ -203,7 +204,8 @@ class PluginRegistry:
         Peek plugin name without full validation where possible.
 
         - YAML: yaml.safe_load + read top-level 'name'
-        - Python: import module and read plugin.name (this executes code; acceptable outside discover())
+        - Python: import module and read plugin.name
+          (this executes code; acceptable outside discover())
         """
         if ref.plugin_type == "yaml":
             try:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 
@@ -12,13 +12,13 @@ SEMVER_RE = r"^\d+\.\d+\.\d+$"
 
 
 class HttpOverrides(BaseModel):
-    timeout_seconds: Optional[float] = None
-    follow_redirects: Optional[bool] = None
-    user_agent: Optional[str] = None
+    timeout_seconds: float | None = None
+    follow_redirects: bool | None = None
+    user_agent: str | None = None
 
     @field_validator("timeout_seconds")
     @classmethod
-    def _validate_timeout(cls, v: Optional[float]) -> Optional[float]:
+    def _validate_timeout(cls, v: float | None) -> float | None:
         if v is None:
             return None
         if v <= 0:
@@ -33,7 +33,7 @@ class PaginationConfig(BaseModel):
     """Pagination configuration for list stages"""
 
     enabled: bool = False
-    selector: Optional[str] = None
+    selector: str | None = None
     max_pages: int = 1
 
     @model_validator(mode="after")
@@ -53,28 +53,38 @@ class NestedSelector(BaseModel):
     container: str = Field(..., description="Main container selector")
 
     # Optional grouping container
-    item_group: Optional[str] = Field(
+    item_group: str | None = Field(
         default=None,
-        description="Optional intermediate container. If set, all 'items' within each group are merged into one result.",
+        description=(
+            "Optional intermediate container. If set, all"
+            " 'items' within each group are merged into"
+            " one result."
+        ),
     )
 
     items: str = Field(
         ..., description="Item selector (relative to container or item_group)"
     )
 
-    fields: Dict[str, str] = Field(
+    fields: dict[str, str] = Field(
         default_factory=dict, description="Field name to CSS selector mapping"
     )
 
-    field_attributes: Dict[str, List[str]] = Field(
+    field_attributes: dict[str, list[str]] = Field(
         default_factory=dict,
-        description="For link/url fields: list of HTML attributes to try (in order)",
+        description=(
+            "For link/url fields: list of HTML attributes"
+            " to try (in order)"
+        ),
     )
 
     # Fields that may contain multiple values per item
-    multi_value_fields: Optional[List[str]] = Field(
+    multi_value_fields: list[str] | None = Field(
         default=None,
-        description="Fields that should collect multiple values as list instead of overwriting",
+        description=(
+            "Fields that should collect multiple values"
+            " as list instead of overwriting"
+        ),
     )
 
     @model_validator(mode="after")
@@ -106,28 +116,28 @@ class StageSelectors(BaseModel):
     """
 
     # For list stages: extract links to next stage
-    link: Optional[str] = None
+    link: str | None = None
 
     # Simple extractors
-    title: Optional[str] = None
-    description: Optional[str] = None
-    release_name: Optional[str] = None
+    title: str | None = None
+    description: str | None = None
+    release_name: str | None = None
 
     # Torrent-specific (from original schema)
-    download_link: Optional[str] = None
-    seeders: Optional[str] = None
-    leechers: Optional[str] = None
-    size: Optional[str] = None
-    published_date: Optional[str] = None
+    download_link: str | None = None
+    seeders: str | None = None
+    leechers: str | None = None
+    size: str | None = None
+    published_date: str | None = None
 
     # Nested extractors
-    download_links: Optional[NestedSelector] = None
+    download_links: NestedSelector | None = None
 
     # Row-based extraction (iterate over multiple result rows)
-    rows: Optional[str] = None
+    rows: str | None = None
 
     # Custom fields (extensible)
-    custom: Dict[str, str] = Field(default_factory=dict)
+    custom: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _validate_selectors(self) -> "StageSelectors":
@@ -171,24 +181,24 @@ class ScrapingStage(BaseModel):
     type: Literal["list", "detail"]
 
     # URL definition
-    url: Optional[str] = None
-    url_pattern: Optional[str] = None  # e.g., "/search/{category}/{page}"
+    url: str | None = None
+    url_pattern: str | None = None  # e.g., "/search/{category}/{page}"
 
     # Selectors for this stage
     selectors: StageSelectors
 
     # Navigation
-    next_stage: Optional[str] = None
-    pagination: Optional[PaginationConfig] = None
+    next_stage: str | None = None
+    pagination: PaginationConfig | None = None
 
     # Conditions for processing (optional)
-    conditions: Optional[Dict[str, Any]] = None
+    conditions: dict[str, Any] | None = None
 
     # Query transformation (e.g., "slugify")
-    query_transform: Optional[str] = None
+    query_transform: str | None = None
 
     # Field attribute extraction at stage level
-    field_attributes: Dict[str, List[str]] = Field(default_factory=dict)
+    field_attributes: dict[str, list[str]] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _validate_stage(self) -> "ScrapingStage":
@@ -212,9 +222,9 @@ class ScrapySelectors(BaseModel):
     row: str
     title: str
     download_link: str
-    seeders: Optional[str] = None
-    leechers: Optional[str] = None
-    size: Optional[str] = None
+    seeders: str | None = None
+    leechers: str | None = None
+    size: str | None = None
 
 
 class PlaywrightLocators(BaseModel):
@@ -223,8 +233,8 @@ class PlaywrightLocators(BaseModel):
     row: str
     title: str
     download_link: str
-    seeders: Optional[str] = None
-    leechers: Optional[str] = None
+    seeders: str | None = None
+    leechers: str | None = None
 
 
 # === Auth Config (unchanged) ===
@@ -233,16 +243,16 @@ class PlaywrightLocators(BaseModel):
 class AuthConfig(BaseModel):
     type: Literal["none", "basic", "form", "cookie"] = "none"
 
-    username: Optional[str] = None
-    password: Optional[str] = None
+    username: str | None = None
+    password: str | None = None
 
-    login_url: Optional[HttpUrl] = None
-    username_field: Optional[str] = None
-    password_field: Optional[str] = None
-    submit_selector: Optional[str] = None
+    login_url: HttpUrl | None = None
+    username_field: str | None = None
+    password_field: str | None = None
+    submit_selector: str | None = None
 
-    username_env: Optional[str] = None
-    password_env: Optional[str] = None
+    username_env: str | None = None
+    password_env: str | None = None
 
     @model_validator(mode="after")
     def _resolve_env_credentials(self) -> "AuthConfig":
@@ -257,35 +267,37 @@ class AuthConfig(BaseModel):
                 self.password = val
         return self
 
+    def _validate_basic_auth(self) -> None:
+        """Validate basic auth has username and password."""
+        if not self.username or not self.password:
+            raise ValueError(
+                "basic auth requires 'username' and 'password'"
+            )
+
+    def _validate_form_auth(self) -> None:
+        """Validate form auth has all required fields."""
+        required_fields: dict[str, object] = {
+            "login_url": self.login_url,
+            "username_field": self.username_field,
+            "password_field": self.password_field,
+            "submit_selector": self.submit_selector,
+            "username": self.username,
+            "password": self.password,
+        }
+        missing = [k for k, v in required_fields.items() if not v]
+        if missing:
+            raise ValueError(
+                f"form auth requires {', '.join(missing)}"
+            )
+
     @model_validator(mode="after")
     def _validate_auth_requirements(self) -> "AuthConfig":
         if self.type == "none":
             return self
-
         if self.type == "basic":
-            if not self.username or not self.password:
-                raise ValueError("basic auth requires 'username' and 'password'")
-            return self
-
-        if self.type == "form":
-            missing: list[str] = []
-            if not self.login_url:
-                missing.append("login_url")
-            if not self.username_field:
-                missing.append("username_field")
-            if not self.password_field:
-                missing.append("password_field")
-            if not self.submit_selector:
-                missing.append("submit_selector")
-            if not self.username:
-                missing.append("username")
-            if not self.password:
-                missing.append("password")
-
-            if missing:
-                raise ValueError(f"form auth requires {', '.join(missing)}")
-            return self
-
+            self._validate_basic_auth()
+        elif self.type == "form":
+            self._validate_form_auth()
         return self
 
 
@@ -296,53 +308,63 @@ class ScrapingConfig(BaseModel):
     mode: Literal["scrapy", "playwright"]
 
     # === Legacy Playwright ===
-    search_url_template: Optional[str] = None
-    wait_for_selector: Optional[str] = None
-    locators: Optional[PlaywrightLocators] = None
+    search_url_template: str | None = None
+    wait_for_selector: str | None = None
+    locators: PlaywrightLocators | None = None
 
     # === scrapy Pipeline ===
-    stages: Optional[List[ScrapingStage]] = None
-    start_stage: Optional[str] = None  # Which stage to begin with
+    stages: list[ScrapingStage] | None = None
+    start_stage: str | None = None  # Which stage to begin with
     max_depth: int = 5  # Recursion limit
     delay_seconds: float = 1.5  # Rate limiting
+
+    def _validate_scrapy_stages(self) -> None:
+        """Validate scrapy stage references and constraints."""
+        if not self.stages or len(self.stages) == 0:
+            raise ValueError(
+                "scrapy mode requires at least one stage"
+            )
+        stage_names = {s.name for s in self.stages}
+        for stage in self.stages:
+            if (
+                stage.next_stage
+                and stage.next_stage not in stage_names
+            ):
+                raise ValueError(
+                    f"stage '{stage.name}' references unknown"
+                    f" next_stage '{stage.next_stage}'"
+                )
+        if self.start_stage and self.start_stage not in stage_names:
+            raise ValueError(
+                f"start_stage '{self.start_stage}'"
+                " not found in stages"
+            )
+        if self.delay_seconds < 0:
+            raise ValueError("delay_seconds must be >= 0")
+
+    def _validate_playwright_fields(self) -> None:
+        """Validate playwright mode has all required fields."""
+        if not self.search_url_template:
+            raise ValueError(
+                "playwright mode requires"
+                " 'search_url_template' field"
+            )
+        if not self.wait_for_selector:
+            raise ValueError(
+                "playwright mode requires"
+                " 'wait_for_selector' field"
+            )
+        if self.locators is None:
+            raise ValueError(
+                "playwright mode requires 'locators' field"
+            )
 
     @model_validator(mode="after")
     def _validate_mode_requirements(self) -> "ScrapingConfig":
         if self.mode == "scrapy":
-            if not self.stages:
-                raise ValueError("scrapy mode requires 'stages' list")
-            if len(self.stages) == 0:
-                raise ValueError("scrapy mode requires at least one stage")
-
-            # Validate stage references
-            stage_names = {s.name for s in self.stages}
-            for stage in self.stages:
-                if stage.next_stage and stage.next_stage not in stage_names:
-                    raise ValueError(
-                        f"stage '{stage.name}' references unknown next_stage '{stage.next_stage}'"
-                    )
-
-            # Validate start_stage
-            if self.start_stage and self.start_stage not in stage_names:
-                raise ValueError(
-                    f"start_stage '{self.start_stage}' not found in stages"
-                )
-
-            # Validate delay
-            if self.delay_seconds < 0:
-                raise ValueError("delay_seconds must be >= 0")
-
-            return self
-
-        if self.mode == "playwright":
-            if not self.search_url_template:
-                raise ValueError("playwright mode requires 'search_url_template' field")
-            if not self.wait_for_selector:
-                raise ValueError("playwright mode requires 'wait_for_selector' field")
-            if self.locators is None:
-                raise ValueError("playwright mode requires 'locators' field")
-            return self
-
+            self._validate_scrapy_stages()
+        elif self.mode == "playwright":
+            self._validate_playwright_fields()
         return self
 
 
@@ -350,22 +372,22 @@ class ScrapingConfig(BaseModel):
 
 
 class YamlPluginDefinitionPydantic(BaseModel):
-    """
-    Pydantic validation model for YAML plugins.
+    """Pydantic validation model for YAML plugins.
 
-    After validation, this is converted to domain.plugins.plugin_schema.YamlPluginDefinition.
+    After validation, this is converted to
+    domain.plugins.plugin_schema.YamlPluginDefinition.
     """
 
     name: str = Field(pattern=PLUGIN_NAME_RE)
     version: str = Field(pattern=SEMVER_RE)
-    base_url: List[HttpUrl]
+    base_url: list[HttpUrl]
 
     scraping: ScrapingConfig
-    category_map: Optional[Dict[int, str]] = None
-    auth: Optional[AuthConfig] = None
+    category_map: dict[int, str] | None = None
+    auth: AuthConfig | None = None
 
     # Optional per-plugin overrides for HTTP behaviour
-    http: Optional[HttpOverrides] = None
+    http: HttpOverrides | None = None
 
     @field_validator("base_url", mode="before")
     @classmethod

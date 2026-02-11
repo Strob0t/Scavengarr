@@ -170,7 +170,10 @@ class AppConfig(BaseModel):
             "log_format",
             AliasPath("logging", "format"),
         ),
-        description="Log renderer format (console/json). If unset, derived from environment.",
+        description=(
+            "Log renderer format (console/json)."
+            " If unset, derived from environment."
+        ),
     )
 
     # Cache (disk-only placeholder) (YAML section: cache.*)
@@ -257,7 +260,8 @@ class EnvOverrides(BaseSettings):
 
     Intended usage:
     - load.py creates EnvOverrides() to read SCAVENGARR_* variables,
-      converts to dict of set values, merges into YAML/defaults, then validates AppConfig.
+      converts to dict of set values, merges into YAML/defaults,
+      then validates AppConfig.
 
     Supported env var examples (flat, explicit):
     - SCAVENGARR_PLUGIN_DIR

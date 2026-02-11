@@ -70,7 +70,8 @@ class DiskcacheAdapter:
         """Read from cache (sync disk I/O -> to_thread)."""
         if self._cache is None:
             raise RuntimeError(
-                "Cache not initialized. Use 'async with cache:' or await cache.__aenter__()"
+                "Cache not initialized. Use 'async with cache:'"
+                " or await cache.__aenter__()"
             )
 
         async with self._semaphore:
