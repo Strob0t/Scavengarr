@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 from types import ModuleType
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -53,9 +53,13 @@ _SEARCH_HTML = """\
   </tr>
   <tr>
     <td>Film</td>
-    <td><span class="otherLittles"><a href="/film/6354-batman.html">Batman</a></span></td>
+    <td><span class="otherLittles">
+      <a href="/film/6354-batman.html">Batman</a>
+    </span></td>
     <td><img src="/images/languages/1.gif" alt="Deutsch"></td>
-    <td><span class="otherLittles"><a href="/jahr/1989.html">1989</a></span></td>
+    <td><span class="otherLittles">
+      <a href="/jahr/1989.html">1989</a>
+    </span></td>
     <td>
       <span class="otherLittles"><a href="/genre/action.html">Action</a></span>,
       <span class="otherLittles"><a href="/genre/abenteuer.html">Abenteuer</a></span>
@@ -64,9 +68,13 @@ _SEARCH_HTML = """\
   </tr>
   <tr bgcolor="#DBDBEA">
     <td>Serie</td>
-    <td><span class="otherLittles"><a href="/serie/123-test-serie.html">Test Serie</a></span></td>
+    <td><span class="otherLittles">
+      <a href="/serie/123-test-serie.html">Test Serie</a>
+    </span></td>
     <td><img src="/images/languages/1.gif" alt="Deutsch"></td>
-    <td><span class="otherLittles"><a href="/jahr/2022.html">2022</a></span></td>
+    <td><span class="otherLittles">
+      <a href="/jahr/2022.html">2022</a>
+    </span></td>
     <td>
       <span class="otherLittles"><a href="/genre/drama.html">Drama</a></span>
     </td>
@@ -91,13 +99,17 @@ _DETAIL_HTML = """\
   <p></p>
   <table>
     <tr>
-      <th><a href="/film/6354-batman1989germandl720p/streams-12345.html">\u25b6 Batman.1989.German.DL.720p.BluRay.x264</a></th>
+      <th><a href="/film/6354-batman/streams-12345.html">
+        \u25b6 Batman.1989.German.DL.720p.BluRay.x264
+      </a></th>
     </tr>
     <tr>
       <td>
         Verfuegbare Streams
-        <a href="/film/6354-batman1989germandl720p/streams-12345.html"><img alt="streamtape.com"></a>
-        <a href="/film/6354-batman1989germandl720p/streams-12345.html"><img alt="voe.sx"></a>
+        <a href="/film/6354-batman/streams-12345.html">
+          <img alt="streamtape.com"></a>
+        <a href="/film/6354-batman/streams-12345.html">
+          <img alt="voe.sx"></a>
       </td>
       <td></td>
     </tr>
@@ -119,7 +131,9 @@ _SERIE_DETAIL_HTML = """\
   <p></p>
   <table>
     <tr>
-      <th><a href="/serie/123-test-serie/streams-55555.html">\u25b6 Test.Serie.S01E01.German.DL.720p.WEB.x264</a></th>
+      <th><a href="/serie/123-test-serie/streams-55555.html">
+        \u25b6 Test.Serie.S01E01.German.DL.720p.WEB.x264
+      </a></th>
     </tr>
     <tr>
       <td>
@@ -138,7 +152,9 @@ _STREAMS_HTML = """\
 <div id="content">
   <table>
     <tr>
-      <th><a href="/film/6354-batman1989germandl720p.html">\u25bc Batman.1989.German.DL.720p.BluRay.x264</a></th>
+      <th><a href="/film/6354-batman.html">
+        \u25bc Batman.1989.German.DL.720p.BluRay.x264
+      </a></th>
     </tr>
     <tr>
       <td>
@@ -148,14 +164,18 @@ _STREAMS_HTML = """\
             <td>Mirror</td>
           </tr>
           <tr>
-            <td><img alt="streamtape.com"><strong>streamtape.com</strong></td>
+            <td><img alt="streamtape.com">
+              <strong>streamtape.com</strong></td>
             <td></td>
-            <td><a href="/film/12345-batman/stream/99001-streamtape.com.html"><span>1</span></a></td>
+            <td><a href="/film/12345/stream/99001-st.html">
+              <span>1</span></a></td>
           </tr>
           <tr>
-            <td><img alt="voe.sx"><strong>voe.sx</strong></td>
+            <td><img alt="voe.sx">
+              <strong>voe.sx</strong></td>
             <td></td>
-            <td><a href="/film/12345-batman/stream/99002-voe.sx.html"><span>1</span></a></td>
+            <td><a href="/film/12345/stream/99002-voe.html">
+              <span>1</span></a></td>
           </tr>
           <tr>
             <td><img alt="usenet.nl"><strong>usenet.nl</strong></td>
@@ -175,7 +195,9 @@ _SERIE_STREAMS_HTML = """\
 <div id="content">
   <table>
     <tr>
-      <th><a href="/serie/123-test-serie.html">\u25bc Test.Serie.S01E01.German.DL.720p.WEB.x264</a></th>
+      <th><a href="/serie/123-test-serie.html">
+        \u25bc Test.Serie.S01E01.German.DL.720p.WEB.x264
+      </a></th>
     </tr>
     <tr>
       <td>
@@ -185,9 +207,11 @@ _SERIE_STREAMS_HTML = """\
             <td>Mirror</td>
           </tr>
           <tr>
-            <td><img alt="voe.sx"><strong>voe.sx</strong></td>
+            <td><img alt="voe.sx">
+              <strong>voe.sx</strong></td>
             <td></td>
-            <td><a href="/serie/55555-test-serie/stream/88001-voe.sx.html"><span>1</span></a></td>
+            <td><a href="/serie/55555/stream/88001-voe.html">
+              <span>1</span></a></td>
           </tr>
         </table>
       </td>
@@ -358,7 +382,9 @@ class TestStreamworldPlugin:
         plug = _make_plugin()
         mock_client = AsyncMock()
 
-        empty_html = "<html><body><table><tr><th>Hinweis</th></tr></table></body></html>"
+        empty_html = (
+            "<html><body><table><tr><th>Hinweis</th></tr></table></body></html>"
+        )
         mock_client.post = AsyncMock(return_value=_mock_response(empty_html))
 
         plug._client = mock_client
@@ -370,7 +396,9 @@ class TestStreamworldPlugin:
     async def test_search_handles_http_error(self) -> None:
         plug = _make_plugin()
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(side_effect=httpx.ConnectError("connection failed"))
+        mock_client.post = AsyncMock(
+            side_effect=httpx.ConnectError("connection failed")
+        )
 
         plug._client = mock_client
         results = await plug.search("test")
