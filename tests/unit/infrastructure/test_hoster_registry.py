@@ -155,7 +155,8 @@ class TestHosterResolverRegistry:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_explicit_hoster_overrides_url_extraction(self) -> None:
+    async def test_hoster_hint_used_when_url_extraction_fails(self) -> None:
+        """When URL domain extraction returns empty, the hoster hint is used."""
         resolver = MagicMock()
         resolver.name = "custom"
         resolver.resolve = AsyncMock(
@@ -163,7 +164,110 @@ class TestHosterResolverRegistry:
         )
 
         registry = HosterResolverRegistry(resolvers=[resolver])
-        result = await registry.resolve("https://voe.sx/e/abc", hoster="custom")
+        # Malformed URL yields empty domain extraction, so "custom" hint kicks in
+        result = await registry.resolve("not-a-valid-url", hoster="custom")
 
         assert result is not None
         resolver.resolve.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_url_domain_takes_priority_over_hoster_hint(self) -> None:
+        """URL domain is authoritative — resolver is chosen by domain, not hint."""
+        voe_resolver = MagicMock()
+        voe_resolver.name = "voe"
+        voe_resolver.resolve = AsyncMock(
+            return_value=ResolvedStream(video_url="https://cdn.voe.sx/video.mp4")
+        )
+        custom_resolver = MagicMock()
+        custom_resolver.name = "custom"
+        custom_resolver.resolve = AsyncMock(return_value=None)
+
+        registry = HosterResolverRegistry(resolvers=[voe_resolver, custom_resolver])
+        # URL domain is "voe", even though hoster hint says "custom"
+        result = await registry.resolve("https://voe.sx/e/abc", hoster="custom")
+
+        assert result is not None
+        voe_resolver.resolve.assert_awaited_once()
+        custom_resolver.resolve.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_follows_redirect_to_resolve(self) -> None:
+        """When URL domain has no resolver, follow redirects and dispatch."""
+        voe_resolver = MagicMock()
+        voe_resolver.name = "voe"
+        voe_resolver.resolve = AsyncMock(
+            return_value=ResolvedStream(video_url="https://cdn.voe.sx/video.mp4")
+        )
+
+        mock_response = MagicMock()
+        mock_response.url = "https://voe.sx/e/abc123"
+
+        http_client = AsyncMock(spec=httpx.AsyncClient)
+        http_client.head = AsyncMock(return_value=mock_response)
+
+        registry = HosterResolverRegistry(
+            resolvers=[voe_resolver], http_client=http_client
+        )
+        # cine.to/out/123 redirects to voe.sx/e/abc123
+        result = await registry.resolve("https://cine.to/out/123")
+
+        assert result is not None
+        assert result.video_url == "https://cdn.voe.sx/video.mp4"
+        voe_resolver.resolve.assert_awaited_once_with("https://voe.sx/e/abc123")
+
+    @pytest.mark.asyncio
+    async def test_redirect_to_unknown_hoster_falls_through_to_probe(self) -> None:
+        """Redirect to unknown domain falls through to content-type probing."""
+        mock_redirect_resp = MagicMock()
+        mock_redirect_resp.url = "https://unknown-hoster.com/v/abc"
+
+        mock_probe_resp = MagicMock()
+        mock_probe_resp.headers = {"content-type": "video/mp4"}
+        mock_probe_resp.url = "https://unknown-hoster.com/v/abc"
+
+        http_client = AsyncMock(spec=httpx.AsyncClient)
+        http_client.head = AsyncMock(side_effect=[mock_redirect_resp, mock_probe_resp])
+
+        registry = HosterResolverRegistry(http_client=http_client)
+        result = await registry.resolve("https://redirect.example/out/123")
+
+        assert result is not None
+        assert result.video_url == "https://unknown-hoster.com/v/abc"
+
+    @pytest.mark.asyncio
+    async def test_redirect_failure_falls_through_to_probe(self) -> None:
+        """When redirect following fails, fall through to probe."""
+        mock_probe_resp = MagicMock()
+        mock_probe_resp.headers = {"content-type": "text/html"}
+        mock_probe_resp.url = "https://broken.example/out/123"
+
+        http_client = AsyncMock(spec=httpx.AsyncClient)
+        # First call (redirect) fails, second call (probe) succeeds
+        http_client.head = AsyncMock(
+            side_effect=[
+                httpx.ConnectError("redirect failed"),
+                mock_probe_resp,
+            ]
+        )
+
+        registry = HosterResolverRegistry(http_client=http_client)
+        result = await registry.resolve("https://broken.example/out/123")
+
+        # Probe returns None for text/html
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_no_redirect_when_url_stays_same(self) -> None:
+        """When redirect returns same URL, skip redirect step."""
+        mock_response = MagicMock()
+        mock_response.url = "https://noredirect.example/embed"
+        mock_response.headers = {"content-type": "text/html"}
+
+        http_client = AsyncMock(spec=httpx.AsyncClient)
+        http_client.head = AsyncMock(return_value=mock_response)
+
+        registry = HosterResolverRegistry(http_client=http_client)
+        result = await registry.resolve("https://noredirect.example/embed")
+
+        # No redirect, probe returns None for text/html
+        assert result is None

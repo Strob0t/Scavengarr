@@ -59,11 +59,13 @@ class HosterResolverRegistry:
     async def resolve(self, url: str, hoster: str = "") -> ResolvedStream | None:
         """Resolve a hoster embed URL to a playable video URL.
 
-        1. Try the specific hoster resolver if registered.
-        2. Fall back to content-type probing (HEAD request).
-        3. Return None if resolution fails.
+        1. Try the specific hoster resolver (URL domain takes priority over hint).
+        2. If URL domain has no resolver, follow HTTP redirects and retry.
+        3. Fall back to content-type probing (HEAD request).
+        4. Return None if resolution fails.
         """
-        hoster_name = hoster or _extract_hoster_from_url(url)
+        # URL domain is authoritative; fall back to plugin-provided hint
+        hoster_name = _extract_hoster_from_url(url) or hoster
 
         # Try specific resolver
         resolver = self._resolvers.get(hoster_name)
@@ -87,8 +89,64 @@ class HosterResolverRegistry:
                 log.exception("hoster_resolve_error", hoster=hoster_name, url=url)
             return None
 
+        # No resolver for this domain — try following redirects
+        final_url = await self._follow_redirects(url)
+        if final_url:
+            redirected_hoster = _extract_hoster_from_url(final_url)
+            resolver = self._resolvers.get(redirected_hoster)
+            if resolver is not None:
+                log.info(
+                    "hoster_resolve_after_redirect",
+                    original=hoster_name,
+                    redirected=redirected_hoster,
+                    url=final_url,
+                )
+                try:
+                    result = await resolver.resolve(final_url)
+                    if result is not None:
+                        log.info(
+                            "hoster_resolve_success",
+                            hoster=redirected_hoster,
+                            is_hls=result.is_hls,
+                        )
+                        return result
+                    log.warning(
+                        "hoster_resolve_failed",
+                        hoster=redirected_hoster,
+                        url=final_url,
+                    )
+                except Exception:
+                    log.exception(
+                        "hoster_resolve_error",
+                        hoster=redirected_hoster,
+                        url=final_url,
+                    )
+                return None
+
         # Fallback: content-type probing
         return await self._probe_content_type(url, hoster_name)
+
+    async def _follow_redirects(self, url: str) -> str | None:
+        """Follow HTTP redirects and return final URL if domain changed.
+
+        Used for redirect-based URLs like cine.to/out/{id} that redirect
+        to actual hoster embed URLs (e.g., voe.sx/e/abc).
+        """
+        if self._http_client is None:
+            return None
+        try:
+            resp = await self._http_client.head(url, follow_redirects=True, timeout=10)
+            final_url = str(resp.url)
+            if final_url != url:
+                log.debug(
+                    "hoster_redirect_followed",
+                    original=url,
+                    final=final_url,
+                )
+                return final_url
+        except Exception:  # noqa: BLE001
+            log.debug("hoster_redirect_follow_failed", url=url)
+        return None
 
     async def _probe_content_type(
         self,
