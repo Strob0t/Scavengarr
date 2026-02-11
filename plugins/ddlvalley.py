@@ -89,9 +89,7 @@ class _SearchResultParser(HTMLParser):
         self._current_href = ""
         self._current_text = ""
 
-    def handle_starttag(
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == "h2":
             self._in_h2 = True
         elif tag == "a" and self._in_h2:
@@ -140,9 +138,7 @@ class _DetailPageParser(HTMLParser):
         self._strong_text = ""
         self._seen_urls: set[str] = set()
 
-    def handle_starttag(
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attr_dict = dict(attrs)
 
         if tag == "div":
@@ -163,9 +159,7 @@ class _DetailPageParser(HTMLParser):
             if href and href.startswith("http"):
                 host = (urlparse(href).hostname or "").replace("www.", "")
                 if _is_hoster_domain(host):
-                    hoster = (
-                        self._current_hoster or _hoster_from_domain(host)
-                    )
+                    hoster = self._current_hoster or _hoster_from_domain(host)
                     if href not in self._seen_urls:
                         self._seen_urls.add(href)
                         self.links.append({"hoster": hoster, "link": href})
@@ -196,9 +190,7 @@ class _TitleParser(HTMLParser):
         self.title: str | None = None
         self._in_title = False
 
-    def handle_starttag(
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == "title":
             self._in_title = True
 
@@ -269,9 +261,7 @@ class DDLValleyPlugin:
             await self._wait_for_cloudflare(page)
 
             try:
-                await page.wait_for_load_state(
-                    "networkidle", timeout=10_000
-                )
+                await page.wait_for_load_state("networkidle", timeout=10_000)
             except Exception:  # noqa: BLE001
                 pass
 
@@ -290,9 +280,7 @@ class DDLValleyPlugin:
             if not page.is_closed():
                 await page.close()
 
-    async def _scrape_detail(
-        self, post: dict[str, str]
-    ) -> SearchResult | None:
+    async def _scrape_detail(self, post: dict[str, str]) -> SearchResult | None:
         """Scrape a detail page for download links."""
         assert self._context is not None  # noqa: S101
 
@@ -303,9 +291,7 @@ class DDLValleyPlugin:
 
             html = await page.content()
         except Exception:  # noqa: BLE001
-            log.warning(
-                "ddlvalley_detail_fetch_failed", url=post["url"]
-            )
+            log.warning("ddlvalley_detail_fetch_failed", url=post["url"])
             return None
         finally:
             if not page.is_closed():
@@ -342,9 +328,7 @@ class DDLValleyPlugin:
         """Search ddlvalley.me and return results with download links."""
         await self._ensure_browser()
 
-        category_path = (
-            _CATEGORY_PATH_MAP.get(category, "") if category else ""
-        )
+        category_path = _CATEGORY_PATH_MAP.get(category, "") if category else ""
         posts = await self._search_posts(query, category_path)
 
         if not posts:

@@ -7,15 +7,11 @@ from pathlib import Path
 from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock
 
-_PLUGIN_PATH = (
-    Path(__file__).resolve().parents[3] / "plugins" / "scnsrc.py"
-)
+_PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "scnsrc.py"
 
 
 def _load_module() -> ModuleType:
-    spec = importlib.util.spec_from_file_location(
-        "scnsrc_plugin", str(_PLUGIN_PATH)
-    )
+    spec = importlib.util.spec_from_file_location("scnsrc_plugin", str(_PLUGIN_PATH))
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -61,9 +57,7 @@ def _make_mock_browser(
     context: AsyncMock | None = None,
 ) -> AsyncMock:
     browser = AsyncMock()
-    browser.new_context = AsyncMock(
-        return_value=context or _make_mock_context()
-    )
+    browser.new_context = AsyncMock(return_value=context or _make_mock_context())
     browser.close = AsyncMock()
     return browser
 
@@ -73,9 +67,7 @@ def _make_mock_playwright(
 ) -> AsyncMock:
     pw = AsyncMock()
     pw.chromium = MagicMock()
-    pw.chromium.launch = AsyncMock(
-        return_value=browser or _make_mock_browser()
-    )
+    pw.chromium.launch = AsyncMock(return_value=browser or _make_mock_browser())
     pw.stop = AsyncMock()
     return pw
 
@@ -177,13 +169,9 @@ class TestPostParser:
 
         assert len(parser.results) == 1
         post = parser.results[0]
-        assert post["title"] == (
-            "Some.Release.S01E01.1080p.WEB-DL.H264-GROUP"
-        )
+        assert post["title"] == ("Some.Release.S01E01.1080p.WEB-DL.H264-GROUP")
         assert post["category"] == "TV"
-        assert post["url"] == (
-            "https://www.scnsrc.me/some-release-1080p-web/"
-        )
+        assert post["url"] == ("https://www.scnsrc.me/some-release-1080p-web/")
 
     def test_download_links_extracted(self) -> None:
         parser = _PostParser("https://www.scnsrc.me")
@@ -201,9 +189,7 @@ class TestPostParser:
         parser.feed(_MULTI_POST_HTML)
 
         assert len(parser.results) == 2
-        assert parser.results[0]["title"] == (
-            "Movie.2025.1080p.BluRay.x264-GRP"
-        )
+        assert parser.results[0]["title"] == ("Movie.2025.1080p.BluRay.x264-GRP")
         assert parser.results[0]["category"] == "Movies"
         assert parser.results[1]["title"] == "Game.2025.ISO-CODEX"
         assert parser.results[1]["category"] == "Games"
@@ -229,9 +215,7 @@ class TestPostParser:
         parser.feed(html)
 
         assert len(parser.results) == 1
-        assert parser.results[0]["title"] == (
-            "Full.Release.Name.1080p.WEB-H264"
-        )
+        assert parser.results[0]["title"] == ("Full.Release.Name.1080p.WEB-H264")
 
     def test_post_without_download_links_still_emitted(self) -> None:
         html = """
@@ -311,13 +295,8 @@ class TestPostParser:
 
 class TestCleanWaybackUrl:
     def test_strips_wayback_prefix(self) -> None:
-        url = (
-            "https://web.archive.org/web/20250308153230/"
-            "https://www.scnsrc.me/test/"
-        )
-        assert _clean_wayback_url(url) == (
-            "https://www.scnsrc.me/test/"
-        )
+        url = "https://web.archive.org/web/20250308153230/https://www.scnsrc.me/test/"
+        assert _clean_wayback_url(url) == ("https://www.scnsrc.me/test/")
 
     def test_leaves_normal_url_untouched(self) -> None:
         url = "https://www.scnsrc.me/test/"
@@ -468,9 +447,7 @@ class TestCloudflareWait:
     async def test_timeout_does_not_raise(self) -> None:
         plugin = _make_plugin()
         page = _make_mock_page()
-        page.wait_for_function = AsyncMock(
-            side_effect=TimeoutError("timeout")
-        )
+        page.wait_for_function = AsyncMock(side_effect=TimeoutError("timeout"))
         await plugin._wait_for_cloudflare(page)
 
 

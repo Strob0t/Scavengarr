@@ -7,16 +7,12 @@ from pathlib import Path
 from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock
 
-_PLUGIN_PATH = (
-    Path(__file__).resolve().parents[3] / "plugins" / "ddlvalley.py"
-)
+_PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "ddlvalley.py"
 
 
 def _load_module() -> ModuleType:
     """Load ddlvalley.py plugin via importlib."""
-    spec = importlib.util.spec_from_file_location(
-        "ddlvalley_plugin", str(_PLUGIN_PATH)
-    )
+    spec = importlib.util.spec_from_file_location("ddlvalley_plugin", str(_PLUGIN_PATH))
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -64,9 +60,7 @@ def _make_mock_browser(
     context: AsyncMock | None = None,
 ) -> AsyncMock:
     browser = AsyncMock()
-    browser.new_context = AsyncMock(
-        return_value=context or _make_mock_context()
-    )
+    browser.new_context = AsyncMock(return_value=context or _make_mock_context())
     browser.close = AsyncMock()
     return browser
 
@@ -76,9 +70,7 @@ def _make_mock_playwright(
 ) -> AsyncMock:
     pw = AsyncMock()
     pw.chromium = MagicMock()
-    pw.chromium.launch = AsyncMock(
-        return_value=browser or _make_mock_browser()
-    )
+    pw.chromium.launch = AsyncMock(return_value=browser or _make_mock_browser())
     pw.stop = AsyncMock()
     return pw
 
@@ -99,9 +91,7 @@ class TestSearchResultParser:
 
         assert len(parser.posts) == 2
         assert parser.posts[0]["title"] == "Some.Movie.2025"
-        assert parser.posts[0]["url"] == (
-            "https://www.ddlvalley.me/some-movie-2025/"
-        )
+        assert parser.posts[0]["url"] == ("https://www.ddlvalley.me/some-movie-2025/")
         assert parser.posts[1]["title"] == "Other.Show.S01"
 
     def test_external_links_excluded(self) -> None:
@@ -161,9 +151,7 @@ class TestDetailPageParser:
 
         assert len(parser.links) == 3
         assert parser.links[0]["hoster"] == "rapidgator"
-        assert parser.links[0]["link"] == (
-            "https://rapidgator.net/file/abc"
-        )
+        assert parser.links[0]["link"] == ("https://rapidgator.net/file/abc")
         assert parser.links[2]["hoster"] == "uploaded"
 
     def test_non_hoster_links_excluded(self) -> None:
@@ -259,9 +247,7 @@ class TestDetailPageParser:
 class TestTitleParser:
     def test_title_stripped(self) -> None:
         parser = _TitleParser()
-        parser.feed(
-            "<title>Some.Movie.2025.1080p | DDLValley</title>"
-        )
+        parser.feed("<title>Some.Movie.2025.1080p | DDLValley</title>")
         assert parser.title == "Some.Movie.2025.1080p"
 
     def test_title_without_suffix(self) -> None:
@@ -363,9 +349,7 @@ class TestPluginSearch:
         detail_page_1 = _make_mock_page(detail_html)
         detail_page_2 = _make_mock_page(detail_html)
 
-        context = _make_mock_context(
-            pages=[search_page, detail_page_1, detail_page_2]
-        )
+        context = _make_mock_context(pages=[search_page, detail_page_1, detail_page_2])
 
         plugin._browser = _make_mock_browser(context)
         plugin._context = context
@@ -382,9 +366,7 @@ class TestPluginSearch:
     async def test_search_no_results(self) -> None:
         plugin = _make_plugin()
 
-        search_page = _make_mock_page(
-            "<html><body>No results</body></html>"
-        )
+        search_page = _make_mock_page("<html><body>No results</body></html>")
         context = _make_mock_context(pages=[search_page])
 
         plugin._browser = _make_mock_browser(context)
@@ -410,9 +392,7 @@ class TestPluginSearch:
         search_page = _make_mock_page(search_html)
         detail_page = _make_mock_page(detail_html)
 
-        context = _make_mock_context(
-            pages=[search_page, detail_page]
-        )
+        context = _make_mock_context(pages=[search_page, detail_page])
 
         plugin._browser = _make_mock_browser(context)
         plugin._context = context
@@ -446,9 +426,7 @@ class TestPluginSearch:
         error_page = _make_mock_page()
         error_page.goto = AsyncMock(side_effect=Exception("timeout"))
 
-        context = _make_mock_context(
-            pages=[search_page, error_page]
-        )
+        context = _make_mock_context(pages=[search_page, error_page])
 
         plugin._browser = _make_mock_browser(context)
         plugin._context = context
@@ -467,9 +445,7 @@ class TestCloudflareWait:
     async def test_timeout_does_not_raise(self) -> None:
         plugin = _make_plugin()
         page = _make_mock_page()
-        page.wait_for_function = AsyncMock(
-            side_effect=TimeoutError("timeout")
-        )
+        page.wait_for_function = AsyncMock(side_effect=TimeoutError("timeout"))
         await plugin._wait_for_cloudflare(page)
 
 

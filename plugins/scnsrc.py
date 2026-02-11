@@ -114,17 +114,17 @@ class _PostParser(HTMLParser):
     def _emit_post(self) -> None:
         title = self._current_release or self._current_title
         if title and (self._current_links or self._current_url):
-            self.results.append({
-                "title": title,
-                "url": self._current_url,
-                "release_name": self._current_release,
-                "links": self._current_links.copy(),
-                "category": self._current_category,
-            })
+            self.results.append(
+                {
+                    "title": title,
+                    "url": self._current_url,
+                    "release_name": self._current_release,
+                    "links": self._current_links.copy(),
+                    "category": self._current_category,
+                }
+            )
 
-    def _handle_div_start(
-        self, attr_dict: dict[str, str | None]
-    ) -> None:
+    def _handle_div_start(self, attr_dict: dict[str, str | None]) -> None:
         classes = (attr_dict.get("class", "") or "").split()
 
         if self._in_post:
@@ -136,9 +136,7 @@ class _PostParser(HTMLParser):
                 self._post_div_depth = 0
                 self._reset_post()
 
-        if self._in_post and "tvshow_info" in (
-            attr_dict.get("class", "") or ""
-        ):
+        if self._in_post and "tvshow_info" in (attr_dict.get("class", "") or ""):
             self._in_tvshow_info = True
             self._tvshow_div_depth = 0
         elif self._in_tvshow_info:
@@ -147,33 +145,26 @@ class _PostParser(HTMLParser):
         if self._in_post and "cat" in classes:
             self._in_cat_meta = True
 
-    def _handle_a_start(
-        self, attr_dict: dict[str, str | None]
-    ) -> None:
+    def _handle_a_start(self, attr_dict: dict[str, str | None]) -> None:
         href = str(attr_dict.get("href", "") or "")
 
         if self._in_h2 and href:
             self._in_h2_a = True
-            self._current_url = _clean_wayback_url(
-                urljoin(self._base_url, href)
-            )
+            self._current_url = _clean_wayback_url(urljoin(self._base_url, href))
             self._current_title = ""
 
-        if (
-            self._in_cat_meta
-            and "category" in (attr_dict.get("rel", "") or "")
-        ):
+        if self._in_cat_meta and "category" in (attr_dict.get("rel", "") or ""):
             self._in_cat_a = True
 
         if self._in_tvshow_info and href and self._after_download_label:
-            self._current_links.append({
-                "hoster": "",
-                "link": _clean_wayback_url(href),
-            })
+            self._current_links.append(
+                {
+                    "hoster": "",
+                    "link": _clean_wayback_url(href),
+                }
+            )
 
-    def handle_starttag(
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attr_dict = dict(attrs)
 
         if tag == "div":
@@ -262,9 +253,7 @@ class _PostParser(HTMLParser):
 
 def _clean_wayback_url(url: str) -> str:
     """Strip Wayback Machine URL prefix if present."""
-    m = re.match(
-        r"https?://web\.archive\.org/web/\d+/(https?://.+)", url
-    )
+    m = re.match(r"https?://web\.archive\.org/web/\d+/(https?://.+)", url)
     return m.group(1) if m else url
 
 
@@ -319,9 +308,7 @@ class ScnSrcPlugin:
             await self._wait_for_cloudflare(page)
 
             try:
-                await page.wait_for_load_state(
-                    "networkidle", timeout=10_000
-                )
+                await page.wait_for_load_state("networkidle", timeout=10_000)
             except Exception:  # noqa: BLE001
                 pass
 
@@ -338,9 +325,7 @@ class ScnSrcPlugin:
         """Search scnsrc.me and return results."""
         await self._ensure_browser()
 
-        category_path = (
-            _CATEGORY_PATH_MAP.get(category, "") if category else ""
-        )
+        category_path = _CATEGORY_PATH_MAP.get(category, "") if category else ""
 
         if category_path:
             url = f"{self.base_url}/{category_path}/?s={query}"
@@ -367,11 +352,7 @@ class ScnSrcPlugin:
 
             primary_link = links[0]["link"]
             cat_name = post.get("category", "")
-            torznab_cat = (
-                category
-                if category
-                else _category_to_torznab(str(cat_name))
-            )
+            torznab_cat = category if category else _category_to_torznab(str(cat_name))
 
             results.append(
                 SearchResult(
