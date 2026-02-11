@@ -589,9 +589,7 @@ class ScrapyAdapter:
 
         sub_results_list = await asyncio.gather(
             *(
-                self.scrape_stage(
-                    next_stage_name, url=link, depth=depth + 1
-                )
+                self.scrape_stage(next_stage_name, url=link, depth=depth + 1)
                 for link in limited_links
             )
         )
@@ -664,9 +662,7 @@ class ScrapyAdapter:
         results: dict[str, list[dict[str, Any]]] = {stage_name: items}
 
         if stage_config.pagination and stage_config.pagination.enabled:
-            paginated = await self._handle_pagination(
-                stage, soup, depth
-            )
+            paginated = await self._handle_pagination(stage, soup, depth)
             if stage_name in paginated:
                 results[stage_name].extend(paginated[stage_name])
 

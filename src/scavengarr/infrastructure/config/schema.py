@@ -171,8 +171,7 @@ class AppConfig(BaseModel):
             AliasPath("logging", "format"),
         ),
         description=(
-            "Log renderer format (console/json)."
-            " If unset, derived from environment."
+            "Log renderer format (console/json). If unset, derived from environment."
         ),
     )
 

@@ -160,9 +160,7 @@ async def _handle_extended_probe(
     rendered = render_rss_xml(
         title=title,
         items=[],
-        description=(error or "indexer not reachable")
-        if not _is_prod(state)
-        else None,
+        description=(error or "indexer not reachable") if not _is_prod(state) else None,
         scavengarr_base_url=scavengarr_base_url,
     )
     return _xml(rendered.payload, status_code=503)
@@ -209,30 +207,22 @@ async def _handle_empty_query(
     """Handle search requests without a query parameter."""
     if extended == 1:
         plugin = state.plugins.get(plugin_name)
-        plugin_base = str(
-            getattr(plugin, "base_url", "") or ""
-        )
+        plugin_base = str(getattr(plugin, "base_url", "") or "")
         if not plugin_base:
             rendered = render_rss_xml(
                 title=title,
                 items=[],
-                description="plugin has no base_url"
-                if not _is_prod(state)
-                else None,
+                description="plugin has no base_url" if not _is_prod(state) else None,
                 scavengarr_base_url=base_url,
             )
             return _xml(rendered.payload, status_code=422)
 
-        return await _handle_extended_probe(
-            state, plugin_name, plugin_base, base_url
-        )
+        return await _handle_extended_probe(state, plugin_name, plugin_base, base_url)
 
     rendered = render_rss_xml(
         title=title,
         items=[],
-        description="Missing query parameter 'q'"
-        if not _is_prod(state)
-        else None,
+        description="Missing query parameter 'q'" if not _is_prod(state) else None,
         scavengarr_base_url=base_url,
     )
     return _xml(rendered.payload, status_code=200)
@@ -261,9 +251,7 @@ async def torznab_plugin_api(
     t: str = Query(..., description="Torznab action: caps|search"),
     q: str | None = Query(None, description="Search query"),
     cat: str = Query("", description="Category filter"),
-    extended: int | None = Query(
-        None, description="Prowlarr extended search flag"
-    ),
+    extended: int | None = Query(None, description="Prowlarr extended search flag"),
 ) -> Response:
     state = cast(AppState, request.app.state)
     title = f"{state.config.app_name} ({plugin_name})"
@@ -274,18 +262,14 @@ async def torznab_plugin_api(
             return _handle_caps(state, plugin_name)
 
         if t != "search":
-            raise TorznabUnsupportedAction(
-                f"Unsupported action t={t!r}"
-            )
+            raise TorznabUnsupportedAction(f"Unsupported action t={t!r}")
 
         if not q:
             return await _handle_empty_query(
                 state, plugin_name, extended, title, base_url
             )
 
-        return await _handle_search(
-            state, plugin_name, q, cat, base_url
-        )
+        return await _handle_search(state, plugin_name, q, cat, base_url)
 
     except TorznabBadRequest as e:
         desc = str(e) if not _is_prod(state) else None
@@ -296,11 +280,7 @@ async def torznab_plugin_api(
         return _error_xml(title, desc, base_url, 404)
 
     except TorznabNoPluginsAvailable:
-        desc = (
-            "no plugins available"
-            if not _is_prod(state)
-            else None
-        )
+        desc = "no plugins available" if not _is_prod(state) else None
         return _error_xml(title, desc, base_url, 503)
 
     except (

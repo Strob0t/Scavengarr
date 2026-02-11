@@ -72,18 +72,14 @@ class NestedSelector(BaseModel):
 
     field_attributes: dict[str, list[str]] = Field(
         default_factory=dict,
-        description=(
-            "For link/url fields: list of HTML attributes"
-            " to try (in order)"
-        ),
+        description=("For link/url fields: list of HTML attributes to try (in order)"),
     )
 
     # Fields that may contain multiple values per item
     multi_value_fields: list[str] | None = Field(
         default=None,
         description=(
-            "Fields that should collect multiple values"
-            " as list instead of overwriting"
+            "Fields that should collect multiple values as list instead of overwriting"
         ),
     )
 
@@ -270,9 +266,7 @@ class AuthConfig(BaseModel):
     def _validate_basic_auth(self) -> None:
         """Validate basic auth has username and password."""
         if not self.username or not self.password:
-            raise ValueError(
-                "basic auth requires 'username' and 'password'"
-            )
+            raise ValueError("basic auth requires 'username' and 'password'")
 
     def _validate_form_auth(self) -> None:
         """Validate form auth has all required fields."""
@@ -286,9 +280,7 @@ class AuthConfig(BaseModel):
         }
         missing = [k for k, v in required_fields.items() if not v]
         if missing:
-            raise ValueError(
-                f"form auth requires {', '.join(missing)}"
-            )
+            raise ValueError(f"form auth requires {', '.join(missing)}")
 
     @model_validator(mode="after")
     def _validate_auth_requirements(self) -> "AuthConfig":
@@ -321,43 +313,27 @@ class ScrapingConfig(BaseModel):
     def _validate_scrapy_stages(self) -> None:
         """Validate scrapy stage references and constraints."""
         if not self.stages or len(self.stages) == 0:
-            raise ValueError(
-                "scrapy mode requires at least one stage"
-            )
+            raise ValueError("scrapy mode requires at least one stage")
         stage_names = {s.name for s in self.stages}
         for stage in self.stages:
-            if (
-                stage.next_stage
-                and stage.next_stage not in stage_names
-            ):
+            if stage.next_stage and stage.next_stage not in stage_names:
                 raise ValueError(
                     f"stage '{stage.name}' references unknown"
                     f" next_stage '{stage.next_stage}'"
                 )
         if self.start_stage and self.start_stage not in stage_names:
-            raise ValueError(
-                f"start_stage '{self.start_stage}'"
-                " not found in stages"
-            )
+            raise ValueError(f"start_stage '{self.start_stage}' not found in stages")
         if self.delay_seconds < 0:
             raise ValueError("delay_seconds must be >= 0")
 
     def _validate_playwright_fields(self) -> None:
         """Validate playwright mode has all required fields."""
         if not self.search_url_template:
-            raise ValueError(
-                "playwright mode requires"
-                " 'search_url_template' field"
-            )
+            raise ValueError("playwright mode requires 'search_url_template' field")
         if not self.wait_for_selector:
-            raise ValueError(
-                "playwright mode requires"
-                " 'wait_for_selector' field"
-            )
+            raise ValueError("playwright mode requires 'wait_for_selector' field")
         if self.locators is None:
-            raise ValueError(
-                "playwright mode requires 'locators' field"
-            )
+            raise ValueError("playwright mode requires 'locators' field")
 
     @model_validator(mode="after")
     def _validate_mode_requirements(self) -> "ScrapingConfig":
