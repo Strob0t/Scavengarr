@@ -128,7 +128,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         resolvers=[
             VoeResolver(http_client=state.http_client),
             StreamtapeResolver(http_client=state.http_client),
-            SuperVideoResolver(http_client=state.http_client),
+            SuperVideoResolver(
+                http_client=state.http_client,
+                playwright_headless=config.playwright_headless,
+                playwright_timeout_ms=config.playwright_timeout_ms,
+            ),
             DoodStreamResolver(http_client=state.http_client),
             FilemoonResolver(http_client=state.http_client),
         ],
@@ -164,6 +168,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        await state.hoster_resolver_registry.cleanup()
+        log.info("hoster_resolvers_cleaned_up")
+
         await state.http_client.aclose()
         log.info("http_client_closed")
 
