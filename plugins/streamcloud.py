@@ -260,7 +260,7 @@ class _SearchResultParser(HTMLParser):
         if self._in_f_year:
             self._current_year += data
 
-    def handle_endtag(self, tag: str) -> None:
+    def handle_endtag(self, tag: str) -> None:  # noqa: C901
         if tag == "a" and self._in_title_a:
             self._in_title_a = False
             self._current_title = self._current_title.strip()
