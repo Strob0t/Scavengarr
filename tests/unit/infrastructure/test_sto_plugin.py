@@ -506,12 +506,12 @@ class TestSearch:
         # search (1) → detail×3 → episode×2 (for stranger-things season 1)
         mock_client.get = AsyncMock(
             side_effect=[
-                search_resp,       # search page
-                detail_resp,       # stranger-things detail
-                empty_detail,      # dark detail (no seasons → skipped)
-                empty_detail,      # episode link detail (no seasons → skipped)
-                episode_resp,      # stranger-things S01E01
-                episode_resp,      # stranger-things S01E02
+                search_resp,  # search page
+                detail_resp,  # stranger-things detail
+                empty_detail,  # dark detail (no seasons → skipped)
+                empty_detail,  # episode link detail (no seasons → skipped)
+                episode_resp,  # stranger-things S01E01
+                episode_resp,  # stranger-things S01E02
             ]
         )
         mock_client.head = AsyncMock(return_value=redirect_resp)
