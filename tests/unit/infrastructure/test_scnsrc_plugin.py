@@ -355,7 +355,8 @@ class TestPluginSearch:
         plugin = _make_plugin()
 
         search_page = _make_mock_page(_SAMPLE_POST_HTML)
-        context = _make_mock_context(pages=[search_page])
+        empty_page = _make_mock_page("<html></html>")
+        context = _make_mock_context(pages=[search_page, empty_page])
 
         plugin._browser = _make_mock_browser(context)
         plugin._context = context
@@ -383,8 +384,9 @@ class TestPluginSearch:
     async def test_search_with_category(self) -> None:
         plugin = _make_plugin()
 
-        page = _make_mock_page(_MULTI_POST_HTML)
-        context = _make_mock_context(pages=[page])
+        search_page = _make_mock_page(_MULTI_POST_HTML)
+        empty_page = _make_mock_page("<html></html>")
+        context = _make_mock_context(pages=[search_page, empty_page])
 
         plugin._browser = _make_mock_browser(context)
         plugin._context = context
@@ -392,7 +394,7 @@ class TestPluginSearch:
         results = await plugin.search("movie", category=2000)
 
         # Verify URL includes category path
-        call_args = page.goto.call_args
+        call_args = search_page.goto.call_args
         url_called = call_args[0][0]
         assert "category/films" in url_called
         assert "s=movie" in url_called
@@ -404,8 +406,9 @@ class TestPluginSearch:
     async def test_search_multiple_results(self) -> None:
         plugin = _make_plugin()
 
-        page = _make_mock_page(_MULTI_POST_HTML)
-        context = _make_mock_context(pages=[page])
+        search_page = _make_mock_page(_MULTI_POST_HTML)
+        empty_page = _make_mock_page("<html></html>")
+        context = _make_mock_context(pages=[search_page, empty_page])
 
         plugin._browser = _make_mock_browser(context)
         plugin._context = context
@@ -427,14 +430,36 @@ class TestPluginSearch:
           </div>
         </div>
         """
-        page = _make_mock_page(html)
-        context = _make_mock_context(pages=[page])
+        search_page = _make_mock_page(html)
+        empty_page = _make_mock_page("<html></html>")
+        context = _make_mock_context(pages=[search_page, empty_page])
 
         plugin._browser = _make_mock_browser(context)
         plugin._context = context
 
         results = await plugin.search("test")
         assert results == []
+
+    async def test_search_paginates(self) -> None:
+        """Verify pagination fetches multiple pages."""
+        plugin = _make_plugin()
+
+        page1 = _make_mock_page(_MULTI_POST_HTML)
+        page2 = _make_mock_page(_SAMPLE_POST_HTML)
+        empty_page = _make_mock_page("<html></html>")
+        context = _make_mock_context(pages=[page1, page2, empty_page])
+
+        plugin._browser = _make_mock_browser(context)
+        plugin._context = context
+
+        results = await plugin.search("test")
+
+        # 2 from page1 + 1 from page2
+        assert len(results) == 3
+
+        # Check page 2 URL has /page/2/
+        page2_url = page2.goto.call_args[0][0]
+        assert "/page/2/" in page2_url
 
 
 class TestCloudflareWait:

@@ -38,6 +38,7 @@ _USER_AGENT = (
 )
 
 _MAX_CONCURRENT_PAGES = 2
+_MAX_RESULTS = 1000
 
 # Torznab category -> URL path segment mapping.
 _CATEGORY_PATH_MAP: dict[int, str] = {
@@ -317,20 +318,25 @@ class ScnSrcPlugin:
             if not page.is_closed():
                 await page.close()
 
-    async def search(
+    async def _search_page(
         self,
         query: str,
-        category: int | None = None,
-    ) -> list[SearchResult]:
-        """Search scnsrc.me and return results."""
-        await self._ensure_browser()
+        category_path: str = "",
+        page_num: int = 1,
+    ) -> list[dict[str, str | list[dict[str, str]]]]:
+        """Fetch one search page and return parsed posts.
 
-        category_path = _CATEGORY_PATH_MAP.get(category, "") if category else ""
-
+        WordPress pagination: ``/page/N/?s=query`` for page >= 2.
+        """
         if category_path:
-            url = f"{self.base_url}/{category_path}/?s={query}"
+            base = f"{self.base_url}/{category_path}"
         else:
-            url = f"{self.base_url}/?s={query}"
+            base = self.base_url
+
+        if page_num > 1:
+            url = f"{base}/page/{page_num}/?s={query}"
+        else:
+            url = f"{base}/?s={query}"
 
         html = await self._fetch_page(url)
 
@@ -338,14 +344,42 @@ class ScnSrcPlugin:
         parser.feed(html)
 
         log.info(
-            "scnsrc_search_results",
+            "scnsrc_search_page",
             query=query,
             category_path=category_path,
+            page=page_num,
             count=len(parser.results),
         )
+        return parser.results
+
+    async def search(
+        self,
+        query: str,
+        category: int | None = None,
+    ) -> list[SearchResult]:
+        """Search scnsrc.me and return results.
+
+        Paginates through WordPress search pages to collect up to
+        1000 results.
+        """
+        await self._ensure_browser()
+
+        category_path = _CATEGORY_PATH_MAP.get(category, "") if category else ""
+
+        # Paginate search results (WordPress: ~10 posts/page)
+        all_posts: list[dict[str, str | list[dict[str, str]]]] = []
+        page_num = 1
+        while len(all_posts) < _MAX_RESULTS:
+            posts = await self._search_page(query, category_path, page_num)
+            if not posts:
+                break
+            all_posts.extend(posts)
+            page_num += 1
+
+        all_posts = all_posts[:_MAX_RESULTS]
 
         results: list[SearchResult] = []
-        for post in parser.results:
+        for post in all_posts:
             links = post.get("links", [])
             if not links:
                 continue
