@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -12,6 +13,25 @@ from scavengarr.infrastructure.hoster_resolvers.filemoon import (
     _extract_hls_from_unpacked,
     _unpack_p_a_c_k,
 )
+
+
+def _make_api_response(data: dict, status: int = 200) -> MagicMock:  # type: ignore[type-arg]
+    """Build a mock response that returns JSON data."""
+    resp = MagicMock()
+    resp.status_code = status
+    resp.json.return_value = data
+    resp.text = json.dumps(data)
+    return resp
+
+
+def _make_html_response(html: str, status: int = 200) -> MagicMock:
+    """Build a mock response for an HTML page."""
+    resp = MagicMock()
+    resp.status_code = status
+    resp.text = html
+    # json() should fail on HTML content
+    resp.json.side_effect = json.JSONDecodeError("msg", "doc", 0)
+    return resp
 
 
 # -- Helper to build a realistic packed JS block --
@@ -360,3 +380,155 @@ class TestFilemoonResolver:
         assert result is not None
         assert result.video_url == hls_url
         assert result.is_hls is True
+
+
+class TestByseApi:
+    """Tests for Filemoon Byse SPA API extraction."""
+
+    @pytest.mark.asyncio
+    async def test_byse_api_extracts_hls_url(self) -> None:
+        api_data = {
+            "sources": [
+                {
+                    "url": "https://cdn.filemoon.sx/hls/abc/master.m3u8",
+                    "mimeType": "application/x-mpegURL",
+                    "height": 720,
+                },
+            ],
+        }
+        api_resp = _make_api_response(api_data)
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(return_value=api_resp)
+
+        resolver = FilemoonResolver(http_client=client)
+        result = await resolver.resolve("https://filemoon.sx/e/abc123def456")
+
+        assert result is not None
+        assert result.video_url == "https://cdn.filemoon.sx/hls/abc/master.m3u8"
+        assert result.is_hls is True
+        # Should only call the API, not fetch HTML
+        assert client.get.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_byse_api_extracts_mp4_url(self) -> None:
+        api_data = {
+            "sources": [
+                {
+                    "url": "https://cdn.filemoon.sx/v/abc.mp4",
+                    "mimeType": "video/mp4",
+                    "height": 1080,
+                },
+            ],
+        }
+        api_resp = _make_api_response(api_data)
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(return_value=api_resp)
+
+        resolver = FilemoonResolver(http_client=client)
+        result = await resolver.resolve("https://filemoon.sx/e/abc123def456")
+
+        assert result is not None
+        assert result.video_url == "https://cdn.filemoon.sx/v/abc.mp4"
+        assert result.is_hls is False
+
+    @pytest.mark.asyncio
+    async def test_byse_api_falls_through_on_404(self) -> None:
+        """API returns 404 (expired video), falls through to legacy packed JS."""
+        hls_url = "https://cdn.filemoon.sx/hls/fallback/master.m3u8"
+        packed = _build_packed_block(hls_url)
+        html = f"<html><body><script>{packed}</script></body></html>"
+
+        api_resp = _make_api_response({}, status=404)
+        html_resp = _make_html_response(html)
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(side_effect=[api_resp, html_resp])
+
+        resolver = FilemoonResolver(http_client=client)
+        result = await resolver.resolve("https://filemoon.sx/e/abc123def456")
+
+        assert result is not None
+        assert result.video_url == hls_url
+        assert client.get.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_byse_api_falls_through_on_network_error(self) -> None:
+        """API call fails, falls through to legacy methods."""
+        hls_url = "https://cdn.filemoon.sx/hls/net/master.m3u8"
+        packed = _build_packed_block(hls_url)
+        html = f"<html><body><script>{packed}</script></body></html>"
+
+        html_resp = _make_html_response(html)
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(
+            side_effect=[httpx.ConnectError("api fail"), html_resp],
+        )
+
+        resolver = FilemoonResolver(http_client=client)
+        result = await resolver.resolve("https://filemoon.sx/e/abc123def456")
+
+        assert result is not None
+        assert result.video_url == hls_url
+
+    @pytest.mark.asyncio
+    async def test_byse_api_returns_none_on_empty_sources(self) -> None:
+        """API returns valid JSON but empty sources array."""
+        api_resp = _make_api_response({"sources": []})
+        html_resp = _make_html_response("<html><body></body></html>")
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(side_effect=[api_resp, html_resp])
+
+        resolver = FilemoonResolver(http_client=client)
+        result = await resolver.resolve("https://filemoon.sx/e/abc123def456")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_byse_api_nested_data_structure(self) -> None:
+        """API returns sources nested under 'data' key."""
+        api_data = {
+            "data": {
+                "sources": [
+                    {
+                        "url": "https://cdn.filemoon.sx/hls/nested/master.m3u8",
+                        "mimeType": "application/x-mpegURL",
+                    },
+                ],
+            },
+        }
+        api_resp = _make_api_response(api_data)
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(return_value=api_resp)
+
+        resolver = FilemoonResolver(http_client=client)
+        result = await resolver.resolve("https://filemoon.sx/e/abc123def456")
+
+        assert result is not None
+        assert result.video_url == "https://cdn.filemoon.sx/hls/nested/master.m3u8"
+
+    def test_extract_video_id_from_embed(self) -> None:
+        client = MagicMock(spec=httpx.AsyncClient)
+        resolver = FilemoonResolver(http_client=client)
+        assert resolver._extract_video_id("https://filemoon.sx/e/abc123") == "abc123"
+
+    def test_extract_video_id_from_download(self) -> None:
+        client = MagicMock(spec=httpx.AsyncClient)
+        resolver = FilemoonResolver(http_client=client)
+        assert resolver._extract_video_id("https://filemoon.sx/d/abc123") == "abc123"
+
+    def test_extract_video_id_from_download_path(self) -> None:
+        client = MagicMock(spec=httpx.AsyncClient)
+        resolver = FilemoonResolver(http_client=client)
+        assert (
+            resolver._extract_video_id("https://filemoon.sx/download/abc123")
+            == "abc123"
+        )
+
+    def test_extract_video_id_invalid_url(self) -> None:
+        client = MagicMock(spec=httpx.AsyncClient)
+        resolver = FilemoonResolver(http_client=client)
+        assert resolver._extract_video_id("https://filemoon.sx/") == ""

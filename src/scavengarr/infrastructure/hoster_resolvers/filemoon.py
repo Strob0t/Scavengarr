@@ -1,9 +1,10 @@
 """Filemoon hoster resolver — extracts HLS URLs from filemoon.sx embed pages.
 
-Filemoon uses XFileSharingPro and embeds its video player in packed JavaScript
-(Dean Edwards packer: eval(function(p,a,c,k,e,d){...})).
+Supports two architectures:
+1. Byse SPA (new): Vite/React frontend that loads video sources via
+   GET /api/videos/{id}/embed/details JSON API.
+2. Legacy XFS: Packed JavaScript (Dean Edwards packer) containing JWPlayer config.
 
-Extraction: GET embed page → find packed JS → unpack → extract HLS m3u8 URL.
 Filemoon domain variants: filemoon.sx, filemoon.to, filemoon.eu, etc.
 """
 
@@ -124,6 +125,12 @@ class FilemoonResolver:
         """Fetch Filemoon embed page and extract HLS URL."""
         embed_url = self._normalize_embed_url(url)
 
+        # Method 0: Byse SPA API (new Filemoon architecture)
+        result = await self._try_byse_api(embed_url)
+        if result:
+            return result
+
+        # Fetch HTML for legacy extraction methods
         try:
             resp = await self._http.get(
                 embed_url,
@@ -153,7 +160,7 @@ class FilemoonResolver:
             log.info("filemoon_offline", url=url)
             return None
 
-        # Method 1: Unpack packed JS blocks
+        # Method 1: Unpack packed JS blocks (legacy XFS)
         result = self._try_packed_js(html)
         if result:
             return result
@@ -164,6 +171,81 @@ class FilemoonResolver:
             return result
 
         log.warning("filemoon_extraction_failed", url=url)
+        return None
+
+    async def _try_byse_api(self, url: str) -> ResolvedStream | None:
+        """Extract video URL via Byse SPA API (new Filemoon architecture).
+
+        Filemoon migrated to a Vite/React SPA ("Byse Frontend") that loads
+        video sources from: GET /api/videos/{id}/embed/details
+        """
+        video_id = self._extract_video_id(url)
+        if not video_id:
+            return None
+
+        base_match = re.match(r"(https?://[^/]+)", url)
+        if not base_match:
+            return None
+        base_url = base_match.group(1)
+
+        api_url = f"{base_url}/api/videos/{video_id}/embed/details"
+        try:
+            resp = await self._http.get(
+                api_url,
+                follow_redirects=True,
+                timeout=15,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                    ),
+                    "Referer": url,
+                },
+            )
+            if resp.status_code != 200:
+                log.debug(
+                    "filemoon_byse_api_not_ok",
+                    status=resp.status_code,
+                    url=api_url,
+                )
+                return None
+
+            data = resp.json()
+        except Exception:  # noqa: BLE001
+            log.debug("filemoon_byse_api_failed", url=api_url)
+            return None
+
+        return self._parse_byse_sources(data)
+
+    def _extract_video_id(self, url: str) -> str:
+        """Extract video ID from Filemoon URL (e.g., /e/abc123 -> abc123)."""
+        match = re.search(r"/(?:e|d|download)/([a-z0-9]+)", url)
+        return match.group(1) if match else ""
+
+    def _parse_byse_sources(self, data: dict) -> ResolvedStream | None:  # type: ignore[type-arg]
+        """Parse Byse API response for video sources."""
+        sources = data.get("sources")
+        if not isinstance(sources, list):
+            # Try nested structure
+            inner = data.get("data")
+            if isinstance(inner, dict):
+                sources = inner.get("sources")
+            if not isinstance(sources, list):
+                return None
+
+        for source in sources:
+            if not isinstance(source, dict):
+                continue
+            video_url = source.get("url") or source.get("file", "")
+            if not video_url or not video_url.startswith("http"):
+                continue
+            mime = (source.get("mimeType") or source.get("type") or "").lower()
+            is_hls = "mpegurl" in mime or ".m3u8" in video_url
+            log.debug("filemoon_byse_api_success", url=video_url[:80])
+            return ResolvedStream(
+                video_url=video_url,
+                is_hls=is_hls,
+                quality=StreamQuality.UNKNOWN,
+            )
         return None
 
     def _try_packed_js(self, html: str) -> ResolvedStream | None:
