@@ -7,7 +7,11 @@ from unittest.mock import AsyncMock, MagicMock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from scavengarr.domain.entities.stremio import StremioMetaPreview, StremioStream
+from scavengarr.domain.entities.stremio import (
+    CachedStreamLink,
+    StremioMetaPreview,
+    StremioStream,
+)
 from scavengarr.interfaces.api.stremio.router import (
     _parse_stream_id,
     router,
@@ -19,6 +23,7 @@ def _make_app(
     plugin_names: list[str] | None = None,
     stremio_stream_uc: AsyncMock | None = None,
     stremio_catalog_uc: AsyncMock | None = None,
+    stream_link_repo: AsyncMock | None = None,
 ) -> FastAPI:
     """Create a minimal FastAPI app with the stremio router."""
     app = FastAPI()
@@ -31,6 +36,8 @@ def _make_app(
 
     app.state.stremio_stream_uc = stremio_stream_uc
     app.state.stremio_catalog_uc = stremio_catalog_uc
+    if stream_link_repo is not None:
+        app.state.stream_link_repo = stream_link_repo
 
     return app
 
@@ -404,3 +411,56 @@ class TestStreamEndpoint:
 
         assert resp.status_code == 200
         assert resp.json() == {"streams": []}
+
+
+class TestPlayEndpoint:
+    def test_redirects_to_hoster_url(self) -> None:
+        link = CachedStreamLink(
+            stream_id="abc123",
+            hoster_url="https://voe.sx/e/test",
+            title="Iron Man",
+            hoster="voe",
+        )
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=link)
+
+        app = _make_app(stream_link_repo=repo)
+        client = TestClient(app, follow_redirects=False)
+
+        resp = client.get("/stremio/play/abc123")
+
+        assert resp.status_code == 302
+        assert resp.headers["location"] == "https://voe.sx/e/test"
+
+    def test_returns_404_for_unknown_stream_id(self) -> None:
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=None)
+
+        app = _make_app(stream_link_repo=repo)
+        client = TestClient(app)
+
+        resp = client.get("/stremio/play/nonexistent")
+
+        assert resp.status_code == 404
+        assert "expired" in resp.json()["error"]
+
+    def test_returns_503_when_repo_not_configured(self) -> None:
+        # No stream_link_repo set on app state
+        app = _make_app()
+        client = TestClient(app)
+
+        resp = client.get("/stremio/play/abc123")
+
+        assert resp.status_code == 503
+        assert "not configured" in resp.json()["error"]
+
+    def test_cors_headers_on_play(self) -> None:
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=None)
+
+        app = _make_app(stream_link_repo=repo)
+        client = TestClient(app)
+
+        resp = client.get("/stremio/play/abc123")
+
+        assert resp.headers["access-control-allow-origin"] == "*"

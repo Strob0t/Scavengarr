@@ -1,4 +1,4 @@
-"""Stremio addon API endpoints (manifest, catalog, stream)."""
+"""Stremio addon API endpoints (manifest, catalog, stream, play)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from typing import Any, cast
 
 import structlog
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from scavengarr.domain.entities.stremio import (
     StremioContentType,
@@ -235,3 +235,45 @@ async def stremio_stream(
     )
 
     return JSONResponse(content={"streams": stremio_streams}, headers=_CORS_HEADERS)
+
+
+@router.get("/play/{stream_id}", response_model=None)
+async def stremio_play(
+    request: Request,
+    stream_id: str,
+) -> JSONResponse | RedirectResponse:
+    """Resolve a cached stream link and redirect to the hoster URL.
+
+    Stremio calls this URL when the user selects a stream. We look up
+    the cached hoster URL and return a 302 redirect.
+    """
+    state = cast(AppState, request.app.state)
+
+    repo = getattr(state, "stream_link_repo", None)
+    if repo is None:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "stream link repository not configured"},
+            headers=_CORS_HEADERS,
+        )
+
+    link = await repo.get(stream_id)
+    if link is None:
+        log.warning("stremio_play_not_found", stream_id=stream_id)
+        return JSONResponse(
+            status_code=404,
+            content={"error": "stream expired or not found"},
+            headers=_CORS_HEADERS,
+        )
+
+    log.info(
+        "stremio_play_redirect",
+        stream_id=stream_id,
+        hoster=link.hoster,
+        url=link.hoster_url,
+    )
+    return RedirectResponse(
+        url=link.hoster_url,
+        status_code=302,
+        headers=_CORS_HEADERS,
+    )
