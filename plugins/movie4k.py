@@ -417,6 +417,7 @@ class Movie4kPlugin:
         """Search movie4k and return results with stream links.
 
         Uses the site's JSON API for browse/search and detail pages.
+        When *season* is provided, only TV series are returned.
         """
         if not query:
             return []
@@ -426,11 +427,16 @@ class Movie4kPlugin:
             if not (2000 <= category < 3000 or 5000 <= category < 6000):
                 return []
 
+        # When season/episode are requested, restrict to series
+        effective_category = category
+        if season is not None and effective_category is None:
+            effective_category = 5000
+
         await self._ensure_client()
         await self._verify_domain()
 
-        type_filter = _type_for_category(category)
-        genre = _GENRE_MAP.get(category, "") if category else ""
+        type_filter = _type_for_category(effective_category)
+        genre = _GENRE_MAP.get(effective_category, "") if effective_category else ""
 
         browse_results = await self._browse_all(query, type_filter, genre)
         if not browse_results:

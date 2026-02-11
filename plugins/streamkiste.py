@@ -757,8 +757,13 @@ class StreamkistePlugin:
             r for r in gathered if isinstance(r, SearchResult)
         ]
 
-        if category is not None:
-            results = _filter_by_category(results, category)
+        # When season is requested, restrict to series results
+        effective_category = category
+        if season is not None and effective_category is None:
+            effective_category = 5000
+
+        if effective_category is not None:
+            results = _filter_by_category(results, effective_category)
 
         return results
 

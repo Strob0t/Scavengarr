@@ -683,14 +683,17 @@ class HdfilmePlugin:
 
         return all_results[:_MAX_RESULTS]
 
-    async def _scrape_detail(self, result: dict[str, str]) -> list[SearchResult]:
+    async def _scrape_detail(
+        self,
+        result: dict[str, str],
+        season: int | None = None,
+        episode: int | None = None,
+    ) -> list[SearchResult]:
         """Scrape a film/series detail page for stream links.
 
         For films: fetches meinecloud.click/ddl/{imdb_id} for stream URLs.
-        For series: extracts episode links from su-spoiler-content divs.
-
-        Returns one SearchResult for films, or one per first-episode-per-season
-        for series (each with all episode links of that season as download_links).
+        For series: extracts episode links from su-spoiler-content divs,
+        optionally filtered to the requested *season* / *episode*.
         """
         client = await self._ensure_client()
         detail_url = result["url"]
@@ -735,8 +738,18 @@ class HdfilmePlugin:
 
         if parser.is_series:
             return self._build_series_results(
-                title, parser, detail_url, category, metadata
+                title,
+                parser,
+                detail_url,
+                category,
+                metadata,
+                season=season,
+                episode=episode,
             )
+
+        # Skip films when season/episode are requested
+        if season is not None:
+            return []
 
         return await self._build_film_results(
             title, parser, detail_url, category, metadata, client
@@ -787,11 +800,32 @@ class HdfilmePlugin:
         detail_url: str,
         category: int,
         metadata: dict[str, str],
+        season: int | None = None,
+        episode: int | None = None,
     ) -> list[SearchResult]:
         """Build SearchResult list for a series from episode links."""
         if not parser.episode_links:
             log.debug("hdfilme_no_episode_links", url=detail_url)
             return []
+
+        links = parser.episode_links
+
+        # Filter to the requested season (e.g. "Staffel 1")
+        if season is not None:
+            season_label = f"Staffel {season}"
+            links = [lnk for lnk in links if lnk.get("season", "") == season_label]
+
+        if not links:
+            return []
+
+        # Filter to a specific episode index within the season
+        if episode is not None and episode >= 1:
+            # Episode links are ordered; pick the Nth one
+            idx = episode - 1
+            if idx < len(links):
+                links = [links[idx]]
+            else:
+                return []
 
         description = (
             f"{metadata.get('genres', '')} ({metadata.get('year', '')})"
@@ -799,12 +833,11 @@ class HdfilmePlugin:
             else metadata.get("genres") or metadata.get("year", "")
         )
 
-        # Return a single SearchResult with all episode links
         return [
             SearchResult(
                 title=title,
-                download_link=parser.episode_links[0]["link"],
-                download_links=parser.episode_links,
+                download_link=links[0]["link"],
+                download_links=links,
                 source_url=detail_url,
                 category=category,
                 description=description,
@@ -836,13 +869,15 @@ class HdfilmePlugin:
     async def _scrape_all_details(
         self,
         items: list[dict[str, str]],
+        season: int | None = None,
+        episode: int | None = None,
     ) -> list[SearchResult]:
         """Scrape detail pages with bounded concurrency."""
         sem = asyncio.Semaphore(_MAX_CONCURRENT_DETAIL)
 
         async def _bounded(r: dict[str, str]) -> list[SearchResult]:
             async with sem:
-                return await self._scrape_detail(r)
+                return await self._scrape_detail(r, season=season, episode=episode)
 
         gathered = await asyncio.gather(
             *[_bounded(r) for r in items],
@@ -879,7 +914,9 @@ class HdfilmePlugin:
             return []
 
         all_items = all_items[:_MAX_RESULTS]
-        results = await self._scrape_all_details(all_items)
+        results = await self._scrape_all_details(
+            all_items, season=season, episode=episode
+        )
 
         # Filter by category if specified
         if category is not None:

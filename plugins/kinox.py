@@ -373,6 +373,7 @@ class KinoxPlugin:
 
         Uses the search page to find movies/series, then fetches detail
         pages to extract year, hosters, and content type.
+        When *season* is provided, only series results are returned.
         """
         if not query:
             return []
@@ -382,6 +383,11 @@ class KinoxPlugin:
             if not (2000 <= category < 3000 or 5000 <= category < 6000):
                 return []
 
+        # When season/episode are requested, restrict to series
+        effective_category = category
+        if season is not None and effective_category is None:
+            effective_category = 5000
+
         await self._ensure_client()
         await self._verify_domain()
 
@@ -390,7 +396,9 @@ class KinoxPlugin:
             return []
 
         sem = asyncio.Semaphore(_MAX_CONCURRENT_DETAIL)
-        tasks = [self._process_entry(e, sem, category) for e in search_entries]
+        tasks = [
+            self._process_entry(e, sem, effective_category) for e in search_entries
+        ]
         task_results = await asyncio.gather(*tasks)
 
         results: list[SearchResult] = []

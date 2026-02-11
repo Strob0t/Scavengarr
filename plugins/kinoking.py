@@ -632,10 +632,14 @@ class KinokingPlugin:
         self,
         card: dict[str, str],
         category: int | None,
+        season: int | None = None,
+        episode: int | None = None,
     ) -> list[SearchResult]:
         """Scrape series detail and build SearchResults per episode."""
         series_id = card["id"]
-        detail = await self._scrape_series_detail(series_id)
+
+        # Fetch the requested season directly when specified
+        detail = await self._scrape_series_detail(series_id, season=season)
 
         if not detail.title and not card.get("title"):
             return []
@@ -648,18 +652,19 @@ class KinokingPlugin:
         if not detail.seasons and not detail.episodes:
             return []
 
-        # Use episodes from the first season (already loaded)
+        # Use episodes from the loaded season
         episodes = detail.episodes
         if not episodes and detail.seasons:
-            # Fetch first season explicitly
-            first_season = detail.seasons[0]["number"]
-            season_detail = await self._scrape_series_detail(
-                series_id, int(first_season)
-            )
+            target = str(season) if season is not None else detail.seasons[0]["number"]
+            season_detail = await self._scrape_series_detail(series_id, int(target))
             episodes = season_detail.episodes
 
         if not episodes:
             return []
+
+        # Filter to a specific episode when requested
+        if episode is not None:
+            episodes = [ep for i, ep in enumerate(episodes, 1) if i == episode]
 
         # Fetch episode links with bounded concurrency
         sem = asyncio.Semaphore(_MAX_CONCURRENT_DETAIL)
@@ -732,6 +737,8 @@ class KinokingPlugin:
         self,
         series: list[dict[str, str]],
         category: int | None,
+        season: int | None = None,
+        episode: int | None = None,
     ) -> list[SearchResult]:
         """Process series cards into SearchResults."""
         sem = asyncio.Semaphore(_MAX_CONCURRENT_DETAIL)
@@ -740,7 +747,9 @@ class KinokingPlugin:
             card: dict[str, str],
         ) -> list[SearchResult]:
             async with sem:
-                return await self._build_series_results(card, category)
+                return await self._build_series_results(
+                    card, category, season=season, episode=episode
+                )
 
         gathered = await asyncio.gather(
             *[_bounded(c) for c in series],
@@ -756,18 +765,26 @@ class KinokingPlugin:
         self,
         cards: list[dict[str, str]],
         category: int | None,
+        season: int | None = None,
+        episode: int | None = None,
     ) -> list[SearchResult]:
         """Process search cards into SearchResults with concurrency."""
         filtered = self._filter_cards(cards, category)
         results: list[SearchResult] = []
 
-        movies = [c for c in filtered if c["type"] == "movie"]
-        if movies:
-            results.extend(await self._process_movies(movies, category))
+        # Skip movies when season/episode are requested
+        if season is None:
+            movies = [c for c in filtered if c["type"] == "movie"]
+            if movies:
+                results.extend(await self._process_movies(movies, category))
 
         series = [c for c in filtered if c["type"] == "series"]
         if series:
-            results.extend(await self._process_series(series, category))
+            results.extend(
+                await self._process_series(
+                    series, category, season=season, episode=episode
+                )
+            )
 
         return results[:_MAX_RESULTS]
 
@@ -786,7 +803,9 @@ class KinokingPlugin:
         if not cards:
             return []
 
-        return await self._process_cards(cards, category)
+        return await self._process_cards(
+            cards, category, season=season, episode=episode
+        )
 
     async def cleanup(self) -> None:
         """Close httpx client."""

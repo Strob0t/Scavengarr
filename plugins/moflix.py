@@ -245,6 +245,7 @@ class MoflixPlugin:
         """Search moflix-stream.xyz and return results with video embed links.
 
         Uses the site's REST API for search and title details.
+        When *season* is provided, only series results are returned.
         """
         if not query:
             return []
@@ -261,13 +262,20 @@ class MoflixPlugin:
         if not search_results:
             return []
 
-        search_results = _pre_filter_by_category(search_results, category)
+        # When season/episode are requested, restrict to series
+        effective_category = category
+        if season is not None and effective_category is None:
+            effective_category = 5000
+
+        search_results = _pre_filter_by_category(search_results, effective_category)
         if not search_results:
             return []
 
         # Fetch detail pages with bounded concurrency
         sem = asyncio.Semaphore(_MAX_CONCURRENT_DETAIL)
-        tasks = [self._process_entry(e, sem, category) for e in search_results]
+        tasks = [
+            self._process_entry(e, sem, effective_category) for e in search_results
+        ]
         task_results = await asyncio.gather(*tasks)
 
         results: list[SearchResult] = []

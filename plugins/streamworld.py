@@ -491,9 +491,14 @@ class StreamworldPlugin:
         if not all_results:
             return []
 
+        # When season is requested, restrict to series type
+        effective_category = category
+        if season is not None and effective_category is None:
+            effective_category = 5000
+
         # Filter by type if Torznab category is specified
-        if category is not None:
-            type_filter = _TORZNAB_TO_TYPE.get(category)
+        if effective_category is not None:
+            type_filter = _TORZNAB_TO_TYPE.get(effective_category)
             if type_filter:
                 all_results = [
                     r for r in all_results if r.get("type", "") == type_filter
