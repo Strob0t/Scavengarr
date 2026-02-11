@@ -252,6 +252,7 @@ class DDLSpotPlugin:
     version = "1.0.0"
     mode = "playwright"
     provides = "download"
+    default_language = "de"
 
     def __init__(self) -> None:
         self._playwright: Playwright | None = None

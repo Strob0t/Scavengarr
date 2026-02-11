@@ -549,6 +549,7 @@ class KinogerPlugin:
     version = "1.0.0"
     mode = "httpx"
     provides = "stream"
+    default_language = "de"
 
     def __init__(self) -> None:
         self._client: httpx.AsyncClient | None = None

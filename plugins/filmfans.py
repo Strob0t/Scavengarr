@@ -195,6 +195,7 @@ class FilmfansPlugin:
     version = "1.0.0"
     mode = "httpx"
     provides = "download"
+    default_language = "de"
 
     def __init__(self) -> None:
         self._client: httpx.AsyncClient | None = None

@@ -175,6 +175,7 @@ class AnimeLoadsPlugin:
     version = "1.0.0"
     mode = "playwright"
     provides = "both"
+    default_language = "de"
 
     def __init__(self) -> None:
         self._pw: Playwright | None = None
