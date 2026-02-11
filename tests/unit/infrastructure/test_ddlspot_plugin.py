@@ -414,6 +414,26 @@ class TestCleanup:
 # ---------------------------------------------------------------------------
 
 
+class TestSearchResultParserPagination:
+    def test_next_page_url_extracted(self) -> None:
+        html = (
+            _SEARCH_HTML
+            + '<div class="box-content">[ 1 ] &nbsp; '
+            + '<a href="/search/2/?q=test&m=1">Next Page &raquo;</a></div>'
+        )
+        parser = _SearchResultParser()
+        parser.feed(html)
+
+        assert parser.next_page_url == "/search/2/?q=test&m=1"
+        assert len(parser.results) == 2
+
+    def test_no_next_page_url(self) -> None:
+        parser = _SearchResultParser()
+        parser.feed(_SEARCH_HTML)
+
+        assert parser.next_page_url == ""
+
+
 class TestSearch:
     @respx.mock
     async def test_search_returns_results(self) -> None:
@@ -427,9 +447,10 @@ class TestSearch:
             return_value=httpx.Response(200, text=_DETAIL_HTML_MULTI)
         )
 
-        # Set up Playwright mocks
+        # Set up Playwright mocks (search page + empty page 2)
         search_page = _make_mock_page(_SEARCH_HTML)
-        context = _make_mock_context(pages=[search_page])
+        empty_page = _make_mock_page(_SEARCH_HTML_NO_TABLE)
+        context = _make_mock_context(pages=[search_page, empty_page])
         browser = _make_mock_browser(context)
         pw = _make_mock_playwright(browser)
 
@@ -482,7 +503,8 @@ class TestSearch:
         )
 
         search_page = _make_mock_page(_SEARCH_HTML)
-        context = _make_mock_context(pages=[search_page])
+        empty_page = _make_mock_page(_SEARCH_HTML_NO_TABLE)
+        context = _make_mock_context(pages=[search_page, empty_page])
         browser = _make_mock_browser(context)
         pw = _make_mock_playwright(browser)
 
@@ -509,7 +531,8 @@ class TestSearch:
         )
 
         search_page = _make_mock_page(_SEARCH_HTML)
-        context = _make_mock_context(pages=[search_page])
+        empty_page = _make_mock_page(_SEARCH_HTML_NO_TABLE)
+        context = _make_mock_context(pages=[search_page, empty_page])
         browser = _make_mock_browser(context)
         pw = _make_mock_playwright(browser)
 
@@ -534,7 +557,8 @@ class TestSearch:
         )
 
         search_page = _make_mock_page(_SEARCH_HTML)
-        context = _make_mock_context(pages=[search_page])
+        empty_page = _make_mock_page(_SEARCH_HTML_NO_TABLE)
+        context = _make_mock_context(pages=[search_page, empty_page])
         browser = _make_mock_browser(context)
         pw = _make_mock_playwright(browser)
 
@@ -565,3 +589,43 @@ class TestSearch:
 
         # new_page should have been called twice (one per search)
         assert context.new_page.await_count == 2
+
+    @respx.mock
+    async def test_search_paginates(self) -> None:
+        """Verify pagination follows Next Page links."""
+        plugin = _make_plugin()
+
+        # Page 1: has results + "Next Page" link
+        page1_html = (
+            _SEARCH_HTML
+            + '<div class="box-content">'
+            + '<a href="/search/2/?q=test&m=1">Next Page &raquo;</a>'
+            + "</div>"
+        )
+        # Page 2: has one result, no next page
+        page2_html = _SEARCH_HTML_SINGLE
+
+        # Mock detail pages for all 3 results
+        respx.get("https://ddlspot.com/file/123/iron-man-2008/").mock(
+            return_value=httpx.Response(200, text=_DETAIL_HTML_SINGLE)
+        )
+        respx.get("https://ddlspot.com/file/456/ubuntu-24/").mock(
+            return_value=httpx.Response(200, text=_DETAIL_HTML_MULTI)
+        )
+        respx.get("https://ddlspot.com/file/789/game-title/").mock(
+            return_value=httpx.Response(200, text=_DETAIL_HTML_SINGLE)
+        )
+
+        search_p1 = _make_mock_page(page1_html)
+        search_p2 = _make_mock_page(page2_html)
+        empty_page = _make_mock_page(_SEARCH_HTML_NO_TABLE)
+        context = _make_mock_context(pages=[search_p1, search_p2, empty_page])
+        browser = _make_mock_browser(context)
+
+        plugin._browser = browser
+        plugin._context = context
+
+        results = await plugin.search("test")
+
+        # 2 from page 1 + 1 from page 2
+        assert len(results) == 3

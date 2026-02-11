@@ -38,6 +38,8 @@ _USER_AGENT = (
 )
 
 _MAX_CONCURRENT_DETAIL = 5
+_MAX_RESULTS = 1000
+_MAX_PAGES = 50  # 20 results/page → 50 pages for 1000
 
 # DDLSpot type string → Torznab category ID
 _CATEGORY_MAP: dict[str, int] = {
@@ -70,6 +72,7 @@ class _SearchResultParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
         self.results: list[dict[str, str]] = []
+        self.next_page_url: str = ""
 
         # State tracking
         self._in_table = False
@@ -79,6 +82,9 @@ class _SearchResultParser(HTMLParser):
         self._td_index = 0
         self._in_td = False
         self._in_a = False
+        self._in_nav_a = False
+        self._nav_a_href = ""
+        self._nav_a_text = ""
 
         # Current row data
         self._current_title = ""
@@ -96,6 +102,14 @@ class _SearchResultParser(HTMLParser):
             classes = (attr_dict.get("class") or "").split()
             if "download" in classes:
                 self._in_table = True
+
+        # Track potential "Next Page" links outside the table
+        if tag == "a" and not self._in_table:
+            href = attr_dict.get("href", "")
+            if href:
+                self._in_nav_a = True
+                self._nav_a_href = href
+                self._nav_a_text = ""
 
         if not self._in_table:
             return
@@ -134,6 +148,9 @@ class _SearchResultParser(HTMLParser):
             self._td_index = 0
 
     def handle_data(self, data: str) -> None:
+        if self._in_nav_a:
+            self._nav_a_text += data
+
         if not self._in_td:
             return
 
@@ -149,37 +166,43 @@ class _SearchResultParser(HTMLParser):
             elif self._td_index == 4:
                 self._current_size = text
 
+    def _handle_a_end(self) -> None:
+        if self._in_a:
+            self._in_a = False
+        if self._in_nav_a:
+            self._in_nav_a = False
+            if "next page" in self._nav_a_text.strip().lower():
+                self.next_page_url = self._nav_a_href
+
+    def _handle_tr_end(self) -> None:
+        if self._in_title_row:
+            self._in_title_row = False
+            self._expect_detail_row = True
+        elif self._in_detail_row:
+            self._in_detail_row = False
+            self._expect_detail_row = False
+            if self._current_title and self._current_detail_url:
+                self.results.append(
+                    {
+                        "title": self._current_title,
+                        "detail_url": self._current_detail_url,
+                        "size": self._current_size,
+                        "type_str": self._current_type,
+                    }
+                )
+
     def handle_endtag(self, tag: str) -> None:
         if tag == "table" and self._in_table:
             self._in_table = False
             self._in_tbody = False
-
-        if tag == "tbody":
+        elif tag == "tbody":
             self._in_tbody = False
-
-        if tag == "a" and self._in_a:
-            self._in_a = False
-
-        if tag == "td":
+        elif tag == "a":
+            self._handle_a_end()
+        elif tag == "td":
             self._in_td = False
-
-        if tag == "tr":
-            if self._in_title_row:
-                self._in_title_row = False
-                self._expect_detail_row = True
-            elif self._in_detail_row:
-                self._in_detail_row = False
-                self._expect_detail_row = False
-                # Emit result from the completed pair
-                if self._current_title and self._current_detail_url:
-                    self.results.append(
-                        {
-                            "title": self._current_title,
-                            "detail_url": self._current_detail_url,
-                            "size": self._current_size,
-                            "type_str": self._current_type,
-                        }
-                    )
+        elif tag == "tr":
+            self._handle_tr_end()
 
 
 class _DetailPageParser(HTMLParser):
@@ -288,21 +311,13 @@ class DDLSpotPlugin:
 
         return result
 
-    async def search(
-        self,
-        query: str,
-        category: int | None = None,
-    ) -> list[SearchResult]:
-        """Search ddlspot.com and return results with download links."""
-        await self._ensure_browser()
-        assert self._context is not None
-
-        encoded_query = quote_plus(query)
-        search_url = f"{self.base_url}/search/?q={encoded_query}&m=1"
+    async def _fetch_search_page(self, url: str) -> str:
+        """Fetch a search page via Playwright and return HTML."""
+        assert self._context is not None  # noqa: S101
 
         page = await self._context.new_page()
         try:
-            await page.goto(search_url, wait_until="domcontentloaded")
+            await page.goto(url, wait_until="domcontentloaded")
             await self._wait_for_cloudflare(page)
 
             try:
@@ -310,52 +325,30 @@ class DDLSpotPlugin:
             except Exception:  # noqa: BLE001
                 pass
 
-            html = await page.content()
+            return await page.content()
         finally:
             if not page.is_closed():
                 await page.close()
 
-        # Parse search results from flat table
-        parser = _SearchResultParser()
-        parser.feed(html)
-
-        if not parser.results:
-            return []
-
-        # Filter by category if specified
-        filtered = parser.results
-        if category is not None:
-            cat_name = _REVERSE_CATEGORY_MAP.get(category, "")
-            if cat_name:
-                filtered = [
-                    r for r in parser.results if r["type_str"].lower() == cat_name
-                ]
-
-        if not filtered:
-            return []
-
-        # Resolve relative detail URLs
-        detail_urls = [urljoin(self.base_url, r["detail_url"]) for r in filtered]
-
-        # Fetch detail pages in parallel for download links
-        detail_links = await self._fetch_detail_links(detail_urls)
-
-        # Build SearchResult objects
+    def _build_results(
+        self,
+        rows: list[dict[str, str]],
+        detail_links: dict[str, list[str]],
+    ) -> list[SearchResult]:
+        """Convert parsed rows + detail links into SearchResult objects."""
         results: list[SearchResult] = []
-        for row, detail_url in zip(filtered, detail_urls):
+        for row in rows:
+            detail_url = urljoin(self.base_url, row["detail_url"])
             download_urls = detail_links.get(detail_url, [])
             if not download_urls:
                 continue
 
-            # Determine category from type string
             type_str = row.get("type_str", "").lower()
             cat = _CATEGORY_MAP.get(type_str, 2000)
 
-            # Build download_links list (hoster derived from URL)
             dl_links = [
                 {"hoster": _hoster_from_url(url), "link": url} for url in download_urls
             ]
-
             results.append(
                 SearchResult(
                     title=row["title"],
@@ -366,8 +359,59 @@ class DDLSpotPlugin:
                     category=cat,
                 )
             )
-
         return results
+
+    async def search(
+        self,
+        query: str,
+        category: int | None = None,
+    ) -> list[SearchResult]:
+        """Search ddlspot.com and return results with download links.
+
+        Paginates through search pages to collect up to 1000 results
+        by following "Next Page" links.
+        """
+        await self._ensure_browser()
+
+        encoded_query = quote_plus(query)
+        search_url = f"{self.base_url}/search/?q={encoded_query}&m=1"
+
+        # Paginate through search results (20 results/page)
+        all_rows: list[dict[str, str]] = []
+        current_url = search_url
+        for _ in range(_MAX_PAGES):
+            if len(all_rows) >= _MAX_RESULTS:
+                break
+
+            html = await self._fetch_search_page(current_url)
+            parser = _SearchResultParser()
+            parser.feed(html)
+
+            if not parser.results:
+                break
+            all_rows.extend(parser.results)
+
+            if not parser.next_page_url:
+                break
+            current_url = urljoin(self.base_url, parser.next_page_url)
+
+        all_rows = all_rows[:_MAX_RESULTS]
+        if not all_rows:
+            return []
+
+        # Filter by category if specified
+        if category is not None:
+            cat_name = _REVERSE_CATEGORY_MAP.get(category, "")
+            if cat_name:
+                all_rows = [r for r in all_rows if r["type_str"].lower() == cat_name]
+
+        if not all_rows:
+            return []
+
+        detail_urls = [urljoin(self.base_url, r["detail_url"]) for r in all_rows]
+        detail_links = await self._fetch_detail_links(detail_urls)
+
+        return self._build_results(all_rows, detail_links)
 
     async def cleanup(self) -> None:
         """Close browser and Playwright resources."""
