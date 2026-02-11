@@ -18,7 +18,9 @@ def registry(tmp_path: Path) -> PluginRegistry:
 class TestGetByProvides:
     """Tests for get_by_provides filtering."""
 
-    def test_yaml_download_default(self, registry: PluginRegistry, tmp_path: Path) -> None:
+    def test_yaml_download_default(
+        self, registry: PluginRegistry, tmp_path: Path
+    ) -> None:
         """YAML plugin without provides field defaults to 'download'."""
         yaml_content = """\
 name: "test-dl"
@@ -39,7 +41,9 @@ scraping:
 
         assert "test-dl" in names
 
-    def test_yaml_stream_explicit(self, registry: PluginRegistry, tmp_path: Path) -> None:
+    def test_yaml_stream_explicit(
+        self, registry: PluginRegistry, tmp_path: Path
+    ) -> None:
         """YAML plugin with provides='stream' is returned for stream queries."""
         yaml_content = """\
 name: "test-stream"
