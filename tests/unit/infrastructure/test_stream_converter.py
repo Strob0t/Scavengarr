@@ -13,6 +13,7 @@ from scavengarr.domain.entities.stremio import (
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.stremio.stream_converter import (
     _extract_hoster,
+    _normalize_hoster_name,
     convert_search_results,
 )
 
@@ -113,7 +114,7 @@ class TestConvertSearchResults:
             ],
         )
         streams = convert_search_results([result])
-        assert streams[0].hoster == "MyHoster"
+        assert streams[0].hoster == "myhoster"  # normalized to lowercase
 
     def test_hoster_extracted_from_url_when_not_in_link(self) -> None:
         result = _make_result(
@@ -310,3 +311,86 @@ class TestExtractHoster:
     def test_url_without_scheme(self) -> None:
         # urlparse without scheme puts everything in path
         assert _extract_hoster("voe.sx/e/abc") == "unknown"
+
+
+class TestNormalizeHosterName:
+    def test_simple_lowercase(self) -> None:
+        assert _normalize_hoster_name("VOE") == "voe"
+
+    def test_strips_quality_suffix(self) -> None:
+        assert _normalize_hoster_name("VOE (HD)") == "voe"
+
+    def test_strips_resolution_suffix(self) -> None:
+        assert _normalize_hoster_name("Filemoon (720p)") == "filemoon"
+
+    def test_already_lowercase(self) -> None:
+        assert _normalize_hoster_name("streamtape") == "streamtape"
+
+    def test_supervideo(self) -> None:
+        assert _normalize_hoster_name("SuperVideo") == "supervideo"
+
+    def test_doodstream(self) -> None:
+        assert _normalize_hoster_name("DoodStream") == "doodstream"
+
+    def test_empty_string(self) -> None:
+        assert _normalize_hoster_name("") == ""
+
+
+class TestLinkKeyCompatibility:
+    """Test that download_links with 'link' key (plugin convention) are read."""
+
+    def test_link_key_used(self) -> None:
+        result = _make_result(
+            download_links=[
+                {"hoster": "VOE", "link": "https://voe.sx/e/abc123"},
+            ],
+        )
+        streams = convert_search_results([result])
+        assert len(streams) == 1
+        assert streams[0].url == "https://voe.sx/e/abc123"
+        assert streams[0].hoster == "voe"
+
+    def test_url_key_still_works(self) -> None:
+        result = _make_result(
+            download_links=[
+                {"hoster": "voe", "url": "https://voe.sx/e/abc123"},
+            ],
+        )
+        streams = convert_search_results([result])
+        assert len(streams) == 1
+        assert streams[0].url == "https://voe.sx/e/abc123"
+
+    def test_link_key_takes_precedence_over_url(self) -> None:
+        result = _make_result(
+            download_links=[
+                {
+                    "link": "https://voe.sx/e/correct",
+                    "url": "https://voe.sx/e/wrong",
+                },
+            ],
+        )
+        streams = convert_search_results([result])
+        assert streams[0].url == "https://voe.sx/e/correct"
+
+    def test_multiple_links_with_link_key(self) -> None:
+        result = _make_result(
+            download_links=[
+                {"hoster": "VOE (HD)", "link": "https://voe.sx/e/abc"},
+                {"hoster": "Filemoon (720p)", "link": "https://filemoon.sx/e/def"},
+            ],
+        )
+        streams = convert_search_results([result])
+        assert len(streams) == 2
+        assert streams[0].hoster == "voe"
+        assert streams[1].hoster == "filemoon"
+
+    def test_empty_link_skipped(self) -> None:
+        result = _make_result(
+            download_links=[
+                {"hoster": "VOE", "link": ""},
+                {"hoster": "Filemoon", "link": "https://filemoon.sx/e/abc"},
+            ],
+        )
+        streams = convert_search_results([result])
+        assert len(streams) == 1
+        assert streams[0].hoster == "filemoon"

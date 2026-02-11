@@ -37,6 +37,25 @@ def _extract_hoster(url: str) -> str:
         return "unknown"
 
 
+def _normalize_hoster_name(raw: str) -> str:
+    """Normalize hoster label from plugins to a clean hoster name.
+
+    Plugins may provide labels like "VOE (HD)", "Filemoon (720p)",
+    "Streamtape", etc. We strip quality suffixes and lowercase.
+
+    Examples:
+        "VOE (HD)" -> "voe"
+        "Filemoon (720p)" -> "filemoon"
+        "SuperVideo" -> "supervideo"
+        "DoodStream" -> "doodstream"
+    """
+    import re
+
+    # Strip parenthesized quality suffix: "VOE (HD)" -> "VOE"
+    name = re.sub(r"\s*\([^)]*\)\s*$", "", raw).strip().lower()
+    return name or raw.lower()
+
+
 def _convert_single_result(
     result: SearchResult,
     plugin_default_language: str | None = None,
@@ -47,7 +66,8 @@ def _convert_single_result(
 
     if result.download_links:
         for link in result.download_links:
-            url = link.get("url", "")
+            # Plugins use "link" key (some older ones use "url")
+            url = link.get("link", "") or link.get("url", "")
             if not url:
                 continue
 
@@ -61,7 +81,12 @@ def _convert_single_result(
                 link_language=link.get("language"),
                 plugin_default_language=plugin_default_language,
             )
-            hoster = link.get("hoster") or _extract_hoster(url)
+            raw_hoster = link.get("hoster", "")
+            hoster = (
+                _normalize_hoster_name(raw_hoster)
+                if raw_hoster
+                else _extract_hoster(url)
+            )
             size = link.get("size") or result.size
 
             streams.append(
