@@ -182,6 +182,23 @@ class TestSuperVideoResolver:
         assert "/e/" in call_url
 
     @pytest.mark.asyncio
+    async def test_sends_browser_user_agent(self) -> None:
+        html = """sources: [{file:"https://sv1.supervideo.cc/v/abc.mp4"}]"""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = html
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(return_value=mock_resp)
+
+        resolver = SuperVideoResolver(http_client=client)
+        await resolver.resolve("https://supervideo.cc/e/abc123def456")
+
+        _, kwargs = client.get.call_args
+        assert "headers" in kwargs
+        assert "Mozilla" in kwargs["headers"]["User-Agent"]
+
+    @pytest.mark.asyncio
     async def test_returns_none_when_no_source_found(self) -> None:
         html = "<html><body><h1>Player</h1></body></html>"
         mock_resp = MagicMock()
