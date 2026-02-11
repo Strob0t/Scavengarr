@@ -191,3 +191,32 @@ class TestYamlPluginDefinition:
             "https://filmpalast.sx",
             "https://filmpalast.im",
         ]
+
+    def test_provides_default_download(self) -> None:
+        plugin = YamlPluginDefinition(
+            name="test",
+            version="0.1",
+            base_url="http://x",
+            scraping=ScrapingConfig(mode="scrapy"),
+        )
+        assert plugin.provides == "download"
+
+    def test_provides_explicit_stream(self) -> None:
+        plugin = YamlPluginDefinition(
+            name="test",
+            version="0.1",
+            base_url="http://x",
+            scraping=ScrapingConfig(mode="scrapy"),
+            provides="stream",
+        )
+        assert plugin.provides == "stream"
+
+    def test_provides_explicit_both(self) -> None:
+        plugin = YamlPluginDefinition(
+            name="test",
+            version="0.1",
+            base_url="http://x",
+            scraping=ScrapingConfig(mode="scrapy"),
+            provides="both",
+        )
+        assert plugin.provides == "both"

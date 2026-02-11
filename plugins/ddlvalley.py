@@ -214,6 +214,7 @@ class DDLValleyPlugin:
     name = "ddlvalley"
     version = "1.0.0"
     mode = "playwright"
+    provides = "download"
 
     def __init__(self) -> None:
         self._playwright: Playwright | None = None

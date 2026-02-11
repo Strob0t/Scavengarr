@@ -2,6 +2,7 @@
 name: "filmpalast"
 version: "1.0.0"
 base_url: "https://filmpalast.to"
+provides: "download"
 
 scraping:
   mode: "scrapy"

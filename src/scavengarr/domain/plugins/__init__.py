@@ -1,4 +1,4 @@
-from .base import PluginProtocol, SearchResult, StageResult
+from .base import PluginProtocol, PluginProvides, SearchResult, StageResult
 from .exceptions import (
     DuplicatePluginError,
     PluginLoadError,
@@ -28,6 +28,7 @@ __all__ = [
     "PluginLoadError",
     "PluginNotFoundError",
     "PluginProtocol",
+    "PluginProvides",
     "PluginValidationError",
     "ScrapingConfig",
     "ScrapingStage",

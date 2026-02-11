@@ -2,6 +2,7 @@
 name: "warezomen"
 version: "1.0.0"
 base_url: "https://warezomen.com"
+provides: "download"
 
 scraping:
   mode: "scrapy"

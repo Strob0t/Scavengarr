@@ -137,9 +137,7 @@ _EXTRACT_RESULTS_JS = """
 """
 
 # JavaScript to extract pagination info.
-_PAGINATION_RE = (
-    r"/Showing\s+(\d+)\s+to\s+(\d+)\s+of\s+(\d+)\s+entries/"
-)
+_PAGINATION_RE = r"/Showing\s+(\d+)\s+to\s+(\d+)\s+of\s+(\d+)\s+entries/"
 
 _EXTRACT_PAGINATION_JS = (
     "() => {"
@@ -176,6 +174,7 @@ class AnimeLoadsPlugin:
     name = "animeloads"
     version = "1.0.0"
     mode = "playwright"
+    provides = "both"
 
     def __init__(self) -> None:
         self._pw: Playwright | None = None

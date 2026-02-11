@@ -6,6 +6,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from scavengarr.domain.plugins.base import PluginProvides
+
 
 @dataclass(frozen=True)
 class HttpOverrides:
@@ -174,5 +176,6 @@ class YamlPluginDefinition:
     scraping: ScrapingConfig
     mirror_urls: list[str] | None = None
     category_map: dict[int, str] | None = None
+    provides: PluginProvides = "download"
     auth: AuthConfig | None = None
     http: HttpOverrides | None = None

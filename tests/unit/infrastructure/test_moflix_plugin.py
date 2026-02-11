@@ -169,6 +169,9 @@ class TestPluginAttributes:
     def test_mode(self, moflix_mod):
         assert moflix_mod.plugin.mode == "httpx"
 
+    def test_provides(self, moflix_mod):
+        assert moflix_mod.plugin.provides == "stream"
+
 
 # ---------------------------------------------------------------------------
 # Build search result tests

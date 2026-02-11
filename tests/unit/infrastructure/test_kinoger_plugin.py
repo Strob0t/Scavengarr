@@ -396,6 +396,10 @@ class TestKinogerPluginAttributes:
         plug = _make_plugin()
         assert plug.mode == "httpx"
 
+    def test_plugin_provides(self) -> None:
+        plug = _make_plugin()
+        assert plug.provides == "stream"
+
 
 class TestKinogerPluginSearch:
     """Tests for KinogerPlugin search with mocked HTTP."""

@@ -2,6 +2,7 @@
 name: "scnlog"
 version: "1.0.0"
 base_url: "https://scnlog.me"
+provides: "download"
 
 category_map:
   2000: "movies/"

@@ -314,6 +314,7 @@ class Nima4kPlugin:
     name = "nima4k"
     version = "1.0.0"
     mode = "httpx"
+    provides = "download"
 
     def __init__(self) -> None:
         self._client: httpx.AsyncClient | None = None

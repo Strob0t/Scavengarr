@@ -248,6 +248,7 @@ class MyGullyPlugin:
     name = "mygully"
     version = "1.0.0"
     mode = "playwright"
+    provides = "download"
 
     def __init__(self) -> None:
         self._domains = list(_DOMAINS)

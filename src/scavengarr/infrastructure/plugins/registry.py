@@ -13,6 +13,7 @@ from scavengarr.domain.plugins import (
     DuplicatePluginError,
     PluginNotFoundError,
     PluginProtocol,
+    PluginProvides,
     YamlPluginDefinition,
 )
 
@@ -151,6 +152,24 @@ class PluginRegistry:
                 result.append(plugin)
 
         return sorted(result, key=lambda p: p.name)
+
+    def get_by_provides(self, provides: PluginProvides) -> list[str]:
+        """Return plugin names filtered by their ``provides`` attribute."""
+        self.discover()
+
+        names: list[str] = []
+        for ref in self._refs:
+            if ref.plugin_type == "yaml":
+                plugin = self._load_yaml(ref)
+                if plugin.provides == provides or plugin.provides == "both":
+                    names.append(plugin.name)
+            else:
+                py_plugin = self._load_python(ref)
+                plugin_provides: str = getattr(py_plugin, "provides", "download")
+                if plugin_provides == provides or plugin_provides == "both":
+                    names.append(py_plugin.name)
+
+        return sorted(names)
 
     def load_all(self) -> None:
         """

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
+
+PluginProvides = Literal["stream", "download", "both"]
 
 
 @dataclass
@@ -66,6 +68,7 @@ class PluginProtocol(Protocol):
     """
 
     name: str
+    provides: PluginProvides
 
     async def search(
         self, query: str, category: int | None = None
@@ -80,6 +83,7 @@ class MultiStagePluginProtocol(Protocol):
     """
 
     name: str
+    provides: PluginProvides
 
     async def search(
         self, query: str, category: int | None = None

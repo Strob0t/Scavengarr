@@ -357,6 +357,7 @@ class YamlPluginDefinitionPydantic(BaseModel):
     name: str = Field(pattern=PLUGIN_NAME_RE)
     version: str = Field(pattern=SEMVER_RE)
     base_url: list[HttpUrl]
+    provides: Literal["stream", "download", "both"] = "download"
 
     scraping: ScrapingConfig
     category_map: dict[int, str] | None = None

@@ -363,6 +363,7 @@ class StoPlugin:
     name = "sto"
     version = "1.0.0"
     mode = "httpx"
+    provides = "stream"
 
     def __init__(self) -> None:
         self._client: httpx.AsyncClient | None = None

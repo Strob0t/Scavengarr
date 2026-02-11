@@ -157,6 +157,7 @@ def to_domain_plugin_definition(
         base_url=urls[0],
         scraping=to_domain_scraping_config(pydantic.scraping),
         mirror_urls=urls[1:] or None,
+        provides=pydantic.provides,
         category_map=pydantic.category_map,
         auth=to_domain_auth_config(pydantic.auth) if pydantic.auth else None,
         http=to_domain_http_overrides(pydantic.http) if pydantic.http else None,
