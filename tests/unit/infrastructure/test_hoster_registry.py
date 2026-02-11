@@ -337,3 +337,25 @@ class TestHosterResolverRegistry:
 
         assert result is not None
         voe_resolver.resolve.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_cleanup_calls_resolver_cleanup(self) -> None:
+        """cleanup() calls cleanup on resolvers that have one."""
+        resolver = MagicMock()
+        resolver.name = "voe"
+        resolver.cleanup = AsyncMock()
+
+        registry = HosterResolverRegistry(resolvers=[resolver])
+        await registry.cleanup()
+
+        resolver.cleanup.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_cleanup_skips_resolvers_without_cleanup(self) -> None:
+        """cleanup() does not error when resolver has no cleanup method."""
+        resolver = MagicMock(spec=["name", "resolve"])
+        resolver.name = "basic"
+
+        registry = HosterResolverRegistry(resolvers=[resolver])
+        # Should not raise
+        await registry.cleanup()

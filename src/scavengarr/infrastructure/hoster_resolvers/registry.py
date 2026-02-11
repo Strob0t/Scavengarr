@@ -56,6 +56,13 @@ class HosterResolverRegistry:
         """Return list of hosters with registered resolvers."""
         return list(self._resolvers.keys())
 
+    async def cleanup(self) -> None:
+        """Close resources held by resolvers that have a cleanup method."""
+        for resolver in self._resolvers.values():
+            cleanup_fn = getattr(resolver, "cleanup", None)
+            if cleanup_fn is not None:
+                await cleanup_fn()
+
     async def resolve(self, url: str, hoster: str = "") -> ResolvedStream | None:
         """Resolve a hoster embed URL to a playable video URL.
 
