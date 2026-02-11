@@ -19,6 +19,7 @@ from scavengarr.infrastructure.persistence.crawljob_cache import (
 )
 from scavengarr.infrastructure.plugins import PluginRegistry
 from scavengarr.infrastructure.tmdb.client import HttpxTmdbClient
+from scavengarr.infrastructure.tmdb.imdb_fallback import ImdbFallbackClient
 from scavengarr.infrastructure.torznab.search_engine import HttpxScrapySearchEngine
 from scavengarr.interfaces.app_state import AppState
 
@@ -95,7 +96,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     log.info("crawljob_factory_initialized")
 
-    # 7) TMDB client (optional — requires API key for Stremio addon)
+    # 7) TMDB client (with IMDB fallback when no API key is configured)
     if config.tmdb_api_key:
         state.tmdb_client = HttpxTmdbClient(
             api_key=config.tmdb_api_key,
@@ -104,22 +105,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         log.info("tmdb_client_initialized")
     else:
-        state.tmdb_client = None
-        log.info("tmdb_client_skipped", reason="no API key configured")
-
-    # 8) Stremio use cases (optional — require TMDB client)
-    if state.tmdb_client:
-        state.stremio_stream_uc = StremioStreamUseCase(
-            tmdb=state.tmdb_client,
-            plugins=state.plugins,
-            search_engine=state.search_engine,
-            config=config.stremio,
+        state.tmdb_client = ImdbFallbackClient(
+            http_client=state.http_client,
+            cache=state.cache,
         )
-        state.stremio_catalog_uc = StremioCatalogUseCase(tmdb=state.tmdb_client)
-        log.info("stremio_use_cases_initialized")
-    else:
-        state.stremio_stream_uc = None
-        state.stremio_catalog_uc = None
+        log.info(
+            "tmdb_client_fallback",
+            reason="no API key, using IMDB suggest API",
+        )
+
+    # 8) Stremio use cases (always initialized — fallback handles missing key)
+    state.stremio_stream_uc = StremioStreamUseCase(
+        tmdb=state.tmdb_client,
+        plugins=state.plugins,
+        search_engine=state.search_engine,
+        config=config.stremio,
+    )
+    state.stremio_catalog_uc = StremioCatalogUseCase(tmdb=state.tmdb_client)
 
     log.info("app_startup_complete")
 
