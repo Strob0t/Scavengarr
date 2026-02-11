@@ -127,6 +127,18 @@ EMPTY_SEARCH_HTML = """\
 </div>
 """
 
+MIRROR_AJAX_HTML_VOE = """\
+<div id="IfrBox">
+  <iframe src="https://voe.sx/e/abc123" width="100%" height="100%"></iframe>
+</div>
+"""
+
+MIRROR_AJAX_HTML_FILEMOON = """\
+<div id="IfrBox">
+  <iframe src="https://filemoon.sx/e/def456" width="100%" height="100%"></iframe>
+</div>
+"""
+
 
 # ---------------------------------------------------------------------------
 # Helper
@@ -276,10 +288,17 @@ class TestPluginSearch:
     async def test_search_returns_results(self, plugin, mock_client):
         search_resp = _make_response(SEARCH_HTML)
         detail_resp = _make_response(DETAIL_MOVIE_HTML)
+        mirror_voe_resp = _make_response(MIRROR_AJAX_HTML_VOE)
+        mirror_filemoon_resp = _make_response(MIRROR_AJAX_HTML_FILEMOON)
 
         async def mock_get(url, **kwargs):
-            if "Search.html" in str(url):
+            url_str = str(url)
+            if "Search.html" in url_str:
                 return search_resp
+            if "/aGET/Mirror/" in url_str:
+                if "Hoster=92" in url_str:
+                    return mirror_voe_resp
+                return mirror_filemoon_resp
             return detail_resp
 
         mock_client.get = AsyncMock(side_effect=mock_get)
@@ -306,10 +325,14 @@ class TestPluginSearch:
     async def test_search_movie_category_accepted(self, plugin, mock_client):
         search_resp = _make_response(SEARCH_HTML)
         detail_resp = _make_response(DETAIL_MOVIE_HTML)
+        mirror_resp = _make_response(MIRROR_AJAX_HTML_VOE)
 
         async def mock_get(url, **kwargs):
-            if "Search.html" in str(url):
+            url_str = str(url)
+            if "Search.html" in url_str:
                 return search_resp
+            if "/aGET/Mirror/" in url_str:
+                return mirror_resp
             return detail_resp
 
         mock_client.get = AsyncMock(side_effect=mock_get)
@@ -322,10 +345,14 @@ class TestPluginSearch:
     async def test_search_tv_category_filters_movies(self, plugin, mock_client):
         search_resp = _make_response(SEARCH_HTML)
         detail_resp = _make_response(DETAIL_MOVIE_HTML)
+        mirror_resp = _make_response(MIRROR_AJAX_HTML_VOE)
 
         async def mock_get(url, **kwargs):
-            if "Search.html" in str(url):
+            url_str = str(url)
+            if "Search.html" in url_str:
                 return search_resp
+            if "/aGET/Mirror/" in url_str:
+                return mirror_resp
             return detail_resp
 
         mock_client.get = AsyncMock(side_effect=mock_get)
@@ -339,10 +366,14 @@ class TestPluginSearch:
     async def test_search_series_results(self, plugin, mock_client):
         search_resp = _make_response(SEARCH_HTML)
         detail_resp = _make_response(DETAIL_SERIES_HTML)
+        mirror_resp = _make_response(MIRROR_AJAX_HTML_VOE)
 
         async def mock_get(url, **kwargs):
-            if "Search.html" in str(url):
+            url_str = str(url)
+            if "Search.html" in url_str:
                 return search_resp
+            if "/aGET/Mirror/" in url_str:
+                return mirror_resp
             return detail_resp
 
         mock_client.get = AsyncMock(side_effect=mock_get)
@@ -390,6 +421,86 @@ class TestPluginSearch:
         # Fallback to search entry title (no year from detail)
         assert results[0].title == "Batman Begins"
         assert results[0].published_date is None
+
+    @pytest.mark.asyncio
+    async def test_search_fetches_mirror_urls(self, plugin, mock_client):
+        """AJAX mirror calls should produce download_links with hoster URLs."""
+        search_resp = _make_response(SEARCH_HTML)
+        detail_resp = _make_response(DETAIL_MOVIE_HTML)
+
+        async def mock_get(url, **kwargs):
+            url_str = str(url)
+            if "Search.html" in url_str:
+                return search_resp
+            if "/aGET/Mirror/" in url_str:
+                if "Hoster=92" in url_str:
+                    return _make_response(MIRROR_AJAX_HTML_VOE)
+                return _make_response(MIRROR_AJAX_HTML_FILEMOON)
+            return detail_resp
+
+        mock_client.get = AsyncMock(side_effect=mock_get)
+
+        results = await plugin.search("batman")
+
+        assert len(results) == 2
+        # Each result should have download_links from mirror AJAX
+        r = results[0]
+        assert r.download_links is not None
+        assert len(r.download_links) == 2
+        # Hoster 92 = Voe.SX, Hoster 104 = Vinovo.to
+        links = {dl["hoster"]: dl["link"] for dl in r.download_links}
+        assert links["Voe.SX"] == "https://voe.sx/e/abc123"
+        assert links["Vinovo.to"] == "https://filemoon.sx/e/def456"
+        # download_link should be the first link
+        assert r.download_link == "https://voe.sx/e/abc123"
+
+    @pytest.mark.asyncio
+    async def test_mirror_url_failure_graceful(self, plugin, mock_client):
+        """When all AJAX mirror calls fail, result still has source_url."""
+        search_resp = _make_response(SEARCH_HTML)
+        detail_resp = _make_response(DETAIL_MOVIE_HTML)
+        error_resp = MagicMock(spec=httpx.Response)
+        error_resp.status_code = 404
+
+        async def mock_get(url, **kwargs):
+            url_str = str(url)
+            if "Search.html" in url_str:
+                return search_resp
+            if "/aGET/Mirror/" in url_str:
+                return error_resp
+            return detail_resp
+
+        mock_client.get = AsyncMock(side_effect=mock_get)
+
+        results = await plugin.search("batman")
+
+        assert len(results) == 2
+        # No download_links since all mirrors failed
+        assert results[0].download_links is None
+        # Fallback to source_url
+        assert "kinox.to" in results[0].download_link
+
+    @pytest.mark.asyncio
+    async def test_mirror_iframe_parsing(self, plugin, mock_client, kinox_mod):
+        """Test iframe src extraction from different HTML formats."""
+        p = kinox_mod.KinoxPlugin()
+        p._client = mock_client
+        p._domain_verified = True
+        p.base_url = "https://www22.kinox.to"
+
+        # Test with single-quoted iframe
+        single_quote_html = "<div><iframe src='https://voe.sx/e/test'></iframe></div>"
+        mock_client.get = AsyncMock(return_value=_make_response(single_quote_html))
+        url = await p._fetch_mirror_url("Test_Movie", "92")
+        assert url == "https://voe.sx/e/test"
+
+        # Test with double-quoted iframe
+        double_quote_html = (
+            '<div><iframe src="https://filemoon.sx/e/test"></iframe></div>'
+        )
+        mock_client.get = AsyncMock(return_value=_make_response(double_quote_html))
+        url = await p._fetch_mirror_url("Test_Movie", "104")
+        assert url == "https://filemoon.sx/e/test"
 
 
 # ---------------------------------------------------------------------------

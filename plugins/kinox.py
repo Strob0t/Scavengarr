@@ -316,10 +316,31 @@ class KinoxPlugin:
         )
         return parser
 
+    async def _fetch_mirror_url(self, slug: str, hoster_id: str) -> str | None:
+        """Fetch embed iframe URL for a hoster mirror via AJAX.
+
+        kinox.to serves embed URLs via:
+        GET /aGET/Mirror/{slug}&Hoster={id}&Mirror=1
+        which returns HTML containing an <iframe src="https://voe.sx/e/abc">.
+        """
+        client = await self._ensure_client()
+        try:
+            resp = await client.get(
+                f"{self.base_url}/aGET/Mirror/{slug}&Hoster={hoster_id}&Mirror=1",
+            )
+            if resp.status_code != 200:
+                return None
+            m = re.search(r'<iframe[^>]+src=["\']([^"\']+)', resp.text)
+            return m.group(1).strip() if m else None
+        except Exception:  # noqa: BLE001
+            log.warning("kinox_mirror_failed", slug=slug, hoster_id=hoster_id)
+            return None
+
     def _build_search_result(
         self,
         search_entry: dict[str, str],
         detail: _DetailPageParser,
+        download_links: list[dict[str, str]] | None = None,
     ) -> SearchResult:
         """Build a SearchResult from search entry and detail page data."""
         title = detail.title or search_entry.get("title", "")
@@ -332,7 +353,8 @@ class KinoxPlugin:
 
         return SearchResult(
             title=display_title,
-            download_link=source_url,
+            download_link=download_links[0]["link"] if download_links else source_url,
+            download_links=download_links or None,
             source_url=source_url,
             published_date=year or None,
             category=category,
@@ -344,7 +366,7 @@ class KinoxPlugin:
         sem: asyncio.Semaphore,
         category: int | None,
     ) -> SearchResult | None:
-        """Fetch detail page for one search entry and build result."""
+        """Fetch detail page for one search entry, then fetch mirror URLs."""
         url_path = entry.get("url", "")
         if not url_path:
             return None
@@ -352,7 +374,25 @@ class KinoxPlugin:
         async with sem:
             detail = await self._fetch_detail_page(url_path)
 
-        sr = self._build_search_result(entry, detail)
+        # Extract slug: "/Stream/Batman_Begins.html" → "Batman_Begins"
+        slug = url_path.replace("/Stream/", "").replace(".html", "")
+
+        # Fetch embed URLs for each hoster (bounded concurrency)
+        links: list[dict[str, str]] = []
+        if detail.hosters:
+            mirror_sem = asyncio.Semaphore(_MAX_CONCURRENT_DETAIL)
+
+            async def _fetch(h: dict[str, str]) -> dict[str, str] | None:
+                async with mirror_sem:
+                    embed_url = await self._fetch_mirror_url(slug, h["id"])
+                    if embed_url:
+                        return {"hoster": h["name"], "link": embed_url}
+                    return None
+
+            results = await asyncio.gather(*[_fetch(h) for h in detail.hosters])
+            links = [r for r in results if isinstance(r, dict)]
+
+        sr = self._build_search_result(entry, detail, download_links=links or None)
 
         # Post-filter by category range
         if category is not None:
