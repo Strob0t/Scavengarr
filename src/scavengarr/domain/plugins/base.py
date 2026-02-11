@@ -64,14 +64,19 @@ class PluginProtocol(Protocol):
 
     A Python plugin must export a module-level variable named `plugin` that:
     - has a `name: str` attribute
-    - implements: async def search(query, category) -> list[SearchResult]
+    - implements: async def search(query, category, season,
+      episode) returning list[SearchResult]
     """
 
     name: str
     provides: PluginProvides
 
     async def search(
-        self, query: str, category: int | None = None
+        self,
+        query: str,
+        category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
     ) -> list[SearchResult]: ...
 
 
@@ -86,7 +91,11 @@ class MultiStagePluginProtocol(Protocol):
     provides: PluginProvides
 
     async def search(
-        self, query: str, category: int | None = None
+        self,
+        query: str,
+        category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
     ) -> list[SearchResult]: ...
 
     async def scrape_stage(

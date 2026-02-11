@@ -55,11 +55,12 @@ def _build_search_query(
     title: str,
     request: StremioStreamRequest,
 ) -> str:
-    """Build a search query string from title and optional season/episode."""
-    if request.season is not None and request.episode is not None:
-        return f"{title} S{request.season:02d}E{request.episode:02d}"
-    if request.season is not None:
-        return f"{title} S{request.season:02d}"
+    """Build a search query string from title.
+
+    Returns the plain title without SxxExx suffix — season and episode
+    are passed as separate parameters to each plugin so they can
+    navigate directly to the correct content.
+    """
     return title
 
 
@@ -126,7 +127,13 @@ class StremioStreamUseCase:
             plugin_count=len(all_names),
         )
 
-        all_results = await self._search_plugins(all_names, query, category)
+        all_results = await self._search_plugins(
+            all_names,
+            query,
+            category,
+            season=request.season,
+            episode=request.episode,
+        )
 
         if not all_results:
             log.info(
@@ -178,13 +185,18 @@ class StremioStreamUseCase:
         plugin_names: list[str],
         query: str,
         category: int | None = None,
+        *,
+        season: int | None = None,
+        episode: int | None = None,
     ) -> list[SearchResult]:
         """Search all plugins in parallel with bounded concurrency."""
         semaphore = asyncio.Semaphore(self._max_concurrent)
 
         async def _search_one(name: str) -> list[SearchResult]:
             async with semaphore:
-                return await self._search_single_plugin(name, query, category)
+                return await self._search_single_plugin(
+                    name, query, category, season=season, episode=episode
+                )
 
         tasks = [_search_one(name) for name in plugin_names]
         results_per_plugin = await asyncio.gather(*tasks)
@@ -199,6 +211,9 @@ class StremioStreamUseCase:
         name: str,
         query: str,
         category: int | None = None,
+        *,
+        season: int | None = None,
+        episode: int | None = None,
     ) -> list[SearchResult]:
         """Search a single plugin, catching and logging errors.
 
@@ -219,7 +234,9 @@ class StremioStreamUseCase:
                 and not hasattr(plugin, "scraping")
             ):
                 # Python plugin: call directly, validate results
-                raw = await plugin.search(query, category=category)
+                raw = await plugin.search(
+                    query, category=category, season=season, episode=episode
+                )
                 results = await self._search_engine.validate_results(raw)
             else:
                 # YAML plugin: delegate to search engine

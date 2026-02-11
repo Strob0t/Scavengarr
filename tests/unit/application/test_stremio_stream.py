@@ -97,17 +97,18 @@ class TestBuildSearchQuery:
         req = _make_request()
         assert _build_search_query("Iron Man", req) == "Iron Man"
 
-    def test_series_season_and_episode(self) -> None:
+    def test_series_returns_plain_title(self) -> None:
+        """Season/episode are passed separately, not appended to the query."""
         req = _make_request(content_type="series", season=1, episode=5)
-        assert _build_search_query("Breaking Bad", req) == "Breaking Bad S01E05"
+        assert _build_search_query("Breaking Bad", req) == "Breaking Bad"
 
-    def test_series_season_only(self) -> None:
+    def test_series_season_only_returns_plain_title(self) -> None:
         req = _make_request(content_type="series", season=2)
-        assert _build_search_query("Breaking Bad", req) == "Breaking Bad S02"
+        assert _build_search_query("Breaking Bad", req) == "Breaking Bad"
 
-    def test_series_double_digit(self) -> None:
-        req = _make_request(content_type="series", season=12, episode=3)
-        assert _build_search_query("Show", req) == "Show S12E03"
+    def test_series_no_season_returns_plain_title(self) -> None:
+        req = _make_request(content_type="series")
+        assert _build_search_query("Show", req) == "Show"
 
 
 # ---------------------------------------------------------------------------
@@ -222,10 +223,13 @@ class TestExecute:
         assert len(result) >= 1
         assert result[0].url == "https://voe.sx/e/abc"
         tmdb.get_german_title.assert_awaited_once_with("tt1234567")
-        mock_plugin.search.assert_awaited_once_with("Iron Man", category=2000)
+        mock_plugin.search.assert_awaited_once_with(
+            "Iron Man", category=2000, season=None, episode=None
+        )
         engine.validate_results.assert_awaited_once()
 
-    async def test_series_query_includes_episode(self) -> None:
+    async def test_series_query_passes_season_episode(self) -> None:
+        """Season/episode are passed as kwargs, query is the plain title."""
         tmdb = AsyncMock()
         tmdb.get_german_title = AsyncMock(return_value="Breaking Bad")
 
@@ -247,7 +251,7 @@ class TestExecute:
         await uc.execute(req)
 
         mock_plugin.search.assert_awaited_once_with(
-            "Breaking Bad S01E05", category=5000
+            "Breaking Bad", category=5000, season=1, episode=5
         )
 
     async def test_multiple_plugins_combined(self) -> None:
