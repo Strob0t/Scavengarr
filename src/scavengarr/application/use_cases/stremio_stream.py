@@ -89,6 +89,7 @@ class StremioStreamUseCase:
         self._search_engine = search_engine
         self._sorter = StreamSorter(config)
         self._max_concurrent = config.max_concurrent_plugins
+        self._plugin_timeout = config.plugin_timeout_seconds
 
     async def execute(
         self,
@@ -194,9 +195,20 @@ class StremioStreamUseCase:
 
         async def _search_one(name: str) -> list[SearchResult]:
             async with semaphore:
-                return await self._search_single_plugin(
-                    name, query, category, season=season, episode=episode
-                )
+                try:
+                    return await asyncio.wait_for(
+                        self._search_single_plugin(
+                            name, query, category, season=season, episode=episode
+                        ),
+                        timeout=self._plugin_timeout,
+                    )
+                except TimeoutError:
+                    log.warning(
+                        "stremio_plugin_timeout",
+                        plugin=name,
+                        timeout=self._plugin_timeout,
+                    )
+                    return []
 
         tasks = [_search_one(name) for name in plugin_names]
         results_per_plugin = await asyncio.gather(*tasks)

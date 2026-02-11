@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 from scavengarr.application.use_cases.stremio_stream import (
@@ -515,3 +516,46 @@ class TestExecute:
         result = await uc.execute(_make_request())
         assert result == []
         assert mock_plugin.search.await_count == 10
+
+    async def test_slow_plugin_cancelled_by_timeout(self) -> None:
+        """A plugin exceeding plugin_timeout_seconds is cancelled."""
+        tmdb = AsyncMock()
+        tmdb.get_german_title = AsyncMock(return_value="Movie")
+
+        sr = _make_search_result(
+            download_links=[{"url": "https://voe.sx/e/fast"}],
+        )
+
+        fast_plugin = AsyncMock()
+        fast_plugin.search = AsyncMock(return_value=[sr])
+        del fast_plugin.scraping
+
+        async def _slow_search(*_a: object, **_kw: object) -> list[SearchResult]:
+            await asyncio.sleep(10)
+            return []
+
+        slow_plugin = AsyncMock()
+        slow_plugin.search = AsyncMock(side_effect=_slow_search)
+        del slow_plugin.scraping
+
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(side_effect=lambda r: r)
+
+        plugins = MagicMock()
+        plugins.get_by_provides.side_effect = lambda p: (
+            ["fast", "slow"] if p == "stream" else []
+        )
+        plugins.get.side_effect = lambda name: {
+            "fast": fast_plugin,
+            "slow": slow_plugin,
+        }[name]
+
+        config = _make_config(plugin_timeout_seconds=0.1)
+        uc = _make_use_case(
+            tmdb=tmdb, plugins=plugins, search_engine=engine, config=config
+        )
+        result = await uc.execute(_make_request())
+
+        # Fast plugin result should be present, slow plugin timed out
+        assert len(result) == 1
+        assert result[0].url == "https://voe.sx/e/fast"

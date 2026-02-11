@@ -17,7 +17,11 @@ _IRON_MAN_RESPONSE = json.dumps(
     {
         "d": [
             {
-                "i": {"height": 2048, "imageUrl": "https://example.com/im.jpg", "width": 1382},
+                "i": {
+                    "height": 2048,
+                    "imageUrl": "https://example.com/im.jpg",
+                    "width": 1382,
+                },
                 "id": "tt0371746",
                 "l": "Iron Man",
                 "q": "feature",

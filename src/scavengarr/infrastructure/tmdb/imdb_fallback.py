@@ -92,15 +92,11 @@ class ImdbFallbackClient:
             log.info("imdb_title_resolved", imdb_id=imdb_id, title=title)
         return title or None
 
-    async def get_title_by_tmdb_id(
-        self, tmdb_id: int, media_type: str
-    ) -> str | None:
+    async def get_title_by_tmdb_id(self, tmdb_id: int, media_type: str) -> str | None:
         """Cannot resolve TMDB IDs without TMDB API."""
         return None
 
-    async def trending_movies(
-        self, page: int = 1
-    ) -> list[StremioMetaPreview]:
+    async def trending_movies(self, page: int = 1) -> list[StremioMetaPreview]:
         """Not available without TMDB API."""
         return []
 
@@ -114,8 +110,6 @@ class ImdbFallbackClient:
         """Not available without TMDB API."""
         return []
 
-    async def search_tv(
-        self, query: str, page: int = 1
-    ) -> list[StremioMetaPreview]:
+    async def search_tv(self, query: str, page: int = 1) -> list[StremioMetaPreview]:
         """Not available without TMDB API."""
         return []

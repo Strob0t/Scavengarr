@@ -116,6 +116,11 @@ class StremioConfig(BaseModel):
         description="Max parallel plugin searches for stream resolution.",
     )
 
+    plugin_timeout_seconds: float = Field(
+        default=30.0,
+        description="Per-plugin timeout in seconds for stream search.",
+    )
+
 
 class AppConfig(BaseModel):
     """
