@@ -522,9 +522,7 @@ The Batman</a></div>
     async def test_search_http_error(self) -> None:
         plug = _make_plugin()
         mock_client = AsyncMock()
-        mock_client.get = AsyncMock(
-            side_effect=httpx.ConnectError("connection failed")
-        )
+        mock_client.get = AsyncMock(side_effect=httpx.ConnectError("connection failed"))
 
         plug._client = mock_client
         results = await plug.search("test")

@@ -115,9 +115,7 @@ class HaschconPlugin:
             )
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            log.warning(
-                "haschcon_player_failed", post_id=post_id, error=str(exc)
-            )
+            log.warning("haschcon_player_failed", post_id=post_id, error=str(exc))
             return None
 
         text = resp.text
@@ -141,7 +139,6 @@ class HaschconPlugin:
     ) -> SearchResult:
         """Build a SearchResult from a WP REST API video entry."""
         title = html_lib.unescape(entry.get("title", {}).get("rendered", ""))
-        post_id = entry.get("id")
         link = entry.get("link", "")
         date = entry.get("date", "")
 
@@ -233,9 +230,7 @@ class HaschconPlugin:
         tasks = [self._process_entry(e, sem) for e in search_results]
         task_results = await asyncio.gather(*tasks)
 
-        results: list[SearchResult] = [
-            sr for sr in task_results if sr is not None
-        ]
+        results: list[SearchResult] = [sr for sr in task_results if sr is not None]
 
         return results[:_MAX_RESULTS]
 

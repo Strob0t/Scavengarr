@@ -173,7 +173,9 @@ class TestBuildSearchResult:
 
     def test_basic_fields(self, haschcon_mod):
         p = haschcon_mod.HaschconPlugin()
-        sr = p._build_search_result(SEARCH_ENTRY_1, "https://www.youtube.com/watch?v=abc123")
+        sr = p._build_search_result(
+            SEARCH_ENTRY_1, "https://www.youtube.com/watch?v=abc123"
+        )
 
         assert sr.title == "Die Fliege"
         assert sr.download_link == "https://www.youtube.com/watch?v=abc123"
@@ -206,7 +208,9 @@ class TestBuildSearchResult:
         p = haschcon_mod.HaschconPlugin()
         sr = p._build_search_result(SEARCH_ENTRY_1, None)
 
-        assert sr.metadata["genres"] == "Horror und Mystery, Science Fiction und Fantasy"
+        assert sr.metadata["genres"] == (
+            "Horror und Mystery, Science Fiction und Fantasy"
+        )
 
     def test_tags_as_actors(self, haschcon_mod):
         p = haschcon_mod.HaschconPlugin()
@@ -218,7 +222,10 @@ class TestBuildSearchResult:
         p = haschcon_mod.HaschconPlugin()
         sr = p._build_search_result(SEARCH_ENTRY_1, None)
 
-        assert sr.metadata["poster"] == "https://haschcon.com/wp-content/uploads/fliege.jpg"
+        assert (
+            sr.metadata["poster"]
+            == "https://haschcon.com/wp-content/uploads/fliege.jpg"
+        )
 
     def test_empty_embedded_terms(self, haschcon_mod):
         p = haschcon_mod.HaschconPlugin()

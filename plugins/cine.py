@@ -124,9 +124,7 @@ class CinePlugin:
             )
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            log.warning(
-                "cine_detail_failed", imdb_id=imdb_id, error=str(exc)
-            )
+            log.warning("cine_detail_failed", imdb_id=imdb_id, error=str(exc))
             return None
 
         data = resp.json()
@@ -146,9 +144,7 @@ class CinePlugin:
             )
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            log.warning(
-                "cine_links_failed", imdb_id=imdb_id, error=str(exc)
-            )
+            log.warning("cine_links_failed", imdb_id=imdb_id, error=str(exc))
             return None
 
         data = resp.json()
@@ -284,9 +280,7 @@ class CinePlugin:
         tasks = [self._process_entry(e, sem) for e in search_results]
         task_results = await asyncio.gather(*tasks)
 
-        results: list[SearchResult] = [
-            sr for sr in task_results if sr is not None
-        ]
+        results: list[SearchResult] = [sr for sr in task_results if sr is not None]
 
         return results[:_MAX_RESULTS]
 

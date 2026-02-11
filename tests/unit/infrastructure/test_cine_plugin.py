@@ -456,9 +456,7 @@ class TestPluginSearch:
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_detail_failure_still_returns_result(
-        self, plugin, mock_client
-    ):
+    async def test_detail_failure_still_returns_result(self, plugin, mock_client):
         """When detail/links fail, result uses search entry data only."""
         search_resp = _make_json_response(SEARCH_RESPONSE_SINGLE_PAGE)
         detail_fail = _make_json_response(DETAIL_RESPONSE_STATUS_FALSE)
