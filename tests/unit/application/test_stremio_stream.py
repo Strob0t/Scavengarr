@@ -71,11 +71,18 @@ def _make_use_case(
     *,
     tmdb: AsyncMock | None = None,
     plugins: MagicMock | None = None,
+    search_engine: AsyncMock | None = None,
     config: StremioConfig | None = None,
 ) -> StremioStreamUseCase:
+    engine = search_engine or AsyncMock()
+    # Default: validate_results returns input unchanged
+    if not search_engine:
+        engine.validate_results = AsyncMock(side_effect=lambda r: r)
+        engine.search = AsyncMock(return_value=[])
     return StremioStreamUseCase(
         tmdb=tmdb or AsyncMock(),
         plugins=plugins or MagicMock(),
+        search_engine=engine,
         config=config or _make_config(),
     )
 
@@ -195,9 +202,13 @@ class TestExecute:
             ],
         )
 
-        # Plugin that returns search results
+        # Python plugin (no scraping attribute) that returns search results
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
+        del mock_plugin.scraping  # Ensure no scraping attr → Python plugin path
+
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(side_effect=lambda r: r)
 
         plugins = MagicMock()
         plugins.get_by_provides.side_effect = lambda p: (
@@ -205,13 +216,14 @@ class TestExecute:
         )
         plugins.get.return_value = mock_plugin
 
-        uc = _make_use_case(tmdb=tmdb, plugins=plugins)
+        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
         result = await uc.execute(_make_request())
 
         assert len(result) >= 1
         assert result[0].url == "https://voe.sx/e/abc"
         tmdb.get_german_title.assert_awaited_once_with("tt1234567")
-        mock_plugin.search.assert_awaited_once_with("Iron Man")
+        mock_plugin.search.assert_awaited_once_with("Iron Man", category=2000)
+        engine.validate_results.assert_awaited_once()
 
     async def test_series_query_includes_episode(self) -> None:
         tmdb = AsyncMock()
@@ -219,6 +231,10 @@ class TestExecute:
 
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[])
+        del mock_plugin.scraping
+
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(return_value=[])
 
         plugins = MagicMock()
         plugins.get_by_provides.side_effect = lambda p: (
@@ -227,10 +243,12 @@ class TestExecute:
         plugins.get.return_value = mock_plugin
 
         req = _make_request(content_type="series", season=1, episode=5)
-        uc = _make_use_case(tmdb=tmdb, plugins=plugins)
+        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
         await uc.execute(req)
 
-        mock_plugin.search.assert_awaited_once_with("Breaking Bad S01E05")
+        mock_plugin.search.assert_awaited_once_with(
+            "Breaking Bad S01E05", category=5000
+        )
 
     async def test_multiple_plugins_combined(self) -> None:
         tmdb = AsyncMock()
@@ -245,8 +263,13 @@ class TestExecute:
 
         plugin_a = AsyncMock()
         plugin_a.search = AsyncMock(return_value=[sr1])
+        del plugin_a.scraping
         plugin_b = AsyncMock()
         plugin_b.search = AsyncMock(return_value=[sr2])
+        del plugin_b.scraping
+
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(side_effect=lambda r: r)
 
         plugins = MagicMock()
         plugins.get_by_provides.side_effect = lambda p: (
@@ -254,7 +277,7 @@ class TestExecute:
         )
         plugins.get.side_effect = lambda name: {"a": plugin_a, "b": plugin_b}[name]
 
-        uc = _make_use_case(tmdb=tmdb, plugins=plugins)
+        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
         result = await uc.execute(_make_request())
 
         assert len(result) == 2
@@ -272,8 +295,13 @@ class TestExecute:
 
         good_plugin = AsyncMock()
         good_plugin.search = AsyncMock(return_value=[sr])
+        del good_plugin.scraping
         bad_plugin = AsyncMock()
         bad_plugin.search = AsyncMock(side_effect=RuntimeError("boom"))
+        del bad_plugin.scraping
+
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(side_effect=lambda r: r)
 
         plugins = MagicMock()
         plugins.get_by_provides.side_effect = lambda p: (
@@ -283,7 +311,7 @@ class TestExecute:
             name
         ]
 
-        uc = _make_use_case(tmdb=tmdb, plugins=plugins)
+        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
         result = await uc.execute(_make_request())
 
         # Should still return results from the good plugin
@@ -310,6 +338,10 @@ class TestExecute:
 
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[])
+        del mock_plugin.scraping
+
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(return_value=[])
 
         plugins = MagicMock()
         plugins.get_by_provides.side_effect = lambda p: (
@@ -317,7 +349,7 @@ class TestExecute:
         )
         plugins.get.return_value = mock_plugin
 
-        uc = _make_use_case(tmdb=tmdb, plugins=plugins)
+        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
         result = await uc.execute(_make_request())
         assert result == []
 
@@ -331,6 +363,10 @@ class TestExecute:
 
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
+        del mock_plugin.scraping
+
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(side_effect=lambda r: r)
 
         plugins = MagicMock()
         plugins.get_by_provides.side_effect = lambda p: (
@@ -338,7 +374,7 @@ class TestExecute:
         )
         plugins.get.return_value = mock_plugin
 
-        uc = _make_use_case(tmdb=tmdb, plugins=plugins)
+        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
         await uc.execute(_make_request())
 
         # The use case should tag source_plugin in metadata
@@ -354,6 +390,10 @@ class TestExecute:
 
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
+        del mock_plugin.scraping
+
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(side_effect=lambda r: r)
 
         plugins = MagicMock()
         # "stream" returns nothing, but "both" returns one plugin
@@ -362,7 +402,7 @@ class TestExecute:
         )
         plugins.get.return_value = mock_plugin
 
-        uc = _make_use_case(tmdb=tmdb, plugins=plugins)
+        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
         result = await uc.execute(_make_request())
 
         assert len(result) == 1
@@ -378,6 +418,10 @@ class TestExecute:
 
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
+        del mock_plugin.scraping
+
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(side_effect=lambda r: r)
 
         plugins = MagicMock()
         # Same plugin name returned by both calls
@@ -386,7 +430,7 @@ class TestExecute:
         )
         plugins.get.return_value = mock_plugin
 
-        uc = _make_use_case(tmdb=tmdb, plugins=plugins)
+        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
         await uc.execute(_make_request())
 
         # Should only search once despite appearing in both lists
@@ -405,6 +449,10 @@ class TestExecute:
 
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
+        del mock_plugin.scraping
+
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(side_effect=lambda r: r)
 
         plugins = MagicMock()
         plugins.get_by_provides.side_effect = lambda p: (
@@ -412,7 +460,7 @@ class TestExecute:
         )
         plugins.get.return_value = mock_plugin
 
-        uc = _make_use_case(tmdb=tmdb, plugins=plugins)
+        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
         result = await uc.execute(_make_request())
 
         # Should have 2 streams (order depends on sorter)
@@ -442,6 +490,10 @@ class TestExecute:
 
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[])
+        del mock_plugin.scraping
+
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(return_value=[])
 
         plugins = MagicMock()
         many_names = [f"plugin_{i}" for i in range(10)]
@@ -451,7 +503,9 @@ class TestExecute:
         plugins.get.return_value = mock_plugin
 
         config = _make_config(max_concurrent_plugins=2)
-        uc = _make_use_case(tmdb=tmdb, plugins=plugins, config=config)
+        uc = _make_use_case(
+            tmdb=tmdb, plugins=plugins, search_engine=engine, config=config
+        )
 
         # Should complete without error; semaphore internally limits to 2
         result = await uc.execute(_make_request())

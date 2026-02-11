@@ -17,6 +17,7 @@ from scavengarr.domain.entities.stremio import (
 )
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.domain.ports.plugin_registry import PluginRegistryPort
+from scavengarr.domain.ports.search_engine import SearchEnginePort
 from scavengarr.domain.ports.tmdb import TmdbClientPort
 from scavengarr.infrastructure.config.schema import StremioConfig
 from scavengarr.infrastructure.stremio.stream_converter import convert_search_results
@@ -79,10 +80,12 @@ class StremioStreamUseCase:
         *,
         tmdb: TmdbClientPort,
         plugins: PluginRegistryPort,
+        search_engine: SearchEnginePort,
         config: StremioConfig,
     ) -> None:
         self._tmdb = tmdb
         self._plugins = plugins
+        self._search_engine = search_engine
         self._sorter = StreamSorter(config)
         self._max_concurrent = config.max_concurrent_plugins
 
@@ -99,12 +102,13 @@ class StremioStreamUseCase:
             Sorted list of StremioStream objects, best first.
             Empty list if title not found or no plugins match.
         """
-        title = await self._tmdb.get_german_title(request.imdb_id)
+        title = await self._resolve_title(request)
         if not title:
             log.warning("stremio_title_not_found", imdb_id=request.imdb_id)
             return []
 
         query = _build_search_query(title, request)
+        category = 2000 if request.content_type == "movie" else 5000
 
         plugin_names = self._plugins.get_by_provides("stream")
         both_names = self._plugins.get_by_provides("both")
@@ -122,7 +126,7 @@ class StremioStreamUseCase:
             plugin_count=len(all_names),
         )
 
-        all_results = await self._search_plugins(all_names, query)
+        all_results = await self._search_plugins(all_names, query, category)
 
         if not all_results:
             log.info(
@@ -157,17 +161,30 @@ class StremioStreamUseCase:
 
         return streams
 
+    async def _resolve_title(
+        self,
+        request: StremioStreamRequest,
+    ) -> str | None:
+        """Resolve a human-readable title from IMDb or TMDB ID via TMDB."""
+        if request.imdb_id.startswith("tmdb:"):
+            tmdb_id = request.imdb_id.removeprefix("tmdb:")
+            return await self._tmdb.get_title_by_tmdb_id(
+                int(tmdb_id), request.content_type
+            )
+        return await self._tmdb.get_german_title(request.imdb_id)
+
     async def _search_plugins(
         self,
         plugin_names: list[str],
         query: str,
+        category: int | None = None,
     ) -> list[SearchResult]:
         """Search all plugins in parallel with bounded concurrency."""
         semaphore = asyncio.Semaphore(self._max_concurrent)
 
         async def _search_one(name: str) -> list[SearchResult]:
             async with semaphore:
-                return await self._search_single_plugin(name, query)
+                return await self._search_single_plugin(name, query, category)
 
         tasks = [_search_one(name) for name in plugin_names]
         results_per_plugin = await asyncio.gather(*tasks)
@@ -181,20 +198,34 @@ class StremioStreamUseCase:
         self,
         name: str,
         query: str,
+        category: int | None = None,
     ) -> list[SearchResult]:
-        """Search a single plugin, catching and logging errors."""
+        """Search a single plugin, catching and logging errors.
+
+        Python plugins (with search() but no scraping stages) are called
+        directly, then their results are validated via SearchEngine.
+        YAML plugins (with scraping stages) are delegated to the SearchEngine.
+        """
         try:
             plugin = self._plugins.get(name)
         except Exception:
             log.warning("stremio_plugin_not_found", plugin=name)
             return []
 
-        if not hasattr(plugin, "search") or not callable(plugin.search):
-            log.debug("stremio_plugin_not_searchable", plugin=name)
-            return []
-
         try:
-            results = await plugin.search(query)
+            if (
+                hasattr(plugin, "search")
+                and callable(plugin.search)
+                and not hasattr(plugin, "scraping")
+            ):
+                # Python plugin: call directly, validate results
+                raw = await plugin.search(query, category=category)
+                results = await self._search_engine.validate_results(raw)
+            else:
+                # YAML plugin: delegate to search engine
+                results = await self._search_engine.search(
+                    plugin, query, category=category
+                )
         except Exception:
             log.warning("stremio_plugin_search_error", plugin=name, exc_info=True)
             return []
