@@ -3,6 +3,14 @@ name: "scnlog"
 version: "1.0.0"
 base_url: "https://scnlog.me"
 
+category_map:
+  2000: "movies/"
+  5000: "tv-shows/"
+  4000: "games/"
+  3000: "music/"
+  7000: "ebooks/"
+  6000: "xxx/"
+
 scraping:
   mode: "scrapy"
   start_stage: "search_results"
@@ -12,7 +20,7 @@ scraping:
   stages:
     - name: "search_results"
       type: "list"
-      url_pattern: "/?s={query}"
+      url_pattern: "/{category_path}?s={query}"
       selectors:
         rows: "div.hentry"
         title: "div.title h1 a"

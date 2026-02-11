@@ -199,8 +199,14 @@ async def torznab_plugin_api(
             crawljob_factory=state.crawljob_factory,
             crawljob_repo=state.crawljob_repo,
         )
+        category = int(cat.split(",")[0]) if cat else None
         items = await search_uc.execute(
-            TorznabQuery(action="search", query=q, plugin_name=plugin_name)
+            TorznabQuery(
+                action="search",
+                query=q,
+                plugin_name=plugin_name,
+                category=category,
+            )
         )
         rendered = render_rss_xml(
             title=f"{state.config.app_name} ({plugin_name})",

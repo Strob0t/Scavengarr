@@ -361,6 +361,7 @@ class YamlPluginDefinitionPydantic(BaseModel):
     base_url: List[HttpUrl]
 
     scraping: ScrapingConfig
+    category_map: Optional[Dict[int, str]] = None
     auth: Optional[AuthConfig] = None
 
     # Optional per-plugin overrides for HTTP behaviour

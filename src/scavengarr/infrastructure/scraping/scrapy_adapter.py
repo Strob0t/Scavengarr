@@ -731,6 +731,14 @@ class ScrapyAdapter:
         # Reset visited URLs for new scrape
         self.visited_urls.clear()
 
+        # Resolve category to category_path for URL templates
+        category = params.pop("category", None)
+        category_map = getattr(self.plugin, "category_map", None)
+        if category and category_map:
+            params["category_path"] = category_map.get(category, "")
+        else:
+            params["category_path"] = ""
+
         # Add query to params
         params["query"] = query
 

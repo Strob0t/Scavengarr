@@ -173,5 +173,6 @@ class YamlPluginDefinition:
     base_url: str
     scraping: ScrapingConfig
     mirror_urls: list[str] | None = None
+    category_map: dict[int, str] | None = None
     auth: AuthConfig | None = None
     http: HttpOverrides | None = None
