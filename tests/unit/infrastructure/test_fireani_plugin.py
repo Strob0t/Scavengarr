@@ -16,9 +16,7 @@ _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "fireani.py"
 
 def _load_module() -> ModuleType:
     """Load fireani.py plugin via importlib."""
-    spec = importlib.util.spec_from_file_location(
-        "fireani_plugin", str(_PLUGIN_PATH)
-    )
+    spec = importlib.util.spec_from_file_location("fireani_plugin", str(_PLUGIN_PATH))
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -240,18 +238,14 @@ class TestBuildStreamLinks:
 
     def test_filters_proxy_players(self) -> None:
         """ProxyPlayerSlow links are excluded."""
-        links = _build_stream_links(
-            _EPISODE_RESPONSE["data"]["anime_episode_links"]
-        )
+        links = _build_stream_links(_EPISODE_RESPONSE["data"]["anime_episode_links"])
         assert len(links) == 3
         for link in links:
             assert link["hoster"] != "proxyplayerslow"
 
     def test_builds_correct_format(self) -> None:
         """Each link has hoster, link, and language keys."""
-        links = _build_stream_links(
-            _EPISODE_RESPONSE["data"]["anime_episode_links"]
-        )
+        links = _build_stream_links(_EPISODE_RESPONSE["data"]["anime_episode_links"])
         for link in links:
             assert "hoster" in link
             assert "link" in link
@@ -260,9 +254,7 @@ class TestBuildStreamLinks:
 
     def test_language_labels(self) -> None:
         """Language keys are mapped to human-readable labels."""
-        links = _build_stream_links(
-            _EPISODE_RESPONSE["data"]["anime_episode_links"]
-        )
+        links = _build_stream_links(_EPISODE_RESPONSE["data"]["anime_episode_links"])
         languages = {link["language"] for link in links}
         assert "German Dub" in languages
         assert "English Sub" in languages
@@ -438,11 +430,15 @@ def _route_get(
         url_str = str(url)
         if "/api/anime/search" in url_str:
             return _mock_response(
-                search_resp if search_resp is not None else {"data": [], "pages": 1, "status": 200}
+                search_resp
+                if search_resp is not None
+                else {"data": [], "pages": 1, "status": 200}
             )
         if "/api/anime/episode" in url_str:
             return _mock_response(
-                episode_resp if episode_resp is not None else {"data": {}, "status": 200}
+                episode_resp
+                if episode_resp is not None
+                else {"data": {}, "status": 200}
             )
         if "/api/anime" in url_str:
             return _mock_response(
@@ -759,9 +755,7 @@ class TestApiSearch:
         """Non-JSON response is handled gracefully."""
         plug = _make_plugin()
         mock_client = AsyncMock()
-        mock_client.get = AsyncMock(
-            return_value=_mock_response("not json at all")
-        )
+        mock_client.get = AsyncMock(return_value=_mock_response("not json at all"))
         mock_client.aclose = AsyncMock()
         plug._client = mock_client
 
@@ -774,9 +768,7 @@ class TestApiSearch:
         plug = _make_plugin()
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(
-            return_value=_mock_response(
-                {"data": [], "status": 500, "error": "fail"}
-            )
+            return_value=_mock_response({"data": [], "status": 500, "error": "fail"})
         )
         mock_client.aclose = AsyncMock()
         plug._client = mock_client
@@ -790,9 +782,7 @@ class TestApiSearch:
         plug = _make_plugin()
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(
-            return_value=_mock_response(
-                {"data": "not a list", "status": 200}
-            )
+            return_value=_mock_response({"data": "not a list", "status": 200})
         )
         mock_client.aclose = AsyncMock()
         plug._client = mock_client
@@ -888,9 +878,7 @@ class TestGetAnimeDetail:
         plug.base_url = "https://fireani.me"
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(
-            return_value=_mock_response(
-                {"error": "Not Found"}, status_code=404
-            )
+            return_value=_mock_response({"error": "Not Found"}, status_code=404)
         )
         mock_client.aclose = AsyncMock()
         plug._client = mock_client
@@ -904,9 +892,7 @@ class TestGetAnimeDetail:
         plug = _make_plugin()
         plug.base_url = "https://fireani.me"
         mock_client = AsyncMock()
-        mock_client.get = AsyncMock(
-            return_value=_mock_response(_ANIME_DETAIL_RESPONSE)
-        )
+        mock_client.get = AsyncMock(return_value=_mock_response(_ANIME_DETAIL_RESPONSE))
         mock_client.aclose = AsyncMock()
         plug._client = mock_client
 

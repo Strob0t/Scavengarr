@@ -46,6 +46,54 @@ _LANG_LABELS: dict[str, str] = {
 }
 
 
+def _build_description(anime: dict[str, Any]) -> str:
+    """Build a display description from anime search entry data."""
+    genres = anime.get("generes", [])
+    if not isinstance(genres, list):
+        genres = []
+    desc = str(anime.get("desc", ""))
+    start = anime.get("start")
+    end = anime.get("end")
+
+    parts: list[str] = []
+    if genres:
+        parts.append(", ".join(str(g) for g in genres))
+    if start:
+        year_str = str(start)
+        if end and end != start:
+            year_str += f" - {end}"
+        parts.append(f"({year_str})")
+    if desc:
+        if len(desc) > 300:
+            desc = desc[:297] + "..."
+        parts.append(desc)
+
+    return " ".join(parts) if parts else ""
+
+
+def _build_metadata(anime: dict[str, Any]) -> dict[str, str]:
+    """Build metadata dict from anime search entry data."""
+    genres = anime.get("generes", [])
+    if not isinstance(genres, list):
+        genres = []
+
+    metadata: dict[str, str] = {
+        "genres": ", ".join(str(g) for g in genres),
+    }
+    for key, field in [
+        ("rating", "vote_avg"),
+        ("votes", "vote_count"),
+        ("tmdb", "tmdb"),
+        ("imdb", "imdb"),
+        ("year", "start"),
+    ]:
+        val = anime.get(field)
+        if val is not None:
+            metadata[key] = str(val)
+
+    return metadata
+
+
 def _build_stream_links(
     episode_links: list[dict[str, Any]],
 ) -> list[dict[str, str]]:
@@ -255,13 +303,29 @@ class FireaniPlugin:
         # Sort episodes by episode number
         sorted_eps = sorted(
             episodes,
-            key=lambda e: int(str(e.get("episode", "0")))
-            if str(e.get("episode", "0")).isdigit()
-            else 0,
+            key=lambda e: (
+                int(str(e.get("episode", "0")))
+                if str(e.get("episode", "0")).isdigit()
+                else 0
+            ),
         )
 
         first_ep = str(sorted_eps[0].get("episode", "1"))
         return (season_name, first_ep)
+
+    async def _fetch_hoster_links(
+        self,
+        slug: str,
+        detail: dict[str, Any] | None,
+    ) -> list[dict[str, str]]:
+        """Resolve the best episode and return hoster links."""
+        if not detail:
+            return await self._get_episode_links(slug, "1", "1")
+        first_ep = self._find_first_episode(detail)
+        if first_ep:
+            season, episode = first_ep
+            return await self._get_episode_links(slug, season, episode)
+        return await self._get_episode_links(slug, "1", "1")
 
     async def _scrape_anime(
         self,
@@ -273,69 +337,15 @@ class FireaniPlugin:
         if not slug or not title:
             return None
 
-        # Get anime detail to find first available episode
         detail = await self._get_anime_detail(slug)
-        if not detail:
-            # Fallback: try S1E1 directly
-            hoster_links = await self._get_episode_links(slug, "1", "1")
-        else:
-            first_ep = self._find_first_episode(detail)
-            if first_ep:
-                season, episode = first_ep
-                hoster_links = await self._get_episode_links(
-                    slug, season, episode
-                )
-            else:
-                hoster_links = await self._get_episode_links(slug, "1", "1")
+        hoster_links = await self._fetch_hoster_links(slug, detail)
 
         if not hoster_links:
             log.debug("fireani_no_hosters", slug=slug)
             return None
 
-        # Build description
-        genres = anime.get("generes", [])
-        if not isinstance(genres, list):
-            genres = []
-        desc = str(anime.get("desc", ""))
-        start = anime.get("start")
-        end = anime.get("end")
-
-        description_parts: list[str] = []
-        if genres:
-            description_parts.append(", ".join(str(g) for g in genres))
-        if start:
-            year_str = str(start)
-            if end and end != start:
-                year_str += f" - {end}"
-            description_parts.append(f"({year_str})")
-        if desc:
-            # Truncate long descriptions
-            if len(desc) > 300:
-                desc = desc[:297] + "..."
-            description_parts.append(desc)
-
-        description = " ".join(description_parts) if description_parts else ""
-
-        # Build metadata
-        vote_avg = anime.get("vote_avg")
-        vote_count = anime.get("vote_count")
-        tmdb = anime.get("tmdb")
-        imdb = anime.get("imdb")
-
-        metadata: dict[str, str] = {
-            "genres": ", ".join(str(g) for g in genres),
-        }
-        if vote_avg is not None:
-            metadata["rating"] = str(vote_avg)
-        if vote_count is not None:
-            metadata["votes"] = str(vote_count)
-        if tmdb is not None:
-            metadata["tmdb"] = str(tmdb)
-        if imdb is not None:
-            metadata["imdb"] = str(imdb)
-        if start is not None:
-            metadata["year"] = str(start)
-
+        description = _build_description(anime)
+        metadata = _build_metadata(anime)
         source_url = f"{self.base_url}/anime/{slug}"
 
         return SearchResult(
