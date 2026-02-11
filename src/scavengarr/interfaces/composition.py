@@ -10,6 +10,8 @@ import structlog
 from fastapi import FastAPI
 
 from scavengarr.application.factories import CrawlJobFactory
+from scavengarr.application.use_cases.stremio_catalog import StremioCatalogUseCase
+from scavengarr.application.use_cases.stremio_stream import StremioStreamUseCase
 from scavengarr.domain.entities.crawljob import Priority
 from scavengarr.infrastructure.cache.cache_factory import create_cache
 from scavengarr.infrastructure.persistence.crawljob_cache import (
@@ -104,6 +106,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     else:
         state.tmdb_client = None
         log.info("tmdb_client_skipped", reason="no API key configured")
+
+    # 8) Stremio use cases (optional — require TMDB client)
+    if state.tmdb_client:
+        state.stremio_stream_uc = StremioStreamUseCase(
+            tmdb=state.tmdb_client,
+            plugins=state.plugins,
+            search_engine=state.search_engine,
+            config=config.stremio,
+        )
+        state.stremio_catalog_uc = StremioCatalogUseCase(tmdb=state.tmdb_client)
+        log.info("stremio_use_cases_initialized")
+    else:
+        state.stremio_stream_uc = None
+        state.stremio_catalog_uc = None
 
     log.info("app_startup_complete")
 

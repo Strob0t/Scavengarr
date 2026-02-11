@@ -11,6 +11,8 @@ from scavengarr.application.factories import CrawlJobFactory
 from scavengarr.infrastructure.config import AppConfig
 
 if TYPE_CHECKING:
+    from scavengarr.application.use_cases.stremio_catalog import StremioCatalogUseCase
+    from scavengarr.application.use_cases.stremio_stream import StremioStreamUseCase
     from scavengarr.domain.ports import (
         CachePort,
         CrawlJobRepository,
@@ -43,3 +45,5 @@ class AppState(State):
 
     # Stremio (optional — requires TMDB API key)
     tmdb_client: TmdbClientPort | None
+    stremio_stream_uc: StremioStreamUseCase | None
+    stremio_catalog_uc: StremioCatalogUseCase | None
