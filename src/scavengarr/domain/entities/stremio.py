@@ -90,6 +90,19 @@ class CachedStreamLink:
 
 
 @dataclass(frozen=True)
+class ResolvedStream:
+    """Result of resolving a hoster embed URL to an actual video URL.
+
+    Returned by HosterResolverPort implementations.
+    """
+
+    video_url: str  # Actual playable URL (.mp4, .m3u8, etc.)
+    headers: dict[str, str] = field(default_factory=dict)  # Required request headers
+    is_hls: bool = False  # True for .m3u8 playlists
+    quality: StreamQuality = StreamQuality.UNKNOWN
+
+
+@dataclass(frozen=True)
 class StremioStreamRequest:
     """Parsed Stremio stream request.
 
