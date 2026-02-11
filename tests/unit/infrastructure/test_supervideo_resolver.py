@@ -64,6 +64,12 @@ class TestIsCloudflareBlock:
     def test_503_with_challenge_platform(self) -> None:
         assert _is_cloudflare_block(503, '<div id="challenge-platform">') is True
 
+    def test_403_with_cf_error_details(self) -> None:
+        assert _is_cloudflare_block(403, '<div id="cf-error-details">') is True
+
+    def test_403_with_challenge_platform(self) -> None:
+        assert _is_cloudflare_block(403, "challenge-platform") is True
+
     def test_403_without_cloudflare_markers(self) -> None:
         assert _is_cloudflare_block(403, "<html>Forbidden</html>") is False
 

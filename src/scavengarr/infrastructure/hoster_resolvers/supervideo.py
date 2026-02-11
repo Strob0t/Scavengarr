@@ -40,12 +40,17 @@ _BROWSER_HEADERS = {
 
 
 def _is_cloudflare_block(status_code: int, html: str) -> bool:
-    """Detect Cloudflare JS challenge from HTTP response."""
-    if status_code == 403 and "Just a moment" in html:
-        return True
-    if status_code == 503 and "challenge-platform" in html:
-        return True
-    return False
+    """Detect Cloudflare block/challenge from HTTP response.
+
+    Cloudflare uses several block types:
+    - JS challenge: 503 + "Just a moment" / "challenge-platform"
+    - WAF block:    403 + "Attention Required" / "cf-error-details"
+    - Turnstile:    403 + "Just a moment" / "challenge-platform"
+    """
+    if status_code not in (403, 503):
+        return False
+    cf_markers = ("Just a moment", "challenge-platform", "cf-error-details")
+    return any(marker in html for marker in cf_markers)
 
 
 def _extract_jwplayer_source(html: str) -> str | None:
@@ -253,10 +258,14 @@ class SuperVideoResolver:
             )
 
     async def _wait_for_cloudflare(self, page: object) -> None:
-        """Wait for Cloudflare challenge to resolve."""
+        """Wait for Cloudflare challenge/block to resolve."""
         try:
             await page.wait_for_function(  # type: ignore[union-attr]
-                "() => !document.title.includes('Just a moment')",
+                """() => {
+                    const t = document.title;
+                    return !t.includes('Just a moment')
+                        && !t.includes('Attention Required');
+                }""",
                 timeout=15_000,
             )
         except Exception:  # noqa: BLE001
