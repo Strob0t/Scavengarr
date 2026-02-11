@@ -43,6 +43,7 @@ class RankedStream:
     language: StreamLanguage | None = None
     size: str | None = None
     release_name: str | None = None
+    title: str = ""
     source_plugin: str = ""
     rank_score: int = 0
 

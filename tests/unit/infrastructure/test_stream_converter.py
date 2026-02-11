@@ -147,6 +147,23 @@ class TestConvertSearchResults:
         streams = convert_search_results([result])
         assert streams[0].release_name == "Movie.2024.1080p.WEB-DL"
 
+    def test_title_propagated_from_search_result(self) -> None:
+        result = _make_result(
+            title="Iron Man",
+            download_links=[{"url": "https://voe.sx/e/abc"}],
+        )
+        streams = convert_search_results([result])
+        assert streams[0].title == "Iron Man"
+
+    def test_title_propagated_for_single_download_link(self) -> None:
+        result = _make_result(
+            title="Iron Man",
+            download_link="https://voe.sx/e/abc",
+            download_links=None,
+        )
+        streams = convert_search_results([result])
+        assert streams[0].title == "Iron Man"
+
     def test_size_from_link_dict(self) -> None:
         result = _make_result(
             download_links=[{"url": "https://voe.sx/e/abc", "size": "1.5 GB"}],

@@ -119,7 +119,7 @@ class TestBuildSearchQuery:
 
 
 class TestFormatStream:
-    def test_full_stream(self) -> None:
+    def test_release_name_used_as_name(self) -> None:
         lang = StreamLanguage(code="de", label="German Dub", is_dubbed=True)
         ranked = RankedStream(
             url="https://voe.sx/e/abc",
@@ -127,18 +127,39 @@ class TestFormatStream:
             quality=StreamQuality.HD_1080P,
             language=lang,
             size="1.5 GB",
+            release_name="Iron.Man.2008.1080p.WEB-DL",
             source_plugin="hdfilme",
             rank_score=1500,
         )
         result = _format_stream(ranked)
         assert result.url == "https://voe.sx/e/abc"
-        assert "hdfilme" in result.name
-        assert "HD 1080P" in result.name
+        assert result.name == "Iron.Man.2008.1080p.WEB-DL"
         assert "German Dub" in result.description
         assert "VOE" in result.description
         assert "1.5 GB" in result.description
 
-    def test_no_source_plugin(self) -> None:
+    def test_title_used_when_no_release_name(self) -> None:
+        ranked = RankedStream(
+            url="https://voe.sx/e/abc",
+            hoster="voe",
+            quality=StreamQuality.HD_1080P,
+            title="Iron Man",
+            source_plugin="hdfilme",
+        )
+        result = _format_stream(ranked)
+        assert result.name == "Iron Man"
+
+    def test_fallback_to_plugin_quality(self) -> None:
+        ranked = RankedStream(
+            url="https://voe.sx/e/abc",
+            hoster="voe",
+            quality=StreamQuality.HD_720P,
+            source_plugin="hdfilme",
+        )
+        result = _format_stream(ranked)
+        assert result.name == "hdfilme HD 720P"
+
+    def test_fallback_no_source_plugin(self) -> None:
         ranked = RankedStream(
             url="https://voe.sx/e/abc",
             hoster="voe",

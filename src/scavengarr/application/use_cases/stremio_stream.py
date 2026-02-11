@@ -30,13 +30,17 @@ log = structlog.get_logger(__name__)
 
 def _format_stream(ranked: RankedStream) -> StremioStream:
     """Convert a scored RankedStream into Stremio protocol format."""
-    quality_label = ranked.quality.name.replace("_", " ")
-    name_parts = (
-        [ranked.source_plugin, quality_label]
-        if ranked.source_plugin
-        else [quality_label]
-    )
-    name = " ".join(name_parts)
+    if ranked.release_name:
+        name = ranked.release_name
+    elif ranked.title:
+        name = ranked.title
+    else:
+        quality_label = ranked.quality.name.replace("_", " ")
+        name = (
+            f"{ranked.source_plugin} {quality_label}"
+            if ranked.source_plugin
+            else quality_label
+        )
 
     desc_parts: list[str] = []
     if ranked.language:

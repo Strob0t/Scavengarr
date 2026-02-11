@@ -72,6 +72,7 @@ def _convert_single_result(
                     language=language,
                     size=size,
                     release_name=result.release_name,
+                    title=result.title,
                     source_plugin=source_plugin,
                 )
             )
@@ -96,6 +97,7 @@ def _convert_single_result(
                 language=language,
                 size=result.size,
                 release_name=result.release_name,
+                title=result.title,
                 source_plugin=source_plugin,
             )
         )
