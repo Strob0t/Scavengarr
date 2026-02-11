@@ -52,12 +52,12 @@ _MAX_RESULTS = 1000
 # Uses parent forum IDs with childforums=1 for broad matching.
 # "25" (Video) is the default.
 _CATEGORY_FORUM_MAP: dict[int, str] = {
-    2000: "25",   # Movies  -> Video (Filme, HD, DVD, Bluray, UHD, 3D, Doku)
-    5000: "25",   # TV      -> Video (Serien, Anime)
-    3000: "26",   # Audio   -> Audio (Alben, Lossless, Singles, Soundtracks)
+    2000: "25",  # Movies  -> Video (Filme, HD, DVD, Bluray, UHD, 3D, Doku)
+    5000: "25",  # TV      -> Video (Serien, Anime)
+    3000: "26",  # Audio   -> Audio (Alben, Lossless, Singles, Soundtracks)
     7000: "363",  # Books   -> Text & HowTos (eBooks, Magazine, Comics)
-    4000: "27",   # PC      -> Games
-    1000: "27",   # Console -> Games
+    4000: "27",  # PC      -> Games
+    1000: "27",  # Console -> Games
 }
 _DEFAULT_FORUM_ID = "25"
 
@@ -233,9 +233,7 @@ class _ThreadTitleParser(HTMLParser):
             text = data.strip()
             if text:
                 # Strip " - myGully.com (...)" suffix from <title>
-                text = re.sub(
-                    r"\s*-\s*myGully\.com.*$", "", text, flags=re.IGNORECASE
-                )
+                text = re.sub(r"\s*-\s*myGully\.com.*$", "", text, flags=re.IGNORECASE)
                 if text:
                     self.title = text
 
@@ -342,17 +340,13 @@ class MyGullyPlugin:
 
                     # Wait for redirect to complete
                     try:
-                        await page.wait_for_load_state(
-                            "networkidle", timeout=10_000
-                        )
+                        await page.wait_for_load_state("networkidle", timeout=10_000)
                     except Exception:  # noqa: BLE001
                         pass
 
                     # Verify login: check for session cookie
                     cookies = await self._context.cookies()
-                    has_session = any(
-                        c["name"] == "bbsessionhash" for c in cookies
-                    )
+                    has_session = any(c["name"] == "bbsessionhash" for c in cookies)
                     if has_session:
                         self.base_url = domain
                         self._logged_in = True
@@ -384,9 +378,7 @@ class MyGullyPlugin:
             await self._wait_for_cloudflare(page)
 
             try:
-                await page.wait_for_load_state(
-                    "networkidle", timeout=10_000
-                )
+                await page.wait_for_load_state("networkidle", timeout=10_000)
             except Exception:  # noqa: BLE001
                 pass
 
@@ -450,9 +442,7 @@ class MyGullyPlugin:
                 )
 
             try:
-                await page.wait_for_load_state(
-                    "networkidle", timeout=10_000
-                )
+                await page.wait_for_load_state("networkidle", timeout=10_000)
             except Exception:  # noqa: BLE001
                 pass
 
@@ -464,9 +454,7 @@ class MyGullyPlugin:
             if not page.is_closed():
                 await page.close()
 
-    async def _search_threads(
-        self, query: str, forum_id: str = "25"
-    ) -> list[str]:
+    async def _search_threads(self, query: str, forum_id: str = "25") -> list[str]:
         """Submit search form and paginate through results.
 
         Collects up to 1000 thread URLs by following "Next Page" links.
@@ -555,9 +543,7 @@ class MyGullyPlugin:
         """Search mygully.com and return results with download links."""
         await self._ensure_session()
 
-        forum_id = _CATEGORY_FORUM_MAP.get(
-            category or 2000, _DEFAULT_FORUM_ID
-        )
+        forum_id = _CATEGORY_FORUM_MAP.get(category or 2000, _DEFAULT_FORUM_ID)
         thread_urls = await self._search_threads(query, forum_id)
 
         if not thread_urls:

@@ -345,9 +345,11 @@ class TestSearch:
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.post = AsyncMock(return_value=search_resp)
         mock_client.get = AsyncMock(
-            side_effect=lambda url, **kw: episode_resp
-            if "/staffel-" in str(url) and "/episode-" in str(url)
-            else detail_resp
+            side_effect=lambda url, **kw: (
+                episode_resp
+                if "/staffel-" in str(url) and "/episode-" in str(url)
+                else detail_resp
+            )
         )
         plugin._client = mock_client
 

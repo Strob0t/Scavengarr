@@ -90,9 +90,7 @@ class _SeriesListParser(HTMLParser):
         self._current_href = ""
         self._current_title = ""
 
-    def handle_starttag(
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attr_dict = dict(attrs)
         classes = (attr_dict.get("class") or "").split()
 
@@ -472,9 +470,7 @@ class BurningSeriesPlugin:
             resp = await client.get(f"{self.base_url}/serie/{slug}")
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            log.warning(
-                "burningseries_detail_failed", slug=slug, error=str(exc)
-            )
+            log.warning("burningseries_detail_failed", slug=slug, error=str(exc))
             return _SeriesDetailParser()
 
         parser = _SeriesDetailParser()

@@ -10,9 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 
-_PLUGIN_PATH = (
-    Path(__file__).resolve().parents[3] / "plugins" / "burningseries.py"
-)
+_PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "burningseries.py"
 
 
 @pytest.fixture()
@@ -349,9 +347,7 @@ class TestHelpers:
 
     def test_match_query_pipe_title(self, bs_mod):
         assert (
-            bs_mod._match_query(
-                "attack titan", "Attack on Titan | Shingeki no Kyojin"
-            )
+            bs_mod._match_query("attack titan", "Attack on Titan | Shingeki no Kyojin")
             is True
         )
 
@@ -502,9 +498,7 @@ class TestPluginSearch:
 
         # The listing endpoint should only be called once
         listing_calls = [
-            c
-            for c in mock_client.get.call_args_list
-            if "andere-serien" in str(c)
+            c for c in mock_client.get.call_args_list if "andere-serien" in str(c)
         ]
         assert len(listing_calls) == 1
 

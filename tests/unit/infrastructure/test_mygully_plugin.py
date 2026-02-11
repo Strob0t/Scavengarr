@@ -15,9 +15,7 @@ _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "mygully.py"
 
 def _load_mygully_module() -> ModuleType:
     """Load mygully.py plugin via importlib (same as plugin loader)."""
-    spec = importlib.util.spec_from_file_location(
-        "mygully_plugin", str(_PLUGIN_PATH)
-    )
+    spec = importlib.util.spec_from_file_location("mygully_plugin", str(_PLUGIN_PATH))
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -87,9 +85,7 @@ def _make_mock_context(
 def _make_mock_browser(context: AsyncMock | None = None) -> AsyncMock:
     """Create a mock Browser."""
     browser = AsyncMock()
-    browser.new_context = AsyncMock(
-        return_value=context or _make_mock_context()
-    )
+    browser.new_context = AsyncMock(return_value=context or _make_mock_context())
     browser.close = AsyncMock()
     return browser
 
@@ -98,9 +94,7 @@ def _make_mock_playwright(browser: AsyncMock | None = None) -> AsyncMock:
     """Create a mock Playwright instance."""
     pw = AsyncMock()
     pw.chromium = MagicMock()
-    pw.chromium.launch = AsyncMock(
-        return_value=browser or _make_mock_browser()
-    )
+    pw.chromium.launch = AsyncMock(return_value=browser or _make_mock_browser())
     pw.stop = AsyncMock()
     return pw
 
@@ -131,9 +125,7 @@ class TestLogin:
         plugin = _make_plugin()
 
         login_page = _make_mock_page(body_text="Willkommen testuser")
-        context = _make_mock_context(
-            pages=[login_page], cookies=_SESSION_COOKIES
-        )
+        context = _make_mock_context(pages=[login_page], cookies=_SESSION_COOKIES)
         browser = _make_mock_browser(context)
         pw = _make_mock_playwright(browser)
 
@@ -194,9 +186,7 @@ class TestLogin:
             patch.object(_mygully, "async_playwright") as mock_ap,
         ):
             mock_ap.return_value.start = mock_start
-            with pytest.raises(
-                RuntimeError, match="All mygully domains failed"
-            ):
+            with pytest.raises(RuntimeError, match="All mygully domains failed"):
                 await plugin._ensure_session()
 
     async def test_missing_credentials_raises(self) -> None:
@@ -277,9 +267,7 @@ class TestSearch:
     async def test_search_no_threads(self) -> None:
         plugin = _make_plugin()
 
-        search_page = _make_mock_page(
-            "<html><body>No results</body></html>"
-        )
+        search_page = _make_mock_page("<html><body>No results</body></html>")
         context = _make_mock_context(pages=[search_page])
 
         plugin._browser = _make_mock_browser(context)
@@ -369,9 +357,7 @@ class TestSearch:
         """Category parameter selects the correct forum ID."""
         plugin = _make_plugin()
 
-        search_page = _make_mock_page(
-            "<html><body>No results</body></html>"
-        )
+        search_page = _make_mock_page("<html><body>No results</body></html>")
         context = _make_mock_context(pages=[search_page])
 
         plugin._browser = _make_mock_browser(context)
@@ -395,9 +381,7 @@ class TestCloudflareWait:
     async def test_cloudflare_wait_timeout_does_not_raise(self) -> None:
         plugin = _make_plugin()
         page = _make_mock_page()
-        page.wait_for_function = AsyncMock(
-            side_effect=TimeoutError("timeout")
-        )
+        page.wait_for_function = AsyncMock(side_effect=TimeoutError("timeout"))
 
         await plugin._wait_for_cloudflare(page)
 
@@ -591,14 +575,8 @@ class TestThreadLinkParser:
         parser.feed(html)
 
         assert len(parser.thread_urls) == 2
-        assert (
-            parser.thread_urls[0]
-            == "https://mygully.com/showthread.php?t=123"
-        )
-        assert (
-            parser.thread_urls[1]
-            == "https://mygully.com/showthread.php?t=456"
-        )
+        assert parser.thread_urls[0] == "https://mygully.com/showthread.php?t=123"
+        assert parser.thread_urls[1] == "https://mygully.com/showthread.php?t=456"
 
     def test_friendly_url_thread_links(self) -> None:
         """myGully uses friendly URLs like /thread/12345-slug/."""
@@ -611,14 +589,8 @@ class TestThreadLinkParser:
         parser.feed(html)
 
         assert len(parser.thread_urls) == 2
-        assert (
-            parser.thread_urls[0]
-            == "https://mygully.com/showthread.php?t=12345"
-        )
-        assert (
-            parser.thread_urls[1]
-            == "https://mygully.com/showthread.php?t=67890"
-        )
+        assert parser.thread_urls[0] == "https://mygully.com/showthread.php?t=12345"
+        assert parser.thread_urls[1] == "https://mygully.com/showthread.php?t=67890"
 
     def test_mixed_url_formats_deduplicated(self) -> None:
         """Same thread via classic and friendly URL detected once."""
@@ -631,10 +603,7 @@ class TestThreadLinkParser:
         parser.feed(html)
 
         assert len(parser.thread_urls) == 1
-        assert (
-            parser.thread_urls[0]
-            == "https://mygully.com/showthread.php?t=12345"
-        )
+        assert parser.thread_urls[0] == "https://mygully.com/showthread.php?t=12345"
 
     def test_duplicate_thread_ids_deduplicated(self) -> None:
         html = """
@@ -647,10 +616,7 @@ class TestThreadLinkParser:
         parser.feed(html)
 
         assert len(parser.thread_urls) == 1
-        assert (
-            parser.thread_urls[0]
-            == "https://mygully.com/showthread.php?t=123"
-        )
+        assert parser.thread_urls[0] == "https://mygully.com/showthread.php?t=123"
 
     def test_post_links_without_thread_id_skipped(self) -> None:
         html = """
@@ -710,16 +676,12 @@ class TestThreadLinkParser:
 class TestTitleParser:
     def test_title_stripped(self) -> None:
         parser = _ThreadTitleParser()
-        parser.feed(
-            "<title>SpongeBob S01 - myGully.com</title>"
-        )
+        parser.feed("<title>SpongeBob S01 - myGully.com</title>")
         assert parser.title == "SpongeBob S01"
 
     def test_title_with_suffix(self) -> None:
         parser = _ThreadTitleParser()
-        parser.feed(
-            "<title>Movie Title - myGully.com (some extra)</title>"
-        )
+        parser.feed("<title>Movie Title - myGully.com (some extra)</title>")
         assert parser.title == "Movie Title"
 
     def test_title_case_insensitive_strip(self) -> None:
@@ -735,20 +697,12 @@ class TestTitleParser:
 
 class TestHosterHelpers:
     def test_hoster_from_url(self) -> None:
-        assert (
-            _hoster_from_url("https://www.keeplinks.org/p53/abc")
-            == "keeplinks"
-        )
-        assert (
-            _hoster_from_url("https://rapidgator.net/file/abc")
-            == "rapidgator"
-        )
+        assert _hoster_from_url("https://www.keeplinks.org/p53/abc") == "keeplinks"
+        assert _hoster_from_url("https://rapidgator.net/file/abc") == "rapidgator"
 
     def test_hoster_from_text_via_pattern(self) -> None:
         assert _hoster_from_text("download via ddownload.com") == "ddownload"
-        assert (
-            _hoster_from_text("download via rapidgator.net") == "rapidgator"
-        )
+        assert _hoster_from_text("download via rapidgator.net") == "rapidgator"
 
     def test_hoster_from_text_plain_name(self) -> None:
         assert _hoster_from_text("RapidGator") == "rapidgator"
