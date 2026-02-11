@@ -121,6 +121,11 @@ class StremioConfig(BaseModel):
         description="Per-plugin timeout in seconds for stream search.",
     )
 
+    title_match_threshold: float = Field(
+        default=0.7,
+        description="Minimum title similarity score to keep a stream result.",
+    )
+
 
 class AppConfig(BaseModel):
     """

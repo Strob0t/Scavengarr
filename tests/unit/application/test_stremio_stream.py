@@ -15,6 +15,7 @@ from scavengarr.domain.entities.stremio import (
     StreamLanguage,
     StreamQuality,
     StremioStreamRequest,
+    TitleMatchInfo,
 )
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.config.schema import StremioConfig
@@ -178,14 +179,16 @@ class TestFormatStream:
 class TestExecute:
     async def test_title_not_found_returns_empty(self) -> None:
         tmdb = AsyncMock()
-        tmdb.get_german_title = AsyncMock(return_value=None)
+        tmdb.get_title_and_year = AsyncMock(return_value=None)
         uc = _make_use_case(tmdb=tmdb)
         result = await uc.execute(_make_request())
         assert result == []
 
     async def test_no_stream_plugins_returns_empty(self) -> None:
         tmdb = AsyncMock()
-        tmdb.get_german_title = AsyncMock(return_value="Iron Man")
+        tmdb.get_title_and_year = AsyncMock(
+            return_value=TitleMatchInfo(title="Iron Man", year=2008)
+        )
 
         plugins = MagicMock()
         plugins.get_by_provides.return_value = []
@@ -196,9 +199,12 @@ class TestExecute:
 
     async def test_happy_path_movie(self) -> None:
         tmdb = AsyncMock()
-        tmdb.get_german_title = AsyncMock(return_value="Iron Man")
+        tmdb.get_title_and_year = AsyncMock(
+            return_value=TitleMatchInfo(title="Iron Man", year=2008)
+        )
 
         sr = _make_search_result(
+            title="Iron Man",
             download_links=[
                 {"url": "https://voe.sx/e/abc", "quality": "1080p"},
             ],
@@ -223,7 +229,7 @@ class TestExecute:
 
         assert len(result) >= 1
         assert result[0].url == "https://voe.sx/e/abc"
-        tmdb.get_german_title.assert_awaited_once_with("tt1234567")
+        tmdb.get_title_and_year.assert_awaited_once_with("tt1234567")
         mock_plugin.search.assert_awaited_once_with(
             "Iron Man", category=2000, season=None, episode=None
         )
@@ -232,7 +238,9 @@ class TestExecute:
     async def test_series_query_passes_season_episode(self) -> None:
         """Season/episode are passed as kwargs, query is the plain title."""
         tmdb = AsyncMock()
-        tmdb.get_german_title = AsyncMock(return_value="Breaking Bad")
+        tmdb.get_title_and_year = AsyncMock(
+            return_value=TitleMatchInfo(title="Breaking Bad", year=2008)
+        )
 
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[])
@@ -257,12 +265,14 @@ class TestExecute:
 
     async def test_multiple_plugins_combined(self) -> None:
         tmdb = AsyncMock()
-        tmdb.get_german_title = AsyncMock(return_value="Movie")
+        tmdb.get_title_and_year = AsyncMock(return_value=TitleMatchInfo(title="Movie"))
 
         sr1 = _make_search_result(
+            title="Movie",
             download_links=[{"url": "https://voe.sx/e/1"}],
         )
         sr2 = _make_search_result(
+            title="Movie",
             download_links=[{"url": "https://filemoon.sx/e/2"}],
         )
 
@@ -292,9 +302,10 @@ class TestExecute:
 
     async def test_plugin_error_does_not_crash(self) -> None:
         tmdb = AsyncMock()
-        tmdb.get_german_title = AsyncMock(return_value="Movie")
+        tmdb.get_title_and_year = AsyncMock(return_value=TitleMatchInfo(title="Movie"))
 
         sr = _make_search_result(
+            title="Movie",
             download_links=[{"url": "https://voe.sx/e/ok"}],
         )
 
@@ -325,7 +336,7 @@ class TestExecute:
 
     async def test_plugin_not_found_skipped(self) -> None:
         tmdb = AsyncMock()
-        tmdb.get_german_title = AsyncMock(return_value="Movie")
+        tmdb.get_title_and_year = AsyncMock(return_value=TitleMatchInfo(title="Movie"))
 
         plugins = MagicMock()
         plugins.get_by_provides.side_effect = lambda p: (
@@ -339,7 +350,7 @@ class TestExecute:
 
     async def test_empty_search_results_returns_empty(self) -> None:
         tmdb = AsyncMock()
-        tmdb.get_german_title = AsyncMock(return_value="Movie")
+        tmdb.get_title_and_year = AsyncMock(return_value=TitleMatchInfo(title="Movie"))
 
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[])
@@ -360,9 +371,10 @@ class TestExecute:
 
     async def test_source_plugin_tagged_on_results(self) -> None:
         tmdb = AsyncMock()
-        tmdb.get_german_title = AsyncMock(return_value="Movie")
+        tmdb.get_title_and_year = AsyncMock(return_value=TitleMatchInfo(title="Movie"))
 
         sr = _make_search_result(
+            title="Movie",
             download_links=[{"url": "https://voe.sx/e/abc"}],
         )
 
@@ -387,9 +399,10 @@ class TestExecute:
 
     async def test_both_provides_plugins_included(self) -> None:
         tmdb = AsyncMock()
-        tmdb.get_german_title = AsyncMock(return_value="Movie")
+        tmdb.get_title_and_year = AsyncMock(return_value=TitleMatchInfo(title="Movie"))
 
         sr = _make_search_result(
+            title="Movie",
             download_links=[{"url": "https://voe.sx/e/both"}],
         )
 
@@ -415,9 +428,10 @@ class TestExecute:
     async def test_deduplication_of_plugin_names(self) -> None:
         """Plugin in both stream and both is searched once."""
         tmdb = AsyncMock()
-        tmdb.get_german_title = AsyncMock(return_value="Movie")
+        tmdb.get_title_and_year = AsyncMock(return_value=TitleMatchInfo(title="Movie"))
 
         sr = _make_search_result(
+            title="Movie",
             download_links=[{"url": "https://voe.sx/e/abc"}],
         )
 
@@ -443,9 +457,10 @@ class TestExecute:
 
     async def test_streams_sorted_by_score(self) -> None:
         tmdb = AsyncMock()
-        tmdb.get_german_title = AsyncMock(return_value="Movie")
+        tmdb.get_title_and_year = AsyncMock(return_value=TitleMatchInfo(title="Movie"))
 
         sr = _make_search_result(
+            title="Movie",
             download_links=[
                 {"url": "https://voe.sx/e/low", "quality": "SD"},
                 {"url": "https://voe.sx/e/high", "quality": "1080p"},
@@ -473,7 +488,7 @@ class TestExecute:
 
     async def test_plugin_without_search_method_skipped(self) -> None:
         tmdb = AsyncMock()
-        tmdb.get_german_title = AsyncMock(return_value="Movie")
+        tmdb.get_title_and_year = AsyncMock(return_value=TitleMatchInfo(title="Movie"))
 
         # Plugin without search method
         no_search_plugin = MagicMock(spec=[])
@@ -491,7 +506,7 @@ class TestExecute:
     async def test_concurrency_limited(self) -> None:
         """Verify semaphore limits concurrent plugin searches."""
         tmdb = AsyncMock()
-        tmdb.get_german_title = AsyncMock(return_value="Movie")
+        tmdb.get_title_and_year = AsyncMock(return_value=TitleMatchInfo(title="Movie"))
 
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[])
@@ -520,9 +535,10 @@ class TestExecute:
     async def test_slow_plugin_cancelled_by_timeout(self) -> None:
         """A plugin exceeding plugin_timeout_seconds is cancelled."""
         tmdb = AsyncMock()
-        tmdb.get_german_title = AsyncMock(return_value="Movie")
+        tmdb.get_title_and_year = AsyncMock(return_value=TitleMatchInfo(title="Movie"))
 
         sr = _make_search_result(
+            title="Movie",
             download_links=[{"url": "https://voe.sx/e/fast"}],
         )
 
@@ -559,3 +575,116 @@ class TestExecute:
         # Fast plugin result should be present, slow plugin timed out
         assert len(result) == 1
         assert result[0].url == "https://voe.sx/e/fast"
+
+
+# ---------------------------------------------------------------------------
+# Title-match filtering
+# ---------------------------------------------------------------------------
+
+
+class TestTitleMatchFiltering:
+    async def test_wrong_titles_filtered(self) -> None:
+        """Only results matching the reference title pass through."""
+        tmdb = AsyncMock()
+        tmdb.get_title_and_year = AsyncMock(
+            return_value=TitleMatchInfo(title="Iron Man", year=2008)
+        )
+
+        sr_good = _make_search_result(
+            title="Iron Man",
+            download_links=[{"url": "https://voe.sx/e/good"}],
+        )
+        sr_sequel = _make_search_result(
+            title="Iron Man 2",
+            download_links=[{"url": "https://voe.sx/e/sequel"}],
+        )
+        sr_unrelated = _make_search_result(
+            title="Avengers Endgame",
+            download_links=[{"url": "https://voe.sx/e/unrelated"}],
+        )
+
+        mock_plugin = AsyncMock()
+        mock_plugin.search = AsyncMock(return_value=[sr_good, sr_sequel, sr_unrelated])
+        del mock_plugin.scraping
+
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(side_effect=lambda r: r)
+
+        plugins = MagicMock()
+        plugins.get_by_provides.side_effect = lambda p: (
+            ["test"] if p == "stream" else []
+        )
+        plugins.get.return_value = mock_plugin
+
+        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
+        result = await uc.execute(_make_request())
+
+        urls = {s.url for s in result}
+        assert "https://voe.sx/e/good" in urls
+        assert "https://voe.sx/e/sequel" not in urls
+        assert "https://voe.sx/e/unrelated" not in urls
+
+    async def test_all_filtered_returns_empty(self) -> None:
+        """When all results are below threshold, return empty list."""
+        tmdb = AsyncMock()
+        tmdb.get_title_and_year = AsyncMock(
+            return_value=TitleMatchInfo(title="Iron Man", year=2008)
+        )
+
+        sr = _make_search_result(
+            title="Completely Unrelated Film",
+            download_links=[{"url": "https://voe.sx/e/bad"}],
+        )
+
+        mock_plugin = AsyncMock()
+        mock_plugin.search = AsyncMock(return_value=[sr])
+        del mock_plugin.scraping
+
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(side_effect=lambda r: r)
+
+        plugins = MagicMock()
+        plugins.get_by_provides.side_effect = lambda p: (
+            ["test"] if p == "stream" else []
+        )
+        plugins.get.return_value = mock_plugin
+
+        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
+        result = await uc.execute(_make_request())
+        assert result == []
+
+    async def test_no_year_still_filters_by_title(self) -> None:
+        """Even without year info, title similarity is applied."""
+        tmdb = AsyncMock()
+        tmdb.get_title_and_year = AsyncMock(
+            return_value=TitleMatchInfo(title="Iron Man")
+        )
+
+        sr_good = _make_search_result(
+            title="Iron Man",
+            download_links=[{"url": "https://voe.sx/e/match"}],
+        )
+        sr_bad = _make_search_result(
+            title="Spider Man",
+            download_links=[{"url": "https://voe.sx/e/nomatch"}],
+        )
+
+        mock_plugin = AsyncMock()
+        mock_plugin.search = AsyncMock(return_value=[sr_good, sr_bad])
+        del mock_plugin.scraping
+
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(side_effect=lambda r: r)
+
+        plugins = MagicMock()
+        plugins.get_by_provides.side_effect = lambda p: (
+            ["test"] if p == "stream" else []
+        )
+        plugins.get.return_value = mock_plugin
+
+        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
+        result = await uc.execute(_make_request())
+
+        urls = {s.url for s in result}
+        assert "https://voe.sx/e/match" in urls
+        assert "https://voe.sx/e/nomatch" not in urls

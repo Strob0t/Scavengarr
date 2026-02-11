@@ -14,6 +14,7 @@ from scavengarr.domain.entities.stremio import (
     RankedStream,
     StremioStream,
     StremioStreamRequest,
+    TitleMatchInfo,
 )
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.domain.ports.plugin_registry import PluginRegistryPort
@@ -22,6 +23,7 @@ from scavengarr.domain.ports.tmdb import TmdbClientPort
 from scavengarr.infrastructure.config.schema import StremioConfig
 from scavengarr.infrastructure.stremio.stream_converter import convert_search_results
 from scavengarr.infrastructure.stremio.stream_sorter import StreamSorter
+from scavengarr.infrastructure.stremio.title_matcher import filter_by_title_match
 
 log = structlog.get_logger(__name__)
 
@@ -90,6 +92,7 @@ class StremioStreamUseCase:
         self._sorter = StreamSorter(config)
         self._max_concurrent = config.max_concurrent_plugins
         self._plugin_timeout = config.plugin_timeout_seconds
+        self._title_match_threshold = config.title_match_threshold
 
     async def execute(
         self,
@@ -104,7 +107,8 @@ class StremioStreamUseCase:
             Sorted list of StremioStream objects, best first.
             Empty list if title not found or no plugins match.
         """
-        title = await self._resolve_title(request)
+        title_info = await self._resolve_title_info(request)
+        title = title_info.title if title_info else None
         if not title:
             log.warning("stremio_title_not_found", imdb_id=request.imdb_id)
             return []
@@ -144,6 +148,20 @@ class StremioStreamUseCase:
             )
             return []
 
+        # --- title-match filtering ---
+        filtered = filter_by_title_match(
+            all_results, title_info, self._title_match_threshold
+        )
+
+        if not filtered:
+            log.info(
+                "stremio_all_filtered",
+                imdb_id=request.imdb_id,
+                query=query,
+                total=len(all_results),
+            )
+            return []
+
         plugin_languages: dict[str, str] = {}
         for name in all_names:
             try:
@@ -154,7 +172,7 @@ class StremioStreamUseCase:
             except Exception:  # noqa: BLE001
                 pass
 
-        ranked = convert_search_results(all_results, plugin_languages=plugin_languages)
+        ranked = convert_search_results(filtered, plugin_languages=plugin_languages)
         sorted_streams = self._sorter.sort(ranked)
 
         streams = [_format_stream(s) for s in sorted_streams]
@@ -164,22 +182,24 @@ class StremioStreamUseCase:
             imdb_id=request.imdb_id,
             query=query,
             result_count=len(all_results),
+            filtered_count=len(filtered),
             stream_count=len(streams),
         )
 
         return streams
 
-    async def _resolve_title(
+    async def _resolve_title_info(
         self,
         request: StremioStreamRequest,
-    ) -> str | None:
-        """Resolve a human-readable title from IMDb or TMDB ID via TMDB."""
+    ) -> TitleMatchInfo | None:
+        """Resolve title + year from IMDb or TMDB ID for matching."""
         if request.imdb_id.startswith("tmdb:"):
             tmdb_id = request.imdb_id.removeprefix("tmdb:")
-            return await self._tmdb.get_title_by_tmdb_id(
+            title = await self._tmdb.get_title_by_tmdb_id(
                 int(tmdb_id), request.content_type
             )
-        return await self._tmdb.get_german_title(request.imdb_id)
+            return TitleMatchInfo(title=title) if title else None
+        return await self._tmdb.get_title_and_year(request.imdb_id)
 
     async def _search_plugins(
         self,
