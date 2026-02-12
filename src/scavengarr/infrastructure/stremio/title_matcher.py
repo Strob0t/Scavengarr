@@ -11,6 +11,7 @@ import re
 from difflib import SequenceMatcher
 
 import structlog
+from guessit import guessit
 
 from scavengarr.domain.entities.stremio import TitleMatchInfo
 from scavengarr.domain.plugins.base import SearchResult
@@ -79,15 +80,71 @@ def _score_single_title(
     return score
 
 
+def _extract_title_candidates(result: SearchResult) -> list[str]:
+    """Build normalised title candidates from title and release_name.
+
+    Uses ``guessit`` to extract clean titles from release-name-style
+    strings (e.g. ``"Iron.Man.2008.German.DL.1080p.BluRay.x264"`` →
+    ``"iron man"``).  Returns deduplicated, non-empty candidates.
+    """
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def _add(text: str | None) -> None:
+        if not text:
+            return
+        norm = _normalize(_strip_year(text))
+        if norm and norm not in seen:
+            seen.add(norm)
+            candidates.append(norm)
+
+    # 1. raw title (normalised)
+    _add(result.title)
+
+    # 2. guessit-parsed title from result.title
+    if result.title:
+        _add(guessit(result.title).get("title"))
+
+    # 3. guessit-parsed title from release_name
+    if result.release_name:
+        _add(guessit(result.release_name).get("title"))
+
+    # 4. raw release_name (normalised) as fallback
+    _add(result.release_name)
+
+    return candidates
+
+
+def _extract_result_year(result: SearchResult) -> int | None:
+    """Extract a year from title, release_name, or guessit parsing."""
+    year = _extract_year(result.title)
+    if year is not None:
+        return year
+
+    if result.release_name:
+        year = _extract_year(result.release_name)
+        if year is not None:
+            return year
+
+    for src in (result.title, result.release_name):
+        if src:
+            guess_year = guessit(src).get("year")
+            if guess_year:
+                return int(guess_year)
+
+    return None
+
+
 def score_title_match(
     result: SearchResult,
     reference: TitleMatchInfo,
 ) -> float:
     """Score how well *result* matches *reference* (0.0–~1.2).
 
-    When *reference* carries ``alt_titles`` (e.g. the original-language
-    title alongside the German localised title), the best score across
-    all variants is returned.
+    Generates multiple title candidates from ``result.title`` and
+    ``result.release_name`` (including ``guessit``-parsed clean titles)
+    and scores each against all reference titles (primary + alt_titles).
+    The best score across all combinations is returned.
 
     Components per title variant:
     - Base: ``SequenceMatcher.ratio()`` on normalised titles (0.0–1.0)
@@ -95,26 +152,25 @@ def score_title_match(
     - Year penalty: −0.3 if year present but wrong
     - Sequel penalty: −0.3 if result has sequel number that reference lacks
     """
-    norm_res = _normalize(_strip_year(result.title))
-    if not norm_res:
+    candidates = _extract_title_candidates(result)
+    if not candidates:
         return 0.0
 
-    result_year = _extract_year(result.title)
-    if result_year is None and result.release_name:
-        result_year = _extract_year(result.release_name)
+    result_year = _extract_result_year(result)
 
     all_ref_titles = [reference.title] + list(reference.alt_titles)
     best = 0.0
-    for ref_title in all_ref_titles:
-        norm_ref = _normalize(_strip_year(ref_title))
-        s = _score_single_title(
-            norm_ref,
-            norm_res,
-            reference_year=reference.year,
-            result_year=result_year,
-        )
-        if s > best:
-            best = s
+    for norm_res in candidates:
+        for ref_title in all_ref_titles:
+            norm_ref = _normalize(_strip_year(ref_title))
+            s = _score_single_title(
+                norm_ref,
+                norm_res,
+                reference_year=reference.year,
+                result_year=result_year,
+            )
+            if s > best:
+                best = s
 
     return best
 

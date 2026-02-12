@@ -7,6 +7,8 @@ import pytest
 from scavengarr.domain.entities.stremio import TitleMatchInfo
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.stremio.title_matcher import (
+    _extract_result_year,
+    _extract_title_candidates,
     _extract_year,
     _normalize,
     _sequel_number,
@@ -282,3 +284,108 @@ class TestFilterByTitleMatch:
         assert "Die Verurteilten" in titles
         assert "The Shawshank Redemption" in titles
         assert "Completely Wrong Movie" not in titles
+
+
+# ---------------------------------------------------------------------------
+# _extract_title_candidates
+# ---------------------------------------------------------------------------
+
+
+class TestExtractTitleCandidates:
+    def test_clean_title_only(self) -> None:
+        sr = _sr("Iron Man")
+        candidates = _extract_title_candidates(sr)
+        assert "iron man" in candidates
+
+    def test_release_name_style_title(self) -> None:
+        """guessit should extract 'iron man' from a release-name title."""
+        sr = _sr("Iron.Man.2008.German.DL.1080p.BluRay.x264")
+        candidates = _extract_title_candidates(sr)
+        assert "iron man" in candidates
+
+    def test_release_name_field_adds_candidate(self) -> None:
+        sr = _sr("Unknown", release_name="Iron.Man.2008.BDRip.x264")
+        candidates = _extract_title_candidates(sr)
+        assert "iron man" in candidates
+
+    def test_deduplication(self) -> None:
+        sr = _sr("Iron Man", release_name="Iron.Man.2008.BDRip")
+        candidates = _extract_title_candidates(sr)
+        assert candidates.count("iron man") == 1
+
+    def test_empty_title_and_release(self) -> None:
+        sr = _sr("")
+        assert _extract_title_candidates(sr) == []
+
+
+# ---------------------------------------------------------------------------
+# _extract_result_year
+# ---------------------------------------------------------------------------
+
+
+class TestExtractResultYear:
+    def test_year_from_title(self) -> None:
+        sr = _sr("Iron Man 2008")
+        assert _extract_result_year(sr) == 2008
+
+    def test_year_from_release_name(self) -> None:
+        sr = _sr("Iron Man", release_name="Iron.Man.2008.BDRip")
+        assert _extract_result_year(sr) == 2008
+
+    def test_year_from_guessit(self) -> None:
+        """guessit can extract year even when regex misses it."""
+        sr = _sr(
+            "Iron Man",
+            release_name="Iron.Man.2008.German.DL.1080p.BluRay.x264",
+        )
+        assert _extract_result_year(sr) == 2008
+
+    def test_no_year(self) -> None:
+        sr = _sr("Iron Man")
+        assert _extract_result_year(sr) is None
+
+
+# ---------------------------------------------------------------------------
+# score_title_match — release-name scenarios
+# ---------------------------------------------------------------------------
+
+
+class TestScoreReleaseName:
+    def test_release_name_as_title_matches(self) -> None:
+        """A scene release name in title field should still match."""
+        ref = TitleMatchInfo(title="Iron Man", year=2008)
+        sr = _sr("Iron.Man.2008.German.DL.1080p.BluRay.x264")
+        score = score_title_match(sr, ref)
+        assert score >= 1.0  # guessit extracts "Iron Man" + year bonus
+
+    def test_title_with_quality_suffix_matches(self) -> None:
+        """Titles like 'Iron Man - BDRip x264' (boerse.py pattern)."""
+        ref = TitleMatchInfo(title="Iron Man", year=2008)
+        sr = _sr("Iron Man - BDRip x264")
+        score = score_title_match(sr, ref)
+        assert score >= 0.7
+
+    def test_release_name_field_used_for_matching(self) -> None:
+        """When title is useless, release_name should save the match."""
+        ref = TitleMatchInfo(title="Iron Man", year=2008)
+        sr = _sr("Unknown", release_name="Iron.Man.2008.BDRip.x264")
+        score = score_title_match(sr, ref)
+        assert score >= 1.0
+
+    def test_wrong_movie_release_name_rejected(self) -> None:
+        """A different movie's release name must still be rejected."""
+        ref = TitleMatchInfo(title="Iron Man", year=2008)
+        sr = _sr("Avengers.Endgame.2019.German.DL.1080p.BluRay.x264")
+        score = score_title_match(sr, ref)
+        assert score < 0.7
+
+    def test_german_release_name_matches(self) -> None:
+        """German release names with extra tags should match."""
+        ref = TitleMatchInfo(
+            title="Die Verurteilten",
+            year=1994,
+            alt_titles=["The Shawshank Redemption"],
+        )
+        sr = _sr("The.Shawshank.Redemption.1994.German.DL.1080p.BluRay.x264")
+        score = score_title_match(sr, ref)
+        assert score >= 1.0
