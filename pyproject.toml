@@ -5,7 +5,7 @@ description = "Torznab OnClick Indexer"
 packages = [{include = "scavengarr", from = "src"}]
 
 [tool.poetry.scripts]
-start = "scavengarr.interfaces.cli.cli:start"
+start = "scavengarr.interfaces.cli:start"
 
 [build-system]
 requires = ["poetry-core"]

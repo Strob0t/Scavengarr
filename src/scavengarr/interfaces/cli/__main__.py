@@ -1,4 +1,7 @@
-"""CLI entry point: argument parsing and uvicorn startup."""
+"""CLI entry point: argument parsing and uvicorn startup.
+
+Run with: ``python -m scavengarr.interfaces.cli``
+"""
 
 from __future__ import annotations
 
@@ -14,7 +17,7 @@ import uvicorn
 
 from scavengarr.infrastructure.config import load_config
 from scavengarr.infrastructure.logging.setup import configure_logging
-from scavengarr.interfaces.main import build_app
+from scavengarr.interfaces.app import create_app
 
 log = structlog.get_logger(__name__)
 
@@ -102,7 +105,7 @@ def start(argv: Iterable[str] | None = None) -> None:
     log_config = configure_logging(config)
 
     uvicorn.run(
-        build_app(config),
+        create_app(config),
         host=host,
         port=port,
         log_config=log_config,

@@ -8,4 +8,4 @@ COPY --from=builder requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 RUN playwright install chromium --with-deps
 COPY src/ /app/src/
-CMD ["uvicorn", "scavengarr.main:app", "--host", "0.0.0.0"]
+CMD ["python", "-m", "scavengarr.interfaces.cli"]

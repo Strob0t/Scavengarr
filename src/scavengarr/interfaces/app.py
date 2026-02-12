@@ -1,4 +1,4 @@
-"""FastAPI application factory."""
+"""FastAPI application factory (create_app)."""
 
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ from scavengarr.interfaces.composition import lifespan
 log = structlog.get_logger(__name__)
 
 
-def build_app(config: AppConfig) -> FastAPI:
-    """Build FastAPI app - configuration ONLY, NO resource initialization.
+def create_app(config: AppConfig) -> FastAPI:
+    """Create FastAPI app — configuration ONLY, NO resource initialization.
 
     Resources (HTTP client, cache, plugins) are created in lifespan().
     """
