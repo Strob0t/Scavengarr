@@ -16,23 +16,9 @@ import re
 from html.parser import HTMLParser
 from urllib.parse import urljoin
 
-import httpx
-import structlog
-
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
-log = structlog.get_logger(__name__)
-
-_BASE_URL = "https://nima4k.org"
-
-_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
-)
-
-_MAX_CONCURRENT_DETAIL = 3
-_MAX_RESULTS = 1000
 _MAX_PAGES = 100  # 10 results/page → 100 pages for 1000
 
 # Torznab category → site URL path segment.
@@ -308,47 +294,28 @@ def _category_to_torznab(categories: list[str]) -> int:
     return 2000  # default: Movies
 
 
-class Nima4kPlugin:
+class Nima4kPlugin(HttpxPluginBase):
     """Python plugin for nima4k.org using httpx."""
 
     name = "nima4k"
-    version = "1.0.0"
-    mode = "httpx"
     provides = "download"
-    default_language = "de"
-
-    def __init__(self) -> None:
-        self._client: httpx.AsyncClient | None = None
-        self.base_url = _BASE_URL
-
-    async def _ensure_client(self) -> httpx.AsyncClient:
-        """Create httpx client if not already running."""
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                timeout=15.0,
-                follow_redirects=True,
-                headers={"User-Agent": _USER_AGENT},
-            )
-        return self._client
+    _domains = ["nima4k.org"]
 
     async def _search_post(self, query: str) -> list[dict[str, str | list[str]]]:
         """Execute POST search and return parsed results."""
-        client = await self._ensure_client()
-
-        try:
-            resp = await client.post(
-                f"{self.base_url}/search",
-                data={"search": query},
-            )
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            log.warning("nima4k_search_failed", query=query, error=str(exc))
+        resp = await self._safe_fetch(
+            f"{self.base_url}/search",
+            method="POST",
+            context="search",
+            data={"search": query},
+        )
+        if resp is None:
             return []
 
         parser = _ListingParser(self.base_url)
         parser.feed(resp.text)
 
-        log.info("nima4k_search_post", query=query, count=len(parser.results))
+        self._log.info("nima4k_search_post", query=query, count=len(parser.results))
         return parser.results
 
     async def _browse_category_page(
@@ -357,29 +324,19 @@ class Nima4kPlugin:
         page_num: int = 1,
     ) -> tuple[list[dict[str, str | list[str]]], bool]:
         """Fetch one category page. Returns (results, has_next_page)."""
-        client = await self._ensure_client()
-
         if page_num > 1:
             url = f"{self.base_url}/{category_path}/page-{page_num}"
         else:
             url = f"{self.base_url}/{category_path}"
 
-        try:
-            resp = await client.get(url)
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            log.warning(
-                "nima4k_browse_failed",
-                category=category_path,
-                page=page_num,
-                error=str(exc),
-            )
+        resp = await self._safe_fetch(url, context="browse")
+        if resp is None:
             return [], False
 
         parser = _ListingParser(self.base_url)
         parser.feed(resp.text)
 
-        log.info(
+        self._log.info(
             "nima4k_browse_page",
             category=category_path,
             page=page_num,
@@ -392,7 +349,7 @@ class Nima4kPlugin:
         self,
         category_path: str,
     ) -> list[dict[str, str | list[str]]]:
-        """Browse a category with pagination up to _MAX_RESULTS items."""
+        """Browse a category with pagination up to max_results items."""
         all_results: list[dict[str, str | list[str]]] = []
 
         for page_num in range(1, _MAX_PAGES + 1):
@@ -402,10 +359,10 @@ class Nima4kPlugin:
             if not results:
                 break
             all_results.extend(results)
-            if len(all_results) >= _MAX_RESULTS or not has_next:
+            if len(all_results) >= self._max_results or not has_next:
                 break
 
-        return all_results[:_MAX_RESULTS]
+        return all_results[: self._max_results]
 
     def _build_search_result(
         self,
@@ -471,12 +428,6 @@ class Nima4kPlugin:
                 results.append(sr)
 
         return results
-
-    async def cleanup(self) -> None:
-        """Close httpx client."""
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
 
 
 plugin = Nima4kPlugin()
