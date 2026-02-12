@@ -15,6 +15,7 @@ from scavengarr.application.use_cases.stremio_stream import StremioStreamUseCase
 from scavengarr.domain.entities.crawljob import Priority
 from scavengarr.infrastructure.cache.cache_factory import create_cache
 from scavengarr.infrastructure.hoster_resolvers import HosterResolverRegistry
+from scavengarr.infrastructure.hoster_resolvers.ddownload import DDownloadResolver
 from scavengarr.infrastructure.hoster_resolvers.doodstream import DoodStreamResolver
 from scavengarr.infrastructure.hoster_resolvers.filemoon import FilemoonResolver
 from scavengarr.infrastructure.hoster_resolvers.filernet import FilerNetResolver
@@ -141,6 +142,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             FilerNetResolver(http_client=state.http_client),
             KatfileResolver(http_client=state.http_client),
             RapidgatorResolver(http_client=state.http_client),
+            DDownloadResolver(http_client=state.http_client),
         ],
         http_client=state.http_client,
     )
