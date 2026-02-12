@@ -1,13 +1,12 @@
-"""Tests for the streamworld.ws Python plugin (httpx-based)."""
+"""Tests for the streamworld.ws Python plugin (Playwright-based)."""
 
 from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
 from types import ModuleType
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
-import httpx
 import pytest
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "streamworld.py"
@@ -31,8 +30,22 @@ _DetailPageParser = _mod._DetailPageParser
 
 
 def _make_plugin() -> object:
-    """Create StreamworldPlugin instance."""
-    return _StreamworldPlugin()
+    """Create StreamworldPlugin instance with pre-verified domain."""
+    p = _StreamworldPlugin()
+    p._domain_verified = True
+    p.base_url = "https://streamworld.ws"
+    return p
+
+
+def _make_mock_page() -> AsyncMock:
+    """Create a mock Playwright Page.
+
+    ``is_closed()`` is synchronous in Playwright, so we use MagicMock
+    to avoid returning a coroutine.
+    """
+    page = AsyncMock()
+    page.is_closed = MagicMock(return_value=False)
+    return page
 
 
 # ---------------------------------------------------------------------------
@@ -314,40 +327,36 @@ class TestDetailPageParser:
 
 
 # ---------------------------------------------------------------------------
-# Plugin integration tests (mocked HTTP)
+# Plugin integration tests (mocked Playwright page.evaluate)
 # ---------------------------------------------------------------------------
 
 
-def _mock_response(text: str, status_code: int = 200) -> httpx.Response:
-    """Create a mock httpx.Response."""
-    return httpx.Response(
-        status_code=status_code,
-        text=text,
-        request=httpx.Request("GET", "https://streamworld.ws/"),
-    )
-
-
 class TestStreamworldPlugin:
-    """Tests for StreamworldPlugin with mocked HTTP."""
+    """Tests for StreamworldPlugin with mocked Playwright."""
 
     @pytest.mark.asyncio
     async def test_search_returns_results(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
+        mock_page = _make_mock_page()
 
-        # AsyncMock resolves immediately, so gather runs tasks sequentially:
-        # Batman: detail → streams, then Serie: detail → streams
-        mock_client.post = AsyncMock(return_value=_mock_response(_SEARCH_HTML))
-        mock_client.get = AsyncMock(
-            side_effect=[
-                _mock_response(_DETAIL_HTML),  # Batman detail
-                _mock_response(_STREAMS_HTML),  # Batman streams
-                _mock_response(_SERIE_DETAIL_HTML),  # Serie detail
-                _mock_response(_SERIE_STREAMS_HTML),  # Serie streams
-            ]
-        )
+        async def mock_evaluate(js, arg=None):
+            if isinstance(arg, list):
+                # Search POST
+                return {"html": _SEARCH_HTML}
+            url = str(arg) if arg else ""
+            if "/streams-" in url:
+                if "batman" in url:
+                    return {"html": _STREAMS_HTML}
+                return {"html": _SERIE_STREAMS_HTML}
+            if "/film/" in url:
+                return {"html": _DETAIL_HTML}
+            if "/serie/" in url:
+                return {"html": _SERIE_DETAIL_HTML}
+            return {"html": ""}
 
-        plug._client = mock_client
+        mock_page.evaluate = AsyncMock(side_effect=mock_evaluate)
+        plug._page = mock_page
+
         results = await plug.search("Batman")
 
         assert len(results) == 2
@@ -359,18 +368,21 @@ class TestStreamworldPlugin:
     @pytest.mark.asyncio
     async def test_search_filters_by_category(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
+        mock_page = _make_mock_page()
 
-        mock_client.post = AsyncMock(return_value=_mock_response(_SEARCH_HTML))
-        # category=5000 filters to Serie only → 1 detail + 1 streams fetch
-        mock_client.get = AsyncMock(
-            side_effect=[
-                _mock_response(_SERIE_DETAIL_HTML),  # Serie detail
-                _mock_response(_SERIE_STREAMS_HTML),  # Serie streams
-            ],
-        )
+        async def mock_evaluate(js, arg=None):
+            if isinstance(arg, list):
+                return {"html": _SEARCH_HTML}
+            url = str(arg) if arg else ""
+            if "/streams-" in url:
+                return {"html": _SERIE_STREAMS_HTML}
+            if "/serie/" in url:
+                return {"html": _SERIE_DETAIL_HTML}
+            return {"html": ""}
 
-        plug._client = mock_client
+        mock_page.evaluate = AsyncMock(side_effect=mock_evaluate)
+        plug._page = mock_page
+
         results = await plug.search("Batman", category=5000)  # TV only
 
         # Should only get the Serie result
@@ -378,29 +390,27 @@ class TestStreamworldPlugin:
         assert results[0].title == "Test Serie"
 
     @pytest.mark.asyncio
-    async def test_search_empty_query(self) -> None:
+    async def test_search_empty_results(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
+        mock_page = _make_mock_page()
 
         empty_html = (
             "<html><body><table><tr><th>Hinweis</th></tr></table></body></html>"
         )
-        mock_client.post = AsyncMock(return_value=_mock_response(empty_html))
+        mock_page.evaluate = AsyncMock(return_value={"html": empty_html})
+        plug._page = mock_page
 
-        plug._client = mock_client
         results = await plug.search("xy")
 
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_search_handles_http_error(self) -> None:
+    async def test_search_handles_evaluate_error(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(
-            side_effect=httpx.ConnectError("connection failed")
-        )
+        mock_page = _make_mock_page()
+        mock_page.evaluate = AsyncMock(side_effect=Exception("page crashed"))
+        plug._page = mock_page
 
-        plug._client = mock_client
         results = await plug.search("test")
 
         assert results == []
@@ -408,45 +418,67 @@ class TestStreamworldPlugin:
     @pytest.mark.asyncio
     async def test_detail_page_error_skips_result(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
+        mock_page = _make_mock_page()
 
-        mock_client.post = AsyncMock(return_value=_mock_response(_SEARCH_HTML))
-        mock_client.get = AsyncMock(
-            side_effect=httpx.ConnectError("detail page failed")
-        )
+        async def mock_evaluate(js, arg=None):
+            if isinstance(arg, list):
+                return {"html": _SEARCH_HTML}
+            # All detail fetches fail
+            return {"_error": 500}
 
-        plug._client = mock_client
+        mock_page.evaluate = AsyncMock(side_effect=mock_evaluate)
+        plug._page = mock_page
+
         results = await plug.search("Batman")
 
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_cleanup_closes_client(self) -> None:
+    async def test_cleanup_closes_browser(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
-        plug._client = mock_client
+        mock_page = _make_mock_page()
+        mock_context = AsyncMock()
+        mock_browser = AsyncMock()
+        mock_pw = AsyncMock()
+
+        plug._page = mock_page
+        plug._context = mock_context
+        plug._browser = mock_browser
+        plug._pw = mock_pw
 
         await plug.cleanup()
 
-        mock_client.aclose.assert_called_once()
-        assert plug._client is None
+        mock_page.close.assert_awaited_once()
+        mock_context.close.assert_awaited_once()
+        mock_browser.close.assert_awaited_once()
+        mock_pw.stop.assert_awaited_once()
+        assert plug._page is None
+        assert plug._context is None
+        assert plug._browser is None
+        assert plug._pw is None
 
     @pytest.mark.asyncio
     async def test_result_has_download_links(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
+        mock_page = _make_mock_page()
 
-        mock_client.post = AsyncMock(return_value=_mock_response(_SEARCH_HTML))
-        mock_client.get = AsyncMock(
-            side_effect=[
-                _mock_response(_DETAIL_HTML),  # Batman detail
-                _mock_response(_STREAMS_HTML),  # Batman streams
-                _mock_response(_SERIE_DETAIL_HTML),  # Serie detail
-                _mock_response(_SERIE_STREAMS_HTML),  # Serie streams
-            ]
-        )
+        async def mock_evaluate(js, arg=None):
+            if isinstance(arg, list):
+                return {"html": _SEARCH_HTML}
+            url = str(arg) if arg else ""
+            if "/streams-" in url:
+                if "batman" in url:
+                    return {"html": _STREAMS_HTML}
+                return {"html": _SERIE_STREAMS_HTML}
+            if "/film/" in url:
+                return {"html": _DETAIL_HTML}
+            if "/serie/" in url:
+                return {"html": _SERIE_DETAIL_HTML}
+            return {"html": ""}
 
-        plug._client = mock_client
+        mock_page.evaluate = AsyncMock(side_effect=mock_evaluate)
+        plug._page = mock_page
+
         results = await plug.search("Batman")
 
         assert len(results) >= 1
@@ -460,19 +492,25 @@ class TestStreamworldPlugin:
     @pytest.mark.asyncio
     async def test_result_metadata(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
+        mock_page = _make_mock_page()
 
-        mock_client.post = AsyncMock(return_value=_mock_response(_SEARCH_HTML))
-        mock_client.get = AsyncMock(
-            side_effect=[
-                _mock_response(_DETAIL_HTML),  # Batman detail
-                _mock_response(_STREAMS_HTML),  # Batman streams
-                _mock_response(_SERIE_DETAIL_HTML),  # Serie detail
-                _mock_response(_SERIE_STREAMS_HTML),  # Serie streams
-            ]
-        )
+        async def mock_evaluate(js, arg=None):
+            if isinstance(arg, list):
+                return {"html": _SEARCH_HTML}
+            url = str(arg) if arg else ""
+            if "/streams-" in url:
+                if "batman" in url:
+                    return {"html": _STREAMS_HTML}
+                return {"html": _SERIE_STREAMS_HTML}
+            if "/film/" in url:
+                return {"html": _DETAIL_HTML}
+            if "/serie/" in url:
+                return {"html": _SERIE_DETAIL_HTML}
+            return {"html": ""}
 
-        plug._client = mock_client
+        mock_page.evaluate = AsyncMock(side_effect=mock_evaluate)
+        plug._page = mock_page
+
         results = await plug.search("Batman")
 
         first = results[0]
