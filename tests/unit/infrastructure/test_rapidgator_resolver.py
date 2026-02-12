@@ -32,9 +32,7 @@ class TestExtractFileId:
         assert _extract_file_id(url) == "abc123def456abc123def456abc123de"
 
     def test_rapidgator_asia(self) -> None:
-        assert (
-            _extract_file_id("https://rapidgator.asia/file/12345678") == "12345678"
-        )
+        assert _extract_file_id("https://rapidgator.asia/file/12345678") == "12345678"
 
     def test_rg_to(self) -> None:
         assert _extract_file_id("https://rg.to/file/12345678") == "12345678"
@@ -45,9 +43,7 @@ class TestExtractFileId:
         )
 
     def test_http_scheme(self) -> None:
-        assert (
-            _extract_file_id("http://rapidgator.net/file/12345678") == "12345678"
-        )
+        assert _extract_file_id("http://rapidgator.net/file/12345678") == "12345678"
 
     def test_non_rapidgator_domain(self) -> None:
         assert _extract_file_id("https://example.com/file/12345678") is None
@@ -219,9 +215,7 @@ class TestRapidgatorResolver:
     async def test_numeric_id(self) -> None:
         numeric_url = "https://rapidgator.net/file/99887766"
         client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(
-            return_value=_make_response(final_url=numeric_url)
-        )
+        client.get = AsyncMock(return_value=_make_response(final_url=numeric_url))
 
         resolver = RapidgatorResolver(http_client=client)
         result = await resolver.resolve(numeric_url)
@@ -236,9 +230,7 @@ class TestRapidgatorResolver:
         client.get = AsyncMock(return_value=_make_response())
 
         resolver = RapidgatorResolver(http_client=client)
-        result = await resolver.resolve(
-            f"https://rapidgator.asia/file/{_FILE_ID}"
-        )
+        result = await resolver.resolve(f"https://rapidgator.asia/file/{_FILE_ID}")
 
         assert result is not None
         assert result.video_url == _FILE_URL

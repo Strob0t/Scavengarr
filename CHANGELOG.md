@@ -112,6 +112,10 @@ SuperVideo, DoodStream, and Filemoon with packed JS unpacking and Cloudflare byp
 - Cache stream links and generate proxy play URLs (`686b4bf`, `f61e30a`)
 - Add `/stremio/play/{stream_id}` endpoint with 302 redirect (`08be69c`)
 - Add `cleanup()` to HosterResolverRegistry (`c148640`)
+- Add filer.net DDL hoster resolver via public status API
+- Add Katfile DDL hoster resolver (XFS offline marker detection)
+- Add Rapidgator DDL hoster resolver (website scraping validation)
+- Add DDownload DDL hoster resolver (ddownload.com / ddl.to, XFS page check)
 
 ### Plugin Improvements
 Various fixes and enhancements to individual plugins.
