@@ -23,7 +23,15 @@ from urllib.parse import urljoin, urlparse
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
+# ---------------------------------------------------------------------------
+# Configurable settings
+# ---------------------------------------------------------------------------
+_DOMAINS = ["www.data-load.me"]
 _MAX_PAGES = 50  # ~20 results/page → 50 pages for 1000
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 
 # Torznab category → list of XenForo forum node IDs.
 _TORZNAB_TO_NODE_IDS: dict[int, list[int]] = {
@@ -401,7 +409,7 @@ class DataloadPlugin(HttpxPluginBase):
     """Python plugin for data-load.me using httpx."""
 
     name = "dataload"
-    _domains = ["www.data-load.me"]
+    _domains = _DOMAINS
 
     def __init__(self) -> None:
         super().__init__()

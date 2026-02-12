@@ -26,9 +26,19 @@ from playwright.async_api import Page
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
+# ---------------------------------------------------------------------------
+# Configurable settings
+# ---------------------------------------------------------------------------
+_DOMAINS = [
+    "streamworld.ws",
+    "streamworld.co",
+]
 _NAV_TIMEOUT = 30_000
 _ANTIBOT_TIMEOUT = 15_000  # ms to wait for anti-bot JS to finish
 
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 # Torznab category -> search result type text.
 # Search results have "Film" or "Serie" in the first cell.
 _TYPE_TO_TORZNAB: dict[str, int] = {
@@ -362,10 +372,7 @@ class StreamworldPlugin(PlaywrightPluginBase):
     provides = "stream"
     default_language = "de"
 
-    _domains = [
-        "streamworld.ws",
-        "streamworld.co",
-    ]
+    _domains = _DOMAINS
 
     async def _wait_for_antibot(self, page: "Page") -> bool:
         """Wait for anti-bot JavaScript to finish on the homepage.

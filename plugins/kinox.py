@@ -19,6 +19,21 @@ from html.parser import HTMLParser
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
+# ---------------------------------------------------------------------------
+# Configurable settings
+# ---------------------------------------------------------------------------
+_DOMAINS = [
+    "www22.kinox.to",
+    "ww22.kinox.to",
+    "www22.kinos.to",
+    "ww22.kinos.to",
+    "www22.kinoz.to",
+    "ww22.kinoz.to",
+    "www20.kinox.to",
+    "www15.kinox.to",
+    "www.kinox.to",
+]
+
 
 class _SearchResultParser(HTMLParser):
     """Parse search results from a kinox.to search page.
@@ -205,17 +220,7 @@ class KinoxPlugin(HttpxPluginBase):
 
     name = "kinox"
     provides = "stream"
-    _domains = [
-        "www22.kinox.to",
-        "ww22.kinox.to",
-        "www22.kinos.to",
-        "ww22.kinos.to",
-        "www22.kinoz.to",
-        "ww22.kinoz.to",
-        "www20.kinox.to",
-        "www15.kinox.to",
-        "www.kinox.to",
-    ]
+    _domains = _DOMAINS
 
     async def _search_page(self, query: str) -> list[dict[str, str]]:
         """Fetch search page and parse results."""

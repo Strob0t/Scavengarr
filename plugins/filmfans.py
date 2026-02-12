@@ -20,6 +20,11 @@ from html.parser import HTMLParser
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
+# ---------------------------------------------------------------------------
+# Configurable settings
+# ---------------------------------------------------------------------------
+_DOMAINS = ["filmfans.org"]
+
 
 class _ReleaseParser(HTMLParser):
     """Parse release entries from a filmfans.org movie page.
@@ -182,7 +187,7 @@ class FilmfansPlugin(HttpxPluginBase):
     provides = "download"
     default_language = "de"
 
-    _domains = ["filmfans.org"]
+    _domains = _DOMAINS
 
     async def _search_api(self, query: str) -> list[dict[str, str | int]]:
         """Execute JSON search API and return movie entries."""

@@ -27,6 +27,21 @@ from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBa
 if TYPE_CHECKING:
     from playwright.async_api import Page
 
+# ---------------------------------------------------------------------------
+# Configurable settings
+# ---------------------------------------------------------------------------
+_DOMAINS = [
+    "boerse.am",
+    "boerse.sx",
+    "boerse.im",
+    "boerse.ai",
+    "boerse.kz",
+]
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
 # Torznab category → vBulletin forum ID mapping.
 # Default is "30" (Videoboerse: movies, series, docs).
 _CATEGORY_FORUM_MAP: dict[int, str] = {
@@ -221,13 +236,7 @@ class BoersePlugin(PlaywrightPluginBase):
     provides = "download"
     default_language = "de"
 
-    _domains = [
-        "boerse.am",
-        "boerse.sx",
-        "boerse.im",
-        "boerse.ai",
-        "boerse.kz",
-    ]
+    _domains = _DOMAINS
 
     _logged_in: bool = False
 

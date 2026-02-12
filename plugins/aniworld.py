@@ -21,6 +21,18 @@ from urllib.parse import urljoin
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
+# ---------------------------------------------------------------------------
+# Configurable settings
+# ---------------------------------------------------------------------------
+_DOMAINS = [
+    "aniworld.to",
+    "aniworld.info",
+]
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
 # Language key mapping from aniworld.to data-lang-key attributes.
 _LANG_MAP: dict[str, str] = {
     "1": "German Dub",
@@ -240,10 +252,7 @@ class AniworldPlugin(HttpxPluginBase):
     provides = "stream"
     default_language = "de"
 
-    _domains = [
-        "aniworld.to",
-        "aniworld.info",
-    ]
+    _domains = _DOMAINS
 
     async def _ajax_search(self, query: str) -> list[dict[str, str]]:
         """Search via POST /ajax/search endpoint.

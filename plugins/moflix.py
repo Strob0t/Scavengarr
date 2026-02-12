@@ -22,9 +22,20 @@ from playwright.async_api import Page
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
+# ---------------------------------------------------------------------------
+# Configurable settings
+# ---------------------------------------------------------------------------
+_DOMAINS = [
+    "moflix-stream.xyz",
+    "moflix-stream.click",
+]
 _SEARCH_LIMIT = 20  # API hard cap
 _CF_TIMEOUT = 30_000  # ms to wait for Cloudflare challenge
 _NAV_TIMEOUT = 30_000
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 
 
 def _pre_filter_by_category(results: list[dict], category: int | None) -> list[dict]:
@@ -65,10 +76,7 @@ class MoflixPlugin(PlaywrightPluginBase):
     provides = "stream"
     default_language = "de"
 
-    _domains = [
-        "moflix-stream.xyz",
-        "moflix-stream.click",
-    ]
+    _domains = _DOMAINS
 
     async def _wait_for_cloudflare(self, page: "Page") -> bool:
         """Wait for the Cloudflare JS challenge to resolve."""

@@ -21,6 +21,15 @@ from html.parser import HTMLParser
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
+# ---------------------------------------------------------------------------
+# Configurable settings
+# ---------------------------------------------------------------------------
+_DOMAINS = ["kinoking.cc"]
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
 # Genre name (lowercase, German) → Torznab category.
 _GENRE_CATEGORY_MAP: dict[str, int] = {
     # Movies
@@ -402,7 +411,7 @@ class KinokingPlugin(HttpxPluginBase):
 
     name = "kinoking"
     provides = "stream"
-    _domains = ["kinoking.cc"]
+    _domains = _DOMAINS
 
     async def _search_cards(self, query: str) -> list[dict[str, str]]:
         """Fetch search page and return parsed content cards."""

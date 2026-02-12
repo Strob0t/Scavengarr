@@ -23,9 +23,16 @@ from urllib.parse import urljoin
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
+# ---------------------------------------------------------------------------
+# Configurable settings
+# ---------------------------------------------------------------------------
+_DOMAINS = ["s.to", "serienstream.to", "186.2.175.5"]
 _MAX_PAGES = 42  # 24 results/page → 42 pages for ~1000
 _RESULTS_PER_PAGE = 24
 
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 # Site genre name (lowercase) → Torznab TV sub-category.
 _GENRE_CATEGORY_MAP: dict[str, int] = {
     "anime": 5070,
@@ -358,7 +365,7 @@ class StoPlugin(HttpxPluginBase):
 
     name = "sto"
     provides = "stream"
-    _domains = ["s.to", "serienstream.to", "186.2.175.5"]
+    _domains = _DOMAINS
 
     async def _search_series(
         self,

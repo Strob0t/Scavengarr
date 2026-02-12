@@ -23,8 +23,15 @@ from urllib.parse import urljoin, urlparse
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
+# ---------------------------------------------------------------------------
+# Configurable settings
+# ---------------------------------------------------------------------------
+_DOMAINS = ["kinoger.com", "kinoger.to"]
 _MAX_PAGES = 84  # 12 results/page → 84 pages for ~1000
 
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 _TV_CATEGORIES = frozenset({5000, 5010, 5020, 5030, 5040, 5050, 5060, 5070, 5080})
 _MOVIE_CATEGORIES = frozenset({2000, 2010, 2020, 2030, 2040, 2045, 2050, 2060})
 
@@ -545,7 +552,7 @@ class KinogerPlugin(HttpxPluginBase):
 
     name = "kinoger"
     provides = "stream"
-    _domains = ["kinoger.com", "kinoger.to"]
+    _domains = _DOMAINS
 
     async def _search_page(
         self,

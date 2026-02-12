@@ -22,6 +22,21 @@ from playwright.async_api import Page
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
+# ---------------------------------------------------------------------------
+# Configurable settings
+# ---------------------------------------------------------------------------
+_DOMAINS = [
+    "www.scnsrc.me",
+    "scnsrc.me",
+    "www.scenesource.me",
+    "scenesource.me",
+    "www.scnsrc.net",
+    "scnsrc.net",
+]
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 # Torznab category -> URL path segment mapping.
 _CATEGORY_PATH_MAP: dict[int, str] = {
     2000: "category/films",
@@ -298,14 +313,7 @@ class ScnSrcPlugin(PlaywrightPluginBase):
     provides = "download"
     default_language = "en"
 
-    _domains = [
-        "www.scnsrc.me",
-        "scnsrc.me",
-        "www.scenesource.me",
-        "scenesource.me",
-        "www.scnsrc.net",
-        "scnsrc.net",
-    ]
+    _domains = _DOMAINS
 
     async def _wait_for_cloudflare(self, page: "Page") -> None:
         """If Cloudflare challenge is detected, wait for it."""

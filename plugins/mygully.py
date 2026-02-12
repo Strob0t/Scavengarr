@@ -26,6 +26,15 @@ from playwright.async_api import Page
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
+# ---------------------------------------------------------------------------
+# Configurable settings
+# ---------------------------------------------------------------------------
+_DOMAINS = ["mygully.com", "mygully.to"]
+_DEFAULT_FORUM_ID = "25"
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 # Torznab category -> vBulletin forum ID mapping.
 # Uses parent forum IDs with childforums=1 for broad matching.
 # "25" (Video) is the default.
@@ -37,7 +46,6 @@ _CATEGORY_FORUM_MAP: dict[int, str] = {
     4000: "27",  # PC      -> Games
     1000: "27",  # Console -> Games
 }
-_DEFAULT_FORUM_ID = "25"
 
 # Hosts that are internal (not download links).
 _INTERNAL_HOSTS = {
@@ -229,10 +237,7 @@ class MyGullyPlugin(PlaywrightPluginBase):
     provides = "download"
     default_language = "de"
 
-    _domains = [
-        "mygully.com",
-        "mygully.to",
-    ]
+    _domains = _DOMAINS
 
     def __init__(self) -> None:
         super().__init__()

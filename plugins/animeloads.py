@@ -18,10 +18,21 @@ from playwright.async_api import Page
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
+# ---------------------------------------------------------------------------
+# Configurable settings
+# ---------------------------------------------------------------------------
+_DOMAINS = [
+    "www.anime-loads.org",
+    "anime-loads.org",
+]
 _PAGE_SIZE = 20
 _MAX_PAGES = 50  # 20/page * 50 = 1000
 _DDOS_TIMEOUT = 30_000  # ms to wait for DDoS-Guard resolution
 _NAV_TIMEOUT = 30_000
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 
 # Map content types (lowercase) to Torznab categories.
 _TYPE_CATEGORY: dict[str, int] = {
@@ -156,10 +167,7 @@ class AnimeLoadsPlugin(PlaywrightPluginBase):
     provides = "both"
     default_language = "de"
 
-    _domains = [
-        "www.anime-loads.org",
-        "anime-loads.org",
-    ]
+    _domains = _DOMAINS
 
     async def _wait_for_ddos_guard(self, page: "Page") -> bool:
         """Wait for DDoS-Guard JS challenge to resolve.

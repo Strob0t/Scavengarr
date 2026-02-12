@@ -24,9 +24,22 @@ from urllib.parse import urljoin, urlparse
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
+# ---------------------------------------------------------------------------
+# Configurable settings
+# ---------------------------------------------------------------------------
+_DOMAINS = [
+    "streamkiste.taxi",
+    "streamkiste.tv",
+    "streamkiste.sx",
+    "streamkiste.al",
+    "streamkiste.city",
+]
 _RESULTS_PER_PAGE = 21
 _MAX_PAGES = 48  # 21 results/page → 48 pages for ~1000
 
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 _TV_CATEGORIES = frozenset({5000, 5010, 5020, 5030, 5040, 5050, 5060, 5070, 5080})
 _MOVIE_CATEGORIES = frozenset({2000, 2010, 2020, 2030, 2040, 2045, 2050, 2060})
 
@@ -534,13 +547,7 @@ class StreamkistePlugin(HttpxPluginBase):
 
     name = "streamkiste"
     provides = "stream"
-    _domains = [
-        "streamkiste.taxi",
-        "streamkiste.tv",
-        "streamkiste.sx",
-        "streamkiste.al",
-        "streamkiste.city",
-    ]
+    _domains = _DOMAINS
 
     async def _search_page(
         self,

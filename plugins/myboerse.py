@@ -24,7 +24,15 @@ from urllib.parse import urljoin, urlparse
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
+# ---------------------------------------------------------------------------
+# Configurable settings
+# ---------------------------------------------------------------------------
+_DOMAINS = ["myboerse.bz", "myboerse.ws", "myboerse.me"]
 _MAX_PAGES = 50  # ~20 results/page → 50 pages for 1000
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 
 # Torznab category → list of XenForo forum node IDs.
 _TORZNAB_TO_NODE_IDS: dict[int, list[int]] = {
@@ -399,7 +407,7 @@ class MyboersePlugin(HttpxPluginBase):
 
     name = "myboerse"
     provides = "download"
-    _domains = ["myboerse.bz", "myboerse.ws", "myboerse.me"]
+    _domains = _DOMAINS
     _logged_in: bool = False
 
     async def cleanup(self) -> None:

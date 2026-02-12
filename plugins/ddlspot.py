@@ -21,7 +21,15 @@ from playwright.async_api import Page
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
+# ---------------------------------------------------------------------------
+# Configurable settings
+# ---------------------------------------------------------------------------
+_DOMAINS = ["ddlspot.com"]
 _MAX_PAGES = 50  # 20 results/page → 50 pages for 1000
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 
 # DDLSpot type string → Torznab category ID
 _CATEGORY_MAP: dict[str, int] = {
@@ -236,7 +244,7 @@ class DDLSpotPlugin(PlaywrightPluginBase):
     provides = "download"
     default_language = "de"
 
-    _domains = ["ddlspot.com"]
+    _domains = _DOMAINS
 
     async def _wait_for_cloudflare(self, page: Page) -> None:
         """If Cloudflare challenge is detected, wait for it to resolve."""

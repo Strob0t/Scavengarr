@@ -25,7 +25,15 @@ from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBa
 if TYPE_CHECKING:
     from playwright.async_api import Page
 
+# ---------------------------------------------------------------------------
+# Configurable settings
+# ---------------------------------------------------------------------------
+_DOMAINS = ["byte.to"]
 _MAX_PAGES = 5
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 
 # Torznab category → site category ID for search URL parameter ``c=``.
 _TORZNAB_TO_SITE_CATEGORY: dict[int, str] = {
@@ -354,7 +362,7 @@ class BytePlugin(PlaywrightPluginBase):
     provides = "download"
     default_language = "de"
 
-    _domains = ["byte.to"]
+    _domains = _DOMAINS
 
     async def _wait_for_cloudflare(self, page: Page) -> None:
         """If Cloudflare challenge is detected, wait for it to resolve."""

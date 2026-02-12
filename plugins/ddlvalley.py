@@ -22,6 +22,16 @@ from playwright.async_api import Page
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
+# ---------------------------------------------------------------------------
+# Configurable settings
+# ---------------------------------------------------------------------------
+_DOMAINS = ["www.ddlvalley.me"]
+_MAX_PAGES = 100  # ~10 posts/page → 100 pages for 1000
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
 # Torznab category -> URL path segment mapping.
 _CATEGORY_PATH_MAP: dict[int, str] = {
     2000: "category/movies",
@@ -198,7 +208,7 @@ class DDLValleyPlugin(PlaywrightPluginBase):
     provides = "download"
     default_language = "en"
 
-    _domains = ["www.ddlvalley.me"]
+    _domains = _DOMAINS
 
     async def _wait_for_cloudflare(self, page: Page) -> None:
         """If Cloudflare challenge is detected, wait for it to resolve."""

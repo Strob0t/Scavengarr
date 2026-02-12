@@ -21,6 +21,15 @@ from typing import Any
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
+# ---------------------------------------------------------------------------
+# Configurable settings
+# ---------------------------------------------------------------------------
+_DOMAINS = ["fireani.me"]
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
 # Internal proxy player names to exclude from results.
 _EXCLUDED_PLAYERS = frozenset({"proxyplayerslow", "proxyplayer"})
 
@@ -116,7 +125,7 @@ class FireaniPlugin(HttpxPluginBase):
 
     name = "fireani"
     provides = "stream"
-    _domains = ["fireani.me"]
+    _domains = _DOMAINS
 
     async def _api_search(self, query: str) -> list[dict[str, Any]]:
         """Search via GET /api/anime/search?q={query}.

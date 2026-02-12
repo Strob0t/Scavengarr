@@ -23,9 +23,16 @@ from urllib.parse import urljoin, urlparse
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
+# ---------------------------------------------------------------------------
+# Configurable settings
+# ---------------------------------------------------------------------------
+_DOMAINS = ["megakino.me"]
 _RESULTS_PER_PAGE = 20
 _MAX_PAGES = 50  # 1000 / 20
 
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 _TV_CATEGORIES = frozenset({5000, 5010, 5020, 5030, 5040, 5050, 5060, 5070, 5080})
 _MOVIE_CATEGORIES = frozenset({2000, 2010, 2020, 2030, 2040, 2045, 2050, 2060})
 
@@ -585,7 +592,7 @@ class MegakinoPlugin(HttpxPluginBase):
 
     name = "megakino"
     provides = "stream"
-    _domains = ["megakino.me"]
+    _domains = _DOMAINS
 
     async def _search_page(
         self,

@@ -19,8 +19,15 @@ from urllib.parse import urljoin
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
+# ---------------------------------------------------------------------------
+# Configurable settings
+# ---------------------------------------------------------------------------
+_DOMAINS = ["nima4k.org"]
 _MAX_PAGES = 100  # 10 results/page → 100 pages for 1000
 
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 # Torznab category → site URL path segment.
 _CATEGORY_PATH_MAP: dict[int, str] = {
     2000: "movies",
@@ -299,7 +306,7 @@ class Nima4kPlugin(HttpxPluginBase):
 
     name = "nima4k"
     provides = "download"
-    _domains = ["nima4k.org"]
+    _domains = _DOMAINS
 
     async def _search_post(self, query: str) -> list[dict[str, str | list[str]]]:
         """Execute POST search and return parsed results."""

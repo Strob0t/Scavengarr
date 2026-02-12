@@ -26,9 +26,16 @@ from urllib.parse import urljoin, urlparse
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
+# ---------------------------------------------------------------------------
+# Configurable settings
+# ---------------------------------------------------------------------------
+_DOMAINS = ["streamcloud.plus", "streamcloud.my"]
 _RESULTS_PER_PAGE = 12
 _MAX_PAGES = 84  # 12 results/page → 84 pages for ~1000
 
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 _TV_CATEGORIES = frozenset({5000, 5010, 5020, 5030, 5040, 5050, 5060, 5070, 5080})
 _MOVIE_CATEGORIES = frozenset({2000, 2010, 2020, 2030, 2040, 2045, 2050, 2060})
 
@@ -580,7 +587,7 @@ class StreamcloudPlugin(HttpxPluginBase):
 
     name = "streamcloud"
     provides = "stream"
-    _domains = ["streamcloud.plus", "streamcloud.my"]
+    _domains = _DOMAINS
 
     async def _search_page(
         self,

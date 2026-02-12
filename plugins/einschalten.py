@@ -18,6 +18,10 @@ from urllib.parse import urlparse
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
+# ---------------------------------------------------------------------------
+# Configurable settings
+# ---------------------------------------------------------------------------
+_DOMAINS = ["einschalten.in"]
 _MAX_PAGES = 32  # ~32 results/page → 32 pages for ~1000
 
 
@@ -39,7 +43,7 @@ class EinschaltenPlugin(HttpxPluginBase):
 
     name = "einschalten"
     provides = "stream"
-    _domains = ["einschalten.in"]
+    _domains = _DOMAINS
 
     async def _api_search(self, query: str) -> list[dict]:
         """Search the API and return all unique results across pages."""

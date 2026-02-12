@@ -19,8 +19,16 @@ import re
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
+# ---------------------------------------------------------------------------
+# Configurable settings
+# ---------------------------------------------------------------------------
+_DOMAINS = ["haschcon.com"]
 _PER_PAGE = 100  # WP REST API max
 _MAX_PAGES = 10  # 10 pages x 100 = 1000
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 
 # Regex patterns for extracting video URLs from player embed pages.
 _YT_PATTERN = re.compile(r"youtube\.com/embed/([a-zA-Z0-9_-]+)")
@@ -32,7 +40,7 @@ class HaschconPlugin(HttpxPluginBase):
 
     name = "haschcon"
     provides = "stream"
-    _domains = ["haschcon.com"]
+    _domains = _DOMAINS
 
     async def _api_search(self, query: str) -> list[dict]:
         """Search via WP REST API across multiple pages."""

@@ -19,7 +19,15 @@ from html.parser import HTMLParser
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
+# ---------------------------------------------------------------------------
+# Configurable settings
+# ---------------------------------------------------------------------------
+_DOMAINS = ["bs.to", "burning-series.io", "burning-series.net"]
 _MAX_SERIES_DETAIL = 50  # Max series to fetch detail pages for
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 
 # Genre -> Torznab category mapping.
 # bs.to only has TV series, so all categories are in the 5xxx range.
@@ -366,7 +374,7 @@ class BurningSeriesPlugin(HttpxPluginBase):
 
     name = "burningseries"
     provides = "stream"
-    _domains = ["bs.to", "burning-series.io", "burning-series.net"]
+    _domains = _DOMAINS
 
     def __init__(self) -> None:
         super().__init__()
