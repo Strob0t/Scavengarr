@@ -8,8 +8,8 @@ Format: version, date, grouped changes. Newest entries first.
 ## Unreleased (staging)
 
 Massive expansion of the plugin ecosystem (2 → 32 plugins), Stremio addon integration,
-hoster resolver system, plugin base class standardization, and growth of the test suite
-from 160 to 1894 tests.
+hoster resolver system, plugin base class standardization, search result caching, and
+growth of the test suite from 160 to 2128 tests.
 
 ### Plugin Standardization (Refactor)
 All 29 Python plugins migrated to shared base classes (`HttpxPluginBase` /
@@ -134,9 +134,25 @@ Various fixes and enhancements to individual plugins.
 - Delegate router to use cases, remove inline business logic (`7c36166`)
 - Wire Stremio use cases into AppState and composition (`d3f076d`)
 
-### Test Suite Growth (160 → 1894 tests)
-Test suite expanded from 160 to 1894 tests with comprehensive coverage for all
-29 Python plugins, hoster resolvers, Stremio components, and base classes.
+### Search Result Caching
+Cache layer for repeated search queries with configurable TTL and cache-hit indicators.
+
+- Add `_search_cache_key()` with SHA-256 hashing of plugin + query + category
+- Add cache read/write to `TorznabSearchUseCase` with graceful error handling
+- Add `search_ttl_seconds` config (default 900s / 15 minutes, 0 = disabled)
+- Add `X-Cache: HIT/MISS` response header to Torznab search responses
+
+### Plugin Fixes (website changes)
+Five plugins updated to match changed website structures.
+
+- Fix filmfans release loading: extract `initMovie()` hash and fetch releases via `/api/v1/{hash}` JSON endpoint
+- Fix kinoger search parser: update selectors for redesigned DLE template (`shortstory` → detail link extraction)
+- Fix megakino_to: add GET fallback for domain verification (HEAD returns 405)
+- Fix movie4k: add GET fallback for domain verification (HEAD returns 405)
+- Fix streamkiste: rewrite detail parser to extract streams from meinecloud.click external script
+
+### Test Suite Growth (160 → 2128 tests)
+Test suite expanded from 160 to 2128 tests with comprehensive coverage across all layers.
 
 - Add unit tests for all 27 plugin test files
 - Add unit tests for all 5 hoster resolvers (VOE, Streamtape, SuperVideo, DoodStream, Filemoon)
@@ -144,6 +160,9 @@ Test suite expanded from 160 to 1894 tests with comprehensive coverage for all
 - Add unit tests for Stremio components (stream converter, stream sorter, TMDB client, title matcher, IMDB fallback)
 - Add unit tests for release name parser, plugin registry, HTML selectors
 - Add unit tests for stream link cache and hoster registry
+- Add 99 E2E tests (46 Torznab endpoint + 53 Stremio endpoint)
+- Add 31 integration tests (config loading, crawljob lifecycle, link validation, plugin pipeline)
+- Add 32 live smoke tests (parametrized across all plugins, hitting real websites)
 
 ### Documentation
 - Add plugin search standards (categories + pagination up to 1000) (`c1fa2c4`)
@@ -270,6 +289,4 @@ configuration system, and CrawlJob generation.
 
 Current known issues:
 
-- **No integration tests:** The test suite contains 1894 unit tests but no integration tests that verify end-to-end wiring. See `docs/plans/integration-tests.md`.
-- **No search caching:** Every Torznab search request triggers a full scraping pipeline. Repeated queries are not cached. See `docs/plans/search-caching.md`.
 - **Cloudflare-heavy sites:** Several Playwright plugins (ddlspot, ddlvalley, scnsrc, byte) return 0 results when Cloudflare challenges cannot be bypassed in headless mode.

@@ -75,9 +75,11 @@ src/scavengarr/
 │   │   └── crawljob_factory.py       # SearchResult → CrawlJob conversion
 │   └── use_cases/
 │       ├── __init__.py
+│       ├── stremio_catalog.py        # TMDB trending + search catalog
+│       ├── stremio_stream.py         # IMDb ID → plugin search → ranked streams
 │       ├── torznab_caps.py           # Capabilities use case
-│       ├── torznab_indexers.py        # Indexer listing use case
-│       └── torznab_search.py         # Search orchestration use case
+│       ├── torznab_indexers.py       # Indexer listing use case
+│       └── torznab_search.py         # Search orchestration + result caching
 ├── infrastructure/
 │   ├── cache/
 │   │   ├── __init__.py
@@ -88,26 +90,49 @@ src/scavengarr/
 │   │   ├── __init__.py
 │   │   ├── converters.py             # to_int()
 │   │   ├── extractors.py             # extract_download_link()
+│   │   ├── html_selectors.py         # CSS-selector HTML extraction with fallback chains
 │   │   └── parsers.py                # parse_size_to_bytes()
 │   ├── config/
 │   │   ├── __init__.py               # Re-exports AppConfig, load_config
 │   │   ├── defaults.py               # DEFAULT_CONFIG dict
 │   │   ├── load.py                   # Layered config loading
 │   │   └── schema.py                 # AppConfig, CacheConfig, EnvOverrides
+│   ├── hoster_resolvers/
+│   │   ├── __init__.py
+│   │   ├── doodstream.py             # DoodStream pass_md5 extraction
+│   │   ├── filemoon.py               # Filemoon packed JS + Byse SPA flow
+│   │   ├── registry.py               # HosterResolverRegistry + content-type probing
+│   │   ├── streamtape.py             # Streamtape token extraction
+│   │   ├── supervideo.py             # SuperVideo XFS + Playwright fallback
+│   │   └── voe.py                    # VOE multi-method extraction
 │   ├── logging/
 │   │   ├── __init__.py
 │   │   └── setup.py                  # Structlog + QueueHandler setup
 │   ├── persistence/
-│   │   └── crawljob_cache.py         # CacheCrawlJobRepository
+│   │   ├── crawljob_cache.py         # CacheCrawlJobRepository
+│   │   └── stream_link_cache.py      # StreamLinkCache for hoster URLs
 │   ├── plugins/
 │   │   ├── __init__.py               # Re-exports PluginRegistry
 │   │   ├── adapters.py               # Pydantic → Domain model conversion
+│   │   ├── constants.py              # DEFAULT_USER_AGENT, DEFAULT_MAX_CONCURRENT, etc.
+│   │   ├── httpx_base.py             # HttpxPluginBase shared base for 20 plugins
 │   │   ├── loader.py                 # YAML + Python plugin loading
+│   │   ├── playwright_base.py        # PlaywrightPluginBase shared base for 9 plugins
 │   │   ├── registry.py               # PluginRegistry (lazy loading)
 │   │   └── validation_schema.py      # Pydantic validation models
 │   ├── scraping/
 │   │   ├── __init__.py               # Re-exports ScrapyAdapter
 │   │   └── scrapy_adapter.py         # Multi-stage scraping engine
+│   ├── stremio/
+│   │   ├── __init__.py
+│   │   ├── release_parser.py         # guessit-based release name parsing
+│   │   ├── stream_converter.py       # SearchResult → RankedStream conversion
+│   │   ├── stream_sorter.py          # Configurable stream ranking/sorting
+│   │   └── title_matcher.py          # Multi-candidate title scoring
+│   ├── tmdb/
+│   │   ├── __init__.py
+│   │   ├── client.py                 # TMDB httpx client with caching
+│   │   └── imdb_fallback.py          # IMDB → title via Wikidata (no API key)
 │   ├── torznab/
 │   │   ├── presenter.py              # XML rendering (caps + RSS)
 │   │   └── search_engine.py          # HttpxScrapySearchEngine
@@ -116,32 +141,51 @@ src/scavengarr/
 │       └── http_link_validator.py    # HEAD/GET link validation
 └── interfaces/
     ├── __init__.py
+    ├── app.py                        # FastAPI factory (build_app)
     ├── app_state.py                  # AppState typed container
     ├── composition.py                # Lifespan (DI composition root)
-    ├── main.py                       # FastAPI factory
     ├── test.py                       # Test utilities
     ├── api/
     │   ├── __init__.py
     │   ├── download/
     │   │   ├── __init__.py
     │   │   └── router.py             # CrawlJob download endpoints
+    │   ├── stremio/
+    │   │   ├── __init__.py
+    │   │   └── router.py             # Stremio manifest, catalog, stream, play
     │   └── torznab/
     │       ├── __init__.py
     │       └── router.py             # Torznab API endpoints
     └── cli/
         ├── __init__.py
-        └── cli.py                    # CLI entry point
+        └── __main__.py               # CLI entry point
 
-plugins/
-├── filmpalast.to.yaml               # YAML plugin example
-└── boerse.py                        # Python plugin example
+plugins/                              # 32 plugins (29 Python + 3 YAML)
+├── filmpalast_to.yaml                # YAML plugin (Scrapy, streaming)
+├── scnlog.yaml                       # YAML plugin (Scrapy, scene log)
+├── warezomen.yaml                    # YAML plugin (Scrapy, DDL)
+├── boerse.py                         # Playwright plugin (Cloudflare + vBulletin)
+├── einschalten.py                    # Httpx plugin (JSON API)
+├── movie4k.py                        # Httpx plugin (JSON API, multi-domain)
+└── ... (26 more Python plugins)
 
 tests/
 ├── conftest.py                       # Shared fixtures
+├── e2e/                              # 99 E2E tests
+│   ├── test_stremio_endpoint.py      # 53 Stremio endpoint tests
+│   └── test_torznab_endpoint.py      # 46 Torznab endpoint tests
+├── integration/                      # 31 integration tests
+│   ├── test_config_loading.py        # Config precedence + validation
+│   ├── test_crawljob_lifecycle.py    # CrawlJob create → retrieve → expire
+│   ├── test_link_validation.py       # HEAD/GET validation with mocked HTTP
+│   └── test_plugin_pipeline.py       # Plugin load → search → results
+├── live/                             # 32 live smoke tests
+│   └── test_plugin_smoke.py          # Parametrized across all 32 plugins
 └── unit/
-    ├── domain/                       # Pure entity/schema tests
-    ├── application/                  # Use case tests (mocked ports)
-    └── infrastructure/               # Adapter/parser/converter tests
+    ├── domain/                       # Pure entity/schema tests (6 files)
+    ├── application/                  # Use case tests with mocked ports (7 files)
+    ├── infrastructure/               # Adapter, parser, plugin tests (57 files)
+    └── interfaces/                   # Router tests (3 files)
 ```
 
 ---
@@ -161,6 +205,7 @@ tests/
 | Cache (Redis) | redis | ^7.1 | Optional distributed cache |
 | Configuration | pydantic-settings | ^2.10 | Typed config with env var support |
 | Env Files | python-dotenv | ^1.1 | `.env` file loading |
+| Release parsing | guessit | -- | Title matching for Stremio |
 | CLI | argparse (stdlib) | -- | Argument parsing |
 | Testing | pytest | ^9.0 | Test runner |
 | HTTP Mocking | respx | ^0.22 | httpx request mocking |
@@ -590,6 +635,29 @@ def __init__(self, *, plugins: PluginRegistryPort, app_name: str, plugin_name: s
 Lists all discovered plugins with metadata.
 
 **`execute() -> list[dict]`** -- Iterates `plugins.list_names()`, reads version and scraping mode for each. Resilient: broken plugins appear with minimal info (name only).
+
+---
+
+#### `application/use_cases/stremio_catalog.py` -- StremioCatalogUseCase
+
+Provides TMDB-based catalog for the Stremio addon (trending + search).
+
+**`trending(content_type) -> list[StremioMeta]`** -- Returns trending movies or series from TMDB with German locale.
+
+**`search(query, content_type) -> list[StremioMeta]`** -- Searches TMDB and returns metadata for Stremio catalog display.
+
+---
+
+#### `application/use_cases/stremio_stream.py` -- StremioStreamUseCase
+
+Resolves IMDb IDs to ranked streams for the Stremio addon.
+
+**`execute(imdb_id, content_type, season, episode) -> list[RankedStream]`** -- Flow:
+1. Look up title and year via TMDB client (or IMDB fallback).
+2. Search all compatible plugins in parallel (with per-plugin timeout).
+3. Convert SearchResults to streams via stream converter.
+4. Score and rank streams via title matcher and stream sorter.
+5. Return ranked streams for Stremio display.
 
 ---
 
@@ -1074,13 +1142,162 @@ def extract_download_link(raw_data: dict) -> str | None:
 
 Placeholder implementation. Checks `raw_data["link"]` then `raw_data["url"]`.
 
+#### `infrastructure/common/html_selectors.py` -- CSS-selector HTML Helpers
+
+Shared HTML extraction functions used by Python plugins. Provides CSS-selector-based
+extraction with fallback chains for common patterns (titles, links, sizes, dates).
+
+Functions include:
+- `select_text(soup, *selectors)` -- Try multiple CSS selectors, return first match text.
+- `select_attr(soup, selector, attr)` -- Extract attribute from matched element.
+- `select_all_text(soup, selector)` -- Extract text from all matches.
+
+---
+
+### Plugin Base Classes
+
+#### `infrastructure/plugins/httpx_base.py` -- HttpxPluginBase
+
+Shared base class for the 20 httpx-based Python plugins. Eliminates 50-100 lines of
+boilerplate per plugin by providing:
+
+- Automatic httpx client lifecycle (`_ensure_client()`, `cleanup()`)
+- Domain fallback across `_domains` list (`_verify_domain()`)
+- Safe HTTP fetching with error handling (`_safe_fetch()`)
+- Safe JSON parsing (`_safe_parse_json()`)
+- Bounded concurrency via `_new_semaphore()` (default: 3)
+- Configurable max results (`_max_results`, default: 1000)
+- Structured logging via `self._log`
+
+```python
+class HttpxPluginBase:
+    name: str                              # Plugin identifier
+    provides: str                          # "stream" or "download"
+    default_language: str = "de"           # Language for Stremio
+    _domains: list[str]                    # Domain list for fallback
+
+    async def search(self, query, category, season, episode) -> list[SearchResult]: ...
+    async def cleanup(self) -> None: ...
+```
+
+#### `infrastructure/plugins/playwright_base.py` -- PlaywrightPluginBase
+
+Shared base class for the 9 Playwright-based Python plugins. Provides:
+
+- Browser and context lifecycle management
+- Cloudflare JS challenge detection and wait
+- DDoS-Guard bypass detection
+- Page navigation with timeout and error handling
+- Domain fallback across `_domains` list
+- Bounded concurrency via semaphore
+
+#### `infrastructure/plugins/constants.py` -- Plugin Constants
+
+Shared constants used by both base classes:
+
+```python
+DEFAULT_USER_AGENT = "Mozilla/5.0 ..."
+DEFAULT_MAX_CONCURRENT = 3
+DEFAULT_MAX_RESULTS = 1000
+DEFAULT_CLIENT_TIMEOUT = 15.0
+```
+
+---
+
+### Stremio Subsystem
+
+#### `infrastructure/stremio/stream_converter.py` -- Stream Converter
+
+Converts `SearchResult` entities from plugin searches into `RankedStream` entities
+for Stremio display. Handles:
+- Release name parsing via guessit
+- Quality/resolution extraction
+- Plugin language threading
+- Download link → stream URL mapping
+
+#### `infrastructure/stremio/stream_sorter.py` -- Stream Sorter
+
+Configurable sorting/ranking of streams for Stremio presentation. Ranks by:
+- Title match score (how well the result matches the requested title)
+- Video quality (4K > 1080p > 720p > SD)
+- Hoster preference
+- Language match
+
+#### `infrastructure/stremio/title_matcher.py` -- Title Matcher
+
+Multi-candidate title scoring module. Compares search result titles against
+the expected title (from TMDB) using:
+- Normalized string comparison
+- Year matching
+- guessit-based title extraction from release names
+
+#### `infrastructure/stremio/release_parser.py` -- Release Name Parser
+
+Wraps guessit for release name parsing. Extracts:
+- Title, year, resolution, codec, audio
+- Season/episode for TV content
+- Quality indicators (BluRay, WEB-DL, etc.)
+
+---
+
+### TMDB Subsystem
+
+#### `infrastructure/tmdb/client.py` -- TMDB Client
+
+Async TMDB API client using httpx with:
+- German locale for title/overview
+- Response caching
+- `get_title_and_year(imdb_id)` for Stremio stream resolution
+- Trending and search endpoints for Stremio catalog
+
+#### `infrastructure/tmdb/imdb_fallback.py` -- IMDB Fallback
+
+Title resolver for Stremio when no TMDB API key is configured:
+- Fetches IMDB page directly for English title
+- Wikidata SPARQL query for German title
+- No API key required
+
+---
+
+### Hoster Resolver System
+
+#### `infrastructure/hoster_resolvers/registry.py` -- HosterResolverRegistry
+
+Central registry for all hoster resolvers. Features:
+- URL domain matching to select appropriate resolver
+- Content-type probing fallback for unrecognized domains
+- Redirect following for rotating hoster domains
+- Hoster hint support (plugin-provided hoster names)
+- Cleanup lifecycle management
+
+#### Hoster Resolvers
+
+Each resolver extracts direct video URLs from streaming hoster embed pages:
+
+| Resolver | File | Technique |
+|---|---|---|
+| VOE | `voe.py` | Multi-method: JSON extraction, obfuscated JS |
+| Streamtape | `streamtape.py` | Token extraction from page source |
+| SuperVideo | `supervideo.py` | XFS extraction + packed JS + Playwright fallback |
+| DoodStream | `doodstream.py` | `pass_md5` API endpoint extraction |
+| Filemoon | `filemoon.py` | Packed JS unpacker + Byse SPA challenge/decrypt flow |
+
+---
+
+### Stream Link Cache
+
+#### `infrastructure/persistence/stream_link_cache.py` -- StreamLinkCache
+
+Caches resolved hoster URLs (video direct links) to avoid repeated resolution.
+Uses the same `CachePort` backend as CrawlJob and search caching.
+
 ---
 
 ## Interfaces Layer
 
 ### FastAPI Application
 
-#### `interfaces/main.py` -- build_app()
+#### `interfaces/app.py` -- build_app()
 
 Factory function that creates the FastAPI application.
 
@@ -1195,9 +1412,25 @@ Fields: job_id, package_name, created_at, expires_at, is_expired, validated_urls
 
 ---
 
+### Stremio API Router
+
+#### `interfaces/api/stremio/router.py`
+
+Stremio addon HTTP endpoints:
+
+**`GET /api/v1/stremio/manifest.json`** -- Returns Stremio addon manifest with supported types (movie, series), catalogs, and resources.
+
+**`GET /api/v1/stremio/catalog/{type}/{id}.json`** -- Catalog endpoint for TMDB trending and search. Delegates to `StremioCatalogUseCase`.
+
+**`GET /api/v1/stremio/stream/{type}/{id}.json`** -- Stream resolution endpoint. Takes IMDb ID, resolves to ranked streams via `StremioStreamUseCase`.
+
+**`GET /api/v1/stremio/play/{stream_id}`** -- Play endpoint. Resolves cached stream link via hoster resolver and returns 302 redirect to direct video URL.
+
+---
+
 ### CLI
 
-#### `interfaces/cli/cli.py` -- CLI Entry Point
+#### `interfaces/cli/__main__.py` -- CLI Entry Point
 
 The process entry point registered as `start` in `pyproject.toml`.
 
@@ -1229,28 +1462,53 @@ def start(argv: Iterable[str] | None = None) -> None:
 
 ## Plugin Files
 
-### `plugins/filmpalast.to.yaml` -- YAML Plugin Example
+Scavengarr ships with **32 plugins** (29 Python + 3 YAML) in the `plugins/` directory.
 
-Declarative plugin for a streaming indexer site. Defines:
-- `name`, `version`, `base_url` (with mirror URLs)
-- `scraping.mode: "scrapy"` with multi-stage pipeline
-- Two stages: list (search results) + detail (download links)
-- Nested selectors for extracting download links from complex HTML
-- Authentication configuration
+### YAML Plugins (3)
 
-### `plugins/boerse.py` -- Python Plugin Example
+- `filmpalast_to.yaml` -- Scrapy multi-stage pipeline (search → detail → download links)
+- `scnlog.yaml` -- Scene log with pagination
+- `warezomen.yaml` -- DDL site (converted from Python to YAML)
 
-Imperative Python plugin implementing `PluginProtocol`. Exports a module-level `plugin` variable with:
-- `name: str` attribute
-- `async def search(query, category) -> list[SearchResult]` method
+### Python Plugins — Httpx (20)
 
-Python plugins handle their own scraping logic and return `SearchResult` lists directly. Link validation is still applied by the search engine.
+All httpx plugins extend `HttpxPluginBase` and follow a consistent pattern:
+- Configurable settings at top (`_DOMAINS`, `_MAX_PAGES`, `_PAGE_SIZE`)
+- `search()` method with `query`, `category`, `season`, `episode` params
+- Bounded concurrency via `self._new_semaphore()`
+- Domain fallback via `self._verify_domain()`
+
+Examples:
+- `einschalten.py` -- JSON API plugin (simplest pattern)
+- `movie4k.py` -- JSON API with browse + detail pages
+- `filmfans.py` -- HTML parsing with `HTMLParser` subclass + API-based release loading
+- `kinox.py` -- Complex plugin with 9 mirror domains and AJAX embed extraction
+
+### Python Plugins — Playwright (9)
+
+All Playwright plugins extend `PlaywrightPluginBase`:
+- `boerse.py` -- Cloudflare bypass + vBulletin form auth
+- `byte.py` -- Cloudflare bypass + iframe link extraction
+- `moflix.py` -- Internal API with Cloudflare bypass
+- `scnsrc.py` -- Scene releases with multi-domain fallback
+
+### Plugin Protocol
+
+All Python plugins export a module-level `plugin` variable implementing:
+```python
+class PluginProtocol(Protocol):
+    name: str
+    provides: str                         # "stream" or "download"
+    default_language: str                 # "de", "en", etc.
+    async def search(self, query, category, season, episode) -> list[SearchResult]: ...
+    async def cleanup(self) -> None: ...
+```
 
 ---
 
 ## Test Suite
 
-**235 tests** across three layers.
+**2128 tests** across unit, integration, E2E, and live test categories.
 
 ### Test Configuration
 
@@ -1269,38 +1527,111 @@ Common test fixtures for entities, mock ports, and configuration.
 - `PluginRegistryPort` is synchronous -- use `MagicMock`.
 - `SearchEnginePort`, `CrawlJobRepository`, `CachePort` are async -- use `AsyncMock`.
 
-### Domain Tests (`tests/unit/domain/`)
+### E2E Tests (`tests/e2e/`) -- 99 tests
 
 | File | Tests |
 |---|---|
-| `test_crawljob.py` | CrawlJob construction, expiry, serialization (`to_crawljob_format()`), BooleanStatus/Priority enums |
-| `test_torznab_entities.py` | TorznabQuery, TorznabItem, TorznabCaps construction; exception hierarchy |
+| `test_torznab_endpoint.py` | 46 tests: caps, search, indexers, download, error responses via full app |
+| `test_stremio_endpoint.py` | 53 tests: manifest, catalog, stream resolution, play endpoint via full app |
+
+### Integration Tests (`tests/integration/`) -- 31 tests
+
+| File | Tests |
+|---|---|
+| `test_config_loading.py` | Configuration precedence (YAML + ENV + CLI + defaults) |
+| `test_crawljob_lifecycle.py` | CrawlJob create → retrieve → expire with real cache |
+| `test_link_validation.py` | HEAD/GET validation with mocked HTTP responses |
+| `test_plugin_pipeline.py` | Plugin load → search → result pipeline |
+
+### Live Smoke Tests (`tests/live/`) -- 32 tests
+
+| File | Tests |
+|---|---|
+| `test_plugin_smoke.py` | Parametrized across all 32 plugins, hits real websites with 60s timeout. Skips on network errors. |
+
+### Domain Tests (`tests/unit/domain/`) -- 6 files
+
+| File | Tests |
+|---|---|
+| `test_crawljob.py` | CrawlJob construction, expiry, serialization, enums |
+| `test_torznab_entities.py` | TorznabQuery, TorznabItem, TorznabCaps, exception hierarchy |
 | `test_search_result.py` | SearchResult construction, defaults, StageResult |
-| `test_plugin_schema.py` | YamlPluginDefinition, ScrapingStage, StageSelectors, NestedSelector, AuthConfig |
+| `test_plugin_schema.py` | YamlPluginDefinition, stages, selectors, auth config |
+| `test_stremio_entities.py` | Stremio domain entities |
 
-### Application Tests (`tests/unit/application/`)
-
-| File | Tests |
-|---|---|
-| `test_crawljob_factory.py` | CrawlJobFactory: SearchResult -> CrawlJob conversion, TTL, URL bundling, comment generation |
-| `test_torznab_caps.py` | TorznabCapsUseCase: plugin resolution, title composition, error paths |
-| `test_torznab_indexers.py` | TorznabIndexersUseCase: plugin listing, resilience to broken plugins |
-| `test_torznab_search.py` | TorznabSearchUseCase: full flow, validation, YAML vs Python routing, error handling |
-
-### Infrastructure Tests (`tests/unit/infrastructure/`)
+### Application Tests (`tests/unit/application/`) -- 7 files
 
 | File | Tests |
 |---|---|
-| `test_converters.py` | `to_int()`: None, int, string, comma-separated, spaces, empty, invalid |
-| `test_parsers.py` | `parse_size_to_bytes()`: raw bytes, KB/MB/GB/TB, empty, invalid |
-| `test_extractors.py` | `extract_download_link()`: dict with link/url, missing fields |
-| `test_presenter.py` | Torznab XML rendering: caps XML structure, RSS XML items, Torznab attributes, CrawlJob URLs |
-| `test_link_validator.py` | HttpLinkValidator: HEAD success, HEAD fail + GET success, timeout, batch validation |
-| `test_search_engine.py` | HttpxScrapySearchEngine: result conversion, deduplication, link validation pipeline |
-| `test_crawljob_cache.py` | CacheCrawlJobRepository: save/get, pickle serialization, missing keys, deserialization errors |
-| `test_scrapy_fallback.py` | ScrapyAdapter mirror fallback behavior |
-| `test_boerse_plugin.py` | Python plugin loading and execution |
-| `test_auth_env_resolution.py` | AuthConfig environment variable credential resolution |
+| `test_crawljob_factory.py` | SearchResult → CrawlJob conversion, TTL, URL bundling |
+| `test_torznab_caps.py` | Capabilities use case |
+| `test_torznab_indexers.py` | Indexer listing, resilience to broken plugins |
+| `test_torznab_search.py` | Full search flow, caching, YAML vs Python routing |
+| `test_stremio_catalog.py` | Stremio catalog use case (trending, search) |
+| `test_stremio_stream.py` | Stremio stream resolution (IMDb → ranked streams) |
+
+### Infrastructure Tests (`tests/unit/infrastructure/`) -- 57 files
+
+Core infrastructure:
+
+| File | Tests |
+|---|---|
+| `test_converters.py` | `to_int()` |
+| `test_parsers.py` | `parse_size_to_bytes()` |
+| `test_extractors.py` | `extract_download_link()` |
+| `test_html_selectors.py` | CSS-selector HTML extraction |
+| `test_presenter.py` | Torznab XML rendering |
+| `test_link_validator.py` | HEAD/GET validation, batch, timeout |
+| `test_search_engine.py` | Result conversion, dedup, validation pipeline |
+| `test_crawljob_cache.py` | CrawlJob persistence |
+| `test_stream_link_cache.py` | Stream link caching |
+| `test_auth_env_resolution.py` | Env var credential resolution |
+| `test_plugin_registry.py` | Plugin discovery and loading |
+| `test_httpx_base.py` | HttpxPluginBase shared base class |
+| `test_playwright_base.py` | PlaywrightPluginBase shared base class |
+| `test_scrapy_fallback.py` | ScrapyAdapter mirror fallback |
+| `test_scrapy_category.py` | Scrapy category filtering |
+| `test_scrapy_rows_and_transform.py` | Scrapy row extraction |
+
+Stremio components:
+
+| File | Tests |
+|---|---|
+| `test_stream_converter.py` | SearchResult → RankedStream conversion |
+| `test_stream_sorter.py` | Stream ranking and sorting |
+| `test_title_matcher.py` | Multi-candidate title scoring |
+| `test_release_parser.py` | guessit release name parsing |
+| `test_tmdb_client.py` | TMDB API client |
+| `test_imdb_fallback.py` | IMDB/Wikidata title fallback |
+
+Hoster resolvers:
+
+| File | Tests |
+|---|---|
+| `test_voe_resolver.py` | VOE multi-method extraction |
+| `test_streamtape_resolver.py` | Streamtape token extraction |
+| `test_supervideo_resolver.py` | SuperVideo XFS + packed JS |
+| `test_doodstream_resolver.py` | DoodStream pass_md5 |
+| `test_filemoon_resolver.py` | Filemoon packed JS + Byse SPA |
+| `test_hoster_registry.py` | Registry domain matching, probing |
+
+Plugin tests (27 files, one per Python plugin):
+
+| File | Plugin |
+|---|---|
+| `test_aniworld_plugin.py` | aniworld |
+| `test_boerse_plugin.py` | boerse |
+| `test_burningseries_plugin.py` | burningseries |
+| `test_byte_plugin.py` | byte |
+| `test_cine_plugin.py` | cine |
+| ... | (22 more plugin test files) |
+
+### Interfaces Tests (`tests/unit/interfaces/`) -- 3 files
+
+| File | Tests |
+|---|---|
+| `test_stremio_router.py` | Stremio router endpoints |
+| `test_router_category.py` | Category routing/mapping |
 
 ---
 
@@ -1371,12 +1702,24 @@ Logging is **non-blocking**: all emission goes through a `QueueHandler` to a bac
 
 ### Key Dependency Chains
 
-**Search request:**
+**Torznab search request:**
 ```
-Router → TorznabSearchUseCase → SearchEnginePort (→ HttpxScrapySearchEngine)
+Router → TorznabSearchUseCase → CachePort (search result caching, 900s TTL)
+                               → SearchEnginePort (→ HttpxScrapySearchEngine)
                                → PluginRegistryPort (→ PluginRegistry)
                                → CrawlJobFactory
                                → CrawlJobRepository (→ CacheCrawlJobRepository → CachePort)
+```
+
+**Stremio stream request:**
+```
+StremioRouter → StremioStreamUseCase → TMDBClient / IMDBFallback (title lookup)
+                                      → PluginRegistryPort (all compatible plugins)
+                                      → StreamConverter (SearchResult → RankedStream)
+                                      → TitleMatcher (score against expected title)
+                                      → StreamSorter (rank by quality, hoster, language)
+              → HosterResolverRegistry → VOE/Streamtape/SuperVideo/DoodStream/Filemoon
+                                       → StreamLinkCache (cache resolved URLs)
 ```
 
 **Plugin loading:**
@@ -1384,6 +1727,7 @@ Router → TorznabSearchUseCase → SearchEnginePort (→ HttpxScrapySearchEngin
 PluginRegistry → loader.load_yaml_plugin() → validation_schema (Pydantic)
                                             → adapters (Pydantic → Domain)
                → loader.load_python_plugin() → importlib dynamic import
+                                              → HttpxPluginBase / PlaywrightPluginBase
 ```
 
 **Configuration:**

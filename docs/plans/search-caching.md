@@ -1,10 +1,26 @@
 # Plan: Search Result Caching
 
-**Status:** Planned
+**Status:** Implemented
 **Priority:** Medium
-**Related:** `src/scavengarr/domain/ports/cache.py`, `src/scavengarr/infrastructure/cache/`
+**Related:** `src/scavengarr/application/use_cases/torznab_search.py`, `src/scavengarr/infrastructure/cache/`
 
-## Problem
+## Implementation Summary
+
+Search result caching is fully implemented in `TorznabSearchUseCase`:
+
+- **Cache key:** SHA-256 hash of `plugin_name:query:category` (16-char hex prefix)
+- **Default TTL:** 900 seconds (15 minutes), configurable via `CACHE_SEARCH_TTL_SECONDS`
+- **Disable:** Set `search_ttl_seconds: 0` to disable caching
+- **HTTP header:** `X-Cache: HIT` or `X-Cache: MISS` on every search response
+- **Error handling:** Cache read/write errors are logged but never fail the request
+- **Backend:** Uses existing `CachePort` (diskcache or Redis)
+
+Key files:
+- `src/scavengarr/application/use_cases/torznab_search.py` — `_search_cache_key()`, `_cache_read()`, `_cache_write()`
+- `src/scavengarr/infrastructure/config/schema.py` — `search_ttl_seconds` config field
+- `src/scavengarr/interfaces/api/torznab/router.py` — `X-Cache` header injection
+
+## Original Problem
 
 Every Torznab search request triggers a full scraping pipeline: HTTP requests to
 the target site, multi-stage HTML parsing, link validation, and result assembly.
@@ -12,7 +28,7 @@ This is slow (seconds per request) and puts unnecessary load on target sites whe
 the same query is repeated within a short time window.
 
 Prowlarr and other Arr applications frequently retry the same search (e.g., when
-monitoring for new releases), so caching search results would significantly reduce
+monitoring for new releases), so caching search results significantly reduces
 latency and external request volume.
 
 ## Design

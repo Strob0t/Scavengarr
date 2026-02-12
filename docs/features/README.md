@@ -4,7 +4,7 @@
 
 Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Prowlarr and other Arr applications. It scrapes sources via two engines (Scrapy for static HTML, Playwright for JS-heavy sites) and delivers results through standard Torznab endpoints.
 
-**Version:** 0.1.0 | **Python:** 3.12+ | **Tests:** 1894 unit tests | **Plugins:** 32 (29 Python + 3 YAML) | **Architecture:** Clean Architecture
+**Version:** 0.1.0 | **Python:** 3.12+ | **Tests:** 2128 (unit + integration + E2E + live) | **Plugins:** 32 (29 Python + 3 YAML) | **Architecture:** Clean Architecture
 
 ---
 
@@ -49,9 +49,9 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Pro
 | Document | Description |
 |---|---|
 | [Playwright Engine](../plans/playwright-engine.md) | Native Playwright scraping engine for JS-heavy sites |
-| [More Plugins](../plans/more-plugins.md) | Planned plugin targets and community contributions |
-| [Integration Tests](../plans/integration-tests.md) | End-to-end testing strategy with deterministic fixtures |
-| [Search Caching](../plans/search-caching.md) | Response caching layer for repeated queries |
+| [More Plugins](../plans/more-plugins.md) | Plugin inventory and remaining candidates |
+| [Integration Tests](../plans/integration-tests.md) | Implemented: 31 integration + 99 E2E + 32 live smoke tests |
+| [Search Caching](../plans/search-caching.md) | Implemented: 900s TTL with X-Cache header |
 
 ### Refactoring History
 
@@ -82,7 +82,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Pro
 | Caching | diskcache (+ optional Redis) | Search result and CrawlJob storage |
 | Logging | structlog | Structured JSON/console logging |
 | CLI | Typer | Local debugging and diagnostics |
-| Testing | pytest | 1894 unit tests across all layers |
+| Testing | pytest | 2128 tests across all layers (unit + integration + E2E + live) |
 
 ---
 
@@ -118,10 +118,14 @@ plugins/                   # Plugin directory (29 Python + 3 YAML)
   einschalten.py           # Python plugin example (httpx API)
 
 tests/
+  e2e/                     # 99 E2E tests (Torznab + Stremio endpoints)
+  integration/             # 31 integration tests (config, crawljob, links, pipeline)
+  live/                    # 32 live smoke tests (real website requests)
   unit/
     domain/                # Pure domain tests
     application/           # Use case tests (mocked ports)
-    infrastructure/        # Adapter and parser tests
+    infrastructure/        # Adapter, parser, and plugin tests (57 files)
+    interfaces/            # Router tests
 ```
 
 ---

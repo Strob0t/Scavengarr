@@ -1,14 +1,26 @@
 # Plan: Integration Test Suite
 
-**Status:** Planned
+**Status:** Implemented
 **Priority:** High
 **Related:** `tests/`, `CLAUDE.md` section 12
 
-## Problem
+## Implementation Summary
 
-Scavengarr has a solid unit test suite (235 tests across domain, application, and
+The test suite now includes 162 non-unit tests across three categories:
+
+| Category | Location | Count | Description |
+|---|---|---|---|
+| Integration | `tests/integration/` | 31 | Config loading, crawljob lifecycle, link validation, plugin pipeline |
+| E2E | `tests/e2e/` | 99 | 46 Torznab endpoint + 53 Stremio endpoint tests |
+| Live smoke | `tests/live/` | 32 | Parametrized tests hitting real websites for all 32 plugins |
+
+Total test suite: **2128 tests** (2117 passed, 11 skipped).
+
+## Original Problem
+
+Scavengarr had a solid unit test suite (235 tests across domain, application, and
 infrastructure layers), but no integration tests. Unit tests mock all I/O boundaries,
-which means the following are never tested together:
+which means the following were never tested together:
 
 - HTTP router receives a Torznab request and returns valid XML
 - Use case loads a plugin, executes scraping, validates links, returns results
@@ -16,7 +28,7 @@ which means the following are never tested together:
 - CrawlJob creation from search results and download via HTTP endpoint
 - Configuration loading from YAML + env vars + defaults in combination
 
-Integration tests would catch wiring bugs, serialization mismatches, and protocol
+Integration tests catch wiring bugs, serialization mismatches, and protocol
 violations that unit tests cannot detect.
 
 ## Design

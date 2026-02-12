@@ -1,82 +1,84 @@
 # Plan: Additional Plugins
 
-**Status:** Planned
-**Priority:** Medium
-**Related:** `plugins/`, `docs/features/plugin-system.md`
+**Status:** Mostly Complete (32 plugins implemented)
+**Priority:** Low (ongoing)
+**Related:** `plugins/`, `docs/features/python-plugins.md`
 
 ## Current State
 
-Scavengarr ships with two plugins:
+Scavengarr ships with **32 plugins** covering German streaming, DDL, and anime sites:
 
-| Plugin | Type | Engine | Site |
+### Httpx plugins (20)
+
+| Plugin | Site | Type | Notes |
 |---|---|---|---|
-| `filmpalast.to.yaml` | YAML (declarative) | Scrapy | filmpalast.to (streaming) |
-| `boerse.py` | Python (imperative) | Playwright | boerse.sx (forum/DDL) |
+| aniworld | aniworld.to | stream | Anime, domain fallback |
+| burningseries | bs.to | stream | Series only |
+| cine | cine.to | stream | JSON API |
+| dataload | data-load.me | download | DDL forum, vBulletin auth |
+| einschalten | einschalten.in | stream | JSON API |
+| filmfans | filmfans.org | download | Release parsing via API |
+| fireani | fireani.me | stream | Anime, JSON API |
+| haschcon | haschcon.com | stream | |
+| hdfilme | hdfilme.legal | stream | MeineCloud link extraction |
+| kinoger | kinoger.com | stream | Domain fallback |
+| kinoking | kinoking.cc | stream | Movie/series detection |
+| kinox | kinox.to | stream | 9 mirror domains, AJAX embeds |
+| megakino | megakino.me | stream | |
+| megakino_to | megakino.org | stream | JSON API |
+| movie4k | movie4k.sx | stream | JSON API, multi-domain |
+| myboerse | myboerse.bz | download | DDL forum, multi-domain |
+| nima4k | nima4k.org | download | Category browsing |
+| sto | s.to | stream | TV-only |
+| streamcloud | streamcloud.plus | stream | Domain fallback |
+| streamkiste | streamkiste.taxi | stream | 5 mirror domains |
 
-These two plugins demonstrate both plugin types and both scraping engines, but more
-plugins are needed to validate the architecture across diverse site structures and to
-provide real value to users.
+### Playwright plugins (9)
 
-## Plugin Candidates
+| Plugin | Site | Type | Notes |
+|---|---|---|---|
+| animeloads | anime-loads.org | stream | DDoS-Guard bypass |
+| boerse | boerse.sx | download | Cloudflare + vBulletin auth |
+| byte | byte.to | download | Cloudflare, iframe links |
+| ddlspot | ddlspot.com | download | Pagination up to 1000 |
+| ddlvalley | ddlvalley.me | download | WordPress pagination |
+| moflix | moflix-stream.xyz | stream | Internal API, Cloudflare |
+| mygully | mygully.com | download | Cloudflare + vBulletin auth |
+| scnsrc | scnsrc.me | download | Scene releases, multi-domain |
+| streamworld | streamworld.ws | stream | Playwright mode |
 
-### YAML Plugins (static HTML, Scrapy engine)
+### YAML plugins (3)
 
-- [ ] **kinox.to** - Streaming site with simple HTML structure. Two-stage: search results
-      list followed by detail page with hoster links. Good candidate for validating the
-      standard search-to-detail pipeline.
+| Plugin | Site | Type | Notes |
+|---|---|---|---|
+| filmpalast_to | filmpalast.to | stream | Original plugin |
+| scnlog | scnlog.me | download | Scene log, pagination |
+| warezomen | warezomen.com | download | Converted from Python |
 
-- [ ] **movie4k / movie2k successors** - Streaming aggregators with straightforward
-      HTML tables. Tests pagination handling in stage selectors.
+## Remaining Candidates
 
-- [ ] **scnlog.me** - Scene release log with download links. Single-stage plugin
-      (search results contain direct links). Validates that single-stage pipelines
-      work correctly alongside multi-stage ones.
+Sites not yet covered that could benefit from plugins:
 
-### Python Plugins (JS-heavy or complex auth)
-
-- [ ] **nima4k.org** - Requires session management and has Cloudflare protection.
-      Good test for the planned PlaywrightAdapter (see `docs/plans/playwright-engine.md`).
-
-- [ ] **serienjunkies.org** - Captcha-protected download links requiring multi-step
-      extraction. Tests the boundary of what can be automated.
-
-## Plugin Authoring Guide
-
-To lower the barrier for contributors, a plugin authoring guide should cover:
-
-- [ ] YAML plugin tutorial with annotated `filmpalast.to.yaml` walkthrough
-- [ ] Python plugin tutorial with simplified boerse.py example
-- [ ] Common selector patterns (CSS selectors for tables, lists, nested containers)
-- [ ] Testing plugins locally with the CLI (`poetry run start`)
-- [ ] Debugging tips: structlog output, stage-by-stage tracing
-- [ ] Category mapping reference (Torznab category IDs to site categories)
+- **movie2k.cx** — Streaming aggregator with JSON API (similar to movie4k)
+- **serienjunkies.org** — Captcha-protected DDL with multi-step extraction
+- **dokustream.de** — Documentary streaming
+- **filmkiste.to** — Movie/TV streaming
+- **xcine.me** — German movie streaming
+- **goldstreamtv.com** — German streaming aggregator
 
 ## Plugin Quality Checklist
 
-Every new plugin (YAML or Python) must meet these criteria before inclusion:
+Every new plugin must meet these standards:
 
-- [ ] Has at least one integration test with fixture HTML
+- [ ] Uses `HttpxPluginBase` or `PlaywrightPluginBase` (no raw client setup)
+- [ ] Configurable settings at top of file with section headers (`_DOMAINS`, `_MAX_PAGES`, etc.)
+- [ ] Category filtering via site's filter system mapped to Torznab categories
+- [ ] Pagination up to 1000 items (`_MAX_PAGES` based on results-per-page)
+- [ ] Bounded concurrency via `self._new_semaphore()` (default 3)
+- [ ] `season`/`episode` params in `search()` signature
+- [ ] `provides` attribute set to `"stream"` or `"download"`
+- [ ] `default_language` attribute set (typically `"de"`)
+- [ ] Unit tests with mocked HTTP responses
+- [ ] Live smoke test entry in `tests/live/`
 - [ ] Handles missing fields gracefully (partial results, not crashes)
-- [ ] Respects rate limits (`delay_seconds` for YAML, semaphore for Python)
-- [ ] Uses `urljoin` for URL construction (no string concatenation)
-- [ ] Documents required auth (env vars, credentials) if applicable
-- [ ] Maps at least one Torznab category
-
-## Architecture Validation Goals
-
-Each new plugin should test at least one architectural assumption:
-
-| Plugin | Validates |
-|---|---|
-| kinox.to | Standard two-stage YAML pipeline |
-| scnlog.me | Single-stage YAML (no detail page) |
-| nima4k.org | PlaywrightAdapter with YAML config |
-| serienjunkies.org | Complex Python plugin with captcha handling |
-
-## Timeline
-
-Plugins should be added incrementally as the core stabilizes:
-
-1. After PlaywrightAdapter lands (see `docs/plans/playwright-engine.md`)
-2. After integration test infrastructure is ready (see `docs/plans/integration-tests.md`)
-3. After search result caching is implemented (see `docs/plans/search-caching.md`)
+- [ ] Uses `self._safe_fetch()` / `self._safe_parse_json()` for error handling

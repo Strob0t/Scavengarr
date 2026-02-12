@@ -26,8 +26,8 @@
 | Scrapy Engine | [x] Implemented | Static HTML scraping backend for YAML plugins |
 | 32 Plugins | [x] Implemented | 29 Python + 3 YAML plugins for German streaming/DDL sites |
 | Playwright Engine | [ ] Planned | Native Playwright scraping backend for YAML plugins |
-| Search Result Caching | [ ] Planned | Cache layer for repeated search queries |
-| Integration Test Suite | [ ] Planned | E2E tests with deterministic fixtures |
+| Search Result Caching | [x] Implemented | 900s TTL with X-Cache HIT/MISS header |
+| Integration Test Suite | [x] Implemented | 31 integration + 99 E2E + 32 live smoke tests |
 
 ---
 
@@ -276,4 +276,4 @@ Infrastructure (implements Domain ports)
 | CLI | `src/scavengarr/interfaces/cli/` |
 | YAML plugin example | `plugins/filmpalast_to.yaml` |
 | Python plugin example | `plugins/boerse.py` |
-| Test suite (1894 tests) | `tests/unit/` |
+| Test suite (2128 tests) | `tests/` |
