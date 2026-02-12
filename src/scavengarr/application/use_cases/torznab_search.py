@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+from dataclasses import dataclass
 from dataclasses import replace as dataclass_replace
 from typing import Any, cast
 
@@ -17,10 +19,26 @@ from scavengarr.domain.entities import (
     TorznabUnsupportedPlugin,
 )
 from scavengarr.domain.ports import PluginRegistryPort
+from scavengarr.domain.ports.cache import CachePort
 from scavengarr.domain.ports.crawljob_repository import CrawlJobRepository
 from scavengarr.domain.ports.search_engine import SearchEnginePort
 
 log = structlog.get_logger(__name__)
+
+
+def _search_cache_key(plugin_name: str, query: str, category: int | None) -> str:
+    """Compute deterministic cache key for a search query."""
+    cat_str = str(category) if category is not None else "none"
+    raw = f"{plugin_name}:{query.lower().strip()}:{cat_str}"
+    return f"search:{hashlib.sha256(raw.encode()).hexdigest()[:16]}"
+
+
+@dataclass(frozen=True)
+class SearchResponse:
+    """Use case response carrying items + cache metadata."""
+
+    items: list[TorznabItem]
+    cache_hit: bool = False
 
 
 def _is_python_plugin(plugin: Any) -> bool:
@@ -49,6 +67,8 @@ class TorznabSearchUseCase:
         engine: SearchEnginePort,
         crawljob_factory: CrawlJobFactory,
         crawljob_repo: CrawlJobRepository,
+        cache: CachePort | None = None,
+        search_ttl: int = 900,
     ):
         """Initialize use case with dependencies.
 
@@ -57,20 +77,24 @@ class TorznabSearchUseCase:
             engine: Search engine (with link validation).
             crawljob_factory: Factory for creating CrawlJobs from SearchResults.
             crawljob_repo: Repository for storing CrawlJobs.
+            cache: Optional cache port for search result caching.
+            search_ttl: TTL for cached search results (seconds). 0 = disabled.
         """
         self.plugins: PluginRegistryPort = plugins
         self.engine: SearchEnginePort = engine
         self.crawljob_factory: CrawlJobFactory = crawljob_factory
         self.crawljob_repo: CrawlJobRepository = crawljob_repo
+        self._cache = cache
+        self._search_ttl = search_ttl
 
-    async def execute(self, q: TorznabQuery) -> list[TorznabItem]:
+    async def execute(self, q: TorznabQuery) -> SearchResponse:
         """Execute Torznab search with link validation and CrawlJob generation.
 
         Args:
             q: TorznabQuery with action, plugin_name, query, category, etc.
 
         Returns:
-            List of TorznabItems with enriched job_id fields.
+            SearchResponse with TorznabItems and cache metadata.
 
         Raises:
             TorznabBadRequest: Invalid query parameters.
@@ -92,11 +116,20 @@ class TorznabSearchUseCase:
         except Exception as e:
             raise TorznabPluginNotFound(q.plugin_name) from e
 
-        # Python plugin path: has search() method, no scraping config
-        if _is_python_plugin(plugin):
-            raw_results = await self._execute_python_plugin(plugin, q)
-        else:
-            raw_results = await self._execute_yaml_plugin(plugin, q)
+        # --- cache lookup ---
+        cache_key = _search_cache_key(q.plugin_name, q.query, q.category)
+        raw_results = await self._cache_read(cache_key, q)
+        cache_hit = raw_results is not None
+
+        # --- cache miss: execute search ---
+        if raw_results is None:
+            if _is_python_plugin(plugin):
+                raw_results = await self._execute_python_plugin(plugin, q)
+            else:
+                raw_results = await self._execute_yaml_plugin(plugin, q)
+
+            if raw_results:
+                await self._cache_write(cache_key, raw_results, q)
 
         if not raw_results:
             log.info(
@@ -104,9 +137,55 @@ class TorznabSearchUseCase:
                 plugin=q.plugin_name,
                 query=q.query,
             )
-            return []
+            return SearchResponse(items=[], cache_hit=cache_hit)
 
-        return await self._build_torznab_items(raw_results, q)
+        items = await self._build_torznab_items(raw_results, q)
+        return SearchResponse(items=items, cache_hit=cache_hit)
+
+    async def _cache_read(self, cache_key: str, q: TorznabQuery) -> list[Any] | None:
+        """Try to read cached search results. Returns None on miss or error."""
+        if not self._cache or self._search_ttl <= 0:
+            return None
+        try:
+            cached = await self._cache.get(cache_key)
+            if cached is not None:
+                log.info(
+                    "search_cache_hit",
+                    plugin=q.plugin_name,
+                    query=q.query,
+                    cache_key=cache_key,
+                    result_count=len(cached),
+                )
+                return cached
+        except Exception:
+            log.warning(
+                "search_cache_read_error",
+                cache_key=cache_key,
+                exc_info=True,
+            )
+        return None
+
+    async def _cache_write(
+        self, cache_key: str, results: list[Any], q: TorznabQuery
+    ) -> None:
+        """Store search results in cache. Silently ignores errors."""
+        if not self._cache or self._search_ttl <= 0:
+            return
+        try:
+            await self._cache.set(cache_key, results, ttl=self._search_ttl)
+            log.debug(
+                "search_cache_stored",
+                plugin=q.plugin_name,
+                cache_key=cache_key,
+                ttl=self._search_ttl,
+                result_count=len(results),
+            )
+        except Exception:
+            log.warning(
+                "search_cache_store_error",
+                cache_key=cache_key,
+                exc_info=True,
+            )
 
     async def _execute_python_plugin(
         self,

@@ -10,7 +10,9 @@ import pytest
 
 from scavengarr.application.factories import CrawlJobFactory
 from scavengarr.application.use_cases.torznab_search import (
+    SearchResponse,
     TorznabSearchUseCase,
+    _search_cache_key,
 )
 from scavengarr.domain.entities import (
     TorznabBadRequest,
@@ -59,12 +61,16 @@ def _make_uc(
     engine: AsyncMock,
     repo: AsyncMock,
     factory: CrawlJobFactory | None = None,
+    cache: AsyncMock | None = None,
+    search_ttl: int = 900,
 ) -> TorznabSearchUseCase:
     return TorznabSearchUseCase(
         plugins=registry,
         engine=engine,
         crawljob_factory=factory or CrawlJobFactory(),
         crawljob_repo=repo,
+        cache=cache,
+        search_ttl=search_ttl,
     )
 
 
@@ -168,8 +174,8 @@ class TestSearchExecution:
             plugin_name="filmpalast",
             query="unknown movie",
         )
-        items = await uc.execute(q)
-        assert items == []
+        response = await uc.execute(q)
+        assert response.items == []
 
     async def test_happy_path_returns_torznab_items(
         self,
@@ -189,11 +195,11 @@ class TestSearchExecution:
             plugin_name="filmpalast",
             query="iron man",
         )
-        items = await uc.execute(q)
-        assert len(items) == 1
-        assert items[0].title == search_result.title
-        assert items[0].job_id is not None
-        assert len(items[0].job_id) == 36  # UUID4
+        response = await uc.execute(q)
+        assert len(response.items) == 1
+        assert response.items[0].title == search_result.title
+        assert response.items[0].job_id is not None
+        assert len(response.items[0].job_id) == 36  # UUID4
 
     async def test_crawljob_saved_to_repo(
         self,
@@ -256,11 +262,11 @@ class TestPythonPluginDispatch:
             plugin_name="boerse",
             query="SpongeBob",
         )
-        items = await uc.execute(q)
+        response = await uc.execute(q)
 
-        assert len(items) == 1
-        assert items[0].title == "SpongeBob"
-        assert items[0].job_id is not None
+        assert len(response.items) == 1
+        assert response.items[0].title == "SpongeBob"
+        assert response.items[0].job_id is not None
         mock_search_engine.validate_results.assert_awaited_once_with([result])
         mock_search_engine.search.assert_not_awaited()
 
@@ -282,8 +288,8 @@ class TestPythonPluginDispatch:
             plugin_name="boerse",
             query="nothing",
         )
-        items = await uc.execute(q)
-        assert items == []
+        response = await uc.execute(q)
+        assert response.items == []
 
     async def test_search_error_raises_external_error(
         self,
@@ -334,3 +340,291 @@ class TestPythonPluginDispatch:
         )
         await uc.execute(q)
         mock_search_engine.validate_results.assert_awaited_once()
+
+
+class TestSearchCacheKey:
+    def test_deterministic(self) -> None:
+        key1 = _search_cache_key("filmpalast", "iron man", 2000)
+        key2 = _search_cache_key("filmpalast", "iron man", 2000)
+        assert key1 == key2
+
+    def test_case_insensitive_query(self) -> None:
+        key_lower = _search_cache_key("filmpalast", "iron man", None)
+        key_upper = _search_cache_key("filmpalast", "Iron Man", None)
+        assert key_lower == key_upper
+
+    def test_whitespace_stripped(self) -> None:
+        key_clean = _search_cache_key("filmpalast", "iron man", None)
+        key_padded = _search_cache_key("filmpalast", "  iron man  ", None)
+        assert key_clean == key_padded
+
+    def test_different_categories_different_keys(self) -> None:
+        key_movie = _search_cache_key("filmpalast", "test", 2000)
+        key_tv = _search_cache_key("filmpalast", "test", 5000)
+        assert key_movie != key_tv
+
+    def test_none_vs_explicit_category(self) -> None:
+        key_none = _search_cache_key("filmpalast", "test", None)
+        key_zero = _search_cache_key("filmpalast", "test", 0)
+        assert key_none != key_zero
+
+    def test_different_plugins_different_keys(self) -> None:
+        key1 = _search_cache_key("filmpalast", "test", None)
+        key2 = _search_cache_key("boerse", "test", None)
+        assert key1 != key2
+
+    def test_prefix(self) -> None:
+        key = _search_cache_key("filmpalast", "test", None)
+        assert key.startswith("search:")
+
+
+class TestSearchCaching:
+    async def test_cache_hit_returns_cached_results(
+        self,
+        mock_plugin_registry: MagicMock,
+        mock_search_engine: AsyncMock,
+        mock_crawljob_repo: AsyncMock,
+        mock_cache: AsyncMock,
+        search_result: SearchResult,
+    ) -> None:
+        mock_cache.get.return_value = [search_result]
+        uc = _make_uc(
+            mock_plugin_registry,
+            mock_search_engine,
+            mock_crawljob_repo,
+            cache=mock_cache,
+        )
+        q = TorznabQuery(
+            action="search",
+            plugin_name="filmpalast",
+            query="iron man",
+        )
+        response = await uc.execute(q)
+
+        assert response.cache_hit is True
+        assert len(response.items) == 1
+        mock_search_engine.search.assert_not_awaited()
+
+    async def test_cache_miss_executes_search(
+        self,
+        mock_plugin_registry: MagicMock,
+        mock_search_engine: AsyncMock,
+        mock_crawljob_repo: AsyncMock,
+        mock_cache: AsyncMock,
+        search_result: SearchResult,
+    ) -> None:
+        mock_cache.get.return_value = None
+        mock_search_engine.search.return_value = [search_result]
+        uc = _make_uc(
+            mock_plugin_registry,
+            mock_search_engine,
+            mock_crawljob_repo,
+            cache=mock_cache,
+        )
+        q = TorznabQuery(
+            action="search",
+            plugin_name="filmpalast",
+            query="iron man",
+        )
+        response = await uc.execute(q)
+
+        assert response.cache_hit is False
+        assert len(response.items) == 1
+        mock_search_engine.search.assert_awaited_once()
+
+    async def test_cache_stores_results_after_miss(
+        self,
+        mock_plugin_registry: MagicMock,
+        mock_search_engine: AsyncMock,
+        mock_crawljob_repo: AsyncMock,
+        mock_cache: AsyncMock,
+        search_result: SearchResult,
+    ) -> None:
+        mock_cache.get.return_value = None
+        mock_search_engine.search.return_value = [search_result]
+        uc = _make_uc(
+            mock_plugin_registry,
+            mock_search_engine,
+            mock_crawljob_repo,
+            cache=mock_cache,
+            search_ttl=600,
+        )
+        q = TorznabQuery(
+            action="search",
+            plugin_name="filmpalast",
+            query="iron man",
+        )
+        await uc.execute(q)
+
+        mock_cache.set.assert_awaited_once()
+        call_kwargs = mock_cache.set.call_args
+        assert call_kwargs.kwargs["ttl"] == 600
+
+    async def test_cache_disabled_when_ttl_zero(
+        self,
+        mock_plugin_registry: MagicMock,
+        mock_search_engine: AsyncMock,
+        mock_crawljob_repo: AsyncMock,
+        mock_cache: AsyncMock,
+    ) -> None:
+        mock_search_engine.search.return_value = []
+        uc = _make_uc(
+            mock_plugin_registry,
+            mock_search_engine,
+            mock_crawljob_repo,
+            cache=mock_cache,
+            search_ttl=0,
+        )
+        q = TorznabQuery(
+            action="search",
+            plugin_name="filmpalast",
+            query="test",
+        )
+        await uc.execute(q)
+
+        mock_cache.get.assert_not_awaited()
+        mock_cache.set.assert_not_awaited()
+
+    async def test_cache_disabled_when_no_cache(
+        self,
+        mock_plugin_registry: MagicMock,
+        mock_search_engine: AsyncMock,
+        mock_crawljob_repo: AsyncMock,
+    ) -> None:
+        mock_search_engine.search.return_value = []
+        uc = _make_uc(
+            mock_plugin_registry,
+            mock_search_engine,
+            mock_crawljob_repo,
+            cache=None,
+        )
+        q = TorznabQuery(
+            action="search",
+            plugin_name="filmpalast",
+            query="test",
+        )
+        response = await uc.execute(q)
+        assert response.cache_hit is False
+
+    async def test_cache_read_error_falls_back_to_search(
+        self,
+        mock_plugin_registry: MagicMock,
+        mock_search_engine: AsyncMock,
+        mock_crawljob_repo: AsyncMock,
+        mock_cache: AsyncMock,
+        search_result: SearchResult,
+    ) -> None:
+        mock_cache.get.side_effect = RuntimeError("cache down")
+        mock_search_engine.search.return_value = [search_result]
+        uc = _make_uc(
+            mock_plugin_registry,
+            mock_search_engine,
+            mock_crawljob_repo,
+            cache=mock_cache,
+        )
+        q = TorznabQuery(
+            action="search",
+            plugin_name="filmpalast",
+            query="test",
+        )
+        response = await uc.execute(q)
+
+        assert response.cache_hit is False
+        assert len(response.items) == 1
+        mock_search_engine.search.assert_awaited_once()
+
+    async def test_cache_write_error_does_not_fail(
+        self,
+        mock_plugin_registry: MagicMock,
+        mock_search_engine: AsyncMock,
+        mock_crawljob_repo: AsyncMock,
+        mock_cache: AsyncMock,
+        search_result: SearchResult,
+    ) -> None:
+        mock_cache.get.return_value = None
+        mock_cache.set.side_effect = RuntimeError("cache write failed")
+        mock_search_engine.search.return_value = [search_result]
+        uc = _make_uc(
+            mock_plugin_registry,
+            mock_search_engine,
+            mock_crawljob_repo,
+            cache=mock_cache,
+        )
+        q = TorznabQuery(
+            action="search",
+            plugin_name="filmpalast",
+            query="test",
+        )
+        response = await uc.execute(q)
+
+        assert len(response.items) == 1
+
+    async def test_empty_results_not_cached(
+        self,
+        mock_plugin_registry: MagicMock,
+        mock_search_engine: AsyncMock,
+        mock_crawljob_repo: AsyncMock,
+        mock_cache: AsyncMock,
+    ) -> None:
+        mock_cache.get.return_value = None
+        mock_search_engine.search.return_value = []
+        uc = _make_uc(
+            mock_plugin_registry,
+            mock_search_engine,
+            mock_crawljob_repo,
+            cache=mock_cache,
+        )
+        q = TorznabQuery(
+            action="search",
+            plugin_name="filmpalast",
+            query="nothing",
+        )
+        await uc.execute(q)
+
+        mock_cache.set.assert_not_awaited()
+
+    async def test_cache_hit_still_generates_crawljobs(
+        self,
+        mock_plugin_registry: MagicMock,
+        mock_search_engine: AsyncMock,
+        mock_crawljob_repo: AsyncMock,
+        mock_cache: AsyncMock,
+        search_result: SearchResult,
+    ) -> None:
+        mock_cache.get.return_value = [search_result]
+        uc = _make_uc(
+            mock_plugin_registry,
+            mock_search_engine,
+            mock_crawljob_repo,
+            cache=mock_cache,
+        )
+        q = TorznabQuery(
+            action="search",
+            plugin_name="filmpalast",
+            query="iron man",
+        )
+        response = await uc.execute(q)
+
+        assert len(response.items) == 1
+        assert response.items[0].job_id is not None
+        mock_crawljob_repo.save.assert_awaited_once()
+
+    async def test_response_type_is_search_response(
+        self,
+        mock_plugin_registry: MagicMock,
+        mock_search_engine: AsyncMock,
+        mock_crawljob_repo: AsyncMock,
+    ) -> None:
+        mock_search_engine.search.return_value = []
+        uc = _make_uc(
+            mock_plugin_registry,
+            mock_search_engine,
+            mock_crawljob_repo,
+        )
+        q = TorznabQuery(
+            action="search",
+            plugin_name="filmpalast",
+            query="test",
+        )
+        response = await uc.execute(q)
+        assert isinstance(response, SearchResponse)

@@ -59,6 +59,10 @@ class CacheConfig(BaseSettings):
         default=3600,
         description="Default TTL for cache entries (seconds)",
     )
+    search_ttl_seconds: int = Field(
+        default=900,
+        description="TTL for cached search results (seconds). 0 = disabled.",
+    )
     max_concurrent: int = Field(
         default=10,
         description="Max parallel cache ops (semaphore limit)",

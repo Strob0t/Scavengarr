@@ -491,6 +491,27 @@ class TestSearchHappyPath:
         assert link is not None
         assert "/api/v1/download/" in link
 
+    def test_x_cache_header_miss(self) -> None:
+        result = _make_search_result()
+        py_plugin = _FakePythonPlugin()
+        py_plugin._results = [result]
+
+        plugins = MagicMock()
+        plugins.get.return_value = py_plugin
+
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(return_value=[result])
+
+        repo = AsyncMock()
+
+        app = _make_app(plugins=plugins, search_engine=engine, crawljob_repo=repo)
+        client = TestClient(app)
+
+        resp = client.get(f"{_PREFIX}/torznab/boerse?t=search&q=test")
+
+        assert resp.status_code == 200
+        assert resp.headers.get("X-Cache") == "MISS"
+
     def test_item_enclosure_type(self) -> None:
         result = _make_search_result()
         py_plugin = _FakePythonPlugin()

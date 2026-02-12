@@ -20,19 +20,15 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from scavengarr.domain.entities.stremio import (
     CachedStreamLink,
-    RankedStream,
     ResolvedStream,
     StremioMetaPreview,
     StremioStream,
     StremioStreamRequest,
-    StreamLanguage,
-    StreamQuality,
     TitleMatchInfo,
 )
 from scavengarr.domain.plugins.base import SearchResult
@@ -336,9 +332,7 @@ class TestCatalogEndpoint:
         assert m["genres"] == ["Sci-Fi", "Drama"]
 
     def test_multiple_metas(self) -> None:
-        metas = [
-            _make_meta(id=f"tt{i}", name=f"Movie {i}") for i in range(5)
-        ]
+        metas = [_make_meta(id=f"tt{i}", name=f"Movie {i}") for i in range(5)]
 
         catalog_uc = AsyncMock()
         catalog_uc.trending = AsyncMock(return_value=metas)
@@ -416,9 +410,7 @@ class TestCatalogSearchEndpoint:
         app = _make_app(stremio_catalog_uc=catalog_uc)
         client = TestClient(app)
 
-        resp = client.get(
-            f"{_PREFIX}/stremio/catalog/anime/some-id/search=naruto.json"
-        )
+        resp = client.get(f"{_PREFIX}/stremio/catalog/anime/some-id/search=naruto.json")
 
         assert resp.status_code == 200
         assert resp.json()["metas"] == []
@@ -505,9 +497,7 @@ class TestStreamEndpoint:
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
 
-        resp = client.get(
-            f"{_PREFIX}/stremio/stream/series/tt0903747:1:5.json"
-        )
+        resp = client.get(f"{_PREFIX}/stremio/stream/series/tt0903747:1:5.json")
 
         assert resp.status_code == 200
         data = resp.json()
@@ -531,9 +521,7 @@ class TestStreamEndpoint:
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
 
-        resp = client.get(
-            f"{_PREFIX}/stremio/stream/movie/tmdb:12345.json"
-        )
+        resp = client.get(f"{_PREFIX}/stremio/stream/movie/tmdb:12345.json")
 
         assert resp.status_code == 200
         call_args = stream_uc.execute.call_args
@@ -548,9 +536,7 @@ class TestStreamEndpoint:
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
 
-        resp = client.get(
-            f"{_PREFIX}/stremio/stream/series/tmdb:67890:2:10.json"
-        )
+        resp = client.get(f"{_PREFIX}/stremio/stream/series/tmdb:67890:2:10.json")
 
         assert resp.status_code == 200
         call_args = stream_uc.execute.call_args
@@ -565,9 +551,7 @@ class TestStreamEndpoint:
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
 
-        resp = client.get(
-            f"{_PREFIX}/stremio/stream/anime/tt1234567.json"
-        )
+        resp = client.get(f"{_PREFIX}/stremio/stream/anime/tt1234567.json")
 
         assert resp.status_code == 200
         assert resp.json()["streams"] == []
@@ -580,9 +564,7 @@ class TestStreamEndpoint:
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
 
-        resp = client.get(
-            f"{_PREFIX}/stremio/stream/movie/notanid.json"
-        )
+        resp = client.get(f"{_PREFIX}/stremio/stream/movie/notanid.json")
 
         assert resp.status_code == 200
         assert resp.json()["streams"] == []
@@ -593,9 +575,7 @@ class TestStreamEndpoint:
         app = _make_app(stremio_stream_uc=None)
         client = TestClient(app)
 
-        resp = client.get(
-            f"{_PREFIX}/stremio/stream/movie/tt1234567.json"
-        )
+        resp = client.get(f"{_PREFIX}/stremio/stream/movie/tt1234567.json")
 
         assert resp.status_code == 200
         assert resp.json()["streams"] == []
@@ -607,9 +587,7 @@ class TestStreamEndpoint:
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
 
-        resp = client.get(
-            f"{_PREFIX}/stremio/stream/movie/tt0000001.json"
-        )
+        resp = client.get(f"{_PREFIX}/stremio/stream/movie/tt0000001.json")
 
         assert resp.status_code == 200
         assert resp.json()["streams"] == []
@@ -629,9 +607,7 @@ class TestStreamEndpoint:
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
 
-        resp = client.get(
-            f"{_PREFIX}/stremio/stream/movie/tt1234567.json"
-        )
+        resp = client.get(f"{_PREFIX}/stremio/stream/movie/tt1234567.json")
 
         assert resp.status_code == 200
         assert len(resp.json()["streams"]) == 4
@@ -648,9 +624,7 @@ class TestStreamEndpoint:
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
 
-        resp = client.get(
-            f"{_PREFIX}/stremio/stream/movie/tt0371746.json"
-        )
+        resp = client.get(f"{_PREFIX}/stremio/stream/movie/tt0371746.json")
 
         s = resp.json()["streams"][0]
         assert s["name"] == "Iron Man (2008) 1080p"
@@ -664,9 +638,7 @@ class TestStreamEndpoint:
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
 
-        resp = client.get(
-            f"{_PREFIX}/stremio/stream/movie/tt1234567.json"
-        )
+        resp = client.get(f"{_PREFIX}/stremio/stream/movie/tt1234567.json")
 
         assert resp.headers.get("access-control-allow-origin") == "*"
 
@@ -678,9 +650,7 @@ class TestStreamEndpoint:
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
 
-        resp = client.get(
-            f"{_PREFIX}/stremio/stream/series/tt0903747.json"
-        )
+        resp = client.get(f"{_PREFIX}/stremio/stream/series/tt0903747.json")
 
         assert resp.status_code == 200
         call_args = stream_uc.execute.call_args
@@ -706,9 +676,7 @@ class TestStreamIdParsing:
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
 
-        resp = client.get(
-            f"{_PREFIX}/stremio/stream/{content_type}/{stream_id}.json"
-        )
+        resp = client.get(f"{_PREFIX}/stremio/stream/{content_type}/{stream_id}.json")
         return resp.json()
 
     def test_imdb_id_movie(self) -> None:
@@ -973,9 +941,7 @@ class TestStreamFullFlow:
         plugins.get.return_value = p
 
         engine = AsyncMock()
-        engine.validate_results = AsyncMock(
-            return_value=search_results or []
-        )
+        engine.validate_results = AsyncMock(return_value=search_results or [])
 
         stream_link_repo = AsyncMock()
 

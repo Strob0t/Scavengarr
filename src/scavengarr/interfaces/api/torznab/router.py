@@ -179,9 +179,11 @@ async def _handle_search(
         engine=state.search_engine,
         crawljob_factory=state.crawljob_factory,
         crawljob_repo=state.crawljob_repo,
+        cache=getattr(state, "cache", None),
+        search_ttl=state.config.cache.search_ttl_seconds,
     )
     category = int(cat.split(",")[0]) if cat else None
-    items = await search_uc.execute(
+    response = await search_uc.execute(
         TorznabQuery(
             action="search",
             query=q,
@@ -191,10 +193,12 @@ async def _handle_search(
     )
     rendered = render_rss_xml(
         title=f"{state.config.app_name} ({plugin_name})",
-        items=items,
+        items=response.items,
         scavengarr_base_url=base_url,
     )
-    return _xml(rendered.payload, status_code=200)
+    resp = _xml(rendered.payload, status_code=200)
+    resp.headers["X-Cache"] = "HIT" if response.cache_hit else "MISS"
+    return resp
 
 
 async def _handle_empty_query(
