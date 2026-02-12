@@ -211,10 +211,15 @@ class AnimeLoadsPlugin:
         return page
 
     async def _wait_for_ddos_guard(self, page: Page) -> bool:
-        """Wait for DDoS-Guard JS challenge to resolve."""
+        """Wait for DDoS-Guard JS challenge to resolve.
+
+        Uses ``nav`` and ``.panel-default`` as indicators that the real
+        page has loaded.  ``h1`` is intentionally excluded because the
+        DDoS-Guard challenge page contains its own ``<h1>`` heading.
+        """
         try:
             await page.wait_for_selector(
-                ".panel-default, h1, .navbar",
+                "nav, .panel-default",
                 timeout=_DDOS_TIMEOUT,
             )
             return True
