@@ -160,7 +160,9 @@ def _extract_metadata(detail: dict | None, browse_entry: dict) -> dict[str, str]
             movie = tmdb_raw.get("movie", {})
             if isinstance(movie, list):
                 movie = movie[0] if movie else {}
-            movie_details = movie.get("movie_details", {}) if isinstance(movie, dict) else {}
+            movie_details = (
+                movie.get("movie_details", {}) if isinstance(movie, dict) else {}
+            )
             if not imdb_id:
                 imdb_id = str(movie_details.get("imdb_id") or "")
             if not rating:
@@ -425,9 +427,7 @@ class MegakinoToPlugin:
         async with sem:
             detail = await self._fetch_detail(movie_id)
 
-        return self._build_search_result(
-            entry, detail, season=season, episode=episode
-        )
+        return self._build_search_result(entry, detail, season=season, episode=episode)
 
     async def search(
         self,

@@ -95,7 +95,7 @@ async def _lightweight_http_probe(
         return False, None, str(e), checked_url
 
 
-@router.get("/api/v1/torznab/indexers")
+@router.get("/torznab/indexers")
 async def torznab_indexers(request: Request) -> dict:
     state = cast(AppState, request.app.state)
     uc = TorznabIndexersUseCase(plugins=state.plugins)
@@ -244,7 +244,7 @@ def _error_xml(
     return _xml(rendered.payload, status_code=status_code)
 
 
-@router.get("/api/v1/torznab/{plugin_name}")
+@router.get("/torznab/{plugin_name}")
 async def torznab_plugin_api(
     request: Request,
     plugin_name: str,
@@ -306,7 +306,7 @@ async def torznab_plugin_api(
         return _error_xml(title, desc, base_url, status)
 
 
-@router.get("/api/v1/torznab/{plugin_name}/health")
+@router.get("/torznab/{plugin_name}/health")
 async def torznab_plugin_health(request: Request, plugin_name: str) -> JSONResponse:
     """Lightweight reachability check for the plugin's base_url."""
     state = cast(AppState, request.app.state)

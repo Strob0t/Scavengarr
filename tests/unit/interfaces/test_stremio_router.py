@@ -29,7 +29,7 @@ def _make_app(
 ) -> FastAPI:
     """Create a minimal FastAPI app with the stremio router."""
     app = FastAPI()
-    app.include_router(router)
+    app.include_router(router, prefix="/api/v1")
 
     plugins = MagicMock()
     names = plugin_names or []
@@ -118,7 +118,7 @@ class TestManifestEndpoint:
         app = _make_app(plugin_names=["hdfilme", "kinox"])
         client = TestClient(app)
 
-        resp = client.get("/stremio/manifest.json")
+        resp = client.get("/api/v1/stremio/manifest.json")
 
         assert resp.status_code == 200
         data = resp.json()
@@ -134,7 +134,7 @@ class TestManifestEndpoint:
         app = _make_app()
         client = TestClient(app)
 
-        resp = client.get("/stremio/manifest.json")
+        resp = client.get("/api/v1/stremio/manifest.json")
 
         assert resp.headers["access-control-allow-origin"] == "*"
 
@@ -144,7 +144,9 @@ class TestCatalogEndpoint:
         app = _make_app()
         client = TestClient(app)
 
-        resp = client.get("/stremio/catalog/movie/scavengarr-trending-movies.json")
+        resp = client.get(
+            "/api/v1/stremio/catalog/movie/scavengarr-trending-movies.json"
+        )
 
         assert resp.status_code == 200
         assert resp.json() == {"metas": []}
@@ -167,7 +169,9 @@ class TestCatalogEndpoint:
         app = _make_app(stremio_catalog_uc=catalog_uc)
         client = TestClient(app)
 
-        resp = client.get("/stremio/catalog/movie/scavengarr-trending-movies.json")
+        resp = client.get(
+            "/api/v1/stremio/catalog/movie/scavengarr-trending-movies.json"
+        )
 
         assert resp.status_code == 200
         metas = resp.json()["metas"]
@@ -189,7 +193,9 @@ class TestCatalogEndpoint:
         app = _make_app(stremio_catalog_uc=catalog_uc)
         client = TestClient(app)
 
-        resp = client.get("/stremio/catalog/series/scavengarr-trending-series.json")
+        resp = client.get(
+            "/api/v1/stremio/catalog/series/scavengarr-trending-series.json"
+        )
 
         assert resp.status_code == 200
         metas = resp.json()["metas"]
@@ -201,7 +207,7 @@ class TestCatalogEndpoint:
         app = _make_app(stremio_catalog_uc=catalog_uc)
         client = TestClient(app)
 
-        resp = client.get("/stremio/catalog/channel/foo.json")
+        resp = client.get("/api/v1/stremio/catalog/channel/foo.json")
 
         assert resp.status_code == 200
         assert resp.json() == {"metas": []}
@@ -223,9 +229,11 @@ class TestCatalogSearchEndpoint:
         app = _make_app(stremio_catalog_uc=catalog_uc)
         client = TestClient(app)
 
-        resp = client.get(
-            "/stremio/catalog/movie/scavengarr-trending-movies/search=Fight Club.json"
+        url = (
+            "/api/v1/stremio/catalog/movie"
+            "/scavengarr-trending-movies/search=Fight Club.json"
         )
+        resp = client.get(url)
 
         assert resp.status_code == 200
         metas = resp.json()["metas"]
@@ -247,7 +255,7 @@ class TestCatalogSearchEndpoint:
         client = TestClient(app)
 
         url = (
-            "/stremio/catalog/series"
+            "/api/v1/stremio/catalog/series"
             "/scavengarr-trending-series/search=Breaking Bad.json"
         )
         resp = client.get(url)
@@ -264,7 +272,7 @@ class TestCatalogSearchEndpoint:
         client = TestClient(app)
 
         resp = client.get(
-            "/stremio/catalog/movie/scavengarr-trending-movies/search= .json"
+            "/api/v1/stremio/catalog/movie/scavengarr-trending-movies/search= .json"
         )
 
         assert resp.status_code == 200
@@ -275,7 +283,7 @@ class TestCatalogSearchEndpoint:
         client = TestClient(app)
 
         resp = client.get(
-            "/stremio/catalog/movie/scavengarr-trending-movies/search=Matrix.json"
+            "/api/v1/stremio/catalog/movie/scavengarr-trending-movies/search=Matrix.json"
         )
 
         assert resp.status_code == 200
@@ -288,7 +296,7 @@ class TestCatalogSearchEndpoint:
         client = TestClient(app)
 
         resp = client.get(
-            "/stremio/catalog/movie/scavengarr-trending-movies/search=Test.json"
+            "/api/v1/stremio/catalog/movie/scavengarr-trending-movies/search=Test.json"
         )
 
         assert resp.headers["access-control-allow-origin"] == "*"
@@ -299,7 +307,7 @@ class TestStreamEndpoint:
         app = _make_app()
         client = TestClient(app)
 
-        resp = client.get("/stremio/stream/movie/nm1234567.json")
+        resp = client.get("/api/v1/stremio/stream/movie/nm1234567.json")
 
         assert resp.status_code == 200
         assert resp.json() == {"streams": []}
@@ -308,7 +316,7 @@ class TestStreamEndpoint:
         app = _make_app()
         client = TestClient(app)
 
-        resp = client.get("/stremio/stream/movie/tt1234567.json")
+        resp = client.get("/api/v1/stremio/stream/movie/tt1234567.json")
 
         assert resp.status_code == 200
         assert resp.json() == {"streams": []}
@@ -328,7 +336,7 @@ class TestStreamEndpoint:
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
 
-        resp = client.get("/stremio/stream/movie/tt0371746.json")
+        resp = client.get("/api/v1/stremio/stream/movie/tt0371746.json")
 
         assert resp.status_code == 200
         streams = resp.json()["streams"]
@@ -341,7 +349,7 @@ class TestStreamEndpoint:
         app = _make_app()
         client = TestClient(app)
 
-        resp = client.get("/stremio/stream/movie/tt1234567.json")
+        resp = client.get("/api/v1/stremio/stream/movie/tt1234567.json")
 
         assert resp.headers["access-control-allow-origin"] == "*"
 
@@ -360,7 +368,7 @@ class TestStreamEndpoint:
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
 
-        resp = client.get("/stremio/stream/movie/tmdb:238.json")
+        resp = client.get("/api/v1/stremio/stream/movie/tmdb:238.json")
 
         assert resp.status_code == 200
         streams = resp.json()["streams"]
@@ -379,7 +387,7 @@ class TestStreamEndpoint:
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
 
-        resp = client.get("/stremio/stream/series/tmdb:1396:3:7.json")
+        resp = client.get("/api/v1/stremio/stream/series/tmdb:1396:3:7.json")
 
         assert resp.status_code == 200
         stream_uc.execute.assert_awaited_once()
@@ -395,7 +403,7 @@ class TestStreamEndpoint:
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
 
-        resp = client.get("/stremio/stream/series/tt0903747:1:1.json")
+        resp = client.get("/api/v1/stremio/stream/series/tt0903747:1:1.json")
 
         assert resp.status_code == 200
         stream_uc.execute.assert_awaited_once()
@@ -411,7 +419,7 @@ class TestStreamEndpoint:
         app = _make_app(stremio_stream_uc=stream_uc, plugin_names=[])
         client = TestClient(app)
 
-        resp = client.get("/stremio/stream/movie/tt0371746.json")
+        resp = client.get("/api/v1/stremio/stream/movie/tt0371746.json")
 
         assert resp.status_code == 200
         assert resp.json() == {"streams": []}
@@ -439,7 +447,7 @@ class TestPlayEndpoint:
         )
         client = TestClient(app, follow_redirects=False)
 
-        resp = client.get("/stremio/play/abc123")
+        resp = client.get("/api/v1/stremio/play/abc123")
 
         assert resp.status_code == 302
         assert resp.headers["location"] == "https://delivery.voe.sx/video/abc123.mp4"
@@ -463,7 +471,7 @@ class TestPlayEndpoint:
         )
         client = TestClient(app)
 
-        resp = client.get("/stremio/play/abc123")
+        resp = client.get("/api/v1/stremio/play/abc123")
 
         assert resp.status_code == 502
         assert "could not extract" in resp.json()["error"]
@@ -479,7 +487,7 @@ class TestPlayEndpoint:
         )
         client = TestClient(app)
 
-        resp = client.get("/stremio/play/nonexistent")
+        resp = client.get("/api/v1/stremio/play/nonexistent")
 
         assert resp.status_code == 404
         assert "expired" in resp.json()["error"]
@@ -489,7 +497,7 @@ class TestPlayEndpoint:
         app = _make_app()
         client = TestClient(app)
 
-        resp = client.get("/stremio/play/abc123")
+        resp = client.get("/api/v1/stremio/play/abc123")
 
         assert resp.status_code == 503
         assert "not configured" in resp.json()["error"]
@@ -507,7 +515,7 @@ class TestPlayEndpoint:
         app = _make_app(stream_link_repo=repo)
         client = TestClient(app)
 
-        resp = client.get("/stremio/play/abc123")
+        resp = client.get("/api/v1/stremio/play/abc123")
 
         assert resp.status_code == 503
         assert "resolver not configured" in resp.json()["error"]
@@ -523,7 +531,7 @@ class TestPlayEndpoint:
         )
         client = TestClient(app)
 
-        resp = client.get("/stremio/play/abc123")
+        resp = client.get("/api/v1/stremio/play/abc123")
 
         assert resp.headers["access-control-allow-origin"] == "*"
 
@@ -545,7 +553,7 @@ class TestPlayEndpoint:
         )
         client = TestClient(app)
 
-        resp = client.get("/stremio/play/abc123")
+        resp = client.get("/api/v1/stremio/play/abc123")
 
         assert resp.status_code == 502
         assert resp.headers["access-control-allow-origin"] == "*"

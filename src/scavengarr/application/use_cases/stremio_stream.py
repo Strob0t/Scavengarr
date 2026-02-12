@@ -261,7 +261,7 @@ class StremioStreamUseCase:
                 hoster=ranked_s.hoster,
             )
             await self._stream_link_repo.save(link)
-            proxy_url = f"{base_url}/stremio/play/{stream_id}"
+            proxy_url = f"{base_url}/api/v1/stremio/play/{stream_id}"
             proxied.append(
                 StremioStream(
                     name=stream.name,

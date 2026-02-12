@@ -16,7 +16,7 @@ def _make_app(
 ) -> FastAPI:
     """Create a minimal FastAPI app with the torznab router."""
     app = FastAPI()
-    app.include_router(router)
+    app.include_router(router, prefix="/api/v1")
 
     # Wire up minimal app state
     state = MagicMock()

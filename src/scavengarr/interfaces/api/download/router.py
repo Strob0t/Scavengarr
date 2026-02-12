@@ -15,7 +15,7 @@ log = structlog.get_logger(__name__)
 router = APIRouter(tags=["download"])
 
 
-@router.get("/api/v1/download/{job_id}")
+@router.get("/download/{job_id}")
 async def download_crawljob(
     job_id: str,
     request: Request,
@@ -106,7 +106,7 @@ async def download_crawljob(
     )
 
 
-@router.get("/api/v1/download/{job_id}/info")
+@router.get("/download/{job_id}/info")
 async def get_crawljob_info(
     job_id: str,
     request: Request,

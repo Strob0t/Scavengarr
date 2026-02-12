@@ -823,7 +823,7 @@ class TestStreamLinkProxy:
         result = await uc.execute(_make_request(), base_url="http://localhost:8080")
 
         assert len(result) >= 1
-        assert result[0].url.startswith("http://localhost:8080/stremio/play/")
+        assert result[0].url.startswith("http://localhost:8080/api/v1/stremio/play/")
         assert "voe.sx" not in result[0].url
         repo.save.assert_awaited()
 

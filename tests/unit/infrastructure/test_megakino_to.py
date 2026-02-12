@@ -71,14 +71,18 @@ _DETAIL_RESPONSE = {
             "added": "2024-01-01",
         },
     ],
-    "tmdb": json.dumps({
-        "movie": [{
-            "movie_details": {
-                "imdb_id": "tt0371746",
-                "vote_average": 7.9,
-            }
-        }]
-    }),
+    "tmdb": json.dumps(
+        {
+            "movie": [
+                {
+                    "movie_details": {
+                        "imdb_id": "tt0371746",
+                        "vote_average": 7.9,
+                    }
+                }
+            ]
+        }
+    ),
 }
 
 _TV_BROWSE_RESPONSE = {
