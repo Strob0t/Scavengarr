@@ -17,27 +17,9 @@ import asyncio
 import json
 from urllib.parse import urlparse
 
-import httpx
-import structlog
-
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
-log = structlog.get_logger(__name__)
-
-# Official domains in priority order.
-_DOMAINS = [
-    "megakino.org",
-    "megakino.to",
-]
-
-_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
-)
-
-_MAX_CONCURRENT_DETAIL = 3
-_MAX_RESULTS = 1000
 _PAGE_SIZE = 20
 _MAX_PAGES = 50  # 20/page * 50 = 1000
 
@@ -187,51 +169,12 @@ def _extract_metadata(detail: dict | None, browse_entry: dict) -> dict[str, str]
     }
 
 
-class MegakinoToPlugin:
+class MegakinoToPlugin(HttpxPluginBase):
     """Python plugin for megakino.org using httpx (JSON API)."""
 
     name = "megakino_to"
-    version = "1.0.0"
-    mode = "httpx"
     provides = "stream"
-    default_language = "de"
-
-    def __init__(self) -> None:
-        self._client: httpx.AsyncClient | None = None
-        self.base_url: str = f"https://{_DOMAINS[0]}"
-        self._domain_verified = False
-
-    async def _ensure_client(self) -> httpx.AsyncClient:
-        """Create httpx client if not already running."""
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                timeout=15.0,
-                follow_redirects=True,
-                headers={"User-Agent": _USER_AGENT},
-            )
-        return self._client
-
-    async def _verify_domain(self) -> None:
-        """Find and cache a working domain from the fallback list."""
-        if self._domain_verified:
-            return
-
-        client = await self._ensure_client()
-        for domain in _DOMAINS:
-            url = f"https://{domain}/"
-            try:
-                resp = await client.head(url, timeout=5.0)
-                if resp.status_code == 200:
-                    self.base_url = f"https://{domain}"
-                    self._domain_verified = True
-                    log.info("megakino_to_domain_found", domain=domain)
-                    return
-            except Exception:  # noqa: BLE001
-                continue
-
-        self.base_url = f"https://{_DOMAINS[0]}"
-        self._domain_verified = True
-        log.warning("megakino_to_no_domain_reachable", fallback=_DOMAINS[0])
+    _domains = ["megakino.org", "megakino.to"]
 
     async def _browse_page(
         self,
@@ -243,48 +186,40 @@ class MegakinoToPlugin:
 
         Returns (movies, total_items).
         """
-        client = await self._ensure_client()
-
-        params: dict[str, str | int] = {
-            "lang": _LANG_DE,
-            "keyword": keyword,
-            "year": "",
-            "networks": "",
-            "rating": "",
-            "votes": "",
-            "genre": "",
-            "country": "",
-            "cast": "",
-            "directors": "",
-            "type": type_filter,
-            "order_by": "",
-            "page": page,
-            "limit": _PAGE_SIZE,
-        }
-
-        try:
-            resp = await client.get(
-                f"{self.base_url}/data/browse/",
-                params=params,
-            )
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            log.warning(
-                "megakino_to_browse_failed",
-                keyword=keyword,
-                page=page,
-                error=str(exc),
-            )
+        resp = await self._safe_fetch(
+            f"{self.base_url}/data/browse/",
+            context="browse",
+            params={
+                "lang": _LANG_DE,
+                "keyword": keyword,
+                "year": "",
+                "networks": "",
+                "rating": "",
+                "votes": "",
+                "genre": "",
+                "country": "",
+                "cast": "",
+                "directors": "",
+                "type": type_filter,
+                "order_by": "",
+                "page": page,
+                "limit": _PAGE_SIZE,
+            },
+        )
+        if resp is None:
             return [], 0
 
-        data = resp.json()
+        data = self._safe_parse_json(resp, context="browse")
+        if not isinstance(data, dict):
+            return [], 0
+
         movies = data.get("movies", [])
         if not isinstance(movies, list):
             movies = []
         pager = data.get("pager", {})
         total = pager.get("totalItems", 0)
 
-        log.info(
+        self._log.info(
             "megakino_to_browse_page",
             keyword=keyword,
             page=page,
@@ -298,19 +233,19 @@ class MegakinoToPlugin:
         keyword: str,
         type_filter: str,
     ) -> list[dict]:
-        """Fetch all browse pages up to _MAX_RESULTS."""
+        """Fetch all browse pages up to _max_results."""
         first_page, total = await self._browse_page(keyword, type_filter, page=1)
         if not first_page:
             return []
 
         all_movies: list[dict] = list(first_page)
-        if total <= _PAGE_SIZE or len(all_movies) >= _MAX_RESULTS:
-            return all_movies[:_MAX_RESULTS]
+        if total <= _PAGE_SIZE or len(all_movies) >= self._max_results:
+            return all_movies[: self._max_results]
 
         total_pages = min((total + _PAGE_SIZE - 1) // _PAGE_SIZE, _MAX_PAGES)
 
         for page_num in range(2, total_pages + 1):
-            if len(all_movies) >= _MAX_RESULTS:
+            if len(all_movies) >= self._max_results:
                 break
             page_movies, _ = await self._browse_page(
                 keyword, type_filter, page=page_num
@@ -319,29 +254,24 @@ class MegakinoToPlugin:
                 break
             all_movies.extend(page_movies)
 
-        return all_movies[:_MAX_RESULTS]
+        return all_movies[: self._max_results]
 
     async def _fetch_detail(self, movie_id: str) -> dict | None:
         """Fetch detail data with streams for a movie/series."""
-        client = await self._ensure_client()
-
-        try:
-            resp = await client.get(
-                f"{self.base_url}/data/watch/",
-                params={"_id": movie_id},
-            )
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            log.warning(
-                "megakino_to_detail_failed",
-                movie_id=movie_id,
-                error=str(exc),
-            )
+        resp = await self._safe_fetch(
+            f"{self.base_url}/data/watch/",
+            context="detail",
+            params={"_id": movie_id},
+        )
+        if resp is None:
             return None
 
-        data = resp.json()
+        data = self._safe_parse_json(resp, context="detail")
+        if not isinstance(data, dict):
+            return None
+
         streams = data.get("streams", [])
-        log.info(
+        self._log.info(
             "megakino_to_detail",
             movie_id=movie_id,
             title=data.get("title", ""),
@@ -465,7 +395,7 @@ class MegakinoToPlugin:
             return []
 
         # Fetch detail pages with bounded concurrency
-        sem = asyncio.Semaphore(_MAX_CONCURRENT_DETAIL)
+        sem = self._new_semaphore()
         tasks = [
             self._process_entry(e, sem, season=season, episode=episode)
             for e in browse_results
@@ -476,16 +406,10 @@ class MegakinoToPlugin:
         for sr in task_results:
             if isinstance(sr, SearchResult):
                 results.append(sr)
-                if len(results) >= _MAX_RESULTS:
+                if len(results) >= self._max_results:
                     break
 
-        return results[:_MAX_RESULTS]
-
-    async def cleanup(self) -> None:
-        """Close httpx client."""
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+        return results[: self._max_results]
 
 
 plugin = MegakinoToPlugin()

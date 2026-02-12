@@ -16,87 +16,49 @@ import asyncio
 import html as html_lib
 import re
 
-import httpx
-import structlog
-
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
-log = structlog.get_logger(__name__)
-
-_BASE_URL = "https://haschcon.com"
-
-_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
-)
-
-_MAX_CONCURRENT_DETAIL = 3
-_MAX_RESULTS = 1000
 _PER_PAGE = 100  # WP REST API max
-_MAX_PAGES = _MAX_RESULTS // _PER_PAGE  # 10 pages × 100 = 1000
+_MAX_PAGES = 10  # 10 pages x 100 = 1000
 
 # Regex patterns for extracting video URLs from player embed pages.
 _YT_PATTERN = re.compile(r"youtube\.com/embed/([a-zA-Z0-9_-]+)")
 _DM_PATTERN = re.compile(r"dailymotion\.com/embed/video/([a-zA-Z0-9]+)")
 
 
-class HaschconPlugin:
+class HaschconPlugin(HttpxPluginBase):
     """Python plugin for haschcon.com using httpx (WordPress REST API)."""
 
     name = "haschcon"
-    version = "1.0.0"
-    mode = "httpx"
     provides = "stream"
-    default_language = "de"
-
-    def __init__(self) -> None:
-        self._client: httpx.AsyncClient | None = None
-        self.base_url: str = _BASE_URL
-
-    async def _ensure_client(self) -> httpx.AsyncClient:
-        """Create httpx client if not already running."""
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                timeout=15.0,
-                follow_redirects=True,
-                headers={"User-Agent": _USER_AGENT},
-            )
-        return self._client
+    _domains = ["haschcon.com"]
 
     async def _api_search(self, query: str) -> list[dict]:
         """Search via WP REST API across multiple pages."""
-        client = await self._ensure_client()
         all_entries: list[dict] = []
 
         for page in range(1, _MAX_PAGES + 1):
-            try:
-                resp = await client.get(
-                    f"{self.base_url}/wp-json/wp/v2/aiovg_videos",
-                    params={
-                        "search": query,
-                        "per_page": str(_PER_PAGE),
-                        "page": str(page),
-                        "_embed": "1",
-                    },
-                )
-                resp.raise_for_status()
-            except Exception as exc:  # noqa: BLE001
-                log.warning(
-                    "haschcon_search_failed",
-                    query=query,
-                    page=page,
-                    error=str(exc),
-                )
+            resp = await self._safe_fetch(
+                f"{self.base_url}/wp-json/wp/v2/aiovg_videos",
+                context="search",
+                params={
+                    "search": query,
+                    "per_page": str(_PER_PAGE),
+                    "page": str(page),
+                    "_embed": "1",
+                },
+            )
+            if resp is None:
                 break
 
-            entries = resp.json()
-            if not entries:
+            data = self._safe_parse_json(resp, context="search")
+            if not isinstance(data, list) or not data:
                 break
 
-            all_entries.extend(entries)
+            all_entries.extend(data)
 
-            if len(all_entries) >= _MAX_RESULTS:
+            if len(all_entries) >= self._max_results:
                 break
 
             # Check pagination headers
@@ -104,20 +66,16 @@ class HaschconPlugin:
             if page >= total_pages:
                 break
 
-        log.info("haschcon_search", query=query, count=len(all_entries))
-        return all_entries[:_MAX_RESULTS]
+        self._log.info("haschcon_search", query=query, count=len(all_entries))
+        return all_entries[: self._max_results]
 
     async def _fetch_player_embed(self, post_id: int) -> str | None:
         """Fetch player embed page and extract YouTube/Dailymotion URL."""
-        client = await self._ensure_client()
-
-        try:
-            resp = await client.get(
-                f"{self.base_url}/player-embed/id/{post_id}/",
-            )
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            log.warning("haschcon_player_failed", post_id=post_id, error=str(exc))
+        resp = await self._safe_fetch(
+            f"{self.base_url}/player-embed/id/{post_id}/",
+            context="player",
+        )
+        if resp is None:
             return None
 
         text = resp.text
@@ -230,19 +188,13 @@ class HaschconPlugin:
             return []
 
         # Fetch player embeds with bounded concurrency
-        sem = asyncio.Semaphore(_MAX_CONCURRENT_DETAIL)
+        sem = self._new_semaphore()
         tasks = [self._process_entry(e, sem) for e in search_results]
         task_results = await asyncio.gather(*tasks)
 
         results: list[SearchResult] = [sr for sr in task_results if sr is not None]
 
-        return results[:_MAX_RESULTS]
-
-    async def cleanup(self) -> None:
-        """Close httpx client."""
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+        return results[: self._max_results]
 
 
 plugin = HaschconPlugin()

@@ -91,15 +91,11 @@ class HttpxPluginBase:
         for domain in self._domains:
             url = f"https://{domain}/"
             try:
-                resp = await client.head(
-                    url, timeout=DEFAULT_DOMAIN_CHECK_TIMEOUT
-                )
+                resp = await client.head(url, timeout=DEFAULT_DOMAIN_CHECK_TIMEOUT)
                 if resp.status_code < 400:
                     self.base_url = f"https://{domain}"
                     self._domain_verified = True
-                    self._log.info(
-                        f"{self.name}_domain_found", domain=domain
-                    )
+                    self._log.info(f"{self.name}_domain_found", domain=domain)
                     return
             except Exception:  # noqa: BLE001
                 continue
@@ -137,7 +133,8 @@ class HttpxPluginBase:
         """
         client = await self._ensure_client()
         try:
-            resp = await client.request(method, url, **kwargs)
+            handler = getattr(client, method.lower(), client.get)
+            resp = await handler(url, **kwargs)
             resp.raise_for_status()
             return resp
         except httpx.TimeoutException:
@@ -197,6 +194,4 @@ class HttpxPluginBase:
 
         Subclasses **must** override this method.
         """
-        raise NotImplementedError(
-            f"{type(self).__name__}.search() not implemented"
-        )
+        raise NotImplementedError(f"{type(self).__name__}.search() not implemented")

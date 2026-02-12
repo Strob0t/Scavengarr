@@ -18,22 +18,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-import httpx
-import structlog
-
 from scavengarr.domain.plugins.base import SearchResult
-
-log = structlog.get_logger(__name__)
-
-_BASE_URL = "https://fireani.me"
-
-_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
-)
-
-_MAX_CONCURRENT_DETAIL = 3
+from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # Internal proxy player names to exclude from results.
 _EXCLUDED_PLAYERS = frozenset({"proxyplayerslow", "proxyplayer"})
@@ -125,28 +111,12 @@ def _build_stream_links(
     return links
 
 
-class FireaniPlugin:
+class FireaniPlugin(HttpxPluginBase):
     """Python plugin for fireani.me using httpx (JSON API)."""
 
     name = "fireani"
-    version = "1.0.0"
-    mode = "httpx"
     provides = "stream"
-    default_language = "de"
-
-    def __init__(self) -> None:
-        self._client: httpx.AsyncClient | None = None
-        self.base_url = _BASE_URL
-
-    async def _ensure_client(self) -> httpx.AsyncClient:
-        """Create httpx client if not already running."""
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                timeout=15.0,
-                follow_redirects=True,
-                headers={"User-Agent": _USER_AGENT},
-            )
-        return self._client
+    _domains = ["fireani.me"]
 
     async def _api_search(self, query: str) -> list[dict[str, Any]]:
         """Search via GET /api/anime/search?q={query}.
@@ -154,24 +124,15 @@ class FireaniPlugin:
         Returns list of anime dicts from the API response.
         The API returns max 30 results with no pagination support.
         """
-        client = await self._ensure_client()
-
-        try:
-            resp = await client.get(
-                f"{self.base_url}/api/anime/search",
-                params={"q": query},
-            )
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            log.warning("fireani_search_failed", query=query, error=str(exc))
+        resp = await self._safe_fetch(
+            f"{self.base_url}/api/anime/search",
+            context="search",
+            params={"q": query},
+        )
+        if resp is None:
             return []
 
-        try:
-            data = resp.json()
-        except Exception:  # noqa: BLE001
-            log.warning("fireani_search_invalid_json", query=query)
-            return []
-
+        data = self._safe_parse_json(resp, context="search")
         if not isinstance(data, dict) or data.get("status") != 200:
             return []
 
@@ -179,7 +140,7 @@ class FireaniPlugin:
         if not isinstance(items, list):
             return []
 
-        log.info(
+        self._log.info(
             "fireani_search_results",
             query=query,
             results=len(items),
@@ -191,23 +152,15 @@ class FireaniPlugin:
 
         Returns the anime data dict with seasons and episode lists.
         """
-        client = await self._ensure_client()
-
-        try:
-            resp = await client.get(
-                f"{self.base_url}/api/anime",
-                params={"slug": slug},
-            )
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            log.warning("fireani_detail_failed", slug=slug, error=str(exc))
+        resp = await self._safe_fetch(
+            f"{self.base_url}/api/anime",
+            context="detail",
+            params={"slug": slug},
+        )
+        if resp is None:
             return None
 
-        try:
-            data = resp.json()
-        except Exception:  # noqa: BLE001
-            return None
-
+        data = self._safe_parse_json(resp, context="detail")
         if not isinstance(data, dict) or data.get("status") != 200:
             return None
 
@@ -224,29 +177,15 @@ class FireaniPlugin:
         Calls GET /api/anime/episode?slug={slug}&season={s}&episode={e}
         and returns filtered hoster links.
         """
-        client = await self._ensure_client()
-
-        try:
-            resp = await client.get(
-                f"{self.base_url}/api/anime/episode",
-                params={"slug": slug, "season": season, "episode": episode},
-            )
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            log.debug(
-                "fireani_episode_failed",
-                slug=slug,
-                season=season,
-                episode=episode,
-                error=str(exc),
-            )
+        resp = await self._safe_fetch(
+            f"{self.base_url}/api/anime/episode",
+            context="episode",
+            params={"slug": slug, "season": season, "episode": episode},
+        )
+        if resp is None:
             return []
 
-        try:
-            data = resp.json()
-        except Exception:  # noqa: BLE001
-            return []
-
+        data = self._safe_parse_json(resp, context="episode")
         if not isinstance(data, dict) or data.get("status") != 200:
             return []
 
@@ -354,7 +293,7 @@ class FireaniPlugin:
             hoster_links = await self._fetch_hoster_links(slug, detail)
 
         if not hoster_links:
-            log.debug("fireani_no_hosters", slug=slug)
+            self._log.debug("fireani_no_hosters", slug=slug)
             return None
 
         description = _build_description(anime)
@@ -394,7 +333,7 @@ class FireaniPlugin:
             return []
 
         # Fetch episode links with bounded concurrency
-        sem = asyncio.Semaphore(_MAX_CONCURRENT_DETAIL)
+        sem = self._new_semaphore()
 
         async def _bounded(anime: dict[str, Any]) -> SearchResult | None:
             async with sem:
@@ -405,17 +344,7 @@ class FireaniPlugin:
             return_exceptions=True,
         )
 
-        results: list[SearchResult] = [
-            r for r in gathered if isinstance(r, SearchResult)
-        ]
-
-        return results
-
-    async def cleanup(self) -> None:
-        """Close httpx client."""
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+        return [r for r in gathered if isinstance(r, SearchResult)]
 
 
 plugin = FireaniPlugin()

@@ -10,7 +10,6 @@ import pytest
 
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
-
 # ---------------------------------------------------------------------------
 # Concrete test subclass
 # ---------------------------------------------------------------------------
@@ -112,9 +111,7 @@ class TestVerifyDomain:
     async def test_all_domains_fail(self) -> None:
         plugin = _TestPlugin()
         mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.head = AsyncMock(
-            side_effect=httpx.ConnectError("timeout")
-        )
+        mock_client.head = AsyncMock(side_effect=httpx.ConnectError("timeout"))
         plugin._client = mock_client
 
         await plugin._verify_domain()
@@ -188,7 +185,7 @@ class TestSafeFetch:
         resp.raise_for_status = MagicMock()
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.request = AsyncMock(return_value=resp)
+        mock_client.get = AsyncMock(return_value=resp)
         plugin._client = mock_client
 
         result = await plugin._safe_fetch("https://example.com/api")
@@ -199,9 +196,7 @@ class TestSafeFetch:
     async def test_returns_none_on_timeout(self) -> None:
         plugin = _TestPlugin()
         mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.request = AsyncMock(
-            side_effect=httpx.ReadTimeout("timeout")
-        )
+        mock_client.get = AsyncMock(side_effect=httpx.ReadTimeout("timeout"))
         plugin._client = mock_client
 
         result = await plugin._safe_fetch("https://example.com/api")
@@ -220,7 +215,7 @@ class TestSafeFetch:
         )
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.request = AsyncMock(return_value=resp)
+        mock_client.get = AsyncMock(return_value=resp)
         plugin._client = mock_client
 
         result = await plugin._safe_fetch("https://example.com/api")
@@ -231,9 +226,7 @@ class TestSafeFetch:
     async def test_returns_none_on_connection_error(self) -> None:
         plugin = _TestPlugin()
         mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.request = AsyncMock(
-            side_effect=httpx.ConnectError("refused")
-        )
+        mock_client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
         plugin._client = mock_client
 
         result = await plugin._safe_fetch("https://example.com/api")
