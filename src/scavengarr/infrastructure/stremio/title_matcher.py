@@ -32,7 +32,10 @@ def _normalize(text: str) -> str:
 
 def _strip_year(text: str) -> str:
     """Remove 4-digit year tokens from text for cleaner title comparison."""
-    return _YEAR_RE.sub("", text).strip()
+    text = _YEAR_RE.sub("", text)
+    # Clean up empty parentheses left after removing year
+    text = re.sub(r"\s*\(\s*\)\s*", " ", text)
+    return text.strip()
 
 
 def _extract_year(text: str) -> int | None:

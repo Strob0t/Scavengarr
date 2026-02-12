@@ -60,6 +60,9 @@ class TestStripYear:
     def test_no_year_unchanged(self) -> None:
         assert _strip_year("Iron Man") == "Iron Man"
 
+    def test_parenthesized_year_cleaned(self) -> None:
+        assert _strip_year("Iron Man (2008)") == "Iron Man"
+
     def test_only_year(self) -> None:
         assert _strip_year("2008") == ""
 
@@ -211,6 +214,12 @@ class TestScoreTitleMatch:
         ref = TitleMatchInfo(title="Iron Man", alt_titles=[])
         score = score_title_match(_sr("Iron Man"), ref)
         assert score == pytest.approx(1.0)
+
+    def test_parenthesized_year_in_result_title(self) -> None:
+        """Titles like 'Iron Man (2008)' from plugins should match well."""
+        ref = TitleMatchInfo(title="Iron Man", year=2008)
+        score = score_title_match(_sr("Iron Man (2008)"), ref)
+        assert score >= 1.0
 
     def test_alt_title_sequel_penalty_still_applies(self) -> None:
         """Sequel penalty applies even when matching against alt title."""
