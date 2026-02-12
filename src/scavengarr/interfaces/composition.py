@@ -17,6 +17,9 @@ from scavengarr.infrastructure.cache.cache_factory import create_cache
 from scavengarr.infrastructure.hoster_resolvers import HosterResolverRegistry
 from scavengarr.infrastructure.hoster_resolvers.doodstream import DoodStreamResolver
 from scavengarr.infrastructure.hoster_resolvers.filemoon import FilemoonResolver
+from scavengarr.infrastructure.hoster_resolvers.filernet import FilerNetResolver
+from scavengarr.infrastructure.hoster_resolvers.katfile import KatfileResolver
+from scavengarr.infrastructure.hoster_resolvers.rapidgator import RapidgatorResolver
 from scavengarr.infrastructure.hoster_resolvers.streamtape import StreamtapeResolver
 from scavengarr.infrastructure.hoster_resolvers.supervideo import SuperVideoResolver
 from scavengarr.infrastructure.hoster_resolvers.voe import VoeResolver
@@ -135,6 +138,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             ),
             DoodStreamResolver(http_client=state.http_client),
             FilemoonResolver(http_client=state.http_client),
+            FilerNetResolver(http_client=state.http_client),
+            KatfileResolver(http_client=state.http_client),
+            RapidgatorResolver(http_client=state.http_client),
         ],
         http_client=state.http_client,
     )
