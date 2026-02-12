@@ -111,9 +111,7 @@ class _SearchResultParser(HTMLParser):
         self._current_title = ""
         self._current_url = ""
 
-    def handle_starttag(
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attr_dict = dict(attrs)
 
         if tag == "h2":
@@ -427,34 +425,38 @@ class _DetailPageParser(HTMLParser):
         if text and len(text) > 10:
             self._meta_texts.append(text)
 
+    def _end_a_tag(self) -> None:
+        """Handle closing of ``<a>`` tag for streams, genres, IMDB."""
+        if self._in_stream_a:
+            self._in_stream_a = False
+            if self._stream_a_href:
+                domain = _domain_from_url(self._stream_a_href)
+                self.stream_links.append(
+                    {
+                        "hoster": domain,
+                        "link": self._stream_a_href,
+                        "quality": self._stream_quality or "HD",
+                    }
+                )
+            self._stream_a_href = ""
+            self._stream_quality = ""
+
+        if self._in_genre_a:
+            self._in_genre_a = False
+            text = self._genre_text.strip()
+            if text and text not in self.genres:
+                self.genres.append(text)
+
+        if self._in_imdb_a:
+            self._in_imdb_a = False
+            text = self._imdb_text.strip()
+            m = re.search(r"([\d.]+)", text)
+            if m:
+                self.imdb_rating = m.group(1)
+
     def handle_endtag(self, tag: str) -> None:
         if tag == "a":
-            if self._in_stream_a:
-                self._in_stream_a = False
-                if self._stream_a_href:
-                    domain = _domain_from_url(self._stream_a_href)
-                    self.stream_links.append(
-                        {
-                            "hoster": domain,
-                            "link": self._stream_a_href,
-                            "quality": self._stream_quality or "HD",
-                        }
-                    )
-                self._stream_a_href = ""
-                self._stream_quality = ""
-
-            if self._in_genre_a:
-                self._in_genre_a = False
-                text = self._genre_text.strip()
-                if text and text not in self.genres:
-                    self.genres.append(text)
-
-            if self._in_imdb_a:
-                self._in_imdb_a = False
-                text = self._imdb_text.strip()
-                m = re.search(r"([\d.]+)", text)
-                if m:
-                    self.imdb_rating = m.group(1)
+            self._end_a_tag()
 
         if tag == "div" and self._in_stream_div:
             if self._stream_div_depth > 0:
@@ -680,9 +682,8 @@ class Movie2kPlugin(HttpxPluginBase):
 
         # Determine if we should browse TV
         is_tv_request = (
-            (category is not None and category in _TV_CATEGORIES)
-            or season is not None
-        )
+            category is not None and category in _TV_CATEGORIES
+        ) or season is not None
 
         # Get initial results
         if query:

@@ -1,14 +1,14 @@
 # Plan: Additional Plugins
 
-**Status:** Mostly Complete (33 plugins implemented)
+**Status:** Mostly Complete (34 plugins implemented)
 **Priority:** Low (ongoing)
 **Related:** `plugins/`, `docs/features/python-plugins.md`
 
 ## Current State
 
-Scavengarr ships with **33 plugins** covering German streaming, DDL, and anime sites:
+Scavengarr ships with **34 plugins** covering German streaming, DDL, and anime sites:
 
-### Httpx plugins (21)
+### Httpx plugins (22)
 
 | Plugin | Site | Type | Notes |
 |---|---|---|---|
@@ -30,6 +30,7 @@ Scavengarr ships with **33 plugins** covering German streaming, DDL, and anime s
 | movie4k | movie4k.sx | stream | JSON API, multi-domain |
 | myboerse | myboerse.bz | download | DDL forum, multi-domain |
 | nima4k | nima4k.org | download | Category browsing |
+| serienfans | serienfans.org | download | TV series DDL, JSON API, season/episode |
 | sto | s.to | stream | TV-only |
 | streamcloud | streamcloud.plus | stream | Domain fallback |
 | streamkiste | streamkiste.taxi | stream | 5 mirror domains |

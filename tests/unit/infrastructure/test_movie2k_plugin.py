@@ -75,8 +75,8 @@ Science Fiction</a></div>
 <div>IMDB Bewertung: <a href="https://www.imdb.com/title/tt0371746">6.93</a> \
 | Aufrufe: 12345 | Genre: Action, Science Fiction | Länge: 126 Minuten \
 | Land/Jahr: USA/2008</div>
-<div>Tony Stark baut sich in einer Höhle einen Kampfanzug und wird zum Superhelden \
-Iron Man. Ein spannendes Abenteuer voller Action und Technologie erwartet den Zuschauer.</div>
+<div>Tony Stark baut sich in einer Hoehle einen \
+Kampfanzug und wird zum Superhelden Iron Man und rettet die Welt.</div>
 <div id="tablemoviesindex2">
   <table><tr><td>
     <a href="https://voe.sx/ssbkh7j0ksb6">
@@ -531,7 +531,7 @@ class TestMovie2kPluginSearch:
         )
 
         plug._client = mock_client
-        results = await plug.search("", category=5000)
+        await plug.search("", category=5000)
 
         # Verify /tv/all was called (not /movies)
         first_call = mock_client.get.call_args_list[0]
@@ -542,9 +542,7 @@ class TestMovie2kPluginSearch:
         plug = _make_plugin()
         mock_client = AsyncMock()
 
-        mock_client.get = AsyncMock(
-            return_value=_mock_response(_EMPTY_SEARCH_HTML)
-        )
+        mock_client.get = AsyncMock(return_value=_mock_response(_EMPTY_SEARCH_HTML))
 
         plug._client = mock_client
         results = await plug.search("xyznonexistent")
@@ -555,9 +553,7 @@ class TestMovie2kPluginSearch:
     async def test_search_http_error(self) -> None:
         plug = _make_plugin()
         mock_client = AsyncMock()
-        mock_client.get = AsyncMock(
-            side_effect=httpx.ConnectError("connection failed")
-        )
+        mock_client.get = AsyncMock(side_effect=httpx.ConnectError("connection failed"))
 
         plug._client = mock_client
         results = await plug.search("test")

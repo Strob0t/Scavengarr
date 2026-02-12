@@ -301,9 +301,7 @@ class CrawliPlugin(HttpxPluginBase):
         pages_to_fetch = min(max_page, _MAX_PAGES)
         page_num = 2
         while len(all_results) < self._max_results and page_num <= pages_to_fetch:
-            page_results, _ = await self._search_page(
-                query, category_path, page_num
-            )
+            page_results, _ = await self._search_page(query, category_path, page_num)
             if not page_results:
                 break
             all_results.extend(page_results)

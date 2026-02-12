@@ -126,9 +126,7 @@ class CinebyPlugin(HttpxPluginBase):
 
             # Filter out "person" results for multi-search
             if media_type is None:
-                results = [
-                    r for r in results if r.get("media_type") in ("movie", "tv")
-                ]
+                results = [r for r in results if r.get("media_type") in ("movie", "tv")]
             else:
                 # Typed search endpoints don't include media_type; inject it
                 for r in results:
@@ -294,9 +292,7 @@ class CinebyPlugin(HttpxPluginBase):
 
         # Fetch details with bounded concurrency
         sem = self._new_semaphore()
-        tasks = [
-            self._process_entry(e, sem, season, episode) for e in search_results
-        ]
+        tasks = [self._process_entry(e, sem, season, episode) for e in search_results]
         task_results = await asyncio.gather(*tasks)
 
         results: list[SearchResult] = [sr for sr in task_results if sr is not None]

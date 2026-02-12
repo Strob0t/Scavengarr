@@ -46,6 +46,7 @@ Expanded from 2 plugins (filmpalast YAML + boerse Python) to 33 total plugins
 - megakino.me — streaming (`ff68aeb`)
 - megakino_to (megakino.org) — streaming via JSON API (`df2cf77`)
 - movie2k.cx — streaming with 2-stage HTML scraping
+- serienfans.org — TV series DDL with JSON search API and season/episode support
 - movie4k.sx — streaming via JSON API with cross-language title matching (`52f07dd`, `dfc58db`)
 - myboerse.bz — DDL forum with multi-domain fallback (`27b42b4`, `d80c69a`)
 - nima4k.org — DDL with category browsing (`d001135`)

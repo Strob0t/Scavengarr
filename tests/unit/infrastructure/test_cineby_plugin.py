@@ -38,7 +38,8 @@ SEARCH_MULTI_RESPONSE = {
             "id": 414906,
             "title": "The Batman",
             "media_type": "movie",
-            "overview": "In his second year of fighting crime, Batman uncovers corruption.",
+            "overview": "In his second year of fighting crime, "
+            "Batman uncovers corruption.",
             "poster_path": "/74xTEgt7R36Fpooo50r9T25onhq.jpg",
             "release_date": "2022-03-01",
             "vote_average": 7.7,
@@ -653,9 +654,7 @@ class TestPluginSearch:
 
         mock_client.get = AsyncMock(side_effect=mock_get)
 
-        results = await plugin.search(
-            "batman", category=5000, season=1, episode=3
-        )
+        results = await plugin.search("batman", category=5000, season=1, episode=3)
 
         assert len(results) == 1
         assert "/embed/tv/2098/1/3" in results[0].download_link

@@ -1,4 +1,4 @@
-"""Live smoke tests for all 32 plugins.
+"""Live smoke tests for all 34 plugins.
 
 Each test hits the real website and verifies the plugin can still scrape
 valid results. Network errors and Cloudflare blocks are handled gracefully
@@ -53,6 +53,7 @@ HTTPX_PLUGINS: list[tuple[str, str]] = [
     ("megakino_to", "Iron Man"),
     ("movie2k", "Iron Man"),
     ("movie4k", "Iron Man"),
+    ("serienfans", "Breaking Bad"),
     ("myboerse", "Iron Man"),
     ("nima4k", "Iron Man"),
     ("sto", "Breaking Bad"),

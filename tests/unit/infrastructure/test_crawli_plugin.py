@@ -46,18 +46,21 @@ _SEARCH_PAGE_HTML = """
 
     <div class="entry-content sresd">
     <strong class="sres"><a href="http://crawli.net/go/?/6781604/"
-        target="_blank" rel="nofollow" class="sres3">Batman und Harley Quinn (2017)</a></strong>
+        target="_blank" rel="nofollow"
+        class="sres3">Batman und Harley Quinn (2017)</a></strong>
     <div style="float:right"><em class="fnfo">Download</em></div>
     <div class="scont">
     <p>Release: Batman.und.Harley.Quinn.2017.German.AC3.DL.1080p.BluRay.x265-FuN</p>
-    <address class="resl author">funxd.site/2026/01/29/batman-und-harley-quinn-2017/</address>
+    <address class="resl author">\
+funxd.site/2026/01/29/batman-und-harley-quinn-2017/</address>
     <small class="rtime published">29.01.2026 19:35</small>
     </div>
     </div>
 
     <div class="entry-content sresd">
     <strong class="sres"><a href="http://crawli.net/go/?/6778536/"
-        target="_blank" rel="nofollow" class="sres3">Batman.1989.GERMAN.DL.HDR.2160.WEB.H265-SunDry</a></strong>
+        target="_blank" rel="nofollow"
+        class="sres3">Batman.1989.GERMAN.DL.HDR.2160.WEB.H265-SunDry</a></strong>
     <div style="float:right"><em class="fnfo">Download</em></div>
     <div class="scont">
     <p></p>
@@ -68,7 +71,8 @@ _SEARCH_PAGE_HTML = """
 
     <div class="entry-content sresd">
     <strong class="sres"><a href="http://crawli.net/go/?/6778544/"
-        target="_blank" rel="nofollow" class="sres3">Batman.Forever.1995.GERMAN.DL.HDR.2160P.WEB.H265-SunDry</a></strong>
+        target="_blank" rel="nofollow"
+        class="sres3">Batman.Forever.1995.GERMAN.DL.HDR.2160P.WEB.H265-SunDry</a></strong>
     <div style="float:right"><em class="fnfo">Download</em></div>
     <div class="scont">
     <p>Some description here</p>
@@ -128,7 +132,8 @@ _SINGLE_RESULT_HTML = """
 <div class="hentry">
     <div class="entry-content sresd">
     <strong class="sres"><a href="http://crawli.net/go/?/1234/"
-        target="_blank" rel="nofollow" class="sres3">Test.Result.2025.German.1080p</a></strong>
+        target="_blank" rel="nofollow"
+        class="sres3">Test.Result.2025.German.1080p</a></strong>
     <div style="float:right"><em class="fnfo">Download</em></div>
     <div class="scont">
     <p>Test description</p>
@@ -391,9 +396,7 @@ class TestCrawliPlugin:
         p._domain_verified = True
 
         mock_client = AsyncMock()
-        mock_client.get = AsyncMock(
-            side_effect=httpx.TimeoutException("timeout")
-        )
+        mock_client.get = AsyncMock(side_effect=httpx.TimeoutException("timeout"))
         p._client = mock_client
 
         results = await p.search("Batman")
