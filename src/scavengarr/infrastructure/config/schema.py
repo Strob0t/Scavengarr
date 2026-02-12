@@ -130,6 +130,27 @@ class StremioConfig(BaseModel):
         description="Minimum title similarity score to keep a stream result.",
     )
 
+    title_year_bonus: float = Field(
+        default=0.2,
+        description="Score bonus when result year matches reference year.",
+    )
+    title_year_penalty: float = Field(
+        default=0.3,
+        description="Score penalty when result year does not match reference year.",
+    )
+    title_sequel_penalty: float = Field(
+        default=0.35,
+        description="Score penalty when result has sequel number that reference lacks.",
+    )
+    title_year_tolerance_movie: int = Field(
+        default=1,
+        description="Allowed year difference for movies (±N years).",
+    )
+    title_year_tolerance_series: int = Field(
+        default=3,
+        description="Allowed year difference for series (±N years).",
+    )
+
     stream_link_ttl_seconds: int = Field(
         default=7200,
         description="TTL for cached stream links (seconds). Default 2h.",

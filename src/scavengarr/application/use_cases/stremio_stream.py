@@ -7,6 +7,7 @@ IMDb ID -> TMDB title -> parallel plugin search
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from uuid import uuid4
 
 import structlog
@@ -132,6 +133,11 @@ class StremioStreamUseCase:
         self._max_concurrent = config.max_concurrent_plugins
         self._plugin_timeout = config.plugin_timeout_seconds
         self._title_match_threshold = config.title_match_threshold
+        self._title_year_bonus = config.title_year_bonus
+        self._title_year_penalty = config.title_year_penalty
+        self._title_sequel_penalty = config.title_sequel_penalty
+        self._title_year_tolerance_movie = config.title_year_tolerance_movie
+        self._title_year_tolerance_series = config.title_year_tolerance_series
         self._stream_link_repo = stream_link_repo
 
     async def execute(
@@ -193,7 +199,14 @@ class StremioStreamUseCase:
 
         # --- title-match filtering ---
         filtered = filter_by_title_match(
-            all_results, title_info, self._title_match_threshold
+            all_results,
+            title_info,
+            self._title_match_threshold,
+            year_bonus=self._title_year_bonus,
+            year_penalty=self._title_year_penalty,
+            sequel_penalty=self._title_sequel_penalty,
+            year_tolerance_movie=self._title_year_tolerance_movie,
+            year_tolerance_series=self._title_year_tolerance_series,
         )
 
         if not filtered:
@@ -281,8 +294,13 @@ class StremioStreamUseCase:
             title = await self._tmdb.get_title_by_tmdb_id(
                 int(tmdb_id), request.content_type
             )
-            return TitleMatchInfo(title=title) if title else None
-        return await self._tmdb.get_title_and_year(request.imdb_id)
+            if not title:
+                return None
+            return TitleMatchInfo(title=title, content_type=request.content_type)
+        info = await self._tmdb.get_title_and_year(request.imdb_id)
+        if info is not None:
+            return replace(info, content_type=request.content_type)
+        return None
 
     async def _search_plugins(
         self,

@@ -99,11 +99,15 @@ class TitleMatchInfo:
     *alt_titles* holds additional language variants (e.g. the original
     English title when the primary title is German).  The scorer picks
     the best match across all titles.
+
+    *content_type* controls year tolerance: series span multiple years
+    so a wider tolerance (±3) is used versus movies (±1).
     """
 
     title: str
     year: int | None = None
     alt_titles: list[str] = field(default_factory=list)
+    content_type: StremioContentType | None = None
 
 
 @dataclass(frozen=True)

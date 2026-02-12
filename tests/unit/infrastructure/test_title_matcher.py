@@ -13,6 +13,7 @@ from scavengarr.infrastructure.stremio.title_matcher import (
     _normalize,
     _sequel_number,
     _strip_year,
+    _token_similarity,
     filter_by_title_match,
     score_title_match,
 )
@@ -389,3 +390,170 @@ class TestScoreReleaseName:
         sr = _sr("The.Shawshank.Redemption.1994.German.DL.1080p.BluRay.x264")
         score = score_title_match(sr, ref)
         assert score >= 1.0
+
+
+# ---------------------------------------------------------------------------
+# _normalize — umlaut transliteration
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeUmlauts:
+    def test_ae_oe_ue(self) -> None:
+        assert _normalize("Schöne Grüße") == "schoene gruesse"
+
+    def test_eszett(self) -> None:
+        assert _normalize("Straße") == "strasse"
+
+    def test_mixed_umlauts_and_ascii(self) -> None:
+        assert _normalize("Über den Wölken") == "ueber den woelken"
+
+    def test_no_umlauts_unchanged(self) -> None:
+        assert _normalize("Iron Man") == "iron man"
+
+    def test_uppercase_umlauts(self) -> None:
+        """Uppercase Ä/Ö/Ü are lowered first, then transliterated."""
+        assert _normalize("ÜBER") == "ueber"
+
+
+# ---------------------------------------------------------------------------
+# _token_similarity
+# ---------------------------------------------------------------------------
+
+
+class TestTokenSimilarity:
+    def test_identical_tokens(self) -> None:
+        assert _token_similarity("iron man", "iron man") == pytest.approx(1.0)
+
+    def test_reordered_tokens(self) -> None:
+        assert _token_similarity("man iron", "iron man") == pytest.approx(1.0)
+
+    def test_subset_tokens(self) -> None:
+        """Overlap coefficient: all tokens of shorter set match."""
+        assert _token_similarity("iron man", "iron man returns") == pytest.approx(1.0)
+
+    def test_partial_overlap(self) -> None:
+        # "iron" overlaps, "man" vs "fist" don't → 1/2 = 0.5
+        assert _token_similarity("iron man", "iron fist") == pytest.approx(0.5)
+
+    def test_no_overlap(self) -> None:
+        assert _token_similarity("iron man", "spider verse") == pytest.approx(0.0)
+
+    def test_empty_string(self) -> None:
+        assert _token_similarity("", "iron man") == pytest.approx(0.0)
+
+    def test_both_empty(self) -> None:
+        assert _token_similarity("", "") == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# score_title_match — token-based scoring
+# ---------------------------------------------------------------------------
+
+
+class TestTokenBasedScoring:
+    def test_reordered_tokens_still_match(self) -> None:
+        """Token similarity rescues reordered titles that SequenceMatcher misses."""
+        ref = TitleMatchInfo(title="Man Iron")
+        score = score_title_match(_sr("Iron Man"), ref)
+        # Token overlap is 1.0, SequenceMatcher would be lower
+        assert score >= 1.0
+
+    def test_token_scoring_picks_max(self) -> None:
+        """Score should be max(sequence, token), not average."""
+        ref = TitleMatchInfo(title="the iron man")
+        score = score_title_match(_sr("iron man the"), ref)
+        # Token: 3/3 = 1.0; Sequence: < 1.0 → result should be 1.0
+        assert score == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# score_title_match — umlaut handling
+# ---------------------------------------------------------------------------
+
+
+class TestUmlautScoring:
+    def test_umlaut_vs_ascii_matches(self) -> None:
+        """'Über' in reference matches 'ueber' in result."""
+        ref = TitleMatchInfo(title="Über den Wolken")
+        score = score_title_match(_sr("Ueber den Wolken"), ref)
+        assert score == pytest.approx(1.0)
+
+    def test_both_umlauts_match(self) -> None:
+        """Both sides with umlauts should normalize the same way."""
+        ref = TitleMatchInfo(title="Schöne Grüße")
+        score = score_title_match(_sr("Schöne Grüße"), ref)
+        assert score == pytest.approx(1.0)
+
+    def test_eszett_matches_ss(self) -> None:
+        ref = TitleMatchInfo(title="Die Straße")
+        score = score_title_match(_sr("Die Strasse"), ref)
+        assert score == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# score_title_match — series year tolerance
+# ---------------------------------------------------------------------------
+
+
+class TestSeriesYearTolerance:
+    def test_series_3_year_difference_accepted(self) -> None:
+        """Series with ±3 year tolerance: 2020 vs 2023 should get bonus."""
+        ref = TitleMatchInfo(title="Breaking Bad", year=2008, content_type="series")
+        score = score_title_match(_sr("Breaking Bad 2011"), ref)
+        # Within ±3 tolerance → year bonus
+        assert score > 1.0
+
+    def test_movie_3_year_difference_penalized(self) -> None:
+        """Movie with ±1 year tolerance: 2008 vs 2011 should get penalty."""
+        ref = TitleMatchInfo(title="Iron Man", year=2008, content_type="movie")
+        score = score_title_match(_sr("Iron Man 2011"), ref)
+        # Outside ±1 tolerance → year penalty
+        assert score < 1.0
+
+    def test_series_exact_year_bonus(self) -> None:
+        ref = TitleMatchInfo(title="Breaking Bad", year=2008, content_type="series")
+        score = score_title_match(_sr("Breaking Bad 2008"), ref)
+        assert score > 1.0
+
+    def test_no_content_type_defaults_to_movie_tolerance(self) -> None:
+        """When content_type is None, use movie tolerance (±1)."""
+        ref = TitleMatchInfo(title="Iron Man", year=2008)
+        score_close = score_title_match(_sr("Iron Man 2009"), ref)
+        score_far = score_title_match(_sr("Iron Man 2011"), ref)
+        assert score_close > 1.0  # within ±1
+        assert score_far < 1.0  # outside ±1
+
+
+# ---------------------------------------------------------------------------
+# score_title_match — configurable penalties
+# ---------------------------------------------------------------------------
+
+
+class TestConfigurablePenalties:
+    def test_custom_year_bonus(self) -> None:
+        ref = TitleMatchInfo(title="Iron Man", year=2008)
+        score = score_title_match(_sr("Iron Man 2008"), ref, year_bonus=0.5)
+        # base 1.0 + bonus 0.5 = 1.5
+        assert score == pytest.approx(1.5)
+
+    def test_custom_year_penalty(self) -> None:
+        ref = TitleMatchInfo(title="Iron Man", year=2008)
+        score = score_title_match(_sr("Iron Man 2015"), ref, year_penalty=0.1)
+        # base 1.0 - penalty 0.1 = 0.9
+        assert score == pytest.approx(0.9)
+
+    def test_custom_sequel_penalty(self) -> None:
+        ref = TitleMatchInfo(title="Iron Man")
+        score_default = score_title_match(_sr("Iron Man 2"), ref)
+        score_light = score_title_match(_sr("Iron Man 2"), ref, sequel_penalty=0.1)
+        assert score_light > score_default
+
+    def test_custom_year_tolerance(self) -> None:
+        ref = TitleMatchInfo(title="Iron Man", year=2008)
+        # Default movie tolerance (1): 2011 is outside → penalty
+        score_strict = score_title_match(_sr("Iron Man 2011"), ref)
+        # Custom tolerance 5: 2011 is within → bonus
+        score_lenient = score_title_match(
+            _sr("Iron Man 2011"), ref, year_tolerance_movie=5
+        )
+        assert score_lenient > score_strict

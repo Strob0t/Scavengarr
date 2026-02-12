@@ -25,10 +25,13 @@ _YEAR_RE = re.compile(r"\b((?:19|20)\d{2})\b")
 # Excludes 4-digit years like "2008".
 _SEQUEL_RE = re.compile(r"\s+(\d{1,2})\s*$")
 
+# German umlaut → ASCII transliteration (applied after lowercasing).
+_UMLAUT_TABLE = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"})
+
 
 def _normalize(text: str) -> str:
-    """Lowercase + collapse whitespace."""
-    return " ".join(text.lower().split())
+    """Lowercase, transliterate German umlauts, collapse whitespace."""
+    return " ".join(text.lower().translate(_UMLAUT_TABLE).split())
 
 
 def _strip_year(text: str) -> str:
@@ -51,31 +54,51 @@ def _sequel_number(title: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
+def _token_similarity(a: str, b: str) -> float:
+    """Overlap coefficient between token sets of *a* and *b*.
+
+    Returns ``|A ∩ B| / min(|A|, |B|)``, which handles token
+    reordering and partial subsets better than SequenceMatcher.
+    """
+    tokens_a = set(a.split())
+    tokens_b = set(b.split())
+    if not tokens_a or not tokens_b:
+        return 0.0
+    intersection = tokens_a & tokens_b
+    return len(intersection) / min(len(tokens_a), len(tokens_b))
+
+
 def _score_single_title(
     norm_ref: str,
     norm_res: str,
     *,
     reference_year: int | None,
     result_year: int | None,
+    year_tolerance: int = 1,
+    year_bonus: float = 0.2,
+    year_penalty: float = 0.3,
+    sequel_penalty: float = 0.35,
 ) -> float:
     """Score one normalised reference title against a normalised result title."""
     if not norm_ref or not norm_res:
         return 0.0
 
-    score = SequenceMatcher(None, norm_ref, norm_res).ratio()
+    seq_score = SequenceMatcher(None, norm_ref, norm_res).ratio()
+    tok_score = _token_similarity(norm_ref, norm_res)
+    score = max(seq_score, tok_score)
 
     # --- year handling ---
     if reference_year is not None and result_year is not None:
-        if abs(reference_year - result_year) <= 1:
-            score += 0.2
+        if abs(reference_year - result_year) <= year_tolerance:
+            score += year_bonus
         else:
-            score -= 0.3
+            score -= year_penalty
 
     # --- sequel detection ---
     ref_sequel = _sequel_number(norm_ref)
     res_sequel = _sequel_number(norm_res)
     if res_sequel is not None and ref_sequel is None:
-        score -= 0.3
+        score -= sequel_penalty
 
     return score
 
@@ -138,6 +161,12 @@ def _extract_result_year(result: SearchResult) -> int | None:
 def score_title_match(
     result: SearchResult,
     reference: TitleMatchInfo,
+    *,
+    year_bonus: float = 0.2,
+    year_penalty: float = 0.3,
+    sequel_penalty: float = 0.35,
+    year_tolerance_movie: int = 1,
+    year_tolerance_series: int = 3,
 ) -> float:
     """Score how well *result* matches *reference* (0.0–~1.2).
 
@@ -147,16 +176,22 @@ def score_title_match(
     The best score across all combinations is returned.
 
     Components per title variant:
-    - Base: ``SequenceMatcher.ratio()`` on normalised titles (0.0–1.0)
-    - Year bonus: +0.2 if year matches (±1 tolerance)
-    - Year penalty: −0.3 if year present but wrong
-    - Sequel penalty: −0.3 if result has sequel number that reference lacks
+    - Base: ``max(SequenceMatcher.ratio(), token_overlap)`` (0.0–1.0)
+    - Year bonus: +*year_bonus* if year matches (tolerance depends on content type)
+    - Year penalty: −*year_penalty* if year present but wrong
+    - Sequel penalty: −*sequel_penalty* if result has sequel number that reference lacks
     """
     candidates = _extract_title_candidates(result)
     if not candidates:
         return 0.0
 
     result_year = _extract_result_year(result)
+
+    year_tolerance = (
+        year_tolerance_series
+        if reference.content_type == "series"
+        else year_tolerance_movie
+    )
 
     all_ref_titles = [reference.title] + list(reference.alt_titles)
     best = 0.0
@@ -168,6 +203,10 @@ def score_title_match(
                 norm_res,
                 reference_year=reference.year,
                 result_year=result_year,
+                year_tolerance=year_tolerance,
+                year_bonus=year_bonus,
+                year_penalty=year_penalty,
+                sequel_penalty=sequel_penalty,
             )
             if s > best:
                 best = s
@@ -179,6 +218,12 @@ def filter_by_title_match(
     results: list[SearchResult],
     reference: TitleMatchInfo | None,
     threshold: float = 0.7,
+    *,
+    year_bonus: float = 0.2,
+    year_penalty: float = 0.3,
+    sequel_penalty: float = 0.35,
+    year_tolerance_movie: int = 1,
+    year_tolerance_series: int = 3,
 ) -> list[SearchResult]:
     """Keep only results whose title score meets *threshold*.
 
@@ -192,7 +237,15 @@ def filter_by_title_match(
     dropped = 0
 
     for r in results:
-        s = score_title_match(r, reference)
+        s = score_title_match(
+            r,
+            reference,
+            year_bonus=year_bonus,
+            year_penalty=year_penalty,
+            sequel_penalty=sequel_penalty,
+            year_tolerance_movie=year_tolerance_movie,
+            year_tolerance_series=year_tolerance_series,
+        )
         if s >= threshold:
             kept.append(r)
         else:
