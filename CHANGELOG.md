@@ -121,6 +121,7 @@ SuperVideo, DoodStream, and Filemoon with packed JS unpacking and Cloudflare byp
 - Add Katfile DDL hoster resolver (XFS offline marker detection)
 - Add Rapidgator DDL hoster resolver (website scraping validation)
 - Add DDownload DDL hoster resolver (ddownload.com / ddl.to, XFS page check)
+- Add 429 rate-limit retry with back-off to SuperVideo resolver (`67babee`)
 
 ### Plugin Improvements
 Various fixes and enhancements to individual plugins.
