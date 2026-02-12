@@ -17,8 +17,6 @@ import re
 from html.parser import HTMLParser
 from urllib.parse import urljoin
 
-from playwright.async_api import Page
-
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
@@ -315,66 +313,12 @@ class ScnSrcPlugin(PlaywrightPluginBase):
 
     _domains = _DOMAINS
 
-    async def _wait_for_cloudflare(self, page: "Page") -> None:
-        """If Cloudflare challenge is detected, wait for it."""
-        try:
-            await page.wait_for_function(
-                "() => !document.title.includes('Just a moment')",
-                timeout=15_000,
-            )
-        except Exception:  # noqa: BLE001
-            pass
-
-    async def _verify_domain(self) -> None:
-        """Find and cache a working domain from the fallback list.
-
-        Tries each domain by navigating with Playwright and waiting for
-        the Cloudflare challenge to resolve.  Caches the first domain
-        that returns a real page (title != 'Just a moment...').
-        """
-        if self._domain_verified:
-            return
-
-        await self._ensure_browser()
-        ctx = await self._ensure_context()
-
-        for domain in self._domains:
-            url = f"https://{domain}/"
-            page = await ctx.new_page()
-            try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=20_000)
-                await self._wait_for_cloudflare(page)
-                title = await page.title()
-                if "just a moment" not in title.lower():
-                    self.base_url = f"https://{domain}"
-                    self._domain_verified = True
-                    self._log.info("scnsrc_domain_found", domain=domain)
-                    return
-            except Exception:  # noqa: BLE001
-                self._log.debug("scnsrc_domain_unreachable", domain=domain)
-            finally:
-                if not page.is_closed():
-                    await page.close()
-
-        # Fallback to primary even if verification failed
-        self.base_url = f"https://{self._domains[0]}"
-        self._domain_verified = True
-        self._log.warning("scnsrc_no_domain_verified", fallback=self._domains[0])
-
     async def _fetch_page(self, url: str) -> str:
         """Navigate to a URL and return page content."""
         ctx = await self._ensure_context()
-
         page = await ctx.new_page()
         try:
-            await page.goto(url, wait_until="domcontentloaded")
-            await self._wait_for_cloudflare(page)
-
-            try:
-                await page.wait_for_load_state("networkidle", timeout=10_000)
-            except Exception:  # noqa: BLE001
-                pass
-
+            await self._navigate_and_wait(page, url)
             return await page.content()
         finally:
             if not page.is_closed():

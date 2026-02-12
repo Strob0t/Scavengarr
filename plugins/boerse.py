@@ -25,7 +25,7 @@ from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
 if TYPE_CHECKING:
-    from playwright.async_api import Page
+    pass
 
 # ---------------------------------------------------------------------------
 # Configurable settings
@@ -240,16 +240,6 @@ class BoersePlugin(PlaywrightPluginBase):
 
     _logged_in: bool = False
 
-    async def _wait_for_cloudflare(self, page: Page) -> None:
-        """If Cloudflare challenge is detected, wait for it to resolve."""
-        try:
-            await page.wait_for_function(
-                "() => !document.title.includes('Just a moment')",
-                timeout=15_000,
-            )
-        except Exception:  # noqa: BLE001
-            pass  # proceed anyway — page may still be usable
-
     async def _ensure_session(self) -> None:
         """Ensure we have an authenticated Playwright session."""
         await self._ensure_context()
@@ -339,25 +329,6 @@ class BoersePlugin(PlaywrightPluginBase):
                 continue
 
         raise RuntimeError("All boerse domains failed during login")
-
-    async def _fetch_page_html(self, url: str) -> str:
-        """Navigate to a URL and return page HTML."""
-        assert self._context is not None  # noqa: S101
-
-        page = await self._context.new_page()
-        try:
-            await page.goto(url, wait_until="domcontentloaded")
-            await self._wait_for_cloudflare(page)
-
-            try:
-                await page.wait_for_load_state("networkidle", timeout=10_000)
-            except Exception:  # noqa: BLE001
-                pass
-
-            return await page.content()
-        finally:
-            if not page.is_closed():
-                await page.close()
 
     async def _submit_search_form(self, query: str, forum_id: str) -> str:
         """Submit the vBulletin search form and return results HTML."""

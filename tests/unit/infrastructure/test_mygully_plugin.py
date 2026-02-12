@@ -52,7 +52,9 @@ def _make_mock_page(
 ) -> AsyncMock:
     """Create a mock Playwright Page."""
     page = AsyncMock()
-    page.goto = AsyncMock()
+    mock_response = AsyncMock()
+    mock_response.status = 200
+    page.goto = AsyncMock(return_value=mock_response)
     page.wait_for_function = AsyncMock()
     page.wait_for_load_state = AsyncMock()
     page.evaluate = AsyncMock(return_value=body_text)

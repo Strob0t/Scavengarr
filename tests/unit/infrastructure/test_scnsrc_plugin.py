@@ -34,7 +34,9 @@ def _make_plugin() -> object:
 
 def _make_mock_page(content: str = "<html></html>") -> AsyncMock:
     page = AsyncMock()
-    page.goto = AsyncMock()
+    mock_response = AsyncMock()
+    mock_response.status = 200
+    page.goto = AsyncMock(return_value=mock_response)
     page.wait_for_function = AsyncMock()
     page.wait_for_load_state = AsyncMock()
     page.content = AsyncMock(return_value=content)
@@ -575,13 +577,14 @@ class TestVerifyDomain:
     async def test_fallback_to_second_domain(self) -> None:
         plugin = _make_plugin()
 
-        # First page: still on Cloudflare challenge
-        cf_page = _make_mock_page()
-        cf_page.title = AsyncMock(return_value="Just a moment...")
-        # Second page: passes challenge
-        ok_page = _make_mock_page()
-        ok_page.title = AsyncMock(return_value="SceneSource - Your source for Games")
-        context = _make_mock_context(pages=[cf_page, ok_page])
+        # Base class _verify_domain uses a single persistent page.
+        # First domain: goto succeeds but CF wait times out.
+        # Second domain: goto succeeds and CF wait passes.
+        page = _make_mock_page()
+        page.wait_for_function = AsyncMock(
+            side_effect=[TimeoutError("CF timeout"), None],
+        )
+        context = _make_mock_context(pages=[page])
 
         plugin._browser = _make_mock_browser(context)
         plugin._context = context
@@ -594,13 +597,10 @@ class TestVerifyDomain:
     async def test_all_domains_fail_uses_primary(self) -> None:
         plugin = _make_plugin()
 
-        # All pages return Cloudflare challenge
-        pages = []
-        for _ in _DOMAINS:
-            p = _make_mock_page()
-            p.title = AsyncMock(return_value="Just a moment...")
-            pages.append(p)
-        context = _make_mock_context(pages=pages)
+        # Single page, CF wait always times out for all domains.
+        page = _make_mock_page()
+        page.wait_for_function = AsyncMock(side_effect=TimeoutError("CF timeout"))
+        context = _make_mock_context(pages=[page])
 
         plugin._browser = _make_mock_browser(context)
         plugin._context = context
@@ -613,13 +613,14 @@ class TestVerifyDomain:
     async def test_domain_error_skips_to_next(self) -> None:
         plugin = _make_plugin()
 
-        # First page: navigation error
-        err_page = _make_mock_page()
-        err_page.goto = AsyncMock(side_effect=Exception("net::ERR_NAME_NOT_RESOLVED"))
-        # Second page: success
-        ok_page = _make_mock_page()
-        ok_page.title = AsyncMock(return_value="SceneSource")
-        context = _make_mock_context(pages=[err_page, ok_page])
+        # Single page: first goto raises, second goto succeeds.
+        page = _make_mock_page()
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        page.goto = AsyncMock(
+            side_effect=[Exception("net::ERR_NAME_NOT_RESOLVED"), mock_resp],
+        )
+        context = _make_mock_context(pages=[page])
 
         plugin._browser = _make_mock_browser(context)
         plugin._context = context

@@ -16,7 +16,6 @@ from html.parser import HTMLParser
 from urllib.parse import quote_plus, urljoin
 
 import httpx
-from playwright.async_api import Page
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
@@ -246,16 +245,6 @@ class DDLSpotPlugin(PlaywrightPluginBase):
 
     _domains = _DOMAINS
 
-    async def _wait_for_cloudflare(self, page: Page) -> None:
-        """If Cloudflare challenge is detected, wait for it to resolve."""
-        try:
-            await page.wait_for_function(
-                "() => !document.title.includes('Just a moment')",
-                timeout=15_000,
-            )
-        except Exception:  # noqa: BLE001
-            pass  # proceed anyway — page may still be usable
-
     async def _fetch_detail_links(self, urls: list[str]) -> dict[str, list[str]]:
         """Fetch detail pages in parallel, return {detail_url: [download_urls]}."""
         result: dict[str, list[str]] = {}
@@ -292,14 +281,7 @@ class DDLSpotPlugin(PlaywrightPluginBase):
         ctx = await self._ensure_context()
         page = await ctx.new_page()
         try:
-            await page.goto(url, wait_until="domcontentloaded")
-            await self._wait_for_cloudflare(page)
-
-            try:
-                await page.wait_for_load_state("networkidle", timeout=10_000)
-            except Exception:  # noqa: BLE001
-                pass
-
+            await self._navigate_and_wait(page, url)
             return await page.content()
         finally:
             if not page.is_closed():

@@ -253,6 +253,7 @@ class TestFetchPageHtml:
         mock_resp.status = 200
 
         mock_page = AsyncMock()
+        mock_page.is_closed = MagicMock(return_value=False)
         mock_page.goto = AsyncMock(return_value=mock_resp)
         mock_page.content = AsyncMock(return_value="<html>ok</html>")
         mock_page.close = AsyncMock()
@@ -273,6 +274,7 @@ class TestFetchPageHtml:
         mock_resp.status = 500
 
         mock_page = AsyncMock()
+        mock_page.is_closed = MagicMock(return_value=False)
         mock_page.goto = AsyncMock(return_value=mock_resp)
         mock_page.close = AsyncMock()
 
@@ -289,6 +291,7 @@ class TestFetchPageHtml:
     async def test_returns_empty_on_exception(self) -> None:
         plugin = _TestPlugin()
         mock_page = AsyncMock()
+        mock_page.is_closed = MagicMock(return_value=False)
         mock_page.goto = AsyncMock(side_effect=Exception("network error"))
         mock_page.close = AsyncMock()
 
@@ -300,6 +303,226 @@ class TestFetchPageHtml:
 
         assert html == ""
         mock_page.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_waits_for_cloudflare(self) -> None:
+        """_fetch_page_html calls _wait_for_cloudflare on success."""
+        plugin = _TestPlugin()
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+
+        mock_page = AsyncMock()
+        mock_page.is_closed = MagicMock(return_value=False)
+        mock_page.goto = AsyncMock(return_value=mock_resp)
+        mock_page.content = AsyncMock(return_value="<html>cf-ok</html>")
+
+        mock_context = AsyncMock()
+        mock_context.new_page = AsyncMock(return_value=mock_page)
+        plugin._context = mock_context
+
+        html = await plugin._fetch_page_html("https://example.com/page")
+
+        assert html == "<html>cf-ok</html>"
+        # CF wait calls wait_for_function
+        mock_page.wait_for_function.assert_awaited_once()
+        # networkidle wait
+        mock_page.wait_for_load_state.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_skips_cf_on_error_status(self) -> None:
+        """_fetch_page_html does NOT wait for CF when status >= 400."""
+        plugin = _TestPlugin()
+        mock_resp = MagicMock()
+        mock_resp.status = 403
+
+        mock_page = AsyncMock()
+        mock_page.is_closed = MagicMock(return_value=False)
+        mock_page.goto = AsyncMock(return_value=mock_resp)
+
+        mock_context = AsyncMock()
+        mock_context.new_page = AsyncMock(return_value=mock_page)
+        plugin._context = mock_context
+
+        html = await plugin._fetch_page_html("https://example.com/page")
+
+        assert html == ""
+        mock_page.wait_for_function.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# _wait_for_cloudflare
+# ---------------------------------------------------------------------------
+
+
+class TestWaitForCloudflare:
+    @pytest.mark.asyncio
+    async def test_returns_true_when_cf_resolves(self) -> None:
+        plugin = _TestPlugin()
+        mock_page = AsyncMock()
+        mock_page.wait_for_function = AsyncMock()  # resolves immediately
+
+        result = await plugin._wait_for_cloudflare(mock_page)
+
+        assert result is True
+        mock_page.wait_for_function.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_returns_false_on_timeout(self) -> None:
+        plugin = _TestPlugin()
+        mock_page = AsyncMock()
+        mock_page.wait_for_function = AsyncMock(
+            side_effect=Exception("Timeout 15000ms exceeded"),
+        )
+
+        result = await plugin._wait_for_cloudflare(mock_page)
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_uses_configurable_timeout(self) -> None:
+        plugin = _TestPlugin()
+        plugin._cf_timeout_ms = 5_000
+        mock_page = AsyncMock()
+        mock_page.wait_for_function = AsyncMock()
+
+        await plugin._wait_for_cloudflare(mock_page)
+
+        call_kwargs = mock_page.wait_for_function.call_args
+        assert call_kwargs[1]["timeout"] == 5_000
+
+    @pytest.mark.asyncio
+    async def test_checks_just_a_moment_title(self) -> None:
+        plugin = _TestPlugin()
+        mock_page = AsyncMock()
+        mock_page.wait_for_function = AsyncMock()
+
+        await plugin._wait_for_cloudflare(mock_page)
+
+        js_code = mock_page.wait_for_function.call_args[0][0]
+        assert "Just a moment" in js_code
+
+
+# ---------------------------------------------------------------------------
+# _navigate_and_wait
+# ---------------------------------------------------------------------------
+
+
+class TestNavigateAndWait:
+    @pytest.mark.asyncio
+    async def test_success_with_cf_and_idle(self) -> None:
+        plugin = _TestPlugin()
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+
+        mock_page = AsyncMock()
+        mock_page.goto = AsyncMock(return_value=mock_resp)
+
+        result = await plugin._navigate_and_wait(mock_page, "https://example.com")
+
+        assert result is True
+        mock_page.goto.assert_awaited_once()
+        mock_page.wait_for_function.assert_awaited_once()  # CF wait
+        mock_page.wait_for_load_state.assert_awaited_once()  # networkidle
+
+    @pytest.mark.asyncio
+    async def test_returns_false_on_error_status(self) -> None:
+        plugin = _TestPlugin()
+        mock_resp = MagicMock()
+        mock_resp.status = 503
+
+        mock_page = AsyncMock()
+        mock_page.goto = AsyncMock(return_value=mock_resp)
+
+        result = await plugin._navigate_and_wait(mock_page, "https://example.com")
+
+        assert result is False
+        mock_page.wait_for_function.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_skip_cf_wait(self) -> None:
+        plugin = _TestPlugin()
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+
+        mock_page = AsyncMock()
+        mock_page.goto = AsyncMock(return_value=mock_resp)
+
+        result = await plugin._navigate_and_wait(
+            mock_page, "https://example.com", wait_for_cf=False
+        )
+
+        assert result is True
+        mock_page.wait_for_function.assert_not_awaited()
+        mock_page.wait_for_load_state.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_skip_idle_wait(self) -> None:
+        plugin = _TestPlugin()
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+
+        mock_page = AsyncMock()
+        mock_page.goto = AsyncMock(return_value=mock_resp)
+
+        result = await plugin._navigate_and_wait(
+            mock_page, "https://example.com", wait_for_idle=False
+        )
+
+        assert result is True
+        mock_page.wait_for_function.assert_awaited_once()
+        mock_page.wait_for_load_state.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_networkidle_timeout_ignored(self) -> None:
+        """networkidle timeout should not cause failure."""
+        plugin = _TestPlugin()
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+
+        mock_page = AsyncMock()
+        mock_page.goto = AsyncMock(return_value=mock_resp)
+        mock_page.wait_for_load_state = AsyncMock(
+            side_effect=Exception("Timeout"),
+        )
+
+        result = await plugin._navigate_and_wait(mock_page, "https://example.com")
+
+        assert result is True  # networkidle failure is non-fatal
+
+    @pytest.mark.asyncio
+    async def test_goto_exception_propagates(self) -> None:
+        plugin = _TestPlugin()
+        mock_page = AsyncMock()
+        mock_page.goto = AsyncMock(side_effect=Exception("Navigation failed"))
+
+        with pytest.raises(Exception, match="Navigation failed"):
+            await plugin._navigate_and_wait(mock_page, "https://example.com")
+
+    @pytest.mark.asyncio
+    async def test_uses_configurable_networkidle_timeout(self) -> None:
+        plugin = _TestPlugin()
+        plugin._networkidle_timeout_ms = 5_000
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+
+        mock_page = AsyncMock()
+        mock_page.goto = AsyncMock(return_value=mock_resp)
+
+        await plugin._navigate_and_wait(mock_page, "https://example.com")
+
+        call_kwargs = mock_page.wait_for_load_state.call_args
+        assert call_kwargs[1]["timeout"] == 5_000
+
+    @pytest.mark.asyncio
+    async def test_none_response_proceeds(self) -> None:
+        """page.goto can return None for some navigation types."""
+        plugin = _TestPlugin()
+        mock_page = AsyncMock()
+        mock_page.goto = AsyncMock(return_value=None)
+
+        result = await plugin._navigate_and_wait(mock_page, "about:blank")
+
+        assert result is True  # None response is acceptable
 
 
 # ---------------------------------------------------------------------------

@@ -55,6 +55,10 @@ class PlaywrightPluginBase:
     _user_agent: str = DEFAULT_USER_AGENT
     _headless: bool = True
 
+    # --- Cloudflare / navigation timeouts ---
+    _cf_timeout_ms: int = 15_000
+    _networkidle_timeout_ms: int = 10_000
+
     def __init__(self) -> None:
         self._pw: Playwright | None = None
         self._browser: Browser | None = None
@@ -101,11 +105,76 @@ class PlaywrightPluginBase:
         return await ctx.new_page()
 
     # ------------------------------------------------------------------
+    # Cloudflare handling
+    # ------------------------------------------------------------------
+
+    async def _wait_for_cloudflare(self, page: Page) -> bool:
+        """Wait for a Cloudflare challenge to resolve on *page*.
+
+        Checks whether the page title still contains the CF challenge
+        marker (``'Just a moment'``).  Returns ``True`` if the page
+        appears usable, ``False`` if the wait timed out.
+        """
+        try:
+            await page.wait_for_function(
+                "() => !document.title.includes('Just a moment')",
+                timeout=self._cf_timeout_ms,
+            )
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
+    async def _navigate_and_wait(
+        self,
+        page: Page,
+        url: str,
+        *,
+        wait_for_cf: bool = True,
+        wait_for_idle: bool = True,
+    ) -> bool:
+        """Navigate to *url*, optionally wait for CF and ``networkidle``.
+
+        Combines the three steps that almost every Playwright plugin
+        repeats: ``goto`` → Cloudflare wait → ``networkidle``.
+
+        Returns ``True`` when the page loaded with status < 400,
+        ``False`` otherwise.  Goto exceptions propagate to the caller.
+        """
+        resp = await page.goto(url, wait_until="domcontentloaded")
+        if resp and resp.status >= 400:
+            self._log.warning(
+                f"{self.name}_navigate_error",
+                url=url,
+                status=resp.status,
+            )
+            return False
+
+        if wait_for_cf:
+            await self._wait_for_cloudflare(page)
+
+        if wait_for_idle:
+            try:
+                await page.wait_for_load_state(
+                    "networkidle",
+                    timeout=self._networkidle_timeout_ms,
+                )
+            except Exception:  # noqa: BLE001
+                pass  # networkidle is best-effort
+
+        return True
+
+    # ------------------------------------------------------------------
     # Domain verification
     # ------------------------------------------------------------------
 
     async def _verify_domain(self) -> None:
-        """Find a working domain by navigating in the browser."""
+        """Find a working domain by navigating in the browser.
+
+        After a successful HTTP response (status < 400) the method also
+        waits for a potential Cloudflare challenge to resolve.  If the
+        CF wait times out the domain is considered unreachable and the
+        next candidate is tried.
+        """
         if self._domain_verified or len(self._domains) <= 1:
             self._domain_verified = True
             return
@@ -120,10 +189,12 @@ class PlaywrightPluginBase:
                     wait_until="domcontentloaded",
                 )
                 if resp and resp.status < 400:
-                    self.base_url = f"https://{domain}"
-                    self._domain_verified = True
-                    self._log.info(f"{self.name}_domain_found", domain=domain)
-                    return
+                    cf_ok = await self._wait_for_cloudflare(page)
+                    if cf_ok:
+                        self.base_url = f"https://{domain}"
+                        self._domain_verified = True
+                        self._log.info(f"{self.name}_domain_found", domain=domain)
+                        return
             except Exception:  # noqa: BLE001
                 continue
 
@@ -147,19 +218,28 @@ class PlaywrightPluginBase:
     ) -> str:
         """Navigate to *url* and return the page HTML.
 
-        Returns an empty string on failure.
+        Waits for a potential Cloudflare challenge and ``networkidle``
+        before reading the DOM.  Returns an empty string on failure.
         """
         page = await self._new_page()
         try:
             resp = await page.goto(url, wait_until=wait_until, timeout=timeout)
-            if resp and resp.status < 400:
-                return await page.content()
-            self._log.warning(
-                f"{self.name}_page_error",
-                url=url,
-                status=resp.status if resp else None,
-            )
-            return ""
+            if resp and resp.status >= 400:
+                self._log.warning(
+                    f"{self.name}_page_error",
+                    url=url,
+                    status=resp.status,
+                )
+                return ""
+            await self._wait_for_cloudflare(page)
+            try:
+                await page.wait_for_load_state(
+                    "networkidle",
+                    timeout=self._networkidle_timeout_ms,
+                )
+            except Exception:  # noqa: BLE001
+                pass  # networkidle is best-effort
+            return await page.content()
         except Exception as exc:  # noqa: BLE001
             self._log.warning(
                 f"{self.name}_page_failed",
@@ -168,7 +248,8 @@ class PlaywrightPluginBase:
             )
             return ""
         finally:
-            await page.close()
+            if not page.is_closed():
+                await page.close()
 
     def _new_semaphore(self) -> asyncio.Semaphore:
         """Create a bounded semaphore for concurrent scraping."""

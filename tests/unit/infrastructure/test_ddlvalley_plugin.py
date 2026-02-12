@@ -35,7 +35,9 @@ def _make_plugin() -> object:
 
 def _make_mock_page(content: str = "<html></html>") -> AsyncMock:
     page = AsyncMock()
-    page.goto = AsyncMock()
+    mock_response = AsyncMock()
+    mock_response.status = 200
+    page.goto = AsyncMock(return_value=mock_response)
     page.wait_for_function = AsyncMock()
     page.wait_for_load_state = AsyncMock()
     page.content = AsyncMock(return_value=content)

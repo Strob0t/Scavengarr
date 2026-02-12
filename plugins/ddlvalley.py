@@ -17,8 +17,6 @@ import re
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
 
-from playwright.async_api import Page
-
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
@@ -210,16 +208,6 @@ class DDLValleyPlugin(PlaywrightPluginBase):
 
     _domains = _DOMAINS
 
-    async def _wait_for_cloudflare(self, page: Page) -> None:
-        """If Cloudflare challenge is detected, wait for it to resolve."""
-        try:
-            await page.wait_for_function(
-                "() => !document.title.includes('Just a moment')",
-                timeout=15_000,
-            )
-        except Exception:  # noqa: BLE001
-            pass  # proceed anyway — page may still be usable
-
     async def _search_posts(
         self,
         query: str,
@@ -243,13 +231,7 @@ class DDLValleyPlugin(PlaywrightPluginBase):
         ctx = await self._ensure_context()
         page = await ctx.new_page()
         try:
-            await page.goto(url, wait_until="domcontentloaded")
-            await self._wait_for_cloudflare(page)
-
-            try:
-                await page.wait_for_load_state("networkidle", timeout=10_000)
-            except Exception:  # noqa: BLE001
-                pass
+            await self._navigate_and_wait(page, url)
 
             html = await page.content()
             parser = _SearchResultParser(self.base_url)
@@ -272,8 +254,7 @@ class DDLValleyPlugin(PlaywrightPluginBase):
         ctx = await self._ensure_context()
         page = await ctx.new_page()
         try:
-            await page.goto(post["url"], wait_until="domcontentloaded")
-            await self._wait_for_cloudflare(page)
+            await self._navigate_and_wait(page, post["url"], wait_for_idle=False)
 
             html = await page.content()
         except Exception:  # noqa: BLE001
