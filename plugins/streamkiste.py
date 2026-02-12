@@ -143,9 +143,9 @@ class _SearchResultParser(HTMLParser):
     Each result is a card with structure like::
 
         <div class="movie-preview res_item">
-          <div class="movie-title">
+          <span class="movie-title">   (or <div class="movie-title">)
             <a href="/film/12345-title.html" title="Title">Title</a>
-          </div>
+          </span>
           <div class="movie-release">2025 - Action Komödie kinofilme</div>
           <div class="ico-bar">
             <span class="icon-hd"></span>
@@ -162,6 +162,7 @@ class _SearchResultParser(HTMLParser):
         self._card_div_depth = 0
 
         self._in_movie_title_div = False
+        self._movie_title_tag = ""
         self._movie_title_div_depth = 0
         self._in_title_a = False
         self._current_title = ""
@@ -182,6 +183,7 @@ class _SearchResultParser(HTMLParser):
         self._year = ""
         self._genres = []
         self._in_movie_title_div = False
+        self._movie_title_tag = ""
         self._movie_title_div_depth = 0
 
     def _emit_card(self) -> None:
@@ -220,6 +222,7 @@ class _SearchResultParser(HTMLParser):
                 self._card_div_depth += 1
                 if "movie-title" in classes:
                     self._in_movie_title_div = True
+                    self._movie_title_tag = "div"
                     self._movie_title_div_depth = 0
                 elif self._in_movie_title_div:
                     self._movie_title_div_depth += 1
@@ -244,6 +247,10 @@ class _SearchResultParser(HTMLParser):
             self._current_title = title_attr or ""
 
         if tag == "span":
+            if self._in_card and "movie-title" in classes:
+                self._in_movie_title_div = True
+                self._movie_title_tag = "span"
+                self._movie_title_div_depth = 0
             for cls in classes:
                 if cls.startswith("icon-"):
                     badge = cls.replace("icon-", "").upper()
@@ -262,11 +269,18 @@ class _SearchResultParser(HTMLParser):
             self._in_title_a = False
             self._current_title = self._current_title.strip()
 
+        if (
+            tag == "span"
+            and self._in_movie_title_div
+            and self._movie_title_tag == "span"
+        ):
+            self._in_movie_title_div = False
+
         if tag == "div":
             if self._in_release_div:
                 self._in_release_div = False
 
-            if self._in_movie_title_div:
+            if self._in_movie_title_div and self._movie_title_tag == "div":
                 if self._movie_title_div_depth > 0:
                     self._movie_title_div_depth -= 1
                 else:
