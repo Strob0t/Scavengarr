@@ -75,9 +75,18 @@ def _genre_to_torznab(genre: str) -> int:
     return _GENRE_CATEGORY_MAP.get(key, 5000)
 
 
+def _is_tv_category(cat: int) -> bool:
+    """Check if a Torznab category is in the TV range (5000-5999)."""
+    return 5000 <= cat <= 5999
+
+
 def _determine_category(genres: list[str], category: int | None) -> int:
-    """Determine Torznab category from genres, with caller override."""
-    if category is not None:
+    """Determine Torznab category from genres, with caller override.
+
+    Only honours *category* when it falls within the TV range (5000-5999).
+    s.to is a TV-only site, so non-TV categories are ignored.
+    """
+    if category is not None and _is_tv_category(category):
         return category
     for genre in genres:
         mapped = _genre_to_torznab(genre)
@@ -728,6 +737,45 @@ class StoPlugin:
 
         return [{"title": ep_title, "url": ep_url, "links": links}]
 
+    async def _process_series(
+        self,
+        series_info: dict[str, str],
+        detail: _SeriesDetailParser,
+        category: int | None,
+        season: int | None,
+        episode: int | None,
+    ) -> list[SearchResult]:
+        """Process a single series into SearchResults."""
+        if not detail.seasons:
+            return []
+
+        slug = series_info.get("slug", "")
+        if not slug:
+            return []
+
+        resolved = await self._resolve_season_detail(slug, detail, season)
+        if resolved is None:
+            return []
+        target_season, season_detail = resolved
+
+        torznab_cat = _determine_category(detail.genres, category)
+
+        if episode is not None:
+            episodes = await self._scrape_single_episode(
+                slug, target_season, episode, season_detail
+            )
+        else:
+            episodes = await self._scrape_season_episodes(
+                slug, target_season, season_detail
+            )
+
+        results: list[SearchResult] = []
+        for ep in episodes:
+            result = self._build_episode_result(ep, detail, target_season, torznab_cat)
+            if result:
+                results.append(result)
+        return results
+
     async def search(
         self,
         query: str,
@@ -747,6 +795,11 @@ class StoPlugin:
         await self._ensure_client()
         await self._verify_domain()
 
+        # s.to is TV-only — reject non-TV category requests early.
+        if category is not None and not _is_tv_category(category):
+            log.info("sto_non_tv_category_rejected", category=category)
+            return []
+
         all_series = await self._paginate_search(query)
         if not all_series:
             return []
@@ -755,38 +808,10 @@ class StoPlugin:
 
         search_results: list[SearchResult] = []
         for series_info, detail in detail_results:
-            if not detail.seasons:
-                continue
-
-            slug = series_info.get("slug", "")
-            if not slug:
-                continue
-
-            resolved = await self._resolve_season_detail(slug, detail, season)
-            if resolved is None:
-                continue
-            target_season, season_detail = resolved
-
-            torznab_cat = _determine_category(detail.genres, category)
-
-            if episode is not None:
-                # Fast path: fetch only the requested episode directly
-                episodes = await self._scrape_single_episode(
-                    slug, target_season, episode, season_detail
-                )
-            else:
-                # Full season scrape
-                episodes = await self._scrape_season_episodes(
-                    slug, target_season, season_detail
-                )
-
-            for ep in episodes:
-                result = self._build_episode_result(
-                    ep, detail, target_season, torznab_cat
-                )
-                if result:
-                    search_results.append(result)
-
+            results = await self._process_series(
+                series_info, detail, category, season, episode
+            )
+            search_results.extend(results)
             if len(search_results) >= _MAX_RESULTS:
                 break
 

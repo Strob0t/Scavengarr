@@ -31,6 +31,8 @@ _EpisodeHosterParser = _mod._EpisodeHosterParser
 _DOMAINS = _mod._DOMAINS
 _GENRE_CATEGORY_MAP = _mod._GENRE_CATEGORY_MAP
 _genre_to_torznab = _mod._genre_to_torznab
+_is_tv_category = _mod._is_tv_category
+_determine_category = _mod._determine_category
 
 
 def _make_plugin() -> object:
@@ -429,6 +431,54 @@ class TestCategoryMapping:
 
 
 # ---------------------------------------------------------------------------
+# _is_tv_category & _determine_category
+# ---------------------------------------------------------------------------
+
+
+class TestIsTvCategory:
+    def test_tv_base_category(self) -> None:
+        assert _is_tv_category(5000) is True
+
+    def test_tv_sub_categories(self) -> None:
+        assert _is_tv_category(5030) is True
+        assert _is_tv_category(5040) is True
+        assert _is_tv_category(5070) is True
+        assert _is_tv_category(5080) is True
+        assert _is_tv_category(5999) is True
+
+    def test_movie_category_rejected(self) -> None:
+        assert _is_tv_category(2000) is False
+        assert _is_tv_category(2030) is False
+        assert _is_tv_category(2040) is False
+
+    def test_other_categories_rejected(self) -> None:
+        assert _is_tv_category(3000) is False  # Music
+        assert _is_tv_category(1000) is False  # Console
+        assert _is_tv_category(7000) is False  # Books
+
+
+class TestDetermineCategory:
+    def test_tv_category_passed_through(self) -> None:
+        assert _determine_category(["Drama"], category=5070) == 5070
+
+    def test_movie_category_ignored(self) -> None:
+        """Non-TV caller category is ignored; genre mapping used instead."""
+        result = _determine_category(["Drama"], category=2000)
+        assert result == 5030  # Drama → 5030
+
+    def test_movie_category_no_genre_defaults_5000(self) -> None:
+        """Non-TV category with unknown genres defaults to 5000."""
+        result = _determine_category(["Krimi"], category=2000)
+        assert result == 5000
+
+    def test_no_category_uses_genres(self) -> None:
+        assert _determine_category(["Horror", "Drama"], category=None) == 5040
+
+    def test_no_category_no_mapped_genre_defaults(self) -> None:
+        assert _determine_category(["Romantik"], category=None) == 5000
+
+
+# ---------------------------------------------------------------------------
 # Hoster URL resolution
 # ---------------------------------------------------------------------------
 
@@ -574,6 +624,22 @@ class TestSearch:
         assert len(results) > 0
         for r in results:
             assert r.category == 5070
+
+    @pytest.mark.asyncio
+    async def test_search_rejects_movie_category(self) -> None:
+        """s.to is TV-only: movie category (2000) should return empty."""
+        plugin = _make_plugin()
+        plugin._domain_verified = True
+        plugin.base_url = "https://s.to"
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        plugin._client = mock_client
+
+        results = await plugin.search("batman", category=2000)
+
+        assert results == []
+        # Should never even perform a search request
+        mock_client.get.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_search_network_failure(self) -> None:
