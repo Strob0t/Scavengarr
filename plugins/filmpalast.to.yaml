@@ -1,8 +1,9 @@
 # plugins/filmpalast.to.yaml
 name: "filmpalast"
-version: "1.0.0"
+version: "1.1.0"
 base_url: "https://filmpalast.to"
-provides: "download"
+provides: "stream"
+default_language: "de"
 
 scraping:
   mode: "scrapy"
@@ -15,15 +16,16 @@ scraping:
       type: "list"
       url_pattern: "/search/title/{query}"
       selectors:
-        link: "a[href*='/stream/']"
-        title: "h2.bgDark"
+        rows: "article"
+        title: "h2 a"
+        link: "h2 a"
       field_attributes:
         link: ["href"]
       next_stage: "movie_detail"
 
     - name: "movie_detail"
       type: "detail"
-      url_pattern: "/stream/{movie_id}"
+      url: "/"
       selectors:
         title: "h2.bgDark"
         release_name: "span#release_text"
