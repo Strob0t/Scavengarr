@@ -6,7 +6,7 @@
             "name": "Scavengarr (CLI entrypoint, Port 7979)",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/src/scavengarr/interfaces/cli/cli.py",
+            "module": "scavengarr.interfaces.cli",
             "args": [
                 "--host",
                 "0.0.0.0",
