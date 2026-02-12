@@ -16,7 +16,6 @@ from unittest.mock import AsyncMock, MagicMock
 from xml.etree import ElementTree as ET
 
 import httpx
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -172,7 +171,9 @@ class TestIndexersEndpoint:
         plugins.list_names.return_value = ["filmpalast", "boerse"]
         plugin_fp = _FakeYamlPlugin(name="filmpalast")
         plugin_bo = _FakePythonPlugin(name="boerse")
-        plugins.get.side_effect = lambda n: plugin_fp if n == "filmpalast" else plugin_bo
+        plugins.get.side_effect = lambda n: (
+            plugin_fp if n == "filmpalast" else plugin_bo
+        )
 
         app = _make_app(plugins=plugins)
         client = TestClient(app)
