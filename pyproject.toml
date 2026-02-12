@@ -49,6 +49,7 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
     "integration: Integration tests (real infrastructure, mocked HTTP)",
+    "live: Live smoke tests against real websites (require network)",
 ]
 
 [tool.ruff]

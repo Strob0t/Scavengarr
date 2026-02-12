@@ -28,9 +28,7 @@ class TestSingleValidation:
     """Single URL validation with HEAD/GET fallback."""
 
     @respx.mock
-    async def test_head_200_is_valid(
-        self, validator: HttpLinkValidator
-    ) -> None:
+    async def test_head_200_is_valid(self, validator: HttpLinkValidator) -> None:
         url = "https://hoster.example.com/file.mp4"
         respx.head(url).respond(200)
 
@@ -80,9 +78,7 @@ class TestSingleValidation:
         assert await validator.validate(url) is True
 
     @respx.mock
-    async def test_both_timeout_is_invalid(
-        self, validator: HttpLinkValidator
-    ) -> None:
+    async def test_both_timeout_is_invalid(self, validator: HttpLinkValidator) -> None:
         url = "https://dead-hoster.example.com/file.mp4"
         respx.head(url).mock(side_effect=httpx.ReadTimeout("timeout"))
         respx.get(url).mock(side_effect=httpx.ReadTimeout("timeout"))
@@ -94,9 +90,7 @@ class TestBatchValidation:
     """Batch validation with multiple URLs in parallel."""
 
     @respx.mock
-    async def test_batch_mixed_results(
-        self, validator: HttpLinkValidator
-    ) -> None:
+    async def test_batch_mixed_results(self, validator: HttpLinkValidator) -> None:
         valid_url = "https://hoster.example.com/good.mp4"
         dead_url = "https://hoster.example.com/dead.mp4"
         fallback_url = "https://veev.to/embed/xyz"
@@ -107,25 +101,19 @@ class TestBatchValidation:
         respx.head(fallback_url).respond(403)
         respx.get(fallback_url).respond(200)
 
-        result = await validator.validate_batch(
-            [valid_url, dead_url, fallback_url]
-        )
+        result = await validator.validate_batch([valid_url, dead_url, fallback_url])
 
         assert result[valid_url] is True
         assert result[dead_url] is False
         assert result[fallback_url] is True
 
     @respx.mock
-    async def test_batch_empty_list(
-        self, validator: HttpLinkValidator
-    ) -> None:
+    async def test_batch_empty_list(self, validator: HttpLinkValidator) -> None:
         result = await validator.validate_batch([])
         assert result == {}
 
     @respx.mock
-    async def test_batch_all_valid(
-        self, validator: HttpLinkValidator
-    ) -> None:
+    async def test_batch_all_valid(self, validator: HttpLinkValidator) -> None:
         urls = [f"https://hoster.example.com/file{i}.mp4" for i in range(5)]
         for url in urls:
             respx.head(url).respond(200)

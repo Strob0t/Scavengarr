@@ -6,7 +6,6 @@ variables, and CLI overrides to verify precedence: defaults < YAML < ENV < CLI.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -69,9 +68,7 @@ class TestYamlOverrides:
         with pytest.raises(FileNotFoundError):
             load_config(config_path=tmp_path / "nonexistent.yaml")
 
-    def test_yaml_partial_override_preserves_defaults(
-        self, tmp_path: Path
-    ) -> None:
+    def test_yaml_partial_override_preserves_defaults(self, tmp_path: Path) -> None:
         """YAML that only sets http.timeout_seconds keeps other defaults."""
         config_data = {"http": {"timeout_seconds": 99.0}}
         path = tmp_path / "partial.yaml"
@@ -98,9 +95,7 @@ class TestEnvOverrides:
         # YAML values not overridden by ENV stay
         assert config.app_name == "scavengarr-test"
 
-    def test_env_overrides_defaults(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_env_overrides_defaults(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("SCAVENGARR_ENVIRONMENT", "prod")
 
         config = load_config()
@@ -122,9 +117,7 @@ class TestCliOverrides:
         )
         assert config.log_level == "ERROR"
 
-    def test_cli_overrides_with_sectioned_format(
-        self, yaml_config: Path
-    ) -> None:
+    def test_cli_overrides_with_sectioned_format(self, yaml_config: Path) -> None:
         config = load_config(
             config_path=yaml_config,
             cli_overrides={"http": {"timeout_seconds": 5.0}},

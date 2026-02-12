@@ -1,0 +1,99 @@
+"""Shared fixtures for live plugin smoke tests.
+
+These tests hit real websites — network errors and Cloudflare blocks
+are handled gracefully via pytest.skip().
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import httpx
+import pytest
+
+from scavengarr.infrastructure.cache.diskcache_adapter import DiskcacheAdapter
+from scavengarr.infrastructure.plugins.registry import PluginRegistry
+from scavengarr.infrastructure.torznab.search_engine import HttpxScrapySearchEngine
+
+# ---------------------------------------------------------------------------
+# Auth env-var registry
+# ---------------------------------------------------------------------------
+
+AUTH_ENV_VARS: dict[str, tuple[str, str]] = {
+    "boerse": ("SCAVENGARR_BOERSE_USERNAME", "SCAVENGARR_BOERSE_PASSWORD"),
+    "mygully": ("SCAVENGARR_MYGULLY_USERNAME", "SCAVENGARR_MYGULLY_PASSWORD"),
+    "dataload": ("SCAVENGARR_DATALOAD_USERNAME", "SCAVENGARR_DATALOAD_PASSWORD"),
+    "myboerse": ("SCAVENGARR_MYBOERSE_USERNAME", "SCAVENGARR_MYBOERSE_PASSWORD"),
+}
+
+
+def has_auth(plugin_name: str) -> bool:
+    """Check if env vars are set for an auth-required plugin."""
+    env_vars = AUTH_ENV_VARS.get(plugin_name)
+    if env_vars is None:
+        return True
+    user_var, pass_var = env_vars
+    return bool(os.environ.get(user_var)) and bool(os.environ.get(pass_var))
+
+
+# ---------------------------------------------------------------------------
+# Chromium availability check (cached)
+# ---------------------------------------------------------------------------
+
+_CHROMIUM_AVAILABLE: bool | None = None
+
+
+def chromium_available() -> bool:
+    """Check if Playwright Chromium is installed (result is cached)."""
+    global _CHROMIUM_AVAILABLE  # noqa: PLW0603
+    if _CHROMIUM_AVAILABLE is None:
+        try:
+            from playwright.sync_api import sync_playwright
+
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True)
+                browser.close()
+            _CHROMIUM_AVAILABLE = True
+        except Exception:
+            _CHROMIUM_AVAILABLE = False
+    return _CHROMIUM_AVAILABLE
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def plugin_registry() -> PluginRegistry:
+    """Real plugin registry pointing at the plugins/ directory."""
+    plugin_dir = Path(__file__).resolve().parents[2] / "plugins"
+    registry = PluginRegistry(plugin_dir)
+    registry.discover()
+    return registry
+
+
+@pytest.fixture()
+async def yaml_search_engine(tmp_path: Path):
+    """HttpxScrapySearchEngine for YAML plugin live tests.
+
+    Uses a temporary diskcache and disables link validation
+    (we just verify that scraping works, not that every link is alive).
+    """
+    async with httpx.AsyncClient(
+        timeout=30.0,
+        follow_redirects=True,
+        headers={"User-Agent": "Scavengarr/1.0"},
+    ) as client:
+        cache = DiskcacheAdapter(
+            directory=tmp_path / "smoke_cache",
+            ttl_seconds=3600,
+        )
+        async with cache:
+            engine = HttpxScrapySearchEngine(
+                http_client=client,
+                cache=cache,
+                validate_links=False,
+            )
+            yield engine

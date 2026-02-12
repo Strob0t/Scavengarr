@@ -6,8 +6,6 @@ Tests the full flow: SearchResult → CrawlJobFactory → CacheCrawlJobRepositor
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from scavengarr.application.factories.crawljob_factory import CrawlJobFactory
