@@ -46,6 +46,7 @@ HTTPX_PLUGINS: list[tuple[str, str]] = [
     ("fireani", "Naruto"),
     ("haschcon", "Iron Man"),
     ("hdfilme", "Iron Man"),
+    ("hdworld", "Iron Man"),
     ("kinoger", "Iron Man"),
     ("kinoking", "Iron Man"),
     ("kinox", "Iron Man"),

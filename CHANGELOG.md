@@ -7,9 +7,9 @@ Format: version, date, grouped changes. Newest entries first.
 
 ## Unreleased (staging)
 
-Massive expansion of the plugin ecosystem (2 → 39 plugins), Stremio addon integration,
+Massive expansion of the plugin ecosystem (2 → 40 plugins), Stremio addon integration,
 hoster resolver system, plugin base class standardization, search result caching, and
-growth of the test suite from 160 to 2531 tests.
+growth of the test suite from 160 to 2590 tests.
 
 ### Plugin Standardization (Refactor)
 All 29 Python plugins migrated to shared base classes (`HttpxPluginBase` /
@@ -27,10 +27,10 @@ All 29 Python plugins migrated to shared base classes (`HttpxPluginBase` /
 - Replace hardcoded year boundary with dynamic `datetime.now().year + 1` in cine plugin (`b3e40e3`)
 
 ### New Plugins (36 Python plugins added)
-Expanded from 2 plugins (filmpalast YAML + boerse Python) to 39 total plugins
-(3 YAML + 36 Python), covering German streaming, DDL, and anime sites.
+Expanded from 2 plugins (filmpalast YAML + boerse Python) to 40 total plugins
+(3 YAML + 37 Python), covering German streaming, DDL, and anime sites.
 
-**Httpx plugins (27):**
+**Httpx plugins (28):**
 - aniworld.to — anime streaming with domain fallback (`3321775`)
 - burningseries (bs.to) — series streaming (`b1e46ff`)
 - cine.to — movie streaming via JSON API (`3153df0`)
@@ -57,6 +57,7 @@ Expanded from 2 plugins (filmpalast YAML + boerse Python) to 39 total plugins
 - cineby.gd — streaming via JSON API
 - crawli.net — single-stage download search engine
 - hd-source.to — DDL with multi-page scraping
+- hd-world.cc — DDL archive via WordPress REST API, movies + TV series
 - serienjunkies.org — DDL with captcha-protected links
 
 **Playwright plugins (9):**
