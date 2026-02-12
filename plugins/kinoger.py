@@ -108,23 +108,26 @@ def _domain_from_url(url: str) -> str:
 class _SearchResultParser(HTMLParser):
     """Parse kinoger.com DLE search result page.
 
-    Each result is a card with structure like::
+    Each result is a pair of sibling divs::
 
-        <div class="shortstory-in">
-          <div class="shortstory-poster">
-            <a href="/stream/12345-title.html">
-              <img src="..." alt="Title">
+        <div class="titlecontrol">
+          <div class="title">
+            <a href="https://kinoger.com/stream/1499-matrix-1999.html">
+              Matrix (1999) Film
             </a>
-            <span class="badge">WEBRip</span>
-            <span class="badge">S01-04</span>
           </div>
-          <a class="shortstory-title" href="/stream/12345-title.html">Title</a>
-          <div class="shortstory-content">
-            <ul class="breadcrumbs">
-              <li>Stream</li>
-              <li>Animation</li>
-              <li>Action</li>
+        </div>
+        <div class="general_box">
+          <div class="headerbar">
+            <ul class="postinfo">
+              <li class="category">
+                <a href="...">Stream</a> / <a href="...">Sci-Fi</a>
+              </li>
             </ul>
+          </div>
+          <div class="content_text searchresult_img">
+            <b><div style="text-align:right;">DVDRip</div></b>
+            ...
           </div>
         </div>
     """
@@ -134,70 +137,66 @@ class _SearchResultParser(HTMLParser):
         self.results: list[dict[str, str | list[str] | bool]] = []
         self._base_url = base_url
 
-        # Card tracking
-        self._in_card = False
-        self._card_div_depth = 0
-
-        # Poster area (for badges)
-        self._in_poster = False
-        self._poster_div_depth = 0
-
-        # Title link
+        # Phase tracking: titlecontrol → general_box
+        self._in_titlecontrol = False
+        self._titlecontrol_depth = 0
+        self._in_title_div = False
+        self._title_div_depth = 0
         self._in_title_a = False
+
+        self._in_general_box = False
+        self._general_box_depth = 0
+
+        # Category <li> inside general_box
+        self._in_category_li = False
+        self._in_category_a = False
+        self._category_text = ""
+
+        # Quality from content_text
+        self._in_content_text = False
+        self._content_text_depth = 0
+        self._in_bold = False
+        self._quality_text = ""
+
+        # Accumulated card data
         self._current_title = ""
         self._current_url = ""
-
-        # Badge tracking
-        self._in_badge_span = False
-        self._badge_text = ""
-        self._badges: list[str] = []
-
-        # Breadcrumb tracking (genres)
-        self._in_breadcrumbs = False
-        self._in_breadcrumb_li = False
-        self._breadcrumb_text = ""
         self._genres: list[str] = []
-
-        # Description
-        self._in_desc = False
-        self._desc_text = ""
+        self._quality = ""
 
     def _reset_card(self) -> None:
         self._current_title = ""
         self._current_url = ""
-        self._badges = []
         self._genres = []
-        self._desc_text = ""
+        self._quality = ""
 
     def _emit_card(self) -> None:
         if not self._current_title or not self._current_url:
+            self._reset_card()
             return
-
-        quality = ""
-        series_badge = ""
-        for badge in self._badges:
-            text = badge.strip()
-            if _SERIES_BADGE_RE.search(text):
-                series_badge = text
-            elif text.upper() in (
-                "WEBRIP",
-                "BDRIP",
-                "CAMRIP",
-                "TS",
-                "HD",
-                "SD",
-                "4K",
-                "HDTV",
-            ):
-                quality = text
 
         # Filter out "Stream" from genres
         genres = [g for g in self._genres if g.lower() != "stream"]
+
+        # Classify quality text: might be a series badge (S01, S01-04) or quality
+        quality = ""
+        series_badge = ""
+        if self._quality:
+            if _SERIES_BADGE_RE.search(self._quality):
+                series_badge = self._quality
+            else:
+                quality = self._quality
+
         is_series = _detect_series(series_badge, genres)
+
+        # Also detect series from title suffix ("Serie" is stripped by _clean_title)
+        raw_title = self._current_title.strip()
+        if raw_title.endswith(" Serie") or raw_title.endswith(" serie"):
+            is_series = True
 
         self.results.append(
             {
-                "title": _clean_title(self._current_title),
+                "title": _clean_title(raw_title),
                 "url": self._current_url,
                 "genres": genres,
                 "quality": quality,
@@ -205,6 +204,7 @@ class _SearchResultParser(HTMLParser):
                 "is_series": is_series,
             }
         )
+        self._reset_card()
 
     def handle_starttag(  # noqa: C901
         self, tag: str, attrs: list[tuple[str, str | None]]
@@ -213,93 +213,110 @@ class _SearchResultParser(HTMLParser):
         classes = (attr_dict.get("class") or "").split()
         href = attr_dict.get("href", "") or ""
 
-        # Card boundary: <div class="shortstory-in">
+        # --- titlecontrol block ---
         if tag == "div":
-            if self._in_card:
-                self._card_div_depth += 1
-            elif "shortstory-in" in classes:
-                self._in_card = True
-                self._card_div_depth = 0
-                self._reset_card()
+            if self._in_titlecontrol:
+                self._titlecontrol_depth += 1
+                if "title" in classes and not self._in_title_div:
+                    self._in_title_div = True
+                    self._title_div_depth = 0
+                elif self._in_title_div:
+                    self._title_div_depth += 1
+            elif "titlecontrol" in classes:
+                self._in_titlecontrol = True
+                self._titlecontrol_depth = 0
 
-            # Poster area inside card
-            if self._in_card:
-                if self._in_poster:
-                    self._poster_div_depth += 1
-                elif "shortstory-poster" in classes:
-                    self._in_poster = True
-                    self._poster_div_depth = 0
+            # --- general_box block ---
+            if self._in_general_box:
+                self._general_box_depth += 1
+                if "content_text" in classes:
+                    self._in_content_text = True
+                    self._content_text_depth = 0
+                elif self._in_content_text:
+                    self._content_text_depth += 1
+            elif "general_box" in classes and self._current_url:
+                # Only enter general_box if we have a pending title from titlecontrol
+                self._in_general_box = True
+                self._general_box_depth = 0
 
-        if not self._in_card:
-            return
-
-        # Title link: <a class="shortstory-title" href="...">
-        if tag == "a" and "shortstory-title" in classes:
-            self._in_title_a = True
-            if href:
-                self._current_url = urljoin(self._base_url, href)
-            self._current_title = ""
-
-        # Poster link (fallback for URL if no title link found yet)
-        if tag == "a" and self._in_poster and not self._current_url:
+        # Title link inside titlecontrol
+        if tag == "a" and self._in_title_div:
             if href and "/stream/" in href:
                 self._current_url = urljoin(self._base_url, href)
+                self._in_title_a = True
+                self._current_title = ""
 
-        # Badge span
-        if tag == "span" and "badge" in classes and self._in_card:
-            self._in_badge_span = True
-            self._badge_text = ""
+        # Category <li> inside general_box
+        if tag == "li" and self._in_general_box and "category" in classes:
+            self._in_category_li = True
 
-        # Breadcrumbs: <ul class="breadcrumbs">
-        if tag == "ul" and "breadcrumbs" in classes:
-            self._in_breadcrumbs = True
+        if tag == "a" and self._in_category_li:
+            self._in_category_a = True
+            self._category_text = ""
 
-        if tag == "li" and self._in_breadcrumbs:
-            self._in_breadcrumb_li = True
-            self._breadcrumb_text = ""
+        # Bold tag for quality detection in content_text
+        if tag == "b" and self._in_content_text:
+            self._in_bold = True
+            self._quality_text = ""
 
     def handle_data(self, data: str) -> None:
         if self._in_title_a:
             self._current_title += data
 
-        if self._in_badge_span:
-            self._badge_text += data
+        if self._in_category_a:
+            self._category_text += data
 
-        if self._in_breadcrumb_li:
-            self._breadcrumb_text += data
+        if self._in_bold and self._in_content_text:
+            self._quality_text += data
 
     def handle_endtag(self, tag: str) -> None:  # noqa: C901
-        if tag == "a" and self._in_title_a:
-            self._in_title_a = False
-            self._current_title = self._current_title.strip()
+        if tag == "a":
+            if self._in_title_a:
+                self._in_title_a = False
+                self._current_title = self._current_title.strip()
+            if self._in_category_a:
+                self._in_category_a = False
+                text = self._category_text.strip()
+                if text:
+                    self._genres.append(text)
 
-        if tag == "span" and self._in_badge_span:
-            self._in_badge_span = False
-            text = self._badge_text.strip()
-            if text:
-                self._badges.append(text)
+        if tag == "li" and self._in_category_li:
+            self._in_category_li = False
 
-        if tag == "li" and self._in_breadcrumb_li:
-            self._in_breadcrumb_li = False
-            text = self._breadcrumb_text.strip()
-            if text:
-                self._genres.append(text)
-
-        if tag == "ul" and self._in_breadcrumbs:
-            self._in_breadcrumbs = False
+        if tag == "b" and self._in_bold:
+            self._in_bold = False
+            text = self._quality_text.strip()
+            if text and not self._quality:
+                self._quality = text
 
         if tag == "div":
-            if self._in_poster:
-                if self._poster_div_depth > 0:
-                    self._poster_div_depth -= 1
+            # Close title div (with depth tracking)
+            if self._in_title_div and self._in_titlecontrol:
+                if self._title_div_depth > 0:
+                    self._title_div_depth -= 1
                 else:
-                    self._in_poster = False
+                    self._in_title_div = False
 
-            if self._in_card:
-                if self._card_div_depth > 0:
-                    self._card_div_depth -= 1
+            # Close titlecontrol
+            if self._in_titlecontrol:
+                if self._titlecontrol_depth > 0:
+                    self._titlecontrol_depth -= 1
                 else:
-                    self._in_card = False
+                    self._in_titlecontrol = False
+
+            # Close content_text
+            if self._in_content_text and self._in_general_box:
+                if self._content_text_depth > 0:
+                    self._content_text_depth -= 1
+                else:
+                    self._in_content_text = False
+
+            # Close general_box → emit card
+            if self._in_general_box:
+                if self._general_box_depth > 0:
+                    self._general_box_depth -= 1
+                else:
+                    self._in_general_box = False
                     self._emit_card()
 
 

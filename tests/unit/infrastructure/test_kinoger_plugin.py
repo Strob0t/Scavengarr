@@ -45,38 +45,49 @@ def _make_plugin() -> object:
 
 _SEARCH_HTML = """\
 <html><body>
-<div class="shortstory-in">
-  <div class="shortstory-poster">
-    <a href="/stream/12345-batman-begins.html">
-      <img src="/poster.jpg" alt="Batman Begins">
-    </a>
-    <span class="badge">WEBRip</span>
+<div class="titlecontrol">
+  <div class="title">
+    <div class="right"></div>
+    <img src="/templates/kinoger/images/ico/postinfo-icon.png" alt="" class="img" />
+    <a href="https://kinoger.com/stream/12345-batman-begins.html">\
+Batman Begins (2005) Film</a>
   </div>
-  <a class="shortstory-title" href="/stream/12345-batman-begins.html">Batman Begins</a>
-  <div class="shortstory-content">
-    <ul class="breadcrumbs">
-      <li>Stream</li>
-      <li>Action</li>
-      <li>Abenteuer</li>
+</div>
+<div class="general_box">
+  <div class="headerbar">
+    <ul class="postinfo">
+      <li class="category">
+        <a href="/stream/">Stream</a> / <a href="/stream/action/">Action</a>\
+ / <a href="/stream/abenteuer/">Abenteuer</a>
+      </li>
     </ul>
+  </div>
+  <div class="content_text searchresult_img">
+    <b><div style="text-align:right;">WEBRip</div></b>
+    Ein junger Bruce Wayne reist nach Osten.
   </div>
 </div>
 
-<div class="shortstory-in">
-  <div class="shortstory-poster">
-    <a href="/stream/67890-stranger-things.html">
-      <img src="/poster2.jpg" alt="Stranger Things">
-    </a>
-    <span class="badge">S01-04</span>
+<div class="titlecontrol">
+  <div class="title">
+    <div class="right"></div>
+    <img src="/templates/kinoger/images/ico/postinfo-icon.png" alt="" class="img" />
+    <a href="https://kinoger.com/stream/67890-stranger-things.html">\
+Stranger Things Serie</a>
   </div>
-  <a class="shortstory-title" href="/stream/67890-stranger-things.html">\
-Stranger Things</a>
-  <div class="shortstory-content">
-    <ul class="breadcrumbs">
-      <li>Stream</li>
-      <li>Drama</li>
-      <li>Serie</li>
+</div>
+<div class="general_box">
+  <div class="headerbar">
+    <ul class="postinfo">
+      <li class="category">
+        <a href="/stream/">Stream</a> / <a href="/stream/drama/">Drama</a>\
+ / <a href="/stream/serie/">Serie</a>
+      </li>
     </ul>
+  </div>
+  <div class="content_text searchresult_img">
+    <b><div style="text-align:right;">S01-04</div></b>
+    Eine Kleinstadt in Indiana.
   </div>
 </div>
 </body></html>
@@ -147,20 +158,26 @@ _EMPTY_DETAIL_HTML = """\
 
 _ANIME_SEARCH_HTML = """\
 <html><body>
-<div class="shortstory-in">
-  <div class="shortstory-poster">
-    <a href="/stream/11111-one-piece.html">
-      <img src="/poster.jpg" alt="One Piece">
-    </a>
-    <span class="badge">S01-20</span>
+<div class="titlecontrol">
+  <div class="title">
+    <div class="right"></div>
+    <img src="/templates/kinoger/images/ico/postinfo-icon.png" alt="" class="img" />
+    <a href="https://kinoger.com/stream/11111-one-piece.html">\
+One Piece Serie</a>
   </div>
-  <a class="shortstory-title" href="/stream/11111-one-piece.html">One Piece</a>
-  <div class="shortstory-content">
-    <ul class="breadcrumbs">
-      <li>Stream</li>
-      <li>Anime</li>
-      <li>Action</li>
+</div>
+<div class="general_box">
+  <div class="headerbar">
+    <ul class="postinfo">
+      <li class="category">
+        <a href="/stream/">Stream</a> / <a href="/stream/anime/">Anime</a>\
+ / <a href="/stream/action/">Action</a>
+      </li>
     </ul>
+  </div>
+  <div class="content_text searchresult_img">
+    <b><div style="text-align:right;">S01-20</div></b>
+    Die Abenteuer von Monkey D. Ruffy.
   </div>
 </div>
 </body></html>
@@ -170,6 +187,37 @@ _ANIME_SEARCH_HTML = """\
 # ---------------------------------------------------------------------------
 # Helper functions
 # ---------------------------------------------------------------------------
+
+
+def _make_search_card(
+    slug: str,
+    title_text: str,
+    categories: list[str],
+    quality: str = "WEBRip",
+) -> str:
+    """Build a kinoger search result card in the current site HTML structure."""
+    cat_links = " / ".join(
+        f'<a href="/stream/{c.lower()}/">{c}</a>' for c in categories
+    )
+    return f"""\
+<div class="titlecontrol">
+  <div class="title">
+    <div class="right"></div>
+    <img src="/templates/kinoger/images/ico/postinfo-icon.png" alt="" class="img" />
+    <a href="https://kinoger.com/stream/{slug}">{title_text}</a>
+  </div>
+</div>
+<div class="general_box">
+  <div class="headerbar">
+    <ul class="postinfo">
+      <li class="category">{cat_links}</li>
+    </ul>
+  </div>
+  <div class="content_text searchresult_img">
+    <b><div style="text-align:right;">{quality}</div></b>
+  </div>
+</div>
+"""
 
 
 def _mock_response(text: str, status_code: int = 200) -> httpx.Response:
@@ -285,15 +333,18 @@ class TestSearchResultParser:
 
     def test_card_without_title_link_skipped(self) -> None:
         html = """\
-        <div class="shortstory-in">
-          <div class="shortstory-poster">
-            <a href="/stream/99999-test.html"><img></a>
+        <div class="titlecontrol">
+          <div class="title">
+            <div class="right"></div>
           </div>
+        </div>
+        <div class="general_box">
+          <div class="content_text searchresult_img">Some text</div>
         </div>
         """
         parser = _SearchResultParser("https://kinoger.com")
         parser.feed(html)
-        # No title link → url from poster, but no title text → skipped
+        # No stream link in title → no url → skipped
         assert len(parser.results) == 0
 
     def test_anime_search_result(self) -> None:
@@ -431,22 +482,12 @@ class TestKinogerPluginSearch:
         plug = _make_plugin()
         mock_client = AsyncMock()
 
-        search_html = """\
-        <div class="shortstory-in">
-          <div class="shortstory-poster">
-            <a href="/stream/12345-batman.html"><img></a>
-            <span class="badge">WEBRip</span>
-          </div>
-          <a class="shortstory-title" href="/stream/12345-batman.html">\
-Batman Begins</a>
-          <div class="shortstory-content">
-            <ul class="breadcrumbs">
-              <li>Stream</li>
-              <li>Action</li>
-            </ul>
-          </div>
-        </div>
-        """
+        search_html = _make_search_card(
+            "12345-batman.html",
+            "Batman Begins (2005) Film",
+            ["Stream", "Action"],
+            "WEBRip",
+        )
 
         mock_client.get = AsyncMock(
             side_effect=[
@@ -472,23 +513,12 @@ Batman Begins</a>
         plug = _make_plugin()
         mock_client = AsyncMock()
 
-        search_html = """\
-        <div class="shortstory-in">
-          <div class="shortstory-poster">
-            <a href="/stream/67890-stranger-things.html"><img></a>
-            <span class="badge">S01-04</span>
-          </div>
-          <a class="shortstory-title" \
-href="/stream/67890-stranger-things.html">Stranger Things</a>
-          <div class="shortstory-content">
-            <ul class="breadcrumbs">
-              <li>Stream</li>
-              <li>Drama</li>
-              <li>Serie</li>
-            </ul>
-          </div>
-        </div>
-        """
+        search_html = _make_search_card(
+            "67890-stranger-things.html",
+            "Stranger Things Serie",
+            ["Stream", "Drama", "Serie"],
+            "S01-04",
+        )
 
         mock_client.get = AsyncMock(
             side_effect=[
@@ -545,17 +575,12 @@ href="/stream/67890-stranger-things.html">Stranger Things</a>
         plug = _make_plugin()
         mock_client = AsyncMock()
 
-        search_html = """\
-        <div class="shortstory-in">
-          <div class="shortstory-poster">
-            <a href="/stream/12345-test.html"><img></a>
-          </div>
-          <a class="shortstory-title" href="/stream/12345-test.html">Test</a>
-          <div class="shortstory-content">
-            <ul class="breadcrumbs"><li>Stream</li><li>Action</li></ul>
-          </div>
-        </div>
-        """
+        search_html = _make_search_card(
+            "12345-test.html",
+            "Test Film",
+            ["Stream", "Action"],
+            "WEBRip",
+        )
 
         mock_client.get = AsyncMock(
             side_effect=[
@@ -575,17 +600,12 @@ href="/stream/67890-stranger-things.html">Stranger Things</a>
         plug = _make_plugin()
         mock_client = AsyncMock()
 
-        search_html = """\
-        <div class="shortstory-in">
-          <div class="shortstory-poster">
-            <a href="/stream/12345-test.html"><img></a>
-          </div>
-          <a class="shortstory-title" href="/stream/12345-test.html">Test</a>
-          <div class="shortstory-content">
-            <ul class="breadcrumbs"><li>Stream</li><li>Action</li></ul>
-          </div>
-        </div>
-        """
+        search_html = _make_search_card(
+            "12345-test.html",
+            "Test Film",
+            ["Stream", "Action"],
+            "WEBRip",
+        )
 
         mock_client.get = AsyncMock(
             side_effect=[
@@ -605,21 +625,12 @@ href="/stream/67890-stranger-things.html">Stranger Things</a>
         plug = _make_plugin()
         mock_client = AsyncMock()
 
-        search_html = """\
-        <div class="shortstory-in">
-          <div class="shortstory-poster">
-            <a href="/stream/12345-batman.html"><img></a>
-          </div>
-          <a class="shortstory-title" href="/stream/12345-batman.html">\
-Batman Begins</a>
-          <div class="shortstory-content">
-            <ul class="breadcrumbs">
-              <li>Stream</li>
-              <li>Action</li>
-            </ul>
-          </div>
-        </div>
-        """
+        search_html = _make_search_card(
+            "12345-batman.html",
+            "Batman Begins (2005) Film",
+            ["Stream", "Action"],
+            "WEBRip",
+        )
 
         mock_client.get = AsyncMock(
             side_effect=[
