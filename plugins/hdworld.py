@@ -191,9 +191,7 @@ class HdWorldPlugin(HttpxPluginBase):
 
         content_raw = post.get("content", {})
         content = (
-            content_raw.get("rendered", "")
-            if isinstance(content_raw, dict)
-            else ""
+            content_raw.get("rendered", "") if isinstance(content_raw, dict) else ""
         )
 
         link = post.get("link", "")
@@ -211,9 +209,7 @@ class HdWorldPlugin(HttpxPluginBase):
         poster = _extract_poster(content)
 
         # Download link = first filecrypt link, or post URL
-        download_link = (
-            download_links[0]["link"] if download_links else link
-        )
+        download_link = download_links[0]["link"] if download_links else link
         if not download_link:
             return None
 

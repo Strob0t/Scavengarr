@@ -318,6 +318,76 @@ class TestSuperVideoResolver:
         assert "Referer" in headers
 
     @pytest.mark.asyncio
+    async def test_retries_on_429_then_succeeds(self) -> None:
+        """HTTP 429 triggers retry; second attempt succeeds."""
+        rate_resp = MagicMock()
+        rate_resp.status_code = 429
+        rate_resp.text = "Too Many Requests"
+        rate_resp.headers = {"Retry-After": "1"}
+
+        ok_resp = MagicMock()
+        ok_resp.status_code = 200
+        ok_resp.text = 'sources: [{file:"https://sv1.supervideo.cc/v/abc.mp4"}]'
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(side_effect=[rate_resp, ok_resp])
+
+        resolver = SuperVideoResolver(http_client=client)
+        with patch(
+            "scavengarr.infrastructure.hoster_resolvers.supervideo.asyncio"
+        ) as m:
+            m.sleep = AsyncMock()
+            result = await resolver.resolve("https://supervideo.cc/e/abc123def456")
+            m.sleep.assert_awaited_once()
+
+        assert result is not None
+        assert result.video_url == "https://sv1.supervideo.cc/v/abc.mp4"
+        assert client.get.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_429_retry_caps_delay_at_10s(self) -> None:
+        """Retry-After header above 10 is capped to 10 seconds."""
+        rate_resp = MagicMock()
+        rate_resp.status_code = 429
+        rate_resp.text = "Too Many Requests"
+        rate_resp.headers = {"Retry-After": "60"}
+
+        ok_resp = MagicMock()
+        ok_resp.status_code = 200
+        ok_resp.text = 'sources: [{file:"https://sv1.supervideo.cc/v/abc.mp4"}]'
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(side_effect=[rate_resp, ok_resp])
+
+        resolver = SuperVideoResolver(http_client=client)
+        with patch(
+            "scavengarr.infrastructure.hoster_resolvers.supervideo.asyncio"
+        ) as m:
+            m.sleep = AsyncMock()
+            await resolver.resolve("https://supervideo.cc/e/abc123def456")
+            m.sleep.assert_awaited_once_with(10)
+
+    @pytest.mark.asyncio
+    async def test_429_gives_up_after_max_attempts(self) -> None:
+        """Two consecutive 429s returns None (no infinite retry)."""
+        rate_resp = MagicMock()
+        rate_resp.status_code = 429
+        rate_resp.text = "Too Many Requests"
+        rate_resp.headers = {"Retry-After": "1"}
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(return_value=rate_resp)
+
+        resolver = SuperVideoResolver(http_client=client)
+        with patch(
+            "scavengarr.infrastructure.hoster_resolvers.supervideo.asyncio"
+        ) as m:
+            m.sleep = AsyncMock()
+            result = await resolver.resolve("https://supervideo.cc/e/abc123def456")
+
+        assert result is None
+
+    @pytest.mark.asyncio
     async def test_returns_none_when_no_source_found(self) -> None:
         html = "<html><body><h1>Player</h1></body></html>"
         mock_resp = MagicMock()

@@ -35,7 +35,7 @@ _MOVIE_CONTENT = (
     "Avg. Bitrate: 12,586 kb/s<br/>\n"
     "Aufloesung: 1920 x 1080<br/>\n"
     "Video Bitrate: 12,168 kb/s @ AVC<br/>\n"
-    'Audio #1 Deutsch AC-3 192 kb/s (2 Kan\u00e4le)</p></blockquote>\n'
+    "Audio #1 Deutsch AC-3 192 kb/s (2 Kan\u00e4le)</p></blockquote>\n"
     '<p><img src="http://hd-world.cc/wp-content/uploads/images/'
     'tt1234567-SHD.jpg" height=436 width=297><br/>\n'
     "<strong>Dauer: </strong>135 Min. | "
@@ -303,16 +303,12 @@ class TestBuildResult:
         result = plugin._build_result(post)
 
         assert result is not None
-        assert result.title == (
-            "Test.Movie.2025.German.DL.1080p.BluRay.x264-GRP"
-        )
+        assert result.title == ("Test.Movie.2025.German.DL.1080p.BluRay.x264-GRP")
         assert result.release_name == result.title
         assert result.category == 2000
         assert result.size == "10269 MB"
         assert result.published_date == "2025-06-15"
-        assert result.description == (
-            "Ein spannendes Abenteuer im Weltraum."
-        )
+        assert result.description == ("Ein spannendes Abenteuer im Weltraum.")
         assert result.metadata["imdb_id"] == "tt1234567"
         assert result.metadata["rating"] == "7.5"
         assert result.metadata["runtime"] == "135"
@@ -361,9 +357,7 @@ class TestBuildResult:
         plugin = hdworld_mod.HdWorldPlugin()
         assert plugin._build_result(post) is None
 
-    def test_no_download_link_uses_post_link(
-        self, hdworld_mod: object
-    ) -> None:
+    def test_no_download_link_uses_post_link(self, hdworld_mod: object) -> None:
         post = _make_post(content="<p>No links here</p>")
         plugin = hdworld_mod.HdWorldPlugin()
         result = plugin._build_result(post)
@@ -388,9 +382,7 @@ class TestBuildResult:
 
 class TestHdWorldSearch:
     @pytest.mark.asyncio
-    async def test_search_returns_results(
-        self, hdworld_mod: object
-    ) -> None:
+    async def test_search_returns_results(self, hdworld_mod: object) -> None:
         posts = [_make_post(post_id=1), _make_post(post_id=2)]
         mock_resp = _make_api_response(posts, total_pages=1)
 
@@ -405,9 +397,7 @@ class TestHdWorldSearch:
         plugin._client.get.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_search_empty_query_browses(
-        self, hdworld_mod: object
-    ) -> None:
+    async def test_search_empty_query_browses(self, hdworld_mod: object) -> None:
         posts = [_make_post(post_id=1)]
         mock_resp = _make_api_response(posts, total_pages=1)
 
@@ -438,17 +428,13 @@ class TestHdWorldSearch:
     async def test_search_http_error(self, hdworld_mod: object) -> None:
         plugin = hdworld_mod.HdWorldPlugin()
         plugin._client = AsyncMock(spec=httpx.AsyncClient)
-        plugin._client.get = AsyncMock(
-            side_effect=httpx.ConnectError("failed")
-        )
+        plugin._client.get = AsyncMock(side_effect=httpx.ConnectError("failed"))
 
         results = await plugin.search("test")
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_category_filtering_movies(
-        self, hdworld_mod: object
-    ) -> None:
+    async def test_category_filtering_movies(self, hdworld_mod: object) -> None:
         posts = [_make_post(post_id=1)]
         mock_resp = _make_api_response(posts, total_pages=1)
 
@@ -464,9 +450,7 @@ class TestHdWorldSearch:
         assert "10" in str(params.get("categories", ""))
 
     @pytest.mark.asyncio
-    async def test_category_filtering_tv(
-        self, hdworld_mod: object
-    ) -> None:
+    async def test_category_filtering_tv(self, hdworld_mod: object) -> None:
         post = _make_post(
             title="Show.S01.German.DL.720p.WEB.h264-GRP",
             content=_SERIES_CONTENT,
@@ -488,9 +472,7 @@ class TestHdWorldSearch:
         assert "13" in str(params.get("categories", ""))
 
     @pytest.mark.asyncio
-    async def test_category_rejects_unsupported(
-        self, hdworld_mod: object
-    ) -> None:
+    async def test_category_rejects_unsupported(self, hdworld_mod: object) -> None:
         plugin = hdworld_mod.HdWorldPlugin()
         results = await plugin.search("test", category=4000)
         assert results == []
@@ -513,9 +495,7 @@ class TestHdWorldSearch:
         assert plugin._client.get.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_stops_at_total_pages(
-        self, hdworld_mod: object
-    ) -> None:
+    async def test_stops_at_total_pages(self, hdworld_mod: object) -> None:
         posts = [_make_post(post_id=1)]
         mock_resp = _make_api_response(posts, total_pages=1)
 
@@ -549,9 +529,7 @@ class TestHdWorldSearch:
         assert r.release_name is not None
 
     @pytest.mark.asyncio
-    async def test_skips_posts_with_empty_title(
-        self, hdworld_mod: object
-    ) -> None:
+    async def test_skips_posts_with_empty_title(self, hdworld_mod: object) -> None:
         posts = [
             _make_post(post_id=1, title=""),
             _make_post(post_id=2),
@@ -566,9 +544,7 @@ class TestHdWorldSearch:
         assert len(results) == 1
 
     @pytest.mark.asyncio
-    async def test_invalid_json_response(
-        self, hdworld_mod: object
-    ) -> None:
+    async def test_invalid_json_response(self, hdworld_mod: object) -> None:
         resp = MagicMock(spec=httpx.Response)
         resp.status_code = 200
         resp.json.side_effect = ValueError("bad json")
