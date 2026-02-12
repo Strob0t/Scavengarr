@@ -12,13 +12,23 @@ No authentication required. DDoS-Guard cookies not needed for API access.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
+# ---------------------------------------------------------------------------
+# Configurable settings
+# ---------------------------------------------------------------------------
+_DOMAINS = ["cine.to"]
 _PER_PAGE = 24
 _MAX_PAGES = 41  # 1000 // 24 = 41 pages × 24 = 984, +1 page = 1008
+_YEAR_MIN = "1902"
+_YEAR_MAX = str(datetime.now().year + 1)
 
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 _QUALITY_MAP: dict[int | str, str] = {
     0: "CAM",
     1: "TS",
@@ -36,7 +46,7 @@ class CinePlugin(HttpxPluginBase):
 
     name = "cine"
     provides = "stream"
-    _domains = ["cine.to"]
+    _domains = _DOMAINS
 
     async def _api_search(self, query: str) -> list[dict]:
         """Search the API across multiple pages and return raw entry dicts."""
@@ -52,7 +62,7 @@ class CinePlugin(HttpxPluginBase):
                         "kind": "all",
                         "genre": "0",
                         "rating": "1",
-                        "year[]": ["1902", "2026"],
+                        "year[]": [_YEAR_MIN, _YEAR_MAX],
                         "language": "0",
                         "page": str(page),
                         "count": str(_PER_PAGE),
