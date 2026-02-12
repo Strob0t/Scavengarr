@@ -16,28 +16,9 @@ import asyncio
 import re
 from html.parser import HTMLParser
 
-import httpx
-import structlog
-
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
-log = structlog.get_logger(__name__)
-
-# Known domains in priority order (all serve identical content).
-_DOMAINS = [
-    "bs.to",
-    "burning-series.io",
-    "burning-series.net",
-]
-
-_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
-)
-
-_MAX_CONCURRENT_DETAIL = 3
-_MAX_RESULTS = 1000
 _MAX_SERIES_DETAIL = 50  # Max series to fetch detail pages for
 
 # Genre -> Torznab category mapping.
@@ -380,52 +361,16 @@ def _match_query(query: str, title: str) -> bool:
     return all(word in title_lower for word in query_lower.split())
 
 
-class BurningSeriesPlugin:
+class BurningSeriesPlugin(HttpxPluginBase):
     """Python plugin for bs.to / Burning Series using httpx."""
 
     name = "burningseries"
-    version = "1.0.0"
-    mode = "httpx"
     provides = "stream"
-    default_language = "de"
+    _domains = ["bs.to", "burning-series.io", "burning-series.net"]
 
     def __init__(self) -> None:
-        self._client: httpx.AsyncClient | None = None
-        self.base_url: str = f"https://{_DOMAINS[0]}"
-        self._domain_verified = False
+        super().__init__()
         self._series_cache: list[dict[str, str]] | None = None
-
-    async def _ensure_client(self) -> httpx.AsyncClient:
-        """Create httpx client if not already running."""
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                timeout=15.0,
-                follow_redirects=True,
-                headers={"User-Agent": _USER_AGENT},
-            )
-        return self._client
-
-    async def _verify_domain(self) -> None:
-        """Find and cache a working domain from the fallback list."""
-        if self._domain_verified:
-            return
-
-        client = await self._ensure_client()
-        for domain in _DOMAINS:
-            url = f"https://{domain}/"
-            try:
-                resp = await client.head(url, timeout=5.0)
-                if resp.status_code == 200:
-                    self.base_url = f"https://{domain}"
-                    self._domain_verified = True
-                    log.info("burningseries_domain_found", domain=domain)
-                    return
-            except Exception:  # noqa: BLE001
-                continue
-
-        self.base_url = f"https://{_DOMAINS[0]}"
-        self._domain_verified = True
-        log.warning("burningseries_no_domain_reachable", fallback=_DOMAINS[0])
 
     async def _fetch_series_listing(self) -> list[dict[str, str]]:
         """Fetch and parse the full series listing, cached for plugin lifetime."""
@@ -441,7 +386,7 @@ class BurningSeriesPlugin:
             )
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            log.warning("burningseries_listing_failed", error=str(exc))
+            self._log.warning("burningseries_listing_failed", error=str(exc))
             return []
 
         parser = _SeriesListParser()
@@ -457,7 +402,7 @@ class BurningSeriesPlugin:
                 unique.append(entry)
 
         self._series_cache = unique
-        log.info(
+        self._log.info(
             "burningseries_listing_loaded",
             total=len(parser.series),
             unique=len(unique),
@@ -472,13 +417,13 @@ class BurningSeriesPlugin:
             resp = await client.get(f"{self.base_url}/serie/{slug}")
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            log.warning("burningseries_detail_failed", slug=slug, error=str(exc))
+            self._log.warning("burningseries_detail_failed", slug=slug, error=str(exc))
             return _SeriesDetailParser()
 
         parser = _SeriesDetailParser()
         parser.feed(resp.text)
 
-        log.info(
+        self._log.info(
             "burningseries_detail",
             slug=slug,
             title=parser.title,
@@ -593,7 +538,7 @@ class BurningSeriesPlugin:
         matching = matching[:_MAX_SERIES_DETAIL]
 
         # Fetch detail pages with bounded concurrency
-        sem = asyncio.Semaphore(_MAX_CONCURRENT_DETAIL)
+        sem = self._new_semaphore()
         tasks = [
             self._process_entry(e, sem, category, season=season, episode=episode)
             for e in matching
@@ -604,16 +549,10 @@ class BurningSeriesPlugin:
         for sr in task_results:
             if sr is not None:
                 results.append(sr)
-                if len(results) >= _MAX_RESULTS:
+                if len(results) >= self._max_results:
                     break
 
-        return results[:_MAX_RESULTS]
-
-    async def cleanup(self) -> None:
-        """Close httpx client."""
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+        return results[: self._max_results]
 
 
 plugin = BurningSeriesPlugin()

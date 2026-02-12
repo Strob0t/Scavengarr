@@ -21,7 +21,7 @@ def _load_module() -> ModuleType:
 _mod = _load_module()
 _ScnSrcPlugin = _mod.ScnSrcPlugin
 _PostParser = _mod._PostParser
-_DOMAINS = _mod._DOMAINS
+_DOMAINS = _ScnSrcPlugin._domains
 _CATEGORY_PATH_MAP = _mod._CATEGORY_PATH_MAP
 _CATEGORY_NAME_MAP = _mod._CATEGORY_NAME_MAP
 _category_to_torznab = _mod._category_to_torznab
@@ -649,7 +649,7 @@ class TestCleanup:
         browser = _make_mock_browser(context)
         pw = _make_mock_playwright(browser)
 
-        plugin._playwright = pw
+        plugin._pw = pw
         plugin._browser = browser
         plugin._context = context
 
@@ -660,7 +660,7 @@ class TestCleanup:
         pw.stop.assert_awaited_once()
         assert plugin._context is None
         assert plugin._browser is None
-        assert plugin._playwright is None
+        assert plugin._pw is None
 
     async def test_cleanup_when_nothing_to_close(self) -> None:
         plugin = _make_plugin()

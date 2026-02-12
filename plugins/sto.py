@@ -20,31 +20,9 @@ import re
 from html.parser import HTMLParser
 from urllib.parse import urljoin
 
-import httpx
-import structlog
-
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
-log = structlog.get_logger(__name__)
-
-# Known domains in priority order.
-_DOMAINS = [
-    "s.to",
-    "serienstream.to",
-    "186.2.175.5",
-]
-
-_BASE_URL = f"https://{_DOMAINS[0]}"
-
-_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
-)
-
-_MAX_CONCURRENT_DETAIL = 3
-_MAX_CONCURRENT_EPISODES = 3
-_MAX_RESULTS = 1000
 _MAX_PAGES = 42  # 24 results/page → 42 pages for ~1000
 _RESULTS_PER_PAGE = 24
 
@@ -371,7 +349,7 @@ def _episode_number(
     return int(m.group(1)) if m else None
 
 
-class StoPlugin:
+class StoPlugin(HttpxPluginBase):
     """Python plugin for s.to (SerienStream) using httpx.
 
     Supports multiple domains with automatic fallback:
@@ -379,47 +357,8 @@ class StoPlugin:
     """
 
     name = "sto"
-    version = "1.0.0"
-    mode = "httpx"
     provides = "stream"
-    default_language = "de"
-
-    def __init__(self) -> None:
-        self._client: httpx.AsyncClient | None = None
-        self._domain_verified = False
-        self.base_url = _BASE_URL
-
-    async def _ensure_client(self) -> httpx.AsyncClient:
-        """Create httpx client if not already running."""
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                timeout=15.0,
-                follow_redirects=True,
-                headers={"User-Agent": _USER_AGENT},
-            )
-        return self._client
-
-    async def _verify_domain(self) -> None:
-        """Find and cache a working domain from the fallback list."""
-        if self._domain_verified:
-            return
-
-        client = await self._ensure_client()
-        for domain in _DOMAINS:
-            url = f"https://{domain}/"
-            try:
-                resp = await client.head(url, timeout=5.0)
-                if resp.status_code == 200:
-                    self.base_url = f"https://{domain}"
-                    self._domain_verified = True
-                    log.info("sto_domain_found", domain=domain)
-                    return
-            except Exception:  # noqa: BLE001
-                continue
-
-        self.base_url = f"https://{_DOMAINS[0]}"
-        self._domain_verified = True
-        log.warning("sto_no_domain_reachable", fallback=_DOMAINS[0])
+    _domains = ["s.to", "serienstream.to", "186.2.175.5"]
 
     async def _search_series(
         self,
@@ -440,7 +379,7 @@ class StoPlugin:
             )
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            log.warning(
+            self._log.warning(
                 "sto_search_failed",
                 query=query,
                 page=page_num,
@@ -451,7 +390,7 @@ class StoPlugin:
         parser = _SearchSeriesParser(self.base_url)
         parser.feed(resp.text)
 
-        log.info(
+        self._log.info(
             "sto_search_page",
             query=query,
             page=page_num,
@@ -470,7 +409,7 @@ class StoPlugin:
             resp = await client.get(series["url"])
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            log.warning(
+            self._log.warning(
                 "sto_series_detail_failed",
                 url=series.get("url", ""),
                 error=str(exc),
@@ -492,7 +431,7 @@ class StoPlugin:
             resp = await client.get(episode_url)
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            log.warning(
+            self._log.warning(
                 "sto_episode_failed",
                 url=episode_url,
                 error=str(exc),
@@ -522,7 +461,7 @@ class StoPlugin:
             if location and location.startswith("http"):
                 return location
         except Exception:  # noqa: BLE001
-            log.debug("sto_resolve_failed", url=full_url)
+            self._log.debug("sto_resolve_failed", url=full_url)
 
         return full_url
 
@@ -536,7 +475,7 @@ class StoPlugin:
 
         Returns one entry per episode with title and resolved hoster URLs.
         """
-        sem = asyncio.Semaphore(_MAX_CONCURRENT_EPISODES)
+        sem = self._new_semaphore()
 
         # Build episode URLs from the detail parser's episode list
         episode_urls: list[tuple[str, str]] = []
@@ -601,16 +540,16 @@ class StoPlugin:
             all_series.extend(series)
             if len(series) < _RESULTS_PER_PAGE:
                 break
-            if len(all_series) >= _MAX_RESULTS:
+            if len(all_series) >= self._max_results:
                 break
-        return all_series[:_MAX_RESULTS]
+        return all_series[: self._max_results]
 
     async def _fetch_all_details(
         self,
         all_series: list[dict[str, str]],
     ) -> list[tuple[dict[str, str], _SeriesDetailParser]]:
         """Scrape series detail pages with bounded concurrency."""
-        sem = asyncio.Semaphore(_MAX_CONCURRENT_DETAIL)
+        sem = self._new_semaphore()
 
         async def _bounded(
             s: dict[str, str],
@@ -714,7 +653,7 @@ class StoPlugin:
             return []
 
         # Resolve hoster URLs
-        sem = asyncio.Semaphore(_MAX_CONCURRENT_EPISODES)
+        sem = self._new_semaphore()
         links: list[dict[str, str]] = []
 
         async def _resolve(h: dict[str, str]) -> dict[str, str] | None:
@@ -797,7 +736,7 @@ class StoPlugin:
 
         # s.to is TV-only — reject non-TV category requests early.
         if category is not None and not _is_tv_category(category):
-            log.info("sto_non_tv_category_rejected", category=category)
+            self._log.info("sto_non_tv_category_rejected", category=category)
             return []
 
         all_series = await self._paginate_search(query)
@@ -812,16 +751,10 @@ class StoPlugin:
                 series_info, detail, category, season, episode
             )
             search_results.extend(results)
-            if len(search_results) >= _MAX_RESULTS:
+            if len(search_results) >= self._max_results:
                 break
 
-        return search_results[:_MAX_RESULTS]
-
-    async def cleanup(self) -> None:
-        """Close httpx client."""
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+        return search_results[: self._max_results]
 
 
 plugin = StoPlugin()

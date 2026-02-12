@@ -16,29 +16,11 @@ from html.parser import HTMLParser
 from urllib.parse import quote_plus, urljoin
 
 import httpx
-import structlog
-from playwright.async_api import (
-    Browser,
-    BrowserContext,
-    Page,
-    Playwright,
-    async_playwright,
-)
+from playwright.async_api import Page
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
-log = structlog.get_logger(__name__)
-
-_BASE_URL = "https://ddlspot.com"
-
-_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
-)
-
-_MAX_CONCURRENT_DETAIL = 5
-_MAX_RESULTS = 1000
 _MAX_PAGES = 50  # 20 results/page → 50 pages for 1000
 
 # DDLSpot type string → Torznab category ID
@@ -245,7 +227,7 @@ class _DetailPageParser(HTMLParser):
                 self._in_links_box = False
 
 
-class DDLSpotPlugin:
+class DDLSpotPlugin(PlaywrightPluginBase):
     """Python plugin for ddlspot.com using Playwright + httpx."""
 
     name = "ddlspot"
@@ -254,23 +236,7 @@ class DDLSpotPlugin:
     provides = "download"
     default_language = "de"
 
-    def __init__(self) -> None:
-        self._playwright: Playwright | None = None
-        self._browser: Browser | None = None
-        self._context: BrowserContext | None = None
-        self.base_url = _BASE_URL
-
-    async def _ensure_browser(self) -> None:
-        """Launch Chromium if not already running."""
-        if self._browser is not None:
-            return
-        self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(
-            headless=True,
-        )
-        self._context = await self._browser.new_context(
-            user_agent=_USER_AGENT,
-        )
+    _domains = ["ddlspot.com"]
 
     async def _wait_for_cloudflare(self, page: Page) -> None:
         """If Cloudflare challenge is detected, wait for it to resolve."""
@@ -285,7 +251,7 @@ class DDLSpotPlugin:
     async def _fetch_detail_links(self, urls: list[str]) -> dict[str, list[str]]:
         """Fetch detail pages in parallel, return {detail_url: [download_urls]}."""
         result: dict[str, list[str]] = {}
-        sem = asyncio.Semaphore(_MAX_CONCURRENT_DETAIL)
+        sem = self._new_semaphore()
 
         async def _fetch_one(client: httpx.AsyncClient, url: str) -> None:
             async with sem:
@@ -296,7 +262,7 @@ class DDLSpotPlugin:
                     parser.feed(resp.text)
                     result[url] = parser.urls
                 except Exception as exc:  # noqa: BLE001
-                    log.warning(
+                    self._log.warning(
                         "ddlspot_detail_fetch_failed",
                         url=url,
                         error=str(exc),
@@ -306,7 +272,7 @@ class DDLSpotPlugin:
         async with httpx.AsyncClient(
             timeout=15.0,
             follow_redirects=True,
-            headers={"User-Agent": _USER_AGENT},
+            headers={"User-Agent": self._user_agent},
         ) as client:
             tasks = [_fetch_one(client, url) for url in urls]
             await asyncio.gather(*tasks)
@@ -315,9 +281,8 @@ class DDLSpotPlugin:
 
     async def _fetch_search_page(self, url: str) -> str:
         """Fetch a search page via Playwright and return HTML."""
-        assert self._context is not None  # noqa: S101
-
-        page = await self._context.new_page()
+        ctx = await self._ensure_context()
+        page = await ctx.new_page()
         try:
             await page.goto(url, wait_until="domcontentloaded")
             await self._wait_for_cloudflare(page)
@@ -384,7 +349,7 @@ class DDLSpotPlugin:
         all_rows: list[dict[str, str]] = []
         current_url = search_url
         for _ in range(_MAX_PAGES):
-            if len(all_rows) >= _MAX_RESULTS:
+            if len(all_rows) >= self._max_results:
                 break
 
             html = await self._fetch_search_page(current_url)
@@ -399,7 +364,7 @@ class DDLSpotPlugin:
                 break
             current_url = urljoin(self.base_url, parser.next_page_url)
 
-        all_rows = all_rows[:_MAX_RESULTS]
+        all_rows = all_rows[: self._max_results]
         if not all_rows:
             return []
 
@@ -416,18 +381,6 @@ class DDLSpotPlugin:
         detail_links = await self._fetch_detail_links(detail_urls)
 
         return self._build_results(all_rows, detail_links)
-
-    async def cleanup(self) -> None:
-        """Close browser and Playwright resources."""
-        if self._context is not None:
-            await self._context.close()
-            self._context = None
-        if self._browser is not None:
-            await self._browser.close()
-            self._browser = None
-        if self._playwright is not None:
-            await self._playwright.stop()
-            self._playwright = None
 
 
 def _hoster_from_url(url: str) -> str:

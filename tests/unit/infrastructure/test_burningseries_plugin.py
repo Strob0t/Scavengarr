@@ -580,7 +580,7 @@ class TestDomainVerification:
         await p._verify_domain()
 
         assert p._domain_verified is True
-        assert bs_mod._DOMAINS[0] in p.base_url
+        assert bs_mod.BurningSeriesPlugin._domains[0] in p.base_url
 
     @pytest.mark.asyncio
     async def test_skips_if_already_verified(self, bs_mod):

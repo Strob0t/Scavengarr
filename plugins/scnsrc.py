@@ -17,39 +17,10 @@ import re
 from html.parser import HTMLParser
 from urllib.parse import urljoin
 
-import structlog
-from playwright.async_api import (
-    Browser,
-    BrowserContext,
-    Page,
-    Playwright,
-    async_playwright,
-)
+from playwright.async_api import Page
 
 from scavengarr.domain.plugins.base import SearchResult
-
-log = structlog.get_logger(__name__)
-
-# Known domains in priority order (all serve identical content).
-_DOMAINS = [
-    "www.scnsrc.me",
-    "scnsrc.me",
-    "www.scenesource.me",
-    "scenesource.me",
-    "www.scnsrc.net",
-    "scnsrc.net",
-]
-
-_BASE_URL = f"https://{_DOMAINS[0]}"
-
-_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
-)
-
-_MAX_CONCURRENT_PAGES = 2
-_MAX_RESULTS = 1000
+from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
 # Torznab category -> URL path segment mapping.
 _CATEGORY_PATH_MAP: dict[int, str] = {
@@ -314,7 +285,7 @@ def _category_to_torznab(category_name: str) -> int:
     return _CATEGORY_NAME_MAP.get(key, 2000)
 
 
-class ScnSrcPlugin:
+class ScnSrcPlugin(PlaywrightPluginBase):
     """Python plugin for scnsrc.me using Playwright.
 
     Supports multiple domains with automatic fallback:
@@ -327,24 +298,24 @@ class ScnSrcPlugin:
     provides = "download"
     default_language = "en"
 
-    def __init__(self) -> None:
-        self._playwright: Playwright | None = None
-        self._browser: Browser | None = None
-        self._context: BrowserContext | None = None
-        self.base_url = _BASE_URL
-        self._domain_verified = False
+    _domains = [
+        "www.scnsrc.me",
+        "scnsrc.me",
+        "www.scenesource.me",
+        "scenesource.me",
+        "www.scnsrc.net",
+        "scnsrc.net",
+    ]
 
-    async def _ensure_browser(self) -> None:
-        """Launch Chromium if not already running."""
-        if self._browser is not None:
-            return
-        self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(
-            headless=True,
-        )
-        self._context = await self._browser.new_context(
-            user_agent=_USER_AGENT,
-        )
+    async def _wait_for_cloudflare(self, page: "Page") -> None:
+        """If Cloudflare challenge is detected, wait for it."""
+        try:
+            await page.wait_for_function(
+                "() => !document.title.includes('Just a moment')",
+                timeout=15_000,
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
     async def _verify_domain(self) -> None:
         """Find and cache a working domain from the fallback list.
@@ -357,11 +328,11 @@ class ScnSrcPlugin:
             return
 
         await self._ensure_browser()
-        assert self._context is not None  # noqa: S101
+        ctx = await self._ensure_context()
 
-        for domain in _DOMAINS:
+        for domain in self._domains:
             url = f"https://{domain}/"
-            page = await self._context.new_page()
+            page = await ctx.new_page()
             try:
                 await page.goto(url, wait_until="domcontentloaded", timeout=20_000)
                 await self._wait_for_cloudflare(page)
@@ -369,34 +340,24 @@ class ScnSrcPlugin:
                 if "just a moment" not in title.lower():
                     self.base_url = f"https://{domain}"
                     self._domain_verified = True
-                    log.info("scnsrc_domain_found", domain=domain)
+                    self._log.info("scnsrc_domain_found", domain=domain)
                     return
             except Exception:  # noqa: BLE001
-                log.debug("scnsrc_domain_unreachable", domain=domain)
+                self._log.debug("scnsrc_domain_unreachable", domain=domain)
             finally:
                 if not page.is_closed():
                     await page.close()
 
         # Fallback to primary even if verification failed
-        self.base_url = _BASE_URL
+        self.base_url = f"https://{self._domains[0]}"
         self._domain_verified = True
-        log.warning("scnsrc_no_domain_verified", fallback=_DOMAINS[0])
-
-    async def _wait_for_cloudflare(self, page: Page) -> None:
-        """If Cloudflare challenge is detected, wait for it."""
-        try:
-            await page.wait_for_function(
-                "() => !document.title.includes('Just a moment')",
-                timeout=15_000,
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        self._log.warning("scnsrc_no_domain_verified", fallback=self._domains[0])
 
     async def _fetch_page(self, url: str) -> str:
         """Navigate to a URL and return page content."""
-        assert self._context is not None  # noqa: S101
+        ctx = await self._ensure_context()
 
-        page = await self._context.new_page()
+        page = await ctx.new_page()
         try:
             await page.goto(url, wait_until="domcontentloaded")
             await self._wait_for_cloudflare(page)
@@ -436,7 +397,7 @@ class ScnSrcPlugin:
         parser = _PostParser(self.base_url)
         parser.feed(html)
 
-        log.info(
+        self._log.info(
             "scnsrc_search_page",
             query=query,
             category_path=category_path,
@@ -465,14 +426,14 @@ class ScnSrcPlugin:
         # Paginate search results (WordPress: ~10 posts/page)
         all_posts: list[dict[str, str | list[dict[str, str]]]] = []
         page_num = 1
-        while len(all_posts) < _MAX_RESULTS:
+        while len(all_posts) < self._max_results:
             posts = await self._search_page(query, category_path, page_num)
             if not posts:
                 break
             all_posts.extend(posts)
             page_num += 1
 
-        all_posts = all_posts[:_MAX_RESULTS]
+        all_posts = all_posts[: self._max_results]
 
         results: list[SearchResult] = []
         for post in all_posts:
@@ -495,18 +456,6 @@ class ScnSrcPlugin:
             )
 
         return results
-
-    async def cleanup(self) -> None:
-        """Close browser and Playwright resources."""
-        if self._context is not None:
-            await self._context.close()
-            self._context = None
-        if self._browser is not None:
-            await self._browser.close()
-            self._browser = None
-        if self._playwright is not None:
-            await self._playwright.stop()
-            self._playwright = None
 
 
 plugin = ScnSrcPlugin()

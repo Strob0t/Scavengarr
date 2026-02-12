@@ -20,28 +20,9 @@ import re
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
 
-import httpx
-import structlog
-
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
-log = structlog.get_logger(__name__)
-
-_DOMAINS = [
-    "kinoger.com",
-    "kinoger.to",
-]
-
-_BASE_URL = f"https://{_DOMAINS[0]}"
-
-_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
-)
-
-_MAX_CONCURRENT_DETAIL = 3
-_MAX_RESULTS = 1000
 _MAX_PAGES = 84  # 12 results/page → 84 pages for ~1000
 
 _TV_CATEGORIES = frozenset({5000, 5010, 5020, 5030, 5040, 5050, 5060, 5070, 5080})
@@ -559,51 +540,12 @@ class _DetailPageParser(HTMLParser):
                 self.year = m.group(0)
 
 
-class KinogerPlugin:
+class KinogerPlugin(HttpxPluginBase):
     """Python plugin for kinoger.com using httpx."""
 
     name = "kinoger"
-    version = "1.0.0"
-    mode = "httpx"
     provides = "stream"
-    default_language = "de"
-
-    def __init__(self) -> None:
-        self._client: httpx.AsyncClient | None = None
-        self._domain_verified = False
-        self.base_url = _BASE_URL
-
-    async def _ensure_client(self) -> httpx.AsyncClient:
-        """Create httpx client if not already running."""
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                timeout=15.0,
-                follow_redirects=True,
-                headers={"User-Agent": _USER_AGENT},
-            )
-        return self._client
-
-    async def _verify_domain(self) -> None:
-        """Find and cache a working domain from the fallback list."""
-        if self._domain_verified:
-            return
-
-        client = await self._ensure_client()
-        for domain in _DOMAINS:
-            url = f"https://{domain}/"
-            try:
-                resp = await client.head(url, timeout=5.0)
-                if resp.status_code == 200:
-                    self.base_url = f"https://{domain}"
-                    self._domain_verified = True
-                    log.info("kinoger_domain_found", domain=domain)
-                    return
-            except Exception:  # noqa: BLE001
-                continue
-
-        self.base_url = f"https://{_DOMAINS[0]}"
-        self._domain_verified = True
-        log.warning("kinoger_no_domain_reachable", fallback=_DOMAINS[0])
+    _domains = ["kinoger.com", "kinoger.to"]
 
     async def _search_page(
         self,
@@ -635,7 +577,7 @@ class KinogerPlugin:
             )
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            log.warning(
+            self._log.warning(
                 "kinoger_search_failed",
                 query=query,
                 page=page,
@@ -646,7 +588,7 @@ class KinogerPlugin:
         parser = _SearchResultParser(self.base_url)
         parser.feed(resp.text)
 
-        log.info(
+        self._log.info(
             "kinoger_search_page",
             query=query,
             page=page,
@@ -658,7 +600,7 @@ class KinogerPlugin:
         self,
         query: str,
     ) -> list[dict[str, str | list[str] | bool]]:
-        """Fetch search results with pagination up to _MAX_RESULTS."""
+        """Fetch search results with pagination up to _max_results."""
         all_results: list[dict[str, str | list[str] | bool]] = []
 
         for page_num in range(1, _MAX_PAGES + 1):
@@ -666,10 +608,10 @@ class KinogerPlugin:
             if not results:
                 break
             all_results.extend(results)
-            if len(all_results) >= _MAX_RESULTS:
+            if len(all_results) >= self._max_results:
                 break
 
-        return all_results[:_MAX_RESULTS]
+        return all_results[: self._max_results]
 
     async def _scrape_detail(
         self,
@@ -683,7 +625,7 @@ class KinogerPlugin:
             resp = await client.get(detail_url)
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            log.warning(
+            self._log.warning(
                 "kinoger_detail_failed",
                 url=detail_url,
                 error=str(exc),
@@ -695,7 +637,7 @@ class KinogerPlugin:
         parser.finalize()
 
         if not parser.stream_links:
-            log.debug("kinoger_no_streams", url=detail_url)
+            self._log.debug("kinoger_no_streams", url=detail_url)
             return None
 
         title = parser.title or str(result.get("title", ""))
@@ -750,7 +692,7 @@ class KinogerPlugin:
             return []
 
         # Scrape detail pages with bounded concurrency
-        sem = asyncio.Semaphore(_MAX_CONCURRENT_DETAIL)
+        sem = self._new_semaphore()
 
         async def _bounded(
             r: dict[str, str | list[str] | bool],
@@ -776,12 +718,6 @@ class KinogerPlugin:
             results = _filter_by_category(results, effective_category)
 
         return results
-
-    async def cleanup(self) -> None:
-        """Close httpx client."""
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
 
 
 plugin = KinogerPlugin()

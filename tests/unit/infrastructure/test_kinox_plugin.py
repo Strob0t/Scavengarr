@@ -560,7 +560,7 @@ class TestDomainVerification:
         await p._verify_domain()
 
         assert p._domain_verified is True
-        assert kinox_mod._DOMAINS[0] in p.base_url
+        assert kinox_mod.KinoxPlugin._domains[0] in p.base_url
 
     @pytest.mark.asyncio
     async def test_skips_if_already_verified(self, kinox_mod):

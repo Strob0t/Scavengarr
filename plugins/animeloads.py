@@ -13,32 +13,11 @@ No authentication required for search.
 
 from __future__ import annotations
 
-import structlog
-from playwright.async_api import (
-    Browser,
-    BrowserContext,
-    Page,
-    Playwright,
-    async_playwright,
-)
+from playwright.async_api import Page
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
-log = structlog.get_logger(__name__)
-
-_DOMAINS = [
-    "www.anime-loads.org",
-    "anime-loads.org",
-]
-
-_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
-)
-
-_MAX_CONCURRENT_PAGES = 3
-_MAX_RESULTS = 1000
 _PAGE_SIZE = 20
 _MAX_PAGES = 50  # 20/page * 50 = 1000
 _DDOS_TIMEOUT = 30_000  # ms to wait for DDoS-Guard resolution
@@ -168,7 +147,7 @@ def _matches_category(content_type: str, category: int | None) -> bool:
     return True
 
 
-class AnimeLoadsPlugin:
+class AnimeLoadsPlugin(PlaywrightPluginBase):
     """Python plugin for anime-loads.org using Playwright (DDoS-Guard bypass)."""
 
     name = "animeloads"
@@ -177,40 +156,12 @@ class AnimeLoadsPlugin:
     provides = "both"
     default_language = "de"
 
-    def __init__(self) -> None:
-        self._pw: Playwright | None = None
-        self._browser: Browser | None = None
-        self._context: BrowserContext | None = None
-        self.base_url: str = f"https://{_DOMAINS[0]}"
-        self._domain_verified = False
+    _domains = [
+        "www.anime-loads.org",
+        "anime-loads.org",
+    ]
 
-    async def _ensure_browser(self) -> Browser:
-        """Launch browser if not already running."""
-        if self._browser is None:
-            self._pw = await async_playwright().start()
-            self._browser = await self._pw.chromium.launch(headless=True)
-            log.info("animeloads_browser_launched")
-        return self._browser
-
-    async def _ensure_context(self) -> BrowserContext:
-        """Create browser context with proper user agent."""
-        if self._context is None:
-            browser = await self._ensure_browser()
-            self._context = await browser.new_context(
-                user_agent=_USER_AGENT,
-                viewport={"width": 1280, "height": 720},
-            )
-        return self._context
-
-    async def _new_page(self) -> Page:
-        """Create a new page in the browser context."""
-        ctx = await self._ensure_context()
-        page = await ctx.new_page()
-        page.set_default_navigation_timeout(_NAV_TIMEOUT)
-        page.set_default_timeout(_NAV_TIMEOUT)
-        return page
-
-    async def _wait_for_ddos_guard(self, page: Page) -> bool:
+    async def _wait_for_ddos_guard(self, page: "Page") -> bool:
         """Wait for DDoS-Guard JS challenge to resolve.
 
         Uses ``nav`` and ``.panel-default`` as indicators that the real
@@ -227,35 +178,14 @@ class AnimeLoadsPlugin:
             # Check if we're still on the DDoS-Guard page
             content = await page.content()
             if "ddos-guard" in content.lower():
-                log.warning("animeloads_ddos_guard_timeout")
+                self._log.warning("animeloads_ddos_guard_timeout")
                 return False
             # Page loaded but no expected elements
             return True
 
-    async def _verify_domain(self, page: Page) -> None:
-        """Find and cache a working domain from the fallback list."""
-        if self._domain_verified:
-            return
-
-        for domain in _DOMAINS:
-            url = f"https://{domain}/"
-            try:
-                await page.goto(url, wait_until="domcontentloaded")
-                if await self._wait_for_ddos_guard(page):
-                    self.base_url = f"https://{domain}"
-                    self._domain_verified = True
-                    log.info("animeloads_domain_found", domain=domain)
-                    return
-            except Exception:  # noqa: BLE001
-                continue
-
-        self.base_url = f"https://{_DOMAINS[0]}"
-        self._domain_verified = True
-        log.warning("animeloads_no_domain_reachable", fallback=_DOMAINS[0])
-
     async def _search_page(
         self,
-        page: Page,
+        page: "Page",
         query: str,
         page_num: int,
     ) -> tuple[list[dict], int]:
@@ -271,7 +201,7 @@ class AnimeLoadsPlugin:
         try:
             await page.goto(url, wait_until="domcontentloaded")
         except Exception as exc:  # noqa: BLE001
-            log.warning(
+            self._log.warning(
                 "animeloads_search_nav_failed",
                 query=query,
                 page=page_num,
@@ -285,7 +215,7 @@ class AnimeLoadsPlugin:
         try:
             results = await page.evaluate(_EXTRACT_RESULTS_JS)
         except Exception as exc:  # noqa: BLE001
-            log.warning(
+            self._log.warning(
                 "animeloads_extract_failed",
                 query=query,
                 page=page_num,
@@ -299,7 +229,7 @@ class AnimeLoadsPlugin:
         except Exception:  # noqa: BLE001
             total_pages = 0
 
-        log.info(
+        self._log.info(
             "animeloads_search_page",
             query=query,
             page=page_num,
@@ -394,7 +324,7 @@ class AnimeLoadsPlugin:
             effective_category = 5070
 
         if season is not None or episode is not None:
-            log.info(
+            self._log.info(
                 "animeloads_season_episode_hint",
                 season=season,
                 episode=episode,
@@ -402,29 +332,29 @@ class AnimeLoadsPlugin:
 
         page = await self._new_page()
         try:
-            await self._verify_domain(page)
+            await self._verify_domain()
             return await self._search_all_pages(page, query, effective_category)
         finally:
             await page.close()
 
     async def _search_all_pages(
         self,
-        page: Page,
+        page: "Page",
         query: str,
         category: int | None,
     ) -> list[SearchResult]:
-        """Fetch all search result pages up to _MAX_RESULTS."""
+        """Fetch all search result pages up to _max_results."""
         first_results, total_pages = await self._search_page(page, query, 1)
         if not first_results:
             return []
 
         all_results = self._filter_and_build(first_results, category)
-        if total_pages <= 1 or len(all_results) >= _MAX_RESULTS:
-            return all_results[:_MAX_RESULTS]
+        if total_pages <= 1 or len(all_results) >= self._max_results:
+            return all_results[: self._max_results]
 
         pages_to_fetch = min(total_pages, _MAX_PAGES)
         for page_num in range(2, pages_to_fetch + 1):
-            if len(all_results) >= _MAX_RESULTS:
+            if len(all_results) >= self._max_results:
                 break
             page_results, _ = await self._search_page(page, query, page_num)
             if not page_results:
@@ -432,7 +362,7 @@ class AnimeLoadsPlugin:
             batch = self._filter_and_build(page_results, category)
             all_results.extend(batch)
 
-        return all_results[:_MAX_RESULTS]
+        return all_results[: self._max_results]
 
     def _filter_and_build(
         self,
@@ -448,18 +378,6 @@ class AnimeLoadsPlugin:
             sr = self._build_search_result(entry)
             results.append(sr)
         return results
-
-    async def cleanup(self) -> None:
-        """Close browser and Playwright."""
-        if self._context is not None:
-            await self._context.close()
-            self._context = None
-        if self._browser is not None:
-            await self._browser.close()
-            self._browser = None
-        if self._pw is not None:
-            await self._pw.stop()
-            self._pw = None
 
 
 plugin = AnimeLoadsPlugin()

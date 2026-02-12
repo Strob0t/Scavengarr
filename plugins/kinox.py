@@ -16,34 +16,8 @@ import asyncio
 import re
 from html.parser import HTMLParser
 
-import httpx
-import structlog
-
 from scavengarr.domain.plugins.base import SearchResult
-
-log = structlog.get_logger(__name__)
-
-# Known domains in priority order (all serve identical content)
-_DOMAINS = [
-    "www22.kinox.to",
-    "ww22.kinox.to",
-    "www22.kinos.to",
-    "ww22.kinos.to",
-    "www22.kinoz.to",
-    "ww22.kinoz.to",
-    "www20.kinox.to",
-    "www15.kinox.to",
-    "www.kinox.to",
-]
-
-_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
-)
-
-_MAX_CONCURRENT_DETAIL = 3
-_MAX_RESULTS = 1000
+from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 
 class _SearchResultParser(HTMLParser):
@@ -226,51 +200,22 @@ class _DetailPageParser(HTMLParser):
             self._in_named_div = False
 
 
-class KinoxPlugin:
+class KinoxPlugin(HttpxPluginBase):
     """Python plugin for kinox.to / kinos.to / kinoz.to using httpx."""
 
     name = "kinox"
-    version = "1.0.0"
-    mode = "httpx"
     provides = "stream"
-    default_language = "de"
-
-    def __init__(self) -> None:
-        self._client: httpx.AsyncClient | None = None
-        self.base_url: str = f"https://{_DOMAINS[0]}"
-        self._domain_verified = False
-
-    async def _ensure_client(self) -> httpx.AsyncClient:
-        """Create httpx client if not already running."""
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                timeout=15.0,
-                follow_redirects=True,
-                headers={"User-Agent": _USER_AGENT},
-            )
-        return self._client
-
-    async def _verify_domain(self) -> None:
-        """Find and cache a working domain from the fallback list."""
-        if self._domain_verified:
-            return
-
-        client = await self._ensure_client()
-        for domain in _DOMAINS:
-            url = f"https://{domain}/"
-            try:
-                resp = await client.head(url, timeout=5.0)
-                if resp.status_code == 200:
-                    self.base_url = f"https://{domain}"
-                    self._domain_verified = True
-                    log.info("kinox_domain_found", domain=domain)
-                    return
-            except Exception:  # noqa: BLE001
-                continue
-
-        self.base_url = f"https://{_DOMAINS[0]}"
-        self._domain_verified = True
-        log.warning("kinox_no_domain_reachable", fallback=_DOMAINS[0])
+    _domains = [
+        "www22.kinox.to",
+        "ww22.kinox.to",
+        "www22.kinos.to",
+        "ww22.kinos.to",
+        "www22.kinoz.to",
+        "ww22.kinoz.to",
+        "www20.kinox.to",
+        "www15.kinox.to",
+        "www.kinox.to",
+    ]
 
     async def _search_page(self, query: str) -> list[dict[str, str]]:
         """Fetch search page and parse results."""
@@ -283,13 +228,13 @@ class KinoxPlugin:
             )
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            log.warning("kinox_search_failed", query=query, error=str(exc))
+            self._log.warning("kinox_search_failed", query=query, error=str(exc))
             return []
 
         parser = _SearchResultParser()
         parser.feed(resp.text)
 
-        log.info("kinox_search", query=query, count=len(parser.results))
+        self._log.info("kinox_search", query=query, count=len(parser.results))
         return parser.results
 
     async def _fetch_detail_page(self, url_path: str) -> _DetailPageParser:
@@ -300,13 +245,13 @@ class KinoxPlugin:
             resp = await client.get(f"{self.base_url}{url_path}")
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            log.warning("kinox_detail_failed", url=url_path, error=str(exc))
+            self._log.warning("kinox_detail_failed", url=url_path, error=str(exc))
             return _DetailPageParser()
 
         parser = _DetailPageParser()
         parser.feed(resp.text)
 
-        log.info(
+        self._log.info(
             "kinox_detail",
             url=url_path,
             title=parser.title,
@@ -333,7 +278,7 @@ class KinoxPlugin:
             m = re.search(r'<iframe[^>]+src=["\']([^"\']+)', resp.text)
             return m.group(1).strip() if m else None
         except Exception:  # noqa: BLE001
-            log.warning("kinox_mirror_failed", slug=slug, hoster_id=hoster_id)
+            self._log.warning("kinox_mirror_failed", slug=slug, hoster_id=hoster_id)
             return None
 
     def _build_search_result(
@@ -380,7 +325,7 @@ class KinoxPlugin:
         # Fetch embed URLs for each hoster (bounded concurrency)
         links: list[dict[str, str]] = []
         if detail.hosters:
-            mirror_sem = asyncio.Semaphore(_MAX_CONCURRENT_DETAIL)
+            mirror_sem = self._new_semaphore()
 
             async def _fetch(h: dict[str, str]) -> dict[str, str] | None:
                 async with mirror_sem:
@@ -435,7 +380,7 @@ class KinoxPlugin:
         if not search_entries:
             return []
 
-        sem = asyncio.Semaphore(_MAX_CONCURRENT_DETAIL)
+        sem = self._new_semaphore()
         tasks = [
             self._process_entry(e, sem, effective_category) for e in search_entries
         ]
@@ -445,16 +390,10 @@ class KinoxPlugin:
         for sr in task_results:
             if sr is not None:
                 results.append(sr)
-                if len(results) >= _MAX_RESULTS:
+                if len(results) >= self._max_results:
                     break
 
-        return results[:_MAX_RESULTS]
-
-    async def cleanup(self) -> None:
-        """Close httpx client."""
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+        return results[: self._max_results]
 
 
 plugin = KinoxPlugin()

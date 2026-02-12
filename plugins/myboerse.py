@@ -21,30 +21,9 @@ import re
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
 
-import httpx
-import structlog
-
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
-log = structlog.get_logger(__name__)
-
-# Known domains in priority order (mirrors redirect to primary).
-_DOMAINS = [
-    "myboerse.bz",
-    "myboerse.ws",
-    "myboerse.me",
-]
-
-_BASE_URL = f"https://{_DOMAINS[0]}"
-
-_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
-)
-
-_MAX_CONCURRENT_DETAIL = 3
-_MAX_RESULTS = 1000
 _MAX_PAGES = 50  # ~20 results/page → 50 pages for 1000
 
 # Torznab category → list of XenForo forum node IDs.
@@ -415,52 +394,18 @@ class _ThreadPostParser(HTMLParser):
             self.links.append({"hoster": hoster, "link": href})
 
 
-class MyboersePlugin:
+class MyboersePlugin(HttpxPluginBase):
     """Python plugin for myboerse.bz using httpx."""
 
     name = "myboerse"
-    version = "1.0.0"
-    mode = "httpx"
     provides = "download"
-    default_language = "de"
+    _domains = ["myboerse.bz", "myboerse.ws", "myboerse.me"]
+    _logged_in: bool = False
 
-    def __init__(self) -> None:
-        self._client: httpx.AsyncClient | None = None
+    async def cleanup(self) -> None:
+        """Close httpx client and reset login state."""
+        await super().cleanup()
         self._logged_in = False
-        self._domain_verified = False
-        self.base_url = _BASE_URL
-
-    async def _ensure_client(self) -> httpx.AsyncClient:
-        """Create httpx client if not already running."""
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                timeout=15.0,
-                follow_redirects=True,
-                headers={"User-Agent": _USER_AGENT},
-            )
-        return self._client
-
-    async def _verify_domain(self) -> None:
-        """Find and cache a working domain from the fallback list."""
-        if self._domain_verified:
-            return
-
-        client = await self._ensure_client()
-        for domain in _DOMAINS:
-            url = f"https://{domain}/"
-            try:
-                resp = await client.head(url, timeout=5.0)
-                if resp.status_code == 200:
-                    self.base_url = f"https://{domain}"
-                    self._domain_verified = True
-                    log.info("myboerse_domain_found", domain=domain)
-                    return
-            except Exception:  # noqa: BLE001
-                continue
-
-        self.base_url = f"https://{_DOMAINS[0]}"
-        self._domain_verified = True
-        log.warning("myboerse_no_domain_reachable", fallback=_DOMAINS[0])
 
     async def _login(self) -> None:
         """Authenticate with XenForo using CSRF token."""
@@ -506,7 +451,7 @@ class MyboersePlugin:
             raise RuntimeError("Login failed: no session cookie received")
 
         self._logged_in = True
-        log.info("myboerse_login_success")
+        self._log.info("myboerse_login_success")
 
     async def _search_page(
         self,
@@ -534,14 +479,14 @@ class MyboersePlugin:
             )
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            log.warning("myboerse_search_failed", query=query, error=str(exc))
+            self._log.warning("myboerse_search_failed", query=query, error=str(exc))
             return [], ""
 
         parser = _SearchResultParser(self.base_url)
         parser.feed(resp.text)
         parser.flush_pending()
 
-        log.info(
+        self._log.info(
             "myboerse_search_page",
             query=query,
             results=len(parser.results),
@@ -557,7 +502,7 @@ class MyboersePlugin:
             resp = await client.get(full_url)
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            log.warning(
+            self._log.warning(
                 "myboerse_page_fetch_failed",
                 url=full_url,
                 error=str(exc),
@@ -578,7 +523,7 @@ class MyboersePlugin:
             resp = await client.get(result["url"])
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            log.warning(
+            self._log.warning(
                 "myboerse_thread_fetch_failed",
                 url=result.get("url", ""),
                 error=str(exc),
@@ -589,7 +534,7 @@ class MyboersePlugin:
         post_parser.feed(resp.text)
 
         if not post_parser.links:
-            log.debug("myboerse_no_links", url=result.get("url", ""))
+            self._log.debug("myboerse_no_links", url=result.get("url", ""))
             return None
 
         # Determine Torznab category
@@ -630,20 +575,22 @@ class MyboersePlugin:
 
         # Paginate
         page_num = 1
-        while next_url and len(all_results) < _MAX_RESULTS and page_num < _MAX_PAGES:
+        while (
+            next_url and len(all_results) < self._max_results and page_num < _MAX_PAGES
+        ):
             page_num += 1
             more_results, next_url = await self._fetch_next_page(next_url)
             if not more_results:
                 break
             all_results.extend(more_results)
 
-        all_results = all_results[:_MAX_RESULTS]
+        all_results = all_results[: self._max_results]
 
         if not all_results:
             return []
 
         # Scrape thread detail pages with bounded concurrency
-        sem = asyncio.Semaphore(_MAX_CONCURRENT_DETAIL)
+        sem = self._new_semaphore()
 
         async def _bounded_scrape(
             r: dict[str, str],
@@ -656,13 +603,6 @@ class MyboersePlugin:
             return_exceptions=True,
         )
         return [r for r in results if isinstance(r, SearchResult)]
-
-    async def cleanup(self) -> None:
-        """Close httpx client."""
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
-        self._logged_in = False
 
 
 plugin = MyboersePlugin()

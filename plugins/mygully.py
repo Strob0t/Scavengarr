@@ -21,32 +21,10 @@ import re
 from html.parser import HTMLParser
 from urllib.parse import urlparse
 
-import structlog
-from playwright.async_api import (
-    Browser,
-    BrowserContext,
-    Page,
-    Playwright,
-    async_playwright,
-)
+from playwright.async_api import Page
 
 from scavengarr.domain.plugins.base import SearchResult
-
-log = structlog.get_logger(__name__)
-
-_DOMAINS = [
-    "https://mygully.com",
-    "https://mygully.to",
-]
-
-_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
-)
-
-_MAX_CONCURRENT_PAGES = 3
-_MAX_RESULTS = 1000
+from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
 # Torznab category -> vBulletin forum ID mapping.
 # Uses parent forum IDs with childforums=1 for broad matching.
@@ -242,7 +220,7 @@ class _ThreadTitleParser(HTMLParser):
             self._in_title_tag = False
 
 
-class MyGullyPlugin:
+class MyGullyPlugin(PlaywrightPluginBase):
     """Python plugin for mygully.com forum using Playwright."""
 
     name = "mygully"
@@ -251,27 +229,16 @@ class MyGullyPlugin:
     provides = "download"
     default_language = "de"
 
+    _domains = [
+        "mygully.com",
+        "mygully.to",
+    ]
+
     def __init__(self) -> None:
-        self._domains = list(_DOMAINS)
-        self._playwright: Playwright | None = None
-        self._browser: Browser | None = None
-        self._context: BrowserContext | None = None
+        super().__init__()
         self._logged_in = False
-        self.base_url = self._domains[0]
 
-    async def _ensure_browser(self) -> None:
-        """Launch Chromium if not already running."""
-        if self._browser is not None:
-            return
-        self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(
-            headless=True,
-        )
-        self._context = await self._browser.new_context(
-            user_agent=_USER_AGENT,
-        )
-
-    async def _wait_for_cloudflare(self, page: Page) -> None:
+    async def _wait_for_cloudflare(self, page: "Page") -> None:
         """If Cloudflare challenge is detected, wait for it to resolve."""
         try:
             await page.wait_for_function(
@@ -296,18 +263,19 @@ class MyGullyPlugin:
                 "and SCAVENGARR_MYGULLY_PASSWORD"
             )
 
-        assert self._context is not None
+        ctx = await self._ensure_context()
         md5_pass = hashlib.md5(  # noqa: S324
             password.encode(),
         ).hexdigest()
 
         for domain in self._domains:
+            domain_url = f"https://{domain}"
             try:
-                page = await self._context.new_page()
+                page = await ctx.new_page()
                 try:
                     # Load homepage to get the login form
                     await page.goto(
-                        domain,
+                        domain_url,
                         wait_until="domcontentloaded",
                     )
                     await self._wait_for_cloudflare(page)
@@ -347,12 +315,12 @@ class MyGullyPlugin:
                         pass
 
                     # Verify login: check for session cookie
-                    cookies = await self._context.cookies()
+                    cookies = await ctx.cookies()
                     has_session = any(c["name"] == "bbsessionhash" for c in cookies)
                     if has_session:
-                        self.base_url = domain
+                        self.base_url = domain_url
                         self._logged_in = True
-                        log.info("mygully_login_success", domain=domain)
+                        self._log.info("mygully_login_success", domain=domain)
                         await page.close()
                         return
 
@@ -361,7 +329,7 @@ class MyGullyPlugin:
                         await page.close()
 
             except Exception as exc:  # noqa: BLE001
-                log.warning(
+                self._log.warning(
                     "mygully_domain_unreachable",
                     domain=domain,
                     error=str(exc),
@@ -372,9 +340,9 @@ class MyGullyPlugin:
 
     async def _fetch_page_html(self, url: str) -> str:
         """Navigate to a URL and return page HTML."""
-        assert self._context is not None  # noqa: S101
+        ctx = await self._ensure_context()
 
-        page = await self._context.new_page()
+        page = await ctx.new_page()
         try:
             await page.goto(url, wait_until="domcontentloaded")
             await self._wait_for_cloudflare(page)
@@ -391,9 +359,9 @@ class MyGullyPlugin:
 
     async def _submit_search_form(self, query: str, forum_id: str) -> str:
         """Submit the vBulletin search form and return results HTML."""
-        assert self._context is not None  # noqa: S101
+        ctx = await self._ensure_context()
 
-        page = await self._context.new_page()
+        page = await ctx.new_page()
         try:
             await page.goto(
                 f"{self.base_url}/search.php",
@@ -474,7 +442,7 @@ class MyGullyPlugin:
                 all_urls.append(url)
 
         next_url = parser.next_page_url
-        while next_url and len(all_urls) < _MAX_RESULTS:
+        while next_url and len(all_urls) < self._max_results:
             if not next_url.startswith("http"):
                 next_url = f"{self.base_url}/{next_url.lstrip('/')}"
 
@@ -497,13 +465,13 @@ class MyGullyPlugin:
                 break
             next_url = parser.next_page_url
 
-        return all_urls[:_MAX_RESULTS]
+        return all_urls[: self._max_results]
 
     async def _scrape_thread(self, url: str) -> SearchResult | None:
         """Scrape a single thread page for title and download links."""
-        assert self._context is not None
+        ctx = await self._ensure_context()
 
-        page = await self._context.new_page()
+        page = await ctx.new_page()
         try:
             await page.goto(url, wait_until="domcontentloaded")
             await self._wait_for_cloudflare(page)
@@ -537,6 +505,11 @@ class MyGullyPlugin:
             category=2000,
         )
 
+    async def cleanup(self) -> None:
+        """Close browser and reset login state."""
+        await super().cleanup()
+        self._logged_in = False
+
     async def search(
         self,
         query: str,
@@ -553,7 +526,7 @@ class MyGullyPlugin:
         if not thread_urls:
             return []
 
-        sem = asyncio.Semaphore(_MAX_CONCURRENT_PAGES)
+        sem = self._new_semaphore()
 
         async def _bounded_scrape(url: str) -> SearchResult | None:
             async with sem:
@@ -564,19 +537,6 @@ class MyGullyPlugin:
             return_exceptions=True,
         )
         return [r for r in results if isinstance(r, SearchResult)]
-
-    async def cleanup(self) -> None:
-        """Close browser and Playwright resources."""
-        if self._context is not None:
-            await self._context.close()
-            self._context = None
-        if self._browser is not None:
-            await self._browser.close()
-            self._browser = None
-        if self._playwright is not None:
-            await self._playwright.stop()
-            self._playwright = None
-        self._logged_in = False
 
 
 def _is_container_host(host: str) -> bool:

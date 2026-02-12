@@ -16,30 +16,15 @@ from __future__ import annotations
 import asyncio
 import re
 from html.parser import HTMLParser
+from typing import TYPE_CHECKING
 from urllib.parse import urljoin
 
-import structlog
-from playwright.async_api import (
-    Browser,
-    BrowserContext,
-    Page,
-    Playwright,
-    async_playwright,
-)
-
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
-log = structlog.get_logger(__name__)
+if TYPE_CHECKING:
+    from playwright.async_api import Page
 
-_BASE_URL = "https://byte.to"
-
-_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
-)
-
-_MAX_CONCURRENT_PAGES = 3
 _MAX_PAGES = 5
 
 # Torznab category → site category ID for search URL parameter ``c=``.
@@ -360,7 +345,7 @@ def _site_category_to_torznab(category_name: str) -> int:
     return _SITE_CATEGORY_MAP.get(category_name.lower().strip(), 2000)
 
 
-class BytePlugin:
+class BytePlugin(PlaywrightPluginBase):
     """Python plugin for byte.to using Playwright."""
 
     name = "byte"
@@ -369,23 +354,7 @@ class BytePlugin:
     provides = "download"
     default_language = "de"
 
-    def __init__(self) -> None:
-        self._playwright: Playwright | None = None
-        self._browser: Browser | None = None
-        self._context: BrowserContext | None = None
-        self.base_url = _BASE_URL
-
-    async def _ensure_browser(self) -> None:
-        """Launch Chromium if not already running."""
-        if self._browser is not None:
-            return
-        self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(
-            headless=True,
-        )
-        self._context = await self._browser.new_context(
-            user_agent=_USER_AGENT,
-        )
+    _domains = ["byte.to"]
 
     async def _wait_for_cloudflare(self, page: Page) -> None:
         """If Cloudflare challenge is detected, wait for it to resolve."""
@@ -430,7 +399,7 @@ class BytePlugin:
             parser.feed(html)
             parser.flush_pending()
 
-            log.info(
+            self._log.info(
                 "byte_search_page",
                 query=query,
                 page=page_num,
@@ -490,7 +459,7 @@ class BytePlugin:
             links = await self._extract_iframe_links(page)
 
             if not links:
-                log.debug("byte_no_links", url=result["url"])
+                self._log.debug("byte_no_links", url=result["url"])
                 return None
 
             title = detail_parser.release_name or result.get("title", "Unknown")
@@ -506,7 +475,7 @@ class BytePlugin:
                 category=torznab_cat,
             )
         except Exception:  # noqa: BLE001
-            log.warning("byte_detail_fetch_failed", url=result["url"])
+            self._log.warning("byte_detail_fetch_failed", url=result["url"])
             return None
         finally:
             if not page.is_closed():
@@ -520,7 +489,7 @@ class BytePlugin:
         episode: int | None = None,
     ) -> list[SearchResult]:
         """Search byte.to and return results with download links."""
-        await self._ensure_browser()
+        await self._ensure_context()
 
         site_category = _TORZNAB_TO_SITE_CATEGORY.get(category, "") if category else ""
 
@@ -543,7 +512,7 @@ class BytePlugin:
             return []
 
         # Scrape detail pages in parallel with bounded concurrency
-        sem = asyncio.Semaphore(_MAX_CONCURRENT_PAGES)
+        sem = self._new_semaphore()
 
         async def _bounded_scrape(
             r: dict[str, str],
@@ -556,18 +525,6 @@ class BytePlugin:
             return_exceptions=True,
         )
         return [r for r in results if isinstance(r, SearchResult)]
-
-    async def cleanup(self) -> None:
-        """Close browser and Playwright resources."""
-        if self._context is not None:
-            await self._context.close()
-            self._context = None
-        if self._browser is not None:
-            await self._browser.close()
-            self._browser = None
-        if self._playwright is not None:
-            await self._playwright.stop()
-            self._playwright = None
 
 
 plugin = BytePlugin()

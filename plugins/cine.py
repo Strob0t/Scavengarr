@@ -13,25 +13,11 @@ from __future__ import annotations
 
 import asyncio
 
-import httpx
-import structlog
-
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
-log = structlog.get_logger(__name__)
-
-_BASE_URL = "https://cine.to"
-
-_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
-)
-
-_MAX_CONCURRENT_DETAIL = 3
-_MAX_RESULTS = 1000
 _PER_PAGE = 24
-_MAX_PAGES = _MAX_RESULTS // _PER_PAGE  # 41 pages × 24 = 984, +1 page = 1008
+_MAX_PAGES = 41  # 1000 // 24 = 41 pages × 24 = 984, +1 page = 1008
 
 _QUALITY_MAP: dict[int | str, str] = {
     0: "CAM",
@@ -45,28 +31,12 @@ _QUALITY_MAP: dict[int | str, str] = {
 }
 
 
-class CinePlugin:
+class CinePlugin(HttpxPluginBase):
     """Python plugin for cine.to using httpx (REST API, movies only)."""
 
     name = "cine"
-    version = "1.0.0"
-    mode = "httpx"
     provides = "stream"
-    default_language = "de"
-
-    def __init__(self) -> None:
-        self._client: httpx.AsyncClient | None = None
-        self.base_url: str = _BASE_URL
-
-    async def _ensure_client(self) -> httpx.AsyncClient:
-        """Create httpx client if not already running."""
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                timeout=15.0,
-                follow_redirects=True,
-                headers={"User-Agent": _USER_AGENT},
-            )
-        return self._client
+    _domains = ["cine.to"]
 
     async def _api_search(self, query: str) -> list[dict]:
         """Search the API across multiple pages and return raw entry dicts."""
@@ -90,7 +60,7 @@ class CinePlugin:
                 )
                 resp.raise_for_status()
             except Exception as exc:  # noqa: BLE001
-                log.warning(
+                self._log.warning(
                     "cine_search_failed",
                     query=query,
                     page=page,
@@ -105,15 +75,15 @@ class CinePlugin:
             entries = data.get("entries") or []
             all_entries.extend(entries)
 
-            if len(all_entries) >= _MAX_RESULTS:
+            if len(all_entries) >= self._max_results:
                 break
 
             total_pages = data.get("pages", 1)
             if page >= total_pages:
                 break
 
-        log.info("cine_search", query=query, count=len(all_entries))
-        return all_entries[:_MAX_RESULTS]
+        self._log.info("cine_search", query=query, count=len(all_entries))
+        return all_entries[: self._max_results]
 
     async def _fetch_entry_detail(self, imdb_id: str) -> dict | None:
         """Fetch title details (genres, rating, plot, duration)."""
@@ -126,7 +96,7 @@ class CinePlugin:
             )
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            log.warning("cine_detail_failed", imdb_id=imdb_id, error=str(exc))
+            self._log.warning("cine_detail_failed", imdb_id=imdb_id, error=str(exc))
             return None
 
         data = resp.json()
@@ -146,7 +116,7 @@ class CinePlugin:
             )
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            log.warning("cine_links_failed", imdb_id=imdb_id, error=str(exc))
+            self._log.warning("cine_links_failed", imdb_id=imdb_id, error=str(exc))
             return None
 
         data = resp.json()
@@ -280,19 +250,13 @@ class CinePlugin:
             return []
 
         # Fetch detail + links with bounded concurrency
-        sem = asyncio.Semaphore(_MAX_CONCURRENT_DETAIL)
+        sem = self._new_semaphore()
         tasks = [self._process_entry(e, sem) for e in search_results]
         task_results = await asyncio.gather(*tasks)
 
         results: list[SearchResult] = [sr for sr in task_results if sr is not None]
 
-        return results[:_MAX_RESULTS]
-
-    async def cleanup(self) -> None:
-        """Close httpx client."""
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+        return results[: self._max_results]
 
 
 plugin = CinePlugin()

@@ -18,27 +18,8 @@ import json
 import re
 from html.parser import HTMLParser
 
-import httpx
-import structlog
-
 from scavengarr.domain.plugins.base import SearchResult
-
-log = structlog.get_logger(__name__)
-
-_DOMAINS = [
-    "kinoking.cc",
-]
-
-_BASE_URL = f"https://{_DOMAINS[0]}"
-
-_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
-)
-
-_MAX_CONCURRENT_DETAIL = 3
-_MAX_RESULTS = 1000
+from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # Genre name (lowercase, German) → Torznab category.
 _GENRE_CATEGORY_MAP: dict[str, int] = {
@@ -413,54 +394,15 @@ class _SeriesDetailParser(HTMLParser):
                     self.episodes.append({"episode_id": m.group(1), "title": title})
 
 
-class KinokingPlugin:
+class KinokingPlugin(HttpxPluginBase):
     """Python plugin for kinoking.cc using httpx.
 
     Scrapes movies and TV series with hoster links.
     """
 
     name = "kinoking"
-    version = "1.0.0"
-    mode = "httpx"
     provides = "stream"
-    default_language = "de"
-
-    def __init__(self) -> None:
-        self._client: httpx.AsyncClient | None = None
-        self._domain_verified = False
-        self.base_url = _BASE_URL
-
-    async def _ensure_client(self) -> httpx.AsyncClient:
-        """Create httpx client if not already running."""
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                timeout=15.0,
-                follow_redirects=True,
-                headers={"User-Agent": _USER_AGENT},
-            )
-        return self._client
-
-    async def _verify_domain(self) -> None:
-        """Find and cache a working domain from the fallback list."""
-        if self._domain_verified:
-            return
-
-        client = await self._ensure_client()
-        for domain in _DOMAINS:
-            url = f"https://{domain}/"
-            try:
-                resp = await client.head(url, timeout=5.0)
-                if resp.status_code == 200:
-                    self.base_url = f"https://{domain}"
-                    self._domain_verified = True
-                    log.info("kinoking_domain_found", domain=domain)
-                    return
-            except Exception:  # noqa: BLE001
-                continue
-
-        self.base_url = f"https://{_DOMAINS[0]}"
-        self._domain_verified = True
-        log.warning("kinoking_no_domain_reachable", fallback=_DOMAINS[0])
+    _domains = ["kinoking.cc"]
 
     async def _search_cards(self, query: str) -> list[dict[str, str]]:
         """Fetch search page and return parsed content cards."""
@@ -473,13 +415,13 @@ class KinokingPlugin:
             )
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            log.warning("kinoking_search_failed", query=query, error=str(exc))
+            self._log.warning("kinoking_search_failed", query=query, error=str(exc))
             return []
 
         parser = _SearchCardParser()
         parser.feed(resp.text)
 
-        log.info(
+        self._log.info(
             "kinoking_search",
             query=query,
             count=len(parser.results),
@@ -497,7 +439,7 @@ class KinokingPlugin:
             )
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            log.warning(
+            self._log.warning(
                 "kinoking_movie_detail_failed",
                 movie_id=movie_id,
                 error=str(exc),
@@ -542,7 +484,7 @@ class KinokingPlugin:
             resp = await client.get(f"{self.base_url}/series.php", params=params)
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            log.warning(
+            self._log.warning(
                 "kinoking_series_detail_failed",
                 series_id=series_id,
                 error=str(exc),
@@ -567,7 +509,7 @@ class KinokingPlugin:
             links = data.get("links", [])
             return [str(lnk) for lnk in links if lnk]
         except Exception as exc:  # noqa: BLE001
-            log.warning(
+            self._log.warning(
                 "kinoking_episode_api_failed",
                 episode_id=episode_id,
                 error=str(exc),
@@ -594,7 +536,7 @@ class KinokingPlugin:
         links: list[dict[str, str]] = [{"hoster": "primary", "link": detail.iframe_src}]
 
         # Resolve additional server links with bounded concurrency
-        sem = asyncio.Semaphore(_MAX_CONCURRENT_DETAIL)
+        sem = self._new_semaphore()
 
         async def _resolve_link(
             srv: dict[str, str],
@@ -667,7 +609,7 @@ class KinokingPlugin:
             episodes = [ep for i, ep in enumerate(episodes, 1) if i == episode]
 
         # Fetch episode links with bounded concurrency
-        sem = asyncio.Semaphore(_MAX_CONCURRENT_DETAIL)
+        sem = self._new_semaphore()
 
         async def _fetch_ep(
             ep: dict[str, str],
@@ -721,7 +663,7 @@ class KinokingPlugin:
         category: int | None,
     ) -> list[SearchResult]:
         """Process movie cards into SearchResults."""
-        sem = asyncio.Semaphore(_MAX_CONCURRENT_DETAIL)
+        sem = self._new_semaphore()
 
         async def _bounded(card: dict[str, str]) -> SearchResult | None:
             async with sem:
@@ -741,7 +683,7 @@ class KinokingPlugin:
         episode: int | None = None,
     ) -> list[SearchResult]:
         """Process series cards into SearchResults."""
-        sem = asyncio.Semaphore(_MAX_CONCURRENT_DETAIL)
+        sem = self._new_semaphore()
 
         async def _bounded(
             card: dict[str, str],
@@ -786,7 +728,7 @@ class KinokingPlugin:
                 )
             )
 
-        return results[:_MAX_RESULTS]
+        return results[: self._max_results]
 
     async def search(
         self,
@@ -806,12 +748,6 @@ class KinokingPlugin:
         return await self._process_cards(
             cards, category, season=season, episode=episode
         )
-
-    async def cleanup(self) -> None:
-        """Close httpx client."""
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
 
 
 plugin = KinokingPlugin()

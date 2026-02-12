@@ -17,23 +17,8 @@ import json
 import time
 from html.parser import HTMLParser
 
-import httpx
-import structlog
-
 from scavengarr.domain.plugins.base import SearchResult
-
-log = structlog.get_logger(__name__)
-
-_BASE_URL = "https://filmfans.org"
-
-_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
-)
-
-_MAX_CONCURRENT_DETAIL = 3
-_MAX_RESULTS = 1000
+from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 
 class _ReleaseParser(HTMLParser):
@@ -188,7 +173,7 @@ class _ReleaseParser(HTMLParser):
                 self._emit_entry()
 
 
-class FilmfansPlugin:
+class FilmfansPlugin(HttpxPluginBase):
     """Python plugin for filmfans.org using httpx."""
 
     name = "filmfans"
@@ -197,19 +182,7 @@ class FilmfansPlugin:
     provides = "download"
     default_language = "de"
 
-    def __init__(self) -> None:
-        self._client: httpx.AsyncClient | None = None
-        self.base_url = _BASE_URL
-
-    async def _ensure_client(self) -> httpx.AsyncClient:
-        """Create httpx client if not already running."""
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                timeout=15.0,
-                follow_redirects=True,
-                headers={"User-Agent": _USER_AGENT},
-            )
-        return self._client
+    _domains = ["filmfans.org"]
 
     async def _search_api(self, query: str) -> list[dict[str, str | int]]:
         """Execute JSON search API and return movie entries."""
@@ -222,20 +195,20 @@ class FilmfansPlugin:
             )
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            log.warning("filmfans_search_failed", query=query, error=str(exc))
+            self._log.warning("filmfans_search_failed", query=query, error=str(exc))
             return []
 
         try:
             data = resp.json()
         except (json.JSONDecodeError, ValueError):
-            log.warning("filmfans_invalid_json", query=query)
+            self._log.warning("filmfans_invalid_json", query=query)
             return []
 
         movies = data.get("result", [])
         if not isinstance(movies, list):
             return []
 
-        log.info("filmfans_search_api", query=query, count=len(movies))
+        self._log.info("filmfans_search_api", query=query, count=len(movies))
         return movies
 
     async def _fetch_movie_page(
@@ -249,7 +222,7 @@ class FilmfansPlugin:
             resp = await client.get(url)
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            log.warning(
+            self._log.warning(
                 "filmfans_movie_page_failed",
                 url_id=url_id,
                 error=str(exc),
@@ -259,7 +232,7 @@ class FilmfansPlugin:
         parser = _ReleaseParser(self.base_url)
         parser.feed(resp.text)
 
-        log.info(
+        self._log.info(
             "filmfans_movie_page",
             url_id=url_id,
             releases=len(parser.releases),
@@ -326,7 +299,7 @@ class FilmfansPlugin:
             return []
 
         # Fetch movie pages with bounded concurrency
-        sem = asyncio.Semaphore(_MAX_CONCURRENT_DETAIL)
+        sem = self._new_semaphore()
         results: list[SearchResult] = []
 
         async def _process_movie(movie: dict[str, str | int]) -> list[SearchResult]:
@@ -349,16 +322,10 @@ class FilmfansPlugin:
 
         for movie_results in task_results:
             results.extend(movie_results)
-            if len(results) >= _MAX_RESULTS:
+            if len(results) >= self._max_results:
                 break
 
-        return results[:_MAX_RESULTS]
-
-    async def cleanup(self) -> None:
-        """Close httpx client."""
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+        return results[: self._max_results]
 
 
 # Used to add timestamp to external links for cache busting

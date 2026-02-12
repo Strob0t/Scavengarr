@@ -17,33 +17,11 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-import structlog
-from playwright.async_api import (
-    Browser,
-    BrowserContext,
-    Page,
-    Playwright,
-    async_playwright,
-)
+from playwright.async_api import Page
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
-log = structlog.get_logger(__name__)
-
-# Known domains in priority order.
-_DOMAINS = [
-    "moflix-stream.xyz",
-    "moflix-stream.click",
-]
-
-_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
-)
-
-_MAX_CONCURRENT_DETAIL = 3
-_MAX_RESULTS = 1000
 _SEARCH_LIMIT = 20  # API hard cap
 _CF_TIMEOUT = 30_000  # ms to wait for Cloudflare challenge
 _NAV_TIMEOUT = 30_000
@@ -78,7 +56,7 @@ async (url) => {
 """
 
 
-class MoflixPlugin:
+class MoflixPlugin(PlaywrightPluginBase):
     """Python plugin for moflix-stream.xyz using Playwright (Cloudflare bypass)."""
 
     name = "moflix"
@@ -87,42 +65,12 @@ class MoflixPlugin:
     provides = "stream"
     default_language = "de"
 
-    def __init__(self) -> None:
-        self._pw: Playwright | None = None
-        self._browser: Browser | None = None
-        self._context: BrowserContext | None = None
-        self._page: Page | None = None
-        self.base_url: str = f"https://{_DOMAINS[0]}"
-        self._domain_verified = False
+    _domains = [
+        "moflix-stream.xyz",
+        "moflix-stream.click",
+    ]
 
-    async def _ensure_browser(self) -> Browser:
-        """Launch browser if not already running."""
-        if self._browser is None:
-            self._pw = await async_playwright().start()
-            self._browser = await self._pw.chromium.launch(headless=True)
-            log.info("moflix_browser_launched")
-        return self._browser
-
-    async def _ensure_context(self) -> BrowserContext:
-        """Create browser context with proper user agent."""
-        if self._context is None:
-            browser = await self._ensure_browser()
-            self._context = await browser.new_context(
-                user_agent=_USER_AGENT,
-                viewport={"width": 1280, "height": 720},
-            )
-        return self._context
-
-    async def _ensure_page(self) -> Page:
-        """Get or create the persistent page used for API calls."""
-        if self._page is None or self._page.is_closed():
-            ctx = await self._ensure_context()
-            self._page = await ctx.new_page()
-            self._page.set_default_navigation_timeout(_NAV_TIMEOUT)
-            self._page.set_default_timeout(_NAV_TIMEOUT)
-        return self._page
-
-    async def _wait_for_cloudflare(self, page: Page) -> bool:
+    async def _wait_for_cloudflare(self, page: "Page") -> bool:
         """Wait for the Cloudflare JS challenge to resolve."""
         try:
             # The real site has a progress bar or content that loads after
@@ -136,7 +84,7 @@ class MoflixPlugin:
         except Exception:  # noqa: BLE001
             pass
 
-        log.warning("moflix_cloudflare_timeout")
+        self._log.warning("moflix_cloudflare_timeout")
         return False
 
     async def _verify_domain(self) -> None:
@@ -146,21 +94,21 @@ class MoflixPlugin:
 
         page = await self._ensure_page()
 
-        for domain in _DOMAINS:
+        for domain in self._domains:
             url = f"https://{domain}/"
             try:
                 await page.goto(url, wait_until="domcontentloaded")
                 if await self._wait_for_cloudflare(page):
                     self.base_url = f"https://{domain}"
                     self._domain_verified = True
-                    log.info("moflix_domain_found", domain=domain)
+                    self._log.info("moflix_domain_found", domain=domain)
                     return
             except Exception:  # noqa: BLE001
                 continue
 
-        self.base_url = f"https://{_DOMAINS[0]}"
+        self.base_url = f"https://{self._domains[0]}"
         self._domain_verified = True
-        log.warning("moflix_no_domain_reachable", fallback=_DOMAINS[0])
+        self._log.warning("moflix_no_domain_reachable", fallback=self._domains[0])
 
     async def _api_fetch(self, path: str) -> dict[str, Any] | None:
         """Call a moflix API endpoint from within the browser context."""
@@ -170,14 +118,14 @@ class MoflixPlugin:
         try:
             data = await page.evaluate(_API_FETCH_JS, url)
         except Exception as exc:  # noqa: BLE001
-            log.warning("moflix_api_fetch_failed", path=path, error=str(exc))
+            self._log.warning("moflix_api_fetch_failed", path=path, error=str(exc))
             return None
 
         if not isinstance(data, dict):
             return None
 
         if "_error" in data:
-            log.warning("moflix_api_error", path=path, status=data["_error"])
+            self._log.warning("moflix_api_error", path=path, status=data["_error"])
             return None
 
         return data
@@ -195,7 +143,7 @@ class MoflixPlugin:
             return []
 
         results = data.get("results", [])
-        log.info("moflix_search", query=query, count=len(results))
+        self._log.info("moflix_search", query=query, count=len(results))
         return results
 
     async def _fetch_title_detail(self, title_id: int) -> dict | None:
@@ -207,7 +155,7 @@ class MoflixPlugin:
 
         title = data.get("title")
         if title:
-            log.info(
+            self._log.info(
                 "moflix_detail",
                 title_id=title_id,
                 name=title.get("name"),
@@ -345,7 +293,7 @@ class MoflixPlugin:
             return []
 
         # Fetch detail pages with bounded concurrency
-        sem = asyncio.Semaphore(_MAX_CONCURRENT_DETAIL)
+        sem = self._new_semaphore()
         tasks = [
             self._process_entry(e, sem, effective_category) for e in search_results
         ]
@@ -355,25 +303,10 @@ class MoflixPlugin:
         for sr in task_results:
             if sr is not None:
                 results.append(sr)
-                if len(results) >= _MAX_RESULTS:
+                if len(results) >= self._max_results:
                     break
 
-        return results[:_MAX_RESULTS]
-
-    async def cleanup(self) -> None:
-        """Close browser and Playwright."""
-        if self._page is not None and not self._page.is_closed():
-            await self._page.close()
-            self._page = None
-        if self._context is not None:
-            await self._context.close()
-            self._context = None
-        if self._browser is not None:
-            await self._browser.close()
-            self._browser = None
-        if self._pw is not None:
-            await self._pw.stop()
-            self._pw = None
+        return results[: self._max_results]
 
 
 plugin = MoflixPlugin()

@@ -11,6 +11,7 @@ import httpx
 import respx
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "ddlspot.py"
+_PW_PATCH = "scavengarr.infrastructure.plugins.playwright_base.async_playwright"
 
 
 def _load_ddlspot_module() -> ModuleType:
@@ -391,7 +392,7 @@ class TestCleanup:
         browser = _make_mock_browser(context)
         pw = _make_mock_playwright(browser)
 
-        p._playwright = pw
+        p._pw = pw
         p._browser = browser
         p._context = context
 
@@ -402,7 +403,7 @@ class TestCleanup:
         pw.stop.assert_awaited_once()
         assert p._context is None
         assert p._browser is None
-        assert p._playwright is None
+        assert p._pw is None
 
     async def test_cleanup_when_not_started(self) -> None:
         p = _make_plugin()
@@ -455,7 +456,7 @@ class TestSearch:
         pw = _make_mock_playwright(browser)
 
         mock_start = AsyncMock(return_value=pw)
-        with patch.object(_ddlspot, "async_playwright") as mock_ap:
+        with patch(_PW_PATCH) as mock_ap:
             mock_ap.return_value.start = mock_start
             results = await plugin.search("iron man")
 
@@ -487,7 +488,7 @@ class TestSearch:
         pw = _make_mock_playwright(browser)
 
         mock_start = AsyncMock(return_value=pw)
-        with patch.object(_ddlspot, "async_playwright") as mock_ap:
+        with patch(_PW_PATCH) as mock_ap:
             mock_ap.return_value.start = mock_start
             results = await plugin.search("nonexistent")
 
@@ -509,7 +510,7 @@ class TestSearch:
         pw = _make_mock_playwright(browser)
 
         mock_start = AsyncMock(return_value=pw)
-        with patch.object(_ddlspot, "async_playwright") as mock_ap:
+        with patch(_PW_PATCH) as mock_ap:
             mock_ap.return_value.start = mock_start
             results = await plugin.search("iron man", category=2000)
 
@@ -537,7 +538,7 @@ class TestSearch:
         pw = _make_mock_playwright(browser)
 
         mock_start = AsyncMock(return_value=pw)
-        with patch.object(_ddlspot, "async_playwright") as mock_ap:
+        with patch(_PW_PATCH) as mock_ap:
             mock_ap.return_value.start = mock_start
             results = await plugin.search("iron man")
 
@@ -563,7 +564,7 @@ class TestSearch:
         pw = _make_mock_playwright(browser)
 
         mock_start = AsyncMock(return_value=pw)
-        with patch.object(_ddlspot, "async_playwright") as mock_ap:
+        with patch(_PW_PATCH) as mock_ap:
             mock_ap.return_value.start = mock_start
             results = await plugin.search("iron man")
 

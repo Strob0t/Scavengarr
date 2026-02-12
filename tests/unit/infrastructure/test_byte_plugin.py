@@ -592,7 +592,7 @@ class TestCleanup:
         browser = _make_mock_browser(context)
         pw = _make_mock_playwright(browser)
 
-        plugin._playwright = pw
+        plugin._pw = pw
         plugin._browser = browser
         plugin._context = context
 
@@ -603,7 +603,7 @@ class TestCleanup:
         pw.stop.assert_awaited_once()
         assert plugin._context is None
         assert plugin._browser is None
-        assert plugin._playwright is None
+        assert plugin._pw is None
 
     async def test_cleanup_when_nothing_to_close(self) -> None:
         plugin = _make_plugin()

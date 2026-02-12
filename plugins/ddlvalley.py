@@ -17,29 +17,10 @@ import re
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
 
-import structlog
-from playwright.async_api import (
-    Browser,
-    BrowserContext,
-    Page,
-    Playwright,
-    async_playwright,
-)
+from playwright.async_api import Page
 
 from scavengarr.domain.plugins.base import SearchResult
-
-log = structlog.get_logger(__name__)
-
-_BASE_URL = "https://www.ddlvalley.me"
-
-_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
-)
-
-_MAX_CONCURRENT_PAGES = 3
-_MAX_RESULTS = 1000
+from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
 # Torznab category -> URL path segment mapping.
 _CATEGORY_PATH_MAP: dict[int, str] = {
@@ -208,7 +189,7 @@ class _TitleParser(HTMLParser):
             self._in_title = False
 
 
-class DDLValleyPlugin:
+class DDLValleyPlugin(PlaywrightPluginBase):
     """Python plugin for ddlvalley.me using Playwright."""
 
     name = "ddlvalley"
@@ -217,23 +198,7 @@ class DDLValleyPlugin:
     provides = "download"
     default_language = "en"
 
-    def __init__(self) -> None:
-        self._playwright: Playwright | None = None
-        self._browser: Browser | None = None
-        self._context: BrowserContext | None = None
-        self.base_url = _BASE_URL
-
-    async def _ensure_browser(self) -> None:
-        """Launch Chromium if not already running."""
-        if self._browser is not None:
-            return
-        self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(
-            headless=True,
-        )
-        self._context = await self._browser.new_context(
-            user_agent=_USER_AGENT,
-        )
+    _domains = ["www.ddlvalley.me"]
 
     async def _wait_for_cloudflare(self, page: Page) -> None:
         """If Cloudflare challenge is detected, wait for it to resolve."""
@@ -255,8 +220,6 @@ class DDLValleyPlugin:
 
         WordPress pagination: ``/page/N/?s=query`` for page >= 2.
         """
-        assert self._context is not None  # noqa: S101
-
         if category_path:
             base = f"{self.base_url}/{category_path}"
         else:
@@ -267,7 +230,8 @@ class DDLValleyPlugin:
         else:
             url = f"{base}/?s={query}"
 
-        page = await self._context.new_page()
+        ctx = await self._ensure_context()
+        page = await ctx.new_page()
         try:
             await page.goto(url, wait_until="domcontentloaded")
             await self._wait_for_cloudflare(page)
@@ -281,7 +245,7 @@ class DDLValleyPlugin:
             parser = _SearchResultParser(self.base_url)
             parser.feed(html)
 
-            log.info(
+            self._log.info(
                 "ddlvalley_search_results",
                 query=query,
                 category_path=category_path,
@@ -295,16 +259,15 @@ class DDLValleyPlugin:
 
     async def _scrape_detail(self, post: dict[str, str]) -> SearchResult | None:
         """Scrape a detail page for download links."""
-        assert self._context is not None  # noqa: S101
-
-        page = await self._context.new_page()
+        ctx = await self._ensure_context()
+        page = await ctx.new_page()
         try:
             await page.goto(post["url"], wait_until="domcontentloaded")
             await self._wait_for_cloudflare(page)
 
             html = await page.content()
         except Exception:  # noqa: BLE001
-            log.warning("ddlvalley_detail_fetch_failed", url=post["url"])
+            self._log.warning("ddlvalley_detail_fetch_failed", url=post["url"])
             return None
         finally:
             if not page.is_closed():
@@ -320,7 +283,7 @@ class DDLValleyPlugin:
         link_parser.feed(html)
 
         if not link_parser.links:
-            log.debug("ddlvalley_no_links", url=post["url"], title=title)
+            self._log.debug("ddlvalley_no_links", url=post["url"], title=title)
             return None
 
         primary_link = link_parser.links[0]["link"]
@@ -352,7 +315,7 @@ class DDLValleyPlugin:
         # Paginate search results (WordPress: ~10 posts/page)
         all_posts: list[dict[str, str]] = []
         page_num = 1
-        while len(all_posts) < _MAX_RESULTS:
+        while len(all_posts) < self._max_results:
             posts = await self._search_posts(query, category_path, page_num)
             if not posts:
                 break
@@ -362,9 +325,9 @@ class DDLValleyPlugin:
         if not all_posts:
             return []
 
-        all_posts = all_posts[:_MAX_RESULTS]
+        all_posts = all_posts[: self._max_results]
 
-        sem = asyncio.Semaphore(_MAX_CONCURRENT_PAGES)
+        sem = self._new_semaphore()
 
         async def _bounded_scrape(
             post: dict[str, str],
@@ -377,18 +340,6 @@ class DDLValleyPlugin:
             return_exceptions=True,
         )
         return [r for r in results if isinstance(r, SearchResult)]
-
-    async def cleanup(self) -> None:
-        """Close browser and Playwright resources."""
-        if self._context is not None:
-            await self._context.close()
-            self._context = None
-        if self._browser is not None:
-            await self._browser.close()
-            self._browser = None
-        if self._playwright is not None:
-            await self._playwright.stop()
-            self._playwright = None
 
 
 def _is_hoster_domain(host: str) -> bool:

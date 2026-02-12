@@ -21,43 +21,22 @@ import re
 from html.parser import HTMLParser
 from urllib.parse import urljoin
 
-import structlog
-from playwright.async_api import (
-    Browser,
-    BrowserContext,
-    Page,
-    Playwright,
-    async_playwright,
-)
+from playwright.async_api import Page
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
-log = structlog.get_logger(__name__)
-
-_DOMAINS = [
-    "streamworld.ws",
-    "streamworld.co",
-]
-
-_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
-)
-
-_MAX_CONCURRENT_DETAIL = 3
-_MAX_RESULTS = 1000
 _NAV_TIMEOUT = 30_000
 _ANTIBOT_TIMEOUT = 15_000  # ms to wait for anti-bot JS to finish
 
-# Torznab category → search result type text.
+# Torznab category -> search result type text.
 # Search results have "Film" or "Serie" in the first cell.
 _TYPE_TO_TORZNAB: dict[str, int] = {
     "film": 2000,
     "serie": 5000,
 }
 
-# Torznab category → type filter for search results.
+# Torznab category -> type filter for search results.
 _TORZNAB_TO_TYPE: dict[int, str] = {
     2000: "film",
     2010: "film",
@@ -374,7 +353,7 @@ class _DetailPageParser(HTMLParser):
             self._in_strong = False
 
 
-class StreamworldPlugin:
+class StreamworldPlugin(PlaywrightPluginBase):
     """Python plugin for streamworld.ws using Playwright (anti-bot bypass)."""
 
     name = "streamworld"
@@ -383,42 +362,12 @@ class StreamworldPlugin:
     provides = "stream"
     default_language = "de"
 
-    def __init__(self) -> None:
-        self._pw: Playwright | None = None
-        self._browser: Browser | None = None
-        self._context: BrowserContext | None = None
-        self._page: Page | None = None
-        self.base_url: str = f"https://{_DOMAINS[0]}"
-        self._domain_verified = False
+    _domains = [
+        "streamworld.ws",
+        "streamworld.co",
+    ]
 
-    async def _ensure_browser(self) -> Browser:
-        """Launch browser if not already running."""
-        if self._browser is None:
-            self._pw = await async_playwright().start()
-            self._browser = await self._pw.chromium.launch(headless=True)
-            log.info("streamworld_browser_launched")
-        return self._browser
-
-    async def _ensure_context(self) -> BrowserContext:
-        """Create browser context with proper user agent."""
-        if self._context is None:
-            browser = await self._ensure_browser()
-            self._context = await browser.new_context(
-                user_agent=_USER_AGENT,
-                viewport={"width": 1280, "height": 720},
-            )
-        return self._context
-
-    async def _ensure_page(self) -> Page:
-        """Get or create the persistent page used for requests."""
-        if self._page is None or self._page.is_closed():
-            ctx = await self._ensure_context()
-            self._page = await ctx.new_page()
-            self._page.set_default_navigation_timeout(_NAV_TIMEOUT)
-            self._page.set_default_timeout(_NAV_TIMEOUT)
-        return self._page
-
-    async def _wait_for_antibot(self, page: Page) -> bool:
+    async def _wait_for_antibot(self, page: "Page") -> bool:
         """Wait for anti-bot JavaScript to finish on the homepage.
 
         The site uses obfuscated JS that must execute before requests
@@ -437,7 +386,7 @@ class StreamworldPlugin:
             for c in cookies:
                 if c["name"] == "PHPSESSID":
                     return True
-            log.warning("streamworld_antibot_timeout")
+            self._log.warning("streamworld_antibot_timeout")
             return False
 
     async def _verify_domain(self) -> None:
@@ -447,21 +396,21 @@ class StreamworldPlugin:
 
         page = await self._ensure_page()
 
-        for domain in _DOMAINS:
+        for domain in self._domains:
             url = f"https://{domain}/"
             try:
                 await page.goto(url, wait_until="networkidle")
                 if await self._wait_for_antibot(page):
                     self.base_url = f"https://{domain}"
                     self._domain_verified = True
-                    log.info("streamworld_domain_found", domain=domain)
+                    self._log.info("streamworld_domain_found", domain=domain)
                     return
             except Exception:  # noqa: BLE001
                 continue
 
-        self.base_url = f"https://{_DOMAINS[0]}"
+        self.base_url = f"https://{self._domains[0]}"
         self._domain_verified = True
-        log.warning("streamworld_no_domain_reachable", fallback=_DOMAINS[0])
+        self._log.warning("streamworld_no_domain_reachable", fallback=self._domains[0])
 
     async def _fetch_html(self, url: str) -> str | None:
         """Fetch a page's HTML using the browser context via fetch()."""
@@ -470,13 +419,13 @@ class StreamworldPlugin:
         try:
             data = await page.evaluate(_GET_FETCH_JS, url)
         except Exception as exc:  # noqa: BLE001
-            log.warning("streamworld_fetch_failed", url=url, error=str(exc))
+            self._log.warning("streamworld_fetch_failed", url=url, error=str(exc))
             return None
 
         if not isinstance(data, dict):
             return None
         if "_error" in data:
-            log.warning("streamworld_fetch_error", url=url, status=data["_error"])
+            self._log.warning("streamworld_fetch_error", url=url, status=data["_error"])
             return None
         return data.get("html")
 
@@ -492,12 +441,12 @@ class StreamworldPlugin:
         try:
             data = await page.evaluate(_SEARCH_FETCH_JS, [url, query])
         except Exception as exc:  # noqa: BLE001
-            log.warning("streamworld_search_failed", query=query, error=str(exc))
+            self._log.warning("streamworld_search_failed", query=query, error=str(exc))
             return []
 
         if not isinstance(data, dict) or "_error" in data:
             status = data.get("_error", "unknown") if isinstance(data, dict) else "?"
-            log.warning("streamworld_search_error", query=query, status=status)
+            self._log.warning("streamworld_search_error", query=query, status=status)
             return []
 
         html = data.get("html", "")
@@ -507,7 +456,7 @@ class StreamworldPlugin:
         parser = _SearchResultParser(self.base_url)
         parser.feed(html)
 
-        log.info(
+        self._log.info(
             "streamworld_search_results",
             query=query,
             results=len(parser.results),
@@ -525,7 +474,7 @@ class StreamworldPlugin:
         parser.feed(html)
 
         if not parser.releases:
-            log.debug("streamworld_no_releases", url=detail_url)
+            self._log.debug("streamworld_no_releases", url=detail_url)
             return None
 
         # Use the first release's streams page for download links
@@ -603,13 +552,13 @@ class StreamworldPlugin:
                     r for r in all_results if r.get("type", "") == type_filter
                 ]
 
-        all_results = all_results[:_MAX_RESULTS]
+        all_results = all_results[: self._max_results]
 
         if not all_results:
             return []
 
         # Scrape detail pages with bounded concurrency
-        sem = asyncio.Semaphore(_MAX_CONCURRENT_DETAIL)
+        sem = self._new_semaphore()
 
         async def _bounded_scrape(r: dict[str, str]) -> SearchResult | None:
             async with sem:
@@ -620,21 +569,6 @@ class StreamworldPlugin:
             return_exceptions=True,
         )
         return [r for r in results if isinstance(r, SearchResult)]
-
-    async def cleanup(self) -> None:
-        """Close browser and Playwright."""
-        if self._page is not None and not self._page.is_closed():
-            await self._page.close()
-            self._page = None
-        if self._context is not None:
-            await self._context.close()
-            self._context = None
-        if self._browser is not None:
-            await self._browser.close()
-            self._browser = None
-        if self._pw is not None:
-            await self._pw.stop()
-            self._pw = None
 
 
 plugin = StreamworldPlugin()

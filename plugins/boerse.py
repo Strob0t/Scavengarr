@@ -18,37 +18,14 @@ import hashlib
 import os
 import re
 from html.parser import HTMLParser
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-import structlog
-from playwright.async_api import (
-    Browser,
-    BrowserContext,
-    Page,
-    Playwright,
-    async_playwright,
-)
-
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
-log = structlog.get_logger(__name__)
-
-_DOMAINS = [
-    "https://boerse.am",
-    "https://boerse.sx",
-    "https://boerse.im",
-    "https://boerse.ai",
-    "https://boerse.kz",
-]
-
-_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
-)
-
-_MAX_CONCURRENT_PAGES = 3
-_MAX_RESULTS = 1000
+if TYPE_CHECKING:
+    from playwright.async_api import Page
 
 # Torznab category → vBulletin forum ID mapping.
 # Default is "30" (Videoboerse: movies, series, docs).
@@ -235,7 +212,7 @@ class _ThreadTitleParser(HTMLParser):
             self._in_title_tag = False
 
 
-class BoersePlugin:
+class BoersePlugin(PlaywrightPluginBase):
     """Python plugin for boerse.sx forum using Playwright."""
 
     name = "boerse"
@@ -244,25 +221,15 @@ class BoersePlugin:
     provides = "download"
     default_language = "de"
 
-    def __init__(self) -> None:
-        self._domains = list(_DOMAINS)
-        self._playwright: Playwright | None = None
-        self._browser: Browser | None = None
-        self._context: BrowserContext | None = None
-        self._logged_in = False
-        self.base_url = self._domains[0]
+    _domains = [
+        "boerse.am",
+        "boerse.sx",
+        "boerse.im",
+        "boerse.ai",
+        "boerse.kz",
+    ]
 
-    async def _ensure_browser(self) -> None:
-        """Launch Chromium if not already running."""
-        if self._browser is not None:
-            return
-        self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(
-            headless=True,
-        )
-        self._context = await self._browser.new_context(
-            user_agent=_USER_AGENT,
-        )
+    _logged_in: bool = False
 
     async def _wait_for_cloudflare(self, page: Page) -> None:
         """If Cloudflare challenge is detected, wait for it to resolve."""
@@ -276,7 +243,7 @@ class BoersePlugin:
 
     async def _ensure_session(self) -> None:
         """Ensure we have an authenticated Playwright session."""
-        await self._ensure_browser()
+        await self._ensure_context()
         if self._logged_in:
             return
 
@@ -295,12 +262,13 @@ class BoersePlugin:
         ).hexdigest()
 
         for domain in self._domains:
+            domain_url = f"https://{domain}"
             try:
                 page = await self._context.new_page()
                 try:
                     # Load homepage to get the real login form
                     await page.goto(
-                        domain,
+                        domain_url,
                         wait_until="domcontentloaded",
                     )
                     await self._wait_for_cloudflare(page)
@@ -343,9 +311,9 @@ class BoersePlugin:
                     cookies = await self._context.cookies()
                     has_session = any(c["name"] == "bbsessionhash" for c in cookies)
                     if has_session:
-                        self.base_url = domain
+                        self.base_url = domain_url
                         self._logged_in = True
-                        log.info("boerse_login_success", domain=domain)
+                        self._log.info("boerse_login_success", domain=domain)
                         await page.close()
                         return
 
@@ -354,7 +322,7 @@ class BoersePlugin:
                         await page.close()
 
             except Exception as exc:  # noqa: BLE001
-                log.warning(
+                self._log.warning(
                     "boerse_domain_unreachable",
                     domain=domain,
                     error=str(exc),
@@ -467,7 +435,7 @@ class BoersePlugin:
                 all_urls.append(url)
 
         next_url = parser.next_page_url
-        while next_url and len(all_urls) < _MAX_RESULTS:
+        while next_url and len(all_urls) < self._max_results:
             if not next_url.startswith("http"):
                 next_url = f"{self.base_url}/{next_url.lstrip('/')}"
 
@@ -490,7 +458,7 @@ class BoersePlugin:
                 break
             next_url = parser.next_page_url
 
-        return all_urls[:_MAX_RESULTS]
+        return all_urls[: self._max_results]
 
     async def _scrape_thread(self, url: str) -> SearchResult | None:
         """Scrape a single thread page for title and download links."""
@@ -531,6 +499,11 @@ class BoersePlugin:
             category=2000,
         )
 
+    async def cleanup(self) -> None:
+        """Close browser and reset login state."""
+        await super().cleanup()
+        self._logged_in = False
+
     async def search(
         self,
         query: str,
@@ -547,7 +520,7 @@ class BoersePlugin:
         if not thread_urls:
             return []
 
-        sem = asyncio.Semaphore(_MAX_CONCURRENT_PAGES)
+        sem = self._new_semaphore()
 
         async def _bounded_scrape(url: str) -> SearchResult | None:
             async with sem:
@@ -558,19 +531,6 @@ class BoersePlugin:
             return_exceptions=True,
         )
         return [r for r in results if isinstance(r, SearchResult)]
-
-    async def cleanup(self) -> None:
-        """Close browser and Playwright resources."""
-        if self._context is not None:
-            await self._context.close()
-            self._context = None
-        if self._browser is not None:
-            await self._browser.close()
-            self._browser = None
-        if self._playwright is not None:
-            await self._playwright.stop()
-            self._playwright = None
-        self._logged_in = False
 
 
 def _is_container_host(host: str) -> bool:

@@ -21,24 +21,10 @@ import re
 from html.parser import HTMLParser
 from urllib.parse import urljoin
 
-import httpx
-import structlog
-
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
-log = structlog.get_logger(__name__)
-
-_BASE_URL = "https://hdfilme.legal"
 _MEINECLOUD_BASE = "https://meinecloud.click"
-
-_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
-)
-
-_MAX_CONCURRENT_DETAIL = 3
-_MAX_RESULTS = 1000
 
 # Torznab category → site category path for browsing.
 _CATEGORY_PATH_MAP: dict[int, str] = {
@@ -565,28 +551,12 @@ def _parse_meinecloud_script(script_text: str) -> list[dict[str, str]]:
     return links
 
 
-class HdfilmePlugin:
+class HdfilmePlugin(HttpxPluginBase):
     """Python plugin for hdfilme.legal using httpx."""
 
     name = "hdfilme"
-    version = "1.0.0"
-    mode = "httpx"
     provides = "stream"
-    default_language = "de"
-
-    def __init__(self) -> None:
-        self._client: httpx.AsyncClient | None = None
-        self.base_url = _BASE_URL
-
-    async def _ensure_client(self) -> httpx.AsyncClient:
-        """Create httpx client if not already running."""
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                timeout=15.0,
-                follow_redirects=True,
-                headers={"User-Agent": _USER_AGENT},
-            )
-        return self._client
+    _domains = ["hdfilme.legal"]
 
     async def _search_page(self, query: str) -> list[dict[str, str]]:
         """Fetch search results page.
@@ -610,13 +580,13 @@ class HdfilmePlugin:
             )
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            log.warning("hdfilme_search_failed", query=query, error=str(exc))
+            self._log.warning("hdfilme_search_failed", query=query, error=str(exc))
             return []
 
         parser = _SearchResultParser(self.base_url)
         parser.feed(resp.text)
 
-        log.info(
+        self._log.info(
             "hdfilme_search_results",
             query=query,
             results=len(parser.results),
@@ -643,7 +613,7 @@ class HdfilmePlugin:
             resp = await client.get(url)
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            log.warning(
+            self._log.warning(
                 "hdfilme_browse_failed",
                 path=path,
                 page=page_num,
@@ -654,7 +624,7 @@ class HdfilmePlugin:
         parser = _SearchResultParser(self.base_url)
         parser.feed(resp.text)
 
-        log.info(
+        self._log.info(
             "hdfilme_browse_page",
             path=path,
             page=page_num,
@@ -666,7 +636,7 @@ class HdfilmePlugin:
         self,
         path: str,
     ) -> list[dict[str, str]]:
-        """Browse a category with pagination up to _MAX_RESULTS items.
+        """Browse a category with pagination up to max_results items.
 
         Pages contain ~24 items each. 1000/24 ≈ 42 pages max.
         """
@@ -678,10 +648,10 @@ class HdfilmePlugin:
             if not results:
                 break
             all_results.extend(results)
-            if len(all_results) >= _MAX_RESULTS:
+            if len(all_results) >= self._max_results:
                 break
 
-        return all_results[:_MAX_RESULTS]
+        return all_results[: self._max_results]
 
     async def _scrape_detail(
         self,
@@ -702,7 +672,7 @@ class HdfilmePlugin:
             resp = await client.get(detail_url)
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            log.warning(
+            self._log.warning(
                 "hdfilme_detail_failed",
                 url=detail_url,
                 error=str(exc),
@@ -752,7 +722,7 @@ class HdfilmePlugin:
             return []
 
         return await self._build_film_results(
-            title, parser, detail_url, category, metadata, client
+            title, parser, detail_url, category, metadata
         )
 
     async def _build_film_results(
@@ -762,17 +732,16 @@ class HdfilmePlugin:
         detail_url: str,
         category: int,
         metadata: dict[str, str],
-        client: httpx.AsyncClient,
     ) -> list[SearchResult]:
         """Build SearchResult list for a film using meinecloud.click."""
         download_links: list[dict[str, str]] = []
 
         if parser.imdb_id:
-            download_links = await self._fetch_meinecloud_links(parser.imdb_id, client)
+            download_links = await self._fetch_meinecloud_links(parser.imdb_id)
 
         if not download_links:
             # No stream links found
-            log.debug("hdfilme_no_streams", url=detail_url)
+            self._log.debug("hdfilme_no_streams", url=detail_url)
             return []
 
         description = (
@@ -805,7 +774,7 @@ class HdfilmePlugin:
     ) -> list[SearchResult]:
         """Build SearchResult list for a series from episode links."""
         if not parser.episode_links:
-            log.debug("hdfilme_no_episode_links", url=detail_url)
+            self._log.debug("hdfilme_no_episode_links", url=detail_url)
             return []
 
         links = parser.episode_links
@@ -848,16 +817,16 @@ class HdfilmePlugin:
     async def _fetch_meinecloud_links(
         self,
         imdb_id: str,
-        client: httpx.AsyncClient,
     ) -> list[dict[str, str]]:
         """Fetch stream links from meinecloud.click/ddl/{imdb_id}."""
+        client = await self._ensure_client()
         url = f"{_MEINECLOUD_BASE}/ddl/{imdb_id}"
 
         try:
             resp = await client.get(url)
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            log.warning(
+            self._log.warning(
                 "hdfilme_meinecloud_failed",
                 imdb_id=imdb_id,
                 error=str(exc),
@@ -873,7 +842,7 @@ class HdfilmePlugin:
         episode: int | None = None,
     ) -> list[SearchResult]:
         """Scrape detail pages with bounded concurrency."""
-        sem = asyncio.Semaphore(_MAX_CONCURRENT_DETAIL)
+        sem = self._new_semaphore()
 
         async def _bounded(r: dict[str, str]) -> list[SearchResult]:
             async with sem:
@@ -913,7 +882,7 @@ class HdfilmePlugin:
         if not all_items:
             return []
 
-        all_items = all_items[:_MAX_RESULTS]
+        all_items = all_items[: self._max_results]
         results = await self._scrape_all_details(
             all_items, season=season, episode=episode
         )
@@ -923,12 +892,6 @@ class HdfilmePlugin:
             results = _filter_by_category(results, category)
 
         return results
-
-    async def cleanup(self) -> None:
-        """Close httpx client."""
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
 
 
 plugin = HdfilmePlugin()

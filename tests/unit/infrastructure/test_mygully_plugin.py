@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "mygully.py"
+_PW_PATCH = "scavengarr.infrastructure.plugins.playwright_base.async_playwright"
 
 
 def _load_mygully_module() -> ModuleType:
@@ -132,7 +133,7 @@ class TestLogin:
         mock_start = AsyncMock(return_value=pw)
         with (
             patch.dict(os.environ, _TEST_CREDENTIALS),
-            patch.object(_mygully, "async_playwright") as mock_ap,
+            patch(_PW_PATCH) as mock_ap,
         ):
             mock_ap.return_value.start = mock_start
             await plugin._ensure_session()
@@ -160,7 +161,7 @@ class TestLogin:
         mock_start = AsyncMock(return_value=pw)
         with (
             patch.dict(os.environ, _TEST_CREDENTIALS),
-            patch.object(_mygully, "async_playwright") as mock_ap,
+            patch(_PW_PATCH) as mock_ap,
         ):
             mock_ap.return_value.start = mock_start
             await plugin._ensure_session()
@@ -183,7 +184,7 @@ class TestLogin:
         mock_start = AsyncMock(return_value=pw)
         with (
             patch.dict(os.environ, _TEST_CREDENTIALS),
-            patch.object(_mygully, "async_playwright") as mock_ap,
+            patch(_PW_PATCH) as mock_ap,
         ):
             mock_ap.return_value.start = mock_start
             with pytest.raises(RuntimeError, match="All mygully domains failed"):
@@ -199,7 +200,7 @@ class TestLogin:
         mock_start = AsyncMock(return_value=pw)
         with (
             patch.dict(os.environ, {}, clear=True),
-            patch.object(_mygully, "async_playwright") as mock_ap,
+            patch(_PW_PATCH) as mock_ap,
         ):
             mock_ap.return_value.start = mock_start
             os.environ.pop("SCAVENGARR_MYGULLY_USERNAME", None)
@@ -394,7 +395,7 @@ class TestCleanup:
         browser = _make_mock_browser(context)
         pw = _make_mock_playwright(browser)
 
-        plugin._playwright = pw
+        plugin._pw = pw
         plugin._browser = browser
         plugin._context = context
         plugin._logged_in = True
@@ -407,7 +408,7 @@ class TestCleanup:
         assert plugin._logged_in is False
         assert plugin._context is None
         assert plugin._browser is None
-        assert plugin._playwright is None
+        assert plugin._pw is None
 
 
 class TestPostLinkParser:
