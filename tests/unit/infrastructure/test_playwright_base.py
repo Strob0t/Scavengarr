@@ -9,7 +9,6 @@ import pytest
 
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
-
 # ---------------------------------------------------------------------------
 # Concrete test subclass
 # ---------------------------------------------------------------------------
@@ -369,7 +368,5 @@ class TestSearchAbstract:
     @pytest.mark.asyncio
     async def test_raises_not_implemented(self) -> None:
         plugin = _TestPlugin()
-        with pytest.raises(
-            NotImplementedError, match="search.*not implemented"
-        ):
+        with pytest.raises(NotImplementedError, match="search.*not implemented"):
             await plugin.search("test")

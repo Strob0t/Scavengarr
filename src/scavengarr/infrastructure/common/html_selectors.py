@@ -122,8 +122,10 @@ def extract_links(
         href_str = str(href)
         if base_url:
             href_str = urljoin(base_url, href_str)
-        results.append({
-            "text": tag.get_text(strip=True),
-            "href": href_str,
-        })
+        results.append(
+            {
+                "text": tag.get_text(strip=True),
+                "href": href_str,
+            }
+        )
     return results

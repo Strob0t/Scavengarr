@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-from bs4 import Tag
-
 from scavengarr.infrastructure.common.html_selectors import (
     extract_all_attrs,
     extract_attr,
@@ -200,9 +197,7 @@ class TestExtractAllAttrs:
         soup = parse_html(_LINKS_HTML)
         container = soup.select_one("div.hosters")
         assert container is not None
-        hrefs = extract_all_attrs(
-            container, "a.nonexistent", "href", "a.hoster-btn"
-        )
+        hrefs = extract_all_attrs(container, "a.nonexistent", "href", "a.hoster-btn")
         assert len(hrefs) == 3
 
     def test_empty_when_no_match(self) -> None:

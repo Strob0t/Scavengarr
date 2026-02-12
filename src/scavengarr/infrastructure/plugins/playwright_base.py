@@ -61,9 +61,7 @@ class PlaywrightPluginBase:
         self._context: BrowserContext | None = None
         self._page: Page | None = None
         self._domain_verified: bool = False
-        self.base_url: str = (
-            f"https://{self._domains[0]}" if self._domains else ""
-        )
+        self.base_url: str = f"https://{self._domains[0]}" if self._domains else ""
         self._log = structlog.get_logger(self.name or __name__)
 
     # ------------------------------------------------------------------
@@ -124,9 +122,7 @@ class PlaywrightPluginBase:
                 if resp and resp.status < 400:
                     self.base_url = f"https://{domain}"
                     self._domain_verified = True
-                    self._log.info(
-                        f"{self.name}_domain_found", domain=domain
-                    )
+                    self._log.info(f"{self.name}_domain_found", domain=domain)
                     return
             except Exception:  # noqa: BLE001
                 continue
@@ -155,9 +151,7 @@ class PlaywrightPluginBase:
         """
         page = await self._new_page()
         try:
-            resp = await page.goto(
-                url, wait_until=wait_until, timeout=timeout
-            )
+            resp = await page.goto(url, wait_until=wait_until, timeout=timeout)
             if resp and resp.status < 400:
                 return await page.content()
             self._log.warning(
@@ -215,6 +209,4 @@ class PlaywrightPluginBase:
 
         Subclasses **must** override this method.
         """
-        raise NotImplementedError(
-            f"{type(self).__name__}.search() not implemented"
-        )
+        raise NotImplementedError(f"{type(self).__name__}.search() not implemented")
