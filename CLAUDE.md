@@ -328,7 +328,7 @@ The system provides a stable download endpoint that delivers a `.crawljob` file 
 - Integration: HTTP router ↔ use case ↔ adapter with HTTP mocking.
 - Optional E2E: real plugin fixtures, but deterministic (no external sites in CI).
 
-### Current test suite (1894 tests)
+### Current test suite (2531 tests)
 
 ```
 tests/
@@ -373,11 +373,17 @@ tests/
       test_supervideo_resolver.py      # SuperVideo hoster resolver
       test_doodstream_resolver.py      # DoodStream hoster resolver
       test_filemoon_resolver.py        # Filemoon hoster resolver
+      test_filernet_resolver.py        # Filer.net DDL hoster resolver
+      test_katfile_resolver.py         # Katfile DDL hoster resolver
+      test_rapidgator_resolver.py      # Rapidgator DDL hoster resolver
+      test_ddownload_resolver.py       # DDownload DDL hoster resolver
       test_aniworld_plugin.py          # aniworld plugin tests
       test_boerse_plugin.py            # boerse plugin tests
       test_burningseries_plugin.py     # burningseries plugin tests
       test_byte_plugin.py              # byte plugin tests
+      test_cineby_plugin.py            # cineby plugin tests
       test_cine_plugin.py              # cine plugin tests
+      test_crawli_plugin.py            # crawli plugin tests
       test_dataload_plugin.py          # dataload plugin tests
       test_ddlspot_plugin.py           # ddlspot plugin tests
       test_ddlvalley_plugin.py         # ddlvalley plugin tests
@@ -386,16 +392,21 @@ tests/
       test_fireani_plugin.py           # fireani plugin tests
       test_haschcon_plugin.py          # haschcon plugin tests
       test_hdfilme_plugin.py           # hdfilme plugin tests
+      test_hdsource_plugin.py          # hdsource plugin tests
       test_kinoger_plugin.py           # kinoger plugin tests
       test_kinoking_plugin.py          # kinoking plugin tests
       test_kinox_plugin.py             # kinox plugin tests
       test_megakino_plugin.py          # megakino plugin tests
       test_megakino_to.py              # megakino_to plugin tests
       test_moflix_plugin.py            # moflix plugin tests
+      test_movie2k_plugin.py           # movie2k plugin tests
       test_myboerse_plugin.py          # myboerse plugin tests
       test_mygully_plugin.py           # mygully plugin tests
       test_nima4k_plugin.py            # nima4k plugin tests
+      test_nox_plugin.py               # nox plugin tests
       test_scnsrc_plugin.py            # scnsrc plugin tests
+      test_serienfans_plugin.py        # serienfans plugin tests
+      test_serienjunkies_plugin.py     # serienjunkies plugin tests
       test_sto_plugin.py               # sto plugin tests
       test_streamcloud_plugin.py       # streamcloud plugin tests
       test_streamkiste_plugin.py       # streamkiste plugin tests
@@ -571,7 +582,7 @@ Agents are ONLY for **simple, explicit, mechanical tasks** where the scope is 10
 | Future plans | `docs/plans/` (playwright-engine, more-plugins, integration-tests, search-caching) |
 | Refactor history | `docs/refactor/COMPLETED/` |
 | Python best practices | `docs/PYTHON-BEST-PRACTICES.md` |
-| Plugins (32 total) | `plugins/` (3 YAML + 29 Python, all inheriting from base classes) |
+| Plugins (39 total) | `plugins/` (3 YAML + 36 Python, all inheriting from base classes) |
 | OpenSpec change specs | `openspec/changes/...` |
 
 ### Adding a new plugin (general workflow)

@@ -61,7 +61,7 @@ _FILESIZE_RE = re.compile(
 
 # Fallback filesize: [<font ...>4.0 GB</font>]
 _FILESIZE_FONT_RE = re.compile(
-    r'\[<font[^>]*>(\d+[^<>]+)</font>\]',
+    r"\[<font[^>]*>(\d+[^<>]+)</font>\]",
 )
 
 

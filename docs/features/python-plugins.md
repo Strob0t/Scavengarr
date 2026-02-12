@@ -104,7 +104,7 @@ class SearchResult:
 
 Most plugins should extend one of the shared base classes instead of implementing everything from scratch. The base classes provide client lifecycle, domain fallback, bounded concurrency, and error handling.
 
-### HttpxPluginBase (20 plugins use this)
+### HttpxPluginBase (27 plugins use this)
 
 For sites with JSON APIs or server-rendered HTML (no JavaScript needed):
 

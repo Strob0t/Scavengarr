@@ -31,7 +31,8 @@ class TestExtractFileId:
         assert _extract_file_id(url) == "abc123def456"
 
     def test_www_prefix(self) -> None:
-        assert _extract_file_id("https://www.ddownload.com/abc123def456") == "abc123def456"
+        url = "https://www.ddownload.com/abc123def456"
+        assert _extract_file_id(url) == "abc123def456"
 
     def test_http_scheme(self) -> None:
         assert _extract_file_id("http://ddownload.com/abc123def456") == "abc123def456"

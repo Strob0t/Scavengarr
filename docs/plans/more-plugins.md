@@ -1,26 +1,29 @@
 # Plan: Additional Plugins
 
-**Status:** Mostly Complete (35 plugins implemented)
+**Status:** Mostly Complete (39 plugins implemented)
 **Priority:** Low (ongoing)
 **Related:** `plugins/`, `docs/features/python-plugins.md`
 
 ## Current State
 
-Scavengarr ships with **35 plugins** covering German streaming, DDL, and anime sites:
+Scavengarr ships with **39 plugins** covering German streaming, DDL, and anime sites:
 
-### Httpx plugins (23)
+### Httpx plugins (27)
 
 | Plugin | Site | Type | Notes |
 |---|---|---|---|
 | aniworld | aniworld.to | stream | Anime, domain fallback |
 | burningseries | bs.to | stream | Series only |
+| cineby | cineby.gd | stream | JSON API |
 | cine | cine.to | stream | JSON API |
+| crawli | crawli.net | download | Single-stage download search engine |
 | dataload | data-load.me | download | DDL forum, vBulletin auth |
 | einschalten | einschalten.in | stream | JSON API |
 | filmfans | filmfans.org | download | Release parsing via API |
 | fireani | fireani.me | stream | Anime, JSON API |
 | haschcon | haschcon.com | stream | |
 | hdfilme | hdfilme.legal | stream | MeineCloud link extraction |
+| hdsource | hd-source.to | download | DDL with multi-page scraping |
 | kinoger | kinoger.com | stream | Domain fallback |
 | kinoking | kinoking.cc | stream | Movie/series detection |
 | kinox | kinox.to | stream | 9 mirror domains, AJAX embeds |
@@ -32,6 +35,7 @@ Scavengarr ships with **35 plugins** covering German streaming, DDL, and anime s
 | nima4k | nima4k.org | download | Category browsing |
 | nox | nox.to | download | JSON API, DDL archive |
 | serienfans | serienfans.org | download | TV series DDL, JSON API, season/episode |
+| serienjunkies | serienjunkies.org | download | DDL with captcha-protected links |
 | sto | s.to | stream | TV-only |
 | streamcloud | streamcloud.plus | stream | Domain fallback |
 | streamkiste | streamkiste.taxi | stream | 5 mirror domains |
@@ -62,7 +66,6 @@ Scavengarr ships with **35 plugins** covering German streaming, DDL, and anime s
 
 Sites not yet covered that could benefit from plugins:
 
-- **serienjunkies.org** — Captcha-protected DDL with multi-step extraction
 - **dokustream.de** — Documentary streaming
 - **filmkiste.to** — Movie/TV streaming
 - **xcine.me** — German movie streaming

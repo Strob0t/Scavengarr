@@ -370,7 +370,10 @@ class TestBuildResult:
 
         assert sr is not None
         assert sr.title == "Iron Man (2008)"
-        assert sr.download_link == "https://nox.to/release/iron-man-2008-german-dl-1080p-bluray-x264-abc123"
+        assert (
+            sr.download_link
+            == "https://nox.to/release/iron-man-2008-german-dl-1080p-bluray-x264-abc123"
+        )
         assert sr.category == 2000
         assert sr.release_name == "Iron.Man.2008.German.DL.1080p.BluRay.x264-GROUP"
         assert sr.size == "1481 MB"
@@ -638,7 +641,8 @@ class TestNoxSearch:
 
         results = await plugin.search("Iron Man")
 
-        assert results[0].release_name == "Iron.Man.2008.German.DL.1080p.BluRay.x264-GROUP"
+        expected = "Iron.Man.2008.German.DL.1080p.BluRay.x264-GROUP"
+        assert results[0].release_name == expected
 
     @pytest.mark.asyncio
     async def test_download_link_is_release_page(self, plugin, mock_client):
@@ -663,14 +667,12 @@ class TestNoxSearch:
             if "/latest/3" in url_str:
                 return _make_json_response(BROWSE_RESPONSE_SMALL)
             # Return enough results on day 7
-            big_response = {
-                "result": [BROWSE_RESPONSE["result"][0]] * 60
-            }
+            big_response = {"result": [BROWSE_RESPONSE["result"][0]] * 60}
             return _make_json_response(big_response)
 
         mock_client.get = AsyncMock(side_effect=mock_get)
 
-        results = await plugin.search("")
+        await plugin.search("")
 
         # Should have escalated past day 1 and 3
         assert call_count >= 3

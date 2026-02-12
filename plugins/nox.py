@@ -12,6 +12,7 @@ No authentication required.
 
 from __future__ import annotations
 
+import re
 from urllib.parse import quote
 
 from scavengarr.domain.plugins.base import SearchResult
@@ -69,9 +70,6 @@ def _category_for_type(release_type: str) -> int | None:
 
 def _extract_year(title: str) -> str | None:
     """Extract a 4-digit year from title patterns like 'Iron Man [2008]' or similar."""
-    # Nox titles sometimes embed year in brackets or the release name has it
-    import re
-
     m = re.search(r"\b((?:19|20)\d{2})\b", title)
     return m.group(1) if m else None
 
@@ -129,9 +127,7 @@ class NoxPlugin(HttpxPluginBase):
             if not isinstance(releases, list):
                 continue
 
-            self._log.info(
-                "nox_browse", days=days, count=len(releases)
-            )
+            self._log.info("nox_browse", days=days, count=len(releases))
 
             if len(releases) >= _BROWSE_MIN_RESULTS:
                 return releases[: self._max_results]
@@ -142,6 +138,48 @@ class NoxPlugin(HttpxPluginBase):
     # ------------------------------------------------------------------
     # Result building
     # ------------------------------------------------------------------
+
+    def _extract_media_metadata(self, media: dict | None) -> dict[str, str]:
+        """Extract metadata fields from the media dict."""
+        if not media:
+            return {
+                "imdb_id": "",
+                "rating": "",
+                "genres": "",
+                "description": "",
+                "poster": "",
+                "runtime": "",
+            }
+
+        imdb_id = media.get("imdbid", "") or ""
+        imdb_rating = (
+            str(media.get("imdbrating", "")) if media.get("imdbrating") else ""
+        )
+
+        genre_list = media.get("genres", [])
+        genres = ""
+        if isinstance(genre_list, list):
+            genres = ", ".join(str(g) for g in genre_list if g)
+
+        desc = media.get("description", "") or ""
+        if len(desc) > 300:
+            desc = desc[:297] + "..."
+
+        runtime = str(media.get("duration", "")) if media.get("duration") else ""
+
+        cover_id = media.get("cover", "") or ""
+        poster = ""
+        if cover_id:
+            poster = f"{self.base_url}{_COVER_URL_TEMPLATE.format(cover_id=cover_id)}"
+
+        return {
+            "imdb_id": imdb_id,
+            "rating": imdb_rating,
+            "genres": genres,
+            "description": desc,
+            "poster": poster,
+            "runtime": runtime,
+        }
 
     def _build_result(
         self,
@@ -180,63 +218,30 @@ class NoxPlugin(HttpxPluginBase):
         if not download_link:
             return None
 
-        # Scene release name
-        release_name = release.get("name") or None
+        # Extract metadata from media + release
+        meta = self._extract_media_metadata(media)
 
-        # Size
-        size = _format_size(release.get("size"), release.get("sizeunit"))
-
-        # Published date
-        published = release.get("publishat") or release.get("createdAt") or ""
-        published_date = published[:10] if published else None
-
-        # IMDB data from media
-        imdb_id = ""
-        imdb_rating = ""
-        genres = ""
-        description = ""
-        poster = ""
-        runtime = ""
-
-        if media:
-            imdb_id = media.get("imdbid", "") or ""
-            imdb_rating = str(media.get("imdbrating", "")) if media.get("imdbrating") else ""
-            genre_list = media.get("genres", [])
-            if isinstance(genre_list, list):
-                genres = ", ".join(str(g) for g in genre_list if g)
-            desc = media.get("description", "") or ""
-            if len(desc) > 300:
-                desc = desc[:297] + "..."
-            description = desc
-            runtime = str(media.get("duration", "")) if media.get("duration") else ""
-
-        # Cover image from _media or media
-        cover_id = ""
-        if media:
-            cover_id = media.get("cover", "") or ""
-        if cover_id:
-            poster = f"{self.base_url}{_COVER_URL_TEMPLATE.format(cover_id=cover_id)}"
-
-        # Technical metadata from release
         codec = release.get("codec", "") or ""
         video = release.get("video", "") or ""
         audio = release.get("audio", "") or ""
+
+        published = release.get("publishat") or release.get("createdAt") or ""
 
         return SearchResult(
             title=display_title,
             download_link=download_link,
             source_url=download_link,
-            release_name=release_name,
-            size=size,
-            published_date=published_date,
+            release_name=release.get("name") or None,
+            size=_format_size(release.get("size"), release.get("sizeunit")),
+            published_date=published[:10] if published else None,
             category=category,
-            description=description or None,
+            description=meta["description"] or None,
             metadata={
-                "imdb_id": imdb_id,
-                "rating": imdb_rating,
-                "genres": genres,
-                "runtime": runtime,
-                "poster": poster,
+                "imdb_id": meta["imdb_id"],
+                "rating": meta["rating"],
+                "genres": meta["genres"],
+                "runtime": meta["runtime"],
+                "poster": meta["poster"],
                 "codec": codec,
                 "video": video,
                 "audio": audio,
@@ -325,9 +330,7 @@ class NoxPlugin(HttpxPluginBase):
 
         return results
 
-    async def _browse_with_latest(
-        self, allowed_type: str | None
-    ) -> list[SearchResult]:
+    async def _browse_with_latest(self, allowed_type: str | None) -> list[SearchResult]:
         """Browse latest releases (empty query)."""
         releases = await self._browse_latest()
         if not releases:
@@ -341,7 +344,11 @@ class NoxPlugin(HttpxPluginBase):
                 continue
 
             # Browse results have _media embedded
-            media = release.get("_media") if isinstance(release.get("_media"), dict) else None
+            media = (
+                release.get("_media")
+                if isinstance(release.get("_media"), dict)
+                else None
+            )
 
             sr = self._build_result(release, media)
             if sr is not None:

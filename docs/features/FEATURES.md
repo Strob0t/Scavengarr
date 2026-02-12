@@ -21,10 +21,10 @@
 | Configuration System | [x] Implemented | YAML/ENV/CLI with typed settings and precedence |
 | Structured Logging | [x] Implemented | JSON/console output via structlog with context fields |
 | Stremio Addon | [x] Implemented | Manifest, catalog, stream resolution with TMDB metadata |
-| Hoster Resolver System | [x] Implemented | Video URL extraction from 5+ hosters (VOE, Streamtape, etc.) |
+| Hoster Resolver System | [x] Implemented | Video URL extraction from 9 hosters (streaming + DDL) |
 | Plugin Base Classes | [x] Implemented | `HttpxPluginBase` / `PlaywrightPluginBase` shared base classes |
 | Scrapy Engine | [x] Implemented | Static HTML scraping backend for YAML plugins |
-| 32 Plugins | [x] Implemented | 29 Python + 3 YAML plugins for German streaming/DDL sites |
+| 39 Plugins | [x] Implemented | 36 Python + 3 YAML plugins for German streaming/DDL sites |
 | Playwright Engine | [ ] Planned | Native Playwright scraping backend for YAML plugins |
 | Search Result Caching | [x] Implemented | 900s TTL with X-Cache HIT/MISS header |
 | Integration Test Suite | [x] Implemented | 31 integration + 99 E2E + 32 live smoke tests |
@@ -109,6 +109,10 @@ Runtime video URL extraction from streaming hosters. Resolves embed page URLs to
 | SuperVideo resolver | [x] Implemented | XFS extraction + Playwright Cloudflare fallback |
 | DoodStream resolver | [x] Implemented | `pass_md5` API extraction |
 | Filemoon resolver | [x] Implemented | Packed JS unpacker + Byse SPA challenge flow |
+| Filer.net resolver | [x] Implemented | DDL validation via public status API |
+| Katfile resolver | [x] Implemented | DDL XFS offline marker detection |
+| Rapidgator resolver | [x] Implemented | DDL validation via website scraping |
+| DDownload resolver | [x] Implemented | DDL XFS page check (ddownload.com / ddl.to) |
 | Content-type probing | [x] Implemented | Fallback: probe URL for direct video links |
 | URL domain priority | [x] Implemented | Match resolver by domain with redirect following |
 | Hoster hint fallback | [x] Implemented | Plugin-provided hoster name for rotating domains |
@@ -276,4 +280,4 @@ Infrastructure (implements Domain ports)
 | CLI | `src/scavengarr/interfaces/cli/` |
 | YAML plugin example | `plugins/filmpalast_to.yaml` |
 | Python plugin example | `plugins/boerse.py` |
-| Test suite (2128 tests) | `tests/` |
+| Test suite (2531 tests) | `tests/` |
