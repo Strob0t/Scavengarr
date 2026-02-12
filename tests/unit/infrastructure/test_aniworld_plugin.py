@@ -451,7 +451,7 @@ class TestDomainVerification:
         await plugin._verify_domain()
 
         assert plugin._domain_verified is True
-        assert _mod._DOMAINS[0] in plugin.base_url
+        assert _AniworldPlugin._domains[0] in plugin.base_url
 
     async def test_skips_if_already_verified(self) -> None:
         plugin = _make_plugin()

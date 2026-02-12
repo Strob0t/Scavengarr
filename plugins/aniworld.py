@@ -2,7 +2,7 @@
 
 Scrapes aniworld.to (German anime streaming site) with:
 - httpx for all requests (server-rendered HTML, AJAX search API)
-- POST /ajax/search with keyword={query} → JSON array of matches
+- POST /ajax/search with keyword={query} -> JSON array of matches
 - Detail page scraping for metadata (description, genres, cover image)
 - Episode page scraping for hoster redirect links (VOE, Filemoon, etc.)
 - Category: always 5070 (Anime) since site is anime-only
@@ -18,27 +18,8 @@ import asyncio
 from html.parser import HTMLParser
 from urllib.parse import urljoin
 
-import httpx
-import structlog
-
 from scavengarr.domain.plugins.base import SearchResult
-
-log = structlog.get_logger(__name__)
-
-# Known domains in priority order.
-_DOMAINS = [
-    "aniworld.to",
-    "aniworld.info",
-]
-
-_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
-)
-
-_MAX_CONCURRENT_DETAIL = 3
-_MAX_RESULTS = 1000
+from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # Language key mapping from aniworld.to data-lang-key attributes.
 _LANG_MAP: dict[str, str] = {
@@ -250,7 +231,7 @@ class _EpisodePageParser(HTMLParser):
             self._current_li_redirect = ""
 
 
-class AniworldPlugin:
+class AniworldPlugin(HttpxPluginBase):
     """Python plugin for aniworld.to using httpx."""
 
     name = "aniworld"
@@ -259,69 +240,27 @@ class AniworldPlugin:
     provides = "stream"
     default_language = "de"
 
-    def __init__(self) -> None:
-        self._client: httpx.AsyncClient | None = None
-        self.base_url: str = f"https://{_DOMAINS[0]}"
-        self._domain_verified = False
-
-    async def _ensure_client(self) -> httpx.AsyncClient:
-        """Create httpx client if not already running."""
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                timeout=15.0,
-                follow_redirects=True,
-                headers={"User-Agent": _USER_AGENT},
-            )
-        return self._client
-
-    async def _verify_domain(self) -> None:
-        """Find and cache a working domain from the fallback list."""
-        if self._domain_verified:
-            return
-
-        client = await self._ensure_client()
-        for domain in _DOMAINS:
-            url = f"https://{domain}/"
-            try:
-                resp = await client.head(url, timeout=5.0)
-                if resp.status_code == 200:
-                    self.base_url = f"https://{domain}"
-                    self._domain_verified = True
-                    log.info("aniworld_domain_found", domain=domain)
-                    return
-            except Exception:  # noqa: BLE001
-                continue
-
-        self.base_url = f"https://{_DOMAINS[0]}"
-        self._domain_verified = True
-        log.warning("aniworld_no_domain_reachable", fallback=_DOMAINS[0])
+    _domains = [
+        "aniworld.to",
+        "aniworld.info",
+    ]
 
     async def _ajax_search(self, query: str) -> list[dict[str, str]]:
         """Search via POST /ajax/search endpoint.
 
         Returns JSON array of {title, description, link} dicts.
         """
-        client = await self._ensure_client()
-
-        try:
-            resp = await client.post(
-                f"{self.base_url}/ajax/search",
-                data={"keyword": query},
-                headers={
-                    "X-Requested-With": "XMLHttpRequest",
-                },
-            )
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            log.warning("aniworld_search_failed", query=query, error=str(exc))
+        resp = await self._safe_fetch(
+            f"{self.base_url}/ajax/search",
+            method="POST",
+            context="ajax_search",
+            data={"keyword": query},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+        if resp is None:
             return []
 
-        try:
-            data = resp.json()
-        except Exception:  # noqa: BLE001
-            log.warning("aniworld_search_invalid_json", query=query)
-            return []
-
+        data = self._safe_parse_json(resp, context="ajax_search")
         if not isinstance(data, list):
             return []
 
@@ -341,12 +280,12 @@ class AniworldPlugin:
                     }
                 )
 
-        log.info(
+        self._log.info(
             "aniworld_search_results",
             query=query,
             results=len(results),
         )
-        return results[:_MAX_RESULTS]
+        return results[: self._max_results]
 
     async def _scrape_detail(
         self,
@@ -360,21 +299,13 @@ class AniworldPlugin:
         to ``/anime/{slug}/staffel-{season}/episode-{episode}`` instead of
         scraping the first episode on the detail page.
         """
-        client = await self._ensure_client()
         detail_url = item["link"]
         if not detail_url.startswith("http"):
             detail_url = urljoin(self.base_url, detail_url)
 
         # Fetch detail page
-        try:
-            resp = await client.get(detail_url)
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            log.warning(
-                "aniworld_detail_failed",
-                url=detail_url,
-                error=str(exc),
-            )
+        resp = await self._safe_fetch(detail_url, context="detail_page")
+        if resp is None:
             return None
 
         detail_parser = _DetailPageParser(self.base_url)
@@ -391,7 +322,7 @@ class AniworldPlugin:
             hoster_links = await self._scrape_episode(detail_parser.first_episode_url)
 
         if not hoster_links:
-            log.debug("aniworld_no_hosters", url=detail_url)
+            self._log.debug("aniworld_no_hosters", url=detail_url)
             return None
 
         title = item.get("title", "")
@@ -415,13 +346,8 @@ class AniworldPlugin:
 
     async def _scrape_episode(self, url: str) -> list[dict[str, str]]:
         """Scrape an episode page for hoster redirect links."""
-        client = await self._ensure_client()
-
-        try:
-            resp = await client.get(url)
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            log.warning("aniworld_episode_failed", url=url, error=str(exc))
+        resp = await self._safe_fetch(url, context="episode_page")
+        if resp is None:
             return []
 
         parser = _EpisodePageParser(self.base_url)
@@ -435,7 +361,7 @@ class AniworldPlugin:
         episode: int | None = None,
     ) -> list[SearchResult]:
         """Scrape detail pages with bounded concurrency."""
-        sem = asyncio.Semaphore(_MAX_CONCURRENT_DETAIL)
+        sem = self._new_semaphore()
 
         async def _bounded(item: dict[str, str]) -> SearchResult | None:
             async with sem:
@@ -476,12 +402,6 @@ class AniworldPlugin:
             return []
 
         return await self._scrape_all_details(all_items, season=season, episode=episode)
-
-    async def cleanup(self) -> None:
-        """Close httpx client."""
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
 
 
 def _strip_html_tags(text: str) -> str:
