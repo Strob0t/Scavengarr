@@ -27,8 +27,8 @@ All 29 Python plugins migrated to shared base classes (`HttpxPluginBase` /
 - Replace hardcoded year boundary with dynamic `datetime.now().year + 1` in cine plugin (`b3e40e3`)
 
 ### New Plugins (30 Python plugins added)
-Expanded from 2 plugins (filmpalast YAML + boerse Python) to 33 total plugins
-(3 YAML + 30 Python), covering German streaming, DDL, and anime sites.
+Expanded from 2 plugins (filmpalast YAML + boerse Python) to 35 total plugins
+(3 YAML + 32 Python), covering German streaming, DDL, and anime sites.
 
 **Httpx plugins (21):**
 - aniworld.to — anime streaming with domain fallback (`3321775`)
@@ -50,6 +50,7 @@ Expanded from 2 plugins (filmpalast YAML + boerse Python) to 33 total plugins
 - movie4k.sx — streaming via JSON API with cross-language title matching (`52f07dd`, `dfc58db`)
 - myboerse.bz — DDL forum with multi-domain fallback (`27b42b4`, `d80c69a`)
 - nima4k.org — DDL with category browsing (`d001135`)
+- nox.to — DDL archive with JSON API, movies + TV episodes
 - sto (s.to/SerienStream) — TV-only streaming (`7924969`, `2a73f16`)
 - streamcloud.plus — streaming with domain fallback (`10f3808`)
 - streamkiste.taxi — streaming with 5 mirror domains (`ff8c662`, `bea8be1`)
