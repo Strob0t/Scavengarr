@@ -541,6 +541,8 @@ class MyGullyPlugin:
         self,
         query: str,
         category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
     ) -> list[SearchResult]:
         """Search mygully.com and return results with download links."""
         await self._ensure_session()

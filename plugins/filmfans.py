@@ -304,6 +304,8 @@ class FilmfansPlugin:
         self,
         query: str,
         category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
     ) -> list[SearchResult]:
         """Search filmfans.org and return results.
 

@@ -516,6 +516,8 @@ class BytePlugin:
         self,
         query: str,
         category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
     ) -> list[SearchResult]:
         """Search byte.to and return results with download links."""
         await self._ensure_browser()
