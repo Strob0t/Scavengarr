@@ -12,6 +12,27 @@ from typing import Literal
 StremioContentType = Literal["movie", "series"]
 
 
+# ---------------------------------------------------------------------------
+# Domain exceptions
+# ---------------------------------------------------------------------------
+
+
+class StremioError(Exception):
+    """Base class for Stremio domain errors."""
+
+
+class StremioTitleNotFound(StremioError):
+    """Title lookup (TMDB) returned no result."""
+
+
+class StremioNoPluginsAvailable(StremioError):
+    """No stream plugins are available/configured."""
+
+
+class StremioExternalError(StremioError):
+    """External service error (plugin search, TMDB API, hoster resolution)."""
+
+
 class StreamQuality(IntEnum):
     """Ranked quality levels (higher value = better quality)."""
 

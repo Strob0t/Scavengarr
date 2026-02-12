@@ -8,9 +8,13 @@ from scavengarr.domain.entities.stremio import (
     RankedStream,
     StreamLanguage,
     StreamQuality,
+    StremioError,
+    StremioExternalError,
     StremioMetaPreview,
+    StremioNoPluginsAvailable,
     StremioStream,
     StremioStreamRequest,
+    StremioTitleNotFound,
 )
 
 
@@ -151,3 +155,29 @@ class TestStremioStreamRequest:
         req = StremioStreamRequest(imdb_id="tt1", content_type="movie")
         with pytest.raises(AttributeError):
             req.imdb_id = "tt2"  # type: ignore[misc]
+
+
+class TestStremioExceptions:
+    def test_hierarchy(self) -> None:
+        assert issubclass(StremioTitleNotFound, StremioError)
+        assert issubclass(StremioNoPluginsAvailable, StremioError)
+        assert issubclass(StremioExternalError, StremioError)
+
+    def test_base_is_exception(self) -> None:
+        assert issubclass(StremioError, Exception)
+
+    def test_title_not_found_caught_by_base(self) -> None:
+        with pytest.raises(StremioError):
+            raise StremioTitleNotFound("tt0000001")
+
+    def test_no_plugins_caught_by_base(self) -> None:
+        with pytest.raises(StremioError):
+            raise StremioNoPluginsAvailable("no stream plugins")
+
+    def test_external_error_caught_by_base(self) -> None:
+        with pytest.raises(StremioError):
+            raise StremioExternalError("TMDB API timeout")
+
+    def test_message_preserved(self) -> None:
+        e = StremioExternalError("connection refused")
+        assert str(e) == "connection refused"

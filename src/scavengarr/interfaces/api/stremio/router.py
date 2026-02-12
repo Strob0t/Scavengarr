@@ -163,7 +163,17 @@ async def stremio_catalog(
         return JSONResponse(content={"metas": []}, headers=_CORS_HEADERS)
 
     ct = cast(StremioContentType, content_type)
-    metas = await uc.trending(ct)
+
+    try:
+        metas = await uc.trending(ct)
+    except Exception:
+        log.exception(
+            "stremio_catalog_error",
+            content_type=content_type,
+            catalog_id=catalog_id,
+        )
+        return JSONResponse(content={"metas": []}, headers=_CORS_HEADERS)
+
     meta_list = [_format_meta_preview(m) for m in metas]
 
     return JSONResponse(content={"metas": meta_list}, headers=_CORS_HEADERS)
@@ -187,7 +197,18 @@ async def stremio_catalog_search(
         return JSONResponse(content={"metas": []}, headers=_CORS_HEADERS)
 
     ct = cast(StremioContentType, content_type)
-    metas = await uc.search(ct, query)
+
+    try:
+        metas = await uc.search(ct, query)
+    except Exception:
+        log.exception(
+            "stremio_catalog_search_error",
+            content_type=content_type,
+            catalog_id=catalog_id,
+            query=query,
+        )
+        return JSONResponse(content={"metas": []}, headers=_CORS_HEADERS)
+
     meta_list = [_format_meta_preview(m) for m in metas]
 
     return JSONResponse(content={"metas": meta_list}, headers=_CORS_HEADERS)
@@ -225,7 +246,18 @@ async def stremio_stream(
     if uc is None:
         return JSONResponse(content={"streams": []}, headers=_CORS_HEADERS)
 
-    streams = await uc.execute(parsed, base_url=str(request.base_url).rstrip("/"))
+    try:
+        streams = await uc.execute(parsed, base_url=str(request.base_url).rstrip("/"))
+    except Exception:
+        log.exception(
+            "stremio_stream_error",
+            imdb_id=parsed.imdb_id,
+            content_type=parsed.content_type,
+            season=parsed.season,
+            episode=parsed.episode,
+        )
+        return JSONResponse(content={"streams": []}, headers=_CORS_HEADERS)
+
     stremio_streams = [_format_stremio_stream(s) for s in streams]
 
     log.info(
@@ -304,4 +336,55 @@ async def stremio_play(
         url=resolved.video_url,
         status_code=302,
         headers=_CORS_HEADERS,
+    )
+
+
+@router.get("/health")
+async def stremio_health(request: Request) -> JSONResponse:
+    """Report Stremio addon health and component status."""
+    state = cast(AppState, request.app.state)
+
+    tmdb_configured = getattr(state, "tmdb_client", None) is not None
+    stream_uc = getattr(state, "stremio_stream_uc", None)
+    catalog_uc = getattr(state, "stremio_catalog_uc", None)
+    resolver_registry = getattr(state, "hoster_resolver_registry", None)
+    stream_link_repo = getattr(state, "stream_link_repo", None)
+
+    stream_plugin_names: list[str] = []
+    try:
+        stream_plugin_names = state.plugins.get_by_provides("stream")
+    except Exception:
+        log.warning("stremio_health_plugin_error", exc_info=True)
+
+    supported_hosters: list[str] = []
+    if resolver_registry is not None:
+        try:
+            supported_hosters = list(resolver_registry.list_hosters())
+        except Exception:
+            pass
+
+    healthy = (
+        tmdb_configured
+        and stream_uc is not None
+        and catalog_uc is not None
+        and resolver_registry is not None
+        and stream_link_repo is not None
+        and len(stream_plugin_names) > 0
+    )
+
+    content: dict[str, object] = {
+        "healthy": healthy,
+        "tmdb_configured": tmdb_configured,
+        "stream_plugin_count": len(stream_plugin_names),
+        "stream_plugins": stream_plugin_names,
+        "stream_uc_initialized": stream_uc is not None,
+        "catalog_uc_initialized": catalog_uc is not None,
+        "hoster_resolver_configured": resolver_registry is not None,
+        "supported_hosters": supported_hosters,
+        "stream_link_repo_configured": stream_link_repo is not None,
+    }
+
+    return JSONResponse(
+        status_code=200 if healthy else 503,
+        content=content,
     )

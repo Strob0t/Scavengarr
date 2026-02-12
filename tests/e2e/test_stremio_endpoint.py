@@ -907,6 +907,181 @@ class TestPlayEndpoint:
 # ---------------------------------------------------------------------------
 
 
+class TestErrorHandling:
+    """Verify that use case errors are caught and return empty responses."""
+
+    def test_catalog_error_returns_empty_metas(self) -> None:
+        catalog_uc = AsyncMock()
+        catalog_uc.trending = AsyncMock(side_effect=RuntimeError("TMDB down"))
+
+        app = _make_app(stremio_catalog_uc=catalog_uc)
+        client = TestClient(app)
+
+        resp = client.get(
+            f"{_PREFIX}/stremio/catalog/movie/scavengarr-trending-movies.json"
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["metas"] == []
+
+    def test_catalog_search_error_returns_empty_metas(self) -> None:
+        catalog_uc = AsyncMock()
+        catalog_uc.search = AsyncMock(side_effect=RuntimeError("TMDB down"))
+
+        app = _make_app(stremio_catalog_uc=catalog_uc)
+        client = TestClient(app)
+
+        resp = client.get(
+            f"{_PREFIX}/stremio/catalog/movie/scavengarr-trending-movies"
+            "/search=test.json"
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["metas"] == []
+
+    def test_stream_error_returns_empty_streams(self) -> None:
+        stream_uc = AsyncMock()
+        stream_uc.execute = AsyncMock(side_effect=RuntimeError("plugin timeout"))
+
+        app = _make_app(stremio_stream_uc=stream_uc)
+        client = TestClient(app)
+
+        resp = client.get(f"{_PREFIX}/stremio/stream/movie/tt1234567.json")
+
+        assert resp.status_code == 200
+        assert resp.json()["streams"] == []
+
+    def test_stream_error_has_cors_headers(self) -> None:
+        stream_uc = AsyncMock()
+        stream_uc.execute = AsyncMock(side_effect=RuntimeError("boom"))
+
+        app = _make_app(stremio_stream_uc=stream_uc)
+        client = TestClient(app)
+
+        resp = client.get(f"{_PREFIX}/stremio/stream/movie/tt1234567.json")
+
+        assert resp.headers.get("access-control-allow-origin") == "*"
+
+
+# ---------------------------------------------------------------------------
+# Health endpoint
+# ---------------------------------------------------------------------------
+
+
+class TestHealthEndpoint:
+    """GET /api/v1/stremio/health"""
+
+    def test_healthy_when_all_configured(self) -> None:
+        plugins = MagicMock()
+        plugins.get_by_provides.return_value = ["hdfilme", "aniworld"]
+
+        resolver = MagicMock()
+        resolver.list_hosters.return_value = ["voe", "streamtape"]
+
+        app = _make_app(
+            plugins=plugins,
+            stremio_catalog_uc=AsyncMock(),
+            stremio_stream_uc=AsyncMock(),
+            stream_link_repo=AsyncMock(),
+            hoster_resolver_registry=resolver,
+        )
+        app.state.tmdb_client = MagicMock()
+
+        client = TestClient(app)
+        resp = client.get(f"{_PREFIX}/stremio/health")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["healthy"] is True
+        assert data["tmdb_configured"] is True
+        assert data["stream_plugin_count"] == 2
+        assert data["stream_plugins"] == ["hdfilme", "aniworld"]
+        assert data["stream_uc_initialized"] is True
+        assert data["catalog_uc_initialized"] is True
+        assert data["hoster_resolver_configured"] is True
+        assert data["supported_hosters"] == ["voe", "streamtape"]
+        assert data["stream_link_repo_configured"] is True
+
+    def test_unhealthy_no_tmdb(self) -> None:
+        plugins = MagicMock()
+        plugins.get_by_provides.return_value = ["hdfilme"]
+
+        app = _make_app(
+            plugins=plugins,
+            stremio_stream_uc=None,
+            stremio_catalog_uc=None,
+        )
+
+        client = TestClient(app)
+        resp = client.get(f"{_PREFIX}/stremio/health")
+
+        assert resp.status_code == 503
+        data = resp.json()
+        assert data["healthy"] is False
+        assert data["tmdb_configured"] is False
+
+    def test_unhealthy_no_plugins(self) -> None:
+        plugins = MagicMock()
+        plugins.get_by_provides.return_value = []
+
+        resolver = MagicMock()
+        resolver.list_hosters.return_value = ["voe"]
+
+        app = _make_app(
+            plugins=plugins,
+            stremio_catalog_uc=AsyncMock(),
+            stremio_stream_uc=AsyncMock(),
+            stream_link_repo=AsyncMock(),
+            hoster_resolver_registry=resolver,
+        )
+        app.state.tmdb_client = MagicMock()
+
+        client = TestClient(app)
+        resp = client.get(f"{_PREFIX}/stremio/health")
+
+        assert resp.status_code == 503
+        data = resp.json()
+        assert data["healthy"] is False
+        assert data["stream_plugin_count"] == 0
+
+    def test_unhealthy_no_stream_link_repo(self) -> None:
+        plugins = MagicMock()
+        plugins.get_by_provides.return_value = ["hdfilme"]
+
+        resolver = MagicMock()
+        resolver.list_hosters.return_value = ["voe"]
+
+        app = _make_app(
+            plugins=plugins,
+            stremio_catalog_uc=AsyncMock(),
+            stremio_stream_uc=AsyncMock(),
+            stream_link_repo=None,
+            hoster_resolver_registry=resolver,
+        )
+        app.state.tmdb_client = MagicMock()
+
+        client = TestClient(app)
+        resp = client.get(f"{_PREFIX}/stremio/health")
+
+        assert resp.status_code == 503
+        data = resp.json()
+        assert data["healthy"] is False
+        assert data["stream_link_repo_configured"] is False
+
+    def test_health_plugin_error_handled(self) -> None:
+        plugins = MagicMock()
+        plugins.get_by_provides.side_effect = RuntimeError("registry broken")
+
+        app = _make_app(plugins=plugins)
+        client = TestClient(app)
+
+        resp = client.get(f"{_PREFIX}/stremio/health")
+
+        assert resp.status_code == 503
+        data = resp.json()
+        assert data["stream_plugin_count"] == 0
+
+
 class TestStreamFullFlow:
     """Test the stream endpoint with a real StremioStreamUseCase.
 
