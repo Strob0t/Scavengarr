@@ -1,14 +1,12 @@
-"""Unit tests for the moflix-stream.xyz plugin."""
+"""Unit tests for the moflix-stream.xyz plugin (Playwright-based)."""
 
 from __future__ import annotations
 
 import importlib.util
-import json
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-import httpx
 import pytest
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "moflix.py"
@@ -26,7 +24,7 @@ def moflix_mod():
 
 
 # ---------------------------------------------------------------------------
-# JSON fixtures
+# JSON fixtures (same as API responses)
 # ---------------------------------------------------------------------------
 
 SEARCH_RESPONSE = {
@@ -139,17 +137,19 @@ DETAIL_NO_VIDEOS_RESPONSE = {
 
 
 # ---------------------------------------------------------------------------
-# Helper
+# Helper: mock Playwright page
 # ---------------------------------------------------------------------------
 
 
-def _make_json_response(data: dict, status_code: int = 200) -> MagicMock:
-    resp = MagicMock(spec=httpx.Response)
-    resp.status_code = status_code
-    resp.text = json.dumps(data)
-    resp.json.return_value = data
-    resp.raise_for_status = MagicMock()
-    return resp
+def _make_mock_page() -> AsyncMock:
+    """Create a mock Playwright Page.
+
+    ``is_closed()`` is synchronous in Playwright, so we use MagicMock
+    to avoid returning a coroutine.
+    """
+    page = AsyncMock()
+    page.is_closed = MagicMock(return_value=False)
+    return page
 
 
 # ---------------------------------------------------------------------------
@@ -164,10 +164,10 @@ class TestPluginAttributes:
         assert moflix_mod.plugin.name == "moflix"
 
     def test_version(self, moflix_mod):
-        assert moflix_mod.plugin.version == "1.0.0"
+        assert moflix_mod.plugin.version == "1.1.0"
 
     def test_mode(self, moflix_mod):
-        assert moflix_mod.plugin.mode == "httpx"
+        assert moflix_mod.plugin.mode == "playwright"
 
     def test_provides(self, moflix_mod):
         assert moflix_mod.plugin.provides == "stream"
@@ -297,42 +297,35 @@ class TestBuildSearchResult:
 
 
 # ---------------------------------------------------------------------------
-# Plugin search tests (mocked HTTP)
+# Plugin search tests (mocked Playwright page.evaluate)
 # ---------------------------------------------------------------------------
 
 
 class TestPluginSearch:
-    """Tests for MoflixPlugin.search() with mocked HTTP."""
+    """Tests for MoflixPlugin.search() with mocked Playwright."""
 
     @pytest.fixture()
-    def mock_client(self):
-        return AsyncMock(spec=httpx.AsyncClient)
-
-    @pytest.fixture()
-    def plugin(self, moflix_mod, mock_client):
+    def plugin(self, moflix_mod):
         p = moflix_mod.MoflixPlugin()
-        p._client = mock_client
         p._domain_verified = True
         p.base_url = "https://moflix-stream.xyz"
+        mock_page = _make_mock_page()
+        p._page = mock_page
         return p
 
     @pytest.mark.asyncio
-    async def test_search_returns_results(self, plugin, mock_client):
-        search_resp = _make_json_response(SEARCH_RESPONSE)
-        detail_movie_resp = _make_json_response(DETAIL_MOVIE_RESPONSE)
-        detail_series_resp = _make_json_response(DETAIL_SERIES_RESPONSE)
+    async def test_search_returns_results(self, plugin):
+        async def mock_evaluate(js, arg=None):
+            url = str(arg) if arg else ""
+            if "/api/v1/search/" in url:
+                return SEARCH_RESPONSE
+            if "/api/v1/titles/2809" in url:
+                return DETAIL_MOVIE_RESPONSE
+            if "/api/v1/titles/9232" in url:
+                return DETAIL_SERIES_RESPONSE
+            return {}
 
-        async def mock_get(url, **kwargs):
-            url_str = str(url)
-            if "/api/v1/search/" in url_str:
-                return search_resp
-            if "/api/v1/titles/2809" in url_str:
-                return detail_movie_resp
-            if "/api/v1/titles/9232" in url_str:
-                return detail_series_resp
-            return _make_json_response({})
-
-        mock_client.get = AsyncMock(side_effect=mock_get)
+        plugin._page.evaluate = AsyncMock(side_effect=mock_evaluate)
 
         results = await plugin.search("batman")
 
@@ -353,17 +346,16 @@ class TestPluginSearch:
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_search_movie_category_filters_series(self, plugin, mock_client):
-        search_resp = _make_json_response(SEARCH_RESPONSE)
-        detail_resp = _make_json_response(DETAIL_MOVIE_RESPONSE)
+    async def test_search_movie_category_filters_series(self, plugin):
+        async def mock_evaluate(js, arg=None):
+            url = str(arg) if arg else ""
+            if "/api/v1/search/" in url:
+                return SEARCH_RESPONSE
+            if "/api/v1/titles/2809" in url:
+                return DETAIL_MOVIE_RESPONSE
+            return {}
 
-        async def mock_get(url, **kwargs):
-            url_str = str(url)
-            if "/api/v1/search/" in url_str:
-                return search_resp
-            return detail_resp
-
-        mock_client.get = AsyncMock(side_effect=mock_get)
+        plugin._page.evaluate = AsyncMock(side_effect=mock_evaluate)
 
         # Request movies only (2000) - should filter out the series result
         results = await plugin.search("batman", category=2000)
@@ -372,17 +364,16 @@ class TestPluginSearch:
         assert results[0].category == 2000
 
     @pytest.mark.asyncio
-    async def test_search_tv_category_filters_movies(self, plugin, mock_client):
-        search_resp = _make_json_response(SEARCH_RESPONSE)
-        detail_resp = _make_json_response(DETAIL_SERIES_RESPONSE)
+    async def test_search_tv_category_filters_movies(self, plugin):
+        async def mock_evaluate(js, arg=None):
+            url = str(arg) if arg else ""
+            if "/api/v1/search/" in url:
+                return SEARCH_RESPONSE
+            if "/api/v1/titles/9232" in url:
+                return DETAIL_SERIES_RESPONSE
+            return {}
 
-        async def mock_get(url, **kwargs):
-            url_str = str(url)
-            if "/api/v1/search/" in url_str:
-                return search_resp
-            return detail_resp
-
-        mock_client.get = AsyncMock(side_effect=mock_get)
+        plugin._page.evaluate = AsyncMock(side_effect=mock_evaluate)
 
         # Request TV only (5000) - should filter out movie results
         results = await plugin.search("batman", category=5000)
@@ -391,36 +382,36 @@ class TestPluginSearch:
         assert results[0].category == 5000
 
     @pytest.mark.asyncio
-    async def test_search_no_results(self, plugin, mock_client):
-        search_resp = _make_json_response(EMPTY_SEARCH_RESPONSE)
-        mock_client.get = AsyncMock(return_value=search_resp)
+    async def test_search_no_results(self, plugin):
+        plugin._page.evaluate = AsyncMock(return_value=EMPTY_SEARCH_RESPONSE)
 
         results = await plugin.search("xyznonexistent")
 
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_search_http_error(self, plugin, mock_client):
-        mock_client.get = AsyncMock(
-            side_effect=httpx.ConnectError("Connection refused")
-        )
+    async def test_search_evaluate_error(self, plugin):
+        plugin._page.evaluate = AsyncMock(side_effect=Exception("page crashed"))
 
         results = await plugin.search("batman")
 
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_detail_failure_uses_fallback(self, plugin, mock_client):
+    async def test_detail_failure_uses_fallback(self, plugin):
         """When a detail page fails, result uses search entry data only."""
-        search_resp = _make_json_response(SEARCH_RESPONSE)
+        call_count = 0
 
-        async def mock_get(url, **kwargs):
-            url_str = str(url)
-            if "/api/v1/search/" in url_str:
-                return search_resp
-            raise httpx.ConnectError("Connection refused")
+        async def mock_evaluate(js, arg=None):
+            nonlocal call_count
+            call_count += 1
+            url = str(arg) if arg else ""
+            if "/api/v1/search/" in url:
+                return SEARCH_RESPONSE
+            # Detail calls fail
+            return {"_error": 500}
 
-        mock_client.get = AsyncMock(side_effect=mock_get)
+        plugin._page.evaluate = AsyncMock(side_effect=mock_evaluate)
 
         results = await plugin.search("batman")
 
@@ -430,17 +421,18 @@ class TestPluginSearch:
         assert results[0].download_links is None
 
     @pytest.mark.asyncio
-    async def test_search_with_videos_in_download_link(self, plugin, mock_client):
-        search_resp = _make_json_response(SEARCH_RESPONSE)
-        detail_resp = _make_json_response(DETAIL_MOVIE_RESPONSE)
+    async def test_search_with_videos_in_download_link(self, plugin):
+        async def mock_evaluate(js, arg=None):
+            url = str(arg) if arg else ""
+            if "/api/v1/search/" in url:
+                return SEARCH_RESPONSE
+            if "/api/v1/titles/2809" in url:
+                return DETAIL_MOVIE_RESPONSE
+            if "/api/v1/titles/9232" in url:
+                return DETAIL_SERIES_RESPONSE
+            return {}
 
-        async def mock_get(url, **kwargs):
-            url_str = str(url)
-            if "/api/v1/search/" in url_str:
-                return search_resp
-            return detail_resp
-
-        mock_client.get = AsyncMock(side_effect=mock_get)
+        plugin._page.evaluate = AsyncMock(side_effect=mock_evaluate)
 
         results = await plugin.search("batman")
 
@@ -449,15 +441,14 @@ class TestPluginSearch:
         assert movie.download_link == "https://doods.to/e/abc123"
 
     @pytest.mark.asyncio
-    async def test_entry_without_id_skipped(self, plugin, mock_client):
+    async def test_entry_without_id_skipped(self, plugin):
         """Entries without an id should be skipped."""
         bad_search = {
             "results": [
                 {"name": "No ID Movie", "is_series": False},
             ],
         }
-        search_resp = _make_json_response(bad_search)
-        mock_client.get = AsyncMock(return_value=search_resp)
+        plugin._page.evaluate = AsyncMock(return_value=bad_search)
 
         results = await plugin.search("test")
 
@@ -473,67 +464,13 @@ class TestDomainVerification:
     """Tests for domain fallback logic."""
 
     @pytest.mark.asyncio
-    async def test_first_domain_works(self, moflix_mod):
-        p = moflix_mod.MoflixPlugin()
-        mock_client = AsyncMock(spec=httpx.AsyncClient)
-        resp = MagicMock(spec=httpx.Response)
-        resp.status_code = 200
-        mock_client.head = AsyncMock(return_value=resp)
-        p._client = mock_client
-
-        await p._verify_domain()
-
-        assert p._domain_verified is True
-        assert "moflix-stream.xyz" in p.base_url
-
-    @pytest.mark.asyncio
-    async def test_fallback_on_connect_error(self, moflix_mod):
-        p = moflix_mod.MoflixPlugin()
-        mock_client = AsyncMock(spec=httpx.AsyncClient)
-        call_count = 0
-
-        async def mock_head(url, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise httpx.ConnectError("Connection failed")
-            resp = MagicMock(spec=httpx.Response)
-            resp.status_code = 200
-            return resp
-
-        mock_client.head = AsyncMock(side_effect=mock_head)
-        p._client = mock_client
-
-        await p._verify_domain()
-
-        assert p._domain_verified is True
-        assert call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_all_domains_fail(self, moflix_mod):
-        p = moflix_mod.MoflixPlugin()
-        mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.head = AsyncMock(
-            side_effect=httpx.ConnectError("Connection failed")
-        )
-        p._client = mock_client
-
-        await p._verify_domain()
-
-        assert p._domain_verified is True
-        assert moflix_mod._DOMAINS[0] in p.base_url
-
-    @pytest.mark.asyncio
     async def test_skips_if_already_verified(self, moflix_mod):
         p = moflix_mod.MoflixPlugin()
         p._domain_verified = True
         p.base_url = "https://custom.domain"
-        mock_client = AsyncMock(spec=httpx.AsyncClient)
-        p._client = mock_client
 
         await p._verify_domain()
 
-        mock_client.head.assert_not_called()
         assert p.base_url == "https://custom.domain"
 
 
@@ -546,18 +483,31 @@ class TestCleanup:
     """Tests for cleanup."""
 
     @pytest.mark.asyncio
-    async def test_cleanup_closes_client(self, moflix_mod):
+    async def test_cleanup_closes_browser(self, moflix_mod):
         p = moflix_mod.MoflixPlugin()
-        mock_client = AsyncMock(spec=httpx.AsyncClient)
-        p._client = mock_client
+        mock_page = _make_mock_page()
+        mock_context = AsyncMock()
+        mock_browser = AsyncMock()
+        mock_pw = AsyncMock()
+
+        p._page = mock_page
+        p._context = mock_context
+        p._browser = mock_browser
+        p._pw = mock_pw
 
         await p.cleanup()
 
-        mock_client.aclose.assert_awaited_once()
-        assert p._client is None
+        mock_page.close.assert_awaited_once()
+        mock_context.close.assert_awaited_once()
+        mock_browser.close.assert_awaited_once()
+        mock_pw.stop.assert_awaited_once()
+        assert p._page is None
+        assert p._context is None
+        assert p._browser is None
+        assert p._pw is None
 
     @pytest.mark.asyncio
-    async def test_cleanup_without_client(self, moflix_mod):
+    async def test_cleanup_without_browser(self, moflix_mod):
         p = moflix_mod.MoflixPlugin()
 
         await p.cleanup()  # Should not raise

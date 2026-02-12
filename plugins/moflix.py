@@ -1,21 +1,30 @@
 """moflix-stream.xyz Python plugin for Scavengarr.
 
-Scrapes moflix-stream.xyz (German streaming aggregator) via its REST API:
+Scrapes moflix-stream.xyz (German streaming aggregator) via Playwright + REST API:
+- Playwright solves the Cloudflare JS challenge and obtains an XSRF-TOKEN cookie
+- API calls are executed from within the browser context using fetch()
 - GET /api/v1/search/{query}?query={query}&limit=20 for search
 - GET /api/v1/titles/{id}?load=videos,genres for title details + video embeds
 - Movies and TV series with TMDB metadata (rating, year, genres, IMDB ID)
 - Video embed links from multiple hosters (doods.to, etc.)
 
 Domain fallback: moflix-stream.xyz, moflix-stream.click
-No authentication required.
+Cloudflare JS challenge requires browser-based access (Playwright mode).
 """
 
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
-import httpx
 import structlog
+from playwright.async_api import (
+    Browser,
+    BrowserContext,
+    Page,
+    Playwright,
+    async_playwright,
+)
 
 from scavengarr.domain.plugins.base import SearchResult
 
@@ -36,6 +45,8 @@ _USER_AGENT = (
 _MAX_CONCURRENT_DETAIL = 3
 _MAX_RESULTS = 1000
 _SEARCH_LIMIT = 20  # API hard cap
+_CF_TIMEOUT = 30_000  # ms to wait for Cloudflare challenge
+_NAV_TIMEOUT = 30_000
 
 
 def _pre_filter_by_category(results: list[dict], category: int | None) -> list[dict]:
@@ -49,41 +60,97 @@ def _pre_filter_by_category(results: list[dict], category: int | None) -> list[d
     return results
 
 
+# JavaScript executed in the browser to call the API with proper XSRF headers.
+_API_FETCH_JS = """
+async (url) => {
+    const token = document.cookie.match(/XSRF-TOKEN=([^;]+)/);
+    const headers = {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+    };
+    if (token) {
+        headers['X-XSRF-TOKEN'] = decodeURIComponent(token[1]);
+    }
+    const resp = await fetch(url, { headers });
+    if (!resp.ok) return { _error: resp.status };
+    return await resp.json();
+}
+"""
+
+
 class MoflixPlugin:
-    """Python plugin for moflix-stream.xyz using httpx (REST API)."""
+    """Python plugin for moflix-stream.xyz using Playwright (Cloudflare bypass)."""
 
     name = "moflix"
-    version = "1.0.0"
-    mode = "httpx"
+    version = "1.1.0"
+    mode = "playwright"
     provides = "stream"
     default_language = "de"
 
     def __init__(self) -> None:
-        self._client: httpx.AsyncClient | None = None
+        self._pw: Playwright | None = None
+        self._browser: Browser | None = None
+        self._context: BrowserContext | None = None
+        self._page: Page | None = None
         self.base_url: str = f"https://{_DOMAINS[0]}"
         self._domain_verified = False
 
-    async def _ensure_client(self) -> httpx.AsyncClient:
-        """Create httpx client if not already running."""
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                timeout=15.0,
-                follow_redirects=True,
-                headers={"User-Agent": _USER_AGENT},
+    async def _ensure_browser(self) -> Browser:
+        """Launch browser if not already running."""
+        if self._browser is None:
+            self._pw = await async_playwright().start()
+            self._browser = await self._pw.chromium.launch(headless=True)
+            log.info("moflix_browser_launched")
+        return self._browser
+
+    async def _ensure_context(self) -> BrowserContext:
+        """Create browser context with proper user agent."""
+        if self._context is None:
+            browser = await self._ensure_browser()
+            self._context = await browser.new_context(
+                user_agent=_USER_AGENT,
+                viewport={"width": 1280, "height": 720},
             )
-        return self._client
+        return self._context
+
+    async def _ensure_page(self) -> Page:
+        """Get or create the persistent page used for API calls."""
+        if self._page is None or self._page.is_closed():
+            ctx = await self._ensure_context()
+            self._page = await ctx.new_page()
+            self._page.set_default_navigation_timeout(_NAV_TIMEOUT)
+            self._page.set_default_timeout(_NAV_TIMEOUT)
+        return self._page
+
+    async def _wait_for_cloudflare(self, page: Page) -> bool:
+        """Wait for the Cloudflare JS challenge to resolve."""
+        try:
+            # The real site has a progress bar or content that loads after
+            # the challenge.  Wait for the XSRF-TOKEN cookie to appear.
+            for _ in range(30):
+                cookies = await page.context.cookies()
+                for c in cookies:
+                    if c["name"] == "XSRF-TOKEN":
+                        return True
+                await page.wait_for_timeout(1000)
+        except Exception:  # noqa: BLE001
+            pass
+
+        log.warning("moflix_cloudflare_timeout")
+        return False
 
     async def _verify_domain(self) -> None:
-        """Find and cache a working domain from the fallback list."""
+        """Navigate to a working domain and solve the Cloudflare challenge."""
         if self._domain_verified:
             return
 
-        client = await self._ensure_client()
+        page = await self._ensure_page()
+
         for domain in _DOMAINS:
             url = f"https://{domain}/"
             try:
-                resp = await client.head(url, timeout=5.0)
-                if resp.status_code == 200:
+                await page.goto(url, wait_until="domcontentloaded")
+                if await self._wait_for_cloudflare(page):
                     self.base_url = f"https://{domain}"
                     self._domain_verified = True
                     log.info("moflix_domain_found", domain=domain)
@@ -95,43 +162,50 @@ class MoflixPlugin:
         self._domain_verified = True
         log.warning("moflix_no_domain_reachable", fallback=_DOMAINS[0])
 
-    async def _api_search(self, query: str) -> list[dict]:
-        """Search the API and return raw result dicts."""
-        client = await self._ensure_client()
+    async def _api_fetch(self, path: str) -> dict[str, Any] | None:
+        """Call a moflix API endpoint from within the browser context."""
+        page = await self._ensure_page()
+        url = f"{self.base_url}{path}"
 
         try:
-            resp = await client.get(
-                f"{self.base_url}/api/v1/search/{query}",
-                params={"query": query, "limit": _SEARCH_LIMIT},
-            )
-            resp.raise_for_status()
+            data = await page.evaluate(_API_FETCH_JS, url)
         except Exception as exc:  # noqa: BLE001
-            log.warning("moflix_search_failed", query=query, error=str(exc))
+            log.warning("moflix_api_fetch_failed", path=path, error=str(exc))
+            return None
+
+        if not isinstance(data, dict):
+            return None
+
+        if "_error" in data:
+            log.warning("moflix_api_error", path=path, status=data["_error"])
+            return None
+
+        return data
+
+    async def _api_search(self, query: str) -> list[dict]:
+        """Search the API and return raw result dicts."""
+        # URL-encode the query for the path segment
+        from urllib.parse import quote
+
+        encoded = quote(query, safe="")
+        path = f"/api/v1/search/{encoded}?query={encoded}&limit={_SEARCH_LIMIT}"
+
+        data = await self._api_fetch(path)
+        if not data:
             return []
 
-        data = resp.json()
         results = data.get("results", [])
-
         log.info("moflix_search", query=query, count=len(results))
         return results
 
     async def _fetch_title_detail(self, title_id: int) -> dict | None:
         """Fetch title details with videos and genres."""
-        client = await self._ensure_client()
-
-        try:
-            resp = await client.get(
-                f"{self.base_url}/api/v1/titles/{title_id}",
-                params={"load": "videos,genres"},
-            )
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            log.warning("moflix_detail_failed", title_id=title_id, error=str(exc))
+        path = f"/api/v1/titles/{title_id}?load=videos,genres"
+        data = await self._api_fetch(path)
+        if not data:
             return None
 
-        data = resp.json()
         title = data.get("title")
-
         if title:
             log.info(
                 "moflix_detail",
@@ -140,7 +214,6 @@ class MoflixPlugin:
                 videos=len(title.get("videos") or []),
                 genres=len(title.get("genres") or []),
             )
-
         return title
 
     def _build_search_result(
@@ -244,7 +317,8 @@ class MoflixPlugin:
     ) -> list[SearchResult]:
         """Search moflix-stream.xyz and return results with video embed links.
 
-        Uses the site's REST API for search and title details.
+        Uses Playwright to bypass Cloudflare, then calls the site's REST API
+        from within the browser context.
         When *season* is provided, only series results are returned.
         """
         if not query:
@@ -255,7 +329,6 @@ class MoflixPlugin:
             if not (2000 <= category < 3000 or 5000 <= category < 6000):
                 return []
 
-        await self._ensure_client()
         await self._verify_domain()
 
         search_results = await self._api_search(query)
@@ -288,10 +361,19 @@ class MoflixPlugin:
         return results[:_MAX_RESULTS]
 
     async def cleanup(self) -> None:
-        """Close httpx client."""
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+        """Close browser and Playwright."""
+        if self._page is not None and not self._page.is_closed():
+            await self._page.close()
+            self._page = None
+        if self._context is not None:
+            await self._context.close()
+            self._context = None
+        if self._browser is not None:
+            await self._browser.close()
+            self._browser = None
+        if self._pw is not None:
+            await self._pw.stop()
+            self._pw = None
 
 
 plugin = MoflixPlugin()
