@@ -37,12 +37,8 @@ _MAX_BROWSE_SERIES = 50
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-_TV_CATEGORIES = frozenset(
-    {5000, 5010, 5020, 5030, 5040, 5050, 5060, 5070, 5080}
-)
-_MOVIE_CATEGORIES = frozenset(
-    {2000, 2010, 2020, 2030, 2040, 2045, 2050, 2060}
-)
+_TV_CATEGORIES = frozenset({5000, 5010, 5020, 5030, 5040, 5050, 5060, 5070, 5080})
+_MOVIE_CATEGORIES = frozenset({2000, 2010, 2020, 2030, 2040, 2045, 2050, 2060})
 
 # Regex to extract initSeason('series_id', ...) from detail page HTML
 _INIT_SEASON_RE = re.compile(r"initSeason\(\s*'([^']+)'")
@@ -54,14 +50,10 @@ _TITLE_YEAR_RE = re.compile(r"<h2>\s*(.+?)\s*<i>\((\d{4})\)</i>\s*</h2>")
 _IMDB_RE = re.compile(r'href="(https://www\.imdb\.com/title/[^"]+)"')
 
 # Regex to extract season count: <strong>Staffeln</strong>\n<span>6</span>
-_SEASONS_RE = re.compile(
-    r"<strong>Staffeln</strong>\s*<span>(\d+)</span>", re.DOTALL
-)
+_SEASONS_RE = re.compile(r"<strong>Staffeln</strong>\s*<span>(\d+)</span>", re.DOTALL)
 
 # Regex to extract runtime: <strong>Laufzeit</strong>\n<span>45min</span>
-_RUNTIME_RE = re.compile(
-    r"<strong>Laufzeit</strong>\s*<span>([^<]+)</span>", re.DOTALL
-)
+_RUNTIME_RE = re.compile(r"<strong>Laufzeit</strong>\s*<span>([^<]+)</span>", re.DOTALL)
 
 # Regex to extract rating: <i class="rating ...">9.5</i>
 _RATING_RE = re.compile(r'<i class="rating[^"]*">([^<]+)</i>')
@@ -70,9 +62,7 @@ _RATING_RE = re.compile(r'<i class="rating[^"]*">([^<]+)</i>')
 _GENRE_RE = re.compile(r'<a class="genre" href="/genre/\d+">([^<]+)</a>')
 
 # Regex to extract description from og:description meta tag
-_DESC_RE = re.compile(
-    r'<meta property="og:description" content="([^"]*)"', re.DOTALL
-)
+_DESC_RE = re.compile(r'<meta property="og:description" content="([^"]*)"', re.DOTALL)
 
 # Regex to extract cover image: <img src="/media/1590003296583/200/300">
 _COVER_RE = re.compile(r'<i class="cover"><img src="([^"]+)"')
@@ -339,9 +329,7 @@ class _IndexPageParser(HTMLParser):
         self._in_small = False
         self._current_year = ""
 
-    def handle_starttag(
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attr_dict = dict(attrs)
 
         if tag == "a":
@@ -411,9 +399,7 @@ class SerienfansPlugin(HttpxPluginBase):
             )
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            self._log.warning(
-                "serienfans_search_failed", query=query, error=str(exc)
-            )
+            self._log.warning("serienfans_search_failed", query=query, error=str(exc))
             return []
 
         try:
@@ -449,9 +435,7 @@ class SerienfansPlugin(HttpxPluginBase):
             resp = await client.get(url)
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            self._log.warning(
-                "serienfans_detail_failed", url_id=url_id, error=str(exc)
-            )
+            self._log.warning("serienfans_detail_failed", url_id=url_id, error=str(exc))
             return None
 
         html = resp.text
@@ -638,14 +622,90 @@ class SerienfansPlugin(HttpxPluginBase):
             resp = await client.get(url)
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            self._log.warning(
-                "serienfans_index_failed", letter=letter, error=str(exc)
-            )
+            self._log.warning("serienfans_index_failed", letter=letter, error=str(exc))
             return []
 
         parser = _IndexPageParser()
         parser.feed(resp.text)
         return parser.series
+
+    # ------------------------------------------------------------------
+    # Series processing
+    # ------------------------------------------------------------------
+
+    async def _process_series(
+        self,
+        sem: asyncio.Semaphore,
+        url_id: str,
+        season: int | None,
+        episode: int | None,
+    ) -> list[SearchResult]:
+        """Fetch detail + season data for one series, return results."""
+        async with sem:
+            meta = await self._fetch_detail_page(url_id)
+            if not meta:
+                return []
+
+            series_id = str(meta.get("series_id", ""))
+            if not series_id:
+                return []
+
+            season_param: int | str = season if season is not None else "ALL"
+            releases, episodes = await self._fetch_season(series_id, season_param)
+
+        # Episode filter
+        if episode is not None:
+            return self._filter_episodes(meta, episodes, episode, url_id)
+
+        # Season pack releases
+        return [
+            sr
+            for release in releases
+            if (sr := self._build_search_result(meta, release, url_id))
+            and sr.download_link
+        ]
+
+    def _filter_episodes(
+        self,
+        meta: dict,
+        episodes: list[dict],
+        episode: int,
+        url_id: str,
+    ) -> list[SearchResult]:
+        """Return only episodes matching the given episode number."""
+        ep_str = str(episode)
+        out: list[SearchResult] = []
+        for ep in episodes:
+            if str(ep.get("episode_num", "")).strip() == ep_str:
+                sr = self._build_episode_result(meta, ep, url_id)
+                if sr.download_link:
+                    out.append(sr)
+        return out
+
+    # ------------------------------------------------------------------
+    # Item collection
+    # ------------------------------------------------------------------
+
+    async def _collect_items(self, query: str) -> list[dict]:
+        """Return url_id dicts from search API or index browse."""
+        if query:
+            series_list = await self._search_api(query)
+            return [
+                {"url_id": str(s.get("url_id", "")), "year": s.get("year")}
+                for s in series_list
+                if s.get("url_id")
+            ]
+
+        # Browse mode: fetch index pages
+        items: list[dict] = []
+        for letter in _INDEX_LETTERS:
+            entries = await self._browse_index(letter)
+            items.extend(
+                {"url_id": e["url_id"], "year": e.get("year")} for e in entries
+            )
+            if len(items) >= _MAX_BROWSE_SERIES:
+                break
+        return items[:_MAX_BROWSE_SERIES]
 
     # ------------------------------------------------------------------
     # Main search
@@ -658,96 +718,24 @@ class SerienfansPlugin(HttpxPluginBase):
         season: int | None = None,
         episode: int | None = None,
     ) -> list[SearchResult]:
-        """Search serienfans.org and return results.
-
-        Uses JSON search API to find series, then fetches detail pages
-        for metadata + series_id, then fetches season API for releases.
-        """
-        # TV only — reject non-TV categories
+        """Search serienfans.org and return results."""
         if category is not None and category in _MOVIE_CATEGORIES:
             return []
 
         await self._ensure_client()
 
-        if query:
-            series_list = await self._search_api(query)
-            if not series_list:
-                return []
-            # Convert API results to url_id list
-            items = [
-                {"url_id": str(s.get("url_id", "")), "year": s.get("year")}
-                for s in series_list
-                if s.get("url_id")
-            ]
-        else:
-            # Browse mode: fetch index pages
-            items = []
-            for letter in _INDEX_LETTERS:
-                entries = await self._browse_index(letter)
-                items.extend(
-                    {"url_id": e["url_id"], "year": e.get("year")}
-                    for e in entries
-                )
-                if len(items) >= _MAX_BROWSE_SERIES:
-                    break
-            items = items[:_MAX_BROWSE_SERIES]
-
+        items = await self._collect_items(query)
         if not items:
             return []
 
-        # Fetch detail pages + seasons with bounded concurrency
         sem = self._new_semaphore()
-        results: list[SearchResult] = []
-
-        async def _process_series(item: dict) -> list[SearchResult]:
-            url_id = str(item.get("url_id", ""))
-            if not url_id:
-                return []
-
-            async with sem:
-                meta = await self._fetch_detail_page(url_id)
-                if not meta:
-                    return []
-
-                series_id = str(meta.get("series_id", ""))
-                if not series_id:
-                    return []
-
-                # Determine which season(s) to fetch
-                if season is not None:
-                    season_param: int | str = season
-                else:
-                    season_param = "ALL"
-
-                releases, episodes = await self._fetch_season(
-                    series_id, season_param
-                )
-
-            series_results: list[SearchResult] = []
-
-            # If episode filter is set, return only matching episodes
-            if episode is not None:
-                ep_str = str(episode)
-                for ep in episodes:
-                    if str(ep.get("episode_num", "")).strip() == ep_str:
-                        sr = self._build_episode_result(ep, ep, url_id)
-                        # Use series meta for the episode result
-                        sr = self._build_episode_result(meta, ep, url_id)
-                        if sr.download_link:
-                            series_results.append(sr)
-                return series_results
-
-            # Return complete season pack releases
-            for release in releases:
-                sr = self._build_search_result(meta, release, url_id)
-                if sr.download_link:
-                    series_results.append(sr)
-
-            return series_results
-
-        tasks = [_process_series(item) for item in items]
+        tasks = [
+            self._process_series(sem, str(item["url_id"]), season, episode)
+            for item in items
+        ]
         task_results = await asyncio.gather(*tasks)
 
+        results: list[SearchResult] = []
         for series_results in task_results:
             results.extend(series_results)
             if len(results) >= self._max_results:

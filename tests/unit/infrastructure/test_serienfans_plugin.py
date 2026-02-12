@@ -9,7 +9,6 @@ from types import ModuleType
 from unittest.mock import AsyncMock
 
 import httpx
-import pytest
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "serienfans.py"
 
@@ -168,13 +167,15 @@ _DETAIL_PAGE_HTML = """
         <li>
           <i class="rating excellent">9.5</i>
           <strong>Bewertung</strong>
-          <span><a href="https://www.imdb.com/title/tt0903747/" target="_new">IMDB</a></span>
+          <span><a href="https://www.imdb.com/title/tt0903747/"
+            target="_new">IMDB</a></span>
         </li>
       </ul>
     </div>
   </div>
   <div class="description main">
-    <select id="set12" onchange="initSeason('testSeriesId123abc', $(this).val(), '', 'ALL');">
+    <select id="set12"
+      onchange="initSeason('testSeriesId123abc', $(this).val(), '', 'ALL');">
       <option value="ALL">Alle Staffeln</option>
       <option value="1">Staffel 1</option>
       <option value="2">Staffel 2</option>
@@ -236,7 +237,8 @@ _INDEX_PAGE_HTML = """
 <div class="list txt">
   <div>
     <a href="/breaking-bad"><strong>Breaking Bad</strong><small>(2008)</small></a>
-    <a href="/better-call-saul"><strong>Better Call Saul</strong><small>(2015)</small></a>
+    <a href="/better-call-saul"><strong>Better Call Saul</strong>
+      <small>(2015)</small></a>
     <a href="/bridgerton"><strong>Bridgerton</strong><small>(2020)</small></a>
   </div>
 </div>
@@ -548,9 +550,7 @@ class TestSearchApi:
         plugin = _make_plugin()
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.get = AsyncMock(
-            side_effect=httpx.ConnectError("unreachable")
-        )
+        mock_client.get = AsyncMock(side_effect=httpx.ConnectError("unreachable"))
         plugin._client = mock_client
 
         results = await plugin.search("test")
@@ -752,9 +752,7 @@ class TestSearchResultConstruction:
         search_response = AsyncMock(spec=httpx.Response)
         search_response.status_code = 200
         search_response.json.return_value = {
-            "result": [
-                {"url_id": "test", "year": 2024, "title": "Test"}
-            ],
+            "result": [{"url_id": "test", "year": 2024, "title": "Test"}],
             "resultCounterPart": [],
         }
         search_response.raise_for_status = lambda: None
@@ -786,9 +784,7 @@ class TestSearchResultConstruction:
         search_response = AsyncMock(spec=httpx.Response)
         search_response.status_code = 200
         search_response.json.return_value = {
-            "result": [
-                {"url_id": "test", "year": 2024, "title": "Test"}
-            ],
+            "result": [{"url_id": "test", "year": 2024, "title": "Test"}],
             "resultCounterPart": [],
         }
         search_response.raise_for_status = lambda: None
@@ -820,9 +816,7 @@ class TestSearchResultConstruction:
         search_response = AsyncMock(spec=httpx.Response)
         search_response.status_code = 200
         search_response.json.return_value = {
-            "result": [
-                {"url_id": "test", "year": 2008, "title": "Test"}
-            ],
+            "result": [{"url_id": "test", "year": 2008, "title": "Test"}],
             "resultCounterPart": [],
         }
         search_response.raise_for_status = lambda: None
@@ -860,9 +854,7 @@ class TestSeasonFiltering:
         search_response = AsyncMock(spec=httpx.Response)
         search_response.status_code = 200
         search_response.json.return_value = {
-            "result": [
-                {"url_id": "test", "year": 2024, "title": "Test"}
-            ],
+            "result": [{"url_id": "test", "year": 2024, "title": "Test"}],
             "resultCounterPart": [],
         }
         search_response.raise_for_status = lambda: None
@@ -895,9 +887,7 @@ class TestSeasonFiltering:
         search_response = AsyncMock(spec=httpx.Response)
         search_response.status_code = 200
         search_response.json.return_value = {
-            "result": [
-                {"url_id": "test", "year": 2024, "title": "Test"}
-            ],
+            "result": [{"url_id": "test", "year": 2024, "title": "Test"}],
             "resultCounterPart": [],
         }
         search_response.raise_for_status = lambda: None
@@ -977,9 +967,7 @@ class TestDetailPageErrors:
         search_response = AsyncMock(spec=httpx.Response)
         search_response.status_code = 200
         search_response.json.return_value = {
-            "result": [
-                {"url_id": "broken", "year": 2024, "title": "Broken"}
-            ],
+            "result": [{"url_id": "broken", "year": 2024, "title": "Broken"}],
             "resultCounterPart": [],
         }
         search_response.raise_for_status = lambda: None
@@ -990,9 +978,7 @@ class TestDetailPageErrors:
         detail_response.raise_for_status = lambda: None
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.get = AsyncMock(
-            side_effect=[search_response, detail_response]
-        )
+        mock_client.get = AsyncMock(side_effect=[search_response, detail_response])
         plugin._client = mock_client
 
         results = await plugin.search("broken")
@@ -1027,9 +1013,7 @@ class TestDetailPageErrors:
         search_response = AsyncMock(spec=httpx.Response)
         search_response.status_code = 200
         search_response.json.return_value = {
-            "result": [
-                {"url_id": "test", "year": 2024, "title": "Test"}
-            ],
+            "result": [{"url_id": "test", "year": 2024, "title": "Test"}],
             "resultCounterPart": [],
         }
         search_response.raise_for_status = lambda: None
