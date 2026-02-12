@@ -328,7 +328,7 @@ The system provides a stable download endpoint that delivers a `.crawljob` file 
 - Integration: HTTP router ↔ use case ↔ adapter with HTTP mocking.
 - Optional E2E: real plugin fixtures, but deterministic (no external sites in CI).
 
-### Current test suite (235 tests)
+### Current test suite (1894 tests)
 
 ```
 tests/
@@ -353,8 +353,54 @@ tests/
       test_search_engine.py            # Multi-stage result conversion, dedup
       test_crawljob_cache.py           # Cache repository (pickle storage)
       test_auth_env_resolution.py      # AuthConfig env var resolution
-      test_boerse_plugin.py            # Boerse Python plugin unit tests
       test_scrapy_fallback.py          # ScrapyAdapter mirror fallback
+      test_scrapy_category.py          # Scrapy category filtering
+      test_scrapy_rows_and_transform.py # Scrapy rows selector + query transform
+      test_html_selectors.py           # CSS-selector HTML helpers
+      test_httpx_base.py               # HttpxPluginBase shared base class
+      test_playwright_base.py          # PlaywrightPluginBase shared base class
+      test_plugin_registry.py          # Plugin discovery and loading
+      test_release_parser.py           # guessit release name parsing
+      test_title_matcher.py            # Title-match scoring for Stremio
+      test_imdb_fallback.py            # IMDB suggest API fallback client
+      test_tmdb_client.py              # TMDB httpx client
+      test_stream_converter.py         # SearchResult → RankedStream conversion
+      test_stream_sorter.py            # Stremio stream sorting/ranking
+      test_stream_link_cache.py        # Stream link cache repository
+      test_hoster_registry.py          # HosterResolverRegistry
+      test_voe_resolver.py             # VOE hoster resolver
+      test_streamtape_resolver.py      # Streamtape hoster resolver
+      test_supervideo_resolver.py      # SuperVideo hoster resolver
+      test_doodstream_resolver.py      # DoodStream hoster resolver
+      test_filemoon_resolver.py        # Filemoon hoster resolver
+      test_aniworld_plugin.py          # aniworld plugin tests
+      test_boerse_plugin.py            # boerse plugin tests
+      test_burningseries_plugin.py     # burningseries plugin tests
+      test_byte_plugin.py              # byte plugin tests
+      test_cine_plugin.py              # cine plugin tests
+      test_dataload_plugin.py          # dataload plugin tests
+      test_ddlspot_plugin.py           # ddlspot plugin tests
+      test_ddlvalley_plugin.py         # ddlvalley plugin tests
+      test_einschalten_plugin.py       # einschalten plugin tests
+      test_filmfans_plugin.py          # filmfans plugin tests
+      test_fireani_plugin.py           # fireani plugin tests
+      test_haschcon_plugin.py          # haschcon plugin tests
+      test_hdfilme_plugin.py           # hdfilme plugin tests
+      test_kinoger_plugin.py           # kinoger plugin tests
+      test_kinoking_plugin.py          # kinoking plugin tests
+      test_kinox_plugin.py             # kinox plugin tests
+      test_megakino_plugin.py          # megakino plugin tests
+      test_megakino_to.py              # megakino_to plugin tests
+      test_moflix_plugin.py            # moflix plugin tests
+      test_myboerse_plugin.py          # myboerse plugin tests
+      test_mygully_plugin.py           # mygully plugin tests
+      test_nima4k_plugin.py            # nima4k plugin tests
+      test_scnsrc_plugin.py            # scnsrc plugin tests
+      test_sto_plugin.py               # sto plugin tests
+      test_streamcloud_plugin.py       # streamcloud plugin tests
+      test_streamkiste_plugin.py       # streamkiste plugin tests
+      test_streamworld_plugin.py       # streamworld plugin tests
+      test_warezomen_plugin.py         # warezomen plugin tests
 ```
 
 Important mock patterns:
@@ -515,14 +561,17 @@ Agents are ONLY for **simple, explicit, mechanical tasks** where the scope is 10
 | Domain entities/ports | `src/scavengarr/domain/...` |
 | Use cases | `src/scavengarr/application/...` |
 | Adapters (scraping/cache/plugins) | `src/scavengarr/infrastructure/...` |
+| Plugin base classes | `src/scavengarr/infrastructure/plugins/httpx_base.py`, `playwright_base.py` |
+| Hoster resolvers | `src/scavengarr/infrastructure/hoster_resolvers/` |
 | HTTP router / CLI | `src/scavengarr/interfaces/...` |
+| Stremio addon | `src/scavengarr/interfaces/api/stremio/` |
 | Tests | `tests/unit/{domain,application,infrastructure}/...` |
 | Feature documentation | `docs/features/` (README.md is the index) |
 | Architecture documentation | `docs/architecture/` (clean-architecture.md, codeplan.md) |
 | Future plans | `docs/plans/` (playwright-engine, more-plugins, integration-tests, search-caching) |
 | Refactor history | `docs/refactor/COMPLETED/` |
 | Python best practices | `docs/PYTHON-BEST-PRACTICES.md` |
-| Plugins (examples) | `plugins/` (filmpalast.to.yaml, boerse.py) |
+| Plugins (32 total) | `plugins/` (3 YAML + 29 Python, all inheriting from base classes) |
 | OpenSpec change specs | `openspec/changes/...` |
 
 ### Adding a new plugin (general workflow)
@@ -539,6 +588,16 @@ Agents are ONLY for **simple, explicit, mechanical tasks** where the scope is 10
 - Python plugin only when YAML is technically impossible (Cloudflare/JS challenge, complex logic, auth, API calls, non-standard table structures)
 - Justification for Python plugin must be stated explicitly in the plan
 
+**Step 2b: Use the correct base class**
+- Httpx plugins: inherit from `HttpxPluginBase` (`src/scavengarr/infrastructure/plugins/httpx_base.py`)
+  - Provides: `_ensure_client()`, `_verify_domain()`, `cleanup()`, `_safe_fetch()`, `_safe_parse_json()`, `_new_semaphore()`
+  - Class attributes: `_domains`, `_max_concurrent` (default 3), `_max_results` (default 1000), `_timeout` (default 15), `_user_agent`
+  - Instance: `self._client`, `self._log`, `self.base_url`, `self._domain_verified`
+- Playwright plugins: inherit from `PlaywrightPluginBase` (`src/scavengarr/infrastructure/plugins/playwright_base.py`)
+  - Provides: `_ensure_browser()`, `_ensure_context()`, `_ensure_page()`, `_new_page()`, `_verify_domain()`, `_fetch_page_html()`, `cleanup()`
+  - Instance: `self._pw`, `self._browser`, `self._context`, `self._page`, `self._log`, `self.base_url`
+- All Python plugins MUST inherit from one of these base classes. Do NOT duplicate boilerplate (client setup, domain fallback, cleanup, semaphore, user-agent).
+
 **Step 3: Implement (MANDATORY search standards for ALL plugins)**
 
 Every plugin MUST implement the following search features:
@@ -546,6 +605,20 @@ Every plugin MUST implement the following search features:
 1. **Category filtering**: Use the site's category/filter system in the search URL whenever available (dropdown IDs, URL path segments, forum IDs, etc.). Map Torznab categories → site categories and pass them in the search request.
 2. **Pagination up to 1000 items**: Scrape multiple search result pages to collect up to 1000 items total. Parse pagination links/hit counts from the first page to determine how many pages exist, then fetch subsequent pages sequentially until 1000 items or no more results. Define `_MAX_PAGES` based on the site's results-per-page (e.g., 200/page → 5 pages, 50/page → 20 pages, 10/page → 100 pages).
 3. **Bounded concurrency** for detail page scraping: Use `asyncio.Semaphore(3)` to scrape detail pages in parallel without overwhelming the target.
+
+#### Adding a new Python plugin (httpx)
+1. Create `plugins/<sitename>.py`, inherit from `HttpxPluginBase`.
+2. Set `name`, `_domains = [...]`, and optionally override `_max_results`, `_max_concurrent`, `categories`.
+3. Implement `async def search(self, query, category, season, episode) -> list[SearchResult]`.
+4. Use `self._safe_fetch()` for HTTP requests, `self._new_semaphore()` for concurrency, `self._log` for logging.
+5. Add comprehensive unit tests in `tests/unit/infrastructure/test_<sitename>_plugin.py`.
+
+#### Adding a new Python plugin (Playwright)
+1. Create `plugins/<sitename>.py`, inherit from `PlaywrightPluginBase`.
+2. Set `name`, `_domains = [...]`, add `from playwright.async_api import Page` if using `Page` type hints.
+3. Implement `async def search(self, query, category, season, episode) -> list[SearchResult]`.
+4. Use `self._ensure_context()` / `self._ensure_page()` for browser management, `self._new_semaphore()` for concurrency.
+5. Add comprehensive unit tests; patch `async_playwright` at `scavengarr.infrastructure.plugins.playwright_base.async_playwright`.
 
 #### Adding a new YAML plugin
 1. Place the YAML file in the plugin dir (configurable via `SCAVENGARR_PLUGIN_DIR`).

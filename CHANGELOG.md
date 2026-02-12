@@ -5,6 +5,152 @@ Format: version, date, grouped changes. Newest entries first.
 
 ---
 
+## Unreleased (staging)
+
+Massive expansion of the plugin ecosystem (2 → 32 plugins), Stremio addon integration,
+hoster resolver system, plugin base class standardization, and growth of the test suite
+from 160 to 1894 tests.
+
+### Plugin Standardization (Refactor)
+All 29 Python plugins migrated to shared base classes (`HttpxPluginBase` /
+`PlaywrightPluginBase`), eliminating 50–100 lines of duplicated boilerplate per plugin
+(client setup, domain fallback, cleanup, semaphore, user-agent).
+
+- Add `HttpxPluginBase` shared base class for httpx plugins (`16b084b`)
+- Add `PlaywrightPluginBase` shared base class for Playwright plugins (`16b084b`)
+- Add shared plugin constants and CSS-selector HTML helpers (`b12c5a7`)
+- Migrate 5 API-only plugins (einschalten, fireani, haschcon, megakino_to, movie4k) to HttpxPluginBase (`407fef9`)
+- Migrate aniworld, dataload, nima4k plugins to HttpxPluginBase (`21030d3`, `bded483`, `e4f7f13`)
+- Migrate all remaining 21 plugins to shared base classes (`10d23db`)
+- Add missing `season`/`episode` params to 10 plugin `search()` signatures (`deef995`)
+
+### New Plugins (29 Python plugins added)
+Expanded from 2 plugins (filmpalast YAML + boerse Python) to 32 total plugins
+(3 YAML + 29 Python), covering German streaming, DDL, and anime sites.
+
+**Httpx plugins (20):**
+- aniworld.to — anime streaming with domain fallback (`3321775`)
+- burningseries (bs.to) — series streaming (`b1e46ff`)
+- cine.to — movie streaming via JSON API (`3153df0`)
+- dataload (data-load.me) — DDL forum with vBulletin auth (`94004e6`)
+- einschalten.in — streaming via JSON API (`a729041`)
+- filmfans.org — movie streaming with release parsing (`7924969` → `7cd46ed`)
+- fireani.me — anime via JSON API (`160171f`)
+- haschcon.com — streaming (`0d65a50`)
+- hdfilme.legal — streaming with MeineCloud link extraction (`fdaf283`)
+- kinoger.com — streaming with domain fallback (`1c03b95`)
+- kinoking.cc — streaming with movie/series detection (`067a634`)
+- kinox.to — streaming with 9 mirror domains and AJAX embed extraction (`d645ccf`, `20e40e9`)
+- megakino.me — streaming (`ff68aeb`)
+- megakino_to (megakino.org) — streaming via JSON API (`df2cf77`)
+- movie4k.sx — streaming via JSON API with cross-language title matching (`52f07dd`, `dfc58db`)
+- myboerse.bz — DDL forum with multi-domain fallback (`27b42b4`, `d80c69a`)
+- nima4k.org — DDL with category browsing (`d001135`)
+- sto (s.to/SerienStream) — TV-only streaming (`7924969`, `2a73f16`)
+- streamcloud.plus — streaming with domain fallback (`10f3808`)
+- streamkiste.taxi — streaming with 5 mirror domains (`ff8c662`, `bea8be1`)
+
+**Playwright plugins (9):**
+- animeloads (anime-loads.org) — anime with DDoS-Guard bypass (`75176af`, `08cced5`)
+- boerse.sx — DDL forum with Cloudflare + vBulletin auth (rewritten, see v0.1.0)
+- byte.to — DDL with Cloudflare bypass and iframe link extraction (`2cdab77`)
+- ddlspot.com — DDL with pagination up to 1000 results (`fca8947`, `21a0657`)
+- ddlvalley.me — DDL WordPress with pagination (`0fedecf`, `3d80cec`)
+- moflix (moflix-stream.xyz) — streaming via internal API with Cloudflare bypass (rewritten from httpx, `eaa0002`)
+- mygully.com — DDL forum with Cloudflare + vBulletin auth
+- scnsrc.me (SceneSource) — scene releases with multi-domain fallback (`cb34282`, `2d930bb`)
+- streamworld.ws — streaming (rewritten from httpx to Playwright, `de29957`)
+
+**YAML plugins (3):**
+- filmpalast.to — movie/TV streaming (original)
+- scnlog.me — scene log with pagination (`24dd4b3`, `a30164b`)
+- warezomen.com — DDL converted from Python to YAML (`1bba59a`, `a30164b`)
+
+### Stremio Addon
+Full Stremio addon integration with manifest, catalog search, and stream resolution.
+Allows using Scavengarr as a Stremio source for all indexed plugins.
+
+- Add Stremio domain entities, TMDB port, and StremioConfig (`c055303`)
+- Add TMDB httpx client with caching and German locale (`c7950ef`)
+- Add release name parser with guessit integration (`89b8ca9`, `e8a07b`)
+- Add stream converter for SearchResult → RankedStream (`a4b2e0c`)
+- Add configurable stream sorter for Stremio addon (`015dde6`)
+- Add StremioCatalogUseCase for TMDB trending and search (`8d7dfbc`)
+- Add StremioStreamUseCase for IMDb-to-streams resolution (`526e0c5`)
+- Add Stremio router with manifest, catalog, and stream endpoints (`0d5854e`, `fed81df`)
+- Add title-match scoring module for Stremio stream filtering (`6a06df9`, `b9454cf`)
+- Add `get_title_and_year()` to TMDB client and IMDB fallback (`55a7bf7`, `2af65b1`)
+- Add IMDB fallback title resolver for Stremio without API key (`23fe5c4`)
+- Add Wikidata German title lookup for IMDB fallback client (`eb8094a`)
+- Robust title matching via guessit + multi-candidate scoring (`e8a07b`)
+- Thread `plugin_default_language` through stream converter (`8bf0911`)
+- Add `default_language` attribute to all plugins (`c53e04c`)
+- Add per-plugin timeout to prevent slow plugins blocking response (`c03a28b`)
+
+### Hoster Resolver System
+Runtime video URL extraction from streaming hosters. Supports VOE, Streamtape,
+SuperVideo, DoodStream, and Filemoon with packed JS unpacking and Cloudflare bypass.
+
+- Add ResolvedStream entity and HosterResolverPort protocol (`f6a3676`)
+- Add HosterResolverRegistry with content-type probing fallback (`8a7642b`)
+- Add VOE hoster resolver with multi-method extraction (`242ce2d`)
+- Add Streamtape hoster resolver with token extraction (`b163637`)
+- Add SuperVideo hoster resolver with XFS video extraction (`d980ebe`)
+- Add DoodStream hoster resolver with pass_md5 extraction (`5ba3a58`)
+- Add Filemoon hoster resolver with packed JS unpacker (`e9353f3`)
+- Add Filemoon Byse SPA API extraction and challenge/attest/decrypt flow (`ad62013`, `8592356`)
+- Add packed JS decoder for SuperVideo video URL extraction (`e7baaa6`)
+- Add Playwright fallback to SuperVideo for Cloudflare bypass (`7ce90dd`, `4438322`)
+- Add hoster hint fallback for rotating redirect domains (`cfe3314`)
+- URL domain priority + redirect following in hoster registry (`b083c0b`)
+- Integrate hoster resolvers into `/play/` endpoint (`2b1f82c`)
+- Cache stream links and generate proxy play URLs (`686b4bf`, `f61e30a`)
+- Add `/stremio/play/{stream_id}` endpoint with 302 redirect (`08be69c`)
+- Add `cleanup()` to HosterResolverRegistry (`c148640`)
+
+### Plugin Improvements
+Various fixes and enhancements to individual plugins.
+
+- Rewrite kinoger search parser for redesigned site template (`3cf475c`)
+- Rewrite streamworld plugin from httpx to Playwright mode (`de29957`)
+- Rewrite moflix plugin from httpx to Playwright mode (`eaa0002`)
+- Fix streamkiste parser to handle `<span class="movie-title">` tags (`bea8be1`)
+- Fix sto plugin to reject non-TV categories (TV-only site) (`2a73f16`)
+- Fix filmpalast.to plugin selectors and change provides to stream (`dfc48a3`)
+- Fix animeloads DDoS-Guard detection excludes h1 selector (`08cced5`)
+- Optimize sto plugin to fetch only requested episode instead of full season (`bb48c58`)
+- Add season/episode filtering to mixed plugins (`9d433f5`, `d109844`, `ea8385f`, `ec643ae`)
+- Add `provides` attribute to plugin system (`e38a07b`)
+- Add domain fallback to aniworld plugin (`f72fc2d`)
+- Add pagination to ddlspot, ddlvalley, scnlog, warezomen, boerse (`21a0657`, `3d80cec`, `a30164b`, `3cfa20f`)
+- Add Torznab category filtering for YAML plugins (`5dc3018`)
+- Add kinox AJAX embed URL extraction for hoster resolution (`20e40e9`)
+
+### API & Router Improvements
+- Centralize `/api/v1/` prefix for all endpoints (`d25ee5c`)
+- Rename `main.py` → `app.py`, `cli.py` → `__main__.py` (`b25bf5c`)
+- Delegate router to use cases, remove inline business logic (`7c36166`)
+- Wire Stremio use cases into AppState and composition (`d3f076d`)
+
+### Test Suite Growth (160 → 1894 tests)
+Test suite expanded from 160 to 1894 tests with comprehensive coverage for all
+29 Python plugins, hoster resolvers, Stremio components, and base classes.
+
+- Add unit tests for all 27 plugin test files
+- Add unit tests for all 5 hoster resolvers (VOE, Streamtape, SuperVideo, DoodStream, Filemoon)
+- Add unit tests for HttpxPluginBase and PlaywrightPluginBase
+- Add unit tests for Stremio components (stream converter, stream sorter, TMDB client, title matcher, IMDB fallback)
+- Add unit tests for release name parser, plugin registry, HTML selectors
+- Add unit tests for stream link cache and hoster registry
+
+### Documentation
+- Add plugin search standards (categories + pagination up to 1000) (`c1fa2c4`)
+- Update agent policy — only for simple mechanical tasks (`e01246c`)
+- Add team agents rules to CLAUDE.md (`2a0eddc`)
+- Restructure documentation following MasterSelects pattern (`dea6fad`)
+
+---
+
 ## v0.1.0 - 2025-XX-XX (Initial Release)
 
 First release of Scavengarr as a self-hosted Torznab/Newznab indexer. Includes the
@@ -120,9 +266,8 @@ configuration system, and CrawlJob generation.
 
 ## KNOWN_ISSUES
 
-Current known issues as of v0.1.0:
+Current known issues:
 
-- **No PlaywrightAdapter:** The Playwright engine does not have a formal `SearchEnginePort` adapter. The boerse.py plugin manages its own Playwright browser lifecycle directly. See `docs/plans/playwright-engine.md` for the implementation plan.
-- **No integration tests:** The test suite contains 235+ unit tests but no integration tests that verify end-to-end wiring. See `docs/plans/integration-tests.md`.
+- **No integration tests:** The test suite contains 1894 unit tests but no integration tests that verify end-to-end wiring. See `docs/plans/integration-tests.md`.
 - **No search caching:** Every Torznab search request triggers a full scraping pipeline. Repeated queries are not cached. See `docs/plans/search-caching.md`.
-- **Limited plugin set:** Only two plugins ship with the project (filmpalast.to YAML, boerse.py Python). See `docs/plans/more-plugins.md`.
+- **Cloudflare-heavy sites:** Several Playwright plugins (ddlspot, ddlvalley, scnsrc, byte) return 0 results when Cloudflare challenges cannot be bypassed in headless mode.
