@@ -641,3 +641,54 @@ Every plugin MUST implement the following search features:
 1. Decide: intermediate or terminal.
 2. Keep selectors minimal (extract only what you need later).
 3. Verify concurrency limits so the stage runs in parallel but does not exhaust resources.
+
+### Adding a new hoster resolver
+
+Hoster resolvers validate whether a URL on a file hosting service is still available. There are two resolver categories:
+
+**Streaming resolvers** extract a direct video URL (`.mp4`/`.m3u8`) from an embed page:
+- VOE, Streamtape, SuperVideo, DoodStream, Filemoon
+- Return `ResolvedStream(video_url=<direct_video_url>, quality=...)`
+
+**DDL (Direct Download Link) resolvers** validate file availability without extracting a video URL:
+- Filer.net (API-based), Katfile, Rapidgator, DDownload (page-scraping)
+- Return `ResolvedStream(video_url=<canonical_file_url>, quality=StreamQuality.UNKNOWN)`
+
+#### XFileSharingPro (XFS) pattern
+
+Katfile and DDownload are both XFS-based hosters. XFS hosters share a common structure that can be reused:
+
+```python
+_DOMAINS = {"katfile", ...}  # Second-level domain names for matching
+_FILE_ID_RE = re.compile(r"^/([a-zA-Z0-9]{12})(?:/|$)")  # 12-char alphanumeric
+_OFFLINE_MARKERS = (
+    "File Not Found",
+    "file was removed",
+    ">The file expired",
+    ">The file was deleted",
+    # ... site-specific markers
+)
+```
+
+When adding a new XFS-based resolver, start from the katfile or ddownload implementation.
+
+#### Workflow for adding a hoster resolver
+
+1. **Create resolver** at `src/scavengarr/infrastructure/hoster_resolvers/<name>.py`:
+   - Module-level: `_DOMAINS` set/frozenset, `_FILE_ID_RE` regex, helper functions (`_extract_file_id()`)
+   - Class with `name` property and `async def resolve(self, url: str) -> ResolvedStream | None`
+   - Constructor takes `http_client: httpx.AsyncClient`
+   - Use `structlog.get_logger(__name__)` for logging
+   - Pattern: extract file ID → build canonical URL → fetch page/API → check offline → return `ResolvedStream` or `None`
+
+2. **Write tests** at `tests/unit/infrastructure/test_<name>_resolver.py`:
+   - `TestExtractFileId`: URL parsing tests (valid domains, www prefix, http scheme, invalid/short IDs, non-matching domains)
+   - `TestResolver`: `test_name`, valid file resolution, offline markers (one test per marker), HTTP errors, network errors, invalid URLs, error redirects
+   - Mock `httpx.AsyncClient` with `AsyncMock(spec=httpx.AsyncClient)`, mock responses with `MagicMock()`
+
+3. **Wire into composition root** at `src/scavengarr/interfaces/composition.py`:
+   - Add import: `from scavengarr.infrastructure.hoster_resolvers.<name> import <Name>Resolver`
+   - Add to `resolvers=[...]` list: `<Name>Resolver(http_client=state.http_client)`
+
+4. Run `poetry run pre-commit run --all-files` and `poetry run pytest -x`
+5. Commit and push to staging
