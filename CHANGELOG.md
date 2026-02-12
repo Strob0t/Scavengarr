@@ -7,7 +7,7 @@ Format: version, date, grouped changes. Newest entries first.
 
 ## Unreleased (staging)
 
-Massive expansion of the plugin ecosystem (2 → 32 plugins), Stremio addon integration,
+Massive expansion of the plugin ecosystem (2 → 33 plugins), Stremio addon integration,
 hoster resolver system, plugin base class standardization, search result caching, and
 growth of the test suite from 160 to 2128 tests.
 
@@ -26,11 +26,11 @@ All 29 Python plugins migrated to shared base classes (`HttpxPluginBase` /
 - Reorganize configurable settings (`_DOMAINS`, `_MAX_PAGES`, etc.) to top of all 28 plugins with section headers (`a79fb8e`)
 - Replace hardcoded year boundary with dynamic `datetime.now().year + 1` in cine plugin (`b3e40e3`)
 
-### New Plugins (29 Python plugins added)
-Expanded from 2 plugins (filmpalast YAML + boerse Python) to 32 total plugins
-(3 YAML + 29 Python), covering German streaming, DDL, and anime sites.
+### New Plugins (30 Python plugins added)
+Expanded from 2 plugins (filmpalast YAML + boerse Python) to 33 total plugins
+(3 YAML + 30 Python), covering German streaming, DDL, and anime sites.
 
-**Httpx plugins (20):**
+**Httpx plugins (21):**
 - aniworld.to — anime streaming with domain fallback (`3321775`)
 - burningseries (bs.to) — series streaming (`b1e46ff`)
 - cine.to — movie streaming via JSON API (`3153df0`)
@@ -45,6 +45,7 @@ Expanded from 2 plugins (filmpalast YAML + boerse Python) to 32 total plugins
 - kinox.to — streaming with 9 mirror domains and AJAX embed extraction (`d645ccf`, `20e40e9`)
 - megakino.me — streaming (`ff68aeb`)
 - megakino_to (megakino.org) — streaming via JSON API (`df2cf77`)
+- movie2k.cx — streaming with 2-stage HTML scraping
 - movie4k.sx — streaming via JSON API with cross-language title matching (`52f07dd`, `dfc58db`)
 - myboerse.bz — DDL forum with multi-domain fallback (`27b42b4`, `d80c69a`)
 - nima4k.org — DDL with category browsing (`d001135`)

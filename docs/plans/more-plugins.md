@@ -1,14 +1,14 @@
 # Plan: Additional Plugins
 
-**Status:** Mostly Complete (32 plugins implemented)
+**Status:** Mostly Complete (33 plugins implemented)
 **Priority:** Low (ongoing)
 **Related:** `plugins/`, `docs/features/python-plugins.md`
 
 ## Current State
 
-Scavengarr ships with **32 plugins** covering German streaming, DDL, and anime sites:
+Scavengarr ships with **33 plugins** covering German streaming, DDL, and anime sites:
 
-### Httpx plugins (20)
+### Httpx plugins (21)
 
 | Plugin | Site | Type | Notes |
 |---|---|---|---|
@@ -26,6 +26,7 @@ Scavengarr ships with **32 plugins** covering German streaming, DDL, and anime s
 | kinox | kinox.to | stream | 9 mirror domains, AJAX embeds |
 | megakino | megakino.me | stream | |
 | megakino_to | megakino.org | stream | JSON API |
+| movie2k | movie2k.cx | stream | 2-stage HTML scraping |
 | movie4k | movie4k.sx | stream | JSON API, multi-domain |
 | myboerse | myboerse.bz | download | DDL forum, multi-domain |
 | nima4k | nima4k.org | download | Category browsing |
@@ -59,7 +60,6 @@ Scavengarr ships with **32 plugins** covering German streaming, DDL, and anime s
 
 Sites not yet covered that could benefit from plugins:
 
-- **movie2k.cx** — Streaming aggregator with JSON API (similar to movie4k)
 - **serienjunkies.org** — Captcha-protected DDL with multi-step extraction
 - **dokustream.de** — Documentary streaming
 - **filmkiste.to** — Movie/TV streaming
