@@ -20,23 +20,9 @@ import re
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
 
-import httpx
-import structlog
-
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
-log = structlog.get_logger(__name__)
-
-_BASE_URL = "https://www.data-load.me"
-
-_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
-)
-
-_MAX_CONCURRENT_DETAIL = 3
-_MAX_RESULTS = 1000
 _MAX_PAGES = 50  # ~20 results/page → 50 pages for 1000
 
 # Torznab category → list of XenForo forum node IDs.
@@ -411,29 +397,15 @@ class _ThreadPostParser(HTMLParser):
             self.links.append({"hoster": hoster, "link": href})
 
 
-class DataloadPlugin:
+class DataloadPlugin(HttpxPluginBase):
     """Python plugin for data-load.me using httpx."""
 
     name = "dataload"
-    version = "1.0.0"
-    mode = "httpx"
-    provides = "download"
-    default_language = "de"
+    _domains = ["www.data-load.me"]
 
     def __init__(self) -> None:
-        self._client: httpx.AsyncClient | None = None
+        super().__init__()
         self._logged_in = False
-        self.base_url = _BASE_URL
-
-    async def _ensure_client(self) -> httpx.AsyncClient:
-        """Create httpx client if not already running."""
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                timeout=15.0,
-                follow_redirects=True,
-                headers={"User-Agent": _USER_AGENT},
-            )
-        return self._client
 
     async def _login(self) -> None:
         """Authenticate with XenForo using CSRF token."""
@@ -479,7 +451,7 @@ class DataloadPlugin:
             raise RuntimeError("Login failed: no session cookie received")
 
         self._logged_in = True
-        log.info("dataload_login_success")
+        self._log.info("dataload_login_success")
 
     async def _search_page(
         self,
@@ -491,8 +463,6 @@ class DataloadPlugin:
 
         Returns ``(results, next_page_url)``.
         """
-        client = await self._ensure_client()
-
         if page_num == 1:
             # Initial search — POST to /search/search
             params: dict[str, str | list[str]] = {
@@ -503,14 +473,13 @@ class DataloadPlugin:
             if node_ids:
                 params["c[nodes][]"] = [str(nid) for nid in node_ids]
 
-            try:
-                resp = await client.post(
-                    f"{self.base_url}/search/search",
-                    data=params,
-                )
-                resp.raise_for_status()
-            except Exception as exc:  # noqa: BLE001
-                log.warning("dataload_search_failed", query=query, error=str(exc))
+            resp = await self._safe_fetch(
+                f"{self.base_url}/search/search",
+                method="POST",
+                context="search_page",
+                data=params,
+            )
+            if resp is None:
                 return [], ""
         else:
             # Subsequent page — need to use the next_page_url passed in
@@ -521,7 +490,7 @@ class DataloadPlugin:
         parser.feed(resp.text)
         parser.flush_pending()
 
-        log.info(
+        self._log.info(
             "dataload_search_page",
             query=query,
             page=page_num,
@@ -531,14 +500,9 @@ class DataloadPlugin:
 
     async def _fetch_next_page(self, next_url: str) -> tuple[list[dict[str, str]], str]:
         """Fetch a subsequent search results page by URL."""
-        client = await self._ensure_client()
-
         full_url = urljoin(self.base_url, next_url)
-        try:
-            resp = await client.get(full_url)
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            log.warning("dataload_page_fetch_failed", url=full_url, error=str(exc))
+        resp = await self._safe_fetch(full_url, context="next_page")
+        if resp is None:
             return [], ""
 
         parser = _SearchResultParser(self.base_url)
@@ -549,24 +513,15 @@ class DataloadPlugin:
 
     async def _scrape_thread(self, result: dict[str, str]) -> SearchResult | None:
         """Scrape a thread page for download links."""
-        client = await self._ensure_client()
-
-        try:
-            resp = await client.get(result["url"])
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            log.warning(
-                "dataload_thread_fetch_failed",
-                url=result.get("url", ""),
-                error=str(exc),
-            )
+        resp = await self._safe_fetch(result["url"], context="thread_detail")
+        if resp is None:
             return None
 
         post_parser = _ThreadPostParser()
         post_parser.feed(resp.text)
 
         if not post_parser.links:
-            log.debug("dataload_no_links", url=result.get("url", ""))
+            self._log.debug("dataload_no_links", url=result.get("url", ""))
             return None
 
         # Determine Torznab category
@@ -606,20 +561,22 @@ class DataloadPlugin:
 
         # Paginate
         page_num = 1
-        while next_url and len(all_results) < _MAX_RESULTS and page_num < _MAX_PAGES:
+        while (
+            next_url and len(all_results) < self._max_results and page_num < _MAX_PAGES
+        ):
             page_num += 1
             more_results, next_url = await self._fetch_next_page(next_url)
             if not more_results:
                 break
             all_results.extend(more_results)
 
-        all_results = all_results[:_MAX_RESULTS]
+        all_results = all_results[: self._max_results]
 
         if not all_results:
             return []
 
         # Scrape thread detail pages with bounded concurrency
-        sem = asyncio.Semaphore(_MAX_CONCURRENT_DETAIL)
+        sem = self._new_semaphore()
 
         async def _bounded_scrape(r: dict[str, str]) -> SearchResult | None:
             async with sem:
@@ -632,10 +589,8 @@ class DataloadPlugin:
         return [r for r in results if isinstance(r, SearchResult)]
 
     async def cleanup(self) -> None:
-        """Close httpx client."""
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+        """Close httpx client and reset login state."""
+        await super().cleanup()
         self._logged_in = False
 
 
