@@ -678,6 +678,56 @@ class StoPlugin:
 
         return target, detail
 
+    async def _scrape_single_episode(
+        self,
+        slug: str,
+        season_num: int,
+        episode_num: int,
+        detail: _SeriesDetailParser,
+    ) -> list[dict[str, str | list[dict[str, str]]]]:
+        """Scrape a single episode directly by number instead of all episodes.
+
+        Much faster than ``_scrape_season_episodes`` when the target episode
+        is already known (e.g. Stremio stream requests).
+        """
+        ep_url = (
+            f"{self.base_url}/serie/{slug}/staffel-{season_num}/episode-{episode_num}"
+        )
+        # Try to find the episode title from the detail parser's episode list
+        ep_title = ""
+        for ep in detail.episodes:
+            if ep["number"] == str(episode_num):
+                ep_title = ep["de_title"] or ep["en_title"]
+                break
+
+        hosters = await self._scrape_episode_hosters(ep_url)
+        if not hosters:
+            return []
+
+        # Resolve hoster URLs
+        sem = asyncio.Semaphore(_MAX_CONCURRENT_EPISODES)
+        links: list[dict[str, str]] = []
+
+        async def _resolve(h: dict[str, str]) -> dict[str, str] | None:
+            async with sem:
+                resolved = await self._resolve_hoster_url(h["play_url"])
+                return {
+                    "hoster": h["provider"].lower(),
+                    "link": resolved,
+                    "language": h.get("language", ""),
+                }
+
+        gathered = await asyncio.gather(
+            *[_resolve(h) for h in hosters],
+            return_exceptions=True,
+        )
+        links = [r for r in gathered if isinstance(r, dict)]
+
+        if not links:
+            return []
+
+        return [{"title": ep_title, "url": ep_url, "links": links}]
+
     async def search(
         self,
         query: str,
@@ -689,6 +739,10 @@ class StoPlugin:
 
         Each episode becomes one SearchResult. Only TV categories are
         returned since s.to is a TV-only site.
+
+        When *season* and *episode* are specified (typical for Stremio stream
+        requests), only that specific episode is fetched per series — avoiding
+        the expensive scrape of every episode in the season.
         """
         await self._ensure_client()
         await self._verify_domain()
@@ -715,12 +769,16 @@ class StoPlugin:
 
             torznab_cat = _determine_category(detail.genres, category)
 
-            episodes = await self._scrape_season_episodes(
-                slug, target_season, season_detail
-            )
-
             if episode is not None:
-                episodes = [ep for ep in episodes if _episode_number(ep) == episode]
+                # Fast path: fetch only the requested episode directly
+                episodes = await self._scrape_single_episode(
+                    slug, target_season, episode, season_detail
+                )
+            else:
+                # Full season scrape
+                episodes = await self._scrape_season_episodes(
+                    slug, target_season, season_detail
+                )
 
             for ep in episodes:
                 result = self._build_episode_result(
