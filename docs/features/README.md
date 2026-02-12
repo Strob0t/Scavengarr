@@ -4,7 +4,7 @@
 
 Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Prowlarr and other Arr applications. It scrapes sources via two engines (Scrapy for static HTML, Playwright for JS-heavy sites) and delivers results through standard Torznab endpoints.
 
-**Version:** 0.1.0 | **Python:** 3.12+ | **Tests:** 235 unit tests | **Architecture:** Clean Architecture
+**Version:** 0.1.0 | **Python:** 3.12+ | **Tests:** 1894 unit tests | **Plugins:** 32 (29 Python + 3 YAML) | **Architecture:** Clean Architecture
 
 ---
 
@@ -28,10 +28,12 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Pro
 | [Link Validation](./link-validation.md) | HEAD/GET validation strategy, parallel checking, status policies |
 | [Configuration](./configuration.md) | YAML/ENV/CLI config, precedence rules, all settings |
 
-### Integration & Resilience
+### Streaming & Integration
 
 | Document | Description |
 |---|---|
+| [Stremio Addon](./stremio-addon.md) | Stremio integration with catalog, streams, and hoster resolution |
+| [Hoster Resolvers](./hoster-resolvers.md) | Video URL extraction from VOE, Streamtape, SuperVideo, DoodStream, Filemoon |
 | [Mirror URL Fallback](./mirror-url-fallback.md) | Automatic domain fallback when primary mirrors are unreachable |
 | [Prowlarr Integration](./prowlarr-integration.md) | Step-by-step Prowlarr setup, endpoint mapping, category sync |
 
@@ -74,12 +76,13 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Pro
 | Web framework | FastAPI + Uvicorn | HTTP API (Torznab endpoints) |
 | Static scraping | Scrapy | HTML parsing for YAML plugins |
 | Dynamic scraping | Playwright (Chromium) | JS-heavy sites, Cloudflare bypass |
-| HTTP client | httpx | Link validation, async requests |
+| HTTP client | httpx | Link validation, async requests, Python plugins |
+| Release parsing | guessit | Release name parsing for title matching |
 | Configuration | pydantic-settings | Typed config with env/YAML/CLI support |
 | Caching | diskcache (+ optional Redis) | Search result and CrawlJob storage |
 | Logging | structlog | Structured JSON/console logging |
 | CLI | Typer | Local debugging and diagnostics |
-| Testing | pytest | 235 unit tests across all layers |
+| Testing | pytest | 1894 unit tests across all layers |
 
 ---
 
@@ -95,21 +98,24 @@ src/scavengarr/
     use_cases/             # TorznabSearch, TorznabCaps, TorznabIndexers
     factories/             # CrawlJob factory
   infrastructure/          # Interface adapters
-    plugins/               # Registry, loader, validation, adapters
+    plugins/               # Registry, loader, base classes (HttpxPluginBase, PlaywrightPluginBase)
     scraping/              # Scrapy search engine
     validation/            # Link validator (HEAD/GET)
     cache/                 # diskcache adapter
     torznab/               # XML presenter
+    stremio/               # Stream converter, sorter, TMDB client, title matcher
+    hoster_resolvers/      # VOE, Streamtape, SuperVideo, DoodStream, Filemoon
     config/                # Settings, logging
-    common/                # Parsers, converters, extractors
+    common/                # Parsers, converters, extractors, HTML selectors
   interfaces/              # Frameworks & drivers
-    http/                  # FastAPI router
+    api/                   # FastAPI routers (Torznab + Stremio)
     cli/                   # Typer CLI
     composition/           # Dependency injection
 
-plugins/                   # Plugin directory
-  filmpalast.to.yaml       # YAML plugin example
-  boerse.py                # Python plugin example
+plugins/                   # Plugin directory (29 Python + 3 YAML)
+  filmpalast_to.yaml       # YAML plugin example
+  boerse.py                # Python plugin example (Playwright)
+  einschalten.py           # Python plugin example (httpx API)
 
 tests/
   unit/

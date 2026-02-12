@@ -23,6 +23,8 @@ All 29 Python plugins migrated to shared base classes (`HttpxPluginBase` /
 - Migrate aniworld, dataload, nima4k plugins to HttpxPluginBase (`21030d3`, `bded483`, `e4f7f13`)
 - Migrate all remaining 21 plugins to shared base classes (`10d23db`)
 - Add missing `season`/`episode` params to 10 plugin `search()` signatures (`deef995`)
+- Reorganize configurable settings (`_DOMAINS`, `_MAX_PAGES`, etc.) to top of all 28 plugins with section headers (`a79fb8e`)
+- Replace hardcoded year boundary with dynamic `datetime.now().year + 1` in cine plugin (`b3e40e3`)
 
 ### New Plugins (29 Python plugins added)
 Expanded from 2 plugins (filmpalast YAML + boerse Python) to 32 total plugins

@@ -32,18 +32,15 @@ Every Python plugin must satisfy the `PluginProtocol` defined in the domain laye
 ```python
 # src/scavengarr/domain/plugins/base.py
 class PluginProtocol(Protocol):
-    """
-    Protocol for Python plugins.
-
-    A Python plugin must export a module-level variable named `plugin` that:
-    - has a `name: str` attribute
-    - implements: async def search(query, category) -> list[SearchResult]
-    """
-
     name: str
+    provides: str  # "stream" or "download"
 
     async def search(
-        self, query: str, category: int | None = None
+        self,
+        query: str,
+        category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
     ) -> list[SearchResult]: ...
 ```
 
@@ -53,9 +50,12 @@ class PluginProtocol(Protocol):
 |---|---|
 | Module-level `plugin` variable | The `.py` file must export a variable named `plugin` |
 | `name: str` attribute | Non-empty string, used as the plugin identifier |
+| `provides: str` attribute | `"stream"` (streaming links) or `"download"` (DDL links) |
 | `async def search(...)` method | Returns `list[SearchResult]` |
 | `query: str` parameter | The search term from the Torznab query |
 | `category: int \| None` parameter | Optional Torznab category ID for filtering |
+| `season: int \| None` parameter | Optional season number for TV content |
+| `episode: int \| None` parameter | Optional episode number for TV content |
 
 ### SearchResult Entity
 
@@ -100,7 +100,134 @@ class SearchResult:
 
 ---
 
-## Plugin Skeleton
+## Plugin Base Classes
+
+Most plugins should extend one of the shared base classes instead of implementing everything from scratch. The base classes provide client lifecycle, domain fallback, bounded concurrency, and error handling.
+
+### HttpxPluginBase (20 plugins use this)
+
+For sites with JSON APIs or server-rendered HTML (no JavaScript needed):
+
+```python
+# plugins/my_site.py
+from __future__ import annotations
+
+from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
+
+# ---------------------------------------------------------------------------
+# Configurable settings
+# ---------------------------------------------------------------------------
+_DOMAINS = ["my-site.com", "my-site.org"]  # Fallback domains
+_MAX_PAGES = 50
+
+class MySitePlugin(HttpxPluginBase):
+    name = "my-site"
+    provides = "stream"
+    _domains = _DOMAINS
+
+    async def search(
+        self,
+        query: str,
+        category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
+    ) -> list[SearchResult]:
+        await self._ensure_client()
+
+        # Use self._safe_fetch() for HTTP requests
+        resp = await self._safe_fetch(
+            f"{self.base_url}/api/search",
+            params={"q": query},
+            context="search",
+        )
+        if resp is None:
+            return []
+
+        data = self._safe_parse_json(resp, context="search")
+        # ... build SearchResult list ...
+        return []
+
+plugin = MySitePlugin()
+```
+
+**Provided by HttpxPluginBase:**
+- `_ensure_client()` — creates/reuses httpx.AsyncClient with proper headers
+- `_verify_domain()` — tries each domain in `_domains` until one responds
+- `_safe_fetch(url, **kwargs)` — GET/POST with error handling, returns `None` on failure
+- `_safe_parse_json(resp)` — JSON parsing with error handling
+- `_new_semaphore()` — creates `asyncio.Semaphore` with `_max_concurrent` limit
+- `cleanup()` — closes httpx client
+- `base_url` property — `https://{first working domain}`
+
+### PlaywrightPluginBase (9 plugins use this)
+
+For sites requiring JavaScript execution or Cloudflare bypass:
+
+```python
+# plugins/my_js_site.py
+from __future__ import annotations
+
+from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
+
+_DOMAINS = ["my-js-site.com"]
+
+class MyJsSitePlugin(PlaywrightPluginBase):
+    name = "my-js-site"
+    provides = "stream"
+    _domains = _DOMAINS
+
+    async def search(
+        self,
+        query: str,
+        category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
+    ) -> list[SearchResult]:
+        await self._ensure_browser()
+        await self._ensure_context()
+
+        page = await self._context.new_page()
+        try:
+            await page.goto(f"{self.base_url}/search?q={query}")
+            html = await page.content()
+            # ... parse HTML, build results ...
+            return []
+        finally:
+            if not page.is_closed():
+                await page.close()
+
+plugin = MyJsSitePlugin()
+```
+
+**Provided by PlaywrightPluginBase:**
+- `_ensure_browser()` / `_ensure_context()` — Chromium lifecycle
+- `_verify_domain()` — domain fallback with Cloudflare wait
+- `_wait_for_cloudflare(page)` — waits for JS challenge to complete
+- `_fetch_page_html(url)` — navigates and returns page HTML
+- `cleanup()` — closes context, browser, and Playwright
+
+### Plugin Settings Organization
+
+All plugins follow a standard layout with configurable settings at the top:
+
+```python
+# ---------------------------------------------------------------------------
+# Configurable settings
+# ---------------------------------------------------------------------------
+_DOMAINS = ["site.com", "site.org"]
+_MAX_PAGES = 50
+_PER_PAGE = 20
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+_CATEGORY_MAP = { ... }
+_LANG_LABELS = { ... }
+```
+
+## Plugin Skeleton (without base class)
 
 ### Minimal Plugin
 
@@ -113,9 +240,14 @@ from scavengarr.domain.plugins.base import SearchResult
 
 class MySitePlugin:
     name = "my-site"
+    provides = "stream"
 
     async def search(
-        self, query: str, category: int | None = None
+        self,
+        query: str,
+        category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
     ) -> list[SearchResult]:
         # Your scraping logic here
         return []
@@ -123,54 +255,6 @@ class MySitePlugin:
 
 # REQUIRED: module-level plugin variable
 plugin = MySitePlugin()
-```
-
-### Plugin with Playwright
-
-```python
-# plugins/my_js_site.py
-from __future__ import annotations
-
-import asyncio
-
-from playwright.async_api import async_playwright
-
-from scavengarr.domain.plugins.base import SearchResult
-
-
-class MyJsSitePlugin:
-    name = "my-js-site"
-
-    async def search(
-        self, query: str, category: int | None = None
-    ) -> list[SearchResult]:
-        async with async_playwright() as pw:
-            browser = await pw.chromium.launch(headless=True)
-            context = await browser.new_context()
-            page = await context.new_page()
-
-            try:
-                await page.goto(f"https://my-js-site.com/search?q={query}")
-                await page.wait_for_selector(".results")
-
-                # Extract results
-                results = []
-                items = await page.query_selector_all(".result-item")
-                for item in items:
-                    title = await item.inner_text()
-                    link = await item.get_attribute("href")
-                    if title and link:
-                        results.append(SearchResult(
-                            title=title,
-                            download_link=link,
-                        ))
-                return results
-            finally:
-                await context.close()
-                await browser.close()
-
-
-plugin = MyJsSitePlugin()
 ```
 
 ---
@@ -229,21 +313,27 @@ def _is_python_plugin(plugin: Any) -> bool:
 
 # In TorznabSearchUseCase.execute():
 if _is_python_plugin(plugin):
-    # Call plugin.search() directly
-    raw_results = await plugin.search(query, category=category)
-    # Then validate results via SearchEngine
+    raw_results = await plugin.search(
+        query, category=category, season=season, episode=episode
+    )
     validated = await engine.validate_results(raw_results)
 else:
-    # YAML plugin: use SearchEngine for multi-stage scraping
     validated = await engine.search(plugin, query, category=category)
 ```
 
 **Flow for Python plugins:**
-1. Use case calls `plugin.search(query, category)` directly
+1. Use case calls `plugin.search(query, category, season, episode)` directly
 2. Plugin returns `list[SearchResult]`
 3. Use case passes results to `SearchEngine.validate_results()` for link validation
 4. Validated results are converted to `CrawlJob` entities
 5. `TorznabItem` XML responses are generated
+
+**Flow for Stremio:**
+1. Stremio stream request arrives with IMDb ID + optional season/episode
+2. `StremioStreamUseCase` resolves title via TMDB (or IMDB fallback)
+3. Searches all `provides="stream"` plugins with title query
+4. Ranks streams by title match score, quality, and language
+5. Returns ranked streams with `/play/{id}` URLs for hoster resolution
 
 **Key difference from YAML plugins:** Python plugins bypass the multi-stage pipeline entirely. They own the full search lifecycle and return final results directly.
 
@@ -578,8 +668,13 @@ async def test_search_returns_results():
 | PluginProtocol definition | `src/scavengarr/domain/plugins/base.py` |
 | SearchResult dataclass | `src/scavengarr/domain/plugins/base.py` |
 | Plugin exceptions | `src/scavengarr/domain/plugins/exceptions.py` |
+| HttpxPluginBase | `src/scavengarr/infrastructure/plugins/httpx_base.py` |
+| PlaywrightPluginBase | `src/scavengarr/infrastructure/plugins/playwright_base.py` |
+| Plugin constants | `src/scavengarr/infrastructure/plugins/constants.py` |
 | Python plugin loader | `src/scavengarr/infrastructure/plugins/loader.py` |
 | Plugin registry | `src/scavengarr/infrastructure/plugins/registry.py` |
 | Search use case (dispatch) | `src/scavengarr/application/use_cases/torznab_search.py` |
+| Stremio stream use case | `src/scavengarr/application/use_cases/stremio_stream.py` |
 | Reference plugin (boerse) | `plugins/boerse.py` |
-| Reference YAML plugin | `plugins/filmpalast.to.yaml` |
+| Reference httpx plugin | `plugins/einschalten.py` |
+| Reference YAML plugin | `plugins/filmpalast_to.yaml` |

@@ -20,11 +20,14 @@
 | Prowlarr Integration | [x] Implemented | Torznab indexer compatible with Prowlarr discovery |
 | Configuration System | [x] Implemented | YAML/ENV/CLI with typed settings and precedence |
 | Structured Logging | [x] Implemented | JSON/console output via structlog with context fields |
+| Stremio Addon | [x] Implemented | Manifest, catalog, stream resolution with TMDB metadata |
+| Hoster Resolver System | [x] Implemented | Video URL extraction from 5+ hosters (VOE, Streamtape, etc.) |
+| Plugin Base Classes | [x] Implemented | `HttpxPluginBase` / `PlaywrightPluginBase` shared base classes |
 | Scrapy Engine | [x] Implemented | Static HTML scraping backend for YAML plugins |
+| 32 Plugins | [x] Implemented | 29 Python + 3 YAML plugins for German streaming/DDL sites |
 | Playwright Engine | [ ] Planned | Native Playwright scraping backend for YAML plugins |
 | Search Result Caching | [ ] Planned | Cache layer for repeated search queries |
 | Integration Test Suite | [ ] Planned | E2E tests with deterministic fixtures |
-| Additional Plugins | [ ] Planned | Community plugin targets beyond filmpalast/boerse |
 
 ---
 
@@ -68,8 +71,47 @@ Python plugins implement the `PluginProtocol` directly. They handle their own sc
 | Bounded concurrency | [x] Implemented | Semaphore-limited parallel page scraping |
 | Custom HTML parsing | [x] Implemented | `HTMLParser` subclasses for extraction |
 | Environment variable credentials | [x] Implemented | `SCAVENGARR_*` env vars for secrets |
+| `HttpxPluginBase` | [x] Implemented | Shared base for 20 httpx plugins (client, domain fallback, semaphore) |
+| `PlaywrightPluginBase` | [x] Implemented | Shared base for 9 Playwright plugins (browser lifecycle, Cloudflare) |
+| Season/episode support | [x] Implemented | All plugins accept `season`/`episode` params for TV content |
+| Settings organization | [x] Implemented | Configurable settings at top of each plugin file |
 
 **Detailed docs:** [Python Plugins](./python-plugins.md)
+
+---
+
+## Stremio Addon
+
+Scavengarr includes a full Stremio addon that provides catalog browsing, search, and stream resolution with automatic hoster video URL extraction.
+
+| Feature | Status | Details |
+|---|---|---|
+| Addon manifest | [x] Implemented | Standard Stremio manifest with movie + series types |
+| TMDB catalog (trending) | [x] Implemented | Trending movies and series via TMDB API |
+| Catalog search | [x] Implemented | TMDB-based search with German locale |
+| Stream resolution | [x] Implemented | IMDb ID → plugin search → ranked streams |
+| Title matching | [x] Implemented | guessit-based scoring with multi-candidate support |
+| `/play/` endpoint | [x] Implemented | 302 redirect to resolved video URL |
+| Stream link caching | [x] Implemented | Cached hoster URLs with TTL |
+| IMDB fallback | [x] Implemented | Title lookup without TMDB API key via Wikidata |
+| Per-plugin timeout | [x] Implemented | Slow plugins don't block the response |
+
+---
+
+## Hoster Resolver System
+
+Runtime video URL extraction from streaming hosters. Resolves embed page URLs to direct `.mp4`/`.m3u8` video URLs.
+
+| Feature | Status | Details |
+|---|---|---|
+| VOE resolver | [x] Implemented | Multi-method extraction (JSON, obfuscated JS) |
+| Streamtape resolver | [x] Implemented | Token extraction from page source |
+| SuperVideo resolver | [x] Implemented | XFS extraction + Playwright Cloudflare fallback |
+| DoodStream resolver | [x] Implemented | `pass_md5` API extraction |
+| Filemoon resolver | [x] Implemented | Packed JS unpacker + Byse SPA challenge flow |
+| Content-type probing | [x] Implemented | Fallback: probe URL for direct video links |
+| URL domain priority | [x] Implemented | Match resolver by domain with redirect following |
+| Hoster hint fallback | [x] Implemented | Plugin-provided hoster name for rotating domains |
 
 ---
 
@@ -222,11 +264,16 @@ Infrastructure (implements Domain ports)
 | CrawlJob factory | `src/scavengarr/application/factories/` |
 | Plugin registry | `src/scavengarr/infrastructure/plugins/registry.py` |
 | Plugin loader | `src/scavengarr/infrastructure/plugins/loader.py` |
+| HttpxPluginBase | `src/scavengarr/infrastructure/plugins/httpx_base.py` |
+| PlaywrightPluginBase | `src/scavengarr/infrastructure/plugins/playwright_base.py` |
 | Search engine | `src/scavengarr/infrastructure/scraping/` |
 | Link validator | `src/scavengarr/infrastructure/validation/` |
 | Torznab presenter | `src/scavengarr/infrastructure/torznab/` |
-| HTTP router | `src/scavengarr/interfaces/http/` |
+| Stremio infrastructure | `src/scavengarr/infrastructure/stremio/` |
+| Hoster resolvers | `src/scavengarr/infrastructure/hoster_resolvers/` |
+| Torznab router | `src/scavengarr/interfaces/api/torznab/` |
+| Stremio router | `src/scavengarr/interfaces/api/stremio/` |
 | CLI | `src/scavengarr/interfaces/cli/` |
-| YAML plugin example | `plugins/filmpalast.to.yaml` |
+| YAML plugin example | `plugins/filmpalast_to.yaml` |
 | Python plugin example | `plugins/boerse.py` |
-| Test suite | `tests/unit/` |
+| Test suite (1894 tests) | `tests/unit/` |
