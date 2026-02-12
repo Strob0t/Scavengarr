@@ -349,6 +349,10 @@ class _DetailPageParser(HTMLParser):
         self._section_id = ""
         self._section_iframe_src = ""
 
+        # Script-in-section tracking (JS player init with embedded URLs)
+        self._in_section_script = False
+        self._section_script_data = ""
+
         # Metadata
         self.title = ""
         self.year = ""
@@ -412,6 +416,11 @@ class _DetailPageParser(HTMLParser):
             if src:
                 self._section_iframe_src = src
 
+        # Script inside section (JS player init with embedded URLs)
+        if tag == "script" and self._in_section:
+            self._in_section_script = True
+            self._section_script_data = ""
+
         # h1
         if tag == "h1":
             self._in_h1 = True
@@ -445,6 +454,9 @@ class _DetailPageParser(HTMLParser):
             self._imdb_text = ""
 
     def handle_data(self, data: str) -> None:
+        if self._in_section_script:
+            self._section_script_data += data
+
         if self._in_label:
             self._label_text += data
 
@@ -473,8 +485,23 @@ class _DetailPageParser(HTMLParser):
                 content_id = f"content{num}"
                 self._tab_labels[content_id] = label_text
 
+        # End of <script> inside section — extract URLs from JS player init
+        if tag == "script" and self._in_section_script:
+            self._in_section_script = False
+            if not self._section_iframe_src and self._section_script_data:
+                # Extract URLs from JS patterns like:
+                #   fsst.show(1,[['https://fsst.online/embed/905450/']],0.2)
+                #   ollhd.show(1,[['https://kinoger.p2pplay.pro/#n6lc6']],0.2)
+                m = re.search(
+                    r"""\.show\(\d+,\s*\[\[['"]?(https?://[^'"\]]+)""",
+                    self._section_script_data,
+                )
+                if m:
+                    self._section_iframe_src = m.group(1)
+
         if tag == "section" and self._in_section:
             self._in_section = False
+            self._in_section_script = False
             if self._section_iframe_src:
                 label = self._tab_labels.get(self._section_id, "")
                 domain = _domain_from_url(self._section_iframe_src)

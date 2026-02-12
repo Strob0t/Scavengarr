@@ -115,6 +115,10 @@ def _collect_streams(
         if not stream_url:
             continue
 
+        # Normalize protocol-relative URLs (e.g. //streamtape.com/...)
+        if stream_url.startswith("//"):
+            stream_url = f"https:{stream_url}"
+
         dedup_key = f"{release}|{_domain_from_url(stream_url)}"
         if dedup_key in seen:
             continue

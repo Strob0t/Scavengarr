@@ -45,8 +45,11 @@ _MOVIE_CATEGORIES = frozenset({2000, 2010, 2020, 2030, 2040, 2045, 2050, 2060})
 
 _SERIES_KEYWORDS = frozenset({"serie", "serien"})
 
-# Regex to extract URL from onclick="window.open('...')"
-_ONCLICK_URL_RE = re.compile(r"window\.open\(['\"]([^'\"]+)['\"]\)")
+# Regex to extract URL from onclick="window.open('...')" (with optional spaces)
+_ONCLICK_URL_RE = re.compile(r"window\.open\(\s*['\"]([^'\"]+)['\"]\s*\)")
+
+# Regex to extract IMDB ID from meinecloud.click script/iframe src
+_IMDB_ID_RE = re.compile(r"meinecloud\.click/(?:ddl|movie)/(tt\d+)")
 
 
 def _filter_by_category(
@@ -100,7 +103,25 @@ def _domain_from_url(url: str) -> str:
 def _extract_onclick_url(onclick: str) -> str:
     """Extract URL from onclick=\"window.open('...')\" attribute."""
     m = _ONCLICK_URL_RE.search(onclick)
-    return m.group(1) if m else ""
+    return m.group(1).strip() if m else ""
+
+
+def _reconstruct_html_from_js(js_text: str) -> str:
+    """Extract HTML from meinecloud.click document.write() JavaScript.
+
+    The meinecloud DDL endpoint returns JS like::
+
+        document.write('<a onclick="window.open( \\'url\\' )" class="streams">'+
+        '<span class="streaming">Hoster</span>'+
+        '</a>');
+
+    This reconstructs the HTML by extracting string literals and unescaping.
+    """
+    parts: list[str] = []
+    for m in re.finditer(r"'((?:[^'\\]|\\.)*)'", js_text):
+        raw = m.group(1)
+        parts.append(raw.replace("\\'", "'").replace("\\\\", "\\"))
+    return "".join(parts)
 
 
 def _parse_release_text(text: str) -> tuple[str, list[str]]:
@@ -623,6 +644,35 @@ class StreamkistePlugin(HttpxPluginBase):
 
         return all_results[: self._max_results]
 
+    async def _fetch_meinecloud_streams(self, imdb_id: str) -> list[dict[str, str]]:
+        """Fetch stream links from meinecloud.click DDL endpoint.
+
+        The endpoint returns JavaScript with ``document.write()`` calls that
+        inject ``<a class="streams" onclick="window.open('url')">`` HTML.
+        We reconstruct the HTML and parse it with ``_DetailPageParser``.
+        """
+        client = await self._ensure_client()
+        url = f"https://meinecloud.click/ddl/{imdb_id}"
+
+        try:
+            resp = await client.get(url)
+            resp.raise_for_status()
+        except Exception as exc:  # noqa: BLE001
+            self._log.warning(
+                "streamkiste_meinecloud_failed",
+                imdb_id=imdb_id,
+                error=str(exc),
+            )
+            return []
+
+        html = _reconstruct_html_from_js(resp.text)
+        if not html.strip():
+            return []
+
+        stream_parser = _DetailPageParser(self.base_url)
+        stream_parser.feed(html)
+        return stream_parser.stream_links
+
     async def _scrape_detail(
         self,
         result: dict[str, str | list[str] | bool],
@@ -645,6 +695,13 @@ class StreamkistePlugin(HttpxPluginBase):
         parser = _DetailPageParser(self.base_url)
         parser.feed(resp.text)
         parser.finalize()
+
+        # Stream links are loaded via external JS from meinecloud.click —
+        # not present in static HTML. Extract IMDB ID and fetch directly.
+        if not parser.stream_links:
+            m = _IMDB_ID_RE.search(resp.text)
+            if m:
+                parser.stream_links = await self._fetch_meinecloud_streams(m.group(1))
 
         if not parser.stream_links:
             self._log.debug("streamkiste_no_streams", url=detail_url)

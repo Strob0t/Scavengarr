@@ -116,6 +116,10 @@ def _collect_streams(
         if not stream_url:
             continue
 
+        # Normalize protocol-relative URLs (e.g. //streamtape.com/...)
+        if stream_url.startswith("//"):
+            stream_url = f"https:{stream_url}"
+
         dedup_key = f"{release}|{_domain_from_url(stream_url)}"
         if dedup_key in seen:
             continue
@@ -139,7 +143,7 @@ def _extract_metadata(detail: dict | None, browse_entry: dict) -> dict[str, str]
         genres_str = _genres_to_str(detail.get("genres", ""))
         imdb_id = str(detail.get("imdb_id") or "")
         tmdb = detail.get("tmdb", {})
-        if tmdb:
+        if isinstance(tmdb, dict) and tmdb:
             movie_details = tmdb.get("movie", {}).get("movie_details", {})
             if not imdb_id:
                 imdb_id = str(movie_details.get("imdb_id") or "")

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from html.parser import HTMLParser
 
@@ -24,6 +25,9 @@ from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 # Configurable settings
 # ---------------------------------------------------------------------------
 _DOMAINS = ["filmfans.org"]
+
+# Regex to extract the initMovie hash from movie page <script> content
+_INIT_MOVIE_RE = re.compile(r"initMovie\(\s*'([^']+)'")
 
 
 class _ReleaseParser(HTMLParser):
@@ -219,7 +223,13 @@ class FilmfansPlugin(HttpxPluginBase):
     async def _fetch_movie_page(
         self, url_id: str
     ) -> list[dict[str, str | list[dict[str, str]]]]:
-        """Fetch a movie page and parse its releases."""
+        """Fetch a movie page and parse its releases.
+
+        Releases are loaded via JavaScript (``initMovie()``), not in the static
+        HTML.  We extract the hash from the page, then call the
+        ``/api/v1/{hash}`` endpoint which returns JSON with an ``html`` field
+        containing the release entries that ``_ReleaseParser`` expects.
+        """
         client = await self._ensure_client()
 
         url = f"{self.base_url}/{url_id}"
@@ -234,8 +244,41 @@ class FilmfansPlugin(HttpxPluginBase):
             )
             return []
 
+        # Extract initMovie hash from the page script
+        m = _INIT_MOVIE_RE.search(resp.text)
+        if not m:
+            self._log.warning("filmfans_no_init_hash", url_id=url_id)
+            return []
+
+        init_hash = m.group(1)
+
+        # Fetch releases via API
+        try:
+            api_resp = await client.get(
+                f"{self.base_url}/api/v1/{init_hash}",
+                params={"_": _timestamp()},
+            )
+            api_resp.raise_for_status()
+        except Exception as exc:  # noqa: BLE001
+            self._log.warning(
+                "filmfans_api_v1_failed",
+                url_id=url_id,
+                error=str(exc),
+            )
+            return []
+
+        try:
+            data = api_resp.json()
+        except (json.JSONDecodeError, ValueError):
+            self._log.warning("filmfans_api_v1_invalid_json", url_id=url_id)
+            return []
+
+        html = data.get("html", "")
+        if not html:
+            return []
+
         parser = _ReleaseParser(self.base_url)
-        parser.feed(resp.text)
+        parser.feed(html)
 
         self._log.info(
             "filmfans_movie_page",

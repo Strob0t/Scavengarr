@@ -86,6 +86,22 @@ _MOVIE_PAGE_HTML = """
 </body></html>
 """
 
+# Movie page HTML with initMovie() script (releases are JS-loaded, not inline)
+_MOVIE_PAGE_WITH_INIT = """
+<html><body>
+<h1>Batman Begins (2005)</h1>
+<div class="list" id="list">Lade ...</div>
+<script>initMovie('testhash123', '', '', '', '', '');</script>
+</body></html>
+"""
+
+# API v1 response containing the releases HTML
+_API_V1_RESPONSE = {
+    "qualitys": ["2160p", "1080p"],
+    "languages": ["DE", "EN"],
+    "html": _MOVIE_PAGE_HTML,
+}
+
 _EMPTY_MOVIE_HTML = "<html><body><h1>Not Found</h1></body></html>"
 
 # Search API JSON response
@@ -308,15 +324,27 @@ class TestSearchApi:
         search_response.json.return_value = _SEARCH_API_RESPONSE
         search_response.raise_for_status = lambda: None
 
-        # Mock movie page response (same for both movies)
-        movie_response = AsyncMock(spec=httpx.Response)
-        movie_response.status_code = 200
-        movie_response.text = _MOVIE_PAGE_HTML
-        movie_response.raise_for_status = lambda: None
+        # Mock movie page response (with initMovie script)
+        movie_page_response = AsyncMock(spec=httpx.Response)
+        movie_page_response.status_code = 200
+        movie_page_response.text = _MOVIE_PAGE_WITH_INIT
+        movie_page_response.raise_for_status = lambda: None
+
+        # Mock API v1 response (release HTML)
+        api_v1_response = AsyncMock(spec=httpx.Response)
+        api_v1_response.status_code = 200
+        api_v1_response.json.return_value = _API_V1_RESPONSE
+        api_v1_response.raise_for_status = lambda: None
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(
-            side_effect=[search_response, movie_response, movie_response]
+            side_effect=[
+                search_response,
+                movie_page_response,
+                api_v1_response,
+                movie_page_response,
+                api_v1_response,
+            ]
         )
         plugin._client = mock_client
 
@@ -324,7 +352,8 @@ class TestSearchApi:
 
         # 2 movies × 2 releases each = 4 results
         assert len(results) == 4
-        assert mock_client.get.await_count == 3  # 1 search + 2 movie pages
+        # 1 search + 2 × (movie page + api v1) = 5
+        assert mock_client.get.await_count == 5
 
     async def test_search_api_url(self) -> None:
         plugin = _make_plugin()
@@ -470,13 +499,20 @@ class TestSearchResultConstruction:
         }
         search_response.raise_for_status = lambda: None
 
-        movie_response = AsyncMock(spec=httpx.Response)
-        movie_response.status_code = 200
-        movie_response.text = _MOVIE_PAGE_HTML
-        movie_response.raise_for_status = lambda: None
+        movie_page_response = AsyncMock(spec=httpx.Response)
+        movie_page_response.status_code = 200
+        movie_page_response.text = _MOVIE_PAGE_WITH_INIT
+        movie_page_response.raise_for_status = lambda: None
+
+        api_v1_response = AsyncMock(spec=httpx.Response)
+        api_v1_response.status_code = 200
+        api_v1_response.json.return_value = _API_V1_RESPONSE
+        api_v1_response.raise_for_status = lambda: None
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.get = AsyncMock(side_effect=[search_response, movie_response])
+        mock_client.get = AsyncMock(
+            side_effect=[search_response, movie_page_response, api_v1_response]
+        )
         plugin._client = mock_client
 
         results = await plugin.search("batman")
@@ -496,13 +532,20 @@ class TestSearchResultConstruction:
         }
         search_response.raise_for_status = lambda: None
 
-        movie_response = AsyncMock(spec=httpx.Response)
-        movie_response.status_code = 200
-        movie_response.text = _MOVIE_PAGE_HTML
-        movie_response.raise_for_status = lambda: None
+        movie_page_response = AsyncMock(spec=httpx.Response)
+        movie_page_response.status_code = 200
+        movie_page_response.text = _MOVIE_PAGE_WITH_INIT
+        movie_page_response.raise_for_status = lambda: None
+
+        api_v1_response = AsyncMock(spec=httpx.Response)
+        api_v1_response.status_code = 200
+        api_v1_response.json.return_value = _API_V1_RESPONSE
+        api_v1_response.raise_for_status = lambda: None
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.get = AsyncMock(side_effect=[search_response, movie_response])
+        mock_client.get = AsyncMock(
+            side_effect=[search_response, movie_page_response, api_v1_response]
+        )
         plugin._client = mock_client
 
         results = await plugin.search("batman")
@@ -523,13 +566,20 @@ class TestSearchResultConstruction:
         }
         search_response.raise_for_status = lambda: None
 
-        movie_response = AsyncMock(spec=httpx.Response)
-        movie_response.status_code = 200
-        movie_response.text = _MOVIE_PAGE_HTML
-        movie_response.raise_for_status = lambda: None
+        movie_page_response = AsyncMock(spec=httpx.Response)
+        movie_page_response.status_code = 200
+        movie_page_response.text = _MOVIE_PAGE_WITH_INIT
+        movie_page_response.raise_for_status = lambda: None
+
+        api_v1_response = AsyncMock(spec=httpx.Response)
+        api_v1_response.status_code = 200
+        api_v1_response.json.return_value = _API_V1_RESPONSE
+        api_v1_response.raise_for_status = lambda: None
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.get = AsyncMock(side_effect=[search_response, movie_response])
+        mock_client.get = AsyncMock(
+            side_effect=[search_response, movie_page_response, api_v1_response]
+        )
         plugin._client = mock_client
 
         results = await plugin.search("batman")
@@ -547,13 +597,20 @@ class TestSearchResultConstruction:
         }
         search_response.raise_for_status = lambda: None
 
-        movie_response = AsyncMock(spec=httpx.Response)
-        movie_response.status_code = 200
-        movie_response.text = _MOVIE_PAGE_HTML
-        movie_response.raise_for_status = lambda: None
+        movie_page_response = AsyncMock(spec=httpx.Response)
+        movie_page_response.status_code = 200
+        movie_page_response.text = _MOVIE_PAGE_WITH_INIT
+        movie_page_response.raise_for_status = lambda: None
+
+        api_v1_response = AsyncMock(spec=httpx.Response)
+        api_v1_response.status_code = 200
+        api_v1_response.json.return_value = _API_V1_RESPONSE
+        api_v1_response.raise_for_status = lambda: None
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.get = AsyncMock(side_effect=[search_response, movie_response])
+        mock_client.get = AsyncMock(
+            side_effect=[search_response, movie_page_response, api_v1_response]
+        )
         plugin._client = mock_client
 
         results = await plugin.search("test")
@@ -572,13 +629,20 @@ class TestSearchResultConstruction:
         }
         search_response.raise_for_status = lambda: None
 
-        movie_response = AsyncMock(spec=httpx.Response)
-        movie_response.status_code = 200
-        movie_response.text = _MOVIE_PAGE_HTML
-        movie_response.raise_for_status = lambda: None
+        movie_page_response = AsyncMock(spec=httpx.Response)
+        movie_page_response.status_code = 200
+        movie_page_response.text = _MOVIE_PAGE_WITH_INIT
+        movie_page_response.raise_for_status = lambda: None
+
+        api_v1_response = AsyncMock(spec=httpx.Response)
+        api_v1_response.status_code = 200
+        api_v1_response.json.return_value = _API_V1_RESPONSE
+        api_v1_response.raise_for_status = lambda: None
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.get = AsyncMock(side_effect=[search_response, movie_response])
+        mock_client.get = AsyncMock(
+            side_effect=[search_response, movie_page_response, api_v1_response]
+        )
         plugin._client = mock_client
 
         results = await plugin.search("test")
@@ -597,13 +661,20 @@ class TestSearchResultConstruction:
         }
         search_response.raise_for_status = lambda: None
 
-        movie_response = AsyncMock(spec=httpx.Response)
-        movie_response.status_code = 200
-        movie_response.text = _MOVIE_PAGE_HTML
-        movie_response.raise_for_status = lambda: None
+        movie_page_response = AsyncMock(spec=httpx.Response)
+        movie_page_response.status_code = 200
+        movie_page_response.text = _MOVIE_PAGE_WITH_INIT
+        movie_page_response.raise_for_status = lambda: None
+
+        api_v1_response = AsyncMock(spec=httpx.Response)
+        api_v1_response.status_code = 200
+        api_v1_response.json.return_value = _API_V1_RESPONSE
+        api_v1_response.raise_for_status = lambda: None
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.get = AsyncMock(side_effect=[search_response, movie_response])
+        mock_client.get = AsyncMock(
+            side_effect=[search_response, movie_page_response, api_v1_response]
+        )
         plugin._client = mock_client
 
         results = await plugin.search("test")
@@ -626,17 +697,25 @@ class TestMoviePageErrors:
         }
         search_response.raise_for_status = lambda: None
 
-        movie_response = AsyncMock(spec=httpx.Response)
-        movie_response.status_code = 200
-        movie_response.text = _MOVIE_PAGE_HTML
-        movie_response.raise_for_status = lambda: None
+        # good-movie: movie page with initMovie script
+        movie_page_response = AsyncMock(spec=httpx.Response)
+        movie_page_response.status_code = 200
+        movie_page_response.text = _MOVIE_PAGE_WITH_INIT
+        movie_page_response.raise_for_status = lambda: None
+
+        # good-movie: API v1 response with release HTML
+        api_v1_response = AsyncMock(spec=httpx.Response)
+        api_v1_response.status_code = 200
+        api_v1_response.json.return_value = _API_V1_RESPONSE
+        api_v1_response.raise_for_status = lambda: None
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(
             side_effect=[
                 search_response,
-                movie_response,  # good-movie succeeds
-                httpx.ConnectError("timeout"),  # bad-movie fails
+                movie_page_response,  # good-movie page
+                api_v1_response,  # good-movie API v1
+                httpx.ConnectError("timeout"),  # bad-movie page fails
             ]
         )
         plugin._client = mock_client
