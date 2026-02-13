@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import pickle
+import json
 from unittest.mock import AsyncMock
 
 from scavengarr.domain.entities.stremio import CachedStreamLink
 from scavengarr.infrastructure.persistence.stream_link_cache import (
     CacheStreamLinkRepository,
+    _serialize_link,
 )
 
 
@@ -27,7 +28,7 @@ def _make_link(
 
 
 class TestCacheStreamLinkRepository:
-    async def test_save_stores_pickled_link(self, mock_cache: AsyncMock) -> None:
+    async def test_save_stores_json_link(self, mock_cache: AsyncMock) -> None:
         link = _make_link()
         repo = CacheStreamLinkRepository(cache=mock_cache)
         await repo.save(link)
@@ -37,9 +38,9 @@ class TestCacheStreamLinkRepository:
         key = call_args[0][0]
         value = call_args[0][1]
         assert key == "streamlink:abc123"
-        restored = pickle.loads(value)  # noqa: S301
-        assert restored.stream_id == "abc123"
-        assert restored.hoster_url == "https://voe.sx/e/abc"
+        restored = json.loads(value)
+        assert restored["stream_id"] == "abc123"
+        assert restored["hoster_url"] == "https://voe.sx/e/abc"
 
     async def test_save_uses_configured_ttl(self, mock_cache: AsyncMock) -> None:
         link = _make_link()
@@ -50,8 +51,8 @@ class TestCacheStreamLinkRepository:
 
     async def test_get_returns_cached_link(self, mock_cache: AsyncMock) -> None:
         link = _make_link()
-        pickled = pickle.dumps(link)
-        mock_cache.get = AsyncMock(return_value=pickled)
+        serialized = _serialize_link(link)
+        mock_cache.get = AsyncMock(return_value=serialized)
         repo = CacheStreamLinkRepository(cache=mock_cache)
         result = await repo.get("abc123")
         assert result is not None
@@ -67,7 +68,7 @@ class TestCacheStreamLinkRepository:
         assert result is None
 
     async def test_get_handles_corrupt_data(self, mock_cache: AsyncMock) -> None:
-        mock_cache.get = AsyncMock(return_value=b"not-valid-pickle")
+        mock_cache.get = AsyncMock(return_value="not-valid-json{{{")
         repo = CacheStreamLinkRepository(cache=mock_cache)
         result = await repo.get("corrupt")
         assert result is None

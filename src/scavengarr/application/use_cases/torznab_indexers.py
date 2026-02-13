@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import structlog
+
 from scavengarr.domain.entities import TorznabIndexInfo
 from scavengarr.domain.ports import PluginRegistryPort
+
+log = structlog.get_logger(__name__)
 
 
 class TorznabIndexersUseCase:
@@ -25,8 +29,8 @@ class TorznabIndexersUseCase:
                 mode = getattr(scraping, "mode", None) if scraping is not None else None
                 if mode is None:
                     mode = getattr(p, "mode", None)
-            except Exception:
-                pass  # Resilient: broken plugins still appear with minimal info
+            except Exception:  # noqa: BLE001
+                log.debug("indexer_plugin_load_failed", plugin=name)
 
             info = TorznabIndexInfo(name=name, version=version, mode=mode)
             out.append({"name": info.name, "version": info.version, "mode": info.mode})

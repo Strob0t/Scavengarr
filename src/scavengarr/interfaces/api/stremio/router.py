@@ -360,8 +360,8 @@ async def stremio_health(request: Request) -> JSONResponse:
     if resolver_registry is not None:
         try:
             supported_hosters = list(resolver_registry.list_hosters())
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001
+            log.debug("stremio_health_hoster_list_failed", exc_info=True)
 
     healthy = (
         tmdb_configured

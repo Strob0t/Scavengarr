@@ -243,7 +243,7 @@ class StremioStreamUseCase:
                 if isinstance(lang, str):
                     plugin_languages[name] = lang
             except Exception:  # noqa: BLE001
-                pass
+                log.debug("stremio_plugin_language_lookup_failed", plugin=name)
 
         ranked = convert_search_results(filtered, plugin_languages=plugin_languages)
         sorted_streams = self._sorter.sort(ranked)
