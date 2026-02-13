@@ -9,7 +9,7 @@ Format: version, date, grouped changes. Newest entries first.
 
 Massive expansion of the plugin ecosystem (2 → 40 plugins), Stremio addon integration,
 hoster resolver system, plugin base class standardization, search result caching, and
-growth of the test suite from 160 to 2590 tests.
+growth of the test suite from 160 to 3225 tests.
 
 ### Plugin Standardization (Refactor)
 All 29 Python plugins migrated to shared base classes (`HttpxPluginBase` /
@@ -98,11 +98,24 @@ Allows using Scavengarr as a Stremio source for all indexed plugins.
 - Add per-plugin timeout to prevent slow plugins blocking response (`c03a28b`)
 
 ### Hoster Resolver System
-Runtime video URL extraction from streaming hosters. Supports VOE, Streamtape,
-SuperVideo, DoodStream, and Filemoon with packed JS unpacking and Cloudflare bypass.
+39 hoster resolvers across three categories: 10 streaming resolvers (video URL extraction),
+14 DDL resolvers (file availability validation), and 15 XFS-consolidated resolvers
+(generic `XFSResolver` with parameterised `XFSConfig`). All resolver tests use respx
+(httpx-native HTTP mocking).
 
+**Core infrastructure:**
 - Add ResolvedStream entity and HosterResolverPort protocol (`f6a3676`)
 - Add HosterResolverRegistry with content-type probing fallback (`8a7642b`)
+- Add hoster hint fallback for rotating redirect domains (`cfe3314`)
+- URL domain priority + redirect following in hoster registry (`b083c0b`)
+- Add `cleanup()` to HosterResolverRegistry (`c148640`)
+- Integrate hoster resolvers into `/play/` endpoint (`2b1f82c`)
+- Cache stream links and generate proxy play URLs (`686b4bf`, `f61e30a`)
+- Add `/stremio/play/{stream_id}` endpoint with 302 redirect (`08be69c`)
+- Add stream preflight probe to filter dead hoster links at `/stream` time
+- Add hybrid Playwright Stealth probe for Cloudflare bypass
+
+**Streaming resolvers (10):**
 - Add VOE hoster resolver with multi-method extraction (`242ce2d`)
 - Add Streamtape hoster resolver with token extraction (`b163637`)
 - Add SuperVideo hoster resolver with XFS video extraction (`d980ebe`)
@@ -111,17 +124,39 @@ SuperVideo, DoodStream, and Filemoon with packed JS unpacking and Cloudflare byp
 - Add Filemoon Byse SPA API extraction and challenge/attest/decrypt flow (`ad62013`, `8592356`)
 - Add packed JS decoder for SuperVideo video URL extraction (`e7baaa6`)
 - Add Playwright fallback to SuperVideo for Cloudflare bypass (`7ce90dd`, `4438322`)
-- Add hoster hint fallback for rotating redirect domains (`cfe3314`)
-- URL domain priority + redirect following in hoster registry (`b083c0b`)
-- Integrate hoster resolvers into `/play/` endpoint (`2b1f82c`)
-- Cache stream links and generate proxy play URLs (`686b4bf`, `f61e30a`)
-- Add `/stremio/play/{stream_id}` endpoint with 302 redirect (`08be69c`)
-- Add `cleanup()` to HosterResolverRegistry (`c148640`)
+- Add 429 rate-limit retry with back-off to SuperVideo resolver (`67babee`)
+- Add Mixdrop hoster resolver with token extraction (multi-domain)
+- Add VidGuard hoster resolver with multi-domain embed resolution
+- Add Vidking hoster resolver with embed page validation
+- Add Stmix hoster resolver with embed page validation
+- Add SerienStream hoster resolver (s.to / serien.sx domain matching)
+
+**DDL resolvers (14):**
 - Add filer.net DDL hoster resolver via public status API
 - Add Katfile DDL hoster resolver (XFS offline marker detection)
 - Add Rapidgator DDL hoster resolver (website scraping validation)
 - Add DDownload DDL hoster resolver (ddownload.com / ddl.to, XFS page check)
-- Add 429 rate-limit retry with back-off to SuperVideo resolver (`67babee`)
+- Add Alfafile DDL hoster resolver (page scraping)
+- Add AlphaDDL hoster resolver (page scraping)
+- Add Fastpic image host resolver (fastpic.org / fastpic.ru)
+- Add Filecrypt container resolver (container validation)
+- Add FileFactory DDL hoster resolver (page scraping)
+- Add FSST hoster resolver (page scraping)
+- Add Go4up mirror link resolver (mirror link validation)
+- Add Nitroflare DDL hoster resolver (page scraping)
+- Add 1fichier DDL hoster resolver (multi-domain page scraping)
+- Add Turbobit DDL hoster resolver (multi-domain page scraping)
+- Add Uploaded DDL hoster resolver (uploaded.net / ul.to)
+
+**XFS consolidation (15 hosters):**
+- Add generic `XFSResolver` with `XFSConfig` dataclass consolidating 15 XFS hosters into one module (`xfs.py`)
+- Configs: Katfile, Hexupload, Clicknupload, Filestore, Uptobox, Funxd, Bigwarp, Dropload, Goodstream, Savefiles, Streamwish (9 domains), Vidmoly, Vidoza, Vinovo, Vidhide (6 domains)
+- Parameterised tests: 219 test cases auto-generated from 15 configs
+- Delete 15 individual resolver files + 15 individual test files (~4,200 lines removed)
+
+**Test improvements:**
+- Migrate all 17 non-XFS resolver test files from AsyncMock to respx (httpx-native HTTP mocking)
+- Add live contract test skeleton for resolver smoke tests (`tests/live/test_resolver_live.py`)
 
 ### Plugin Improvements
 Various fixes and enhancements to individual plugins.
@@ -164,18 +199,21 @@ Five plugins updated to match changed website structures.
 - Fix movie4k: add GET fallback for domain verification (HEAD returns 405)
 - Fix streamkiste: rewrite detail parser to extract streams from meinecloud.click external script
 
-### Test Suite Growth (160 → 2128 tests)
-Test suite expanded from 160 to 2128 tests with comprehensive coverage across all layers.
+### Test Suite Growth (160 → 3225 tests)
+Test suite expanded from 160 to 3225 tests (3047 unit + 109 E2E + 31 integration + 38 live)
+with comprehensive coverage across all layers.
 
-- Add unit tests for all 27 plugin test files
-- Add unit tests for all 5 hoster resolvers (VOE, Streamtape, SuperVideo, DoodStream, Filemoon)
+- Add unit tests for all 35 plugin test files
+- Add unit tests for all 39 hoster resolvers (10 streaming + 14 DDL + 15 XFS consolidated)
 - Add unit tests for HttpxPluginBase and PlaywrightPluginBase
 - Add unit tests for Stremio components (stream converter, stream sorter, TMDB client, title matcher, IMDB fallback)
 - Add unit tests for release name parser, plugin registry, HTML selectors
 - Add unit tests for stream link cache and hoster registry
-- Add 99 E2E tests (46 Torznab endpoint + 53 Stremio endpoint)
+- Add 109 E2E tests (46 Torznab endpoint + 63 Stremio endpoint)
 - Add 31 integration tests (config loading, crawljob lifecycle, link validation, plugin pipeline)
-- Add 32 live smoke tests (parametrized across all plugins, hitting real websites)
+- Add 38 live smoke tests (plugin smoke tests + resolver contract tests)
+- Migrate all resolver tests from AsyncMock to respx (httpx-native HTTP mocking)
+- Add parameterised XFS resolver tests (219 test cases across 15 configs)
 
 ### Documentation
 - Add plugin search standards (categories + pagination up to 1000) (`c1fa2c4`)

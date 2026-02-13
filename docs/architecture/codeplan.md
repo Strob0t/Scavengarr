@@ -171,20 +171,21 @@ plugins/                              # 32 plugins (29 Python + 3 YAML)
 
 tests/
 ├── conftest.py                       # Shared fixtures
-├── e2e/                              # 99 E2E tests
-│   ├── test_stremio_endpoint.py      # 53 Stremio endpoint tests
+├── e2e/                              # 109 E2E tests
+│   ├── test_stremio_endpoint.py      # 63 Stremio endpoint tests
 │   └── test_torznab_endpoint.py      # 46 Torznab endpoint tests
 ├── integration/                      # 31 integration tests
 │   ├── test_config_loading.py        # Config precedence + validation
 │   ├── test_crawljob_lifecycle.py    # CrawlJob create → retrieve → expire
 │   ├── test_link_validation.py       # HEAD/GET validation with mocked HTTP
 │   └── test_plugin_pipeline.py       # Plugin load → search → results
-├── live/                             # 32 live smoke tests
-│   └── test_plugin_smoke.py          # Parametrized across all 32 plugins
+├── live/                             # 38 live smoke tests
+│   ├── test_plugin_smoke.py          # Parametrized across all plugins
+│   └── test_resolver_live.py         # Resolver contract tests (XFS + non-XFS)
 └── unit/
     ├── domain/                       # Pure entity/schema tests (6 files)
     ├── application/                  # Use case tests with mocked ports (7 files)
-    ├── infrastructure/               # Adapter, parser, plugin tests (57 files)
+    ├── infrastructure/               # Adapter, parser, plugin tests (~90 files)
     └── interfaces/                   # Router tests (3 files)
 ```
 
@@ -1272,7 +1273,9 @@ Central registry for all hoster resolvers. Features:
 
 #### Hoster Resolvers
 
-Each resolver extracts direct video URLs from streaming hoster embed pages:
+39 resolvers across three categories: streaming (extract direct video URLs), DDL (validate file availability), and XFS (15 hosters consolidated via generic `XFSResolver`).
+
+**Streaming resolvers** (extract `.mp4`/`.m3u8` URLs):
 
 | Resolver | File | Technique |
 |---|---|---|
@@ -1281,6 +1284,36 @@ Each resolver extracts direct video URLs from streaming hoster embed pages:
 | SuperVideo | `supervideo.py` | XFS extraction + packed JS + Playwright fallback |
 | DoodStream | `doodstream.py` | `pass_md5` API endpoint extraction |
 | Filemoon | `filemoon.py` | Packed JS unpacker + Byse SPA challenge/decrypt flow |
+| Mixdrop | `mixdrop.py` | Token extraction, multi-domain |
+| VidGuard | `vidguard.py` | Multi-domain embed resolution |
+| Vidking | `vidking.py` | Embed page validation |
+| Stmix | `stmix.py` | Embed page validation |
+| SerienStream | `serienstream.py` | s.to / serien.sx domain matching |
+
+**DDL resolvers** (validate file availability):
+
+| Resolver | File | Technique |
+|---|---|---|
+| Filer.net | `filernet.py` | Public status API |
+| Rapidgator | `rapidgator.py` | Website scraping |
+| DDownload | `ddownload.py` | XFS page check with canonical URL normalization |
+| Alfafile | `alfafile.py` | Page scraping |
+| AlphaDDL | `alphaddl.py` | Page scraping |
+| Fastpic | `fastpic.py` | Image host validation |
+| Filecrypt | `filecrypt.py` | Container validation |
+| FileFactory | `filefactory.py` | Page scraping |
+| FSST | `fsst.py` | Page scraping |
+| Go4up | `go4up.py` | Mirror link validation |
+| Nitroflare | `nitroflare.py` | Page scraping |
+| 1fichier | `onefichier.py` | Page scraping, multi-domain |
+| Turbobit | `turbobit.py` | Page scraping, multi-domain |
+| Uploaded | `uploaded.py` | Page scraping, multi-domain |
+
+**XFS consolidated resolvers** (`xfs.py` -- 15 hosters via parameterised `XFSConfig`):
+
+Katfile, Hexupload, Clicknupload, Filestore, Uptobox, Funxd, Bigwarp, Dropload, Goodstream, Savefiles, Streamwish, Vidmoly, Vidoza, Vinovo, Vidhide.
+
+Each is defined as an `XFSConfig` (name, domains, file_id_re, offline_markers). The `XFSResolver` class handles resolution logic once. `create_all_xfs_resolvers()` factory creates all 15 instances.
 
 ---
 
@@ -1508,7 +1541,7 @@ class PluginProtocol(Protocol):
 
 ## Test Suite
 
-**2128 tests** across unit, integration, E2E, and live test categories.
+**3225 tests** across unit, integration, E2E, and live test categories.
 
 ### Test Configuration
 
@@ -1527,12 +1560,12 @@ Common test fixtures for entities, mock ports, and configuration.
 - `PluginRegistryPort` is synchronous -- use `MagicMock`.
 - `SearchEnginePort`, `CrawlJobRepository`, `CachePort` are async -- use `AsyncMock`.
 
-### E2E Tests (`tests/e2e/`) -- 99 tests
+### E2E Tests (`tests/e2e/`) -- 109 tests
 
 | File | Tests |
 |---|---|
 | `test_torznab_endpoint.py` | 46 tests: caps, search, indexers, download, error responses via full app |
-| `test_stremio_endpoint.py` | 53 tests: manifest, catalog, stream resolution, play endpoint via full app |
+| `test_stremio_endpoint.py` | 63 tests: manifest, catalog, stream resolution, play endpoint via full app |
 
 ### Integration Tests (`tests/integration/`) -- 31 tests
 
@@ -1543,11 +1576,12 @@ Common test fixtures for entities, mock ports, and configuration.
 | `test_link_validation.py` | HEAD/GET validation with mocked HTTP responses |
 | `test_plugin_pipeline.py` | Plugin load → search → result pipeline |
 
-### Live Smoke Tests (`tests/live/`) -- 32 tests
+### Live Smoke Tests (`tests/live/`) -- 38 tests
 
 | File | Tests |
 |---|---|
-| `test_plugin_smoke.py` | Parametrized across all 32 plugins, hits real websites with 60s timeout. Skips on network errors. |
+| `test_plugin_smoke.py` | Parametrized across all plugins, hits real websites with 60s timeout. Skips on network errors. |
+| `test_resolver_live.py` | Parameterised XFS resolver contract tests for known live/dead URLs. |
 
 ### Domain Tests (`tests/unit/domain/`) -- 6 files
 
@@ -1570,7 +1604,7 @@ Common test fixtures for entities, mock ports, and configuration.
 | `test_stremio_catalog.py` | Stremio catalog use case (trending, search) |
 | `test_stremio_stream.py` | Stremio stream resolution (IMDb → ranked streams) |
 
-### Infrastructure Tests (`tests/unit/infrastructure/`) -- 57 files
+### Infrastructure Tests (`tests/unit/infrastructure/`) -- ~90 files
 
 Core infrastructure:
 
@@ -1608,14 +1642,34 @@ Hoster resolvers:
 
 | File | Tests |
 |---|---|
+| `test_xfs_resolver.py` | Generic XFS resolver (15 hosters, 219 parameterised tests) |
 | `test_voe_resolver.py` | VOE multi-method extraction |
 | `test_streamtape_resolver.py` | Streamtape token extraction |
 | `test_supervideo_resolver.py` | SuperVideo XFS + packed JS |
 | `test_doodstream_resolver.py` | DoodStream pass_md5 |
 | `test_filemoon_resolver.py` | Filemoon packed JS + Byse SPA |
+| `test_ddownload_resolver.py` | DDownload XFS + canonical URL |
+| `test_alfafile_resolver.py` | Alfafile DDL validation |
+| `test_alphaddl_resolver.py` | AlphaDDL validation |
+| `test_fastpic_resolver.py` | Fastpic image host |
+| `test_filecrypt_resolver.py` | Filecrypt container |
+| `test_filefactory_resolver.py` | FileFactory DDL |
+| `test_fsst_resolver.py` | FSST validation |
+| `test_go4up_resolver.py` | Go4up mirror links |
+| `test_mixdrop_resolver.py` | Mixdrop streaming |
+| `test_nitroflare_resolver.py` | Nitroflare DDL |
+| `test_onefichier_resolver.py` | 1fichier DDL |
+| `test_serienstream_resolver.py` | SerienStream resolution |
+| `test_stmix_resolver.py` | Stmix streaming |
+| `test_turbobit_resolver.py` | Turbobit DDL |
+| `test_uploaded_resolver.py` | Uploaded DDL |
+| `test_vidguard_resolver.py` | VidGuard streaming |
+| `test_vidking_resolver.py` | Vidking streaming |
 | `test_hoster_registry.py` | Registry domain matching, probing |
 
-Plugin tests (27 files, one per Python plugin):
+All resolver tests use `respx` (httpx-native HTTP mocking).
+
+Plugin tests (35 files, one per Python plugin):
 
 | File | Plugin |
 |---|---|

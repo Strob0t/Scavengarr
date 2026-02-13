@@ -1,14 +1,14 @@
 # Plan: Additional Plugins
 
-**Status:** Mostly Complete (39 plugins implemented)
+**Status:** Mostly Complete (40 plugins implemented)
 **Priority:** Low (ongoing)
 **Related:** `plugins/`, `docs/features/python-plugins.md`
 
 ## Current State
 
-Scavengarr ships with **39 plugins** covering German streaming, DDL, and anime sites:
+Scavengarr ships with **40 plugins** covering German streaming, DDL, and anime sites:
 
-### Httpx plugins (27)
+### Httpx plugins (28)
 
 | Plugin | Site | Type | Notes |
 |---|---|---|---|
@@ -24,6 +24,7 @@ Scavengarr ships with **39 plugins** covering German streaming, DDL, and anime s
 | haschcon | haschcon.com | stream | |
 | hdfilme | hdfilme.legal | stream | MeineCloud link extraction |
 | hdsource | hd-source.to | download | DDL with multi-page scraping |
+| hdworld | hd-world.cc | download | WordPress REST API DDL |
 | kinoger | kinoger.com | stream | Domain fallback |
 | kinoking | kinoking.cc | stream | Movie/series detection |
 | kinox | kinox.to | stream | 9 mirror domains, AJAX embeds |

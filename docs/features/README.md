@@ -4,7 +4,7 @@
 
 Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Prowlarr and other Arr applications. It scrapes sources via two engines (Scrapy for static HTML, Playwright for JS-heavy sites) and delivers results through standard Torznab endpoints.
 
-**Version:** 0.1.0 | **Python:** 3.12+ | **Tests:** 2128 (unit + integration + E2E + live) | **Plugins:** 33 (30 Python + 3 YAML) | **Architecture:** Clean Architecture
+**Version:** 0.1.0 | **Python:** 3.12+ | **Tests:** 3225 (3047 unit + 109 E2E + 31 integration + 38 live) | **Plugins:** 40 (37 Python + 3 YAML) | **Hoster Resolvers:** 39 | **Architecture:** Clean Architecture
 
 ---
 
@@ -33,7 +33,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Pro
 | Document | Description |
 |---|---|
 | [Stremio Addon](./stremio-addon.md) | Stremio integration with catalog, streams, and hoster resolution |
-| [Hoster Resolvers](./hoster-resolvers.md) | Video URL extraction from VOE, Streamtape, SuperVideo, DoodStream, Filemoon |
+| [Hoster Resolvers](./hoster-resolvers.md) | 39 hoster resolvers (streaming + DDL + 15 XFS consolidated) |
 | [Mirror URL Fallback](./mirror-url-fallback.md) | Automatic domain fallback when primary mirrors are unreachable |
 | [Prowlarr Integration](./prowlarr-integration.md) | Step-by-step Prowlarr setup, endpoint mapping, category sync |
 
@@ -50,7 +50,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Pro
 |---|---|
 | [Playwright Engine](../plans/playwright-engine.md) | Native Playwright scraping engine for JS-heavy sites |
 | [More Plugins](../plans/more-plugins.md) | Plugin inventory and remaining candidates |
-| [Integration Tests](../plans/integration-tests.md) | Implemented: 31 integration + 99 E2E + 32 live smoke tests |
+| [Integration Tests](../plans/integration-tests.md) | Implemented: 31 integration + 109 E2E + 38 live smoke tests |
 | [Search Caching](../plans/search-caching.md) | Implemented: 900s TTL with X-Cache header |
 
 ### Refactoring History
@@ -82,7 +82,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Pro
 | Caching | diskcache (+ optional Redis) | Search result and CrawlJob storage |
 | Logging | structlog | Structured JSON/console logging |
 | CLI | Typer | Local debugging and diagnostics |
-| Testing | pytest | 2128 tests across all layers (unit + integration + E2E + live) |
+| Testing | pytest | 3225 tests across all layers (3047 unit + 109 E2E + 31 integration + 38 live) |
 
 ---
 
@@ -104,7 +104,7 @@ src/scavengarr/
     cache/                 # diskcache adapter
     torznab/               # XML presenter
     stremio/               # Stream converter, sorter, TMDB client, title matcher
-    hoster_resolvers/      # VOE, Streamtape, SuperVideo, DoodStream, Filemoon
+    hoster_resolvers/      # 39 resolvers (15 XFS consolidated + 24 non-XFS)
     config/                # Settings, logging
     common/                # Parsers, converters, extractors, HTML selectors
   interfaces/              # Frameworks & drivers
@@ -112,19 +112,19 @@ src/scavengarr/
     cli/                   # Typer CLI
     composition/           # Dependency injection
 
-plugins/                   # Plugin directory (29 Python + 3 YAML)
+plugins/                   # Plugin directory (37 Python + 3 YAML)
   filmpalast_to.yaml       # YAML plugin example
   boerse.py                # Python plugin example (Playwright)
   einschalten.py           # Python plugin example (httpx API)
 
 tests/
-  e2e/                     # 99 E2E tests (Torznab + Stremio endpoints)
+  e2e/                     # 109 E2E tests (Torznab + Stremio endpoints)
   integration/             # 31 integration tests (config, crawljob, links, pipeline)
-  live/                    # 32 live smoke tests (real website requests)
+  live/                    # 38 live smoke tests (plugins + resolver contract tests)
   unit/
     domain/                # Pure domain tests
     application/           # Use case tests (mocked ports)
-    infrastructure/        # Adapter, parser, and plugin tests (57 files)
+    infrastructure/        # Adapter, parser, resolver, and plugin tests (~90 files)
     interfaces/            # Router tests
 ```
 

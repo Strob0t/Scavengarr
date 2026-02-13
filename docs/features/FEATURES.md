@@ -21,13 +21,13 @@
 | Configuration System | [x] Implemented | YAML/ENV/CLI with typed settings and precedence |
 | Structured Logging | [x] Implemented | JSON/console output via structlog with context fields |
 | Stremio Addon | [x] Implemented | Manifest, catalog, stream resolution with TMDB metadata |
-| Hoster Resolver System | [x] Implemented | Video URL extraction from 9 hosters (streaming + DDL) |
+| Hoster Resolver System | [x] Implemented | 39 hoster resolvers (streaming + DDL + 15 XFS consolidated) |
 | Plugin Base Classes | [x] Implemented | `HttpxPluginBase` / `PlaywrightPluginBase` shared base classes |
 | Scrapy Engine | [x] Implemented | Static HTML scraping backend for YAML plugins |
-| 39 Plugins | [x] Implemented | 36 Python + 3 YAML plugins for German streaming/DDL sites |
+| 40 Plugins | [x] Implemented | 37 Python + 3 YAML plugins for German streaming/DDL sites |
 | Playwright Engine | [ ] Planned | Native Playwright scraping backend for YAML plugins |
 | Search Result Caching | [x] Implemented | 900s TTL with X-Cache HIT/MISS header |
-| Integration Test Suite | [x] Implemented | 31 integration + 99 E2E + 32 live smoke tests |
+| Integration Test Suite | [x] Implemented | 31 integration + 109 E2E + 38 live smoke tests |
 
 ---
 
@@ -71,7 +71,7 @@ Python plugins implement the `PluginProtocol` directly. They handle their own sc
 | Bounded concurrency | [x] Implemented | Semaphore-limited parallel page scraping |
 | Custom HTML parsing | [x] Implemented | `HTMLParser` subclasses for extraction |
 | Environment variable credentials | [x] Implemented | `SCAVENGARR_*` env vars for secrets |
-| `HttpxPluginBase` | [x] Implemented | Shared base for 20 httpx plugins (client, domain fallback, semaphore) |
+| `HttpxPluginBase` | [x] Implemented | Shared base for 28 httpx plugins (client, domain fallback, semaphore) |
 | `PlaywrightPluginBase` | [x] Implemented | Shared base for 9 Playwright plugins (browser lifecycle, Cloudflare) |
 | Season/episode support | [x] Implemented | All plugins accept `season`/`episode` params for TV content |
 | Settings organization | [x] Implemented | Configurable settings at top of each plugin file |
@@ -100,22 +100,72 @@ Scavengarr includes a full Stremio addon that provides catalog browsing, search,
 
 ## Hoster Resolver System
 
-Runtime video URL extraction from streaming hosters. Resolves embed page URLs to direct `.mp4`/`.m3u8` video URLs.
+Validates file availability and extracts direct video URLs from streaming hosters. 39 resolvers across three categories.
+
+### Streaming resolvers (extract direct `.mp4`/`.m3u8` URLs)
+
+| Resolver | Status | Technique |
+|---|---|---|
+| VOE | [x] Implemented | Multi-method extraction (JSON, obfuscated JS) |
+| Streamtape | [x] Implemented | Token extraction from page source |
+| SuperVideo | [x] Implemented | XFS extraction + Playwright Cloudflare fallback |
+| DoodStream | [x] Implemented | `pass_md5` API extraction |
+| Filemoon | [x] Implemented | Packed JS unpacker + Byse SPA challenge flow |
+| Mixdrop | [x] Implemented | Token extraction, multi-domain |
+| VidGuard | [x] Implemented | Multi-domain embed resolution |
+| Vidking | [x] Implemented | Embed page validation |
+| Stmix | [x] Implemented | Embed page validation |
+| SerienStream | [x] Implemented | s.to / serien.sx domain matching |
+
+### DDL resolvers (validate file availability)
+
+| Resolver | Status | Technique |
+|---|---|---|
+| Filer.net | [x] Implemented | Public status API |
+| Rapidgator | [x] Implemented | Website scraping |
+| DDownload | [x] Implemented | XFS page check with canonical URL normalization |
+| Alfafile | [x] Implemented | Page scraping |
+| AlphaDDL | [x] Implemented | Page scraping |
+| Fastpic | [x] Implemented | Image host validation |
+| Filecrypt | [x] Implemented | Container validation |
+| FileFactory | [x] Implemented | Page scraping |
+| FSST | [x] Implemented | Page scraping |
+| Go4up | [x] Implemented | Mirror link validation |
+| Nitroflare | [x] Implemented | Page scraping |
+| 1fichier | [x] Implemented | Page scraping, multi-domain |
+| Turbobit | [x] Implemented | Page scraping, multi-domain |
+| Uploaded | [x] Implemented | Page scraping, multi-domain |
+
+### XFS consolidated resolvers (15 hosters via generic XFSResolver)
+
+| Resolver | Status | Details |
+|---|---|---|
+| Katfile | [x] Implemented | DDL XFS offline marker detection |
+| Hexupload | [x] Implemented | Standard XFS markers |
+| Clicknupload | [x] Implemented | Multi-domain (clicknupload, clickndownload) |
+| Filestore | [x] Implemented | Standard XFS markers |
+| Uptobox | [x] Implemented | Multi-domain (uptobox, uptostream) |
+| Funxd | [x] Implemented | `/e/`/`/d/` path prefix |
+| Bigwarp | [x] Implemented | Extended markers |
+| Dropload | [x] Implemented | Extended markers |
+| Goodstream | [x] Implemented | Extended markers |
+| Savefiles | [x] Implemented | Extended markers |
+| Streamwish | [x] Implemented | 9 domains, extended+custom markers |
+| Vidmoly | [x] Implemented | `/w/` path prefix support |
+| Vidoza | [x] Implemented | Multi-domain (vidoza, videzz) |
+| Vinovo | [x] Implemented | 12+ char file IDs |
+| Vidhide | [x] Implemented | 6 domains, lowercase-only IDs |
+
+### System features
 
 | Feature | Status | Details |
 |---|---|---|
-| VOE resolver | [x] Implemented | Multi-method extraction (JSON, obfuscated JS) |
-| Streamtape resolver | [x] Implemented | Token extraction from page source |
-| SuperVideo resolver | [x] Implemented | XFS extraction + Playwright Cloudflare fallback |
-| DoodStream resolver | [x] Implemented | `pass_md5` API extraction |
-| Filemoon resolver | [x] Implemented | Packed JS unpacker + Byse SPA challenge flow |
-| Filer.net resolver | [x] Implemented | DDL validation via public status API |
-| Katfile resolver | [x] Implemented | DDL XFS offline marker detection |
-| Rapidgator resolver | [x] Implemented | DDL validation via website scraping |
-| DDownload resolver | [x] Implemented | DDL XFS page check (ddownload.com / ddl.to) |
 | Content-type probing | [x] Implemented | Fallback: probe URL for direct video links |
 | URL domain priority | [x] Implemented | Match resolver by domain with redirect following |
 | Hoster hint fallback | [x] Implemented | Plugin-provided hoster name for rotating domains |
+| XFS consolidation | [x] Implemented | 15 XFS hosters share one parameterised resolver |
+| respx-based tests | [x] Implemented | All resolver tests use httpx-native HTTP mocking |
+| Live contract tests | [x] Implemented | Skeleton for resolver live/dead URL validation |
 
 ---
 
@@ -280,4 +330,4 @@ Infrastructure (implements Domain ports)
 | CLI | `src/scavengarr/interfaces/cli/` |
 | YAML plugin example | `plugins/filmpalast_to.yaml` |
 | Python plugin example | `plugins/boerse.py` |
-| Test suite (2531 tests) | `tests/` |
+| Test suite (3225 tests) | `tests/` |
