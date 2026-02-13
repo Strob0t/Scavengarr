@@ -3677,6 +3677,24 @@ greenlet = ">=3.1.1,<4.0.0"
 pyee = ">=13,<14"
 
 [[package]]
+name = "playwright-stealth"
+version = "2.0.1"
+description = "Make your playwright instance stealthy"
+optional = false
+python-versions = ">=3.9"
+groups = ["main"]
+files = [
+    {file = "playwright_stealth-2.0.1-py3-none-any.whl", hash = "sha256:3905776f45f175057dd9d7d1639280b8d639822580f15a01a2f9e7c35bff40af"},
+    {file = "playwright_stealth-2.0.1.tar.gz", hash = "sha256:a36f735d61469c12bda179b58d5fc4228bbee61c9cf5b1343b1497a5fd51ec1a"},
+]
+
+[package.dependencies]
+playwright = ">=1.40.0"
+
+[package.extras]
+black = ["black (>=25.9.0)"]
+
+[[package]]
 name = "pluggy"
 version = "1.6.0"
 description = "plugin and hook calling mechanisms for python"
@@ -6583,4 +6601,4 @@ testing = ["coverage[toml]", "zope.event", "zope.testing"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12,<3.14"
-content-hash = "71898684a7565449e720dd5d2830702921674f3bf28473105297822efbd7f1b5"
+content-hash = "0e0c81ee4312952ad17dd12b8b74e69a2b02197d9649fbd01e6606b67be4bbbb"

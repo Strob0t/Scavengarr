@@ -22,6 +22,9 @@ from playwright.async_api import (
 )
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
+from scavengarr.infrastructure.hoster_resolvers.cloudflare import (
+    is_cloudflare_challenge,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -37,20 +40,6 @@ _BROWSER_HEADERS = {
     ),
     "Accept-Language": "en-US,en;q=0.5",
 }
-
-
-def _is_cloudflare_block(status_code: int, html: str) -> bool:
-    """Detect Cloudflare block/challenge from HTTP response.
-
-    Cloudflare uses several block types:
-    - JS challenge: 503 + "Just a moment" / "challenge-platform"
-    - WAF block:    403 + "Attention Required" / "cf-error-details"
-    - Turnstile:    403 + "Just a moment" / "challenge-platform"
-    """
-    if status_code not in (403, 503):
-        return False
-    cf_markers = ("Just a moment", "challenge-platform", "cf-error-details")
-    return any(marker in html for marker in cf_markers)
 
 
 def _extract_jwplayer_source(html: str) -> str | None:
@@ -253,7 +242,7 @@ class SuperVideoResolver:
                     headers=headers,
                 )
 
-                if _is_cloudflare_block(resp.status_code, resp.text):
+                if is_cloudflare_challenge(resp.status_code, resp.text):
                     log.info(
                         "supervideo_cloudflare_detected",
                         status=resp.status_code,

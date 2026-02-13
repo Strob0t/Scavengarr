@@ -21,8 +21,9 @@ from scavengarr.infrastructure.hoster_resolvers.doodstream import DoodStreamReso
 from scavengarr.infrastructure.hoster_resolvers.filemoon import FilemoonResolver
 from scavengarr.infrastructure.hoster_resolvers.filernet import FilerNetResolver
 from scavengarr.infrastructure.hoster_resolvers.katfile import KatfileResolver
-from scavengarr.infrastructure.hoster_resolvers.probe import probe_urls
+from scavengarr.infrastructure.hoster_resolvers.probe import probe_urls_stealth
 from scavengarr.infrastructure.hoster_resolvers.rapidgator import RapidgatorResolver
+from scavengarr.infrastructure.hoster_resolvers.stealth_pool import StealthPool
 from scavengarr.infrastructure.hoster_resolvers.streamtape import StreamtapeResolver
 from scavengarr.infrastructure.hoster_resolvers.supervideo import SuperVideoResolver
 from scavengarr.infrastructure.hoster_resolvers.voe import VoeResolver
@@ -163,12 +164,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         ttl_seconds=config.stremio.stream_link_ttl_seconds,
     )
 
-    # 10) Stremio use cases (always initialized — fallback handles missing key)
+    # 10) Stealth pool (optional — for Cloudflare bypass probing)
+    if config.stremio.probe_stealth_enabled:
+        state.stealth_pool = StealthPool(
+            headless=config.playwright_headless,
+            timeout_ms=int(config.stremio.probe_stealth_timeout_seconds * 1000),
+        )
+        log.info("stealth_pool_configured")
+    else:
+        state.stealth_pool = None
+
+    # 11) Stremio use cases (always initialized — fallback handles missing key)
     probe_fn = functools.partial(
-        probe_urls,
+        probe_urls_stealth,
         state.http_client,
+        stealth_pool=state.stealth_pool,
         concurrency=config.stremio.probe_concurrency,
+        stealth_concurrency=config.stremio.probe_stealth_concurrency,
         timeout=config.stremio.probe_timeout_seconds,
+        stealth_timeout=config.stremio.probe_stealth_timeout_seconds,
     )
     state.stremio_stream_uc = StremioStreamUseCase(
         tmdb=state.tmdb_client,
@@ -185,6 +199,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        if state.stealth_pool is not None:
+            await state.stealth_pool.cleanup()
+            log.info("stealth_pool_cleaned_up")
+
         await state.hoster_resolver_registry.cleanup()
         log.info("hoster_resolvers_cleaned_up")
 

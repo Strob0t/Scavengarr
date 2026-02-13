@@ -12,8 +12,11 @@ from scavengarr.infrastructure.hoster_resolvers.probe import (
     _OFFLINE_MARKERS,
     _OFFLINE_STATUS_CODES,
     _is_error_redirect,
+    _probe_url_classified,
+    _ProbeOutcome,
     probe_url,
     probe_urls,
+    probe_urls_stealth,
 )
 
 # ---------------------------------------------------------------------------
@@ -158,15 +161,11 @@ class TestProbeUrlOfflineMarkers:
         assert await probe_url(client, _TEST_URL) is False
 
     async def test_copyright_ban(self) -> None:
-        client = _mock_client(
-            text="<p>This file was banned by copyright holder</p>"
-        )
+        client = _mock_client(text="<p>This file was banned by copyright holder</p>")
         assert await probe_url(client, _TEST_URL) is False
 
     async def test_maintenance_mode(self) -> None:
-        client = _mock_client(
-            text="<p>This server is in maintenance mode</p>"
-        )
+        client = _mock_client(text="<p>This server is in maintenance mode</p>")
         assert await probe_url(client, _TEST_URL) is False
 
     async def test_file_expired(self) -> None:
@@ -174,15 +173,11 @@ class TestProbeUrlOfflineMarkers:
         assert await probe_url(client, _TEST_URL) is False
 
     async def test_deleted_by_owner(self) -> None:
-        client = _mock_client(
-            text="<p>The file was deleted by its owner</p>"
-        )
+        client = _mock_client(text="<p>The file was deleted by its owner</p>")
         assert await probe_url(client, _TEST_URL) is False
 
     async def test_rapidgator_404(self) -> None:
-        client = _mock_client(
-            text="<div class='error'>404 File not found</div>"
-        )
+        client = _mock_client(text="<div class='error'>404 File not found</div>")
         assert await probe_url(client, _TEST_URL) is False
 
     async def test_file_unavailable(self) -> None:
@@ -194,9 +189,7 @@ class TestProbeUrlOfflineMarkers:
         assert await probe_url(client, _TEST_URL) is False
 
     async def test_file_not_available(self) -> None:
-        client = _mock_client(
-            text="<p>This file is not available anymore</p>"
-        )
+        client = _mock_client(text="<p>This file is not available anymore</p>")
         assert await probe_url(client, _TEST_URL) is False
 
     async def test_voe_server_overloaded(self) -> None:
@@ -220,9 +213,7 @@ class TestProbeUrlOfflineMarkers:
         assert await probe_url(client, _TEST_URL) is False
 
     async def test_file_looking_for_not_found(self) -> None:
-        client = _mock_client(
-            text="<p>File you are looking for is not found</p>"
-        )
+        client = _mock_client(text="<p>File you are looking for is not found</p>")
         assert await probe_url(client, _TEST_URL) is False
 
     async def test_the_file_was_deleted(self) -> None:
@@ -261,9 +252,7 @@ class TestProbeUrlErrors:
         assert await probe_url(client, _TEST_URL) is False
 
     async def test_http_timeout_error(self) -> None:
-        client = _mock_client(
-            side_effect=httpx.ReadTimeout("timeout")
-        )
+        client = _mock_client(side_effect=httpx.ReadTimeout("timeout"))
         assert await probe_url(client, _TEST_URL) is False
 
     async def test_generic_http_error(self) -> None:
@@ -363,3 +352,167 @@ class TestProbeUrls:
         await probe_urls(client, urls, concurrency=3, timeout=5)
 
         assert max_concurrent <= 3
+
+
+# ---------------------------------------------------------------------------
+# _probe_url_classified — Three-state classification
+# ---------------------------------------------------------------------------
+
+
+class TestProbeUrlClassified:
+    async def test_alive_page(self) -> None:
+        client = _mock_client(status_code=200)
+        outcome = await _probe_url_classified(client, _TEST_URL)
+        assert outcome == _ProbeOutcome.ALIVE
+
+    async def test_dead_404(self) -> None:
+        client = _mock_client(status_code=404)
+        outcome = await _probe_url_classified(client, _TEST_URL)
+        assert outcome == _ProbeOutcome.DEAD
+
+    async def test_dead_offline_marker(self) -> None:
+        client = _mock_client(text="<h1>File Not Found</h1>")
+        outcome = await _probe_url_classified(client, _TEST_URL)
+        assert outcome == _ProbeOutcome.DEAD
+
+    async def test_cloudflare_403_with_marker(self) -> None:
+        client = _mock_client(
+            status_code=403,
+            text="<html><title>Just a moment</title></html>",
+        )
+        outcome = await _probe_url_classified(client, _TEST_URL)
+        assert outcome == _ProbeOutcome.CLOUDFLARE
+
+    async def test_cloudflare_503_with_challenge(self) -> None:
+        client = _mock_client(
+            status_code=503,
+            text='<div id="challenge-platform">loading</div>',
+        )
+        outcome = await _probe_url_classified(client, _TEST_URL)
+        assert outcome == _ProbeOutcome.CLOUDFLARE
+
+    async def test_403_without_cf_markers_is_dead(self) -> None:
+        client = _mock_client(
+            status_code=403,
+            text="<html>Access denied</html>",
+        )
+        outcome = await _probe_url_classified(client, _TEST_URL)
+        assert outcome == _ProbeOutcome.DEAD
+
+    async def test_http_error_is_dead(self) -> None:
+        client = _mock_client(side_effect=httpx.ConnectError("refused"))
+        outcome = await _probe_url_classified(client, _TEST_URL)
+        assert outcome == _ProbeOutcome.DEAD
+
+
+# ---------------------------------------------------------------------------
+# probe_urls_stealth — Hybrid two-phase probe
+# ---------------------------------------------------------------------------
+
+
+class TestProbeUrlsStealth:
+    async def test_empty_list(self) -> None:
+        client = AsyncMock(spec=httpx.AsyncClient)
+        alive = await probe_urls_stealth(client, [])
+        assert alive == set()
+
+    async def test_all_alive_no_stealth_needed(self) -> None:
+        """All URLs alive via httpx — stealth pool never called."""
+        client = _mock_client(status_code=200)
+        mock_pool = AsyncMock()
+        mock_pool.probe_url = AsyncMock()
+
+        urls = [(0, _TEST_URL), (1, _TEST_URL)]
+        alive = await probe_urls_stealth(client, urls, stealth_pool=mock_pool)
+        assert alive == {0, 1}
+        mock_pool.probe_url.assert_not_awaited()
+
+    async def test_cf_urls_sent_to_stealth(self) -> None:
+        """Cloudflare-blocked URLs are forwarded to stealth pool."""
+        cf_html = "<html><title>Just a moment</title></html>"
+
+        responses = {
+            "https://a.com/e/1": _mock_response(url="https://a.com/e/1"),
+            "https://b.com/cf": _mock_response(
+                status_code=403, text=cf_html, url="https://b.com/cf"
+            ),
+        }
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(side_effect=lambda url, **kw: responses[url])
+
+        mock_pool = AsyncMock()
+        mock_pool.probe_url = AsyncMock(return_value=True)
+
+        urls = [(0, "https://a.com/e/1"), (1, "https://b.com/cf")]
+        alive = await probe_urls_stealth(client, urls, stealth_pool=mock_pool)
+
+        assert alive == {0, 1}
+        mock_pool.probe_url.assert_awaited_once()
+        call_url = mock_pool.probe_url.call_args[0][0]
+        assert call_url == "https://b.com/cf"
+
+    async def test_stealth_returns_dead(self) -> None:
+        """Stealth pool classifies CF URL as dead."""
+        cf_html = "<html><title>Just a moment</title></html>"
+
+        client = _mock_client(status_code=403, text=cf_html)
+        mock_pool = AsyncMock()
+        mock_pool.probe_url = AsyncMock(return_value=False)
+
+        urls = [(0, _TEST_URL)]
+        alive = await probe_urls_stealth(client, urls, stealth_pool=mock_pool)
+
+        assert alive == set()
+
+    async def test_no_stealth_pool_degrades_gracefully(self) -> None:
+        """Without stealth pool, CF URLs are treated as dead."""
+        cf_html = "<html><title>Just a moment</title></html>"
+
+        responses = {
+            "https://a.com/e/1": _mock_response(url="https://a.com/e/1"),
+            "https://b.com/cf": _mock_response(
+                status_code=403, text=cf_html, url="https://b.com/cf"
+            ),
+        }
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(side_effect=lambda url, **kw: responses[url])
+
+        urls = [(0, "https://a.com/e/1"), (1, "https://b.com/cf")]
+        alive = await probe_urls_stealth(client, urls, stealth_pool=None)
+
+        # Only httpx-alive URL passes; CF URL lost
+        assert alive == {0}
+
+    async def test_mixed_dead_alive_cf(self) -> None:
+        """Mix of dead, alive, and CF URLs."""
+        cf_html = "<html><title>Just a moment</title></html>"
+        dead_html = "<h1>File Not Found</h1>"
+        ok_html = "<html><body>Player</body></html>"
+
+        responses = {
+            "https://a.com/1": _mock_response(text=ok_html, url="https://a.com/1"),
+            "https://b.com/2": _mock_response(
+                status_code=404, text=dead_html, url="https://b.com/2"
+            ),
+            "https://c.com/3": _mock_response(
+                status_code=403, text=cf_html, url="https://c.com/3"
+            ),
+            "https://d.com/4": _mock_response(text=ok_html, url="https://d.com/4"),
+        }
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(side_effect=lambda url, **kw: responses[url])
+
+        mock_pool = AsyncMock()
+        mock_pool.probe_url = AsyncMock(return_value=True)
+
+        urls = [
+            (0, "https://a.com/1"),
+            (1, "https://b.com/2"),
+            (2, "https://c.com/3"),
+            (3, "https://d.com/4"),
+        ]
+        alive = await probe_urls_stealth(client, urls, stealth_pool=mock_pool)
+
+        # 0=alive, 1=dead, 2=CF→stealth→alive, 3=alive
+        assert alive == {0, 2, 3}

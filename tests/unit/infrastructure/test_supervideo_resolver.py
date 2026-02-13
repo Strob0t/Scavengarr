@@ -7,12 +7,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from scavengarr.infrastructure.hoster_resolvers.cloudflare import (
+    is_cloudflare_challenge,
+)
 from scavengarr.infrastructure.hoster_resolvers.supervideo import (
     SuperVideoResolver,
     _extract_html5_video,
     _extract_jwplayer_source,
     _extract_packed_eval,
-    _is_cloudflare_block,
     _unpack_p_a_c_k,
 )
 
@@ -60,26 +62,28 @@ class TestExtractHtml5Video:
 
 
 class TestIsCloudflareBlock:
+    """Kept for backward compat; delegates to shared cloudflare module."""
+
     def test_403_with_just_a_moment(self) -> None:
-        assert _is_cloudflare_block(403, "<title>Just a moment...</title>") is True
+        assert is_cloudflare_challenge(403, "<title>Just a moment...</title>") is True
 
     def test_503_with_challenge_platform(self) -> None:
-        assert _is_cloudflare_block(503, '<div id="challenge-platform">') is True
+        assert is_cloudflare_challenge(503, '<div id="challenge-platform">') is True
 
     def test_403_with_cf_error_details(self) -> None:
-        assert _is_cloudflare_block(403, '<div id="cf-error-details">') is True
+        assert is_cloudflare_challenge(403, '<div id="cf-error-details">') is True
 
-    def test_403_with_challenge_platform(self) -> None:
-        assert _is_cloudflare_block(403, "challenge-platform") is True
+    def test_403_with_challenge_platform_text(self) -> None:
+        assert is_cloudflare_challenge(403, "challenge-platform") is True
 
     def test_403_without_cloudflare_markers(self) -> None:
-        assert _is_cloudflare_block(403, "<html>Forbidden</html>") is False
+        assert is_cloudflare_challenge(403, "<html>Forbidden</html>") is False
 
     def test_200_with_just_a_moment(self) -> None:
-        assert _is_cloudflare_block(200, "Just a moment") is False
+        assert is_cloudflare_challenge(200, "Just a moment") is False
 
     def test_404_plain(self) -> None:
-        assert _is_cloudflare_block(404, "Not found") is False
+        assert is_cloudflare_challenge(404, "Not found") is False
 
 
 class TestUnpackPACK:

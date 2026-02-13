@@ -173,6 +173,19 @@ class StremioConfig(BaseModel):
         description="Max streams to probe at stream time (top-ranked first).",
     )
 
+    probe_stealth_enabled: bool = Field(
+        default=True,
+        description="Use Playwright Stealth to bypass Cloudflare for probed URLs.",
+    )
+    probe_stealth_concurrency: int = Field(
+        default=3,
+        description="Max parallel Playwright Stealth probes.",
+    )
+    probe_stealth_timeout_seconds: float = Field(
+        default=15.0,
+        description="Per-URL Playwright Stealth timeout in seconds.",
+    )
+
 
 class AppConfig(BaseModel):
     """
