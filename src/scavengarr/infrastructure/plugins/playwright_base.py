@@ -56,6 +56,9 @@ class PlaywrightPluginBase:
     _user_agent: str = DEFAULT_USER_AGENT
     _headless: bool = True
 
+    # --- Stealth mode (opt-in for Cloudflare bypass) ---
+    _stealth: bool = False
+
     # --- Cloudflare / navigation timeouts ---
     _cf_timeout_ms: int = 15_000
     _networkidle_timeout_ms: int = 10_000
@@ -92,13 +95,27 @@ class PlaywrightPluginBase:
         return self._browser
 
     async def _ensure_context(self) -> BrowserContext:
-        """Create browser context with standard user-agent."""
+        """Create browser context with standard user-agent.
+
+        When ``_stealth`` is True, applies playwright-stealth evasions
+        and blocks heavy resources (images, fonts, CSS) to reduce
+        fingerprinting and speed up navigation.
+        """
         if self._context is None:
             browser = await self._ensure_browser()
             self._context = await browser.new_context(
                 user_agent=self._user_agent,
                 viewport={"width": 1280, "height": 720},
             )
+            if self._stealth:
+                from playwright_stealth import Stealth
+
+                await Stealth().apply_stealth_async(self._context)
+                await self._context.route(
+                    "**/*.{png,jpg,jpeg,gif,svg,woff,woff2,ttf,css}",
+                    lambda route: route.abort(),
+                )
+                self._log.info(f"{self.name}_stealth_enabled")
         return self._context
 
     async def _ensure_page(self) -> Page:
