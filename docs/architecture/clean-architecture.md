@@ -227,7 +227,7 @@ Infrastructure implements the ports defined by Domain and provides concrete adap
 |---|---|---|
 | `CachePort` | `DiskcacheAdapter` | `cache/diskcache_adapter.py` |
 | `CachePort` | `RedisAdapter` | `cache/redis_adapter.py` |
-| `SearchEnginePort` | `HttpxScrapySearchEngine` | `torznab/search_engine.py` |
+| `SearchEnginePort` | `HttpxSearchEngine` | `torznab/search_engine.py` |
 | `PluginRegistryPort` | `PluginRegistry` | `plugins/registry.py` |
 | `LinkValidatorPort` | `HttpLinkValidator` | `validation/http_link_validator.py` |
 | `CrawlJobRepository` | `CacheCrawlJobRepository` | `persistence/crawljob_cache.py` |
@@ -301,7 +301,7 @@ The composition root is the **only place** where concrete implementations are wi
      ↓
 3. Plugin Registry (PluginRegistry with discovery)
      ↓
-4. Search Engine (HttpxScrapySearchEngine using HTTP client + cache)
+4. Search Engine (HttpxSearchEngine using HTTP client + cache)
      ↓
 5. CrawlJob Repository (CacheCrawlJobRepository using cache)
      ↓

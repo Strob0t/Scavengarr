@@ -55,7 +55,7 @@ from scavengarr.infrastructure.plugins import PluginRegistry
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.tmdb.client import HttpxTmdbClient
 from scavengarr.infrastructure.tmdb.imdb_fallback import ImdbFallbackClient
-from scavengarr.infrastructure.torznab.search_engine import HttpxScrapySearchEngine
+from scavengarr.infrastructure.torznab.search_engine import HttpxSearchEngine
 from scavengarr.interfaces.app_state import AppState
 
 log = structlog.get_logger(__name__)
@@ -133,7 +133,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     log.info("plugins_discovered", count=state.plugins.discovered_count)
 
     # 4) Search engine
-    state.search_engine = HttpxScrapySearchEngine(
+    state.search_engine = HttpxSearchEngine(
         http_client=state.http_client,
         cache=state.cache,
         validate_links=config.validate_download_links,

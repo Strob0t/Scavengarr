@@ -1,4 +1,4 @@
-"""Tests for HttpxScrapySearchEngine validation/filtering methods."""
+"""Tests for HttpxSearchEngine validation/filtering methods."""
 
 from __future__ import annotations
 
@@ -8,15 +8,15 @@ import httpx
 
 from scavengarr.domain.plugins import SearchResult
 from scavengarr.infrastructure.torznab.search_engine import (
-    HttpxScrapySearchEngine,
+    HttpxSearchEngine,
 )
 
 
 def _make_engine(
     validate_links: bool = False,
-) -> HttpxScrapySearchEngine:
+) -> HttpxSearchEngine:
     """Create engine with mock dependencies (validation off by default)."""
-    return HttpxScrapySearchEngine(
+    return HttpxSearchEngine(
         http_client=AsyncMock(spec=httpx.AsyncClient),
         cache=AsyncMock(),
         validate_links=validate_links,

@@ -135,7 +135,7 @@ src/scavengarr/
 │   │   └── imdb_fallback.py          # IMDB → title via Wikidata (no API key)
 │   ├── torznab/
 │   │   ├── presenter.py              # XML rendering (caps + RSS)
-│   │   └── search_engine.py          # HttpxScrapySearchEngine
+│   │   └── search_engine.py          # HttpxSearchEngine
 │   └── validation/
 │       ├── __init__.py               # Re-exports HttpLinkValidator
 │       └── http_link_validator.py    # HEAD/GET link validation
@@ -539,7 +539,7 @@ class SearchEnginePort(Protocol):
     async def validate_results(self, results: list[SearchResult]) -> list[SearchResult]: ...
 ```
 
-Implementation: `HttpxScrapySearchEngine`.
+Implementation: `HttpxSearchEngine`.
 
 #### `domain/ports/plugin_registry.py` -- PluginRegistryPort
 
@@ -906,12 +906,12 @@ Key methods:
 
 ### Search Engine
 
-#### `infrastructure/torznab/search_engine.py` -- HttpxScrapySearchEngine
+#### `infrastructure/torznab/search_engine.py` -- HttpxSearchEngine
 
 Orchestrates ScrapyAdapter and HttpLinkValidator. Implements `SearchEnginePort`.
 
 ```python
-class HttpxScrapySearchEngine:
+class HttpxSearchEngine:
     def __init__(
         self, *, http_client: httpx.AsyncClient, cache: CachePort,
         validate_links: bool = True,
@@ -1367,7 +1367,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 | 1 | Cache | `create_cache()` | `state.cache` |
 | 2 | HTTP Client | `httpx.AsyncClient()` | `state.http_client` |
 | 3 | Plugin Registry | `PluginRegistry()` + `discover()` | `state.plugins` |
-| 4 | Search Engine | `HttpxScrapySearchEngine()` | `state.search_engine` |
+| 4 | Search Engine | `HttpxSearchEngine()` | `state.search_engine` |
 | 5 | CrawlJob Repository | `CacheCrawlJobRepository()` | `state.crawljob_repo` |
 | 6 | CrawlJob Factory | `CrawlJobFactory()` | `state.crawljob_factory` |
 
@@ -1759,7 +1759,7 @@ Logging is **non-blocking**: all emission goes through a `QueueHandler` to a bac
 **Torznab search request:**
 ```
 Router → TorznabSearchUseCase → CachePort (search result caching, 900s TTL)
-                               → SearchEnginePort (→ HttpxScrapySearchEngine)
+                               → SearchEnginePort (→ HttpxSearchEngine)
                                → PluginRegistryPort (→ PluginRegistry)
                                → CrawlJobFactory
                                → CrawlJobRepository (→ CacheCrawlJobRepository → CachePort)

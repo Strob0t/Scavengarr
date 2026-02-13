@@ -206,7 +206,7 @@ Example: 50 URLs, 20 concurrency, 5s timeout
 
 ## Integration with Search Engine
 
-The `HttpxScrapySearchEngine` uses link validation as part of its search flow.
+The `HttpxSearchEngine` uses link validation as part of its search flow.
 
 ### URL Collection
 
@@ -298,7 +298,7 @@ Link validation can be disabled for specific use cases (e.g., testing, trusted s
 
 ```python
 # src/scavengarr/infrastructure/torznab/search_engine.py
-engine = HttpxScrapySearchEngine(
+engine = HttpxSearchEngine(
     http_client=client,
     cache=cache,
     validate_links=False,  # Skip validation
@@ -360,6 +360,6 @@ Link validation produces structured log messages at multiple levels:
 |---|---|
 | `LinkValidatorPort` (protocol) | `src/scavengarr/domain/ports/link_validator.py` |
 | `HttpLinkValidator` | `src/scavengarr/infrastructure/validation/http_link_validator.py` |
-| `HttpxScrapySearchEngine` (integration) | `src/scavengarr/infrastructure/torznab/search_engine.py` |
+| `HttpxSearchEngine` (integration) | `src/scavengarr/infrastructure/torznab/search_engine.py` |
 | Unit tests (validator) | `tests/unit/infrastructure/test_link_validator.py` |
 | Unit tests (search engine) | `tests/unit/infrastructure/test_search_engine.py` |

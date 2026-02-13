@@ -12,7 +12,7 @@ from scavengarr.infrastructure.validation import HttpLinkValidator
 log = structlog.get_logger(__name__)
 
 
-class HttpxScrapySearchEngine:
+class HttpxSearchEngine:
     """Search engine providing link validation for Python plugin results.
 
     Features:

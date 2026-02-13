@@ -151,14 +151,14 @@ class ScrapyAdapter:
     ): ...
 ```
 
-### `HttpxScrapySearchEngine`
+### `HttpxSearchEngine`
 
-`HttpxScrapySearchEngine` wraps the adapter and adds link validation. This is the class
+`HttpxSearchEngine` wraps the adapter and adds link validation. This is the class
 used by the Torznab use case.
 
 ```python
 # src/scavengarr/infrastructure/torznab/search_engine.py
-class HttpxScrapySearchEngine:
+class HttpxSearchEngine:
     async def search(self, plugin, query: str, **params) -> list[SearchResult]:
         # 1. Create ScrapyAdapter
         # 2. Execute multi-stage scrape
@@ -373,7 +373,7 @@ from being fetched twice during a single scrape operation. URLs are added to the
 
 ### Result-Level Deduplication
 
-`HttpxScrapySearchEngine._convert_stage_results()` deduplicates by `(title, download_link)` tuple:
+`HttpxSearchEngine._convert_stage_results()` deduplicates by `(title, download_link)` tuple:
 
 ```python
 # src/scavengarr/infrastructure/torznab/search_engine.py
@@ -452,7 +452,7 @@ categories:
 |---|---|
 | `StageScraper` | `src/scavengarr/infrastructure/scraping/scrapy_adapter.py` |
 | `ScrapyAdapter` | `src/scavengarr/infrastructure/scraping/scrapy_adapter.py` |
-| `HttpxScrapySearchEngine` | `src/scavengarr/infrastructure/torznab/search_engine.py` |
+| `HttpxSearchEngine` | `src/scavengarr/infrastructure/torznab/search_engine.py` |
 | `ScrapingStage` (schema) | `src/scavengarr/domain/plugins/plugin_schema.py` |
 | `StageSelectors` (schema) | `src/scavengarr/domain/plugins/plugin_schema.py` |
 | `NestedSelector` (schema) | `src/scavengarr/domain/plugins/plugin_schema.py` |
