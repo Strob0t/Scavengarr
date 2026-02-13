@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import textwrap
 from pathlib import Path
 
 import pytest
 
 from scavengarr.infrastructure.plugins.registry import PluginRegistry
+
+
+def _write_plugin(tmp_path: Path, filename: str, code: str) -> None:
+    """Write a Python plugin file with proper formatting."""
+    (tmp_path / filename).write_text(textwrap.dedent(code))
 
 
 @pytest.fixture()
@@ -18,71 +24,58 @@ def registry(tmp_path: Path) -> PluginRegistry:
 class TestGetByProvides:
     """Tests for get_by_provides filtering."""
 
-    def test_yaml_download_default(
-        self, registry: PluginRegistry, tmp_path: Path
-    ) -> None:
-        """YAML plugin without provides field defaults to 'download'."""
-        yaml_content = """\
-name: "test-dl"
-version: "1.0.0"
-base_url: "https://example.com"
-scraping:
-  mode: "scrapy"
-  stages:
-    - name: "search"
-      type: "list"
-      url: "/search"
-      selectors:
-        link: "a"
-"""
-        (tmp_path / "test-dl.yaml").write_text(yaml_content)
+    def test_download_default(self, registry: PluginRegistry, tmp_path: Path) -> None:
+        """Plugin without provides field defaults to 'download'."""
+        _write_plugin(
+            tmp_path,
+            "test_dl.py",
+            """\
+            class _Plugin:
+                name = "test-dl"
+                async def search(self, query, category=None):
+                    return []
+            plugin = _Plugin()
+            """,
+        )
 
         names = registry.get_by_provides("download")
 
         assert "test-dl" in names
 
-    def test_yaml_stream_explicit(
-        self, registry: PluginRegistry, tmp_path: Path
-    ) -> None:
-        """YAML plugin with provides='stream' is returned for stream queries."""
-        yaml_content = """\
-name: "test-stream"
-version: "1.0.0"
-base_url: "https://example.com"
-provides: "stream"
-scraping:
-  mode: "scrapy"
-  stages:
-    - name: "search"
-      type: "list"
-      url: "/search"
-      selectors:
-        link: "a"
-"""
-        (tmp_path / "test-stream.yaml").write_text(yaml_content)
+    def test_stream_explicit(self, registry: PluginRegistry, tmp_path: Path) -> None:
+        """Plugin with provides='stream' is returned for stream queries."""
+        _write_plugin(
+            tmp_path,
+            "test_stream.py",
+            """\
+            class _Plugin:
+                name = "test-stream"
+                provides = "stream"
+                async def search(self, query, category=None):
+                    return []
+            plugin = _Plugin()
+            """,
+        )
 
         assert "test-stream" in registry.get_by_provides("stream")
         assert "test-stream" not in registry.get_by_provides("download")
 
-    def test_yaml_both_returned_for_either(
+    def test_both_returned_for_either(
         self, registry: PluginRegistry, tmp_path: Path
     ) -> None:
-        """YAML plugin with provides='both' is returned for both stream and download."""
-        yaml_content = """\
-name: "test-both"
-version: "1.0.0"
-base_url: "https://example.com"
-provides: "both"
-scraping:
-  mode: "scrapy"
-  stages:
-    - name: "search"
-      type: "list"
-      url: "/search"
-      selectors:
-        link: "a"
-"""
-        (tmp_path / "test-both.yaml").write_text(yaml_content)
+        """Plugin with provides='both' is returned for both stream and download."""
+        _write_plugin(
+            tmp_path,
+            "test_both.py",
+            """\
+            class _Plugin:
+                name = "test-both"
+                provides = "both"
+                async def search(self, query, category=None):
+                    return []
+            plugin = _Plugin()
+            """,
+        )
 
         assert "test-both" in registry.get_by_provides("stream")
         assert "test-both" in registry.get_by_provides("download")
@@ -95,36 +88,30 @@ scraping:
     def test_mixed_plugins_filtered(
         self, registry: PluginRegistry, tmp_path: Path
     ) -> None:
-        """Multiple YAML plugins are correctly filtered by provides type."""
-        dl_yaml = """\
-name: "dl-plugin"
-version: "1.0.0"
-base_url: "https://dl.example.com"
-scraping:
-  mode: "scrapy"
-  stages:
-    - name: "search"
-      type: "list"
-      url: "/search"
-      selectors:
-        link: "a"
-"""
-        stream_yaml = """\
-name: "stream-plugin"
-version: "1.0.0"
-base_url: "https://stream.example.com"
-provides: "stream"
-scraping:
-  mode: "scrapy"
-  stages:
-    - name: "search"
-      type: "list"
-      url: "/search"
-      selectors:
-        link: "a"
-"""
-        (tmp_path / "dl.yaml").write_text(dl_yaml)
-        (tmp_path / "stream.yaml").write_text(stream_yaml)
+        """Multiple plugins are correctly filtered by provides type."""
+        _write_plugin(
+            tmp_path,
+            "dl.py",
+            """\
+            class _Plugin:
+                name = "dl-plugin"
+                async def search(self, query, category=None):
+                    return []
+            plugin = _Plugin()
+            """,
+        )
+        _write_plugin(
+            tmp_path,
+            "stream.py",
+            """\
+            class _Plugin:
+                name = "stream-plugin"
+                provides = "stream"
+                async def search(self, query, category=None):
+                    return []
+            plugin = _Plugin()
+            """,
+        )
 
         dl_names = registry.get_by_provides("download")
         stream_names = registry.get_by_provides("stream")
@@ -142,20 +129,17 @@ class TestMetadataCache:
         self, registry: PluginRegistry, tmp_path: Path
     ) -> None:
         """Metadata cache is populated after first get_by_provides() call."""
-        yaml_content = """\
-name: "cache-test"
-version: "1.0.0"
-base_url: "https://example.com"
-scraping:
-  mode: "scrapy"
-  stages:
-    - name: "search"
-      type: "list"
-      url: "/search"
-      selectors:
-        link: "a"
-"""
-        (tmp_path / "cache-test.yaml").write_text(yaml_content)
+        _write_plugin(
+            tmp_path,
+            "cache_test.py",
+            """\
+            class _Plugin:
+                name = "cache-test"
+                async def search(self, query, category=None):
+                    return []
+            plugin = _Plugin()
+            """,
+        )
 
         assert not registry._meta_cached
         registry.get_by_provides("download")
@@ -166,20 +150,17 @@ scraping:
         self, registry: PluginRegistry, tmp_path: Path
     ) -> None:
         """Second get_by_provides() call uses cached metadata."""
-        yaml_content = """\
-name: "cached-plugin"
-version: "1.0.0"
-base_url: "https://example.com"
-scraping:
-  mode: "scrapy"
-  stages:
-    - name: "search"
-      type: "list"
-      url: "/search"
-      selectors:
-        link: "a"
-"""
-        (tmp_path / "cached-plugin.yaml").write_text(yaml_content)
+        _write_plugin(
+            tmp_path,
+            "cached_plugin.py",
+            """\
+            class _Plugin:
+                name = "cached-plugin"
+                async def search(self, query, category=None):
+                    return []
+            plugin = _Plugin()
+            """,
+        )
 
         result1 = registry.get_by_provides("download")
         result2 = registry.get_by_provides("download")

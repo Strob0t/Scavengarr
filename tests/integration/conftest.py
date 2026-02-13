@@ -1,7 +1,7 @@
 """Shared fixtures for integration tests.
 
 These tests use real infrastructure components (DiskcacheAdapter,
-HttpLinkValidator, ScrapyAdapter, etc.) with mocked HTTP via respx.
+HttpLinkValidator, etc.) with mocked HTTP via respx.
 """
 
 from __future__ import annotations

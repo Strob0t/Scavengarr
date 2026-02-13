@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 from html.parser import HTMLParser
-from urllib.parse import urljoin, quote_plus
+from urllib.parse import quote_plus, urljoin
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
@@ -144,9 +144,7 @@ class _SearchResultParser(HTMLParser):
                     title = self._current_title.strip()
                     href = self._current_href.strip()
                     if title and href:
-                        self.results.append(
-                            {"title": title, "detail_url": href}
-                        )
+                        self.results.append({"title": title, "detail_url": href})
 
 
 class _DetailPageParser(HTMLParser):
@@ -177,9 +175,7 @@ class _DetailPageParser(HTMLParser):
         self._current_hoster = ""
         self._current_href = ""
 
-    def handle_starttag(
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attr_dict = dict(attrs)
         classes = (attr_dict.get("class", "") or "").split()
 
@@ -216,9 +212,7 @@ class _DetailPageParser(HTMLParser):
             href = self._current_href.strip()
             hoster = self._current_hoster.strip()
             if href:
-                self.links.append(
-                    {"hoster": hoster or "unknown", "link": href}
-                )
+                self.links.append({"hoster": hoster or "unknown", "link": href})
         elif tag == "div" and self._in_download_div:
             if self._download_depth > 0:
                 self._download_depth -= 1
@@ -278,9 +272,7 @@ class ScnlogPlugin(HttpxPluginBase):
         )
         return parser.results, next_url
 
-    async def _scrape_detail(
-        self, detail_url: str
-    ) -> tuple[str, list[dict[str, str]]]:
+    async def _scrape_detail(self, detail_url: str) -> tuple[str, list[dict[str, str]]]:
         """Scrape a detail page for title and download links.
 
         Returns ``(title, links)`` where links is a list of
@@ -294,30 +286,13 @@ class ScnlogPlugin(HttpxPluginBase):
         parser.feed(resp.text)
         return parser.title.strip(), parser.links
 
-    async def search(
+    async def _paginate_search(
         self,
         query: str,
-        category: int | None = None,
-        season: int | None = None,
-        episode: int | None = None,
-    ) -> list[SearchResult]:
-        """Search scnlog.me and return results with download links.
-
-        Stage 1: Search pages with pagination for detail page URLs.
-        Stage 2: Detail pages for download links (bounded concurrency).
-        """
-        await self._ensure_client()
-        await self._verify_domain()
-
-        # Map category to path segment
-        category_path = ""
-        if category is not None:
-            category_path = _CATEGORY_MAP.get(category, "")
-
-        # Paginate through search results
-        first_results, next_url = await self._search_page(
-            query, category_path
-        )
+        category_path: str,
+    ) -> list[dict[str, str]]:
+        """Paginate through search result pages and collect detail items."""
+        first_results, next_url = await self._search_page(query, category_path)
         all_items = list(first_results)
 
         if not all_items and not next_url:
@@ -337,7 +312,25 @@ class ScnlogPlugin(HttpxPluginBase):
             all_items.extend(page_results)
             pages_fetched += 1
 
-        all_items = all_items[: self.effective_max_results]
+        return all_items[: self.effective_max_results]
+
+    async def search(
+        self,
+        query: str,
+        category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
+    ) -> list[SearchResult]:
+        """Search scnlog.me and return results with download links.
+
+        Stage 1: Search pages with pagination for detail page URLs.
+        Stage 2: Detail pages for download links (bounded concurrency).
+        """
+        await self._ensure_client()
+        await self._verify_domain()
+
+        category_path = _CATEGORY_MAP.get(category, "") if category else ""
+        all_items = await self._paginate_search(query, category_path)
         if not all_items:
             return []
 

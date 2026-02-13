@@ -1,4 +1,4 @@
-"""Live smoke tests for all 34 plugins.
+"""Live smoke tests for plugins.
 
 Each test hits the real website and verifies the plugin can still scrape
 valid results. Network errors and Cloudflare blocks are handled gracefully
@@ -13,13 +13,11 @@ Run:
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 
 import httpx
 import pytest
 
 from scavengarr.domain.plugins.base import SearchResult
-from scavengarr.domain.plugins.plugin_schema import YamlPluginDefinition
 from scavengarr.infrastructure.plugins.registry import PluginRegistry
 
 from .conftest import AUTH_ENV_VARS, chromium_available, has_auth
@@ -30,12 +28,6 @@ pytestmark = pytest.mark.live
 # Plugin lists: (registry_name, search_query)
 # ---------------------------------------------------------------------------
 
-YAML_PLUGINS: list[tuple[str, str]] = [
-    ("filmpalast", "Iron Man"),
-    ("scnlog", "Iron Man"),
-    ("warezomen", "Iron Man"),
-]
-
 HTTPX_PLUGINS: list[tuple[str, str]] = [
     ("aniworld", "Naruto"),
     ("burningseries", "Breaking Bad"),
@@ -43,6 +35,7 @@ HTTPX_PLUGINS: list[tuple[str, str]] = [
     ("dataload", "Iron Man"),
     ("einschalten", "Iron Man"),
     ("filmfans", "Iron Man"),
+    ("filmpalast", "Iron Man"),
     ("fireani", "Naruto"),
     ("haschcon", "Iron Man"),
     ("hdfilme", "Iron Man"),
@@ -55,12 +48,14 @@ HTTPX_PLUGINS: list[tuple[str, str]] = [
     ("movie2k", "Iron Man"),
     ("movie4k", "Iron Man"),
     ("nox", "Iron Man"),
+    ("scnlog", "Iron Man"),
     ("serienfans", "Breaking Bad"),
     ("myboerse", "Iron Man"),
     ("nima4k", "Iron Man"),
     ("sto", "Breaking Bad"),
     ("streamcloud", "Iron Man"),
     ("streamkiste", "Iron Man"),
+    ("warezomen", "Iron Man"),
 ]
 
 PLAYWRIGHT_PLUGINS: list[tuple[str, str]] = [
@@ -125,40 +120,7 @@ def _assert_results(results: list[SearchResult], plugin_name: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# YAML plugin tests (3 plugins via HttpxScrapySearchEngine)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(("plugin_name", "query"), YAML_PLUGINS)
-async def test_yaml_plugin_smoke(
-    plugin_name: str,
-    query: str,
-    plugin_registry: PluginRegistry,
-    yaml_search_engine: Any,
-) -> None:
-    """YAML plugins: scrape via HttpxScrapySearchEngine."""
-    plugin = plugin_registry.get(plugin_name)
-    assert isinstance(plugin, YamlPluginDefinition), (
-        f"Expected YAML plugin, got {type(plugin).__name__}"
-    )
-
-    try:
-        results = await asyncio.wait_for(
-            yaml_search_engine.search(plugin, query),
-            timeout=60.0,
-        )
-    except _NETWORK_ERRORS:
-        pytest.skip(f"Network error reaching {plugin_name} — site may be down.")
-    except Exception as exc:
-        if _is_cloudflare_block(exc):
-            pytest.skip(f"Cloudflare block on {plugin_name}.")
-        raise
-
-    _assert_results(results, plugin_name)
-
-
-# ---------------------------------------------------------------------------
-# Httpx plugin tests (20 plugins via direct plugin.search())
+# Httpx plugin tests (direct plugin.search())
 # ---------------------------------------------------------------------------
 
 
@@ -197,7 +159,7 @@ async def test_httpx_plugin_smoke(
 
 
 # ---------------------------------------------------------------------------
-# Playwright plugin tests (9 plugins via browser-based search)
+# Playwright plugin tests (browser-based search)
 # ---------------------------------------------------------------------------
 
 

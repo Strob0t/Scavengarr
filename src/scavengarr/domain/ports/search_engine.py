@@ -1,18 +1,14 @@
-"""Port for multi-stage search execution."""
+"""Port for search result validation."""
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Protocol
 
 from scavengarr.domain.plugins.base import SearchResult
 
 
 class SearchEnginePort(Protocol):
-    """Async interface for executing plugin-driven search pipelines."""
-
-    async def search(
-        self, plugin: Any, query: str, **params: Any
-    ) -> list[SearchResult]: ...
+    """Async interface for validating search results."""
 
     async def validate_results(
         self, results: list[SearchResult]

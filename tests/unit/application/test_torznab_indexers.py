@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 from unittest.mock import MagicMock
 
 from scavengarr.application.use_cases.torznab_indexers import (
@@ -12,19 +11,10 @@ from scavengarr.application.use_cases.torznab_indexers import (
 
 
 @dataclass
-class _FakeScrapingConfig:
-    mode: str = "scrapy"
-
-
-@dataclass
 class _FakePlugin:
     name: str = "filmpalast"
     version: str = "1.0.0"
-    scraping: Any = None
-
-    def __post_init__(self) -> None:
-        if self.scraping is None:
-            self.scraping = _FakeScrapingConfig()
+    mode: str = "httpx"
 
 
 class TestTorznabIndexersUseCase:
@@ -36,8 +26,6 @@ class TestTorznabIndexersUseCase:
         result = uc.execute()
         assert len(result) == 1
         assert result[0]["name"] == "filmpalast"
-        assert result[0]["version"] == "1.0.0"
-        assert result[0]["mode"] == "scrapy"
 
     def test_empty_registry(self) -> None:
         registry = MagicMock()

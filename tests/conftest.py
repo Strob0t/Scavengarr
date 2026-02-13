@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -86,31 +85,13 @@ def crawljob_factory() -> CrawlJobFactory:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class FakePlugin:
-    """Minimal fake plugin satisfying PluginRegistryPort.get() return."""
-
-    name: str = "filmpalast"
-    version: str = "1.0.0"
-    scraping: Any = None
-
-    def __post_init__(self) -> None:
-        if self.scraping is None:
-            self.scraping = _FakeScrapingConfig()
-
-
-@dataclass
-class _FakeScrapingConfig:
-    mode: str = "scrapy"
+@pytest.fixture()
+def fake_plugin() -> FakePythonPlugin:
+    return FakePythonPlugin(name="filmpalast")
 
 
 @pytest.fixture()
-def fake_plugin() -> FakePlugin:
-    return FakePlugin()
-
-
-@pytest.fixture()
-def mock_plugin_registry(fake_plugin: FakePlugin) -> MagicMock:
+def mock_plugin_registry(fake_plugin: FakePythonPlugin) -> MagicMock:
     """Mock PluginRegistryPort (synchronous methods)."""
     registry = MagicMock()
     registry.discover.return_value = None

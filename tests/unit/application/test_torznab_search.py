@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -19,33 +18,18 @@ from scavengarr.domain.entities import (
     TorznabExternalError,
     TorznabPluginNotFound,
     TorznabQuery,
-    TorznabUnsupportedPlugin,
 )
 from scavengarr.domain.plugins import SearchResult
 
 
-@dataclass
-class _FakeScrapingConfig:
-    mode: str = "scrapy"
-
-
-@dataclass
-class _FakePlugin:
-    name: str = "filmpalast"
-    version: str = "1.0.0"
-    scraping: Any = None
-
-    def __post_init__(self) -> None:
-        if self.scraping is None:
-            self.scraping = _FakeScrapingConfig()
-
-
 class _FakePythonPlugin:
-    """Python plugin: has search(), no scraping attribute."""
+    """Minimal fake Python plugin for inline test use."""
 
-    def __init__(self) -> None:
-        self.name = "boerse"
-        self.base_url = "https://boerse.am"
+    def __init__(
+        self, name: str = "boerse", base_url: str = "https://boerse.am"
+    ) -> None:
+        self.name = name
+        self.base_url = base_url
         self._results: list[Any] = []
 
     async def search(
@@ -138,108 +122,8 @@ class TestPluginValidation:
         with pytest.raises(TorznabPluginNotFound):
             await uc.execute(q)
 
-    async def test_unsupported_mode(
-        self,
-        mock_search_engine: AsyncMock,
-        mock_crawljob_repo: AsyncMock,
-    ) -> None:
-        plugin = _FakePlugin(scraping=_FakeScrapingConfig(mode="playwright"))
-        registry = MagicMock()
-        registry.get.return_value = plugin
-        uc = _make_uc(registry, mock_search_engine, mock_crawljob_repo)
-        q = TorznabQuery(
-            action="search",
-            plugin_name="filmpalast",
-            query="test",
-        )
-        with pytest.raises(TorznabUnsupportedPlugin):
-            await uc.execute(q)
-
 
 class TestSearchExecution:
-    async def test_empty_results(
-        self,
-        mock_plugin_registry: MagicMock,
-        mock_search_engine: AsyncMock,
-        mock_crawljob_repo: AsyncMock,
-    ) -> None:
-        mock_search_engine.search.return_value = []
-        uc = _make_uc(
-            mock_plugin_registry,
-            mock_search_engine,
-            mock_crawljob_repo,
-        )
-        q = TorznabQuery(
-            action="search",
-            plugin_name="filmpalast",
-            query="unknown movie",
-        )
-        response = await uc.execute(q)
-        assert response.items == []
-
-    async def test_happy_path_returns_torznab_items(
-        self,
-        mock_plugin_registry: MagicMock,
-        mock_search_engine: AsyncMock,
-        mock_crawljob_repo: AsyncMock,
-        search_result: SearchResult,
-    ) -> None:
-        mock_search_engine.search.return_value = [search_result]
-        uc = _make_uc(
-            mock_plugin_registry,
-            mock_search_engine,
-            mock_crawljob_repo,
-        )
-        q = TorznabQuery(
-            action="search",
-            plugin_name="filmpalast",
-            query="iron man",
-        )
-        response = await uc.execute(q)
-        assert len(response.items) == 1
-        assert response.items[0].title == search_result.title
-        assert response.items[0].job_id is not None
-        assert len(response.items[0].job_id) == 36  # UUID4
-
-    async def test_crawljob_saved_to_repo(
-        self,
-        mock_plugin_registry: MagicMock,
-        mock_search_engine: AsyncMock,
-        mock_crawljob_repo: AsyncMock,
-        search_result: SearchResult,
-    ) -> None:
-        mock_search_engine.search.return_value = [search_result]
-        uc = _make_uc(
-            mock_plugin_registry,
-            mock_search_engine,
-            mock_crawljob_repo,
-        )
-        q = TorznabQuery(
-            action="search",
-            plugin_name="filmpalast",
-            query="iron man",
-        )
-        await uc.execute(q)
-        mock_crawljob_repo.save.assert_awaited_once()
-
-    async def test_engine_error_raises_external_error(
-        self,
-        mock_plugin_registry: MagicMock,
-        mock_crawljob_repo: AsyncMock,
-    ) -> None:
-        engine = AsyncMock()
-        engine.search.side_effect = RuntimeError("connection failed")
-        uc = _make_uc(mock_plugin_registry, engine, mock_crawljob_repo)
-        q = TorznabQuery(
-            action="search",
-            plugin_name="filmpalast",
-            query="test",
-        )
-        with pytest.raises(TorznabExternalError):
-            await uc.execute(q)
-
-
-class TestPythonPluginDispatch:
     async def test_happy_path(
         self,
         mock_search_engine: AsyncMock,
@@ -249,7 +133,7 @@ class TestPythonPluginDispatch:
             title="SpongeBob",
             download_link="https://example.com/dl",
         )
-        py_plugin = _FakePythonPlugin()
+        py_plugin = _FakePythonPlugin(name="filmpalast")
         py_plugin._results = [result]
 
         registry = MagicMock()
@@ -259,7 +143,7 @@ class TestPythonPluginDispatch:
         uc = _make_uc(registry, mock_search_engine, mock_crawljob_repo)
         q = TorznabQuery(
             action="search",
-            plugin_name="boerse",
+            plugin_name="filmpalast",
             query="SpongeBob",
         )
         response = await uc.execute(q)
@@ -267,15 +151,15 @@ class TestPythonPluginDispatch:
         assert len(response.items) == 1
         assert response.items[0].title == "SpongeBob"
         assert response.items[0].job_id is not None
+        assert len(response.items[0].job_id) == 36  # UUID4
         mock_search_engine.validate_results.assert_awaited_once_with([result])
-        mock_search_engine.search.assert_not_awaited()
 
     async def test_empty_results(
         self,
         mock_search_engine: AsyncMock,
         mock_crawljob_repo: AsyncMock,
     ) -> None:
-        py_plugin = _FakePythonPlugin()
+        py_plugin = _FakePythonPlugin(name="filmpalast")
         py_plugin._results = []
 
         registry = MagicMock()
@@ -285,7 +169,7 @@ class TestPythonPluginDispatch:
         uc = _make_uc(registry, mock_search_engine, mock_crawljob_repo)
         q = TorznabQuery(
             action="search",
-            plugin_name="boerse",
+            plugin_name="filmpalast",
             query="nothing",
         )
         response = await uc.execute(q)
@@ -296,9 +180,8 @@ class TestPythonPluginDispatch:
         mock_search_engine: AsyncMock,
         mock_crawljob_repo: AsyncMock,
     ) -> None:
-        py_plugin = _FakePythonPlugin()
+        py_plugin = _FakePythonPlugin(name="filmpalast")
 
-        # Make the search method raise
         async def _failing_search(query: str, category: int | None = None) -> list:
             raise RuntimeError("login failed")
 
@@ -310,10 +193,10 @@ class TestPythonPluginDispatch:
         uc = _make_uc(registry, mock_search_engine, mock_crawljob_repo)
         q = TorznabQuery(
             action="search",
-            plugin_name="boerse",
+            plugin_name="filmpalast",
             query="test",
         )
-        with pytest.raises(TorznabExternalError, match="Python plugin"):
+        with pytest.raises(TorznabExternalError, match="Plugin search"):
             await uc.execute(q)
 
     async def test_validate_results_called(
@@ -325,7 +208,7 @@ class TestPythonPluginDispatch:
             title="Movie",
             download_link="https://example.com/dl",
         )
-        py_plugin = _FakePythonPlugin()
+        py_plugin = _FakePythonPlugin(name="filmpalast")
         py_plugin._results = [result]
 
         registry = MagicMock()
@@ -335,11 +218,59 @@ class TestPythonPluginDispatch:
         uc = _make_uc(registry, mock_search_engine, mock_crawljob_repo)
         q = TorznabQuery(
             action="search",
-            plugin_name="boerse",
+            plugin_name="filmpalast",
             query="test",
         )
         await uc.execute(q)
         mock_search_engine.validate_results.assert_awaited_once()
+
+    async def test_crawljob_saved_to_repo(
+        self,
+        mock_search_engine: AsyncMock,
+        mock_crawljob_repo: AsyncMock,
+        search_result: SearchResult,
+    ) -> None:
+        py_plugin = _FakePythonPlugin(name="filmpalast")
+        py_plugin._results = [search_result]
+
+        registry = MagicMock()
+        registry.get.return_value = py_plugin
+        mock_search_engine.validate_results.return_value = [search_result]
+
+        uc = _make_uc(registry, mock_search_engine, mock_crawljob_repo)
+        q = TorznabQuery(
+            action="search",
+            plugin_name="filmpalast",
+            query="iron man",
+        )
+        await uc.execute(q)
+        mock_crawljob_repo.save.assert_awaited_once()
+
+    async def test_validation_error_raises_external_error(
+        self,
+        mock_crawljob_repo: AsyncMock,
+    ) -> None:
+        result = SearchResult(
+            title="Movie",
+            download_link="https://example.com/dl",
+        )
+        py_plugin = _FakePythonPlugin(name="filmpalast")
+        py_plugin._results = [result]
+
+        registry = MagicMock()
+        registry.get.return_value = py_plugin
+
+        engine = AsyncMock()
+        engine.validate_results.side_effect = RuntimeError("validation crash")
+
+        uc = _make_uc(registry, engine, mock_crawljob_repo)
+        q = TorznabQuery(
+            action="search",
+            plugin_name="filmpalast",
+            query="test",
+        )
+        with pytest.raises(TorznabExternalError, match="Result validation"):
+            await uc.execute(q)
 
 
 class TestSearchCacheKey:
@@ -403,10 +334,10 @@ class TestSearchCaching:
 
         assert response.cache_hit is True
         assert len(response.items) == 1
-        mock_search_engine.search.assert_not_awaited()
 
     async def test_cache_miss_executes_search(
         self,
+        fake_plugin: _FakePythonPlugin,
         mock_plugin_registry: MagicMock,
         mock_search_engine: AsyncMock,
         mock_crawljob_repo: AsyncMock,
@@ -414,7 +345,8 @@ class TestSearchCaching:
         search_result: SearchResult,
     ) -> None:
         mock_cache.get.return_value = None
-        mock_search_engine.search.return_value = [search_result]
+        fake_plugin._results = [search_result]
+        mock_search_engine.validate_results.return_value = [search_result]
         uc = _make_uc(
             mock_plugin_registry,
             mock_search_engine,
@@ -430,10 +362,10 @@ class TestSearchCaching:
 
         assert response.cache_hit is False
         assert len(response.items) == 1
-        mock_search_engine.search.assert_awaited_once()
 
     async def test_cache_stores_results_after_miss(
         self,
+        fake_plugin: _FakePythonPlugin,
         mock_plugin_registry: MagicMock,
         mock_search_engine: AsyncMock,
         mock_crawljob_repo: AsyncMock,
@@ -441,7 +373,8 @@ class TestSearchCaching:
         search_result: SearchResult,
     ) -> None:
         mock_cache.get.return_value = None
-        mock_search_engine.search.return_value = [search_result]
+        fake_plugin._results = [search_result]
+        mock_search_engine.validate_results.return_value = [search_result]
         uc = _make_uc(
             mock_plugin_registry,
             mock_search_engine,
@@ -467,7 +400,7 @@ class TestSearchCaching:
         mock_crawljob_repo: AsyncMock,
         mock_cache: AsyncMock,
     ) -> None:
-        mock_search_engine.search.return_value = []
+        mock_search_engine.validate_results.return_value = []
         uc = _make_uc(
             mock_plugin_registry,
             mock_search_engine,
@@ -491,7 +424,7 @@ class TestSearchCaching:
         mock_search_engine: AsyncMock,
         mock_crawljob_repo: AsyncMock,
     ) -> None:
-        mock_search_engine.search.return_value = []
+        mock_search_engine.validate_results.return_value = []
         uc = _make_uc(
             mock_plugin_registry,
             mock_search_engine,
@@ -508,6 +441,7 @@ class TestSearchCaching:
 
     async def test_cache_read_error_falls_back_to_search(
         self,
+        fake_plugin: _FakePythonPlugin,
         mock_plugin_registry: MagicMock,
         mock_search_engine: AsyncMock,
         mock_crawljob_repo: AsyncMock,
@@ -515,7 +449,8 @@ class TestSearchCaching:
         search_result: SearchResult,
     ) -> None:
         mock_cache.get.side_effect = RuntimeError("cache down")
-        mock_search_engine.search.return_value = [search_result]
+        fake_plugin._results = [search_result]
+        mock_search_engine.validate_results.return_value = [search_result]
         uc = _make_uc(
             mock_plugin_registry,
             mock_search_engine,
@@ -531,10 +466,10 @@ class TestSearchCaching:
 
         assert response.cache_hit is False
         assert len(response.items) == 1
-        mock_search_engine.search.assert_awaited_once()
 
     async def test_cache_write_error_does_not_fail(
         self,
+        fake_plugin: _FakePythonPlugin,
         mock_plugin_registry: MagicMock,
         mock_search_engine: AsyncMock,
         mock_crawljob_repo: AsyncMock,
@@ -543,7 +478,8 @@ class TestSearchCaching:
     ) -> None:
         mock_cache.get.return_value = None
         mock_cache.set.side_effect = RuntimeError("cache write failed")
-        mock_search_engine.search.return_value = [search_result]
+        fake_plugin._results = [search_result]
+        mock_search_engine.validate_results.return_value = [search_result]
         uc = _make_uc(
             mock_plugin_registry,
             mock_search_engine,
@@ -567,7 +503,7 @@ class TestSearchCaching:
         mock_cache: AsyncMock,
     ) -> None:
         mock_cache.get.return_value = None
-        mock_search_engine.search.return_value = []
+        mock_search_engine.validate_results.return_value = []
         uc = _make_uc(
             mock_plugin_registry,
             mock_search_engine,
@@ -615,7 +551,7 @@ class TestSearchCaching:
         mock_search_engine: AsyncMock,
         mock_crawljob_repo: AsyncMock,
     ) -> None:
-        mock_search_engine.search.return_value = []
+        mock_search_engine.validate_results.return_value = []
         uc = _make_uc(
             mock_plugin_registry,
             mock_search_engine,
@@ -637,12 +573,13 @@ class TestSearchCaching:
         search_result: SearchResult,
     ) -> None:
         """Plugin with cache_ttl=300 should override global search_ttl=900."""
-        plugin = _FakePlugin()
+        plugin = _FakePythonPlugin(name="filmpalast")
+        plugin._results = [search_result]
         plugin.cache_ttl = 300  # type: ignore[attr-defined]
         registry = MagicMock()
         registry.get.return_value = plugin
         mock_cache.get.return_value = None
-        mock_search_engine.search.return_value = [search_result]
+        mock_search_engine.validate_results.return_value = [search_result]
         uc = _make_uc(
             registry,
             mock_search_engine,
@@ -662,6 +599,7 @@ class TestSearchCaching:
 
     async def test_plugin_without_cache_ttl_uses_global(
         self,
+        fake_plugin: _FakePythonPlugin,
         mock_plugin_registry: MagicMock,
         mock_search_engine: AsyncMock,
         mock_crawljob_repo: AsyncMock,
@@ -670,7 +608,8 @@ class TestSearchCaching:
     ) -> None:
         """Plugin without cache_ttl should use global search_ttl."""
         mock_cache.get.return_value = None
-        mock_search_engine.search.return_value = [search_result]
+        fake_plugin._results = [search_result]
+        mock_search_engine.validate_results.return_value = [search_result]
         uc = _make_uc(
             mock_plugin_registry,
             mock_search_engine,

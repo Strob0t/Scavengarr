@@ -4,30 +4,24 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
 
 import structlog
-import yaml
 
 from scavengarr.domain.plugins import (
     DuplicatePluginError,
     PluginNotFoundError,
     PluginProtocol,
     PluginProvides,
-    YamlPluginDefinition,
 )
 
-from .loader import load_python_plugin, load_yaml_plugin
+from .loader import load_python_plugin
 
 log = structlog.get_logger(__name__)
-
-PluginType = Literal["yaml", "python"]
 
 
 @dataclass(frozen=True)
 class _PluginRef:
     path: Path
-    plugin_type: PluginType
 
 
 @dataclass(frozen=True)
@@ -45,10 +39,10 @@ class PluginRegistry:
     Lazy-loading plugin registry with metadata caching.
 
     discover():
-      - indexes files only (no YAML parsing, no Python execution)
+      - indexes .py files only (no Python execution)
 
-    get()/get_by_mode()/load_all()/list_names():
-      - may load/parse on demand and cache results
+    get()/load_all()/list_names():
+      - may load on demand and cache results
 
     Metadata caching:
       - get_by_provides() caches plugin metadata on first call so
@@ -62,7 +56,6 @@ class PluginRegistry:
         self._meta_cache: dict[str, _PluginMeta] = {}
         self._meta_cached: bool = False
 
-        self._yaml_cache: dict[str, YamlPluginDefinition] = {}
         self._python_cache: dict[str, PluginProtocol] = {}
 
     @property
@@ -92,13 +85,8 @@ class PluginRegistry:
         for path in sorted(self._plugin_dir.iterdir(), key=lambda p: p.name):
             if path.is_dir():
                 continue
-            suffix = path.suffix.lower()
-            if suffix in {".yaml", ".yml"}:
-                self._refs.append(_PluginRef(path=path, plugin_type="yaml"))
-            elif suffix == ".py":
-                self._refs.append(_PluginRef(path=path, plugin_type="python"))
-            else:
-                continue
+            if path.suffix.lower() == ".py":
+                self._refs.append(_PluginRef(path=path))
 
         log.info(
             "plugins_discovered",
@@ -119,33 +107,22 @@ class PluginRegistry:
             if name is None:
                 continue
             if name in names:
-                # list_names should not crash the app;
-                # duplicates are surfaced on load_all()
                 continue
             names.add(name)
             out.append(name)
 
         return sorted(out)
 
-    def get(self, name: str) -> YamlPluginDefinition | PluginProtocol:
+    def get(self, name: str) -> PluginProtocol:
         self.discover()
 
-        if name in self._yaml_cache:
-            return self._yaml_cache[name]
         if name in self._python_cache:
             return self._python_cache[name]
 
-        # Find first matching plugin by peeking the name from the file.
         for ref in self._refs:
             ref_name = self._peek_name(ref)
             if ref_name != name:
                 continue
-
-            if ref.plugin_type == "yaml":
-                plugin = load_yaml_plugin(ref.path)
-                self._yaml_cache[plugin.name] = plugin
-                log.info("plugin_loaded", plugin_name=plugin.name, plugin_type="yaml")
-                return plugin
 
             plugin = load_python_plugin(ref.path)
             self._python_cache[plugin.name] = plugin
@@ -153,26 +130,6 @@ class PluginRegistry:
             return plugin
 
         raise PluginNotFoundError(f"Plugin '{name}' not found")
-
-    def get_by_mode(
-        self, mode: Literal["scrapy", "playwright"]
-    ) -> list[YamlPluginDefinition]:
-        """
-        Return YAML plugins filtered by scraping mode.
-        Python plugins are intentionally excluded.
-        """
-        self.discover()
-
-        result: list[YamlPluginDefinition] = []
-        for ref in self._refs:
-            if ref.plugin_type != "yaml":
-                continue
-
-            plugin = self._load_yaml(ref)
-            if plugin.scraping.mode == mode:
-                result.append(plugin)
-
-        return sorted(result, key=lambda p: p.name)
 
     def get_by_provides(self, provides: PluginProvides) -> list[str]:
         """Return plugin names filtered by their ``provides`` attribute.
@@ -196,22 +153,13 @@ class PluginRegistry:
             return
 
         for ref in self._refs:
-            if ref.plugin_type == "yaml":
-                plugin = self._load_yaml(ref)
-                self._meta_cache[plugin.name] = _PluginMeta(
-                    name=plugin.name,
-                    provides=plugin.provides,
-                    mode=plugin.scraping.mode,
-                    language=getattr(plugin, "default_language", "de"),
-                )
-            else:
-                py_plugin = self._load_python(ref)
-                self._meta_cache[py_plugin.name] = _PluginMeta(
-                    name=py_plugin.name,
-                    provides=getattr(py_plugin, "provides", "download"),
-                    mode=getattr(py_plugin, "mode", "httpx"),
-                    language=getattr(py_plugin, "default_language", "de"),
-                )
+            py_plugin = self._load_python(ref)
+            self._meta_cache[py_plugin.name] = _PluginMeta(
+                name=py_plugin.name,
+                provides=getattr(py_plugin, "provides", "download"),
+                mode=getattr(py_plugin, "mode", "httpx"),
+                language=getattr(py_plugin, "default_language", "de"),
+            )
 
         self._meta_cached = True
         log.debug(
@@ -230,32 +178,12 @@ class PluginRegistry:
         loaded_names: set[str] = set()
 
         for ref in self._refs:
-            if ref.plugin_type == "yaml":
-                plugin = self._load_yaml(ref)
-                if plugin.name in loaded_names:
-                    raise DuplicatePluginError(
-                        f"Plugin name '{plugin.name}' already exists"
-                    )
-                loaded_names.add(plugin.name)
-                continue
-
             plugin = self._load_python(ref)
             if plugin.name in loaded_names:
                 raise DuplicatePluginError(
                     f"Plugin name '{plugin.name}' already exists"
                 )
             loaded_names.add(plugin.name)
-
-    def _load_yaml(self, ref: _PluginRef) -> YamlPluginDefinition:
-        # If already cached by name, return it. But name is
-        # only known after parsing; parse once, cache by name.
-        plugin = load_yaml_plugin(ref.path)
-        cached = self._yaml_cache.get(plugin.name)
-        if cached is not None:
-            return cached
-        self._yaml_cache[plugin.name] = plugin
-        log.info("plugin_loaded", plugin_name=plugin.name, plugin_type="yaml")
-        return plugin
 
     def _load_python(self, ref: _PluginRef) -> PluginProtocol:
         plugin = load_python_plugin(ref.path)
@@ -268,24 +196,8 @@ class PluginRegistry:
 
     def _peek_name(self, ref: _PluginRef) -> str | None:
         """
-        Peek plugin name without full validation where possible.
-
-        - YAML: yaml.safe_load + read top-level 'name'
-        - Python: import module and read plugin.name
-          (this executes code; acceptable outside discover())
+        Peek plugin name by importing the module and reading plugin.name.
         """
-        if ref.plugin_type == "yaml":
-            try:
-                raw = ref.path.read_text(encoding="utf-8")
-                data = yaml.safe_load(raw)
-                if not isinstance(data, dict):
-                    return None
-                name = data.get("name")
-                return name if isinstance(name, str) and name.strip() else None
-            except Exception:
-                return None
-
-        # python
         try:
             plugin = load_python_plugin(ref.path)
             return plugin.name

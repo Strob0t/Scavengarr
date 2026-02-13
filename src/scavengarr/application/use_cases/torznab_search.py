@@ -16,7 +16,6 @@ from scavengarr.domain.entities import (
     TorznabItem,
     TorznabPluginNotFound,
     TorznabQuery,
-    TorznabUnsupportedPlugin,
 )
 from scavengarr.domain.ports import PluginRegistryPort
 from scavengarr.domain.ports.cache import CachePort
@@ -41,24 +40,16 @@ class SearchResponse:
     cache_hit: bool = False
 
 
-def _is_python_plugin(plugin: Any) -> bool:
-    """Detect Python plugins (have search() method, no scraping config)."""
-    return (
-        hasattr(plugin, "search")
-        and callable(plugin.search)
-        and not hasattr(plugin, "scraping")
-    )
-
-
 class TorznabSearchUseCase:
     """Executes Torznab search queries with link validation and CrawlJob generation.
 
     Flow:
         1. Validate query and plugin
-        2. Execute search via SearchEngine (includes link validation)
-        3. Convert each SearchResult → CrawlJob (via Factory)
-        4. Store CrawlJobs in repository
-        5. Return enriched TorznabItems with job_id fields
+        2. Execute search via Python plugin
+        3. Validate download links via SearchEngine
+        4. Convert each SearchResult -> CrawlJob (via Factory)
+        5. Store CrawlJobs in repository
+        6. Return enriched TorznabItems with job_id fields
     """
 
     def __init__(
@@ -99,7 +90,6 @@ class TorznabSearchUseCase:
         Raises:
             TorznabBadRequest: Invalid query parameters.
             TorznabPluginNotFound: Plugin does not exist.
-            TorznabUnsupportedPlugin: Plugin has unsupported scraping mode.
             TorznabExternalError: Search engine failure.
         """
         # Validate query
@@ -123,10 +113,7 @@ class TorznabSearchUseCase:
 
         # --- cache miss: execute search ---
         if raw_results is None:
-            if _is_python_plugin(plugin):
-                raw_results = await self._execute_python_plugin(plugin, q)
-            else:
-                raw_results = await self._execute_yaml_plugin(plugin, q)
+            raw_results = await self._execute_plugin(plugin, q)
 
             if raw_results:
                 await self._cache_write(cache_key, raw_results, q, plugin)
@@ -199,7 +186,7 @@ class TorznabSearchUseCase:
                 exc_info=True,
             )
 
-    async def _execute_python_plugin(
+    async def _execute_plugin(
         self,
         plugin: Any,
         q: TorznabQuery,
@@ -208,38 +195,12 @@ class TorznabSearchUseCase:
         try:
             raw_results = await plugin.search(q.query, category=q.category)
         except Exception as e:
-            raise TorznabExternalError(f"Python plugin search error: {e!s}") from e
+            raise TorznabExternalError(f"Plugin search error: {e!s}") from e
 
         try:
             return await self.engine.validate_results(raw_results)
         except Exception as e:
             raise TorznabExternalError(f"Result validation error: {e!s}") from e
-
-    async def _execute_yaml_plugin(
-        self,
-        plugin: Any,
-        q: TorznabQuery,
-    ) -> list[Any]:
-        """Execute search via YAML plugin through the Scrapy engine."""
-        try:
-            mode = plugin.scraping.mode
-        except Exception as e:
-            raise TorznabUnsupportedPlugin(
-                "Plugin does not expose scraping.mode"
-            ) from e
-        if mode != "scrapy":
-            raise TorznabUnsupportedPlugin(f"Unsupported scraping.mode: {mode}")
-
-        try:
-            return await self.engine.search(
-                plugin,
-                q.query,
-                category=q.category,
-            )
-        except TorznabExternalError:
-            raise
-        except Exception as e:
-            raise TorznabExternalError(f"Search engine error: {e!s}") from e
 
     async def _build_torznab_items(
         self,

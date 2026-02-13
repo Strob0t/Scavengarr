@@ -10,7 +10,6 @@ router logic are exercised.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from xml.etree import ElementTree as ET
@@ -33,35 +32,18 @@ _PREFIX = "/api/v1"
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class _FakeScrapingConfig:
-    mode: str = "scrapy"
-
-
-@dataclass
-class _FakeYamlPlugin:
-    """Minimal YAML-style plugin (has scraping.mode)."""
-
-    name: str = "filmpalast"
-    version: str = "1.0.0"
-    base_url: str = "https://filmpalast.to"
-    scraping: Any = None
-
-    def __post_init__(self) -> None:
-        if self.scraping is None:
-            self.scraping = _FakeScrapingConfig()
-
-
 class _FakePythonPlugin:
-    """Minimal Python-style plugin (has search(), no scraping)."""
+    """Minimal Python-style plugin (has search())."""
 
     def __init__(
         self,
         name: str = "boerse",
         base_url: str = "https://boerse.am",
+        version: str = "1.0.0",
     ) -> None:
         self.name = name
         self.base_url = base_url
+        self.version = version
         self._results: list[SearchResult] = []
 
     async def search(
@@ -80,17 +62,6 @@ class _FakePluginNoBaseUrl:
 
     async def search(self, query: str, category: int | None = None) -> list:
         return []
-
-
-class _FakePluginBadMode:
-    """Plugin with unsupported scraping mode."""
-
-    name = "badmode"
-    version = "1.0.0"
-    base_url = "https://example.com"
-
-    def __init__(self) -> None:
-        self.scraping = _FakeScrapingConfig(mode="playwright")
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +140,9 @@ class TestIndexersEndpoint:
     def test_returns_plugin_list(self) -> None:
         plugins = MagicMock()
         plugins.list_names.return_value = ["filmpalast", "boerse"]
-        plugin_fp = _FakeYamlPlugin(name="filmpalast")
+        plugin_fp = _FakePythonPlugin(
+            name="filmpalast", base_url="https://filmpalast.to"
+        )
         plugin_bo = _FakePythonPlugin(name="boerse")
         plugins.get.side_effect = lambda n: (
             plugin_fp if n == "filmpalast" else plugin_bo
@@ -199,10 +172,13 @@ class TestIndexersEndpoint:
         assert resp.status_code == 200
         assert resp.json()["indexers"] == []
 
-    def test_returns_mode_for_yaml_plugin(self) -> None:
+    def test_returns_mode_for_plugin_with_mode(self) -> None:
+        plugin = _FakePythonPlugin(name="filmpalast")
+        plugin.mode = "httpx"  # type: ignore[attr-defined]
+
         plugins = MagicMock()
         plugins.list_names.return_value = ["filmpalast"]
-        plugins.get.return_value = _FakeYamlPlugin()
+        plugins.get.return_value = plugin
 
         app = _make_app(plugins=plugins)
         client = TestClient(app)
@@ -210,7 +186,7 @@ class TestIndexersEndpoint:
         resp = client.get(f"{_PREFIX}/torznab/indexers")
 
         indexer = resp.json()["indexers"][0]
-        assert indexer["mode"] == "scrapy"
+        assert indexer["mode"] == "httpx"
 
     def test_returns_null_mode_for_python_plugin(self) -> None:
         plugins = MagicMock()
@@ -236,7 +212,7 @@ class TestCapsEndpoint:
 
     def test_happy_path(self) -> None:
         plugins = MagicMock()
-        plugins.get.return_value = _FakeYamlPlugin(name="filmpalast")
+        plugins.get.return_value = _FakePythonPlugin(name="filmpalast")
 
         app = _make_app(plugins=plugins)
         client = TestClient(app)
@@ -256,7 +232,7 @@ class TestCapsEndpoint:
 
     def test_caps_has_limits(self) -> None:
         plugins = MagicMock()
-        plugins.get.return_value = _FakeYamlPlugin()
+        plugins.get.return_value = _FakePythonPlugin()
 
         app = _make_app(plugins=plugins)
         client = TestClient(app)
@@ -271,7 +247,7 @@ class TestCapsEndpoint:
 
     def test_caps_has_categories(self) -> None:
         plugins = MagicMock()
-        plugins.get.return_value = _FakeYamlPlugin()
+        plugins.get.return_value = _FakePythonPlugin()
 
         app = _make_app(plugins=plugins)
         client = TestClient(app)
@@ -288,7 +264,7 @@ class TestCapsEndpoint:
 
     def test_caps_has_search_params(self) -> None:
         plugins = MagicMock()
-        plugins.get.return_value = _FakeYamlPlugin()
+        plugins.get.return_value = _FakePythonPlugin()
 
         app = _make_app(plugins=plugins)
         client = TestClient(app)
@@ -325,7 +301,7 @@ class TestCapsEndpoint:
 class TestSearchHappyPath:
     """GET /api/v1/torznab/{plugin}?t=search&q=..."""
 
-    def test_python_plugin_returns_items(self) -> None:
+    def test_plugin_returns_items(self) -> None:
         result = _make_search_result()
         py_plugin = _FakePythonPlugin()
         py_plugin._results = [result]
@@ -350,28 +326,6 @@ class TestSearchHappyPath:
         channel = root.find("channel")
         assert channel is not None
         items = channel.findall("item")
-        assert len(items) == 1
-
-    def test_yaml_plugin_returns_items(self) -> None:
-        result = _make_search_result()
-        yaml_plugin = _FakeYamlPlugin()
-
-        plugins = MagicMock()
-        plugins.get.return_value = yaml_plugin
-
-        engine = AsyncMock()
-        engine.search = AsyncMock(return_value=[result])
-
-        repo = AsyncMock()
-
-        app = _make_app(plugins=plugins, search_engine=engine, crawljob_repo=repo)
-        client = TestClient(app)
-
-        resp = client.get(f"{_PREFIX}/torznab/filmpalast?t=search&q=iron+man")
-
-        assert resp.status_code == 200
-        root = _parse_xml(resp.content)
-        items = root.findall(".//item")
         assert len(items) == 1
 
     def test_empty_results(self) -> None:
@@ -419,29 +373,26 @@ class TestSearchHappyPath:
         items = _parse_xml(resp.content).findall(".//item")
         assert len(items) == 5
 
-    def test_category_passed_to_query(self) -> None:
+    def test_category_passed_to_plugin(self) -> None:
         result = _make_search_result()
-        yaml_plugin = _FakeYamlPlugin()
+        py_plugin = _FakePythonPlugin()
+        py_plugin.search = AsyncMock(return_value=[result])  # type: ignore[method-assign]
 
         plugins = MagicMock()
-        plugins.get.return_value = yaml_plugin
+        plugins.get.return_value = py_plugin
 
         engine = AsyncMock()
-        engine.search = AsyncMock(return_value=[result])
+        engine.validate_results = AsyncMock(return_value=[result])
 
         repo = AsyncMock()
 
         app = _make_app(plugins=plugins, search_engine=engine, crawljob_repo=repo)
         client = TestClient(app)
 
-        resp = client.get(f"{_PREFIX}/torznab/filmpalast?t=search&q=test&cat=5000")
+        resp = client.get(f"{_PREFIX}/torznab/boerse?t=search&q=test&cat=5000")
 
         assert resp.status_code == 200
-        # Verify category was passed to the engine
-        call_args = engine.search.call_args
-        assert call_args is not None
-        # engine.search(plugin, query, category=category)
-        assert call_args.kwargs.get("category") == 5000
+        py_plugin.search.assert_called_once_with("test", category=5000)
 
     def test_crawljob_generated_and_stored(self) -> None:
         result = _make_search_result()
@@ -547,7 +498,7 @@ class TestSearchEmptyQuery:
 
     def test_no_query_returns_200_with_description_dev(self) -> None:
         plugins = MagicMock()
-        plugins.get.return_value = _FakeYamlPlugin()
+        plugins.get.return_value = _FakePythonPlugin()
 
         app = _make_app(plugins=plugins, environment="dev")
         client = TestClient(app)
@@ -562,7 +513,7 @@ class TestSearchEmptyQuery:
 
     def test_no_query_returns_200_no_description_prod(self) -> None:
         plugins = MagicMock()
-        plugins.get.return_value = _FakeYamlPlugin()
+        plugins.get.return_value = _FakePythonPlugin()
 
         app = _make_app(plugins=plugins, environment="prod")
         client = TestClient(app)
@@ -691,7 +642,7 @@ class TestSearchErrorHandling:
 
     def test_unsupported_action_returns_422(self) -> None:
         plugins = MagicMock()
-        plugins.get.return_value = _FakeYamlPlugin()
+        plugins.get.return_value = _FakePythonPlugin()
 
         app = _make_app(plugins=plugins)
         client = TestClient(app)
@@ -704,32 +655,22 @@ class TestSearchErrorHandling:
         assert desc is not None
         assert "Unsupported" in desc
 
-    def test_unsupported_plugin_mode_returns_422(self) -> None:
-        plugins = MagicMock()
-        plugins.get.return_value = _FakePluginBadMode()
-
-        engine = AsyncMock()
-        # Let the real use case detect the bad mode
-        app = _make_app(plugins=plugins, search_engine=engine)
-        client = TestClient(app)
-
-        resp = client.get(f"{_PREFIX}/torznab/badmode?t=search&q=test")
-
-        assert resp.status_code == 422
-
-    def test_search_engine_error_returns_502_dev(self) -> None:
-        yaml_plugin = _FakeYamlPlugin()
+    def test_validate_results_error_returns_502_dev(self) -> None:
+        py_plugin = _FakePythonPlugin()
+        py_plugin._results = [_make_search_result()]
 
         plugins = MagicMock()
-        plugins.get.return_value = yaml_plugin
+        plugins.get.return_value = py_plugin
 
         engine = AsyncMock()
-        engine.search = AsyncMock(side_effect=RuntimeError("connection refused"))
+        engine.validate_results = AsyncMock(
+            side_effect=RuntimeError("connection refused")
+        )
 
         app = _make_app(plugins=plugins, search_engine=engine, environment="dev")
         client = TestClient(app)
 
-        resp = client.get(f"{_PREFIX}/torznab/filmpalast?t=search&q=test")
+        resp = client.get(f"{_PREFIX}/torznab/boerse?t=search&q=test")
 
         assert resp.status_code == 502
         root = _parse_xml(resp.content)
@@ -754,13 +695,15 @@ class TestSearchErrorHandling:
 
         assert resp.status_code == 502
 
-    def test_unhandled_exception_returns_500_dev(self) -> None:
+    def test_unhandled_exception_returns_200_with_zero_items(self) -> None:
+        py_plugin = _FakePythonPlugin()
+        py_plugin._results = [_make_search_result()]
+
         plugins = MagicMock()
-        # Make get() work but trigger error later in the flow
-        plugins.get.return_value = _FakeYamlPlugin()
+        plugins.get.return_value = py_plugin
 
         engine = AsyncMock()
-        engine.search = AsyncMock(return_value=[_make_search_result()])
+        engine.validate_results = AsyncMock(return_value=[_make_search_result()])
 
         repo = AsyncMock()
         # Trigger unhandled error during CrawlJob save
@@ -778,7 +721,7 @@ class TestSearchErrorHandling:
         )
         client = TestClient(app)
 
-        resp = client.get(f"{_PREFIX}/torznab/filmpalast?t=search&q=test")
+        resp = client.get(f"{_PREFIX}/torznab/boerse?t=search&q=test")
 
         # The use case catches per-item exceptions, so items will be skipped.
         # This should still return 200 with 0 items (not a 500) because the
@@ -787,12 +730,9 @@ class TestSearchErrorHandling:
         items = _parse_xml(resp.content).findall(".//item")
         assert len(items) == 0
 
-    def test_truly_unhandled_exception_returns_500(self) -> None:
+    def test_truly_unhandled_exception_returns_502(self) -> None:
         """An error that escapes all try/except in the use case."""
         plugins = MagicMock()
-        # get() works, but the plugin has search() and no scraping,
-        # so the use case calls validate_results, which we make blow up
-        # with a non-TorznabError so it becomes TorznabExternalError -> 502
         py_plugin = _FakePythonPlugin()
         py_plugin._results = [_make_search_result()]
         plugins.get.return_value = py_plugin
@@ -834,18 +774,20 @@ class TestSearchProdMode:
         assert "not found" not in desc.lower()
 
     def test_external_error_returns_200_prod(self) -> None:
-        yaml_plugin = _FakeYamlPlugin()
+        py_plugin = _FakePythonPlugin()
+        py_plugin.search = AsyncMock(  # type: ignore[method-assign]
+            side_effect=RuntimeError("network error")
+        )
 
         plugins = MagicMock()
-        plugins.get.return_value = yaml_plugin
+        plugins.get.return_value = py_plugin
 
         engine = AsyncMock()
-        engine.search = AsyncMock(side_effect=RuntimeError("network error"))
 
         app = _make_app(plugins=plugins, search_engine=engine, environment="prod")
         client = TestClient(app)
 
-        resp = client.get(f"{_PREFIX}/torznab/filmpalast?t=search&q=test")
+        resp = client.get(f"{_PREFIX}/torznab/boerse?t=search&q=test")
 
         # Prod: external errors return 200 (Prowlarr compatibility)
         assert resp.status_code == 200
@@ -853,7 +795,7 @@ class TestSearchProdMode:
     def test_unsupported_action_returns_422_prod(self) -> None:
         """Unsupported action returns 422 even in prod (client error)."""
         plugins = MagicMock()
-        plugins.get.return_value = _FakeYamlPlugin()
+        plugins.get.return_value = _FakePythonPlugin()
 
         app = _make_app(plugins=plugins, environment="prod")
         client = TestClient(app)
@@ -877,7 +819,7 @@ class TestHealthEndpoint:
     """GET /api/v1/torznab/{plugin}/health"""
 
     def test_reachable(self) -> None:
-        plugin = _FakeYamlPlugin(base_url="https://filmpalast.to")
+        plugin = _FakePythonPlugin(name="filmpalast", base_url="https://filmpalast.to")
 
         plugins = MagicMock()
         plugins.get.return_value = plugin
@@ -900,7 +842,7 @@ class TestHealthEndpoint:
         assert data["base_url"] == "https://filmpalast.to"
 
     def test_unreachable(self) -> None:
-        plugin = _FakeYamlPlugin(base_url="https://filmpalast.to")
+        plugin = _FakePythonPlugin(name="filmpalast", base_url="https://filmpalast.to")
 
         plugins = MagicMock()
         plugins.get.return_value = plugin
@@ -951,8 +893,11 @@ class TestHealthEndpoint:
         assert "no base_url" in data["error"]
 
     def test_mirror_fallback_when_primary_unreachable(self) -> None:
-        plugin = _FakeYamlPlugin(base_url="https://primary.to")
-        plugin.mirror_urls = ["https://mirror1.to", "https://mirror2.to"]  # type: ignore[attr-defined]
+        plugin = _FakePythonPlugin(name="filmpalast", base_url="https://primary.to")
+        plugin.mirror_urls = [  # type: ignore[attr-defined]
+            "https://mirror1.to",
+            "https://mirror2.to",
+        ]
 
         plugins = MagicMock()
         plugins.get.return_value = plugin
@@ -991,7 +936,7 @@ class TestHealthEndpoint:
         assert mirror2[0]["reachable"] is True
 
     def test_mirrors_not_probed_when_primary_reachable(self) -> None:
-        plugin = _FakeYamlPlugin(base_url="https://filmpalast.to")
+        plugin = _FakePythonPlugin(name="filmpalast", base_url="https://filmpalast.to")
         plugin.mirror_urls = ["https://mirror1.to"]  # type: ignore[attr-defined]
 
         plugins = MagicMock()

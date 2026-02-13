@@ -87,10 +87,10 @@ class TestTorznabCaps:
 
 class TestTorznabIndexInfo:
     def test_creation(self) -> None:
-        info = TorznabIndexInfo(name="filmpalast", version="1.0.0", mode="scrapy")
+        info = TorznabIndexInfo(name="filmpalast", version="1.0.0", mode="httpx")
         assert info.name == "filmpalast"
         assert info.version == "1.0.0"
-        assert info.mode == "scrapy"
+        assert info.mode == "httpx"
 
     def test_nullable_fields(self) -> None:
         info = TorznabIndexInfo(name="test", version=None, mode=None)

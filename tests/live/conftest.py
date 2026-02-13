@@ -9,12 +9,9 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-import httpx
 import pytest
 
-from scavengarr.infrastructure.cache.diskcache_adapter import DiskcacheAdapter
 from scavengarr.infrastructure.plugins.registry import PluginRegistry
-from scavengarr.infrastructure.torznab.search_engine import HttpxScrapySearchEngine
 
 # ---------------------------------------------------------------------------
 # Auth env-var registry
@@ -72,28 +69,3 @@ def plugin_registry() -> PluginRegistry:
     registry = PluginRegistry(plugin_dir)
     registry.discover()
     return registry
-
-
-@pytest.fixture()
-async def yaml_search_engine(tmp_path: Path):
-    """HttpxScrapySearchEngine for YAML plugin live tests.
-
-    Uses a temporary diskcache and disables link validation
-    (we just verify that scraping works, not that every link is alive).
-    """
-    async with httpx.AsyncClient(
-        timeout=30.0,
-        follow_redirects=True,
-        headers={"User-Agent": "Scavengarr/1.0"},
-    ) as client:
-        cache = DiskcacheAdapter(
-            directory=tmp_path / "smoke_cache",
-            ttl_seconds=3600,
-        )
-        async with cache:
-            engine = HttpxScrapySearchEngine(
-                http_client=client,
-                cache=cache,
-                validate_links=False,
-            )
-            yield engine
