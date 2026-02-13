@@ -15,7 +15,10 @@ from scavengarr.infrastructure.hoster_resolvers.alphaddl import (
 
 class TestExtractFileId:
     def test_main_domain(self) -> None:
-        assert _extract_file_id("https://alphaddl.com/movie-2025-1080p") == "movie-2025-1080p"
+        assert (
+            _extract_file_id("https://alphaddl.com/movie-2025-1080p")
+            == "movie-2025-1080p"
+        )
 
     def test_www_prefix(self) -> None:
         assert _extract_file_id("https://www.alphaddl.com/movie-2025") == "movie-2025"

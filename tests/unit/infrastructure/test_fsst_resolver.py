@@ -73,7 +73,9 @@ class TestFsstResolver:
         client = AsyncMock(spec=httpx.AsyncClient)
         client.get = AsyncMock(return_value=mock_resp)
 
-        result = await FsstResolver(http_client=client).resolve("https://fsst.online/abc123def")
+        result = await FsstResolver(http_client=client).resolve(
+            "https://fsst.online/abc123def"
+        )
         assert result is None
 
     @pytest.mark.asyncio
@@ -82,20 +84,26 @@ class TestFsstResolver:
         mock_resp.status_code = 500
         client = AsyncMock(spec=httpx.AsyncClient)
         client.get = AsyncMock(return_value=mock_resp)
-        result = await FsstResolver(http_client=client).resolve("https://fsst.online/abc123def")
+        result = await FsstResolver(http_client=client).resolve(
+            "https://fsst.online/abc123def"
+        )
         assert result is None
 
     @pytest.mark.asyncio
     async def test_returns_none_on_network_error(self) -> None:
         client = AsyncMock(spec=httpx.AsyncClient)
         client.get = AsyncMock(side_effect=httpx.ConnectError("failed"))
-        result = await FsstResolver(http_client=client).resolve("https://fsst.online/abc123def")
+        result = await FsstResolver(http_client=client).resolve(
+            "https://fsst.online/abc123def"
+        )
         assert result is None
 
     @pytest.mark.asyncio
     async def test_returns_none_for_invalid_url(self) -> None:
         client = AsyncMock(spec=httpx.AsyncClient)
-        result = await FsstResolver(http_client=client).resolve("https://example.com/abc123def")
+        result = await FsstResolver(http_client=client).resolve(
+            "https://example.com/abc123def"
+        )
         assert result is None
         client.get.assert_not_called()
 
@@ -107,5 +115,7 @@ class TestFsstResolver:
         mock_resp.url = "https://fsst.online/404"
         client = AsyncMock(spec=httpx.AsyncClient)
         client.get = AsyncMock(return_value=mock_resp)
-        result = await FsstResolver(http_client=client).resolve("https://fsst.online/abc123def")
+        result = await FsstResolver(http_client=client).resolve(
+            "https://fsst.online/abc123def"
+        )
         assert result is None

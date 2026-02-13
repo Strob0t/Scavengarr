@@ -15,13 +15,20 @@ from scavengarr.infrastructure.hoster_resolvers.filecrypt import (
 
 class TestExtractFileId:
     def test_main_domain(self) -> None:
-        assert _extract_file_id("https://filecrypt.cc/Container/ABC123DEF") == "ABC123DEF"
+        assert (
+            _extract_file_id("https://filecrypt.cc/Container/ABC123DEF") == "ABC123DEF"
+        )
 
     def test_www_prefix(self) -> None:
-        assert _extract_file_id("https://www.filecrypt.cc/Container/ABC123DEF") == "ABC123DEF"
+        assert (
+            _extract_file_id("https://www.filecrypt.cc/Container/ABC123DEF")
+            == "ABC123DEF"
+        )
 
     def test_http_scheme(self) -> None:
-        assert _extract_file_id("http://filecrypt.cc/Container/ABC123DEF") == "ABC123DEF"
+        assert (
+            _extract_file_id("http://filecrypt.cc/Container/ABC123DEF") == "ABC123DEF"
+        )
 
     def test_non_matching_domain(self) -> None:
         assert _extract_file_id("https://example.com/Container/ABC123DEF") is None

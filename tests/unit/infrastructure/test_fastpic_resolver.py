@@ -19,7 +19,9 @@ class TestExtractFileId:
         assert _extract_file_id(url) == "abcdef01234567890abcdef012345678.jpg"
 
     def test_ru_domain(self) -> None:
-        url = "https://fastpic.ru/fullview/123/2025/abcdef01234567890abcdef012345678.png"
+        url = (
+            "https://fastpic.ru/fullview/123/2025/abcdef01234567890abcdef012345678.png"
+        )
         assert _extract_file_id(url) == "abcdef01234567890abcdef012345678.png"
 
     def test_www_prefix(self) -> None:
@@ -57,7 +59,9 @@ class TestFastpicResolver:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.text = _VALID_PAGE
-        mock_resp.url = "https://fastpic.org/view/123/abcdef01234567890abcdef012345678.jpg"
+        mock_resp.url = (
+            "https://fastpic.org/view/123/abcdef01234567890abcdef012345678.jpg"
+        )
 
         client = AsyncMock(spec=httpx.AsyncClient)
         client.get = AsyncMock(return_value=mock_resp)
@@ -72,7 +76,9 @@ class TestFastpicResolver:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.text = _OFFLINE_PAGE
-        mock_resp.url = "https://fastpic.org/view/123/abcdef01234567890abcdef012345678.jpg"
+        mock_resp.url = (
+            "https://fastpic.org/view/123/abcdef01234567890abcdef012345678.jpg"
+        )
 
         client = AsyncMock(spec=httpx.AsyncClient)
         client.get = AsyncMock(return_value=mock_resp)
