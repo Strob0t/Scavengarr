@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import functools
+import os
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, cast
 
@@ -68,6 +69,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # 0) Metrics collector (zero-overhead, must exist before components that record)
     state.metrics = MetricsCollector()
+
+    # 0b) Auto-tune max_concurrent_plugins based on host capacity
+    if config.stremio.max_concurrent_plugins_auto:
+        cpu_count = os.cpu_count() or 2
+        try:
+            import psutil
+
+            available_ram_gb = psutil.virtual_memory().available / (1024**3)
+            mem_limit = int(available_ram_gb * 2)
+        except ImportError:
+            mem_limit = 8  # conservative default without psutil
+
+        auto_concurrent = max(2, min(cpu_count, mem_limit, 10))
+        config.stremio.max_concurrent_plugins = auto_concurrent
+        log.info(
+            "auto_concurrency",
+            cpu=cpu_count,
+            mem_limit=mem_limit,
+            result=auto_concurrent,
+        )
 
     # 1) Cache (must be first - other components depend on it)
     cache = create_cache(

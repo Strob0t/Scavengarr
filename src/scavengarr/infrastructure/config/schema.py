@@ -120,6 +120,14 @@ class StremioConfig(BaseModel):
         description="Max parallel plugin searches for stream resolution.",
     )
 
+    max_concurrent_plugins_auto: bool = Field(
+        default=True,
+        description=(
+            "Auto-tune max_concurrent_plugins based on host CPU and memory. "
+            "When enabled, overrides max_concurrent_plugins at startup."
+        ),
+    )
+
     max_results_per_plugin: int = Field(
         default=100,
         description=(
