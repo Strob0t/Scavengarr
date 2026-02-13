@@ -631,7 +631,7 @@ class StreamkistePlugin(HttpxPluginBase):
         self,
         query: str,
     ) -> list[dict[str, str | list[str] | bool]]:
-        """Fetch search results with pagination up to self._max_results."""
+        """Fetch search results with pagination up to self.effective_max_results."""
         all_results: list[dict[str, str | list[str] | bool]] = []
 
         for page_num in range(1, _MAX_PAGES + 1):
@@ -639,10 +639,10 @@ class StreamkistePlugin(HttpxPluginBase):
             if not results:
                 break
             all_results.extend(results)
-            if len(all_results) >= self._max_results:
+            if len(all_results) >= self.effective_max_results:
                 break
 
-        return all_results[: self._max_results]
+        return all_results[: self.effective_max_results]
 
     async def _fetch_meinecloud_streams(self, imdb_id: str) -> list[dict[str, str]]:
         """Fetch stream links from meinecloud.click DDL endpoint.

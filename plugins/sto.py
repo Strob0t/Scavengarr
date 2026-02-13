@@ -547,9 +547,9 @@ class StoPlugin(HttpxPluginBase):
             all_series.extend(series)
             if len(series) < _RESULTS_PER_PAGE:
                 break
-            if len(all_series) >= self._max_results:
+            if len(all_series) >= self.effective_max_results:
                 break
-        return all_series[: self._max_results]
+        return all_series[: self.effective_max_results]
 
     async def _fetch_all_details(
         self,
@@ -758,10 +758,10 @@ class StoPlugin(HttpxPluginBase):
                 series_info, detail, category, season, episode
             )
             search_results.extend(results)
-            if len(search_results) >= self._max_results:
+            if len(search_results) >= self.effective_max_results:
                 break
 
-        return search_results[: self._max_results]
+        return search_results[: self.effective_max_results]
 
 
 plugin = StoPlugin()

@@ -378,14 +378,14 @@ class ScnSrcPlugin(PlaywrightPluginBase):
         # Paginate search results (WordPress: ~10 posts/page)
         all_posts: list[dict[str, str | list[dict[str, str]]]] = []
         page_num = 1
-        while len(all_posts) < self._max_results:
+        while len(all_posts) < self.effective_max_results:
             posts = await self._search_page(query, category_path, page_num)
             if not posts:
                 break
             all_posts.extend(posts)
             page_num += 1
 
-        all_posts = all_posts[: self._max_results]
+        all_posts = all_posts[: self.effective_max_results]
 
         results: list[SearchResult] = []
         for post in all_posts:

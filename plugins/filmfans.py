@@ -370,10 +370,10 @@ class FilmfansPlugin(HttpxPluginBase):
 
         for movie_results in task_results:
             results.extend(movie_results)
-            if len(results) >= self._max_results:
+            if len(results) >= self.effective_max_results:
                 break
 
-        return results[: self._max_results]
+        return results[: self.effective_max_results]
 
 
 # Used to add timestamp to external links for cache busting

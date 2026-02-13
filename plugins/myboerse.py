@@ -584,7 +584,9 @@ class MyboersePlugin(HttpxPluginBase):
         # Paginate
         page_num = 1
         while (
-            next_url and len(all_results) < self._max_results and page_num < _MAX_PAGES
+            next_url
+            and len(all_results) < self.effective_max_results
+            and page_num < _MAX_PAGES
         ):
             page_num += 1
             more_results, next_url = await self._fetch_next_page(next_url)
@@ -592,7 +594,7 @@ class MyboersePlugin(HttpxPluginBase):
                 break
             all_results.extend(more_results)
 
-        all_results = all_results[: self._max_results]
+        all_results = all_results[: self.effective_max_results]
 
         if not all_results:
             return []

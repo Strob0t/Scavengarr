@@ -737,7 +737,7 @@ class KinokingPlugin(HttpxPluginBase):
                 )
             )
 
-        return results[: self._max_results]
+        return results[: self.effective_max_results]
 
     async def search(
         self,

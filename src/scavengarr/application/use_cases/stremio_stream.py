@@ -26,6 +26,7 @@ from scavengarr.domain.ports.search_engine import SearchEnginePort
 from scavengarr.domain.ports.stream_link_repository import StreamLinkRepository
 from scavengarr.domain.ports.tmdb import TmdbClientPort
 from scavengarr.infrastructure.config.schema import StremioConfig
+from scavengarr.infrastructure.plugins.constants import search_max_results
 from scavengarr.infrastructure.stremio.stream_converter import convert_search_results
 from scavengarr.infrastructure.stremio.stream_sorter import StreamSorter
 from scavengarr.infrastructure.stremio.title_matcher import filter_by_title_match
@@ -146,6 +147,7 @@ class StremioStreamUseCase:
         self._title_sequel_penalty = config.title_sequel_penalty
         self._title_year_tolerance_movie = config.title_year_tolerance_movie
         self._title_year_tolerance_series = config.title_year_tolerance_series
+        self._max_results_per_plugin = config.max_results_per_plugin
         self._stream_link_repo = stream_link_repo
         self._probe_fn = probe_fn
         self._probe_at_stream_time = config.probe_at_stream_time
@@ -406,9 +408,14 @@ class StremioStreamUseCase:
                 and not hasattr(plugin, "scraping")
             ):
                 # Python plugin: call directly, validate results
-                raw = await plugin.search(
-                    query, category=category, season=season, episode=episode
-                )
+                # Set max_results context so plugins limit pagination
+                token = search_max_results.set(self._max_results_per_plugin)
+                try:
+                    raw = await plugin.search(
+                        query, category=category, season=season, episode=episode
+                    )
+                finally:
+                    search_max_results.reset(token)
                 results = await self._search_engine.validate_results(raw)
             else:
                 # YAML plugin: delegate to search engine

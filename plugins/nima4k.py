@@ -366,10 +366,10 @@ class Nima4kPlugin(HttpxPluginBase):
             if not results:
                 break
             all_results.extend(results)
-            if len(all_results) >= self._max_results or not has_next:
+            if len(all_results) >= self.effective_max_results or not has_next:
                 break
 
-        return all_results[: self._max_results]
+        return all_results[: self.effective_max_results]
 
     def _build_search_result(
         self,

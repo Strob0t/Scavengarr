@@ -78,11 +78,11 @@ class EinschaltenPlugin(HttpxPluginBase):
             if new_count == 0 or not pagination.get("hasMore", False):
                 break
 
-            if len(all_results) >= self._max_results:
+            if len(all_results) >= self.effective_max_results:
                 break
 
         self._log.info("einschalten_search", query=query, count=len(all_results))
-        return all_results[: self._max_results]
+        return all_results[: self.effective_max_results]
 
     async def _fetch_detail(self, movie_id: int) -> dict | None:
         """Fetch movie detail (metadata, genres, IMDB ID)."""
@@ -234,10 +234,10 @@ class EinschaltenPlugin(HttpxPluginBase):
         for sr in task_results:
             if sr is not None:
                 results.append(sr)
-                if len(results) >= self._max_results:
+                if len(results) >= self.effective_max_results:
                     break
 
-        return results[: self._max_results]
+        return results[: self.effective_max_results]
 
 
 plugin = EinschaltenPlugin()

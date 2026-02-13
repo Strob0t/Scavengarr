@@ -557,10 +557,10 @@ class BurningSeriesPlugin(HttpxPluginBase):
         for sr in task_results:
             if sr is not None:
                 results.append(sr)
-                if len(results) >= self._max_results:
+                if len(results) >= self.effective_max_results:
                     break
 
-        return results[: self._max_results]
+        return results[: self.effective_max_results]
 
 
 plugin = BurningSeriesPlugin()

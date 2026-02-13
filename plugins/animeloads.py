@@ -358,12 +358,12 @@ class AnimeLoadsPlugin(PlaywrightPluginBase):
             return []
 
         all_results = self._filter_and_build(first_results, category)
-        if total_pages <= 1 or len(all_results) >= self._max_results:
-            return all_results[: self._max_results]
+        if total_pages <= 1 or len(all_results) >= self.effective_max_results:
+            return all_results[: self.effective_max_results]
 
         pages_to_fetch = min(total_pages, _MAX_PAGES)
         for page_num in range(2, pages_to_fetch + 1):
-            if len(all_results) >= self._max_results:
+            if len(all_results) >= self.effective_max_results:
                 break
             page_results, _ = await self._search_page(page, query, page_num)
             if not page_results:
@@ -371,7 +371,7 @@ class AnimeLoadsPlugin(PlaywrightPluginBase):
             batch = self._filter_and_build(page_results, category)
             all_results.extend(batch)
 
-        return all_results[: self._max_results]
+        return all_results[: self.effective_max_results]
 
     def _filter_and_build(
         self,

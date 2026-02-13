@@ -467,14 +467,14 @@ class HdSourcePlugin(HttpxPluginBase):
         max_page = min(last_page, _MAX_PAGES)
 
         for page_num in range(2, max_page + 1):
-            if len(all_results) >= self._max_results:
+            if len(all_results) >= self.effective_max_results:
                 break
             results, _ = await self._search_page(query, page_num)
             if not results:
                 break
             all_results.extend(results)
 
-        return all_results[: self._max_results]
+        return all_results[: self.effective_max_results]
 
     @staticmethod
     def _item_to_result(item: dict) -> SearchResult | None:

@@ -120,6 +120,14 @@ class StremioConfig(BaseModel):
         description="Max parallel plugin searches for stream resolution.",
     )
 
+    max_results_per_plugin: int = Field(
+        default=100,
+        description=(
+            "Max results per plugin in Stremio search. Limits pagination "
+            "to reduce response time. Torznab uses the plugin default (1000)."
+        ),
+    )
+
     plugin_timeout_seconds: float = Field(
         default=30.0,
         description="Per-plugin timeout in seconds for stream search.",

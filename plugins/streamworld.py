@@ -559,7 +559,7 @@ class StreamworldPlugin(PlaywrightPluginBase):
                     r for r in all_results if r.get("type", "") == type_filter
                 ]
 
-        all_results = all_results[: self._max_results]
+        all_results = all_results[: self.effective_max_results]
 
         if not all_results:
             return []

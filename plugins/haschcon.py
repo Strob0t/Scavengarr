@@ -66,7 +66,7 @@ class HaschconPlugin(HttpxPluginBase):
 
             all_entries.extend(data)
 
-            if len(all_entries) >= self._max_results:
+            if len(all_entries) >= self.effective_max_results:
                 break
 
             # Check pagination headers
@@ -75,7 +75,7 @@ class HaschconPlugin(HttpxPluginBase):
                 break
 
         self._log.info("haschcon_search", query=query, count=len(all_entries))
-        return all_entries[: self._max_results]
+        return all_entries[: self.effective_max_results]
 
     async def _fetch_player_embed(self, post_id: int) -> str | None:
         """Fetch player embed page and extract YouTube/Dailymotion URL."""
@@ -202,7 +202,7 @@ class HaschconPlugin(HttpxPluginBase):
 
         results: list[SearchResult] = [sr for sr in task_results if sr is not None]
 
-        return results[: self._max_results]
+        return results[: self.effective_max_results]
 
 
 plugin = HaschconPlugin()

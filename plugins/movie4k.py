@@ -241,13 +241,13 @@ class Movie4kPlugin(HttpxPluginBase):
             return []
 
         all_movies: list[dict] = list(first_page)
-        if total <= _PAGE_SIZE or len(all_movies) >= self._max_results:
-            return all_movies[: self._max_results]
+        if total <= _PAGE_SIZE or len(all_movies) >= self.effective_max_results:
+            return all_movies[: self.effective_max_results]
 
         total_pages = min((total + _PAGE_SIZE - 1) // _PAGE_SIZE, _MAX_PAGES)
 
         for page_num in range(2, total_pages + 1):
-            if len(all_movies) >= self._max_results:
+            if len(all_movies) >= self.effective_max_results:
                 break
             page_movies, _ = await self._browse_page(
                 keyword, type_filter, genre, page=page_num
@@ -256,7 +256,7 @@ class Movie4kPlugin(HttpxPluginBase):
                 break
             all_movies.extend(page_movies)
 
-        return all_movies[: self._max_results]
+        return all_movies[: self.effective_max_results]
 
     async def _fetch_detail(self, movie_id: str) -> dict | None:
         """Fetch detail data with streams for a movie/series."""
@@ -393,10 +393,10 @@ class Movie4kPlugin(HttpxPluginBase):
         for sr in task_results:
             if isinstance(sr, SearchResult):
                 results.append(sr)
-                if len(results) >= self._max_results:
+                if len(results) >= self.effective_max_results:
                     break
 
-        return results[: self._max_results]
+        return results[: self.effective_max_results]
 
 
 plugin = Movie4kPlugin()

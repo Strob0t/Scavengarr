@@ -339,7 +339,7 @@ class DDLSpotPlugin(PlaywrightPluginBase):
         all_rows: list[dict[str, str]] = []
         current_url = search_url
         for _ in range(_MAX_PAGES):
-            if len(all_rows) >= self._max_results:
+            if len(all_rows) >= self.effective_max_results:
                 break
 
             html = await self._fetch_search_page(current_url)
@@ -354,7 +354,7 @@ class DDLSpotPlugin(PlaywrightPluginBase):
                 break
             current_url = urljoin(self.base_url, parser.next_page_url)
 
-        all_rows = all_rows[: self._max_results]
+        all_rows = all_rows[: self.effective_max_results]
         if not all_rows:
             return []
 

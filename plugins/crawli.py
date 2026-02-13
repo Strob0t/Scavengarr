@@ -300,14 +300,16 @@ class CrawliPlugin(HttpxPluginBase):
         # Fetch remaining pages sequentially (crawli returns 10/page)
         pages_to_fetch = min(max_page, _MAX_PAGES)
         page_num = 2
-        while len(all_results) < self._max_results and page_num <= pages_to_fetch:
+        while (
+            len(all_results) < self.effective_max_results and page_num <= pages_to_fetch
+        ):
             page_results, _ = await self._search_page(query, category_path, page_num)
             if not page_results:
                 break
             all_results.extend(page_results)
             page_num += 1
 
-        all_results = all_results[: self._max_results]
+        all_results = all_results[: self.effective_max_results]
 
         # Convert to SearchResult
         torznab_cat = category if category else 2000

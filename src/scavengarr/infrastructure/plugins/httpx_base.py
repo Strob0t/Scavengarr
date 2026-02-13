@@ -26,6 +26,7 @@ from .constants import (
     DEFAULT_MAX_CONCURRENT,
     DEFAULT_MAX_RESULTS,
     DEFAULT_USER_AGENT,
+    search_max_results,
 )
 
 
@@ -66,6 +67,14 @@ class HttpxPluginBase:
         self._domain_verified: bool = False
         self.base_url: str = f"https://{self._domains[0]}" if self._domains else ""
         self._log = structlog.get_logger(self.name or __name__)
+
+    @property
+    def effective_max_results(self) -> int:
+        """Max results respecting caller context (e.g. Stremio limit)."""
+        ctx = search_max_results.get(None)
+        if ctx is not None:
+            return min(ctx, self._max_results)
+        return self._max_results
 
     # ------------------------------------------------------------------
     # Client lifecycle

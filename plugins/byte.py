@@ -485,14 +485,19 @@ class BytePlugin(PlaywrightPluginBase):
         )
 
         all_results = list(first_results)
+        limit = self.effective_max_results
 
         # Fetch additional pages if needed
         pages_needed = min(max_page, _MAX_PAGES)
         for page_num in range(2, pages_needed + 1):
+            if len(all_results) >= limit:
+                break
             more_results, _, _ = await self._search_page(query, site_category, page_num)
             all_results.extend(more_results)
             if not more_results:
                 break
+
+        all_results = all_results[:limit]
 
         if not all_results:
             return []

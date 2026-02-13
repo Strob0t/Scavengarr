@@ -294,7 +294,7 @@ class AniworldPlugin(HttpxPluginBase):
             query=query,
             results=len(results),
         )
-        return results[: self._max_results]
+        return results[: self.effective_max_results]
 
     async def _scrape_detail(
         self,

@@ -642,10 +642,10 @@ class KinogerPlugin(HttpxPluginBase):
             if not results:
                 break
             all_results.extend(results)
-            if len(all_results) >= self._max_results:
+            if len(all_results) >= self.effective_max_results:
                 break
 
-        return all_results[: self._max_results]
+        return all_results[: self.effective_max_results]
 
     async def _scrape_detail(
         self,

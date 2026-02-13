@@ -414,7 +414,7 @@ class SerienjunkiesPlugin(HttpxPluginBase):
             if isinstance(result, list):
                 all_results.extend(result)
 
-        return all_results[: self._max_results]
+        return all_results[: self.effective_max_results]
 
 
 plugin = SerienjunkiesPlugin()

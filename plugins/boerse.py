@@ -415,7 +415,7 @@ class BoersePlugin(PlaywrightPluginBase):
                 all_urls.append(url)
 
         next_url = parser.next_page_url
-        while next_url and len(all_urls) < self._max_results:
+        while next_url and len(all_urls) < self.effective_max_results:
             if not next_url.startswith("http"):
                 next_url = f"{self.base_url}/{next_url.lstrip('/')}"
 
@@ -438,7 +438,7 @@ class BoersePlugin(PlaywrightPluginBase):
                 break
             next_url = parser.next_page_url
 
-        return all_urls[: self._max_results]
+        return all_urls[: self.effective_max_results]
 
     async def _scrape_thread(self, url: str) -> SearchResult | None:
         """Scrape a single thread page for title and download links."""

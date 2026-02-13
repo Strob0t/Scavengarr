@@ -654,10 +654,10 @@ class HdfilmePlugin(HttpxPluginBase):
             if not results:
                 break
             all_results.extend(results)
-            if len(all_results) >= self._max_results:
+            if len(all_results) >= self.effective_max_results:
                 break
 
-        return all_results[: self._max_results]
+        return all_results[: self.effective_max_results]
 
     async def _scrape_detail(
         self,
@@ -888,7 +888,7 @@ class HdfilmePlugin(HttpxPluginBase):
         if not all_items:
             return []
 
-        all_items = all_items[: self._max_results]
+        all_items = all_items[: self.effective_max_results]
         results = await self._scrape_all_details(
             all_items, season=season, episode=episode
         )

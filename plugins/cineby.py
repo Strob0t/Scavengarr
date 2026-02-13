@@ -134,7 +134,7 @@ class CinebyPlugin(HttpxPluginBase):
 
             all_results.extend(results)
 
-            if len(all_results) >= self._max_results:
+            if len(all_results) >= self.effective_max_results:
                 break
 
             total_pages = data.get("total_pages", 1)
@@ -142,7 +142,7 @@ class CinebyPlugin(HttpxPluginBase):
                 break
 
         self._log.info("cineby_search", query=query, count=len(all_results))
-        return all_results[: self._max_results]
+        return all_results[: self.effective_max_results]
 
     async def _fetch_detail(self, tmdb_id: int, media_type: str) -> dict | None:
         """Fetch movie/TV detail for IMDB ID and additional metadata."""
@@ -297,7 +297,7 @@ class CinebyPlugin(HttpxPluginBase):
 
         results: list[SearchResult] = [sr for sr in task_results if sr is not None]
 
-        return results[: self._max_results]
+        return results[: self.effective_max_results]
 
 
 plugin = CinebyPlugin()

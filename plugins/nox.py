@@ -130,10 +130,10 @@ class NoxPlugin(HttpxPluginBase):
             self._log.info("nox_browse", days=days, count=len(releases))
 
             if len(releases) >= _BROWSE_MIN_RESULTS:
-                return releases[: self._max_results]
+                return releases[: self.effective_max_results]
 
         # Return whatever we got from the last attempt
-        return releases[: self._max_results] if releases else []
+        return releases[: self.effective_max_results] if releases else []
 
     # ------------------------------------------------------------------
     # Result building
@@ -325,7 +325,7 @@ class NoxPlugin(HttpxPluginBase):
             sr = self._build_result(release, media)
             if sr is not None:
                 results.append(sr)
-                if len(results) >= self._max_results:
+                if len(results) >= self.effective_max_results:
                     break
 
         return results
@@ -353,7 +353,7 @@ class NoxPlugin(HttpxPluginBase):
             sr = self._build_result(release, media)
             if sr is not None:
                 results.append(sr)
-                if len(results) >= self._max_results:
+                if len(results) >= self.effective_max_results:
                     break
 
         return results
