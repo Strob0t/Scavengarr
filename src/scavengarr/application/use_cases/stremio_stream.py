@@ -319,18 +319,22 @@ class StremioStreamUseCase:
                 r for i, r in enumerate(ranked) if i in alive_indices or i >= limit
             ]
 
-        # --- Cache step ---
-        proxied: list[StremioStream] = []
-        for stream, ranked_s in zip(streams, ranked):
-            stream_id = uuid4().hex
-            link = CachedStreamLink(
-                stream_id=stream_id,
+        # --- Cache step (parallel writes) ---
+        stream_ids = [uuid4().hex for _ in streams]
+        links = [
+            CachedStreamLink(
+                stream_id=sid,
                 hoster_url=ranked_s.url,
                 title=ranked_s.title,
                 hoster=ranked_s.hoster,
             )
-            await self._stream_link_repo.save(link)
-            proxy_url = f"{base_url}/api/v1/stremio/play/{stream_id}"
+            for sid, ranked_s in zip(stream_ids, ranked)
+        ]
+        await asyncio.gather(*(self._stream_link_repo.save(lnk) for lnk in links))
+
+        proxied: list[StremioStream] = []
+        for stream, sid in zip(streams, stream_ids):
+            proxy_url = f"{base_url}/api/v1/stremio/play/{sid}"
             proxied.append(
                 StremioStream(
                     name=stream.name,

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import pickle
+import sys
 from pathlib import Path
 from typing import Any, Optional
 
@@ -101,7 +101,7 @@ class DiskcacheAdapter:
                 "cache_set",
                 key=key,
                 ttl=expire_time,
-                size_bytes=len(pickle.dumps(value)),  # rough estimate
+                size_bytes=sys.getsizeof(value),
             )
 
     async def delete(self, key: str) -> bool:

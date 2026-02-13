@@ -52,6 +52,7 @@ from scavengarr.infrastructure.persistence.stream_link_cache import (
     CacheStreamLinkRepository,
 )
 from scavengarr.infrastructure.plugins import PluginRegistry
+from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.tmdb.client import HttpxTmdbClient
 from scavengarr.infrastructure.tmdb.imdb_fallback import ImdbFallbackClient
 from scavengarr.infrastructure.torznab.search_engine import HttpxScrapySearchEngine
@@ -123,10 +124,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     log.info("http_client_initialized")
 
+    # 2b) Share HTTP client with httpx-based plugins
+    HttpxPluginBase.set_shared_http_client(state.http_client)
+
     # 3) Plugin registry
     state.plugins = PluginRegistry(plugin_dir=config.plugin_dir)
     state.plugins.discover()
-    log.info("plugins_discovered", count=len(state.plugins.list_names()))
+    log.info("plugins_discovered", count=state.plugins.discovered_count)
 
     # 4) Search engine
     state.search_engine = HttpxScrapySearchEngine(

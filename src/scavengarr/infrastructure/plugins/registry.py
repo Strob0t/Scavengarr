@@ -69,6 +69,11 @@ class PluginRegistry:
     def plugin_dir(self) -> Path:
         return self._plugin_dir
 
+    @property
+    def discovered_count(self) -> int:
+        """Number of discovered plugin files (no parsing required)."""
+        return len(self._refs)
+
     def discover(self) -> None:
         if self._discovered:
             return

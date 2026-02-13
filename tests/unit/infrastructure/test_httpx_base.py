@@ -284,6 +284,81 @@ class TestNewSemaphore:
 # ---------------------------------------------------------------------------
 
 
+class TestSharedHttpClient:
+    @pytest.fixture(autouse=True)
+    def _reset_shared(self) -> None:
+        """Ensure shared client is cleared before/after each test."""
+        HttpxPluginBase._shared_http_client = None
+        yield
+        HttpxPluginBase._shared_http_client = None
+
+    @pytest.mark.asyncio
+    async def test_uses_shared_client_when_set(self) -> None:
+        shared = AsyncMock(spec=httpx.AsyncClient)
+        HttpxPluginBase.set_shared_http_client(shared)
+        plugin = _TestPlugin()
+
+        client = await plugin._ensure_client()
+
+        assert client is shared
+
+    @pytest.mark.asyncio
+    async def test_creates_own_client_when_no_shared(self) -> None:
+        plugin = _TestPlugin()
+
+        client = await plugin._ensure_client()
+
+        assert client is not None
+        assert isinstance(client, httpx.AsyncClient)
+        await plugin.cleanup()
+
+    @pytest.mark.asyncio
+    async def test_cleanup_skips_shared_client(self) -> None:
+        shared = AsyncMock(spec=httpx.AsyncClient)
+        HttpxPluginBase.set_shared_http_client(shared)
+        plugin = _TestPlugin()
+        await plugin._ensure_client()
+
+        await plugin.cleanup()
+
+        shared.aclose.assert_not_awaited()
+        assert plugin._client is None
+
+    @pytest.mark.asyncio
+    async def test_safe_fetch_adds_per_plugin_overrides(self) -> None:
+        shared = AsyncMock(spec=httpx.AsyncClient)
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.raise_for_status = MagicMock()
+        shared.get = AsyncMock(return_value=resp)
+        HttpxPluginBase.set_shared_http_client(shared)
+
+        plugin = _TestPlugin()
+        plugin._timeout = 42.0
+        plugin._user_agent = "CustomAgent/1.0"
+        await plugin._safe_fetch("https://example.com/test")
+
+        call_kwargs = shared.get.call_args[1]
+        assert call_kwargs["timeout"] == httpx.Timeout(42.0)
+        assert call_kwargs["headers"] == {"User-Agent": "CustomAgent/1.0"}
+
+    @pytest.mark.asyncio
+    async def test_safe_fetch_no_overrides_with_own_client(self) -> None:
+        plugin = _TestPlugin()
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.raise_for_status = MagicMock()
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.get = AsyncMock(return_value=resp)
+        plugin._client = mock_client
+
+        await plugin._safe_fetch("https://example.com/test")
+
+        call_kwargs = mock_client.get.call_args[1]
+        assert "timeout" not in call_kwargs
+        assert "headers" not in call_kwargs
+
+
 class TestSearchAbstract:
     @pytest.mark.asyncio
     async def test_raises_not_implemented(self) -> None:

@@ -47,6 +47,9 @@ class HttpxPluginBase:
     - ``_user_agent``
     """
 
+    # --- Shared HTTP client (set once, used by all instances) ---
+    _shared_http_client: httpx.AsyncClient | None = None
+
     # --- Must be set by subclass ---
     name: str = ""
     provides: str = "download"
@@ -62,6 +65,16 @@ class HttpxPluginBase:
     _timeout: float = DEFAULT_CLIENT_TIMEOUT
     _user_agent: str = DEFAULT_USER_AGENT
     cache_ttl: int | None = None
+
+    @classmethod
+    def set_shared_http_client(cls, client: httpx.AsyncClient) -> None:
+        """Inject a shared HTTP client for all httpx plugin instances.
+
+        When set, plugins reuse this client instead of creating their
+        own.  Per-plugin timeout and headers are applied per-request
+        so each plugin's overrides still work.
+        """
+        cls._shared_http_client = client
 
     def __init__(self) -> None:
         self._client: httpx.AsyncClient | None = None
@@ -82,8 +95,13 @@ class HttpxPluginBase:
     # ------------------------------------------------------------------
 
     async def _ensure_client(self) -> httpx.AsyncClient:
-        """Create httpx client if not already running."""
-        if self._client is None:
+        """Return an HTTP client, preferring the shared instance."""
+        if self._client is not None:
+            return self._client
+
+        if self._shared_http_client is not None:
+            self._client = self._shared_http_client
+        else:
             self._client = httpx.AsyncClient(
                 timeout=self._timeout,
                 follow_redirects=True,
@@ -119,11 +137,11 @@ class HttpxPluginBase:
         )
 
     async def cleanup(self) -> None:
-        """Close httpx client."""
-        if self._client is not None:
+        """Close httpx client (skip if it is the shared instance)."""
+        if self._client is not None and self._client is not self._shared_http_client:
             await self._client.aclose()
-            self._client = None
-            self._domain_verified = False
+        self._client = None
+        self._domain_verified = False
 
     # ------------------------------------------------------------------
     # Convenience helpers
@@ -139,9 +157,17 @@ class HttpxPluginBase:
     ) -> httpx.Response | None:
         """Fetch *url* with structured error logging.
 
+        When using a shared client, per-plugin timeout and headers are
+        applied per-request so each plugin's overrides still work.
         Returns ``None`` on failure instead of raising.
         """
         client = await self._ensure_client()
+
+        # Apply per-plugin overrides when using the shared client
+        if client is self._shared_http_client:
+            kwargs.setdefault("timeout", httpx.Timeout(self._timeout))
+            kwargs.setdefault("headers", {"User-Agent": self._user_agent})
+
         try:
             handler = getattr(client, method.lower(), client.get)
             resp = await handler(url, **kwargs)
