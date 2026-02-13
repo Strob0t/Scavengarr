@@ -345,3 +345,62 @@ class TestFilterValidLinks:
         engine = _make_engine(validate_links=True)
         filtered = await engine._filter_valid_links([])
         assert filtered == []
+
+    async def test_pre_validated_results_skip_validation(self) -> None:
+        """Results with validated_links already set bypass HTTP validation."""
+        engine = _make_engine(validate_links=True)
+        engine._link_validator.validate_batch = AsyncMock(
+            return_value={},
+        )
+
+        pre = SearchResult(
+            title="Anime",
+            download_link="https://animeloads.io/embed/123",
+            validated_links=["https://animeloads.io/embed/123"],
+        )
+        filtered = await engine._filter_valid_links([pre])
+        assert len(filtered) == 1
+        assert filtered[0].title == "Anime"
+        # validate_batch should NOT be called (no urls to validate)
+        engine._link_validator.validate_batch.assert_not_called()
+
+    async def test_pre_validated_mixed_with_needs_validation(self) -> None:
+        """Pre-validated results are kept alongside normally validated ones."""
+        engine = _make_engine(validate_links=True)
+        engine._link_validator.validate_batch = AsyncMock(
+            return_value={"https://good.com/dl": True},
+        )
+
+        pre = SearchResult(
+            title="PreValidated",
+            download_link="https://animeloads.io/embed/123",
+            validated_links=["https://animeloads.io/embed/123"],
+        )
+        normal = SearchResult(
+            title="Normal",
+            download_link="https://good.com/dl",
+        )
+        filtered = await engine._filter_valid_links([pre, normal])
+        assert len(filtered) == 2
+        titles = {r.title for r in filtered}
+        assert titles == {"PreValidated", "Normal"}
+
+    async def test_pre_validated_mixed_with_invalid(self) -> None:
+        """Pre-validated results survive even when normal results are filtered."""
+        engine = _make_engine(validate_links=True)
+        engine._link_validator.validate_batch = AsyncMock(
+            return_value={"https://dead.com/dl": False},
+        )
+
+        pre = SearchResult(
+            title="PreValidated",
+            download_link="https://animeloads.io/embed/123",
+            validated_links=["https://animeloads.io/embed/123"],
+        )
+        dead = SearchResult(
+            title="Dead",
+            download_link="https://dead.com/dl",
+        )
+        filtered = await engine._filter_valid_links([pre, dead])
+        assert len(filtered) == 1
+        assert filtered[0].title == "PreValidated"

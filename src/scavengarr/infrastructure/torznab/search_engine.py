@@ -200,13 +200,19 @@ class HttpxScrapySearchEngine:
         self,
         results: list[SearchResult],
     ) -> list[SearchResult]:
-        """Batch-validate ALL URLs and collect valid links per result.
+        """Batch-validate URLs and collect valid links per result.
+
+        Results that already have ``validated_links`` populated are treated
+        as pre-validated and passed through without HTTP checks.  This
+        allows plugins behind anti-bot protection (e.g. DDoS-Guard) to
+        skip link validation that would always fail via httpx.
 
         Flow:
-            1. Collect all unique URLs across all results (primaries + alternatives).
-            2. Single validate_batch() call for everything.
-            3. For each result, assemble validated_links and promote if needed.
-            4. Drop results with zero valid links.
+            1. Separate pre-validated results from those needing validation.
+            2. Collect all unique URLs across results needing validation.
+            3. Single validate_batch() call for everything.
+            4. For each result, assemble validated_links and promote if needed.
+            5. Drop results with zero valid links.
 
         Args:
             results: Raw search results from scraper.
@@ -214,30 +220,37 @@ class HttpxScrapySearchEngine:
         Returns:
             Results with validated_links populated and reachable download_link.
         """
-        all_urls = self._collect_all_urls(results)
+        pre_validated = [r for r in results if r.validated_links]
+        needs_validation = [r for r in results if not r.validated_links]
+
+        if not needs_validation:
+            return results
+
+        all_urls = self._collect_all_urls(needs_validation)
 
         if not all_urls:
             log.warning("no_download_links_to_validate")
-            return results
+            return pre_validated + needs_validation
 
         validation_map = await self._link_validator.validate_batch(list(all_urls))
 
         valid_results = [
             r
-            for r in results
+            for r in needs_validation
             if r.download_link and self._apply_validation(r, validation_map)
         ]
 
-        filtered = len(results) - len(valid_results)
+        filtered = len(needs_validation) - len(valid_results)
         if filtered > 0:
             log.info(
                 "links_filtered",
-                total=len(results),
+                total=len(needs_validation),
                 valid=len(valid_results),
                 invalid=filtered,
+                pre_validated=len(pre_validated),
             )
 
-        return valid_results
+        return pre_validated + valid_results
 
     def _collect_all_urls(self, results: list[SearchResult]) -> set[str]:
         """Collect all unique URLs from results (primaries + alternatives).

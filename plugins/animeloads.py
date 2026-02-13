@@ -286,6 +286,7 @@ class AnimeLoadsPlugin(PlaywrightPluginBase):
             title=display_title,
             download_link=download_link,
             download_links=download_links or None,
+            validated_links=[download_link],  # Pre-validated: DDoS-Guard blocks httpx
             source_url=source_url,
             published_date=year if year else None,
             category=category,
