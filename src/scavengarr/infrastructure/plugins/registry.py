@@ -30,21 +30,37 @@ class _PluginRef:
     plugin_type: PluginType
 
 
+@dataclass(frozen=True)
+class _PluginMeta:
+    """Cached plugin metadata to avoid re-parsing for filtering queries."""
+
+    name: str
+    provides: str
+    mode: str
+    language: str
+
+
 class PluginRegistry:
     """
-    Lazy-loading plugin registry.
+    Lazy-loading plugin registry with metadata caching.
 
     discover():
       - indexes files only (no YAML parsing, no Python execution)
 
     get()/get_by_mode()/load_all()/list_names():
       - may load/parse on demand and cache results
+
+    Metadata caching:
+      - get_by_provides() caches plugin metadata on first call so
+        subsequent calls don't re-parse all plugin files.
     """
 
     def __init__(self, plugin_dir: Path) -> None:
         self._plugin_dir = plugin_dir
         self._discovered: bool = False
         self._refs: list[_PluginRef] = []
+        self._meta_cache: dict[str, _PluginMeta] = {}
+        self._meta_cached: bool = False
 
         self._yaml_cache: dict[str, YamlPluginDefinition] = {}
         self._python_cache: dict[str, PluginProtocol] = {}
@@ -154,22 +170,49 @@ class PluginRegistry:
         return sorted(result, key=lambda p: p.name)
 
     def get_by_provides(self, provides: PluginProvides) -> list[str]:
-        """Return plugin names filtered by their ``provides`` attribute."""
+        """Return plugin names filtered by their ``provides`` attribute.
+
+        Uses cached metadata after the first call to avoid re-parsing
+        all plugin files on every invocation.
+        """
         self.discover()
+        self._ensure_meta_cache()
 
         names: list[str] = []
+        for meta in self._meta_cache.values():
+            if meta.provides == provides or meta.provides == "both":
+                names.append(meta.name)
+
+        return sorted(names)
+
+    def _ensure_meta_cache(self) -> None:
+        """Build metadata cache from all plugins (lazy, one-time)."""
+        if self._meta_cached:
+            return
+
         for ref in self._refs:
             if ref.plugin_type == "yaml":
                 plugin = self._load_yaml(ref)
-                if plugin.provides == provides or plugin.provides == "both":
-                    names.append(plugin.name)
+                self._meta_cache[plugin.name] = _PluginMeta(
+                    name=plugin.name,
+                    provides=plugin.provides,
+                    mode=plugin.scraping.mode,
+                    language=getattr(plugin, "default_language", "de"),
+                )
             else:
                 py_plugin = self._load_python(ref)
-                plugin_provides: str = getattr(py_plugin, "provides", "download")
-                if plugin_provides == provides or plugin_provides == "both":
-                    names.append(py_plugin.name)
+                self._meta_cache[py_plugin.name] = _PluginMeta(
+                    name=py_plugin.name,
+                    provides=getattr(py_plugin, "provides", "download"),
+                    mode=getattr(py_plugin, "mode", "httpx"),
+                    language=getattr(py_plugin, "default_language", "de"),
+                )
 
-        return sorted(names)
+        self._meta_cached = True
+        log.debug(
+            "plugin_meta_cached",
+            count=len(self._meta_cache),
+        )
 
     def load_all(self) -> None:
         """

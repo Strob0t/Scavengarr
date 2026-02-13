@@ -154,6 +154,41 @@ class TestValidate:
         assert await validator.validate("https://broken.com") is False
 
 
+class TestValidateCache:
+    async def test_valid_result_cached(self) -> None:
+        """Second call for same URL uses cache, not HTTP."""
+        client = _mock_client(status_code=200)
+        validator = HttpLinkValidator(client)
+        url = "https://cached.example.com"
+
+        result1 = await validator.validate(url)
+        assert result1 is True
+
+        # Reset mock to prove cache is used
+        client.head.reset_mock()
+        client.get.reset_mock()
+
+        result2 = await validator.validate(url)
+        assert result2 is True
+        client.head.assert_not_called()
+
+    async def test_invalid_result_cached(self) -> None:
+        """Failed validation is also cached."""
+        client = _mock_client(status_code=404, get_status_code=404)
+        validator = HttpLinkValidator(client)
+        url = "https://dead-cached.example.com"
+
+        result1 = await validator.validate(url)
+        assert result1 is False
+
+        client.head.reset_mock()
+        client.get.reset_mock()
+
+        result2 = await validator.validate(url)
+        assert result2 is False
+        client.head.assert_not_called()
+
+
 class TestValidateBatch:
     async def test_empty_list_returns_empty_dict(self) -> None:
         client = _mock_client()
@@ -191,3 +226,17 @@ class TestValidateBatch:
         urls = ["https://a.com", "https://b.com", "https://c.com"]
         result = await validator.validate_batch(urls)
         assert set(result.keys()) == set(urls)
+
+    async def test_deduplicates_urls(self) -> None:
+        """Duplicate URLs are validated once, result propagated to all."""
+        client = _mock_client(status_code=200)
+        validator = HttpLinkValidator(client)
+        urls = ["https://a.com", "https://a.com", "https://b.com"]
+        result = await validator.validate_batch(urls)
+
+        assert result == {
+            "https://a.com": True,
+            "https://b.com": True,
+        }
+        # HEAD should have been called only 2 times (not 3)
+        assert client.head.call_count == 2

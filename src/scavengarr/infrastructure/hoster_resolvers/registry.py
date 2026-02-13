@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from urllib.parse import urlparse
 
 import httpx
@@ -11,6 +12,11 @@ from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
 from scavengarr.domain.ports.hoster_resolver import HosterResolverPort
 
 log = structlog.get_logger(__name__)
+
+# Cache TTLs for resolver results
+_CACHE_TTL_ALIVE = 3600  # 1 hour for successful resolutions
+_CACHE_TTL_DEAD = 900  # 15 minutes for failed resolutions
+_CACHE_TTL_REDIRECT = 3600  # 1 hour for redirect mappings
 
 
 def _extract_hoster_from_url(url: str) -> str:
@@ -30,19 +36,38 @@ def _extract_hoster_from_url(url: str) -> str:
         return ""
 
 
+class _CacheEntry:
+    """Time-bounded cache entry for resolver results."""
+
+    __slots__ = ("value", "expires_at")
+
+    def __init__(self, value: ResolvedStream | None, ttl: int) -> None:
+        self.value = value
+        self.expires_at = time.monotonic() + ttl
+
+    @property
+    def is_expired(self) -> bool:
+        return time.monotonic() >= self.expires_at
+
+
 class HosterResolverRegistry:
     """Dispatches hoster URL resolution to the appropriate resolver.
 
     Falls back to content-type probing when no specific resolver is registered.
+    Caches resolution outcomes and redirect mappings in-memory.
     """
 
     def __init__(
         self,
         resolvers: list[HosterResolverPort] | None = None,
         http_client: httpx.AsyncClient | None = None,
+        resolve_timeout: float = 15.0,
     ) -> None:
         self._resolvers: dict[str, HosterResolverPort] = {}
         self._http_client = http_client
+        self._resolve_timeout = resolve_timeout
+        self._result_cache: dict[str, _CacheEntry] = {}
+        self._redirect_cache: dict[str, _CacheEntry] = {}
         for resolver in resolvers or []:
             self.register(resolver)
 
@@ -66,19 +91,28 @@ class HosterResolverRegistry:
     async def resolve(self, url: str, hoster: str = "") -> ResolvedStream | None:
         """Resolve a hoster embed URL to a playable video URL.
 
-        1. Try the specific hoster resolver (URL domain takes priority over hint).
-        2. If URL domain has no resolver, follow HTTP redirects and retry.
-        3. Try hoster hint if different from URL domain (handles redirect domains).
-        4. Fall back to content-type probing (HEAD request).
-        5. Return None if resolution fails.
+        1. Check result cache for previously resolved URL.
+        2. Try the specific hoster resolver (URL domain takes priority over hint).
+        3. If URL domain has no resolver, follow HTTP redirects and retry.
+        4. Try hoster hint if different from URL domain (handles redirect domains).
+        5. Fall back to content-type probing (HEAD request).
+        6. Cache the result (alive or dead) and return.
         """
+        # 0. Check result cache
+        cached = self._result_cache.get(url)
+        if cached is not None and not cached.is_expired:
+            log.debug("hoster_resolve_cache_hit", url=url)
+            return cached.value
+
         # URL domain is authoritative; fall back to plugin-provided hint
         hoster_name = _extract_hoster_from_url(url) or hoster
 
         # 1. Try specific resolver for URL domain
         resolver = self._resolvers.get(hoster_name)
         if resolver is not None:
-            return await self._try_resolver(resolver, hoster_name, url)
+            result = await self._try_resolver(resolver, hoster_name, url)
+            self._cache_result(url, result)
+            return result
 
         # 2. No resolver for this domain — try following redirects
         final_url = await self._follow_redirects(url)
@@ -92,7 +126,11 @@ class HosterResolverRegistry:
                     redirected=redirected_hoster,
                     url=final_url,
                 )
-                return await self._try_resolver(resolver, redirected_hoster, final_url)
+                result = await self._try_resolver(
+                    resolver, redirected_hoster, final_url
+                )
+                self._cache_result(url, result)
+                return result
 
         # 3. Try hoster hint if different from URL domain
         #    Handles rotating redirect domains (e.g., lauradaydo.com for VOE)
@@ -105,10 +143,19 @@ class HosterResolverRegistry:
                     url_domain=hoster_name,
                     url=url,
                 )
-                return await self._try_resolver(resolver, hoster, url)
+                result = await self._try_resolver(resolver, hoster, url)
+                self._cache_result(url, result)
+                return result
 
         # 4. Fallback: content-type probing
-        return await self._probe_content_type(url, hoster_name)
+        result = await self._probe_content_type(url, hoster_name)
+        self._cache_result(url, result)
+        return result
+
+    def _cache_result(self, url: str, result: ResolvedStream | None) -> None:
+        """Cache a resolution result with appropriate TTL."""
+        ttl = _CACHE_TTL_ALIVE if result is not None else _CACHE_TTL_DEAD
+        self._result_cache[url] = _CacheEntry(result, ttl)
 
     async def _try_resolver(
         self,
@@ -127,6 +174,15 @@ class HosterResolverRegistry:
                 )
                 return result
             log.warning("hoster_resolve_failed", hoster=hoster_name, url=url)
+        except httpx.TimeoutException:
+            log.warning("hoster_resolve_timeout", hoster=hoster_name, url=url)
+        except httpx.HTTPError as exc:
+            log.warning(
+                "hoster_resolve_http_error",
+                hoster=hoster_name,
+                url=url,
+                error=str(exc),
+            )
         except Exception:
             log.exception("hoster_resolve_error", hoster=hoster_name, url=url)
         return None
@@ -134,13 +190,20 @@ class HosterResolverRegistry:
     async def _follow_redirects(self, url: str) -> str | None:
         """Follow HTTP redirects and return final URL if domain changed.
 
-        Used for redirect-based URLs like cine.to/out/{id} that redirect
-        to actual hoster embed URLs (e.g., voe.sx/e/abc).
+        Uses a redirect cache to avoid repeated lookups for rotating
+        mirror domains. Cache TTL: 1 hour.
         """
+        # Check redirect cache
+        cached = self._redirect_cache.get(url)
+        if cached is not None and not cached.is_expired:
+            return cached.value  # type: ignore[return-value]
+
         if self._http_client is None:
             return None
         try:
-            resp = await self._http_client.head(url, follow_redirects=True, timeout=10)
+            resp = await self._http_client.head(
+                url, follow_redirects=True, timeout=self._resolve_timeout
+            )
             final_url = str(resp.url)
             if final_url != url:
                 log.debug(
@@ -148,7 +211,15 @@ class HosterResolverRegistry:
                     original=url,
                     final=final_url,
                 )
+                self._redirect_cache[url] = _CacheEntry(
+                    final_url,
+                    _CACHE_TTL_REDIRECT,  # type: ignore[arg-type]
+                )
                 return final_url
+        except httpx.TimeoutException:
+            log.debug("hoster_redirect_timeout", url=url)
+        except httpx.HTTPError as exc:
+            log.debug("hoster_redirect_http_error", url=url, error=str(exc))
         except Exception:  # noqa: BLE001
             log.debug("hoster_redirect_follow_failed", url=url)
         return None
@@ -167,7 +238,9 @@ class HosterResolverRegistry:
             return None
 
         try:
-            resp = await self._http_client.head(url, follow_redirects=True, timeout=10)
+            resp = await self._http_client.head(
+                url, follow_redirects=True, timeout=self._resolve_timeout
+            )
             content_type = resp.headers.get("content-type", "").lower()
 
             if content_type.startswith("video/"):
@@ -192,11 +265,16 @@ class HosterResolverRegistry:
                     quality=StreamQuality.UNKNOWN,
                 )
 
-        except Exception:
+        except httpx.TimeoutException:
+            log.debug("hoster_probe_timeout", hoster=hoster_name, url=url)
+        except httpx.HTTPError as exc:
             log.debug(
-                "hoster_probe_failed",
+                "hoster_probe_http_error",
                 hoster=hoster_name,
                 url=url,
+                error=str(exc),
             )
+        except Exception:  # noqa: BLE001
+            log.debug("hoster_probe_failed", hoster=hoster_name, url=url)
 
         return None

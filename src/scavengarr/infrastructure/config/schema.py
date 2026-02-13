@@ -237,7 +237,15 @@ class AppConfig(BaseModel):
             "http_timeout_seconds",
             AliasPath("http", "timeout_seconds"),
         ),
-        description="HTTP timeout in seconds for static scraping.",
+        description="Default HTTP timeout in seconds (used by scraping engine).",
+    )
+    http_timeout_resolve_seconds: float = Field(
+        default=15.0,
+        validation_alias=AliasChoices(
+            "http_timeout_resolve_seconds",
+            AliasPath("http", "timeout_resolve_seconds"),
+        ),
+        description="HTTP timeout for hoster resolution requests.",
     )
     http_follow_redirects: bool = Field(
         default=True,
@@ -342,11 +350,29 @@ class AppConfig(BaseModel):
     def _validate_paths(cls, v: Any) -> Path:
         return _normalize_path(v)
 
-    @field_validator("http_timeout_seconds")
+    # Rate limiting (YAML section: http.*)
+    rate_limit_requests_per_second: float = Field(
+        default=5.0,
+        validation_alias=AliasChoices(
+            "rate_limit_requests_per_second",
+            AliasPath("http", "rate_limit_rps"),
+        ),
+        description="Default per-domain rate limit (requests/second). 0 = unlimited.",
+    )
+    api_rate_limit_rpm: int = Field(
+        default=120,
+        validation_alias=AliasChoices(
+            "api_rate_limit_rpm",
+            AliasPath("http", "api_rate_limit_rpm"),
+        ),
+        description="API rate limit per IP (requests/minute). 0 = unlimited.",
+    )
+
+    @field_validator("http_timeout_seconds", "http_timeout_resolve_seconds")
     @classmethod
     def _validate_http_timeout(cls, v: float) -> float:
         if v <= 0:
-            raise ValueError("http_timeout_seconds must be > 0")
+            raise ValueError("HTTP timeout must be > 0")
         return v
 
     @field_validator("playwright_timeout_ms")
@@ -380,8 +406,11 @@ class AppConfig(BaseModel):
             "plugins": {"plugin_dir": str(self.plugin_dir)},
             "http": {
                 "timeout_seconds": self.http_timeout_seconds,
+                "timeout_resolve_seconds": self.http_timeout_resolve_seconds,
                 "follow_redirects": self.http_follow_redirects,
                 "user_agent": self.http_user_agent,
+                "rate_limit_rps": self.rate_limit_requests_per_second,
+                "api_rate_limit_rpm": self.api_rate_limit_rpm,
             },
             "playwright": {
                 "headless": self.playwright_headless,
@@ -424,8 +453,12 @@ class EnvOverrides(BaseSettings):
     plugin_dir: Optional[Path] = None
 
     http_timeout_seconds: Optional[float] = None
+    http_timeout_resolve_seconds: Optional[float] = None
     http_follow_redirects: Optional[bool] = None
     http_user_agent: Optional[str] = None
+
+    rate_limit_requests_per_second: Optional[float] = None
+    api_rate_limit_rpm: Optional[int] = None
 
     playwright_headless: Optional[bool] = None
     playwright_timeout_ms: Optional[int] = None

@@ -359,3 +359,75 @@ class TestHosterResolverRegistry:
         registry = HosterResolverRegistry(resolvers=[resolver])
         # Should not raise
         await registry.cleanup()
+
+    @pytest.mark.asyncio
+    async def test_result_cache_prevents_repeated_resolution(self) -> None:
+        """Successful resolution is cached — second call doesn't invoke resolver."""
+        expected = ResolvedStream(video_url="https://cdn.example.com/video.mp4")
+        resolver = MagicMock()
+        resolver.name = "voe"
+        resolver.resolve = AsyncMock(return_value=expected)
+
+        registry = HosterResolverRegistry(resolvers=[resolver])
+
+        result1 = await registry.resolve("https://voe.sx/e/abc123")
+        assert result1 is not None
+        assert resolver.resolve.await_count == 1
+
+        result2 = await registry.resolve("https://voe.sx/e/abc123")
+        assert result2 is not None
+        assert result2.video_url == expected.video_url
+        # Resolver should NOT have been called again
+        assert resolver.resolve.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_failed_result_cached(self) -> None:
+        """Failed resolution (None) is cached too."""
+        resolver = MagicMock()
+        resolver.name = "voe"
+        resolver.resolve = AsyncMock(return_value=None)
+
+        registry = HosterResolverRegistry(resolvers=[resolver])
+
+        result1 = await registry.resolve("https://voe.sx/e/dead")
+        assert result1 is None
+
+        result2 = await registry.resolve("https://voe.sx/e/dead")
+        assert result2 is None
+        # Only one actual resolve call
+        assert resolver.resolve.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_redirect_cache_prevents_repeated_head(self) -> None:
+        """Redirect mapping is cached — second call skips HEAD redirect check."""
+        voe_resolver = MagicMock()
+        voe_resolver.name = "voe"
+        voe_resolver.resolve = AsyncMock(
+            return_value=ResolvedStream(video_url="https://cdn.voe.sx/v.mp4")
+        )
+
+        mock_response = MagicMock()
+        mock_response.url = "https://voe.sx/e/abc123"
+
+        http_client = AsyncMock(spec=httpx.AsyncClient)
+        http_client.head = AsyncMock(return_value=mock_response)
+
+        registry = HosterResolverRegistry(
+            resolvers=[voe_resolver], http_client=http_client
+        )
+
+        # First call: follows redirect via HEAD
+        result1 = await registry.resolve("https://cine.to/out/123")
+        assert result1 is not None
+        head_count_after_first = http_client.head.await_count
+
+        # Second call: should use result cache, no new HEAD
+        result2 = await registry.resolve("https://cine.to/out/123")
+        assert result2 is not None
+        assert http_client.head.await_count == head_count_after_first
+
+    @pytest.mark.asyncio
+    async def test_resolve_timeout_parameter(self) -> None:
+        """resolve_timeout parameter is accepted."""
+        registry = HosterResolverRegistry(resolve_timeout=5.0)
+        assert registry._resolve_timeout == 5.0

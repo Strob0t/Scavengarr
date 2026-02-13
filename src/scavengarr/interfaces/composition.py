@@ -208,6 +208,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             *create_all_xfs_resolvers(http_client=state.http_client),
         ],
         http_client=state.http_client,
+        resolve_timeout=config.http_timeout_resolve_seconds,
     )
     log.info(
         "hoster_resolver_registry_initialized",

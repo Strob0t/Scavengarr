@@ -133,3 +133,54 @@ scraping:
         assert "dl-plugin" not in stream_names
         assert "stream-plugin" in stream_names
         assert "stream-plugin" not in dl_names
+
+
+class TestMetadataCache:
+    """Tests for plugin metadata caching in get_by_provides()."""
+
+    def test_metadata_cached_after_first_call(
+        self, registry: PluginRegistry, tmp_path: Path
+    ) -> None:
+        """Metadata cache is populated after first get_by_provides() call."""
+        yaml_content = """\
+name: "cache-test"
+version: "1.0.0"
+base_url: "https://example.com"
+scraping:
+  mode: "scrapy"
+  stages:
+    - name: "search"
+      type: "list"
+      url: "/search"
+      selectors:
+        link: "a"
+"""
+        (tmp_path / "cache-test.yaml").write_text(yaml_content)
+
+        assert not registry._meta_cached
+        registry.get_by_provides("download")
+        assert registry._meta_cached
+        assert "cache-test" in registry._meta_cache
+
+    def test_second_call_uses_cache(
+        self, registry: PluginRegistry, tmp_path: Path
+    ) -> None:
+        """Second get_by_provides() call uses cached metadata."""
+        yaml_content = """\
+name: "cached-plugin"
+version: "1.0.0"
+base_url: "https://example.com"
+scraping:
+  mode: "scrapy"
+  stages:
+    - name: "search"
+      type: "list"
+      url: "/search"
+      selectors:
+        link: "a"
+"""
+        (tmp_path / "cached-plugin.yaml").write_text(yaml_content)
+
+        result1 = registry.get_by_provides("download")
+        result2 = registry.get_by_provides("download")
+        assert result1 == result2

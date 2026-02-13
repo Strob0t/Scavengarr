@@ -8,6 +8,7 @@ import structlog
 from fastapi import FastAPI, Request
 
 from scavengarr.infrastructure.config import AppConfig
+from scavengarr.interfaces.api.middleware import RateLimitMiddleware
 from scavengarr.interfaces.app_state import AppState
 from scavengarr.interfaces.composition import lifespan
 
@@ -29,6 +30,12 @@ def create_app(config: AppConfig) -> FastAPI:
     app.state = AppState()
     app.state.config = config
 
+    # API rate limiting (per-IP sliding window)
+    if config.api_rate_limit_rpm > 0:
+        app.add_middleware(
+            RateLimitMiddleware, requests_per_minute=config.api_rate_limit_rpm
+        )
+
     from scavengarr.interfaces.api.download.router import router as download_router
     from scavengarr.interfaces.api.stremio import router as stremio_router
     from scavengarr.interfaces.api.torznab import router as torznab_router
@@ -38,8 +45,15 @@ def create_app(config: AppConfig) -> FastAPI:
     app.include_router(stremio_router, prefix="/api/v1")
 
     @app.get("/api/v1/healthz")
-    async def healthz() -> dict[str, str]:
-        return {"status": "ok"}
+    async def healthz() -> dict[str, str | int | list[str]]:
+        state = app.state
+        plugins = getattr(state, "plugins", None)
+        registry = getattr(state, "hoster_resolver_registry", None)
+        return {
+            "status": "ok",
+            "plugins": len(plugins.list_names()) if plugins else 0,
+            "hosters": registry.supported_hosters if registry else [],
+        }
 
     @app.middleware("http")
     async def log_requests(request: Request, call_next):
