@@ -328,7 +328,7 @@ The system provides a stable download endpoint that delivers a `.crawljob` file 
 - Integration: HTTP router ↔ use case ↔ adapter with HTTP mocking.
 - Optional E2E: real plugin fixtures, but deterministic (no external sites in CI).
 
-### Current test suite (2531 tests)
+### Current test suite (3047 tests)
 
 ```
 tests/
@@ -368,15 +368,31 @@ tests/
       test_stream_sorter.py            # Stremio stream sorting/ranking
       test_stream_link_cache.py        # Stream link cache repository
       test_hoster_registry.py          # HosterResolverRegistry
+      test_xfs_resolver.py             # Generic XFS resolver (15 hosters, parameterised)
       test_voe_resolver.py             # VOE hoster resolver
       test_streamtape_resolver.py      # Streamtape hoster resolver
       test_supervideo_resolver.py      # SuperVideo hoster resolver
       test_doodstream_resolver.py      # DoodStream hoster resolver
       test_filemoon_resolver.py        # Filemoon hoster resolver
       test_filernet_resolver.py        # Filer.net DDL hoster resolver
-      test_katfile_resolver.py         # Katfile DDL hoster resolver
       test_rapidgator_resolver.py      # Rapidgator DDL hoster resolver
       test_ddownload_resolver.py       # DDownload DDL hoster resolver
+      test_alfafile_resolver.py        # Alfafile DDL hoster resolver
+      test_alphaddl_resolver.py        # AlphaDDL hoster resolver
+      test_fastpic_resolver.py         # Fastpic hoster resolver
+      test_filecrypt_resolver.py       # Filecrypt hoster resolver
+      test_filefactory_resolver.py     # FileFactory DDL hoster resolver
+      test_fsst_resolver.py            # FSST hoster resolver
+      test_go4up_resolver.py           # Go4up hoster resolver
+      test_mixdrop_resolver.py         # Mixdrop streaming resolver
+      test_nitroflare_resolver.py      # Nitroflare DDL hoster resolver
+      test_onefichier_resolver.py      # 1fichier DDL hoster resolver
+      test_serienstream_resolver.py    # SerienStream resolver
+      test_stmix_resolver.py           # Stmix streaming resolver
+      test_turbobit_resolver.py        # Turbobit DDL hoster resolver
+      test_uploaded_resolver.py        # Uploaded DDL hoster resolver
+      test_vidguard_resolver.py        # VidGuard streaming resolver
+      test_vidking_resolver.py         # Vidking streaming resolver
       test_aniworld_plugin.py          # aniworld plugin tests
       test_boerse_plugin.py            # boerse plugin tests
       test_burningseries_plugin.py     # burningseries plugin tests
@@ -417,6 +433,7 @@ tests/
 Important mock patterns:
 - `PluginRegistryPort` is **synchronous** → use `MagicMock` (not `AsyncMock`).
 - `SearchEnginePort`, `CrawlJobRepository`, `CachePort` are **async** → use `AsyncMock`.
+- Hoster resolver tests use `respx` (httpx-native HTTP mocking), not `AsyncMock`/`MagicMock`.
 
 ### TDD loop (mandatory for agents)
 1. Write test first (precise acceptance, small scope).
@@ -651,29 +668,39 @@ Hoster resolvers validate whether a URL on a file hosting service is still avail
 - Return `ResolvedStream(video_url=<direct_video_url>, quality=...)`
 
 **DDL (Direct Download Link) resolvers** validate file availability without extracting a video URL:
-- Filer.net (API-based), Katfile, Rapidgator, DDownload (page-scraping)
+- Filer.net (API-based), Rapidgator, DDownload (page-scraping)
+- 15 XFS-based hosters (katfile, hexupload, clicknupload, filestore, uptobox, funxd, bigwarp, dropload, goodstream, savefiles, streamwish, vidmoly, vidoza, vinovo, vidhide)
 - Return `ResolvedStream(video_url=<canonical_file_url>, quality=StreamQuality.UNKNOWN)`
 
-#### XFileSharingPro (XFS) pattern
+#### XFileSharingPro (XFS) — consolidated resolver
 
-Katfile and DDownload are both XFS-based hosters. XFS hosters share a common structure that can be reused:
+15 XFS-based hosters are consolidated into a single generic `XFSResolver` with parameterised `XFSConfig` in `src/scavengarr/infrastructure/hoster_resolvers/xfs.py`. Each hoster is described by an `XFSConfig` — name, domains, file-ID regex, and offline markers — while the resolution logic lives once in `XFSResolver`.
 
 ```python
-_DOMAINS = {"katfile", ...}  # Second-level domain names for matching
-_FILE_ID_RE = re.compile(r"^/([a-zA-Z0-9]{12})(?:/|$)")  # 12-char alphanumeric
-_OFFLINE_MARKERS = (
-    "File Not Found",
-    "file was removed",
-    ">The file expired",
-    ">The file was deleted",
-    # ... site-specific markers
-)
+@dataclass(frozen=True)
+class XFSConfig:
+    name: str                          # e.g. "katfile"
+    domains: frozenset[str]            # e.g. frozenset({"katfile"})
+    file_id_re: re.Pattern[str]        # e.g. re.compile(r"^/([a-zA-Z0-9]{12})(?:/|$)")
+    offline_markers: tuple[str, ...]   # e.g. ("File Not Found", ...)
+
+ALL_XFS_CONFIGS: tuple[XFSConfig, ...]  # all 15 configs
+create_all_xfs_resolvers(http_client) -> list[XFSResolver]  # factory function
 ```
 
-When adding a new XFS-based resolver, start from the katfile or ddownload implementation.
+Adding a new XFS hoster = adding a new `XFSConfig` constant + appending it to `ALL_XFS_CONFIGS`.
 
-#### Workflow for adding a hoster resolver
+DDownload stays separate (`ddownload.py`) due to canonical URL normalization and metadata extraction.
 
+#### Workflow for adding a new hoster resolver
+
+**For XFS-based hosters:**
+1. Add a new `XFSConfig` constant in `xfs.py` (name, domains, file_id_re, offline_markers)
+2. Append it to `ALL_XFS_CONFIGS`
+3. Tests are automatically parameterised — no new test file needed
+4. Composition root uses `create_all_xfs_resolvers()` — no wiring changes needed
+
+**For non-XFS hosters:**
 1. **Create resolver** at `src/scavengarr/infrastructure/hoster_resolvers/<name>.py`:
    - Module-level: `_DOMAINS` set/frozenset, `_FILE_ID_RE` regex, helper functions (`_extract_file_id()`)
    - Class with `name` property and `async def resolve(self, url: str) -> ResolvedStream | None`
@@ -684,7 +711,15 @@ When adding a new XFS-based resolver, start from the katfile or ddownload implem
 2. **Write tests** at `tests/unit/infrastructure/test_<name>_resolver.py`:
    - `TestExtractFileId`: URL parsing tests (valid domains, www prefix, http scheme, invalid/short IDs, non-matching domains)
    - `TestResolver`: `test_name`, valid file resolution, offline markers (one test per marker), HTTP errors, network errors, invalid URLs, error redirects
-   - Mock `httpx.AsyncClient` with `AsyncMock(spec=httpx.AsyncClient)`, mock responses with `MagicMock()`
+   - Use `respx` for HTTP mocking (not `AsyncMock`/`MagicMock`):
+     ```python
+     @respx.mock
+     @pytest.mark.asyncio()
+     async def test_resolves_valid_file(self) -> None:
+         respx.get(url).respond(200, text=html)
+         async with httpx.AsyncClient() as client:
+             result = await Resolver(http_client=client).resolve(url)
+     ```
 
 3. **Wire into composition root** at `src/scavengarr/interfaces/composition.py`:
    - Add import: `from scavengarr.infrastructure.hoster_resolvers.<name> import <Name>Resolver`
