@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, cast
 
@@ -20,6 +21,7 @@ from scavengarr.infrastructure.hoster_resolvers.doodstream import DoodStreamReso
 from scavengarr.infrastructure.hoster_resolvers.filemoon import FilemoonResolver
 from scavengarr.infrastructure.hoster_resolvers.filernet import FilerNetResolver
 from scavengarr.infrastructure.hoster_resolvers.katfile import KatfileResolver
+from scavengarr.infrastructure.hoster_resolvers.probe import probe_urls
 from scavengarr.infrastructure.hoster_resolvers.rapidgator import RapidgatorResolver
 from scavengarr.infrastructure.hoster_resolvers.streamtape import StreamtapeResolver
 from scavengarr.infrastructure.hoster_resolvers.supervideo import SuperVideoResolver
@@ -162,12 +164,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
 
     # 10) Stremio use cases (always initialized — fallback handles missing key)
+    probe_fn = functools.partial(
+        probe_urls,
+        state.http_client,
+        concurrency=config.stremio.probe_concurrency,
+        timeout=config.stremio.probe_timeout_seconds,
+    )
     state.stremio_stream_uc = StremioStreamUseCase(
         tmdb=state.tmdb_client,
         plugins=state.plugins,
         search_engine=state.search_engine,
         config=config.stremio,
         stream_link_repo=state.stream_link_repo,
+        probe_fn=probe_fn,
     )
     state.stremio_catalog_uc = StremioCatalogUseCase(tmdb=state.tmdb_client)
 

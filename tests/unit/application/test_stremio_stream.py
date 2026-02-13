@@ -76,6 +76,7 @@ def _make_use_case(
     search_engine: AsyncMock | None = None,
     config: StremioConfig | None = None,
     stream_link_repo: AsyncMock | None = None,
+    probe_fn: AsyncMock | None = None,
 ) -> StremioStreamUseCase:
     engine = search_engine or AsyncMock()
     # Default: validate_results returns input unchanged
@@ -88,6 +89,7 @@ def _make_use_case(
         search_engine=engine,
         config=config or _make_config(),
         stream_link_repo=stream_link_repo,
+        probe_fn=probe_fn,
     )
 
 
@@ -897,3 +899,128 @@ class TestStreamLinkProxy:
 
         assert len(result) >= 1
         assert result[0].url == "https://voe.sx/e/abc"
+
+
+# ---------------------------------------------------------------------------
+# Stream probe at /stream time
+# ---------------------------------------------------------------------------
+
+
+def _probe_test_setup(
+    *,
+    result_count: int = 3,
+    probe_fn: AsyncMock | None = None,
+    config: StremioConfig | None = None,
+) -> tuple[StremioStreamUseCase, AsyncMock]:
+    """Build a use case with probe callback for testing.
+
+    Returns (use_case, repo_mock). The use case has a TMDB mock returning
+    "Iron Man" (2008), a single plugin returning *result_count* streams,
+    and a stream_link_repo mock for proxy URL generation.
+    """
+    tmdb = AsyncMock()
+    tmdb.get_title_and_year = AsyncMock(
+        return_value=TitleMatchInfo(title="Iron Man", year=2008)
+    )
+
+    srs = [
+        _make_search_result(
+            title="Iron Man",
+            download_links=[{"url": f"https://voe.sx/e/stream{i}"}],
+        )
+        for i in range(result_count)
+    ]
+
+    mock_plugin = AsyncMock()
+    mock_plugin.search = AsyncMock(return_value=srs)
+    del mock_plugin.scraping
+
+    engine = AsyncMock()
+    engine.validate_results = AsyncMock(side_effect=lambda r: r)
+
+    plugins = MagicMock()
+    plugins.get_by_provides.side_effect = lambda p: ["hdfilme"] if p == "stream" else []
+    plugins.get.return_value = mock_plugin
+
+    repo = AsyncMock()
+    uc = _make_use_case(
+        tmdb=tmdb,
+        plugins=plugins,
+        search_engine=engine,
+        config=config or _make_config(),
+        stream_link_repo=repo,
+        probe_fn=probe_fn,
+    )
+    return uc, repo
+
+
+class TestStreamProbe:
+    async def test_dead_links_filtered_by_probe(self) -> None:
+        """Probe kills index 1 → only 2 streams returned."""
+        probe_fn = AsyncMock(return_value={0, 2})
+        uc, repo = _probe_test_setup(result_count=3, probe_fn=probe_fn)
+
+        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        assert len(result) == 2
+        probe_fn.assert_awaited_once()
+        assert repo.save.await_count == 2
+
+    async def test_probe_disabled_skips_filtering(self) -> None:
+        """probe_at_stream_time=False → no filtering, all streams pass."""
+        probe_fn = AsyncMock(return_value={0})
+        config = _make_config(probe_at_stream_time=False)
+        uc, repo = _probe_test_setup(result_count=3, probe_fn=probe_fn, config=config)
+
+        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        assert len(result) == 3
+        probe_fn.assert_not_awaited()
+
+    async def test_probe_without_fn_skips_filtering(self) -> None:
+        """No probe_fn → all streams pass through unfiltered."""
+        uc, repo = _probe_test_setup(result_count=3, probe_fn=None)
+
+        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        assert len(result) == 3
+
+    async def test_max_probe_count_limits_probing(self) -> None:
+        """5 streams, max_probe_count=2 → only first 2 probed, rest pass."""
+        # Probe kills index 0, keeps index 1
+        probe_fn = AsyncMock(return_value={1})
+        config = _make_config(max_probe_count=2)
+        uc, repo = _probe_test_setup(result_count=5, probe_fn=probe_fn, config=config)
+
+        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        # Index 0 killed, index 1 alive, indices 2-4 unprobed (pass through)
+        assert len(result) == 4
+        # Verify probe was called with only 2 targets
+        call_args = probe_fn.call_args[0][0]
+        assert len(call_args) == 2
+
+    async def test_all_dead_returns_empty(self) -> None:
+        """All streams fail probe → empty result."""
+        probe_fn = AsyncMock(return_value=set())
+        uc, repo = _probe_test_setup(result_count=3, probe_fn=probe_fn)
+
+        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        assert len(result) == 0
+        repo.save.assert_not_awaited()
+
+    async def test_probe_preserves_stream_order(self) -> None:
+        """Alive streams keep original sort order."""
+        # Keep indices 0 and 2 → first and third stream
+        probe_fn = AsyncMock(return_value={0, 2})
+        uc, repo = _probe_test_setup(result_count=3, probe_fn=probe_fn)
+
+        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        assert len(result) == 2
+        # Both should be proxy URLs (order preserved)
+        assert all(
+            s.url.startswith("http://localhost:8080/api/v1/stremio/play/")
+            for s in result
+        )

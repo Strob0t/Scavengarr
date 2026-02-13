@@ -7,6 +7,7 @@ IMDb ID -> TMDB title -> parallel plugin search
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from uuid import uuid4
 
@@ -105,6 +106,11 @@ def _build_search_query(
     return title
 
 
+# Callback type for probing hoster URLs at /stream time.
+# Accepts list of (index, url) tuples, returns set of alive indices.
+ProbeCallback = Callable[[list[tuple[int, str]]], Awaitable[set[int]]]
+
+
 class StremioStreamUseCase:
     """Resolve Stremio stream requests into sorted stream links.
 
@@ -114,7 +120,8 @@ class StremioStreamUseCase:
         3. Search all plugins in parallel (bounded concurrency).
         4. Convert SearchResults to RankedStreams.
         5. Sort by language, quality, and hoster.
-        6. Format into StremioStream objects.
+        6. Probe hoster URLs to filter dead links (optional).
+        7. Format into StremioStream objects.
     """
 
     def __init__(
@@ -125,6 +132,7 @@ class StremioStreamUseCase:
         search_engine: SearchEnginePort,
         config: StremioConfig,
         stream_link_repo: StreamLinkRepository | None = None,
+        probe_fn: ProbeCallback | None = None,
     ) -> None:
         self._tmdb = tmdb
         self._plugins = plugins
@@ -139,6 +147,9 @@ class StremioStreamUseCase:
         self._title_year_tolerance_movie = config.title_year_tolerance_movie
         self._title_year_tolerance_series = config.title_year_tolerance_series
         self._stream_link_repo = stream_link_repo
+        self._probe_fn = probe_fn
+        self._probe_at_stream_time = config.probe_at_stream_time
+        self._max_probe_count = config.max_probe_count
 
     async def execute(
         self,
@@ -263,7 +274,35 @@ class StremioStreamUseCase:
         ranked: list[RankedStream],
         base_url: str,
     ) -> list[StremioStream]:
-        """Cache hoster URLs and replace stream URLs with proxy play links."""
+        """Cache hoster URLs and replace stream URLs with proxy play links.
+
+        When a probe callback is configured and enabled, performs a
+        lightweight GET probe on each hoster embed URL to filter dead
+        links before caching. Only the top ``max_probe_count`` streams
+        are probed; the rest pass through unchecked.
+        """
+        # --- Probe step: filter dead links ---
+        if self._probe_fn and self._probe_at_stream_time:
+            limit = min(len(ranked), self._max_probe_count)
+            probe_targets = [(i, ranked[i].url) for i in range(limit)]
+            alive_indices = await self._probe_fn(probe_targets)
+
+            log.info(
+                "stremio_probe_complete",
+                total=limit,
+                alive=len(alive_indices),
+                filtered=limit - len(alive_indices),
+            )
+
+            # Keep only alive streams (preserve order); unprobed streams pass through
+            streams = [
+                s for i, s in enumerate(streams) if i in alive_indices or i >= limit
+            ]
+            ranked = [
+                r for i, r in enumerate(ranked) if i in alive_indices or i >= limit
+            ]
+
+        # --- Cache step ---
         proxied: list[StremioStream] = []
         for stream, ranked_s in zip(streams, ranked):
             stream_id = uuid4().hex
