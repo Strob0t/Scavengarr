@@ -9,7 +9,7 @@ Every module lives in one of four concentric layers. Dependencies always point *
 ┌────────────────────────────────────────────────┐
 │  Interfaces (Controllers, CLI, HTTP Router)    │  ← Frameworks & Drivers
 ├────────────────────────────────────────────────┤
-│  Infrastructure (Scrapy, Playwright, Cache)    │  ← Interface Adapters
+│  Infrastructure (httpx, Playwright, Cache)      │  ← Interface Adapters
 ├────────────────────────────────────────────────┤
 │  Application (Use Cases, Factories, Services)  │  ← Application Business Rules
 ├────────────────────────────────────────────────┤
@@ -96,14 +96,8 @@ Value objects are immutable configuration types (`frozen=True` dataclasses):
 
 | Value Object | File | Purpose |
 |---|---|---|
-| `YamlPluginDefinition` | `plugins/plugin_schema.py` | Complete YAML plugin configuration (name, base_url, stages, auth) |
-| `ScrapingConfig` | `plugins/plugin_schema.py` | Scraping mode and stage definitions |
-| `ScrapingStage` | `plugins/plugin_schema.py` | Single stage in multi-stage pipeline (name, type, selectors) |
-| `StageSelectors` | `plugins/plugin_schema.py` | CSS selectors for data extraction in a stage |
-| `NestedSelector` | `plugins/plugin_schema.py` | Complex nested extraction with grouping strategies |
 | `AuthConfig` | `plugins/plugin_schema.py` | Authentication settings (none/basic/form/cookie) |
 | `HttpOverrides` | `plugins/plugin_schema.py` | Per-plugin HTTP configuration overrides |
-| `PaginationConfig` | `plugins/plugin_schema.py` | Pagination settings for list stages |
 
 ### Enums
 
@@ -138,7 +132,7 @@ TorznabError (base)
 └── TorznabExternalError      → HTTP 502 (dev) / 200 (prod)
 
 PluginError (base)
-├── PluginValidationError     YAML schema validation failure
+├── PluginValidationError     Plugin validation failure
 ├── PluginLoadError           Python plugin import failure
 ├── PluginNotFoundError       Plugin name not in registry
 └── DuplicatePluginError      Two plugins share the same name
@@ -171,9 +165,8 @@ This is the most important use case. Its `execute()` method implements the full 
 async def execute(self, q: TorznabQuery) -> list[TorznabItem]:
     # 1. Validate query (action, query string, plugin name)
     # 2. Resolve plugin from PluginRegistryPort
-    # 3. Route to YAML or Python plugin execution path
-    #    - YAML: engine.search(plugin, query)  [multi-stage scraping]
-    #    - Python: plugin.search(query) + engine.validate_results()
+    # 3. Execute plugin search via engine
+    #    - plugin.search(query) + engine.validate_results()
     # 4. Convert SearchResults -> TorznabItems + CrawlJobs
     # 5. Save CrawlJobs to repository
     # 6. Return enriched TorznabItems (with job_id)
@@ -236,11 +229,9 @@ Infrastructure implements the ports defined by Domain and provides concrete adap
 
 **Cache** (`cache/`): Two interchangeable adapters behind `CachePort`. A factory function (`create_cache()`) selects the backend based on configuration.
 
-**Plugins** (`plugins/`): Discovery, loading, validation, and caching of YAML and Python plugins. The `PluginRegistry` indexes files lazily and caches loaded plugins in memory.
+**Plugins** (`plugins/`): Discovery, loading, validation, and caching of Python plugins. The `PluginRegistry` indexes `.py` files lazily and caches loaded plugins in memory. All plugins inherit from `HttpxPluginBase` or `PlaywrightPluginBase`.
 
-**Scraping** (`scraping/`): The `ScrapyAdapter` executes multi-stage CSS-selector-based scraping with httpx. The `StageScraper` handles individual stage execution including data extraction, link extraction, and pagination.
-
-**Search Engine** (`torznab/search_engine.py`): Orchestrates ScrapyAdapter and HttpLinkValidator. Converts raw stage results to SearchResult objects, deduplicates, and filters by link validity.
+**Search Engine** (`torznab/search_engine.py`): `HttpxSearchEngine` orchestrates plugin search and HttpLinkValidator. Dispatches to Python plugins, deduplicates results, and filters by link validity.
 
 **Presenter** (`torznab/presenter.py`): Renders Domain entities (TorznabCaps, TorznabItem) to Torznab-compliant RSS 2.0 XML.
 
@@ -331,12 +322,9 @@ HTTP GET /api/v1/torznab/filmpalast?t=search&q=iron+man
 │
 ├─ TorznabSearchUseCase.execute(query)
 │   ├─ Validate: action == "search", query present, plugin_name present
-│   ├─ PluginRegistry.get("filmpalast") → YamlPluginDefinition
+│   ├─ PluginRegistry.get("filmpalast") → Python plugin
 │   ├─ SearchEngine.search(plugin, "iron man")
-│   │   ├─ ScrapyAdapter.scrape(query="iron man")
-│   │   │   ├─ Stage 1 (list): fetch search page → extract detail links
-│   │   │   └─ Stage 2 (detail): fetch detail pages [parallel] → extract download links
-│   │   ├─ Convert stage results → list[SearchResult]
+│   │   ├─ plugin.search("iron man") → list[SearchResult]
 │   │   ├─ Deduplicate by (title, download_link)
 │   │   └─ LinkValidator.validate_batch(all_urls) → filter dead links
 │   ├─ For each SearchResult:
@@ -437,7 +425,7 @@ async def test_search_returns_items(mock_plugins, mock_engine, ...):
 
 ### Why sync PluginRegistryPort
 
-- Plugin discovery reads `.yaml` and `.py` files from a local directory.
+- Plugin discovery reads `.py` files from a local directory.
 - This is fast local I/O, not network I/O.
 - Making it async would add unnecessary complexity without benefit.
 
@@ -475,7 +463,7 @@ src/scavengarr/
 │   ├── plugins/
 │   │   ├── base.py                 # SearchResult, StageResult, PluginProtocol
 │   │   ├── exceptions.py           # Plugin exception hierarchy
-│   │   └── plugin_schema.py        # YAML plugin definition value objects
+│   │   └── plugin_schema.py        # Plugin definition value objects
 │   └── ports/
 │       ├── cache.py                # CachePort
 │       ├── crawljob_repository.py  # CrawlJobRepository
@@ -497,8 +485,7 @@ src/scavengarr/
 │   ├── config/                     # Configuration loading + validation
 │   ├── logging/                    # Structured logging setup
 │   ├── persistence/                # CrawlJob cache repository
-│   ├── plugins/                    # Plugin registry, loader, adapters
-│   ├── scraping/                   # ScrapyAdapter (multi-stage engine)
+│   ├── plugins/                    # Plugin registry, loader, base classes
 │   ├── torznab/                    # Search engine + XML presenter
 │   └── validation/                 # HTTP link validator
 │

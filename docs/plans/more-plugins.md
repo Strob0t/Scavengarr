@@ -8,7 +8,7 @@
 
 Scavengarr ships with **40 plugins** covering German streaming, DDL, and anime sites:
 
-### Httpx plugins (28)
+### Httpx plugins (31)
 
 | Plugin | Site | Type | Notes |
 |---|---|---|---|
@@ -40,6 +40,9 @@ Scavengarr ships with **40 plugins** covering German streaming, DDL, and anime s
 | sto | s.to | stream | TV-only |
 | streamcloud | streamcloud.plus | stream | Domain fallback |
 | streamkiste | streamkiste.taxi | stream | 5 mirror domains |
+| filmpalast | filmpalast.to | stream | Converted from YAML |
+| scnlog | scnlog.me | download | Scene log, pagination |
+| warezomen | warezomen.com | download | Converted from YAML |
 
 ### Playwright plugins (9)
 
@@ -54,14 +57,6 @@ Scavengarr ships with **40 plugins** covering German streaming, DDL, and anime s
 | mygully | mygully.com | download | Cloudflare + vBulletin auth |
 | scnsrc | scnsrc.me | download | Scene releases, multi-domain |
 | streamworld | streamworld.ws | stream | Playwright mode |
-
-### YAML plugins (3)
-
-| Plugin | Site | Type | Notes |
-|---|---|---|---|
-| filmpalast_to | filmpalast.to | stream | Original plugin |
-| scnlog | scnlog.me | download | Scene log, pagination |
-| warezomen | warezomen.com | download | Converted from Python |
 
 ## Remaining Candidates
 

@@ -88,7 +88,7 @@ model, which reads them automatically.
 |----------|------|---------|-------------|
 | `SCAVENGARR_APP_NAME` | string | `scavengarr` | Application name (appears in XML titles and logs) |
 | `SCAVENGARR_ENVIRONMENT` | string | `dev` | Runtime environment: `dev`, `test`, or `prod` |
-| `SCAVENGARR_PLUGIN_DIR` | path | `./plugins` | Directory containing YAML/Python plugin files |
+| `SCAVENGARR_PLUGIN_DIR` | path | `./plugins` | Directory containing Python plugin files |
 | `SCAVENGARR_HTTP_TIMEOUT_SECONDS` | float | `30.0` | HTTP request timeout for scraping operations |
 | `SCAVENGARR_HTTP_FOLLOW_REDIRECTS` | bool | `true` | Whether the HTTP client follows redirects |
 | `SCAVENGARR_HTTP_USER_AGENT` | string | `Scavengarr/0.1.0 (...)` | User-Agent header for outgoing requests |
@@ -196,15 +196,15 @@ The `environment` setting controls several behavioral defaults (see
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `plugins.plugin_dir` | path | `./plugins` | Directory containing YAML and Python plugin files |
+| `plugins.plugin_dir` | path | `./plugins` | Directory containing Python plugin files |
 
-The plugin registry scans this directory at startup for `.yaml` and `.py` files.
+The plugin registry scans this directory at startup for `.py` files.
 Plugins are loaded lazily on first access and cached in memory. See
 [Plugin System](./plugin-system.md) for details.
 
 ### HTTP
 
-Controls the HTTP client used by the Scrapy scraping engine for static HTML pages.
+Controls the HTTP client used by httpx plugins for static HTML pages and API requests.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -433,7 +433,7 @@ docker run -d --name scavengarr \
 
 | Container Path | Purpose | Required |
 |----------------|---------|----------|
-| `/app/plugins` | Plugin directory (YAML/Python files) | Yes |
+| `/app/plugins` | Plugin directory (Python files) | Yes |
 | `/app/cache` | Cache storage (diskcache SQLite) | Recommended |
 | `/app/config.yaml` | Configuration file | Optional |
 

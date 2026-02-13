@@ -2,9 +2,9 @@
 
 > Central index for all feature documentation. Start here to navigate the system.
 
-Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Prowlarr and other Arr applications. It scrapes sources via two engines (Scrapy for static HTML, Playwright for JS-heavy sites) and delivers results through standard Torznab endpoints.
+Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Prowlarr and other Arr applications. It scrapes sources via Python plugins (httpx for static HTML, Playwright for JS-heavy sites) and delivers results through standard Torznab endpoints.
 
-**Version:** 0.1.0 | **Python:** 3.12+ | **Tests:** 3225 (3047 unit + 109 E2E + 31 integration + 38 live) | **Plugins:** 40 (37 Python + 3 YAML) | **Hoster Resolvers:** 39 | **Architecture:** Clean Architecture
+**Version:** 0.1.0 | **Python:** 3.12+ | **Tests:** 3225+ | **Plugins:** 40 (31 httpx + 9 Playwright) | **Hoster Resolvers:** 39 | **Architecture:** Clean Architecture
 
 ---
 
@@ -20,8 +20,8 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Pro
 
 | Document | Description |
 |---|---|
-| [Plugin System (YAML)](./plugin-system.md) | Declarative YAML plugin authoring, schema reference, selectors |
-| [Python Plugins](./python-plugins.md) | Imperative Python plugin development, protocol, examples |
+| [Plugin System](./plugin-system.md) | Python plugin authoring, base classes, protocol, discovery |
+| [Python Plugins](./python-plugins.md) | Detailed Python plugin development, base class reference, examples |
 | [Multi-Stage Scraping](./multi-stage-scraping.md) | Search-Detail-Links pipeline, stage types, parallel execution |
 | [CrawlJob System](./crawljob-system.md) | Multi-link packaging for JDownloader integration |
 | [Torznab API](./torznab-api.md) | Torznab/Newznab endpoint reference, XML format, Prowlarr compat |
@@ -48,7 +48,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Pro
 
 | Document | Description |
 |---|---|
-| [Playwright Engine](../plans/playwright-engine.md) | Native Playwright scraping engine for JS-heavy sites |
+| [Playwright Engine](../plans/playwright-engine.md) | Browser pool and resource management for Playwright plugins |
 | [More Plugins](../plans/more-plugins.md) | Plugin inventory and remaining candidates |
 | [Integration Tests](../plans/integration-tests.md) | Implemented: 31 integration + 109 E2E + 38 live smoke tests |
 | [Search Caching](../plans/search-caching.md) | Implemented: 900s TTL with X-Cache header |
@@ -74,9 +74,8 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Pro
 | Component | Technology | Purpose |
 |---|---|---|
 | Web framework | FastAPI + Uvicorn | HTTP API (Torznab endpoints) |
-| Static scraping | Scrapy | HTML parsing for YAML plugins |
+| Static scraping | httpx | HTML parsing for Python plugins |
 | Dynamic scraping | Playwright (Chromium) | JS-heavy sites, Cloudflare bypass |
-| HTTP client | httpx | Link validation, async requests, Python plugins |
 | Release parsing | guessit | Release name parsing for title matching |
 | Configuration | pydantic-settings | Typed config with env/YAML/CLI support |
 | Caching | diskcache (+ optional Redis) | Search result and CrawlJob storage |
@@ -99,10 +98,9 @@ src/scavengarr/
     factories/             # CrawlJob factory
   infrastructure/          # Interface adapters
     plugins/               # Registry, loader, base classes (HttpxPluginBase, PlaywrightPluginBase)
-    scraping/              # Scrapy search engine
+    torznab/               # HttpxSearchEngine + XML presenter
     validation/            # Link validator (HEAD/GET)
     cache/                 # diskcache adapter
-    torznab/               # XML presenter
     stremio/               # Stream converter, sorter, TMDB client, title matcher
     hoster_resolvers/      # 39 resolvers (15 XFS consolidated + 24 non-XFS)
     config/                # Settings, logging
@@ -112,8 +110,8 @@ src/scavengarr/
     cli/                   # Typer CLI
     composition/           # Dependency injection
 
-plugins/                   # Plugin directory (37 Python + 3 YAML)
-  filmpalast_to.yaml       # YAML plugin example
+plugins/                   # Plugin directory (40 Python plugins)
+  filmpalast_to.py         # Python plugin example (httpx)
   boerse.py                # Python plugin example (Playwright)
   einschalten.py           # Python plugin example (httpx API)
 
@@ -133,8 +131,8 @@ tests/
 ## How to Use These Docs
 
 1. **New to Scavengarr?** Start with [FEATURES.md](./FEATURES.md) for a bird's-eye view.
-2. **Writing a YAML plugin?** Read [Plugin System](./plugin-system.md) and [Multi-Stage Scraping](./multi-stage-scraping.md).
-3. **Writing a Python plugin?** Read [Python Plugins](./python-plugins.md).
+2. **Writing a new plugin?** Read [Plugin System](./plugin-system.md) and [Python Plugins](./python-plugins.md).
+3. **Understanding multi-stage scraping?** Read [Multi-Stage Scraping](./multi-stage-scraping.md).
 4. **Setting up Prowlarr?** Read [Prowlarr Integration](./prowlarr-integration.md) and [Torznab API](./torznab-api.md).
 5. **Understanding the architecture?** Read [Clean Architecture](../architecture/clean-architecture.md).
 6. **Configuring the system?** Read [Configuration](./configuration.md).

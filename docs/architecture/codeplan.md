@@ -61,7 +61,7 @@ src/scavengarr/
 │   │   ├── __init__.py               # Re-exports SearchResult, plugin types, exceptions
 │   │   ├── base.py                   # SearchResult, StageResult, Protocols
 │   │   ├── exceptions.py             # Plugin exception hierarchy
-│   │   └── plugin_schema.py          # YAML plugin value objects
+│   │   └── plugin_schema.py          # Plugin value objects
 │   └── ports/
 │       ├── __init__.py               # Re-exports all port protocols
 │       ├── cache.py                  # CachePort
@@ -120,9 +120,6 @@ src/scavengarr/
 │   │   ├── playwright_base.py        # PlaywrightPluginBase shared base for 9 plugins
 │   │   ├── registry.py               # PluginRegistry (lazy loading)
 │   │   └── validation_schema.py      # Pydantic validation models
-│   ├── scraping/
-│   │   ├── __init__.py               # Re-exports ScrapyAdapter
-│   │   └── scrapy_adapter.py         # Multi-stage scraping engine
 │   ├── stremio/
 │   │   ├── __init__.py
 │   │   ├── release_parser.py         # guessit-based release name parsing
@@ -160,10 +157,10 @@ src/scavengarr/
         ├── __init__.py
         └── __main__.py               # CLI entry point
 
-plugins/                              # 32 plugins (29 Python + 3 YAML)
-├── filmpalast_to.yaml                # YAML plugin (Scrapy, streaming)
-├── scnlog.yaml                       # YAML plugin (Scrapy, scene log)
-├── warezomen.yaml                    # YAML plugin (Scrapy, DDL)
+plugins/                              # 40 plugins (31 httpx + 9 Playwright)
+├── filmpalast_to.py                  # Httpx plugin (streaming)
+├── scnlog.py                         # Httpx plugin (scene log)
+├── warezomen.py                      # Httpx plugin (DDL)
 ├── boerse.py                         # Playwright plugin (Cloudflare + vBulletin)
 ├── einschalten.py                    # Httpx plugin (JSON API)
 ├── movie4k.py                        # Httpx plugin (JSON API, multi-domain)
@@ -199,8 +196,7 @@ tests/
 | ASGI Server | Uvicorn | ^0.40 | Production ASGI server |
 | HTTP Client | httpx | ^0.28 | Async HTTP for scraping and validation |
 | HTML Parsing | BeautifulSoup4 | (transitive) | CSS selector extraction |
-| Browser Automation | Playwright | ^1.47 | JS-heavy site scraping (future) |
-| Spider Framework | Scrapy | ^2.14 | Static HTML scraping engine |
+| Browser Automation | Playwright | ^1.47 | JS-heavy site scraping (9 plugins) |
 | Structured Logging | structlog | ^25.5 | JSON/console logging |
 | Cache (SQLite) | diskcache | ^5.6 | Local persistent cache |
 | Cache (Redis) | redis | ^7.1 | Optional distributed cache |
@@ -410,74 +406,7 @@ class MultiStagePluginProtocol(Protocol):
 
 #### `domain/plugins/plugin_schema.py`
 
-Pure domain models for YAML plugin configuration. All are frozen dataclasses -- no validation logic (validation lives in Infrastructure).
-
-**YamlPluginDefinition** -- Top-level plugin definition.
-
-```python
-@dataclass(frozen=True)
-class YamlPluginDefinition:
-    name: str                                    # e.g., "filmpalast"
-    version: str                                 # semver, e.g., "1.0.0"
-    base_url: str                                # Primary URL
-    scraping: ScrapingConfig                     # Scraping mode + stages
-    mirror_urls: list[str] | None = None         # Fallback URLs
-    auth: AuthConfig | None = None               # Authentication
-    http: HttpOverrides | None = None            # Per-plugin HTTP overrides
-```
-
-**ScrapingConfig** -- Scraping engine configuration.
-
-```python
-@dataclass(frozen=True)
-class ScrapingConfig:
-    mode: Literal["scrapy", "playwright"]
-    # Legacy Playwright fields
-    search_url_template: str | None = None
-    wait_for_selector: str | None = None
-    locators: PlaywrightLocators | None = None
-    # Scrapy multi-stage pipeline
-    stages: list[ScrapingStage] | None = None
-    start_stage: str | None = None
-    max_depth: int = 5
-    delay_seconds: float = 1.5
-```
-
-**ScrapingStage** -- Single pipeline stage.
-
-```python
-@dataclass(frozen=True)
-class ScrapingStage:
-    name: str                                    # e.g., "movie_list"
-    type: Literal["list", "detail"]              # list=intermediate, detail=terminal
-    selectors: StageSelectors                    # CSS selectors
-    url: str | None = None                       # Static URL
-    url_pattern: str | None = None               # Dynamic URL template
-    next_stage: str | None = None                # Next stage to chain
-    pagination: PaginationConfig | None = None
-    conditions: dict[str, Any] | None = None     # Processing conditions
-```
-
-**StageSelectors** -- CSS selectors for data extraction.
-
-Fields: `link`, `title`, `description`, `release_name`, `download_link`, `seeders`, `leechers`, `size`, `published_date`, `download_links` (nested), `custom` (dict).
-
-**NestedSelector** -- Complex nested extraction.
-
-```python
-@dataclass(frozen=True)
-class NestedSelector:
-    container: str                               # Main container CSS selector
-    items: str                                   # Item CSS selector
-    fields: dict[str, str] = field(default_factory=dict)
-    item_group: str | None = None                # Optional grouping container
-    field_attributes: dict[str, list[str]] = field(default_factory=dict)
-    multi_value_fields: list[str] | None = None  # Fields collected as lists
-```
-
-Two extraction modes:
-1. **Direct:** Each `items` element = 1 result
-2. **Grouped:** All `items` within each `item_group` are merged into 1 result
+Pure domain models for plugin configuration. All are frozen dataclasses -- no validation logic (validation lives in Infrastructure).
 
 **AuthConfig** -- Authentication configuration.
 
@@ -495,7 +424,7 @@ class AuthConfig:
     password_env: str | None = None     # Env var name for password
 ```
 
-**Other value objects:** `HttpOverrides` (timeout, redirects, user-agent), `PaginationConfig` (enabled, selector, max_pages), `ScrapySelectors` (legacy), `PlaywrightLocators` (legacy).
+**Other value objects:** `HttpOverrides` (timeout, redirects, user-agent).
 
 ---
 
@@ -505,7 +434,7 @@ Plugin-specific exception hierarchy.
 
 ```
 PluginError (base)
-├── PluginValidationError   # YAML schema validation failure
+├── PluginValidationError   # Plugin validation failure
 ├── PluginLoadError         # Python plugin import/protocol failure
 ├── PluginNotFoundError     # Plugin name not in registry
 └── DuplicatePluginError    # Two plugins share the same name
@@ -548,7 +477,7 @@ Implementation: `HttpxSearchEngine`.
 class PluginRegistryPort(Protocol):
     def discover(self) -> None: ...
     def list_names(self) -> list[str]: ...
-    def get(self, name: str) -> YamlPluginDefinition | PluginProtocol: ...
+    def get(self, name: str) -> PluginProtocol: ...
 ```
 
 **Synchronous** -- plugin files are local. Decorated with `@runtime_checkable` for isinstance checks.
@@ -602,9 +531,7 @@ def __init__(
 Flow:
 1. **Validate** -- action must be "search", query and plugin_name must be present.
 2. **Resolve plugin** -- `plugins.get(q.plugin_name)`. Raises `TorznabPluginNotFound`.
-3. **Route by type:**
-   - Python plugin (has `search()`, no `scraping`): calls `plugin.search()` then `engine.validate_results()`.
-   - YAML plugin (has `scraping.mode`): calls `engine.search(plugin, query)`.
+3. **Execute search** -- calls `plugin.search()` then `engine.validate_results()`.
 4. **Build TorznabItems** -- For each SearchResult:
    - Create TorznabItem with mapped fields.
    - Create CrawlJob via factory.
@@ -612,7 +539,7 @@ Flow:
    - Enrich TorznabItem with `job_id`.
 5. **Return** -- list of enriched TorznabItems.
 
-Helper function `_is_python_plugin(plugin)` detects Python plugins by checking for `search()` method without `scraping` attribute.
+All plugins are Python-based and implement the `PluginProtocol` with a `search()` method.
 
 **Error handling:** Individual CrawlJob creation failures are logged and skipped (degraded result, not crash).
 
@@ -751,39 +678,24 @@ def __init__(self, url: str = "redis://localhost:6379/0", ttl_seconds: int = 360
 Lazy-loading plugin registry implementing `PluginRegistryPort`.
 
 **Design principles:**
-- `discover()` only indexes file paths (no YAML parsing, no Python execution).
+- `discover()` only indexes file paths (no Python execution).
 - `get()` loads and caches on first access.
-- Separate caches for YAML and Python plugins.
 
 **Internal state:**
 - `_refs: list[_PluginRef]` -- Discovered file references (path + type).
-- `_yaml_cache: dict[str, YamlPluginDefinition]` -- Loaded YAML plugins.
 - `_python_cache: dict[str, PluginProtocol]` -- Loaded Python plugins.
 
-**`discover() -> None`** -- Scans `plugin_dir` for `.yaml`/`.yml`/`.py` files. Idempotent (only runs once).
+**`discover() -> None`** -- Scans `plugin_dir` for `.py` files. Idempotent (only runs once).
 
-**`list_names() -> list[str]`** -- Peeks plugin names without full loading. For YAML: reads just the `name` field via `yaml.safe_load()`. For Python: imports module and reads `plugin.name`.
+**`list_names() -> list[str]`** -- Peeks plugin names without full loading. Imports module and reads `plugin.name`.
 
-**`get(name: str) -> YamlPluginDefinition | PluginProtocol`** -- Returns cached plugin or loads on demand. Raises `PluginNotFoundError`.
-
-**`get_by_mode(mode) -> list[YamlPluginDefinition]`** -- Returns YAML plugins filtered by scraping mode (scrapy/playwright).
+**`get(name: str) -> PluginProtocol`** -- Returns cached plugin or loads on demand. Raises `PluginNotFoundError`.
 
 **`load_all() -> None`** -- Force-loads all plugins. Raises `DuplicatePluginError` if name collision found.
 
 ---
 
 #### `infrastructure/plugins/loader.py` -- Plugin Loading
-
-Two loading functions:
-
-**`load_yaml_plugin(path: Path) -> YamlPluginDefinition`**
-
-Flow:
-1. Read YAML file → `yaml.safe_load()`.
-2. Validate with Pydantic (`YamlPluginDefinitionPydantic.model_validate()`).
-3. Convert to domain model via `to_domain_plugin_definition()`.
-
-Raises: `PluginLoadError` (file I/O), `PluginValidationError` (schema/YAML errors).
 
 **`load_python_plugin(path: Path) -> PluginProtocol`**
 
@@ -793,114 +705,11 @@ Flow:
 3. Verify `plugin` variable exists with `name: str` and `search()` method.
 
 Raises: `PluginLoadError` (import errors, missing protocol).
-
----
-
-#### `infrastructure/plugins/validation_schema.py` -- Pydantic Validation Models
-
-Pydantic `BaseModel` classes that validate YAML plugin content. Mirrors the domain schema but with validation rules.
-
-**Key models:**
-
-| Model | Validates |
-|---|---|
-| `YamlPluginDefinitionPydantic` | Top-level plugin: name (regex), version (semver), base_url (HttpUrl list), scraping, auth, http |
-| `ScrapingConfig` | Mode-specific requirements: scrapy needs stages, playwright needs search_url_template |
-| `ScrapingStage` | Stage needs url/url_pattern, list stages need link selector, stage references validated |
-| `StageSelectors` | At least one selector required |
-| `NestedSelector` | At least one field, link/url fields must have field_attributes |
 | `AuthConfig` | Type-specific requirements: basic needs username+password, form needs all form fields |
-| `PaginationConfig` | Enabled pagination needs selector, max_pages >= 1 |
 | `HttpOverrides` | timeout_seconds > 0 |
 
 **Special features:**
-- `base_url` accepts single string or list (first = primary, rest = mirrors).
 - `AuthConfig._resolve_env_credentials()` reads username/password from environment variables.
-
----
-
-#### `infrastructure/plugins/adapters.py` -- Model Conversion
-
-Functions that convert Pydantic validation models to pure domain dataclasses:
-
-```python
-to_domain_plugin_definition(pydantic: YamlPluginDefinitionPydantic) -> YamlPluginDefinition
-to_domain_scraping_config(pydantic: ScrapingConfig) -> domain.ScrapingConfig
-to_domain_scraping_stage(pydantic: ScrapingStage) -> domain.ScrapingStage
-to_domain_stage_selectors(pydantic: StageSelectors) -> domain.StageSelectors
-to_domain_nested_selector(pydantic: NestedSelector) -> domain.NestedSelector
-to_domain_auth_config(pydantic: AuthConfig) -> domain.AuthConfig
-to_domain_http_overrides(pydantic: HttpOverrides) -> domain.HttpOverrides
-to_domain_pagination(pydantic: PaginationConfig) -> domain.PaginationConfig
-to_domain_scrapy_selectors(pydantic: ScrapySelectors) -> domain.ScrapySelectors
-to_domain_playwright_locators(pydantic: PlaywrightLocators) -> domain.PlaywrightLocators
-```
-
-This adapter layer keeps Pydantic out of the Domain. Domain models are plain dataclasses with no validation framework dependency.
-
----
-
-### Scraping Subsystem
-
-#### `infrastructure/scraping/scrapy_adapter.py` -- ScrapyAdapter + StageScraper
-
-The multi-stage scraping engine. Despite the name "Scrapy", it uses **httpx** for HTTP and **BeautifulSoup** for HTML parsing (not the Scrapy framework directly).
-
-**StageScraper** -- Executes a single scraping stage.
-
-```python
-class StageScraper:
-    def __init__(self, stage: ScrapingStage, base_url: str):
-```
-
-Key methods:
-- `build_url(url, **url_params) -> str` -- Constructs URL from static url, url_pattern, or provided url. Uses `urljoin` for relative paths.
-- `extract_data(soup) -> dict` -- Extracts data using CSS selectors. Simple fields use text extraction; link fields use attribute extraction with fallback chain.
-- `extract_links(soup) -> list[str]` -- Extracts deduplicated links for next stage.
-- `should_process(data) -> bool` -- Evaluates conditions (e.g., `min_seeders: 5`).
-
-Nested extraction (`_extract_nested`) supports two modes:
-1. **Direct:** Each `items` match = 1 result.
-2. **Grouped:** All `items` within each `item_group` are merged (with multi-value field support).
-
-Attribute extraction (`_extract_from_attributes`) has special handling for `onclick` attributes (extracts URLs from JavaScript calls like `embedy('https://...')`).
-
-**ScrapyAdapter** -- Orchestrates the multi-stage pipeline.
-
-```python
-class ScrapyAdapter:
-    def __init__(
-        self, plugin: YamlPluginDefinition,
-        http_client: httpx.AsyncClient,
-        cache: Cache,
-        delay_seconds: float = 1.5,
-        max_depth: int = 5,
-        max_retries: int = 3,
-        retry_backoff_base: float = 2.0,
-    ):
-```
-
-Key methods:
-
-**`scrape(query, **params) -> dict[str, list[dict]]`** -- Entry point. Resets visited URLs, starts from `start_stage_name`.
-
-**`scrape_stage(stage_name, url, depth, **url_params) -> dict[str, list[dict]]`** -- Recursive stage execution:
-1. Check max_depth.
-2. Fetch page via `_fetch_page()`.
-3. Extract data and links.
-4. Handle pagination if enabled.
-5. Recursively scrape next_stage for each link (parallel via `asyncio.gather`, max 10 links).
-
-**`_fetch_page(url) -> BeautifulSoup | None`** -- HTTP fetch with:
-- Loop detection (visited URL set, checked before yielding to event loop).
-- Rate limiting (`asyncio.sleep(delay)`).
-- Exponential backoff retry (3 attempts, 2x backoff).
-- 4xx = no retry, 5xx = retry.
-- Mirror fallback on final failure.
-
-**`_try_mirrors(url) -> BeautifulSoup | None`** -- Tries mirror URLs by replacing domain. On success, switches `base_url` for all subsequent requests.
-
-**`normalize_results(stage_results) -> list[SearchResult]`** -- Converts raw stage dicts to SearchResult entities.
 
 ---
 
@@ -908,7 +717,7 @@ Key methods:
 
 #### `infrastructure/torznab/search_engine.py` -- HttpxSearchEngine
 
-Orchestrates ScrapyAdapter and HttpLinkValidator. Implements `SearchEnginePort`.
+Orchestrates Python plugins and HttpLinkValidator. Implements `SearchEnginePort`.
 
 ```python
 class HttpxSearchEngine:
@@ -923,15 +732,12 @@ class HttpxSearchEngine:
 **`search(plugin, query, **params) -> list[SearchResult]`**
 
 Flow:
-1. Create `ScrapyAdapter` for the plugin.
-2. Execute `adapter.scrape(query)` -- multi-stage scraping.
-3. Convert stage results to SearchResult via `_convert_stage_results()`.
-4. Validate links (if enabled) via `_filter_valid_links()`.
-5. Return validated results.
+1. Call `plugin.search(query)` -- plugin handles its own multi-stage scraping.
+2. Deduplicate results by `(title, download_link)` tuple.
+3. Validate links (if enabled) via `_filter_valid_links()`.
+4. Return validated results.
 
-**`validate_results(results) -> list[SearchResult]`** -- Used by Python plugins that produce their own SearchResults. Delegates to `_filter_valid_links()`.
-
-**`_convert_stage_results(stage_results) -> list[SearchResult]`** -- Deduplicates by `(title, download_link)` tuple. Tries multiple field names for title (`release_name` > `title` > `name`). Extracts download link from `download_link`, `link`, or first entry in `download_links`.
+**`validate_results(results) -> list[SearchResult]`** -- Validates results from plugins. Delegates to `_filter_valid_links()`.
 
 **`_filter_valid_links(results) -> list[SearchResult]`** -- Batch validation pipeline:
 1. Collect all unique URLs across all results (primary + alternative links).
@@ -1495,15 +1301,9 @@ def start(argv: Iterable[str] | None = None) -> None:
 
 ## Plugin Files
 
-Scavengarr ships with **32 plugins** (29 Python + 3 YAML) in the `plugins/` directory.
+Scavengarr ships with **40 plugins** (31 httpx + 9 Playwright) in the `plugins/` directory. All plugins are Python-based.
 
-### YAML Plugins (3)
-
-- `filmpalast_to.yaml` -- Scrapy multi-stage pipeline (search → detail → download links)
-- `scnlog.yaml` -- Scene log with pagination
-- `warezomen.yaml` -- DDL site (converted from Python to YAML)
-
-### Python Plugins — Httpx (20)
+### Python Plugins -- Httpx (31)
 
 All httpx plugins extend `HttpxPluginBase` and follow a consistent pattern:
 - Configurable settings at top (`_DOMAINS`, `_MAX_PAGES`, `_PAGE_SIZE`)
@@ -1590,7 +1390,7 @@ Common test fixtures for entities, mock ports, and configuration.
 | `test_crawljob.py` | CrawlJob construction, expiry, serialization, enums |
 | `test_torznab_entities.py` | TorznabQuery, TorznabItem, TorznabCaps, exception hierarchy |
 | `test_search_result.py` | SearchResult construction, defaults, StageResult |
-| `test_plugin_schema.py` | YamlPluginDefinition, stages, selectors, auth config |
+| `test_plugin_schema.py` | Plugin schema, auth config |
 | `test_stremio_entities.py` | Stremio domain entities |
 
 ### Application Tests (`tests/unit/application/`) -- 7 files
@@ -1600,7 +1400,7 @@ Common test fixtures for entities, mock ports, and configuration.
 | `test_crawljob_factory.py` | SearchResult → CrawlJob conversion, TTL, URL bundling |
 | `test_torznab_caps.py` | Capabilities use case |
 | `test_torznab_indexers.py` | Indexer listing, resilience to broken plugins |
-| `test_torznab_search.py` | Full search flow, caching, YAML vs Python routing |
+| `test_torznab_search.py` | Full search flow, caching, plugin dispatch |
 | `test_stremio_catalog.py` | Stremio catalog use case (trending, search) |
 | `test_stremio_stream.py` | Stremio stream resolution (IMDb → ranked streams) |
 
@@ -1623,9 +1423,6 @@ Core infrastructure:
 | `test_plugin_registry.py` | Plugin discovery and loading |
 | `test_httpx_base.py` | HttpxPluginBase shared base class |
 | `test_playwright_base.py` | PlaywrightPluginBase shared base class |
-| `test_scrapy_fallback.py` | ScrapyAdapter mirror fallback |
-| `test_scrapy_category.py` | Scrapy category filtering |
-| `test_scrapy_rows_and_transform.py` | Scrapy row extraction |
 
 Stremio components:
 
@@ -1740,7 +1537,7 @@ Logging is **non-blocking**: all emission goes through a `QueueHandler` to a bac
                │               │               │
     ┌──────────▼──────┐ ┌──────▼──────┐ ┌──────▼──────────┐
     │   Use Cases     │ │  Factories  │ │    Adapters      │  infrastructure/
-    │ (orchestration) │ │             │ │ (ScrapyAdapter,  │
+    │ (orchestration) │ │             │ │ (SearchEngine,   │
     └──────────┬──────┘ └──────┬──────┘ │  DiskcacheAdapter│
                │               │        │  PluginRegistry, │
                │               │        │  HttpLinkValidator│
@@ -1778,9 +1575,7 @@ StremioRouter → StremioStreamUseCase → TMDBClient / IMDBFallback (title look
 
 **Plugin loading:**
 ```
-PluginRegistry → loader.load_yaml_plugin() → validation_schema (Pydantic)
-                                            → adapters (Pydantic → Domain)
-               → loader.load_python_plugin() → importlib dynamic import
+PluginRegistry → loader.load_python_plugin() → importlib dynamic import
                                               → HttpxPluginBase / PlaywrightPluginBase
 ```
 

@@ -11,6 +11,19 @@ Massive expansion of the plugin ecosystem (2 → 40 plugins), Stremio addon inte
 hoster resolver system, plugin base class standardization, search result caching, and
 growth of the test suite from 160 to 3225 tests.
 
+### YAML Plugin Infrastructure Removal (Refactor)
+Migrated 3 remaining YAML plugins (warezomen, filmpalast, scnlog) to Python httpx
+plugins. Removed entire YAML plugin infrastructure: ScrapyAdapter, YAML schema models,
+YAML loader, YAML discovery, and all associated tests (~3,500 lines deleted). Renamed
+`HttpxScrapySearchEngine` to `HttpxSearchEngine`. Removed `scrapy` and `beautifulsoup4`
+dependencies from `pyproject.toml`.
+
+- Add warezomen Python httpx plugin replacing YAML (`fd4bc98`)
+- Add filmpalast Python httpx plugin replacing YAML (`3ae7921`)
+- Add scnlog Python httpx plugin replacing YAML (`0fa4f36`)
+- Remove YAML plugin infrastructure and scrapy dependency (`42fced9`)
+- Rename HttpxScrapySearchEngine to HttpxSearchEngine (`12aa0a5`)
+
 ### Plugin Standardization (Refactor)
 All 29 Python plugins migrated to shared base classes (`HttpxPluginBase` /
 `PlaywrightPluginBase`), eliminating 50–100 lines of duplicated boilerplate per plugin

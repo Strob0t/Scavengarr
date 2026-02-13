@@ -22,7 +22,7 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 
 ## Repository Context
 - **Repository**: `Strob0t/Scavengarr`
-- **Core Stack**: Python 3.12, FastAPI, Scrapy, Playwright, `diskcache` (Redis optional/future), Docker, Poetry
+- **Core Stack**: Python 3.12, FastAPI, httpx, Playwright, `diskcache` (Redis optional/future), Docker, Poetry
 - **Python Version**: Always use **Python 3.12** for development and production. The `pyproject.toml` enforces this via `requires-python = ">=3.12"`.
 - **Tooling**: `ruff` (lint+format), `mypy`, `pytest`, `pre-commit`, `structlog`
 - **Critical Documentation**:
@@ -66,8 +66,8 @@ These decisions are **non-negotiable** across all changes:
 | **Entry Point** | `poetry run scavengarr` (CLI via Typer at `src/scavengarr/application/cli.py:start`) | `pyproject.toml` `[tool.poetry.scripts]` |
 | **Config Prefix** | `SCAVENGARR_` (all env vars) | `add-config-system` change |
 | **Plugin Directory** | Configurable via `SCAVENGARR_PLUGIN_DIR` (default: `./plugins`) | `add-plugin-loader` change |
-| **Plugin Formats** | YAML (declarative) + Python (imperative) | `add-plugin-loader` change |
-| **Scraping Engines** | ScrapyEngine (httpx + parsel), PlaywrightEngine (future) | `add-scrapy-engine` change |
+| **Plugin Formats** | Python only (httpx + Playwright base classes) | `add-plugin-loader` change |
+| **Scraping Engines** | HttpxSearchEngine (httpx plugins), Playwright (browser plugins) | Architecture |
 | **Cache Backend** | `diskcache` (default), Redis optional (future) | `add-config-system` design decision |
 | **Logging** | `structlog` with JSON (prod) or console (dev) output | `add-config-system` change |
 | **Config Precedence** | CLI args > ENV vars > YAML file > `.env` > defaults | `add-config-system` spec |
@@ -110,7 +110,7 @@ Enforced by `commitlint` (configured in `pyproject.toml`).
 - **Examples**:
   - `feat(config): add pydantic settings loader`
   - `fix(plugins): handle missing plugin.py export gracefully`
-  - `test(engines): add scrapy engine CSS selector tests`
+  - `test(engines): add httpx search engine tests`
 
 ***
 
@@ -146,7 +146,7 @@ from pydantic import BaseModel
 logger = structlog.get_logger()
 
 class PluginDefinition(BaseModel):
-    """YAML plugin schema definition.
+    """Python plugin schema definition.
 
     Attributes:
         name: Plugin identifier (lowercase, alphanumeric + hyphens).
@@ -155,23 +155,23 @@ class PluginDefinition(BaseModel):
     name: str
     base_url: str
 
-def load_yaml_plugin(path: Path) -> PluginDefinition:
-    """Load and validate a YAML plugin file.
+def load_python_plugin(path: Path) -> PluginDefinition:
+    """Load and validate a Python plugin file.
 
     Args:
-        path: Absolute path to .yaml file.
+        path: Absolute path to .py file.
 
     Returns:
-        Validated PluginDefinition instance.
+        Validated plugin instance.
 
     Raises:
         PluginLoadError: If file is missing or malformed.
-        PluginValidationError: If schema validation fails.
+        PluginValidationError: If validation fails.
 
     Example:
-        >>> plugin = load_yaml_plugin(Path("./plugins/1337x.yaml"))
+        >>> plugin = load_python_plugin(Path("./plugins/filmpalast_to.py"))
         >>> plugin.name
-        '1337x'
+        'filmpalast'
     """
     logger.info("loading_plugin", file=str(path))
     # Implementation...
@@ -179,25 +179,18 @@ def load_yaml_plugin(path: Path) -> PluginDefinition:
 
 ***
 
-## Plugin System (Updated per `add-plugin-loader`)
+## Plugin System
 
 ### Plugin Discovery
 - Plugins are discovered from the directory specified by `SCAVENGARR_PLUGIN_DIR` (default: `./plugins`)
-- **Supported formats**: `.yaml` (declarative) and `.py` (imperative)
+- **Supported format**: `.py` (Python plugins only)
 - Discovery happens at **application startup** via `PluginRegistry.discover()`
-- Plugins are **lazy-loaded** (parsed only on first access via `PluginRegistry.get(name)`)
+- Plugins are **lazy-loaded** (imported only on first access via `PluginRegistry.get(name)`)
 
-### YAML Plugins (Declarative)
-- **Location**: Any `.yaml` file in plugin directory (e.g., `plugins/1337x.yaml`)
-- **Schema**: Validated against `PluginDefinition` Pydantic model (see `src/scavengarr/plugins/schema.py`)
-- **Required fields**: `name`, `description`, `version`, `author`, `base_url`, `scraping` (with `mode`, `selectors`/`locators`)
-- **Modes**:
-  - `scrapy`: Static HTML scraping (CSS selectors)
-  - `playwright`: JavaScript-rendered sites (Playwright locators, future)
-
-### Python Plugins (Imperative)
-- **Location**: Any `.py` file in plugin directory (e.g., `plugins/my_gully.py`)
-- **Protocol**: Must export a `plugin` variable with an `async def search(query: str, category: int | None) -> list[SearchResult]` method
+### Python Plugins
+- **Location**: Any `.py` file in plugin directory (e.g., `plugins/filmpalast_to.py`)
+- **Base classes**: `HttpxPluginBase` (31 plugins) or `PlaywrightPluginBase` (9 plugins)
+- **Protocol**: Must export a `plugin` variable with an `async def search(query: str, category: int | None, season: int | None, episode: int | None) -> list[SearchResult]` method
 - **Validation**: At load-time, checks for `plugin` export and `search` method (duck-typing via `hasattr`)
 - **Dependencies**: Any third-party libs must be declared in `pyproject.toml` `[tool.poetry.dependencies]` and installed via `poetry install`
 
@@ -210,13 +203,10 @@ registry = PluginRegistry(plugin_dir=Path("./plugins"))
 registry.discover()
 
 # Get plugin by name (lazy-loads if needed)
-plugin = registry.get("1337x")  # PluginDefinition | object
+plugin = registry.get("filmpalast")  # PluginProtocol instance
 
 # List all plugin names
-names = registry.list_names()  # ['1337x', 'rarbg', 'my-gully']
-
-# Filter by mode (YAML only)
-scrapy_plugins = registry.get_by_mode("scrapy")  # [PluginDefinition, ...]
+names = registry.list_names()  # ['filmpalast', 'boerse', 'einschalten']
 ```
 
 ***
@@ -270,22 +260,22 @@ See `src/scavengarr/config/schema.py:AppConfig` for canonical fields:
 
 ***
 
-## Scraping Engines (Updated per `add-scrapy-engine`)
+## Scraping Architecture
 
-### ScrapyEngine (Static HTML)
-- **Purpose**: Fast scraping for static HTML pages (no JavaScript execution)
-- **Dependencies**: `httpx` (async HTTP client), `parsel` (CSS selector extraction)
-- **Input**: YAML plugin with `scraping.mode: "scrapy"`
-- **Process**:
-  1. Build search URL from `base_url` + `search_path.format(query=...)`
-  2. HTTP GET with `httpx.AsyncClient()` (30s timeout, custom User-Agent)
-  3. Parse HTML with `parsel.Selector(text=response.text)`
-  4. Extract fields using CSS selectors (`selectors.title`, `selectors.download_link`, etc.)
-  5. Return `list[SearchResult]`
+### HttpxSearchEngine
+- **Purpose**: Orchestrates plugin search and link validation
+- **Location**: `src/scavengarr/infrastructure/torznab/search_engine.py`
+- **Process**: Dispatches to Python plugins, deduplicates results, validates download links
 
-### PlaywrightEngine (JavaScript-rendered, Future)
-- **Purpose**: Scraping for sites requiring JavaScript execution (e.g., infinite scroll, dynamic content)
-- **Status**: Future change (`add-playwright-engine`)
+### Plugin Base Classes
+- **HttpxPluginBase** (31 plugins): Static HTML scraping via httpx async HTTP client
+  - `_safe_fetch()` for HTTP requests with error handling
+  - `_verify_domain()` for mirror fallback
+  - `_new_semaphore()` for bounded concurrency
+- **PlaywrightPluginBase** (9 plugins): JS-heavy sites requiring browser rendering
+  - Chromium browser lifecycle management
+  - Cloudflare challenge bypass via `_wait_for_cloudflare()`
+  - Domain fallback with browser navigation
 
 ***
 
@@ -364,8 +354,8 @@ When implementing an OpenSpec change:
 ### Test Layers
 1. **Unit Tests** (`tests/unit/`) – Test individual components in isolation
    - Config loading, precedence, validation
-   - Plugin loading (YAML parsing, Python imports, protocol validation)
-   - Engine logic (URL building, selector extraction, error handling)
+   - Plugin loading (Python imports, protocol validation)
+   - Plugin logic (URL building, HTML parsing, error handling)
    - **Coverage target**: 80%+ for core modules
 2. **Integration Tests** (`tests/integration/`) – Test component interactions
    - Plugin → Engine → Results
@@ -380,7 +370,7 @@ When implementing an OpenSpec change:
 ### Test Fixtures
 - **Temporary files**: Use `pytest` `tmp_path` fixture for YAML configs, `.env` files
 - **Environment isolation**: Use `monkeypatch` to set/unset env vars
-- **Sample data**: Store in `tests/fixtures/` (HTML files, valid/invalid plugins)
+- **Sample data**: Store in `tests/fixtures/` (HTML files, valid/invalid plugin files)
 
 ### Example (Good Test)
 ```python
@@ -494,7 +484,7 @@ Before providing code to the user, verify:
 
 **Last Updated**: 2026-01-25
 **Author**: Scavengarr Team
-**OpenSpec Changes Integrated**: `add-config-system`, `add-plugin-loader`, `add-scrapy-engine`
+**OpenSpec Changes Integrated**: `add-config-system`, `add-plugin-loader`
 
 ***
 

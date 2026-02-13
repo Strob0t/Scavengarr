@@ -93,11 +93,11 @@ When changing behavior or adding features, update the relevant documentation:
 ## 2. Project overview
 
 Scavengarr is a self-hosted, container-ready Torznab/Newznab indexer for Prowlarr and other Arr applications.
-The system scrapes sources via two engines (Scrapy for static HTML, Playwright for JavaScript-heavy sites) and delivers results through Torznab endpoints like `caps` and `search`.
+The system scrapes sources via two engines (httpx for static HTML, Playwright for JavaScript-heavy sites) and delivers results through Torznab endpoints like `caps` and `search`.
 
 ### Core ideas (target architecture)
-- Plugin-driven: YAML (declarative) and Python (imperative) plugins define site-specific logic without touching core code.
-- Dual engine: Scrapy + Playwright are equal-weight backends; selection per plugin/stage depends on “JS-heavy” classification.
+- Plugin-driven: Python plugins (httpx or Playwright-based) define site-specific logic without touching core code.
+- Dual engine: httpx + Playwright are equal-weight backends; selection per plugin depends on "JS-heavy" classification.
 - Multi-stage scraping is a core feature: “Search → Detail → Links” is the norm.
 - I/O dominates runtime: architecture and code must be non-blocking (no mutual blocking).
 - CrawlJob system: multiple validated links are bundled into a `.crawljob` file (multi-link packaging).
@@ -110,7 +110,7 @@ The system scrapes sources via two engines (Scrapy for static HTML, Playwright f
 ┌────────────────────────────────────────────────┐
 │  Interfaces (Controllers, CLI, HTTP Router)    │ ← Frameworks & Drivers
 ├────────────────────────────────────────────────┤
-│  Adapters (Scrapy, Playwright, DiskCache)      │ ← Interface Adapters
+│  Adapters (httpx, Playwright, DiskCache)       │ ← Interface Adapters
 ├────────────────────────────────────────────────┤
 │  Application (Use Cases, Factories, Services)  │ ← Application Business Rules
 ├────────────────────────────────────────────────┤
@@ -145,9 +145,8 @@ Rule: Domain is framework-free, I/O-free, and kept simple.
 Rule: Application knows ports (protocols) but not concrete adapters.
 
 ### Infrastructure (interface adapters)
-- Plugins: discovery/loading/validation for YAML & Python plugins.
-- Scraping adapters: Scrapy/Playwright implementations of ScrapingEngine.
-- Search engine: orchestrates multi-stage scraping, link validation, and result conversion.
+- Plugins: discovery/loading/validation for Python plugins.
+- Search engine: orchestrates link validation and result filtering.
 - Validation: HTTP link validator (HEAD/GET strategies, redirects, parallelism).
 - Cache: diskcache adapter (Redis optional only if already present).
 - Persistence: repository implementations (CrawlJob cache repository).
@@ -170,7 +169,7 @@ Rule: Interfaces contain no business rules, only input/output.
 ## 5. Technology stack (dependencies)
 
 The source of truth for dependencies is `pyproject.toml`.
-Scavengarr uses FastAPI/Uvicorn, Scrapy, Playwright, structlog, diskcache, Typer, pydantic-settings, httpx, and optionally Redis.
+Scavengarr uses FastAPI/Uvicorn, Playwright, structlog, diskcache, Typer, pydantic-settings, httpx, and optionally Redis.
 
 ### Package documentation (docs-mcp-server)
 
@@ -192,7 +191,7 @@ This ensures code is written against the actual API of the installed package ver
 | Term | Brief description |
 |---|---|
 | Torznab query | Normalized input (e.g., `t=search`, `q=...`, categories, extended). |
-| Plugin | Describes how to scrape (YAML: declarative; Python: imperative). |
+| Plugin | Describes how to scrape (Python: httpx or Playwright). |
 | Stage | One step in the pipeline (e.g., `search_results`, `movie_detail`). |
 | SearchResult | Domain entity: a found item, including metadata and links. |
 | Link validation | I/O-heavy filter that removes dead/blocked links. |
@@ -207,7 +206,7 @@ Goal: HTTP/CLI only provide input/output; the use case orchestrates; adapters pe
 
 1. Request arrives (HTTP `caps/search/...` or CLI).
 2. Use case loads plugin from registry (lazy).
-3. Scraping engine executes the multi-stage pipeline (Scrapy or Playwright).
+3. Plugin executes the search (httpx or Playwright).
 4. Link validator checks links in parallel (not sequentially).
 5. CrawlJob generates `.crawljob` for multiple links (if feature is active).
 6. Presenter renders the Torznab XML response.
@@ -243,57 +242,17 @@ Goal: HTTP/CLI only provide input/output; the use case orchestrates; adapters pe
 ## 9. Plugin system & multi-stage scraping
 
 ### Plugin types
-- YAML plugins: declarative scraping (selector mapping, stages, URL templates).
-- Python plugins: imperative logic for complex flows (auth, APIs, edge cases).
+- Httpx plugins: Python plugins using httpx for static HTML scraping (inherit from `HttpxPluginBase`).
+- Playwright plugins: Python plugins using Playwright for JS-heavy sites (inherit from `PlaywrightPluginBase`).
 
 ### Plugin discovery & loading (agent-relevant)
-- Discovery: registry scans plugin dir for `.yaml` and `.py`.
-- Lazy loading: plugins are parsed/imported on first access.
+- Discovery: registry scans plugin dir for `.py` files.
+- Lazy loading: plugins are imported on first access.
 - Caching: once loaded, plugins remain in the process cache.
 
-### YAML plugin (multi-stage example)
-
-```yaml
-name: "example-site"
-description: "Example indexer plugin"
-version: "1.0.0"
-author: "scavengarr"
-
-base_url: "https://example.org"
-
-scraping:
-  mode: "scrapy"  # "scrapy" (static HTML) or "playwright" (JS-heavy)
-
-  stages:
-    - name: "search_results"
-      request:
-        path: "/search/{query}/"
-        method: "GET"
-      selectors:
-        rows: "div.result"
-        title: "a.title::text"
-        detail_url: "a.title::attr(href)"   # next stage input
-
-    - name: "detail_page"
-      request:
-        method: "GET"
-      selectors:
-        rows: "div.downloads a"
-        download_url: "::attr(href)"        # terminal output
-        size: "span.size::text"
-
-auth:
-  type: "none"  # reserved for future/basic/form/cookie/token
-
-categories:
-  2000: "Movies"
-  5000: "TV"
-```
-
 ### Multi-stage execution (semantics)
-- A stage can be intermediate (produces URLs for the next stage) or terminal (produces SearchResults).
+- Plugins implement multi-stage scraping internally (search page → detail pages → links).
 - Within a stage, independent URLs are processed in parallel (bounded concurrency) to prevent blocking.
-- Keep stages deterministic and testable (selectors + normalization); encapsulate edge cases in Python plugins.
 
 ***
 
@@ -338,7 +297,7 @@ tests/
       test_crawljob.py                 # CrawlJob entity, enums, serialization
       test_torznab_entities.py         # TorznabQuery/Item/Caps, exceptions
       test_search_result.py            # SearchResult, StageResult
-      test_plugin_schema.py            # YamlPluginDefinition, stage config
+      test_plugin_schema.py            # AuthConfig, HttpOverrides
     application/
       test_crawljob_factory.py         # SearchResult → CrawlJob conversion
       test_torznab_caps.py             # Capabilities use case
@@ -350,12 +309,9 @@ tests/
       test_extractors.py               # extract_download_link()
       test_presenter.py                # Torznab XML rendering (caps + RSS)
       test_link_validator.py           # HTTP HEAD/GET validation
-      test_search_engine.py            # Multi-stage result conversion, dedup
+      test_search_engine.py            # HttpxSearchEngine validation/filtering
       test_crawljob_cache.py           # Cache repository (pickle storage)
       test_auth_env_resolution.py      # AuthConfig env var resolution
-      test_scrapy_fallback.py          # ScrapyAdapter mirror fallback
-      test_scrapy_category.py          # Scrapy category filtering
-      test_scrapy_rows_and_transform.py # Scrapy rows selector + query transform
       test_html_selectors.py           # CSS-selector HTML helpers
       test_httpx_base.py               # HttpxPluginBase shared base class
       test_playwright_base.py          # PlaywrightPluginBase shared base class
@@ -503,8 +459,8 @@ for url in urls:
 
 When CPU-bound parsing is unavoidable, move it out of the event loop (`run_in_executor`) to avoid blocking everything.
 
-### Scrapy-specific patterns
-- Selectors: as specific as needed, as robust as possible (don’t match too broadly).
+### HTML scraping patterns
+- Selectors: as specific as needed, as robust as possible (don't match too broadly).
 - URL handling: `urljoin` instead of string concatenation.
 - Degradation: missing fields → partial result + warning, not a full abort.
 
@@ -599,7 +555,7 @@ Agents are ONLY for **simple, explicit, mechanical tasks** where the scope is 10
 | Future plans | `docs/plans/` (playwright-engine, more-plugins, integration-tests, search-caching) |
 | Refactor history | `docs/refactor/COMPLETED/` |
 | Python best practices | `docs/PYTHON-BEST-PRACTICES.md` |
-| Plugins (39 total) | `plugins/` (3 YAML + 36 Python, all inheriting from base classes) |
+| Plugins (40 total) | `plugins/` (all Python, inheriting from httpx or Playwright base classes) |
 | OpenSpec change specs | `openspec/changes/...` |
 
 ### Adding a new plugin (general workflow)
@@ -611,12 +567,7 @@ Agents are ONLY for **simple, explicit, mechanical tasks** where the scope is 10
 - Identify auth mechanisms (login, cookies, tokens)
 - Map URL patterns (search, detail, download)
 
-**Step 2: Decide YAML vs Python**
-- Default: YAML plugin (Scrapy) — faster, simpler, preferred
-- Python plugin only when YAML is technically impossible (Cloudflare/JS challenge, complex logic, auth, API calls, non-standard table structures)
-- Justification for Python plugin must be stated explicitly in the plan
-
-**Step 2b: Use the correct base class**
+**Step 2: Choose the correct base class**
 - Httpx plugins: inherit from `HttpxPluginBase` (`src/scavengarr/infrastructure/plugins/httpx_base.py`)
   - Provides: `_ensure_client()`, `_verify_domain()`, `cleanup()`, `_safe_fetch()`, `_safe_parse_json()`, `_new_semaphore()`
   - Class attributes: `_domains`, `_max_concurrent` (default 3), `_max_results` (default 1000), `_timeout` (default 15), `_user_agent`
@@ -647,17 +598,6 @@ Every plugin MUST implement the following search features:
 3. Implement `async def search(self, query, category, season, episode) -> list[SearchResult]`.
 4. Use `self._ensure_context()` / `self._ensure_page()` for browser management, `self._new_semaphore()` for concurrency.
 5. Add comprehensive unit tests; patch `async_playwright` at `scavengarr.infrastructure.plugins.playwright_base.async_playwright`.
-
-#### Adding a new YAML plugin
-1. Place the YAML file in the plugin dir (configurable via `SCAVENGARR_PLUGIN_DIR`).
-2. Set minimal fields: `name`, `base_url`, `scraping.mode`, `stages[]`, `categories`.
-3. Stage 1 outputs `detail_url` (or directly a terminal `download_url`), stage 2+ outputs `download_url`.
-4. Test locally (CLI), then add an integration test with fixtures.
-
-### Adding a new stage (multi-stage)
-1. Decide: intermediate or terminal.
-2. Keep selectors minimal (extract only what you need later).
-3. Verify concurrency limits so the stage runs in parallel but does not exhaust resources.
 
 ### Adding a new hoster resolver
 

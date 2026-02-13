@@ -43,7 +43,7 @@ Each entry includes the plugin name, version, and scraping mode.
     {
       "name": "filmpalast",
       "version": "1.0.0",
-      "mode": "scrapy"
+      "mode": "httpx"
     },
     {
       "name": "example-site",
@@ -55,7 +55,7 @@ Each entry includes the plugin name, version, and scraping mode.
 ```
 
 The `mode` field indicates which scraping engine the plugin uses:
-- `scrapy` -- static HTML scraping (fast, low resource usage)
+- `httpx` -- static HTML scraping via httpx (fast, low resource usage)
 - `playwright` -- JavaScript-heavy sites requiring browser rendering
 
 This endpoint is useful for discovering available plugins before constructing

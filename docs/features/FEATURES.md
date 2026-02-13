@@ -10,8 +10,7 @@
 
 | Feature | Status | Details |
 |---|---|---|
-| YAML Plugin System | [x] Implemented | Declarative plugins with CSS selectors and multi-stage pipelines |
-| Python Plugin System | [x] Implemented | Imperative plugins for complex auth, APIs, JS-heavy sites |
+| Python Plugin System | [x] Implemented | All 40 plugins are Python-based (httpx or Playwright) |
 | Multi-Stage Scraping | [x] Implemented | Search -> Detail -> Links pipeline with parallel execution |
 | CrawlJob System | [x] Implemented | Multi-link `.crawljob` packaging for JDownloader |
 | Torznab/Newznab API | [x] Implemented | `caps`, `search` endpoints compatible with Prowlarr |
@@ -23,9 +22,7 @@
 | Stremio Addon | [x] Implemented | Manifest, catalog, stream resolution with TMDB metadata |
 | Hoster Resolver System | [x] Implemented | 39 hoster resolvers (streaming + DDL + 15 XFS consolidated) |
 | Plugin Base Classes | [x] Implemented | `HttpxPluginBase` / `PlaywrightPluginBase` shared base classes |
-| Scrapy Engine | [x] Implemented | Static HTML scraping backend for YAML plugins |
-| 40 Plugins | [x] Implemented | 37 Python + 3 YAML plugins for German streaming/DDL sites |
-| Playwright Engine | [ ] Planned | Native Playwright scraping backend for YAML plugins |
+| 40 Plugins | [x] Implemented | 40 Python plugins for German streaming/DDL sites (31 httpx + 9 Playwright) |
 | Search Result Caching | [x] Implemented | 900s TTL with X-Cache HIT/MISS header |
 | Integration Test Suite | [x] Implemented | 31 integration + 109 E2E + 38 live smoke tests |
 
@@ -33,33 +30,11 @@
 
 ## Plugin System
 
-Scavengarr is plugin-driven. Each plugin defines how to scrape a specific source site. Two plugin types are supported.
+Scavengarr is plugin-driven. Each plugin defines how to scrape a specific source site. All 40 plugins are Python-based, inheriting from `HttpxPluginBase` (for static HTML) or `PlaywrightPluginBase` (for JS-heavy sites).
 
-### YAML Plugins (Declarative)
+### Python Plugins
 
-YAML plugins define scraping rules using CSS selectors and URL templates. They are processed by the Scrapy engine through a multi-stage pipeline.
-
-| Capability | Status | Notes |
-|---|---|---|
-| Multi-stage pipeline (list -> detail) | [x] Implemented | Arbitrary stage depth with `next_stage` chaining |
-| CSS selector extraction | [x] Implemented | Text content and attribute extraction |
-| Nested download link extraction | [x] Implemented | Container/group/item hierarchy |
-| Field attribute fallbacks | [x] Implemented | Ordered list of attributes to try |
-| URL pattern templating | [x] Implemented | `{query}`, `{movie_id}` substitution |
-| Pagination | [x] Implemented | Configurable max pages per list stage |
-| Mirror URL support | [x] Implemented | `base_url` accepts single URL or list |
-| Per-plugin HTTP overrides | [x] Implemented | Timeout, redirects, user agent |
-| Auth: none | [x] Implemented | Default for public sites |
-| Auth: basic | [x] Implemented | HTTP Basic Authentication |
-| Auth: form | [x] Implemented | Form-based login with selectors |
-| Auth: cookie | [x] Implemented | Cookie-based session management |
-| Pydantic validation | [x] Implemented | Schema validation on load with clear errors |
-
-**Detailed docs:** [Plugin System (YAML)](./plugin-system.md)
-
-### Python Plugins (Imperative)
-
-Python plugins implement the `PluginProtocol` directly. They handle their own scraping logic, making them suitable for sites requiring complex authentication, Cloudflare bypass, or non-standard page structures.
+Python plugins implement the `PluginProtocol` directly. They handle their own scraping logic, supporting complex authentication, Cloudflare bypass, multi-stage pipelines, and non-standard page structures.
 
 | Capability | Status | Notes |
 |---|---|---|
@@ -71,7 +46,7 @@ Python plugins implement the `PluginProtocol` directly. They handle their own sc
 | Bounded concurrency | [x] Implemented | Semaphore-limited parallel page scraping |
 | Custom HTML parsing | [x] Implemented | `HTMLParser` subclasses for extraction |
 | Environment variable credentials | [x] Implemented | `SCAVENGARR_*` env vars for secrets |
-| `HttpxPluginBase` | [x] Implemented | Shared base for 28 httpx plugins (client, domain fallback, semaphore) |
+| `HttpxPluginBase` | [x] Implemented | Shared base for 31 httpx plugins (client, domain fallback, semaphore) |
 | `PlaywrightPluginBase` | [x] Implemented | Shared base for 9 Playwright plugins (browser lifecycle, Cloudflare) |
 | Season/episode support | [x] Implemented | All plugins accept `season`/`episode` params for TV content |
 | Settings organization | [x] Implemented | Configurable settings at top of each plugin file |
@@ -178,9 +153,8 @@ The scraping pipeline supports multiple stages that cascade from search results 
 | List stages (intermediate) | [x] Implemented | Extract URLs for the next stage |
 | Detail stages (terminal) | [x] Implemented | Extract SearchResult data |
 | Parallel URL processing | [x] Implemented | Bounded concurrency within each stage |
-| Stage chaining via `next_stage` | [x] Implemented | Declarative stage flow |
-| Depth limiting (`max_depth`) | [x] Implemented | Prevent runaway recursion |
-| Rate limiting (`delay_seconds`) | [x] Implemented | Per-plugin request throttling |
+| Stage chaining | [x] Implemented | Plugin-defined stage flow |
+| Rate limiting | [x] Implemented | Per-plugin request throttling |
 | Result deduplication | [x] Implemented | By `(title, download_link)` tuple |
 
 **Detailed docs:** [Multi-Stage Scraping](./multi-stage-scraping.md)
@@ -246,7 +220,7 @@ Plugins can define multiple base URLs. If the primary domain is unreachable, the
 
 | Feature | Status | Details |
 |---|---|---|
-| Multiple `base_url` entries | [x] Implemented | YAML `base_url` accepts a list |
+| Multiple domain entries | [x] Implemented | Plugin `_domains` list for mirror fallback |
 | Sequential fallback | [x] Implemented | Try mirrors in order until one works |
 | Python plugin domain lists | [x] Implemented | Custom fallback logic in Python plugins |
 
@@ -320,7 +294,7 @@ Infrastructure (implements Domain ports)
 | Plugin loader | `src/scavengarr/infrastructure/plugins/loader.py` |
 | HttpxPluginBase | `src/scavengarr/infrastructure/plugins/httpx_base.py` |
 | PlaywrightPluginBase | `src/scavengarr/infrastructure/plugins/playwright_base.py` |
-| Search engine | `src/scavengarr/infrastructure/scraping/` |
+| Search engine | `src/scavengarr/infrastructure/torznab/search_engine.py` |
 | Link validator | `src/scavengarr/infrastructure/validation/` |
 | Torznab presenter | `src/scavengarr/infrastructure/torznab/` |
 | Stremio infrastructure | `src/scavengarr/infrastructure/stremio/` |
@@ -328,6 +302,6 @@ Infrastructure (implements Domain ports)
 | Torznab router | `src/scavengarr/interfaces/api/torznab/` |
 | Stremio router | `src/scavengarr/interfaces/api/stremio/` |
 | CLI | `src/scavengarr/interfaces/cli/` |
-| YAML plugin example | `plugins/filmpalast_to.yaml` |
-| Python plugin example | `plugins/boerse.py` |
+| Python plugin example (httpx) | `plugins/filmpalast_to.py` |
+| Python plugin example (Playwright) | `plugins/boerse.py` |
 | Test suite (3225 tests) | `tests/` |

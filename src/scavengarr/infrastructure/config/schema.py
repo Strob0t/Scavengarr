@@ -227,10 +227,10 @@ class AppConfig(BaseModel):
             "plugin_dir",
             AliasPath("plugins", "plugin_dir"),
         ),
-        description="Directory containing YAML/Python plugins.",
+        description="Directory containing Python plugins.",
     )
 
-    # HTTP / Scrapy engine (YAML section: http.*)
+    # HTTP engine (YAML section: http.*)
     http_timeout_seconds: float = Field(
         default=30.0,
         validation_alias=AliasChoices(

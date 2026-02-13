@@ -2,7 +2,7 @@
 
 **Self-hosted Torznab/Newznab indexer for Prowlarr and other Arr applications.**
 
-Scavengarr scrapes sources via two engines (Scrapy for static HTML, Playwright for
+Scavengarr scrapes sources via two engines (httpx for static HTML, Playwright for
 JS-heavy sites) and delivers results through standard Torznab API endpoints. It
 integrates directly with Prowlarr as a custom indexer.
 
@@ -13,8 +13,8 @@ integrates directly with Prowlarr as a custom indexer.
 ## Features
 
 - **Torznab API** compatible with Prowlarr, Sonarr, Radarr, and other Arr applications
-- **Dual scraping engine:** Scrapy (static HTML) and Playwright (JS-heavy / Cloudflare)
-- **Plugin system:** YAML plugins for declarative scraping, Python plugins for complex flows
+- **Dual scraping engine:** httpx (static HTML) and Playwright (JS-heavy / Cloudflare)
+- **Plugin system:** Python plugins for all scraping (httpx or Playwright-based)
 - **Multi-stage scraping:** Search results, detail pages, and link extraction in a pipeline
 - **Link validation:** Parallel HEAD/GET validation with dead-link filtering
 - **CrawlJob packaging:** Bundle multiple validated download links into `.crawljob` files
@@ -80,9 +80,8 @@ docker compose up --build
 | Component | Library |
 |---|---|
 | HTTP Framework | FastAPI + Uvicorn |
-| Static Scraping | Scrapy |
+| Static Scraping | httpx |
 | JS Scraping | Playwright (Chromium) |
-| HTTP Client | httpx |
 | Configuration | pydantic-settings |
 | Caching | diskcache (SQLite) / Redis |
 | Logging | structlog |
@@ -90,12 +89,12 @@ docker compose up --build
 
 ## Plugins
 
-Scavengarr ships with two reference plugins:
+Scavengarr ships with 40 Python plugins covering httpx and Playwright-based scraping. Examples:
 
-| Plugin | Type | Engine | Site |
-|---|---|---|---|
-| `filmpalast.to.yaml` | YAML | Scrapy | filmpalast.to |
-| `boerse.py` | Python | Playwright | boerse.sx |
+| Plugin | Type | Site |
+|---|---|---|
+| `filmpalast_to.py` | httpx | filmpalast.to |
+| `boerse.py` | Playwright | boerse.sx |
 
 See [docs/features/plugin-system.md](docs/features/plugin-system.md) for how to write your own plugins.
 

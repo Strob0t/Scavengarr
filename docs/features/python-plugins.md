@@ -2,26 +2,23 @@
 
 # Python Plugins
 
-> Imperative plugins for complex scraping scenarios that require full programmatic control: authentication flows, Cloudflare bypass, custom parsing, and multi-domain fallback.
+> All Scavengarr plugins are Python-based, providing full programmatic control: authentication flows, Cloudflare bypass, custom parsing, and multi-domain fallback.
 
 ---
 
 ## Overview
 
-Python plugins complement YAML plugins for sites where declarative CSS selectors are insufficient. They implement the `PluginProtocol` directly and handle their own scraping logic using any Python library (Playwright, httpx, custom parsers).
+Python plugins implement the `PluginProtocol` directly and handle their own scraping logic using httpx (for static HTML) or Playwright (for JS-heavy sites). All 40 plugins inherit from one of two base classes: `HttpxPluginBase` or `PlaywrightPluginBase`.
 
-**When to use a Python plugin:**
+**When to use HttpxPluginBase:**
+- The site is static HTML with server-rendered pages
+- JSON APIs or standard HTTP requests are sufficient
+- No JavaScript execution or Cloudflare challenge bypass is needed
+
+**When to use PlaywrightPluginBase:**
 - The site requires JavaScript execution (Cloudflare challenge, SPA)
 - Authentication is non-standard (MD5 hashed passwords, multi-step login, CAPTCHA)
-- The page structure cannot be captured with CSS selectors alone
-- Domain fallback logic is needed beyond simple mirror lists
-- Custom post-processing or link extraction is required
-
-**When to use a YAML plugin instead:**
-- The site is static HTML with predictable structure
-- Standard CSS selectors can extract all needed data
-- No authentication or simple auth types suffice
-- You want the simplicity of a declarative definition
+- Dynamic content loading or browser interaction is required
 
 ---
 
@@ -104,7 +101,7 @@ class SearchResult:
 
 Most plugins should extend one of the shared base classes instead of implementing everything from scratch. The base classes provide client lifecycle, domain fallback, bounded concurrency, and error handling.
 
-### HttpxPluginBase (27 plugins use this)
+### HttpxPluginBase (31 plugins use this)
 
 For sites with JSON APIs or server-rendered HTML (no JavaScript needed):
 
@@ -292,36 +289,25 @@ def load_python_plugin(path: Path) -> PluginProtocol:
 - Module-level code executes during import (including `plugin = MySitePlugin()`)
 - The module name is prefixed: `scavengarr_dynamic_plugin_{stem}`
 - Syntax errors and import failures are wrapped in `PluginLoadError`
-- The plugin is cached after first load (same behavior as YAML plugins)
+- The plugin is cached after first load
 
 ---
 
 ## Search Use Case Integration
 
-The `TorznabSearchUseCase` automatically detects Python plugins and dispatches accordingly:
+The `TorznabSearchUseCase` dispatches to plugins and validates results:
 
 ```python
 # src/scavengarr/application/use_cases/torznab_search.py (simplified)
 
-def _is_python_plugin(plugin: Any) -> bool:
-    """Detect Python plugins (have search() method, no scraping config)."""
-    return (
-        hasattr(plugin, "search")
-        and callable(plugin.search)
-        and not hasattr(plugin, "scraping")
-    )
-
 # In TorznabSearchUseCase.execute():
-if _is_python_plugin(plugin):
-    raw_results = await plugin.search(
-        query, category=category, season=season, episode=episode
-    )
-    validated = await engine.validate_results(raw_results)
-else:
-    validated = await engine.search(plugin, query, category=category)
+raw_results = await plugin.search(
+    query, category=category, season=season, episode=episode
+)
+validated = await engine.validate_results(raw_results)
 ```
 
-**Flow for Python plugins:**
+**Flow for Torznab search:**
 1. Use case calls `plugin.search(query, category, season, episode)` directly
 2. Plugin returns `list[SearchResult]`
 3. Use case passes results to `SearchEngine.validate_results()` for link validation
@@ -335,7 +321,7 @@ else:
 4. Ranks streams by title match score, quality, and language
 5. Returns ranked streams with `/play/{id}` URLs for hoster resolution
 
-**Key difference from YAML plugins:** Python plugins bypass the multi-stage pipeline entirely. They own the full search lifecycle and return final results directly.
+All plugins own the full search lifecycle and return final results directly.
 
 ---
 
@@ -595,7 +581,7 @@ The plugin system defines a hierarchy of exceptions:
 ```python
 # src/scavengarr/domain/plugins/exceptions.py
 class PluginError(Exception):           # Base class
-class PluginValidationError(PluginError): # YAML schema validation failure
+class PluginValidationError(PluginError): # Plugin validation failure
 class PluginLoadError(PluginError):       # Python import/protocol failure
 class PluginNotFoundError(PluginError):   # Name not in registry
 class DuplicatePluginError(PluginError):  # Two plugins with same name
@@ -644,20 +630,18 @@ async def test_search_returns_results():
 
 ---
 
-## YAML vs Python Plugin Comparison
+## Httpx vs Playwright Plugin Comparison
 
-| Aspect | YAML Plugin | Python Plugin |
+| Aspect | HttpxPluginBase | PlaywrightPluginBase |
 |---|---|---|
-| Definition | Declarative `.yaml` file | Imperative `.py` file |
-| Scraping engine | Scrapy (managed by framework) | Self-managed (Playwright, httpx, etc.) |
-| Multi-stage pipeline | Automatic via stage definitions | Manual implementation |
-| Link validation | Automatic (post-scraping) | Automatic (use case validates results) |
-| Authentication | Declarative auth config | Custom code (full flexibility) |
-| Cloudflare bypass | Not supported (scrapy mode) | Playwright wait_for_function |
-| Domain fallback | `base_url` list (automatic) | Custom logic in plugin code |
-| Complexity | Low (no code) | Medium-High (full Python) |
-| Testing | Schema validation tests | Unit tests with mocked browser |
-| Loading | YAML parse + Pydantic validation | `importlib` dynamic import |
+| HTTP client | httpx (async) | Playwright Chromium browser |
+| Use case | Static HTML, JSON APIs | JS-heavy sites, SPAs, Cloudflare |
+| Resource usage | Low (no browser) | Higher (~50-100MB per context) |
+| Domain fallback | `_verify_domain()` with HTTP probe | `_verify_domain()` with browser navigation |
+| Cloudflare bypass | Not supported | `_wait_for_cloudflare()` built-in |
+| Concurrency | `_new_semaphore()` for parallel requests | `_new_semaphore()` for parallel pages |
+| Cleanup | Close httpx client | Close context, browser, Playwright |
+| Testing | Mock httpx responses | Mock Playwright API |
 
 ---
 
@@ -677,4 +661,4 @@ async def test_search_returns_results():
 | Stremio stream use case | `src/scavengarr/application/use_cases/stremio_stream.py` |
 | Reference plugin (boerse) | `plugins/boerse.py` |
 | Reference httpx plugin | `plugins/einschalten.py` |
-| Reference YAML plugin | `plugins/filmpalast_to.yaml` |
+| Reference httpx plugin (filmpalast) | `plugins/filmpalast_to.py` |
