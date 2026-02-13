@@ -16,16 +16,24 @@ from scavengarr.application.use_cases.stremio_stream import StremioStreamUseCase
 from scavengarr.domain.entities.crawljob import Priority
 from scavengarr.infrastructure.cache.cache_factory import create_cache
 from scavengarr.infrastructure.hoster_resolvers import HosterResolverRegistry
+from scavengarr.infrastructure.hoster_resolvers.bigwarp import BigwarpResolver
 from scavengarr.infrastructure.hoster_resolvers.ddownload import DDownloadResolver
 from scavengarr.infrastructure.hoster_resolvers.doodstream import DoodStreamResolver
+from scavengarr.infrastructure.hoster_resolvers.dropload import DroploadResolver
 from scavengarr.infrastructure.hoster_resolvers.filemoon import FilemoonResolver
 from scavengarr.infrastructure.hoster_resolvers.filernet import FilerNetResolver
+from scavengarr.infrastructure.hoster_resolvers.goodstream import GoodstreamResolver
 from scavengarr.infrastructure.hoster_resolvers.katfile import KatfileResolver
 from scavengarr.infrastructure.hoster_resolvers.probe import probe_urls_stealth
 from scavengarr.infrastructure.hoster_resolvers.rapidgator import RapidgatorResolver
+from scavengarr.infrastructure.hoster_resolvers.savefiles import SavefilesResolver
 from scavengarr.infrastructure.hoster_resolvers.stealth_pool import StealthPool
 from scavengarr.infrastructure.hoster_resolvers.streamtape import StreamtapeResolver
+from scavengarr.infrastructure.hoster_resolvers.streamwish import StreamwishResolver
 from scavengarr.infrastructure.hoster_resolvers.supervideo import SuperVideoResolver
+from scavengarr.infrastructure.hoster_resolvers.vidguard import VidguardResolver
+from scavengarr.infrastructure.hoster_resolvers.vidmoly import VidmolyResolver
+from scavengarr.infrastructure.hoster_resolvers.vinovo import VinovoResolver
 from scavengarr.infrastructure.hoster_resolvers.voe import VoeResolver
 from scavengarr.infrastructure.metrics import MetricsCollector
 from scavengarr.infrastructure.persistence.crawljob_cache import (
@@ -150,6 +158,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             KatfileResolver(http_client=state.http_client),
             RapidgatorResolver(http_client=state.http_client),
             DDownloadResolver(http_client=state.http_client),
+            BigwarpResolver(http_client=state.http_client),
+            DroploadResolver(http_client=state.http_client),
+            GoodstreamResolver(http_client=state.http_client),
+            SavefilesResolver(http_client=state.http_client),
+            StreamwishResolver(http_client=state.http_client),
+            VidguardResolver(http_client=state.http_client),
+            VidmolyResolver(http_client=state.http_client),
+            VinovoResolver(http_client=state.http_client),
         ],
         http_client=state.http_client,
     )
