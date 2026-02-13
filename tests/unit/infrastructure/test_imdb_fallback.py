@@ -370,12 +370,163 @@ class TestUnsupportedMethods:
         client, _ = _make_client()
         assert await client.trending_tv() == []
 
+
+# ---------------------------------------------------------------------------
+# IMDB Suggest search (catalog)
+# ---------------------------------------------------------------------------
+
+_SEARCH_MIXED_RESPONSE = json.dumps(
+    {
+        "d": [
+            {
+                "i": {
+                    "imageUrl": "https://example.com/ironman.jpg",
+                    "width": 100,
+                    "height": 150,
+                },
+                "id": "tt0371746",
+                "l": "Iron Man",
+                "q": "feature",
+                "qid": "movie",
+                "rank": 996,
+                "s": "Robert Downey Jr.",
+                "y": 2008,
+            },
+            {
+                "id": "tt0800369",
+                "l": "Thor",
+                "q": "feature",
+                "qid": "movie",
+                "y": 2011,
+            },
+            {
+                "id": "tt4574334",
+                "l": "Stranger Things",
+                "qid": "tvSeries",
+                "y": 2016,
+            },
+            {
+                "id": "tt7569592",
+                "l": "Chernobyl",
+                "qid": "tvMiniSeries",
+                "y": 2019,
+            },
+            {
+                "id": "nm0000375",
+                "l": "Robert Downey Jr.",
+                "qid": "actor",
+            },
+        ],
+        "q": "iron",
+        "v": 1,
+    }
+)
+
+
+class TestSearchMovies:
     @pytest.mark.asyncio
-    async def test_search_movies_empty(self) -> None:
-        client, _ = _make_client()
-        assert await client.search_movies("Iron Man") == []
+    async def test_returns_only_movies(self) -> None:
+        """search_movies filters by qid='movie', skipping TV and people."""
+        client, _ = _make_client(response_text=_SEARCH_MIXED_RESPONSE)
+        results = await client.search_movies("iron")
+        assert len(results) == 2
+        assert results[0].id == "tt0371746"
+        assert results[0].name == "Iron Man"
+        assert results[0].type == "movie"
+        assert results[0].release_info == "2008"
+        assert results[0].poster == "https://example.com/ironman.jpg"
+        assert results[1].id == "tt0800369"
+        assert results[1].name == "Thor"
+        assert results[1].type == "movie"
 
     @pytest.mark.asyncio
-    async def test_search_tv_empty(self) -> None:
+    async def test_empty_query_returns_empty(self) -> None:
         client, _ = _make_client()
-        assert await client.search_tv("Breaking Bad") == []
+        assert await client.search_movies("") == []
+        assert await client.search_movies("   ") == []
+
+    @pytest.mark.asyncio
+    async def test_network_error_returns_empty(self) -> None:
+        client, _ = _make_client(status_code=500)
+        assert await client.search_movies("iron") == []
+
+    @pytest.mark.asyncio
+    async def test_no_entries_returns_empty(self) -> None:
+        client, _ = _make_client(response_text=_EMPTY_RESPONSE)
+        assert await client.search_movies("xyznonexistent") == []
+
+    @pytest.mark.asyncio
+    async def test_results_are_cached(self) -> None:
+        call_count = {"imdb": 0}
+
+        def _handler(request: httpx.Request) -> httpx.Response:
+            url = str(request.url)
+            if "wikidata.org" in url:
+                return httpx.Response(200, text=_WIKIDATA_EMPTY_SEARCH)
+            call_count["imdb"] += 1
+            return httpx.Response(200, text=_SEARCH_MIXED_RESPONSE)
+
+        client, _ = _make_client_with_handler(_handler)
+        r1 = await client.search_movies("iron")
+        assert len(r1) == 2
+        first_calls = call_count["imdb"]
+
+        r2 = await client.search_movies("iron")
+        assert len(r2) == 2
+        assert call_count["imdb"] == first_calls  # cached
+
+    @pytest.mark.asyncio
+    async def test_skips_entries_without_imdb_id(self) -> None:
+        """Entries without tt-prefixed IDs are skipped."""
+        data = json.dumps(
+            {
+                "d": [
+                    {"id": "nm0000001", "l": "Actor", "qid": "movie", "y": 2020},
+                    {"id": "tt1234567", "l": "Real Movie", "qid": "movie", "y": 2021},
+                ],
+                "q": "test",
+                "v": 1,
+            }
+        )
+        client, _ = _make_client(response_text=data)
+        results = await client.search_movies("test")
+        assert len(results) == 1
+        assert results[0].id == "tt1234567"
+
+    @pytest.mark.asyncio
+    async def test_missing_poster(self) -> None:
+        """Entries without image info return empty poster."""
+        client, _ = _make_client(response_text=_SEARCH_MIXED_RESPONSE)
+        results = await client.search_movies("iron")
+        # Thor entry has no "i" field
+        thor = [r for r in results if r.name == "Thor"][0]
+        assert thor.poster == ""
+
+
+class TestSearchTv:
+    @pytest.mark.asyncio
+    async def test_returns_tv_series_and_miniseries(self) -> None:
+        """search_tv returns tvSeries and tvMiniSeries, not movies."""
+        client, _ = _make_client(response_text=_SEARCH_MIXED_RESPONSE)
+        results = await client.search_tv("iron")
+        assert len(results) == 2
+        names = {r.name for r in results}
+        assert names == {"Stranger Things", "Chernobyl"}
+        for r in results:
+            assert r.type == "series"
+
+    @pytest.mark.asyncio
+    async def test_empty_query_returns_empty(self) -> None:
+        client, _ = _make_client()
+        assert await client.search_tv("") == []
+
+    @pytest.mark.asyncio
+    async def test_network_error_returns_empty(self) -> None:
+        client, _ = _make_client(status_code=500)
+        assert await client.search_tv("iron") == []
+
+    @pytest.mark.asyncio
+    async def test_no_tv_in_results(self) -> None:
+        """When API returns only movies, search_tv returns empty."""
+        client, _ = _make_client(response_text=_IRON_MAN_RESPONSE)
+        assert await client.search_tv("iron man") == []

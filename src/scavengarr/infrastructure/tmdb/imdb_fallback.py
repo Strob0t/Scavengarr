@@ -18,8 +18,10 @@ from scavengarr.domain.ports.cache import CachePort
 log = structlog.get_logger(__name__)
 
 _SUGGEST_URL = "https://v2.sg.media-imdb.com/suggestion/t/{imdb_id}.json"
+_SEARCH_URL = "https://v2.sg.media-imdb.com/suggestion/{letter}/{query}.json"
 _WIKIDATA_API = "https://www.wikidata.org/w/api.php"
 _TTL_TITLE = 86_400  # 24 hours
+_TTL_SEARCH = 3_600  # 1 hour for search results
 
 
 class ImdbFallbackClient:
@@ -225,19 +227,95 @@ class ImdbFallbackClient:
         return None
 
     async def trending_movies(self, page: int = 1) -> list[StremioMetaPreview]:
-        """Not available without TMDB API."""
+        """Not available without TMDB API — requires editorial curation."""
         return []
 
     async def trending_tv(self, page: int = 1) -> list[StremioMetaPreview]:
-        """Not available without TMDB API."""
+        """Not available without TMDB API — requires editorial curation."""
         return []
 
     async def search_movies(
         self, query: str, page: int = 1
     ) -> list[StremioMetaPreview]:
-        """Not available without TMDB API."""
-        return []
+        """Search movies via IMDB Suggest API (free, no key)."""
+        return await self._search_suggest(query, qid_filter={"movie"})
 
     async def search_tv(self, query: str, page: int = 1) -> list[StremioMetaPreview]:
-        """Not available without TMDB API."""
-        return []
+        """Search TV shows via IMDB Suggest API (free, no key)."""
+        return await self._search_suggest(
+            query, qid_filter={"tvSeries", "tvMiniSeries"}
+        )
+
+    async def _search_suggest(
+        self,
+        query: str,
+        qid_filter: set[str],
+    ) -> list[StremioMetaPreview]:
+        """Fetch IMDB Suggest search results and filter by content type.
+
+        The IMDB Suggest API accepts a query via URL:
+        ``https://v2.sg.media-imdb.com/suggestion/{first_letter}/{query}.json``
+
+        Each result has a ``qid`` field (movie, tvSeries, tvMiniSeries, etc.)
+        used to filter content type.
+        """
+        if not query or not query.strip():
+            return []
+
+        clean = query.strip().lower()
+        cache_key = f"imdb:search:{clean}"
+        cached = await self._cache.get(cache_key)
+        if cached is not None:
+            # Cached raw entries — filter by qid
+            return self._entries_to_previews(cached, qid_filter)
+
+        letter = clean[0] if clean[0].isalpha() else "a"
+        url = _SEARCH_URL.format(letter=letter, query=clean)
+
+        try:
+            resp = await self._http.get(url, timeout=10.0)
+            resp.raise_for_status()
+            data = resp.json()
+        except (httpx.HTTPError, ValueError):
+            log.warning("imdb_search_failed", query=query, exc_info=True)
+            return []
+
+        entries = data.get("d", [])
+        if not entries:
+            return []
+
+        await self._cache.set(cache_key, entries, ttl=_TTL_SEARCH)
+        return self._entries_to_previews(entries, qid_filter)
+
+    @staticmethod
+    def _entries_to_previews(
+        entries: list[dict[str, Any]],
+        qid_filter: set[str],
+    ) -> list[StremioMetaPreview]:
+        """Convert IMDB Suggest entries to StremioMetaPreview list."""
+        previews: list[StremioMetaPreview] = []
+        for entry in entries:
+            qid = entry.get("qid", "")
+            if qid not in qid_filter:
+                continue
+            imdb_id = entry.get("id", "")
+            if not imdb_id or not imdb_id.startswith("tt"):
+                continue
+            title = entry.get("l", "")
+            if not title:
+                continue
+
+            year = entry.get("y")
+            poster = entry.get("i", {}).get("imageUrl", "") if entry.get("i") else ""
+            content_type = "movie" if qid == "movie" else "series"
+
+            previews.append(
+                StremioMetaPreview(
+                    id=imdb_id,
+                    type=content_type,
+                    name=title,
+                    poster=poster,
+                    release_info=str(year) if year else "",
+                )
+            )
+        return previews
