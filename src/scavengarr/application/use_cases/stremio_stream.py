@@ -7,6 +7,7 @@ IMDb ID -> TMDB title -> parallel plugin search
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from uuid import uuid4
@@ -26,6 +27,7 @@ from scavengarr.domain.ports.search_engine import SearchEnginePort
 from scavengarr.domain.ports.stream_link_repository import StreamLinkRepository
 from scavengarr.domain.ports.tmdb import TmdbClientPort
 from scavengarr.infrastructure.config.schema import StremioConfig
+from scavengarr.infrastructure.metrics import MetricsCollector
 from scavengarr.infrastructure.plugins.constants import search_max_results
 from scavengarr.infrastructure.stremio.stream_converter import convert_search_results
 from scavengarr.infrastructure.stremio.stream_sorter import StreamSorter
@@ -134,6 +136,7 @@ class StremioStreamUseCase:
         config: StremioConfig,
         stream_link_repo: StreamLinkRepository | None = None,
         probe_fn: ProbeCallback | None = None,
+        metrics: MetricsCollector | None = None,
     ) -> None:
         self._tmdb = tmdb
         self._plugins = plugins
@@ -152,6 +155,7 @@ class StremioStreamUseCase:
         self._probe_fn = probe_fn
         self._probe_at_stream_time = config.probe_at_stream_time
         self._max_probe_count = config.max_probe_count
+        self._metrics = metrics
 
     async def execute(
         self,
@@ -287,14 +291,25 @@ class StremioStreamUseCase:
         if self._probe_fn and self._probe_at_stream_time:
             limit = min(len(ranked), self._max_probe_count)
             probe_targets = [(i, ranked[i].url) for i in range(limit)]
+            t0_probe = time.perf_counter_ns()
             alive_indices = await self._probe_fn(probe_targets)
+            probe_duration = time.perf_counter_ns() - t0_probe
 
+            dead = limit - len(alive_indices)
             log.info(
                 "stremio_probe_complete",
                 total=limit,
                 alive=len(alive_indices),
-                filtered=limit - len(alive_indices),
+                filtered=dead,
             )
+            if self._metrics is not None:
+                self._metrics.record_probe(
+                    total=limit,
+                    alive=len(alive_indices),
+                    dead=dead,
+                    cf_blocked=0,
+                    duration_ns=probe_duration,
+                )
 
             # Keep only alive streams (preserve order); unprobed streams pass through
             streams = [
@@ -401,6 +416,8 @@ class StremioStreamUseCase:
             log.warning("stremio_plugin_not_found", plugin=name)
             return []
 
+        t0 = time.perf_counter_ns()
+        success = False
         try:
             if (
                 hasattr(plugin, "search")
@@ -422,9 +439,19 @@ class StremioStreamUseCase:
                 results = await self._search_engine.search(
                     plugin, query, category=category
                 )
+            success = True
         except Exception:
             log.warning("stremio_plugin_search_error", plugin=name, exc_info=True)
-            return []
+            results = []
+        finally:
+            duration_ns = time.perf_counter_ns() - t0
+            if self._metrics is not None:
+                self._metrics.record_plugin_search(
+                    name,
+                    duration_ns,
+                    len(results),
+                    success=success,
+                )
 
         # Tag results with source plugin for downstream use
         for r in results:

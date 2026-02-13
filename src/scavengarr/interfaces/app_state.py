@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from scavengarr.domain.ports.tmdb import TmdbClientPort
     from scavengarr.infrastructure.hoster_resolvers import HosterResolverRegistry
     from scavengarr.infrastructure.hoster_resolvers.stealth_pool import StealthPool
+    from scavengarr.infrastructure.metrics import MetricsCollector
 
 
 class AppState(State):
@@ -52,6 +53,9 @@ class AppState(State):
 
     # Playwright Stealth pool (optional — for CF bypass probing)
     stealth_pool: StealthPool | None
+
+    # Metrics (zero-impact in-memory counters)
+    metrics: MetricsCollector
 
     # Stremio (optional — requires TMDB API key)
     tmdb_client: TmdbClientPort | None

@@ -372,6 +372,11 @@ async def stremio_health(request: Request) -> JSONResponse:
         and len(stream_plugin_names) > 0
     )
 
+    metrics_snapshot: dict[str, object] = {}
+    metrics = getattr(state, "metrics", None)
+    if metrics is not None:
+        metrics_snapshot = metrics.snapshot()
+
     content: dict[str, object] = {
         "healthy": healthy,
         "tmdb_configured": tmdb_configured,
@@ -382,6 +387,7 @@ async def stremio_health(request: Request) -> JSONResponse:
         "hoster_resolver_configured": resolver_registry is not None,
         "supported_hosters": supported_hosters,
         "stream_link_repo_configured": stream_link_repo is not None,
+        "metrics": metrics_snapshot,
     }
 
     return JSONResponse(

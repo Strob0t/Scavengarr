@@ -27,6 +27,7 @@ from scavengarr.infrastructure.hoster_resolvers.stealth_pool import StealthPool
 from scavengarr.infrastructure.hoster_resolvers.streamtape import StreamtapeResolver
 from scavengarr.infrastructure.hoster_resolvers.supervideo import SuperVideoResolver
 from scavengarr.infrastructure.hoster_resolvers.voe import VoeResolver
+from scavengarr.infrastructure.metrics import MetricsCollector
 from scavengarr.infrastructure.persistence.crawljob_cache import (
     CacheCrawlJobRepository,
 )
@@ -56,6 +57,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     state = cast(AppState, app.state)
     config = state.config
+
+    # 0) Metrics collector (zero-overhead, must exist before components that record)
+    state.metrics = MetricsCollector()
 
     # 1) Cache (must be first - other components depend on it)
     cache = create_cache(
@@ -191,6 +195,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         config=config.stremio,
         stream_link_repo=state.stream_link_repo,
         probe_fn=probe_fn,
+        metrics=state.metrics,
     )
     state.stremio_catalog_uc = StremioCatalogUseCase(tmdb=state.tmdb_client)
 
