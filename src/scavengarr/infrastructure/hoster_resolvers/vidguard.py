@@ -99,9 +99,7 @@ class VidguardResolver:
             return None
 
         try:
-            resp = await self._http.get(
-                url, follow_redirects=True, timeout=15
-            )
+            resp = await self._http.get(url, follow_redirects=True, timeout=15)
         except httpx.HTTPError:
             log.warning("vidguard_request_failed", url=url)
             return None
@@ -115,24 +113,18 @@ class VidguardResolver:
             return None
 
         if resp.status_code != 200:
-            log.warning(
-                "vidguard_http_error", status=resp.status_code, url=url
-            )
+            log.warning("vidguard_http_error", status=resp.status_code, url=url)
             return None
 
         html = resp.text
         for marker in _OFFLINE_MARKERS:
             if marker in html:
-                log.info(
-                    "vidguard_file_offline", file_id=file_id, marker=marker
-                )
+                log.info("vidguard_file_offline", file_id=file_id, marker=marker)
                 return None
 
         final_url = str(resp.url)
         if "/404" in final_url or "error" in final_url:
-            log.info(
-                "vidguard_error_redirect", file_id=file_id, url=final_url
-            )
+            log.info("vidguard_error_redirect", file_id=file_id, url=final_url)
             return None
 
         log.debug("vidguard_resolved", file_id=file_id)

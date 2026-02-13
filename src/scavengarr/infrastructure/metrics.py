@@ -136,8 +136,7 @@ class MetricsCollector:
         return {
             "uptime_seconds": uptime_s,
             "plugins": {
-                name: stats.snapshot()
-                for name, stats in sorted(self._plugins.items())
+                name: stats.snapshot() for name, stats in sorted(self._plugins.items())
             },
             "probe": self._probe.snapshot(),
         }

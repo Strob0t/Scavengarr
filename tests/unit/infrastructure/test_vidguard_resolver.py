@@ -64,9 +64,7 @@ class TestExtractFileId:
 
     def test_long_id(self) -> None:
         url = "https://vidguard.to/e/abcdefghijklmnopqrstuvwxyz123456"
-        assert (
-            _extract_file_id(url) == "abcdefghijklmnopqrstuvwxyz123456"
-        )
+        assert _extract_file_id(url) == "abcdefghijklmnopqrstuvwxyz123456"
 
     def test_short_id_accepted(self) -> None:
         # Vidguard accepts variable-length IDs (not restricted to 12)
@@ -74,9 +72,7 @@ class TestExtractFileId:
         assert _extract_file_id(url) == "abc"
 
     def test_non_vidguard_domain(self) -> None:
-        assert (
-            _extract_file_id("https://example.com/e/abc123XYZ") is None
-        )
+        assert _extract_file_id("https://example.com/e/abc123XYZ") is None
 
     def test_no_path_prefix(self) -> None:
         assert _extract_file_id("https://vidguard.to/abc123XYZ") is None
@@ -208,9 +204,7 @@ class TestVidguardResolver:
     @pytest.mark.asyncio
     async def test_returns_none_on_network_error(self) -> None:
         client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(
-            side_effect=httpx.ConnectError("failed")
-        )
+        client.get = AsyncMock(side_effect=httpx.ConnectError("failed"))
 
         resolver = VidguardResolver(http_client=client)
         result = await resolver.resolve("https://vidguard.to/e/abc123XYZ")
@@ -221,9 +215,7 @@ class TestVidguardResolver:
         client = AsyncMock(spec=httpx.AsyncClient)
 
         resolver = VidguardResolver(http_client=client)
-        result = await resolver.resolve(
-            "https://example.com/e/abc123XYZ"
-        )
+        result = await resolver.resolve("https://example.com/e/abc123XYZ")
         assert result is None
         client.get.assert_not_called()
 

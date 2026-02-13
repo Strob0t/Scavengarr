@@ -9,7 +9,6 @@ from scavengarr.infrastructure.hoster_resolvers.cloudflare import (
     is_cloudflare_challenge,
 )
 
-
 # ------------------------------------------------------------------
 # Positive: CF challenge detected
 # ------------------------------------------------------------------

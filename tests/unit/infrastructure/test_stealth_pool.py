@@ -7,12 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from scavengarr.infrastructure.hoster_resolvers.stealth_pool import (
-    StealthPool,
     _BLOCKED_RESOURCE_TYPES,
     _OFFLINE_MARKERS,
+    StealthPool,
     _block_resources,
 )
-
 
 # ------------------------------------------------------------------
 # Helpers
@@ -89,12 +88,8 @@ class TestBlockResources:
 class TestStealthPoolLifecycle:
     """Browser init, stealth application, cleanup."""
 
-    @patch(
-        "scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright"
-    )
-    @patch(
-        "scavengarr.infrastructure.hoster_resolvers.stealth_pool.Stealth"
-    )
+    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright")
+    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.Stealth")
     async def test_ensure_context_launches_browser(
         self, mock_stealth_cls: MagicMock, mock_ap: MagicMock
     ) -> None:
@@ -114,12 +109,8 @@ class TestStealthPoolLifecycle:
         stealth_instance.apply_stealth_async.assert_awaited_once_with(context)
         context.route.assert_awaited_once()
 
-    @patch(
-        "scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright"
-    )
-    @patch(
-        "scavengarr.infrastructure.hoster_resolvers.stealth_pool.Stealth"
-    )
+    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright")
+    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.Stealth")
     async def test_ensure_context_reuses_existing(
         self, mock_stealth_cls: MagicMock, mock_ap: MagicMock
     ) -> None:
@@ -135,12 +126,8 @@ class TestStealthPoolLifecycle:
         # launch only called once
         pw.chromium.launch.assert_awaited_once()
 
-    @patch(
-        "scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright"
-    )
-    @patch(
-        "scavengarr.infrastructure.hoster_resolvers.stealth_pool.Stealth"
-    )
+    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright")
+    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.Stealth")
     async def test_cleanup_closes_all_resources(
         self, mock_stealth_cls: MagicMock, mock_ap: MagicMock
     ) -> None:
@@ -172,12 +159,8 @@ class TestStealthPoolLifecycle:
 class TestStealthPoolProbe:
     """probe_url navigation and classification."""
 
-    @patch(
-        "scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright"
-    )
-    @patch(
-        "scavengarr.infrastructure.hoster_resolvers.stealth_pool.Stealth"
-    )
+    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright")
+    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.Stealth")
     async def test_alive_page(
         self, mock_stealth_cls: MagicMock, mock_ap: MagicMock
     ) -> None:
@@ -195,12 +178,8 @@ class TestStealthPoolProbe:
         page.goto.assert_awaited_once()
         page.close.assert_awaited_once()
 
-    @patch(
-        "scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright"
-    )
-    @patch(
-        "scavengarr.infrastructure.hoster_resolvers.stealth_pool.Stealth"
-    )
+    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright")
+    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.Stealth")
     @pytest.mark.parametrize("marker", _OFFLINE_MARKERS)
     async def test_dead_page_offline_marker(
         self,
@@ -220,12 +199,8 @@ class TestStealthPoolProbe:
 
         assert result is False
 
-    @patch(
-        "scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright"
-    )
-    @patch(
-        "scavengarr.infrastructure.hoster_resolvers.stealth_pool.Stealth"
-    )
+    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright")
+    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.Stealth")
     async def test_navigation_error_returns_false(
         self, mock_stealth_cls: MagicMock, mock_ap: MagicMock
     ) -> None:
@@ -243,12 +218,8 @@ class TestStealthPoolProbe:
         assert result is False
         page.close.assert_awaited_once()
 
-    @patch(
-        "scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright"
-    )
-    @patch(
-        "scavengarr.infrastructure.hoster_resolvers.stealth_pool.Stealth"
-    )
+    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright")
+    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.Stealth")
     async def test_page_closed_even_on_error(
         self, mock_stealth_cls: MagicMock, mock_ap: MagicMock
     ) -> None:
@@ -266,12 +237,8 @@ class TestStealthPoolProbe:
         assert result is False
         page.close.assert_awaited_once()
 
-    @patch(
-        "scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright"
-    )
-    @patch(
-        "scavengarr.infrastructure.hoster_resolvers.stealth_pool.Stealth"
-    )
+    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright")
+    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.Stealth")
     async def test_cf_wait_timeout_still_checks_content(
         self, mock_stealth_cls: MagicMock, mock_ap: MagicMock
     ) -> None:
