@@ -55,6 +55,7 @@ class PlaywrightPluginBase:
     _max_results: int = DEFAULT_MAX_RESULTS
     _user_agent: str = DEFAULT_USER_AGENT
     _headless: bool = True
+    cache_ttl: int | None = None
 
     # --- Stealth mode (opt-in for Cloudflare bypass) ---
     _stealth: bool = False

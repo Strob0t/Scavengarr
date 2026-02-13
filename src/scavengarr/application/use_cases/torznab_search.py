@@ -129,7 +129,7 @@ class TorznabSearchUseCase:
                 raw_results = await self._execute_yaml_plugin(plugin, q)
 
             if raw_results:
-                await self._cache_write(cache_key, raw_results, q)
+                await self._cache_write(cache_key, raw_results, q, plugin)
 
         if not raw_results:
             log.info(
@@ -166,18 +166,30 @@ class TorznabSearchUseCase:
         return None
 
     async def _cache_write(
-        self, cache_key: str, results: list[Any], q: TorznabQuery
+        self,
+        cache_key: str,
+        results: list[Any],
+        q: TorznabQuery,
+        plugin: Any = None,
     ) -> None:
-        """Store search results in cache. Silently ignores errors."""
+        """Store search results in cache. Silently ignores errors.
+
+        Uses the plugin's ``cache_ttl`` attribute if set, otherwise
+        falls back to the global ``self._search_ttl``.
+        """
         if not self._cache or self._search_ttl <= 0:
             return
+        ttl = self._search_ttl
+        plugin_ttl = getattr(plugin, "cache_ttl", None)
+        if plugin_ttl is not None and plugin_ttl > 0:
+            ttl = plugin_ttl
         try:
-            await self._cache.set(cache_key, results, ttl=self._search_ttl)
+            await self._cache.set(cache_key, results, ttl=ttl)
             log.debug(
                 "search_cache_stored",
                 plugin=q.plugin_name,
                 cache_key=cache_key,
-                ttl=self._search_ttl,
+                ttl=ttl,
                 result_count=len(results),
             )
         except Exception:

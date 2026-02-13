@@ -366,6 +366,9 @@ class YamlPluginDefinitionPydantic(BaseModel):
     # Optional per-plugin overrides for HTTP behaviour
     http: HttpOverrides | None = None
 
+    # Optional per-plugin search cache TTL (seconds).  0 = use global default.
+    cache_ttl: int | None = Field(default=None, ge=0)
+
     @field_validator("base_url", mode="before")
     @classmethod
     def _normalize_base_url(cls, v: object) -> list[object]:

@@ -220,3 +220,22 @@ class TestYamlPluginDefinition:
             provides="both",
         )
         assert plugin.provides == "both"
+
+    def test_cache_ttl_default_none(self) -> None:
+        plugin = YamlPluginDefinition(
+            name="test",
+            version="0.1",
+            base_url="http://x",
+            scraping=ScrapingConfig(mode="scrapy"),
+        )
+        assert plugin.cache_ttl is None
+
+    def test_cache_ttl_explicit(self) -> None:
+        plugin = YamlPluginDefinition(
+            name="test",
+            version="0.1",
+            base_url="http://x",
+            scraping=ScrapingConfig(mode="scrapy"),
+            cache_ttl=300,
+        )
+        assert plugin.cache_ttl == 300

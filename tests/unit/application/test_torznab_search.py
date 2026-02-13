@@ -628,3 +628,94 @@ class TestSearchCaching:
         )
         response = await uc.execute(q)
         assert isinstance(response, SearchResponse)
+
+    async def test_plugin_cache_ttl_overrides_global(
+        self,
+        mock_search_engine: AsyncMock,
+        mock_crawljob_repo: AsyncMock,
+        mock_cache: AsyncMock,
+        search_result: SearchResult,
+    ) -> None:
+        """Plugin with cache_ttl=300 should override global search_ttl=900."""
+        plugin = _FakePlugin()
+        plugin.cache_ttl = 300  # type: ignore[attr-defined]
+        registry = MagicMock()
+        registry.get.return_value = plugin
+        mock_cache.get.return_value = None
+        mock_search_engine.search.return_value = [search_result]
+        uc = _make_uc(
+            registry,
+            mock_search_engine,
+            mock_crawljob_repo,
+            cache=mock_cache,
+            search_ttl=900,
+        )
+        q = TorznabQuery(
+            action="search",
+            plugin_name="filmpalast",
+            query="test",
+        )
+        await uc.execute(q)
+
+        mock_cache.set.assert_awaited_once()
+        assert mock_cache.set.call_args.kwargs["ttl"] == 300
+
+    async def test_plugin_without_cache_ttl_uses_global(
+        self,
+        mock_plugin_registry: MagicMock,
+        mock_search_engine: AsyncMock,
+        mock_crawljob_repo: AsyncMock,
+        mock_cache: AsyncMock,
+        search_result: SearchResult,
+    ) -> None:
+        """Plugin without cache_ttl should use global search_ttl."""
+        mock_cache.get.return_value = None
+        mock_search_engine.search.return_value = [search_result]
+        uc = _make_uc(
+            mock_plugin_registry,
+            mock_search_engine,
+            mock_crawljob_repo,
+            cache=mock_cache,
+            search_ttl=900,
+        )
+        q = TorznabQuery(
+            action="search",
+            plugin_name="filmpalast",
+            query="test",
+        )
+        await uc.execute(q)
+
+        mock_cache.set.assert_awaited_once()
+        assert mock_cache.set.call_args.kwargs["ttl"] == 900
+
+    async def test_python_plugin_cache_ttl_overrides_global(
+        self,
+        mock_search_engine: AsyncMock,
+        mock_crawljob_repo: AsyncMock,
+        mock_cache: AsyncMock,
+        search_result: SearchResult,
+    ) -> None:
+        """Python plugin with cache_ttl should override global TTL."""
+        plugin = _FakePythonPlugin()
+        plugin.cache_ttl = 120  # type: ignore[attr-defined]
+        plugin._results = [search_result]
+        registry = MagicMock()
+        registry.get.return_value = plugin
+        mock_cache.get.return_value = None
+        mock_search_engine.validate_results.return_value = [search_result]
+        uc = _make_uc(
+            registry,
+            mock_search_engine,
+            mock_crawljob_repo,
+            cache=mock_cache,
+            search_ttl=900,
+        )
+        q = TorznabQuery(
+            action="search",
+            plugin_name="boerse",
+            query="test",
+        )
+        await uc.execute(q)
+
+        mock_cache.set.assert_awaited_once()
+        assert mock_cache.set.call_args.kwargs["ttl"] == 120

@@ -61,6 +61,7 @@ class HttpxPluginBase:
     _max_results: int = DEFAULT_MAX_RESULTS
     _timeout: float = DEFAULT_CLIENT_TIMEOUT
     _user_agent: str = DEFAULT_USER_AGENT
+    cache_ttl: int | None = None
 
     def __init__(self) -> None:
         self._client: httpx.AsyncClient | None = None

@@ -179,3 +179,4 @@ class YamlPluginDefinition:
     provides: PluginProvides = "download"
     auth: AuthConfig | None = None
     http: HttpOverrides | None = None
+    cache_ttl: int | None = None
