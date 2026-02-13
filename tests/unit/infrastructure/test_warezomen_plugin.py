@@ -1,22 +1,49 @@
-"""Tests for the warezomen.com YAML plugin (Scrapy-based)."""
+"""Tests for the warezomen.com Python plugin (httpx-based)."""
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
+from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
-from diskcache import Cache
 
-from scavengarr.infrastructure.plugins.loader import load_yaml_plugin
-from scavengarr.infrastructure.scraping.scrapy_adapter import ScrapyAdapter
-
-_PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "warezomen.yaml"
+_PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "warezomen.py"
 
 
-# -- Fixtures: HTML snippets ------------------------------------------------
+def _load_module() -> ModuleType:
+    """Load warezomen.py plugin via importlib."""
+    spec = importlib.util.spec_from_file_location("warezomen_plugin", str(_PLUGIN_PATH))
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
+
+_mod = _load_module()
+_WarezomenPlugin = _mod.WarezomenPlugin
+_SearchResultParser = _mod._SearchResultParser
+_slugify = _mod._slugify
+
+
+def _make_plugin() -> object:
+    return _WarezomenPlugin()
+
+
+def _mock_response(html: str, url: str = "https://warezomen.com/test") -> MagicMock:
+    resp = MagicMock(spec=httpx.Response)
+    resp.status_code = 200
+    resp.text = html
+    resp.url = url
+    resp.raise_for_status = MagicMock()
+    return resp
+
+
+# ---------------------------------------------------------------------------
+# HTML fixtures
+# ---------------------------------------------------------------------------
 _RESULT_TABLE_HTML = """
 <html><body>
 <table class="download">
@@ -101,185 +128,244 @@ _PAGE2_HTML = """
 """
 
 
-# -- Plugin loading -----------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Slugify tests
+# ---------------------------------------------------------------------------
+class TestSlugify:
+    def test_basic(self) -> None:
+        assert _slugify("Avatar 2009") == "avatar-2009"
+
+    def test_special_chars(self) -> None:
+        assert _slugify("Spider-Man: No Way Home") == "spider-man-no-way-home"
+
+    def test_multiple_spaces(self) -> None:
+        assert _slugify("hello   world") == "hello-world"
+
+    def test_empty(self) -> None:
+        assert _slugify("") == ""
 
 
-class TestPluginLoading:
-    def test_yaml_loads_successfully(self) -> None:
-        plugin = load_yaml_plugin(_PLUGIN_PATH)
-        assert plugin.name == "warezomen"
-        assert plugin.version == "1.0.0"
-        assert "warezomen.com" in plugin.base_url
+# ---------------------------------------------------------------------------
+# Parser tests
+# ---------------------------------------------------------------------------
+class TestSearchResultParser:
+    def test_extracts_results(self) -> None:
+        parser = _SearchResultParser()
+        parser.feed(_RESULT_TABLE_HTML)
 
-    def test_has_search_results_stage(self) -> None:
-        plugin = load_yaml_plugin(_PLUGIN_PATH)
-        assert plugin.scraping.stages is not None
-        assert len(plugin.scraping.stages) == 1
-        assert plugin.scraping.stages[0].name == "search_results"
-
-    def test_stage_has_query_transform(self) -> None:
-        plugin = load_yaml_plugin(_PLUGIN_PATH)
-        assert plugin.scraping.stages is not None
-        stage = plugin.scraping.stages[0]
-        assert stage.query_transform == "slugify"
-
-    def test_stage_has_rows_selector(self) -> None:
-        plugin = load_yaml_plugin(_PLUGIN_PATH)
-        assert plugin.scraping.stages is not None
-        stage = plugin.scraping.stages[0]
-        assert stage.selectors.rows == "table.download tbody tr"
-
-    def test_stage_has_field_attributes(self) -> None:
-        plugin = load_yaml_plugin(_PLUGIN_PATH)
-        assert plugin.scraping.stages is not None
-        stage = plugin.scraping.stages[0]
-        assert stage.field_attributes == {
-            "title": ["title"],
-            "download_link": ["href"],
-        }
-
-    def test_pagination_configured(self) -> None:
-        plugin = load_yaml_plugin(_PLUGIN_PATH)
-        assert plugin.scraping.stages is not None
-        stage = plugin.scraping.stages[0]
-        assert stage.pagination is not None
-        assert stage.pagination.enabled is True
-        assert stage.pagination.max_pages == 50
-
-
-# -- Helpers for ScrapyAdapter tests ------------------------------------------
-
-
-def _mock_response(html: str, status_code: int = 200) -> httpx.Response:
-    """Create a real httpx.Response with given HTML content."""
-    return httpx.Response(
-        status_code=status_code,
-        content=html.encode("utf-8"),
-        request=httpx.Request("GET", "https://warezomen.com/test"),
-    )
-
-
-def _make_adapter() -> tuple[ScrapyAdapter, AsyncMock]:
-    """Create a ScrapyAdapter with the warezomen plugin and a mock client."""
-    plugin = load_yaml_plugin(_PLUGIN_PATH)
-    mock_client = AsyncMock(spec=httpx.AsyncClient)
-    cache = MagicMock(spec=Cache)
-    adapter = ScrapyAdapter(
-        plugin=plugin,
-        http_client=mock_client,
-        cache=cache,
-        delay_seconds=0,
-        max_retries=1,
-    )
-    return adapter, mock_client
-
-
-# -- URL construction ---------------------------------------------------------
-
-
-class TestUrlConstruction:
-    def test_slugified_url(self) -> None:
-        adapter, _ = _make_adapter()
-        stage = adapter.stages["search_results"]
-        url = stage.build_url(query="Avatar 2009")
-        assert url == "https://warezomen.com/download/avatar-2009/"
-
-    def test_special_chars_in_query(self) -> None:
-        adapter, _ = _make_adapter()
-        stage = adapter.stages["search_results"]
-        url = stage.build_url(query="Spider-Man: No Way Home")
-        assert url == "https://warezomen.com/download/spider-man-no-way-home/"
-
-
-# -- Scraping results ---------------------------------------------------------
-
-
-class TestScrapingResults:
-    @pytest.mark.asyncio
-    async def test_extracts_multiple_rows(self) -> None:
-        adapter, mock_client = _make_adapter()
-        mock_client.get = AsyncMock(return_value=_mock_response(_RESULT_TABLE_HTML))
-
-        results = await adapter.scrape("avatar")
-
-        # search_results stage should have items
-        assert "search_results" in results
-        items = results["search_results"]
-
-        # Separator rows (td.d) should be filtered out (no title/link)
-        titles = [item["title"] for item in items]
+        assert len(parser.results) == 3
+        titles = [r["title"] for r in parser.results]
         assert "Avatar.2009.1080p.BluRay" in titles
         assert "Breaking.Bad.S01.720p" in titles
         assert "Photoshop.2024.Portable" in titles
 
-    @pytest.mark.asyncio
-    async def test_result_fields(self) -> None:
-        adapter, mock_client = _make_adapter()
-        mock_client.get = AsyncMock(return_value=_mock_response(_RESULT_TABLE_HTML))
+    def test_result_fields(self) -> None:
+        parser = _SearchResultParser()
+        parser.feed(_RESULT_TABLE_HTML)
 
-        results = await adapter.scrape("avatar")
-        items = results["search_results"]
-
-        # Find the Avatar row
-        avatar = next(i for i in items if "Avatar" in i.get("title", ""))
+        avatar = parser.results[0]
         assert avatar["title"] == "Avatar.2009.1080p.BluRay"
         assert avatar["download_link"] == "https://apps4all.com/dl/avatar"
         assert avatar["published_date"] == "01-Nov-2025"
 
+    def test_empty_table(self) -> None:
+        parser = _SearchResultParser()
+        parser.feed(_EMPTY_TABLE_HTML)
+        assert parser.results == []
+
+    def test_no_table(self) -> None:
+        parser = _SearchResultParser()
+        parser.feed(_NO_TABLE_HTML)
+        assert parser.results == []
+
+    def test_pagination_detected(self) -> None:
+        parser = _SearchResultParser()
+        parser.feed(_PAGINATION_HTML)
+        assert parser.next_page_url == "/download/test/2/"
+
+    def test_no_pagination(self) -> None:
+        parser = _SearchResultParser()
+        parser.feed(_RESULT_TABLE_HTML)
+        assert parser.next_page_url == ""
+
+    def test_separator_rows_skipped(self) -> None:
+        parser = _SearchResultParser()
+        parser.feed(_RESULT_TABLE_HTML)
+        # Separator rows have class="d", should not produce results
+        for r in parser.results:
+            assert r["title"] != ""
+            assert r["download_link"] != ""
+
+
+# ---------------------------------------------------------------------------
+# Plugin attributes
+# ---------------------------------------------------------------------------
+class TestPluginAttributes:
+    def test_name(self) -> None:
+        plugin = _make_plugin()
+        assert plugin.name == "warezomen"
+
+    def test_provides(self) -> None:
+        plugin = _make_plugin()
+        assert plugin.provides == "download"
+
+    def test_domains(self) -> None:
+        plugin = _make_plugin()
+        assert "warezomen.com" in plugin._domains
+
+    def test_base_url(self) -> None:
+        plugin = _make_plugin()
+        assert plugin.base_url == "https://warezomen.com"
+
+
+# ---------------------------------------------------------------------------
+# Search URL construction
+# ---------------------------------------------------------------------------
+class TestSearchUrl:
+    @pytest.mark.asyncio
+    async def test_builds_slugified_url(self) -> None:
+        plugin = _make_plugin()
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.get = AsyncMock(return_value=_mock_response(_RESULT_TABLE_HTML))
+        plugin._client = mock_client
+
+        await plugin.search("Avatar 2009")
+
+        call_url = mock_client.get.call_args_list[0][0][0]
+        assert call_url == "https://warezomen.com/download/avatar-2009/"
+
+    @pytest.mark.asyncio
+    async def test_special_chars_in_query(self) -> None:
+        plugin = _make_plugin()
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.get = AsyncMock(return_value=_mock_response(_RESULT_TABLE_HTML))
+        plugin._client = mock_client
+
+        await plugin.search("Spider-Man: No Way Home")
+
+        call_url = mock_client.get.call_args_list[0][0][0]
+        assert call_url == "https://warezomen.com/download/spider-man-no-way-home/"
+
+
+# ---------------------------------------------------------------------------
+# Search results
+# ---------------------------------------------------------------------------
+class TestSearch:
+    @pytest.mark.asyncio
+    async def test_returns_search_results(self) -> None:
+        plugin = _make_plugin()
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.get = AsyncMock(return_value=_mock_response(_RESULT_TABLE_HTML))
+        plugin._client = mock_client
+
+        results = await plugin.search("avatar")
+
+        assert len(results) == 3
+        assert results[0].title == "Avatar.2009.1080p.BluRay"
+        assert results[0].download_link == "https://apps4all.com/dl/avatar"
+
     @pytest.mark.asyncio
     async def test_empty_results(self) -> None:
-        adapter, mock_client = _make_adapter()
+        plugin = _make_plugin()
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(return_value=_mock_response(_EMPTY_TABLE_HTML))
+        plugin._client = mock_client
 
-        results = await adapter.scrape("nonexistent")
-
-        # No valid rows -> empty
-        assert results == {} or all(len(v) == 0 for v in results.values())
+        results = await plugin.search("nonexistent")
+        assert results == []
 
     @pytest.mark.asyncio
     async def test_no_table_returns_empty(self) -> None:
-        adapter, mock_client = _make_adapter()
+        plugin = _make_plugin()
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(return_value=_mock_response(_NO_TABLE_HTML))
+        plugin._client = mock_client
 
-        results = await adapter.scrape("nonexistent")
-        assert results == {} or all(len(v) == 0 for v in results.values())
+        results = await plugin.search("nonexistent")
+        assert results == []
+
+    @pytest.mark.asyncio
+    async def test_category_passed_through(self) -> None:
+        plugin = _make_plugin()
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.get = AsyncMock(return_value=_mock_response(_RESULT_TABLE_HTML))
+        plugin._client = mock_client
+
+        results = await plugin.search("avatar", category=5000)
+
+        assert all(r.category == 5000 for r in results)
+
+    @pytest.mark.asyncio
+    async def test_default_category(self) -> None:
+        plugin = _make_plugin()
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.get = AsyncMock(return_value=_mock_response(_RESULT_TABLE_HTML))
+        plugin._client = mock_client
+
+        results = await plugin.search("avatar")
+
+        assert all(r.category == 2000 for r in results)
+
+    @pytest.mark.asyncio
+    async def test_network_error_returns_empty(self) -> None:
+        plugin = _make_plugin()
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
+        plugin._client = mock_client
+
+        results = await plugin.search("avatar")
+        assert results == []
 
 
-# -- Pagination ---------------------------------------------------------------
-
-
+# ---------------------------------------------------------------------------
+# Pagination
+# ---------------------------------------------------------------------------
 class TestPagination:
     @pytest.mark.asyncio
     async def test_follows_next_page(self) -> None:
-        adapter, mock_client = _make_adapter()
-        responses = [
-            _mock_response(_PAGINATION_HTML),
-            _mock_response(_PAGE2_HTML),
-        ]
-        mock_client.get = AsyncMock(side_effect=responses)
+        plugin = _make_plugin()
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.get = AsyncMock(
+            side_effect=[
+                _mock_response(_PAGINATION_HTML),
+                _mock_response(_PAGE2_HTML),
+            ]
+        )
+        plugin._client = mock_client
 
-        results = await adapter.scrape("test")
-        items = results.get("search_results", [])
+        results = await plugin.search("test")
 
-        titles = [item["title"] for item in items]
+        assert len(results) == 2
+        titles = [r.title for r in results]
         assert "Result.One" in titles
         assert "Result.Two" in titles
         assert mock_client.get.call_count == 2
 
-
-# -- Normalize results --------------------------------------------------------
-
-
-class TestNormalizeResults:
     @pytest.mark.asyncio
-    async def test_normalize_to_search_results(self) -> None:
-        adapter, mock_client = _make_adapter()
+    async def test_stops_on_no_next_page(self) -> None:
+        plugin = _make_plugin()
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(return_value=_mock_response(_RESULT_TABLE_HTML))
+        plugin._client = mock_client
 
-        raw = await adapter.scrape("avatar")
-        search_results = adapter.normalize_results(raw)
+        await plugin.search("test")
 
-        assert len(search_results) >= 3
-        first = search_results[0]
-        assert first.title == "Avatar.2009.1080p.BluRay"
-        assert first.download_link == "https://apps4all.com/dl/avatar"
+        # Only one request since no pagination link
+        assert mock_client.get.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_stops_on_empty_page(self) -> None:
+        plugin = _make_plugin()
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.get = AsyncMock(
+            side_effect=[
+                _mock_response(_PAGINATION_HTML),
+                _mock_response(_EMPTY_TABLE_HTML),
+            ]
+        )
+        plugin._client = mock_client
+
+        results = await plugin.search("test")
+
+        assert len(results) == 1
+        assert mock_client.get.call_count == 2
