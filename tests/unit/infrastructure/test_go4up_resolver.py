@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
-
 import httpx
 import pytest
+import respx
 
 from scavengarr.infrastructure.hoster_resolvers.go4up import (
     Go4upResolver,
@@ -45,83 +44,66 @@ _OFFLINE_PAGE = "<html><body><p>Link not found</p></body></html>"
 
 class TestGo4upResolver:
     def test_name(self) -> None:
-        client = MagicMock(spec=httpx.AsyncClient)
-        assert Go4upResolver(http_client=client).name == "go4up"
+        assert Go4upResolver(http_client=httpx.AsyncClient()).name == "go4up"
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_resolves_valid_file(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = _VALID_PAGE
-        mock_resp.url = "https://go4up.com/dl/abc123def"
-
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-
         url = "https://go4up.com/dl/abc123def"
-        result = await Go4upResolver(http_client=client).resolve(url)
+        respx.get(url).respond(200, text=_VALID_PAGE)
+
+        async with httpx.AsyncClient() as client:
+            result = await Go4upResolver(http_client=client).resolve(url)
         assert result is not None
         assert result.video_url == url
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_for_offline(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = _OFFLINE_PAGE
-        mock_resp.url = "https://go4up.com/dl/abc123def"
+        url = "https://go4up.com/dl/abc123def"
+        respx.get(url).respond(200, text=_OFFLINE_PAGE)
 
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-
-        result = await Go4upResolver(http_client=client).resolve(
-            "https://go4up.com/dl/abc123def"
-        )
+        async with httpx.AsyncClient() as client:
+            result = await Go4upResolver(http_client=client).resolve(url)
         assert result is None
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_on_http_error(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 500
+        url = "https://go4up.com/dl/abc123def"
+        respx.get(url).respond(500)
 
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-
-        result = await Go4upResolver(http_client=client).resolve(
-            "https://go4up.com/dl/abc123def"
-        )
+        async with httpx.AsyncClient() as client:
+            result = await Go4upResolver(http_client=client).resolve(url)
         assert result is None
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_on_network_error(self) -> None:
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(side_effect=httpx.ConnectError("failed"))
+        url = "https://go4up.com/dl/abc123def"
+        respx.get(url).mock(side_effect=httpx.ConnectError("failed"))
 
-        result = await Go4upResolver(http_client=client).resolve(
-            "https://go4up.com/dl/abc123def"
-        )
+        async with httpx.AsyncClient() as client:
+            result = await Go4upResolver(http_client=client).resolve(url)
         assert result is None
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_for_invalid_url(self) -> None:
-        client = AsyncMock(spec=httpx.AsyncClient)
-
-        result = await Go4upResolver(http_client=client).resolve(
-            "https://example.com/dl/abc123def"
-        )
+        async with httpx.AsyncClient() as client:
+            result = await Go4upResolver(http_client=client).resolve(
+                "https://example.com/dl/abc123def"
+            )
         assert result is None
-        client.get.assert_not_called()
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_on_error_redirect(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = "<html><body>Error</body></html>"
-        mock_resp.url = "https://go4up.com/404"
+        url = "https://go4up.com/dl/abc123def"
+        error_url = "https://go4up.com/404"
+        respx.get(url).respond(302, headers={"Location": error_url})
+        respx.get(error_url).respond(200, text="<html><body>Error</body></html>")
 
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-
-        result = await Go4upResolver(http_client=client).resolve(
-            "https://go4up.com/dl/abc123def"
-        )
+        async with httpx.AsyncClient() as client:
+            result = await Go4upResolver(http_client=client).resolve(url)
         assert result is None

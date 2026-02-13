@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
-
 import httpx
 import pytest
+import respx
 
 from scavengarr.infrastructure.hoster_resolvers.filefactory import (
     FilefactoryResolver,
@@ -70,81 +69,72 @@ _OFFLINE_PAGE = """
 
 class TestFilefactoryResolver:
     def test_name(self) -> None:
-        client = MagicMock(spec=httpx.AsyncClient)
-        resolver = FilefactoryResolver(http_client=client)
+        resolver = FilefactoryResolver(http_client=httpx.AsyncClient())
         assert resolver.name == "filefactory"
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_resolves_valid_file(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = _VALID_PAGE
-        mock_resp.url = "https://filefactory.com/file/abc123def"
-
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-
-        resolver = FilefactoryResolver(http_client=client)
         url = "https://filefactory.com/file/abc123def"
-        result = await resolver.resolve(url)
+        respx.get(url).respond(200, text=_VALID_PAGE)
+
+        async with httpx.AsyncClient() as client:
+            resolver = FilefactoryResolver(http_client=client)
+            result = await resolver.resolve(url)
 
         assert result is not None
         assert result.video_url == url
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_for_offline(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = _OFFLINE_PAGE
-        mock_resp.url = "https://filefactory.com/file/abc123def"
+        url = "https://filefactory.com/file/abc123def"
+        respx.get(url).respond(200, text=_OFFLINE_PAGE)
 
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-
-        resolver = FilefactoryResolver(http_client=client)
-        result = await resolver.resolve("https://filefactory.com/file/abc123def")
+        async with httpx.AsyncClient() as client:
+            resolver = FilefactoryResolver(http_client=client)
+            result = await resolver.resolve(url)
         assert result is None
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_on_http_error(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 500
+        url = "https://filefactory.com/file/abc123def"
+        respx.get(url).respond(500)
 
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-
-        resolver = FilefactoryResolver(http_client=client)
-        result = await resolver.resolve("https://filefactory.com/file/abc123def")
+        async with httpx.AsyncClient() as client:
+            resolver = FilefactoryResolver(http_client=client)
+            result = await resolver.resolve(url)
         assert result is None
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_on_network_error(self) -> None:
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(side_effect=httpx.ConnectError("failed"))
+        url = "https://filefactory.com/file/abc123def"
+        respx.get(url).mock(side_effect=httpx.ConnectError("failed"))
 
-        resolver = FilefactoryResolver(http_client=client)
-        result = await resolver.resolve("https://filefactory.com/file/abc123def")
+        async with httpx.AsyncClient() as client:
+            resolver = FilefactoryResolver(http_client=client)
+            result = await resolver.resolve(url)
         assert result is None
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_for_invalid_url(self) -> None:
-        client = AsyncMock(spec=httpx.AsyncClient)
-
-        resolver = FilefactoryResolver(http_client=client)
-        result = await resolver.resolve("https://example.com/file/abc123def")
+        async with httpx.AsyncClient() as client:
+            resolver = FilefactoryResolver(http_client=client)
+            result = await resolver.resolve("https://example.com/file/abc123def")
         assert result is None
-        client.get.assert_not_called()
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_on_error_redirect(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = "<html><body>Error</body></html>"
-        mock_resp.url = "https://filefactory.com/404"
+        url = "https://filefactory.com/file/abc123def"
+        error_url = "https://filefactory.com/404"
+        respx.get(url).respond(302, headers={"Location": error_url})
+        respx.get(error_url).respond(200, text="<html><body>Error</body></html>")
 
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-
-        resolver = FilefactoryResolver(http_client=client)
-        result = await resolver.resolve("https://filefactory.com/file/abc123def")
+        async with httpx.AsyncClient() as client:
+            resolver = FilefactoryResolver(http_client=client)
+            result = await resolver.resolve(url)
         assert result is None

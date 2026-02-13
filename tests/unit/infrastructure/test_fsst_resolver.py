@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
-
 import httpx
 import pytest
+import respx
 
 from scavengarr.infrastructure.hoster_resolvers.fsst import (
     FsstResolver,
@@ -45,77 +44,67 @@ _OFFLINE_PAGE = "<html><body>Video not found</body></html>"
 
 class TestFsstResolver:
     def test_name(self) -> None:
-        client = MagicMock(spec=httpx.AsyncClient)
-        assert FsstResolver(http_client=client).name == "fsst"
+        resolver = FsstResolver(http_client=httpx.AsyncClient())
+        assert resolver.name == "fsst"
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_resolves_valid_file(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = _VALID_PAGE
-        mock_resp.url = "https://fsst.online/abc123def"
-
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-
         url = "https://fsst.online/abc123def"
-        result = await FsstResolver(http_client=client).resolve(url)
+        respx.get(url).respond(200, text=_VALID_PAGE)
+
+        async with httpx.AsyncClient() as client:
+            result = await FsstResolver(http_client=client).resolve(url)
         assert result is not None
         assert result.video_url == url
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_for_offline(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = _OFFLINE_PAGE
-        mock_resp.url = "https://fsst.online/abc123def"
+        url = "https://fsst.online/abc123def"
+        respx.get(url).respond(200, text=_OFFLINE_PAGE)
 
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-
-        result = await FsstResolver(http_client=client).resolve(
-            "https://fsst.online/abc123def"
-        )
+        async with httpx.AsyncClient() as client:
+            result = await FsstResolver(http_client=client).resolve(url)
         assert result is None
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_on_http_error(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 500
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-        result = await FsstResolver(http_client=client).resolve(
-            "https://fsst.online/abc123def"
-        )
+        url = "https://fsst.online/abc123def"
+        respx.get(url).respond(500)
+
+        async with httpx.AsyncClient() as client:
+            result = await FsstResolver(http_client=client).resolve(url)
         assert result is None
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_on_network_error(self) -> None:
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(side_effect=httpx.ConnectError("failed"))
-        result = await FsstResolver(http_client=client).resolve(
-            "https://fsst.online/abc123def"
-        )
+        url = "https://fsst.online/abc123def"
+        respx.get(url).mock(side_effect=httpx.ConnectError("failed"))
+
+        async with httpx.AsyncClient() as client:
+            result = await FsstResolver(http_client=client).resolve(url)
         assert result is None
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_for_invalid_url(self) -> None:
-        client = AsyncMock(spec=httpx.AsyncClient)
-        result = await FsstResolver(http_client=client).resolve(
-            "https://example.com/abc123def"
-        )
+        async with httpx.AsyncClient() as client:
+            result = await FsstResolver(http_client=client).resolve(
+                "https://example.com/abc123def"
+            )
         assert result is None
-        client.get.assert_not_called()
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_on_error_redirect(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = "<html><body>Error</body></html>"
-        mock_resp.url = "https://fsst.online/404"
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-        result = await FsstResolver(http_client=client).resolve(
-            "https://fsst.online/abc123def"
-        )
+        url = "https://fsst.online/abc123def"
+        error_url = "https://fsst.online/404"
+        respx.get(url).respond(302, headers={"Location": error_url})
+        respx.get(error_url).respond(200, text="<html><body>Error</body></html>")
+
+        async with httpx.AsyncClient() as client:
+            result = await FsstResolver(http_client=client).resolve(url)
         assert result is None

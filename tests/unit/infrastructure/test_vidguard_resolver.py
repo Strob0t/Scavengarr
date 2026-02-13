@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
-
 import httpx
 import pytest
+import respx
 
 from scavengarr.infrastructure.hoster_resolvers.vidguard import (
     VidguardResolver,
@@ -116,153 +115,131 @@ _OFFLINE_VIDEO_NOT_FOUND = """
 
 class TestVidguardResolver:
     def test_name(self) -> None:
-        client = MagicMock(spec=httpx.AsyncClient)
-        resolver = VidguardResolver(http_client=client)
+        resolver = VidguardResolver(http_client=httpx.AsyncClient())
         assert resolver.name == "vidguard"
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_resolves_valid_file(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = _VALID_PAGE
-        mock_resp.url = "https://vidguard.to/e/abc123XYZ"
-
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-
-        resolver = VidguardResolver(http_client=client)
         url = "https://vidguard.to/e/abc123XYZ"
-        result = await resolver.resolve(url)
+        respx.get(url).respond(200, text=_VALID_PAGE)
+
+        async with httpx.AsyncClient() as client:
+            resolver = VidguardResolver(http_client=client)
+            result = await resolver.resolve(url)
 
         assert result is not None
         assert result.video_url == url
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_for_not_found(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = _OFFLINE_NOT_FOUND
-        mock_resp.url = "https://vidguard.to/e/abc123XYZ"
+        url = "https://vidguard.to/e/abc123XYZ"
+        respx.get(url).respond(200, text=_OFFLINE_NOT_FOUND)
 
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-
-        resolver = VidguardResolver(http_client=client)
-        result = await resolver.resolve("https://vidguard.to/e/abc123XYZ")
+        async with httpx.AsyncClient() as client:
+            resolver = VidguardResolver(http_client=client)
+            result = await resolver.resolve(url)
         assert result is None
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_for_video_not_found(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = _OFFLINE_VIDEO_NOT_FOUND
-        mock_resp.url = "https://vidguard.to/e/abc123XYZ"
+        url = "https://vidguard.to/e/abc123XYZ"
+        respx.get(url).respond(200, text=_OFFLINE_VIDEO_NOT_FOUND)
 
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-
-        resolver = VidguardResolver(http_client=client)
-        result = await resolver.resolve("https://vidguard.to/e/abc123XYZ")
+        async with httpx.AsyncClient() as client:
+            resolver = VidguardResolver(http_client=client)
+            result = await resolver.resolve(url)
         assert result is None
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_on_404(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 404
+        url = "https://vidguard.to/e/abc123XYZ"
+        respx.get(url).respond(404)
 
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-
-        resolver = VidguardResolver(http_client=client)
-        result = await resolver.resolve("https://vidguard.to/e/abc123XYZ")
+        async with httpx.AsyncClient() as client:
+            resolver = VidguardResolver(http_client=client)
+            result = await resolver.resolve(url)
         assert result is None
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_on_403(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 403
+        url = "https://vidguard.to/e/abc123XYZ"
+        respx.get(url).respond(403)
 
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-
-        resolver = VidguardResolver(http_client=client)
-        result = await resolver.resolve("https://vidguard.to/e/abc123XYZ")
+        async with httpx.AsyncClient() as client:
+            resolver = VidguardResolver(http_client=client)
+            result = await resolver.resolve(url)
         assert result is None
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_on_http_error(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 500
+        url = "https://vidguard.to/e/abc123XYZ"
+        respx.get(url).respond(500)
 
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-
-        resolver = VidguardResolver(http_client=client)
-        result = await resolver.resolve("https://vidguard.to/e/abc123XYZ")
+        async with httpx.AsyncClient() as client:
+            resolver = VidguardResolver(http_client=client)
+            result = await resolver.resolve(url)
         assert result is None
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_on_network_error(self) -> None:
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(side_effect=httpx.ConnectError("failed"))
+        url = "https://vidguard.to/e/abc123XYZ"
+        respx.get(url).mock(side_effect=httpx.ConnectError("failed"))
 
-        resolver = VidguardResolver(http_client=client)
-        result = await resolver.resolve("https://vidguard.to/e/abc123XYZ")
+        async with httpx.AsyncClient() as client:
+            resolver = VidguardResolver(http_client=client)
+            result = await resolver.resolve(url)
         assert result is None
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_for_invalid_url(self) -> None:
-        client = AsyncMock(spec=httpx.AsyncClient)
-
-        resolver = VidguardResolver(http_client=client)
-        result = await resolver.resolve("https://example.com/e/abc123XYZ")
+        async with httpx.AsyncClient() as client:
+            resolver = VidguardResolver(http_client=client)
+            result = await resolver.resolve("https://example.com/e/abc123XYZ")
         assert result is None
-        client.get.assert_not_called()
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_on_error_redirect(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = "<html><body>Error</body></html>"
-        mock_resp.url = "https://vidguard.to/404"
+        url = "https://vidguard.to/e/abc123XYZ"
+        error_url = "https://vidguard.to/404"
+        respx.get(url).respond(302, headers={"Location": error_url})
+        respx.get(error_url).respond(200, text="<html><body>Error</body></html>")
 
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-
-        resolver = VidguardResolver(http_client=client)
-        result = await resolver.resolve("https://vidguard.to/e/abc123XYZ")
+        async with httpx.AsyncClient() as client:
+            resolver = VidguardResolver(http_client=client)
+            result = await resolver.resolve(url)
         assert result is None
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_vgfplay_domain_resolves(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = _VALID_PAGE
-        mock_resp.url = "https://vgfplay.com/e/abc123XYZ"
-
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-
-        resolver = VidguardResolver(http_client=client)
         url = "https://vgfplay.com/e/abc123XYZ"
-        result = await resolver.resolve(url)
+        respx.get(url).respond(200, text=_VALID_PAGE)
+
+        async with httpx.AsyncClient() as client:
+            resolver = VidguardResolver(http_client=client)
+            result = await resolver.resolve(url)
 
         assert result is not None
         assert result.video_url == url
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_listeamed_domain_resolves(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = _VALID_PAGE
-        mock_resp.url = "https://listeamed.net/e/abc123XYZ"
-
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-
-        resolver = VidguardResolver(http_client=client)
         url = "https://listeamed.net/e/abc123XYZ"
-        result = await resolver.resolve(url)
+        respx.get(url).respond(200, text=_VALID_PAGE)
+
+        async with httpx.AsyncClient() as client:
+            resolver = VidguardResolver(http_client=client)
+            result = await resolver.resolve(url)
 
         assert result is not None
         assert result.video_url == url

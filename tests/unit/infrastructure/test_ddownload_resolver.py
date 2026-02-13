@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
-
 import httpx
 import pytest
+import respx
 
 from scavengarr.infrastructure.hoster_resolvers.ddownload import (
     DDownloadResolver,
@@ -153,183 +152,152 @@ _MAINTENANCE_PAGE = """
 
 class TestDDownloadResolver:
     def test_name(self) -> None:
-        client = MagicMock(spec=httpx.AsyncClient)
-        resolver = DDownloadResolver(http_client=client)
+        resolver = DDownloadResolver(http_client=httpx.AsyncClient())
         assert resolver.name == "ddownload"
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_resolves_valid_file(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = _VALID_PAGE
-        mock_resp.url = "https://ddownload.com/abc123def456"
+        url = "https://ddownload.com/abc123def456"
+        respx.get(url).respond(200, text=_VALID_PAGE)
 
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-
-        resolver = DDownloadResolver(http_client=client)
-        result = await resolver.resolve("https://ddownload.com/abc123def456")
+        async with httpx.AsyncClient() as client:
+            resolver = DDownloadResolver(http_client=client)
+            result = await resolver.resolve(url)
 
         assert result is not None
         assert result.video_url == "https://ddownload.com/abc123def456"
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_ddl_to_resolves_with_canonical_url(self) -> None:
         """ddl.to URLs should be canonicalized to ddownload.com."""
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = _VALID_PAGE
-        mock_resp.url = "https://ddownload.com/abc123def456"
+        canonical_url = "https://ddownload.com/abc123def456"
+        respx.get(canonical_url).respond(200, text=_VALID_PAGE)
 
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-
-        resolver = DDownloadResolver(http_client=client)
-        result = await resolver.resolve("https://ddl.to/abc123def456")
+        async with httpx.AsyncClient() as client:
+            resolver = DDownloadResolver(http_client=client)
+            result = await resolver.resolve("https://ddl.to/abc123def456")
 
         assert result is not None
         assert result.video_url == "https://ddownload.com/abc123def456"
-        # Verify the canonical URL was used for the request.
-        client.get.assert_called_once()
-        call_url = client.get.call_args[0][0]
-        assert call_url == "https://ddownload.com/abc123def456"
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_for_file_not_found(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = _OFFLINE_NOT_FOUND
-        mock_resp.url = "https://ddownload.com/abc123def456"
+        url = "https://ddownload.com/abc123def456"
+        respx.get(url).respond(200, text=_OFFLINE_NOT_FOUND)
 
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-
-        resolver = DDownloadResolver(http_client=client)
-        result = await resolver.resolve("https://ddownload.com/abc123def456")
+        async with httpx.AsyncClient() as client:
+            resolver = DDownloadResolver(http_client=client)
+            result = await resolver.resolve(url)
         assert result is None
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_for_removed_file(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = _OFFLINE_REMOVED
-        mock_resp.url = "https://ddownload.com/abc123def456"
+        url = "https://ddownload.com/abc123def456"
+        respx.get(url).respond(200, text=_OFFLINE_REMOVED)
 
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-
-        resolver = DDownloadResolver(http_client=client)
-        result = await resolver.resolve("https://ddownload.com/abc123def456")
+        async with httpx.AsyncClient() as client:
+            resolver = DDownloadResolver(http_client=client)
+            result = await resolver.resolve(url)
         assert result is None
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_for_copyright_ban(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = _OFFLINE_COPYRIGHT
-        mock_resp.url = "https://ddownload.com/abc123def456"
+        url = "https://ddownload.com/abc123def456"
+        respx.get(url).respond(200, text=_OFFLINE_COPYRIGHT)
 
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-
-        resolver = DDownloadResolver(http_client=client)
-        result = await resolver.resolve("https://ddownload.com/abc123def456")
+        async with httpx.AsyncClient() as client:
+            resolver = DDownloadResolver(http_client=client)
+            result = await resolver.resolve(url)
         assert result is None
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_for_expired_file(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = _OFFLINE_EXPIRED
-        mock_resp.url = "https://ddownload.com/abc123def456"
+        url = "https://ddownload.com/abc123def456"
+        respx.get(url).respond(200, text=_OFFLINE_EXPIRED)
 
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-
-        resolver = DDownloadResolver(http_client=client)
-        result = await resolver.resolve("https://ddownload.com/abc123def456")
+        async with httpx.AsyncClient() as client:
+            resolver = DDownloadResolver(http_client=client)
+            result = await resolver.resolve(url)
         assert result is None
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_for_deleted_file(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = _OFFLINE_DELETED
-        mock_resp.url = "https://ddownload.com/abc123def456"
+        url = "https://ddownload.com/abc123def456"
+        respx.get(url).respond(200, text=_OFFLINE_DELETED)
 
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-
-        resolver = DDownloadResolver(http_client=client)
-        result = await resolver.resolve("https://ddownload.com/abc123def456")
+        async with httpx.AsyncClient() as client:
+            resolver = DDownloadResolver(http_client=client)
+            result = await resolver.resolve(url)
         assert result is None
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_for_maintenance(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = _MAINTENANCE_PAGE
-        mock_resp.url = "https://ddownload.com/abc123def456"
+        url = "https://ddownload.com/abc123def456"
+        respx.get(url).respond(200, text=_MAINTENANCE_PAGE)
 
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-
-        resolver = DDownloadResolver(http_client=client)
-        result = await resolver.resolve("https://ddownload.com/abc123def456")
+        async with httpx.AsyncClient() as client:
+            resolver = DDownloadResolver(http_client=client)
+            result = await resolver.resolve(url)
         assert result is None
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_on_404(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 404
+        url = "https://ddownload.com/abc123def456"
+        respx.get(url).respond(404)
 
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-
-        resolver = DDownloadResolver(http_client=client)
-        result = await resolver.resolve("https://ddownload.com/abc123def456")
+        async with httpx.AsyncClient() as client:
+            resolver = DDownloadResolver(http_client=client)
+            result = await resolver.resolve(url)
         assert result is None
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_on_http_error(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 500
+        url = "https://ddownload.com/abc123def456"
+        respx.get(url).respond(500)
 
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-
-        resolver = DDownloadResolver(http_client=client)
-        result = await resolver.resolve("https://ddownload.com/abc123def456")
+        async with httpx.AsyncClient() as client:
+            resolver = DDownloadResolver(http_client=client)
+            result = await resolver.resolve(url)
         assert result is None
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_on_network_error(self) -> None:
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(side_effect=httpx.ConnectError("failed"))
+        url = "https://ddownload.com/abc123def456"
+        respx.get(url).mock(side_effect=httpx.ConnectError("failed"))
 
-        resolver = DDownloadResolver(http_client=client)
-        result = await resolver.resolve("https://ddownload.com/abc123def456")
+        async with httpx.AsyncClient() as client:
+            resolver = DDownloadResolver(http_client=client)
+            result = await resolver.resolve(url)
         assert result is None
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_for_invalid_url(self) -> None:
-        client = AsyncMock(spec=httpx.AsyncClient)
-
-        resolver = DDownloadResolver(http_client=client)
-        result = await resolver.resolve("https://example.com/abc123def456")
+        async with httpx.AsyncClient() as client:
+            resolver = DDownloadResolver(http_client=client)
+            result = await resolver.resolve("https://example.com/abc123def456")
         assert result is None
-        client.get.assert_not_called()
 
-    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_returns_none_on_error_redirect(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = "<html><body>Error</body></html>"
-        mock_resp.url = "https://ddownload.com/404"
+        url = "https://ddownload.com/abc123def456"
+        error_url = "https://ddownload.com/404"
+        respx.get(url).respond(302, headers={"Location": error_url})
+        respx.get(error_url).respond(200, text="<html><body>Error</body></html>")
 
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-
-        resolver = DDownloadResolver(http_client=client)
-        result = await resolver.resolve("https://ddownload.com/abc123def456")
+        async with httpx.AsyncClient() as client:
+            resolver = DDownloadResolver(http_client=client)
+            result = await resolver.resolve(url)
         assert result is None
