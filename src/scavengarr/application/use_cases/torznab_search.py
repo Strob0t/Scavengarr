@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from dataclasses import dataclass
 from dataclasses import replace as dataclass_replace
@@ -209,6 +210,7 @@ class TorznabSearchUseCase:
     ) -> list[TorznabItem]:
         """Transform SearchResults into TorznabItems with CrawlJob generation."""
         items: list[TorznabItem] = []
+        save_coros: list[Any] = []
         for raw_result in raw_results:
             try:
                 base_item = TorznabItem(
@@ -230,7 +232,7 @@ class TorznabSearchUseCase:
                 )
 
                 crawljob = self.crawljob_factory.create_from_search_result(raw_result)
-                await self.crawljob_repo.save(crawljob)
+                save_coros.append(self.crawljob_repo.save(crawljob))
                 enriched_item = dataclass_replace(base_item, job_id=crawljob.job_id)
                 items.append(enriched_item)
 
@@ -252,6 +254,10 @@ class TorznabSearchUseCase:
                     error=str(e),
                 )
                 continue
+
+        # Batch-save all crawljobs in parallel
+        if save_coros:
+            await asyncio.gather(*save_coros, return_exceptions=True)
 
         log.info(
             "torznab_search_completed",
