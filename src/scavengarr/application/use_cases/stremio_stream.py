@@ -11,6 +11,7 @@ import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
+from typing import Any
 from uuid import uuid4
 
 import structlog
@@ -19,6 +20,7 @@ from guessit import guessit
 from scavengarr.domain.entities.stremio import (
     CachedStreamLink,
     RankedStream,
+    ResolvedStream,
     StremioStream,
     StremioStreamRequest,
     TitleMatchInfo,
@@ -30,7 +32,10 @@ from scavengarr.domain.ports.stream_link_repository import StreamLinkRepository
 from scavengarr.domain.ports.tmdb import TmdbClientPort
 from scavengarr.infrastructure.config.schema import StremioConfig
 from scavengarr.infrastructure.metrics import MetricsCollector
-from scavengarr.infrastructure.plugins.constants import search_max_results
+from scavengarr.infrastructure.plugins.constants import (
+    DEFAULT_USER_AGENT,
+    search_max_results,
+)
 from scavengarr.infrastructure.stremio.stream_converter import convert_search_results
 from scavengarr.infrastructure.stremio.stream_sorter import StreamSorter
 from scavengarr.infrastructure.stremio.title_matcher import filter_by_title_match
@@ -250,6 +255,32 @@ def _build_search_query(title: str) -> str:
 # Accepts list of (index, url) tuples, returns set of alive indices.
 ProbeCallback = Callable[[list[tuple[int, str]]], Awaitable[set[int]]]
 
+# Callback type for resolving hoster embed URLs to playable video URLs.
+# Accepts (url, hoster_hint), returns ResolvedStream or None.
+ResolveCallback = Callable[[str, str], Awaitable[ResolvedStream | None]]
+
+
+def _build_behavior_hints(resolved: ResolvedStream) -> dict[str, Any]:
+    """Build Stremio ``behaviorHints`` from a resolved stream.
+
+    Sets ``notWebReady: true`` so Stremio routes the stream through its
+    local streaming server, which applies the ``proxyHeaders`` to every
+    request (including Range requests for seeking).
+
+    Headers always include a browser User-Agent. If the resolver provided
+    additional headers (e.g. Referer), they are merged in.
+    """
+    request_headers: dict[str, str] = {"User-Agent": DEFAULT_USER_AGENT}
+    if resolved.headers:
+        request_headers.update(resolved.headers)
+
+    return {
+        "notWebReady": True,
+        "proxyHeaders": {
+            "request": request_headers,
+        },
+    }
+
 
 class StremioStreamUseCase:
     """Resolve Stremio stream requests into sorted stream links.
@@ -273,6 +304,7 @@ class StremioStreamUseCase:
         config: StremioConfig,
         stream_link_repo: StreamLinkRepository | None = None,
         probe_fn: ProbeCallback | None = None,
+        resolve_fn: ResolveCallback | None = None,
         metrics: MetricsCollector | None = None,
     ) -> None:
         self._tmdb = tmdb
@@ -290,6 +322,7 @@ class StremioStreamUseCase:
         self._max_results_per_plugin = config.max_results_per_plugin
         self._stream_link_repo = stream_link_repo
         self._probe_fn = probe_fn
+        self._resolve_fn = resolve_fn
         self._probe_at_stream_time = config.probe_at_stream_time
         self._max_probe_count = config.max_probe_count
         self._metrics = metrics
@@ -423,6 +456,12 @@ class StremioStreamUseCase:
         lightweight GET probe on each hoster embed URL to filter dead
         links before caching. Only the top ``max_probe_count`` streams
         are probed; the rest pass through unchecked.
+
+        When a resolve callback is configured, resolves hoster embed URLs
+        to direct video URLs and attaches ``behaviorHints.proxyHeaders``
+        so Stremio sends the correct HTTP headers (Referer, User-Agent)
+        when playing the stream.  Streams that fail to resolve fall back
+        to the ``/play/`` proxy endpoint.
         """
         # --- Probe step: filter dead links ---
         if self._probe_fn and self._probe_at_stream_time:
@@ -456,6 +495,11 @@ class StremioStreamUseCase:
                 r for i, r in enumerate(ranked) if i in alive_indices or i >= limit
             ]
 
+        # --- Resolve step: extract direct video URLs + headers ---
+        resolved_map: dict[int, ResolvedStream] = {}
+        if self._resolve_fn:
+            resolved_map = await self._resolve_top_streams(ranked)
+
         # --- Cache step (parallel writes) ---
         stream_ids = [uuid4().hex for _ in streams]
         links = [
@@ -470,16 +514,75 @@ class StremioStreamUseCase:
         await asyncio.gather(*(self._stream_link_repo.save(lnk) for lnk in links))
 
         proxied: list[StremioStream] = []
-        for stream, sid in zip(streams, stream_ids):
-            proxy_url = f"{base_url}/api/v1/stremio/play/{sid}"
-            proxied.append(
-                StremioStream(
-                    name=stream.name,
-                    description=stream.description,
-                    url=proxy_url,
+        for i, (stream, sid) in enumerate(zip(streams, stream_ids)):
+            resolved = resolved_map.get(i)
+            if resolved is not None:
+                # Direct video URL with proxyHeaders for Stremio's streaming server
+                hints = _build_behavior_hints(resolved)
+                proxied.append(
+                    StremioStream(
+                        name=stream.name,
+                        description=stream.description,
+                        url=resolved.video_url,
+                        behavior_hints=hints,
+                    )
                 )
-            )
+            else:
+                # Fallback: proxy through /play/ endpoint
+                proxy_url = f"{base_url}/api/v1/stremio/play/{sid}"
+                proxied.append(
+                    StremioStream(
+                        name=stream.name,
+                        description=stream.description,
+                        url=proxy_url,
+                    )
+                )
         return proxied
+
+    async def _resolve_top_streams(
+        self,
+        ranked: list[RankedStream],
+    ) -> dict[int, ResolvedStream]:
+        """Resolve the top streams to direct video URLs in parallel.
+
+        Returns a mapping of stream index -> ResolvedStream for
+        successfully resolved streams.  Failed resolutions are omitted
+        (those streams fall back to the /play/ proxy).
+        """
+        limit = min(len(ranked), self._max_probe_count)
+        semaphore = asyncio.Semaphore(10)
+
+        async def _resolve_one(idx: int) -> tuple[int, ResolvedStream | None]:
+            async with semaphore:
+                r = ranked[idx]
+                try:
+                    return idx, await self._resolve_fn(r.url, r.hoster)
+                except Exception:
+                    log.debug(
+                        "stremio_resolve_failed",
+                        index=idx,
+                        hoster=r.hoster,
+                        url=r.url[:80],
+                    )
+                    return idx, None
+
+        tasks = [_resolve_one(i) for i in range(limit)]
+        results = await asyncio.gather(*tasks)
+
+        resolved_count = 0
+        resolved_map: dict[int, ResolvedStream] = {}
+        for idx, resolved in results:
+            if resolved is not None:
+                resolved_map[idx] = resolved
+                resolved_count += 1
+
+        log.info(
+            "stremio_resolve_complete",
+            total=limit,
+            resolved=resolved_count,
+            failed=limit - resolved_count,
+        )
+        return resolved_map
 
     async def _resolve_title_info(
         self,

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Literal
+from typing import Any, Literal
 
 StremioContentType = Literal["movie", "series"]
 
@@ -76,6 +76,7 @@ class StremioStream:
     name: str  # Bold title in Stremio UI, e.g. "HDFilme 1080p"
     description: str  # Below name, e.g. "German Dub | VOE | 1.2 GB"
     url: str  # Direct stream URL
+    behavior_hints: dict[str, Any] | None = None  # Stremio behaviorHints
 
 
 @dataclass(frozen=True)

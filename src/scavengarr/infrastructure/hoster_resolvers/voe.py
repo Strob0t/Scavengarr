@@ -151,29 +151,53 @@ class VoeResolver:
                 return None
 
             html = resp.text
+            embed_url = str(resp.url)
         except httpx.HTTPError:
             log.warning("voe_request_failed", url=url)
             return None
 
+        # Headers that the video CDN requires for playback
+        playback_headers = {"Referer": embed_url}
+
         # Method 1: MKGMa deobfuscation
         result = self._try_mkgma(html)
         if result:
-            return result
+            return ResolvedStream(
+                video_url=result.video_url,
+                is_hls=result.is_hls,
+                quality=result.quality,
+                headers=playback_headers,
+            )
 
         # Method 2: Direct mp4/hls regex
         result = self._try_direct_regex(html)
         if result:
-            return result
+            return ResolvedStream(
+                video_url=result.video_url,
+                is_hls=result.is_hls,
+                quality=result.quality,
+                headers=playback_headers,
+            )
 
         # Method 3: Base64-encoded hls
         result = self._try_b64_hls(html)
         if result:
-            return result
+            return ResolvedStream(
+                video_url=result.video_url,
+                is_hls=result.is_hls,
+                quality=result.quality,
+                headers=playback_headers,
+            )
 
         # Method 4: Base64-encoded variables
         result = self._try_b64_vars(html)
         if result:
-            return result
+            return ResolvedStream(
+                video_url=result.video_url,
+                is_hls=result.is_hls,
+                quality=result.quality,
+                headers=playback_headers,
+            )
 
         log.warning("voe_all_methods_failed", url=url)
         return None

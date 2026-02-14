@@ -113,13 +113,16 @@ def _parse_stream_id(content_type: str, raw_id: str) -> StremioStreamRequest | N
     return StremioStreamRequest(imdb_id=imdb_id, content_type=ct)
 
 
-def _format_stremio_stream(stream: StremioStream) -> dict[str, str]:
+def _format_stremio_stream(stream: StremioStream) -> dict[str, Any]:
     """Convert a StremioStream dataclass to Stremio JSON format."""
-    return {
+    data: dict[str, Any] = {
         "name": stream.name,
         "description": stream.description,
         "url": stream.url,
     }
+    if stream.behavior_hints:
+        data["behaviorHints"] = stream.behavior_hints
+    return data
 
 
 def _format_meta_preview(m: StremioMetaPreview) -> dict[str, Any]:

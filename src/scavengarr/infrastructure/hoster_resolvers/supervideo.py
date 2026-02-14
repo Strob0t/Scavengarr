@@ -219,7 +219,16 @@ class SuperVideoResolver:
         if html is None:
             return None
 
-        return self._extract_video(html, url)
+        result = self._extract_video(html, url)
+        if result is not None:
+            # Add Referer header required for CDN playback
+            return ResolvedStream(
+                video_url=result.video_url,
+                is_hls=result.is_hls,
+                quality=result.quality,
+                headers={"Referer": embed_url},
+            )
+        return None
 
     # ------------------------------------------------------------------
     # Fetch strategies

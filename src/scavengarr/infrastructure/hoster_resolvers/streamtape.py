@@ -113,4 +113,5 @@ class StreamtapeResolver:
         return ResolvedStream(
             video_url=video_url,
             quality=StreamQuality.UNKNOWN,
+            headers={"Referer": f"https://{resp_host}/"},
         )

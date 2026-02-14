@@ -260,10 +260,18 @@ class FilemoonResolver:
         """Fetch Filemoon embed page and extract HLS URL."""
         embed_url = self._normalize_embed_url(url)
 
+        # Headers that the video CDN requires for playback
+        playback_headers = {"Referer": embed_url}
+
         # Method 0: Byse SPA API (new Filemoon architecture)
         result = await self._try_byse_api(embed_url)
         if result:
-            return result
+            return ResolvedStream(
+                video_url=result.video_url,
+                is_hls=result.is_hls,
+                quality=result.quality,
+                headers=playback_headers,
+            )
 
         # Fetch HTML for legacy extraction methods
         try:
@@ -286,6 +294,8 @@ class FilemoonResolver:
                 return None
 
             html = resp.text
+            # Update Referer to the final URL after any redirects
+            playback_headers = {"Referer": str(resp.url)}
         except httpx.HTTPError:
             log.warning("filemoon_request_failed", url=embed_url)
             return None
@@ -298,12 +308,22 @@ class FilemoonResolver:
         # Method 1: Unpack packed JS blocks (legacy XFS)
         result = self._try_packed_js(html)
         if result:
-            return result
+            return ResolvedStream(
+                video_url=result.video_url,
+                is_hls=result.is_hls,
+                quality=result.quality,
+                headers=playback_headers,
+            )
 
         # Method 2: Direct HLS URL in page source (rare, but possible)
         result = self._try_direct_hls(html)
         if result:
-            return result
+            return ResolvedStream(
+                video_url=result.video_url,
+                is_hls=result.is_hls,
+                quality=result.quality,
+                headers=playback_headers,
+            )
 
         log.warning("filemoon_extraction_failed", url=url)
         return None
