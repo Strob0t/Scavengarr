@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from scavengarr.application.factories import CrawlJobFactory
-from scavengarr.domain.entities import TorznabItem, TorznabQuery
 from scavengarr.domain.entities.crawljob import CrawlJob
 from scavengarr.domain.plugins import SearchResult
 
@@ -31,26 +30,6 @@ def search_result() -> SearchResult:
         description="Iron Man movie",
         source_url="https://example.com/movie/1",
         metadata={},
-    )
-
-
-@pytest.fixture()
-def torznab_query() -> TorznabQuery:
-    """Minimal valid TorznabQuery for search."""
-    return TorznabQuery(
-        action="search",
-        plugin_name="filmpalast",
-        query="iron man",
-    )
-
-
-@pytest.fixture()
-def torznab_item() -> TorznabItem:
-    """Minimal valid TorznabItem."""
-    return TorznabItem(
-        title="Iron.Man.2008.1080p.BluRay",
-        download_url="https://example.com/download/1",
-        job_id="test-job-id-123",
     )
 
 
@@ -134,11 +113,6 @@ class FakePythonPlugin:
         category: int | None = None,
     ) -> list[Any]:
         return self._results
-
-
-@pytest.fixture()
-def fake_python_plugin() -> FakePythonPlugin:
-    return FakePythonPlugin()
 
 
 @pytest.fixture()

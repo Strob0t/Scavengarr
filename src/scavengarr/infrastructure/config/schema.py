@@ -396,34 +396,6 @@ class AppConfig(BaseModel):
             self.log_format = "json" if self.environment == "prod" else "console"
         return self
 
-    def to_sectioned_dict(self) -> dict[str, Any]:
-        """
-        Dump configuration in the sectioned shape used by config.yaml/docs.
-        """
-        return {
-            "app_name": self.app_name,
-            "environment": self.environment,
-            "plugins": {"plugin_dir": str(self.plugin_dir)},
-            "http": {
-                "timeout_seconds": self.http_timeout_seconds,
-                "timeout_resolve_seconds": self.http_timeout_resolve_seconds,
-                "follow_redirects": self.http_follow_redirects,
-                "user_agent": self.http_user_agent,
-                "rate_limit_rps": self.rate_limit_requests_per_second,
-                "api_rate_limit_rpm": self.api_rate_limit_rpm,
-            },
-            "playwright": {
-                "headless": self.playwright_headless,
-                "timeout_ms": self.playwright_timeout_ms,
-            },
-            "logging": {"level": self.log_level, "format": self.log_format},
-            "cache": {
-                "dir": str(self.cache_dir),
-                "ttl_seconds": self.cache_ttl_seconds,
-            },
-            "stremio": self.stremio.model_dump(),
-        }
-
 
 class EnvOverrides(BaseSettings):
     """
