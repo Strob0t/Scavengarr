@@ -31,7 +31,19 @@ class HosterResolverPort(Protocol):
     async def resolve(self, url: str) -> ResolvedStream | None: ...
 ```
 
-Returns `ResolvedStream(video_url=..., quality=...)` on success, `None` when the file is offline/deleted.
+Returns `ResolvedStream(video_url=..., quality=..., headers=...)` on success, `None` when the file is offline/deleted.
+
+### Playback Headers
+
+Streaming resolvers include an `headers` dict on `ResolvedStream` with the HTTP headers required for CDN playback (typically `Referer`). These headers are forwarded to Stremio via `behaviorHints.proxyHeaders` so the player's streaming server sends them when fetching the video.
+
+| Resolver | Required Headers |
+|---|---|
+| VOE | `Referer: <embed_url>` |
+| Filemoon | `Referer: <embed_url>` |
+| SuperVideo | `Referer: <embed_url>` |
+| Streamtape | `Referer: <host>/` |
+| DoodStream | `Referer: <base_url>` |
 
 ---
 

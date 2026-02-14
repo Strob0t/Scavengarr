@@ -38,8 +38,9 @@ IMDb ID → TMDB title lookup → parallel plugin search → title matching
 4. **Stream conversion** — Convert `SearchResult` objects into `RankedStream` with parsed quality/language
 5. **Ranking** — Sort by language preference, quality, and hoster bonus
 6. **Probing** — Optionally probe top N hoster URLs to filter dead links
-7. **Caching** — Cache hoster URLs and generate `/play/{stream_id}` proxy links
-8. **Formatting** — Return sorted `StremioStream` objects to the Stremio app
+7. **Pre-resolution** — Resolve top N hoster embed URLs to direct video URLs (for `behaviorHints.proxyHeaders`)
+8. **Caching** — Cache resolved URLs; generate `/play/{stream_id}` fallback for unresolved streams
+9. **Formatting** — Return sorted `StremioStream` objects with `behaviorHints` to the Stremio app
 
 ---
 
@@ -84,15 +85,50 @@ GET /api/v1/stremio/stream/{content_type}/{stream_id}.json
 Each stream contains:
 - `name` — Title with year and quality badge
 - `description` — Plugin source, language, hoster, file size
-- `url` — Proxy URL (`/play/{stream_id}`) or direct hoster embed
+- `url` — Direct video URL (pre-resolved) or proxy URL (`/play/{stream_id}`) as fallback
+- `behaviorHints` — (optional) Stremio playback hints including `proxyHeaders`
 
-### Play (Proxy)
+### Stream behaviorHints (proxyHeaders)
+
+When a stream is pre-resolved at `/stream` time, the response includes `behaviorHints`:
+
+```json
+{
+  "name": "Movie Title [1080p]",
+  "url": "https://cdn.hoster.com/video.mp4",
+  "behaviorHints": {
+    "notWebReady": true,
+    "proxyHeaders": {
+      "request": {
+        "User-Agent": "Mozilla/5.0 ...",
+        "Referer": "https://hoster.com/"
+      }
+    }
+  }
+}
+```
+
+- `notWebReady: true` activates Stremio's local streaming server proxy
+- `proxyHeaders.request` tells Stremio what HTTP headers to send when fetching video content
+- This is required because most hoster CDNs reject requests without a valid `Referer` header
+
+**Platform support:**
+| Platform | Status |
+|---|---|
+| Desktop (Electron) | Full support |
+| Android | Partial (some Referer bugs with specific hosters) |
+| iOS | Partial (KSPlayer engine only) |
+| Web | Not supported (CORS restrictions) |
+
+Streams that fail pre-resolution fall back to the `/play/` proxy endpoint.
+
+### Play (Proxy Fallback)
 
 ```
 GET /api/v1/stremio/play/{stream_id}
 ```
 
-Resolves a cached hoster embed URL to a playable video URL:
+Fallback endpoint for streams that could not be pre-resolved at `/stream` time:
 1. Look up `stream_id` in the stream link cache
 2. Resolve via `HosterResolverRegistry` (e.g., VOE, Filemoon, Streamtape)
 3. Return **302 redirect** to the direct `.mp4`/`.m3u8` URL

@@ -11,6 +11,22 @@ Massive expansion of the plugin ecosystem (2 → 40 plugins), Stremio addon inte
 hoster resolver system, plugin base class standardization, search result caching, and
 growth of the test suite from 160 to 3225 tests.
 
+### Stremio Playback: behaviorHints.proxyHeaders
+Pre-resolve hoster embed URLs at `/stream` time and emit `behaviorHints.proxyHeaders`
+so Stremio's local streaming server sends the correct `Referer` and `User-Agent` headers
+to hoster CDNs. This eliminates buffering caused by 403 rejections on missing headers.
+
+- Add `behavior_hints` field to `StremioStream` domain entity
+- Add `_build_behavior_hints()` and `_resolve_top_streams()` to `StremioStreamUseCase`
+- Add `ResolveCallback` type and wire `HosterResolverRegistry.resolve` via composition root
+- Add `Referer` header to all streaming resolver returns (VOE, Filemoon, SuperVideo, Streamtape)
+- Emit `behaviorHints.notWebReady` + `proxyHeaders.request` in Stremio stream JSON
+- Fallback to `/play/` proxy redirect for streams that fail pre-resolution
+
+### Code Quality (Audit)
+- Remove dead code across domain, application, infrastructure, and plugin layers
+- Consolidate duplicate constants and unused imports
+
 ### YAML Plugin Infrastructure Removal (Refactor)
 Migrated 3 remaining YAML plugins (warezomen, filmpalast, scnlog) to Python httpx
 plugins. Removed entire YAML plugin infrastructure: ScrapyAdapter, YAML schema models,

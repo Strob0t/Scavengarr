@@ -33,6 +33,7 @@ poetry run pytest
 Rules:
 - Fix all errors before committing (warnings can be acceptable depending on the check).
 - Make small, atomic commits (do not batch unrelated changes).
+- **Update documentation before every commit**: if the change affects behavior, features, architecture, or configuration, update the relevant docs (`CHANGELOG.md`, `docs/features/`, `docs/architecture/`, `CLAUDE.md`, `README.md`) as part of the same commit. Documentation is not a follow-up task — it ships with the code.
 - Push after each successful change:
 
 ```bash
@@ -46,6 +47,7 @@ Never:
 - Merge to `main` on your own.
 - Accumulate multiple changes without committing.
 - Commit without running `poetry run pre-commit run --all-files`.
+- Commit code changes without updating relevant documentation.
 
 ### Merge to main (only when the user requests it)
 
