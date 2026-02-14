@@ -18,14 +18,10 @@ import hashlib
 import os
 import re
 from html.parser import HTMLParser
-from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
-
-if TYPE_CHECKING:
-    pass
 
 # ---------------------------------------------------------------------------
 # Configurable settings

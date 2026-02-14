@@ -407,21 +407,17 @@ class TestFilterLinksByEpisode:
 
 class TestBuildSearchQuery:
     def test_movie_query(self) -> None:
-        req = _make_request()
-        assert _build_search_query("Iron Man", req) == "Iron Man"
+        assert _build_search_query("Iron Man") == "Iron Man"
 
     def test_series_returns_plain_title(self) -> None:
         """Season/episode are passed separately, not appended to the query."""
-        req = _make_request(content_type="series", season=1, episode=5)
-        assert _build_search_query("Breaking Bad", req) == "Breaking Bad"
+        assert _build_search_query("Breaking Bad") == "Breaking Bad"
 
     def test_series_season_only_returns_plain_title(self) -> None:
-        req = _make_request(content_type="series", season=2)
-        assert _build_search_query("Breaking Bad", req) == "Breaking Bad"
+        assert _build_search_query("Breaking Bad") == "Breaking Bad"
 
     def test_series_no_season_returns_plain_title(self) -> None:
-        req = _make_request(content_type="series")
-        assert _build_search_query("Show", req) == "Show"
+        assert _build_search_query("Show") == "Show"
 
 
 # ---------------------------------------------------------------------------

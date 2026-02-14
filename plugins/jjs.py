@@ -316,6 +316,7 @@ class _DetailPageParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
         self.download_links: list[dict[str, str]] = []
+        self._seen_links: set[str] = set()
         self.size: str = ""
 
         # DDL section tracking
@@ -388,7 +389,8 @@ class _DetailPageParser(HTMLParser):
             hoster = "ddownload"
         elif "rapidgator" in text:
             hoster = "rapidgator"
-        if not any(d["link"] == href for d in self.download_links):
+        if href not in self._seen_links:
+            self._seen_links.add(href)
             self.download_links.append({"hoster": hoster, "link": href})
 
     def handle_endtag(self, tag: str) -> None:

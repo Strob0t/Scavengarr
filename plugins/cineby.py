@@ -100,7 +100,7 @@ class CinebyPlugin(HttpxPluginBase):
         Returns:
             List of raw result dicts (persons filtered out).
         """
-        client = await self._ensure_client()  # noqa: F841 – ensures client is ready
+        await self._ensure_client()
         all_results: list[dict] = []
 
         if media_type == "movie":

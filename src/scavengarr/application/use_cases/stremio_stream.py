@@ -236,10 +236,7 @@ def _format_stream(
     )
 
 
-def _build_search_query(
-    title: str,
-    request: StremioStreamRequest,
-) -> str:
+def _build_search_query(title: str) -> str:
     """Build a search query string from title.
 
     Returns the plain title without SxxExx suffix — season and episode
@@ -319,7 +316,7 @@ class StremioStreamUseCase:
             log.warning("stremio_title_not_found", imdb_id=request.imdb_id)
             return []
 
-        query = _build_search_query(title, request)
+        query = _build_search_query(title)
         category = 2000 if request.content_type == "movie" else 5000
 
         plugin_names = self._plugins.get_by_provides("stream")

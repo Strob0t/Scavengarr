@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -163,8 +164,10 @@ class CrawlJob:
 
         # === Passwords (JSON array format) ===
         if self.extract_passwords:
-            passwords_json = '["' + '","'.join(self.extract_passwords) + '"]'
-            lines.append(f"extractPasswords={passwords_json}")
+            lines.append(
+                f"extractPasswords="
+                f"{json.dumps(self.extract_passwords, separators=(',', ':'))}"
+            )
 
         if self.download_password:
             lines.append(f"downloadPassword={self.download_password}")

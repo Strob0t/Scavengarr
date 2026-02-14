@@ -78,30 +78,3 @@ class PluginProtocol(Protocol):
         season: int | None = None,
         episode: int | None = None,
     ) -> list[SearchResult]: ...
-
-
-class MultiStagePluginProtocol(Protocol):
-    """
-    Extended protocol for multi-stage plugins.
-
-    Supports progressive data collection across multiple page levels.
-    """
-
-    name: str
-    provides: PluginProvides
-
-    async def search(
-        self,
-        query: str,
-        category: int | None = None,
-        season: int | None = None,
-        episode: int | None = None,
-    ) -> list[SearchResult]: ...
-
-    async def scrape_stage(
-        self,
-        stage_name: str,
-        url: str | None = None,
-        depth: int = 0,
-        **url_params: Any,
-    ) -> list[StageResult]: ...

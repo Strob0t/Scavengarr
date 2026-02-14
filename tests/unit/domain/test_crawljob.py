@@ -100,6 +100,12 @@ class TestCrawlJobToCrawljobFormat:
         output = job.to_crawljob_format()
         assert 'extractPasswords=["pass1","pass2"]' in output
 
+    def test_extract_passwords_special_characters(self) -> None:
+        """Passwords with quotes/backslashes must be JSON-escaped."""
+        job = CrawlJob(extract_passwords=['p"ass', "back\\slash"])
+        output = job.to_crawljob_format()
+        assert r'extractPasswords=["p\"ass","back\\slash"]' in output
+
     def test_extract_passwords_omitted_when_empty(self) -> None:
         job = CrawlJob(extract_passwords=[])
         output = job.to_crawljob_format()

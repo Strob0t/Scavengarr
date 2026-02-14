@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from collections import defaultdict
+from collections import deque
 
 import structlog
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
@@ -12,9 +12,16 @@ from starlette.responses import JSONResponse, Response
 
 log = structlog.get_logger(__name__)
 
+# How many dispatch cycles between full sweeps of stale client entries.
+_GC_INTERVAL = 256
+
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Sliding-window rate limiter per client IP.
+
+    Uses a deque per IP for O(1) append and efficient left-pruning.
+    Periodically evicts IPs with no recent requests to prevent unbounded
+    memory growth.
 
     Args:
         app: ASGI application.
@@ -24,7 +31,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     def __init__(self, app: object, requests_per_minute: int = 120) -> None:
         super().__init__(app)  # type: ignore[arg-type]
         self._rpm = requests_per_minute
-        self._window: dict[str, list[float]] = defaultdict(list)
+        self._window: dict[str, deque[float]] = {}
+        self._dispatch_count = 0
 
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
@@ -36,16 +44,22 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         now = time.monotonic()
         cutoff = now - 60.0
 
-        # Prune old entries
-        timestamps = self._window[client_ip]
-        self._window[client_ip] = [t for t in timestamps if t > cutoff]
+        # Get or create deque for this client
+        timestamps = self._window.get(client_ip)
+        if timestamps is None:
+            timestamps = deque()
+            self._window[client_ip] = timestamps
 
-        if len(self._window[client_ip]) >= self._rpm:
+        # Prune expired entries from the left (oldest first) — O(k) where k = expired
+        while timestamps and timestamps[0] <= cutoff:
+            timestamps.popleft()
+
+        if len(timestamps) >= self._rpm:
             log.warning(
                 "rate_limit_exceeded",
                 client_ip=client_ip,
                 rpm=self._rpm,
-                current=len(self._window[client_ip]),
+                current=len(timestamps),
             )
             return JSONResponse(
                 status_code=429,
@@ -56,10 +70,18 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 headers={"Retry-After": "60"},
             )
 
-        self._window[client_ip].append(now)
+        timestamps.append(now)
+
+        # Periodic GC: evict IPs whose deques are empty
+        self._dispatch_count += 1
+        if self._dispatch_count >= _GC_INTERVAL:
+            self._dispatch_count = 0
+            stale = [ip for ip, dq in self._window.items() if not dq]
+            for ip in stale:
+                del self._window[ip]
 
         response = await call_next(request)
-        remaining = max(0, self._rpm - len(self._window[client_ip]))
+        remaining = max(0, self._rpm - len(timestamps))
         response.headers["X-RateLimit-Limit"] = str(self._rpm)
         response.headers["X-RateLimit-Remaining"] = str(remaining)
         return response
