@@ -351,6 +351,14 @@ class TestHelpers:
             is True
         )
 
+    def test_match_query_strips_punctuation(self, bs_mod):
+        """Colons in query should not prevent matching (e.g. 'Naruto:')."""
+        assert bs_mod._match_query("Naruto:", "Naruto Shippuuden") is True
+
+    def test_match_query_colon_separated(self, bs_mod):
+        """Query 'Naruto: Shippuuden' should match title 'Naruto Shippuuden'."""
+        assert bs_mod._match_query("Naruto: Shippuuden", "Naruto Shippuuden") is True
+
 
 # ---------------------------------------------------------------------------
 # Plugin attribute tests

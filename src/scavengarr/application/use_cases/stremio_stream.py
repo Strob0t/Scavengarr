@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+import unicodedata
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from typing import Any
@@ -247,8 +248,21 @@ def _build_search_query(title: str) -> str:
     Returns the plain title without SxxExx suffix — season and episode
     are passed as separate parameters to each plugin so they can
     navigate directly to the correct content.
+
+    Sanitizes the title for use as a search query:
+    - Decomposes Unicode diacritics to ASCII (e.g. ū→u, é→e)
+    - Strips colons, semicolons, and other punctuation that break
+      site search engines (e.g. s.to returns 0 results for "Naruto:")
+    - Collapses whitespace
     """
-    return title
+    # NFKD decomposes characters: ū → u + combining macron, é → e + combining acute
+    decomposed = unicodedata.normalize("NFKD", title)
+    # Strip combining marks (category "M") to get ASCII-ish base characters
+    ascii_ish = "".join(c for c in decomposed if unicodedata.category(c)[0] != "M")
+    # Remove punctuation that breaks site searches (keep hyphens and apostrophes)
+    cleaned = re.sub(r"[^\w\s\-']", " ", ascii_ish)
+    # Collapse whitespace
+    return " ".join(cleaned.split())
 
 
 # Callback type for probing hoster URLs at /stream time.

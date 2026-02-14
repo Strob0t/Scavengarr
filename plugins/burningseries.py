@@ -363,10 +363,15 @@ def _genre_to_category(genre: str) -> int:
 
 
 def _match_query(query: str, title: str) -> bool:
-    """Check if all query words appear in the title (case-insensitive)."""
-    query_lower = query.lower()
-    title_lower = title.lower()
-    return all(word in title_lower for word in query_lower.split())
+    """Check if all query words appear in the title (case-insensitive).
+
+    Strips punctuation from both query and title before matching so that
+    queries like ``"Naruto:"`` match titles like ``"Naruto Shippuuden"``.
+    """
+    clean = re.compile(r"[^\w\s]")
+    query_words = clean.sub("", query.lower()).split()
+    title_clean = clean.sub("", title.lower())
+    return all(word in title_clean for word in query_words)
 
 
 class BurningSeriesPlugin(HttpxPluginBase):

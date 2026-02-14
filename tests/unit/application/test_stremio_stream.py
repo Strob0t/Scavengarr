@@ -419,6 +419,26 @@ class TestBuildSearchQuery:
     def test_series_no_season_returns_plain_title(self) -> None:
         assert _build_search_query("Show") == "Show"
 
+    def test_strips_colons(self) -> None:
+        """Colons break site searches (e.g. s.to)."""
+        assert _build_search_query("Naruto: Shippuden") == "Naruto Shippuden"
+
+    def test_normalizes_unicode_diacritics(self) -> None:
+        """Unicode diacritics like ū must become plain ASCII."""
+        assert _build_search_query("Naruto: Shippūden") == "Naruto Shippuden"
+
+    def test_preserves_hyphens(self) -> None:
+        """Hyphens should survive sanitization."""
+        assert _build_search_query("Spider-Man") == "Spider-Man"
+
+    def test_collapses_whitespace(self) -> None:
+        assert _build_search_query("  Breaking   Bad  ") == "Breaking Bad"
+
+    def test_german_umlauts_pass_through(self) -> None:
+        """German umlauts (ä/ö/ü) decompose to ae/oe/ue-like forms via NFKD."""
+        # NFKD decomposes ü → u + combining diaeresis, then combining mark is stripped
+        assert _build_search_query("Türkisch für Anfänger") == "Turkisch fur Anfanger"
+
 
 # ---------------------------------------------------------------------------
 # _format_stream
