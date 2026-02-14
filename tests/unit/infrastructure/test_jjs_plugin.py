@@ -49,7 +49,8 @@ def _search_result_html(
     subcategory_href: str = "https://jjs.page/jjmovies/uhd-jjmovies/",
 ) -> str:
     return (
-        '<article class="post-type-post type-post status-publish format-standard hentry">'
+        '<article class="post-type-post type-post'
+        ' status-publish format-standard hentry">'
         f'<h2 class="entry-title"><a href="{url}">{title}</a></h2>'
         f'<p class="post-meta">{date} | '
         f'<a href="{category_href}">{category_text}</a>, '
@@ -76,9 +77,7 @@ def _pagination_html(current: int = 1, last: int = 16) -> str:
     if last > 5:
         parts.append('<span class="extend">...</span>')
         parts.append(f'<a href="/page/{last}/?s=test">{last}</a>')
-    parts.append(
-        f'<a class="last" href="/page/{last}/?s=test">Letzte &raquo;</a>'
-    )
+    parts.append(f'<a class="last" href="/page/{last}/?s=test">Letzte &raquo;</a>')
     parts.append("</div>")
     return "".join(parts)
 
@@ -144,7 +143,10 @@ class TestSearchResultParser:
         html = _search_page_html(
             results=[
                 _search_result_html(
-                    title="Criminal Minds S16 COMPLETE German EAC3 DL 1080p WebHD x264 – JJ",
+                    title=(
+                        "Criminal Minds S16 COMPLETE German"
+                        " EAC3 DL 1080p WebHD x264 – JJ"
+                    ),
                     url="https://jjs.page/criminal-minds-s16/",
                     category_text="JJ Serien Releases",
                     category_href="https://jjs.page/jjseries/",
@@ -321,9 +323,7 @@ class TestDetailPageParser:
 
     def test_parses_single_link(self) -> None:
         html = _detail_page_html(
-            links=[
-                ("https://filecrypt.cc/Container/XYZ789.html", "Ddownload.com")
-            ]
+            links=[("https://filecrypt.cc/Container/XYZ789.html", "Ddownload.com")]
         )
         parser = _DetailPageParser()
         parser.feed(html)
@@ -333,9 +333,7 @@ class TestDetailPageParser:
 
     def test_parses_unknown_hoster(self) -> None:
         html = _detail_page_html(
-            links=[
-                ("https://filecrypt.cc/Container/UNK001.html", "SomeHoster")
-            ]
+            links=[("https://filecrypt.cc/Container/UNK001.html", "SomeHoster")]
         )
         parser = _DetailPageParser()
         parser.feed(html)
@@ -445,9 +443,7 @@ class TestJjsPlugin:
 
         call_count = 0
 
-        async def mock_fetch(
-            url: str, **kwargs: object
-        ) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
             nonlocal call_count
             call_count += 1
             if "page/2" in url:
@@ -481,9 +477,7 @@ class TestJjsPlugin:
         search_html = _search_page_html()
         detail_html = _detail_page_html()
 
-        async def mock_fetch(
-            url: str, **kwargs: object
-        ) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
             if "?s=" in url:
                 return httpx.Response(
                     200,
@@ -558,9 +552,7 @@ class TestJjsPlugin:
         search_html = _search_page_html(results=[movie, series])
         detail_html = _detail_page_html()
 
-        async def mock_fetch(
-            url: str, **kwargs: object
-        ) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
             if "?s=" in url:
                 return httpx.Response(
                     200,
@@ -597,9 +589,7 @@ class TestJjsPlugin:
         search_html = _search_page_html(results=[movie, series])
         detail_html = _detail_page_html()
 
-        async def mock_fetch(
-            url: str, **kwargs: object
-        ) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
             if "?s=" in url:
                 return httpx.Response(
                     200,
@@ -636,9 +626,7 @@ class TestJjsPlugin:
         search_html = _search_page_html(results=[movie, series])
         detail_html = _detail_page_html()
 
-        async def mock_fetch(
-            url: str, **kwargs: object
-        ) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
             if "?s=" in url:
                 return httpx.Response(
                     200,
@@ -663,9 +651,7 @@ class TestJjsPlugin:
         search_html = _search_page_html()
         empty_detail = "<html><body><p>No downloads here</p></body></html>"
 
-        async def mock_fetch(
-            url: str, **kwargs: object
-        ) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
             if "?s=" in url:
                 return httpx.Response(
                     200,
@@ -688,9 +674,7 @@ class TestJjsPlugin:
         plugin = _make_plugin()
         search_html = _search_page_html()
 
-        async def mock_fetch(
-            url: str, **kwargs: object
-        ) -> httpx.Response | None:
+        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response | None:
             if "?s=" in url:
                 return httpx.Response(
                     200,
@@ -710,9 +694,7 @@ class TestJjsPlugin:
         search_html = _search_page_html()
         detail_html = _detail_page_html()
 
-        async def mock_fetch(
-            url: str, **kwargs: object
-        ) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
             if "?s=" in url:
                 return httpx.Response(
                     200,
@@ -737,9 +719,7 @@ class TestJjsPlugin:
         search_html = _search_page_html()
         detail_html = _detail_page_html(size_text="4.2 GB")
 
-        async def mock_fetch(
-            url: str, **kwargs: object
-        ) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
             if "?s=" in url:
                 return httpx.Response(
                     200,
@@ -764,9 +744,7 @@ class TestJjsPlugin:
         search_html = _search_page_html()
         detail_html = _detail_page_html()
 
-        async def mock_fetch(
-            url: str, **kwargs: object
-        ) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
             if "?s=" in url:
                 return httpx.Response(
                     200,
@@ -803,9 +781,7 @@ class TestJjsPlugin:
         )
         detail_html = _detail_page_html()
 
-        async def mock_fetch(
-            url: str, **kwargs: object
-        ) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
             if "?s=" in url:
                 return httpx.Response(
                     200,

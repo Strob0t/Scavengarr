@@ -340,7 +340,6 @@ class _DetailPageParser(HTMLParser):
     ) -> None:
         attr_dict = dict(attrs)
         element_id = attr_dict.get("id", "") or ""
-        classes = attr_dict.get("class", "") or ""
 
         if tag == "div":
             # DDLContent container
@@ -378,21 +377,24 @@ class _DetailPageParser(HTMLParser):
             self._a_text += data
         self._all_text += " " + data
 
+    def _finish_link(self) -> None:
+        """Process a completed <a> tag and store the download link."""
+        href = self._a_href
+        text = self._a_text.strip().lower()
+        if not (href and _FILECRYPT_RE.match(href)):
+            return
+        hoster = "filecrypt"
+        if "ddownload" in text:
+            hoster = "ddownload"
+        elif "rapidgator" in text:
+            hoster = "rapidgator"
+        if not any(d["link"] == href for d in self.download_links):
+            self.download_links.append({"hoster": hoster, "link": href})
+
     def handle_endtag(self, tag: str) -> None:
         if tag == "a" and self._in_a:
             self._in_a = False
-            href = self._a_href
-            text = self._a_text.strip().lower()
-            if href and _FILECRYPT_RE.match(href):
-                # Determine hoster from surrounding text
-                hoster = "filecrypt"
-                if "ddownload" in text:
-                    hoster = "ddownload"
-                elif "rapidgator" in text:
-                    hoster = "rapidgator"
-                # Avoid duplicate links
-                if not any(d["link"] == href for d in self.download_links):
-                    self.download_links.append({"hoster": hoster, "link": href})
+            self._finish_link()
 
         if tag == "div":
             if self._in_ddl_slot:
@@ -461,9 +463,7 @@ class JjsPlugin(HttpxPluginBase):
         )
         return parser.results, pag_parser.last_page
 
-    async def _search_all_pages(
-        self, query: str
-    ) -> list[dict[str, str | int]]:
+    async def _search_all_pages(self, query: str) -> list[dict[str, str | int]]:
         """Paginate through search results up to effective_max_results."""
         all_results: list[dict[str, str | int]] = []
 
@@ -533,6 +533,29 @@ class JjsPlugin(HttpxPluginBase):
             release_name=title,
         )
 
+    @staticmethod
+    def _filter_by_category(
+        items: list[dict[str, str | int]],
+        category: int | None,
+        season: int | None,
+    ) -> list[dict[str, str | int]]:
+        """Filter search items by Torznab category and season hint."""
+        if category is not None:
+            filtered: list[dict[str, str | int]] = []
+            for item in items:
+                cat = int(item.get("category", 2000))
+                if is_tv_category(category) and cat < 5000:
+                    continue
+                if is_movie_category(category) and cat >= 5000:
+                    continue
+                filtered.append(item)
+            items = filtered
+
+        # When season is requested but no category, restrict to TV
+        if season is not None and category is None:
+            items = [item for item in items if int(item.get("category", 2000)) >= 5000]
+        return items
+
     async def search(
         self,
         query: str,
@@ -551,30 +574,10 @@ class JjsPlugin(HttpxPluginBase):
         if not all_items:
             return []
 
-        # Category filtering on search results (before detail scraping)
-        if category is not None:
-            filtered: list[dict[str, str | int]] = []
-            for item in all_items:
-                cat = int(item.get("category", 2000))
-                if is_tv_category(category) and cat < 5000:
-                    continue
-                if is_movie_category(category) and cat >= 5000:
-                    continue
-                filtered.append(item)
-            all_items = filtered
-
-        # When season is requested but no category, restrict to TV
-        if season is not None and category is None:
-            all_items = [
-                item
-                for item in all_items
-                if int(item.get("category", 2000)) >= 5000
-            ]
-
+        all_items = self._filter_by_category(all_items, category, season)
         if not all_items:
             return []
 
-        # Scrape detail pages for download links
         enriched = await self._scrape_details_parallel(all_items)
 
         results: list[SearchResult] = []
