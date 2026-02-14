@@ -549,6 +549,22 @@ class TestSearchIntegration:
         assert len(results) == 2
 
     @pytest.mark.asyncio
+    async def test_search_parent_tv_category_allowed(self) -> None:
+        """Parent category 5000 (any TV) must include anime (5070)."""
+        plug = _make_plugin()
+        mock_client = AsyncMock()
+        mock_client.get = _route_get(
+            search_resp=_SEARCH_RESPONSE,
+            detail_resp=_ANIME_DETAIL_RESPONSE,
+            episode_resp=_EPISODE_RESPONSE,
+        )
+        mock_client.aclose = AsyncMock()
+        plug._client = mock_client
+
+        results = await plug.search("Naruto", category=5000)
+        assert len(results) == 2
+
+    @pytest.mark.asyncio
     async def test_search_no_results(self) -> None:
         """Search returning empty data returns empty list."""
         plug = _make_plugin()

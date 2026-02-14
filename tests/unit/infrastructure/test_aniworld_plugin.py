@@ -358,6 +358,29 @@ class TestSearch:
         results = await plugin.search("naruto", category=5070)
         assert len(results) == 1
 
+    async def test_search_parent_tv_category_allowed(self) -> None:
+        """Parent category 5000 (any TV) must include anime (5070)."""
+        plugin = _make_plugin()
+        plugin._domain_verified = True
+
+        search_resp = _make_mock_response(json_data=_AJAX_SEARCH_RESPONSE[:1])
+        detail_resp = _make_mock_response(text=_DETAIL_HTML)
+        episode_resp = _make_mock_response(text=_EPISODE_HTML)
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.post = AsyncMock(return_value=search_resp)
+        mock_client.get = AsyncMock(
+            side_effect=lambda url, **kw: (
+                episode_resp
+                if "/staffel-" in str(url) and "/episode-" in str(url)
+                else detail_resp
+            )
+        )
+        plugin._client = mock_client
+
+        results = await plugin.search("naruto", category=5000)
+        assert len(results) == 1
+
     async def test_search_no_results(self) -> None:
         plugin = _make_plugin()
         plugin._domain_verified = True

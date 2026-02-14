@@ -242,6 +242,29 @@ def _format_stream(
     )
 
 
+# Transliteration table for characters that NFKD does not decompose.
+# Covers German, Scandinavian, Polish, and other common Latin-script specials.
+_TRANSLITERATION = str.maketrans(
+    {
+        "ß": "ss",
+        "æ": "ae",
+        "Æ": "Ae",
+        "œ": "oe",
+        "Œ": "Oe",
+        "ø": "o",
+        "Ø": "O",
+        "ð": "d",
+        "Ð": "D",
+        "þ": "th",
+        "Þ": "Th",
+        "ł": "l",
+        "Ł": "L",
+        "đ": "d",
+        "Đ": "D",
+    }
+)
+
+
 def _build_search_query(title: str) -> str:
     """Build a search query string from title.
 
@@ -249,19 +272,24 @@ def _build_search_query(title: str) -> str:
     are passed as separate parameters to each plugin so they can
     navigate directly to the correct content.
 
-    Sanitizes the title for use as a search query:
-    - Decomposes Unicode diacritics to ASCII (e.g. ū→u, é→e)
-    - Strips colons, semicolons, and other punctuation that break
-      site search engines (e.g. s.to returns 0 results for "Naruto:")
-    - Collapses whitespace
+    Applies fuzzy transliteration so titles from TMDB/Wikidata (which
+    may contain Unicode diacritics, ligatures, or special characters)
+    produce clean search queries that work on German streaming sites:
+
+    1. Explicit transliteration (ß→ss, æ→ae, ø→o, ł→l, …)
+    2. NFKD decomposition + combining-mark stripping (ū→u, é→e, ü→u)
+    3. Punctuation removal (colons, semicolons, etc.)
+    4. Whitespace normalization
     """
-    # NFKD decomposes characters: ū → u + combining macron, é → e + combining acute
-    decomposed = unicodedata.normalize("NFKD", title)
-    # Strip combining marks (category "M") to get ASCII-ish base characters
+    # 1) Transliterate characters that NFKD cannot decompose
+    text = title.translate(_TRANSLITERATION)
+    # 2) NFKD decomposes: ū → u + combining macron, é → e + combining acute
+    decomposed = unicodedata.normalize("NFKD", text)
+    # Strip combining marks (category "M") to get plain base characters
     ascii_ish = "".join(c for c in decomposed if unicodedata.category(c)[0] != "M")
-    # Remove punctuation that breaks site searches (keep hyphens and apostrophes)
+    # 3) Remove punctuation that breaks site searches (keep hyphens and apostrophes)
     cleaned = re.sub(r"[^\w\s\-']", " ", ascii_ish)
-    # Collapse whitespace
+    # 4) Collapse whitespace
     return " ".join(cleaned.split())
 
 

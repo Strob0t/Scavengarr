@@ -359,6 +359,41 @@ class TestSharedHttpClient:
         assert "headers" not in call_kwargs
 
 
+class TestCategoryMatches:
+    """Tests for _category_matches range-aware helper."""
+
+    def test_none_matches_anything(self) -> None:
+        assert _TestPlugin._category_matches(None, 5070) is True
+
+    def test_exact_match(self) -> None:
+        assert _TestPlugin._category_matches(5070, 5070) is True
+
+    def test_parent_matches_child(self) -> None:
+        """5000 (any TV) should match 5070 (anime)."""
+        assert _TestPlugin._category_matches(5000, 5070) is True
+
+    def test_parent_matches_itself(self) -> None:
+        assert _TestPlugin._category_matches(5000, 5000) is True
+
+    def test_parent_matches_all_children(self) -> None:
+        for child in (5010, 5020, 5030, 5040, 5050, 5060, 5070, 5080):
+            assert _TestPlugin._category_matches(5000, child) is True
+
+    def test_movie_parent_matches_movie_children(self) -> None:
+        assert _TestPlugin._category_matches(2000, 2040) is True
+
+    def test_different_range_no_match(self) -> None:
+        """Movie category should not match TV child."""
+        assert _TestPlugin._category_matches(2000, 5070) is False
+
+    def test_child_does_not_match_different_child(self) -> None:
+        assert _TestPlugin._category_matches(5070, 5080) is False
+
+    def test_child_does_not_match_parent_as_accepted(self) -> None:
+        """5070 requested should not match 5000 accepted."""
+        assert _TestPlugin._category_matches(5070, 5000) is False
+
+
 class TestSearchAbstract:
     @pytest.mark.asyncio
     async def test_raises_not_implemented(self) -> None:

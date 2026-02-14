@@ -333,8 +333,8 @@ class FireaniPlugin(HttpxPluginBase):
             return []
 
         # Category filter: site is anime-only (5070).
-        # If a non-anime category is requested, return empty.
-        if category is not None and category != 5070:
+        # Accept parent category 5000 (any TV) as well as exact 5070.
+        if not self._category_matches(category, 5070):
             return []
 
         all_items = await self._api_search(query)

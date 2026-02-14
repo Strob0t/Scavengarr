@@ -439,6 +439,36 @@ class TestBuildSearchQuery:
         # NFKD decomposes ü → u + combining diaeresis, then combining mark is stripped
         assert _build_search_query("Türkisch für Anfänger") == "Turkisch fur Anfanger"
 
+    def test_german_eszett(self) -> None:
+        """ß must transliterate to 'ss' (NFKD cannot decompose it)."""
+        assert _build_search_query("Die Straße") == "Die Strasse"
+
+    def test_ligature_ae(self) -> None:
+        """æ must transliterate to 'ae'."""
+        assert _build_search_query("Ælfred") == "Aelfred"
+
+    def test_scandinavian_oe(self) -> None:
+        """œ must transliterate to 'oe'."""
+        assert _build_search_query("Cœur") == "Coeur"
+
+    def test_scandinavian_oslash(self) -> None:
+        """ø must transliterate to 'o'."""
+        assert _build_search_query("Ødegaard") == "Odegaard"
+
+    def test_polish_l_stroke(self) -> None:
+        """Ł must transliterate to 'L'."""
+        assert _build_search_query("Łódź") == "Lodz"
+
+    def test_full_pipeline_naruto(self) -> None:
+        """End-to-end: Wikidata title with colon + macron → clean query."""
+        assert _build_search_query("Naruto: Shippūden") == "Naruto Shippuden"
+
+    def test_ampersand_removed(self) -> None:
+        assert _build_search_query("Hänsel & Gretel") == "Hansel Gretel"
+
+    def test_preserves_apostrophe(self) -> None:
+        assert _build_search_query("Ocean's Eleven") == "Ocean's Eleven"
+
 
 # ---------------------------------------------------------------------------
 # _format_stream
