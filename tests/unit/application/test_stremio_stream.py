@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 from scavengarr.application.use_cases.stremio_stream import (
     StremioStreamUseCase,
     _build_search_query,
+    _filter_by_episode,
     _format_stream,
 )
 from scavengarr.domain.entities.stremio import (
@@ -91,6 +92,72 @@ def _make_use_case(
         stream_link_repo=stream_link_repo,
         probe_fn=probe_fn,
     )
+
+
+# ---------------------------------------------------------------------------
+# _filter_by_episode
+# ---------------------------------------------------------------------------
+
+
+class TestFilterByEpisode:
+    def test_no_season_no_episode_returns_all(self) -> None:
+        results = [
+            _make_search_result(title="Show S01E01"),
+            _make_search_result(title="Show S01E02"),
+        ]
+        assert _filter_by_episode(results, season=None, episode=None) == results
+
+    def test_filters_wrong_season(self) -> None:
+        results = [
+            _make_search_result(title="Show S01E01"),
+            _make_search_result(title="Show S02E01"),
+        ]
+        filtered = _filter_by_episode(results, season=1, episode=None)
+        assert len(filtered) == 1
+        assert filtered[0].title == "Show S01E01"
+
+    def test_filters_wrong_episode(self) -> None:
+        results = [
+            _make_search_result(title="Show S01E01"),
+            _make_search_result(title="Show S01E02"),
+            _make_search_result(title="Show S01E03"),
+        ]
+        filtered = _filter_by_episode(results, season=1, episode=2)
+        assert len(filtered) == 1
+        assert filtered[0].title == "Show S01E02"
+
+    def test_keeps_unparseable_titles(self) -> None:
+        """Results without season/episode info are kept (benefit of the doubt)."""
+        results = [
+            _make_search_result(title="Random Movie Title"),
+            _make_search_result(title="Show S01E03"),
+        ]
+        filtered = _filter_by_episode(results, season=1, episode=3)
+        assert len(filtered) == 2
+
+    def test_season_only_keeps_all_episodes_of_season(self) -> None:
+        results = [
+            _make_search_result(title="Show S02E01"),
+            _make_search_result(title="Show S02E05"),
+            _make_search_result(title="Show S03E01"),
+        ]
+        filtered = _filter_by_episode(results, season=2, episode=None)
+        assert len(filtered) == 2
+        assert all("S02" in r.title for r in filtered)
+
+    def test_release_name_style_titles(self) -> None:
+        """Guessit should parse release-name style titles."""
+        results = [
+            _make_search_result(title="Breaking.Bad.S05E03.1080p.WEB-DL"),
+            _make_search_result(title="Breaking.Bad.S05E04.720p.BluRay"),
+            _make_search_result(title="Breaking.Bad.S04E01.HDTV"),
+        ]
+        filtered = _filter_by_episode(results, season=5, episode=3)
+        assert len(filtered) == 1
+        assert "S05E03" in filtered[0].title
+
+    def test_empty_results_returns_empty(self) -> None:
+        assert _filter_by_episode([], season=1, episode=1) == []
 
 
 # ---------------------------------------------------------------------------

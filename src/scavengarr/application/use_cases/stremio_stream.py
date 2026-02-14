@@ -13,6 +13,7 @@ from dataclasses import replace
 from uuid import uuid4
 
 import structlog
+from guessit import guessit
 
 from scavengarr.domain.entities.stremio import (
     CachedStreamLink,
@@ -34,6 +35,52 @@ from scavengarr.infrastructure.stremio.stream_sorter import StreamSorter
 from scavengarr.infrastructure.stremio.title_matcher import filter_by_title_match
 
 log = structlog.get_logger(__name__)
+
+
+def _filter_by_episode(
+    results: list[SearchResult],
+    season: int | None,
+    episode: int | None,
+) -> list[SearchResult]:
+    """Filter results to match the requested season/episode.
+
+    Uses guessit to parse release names. Results that cannot be parsed
+    (no season/episode info in the title) are kept -- they might be
+    season packs or unstructured titles that are still relevant.
+    """
+    if not season and not episode:
+        return results
+
+    filtered: list[SearchResult] = []
+    for r in results:
+        info = guessit(r.title)
+        r_season = info.get("season")
+        r_episode = info.get("episode")
+
+        # No parseable season/episode -> keep (benefit of the doubt)
+        if r_season is None and r_episode is None:
+            filtered.append(r)
+            continue
+
+        # Season mismatch -> skip
+        if season and r_season is not None and r_season != season:
+            continue
+
+        # Episode mismatch -> skip
+        if episode and r_episode is not None and r_episode != episode:
+            continue
+
+        filtered.append(r)
+
+    if len(filtered) < len(results):
+        log.debug(
+            "episode_filter_applied",
+            season=season,
+            episode=episode,
+            before=len(results),
+            after=len(filtered),
+        )
+    return filtered
 
 
 def _format_stream(
@@ -438,6 +485,7 @@ class StremioStreamUseCase:
                     )
                 finally:
                     search_max_results.reset(token)
+                raw = _filter_by_episode(raw, season, episode)
                 results = await self._search_engine.validate_results(raw)
             else:
                 # YAML plugin: delegate to search engine
