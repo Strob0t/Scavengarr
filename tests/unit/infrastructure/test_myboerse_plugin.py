@@ -76,6 +76,7 @@ class TestDomainVerification:
 
         head_resp = MagicMock()
         head_resp.status_code = 200
+        head_resp.url = httpx.URL(f"https://{_DOMAINS[0]}/")
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.head = AsyncMock(return_value=head_resp)
@@ -92,6 +93,7 @@ class TestDomainVerification:
 
         ok_resp = MagicMock()
         ok_resp.status_code = 200
+        ok_resp.url = httpx.URL(f"https://{_DOMAINS[1]}/")
         fail_exc = httpx.ConnectError("Connection refused")
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)

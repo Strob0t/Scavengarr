@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 from types import ModuleType
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -679,10 +679,13 @@ class TestStreamcloudDomainFallback:
         mock_client = AsyncMock()
 
         # First domain fails, second succeeds
+        ok_resp = MagicMock()
+        ok_resp.status_code = 200
+        ok_resp.url = httpx.URL("https://streamcloud.my/")
         mock_client.head = AsyncMock(
             side_effect=[
                 httpx.ConnectError("streamcloud.plus down"),
-                _mock_response("", 200),
+                ok_resp,
             ]
         )
 

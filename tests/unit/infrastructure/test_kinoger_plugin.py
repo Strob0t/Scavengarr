@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 from types import ModuleType
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -704,10 +704,13 @@ class TestKinogerDomainFallback:
         mock_client = AsyncMock()
 
         # First domain fails, second succeeds
+        ok_resp = MagicMock()
+        ok_resp.status_code = 200
+        ok_resp.url = httpx.URL("https://kinoger.to/")
         mock_client.head = AsyncMock(
             side_effect=[
                 httpx.ConnectError("kinoger.com down"),
-                _mock_response("", 200),
+                ok_resp,
             ]
         )
 

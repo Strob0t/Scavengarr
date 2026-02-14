@@ -130,7 +130,12 @@ class HttpxPluginBase:
         return self._client
 
     async def _verify_domain(self) -> None:
-        """Find and cache a working domain from the fallback list."""
+        """Find and cache a working domain from the fallback list.
+
+        Uses the *final* URL after redirects so that domains that
+        redirect (e.g. ``aniworld.info`` → ``www.aniworld.info``)
+        produce a correct ``base_url`` for subsequent requests.
+        """
         if self._domain_verified or len(self._domains) <= 1:
             self._domain_verified = True
             return
@@ -141,9 +146,16 @@ class HttpxPluginBase:
             try:
                 resp = await client.head(url, timeout=DEFAULT_DOMAIN_CHECK_TIMEOUT)
                 if resp.status_code < 400:
-                    self.base_url = f"https://{domain}"
+                    # Use the final URL after any redirects (e.g. www. prefix).
+                    final_url = str(resp.url)
+                    final_host = resp.url.host
+                    self.base_url = final_url.rstrip("/")
                     self._domain_verified = True
-                    self._log.info(f"{self.name}_domain_found", domain=domain)
+                    self._log.info(
+                        f"{self.name}_domain_found",
+                        domain=domain,
+                        resolved=final_host,
+                    )
                     return
             except Exception:  # noqa: BLE001
                 continue

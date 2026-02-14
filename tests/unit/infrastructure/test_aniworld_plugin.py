@@ -432,6 +432,7 @@ class TestDomainVerification:
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         resp = MagicMock(spec=httpx.Response)
         resp.status_code = 200
+        resp.url = httpx.URL("https://aniworld.to/")
         mock_client.head = AsyncMock(return_value=resp)
         plugin._client = mock_client
 
@@ -452,6 +453,7 @@ class TestDomainVerification:
                 raise httpx.ConnectError("Connection failed")
             resp = MagicMock(spec=httpx.Response)
             resp.status_code = 200
+            resp.url = httpx.URL("https://aniworld.info/")
             return resp
 
         mock_client.head = AsyncMock(side_effect=mock_head)

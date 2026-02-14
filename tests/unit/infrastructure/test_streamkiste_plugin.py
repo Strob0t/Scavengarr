@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 from types import ModuleType
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -762,11 +762,14 @@ class TestStreamkisteDomainFallback:
         mock_client = AsyncMock()
 
         # First two domains fail, third succeeds
+        ok_resp = MagicMock()
+        ok_resp.status_code = 200
+        ok_resp.url = httpx.URL("https://streamkiste.sx/")
         mock_client.head = AsyncMock(
             side_effect=[
                 httpx.ConnectError("streamkiste.taxi down"),
                 httpx.ConnectError("streamkiste.tv down"),
-                _mock_response("", 200),
+                ok_resp,
             ]
         )
 

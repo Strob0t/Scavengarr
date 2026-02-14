@@ -544,6 +544,7 @@ class TestDomainVerification:
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         resp = MagicMock(spec=httpx.Response)
         resp.status_code = 200
+        resp.url = httpx.URL("https://bs.to/")
         mock_client.head = AsyncMock(return_value=resp)
         p._client = mock_client
 
@@ -565,6 +566,7 @@ class TestDomainVerification:
                 raise httpx.ConnectError("Connection failed")
             resp = MagicMock(spec=httpx.Response)
             resp.status_code = 200
+            resp.url = httpx.URL("https://burning-series.io/")
             return resp
 
         mock_client.head = AsyncMock(side_effect=mock_head)

@@ -73,12 +73,19 @@ class TestEnsureClient:
 # ---------------------------------------------------------------------------
 
 
+def _head_response(domain: str, status: int = 200) -> MagicMock:
+    """Build a mock HEAD response with a realistic ``.url`` attribute."""
+    resp = MagicMock()
+    resp.status_code = status
+    resp.url = httpx.URL(f"https://{domain}/")
+    return resp
+
+
 class TestVerifyDomain:
     @pytest.mark.asyncio
     async def test_first_domain_reachable(self) -> None:
         plugin = _TestPlugin()
-        head_resp = MagicMock()
-        head_resp.status_code = 200
+        head_resp = _head_response("example.com")
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.head = AsyncMock(return_value=head_resp)
@@ -92,11 +99,8 @@ class TestVerifyDomain:
     @pytest.mark.asyncio
     async def test_fallback_to_second_domain(self) -> None:
         plugin = _TestPlugin()
-        fail_resp = MagicMock()
-        fail_resp.status_code = 503
-
-        ok_resp = MagicMock()
-        ok_resp.status_code = 200
+        fail_resp = _head_response("example.com", status=503)
+        ok_resp = _head_response("fallback.com")
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.head = AsyncMock(side_effect=[fail_resp, ok_resp])
@@ -144,6 +148,22 @@ class TestVerifyDomain:
 
         mock_client.head.assert_not_called()
         assert plugin._domain_verified is True
+
+    @pytest.mark.asyncio
+    async def test_redirect_captures_final_url(self) -> None:
+        """When a domain redirects (e.g. to www.), base_url uses the final host."""
+        plugin = _TestPlugin()
+        # Simulate: HEAD https://example.com/ → redirected to www.example.com
+        redirected_resp = _head_response("www.example.com")
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.head = AsyncMock(return_value=redirected_resp)
+        plugin._client = mock_client
+
+        await plugin._verify_domain()
+
+        assert plugin._domain_verified is True
+        assert plugin.base_url == "https://www.example.com"
 
 
 # ---------------------------------------------------------------------------

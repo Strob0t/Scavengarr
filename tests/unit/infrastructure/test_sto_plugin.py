@@ -204,6 +204,7 @@ class TestDomainVerification:
 
         head_resp = MagicMock()
         head_resp.status_code = 200
+        head_resp.url = httpx.URL("https://s.to/")
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.head = AsyncMock(return_value=head_resp)
@@ -223,6 +224,7 @@ class TestDomainVerification:
 
         ok_resp = MagicMock()
         ok_resp.status_code = 200
+        ok_resp.url = httpx.URL("https://serienstream.to/")
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.head = AsyncMock(side_effect=[fail_resp, ok_resp])

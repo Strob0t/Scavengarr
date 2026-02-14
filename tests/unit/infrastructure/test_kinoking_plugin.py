@@ -233,6 +233,7 @@ class TestDomainVerification:
 
         head_resp = MagicMock()
         head_resp.status_code = 200
+        head_resp.url = httpx.URL("https://kinoking.cc/")
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.head = AsyncMock(return_value=head_resp)
