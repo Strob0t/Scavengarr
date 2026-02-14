@@ -80,6 +80,13 @@ def _add_record_created_timestamp_utc(
 _QUEUE_LISTENER: QueueListener | None = None
 
 
+def _make_renderer(config: AppConfig) -> structlog.typing.Processor:
+    """Return the appropriate structlog renderer for the configured format."""
+    if config.log_format == "json":
+        return structlog.processors.JSONRenderer()
+    return structlog.dev.ConsoleRenderer()
+
+
 def build_logging_config(config: AppConfig) -> dict[str, Any]:
     """
     Build a uvicorn-compatible logging config dict (dictConfig),
@@ -92,10 +99,7 @@ def build_logging_config(config: AppConfig) -> dict[str, Any]:
     """
     cfg = copy.deepcopy(BASE_LOGGING_CONFIG)
 
-    if config.log_format == "json":
-        renderer: structlog.typing.Processor = structlog.processors.JSONRenderer()
-    else:
-        renderer = structlog.dev.ConsoleRenderer()
+    renderer = _make_renderer(config)
 
     cfg.setdefault("formatters", {})
     cfg["formatters"]["structlog"] = {
@@ -152,10 +156,7 @@ def _enable_async_logging(config: AppConfig) -> None:
 
     _stop_async_listener()
 
-    if config.log_format == "json":
-        renderer: structlog.typing.Processor = structlog.processors.JSONRenderer()
-    else:
-        renderer = structlog.dev.ConsoleRenderer()
+    renderer = _make_renderer(config)
 
     processor_formatter = structlog.stdlib.ProcessorFormatter(
         foreign_pre_chain=[

@@ -5,6 +5,7 @@ Pure transformation logic — no I/O, no framework dependencies.
 
 from __future__ import annotations
 
+import re
 from urllib.parse import urlparse
 
 from scavengarr.domain.entities.stremio import RankedStream
@@ -51,8 +52,6 @@ def _normalize_hoster_name(raw: str) -> str:
         "SuperVideo" -> "supervideo"
         "DoodStream" -> "doodstream"
     """
-    import re
-
     # Strip parenthesized quality suffix: "VOE (HD)" -> "VOE"
     name = re.sub(r"\s*\([^)]*\)\s*$", "", raw).strip()
     # Strip colon-separated suffix: "Filemoon: HD" -> "Filemoon"
