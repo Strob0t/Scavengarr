@@ -95,6 +95,17 @@ def _clean_title(title: str) -> str:
     return title.strip()
 
 
+_EPISODE_NUM_RE = re.compile(r"(\d{1,2})\s*[xX]\s*(\d{1,4})")
+
+
+def _label_matches_episode(label: str, episode: int) -> bool:
+    """Check if a link label matches the requested episode number."""
+    m = _EPISODE_NUM_RE.search(label)
+    if m:
+        return int(m.group(2)) == episode
+    return False
+
+
 def _domain_from_url(url: str) -> str:
     """Extract domain name from a URL for hoster labeling."""
     try:
@@ -336,7 +347,7 @@ class _DetailPageParser(HTMLParser):
 
         # Series select tracking
         self._in_mr_select = False
-        self._first_mr_select_done = False
+        self._mr_select_episode = 0  # Current episode number (from id="epN")
         self._in_mr_option = False
         self._mr_option_value = ""
         self._mr_option_text = ""
@@ -455,8 +466,11 @@ class _DetailPageParser(HTMLParser):
 
         # --- Series hosters: mr-select ---
         if tag == "select" and "mr-select" in classes:
-            if not self._first_mr_select_done:
-                self._in_mr_select = True
+            self._in_mr_select = True
+            # Extract episode number from id="ep1", "ep2", etc.
+            select_id = attr_dict.get("id", "") or ""
+            m = re.match(r"ep(\d+)", select_id)
+            self._mr_select_episode = int(m.group(1)) if m else 0
 
         if tag == "option" and self._in_mr_select:
             value = attr_dict.get("value", "") or ""
@@ -569,18 +583,20 @@ class _DetailPageParser(HTMLParser):
             name = self._mr_option_text.strip()
             if self._mr_option_value:
                 domain = _domain_from_url(self._mr_option_value)
+                hoster = name.lower() if name else domain
+                ep_num = self._mr_select_episode
+                label = f"1x{ep_num} {name or domain}" if ep_num else name or domain
                 self.stream_links.append(
                     {
-                        "hoster": name.lower() if name else domain,
+                        "hoster": hoster,
                         "link": self._mr_option_value,
-                        "label": name or domain,
+                        "label": label,
                     }
                 )
 
         # mr-select close
         if tag == "select" and self._in_mr_select:
             self._in_mr_select = False
-            self._first_mr_select_done = True
 
     def finalize(self) -> None:
         """Post-processing: detect series from genres."""
@@ -666,6 +682,8 @@ class MegakinoPlugin(HttpxPluginBase):
     async def _scrape_detail(
         self,
         result: dict[str, str | list[str] | bool],
+        season: int | None = None,
+        episode: int | None = None,
     ) -> SearchResult | None:
         """Scrape a detail page for stream links and metadata."""
         client = await self._ensure_client()
@@ -685,6 +703,16 @@ class MegakinoPlugin(HttpxPluginBase):
         parser = _DetailPageParser(self.base_url)
         parser.feed(resp.text)
         parser.finalize()
+
+        # Filter series links by episode (ep1, ep2, ... labels)
+        if parser.is_series and episode is not None and parser.stream_links:
+            filtered = [
+                lnk
+                for lnk in parser.stream_links
+                if _label_matches_episode(lnk.get("label", ""), episode)
+            ]
+            if filtered:
+                parser.stream_links = filtered
 
         if not parser.stream_links:
             self._log.debug("megakino_no_streams", url=detail_url)
@@ -749,7 +777,7 @@ class MegakinoPlugin(HttpxPluginBase):
             r: dict[str, str | list[str] | bool],
         ) -> SearchResult | None:
             async with sem:
-                return await self._scrape_detail(r)
+                return await self._scrape_detail(r, season=season, episode=episode)
 
         gathered = await asyncio.gather(
             *[_bounded(r) for r in all_items],

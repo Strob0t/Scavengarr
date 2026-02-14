@@ -417,18 +417,28 @@ class TestDetailPageParser:
         parser.feed(_SERIES_DETAIL_HTML)
         parser.finalize()
 
-        # Only first mr-select (ep1) hosters are collected
-        assert len(parser.stream_links) == 2
+        # All mr-select elements are collected (ep1=2 hosters, ep2=1, ep3=1)
+        assert len(parser.stream_links) == 4
 
         first = parser.stream_links[0]
         assert first["hoster"] == "voe"
         assert first["link"] == "https://voe.sx/e/g5sv7hvi8cfw"
-        assert first["label"] == "Voe"
+        assert first["label"] == "1x1 Voe"
 
         second = parser.stream_links[1]
         assert second["hoster"] == "doodstream"
         assert second["link"] == "https://dood.wf/e/abc123"
-        assert second["label"] == "Doodstream"
+        assert second["label"] == "1x1 Doodstream"
+
+        third = parser.stream_links[2]
+        assert third["hoster"] == "voe"
+        assert third["link"] == "https://voe.sx/e/ep2abc"
+        assert third["label"] == "1x2 Voe"
+
+        fourth = parser.stream_links[3]
+        assert fourth["hoster"] == "voe"
+        assert fourth["link"] == "https://voe.sx/e/ep3abc"
+        assert fourth["label"] == "1x3 Voe"
 
     def test_series_detection(self) -> None:
         parser = _DetailPageParser("https://megakino.me")

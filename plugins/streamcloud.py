@@ -122,6 +122,34 @@ def _domain_from_url(url: str) -> str:
         return "unknown"
 
 
+_EPISODE_NUM_RE = re.compile(r"(\d{1,2})\s*[xX]\s*(\d{1,4})")
+
+
+def _filter_episode_links(
+    links: list[dict[str, str]],
+    season: int,
+    episode: int | None,
+) -> list[dict[str, str]]:
+    """Filter series download_links to the requested season/episode.
+
+    Parses ``NxM`` patterns from link labels (e.g. ``1x5 Episode 5``).
+    Links without episode info are dropped (they belong to other episodes).
+    """
+    matched: list[dict[str, str]] = []
+    for link in links:
+        label = link.get("label", "")
+        m = _EPISODE_NUM_RE.search(label)
+        if not m:
+            continue
+        s, e = int(m.group(1)), int(m.group(2))
+        if s != season:
+            continue
+        if episode is not None and e != episode:
+            continue
+        matched.append(link)
+    return matched
+
+
 class _SearchResultParser(HTMLParser):
     """Parse streamcloud.plus DLE search result page.
 
@@ -335,6 +363,7 @@ class _DetailPageParser(HTMLParser):
         # Series episode/mirror links (data-link attributes)
         self._series_links: list[dict[str, str]] = []
         self._has_season_tabs = False
+        self._last_data_num = ""  # Track last episode label for mirrors
 
         # Metadata
         self.title = ""
@@ -406,6 +435,7 @@ class _DetailPageParser(HTMLParser):
             if data_link and data_num:
                 # Episode primary link
                 full_url = urljoin(self._base_url, data_link)
+                self._last_data_num = data_num
                 self._series_links.append(
                     {
                         "hoster": _domain_from_url(full_url),
@@ -417,11 +447,14 @@ class _DetailPageParser(HTMLParser):
             elif data_link and data_m:
                 # Mirror link inside <div class="mirrors">
                 full_url = urljoin(self._base_url, data_link)
+                label = (
+                    f"{self._last_data_num} {data_m}" if self._last_data_num else data_m
+                )
                 self._series_links.append(
                     {
                         "hoster": data_m,
                         "link": full_url,
-                        "label": data_m,
+                        "label": label,
                     }
                 )
                 self._has_season_tabs = True
@@ -677,6 +710,8 @@ class StreamcloudPlugin(HttpxPluginBase):
     async def _scrape_detail(
         self,
         result: dict[str, str],
+        season: int | None = None,
+        episode: int | None = None,
     ) -> SearchResult | None:
         """Scrape a detail page for stream links and metadata."""
         client = await self._ensure_client()
@@ -696,6 +731,20 @@ class StreamcloudPlugin(HttpxPluginBase):
         parser = _DetailPageParser(self.base_url)
         parser.feed(resp.text)
         parser.finalize()
+
+        # Filter series links to requested season/episode
+        if parser.is_series and season is not None and parser.stream_links:
+            filtered = _filter_episode_links(parser.stream_links, season, episode)
+            if filtered:
+                parser.stream_links = filtered
+            else:
+                self._log.debug(
+                    "streamcloud_no_episode_match",
+                    url=detail_url,
+                    season=season,
+                    episode=episode,
+                )
+                return None
 
         if not parser.stream_links:
             self._log.debug("streamcloud_no_streams", url=detail_url)
@@ -759,7 +808,7 @@ class StreamcloudPlugin(HttpxPluginBase):
 
         async def _bounded(r: dict[str, str]) -> SearchResult | None:
             async with sem:
-                return await self._scrape_detail(r)
+                return await self._scrape_detail(r, season=season, episode=episode)
 
         gathered = await asyncio.gather(
             *[_bounded(r) for r in all_items],
