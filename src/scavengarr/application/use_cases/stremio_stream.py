@@ -38,20 +38,32 @@ from scavengarr.infrastructure.stremio.title_matcher import filter_by_title_matc
 log = structlog.get_logger(__name__)
 
 
-# Matches "1x5", "1x05", "2x10", etc. in download_link labels.
-# Streamcloud uses data-num="1x1", labels like "1x1 Episode 1".
-_EPISODE_LABEL_RE = re.compile(r"(?:^|\D)(\d{1,2})\s*[xX]\s*(\d{1,4})(?:\D|$)")
+# Matches episode labels in download_links.
+# Patterns: "1x5", "1x05", "2X10", "S01E05", "s1e5", "S02E10 Episode Title".
+_EPISODE_LABEL_RE = re.compile(
+    r"(?:^|\D)"
+    r"(?:"
+    r"(\d{1,2})\s*[xX]\s*(\d{1,4})"  # 1x5, 2X10
+    r"|"
+    r"[Ss](\d{1,2})\s*[Ee](\d{1,4})"  # S01E05, s1e5
+    r")"
+    r"(?:\D|$)"
+)
 
 
 def _parse_episode_from_label(label: str) -> tuple[int | None, int | None]:
     """Extract (season, episode) from a download_link label.
 
-    Recognises patterns like ``1x5``, ``1x05``, ``2x10 Episode Title``.
+    Recognises patterns like ``1x5``, ``1x05``, ``2x10``,
+    ``S01E05``, ``s1e5``.
     Returns ``(None, None)`` when no pattern is found.
     """
     m = _EPISODE_LABEL_RE.search(label)
     if m:
-        return int(m.group(1)), int(m.group(2))
+        # Groups 1,2 for NxM pattern; groups 3,4 for SxxExx pattern
+        season = m.group(1) if m.group(1) is not None else m.group(3)
+        episode = m.group(2) if m.group(2) is not None else m.group(4)
+        return int(season), int(episode)
     return None, None
 
 
@@ -80,9 +92,9 @@ def _filter_links_by_episode(
 
         has_episode_info = True
 
-        if season and l_season is not None and l_season != season:
+        if season is not None and l_season is not None and l_season != season:
             continue
-        if episode and l_episode is not None and l_episode != episode:
+        if episode is not None and l_episode is not None and l_episode != episode:
             continue
 
         matched.append(link)
@@ -108,7 +120,7 @@ def _filter_by_episode(
     title OR in download_links) are kept -- they might be different hosters
     for a single content page.
     """
-    if not season and not episode:
+    if season is None and episode is None:
         return results
 
     filtered: list[SearchResult] = []
@@ -144,11 +156,11 @@ def _filter_by_episode(
             continue
 
         # Season mismatch -> skip
-        if season and r_season is not None and r_season != season:
+        if season is not None and r_season is not None and r_season != season:
             continue
 
         # Episode mismatch -> skip
-        if episode and r_episode is not None and r_episode != episode:
+        if episode is not None and r_episode is not None and r_episode != episode:
             continue
 
         filtered.append(r)

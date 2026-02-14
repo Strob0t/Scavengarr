@@ -161,6 +161,27 @@ class TestFilterByEpisode:
     def test_empty_results_returns_empty(self) -> None:
         assert _filter_by_episode([], season=1, episode=1) == []
 
+    def test_season_zero_filters_correctly(self) -> None:
+        """Season 0 (Specials) must not bypass the filter."""
+        results = [
+            _make_search_result(title="Show S00E01"),
+            _make_search_result(title="Show S01E01"),
+            _make_search_result(title="Show S00E02"),
+        ]
+        filtered = _filter_by_episode(results, season=0, episode=1)
+        assert len(filtered) == 1
+        assert filtered[0].title == "Show S00E01"
+
+    def test_episode_zero_filters_correctly(self) -> None:
+        """Episode 0 (Pilot/Special) must not bypass the filter."""
+        results = [
+            _make_search_result(title="Show S01E00"),
+            _make_search_result(title="Show S01E01"),
+        ]
+        filtered = _filter_by_episode(results, season=1, episode=0)
+        assert len(filtered) == 1
+        assert filtered[0].title == "Show S01E00"
+
     def test_unparseable_title_with_episode_labels_filters_links(self) -> None:
         """Streamcloud: no SxxExx in title, 1x5 labels in links."""
         links = [
@@ -272,6 +293,21 @@ class TestParseEpisodeFromLabel:
     def test_with_surrounding_text(self) -> None:
         assert _parse_episode_from_label("Season 3x12 - The Final") == (3, 12)
 
+    def test_sxxexx_format(self) -> None:
+        assert _parse_episode_from_label("S01E05 Episode 5") == (1, 5)
+
+    def test_sxxexx_no_padding(self) -> None:
+        assert _parse_episode_from_label("S1E5") == (1, 5)
+
+    def test_sxxexx_lowercase(self) -> None:
+        assert _parse_episode_from_label("s02e10 title") == (2, 10)
+
+    def test_sxxexx_high_numbers(self) -> None:
+        assert _parse_episode_from_label("S21E1042") == (21, 1042)
+
+    def test_sxxexx_with_surrounding_text(self) -> None:
+        assert _parse_episode_from_label("Show S03E12 - The Final") == (3, 12)
+
 
 # ---------------------------------------------------------------------------
 # _filter_links_by_episode
@@ -315,6 +351,41 @@ class TestFilterLinksByEpisode:
         result = _filter_links_by_episode(links, season=1, episode=5)
         assert result is not None
         assert len(result) == 0
+
+    def test_season_zero_not_treated_as_falsy(self) -> None:
+        """Season 0 (Specials/OVAs) must filter correctly, not bypass."""
+        links = [
+            {"hoster": "VOE", "link": "https://a", "label": "0x1 Special 1"},
+            {"hoster": "VOE", "link": "https://b", "label": "1x1 Episode 1"},
+            {"hoster": "VOE", "link": "https://c", "label": "0x2 Special 2"},
+        ]
+        result = _filter_links_by_episode(links, season=0, episode=1)
+        assert result is not None
+        assert len(result) == 1
+        assert result[0]["label"] == "0x1 Special 1"
+
+    def test_episode_zero_not_treated_as_falsy(self) -> None:
+        """Episode 0 must filter correctly, not bypass."""
+        links = [
+            {"hoster": "VOE", "link": "https://a", "label": "1x0 Pilot"},
+            {"hoster": "VOE", "link": "https://b", "label": "1x1 Episode 1"},
+        ]
+        result = _filter_links_by_episode(links, season=1, episode=0)
+        assert result is not None
+        assert len(result) == 1
+        assert result[0]["label"] == "1x0 Pilot"
+
+    def test_sxxexx_labels_filtered(self) -> None:
+        """SxxExx format in labels should be parsed and filtered."""
+        links = [
+            {"hoster": "VOE", "link": "https://a", "label": "S01E01 Pilot"},
+            {"hoster": "VOE", "link": "https://b", "label": "S01E02 Episode 2"},
+            {"hoster": "VOE", "link": "https://c", "label": "S02E01 New Season"},
+        ]
+        result = _filter_links_by_episode(links, season=1, episode=2)
+        assert result is not None
+        assert len(result) == 1
+        assert result[0]["label"] == "S01E02 Episode 2"
 
     def test_orphaned_mirrors_skipped(self) -> None:
         """Links without episode labels are skipped (orphaned mirrors)."""
