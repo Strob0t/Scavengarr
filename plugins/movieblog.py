@@ -507,11 +507,7 @@ class MovieblogPlugin(HttpxPluginBase):
             items = filtered
 
         if season is not None and category is None:
-            items = [
-                item
-                for item in items
-                if int(item.get("category", 2000)) >= 5000
-            ]
+            items = [item for item in items if int(item.get("category", 2000)) >= 5000]
         return items
 
     # ------------------------------------------------------------------

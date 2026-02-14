@@ -281,7 +281,9 @@ class SuperVideoResolver:
         """Fetch page via Playwright (Cloudflare bypass)."""
         try:
             await self._ensure_browser()
-            assert self._context is not None  # noqa: S101
+            if self._context is None:
+                log.warning("supervideo_no_browser_context", url=embed_url)
+                return None
 
             page = await self._context.new_page()
             try:

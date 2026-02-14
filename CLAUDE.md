@@ -287,7 +287,7 @@ The system provides a stable download endpoint that delivers a `.crawljob` file 
 - Integration: HTTP router ↔ use case ↔ adapter with HTTP mocking.
 - Optional E2E: real plugin fixtures, but deterministic (no external sites in CI).
 
-### Current test suite (3303 tests)
+### Current test suite (3274 tests)
 
 ```
 tests/
@@ -306,13 +306,11 @@ tests/
     infrastructure/
       test_converters.py               # to_int()
       test_parsers.py                  # parse_size_to_bytes()
-      test_extractors.py               # extract_download_link()
       test_presenter.py                # Torznab XML rendering (caps + RSS)
       test_link_validator.py           # HTTP HEAD/GET validation
       test_search_engine.py            # HttpxSearchEngine validation/filtering
       test_crawljob_cache.py           # Cache repository (pickle storage)
       test_auth_env_resolution.py      # AuthConfig env var resolution
-      test_html_selectors.py           # CSS-selector HTML helpers
       test_httpx_base.py               # HttpxPluginBase shared base class
       test_playwright_base.py          # PlaywrightPluginBase shared base class
       test_plugin_registry.py          # Plugin discovery and loading

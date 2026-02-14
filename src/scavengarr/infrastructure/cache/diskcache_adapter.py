@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import structlog
 from diskcache import Cache as DiskCache
@@ -66,7 +66,7 @@ class DiskcacheAdapter:
             log.info("diskcache_closed", directory=str(self.directory))
 
     # --- CachePort implementation ---
-    async def get(self, key: str) -> Optional[Any]:
+    async def get(self, key: str) -> Any | None:
         """Read from cache (sync disk I/O -> to_thread)."""
         if self._cache is None:
             raise RuntimeError(

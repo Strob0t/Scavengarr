@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Awaitable, Callable
 
 import structlog
 from fastapi import FastAPI, Request
+from starlette.responses import Response
 
 from scavengarr.infrastructure.config import AppConfig
 from scavengarr.interfaces.api.middleware import RateLimitMiddleware
@@ -56,7 +58,9 @@ def create_app(config: AppConfig) -> FastAPI:
         }
 
     @app.middleware("http")
-    async def log_requests(request: Request, call_next):
+    async def log_requests(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ):
         start = time.perf_counter()
         try:
             response = await call_next(request)

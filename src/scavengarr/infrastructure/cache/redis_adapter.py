@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import pickle
-from typing import Any, Optional
+from typing import Any
 
 import structlog
 from redis.asyncio import Redis
@@ -73,7 +73,7 @@ class RedisAdapter:
             log.info("redis_closed")
 
     # --- CachePort implementation ---
-    async def get(self, key: str) -> Optional[Any]:
+    async def get(self, key: str) -> Any | None:
         """GET with pickle deserialization."""
         if self._client is None:
             raise RuntimeError("Redis not initialized. Use 'async with cache:'")

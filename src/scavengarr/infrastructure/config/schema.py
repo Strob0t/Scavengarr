@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import (
     AliasChoices,
@@ -305,7 +305,7 @@ class AppConfig(BaseModel):
         ),
         description="Log level.",
     )
-    log_format: Optional[LogFormat] = Field(
+    log_format: LogFormat | None = Field(
         default=None,
         validation_alias=AliasChoices(
             "log_format",
@@ -447,29 +447,29 @@ class EnvOverrides(BaseSettings):
         case_sensitive=False,
     )
 
-    app_name: Optional[str] = None
-    environment: Optional[Environment] = None
+    app_name: str | None = None
+    environment: Environment | None = None
 
-    plugin_dir: Optional[Path] = None
+    plugin_dir: Path | None = None
 
-    http_timeout_seconds: Optional[float] = None
-    http_timeout_resolve_seconds: Optional[float] = None
-    http_follow_redirects: Optional[bool] = None
-    http_user_agent: Optional[str] = None
+    http_timeout_seconds: float | None = None
+    http_timeout_resolve_seconds: float | None = None
+    http_follow_redirects: bool | None = None
+    http_user_agent: str | None = None
 
-    rate_limit_requests_per_second: Optional[float] = None
-    api_rate_limit_rpm: Optional[int] = None
+    rate_limit_requests_per_second: float | None = None
+    api_rate_limit_rpm: int | None = None
 
-    playwright_headless: Optional[bool] = None
-    playwright_timeout_ms: Optional[int] = None
+    playwright_headless: bool | None = None
+    playwright_timeout_ms: int | None = None
 
-    log_level: Optional[LogLevel] = None
-    log_format: Optional[LogFormat] = None
+    log_level: LogLevel | None = None
+    log_format: LogFormat | None = None
 
-    cache_dir: Optional[Path] = None
-    cache_ttl_seconds: Optional[int] = None
+    cache_dir: Path | None = None
+    cache_ttl_seconds: int | None = None
 
-    tmdb_api_key: Optional[str] = None
+    tmdb_api_key: str | None = None
 
     @field_validator("plugin_dir", "cache_dir", mode="before")
     @classmethod

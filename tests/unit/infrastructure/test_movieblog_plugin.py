@@ -14,9 +14,7 @@ _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "movieblog.py"
 
 
 def _load_module() -> ModuleType:
-    spec = importlib.util.spec_from_file_location(
-        "movieblog_plugin", str(_PLUGIN_PATH)
-    )
+    spec = importlib.util.spec_from_file_location("movieblog_plugin", str(_PLUGIN_PATH))
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -43,8 +41,7 @@ def _make_plugin() -> object:
 
 def _search_result_html(
     title: str = (
-        "Iron.Maze-Im.Netz.der.Leidenschaft"
-        ".1991.German.AC3D.1080p.DvD2BD.x264-MMS"
+        "Iron.Maze-Im.Netz.der.Leidenschaft.1991.German.AC3D.1080p.DvD2BD.x264-MMS"
     ),
     url: str = (
         "https://movieblog.to/iron-maze-im-netz-der-"
@@ -61,8 +58,7 @@ def _search_result_html(
             ("https://movieblog.to/category/hd-1080p/", "HD - 1080p"),
         ]
     cat_links = ", ".join(
-        f'<a href="{href}" rel="category tag">{text}</a>'
-        for href, text in categories
+        f'<a href="{href}" rel="category tag">{text}</a>' for href, text in categories
     )
     return (
         '<div class="post">'
@@ -75,7 +71,7 @@ def _search_result_html(
         f'<p class="date_x">Samstag, 7. Februar 2026 9:33</p>'
         f'<div class="entry_x"><p>Description text</p></div>'
         f'<p class="info_x">Thema: {cat_links}'
-        f' <strong>| </strong>'
+        f" <strong>| </strong>"
         f'<a href="{url}#respond">Kommentare (0)</a></p>'
         "</div>"
     )
@@ -138,7 +134,7 @@ def _detail_page_html(
     link_html_parts = []
     for href, label, hoster in links:
         link_html_parts.append(
-            f'<strong>{label}: </strong>'
+            f"<strong>{label}: </strong>"
             f'<a href="{href}" target="_blank" rel="noopener">'
             f"{hoster}</a><br />"
         )
@@ -277,15 +273,11 @@ class TestPaginationParser:
     """Tests for _PaginationParser."""
 
     def test_extracts_next_page_url(self) -> None:
-        html = _navigation_html(
-            next_url="https://movieblog.to/page/2/?s=test"
-        )
+        html = _navigation_html(next_url="https://movieblog.to/page/2/?s=test")
         parser = _PaginationParser()
         parser.feed(html)
 
-        assert parser.next_page_url == (
-            "https://movieblog.to/page/2/?s=test"
-        )
+        assert parser.next_page_url == ("https://movieblog.to/page/2/?s=test")
 
     def test_no_navigation(self) -> None:
         html = "<html><body><p>No results</p></body></html>"
@@ -317,9 +309,7 @@ class TestPaginationParser:
         parser = _PaginationParser()
         parser.feed(html)
 
-        assert parser.next_page_url == (
-            "https://movieblog.to/page/3/?s=test"
-        )
+        assert parser.next_page_url == ("https://movieblog.to/page/3/?s=test")
 
     def test_last_page_has_no_next(self) -> None:
         """On the last page, no Nächste Seite link exists."""
@@ -468,9 +458,7 @@ class TestMovieblogPlugin:
         plugin = _make_plugin()
         search_html = _search_page_html()
 
-        async def mock_fetch(
-            url: str, **kwargs: object
-        ) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
             return httpx.Response(
                 200,
                 text=search_html,
@@ -481,18 +469,14 @@ class TestMovieblogPlugin:
 
         import asyncio
 
-        asyncio.get_event_loop().run_until_complete(
-            plugin._search_page("iron man", 1)
-        )
+        asyncio.get_event_loop().run_until_complete(plugin._search_page("iron man", 1))
         called_url = plugin._safe_fetch.call_args[0][0]
         assert "?s=iron+man" in called_url
 
     def test_search_page_2_url(self) -> None:
         plugin = _make_plugin()
 
-        async def mock_fetch(
-            url: str, **kwargs: object
-        ) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
             return httpx.Response(
                 200,
                 text=_search_page_html(),
@@ -503,9 +487,7 @@ class TestMovieblogPlugin:
 
         import asyncio
 
-        asyncio.get_event_loop().run_until_complete(
-            plugin._search_page("test", 2)
-        )
+        asyncio.get_event_loop().run_until_complete(plugin._search_page("test", 2))
         called_url = plugin._safe_fetch.call_args[0][0]
         assert "/page/2/?s=test" in called_url
 
@@ -515,9 +497,7 @@ class TestMovieblogPlugin:
         search_html = _search_page_html()
         detail_html = _detail_page_html()
 
-        async def mock_fetch(
-            url: str, **kwargs: object
-        ) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
             if "?s=" in url:
                 return httpx.Response(
                     200,
@@ -553,9 +533,7 @@ class TestMovieblogPlugin:
             return_value=httpx.Response(
                 200,
                 text=empty_html,
-                request=httpx.Request(
-                    "GET", "https://movieblog.to/?s=xyz"
-                ),
+                request=httpx.Request("GET", "https://movieblog.to/?s=xyz"),
             )
         )
         results = await plugin.search("xyz")
@@ -586,14 +564,10 @@ class TestMovieblogPlugin:
                 ("https://movieblog.to/category/serie/", "Serie"),
             ],
         )
-        search_html = _search_page_html(
-            results=[movie_result, series_result]
-        )
+        search_html = _search_page_html(results=[movie_result, series_result])
         detail_html = _detail_page_html()
 
-        async def mock_fetch(
-            url: str, **kwargs: object
-        ) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
             if "?s=" in url:
                 return httpx.Response(
                     200,
@@ -630,14 +604,10 @@ class TestMovieblogPlugin:
                 ("https://movieblog.to/category/serie/", "Serie"),
             ],
         )
-        search_html = _search_page_html(
-            results=[movie_result, series_result]
-        )
+        search_html = _search_page_html(results=[movie_result, series_result])
         detail_html = _detail_page_html()
 
-        async def mock_fetch(
-            url: str, **kwargs: object
-        ) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
             if "?s=" in url:
                 return httpx.Response(
                     200,
@@ -674,14 +644,10 @@ class TestMovieblogPlugin:
                 ("https://movieblog.to/category/serie/", "Serie"),
             ],
         )
-        search_html = _search_page_html(
-            results=[movie_result, series_result]
-        )
+        search_html = _search_page_html(results=[movie_result, series_result])
         detail_html = _detail_page_html()
 
-        async def mock_fetch(
-            url: str, **kwargs: object
-        ) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
             if "?s=" in url:
                 return httpx.Response(
                     200,
@@ -706,9 +672,7 @@ class TestMovieblogPlugin:
         search_html = _search_page_html()
         empty_detail = "<html><body><p>No links</p></body></html>"
 
-        async def mock_fetch(
-            url: str, **kwargs: object
-        ) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
             if "?s=" in url:
                 return httpx.Response(
                     200,
@@ -733,9 +697,7 @@ class TestMovieblogPlugin:
 
         call_count = 0
 
-        async def mock_fetch(
-            url: str, **kwargs: object
-        ) -> httpx.Response | None:
+        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response | None:
             nonlocal call_count
             call_count += 1
             if "?s=" in url:
@@ -757,9 +719,7 @@ class TestMovieblogPlugin:
         search_html = _search_page_html()
         detail_html = _detail_page_html()
 
-        async def mock_fetch(
-            url: str, **kwargs: object
-        ) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
             if "?s=" in url:
                 return httpx.Response(
                     200,
@@ -783,9 +743,7 @@ class TestMovieblogPlugin:
         search_html = _search_page_html()
         detail_html = _detail_page_html(size_text="7,72 GB")
 
-        async def mock_fetch(
-            url: str, **kwargs: object
-        ) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
             if "?s=" in url:
                 return httpx.Response(
                     200,
@@ -809,9 +767,7 @@ class TestMovieblogPlugin:
         search_html = _search_page_html()
         detail_html = _detail_page_html()
 
-        async def mock_fetch(
-            url: str, **kwargs: object
-        ) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
             if "?s=" in url:
                 return httpx.Response(
                     200,
@@ -835,9 +791,7 @@ class TestMovieblogPlugin:
         search_html = _search_page_html()
         detail_html = _detail_page_html()
 
-        async def mock_fetch(
-            url: str, **kwargs: object
-        ) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
             if "?s=" in url:
                 return httpx.Response(
                     200,
@@ -859,9 +813,7 @@ class TestMovieblogPlugin:
     async def test_pagination_follows_next(self) -> None:
         """Plugin follows pagination to collect more results."""
         plugin = _make_plugin()
-        nav = _navigation_html(
-            next_url="https://movieblog.to/page/2/?s=test"
-        )
+        nav = _navigation_html(next_url="https://movieblog.to/page/2/?s=test")
         page1_html = _search_page_html(
             results=[
                 _search_result_html(
@@ -883,9 +835,7 @@ class TestMovieblogPlugin:
         )
         detail_html = _detail_page_html()
 
-        async def mock_fetch(
-            url: str, **kwargs: object
-        ) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
             if "/page/2/" in url:
                 return httpx.Response(
                     200,

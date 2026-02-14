@@ -10,7 +10,7 @@ import queue
 import sys
 from datetime import datetime, timezone
 from logging.handlers import QueueHandler, QueueListener
-from typing import Any, Optional
+from typing import Any
 
 import structlog
 
@@ -77,7 +77,7 @@ def _add_record_created_timestamp_utc(
     return event_dict
 
 
-_QUEUE_LISTENER: Optional[QueueListener] = None
+_QUEUE_LISTENER: QueueListener | None = None
 
 
 def build_logging_config(config: AppConfig) -> dict[str, Any]:
