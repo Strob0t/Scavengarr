@@ -102,13 +102,13 @@ def start(argv: Iterable[str] | None = None) -> None:
         cli_overrides=cli_overrides,
     )
 
-    log_config = configure_logging(config)
+    configure_logging(config)
 
     uvicorn.run(
         create_app(config),
         host=host,
         port=port,
-        log_config=log_config,
+        log_config=None,
     )
 
 

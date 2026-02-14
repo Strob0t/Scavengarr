@@ -207,7 +207,7 @@ def _enable_async_logging(config: AppConfig) -> None:
 
         def prepare(self, record: logging.LogRecord) -> logging.LogRecord:
             # Preserve dict-msg for structlog ProcessorFormatter
-            return copy.copy(record)
+            return copy.deepcopy(record)
 
     queue_handler = _StructlogPreservingQueueHandler(q)
 
@@ -229,12 +229,14 @@ def _enable_async_logging(config: AppConfig) -> None:
     atexit.register(_stop_async_listener)
 
 
-def configure_logging(config: AppConfig) -> dict[str, Any]:
+def configure_logging(config: AppConfig) -> None:
     """
     Configure structlog + stdlib logging.
 
-    Returns a uvicorn-compatible dictConfig (useful for debugging/inspection),
-    but the actual emission is wired through QueueHandler/QueueListener.
+    Sets up structlog processors, applies a one-time dictConfig for handler
+    structure, then replaces all handlers with an async QueueHandler/QueueListener
+    pipeline.  Does NOT return a config dict -- uvicorn.run() must receive
+    ``log_config=None`` so it does not call dictConfig a second time.
     """
     structlog.configure(
         processors=[
@@ -259,4 +261,3 @@ def configure_logging(config: AppConfig) -> dict[str, Any]:
     log.info(
         "logging_configured", log_format=config.log_format, log_level=config.log_level
     )
-    return cfg
