@@ -287,7 +287,7 @@ The system provides a stable download endpoint that delivers a `.crawljob` file 
 - Integration: HTTP router ↔ use case ↔ adapter with HTTP mocking.
 - Optional E2E: real plugin fixtures, but deterministic (no external sites in CI).
 
-### Current test suite (3268 tests)
+### Current test suite (3303 tests)
 
 ```
 tests/
@@ -372,6 +372,7 @@ tests/
       test_megakino_plugin.py          # megakino plugin tests
       test_megakino_to.py              # megakino_to plugin tests
       test_moflix_plugin.py            # moflix plugin tests
+      test_movieblog_plugin.py         # movieblog plugin tests
       test_movie2k_plugin.py           # movie2k plugin tests
       test_myboerse_plugin.py          # myboerse plugin tests
       test_mygully_plugin.py           # mygully plugin tests
@@ -556,7 +557,7 @@ Agents are ONLY for **simple, explicit, mechanical tasks** where the scope is 10
 | Future plans | `docs/plans/` (playwright-engine, more-plugins, integration-tests, search-caching) |
 | Refactor history | `docs/refactor/COMPLETED/` |
 | Python best practices | `docs/PYTHON-BEST-PRACTICES.md` |
-| Plugins (41 total) | `plugins/` (all Python, inheriting from httpx or Playwright base classes) |
+| Plugins (42 total) | `plugins/` (all Python, inheriting from httpx or Playwright base classes) |
 | OpenSpec change specs | `openspec/changes/...` |
 
 ### Adding a new plugin (general workflow)
