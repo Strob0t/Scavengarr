@@ -7,6 +7,7 @@ IMDb ID -> TMDB title -> parallel plugin search
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
@@ -37,6 +38,61 @@ from scavengarr.infrastructure.stremio.title_matcher import filter_by_title_matc
 log = structlog.get_logger(__name__)
 
 
+# Matches "1x5", "1x05", "2x10", etc. in download_link labels.
+# Streamcloud uses data-num="1x1", labels like "1x1 Episode 1".
+_EPISODE_LABEL_RE = re.compile(r"(?:^|\D)(\d{1,2})\s*[xX]\s*(\d{1,4})(?:\D|$)")
+
+
+def _parse_episode_from_label(label: str) -> tuple[int | None, int | None]:
+    """Extract (season, episode) from a download_link label.
+
+    Recognises patterns like ``1x5``, ``1x05``, ``2x10 Episode Title``.
+    Returns ``(None, None)`` when no pattern is found.
+    """
+    m = _EPISODE_LABEL_RE.search(label)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    return None, None
+
+
+def _filter_links_by_episode(
+    links: list[dict[str, str]],
+    season: int | None,
+    episode: int | None,
+) -> list[dict[str, str]] | None:
+    """Filter download_links by episode info in their labels.
+
+    Returns:
+        List of matching links when at least one link had episode info.
+        ``None`` when no links contained parseable episode labels
+        (meaning the filter cannot be applied).
+    """
+    matched: list[dict[str, str]] = []
+    has_episode_info = False
+
+    for link in links:
+        label = link.get("label", "")
+        l_season, l_episode = _parse_episode_from_label(label)
+
+        if l_season is None and l_episode is None:
+            # No episode info in this link — skip (orphaned mirror)
+            continue
+
+        has_episode_info = True
+
+        if season and l_season is not None and l_season != season:
+            continue
+        if episode and l_episode is not None and l_episode != episode:
+            continue
+
+        matched.append(link)
+
+    if not has_episode_info:
+        return None
+
+    return matched
+
+
 def _filter_by_episode(
     results: list[SearchResult],
     season: int | None,
@@ -44,9 +100,13 @@ def _filter_by_episode(
 ) -> list[SearchResult]:
     """Filter results to match the requested season/episode.
 
-    Uses guessit to parse release names. Results that cannot be parsed
-    (no season/episode info in the title) are kept -- they might be
-    season packs or unstructured titles that are still relevant.
+    Uses guessit to parse release names. When the title has no parseable
+    season/episode info, falls back to filtering individual download_links
+    by their labels (e.g. ``1x5`` format from episode tabs).
+
+    Results that cannot be parsed at all (no season/episode info in the
+    title OR in download_links) are kept -- they might be different hosters
+    for a single content page.
     """
     if not season and not episode:
         return results
@@ -57,8 +117,29 @@ def _filter_by_episode(
         r_season = info.get("season")
         r_episode = info.get("episode")
 
-        # No parseable season/episode -> keep (benefit of the doubt)
+        # No parseable season/episode in title -> try download_links
         if r_season is None and r_episode is None:
+            if r.download_links:
+                kept = _filter_links_by_episode(r.download_links, season, episode)
+                if kept is not None:
+                    # Links had episode labels; only keep matching ones
+                    if kept:
+                        first_url = (
+                            kept[0].get("link", "")
+                            or kept[0].get("url", "")
+                            or r.download_link
+                        )
+                        filtered.append(
+                            replace(
+                                r,
+                                download_link=first_url,
+                                download_links=kept,
+                            )
+                        )
+                    # else: all links wrong episode -> drop entirely
+                    continue
+
+            # No download_links or no episode info in links -> keep
             filtered.append(r)
             continue
 

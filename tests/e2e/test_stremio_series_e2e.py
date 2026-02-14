@@ -24,13 +24,11 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from scavengarr.application.use_cases.stremio_stream import StremioStreamUseCase
 from scavengarr.domain.entities.stremio import (
-    StremioStreamRequest,
     TitleMatchInfo,
 )
 from scavengarr.domain.plugins.base import SearchResult
@@ -250,9 +248,7 @@ class TestNarutoShippudenE2E:
         ]
         kinoger = _FakeSeriesPlugin("kinoger", results=all_episodes)
 
-        app, _ = _make_series_app(
-            title_info=self._TITLE, plugins={"kinoger": kinoger}
-        )
+        app, _ = _make_series_app(title_info=self._TITLE, plugins={"kinoger": kinoger})
         client = TestClient(app)
 
         resp = client.get(f"{_PREFIX}/stremio/stream/series/{self._IMDB}:1:5.json")
@@ -273,9 +269,7 @@ class TestNarutoShippudenE2E:
         ]
         sto = _FakeSeriesPlugin("sto", results=mixed)
 
-        app, _ = _make_series_app(
-            title_info=self._TITLE, plugins={"sto": sto}
-        )
+        app, _ = _make_series_app(title_info=self._TITLE, plugins={"sto": sto})
         client = TestClient(app)
 
         resp = client.get(f"{_PREFIX}/stremio/stream/series/{self._IMDB}:2:3.json")
@@ -299,16 +293,17 @@ class TestNarutoShippudenE2E:
             "kinoking",
             results=[
                 _naruto_ep(
-                    1, 5, _make_hosters("Streamtape", "DoodStream"), plugin_name="kinoking"
+                    1,
+                    5,
+                    _make_hosters("Streamtape", "DoodStream"),
+                    plugin_name="kinoking",
                 ),
             ],
         )
         sto = _FakeSeriesPlugin(
             "sto",
             results=[
-                _naruto_ep(
-                    1, 5, _make_hosters("SuperVideo"), plugin_name="sto"
-                ),
+                _naruto_ep(1, 5, _make_hosters("SuperVideo"), plugin_name="sto"),
             ],
         )
 
@@ -345,9 +340,7 @@ class TestNarutoShippudenE2E:
         ]
         spammy = _FakeSeriesPlugin("spammy", results=spam_results)
 
-        app, _ = _make_series_app(
-            title_info=self._TITLE, plugins={"spammy": spammy}
-        )
+        app, _ = _make_series_app(title_info=self._TITLE, plugins={"spammy": spammy})
         client = TestClient(app)
 
         resp = client.get(f"{_PREFIX}/stremio/stream/series/{self._IMDB}:1:10.json")
@@ -395,9 +388,7 @@ class TestNarutoShippudenE2E:
                 category=5070,
                 metadata={"source_plugin": "aniworld"},
             ),
-            _naruto_ep(
-                1, 5, _make_hosters("Filemoon"), plugin_name="aniworld"
-            ),
+            _naruto_ep(1, 5, _make_hosters("Filemoon"), plugin_name="aniworld"),
         ]
         aniworld = _FakeSeriesPlugin("aniworld", results=results)
 
@@ -427,9 +418,7 @@ class TestNarutoShippudenE2E:
             category=5070,
             metadata={"source_plugin": "aniworld"},
         )
-        correct = _naruto_ep(
-            1, 5, _make_hosters("Filemoon"), plugin_name="aniworld"
-        )
+        correct = _naruto_ep(1, 5, _make_hosters("Filemoon"), plugin_name="aniworld")
         aniworld = _FakeSeriesPlugin("aniworld", results=[wrong_title, correct])
 
         app, _ = _make_series_app(
@@ -475,9 +464,7 @@ class TestNarutoShippudenE2E:
         """When no plugin returns results, response is an empty streams list."""
         empty = _FakeSeriesPlugin("aniworld", results=[])
 
-        app, _ = _make_series_app(
-            title_info=self._TITLE, plugins={"aniworld": empty}
-        )
+        app, _ = _make_series_app(title_info=self._TITLE, plugins={"aniworld": empty})
         client = TestClient(app)
 
         resp = client.get(f"{_PREFIX}/stremio/stream/series/{self._IMDB}:1:5.json")
@@ -604,9 +591,7 @@ class TestBreakingBadE2E:
         ]
         hdfilme = _FakeSeriesPlugin("hdfilme", results=all_eps)
 
-        app, _ = _make_series_app(
-            title_info=self._TITLE, plugins={"hdfilme": hdfilme}
-        )
+        app, _ = _make_series_app(title_info=self._TITLE, plugins={"hdfilme": hdfilme})
         client = TestClient(app)
 
         resp = client.get(f"{_PREFIX}/stremio/stream/series/{self._IMDB}:5:3.json")
@@ -654,9 +639,7 @@ class TestBreakingBadE2E:
                 self._bb_ep(
                     5,
                     3,
-                    _make_hosters(
-                        "SuperVideo", "DoodStream", language="German Sub"
-                    ),
+                    _make_hosters("SuperVideo", "DoodStream", language="German Sub"),
                     plugin_name="streamcloud",
                 ),
             ],
@@ -706,9 +689,7 @@ class TestBreakingBadE2E:
         # 5 seasons x 13 eps x 3 hosters = 195 potential streams
         spammy = _FakeSeriesPlugin("spammy", results=all_results)
 
-        app, _ = _make_series_app(
-            title_info=self._TITLE, plugins={"spammy": spammy}
-        )
+        app, _ = _make_series_app(title_info=self._TITLE, plugins={"spammy": spammy})
         client = TestClient(app)
 
         resp = client.get(f"{_PREFIX}/stremio/stream/series/{self._IMDB}:3:7.json")
@@ -769,9 +750,7 @@ class TestSeriesEdgeCases:
         ]
         plugin = _FakeSeriesPlugin("plugin", results=results)
 
-        app, _ = _make_series_app(
-            title_info=self._TITLE, plugins={"plugin": plugin}
-        )
+        app, _ = _make_series_app(title_info=self._TITLE, plugins={"plugin": plugin})
         client = TestClient(app)
 
         # 2-part ID: router parses as season=None, episode=None (no filtering)
@@ -804,9 +783,7 @@ class TestSeriesEdgeCases:
         ]
         plugin = _FakeSeriesPlugin("plugin", results=results)
 
-        app, _ = _make_series_app(
-            title_info=self._TITLE, plugins={"plugin": plugin}
-        )
+        app, _ = _make_series_app(title_info=self._TITLE, plugins={"plugin": plugin})
         client = TestClient(app)
 
         resp = client.get(f"{_PREFIX}/stremio/stream/series/tmdb:12345:1:1.json")
@@ -819,9 +796,7 @@ class TestSeriesEdgeCases:
         """When TMDB returns no title, response is empty."""
         plugin = _FakeSeriesPlugin("plugin", results=[])
 
-        app, _ = _make_series_app(
-            title_info=None, plugins={"plugin": plugin}
-        )
+        app, _ = _make_series_app(title_info=None, plugins={"plugin": plugin})
         client = TestClient(app)
 
         resp = client.get(f"{_PREFIX}/stremio/stream/series/tt0000001:1:1.json")
@@ -864,9 +839,7 @@ class TestSeriesEdgeCases:
         plugin = _FakeSeriesPlugin("aniworld", results=results)
 
         title = TitleMatchInfo(title="One Piece", year=1999)
-        app, _ = _make_series_app(
-            title_info=title, plugins={"aniworld": plugin}
-        )
+        app, _ = _make_series_app(title_info=title, plugins={"aniworld": plugin})
         client = TestClient(app)
 
         resp = client.get(f"{_PREFIX}/stremio/stream/series/tt0388629:21:1042.json")

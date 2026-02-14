@@ -9,7 +9,9 @@ from scavengarr.application.use_cases.stremio_stream import (
     StremioStreamUseCase,
     _build_search_query,
     _filter_by_episode,
+    _filter_links_by_episode,
     _format_stream,
+    _parse_episode_from_label,
 )
 from scavengarr.domain.entities.stremio import (
     RankedStream,
@@ -158,6 +160,173 @@ class TestFilterByEpisode:
 
     def test_empty_results_returns_empty(self) -> None:
         assert _filter_by_episode([], season=1, episode=1) == []
+
+    def test_unparseable_title_with_episode_labels_filters_links(self) -> None:
+        """Streamcloud: no SxxExx in title, 1x5 labels in links."""
+        links = [
+            {"hoster": "VOE", "link": "https://voe.sx/e/1x1", "label": "1x1 Episode 1"},
+            {"hoster": "VOE", "link": "https://voe.sx/e/1x2", "label": "1x2 Episode 2"},
+            {"hoster": "VOE", "link": "https://voe.sx/e/1x5", "label": "1x5 Episode 5"},
+            {
+                "hoster": "Filemoon",
+                "link": "https://fm.sx/e/1x5",
+                "label": "1x5 Episode 5",
+            },
+        ]
+        results = [
+            _make_search_result(
+                title="Naruto Shippuden",
+                download_links=links,
+            ),
+        ]
+        filtered = _filter_by_episode(results, season=1, episode=5)
+        assert len(filtered) == 1
+        # Only the two 1x5 links should survive
+        assert len(filtered[0].download_links) == 2
+        assert all("1x5" in lnk["label"] for lnk in filtered[0].download_links)
+
+    def test_unparseable_title_all_wrong_episodes_dropped(self) -> None:
+        """All download_links are for wrong episodes -> result dropped entirely."""
+        links = [
+            {"hoster": "VOE", "link": "https://voe.sx/e/1x1", "label": "1x1 Episode 1"},
+            {"hoster": "VOE", "link": "https://voe.sx/e/1x2", "label": "1x2 Episode 2"},
+        ]
+        results = [
+            _make_search_result(title="Naruto Shippuden", download_links=links),
+        ]
+        filtered = _filter_by_episode(results, season=1, episode=5)
+        assert len(filtered) == 0
+
+    def test_unparseable_title_no_labels_kept(self) -> None:
+        """Links without episode labels -> kept (kinoger-style, just hosters)."""
+        links = [
+            {"hoster": "VOE", "link": "https://voe.sx/e/abc", "label": "Stream HD+"},
+            {"hoster": "Filemoon", "link": "https://fm.sx/e/def", "label": "Stream SD"},
+        ]
+        results = [
+            _make_search_result(title="Naruto Shippuden", download_links=links),
+        ]
+        filtered = _filter_by_episode(results, season=1, episode=5)
+        assert len(filtered) == 1
+        assert len(filtered[0].download_links) == 2
+
+    def test_streamcloud_massive_episode_list_filtered(self) -> None:
+        """100 episode links from all seasons reduced to 2 links for S02E03."""
+        links = []
+        for s in range(1, 6):
+            for e in range(1, 21):
+                links.append(
+                    {
+                        "hoster": "VOE",
+                        "link": f"https://voe.sx/e/{s}x{e}",
+                        "label": f"{s}x{e} Episode {e}",
+                    }
+                )
+                links.append(
+                    {
+                        "hoster": "Filemoon",
+                        "link": f"https://fm.sx/e/{s}x{e}",
+                        "label": f"{s}x{e} Episode {e}",
+                    }
+                )
+        # 5 seasons × 20 episodes × 2 hosters = 200 links
+        assert len(links) == 200
+
+        results = [
+            _make_search_result(title="Breaking Bad", download_links=links),
+        ]
+        filtered = _filter_by_episode(results, season=2, episode=3)
+        assert len(filtered) == 1
+        assert len(filtered[0].download_links) == 2
+        for lnk in filtered[0].download_links:
+            assert "2x3" in lnk["label"]
+
+
+# ---------------------------------------------------------------------------
+# _parse_episode_from_label
+# ---------------------------------------------------------------------------
+
+
+class TestParseEpisodeFromLabel:
+    def test_standard_format(self) -> None:
+        assert _parse_episode_from_label("1x5 Episode 5") == (1, 5)
+
+    def test_zero_padded(self) -> None:
+        assert _parse_episode_from_label("1x05 Episode 5") == (1, 5)
+
+    def test_high_numbers(self) -> None:
+        assert _parse_episode_from_label("21x1042") == (21, 1042)
+
+    def test_no_match(self) -> None:
+        assert _parse_episode_from_label("Stream HD+") == (None, None)
+
+    def test_empty_string(self) -> None:
+        assert _parse_episode_from_label("") == (None, None)
+
+    def test_hoster_name_only(self) -> None:
+        assert _parse_episode_from_label("streamtape") == (None, None)
+
+    def test_uppercase_x(self) -> None:
+        assert _parse_episode_from_label("2X10 Title") == (2, 10)
+
+    def test_with_surrounding_text(self) -> None:
+        assert _parse_episode_from_label("Season 3x12 - The Final") == (3, 12)
+
+
+# ---------------------------------------------------------------------------
+# _filter_links_by_episode
+# ---------------------------------------------------------------------------
+
+
+class TestFilterLinksByEpisode:
+    def test_returns_none_when_no_labels_have_episodes(self) -> None:
+        links = [
+            {"hoster": "VOE", "link": "https://voe.sx/e/a", "label": "Stream HD+"},
+            {"hoster": "Filemoon", "link": "https://fm.sx/e/b", "label": "Mirror"},
+        ]
+        assert _filter_links_by_episode(links, season=1, episode=5) is None
+
+    def test_filters_to_matching_episode(self) -> None:
+        links = [
+            {"hoster": "VOE", "link": "https://voe.sx/e/1", "label": "1x1 Ep 1"},
+            {"hoster": "VOE", "link": "https://voe.sx/e/2", "label": "1x2 Ep 2"},
+            {"hoster": "VOE", "link": "https://voe.sx/e/3", "label": "1x3 Ep 3"},
+        ]
+        result = _filter_links_by_episode(links, season=1, episode=2)
+        assert result is not None
+        assert len(result) == 1
+        assert result[0]["label"] == "1x2 Ep 2"
+
+    def test_filters_by_season(self) -> None:
+        links = [
+            {"hoster": "VOE", "link": "https://a", "label": "1x1"},
+            {"hoster": "VOE", "link": "https://b", "label": "2x1"},
+            {"hoster": "VOE", "link": "https://c", "label": "2x2"},
+        ]
+        result = _filter_links_by_episode(links, season=2, episode=None)
+        assert result is not None
+        assert len(result) == 2
+
+    def test_empty_result_when_no_match(self) -> None:
+        links = [
+            {"hoster": "VOE", "link": "https://a", "label": "1x1"},
+            {"hoster": "VOE", "link": "https://b", "label": "1x2"},
+        ]
+        result = _filter_links_by_episode(links, season=1, episode=5)
+        assert result is not None
+        assert len(result) == 0
+
+    def test_orphaned_mirrors_skipped(self) -> None:
+        """Links without episode labels are skipped (orphaned mirrors)."""
+        links = [
+            {"hoster": "VOE", "link": "https://a", "label": "1x5 Ep 5"},
+            {"hoster": "Streamtape", "link": "https://b", "label": "streamtape"},
+            {"hoster": "VOE", "link": "https://c", "label": "1x6 Ep 6"},
+        ]
+        result = _filter_links_by_episode(links, season=1, episode=5)
+        assert result is not None
+        assert len(result) == 1
+        assert result[0]["label"] == "1x5 Ep 5"
 
 
 # ---------------------------------------------------------------------------
