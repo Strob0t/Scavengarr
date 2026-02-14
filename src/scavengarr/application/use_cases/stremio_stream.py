@@ -422,6 +422,7 @@ class StremioStreamUseCase:
 
         t0 = time.perf_counter_ns()
         success = False
+        results: list[SearchResult] = []
         try:
             if (
                 hasattr(plugin, "search")
@@ -447,6 +448,9 @@ class StremioStreamUseCase:
         except Exception:
             log.warning("stremio_plugin_search_error", plugin=name, exc_info=True)
             results = []
+        except BaseException:
+            log.warning("stremio_plugin_search_cancelled", plugin=name)
+            raise
         finally:
             duration_ns = time.perf_counter_ns() - t0
             if self._metrics is not None:
