@@ -36,6 +36,9 @@ _DOMAINS = [
 _NAV_TIMEOUT = 30_000
 _ANTIBOT_TIMEOUT = 15_000  # ms to wait for anti-bot JS to finish
 
+# Regex to extract SxxExx from release names.
+_RELEASE_EPISODE_RE = re.compile(r"[Ss](\d{1,2})\s*[Ee](\d{1,4})")
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -93,6 +96,26 @@ async (url) => {
     return {html: await resp.text()};
 }
 """
+
+
+def _find_matching_release(
+    releases: list[dict[str, str]],
+    season: int | None,
+    episode: int | None,
+) -> dict[str, str] | None:
+    """Find the release whose name matches the requested season/episode."""
+    for release in releases:
+        m = _RELEASE_EPISODE_RE.search(release["name"])
+        if not m:
+            continue
+        r_season = int(m.group(1))
+        r_episode = int(m.group(2))
+        if season is not None and r_season != season:
+            continue
+        if episode is not None and r_episode != episode:
+            continue
+        return release
+    return None
 
 
 class _SearchResultParser(HTMLParser):
@@ -470,7 +493,12 @@ class StreamworldPlugin(PlaywrightPluginBase):
         )
         return parser.results
 
-    async def _scrape_detail(self, result: dict[str, str]) -> SearchResult | None:
+    async def _scrape_detail(
+        self,
+        result: dict[str, str],
+        season: int | None = None,
+        episode: int | None = None,
+    ) -> SearchResult | None:
         """Scrape a film/series detail page for stream links."""
         detail_url = result["url"]
         html = await self._fetch_html(detail_url)
@@ -484,9 +512,22 @@ class StreamworldPlugin(PlaywrightPluginBase):
             self._log.debug("streamworld_no_releases", url=detail_url)
             return None
 
-        # Use the first release's streams page for download links
-        first_release = parser.releases[0]
-        streams_url = first_release["streams_url"]
+        # When season/episode requested, find the matching release
+        target_release = None
+        if season is not None or episode is not None:
+            target_release = _find_matching_release(parser.releases, season, episode)
+            if target_release is None:
+                self._log.debug(
+                    "streamworld_no_matching_release",
+                    url=detail_url,
+                    season=season,
+                    episode=episode,
+                    releases=[r["name"] for r in parser.releases[:5]],
+                )
+                # Fall through to first release; central filter handles later
+
+        selected_release = target_release or parser.releases[0]
+        streams_url = selected_release["streams_url"]
 
         # Fetch the streams sub-page to get individual hoster links
         download_links = await self._scrape_streams_page(streams_url)
@@ -510,7 +551,7 @@ class StreamworldPlugin(PlaywrightPluginBase):
             download_links=download_links,
             source_url=detail_url,
             category=category,
-            release_name=first_release["name"],
+            release_name=selected_release["name"],
             description=f"{genres} ({year})" if genres and year else genres or year,
             metadata={
                 "year": year,
@@ -569,7 +610,7 @@ class StreamworldPlugin(PlaywrightPluginBase):
 
         async def _bounded_scrape(r: dict[str, str]) -> SearchResult | None:
             async with sem:
-                return await self._scrape_detail(r)
+                return await self._scrape_detail(r, season=season, episode=episode)
 
         results = await asyncio.gather(
             *[_bounded_scrape(r) for r in all_results],

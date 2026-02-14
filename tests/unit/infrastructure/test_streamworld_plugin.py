@@ -27,6 +27,7 @@ _mod = _load_module()
 _StreamworldPlugin = _mod.StreamworldPlugin
 _SearchResultParser = _mod._SearchResultParser
 _DetailPageParser = _mod._DetailPageParser
+_find_matching_release = _mod._find_matching_release
 
 
 def _make_plugin() -> object:
@@ -224,6 +225,62 @@ _SERIE_STREAMS_HTML = """\
               <strong>voe.sx</strong></td>
             <td></td>
             <td><a href="/serie/55555/stream/88001-voe.html">
+              <span>1</span></a></td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</div>
+</body></html>
+"""
+
+_SERIE_MULTI_EPISODE_DETAIL_HTML = """\
+<html><body>
+<div id="content">
+  <h1>Breaking Bad</h1>
+  <a href="https://www.imdb.com/title/tt0903747/">9.5</a>
+  <table>
+    <tr>
+      <th><a href="/serie/500-breaking-bad/streams-10001.html">
+        \u25b6 Breaking.Bad.S05E01.German.DL.1080p.WEB.x264
+      </a></th>
+    </tr>
+    <tr><td>Verfuegbare Streams</td></tr>
+    <tr>
+      <th><a href="/serie/500-breaking-bad/streams-10002.html">
+        \u25b6 Breaking.Bad.S05E02.German.DL.1080p.WEB.x264
+      </a></th>
+    </tr>
+    <tr><td>Verfuegbare Streams</td></tr>
+    <tr>
+      <th><a href="/serie/500-breaking-bad/streams-10003.html">
+        \u25b6 Breaking.Bad.S05E03.German.DL.1080p.WEB.x264
+      </a></th>
+    </tr>
+    <tr><td>Verfuegbare Streams</td></tr>
+  </table>
+</div>
+</body></html>
+"""
+
+_SERIE_E03_STREAMS_HTML = """\
+<html><body>
+<div id="content">
+  <table>
+    <tr>
+      <th><a href="/serie/500-breaking-bad.html">
+        \u25bc Breaking.Bad.S05E03.German.DL.1080p.WEB.x264
+      </a></th>
+    </tr>
+    <tr>
+      <td>
+        <table>
+          <tr><td>Streams</td><td>Mirror</td></tr>
+          <tr>
+            <td><strong>voe.sx</strong></td>
+            <td></td>
+            <td><a href="/serie/10003/stream/77001-voe.html">
               <span>1</span></a></td>
           </tr>
         </table>
@@ -517,3 +574,133 @@ class TestStreamworldPlugin:
         assert first.metadata.get("year") == "1989"
         assert "Action" in first.metadata.get("genres", "")
         assert first.metadata.get("imdb_url") is not None
+
+    @pytest.mark.asyncio
+    async def test_search_with_episode_selects_matching_release(self) -> None:
+        """When season/episode are provided, the matching release is used."""
+        plug = _make_plugin()
+        mock_page = _make_mock_page()
+
+        async def mock_evaluate(js, arg=None):
+            if isinstance(arg, list):
+                # Return a single series result for search
+                return {
+                    "html": """\
+<table>
+  <tr><th></th><th></th><th></th><th></th><th></th><th></th></tr>
+  <tr>
+    <td>Serie</td>
+    <td><span class="otherLittles">
+      <a href="/serie/500-breaking-bad.html">Breaking Bad</a>
+    </span></td>
+    <td></td>
+    <td><span class="otherLittles"><a href="/jahr/2013.html">2013</a></span></td>
+    <td></td>
+    <td></td>
+  </tr>
+</table>"""
+                }
+            url = str(arg) if arg else ""
+            if "/streams-10003" in url:
+                return {"html": _SERIE_E03_STREAMS_HTML}
+            if "/serie/500-breaking-bad.html" in url:
+                return {"html": _SERIE_MULTI_EPISODE_DETAIL_HTML}
+            return {"html": ""}
+
+        mock_page.evaluate = AsyncMock(side_effect=mock_evaluate)
+        plug._page = mock_page
+
+        results = await plug.search("Breaking Bad", season=5, episode=3)
+
+        assert len(results) == 1
+        r = results[0]
+        assert "S05E03" in r.release_name
+        assert r.download_links is not None
+        assert len(r.download_links) >= 1
+
+    @pytest.mark.asyncio
+    async def test_search_with_episode_falls_back_when_no_match(self) -> None:
+        """When no release matches season/episode, falls back to first release."""
+        plug = _make_plugin()
+        mock_page = _make_mock_page()
+
+        async def mock_evaluate(js, arg=None):
+            if isinstance(arg, list):
+                return {
+                    "html": """\
+<table>
+  <tr><th></th><th></th><th></th><th></th><th></th><th></th></tr>
+  <tr>
+    <td>Serie</td>
+    <td><span class="otherLittles">
+      <a href="/serie/500-breaking-bad.html">Breaking Bad</a>
+    </span></td>
+    <td></td>
+    <td><span class="otherLittles"><a href="/jahr/2013.html">2013</a></span></td>
+    <td></td>
+    <td></td>
+  </tr>
+</table>"""
+                }
+            url = str(arg) if arg else ""
+            if "/streams-" in url:
+                return {"html": _SERIE_E03_STREAMS_HTML}
+            if "/serie/500-breaking-bad.html" in url:
+                return {"html": _SERIE_MULTI_EPISODE_DETAIL_HTML}
+            return {"html": ""}
+
+        mock_page.evaluate = AsyncMock(side_effect=mock_evaluate)
+        plug._page = mock_page
+
+        # Request episode 99 which doesn't exist
+        results = await plug.search("Breaking Bad", season=5, episode=99)
+
+        assert len(results) == 1
+        # Falls back to first release (S05E01)
+        assert "S05E01" in results[0].release_name
+
+
+# ---------------------------------------------------------------------------
+# _find_matching_release unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestFindMatchingRelease:
+    """Tests for _find_matching_release helper."""
+
+    _RELEASES = [
+        {"name": "Show.S01E01.720p.WEB.x264", "streams_url": "/s/1001.html"},
+        {"name": "Show.S01E02.720p.WEB.x264", "streams_url": "/s/1002.html"},
+        {"name": "Show.S02E05.1080p.WEB.x264", "streams_url": "/s/2005.html"},
+    ]
+
+    def test_finds_exact_match(self) -> None:
+        result = _find_matching_release(self._RELEASES, season=1, episode=2)
+        assert result is not None
+        assert "S01E02" in result["name"]
+
+    def test_finds_by_season_and_episode(self) -> None:
+        result = _find_matching_release(self._RELEASES, season=2, episode=5)
+        assert result is not None
+        assert "S02E05" in result["name"]
+
+    def test_returns_none_when_no_match(self) -> None:
+        result = _find_matching_release(self._RELEASES, season=3, episode=1)
+        assert result is None
+
+    def test_season_only_returns_first_of_season(self) -> None:
+        result = _find_matching_release(self._RELEASES, season=1, episode=None)
+        assert result is not None
+        assert "S01E01" in result["name"]
+
+    def test_episode_only_matches_any_season(self) -> None:
+        result = _find_matching_release(self._RELEASES, season=None, episode=5)
+        assert result is not None
+        assert "S02E05" in result["name"]
+
+    def test_no_sxxexx_in_name_skips(self) -> None:
+        releases = [
+            {"name": "Movie.2023.720p.BluRay", "streams_url": "/s/999.html"},
+        ]
+        result = _find_matching_release(releases, season=1, episode=1)
+        assert result is None
