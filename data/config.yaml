@@ -1,0 +1,134 @@
+# ----------------------------------------------------------------------
+# Scavengarr Configuration
+# ----------------------------------------------------------------------
+# Precedence (high → low):
+#   1. CLI arguments (--log-level, --config, etc.)
+#   2. Environment variables (SCAVENGARR_*)
+#   3. This YAML file
+#   4. .env file
+#   5. Built-in defaults
+# ----------------------------------------------------------------------
+
+# -- General ----------------------------------------------------------
+app_name: "scavengarr"
+environment: "prod" # dev | test | prod
+tmdb_api_key: "" # env: SCAVENGARR_TMDB_API_KEY
+
+# -- Plugins ----------------------------------------------------------
+plugins:
+  plugin_dir: "./plugins" # env: SCAVENGARR_PLUGIN_DIR
+  overrides: {}
+  # Per-plugin overrides example:
+  # overrides:
+  #   kinoger:
+  #     timeout: 20.0
+  #     max_concurrent: 5
+  #     max_results: 500
+  #     enabled: false
+  #   filmpalast:
+  #     timeout: 30.0
+  #   sto:
+  #     max_concurrent: 2
+
+# -- HTTP / Scraping --------------------------------------------------
+http:
+  timeout_seconds: 30.0 # env: SCAVENGARR_HTTP_TIMEOUT_SECONDS
+  timeout_resolve_seconds: 15.0 # env: SCAVENGARR_HTTP_TIMEOUT_RESOLVE_SECONDS
+  follow_redirects: true # env: SCAVENGARR_HTTP_FOLLOW_REDIRECTS
+  user_agent: "Scavengarr/0.1.0 (+https://github.com/Strob0t/Scavengarr)"
+  rate_limit_rps: 5.0 # env: SCAVENGARR_RATE_LIMIT_REQUESTS_PER_SECOND
+  api_rate_limit_rpm: 120 # env: SCAVENGARR_API_RATE_LIMIT_RPM (0 = off)
+
+# -- Link Validation -------------------------------------------------
+validate_download_links: true
+validation_timeout_seconds: 5.0
+validation_max_concurrent: 20
+
+# -- Playwright -------------------------------------------------------
+playwright:
+  headless: true # env: SCAVENGARR_PLAYWRIGHT_HEADLESS
+  timeout_ms: 30000 # env: SCAVENGARR_PLAYWRIGHT_TIMEOUT_MS
+
+# -- Logging ----------------------------------------------------------
+logging:
+  level: "INFO" # env: SCAVENGARR_LOG_LEVEL (DEBUG|INFO|WARNING|ERROR)
+  format: "json" # env: SCAVENGARR_LOG_FORMAT (json|console, auto if omitted)
+
+# -- Cache ------------------------------------------------------------
+cache:
+  backend: "diskcache" # diskcache | redis
+  dir: "/data/cache" # env: SCAVENGARR_CACHE_DIR
+  ttl_seconds: 3600 # env: SCAVENGARR_CACHE_TTL_SECONDS
+  search_ttl_seconds: 900 # env: CACHE_SEARCH_TTL_SECONDS (0 = off)
+  max_concurrent: 10 # env: CACHE_MAX_CONCURRENT
+  # redis_url: "redis://redis:6379/0"      # env: CACHE_REDIS_URL (only for backend: redis)
+
+# -- Scoring (background plugin probing) ------------------------------
+scoring:
+  enabled: false # env: SCAVENGARR_SCORING_ENABLED
+  health_halflife_days: 2.0
+  search_halflife_weeks: 2.0
+  health_interval_hours: 24.0
+  search_runs_per_week: 2
+  health_timeout_seconds: 5.0
+  search_timeout_seconds: 10.0
+  search_max_items: 20
+  health_concurrency: 5
+  search_concurrency: 3
+  score_ttl_days: 30
+  w_health: 0.4 # env: SCAVENGARR_SCORING_W_HEALTH
+  w_search: 0.6 # env: SCAVENGARR_SCORING_W_SEARCH
+
+# -- Stremio Addon ----------------------------------------------------
+stremio:
+  # Language & ranking
+  preferred_language: "de"
+  language_scores:
+    "de": 1000
+    "de-sub": 500
+    "en-sub": 200
+    "en": 150
+  default_language_score: 100
+  quality_multiplier: 10
+  hoster_scores:
+    "supervideo": 5
+    "voe": 4
+    "filemoon": 3
+    "streamtape": 2
+    "doodstream": 1
+
+  # Concurrency
+  max_concurrent_plugins: 5
+  max_concurrent_plugins_auto: true # auto-tune based on CPU/RAM
+  max_results_per_plugin: 100
+  plugin_timeout_seconds: 30.0
+
+  # Title matching
+  title_match_threshold: 0.7
+  title_year_bonus: 0.2
+  title_year_penalty: 0.3
+  title_sequel_penalty: 0.35
+  title_year_tolerance_movie: 1
+  title_year_tolerance_series: 3
+
+  # Stream link caching
+  stream_link_ttl_seconds: 7200 # 2 hours
+
+  # Link probing at /stream time
+  probe_at_stream_time: true
+  probe_concurrency: 10
+  probe_timeout_seconds: 10.0
+  max_probe_count: 50
+
+  # Stealth probing (Playwright, Cloudflare bypass)
+  probe_stealth_enabled: true
+  probe_stealth_concurrency: 5
+  probe_stealth_timeout_seconds: 15.0
+
+  # Scored plugin selection (requires scoring.enabled: true)
+  scoring_enabled: false
+  stremio_deadline_ms: 2000
+  max_plugins_scored: 5
+  max_items_total: 50
+  max_items_per_plugin: 20
+  exploration_probability: 0.15

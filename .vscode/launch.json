@@ -15,7 +15,9 @@
                 "--log-format",
                 "console",
                 "--log-level",
-                "DEBUG"
+                "DEBUG",
+                "--config",
+                "./data/config.yaml"
             ],
             "console": "integratedTerminal",
             "justMyCode": false,
