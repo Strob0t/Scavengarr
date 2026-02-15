@@ -167,6 +167,12 @@ class PluginRegistry:
             count=len(self._meta_cache),
         )
 
+    def remove(self, name: str) -> None:
+        """Remove a plugin by name (used for disabling via config overrides)."""
+        self._refs = [r for r in self._refs if self._peek_name(r) != name]
+        self._python_cache.pop(name, None)
+        self._meta_cache.pop(name, None)
+
     def load_all(self) -> None:
         """
         Force-load all discovered plugins.

@@ -11,12 +11,15 @@ from scavengarr.application.factories import CrawlJobFactory
 from scavengarr.infrastructure.config import AppConfig
 
 if TYPE_CHECKING:
+    import asyncio
+
     from scavengarr.application.use_cases.stremio_catalog import StremioCatalogUseCase
     from scavengarr.application.use_cases.stremio_stream import StremioStreamUseCase
     from scavengarr.domain.ports import (
         CachePort,
         CrawlJobRepository,
         PluginRegistryPort,
+        PluginScoreStorePort,
         SearchEnginePort,
         StreamLinkRepository,
     )
@@ -24,6 +27,7 @@ if TYPE_CHECKING:
     from scavengarr.infrastructure.hoster_resolvers import HosterResolverRegistry
     from scavengarr.infrastructure.hoster_resolvers.stealth_pool import StealthPool
     from scavengarr.infrastructure.metrics import MetricsCollector
+    from scavengarr.infrastructure.scoring.scheduler import ScoringScheduler
 
 
 class AppState(State):
@@ -61,3 +65,8 @@ class AppState(State):
     tmdb_client: TmdbClientPort | None
     stremio_stream_uc: StremioStreamUseCase | None
     stremio_catalog_uc: StremioCatalogUseCase | None
+
+    # Plugin scoring (optional — requires scoring.enabled=True)
+    plugin_score_store: PluginScoreStorePort | None
+    scoring_scheduler: ScoringScheduler | None
+    _scoring_task: asyncio.Task | None

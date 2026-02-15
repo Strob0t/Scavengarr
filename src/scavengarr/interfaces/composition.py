@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import AsyncIterator, cast
 
 import httpx
@@ -16,6 +17,7 @@ from scavengarr.application.use_cases.stremio_catalog import StremioCatalogUseCa
 from scavengarr.application.use_cases.stremio_stream import StremioStreamUseCase
 from scavengarr.domain.entities.crawljob import Priority
 from scavengarr.infrastructure.cache.cache_factory import create_cache
+from scavengarr.infrastructure.config.schema import AppConfig
 from scavengarr.infrastructure.hoster_resolvers import HosterResolverRegistry
 from scavengarr.infrastructure.hoster_resolvers.alfafile import AlfafileResolver
 from scavengarr.infrastructure.hoster_resolvers.alphaddl import AlphaddlResolver
@@ -48,17 +50,99 @@ from scavengarr.infrastructure.metrics import MetricsCollector
 from scavengarr.infrastructure.persistence.crawljob_cache import (
     CacheCrawlJobRepository,
 )
+from scavengarr.infrastructure.persistence.plugin_score_cache import (
+    CachePluginScoreStore,
+)
 from scavengarr.infrastructure.persistence.stream_link_cache import (
     CacheStreamLinkRepository,
 )
 from scavengarr.infrastructure.plugins import PluginRegistry
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
+from scavengarr.infrastructure.scoring.health_prober import HealthProber
+from scavengarr.infrastructure.scoring.query_pool import QueryPoolBuilder
+from scavengarr.infrastructure.scoring.scheduler import ScoringScheduler
+from scavengarr.infrastructure.scoring.search_prober import MiniSearchProber
 from scavengarr.infrastructure.tmdb.client import HttpxTmdbClient
 from scavengarr.infrastructure.tmdb.imdb_fallback import ImdbFallbackClient
 from scavengarr.infrastructure.torznab.search_engine import HttpxSearchEngine
 from scavengarr.interfaces.app_state import AppState
 
 log = structlog.get_logger(__name__)
+
+
+def _auto_tune_concurrency(config: AppConfig) -> None:
+    """Auto-tune max_concurrent_plugins based on host CPU/RAM capacity."""
+    if not config.stremio.max_concurrent_plugins_auto:
+        return
+
+    cpu_count = os.cpu_count() or 2
+    try:
+        import psutil
+
+        available_ram_gb = psutil.virtual_memory().available / (1024**3)
+        mem_limit = int(available_ram_gb * 2)
+    except ImportError:
+        mem_limit = 8  # conservative default without psutil
+
+    auto_concurrent = max(2, min(cpu_count, mem_limit, 10))
+    config.stremio.max_concurrent_plugins = auto_concurrent
+    log.info(
+        "auto_concurrency",
+        cpu=cpu_count,
+        mem_limit=mem_limit,
+        result=auto_concurrent,
+    )
+
+
+def _apply_plugin_overrides(plugins: PluginRegistry, config: AppConfig) -> None:
+    """Apply per-plugin YAML overrides (timeout, concurrency, enabled)."""
+    for name, override in config.plugins.overrides.items():
+        try:
+            if not override.enabled:
+                plugins.remove(name)
+                log.info("plugin_disabled_by_config", plugin=name)
+                continue
+            plugin = plugins.get(name)
+            if override.timeout is not None:
+                plugin._timeout = override.timeout  # noqa: SLF001
+            if override.max_concurrent is not None:
+                plugin._max_concurrent = override.max_concurrent  # noqa: SLF001
+            if override.max_results is not None:
+                plugin._max_results = override.max_results  # noqa: SLF001
+            log.info("plugin_override_applied", plugin=name, override=override)
+        except Exception:
+            log.warning("plugin_override_unknown", plugin=name)
+
+
+def _wire_scoring(state: AppState, config: AppConfig) -> None:
+    """Wire scoring components when scoring is enabled."""
+    state.plugin_score_store = CachePluginScoreStore(
+        cache=state.cache,
+        ttl_days=config.scoring.score_ttl_days,
+    )
+    health_prober = HealthProber(
+        http_client=state.http_client,
+        timeout=config.scoring.health_timeout_seconds,
+    )
+    search_prober = MiniSearchProber(
+        plugins=state.plugins,
+        http_client=state.http_client,
+    )
+    query_pool = QueryPoolBuilder(
+        api_key=config.tmdb_api_key or "",
+        http_client=state.http_client,
+        cache=state.cache,
+    )
+    state.scoring_scheduler = ScoringScheduler(
+        health_prober=health_prober,
+        search_prober=search_prober,
+        query_pool=query_pool,
+        score_store=state.plugin_score_store,
+        plugins=state.plugins,
+        config=config.scoring,
+    )
+    state._scoring_task = asyncio.create_task(state.scoring_scheduler.run_forever())
+    log.info("scoring_scheduler_started")
 
 
 @asynccontextmanager
@@ -80,24 +164,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     state.metrics = MetricsCollector()
 
     # 0b) Auto-tune max_concurrent_plugins based on host capacity
-    if config.stremio.max_concurrent_plugins_auto:
-        cpu_count = os.cpu_count() or 2
-        try:
-            import psutil
-
-            available_ram_gb = psutil.virtual_memory().available / (1024**3)
-            mem_limit = int(available_ram_gb * 2)
-        except ImportError:
-            mem_limit = 8  # conservative default without psutil
-
-        auto_concurrent = max(2, min(cpu_count, mem_limit, 10))
-        config.stremio.max_concurrent_plugins = auto_concurrent
-        log.info(
-            "auto_concurrency",
-            cpu=cpu_count,
-            mem_limit=mem_limit,
-            result=auto_concurrent,
-        )
+    _auto_tune_concurrency(config)
 
     # 1) Cache (must be first - other components depend on it)
     cache = create_cache(
@@ -131,6 +198,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     state.plugins = PluginRegistry(plugin_dir=config.plugin_dir)
     state.plugins.discover()
     log.info("plugins_discovered", count=state.plugins.discovered_count)
+
+    # 3b) Apply per-plugin overrides from config
+    _apply_plugin_overrides(state.plugins, config)
 
     # 4) Search engine
     state.search_engine = HttpxSearchEngine(
@@ -229,7 +299,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         ttl_seconds=config.stremio.stream_link_ttl_seconds,
     )
 
-    # 10) Stealth pool (optional — for Cloudflare bypass probing)
+    # 10) Plugin scoring (optional — background health + search probes)
+    state.plugin_score_store = None
+    state.scoring_scheduler = None
+    state._scoring_task = None
+
+    if config.scoring.enabled:
+        _wire_scoring(state, config)
+
+    # 11) Stealth pool (optional — for Cloudflare bypass probing)
     if config.stremio.probe_stealth_enabled:
         state.stealth_pool = StealthPool(
             headless=config.playwright_headless,
@@ -239,7 +317,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     else:
         state.stealth_pool = None
 
-    # 11) Stremio use cases (always initialized — fallback handles missing key)
+    # 12) Stremio use cases (always initialized — fallback handles missing key)
     probe_fn = functools.partial(
         probe_urls_stealth,
         state.http_client,
@@ -266,6 +344,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        if state._scoring_task is not None:
+            state._scoring_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await state._scoring_task
+            log.info("scoring_scheduler_stopped")
+
         if state.stealth_pool is not None:
             await state.stealth_pool.cleanup()
             log.info("stealth_pool_cleaned_up")
