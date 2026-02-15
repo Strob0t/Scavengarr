@@ -39,12 +39,14 @@ def create_app(config: AppConfig) -> FastAPI:
         )
 
     from scavengarr.interfaces.api.download.router import router as download_router
+    from scavengarr.interfaces.api.stats import router as stats_router
     from scavengarr.interfaces.api.stremio import router as stremio_router
     from scavengarr.interfaces.api.torznab import router as torznab_router
 
     app.include_router(download_router, prefix="/api/v1")
     app.include_router(torznab_router, prefix="/api/v1")
     app.include_router(stremio_router, prefix="/api/v1")
+    app.include_router(stats_router, prefix="/api/v1")
 
     @app.get("/api/v1/healthz")
     async def healthz() -> dict[str, str | int | list[str]]:
