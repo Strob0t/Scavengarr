@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime
 
 import structlog
 
 from scavengarr.domain.entities.scoring import (
-    AgeBucket,
     EwmaState,
     PluginScoreSnapshot,
 )

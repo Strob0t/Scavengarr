@@ -36,9 +36,7 @@ def _make_snapshot(
 
 
 class TestGetSnapshot:
-    async def test_returns_snapshot_when_cached(
-        self, mock_cache: AsyncMock
-    ) -> None:
+    async def test_returns_snapshot_when_cached(self, mock_cache: AsyncMock) -> None:
         snap = _make_snapshot()
         mock_cache.get = AsyncMock(return_value=_serialize_snapshot(snap))
         store = CachePluginScoreStore(cache=mock_cache)
@@ -53,18 +51,14 @@ class TestGetSnapshot:
         assert result.health_score.value == pytest.approx(0.8)
         assert result.search_score.n_samples == 5
 
-    async def test_returns_none_when_missing(
-        self, mock_cache: AsyncMock
-    ) -> None:
+    async def test_returns_none_when_missing(self, mock_cache: AsyncMock) -> None:
         mock_cache.get = AsyncMock(return_value=None)
         store = CachePluginScoreStore(cache=mock_cache)
 
         result = await store.get_snapshot("sto", 5000, "current")
         assert result is None
 
-    async def test_returns_none_on_corrupt_data(
-        self, mock_cache: AsyncMock
-    ) -> None:
+    async def test_returns_none_on_corrupt_data(self, mock_cache: AsyncMock) -> None:
         mock_cache.get = AsyncMock(return_value="not-valid-json{{{")
         store = CachePluginScoreStore(cache=mock_cache)
 
@@ -80,9 +74,7 @@ class TestGetSnapshot:
 
 
 class TestPutSnapshot:
-    async def test_stores_serialized_json(
-        self, mock_cache: AsyncMock
-    ) -> None:
+    async def test_stores_serialized_json(self, mock_cache: AsyncMock) -> None:
         mock_cache.get = AsyncMock(return_value=None)
         snap = _make_snapshot()
         store = CachePluginScoreStore(cache=mock_cache)
@@ -132,9 +124,7 @@ class TestPutSnapshot:
         assert key == "score:_index"
         assert ["sto", 5000, "current"] in value
 
-    async def test_does_not_duplicate_index_entry(
-        self, mock_cache: AsyncMock
-    ) -> None:
+    async def test_does_not_duplicate_index_entry(self, mock_cache: AsyncMock) -> None:
         existing_index = json.dumps([["sto", 5000, "current"]])
         # _load_index calls cache.get(_INDEX_KEY) — return existing index.
         mock_cache.get = AsyncMock(return_value=existing_index)
@@ -148,15 +138,15 @@ class TestPutSnapshot:
 
 
 class TestListSnapshots:
-    async def test_returns_all_snapshots(
-        self, mock_cache: AsyncMock
-    ) -> None:
+    async def test_returns_all_snapshots(self, mock_cache: AsyncMock) -> None:
         snap_a = _make_snapshot(plugin="sto")
         snap_b = _make_snapshot(plugin="kinoger", category=2000)
-        index = json.dumps([
-            ["sto", 5000, "current"],
-            ["kinoger", 2000, "current"],
-        ])
+        index = json.dumps(
+            [
+                ["sto", 5000, "current"],
+                ["kinoger", 2000, "current"],
+            ]
+        )
         mock_cache.get = AsyncMock(
             side_effect=[
                 index,
@@ -173,10 +163,12 @@ class TestListSnapshots:
 
     async def test_filters_by_plugin(self, mock_cache: AsyncMock) -> None:
         snap_a = _make_snapshot(plugin="sto")
-        index = json.dumps([
-            ["sto", 5000, "current"],
-            ["kinoger", 2000, "current"],
-        ])
+        index = json.dumps(
+            [
+                ["sto", 5000, "current"],
+                ["kinoger", 2000, "current"],
+            ]
+        )
         mock_cache.get = AsyncMock(
             side_effect=[
                 index,
@@ -189,18 +181,14 @@ class TestListSnapshots:
         assert len(results) == 1
         assert results[0].plugin == "sto"
 
-    async def test_returns_empty_when_no_index(
-        self, mock_cache: AsyncMock
-    ) -> None:
+    async def test_returns_empty_when_no_index(self, mock_cache: AsyncMock) -> None:
         mock_cache.get = AsyncMock(return_value=None)
         store = CachePluginScoreStore(cache=mock_cache)
 
         results = await store.list_snapshots()
         assert results == []
 
-    async def test_skips_expired_snapshots(
-        self, mock_cache: AsyncMock
-    ) -> None:
+    async def test_skips_expired_snapshots(self, mock_cache: AsyncMock) -> None:
         index = json.dumps([["sto", 5000, "current"]])
         # Index exists but snapshot has expired (returns None).
         mock_cache.get = AsyncMock(side_effect=[index, None])
@@ -211,9 +199,7 @@ class TestListSnapshots:
 
 
 class TestLastRun:
-    async def test_set_and_get_last_run(
-        self, mock_cache: AsyncMock
-    ) -> None:
+    async def test_set_and_get_last_run(self, mock_cache: AsyncMock) -> None:
         store = CachePluginScoreStore(cache=mock_cache)
         await store.set_last_run("health", "sto", _NOW)
 
@@ -222,9 +208,7 @@ class TestLastRun:
         assert call[0][0] == "lastrun:health:sto"
         assert call[0][1] == _NOW.isoformat()
 
-    async def test_get_last_run_returns_datetime(
-        self, mock_cache: AsyncMock
-    ) -> None:
+    async def test_get_last_run_returns_datetime(self, mock_cache: AsyncMock) -> None:
         mock_cache.get = AsyncMock(return_value=_NOW.isoformat())
         store = CachePluginScoreStore(cache=mock_cache)
 
@@ -258,9 +242,7 @@ class TestLastRun:
         call = mock_cache.set.call_args
         assert call[0][0] == "lastrun:search:sto:5000:y1_2"
 
-    async def test_key_without_category_and_bucket(
-        self, mock_cache: AsyncMock
-    ) -> None:
+    async def test_key_without_category_and_bucket(self, mock_cache: AsyncMock) -> None:
         store = CachePluginScoreStore(cache=mock_cache)
         await store.set_last_run("health", "kinoger", _NOW)
 
