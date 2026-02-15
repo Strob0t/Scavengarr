@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import math
 from datetime import datetime, timezone
-from typing import Literal
 
 from scavengarr.domain.entities.scoring import EwmaState, ProbeResult
 
@@ -156,5 +155,7 @@ def update_snapshot_scores(
     total_samples = health.n_samples + search.n_samples
 
     conf = compute_confidence(total_samples, age_seconds)
-    score = compute_final_score(health, search, conf, w_health=w_health, w_search=w_search)
+    score = compute_final_score(
+        health, search, conf, w_health=w_health, w_search=w_search
+    )
     return score, conf
