@@ -2,7 +2,7 @@
 # Multi-stage build: install deps → install Playwright → slim runtime
 #
 # Build:  docker build -f Dockerfile.prod -t scavengarr .
-# Run:    docker run -p 7979:7979 -v ./plugins:/app/plugins -v ./data:/data scavengarr
+# Run:    docker run -p 7979:7979 -v ./plugins:/app/plugins -v ./data:/app/config scavengarr
 
 # ── Stage 1: Install Python deps ─────────────────────────────────────────────
 FROM python:3.12-slim AS builder
@@ -57,9 +57,9 @@ COPY --from=playwright /app/src /app/src
 COPY --from=playwright /root/.cache/ms-playwright /home/scavengarr/.cache/ms-playwright
 
 # Default config, plugin and cache directories
-COPY data/config.yaml /data/config.yaml
+COPY data/config.yaml /app/config/config.yaml
 RUN mkdir -p /app/plugins /app/cache && \
-    chown -R scavengarr:scavengarr /app /home/scavengarr /data
+    chown -R scavengarr:scavengarr /app /home/scavengarr
 
 USER scavengarr
 
@@ -67,7 +67,7 @@ USER scavengarr
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     SCAVENGARR_ENVIRONMENT=prod \
-    SCAVENGARR_CONFIG=/data/config.yaml \
+    SCAVENGARR_CONFIG=/app/config/config.yaml \
     SCAVENGARR_LOG_LEVEL=INFO \
     SCAVENGARR_LOG_FORMAT=json \
     SCAVENGARR_PLUGIN_DIR=/app/plugins \
