@@ -12,7 +12,15 @@ from dotenv import load_dotenv
 from .defaults import DEFAULT_CONFIG
 from .schema import AppConfig, EnvOverrides
 
-_SECTION_KEYS: set[str] = {"plugins", "http", "playwright", "logging", "cache"}
+_SECTION_KEYS: set[str] = {
+    "plugins",
+    "http",
+    "playwright",
+    "logging",
+    "cache",
+    "stremio",
+    "scoring",
+}
 
 
 def _deep_merge(base: dict[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
@@ -49,16 +57,27 @@ def _normalize_layer(data: Mapping[str, Any]) -> dict[str, Any]:
         if section in data and isinstance(data[section], Mapping):
             out[section] = dict(data[section])
 
-    if "app_name" in data:
-        out["app_name"] = data["app_name"]
-    if "environment" in data:
-        out["environment"] = data["environment"]
+    # Pass through known top-level scalar keys.
+    _TOP_LEVEL_KEYS = {
+        "app_name",
+        "environment",
+        "tmdb_api_key",
+        "validate_download_links",
+        "validation_timeout_seconds",
+        "validation_max_concurrent",
+    }
+    for key in _TOP_LEVEL_KEYS:
+        if key in data:
+            out[key] = data[key]
 
     flat_map: dict[str, tuple[str, str]] = {
         "plugin_dir": ("plugins", "plugin_dir"),
         "http_timeout_seconds": ("http", "timeout_seconds"),
+        "http_timeout_resolve_seconds": ("http", "timeout_resolve_seconds"),
         "http_follow_redirects": ("http", "follow_redirects"),
         "http_user_agent": ("http", "user_agent"),
+        "rate_limit_requests_per_second": ("http", "rate_limit_rps"),
+        "api_rate_limit_rpm": ("http", "api_rate_limit_rpm"),
         "playwright_headless": ("playwright", "headless"),
         "playwright_timeout_ms": ("playwright", "timeout_ms"),
         "log_level": ("logging", "level"),

@@ -99,11 +99,7 @@ class MiniSearchProber:
         items_used = min(items_found, max_items)
 
         # HEAD-check a sample of result links for hoster reachability.
-        links = [
-            r.download_link
-            for r in results[:max_items]
-            if r.download_link
-        ]
+        links = [r.download_link for r in results[:max_items] if r.download_link]
         hoster_checked, hoster_reachable = await self._check_hosters(
             links[: self._hoster_check_count]
         )
@@ -119,9 +115,7 @@ class MiniSearchProber:
             hoster_reachable=hoster_reachable,
         )
 
-    async def _check_hosters(
-        self, links: list[str]
-    ) -> tuple[int, int]:
+    async def _check_hosters(self, links: list[str]) -> tuple[int, int]:
         """HEAD-check a small sample of links.
 
         Returns:

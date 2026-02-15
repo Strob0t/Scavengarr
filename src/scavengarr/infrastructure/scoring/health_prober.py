@@ -110,8 +110,7 @@ class HealthProber:
                 )
 
         tasks = [
-            asyncio.create_task(_probe_one(name, url))
-            for name, url in plugins.items()
+            asyncio.create_task(_probe_one(name, url)) for name, url in plugins.items()
         ]
         await asyncio.gather(*tasks)
         return results

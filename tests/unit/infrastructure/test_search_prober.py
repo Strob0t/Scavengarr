@@ -5,7 +5,6 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
-import pytest
 import respx
 
 from scavengarr.domain.plugins.base import SearchResult
@@ -49,9 +48,7 @@ class TestProbe:
             respx.head(f"https://hoster.com/file/{i}").respond(200)
 
         async with httpx.AsyncClient() as client:
-            prober = MiniSearchProber(
-                plugins=registry, http_client=client
-            )
+            prober = MiniSearchProber(plugins=registry, http_client=client)
             probe = await prober.probe("sto", "Iron Man", 2000)
 
         assert probe.ok is True
@@ -65,9 +62,7 @@ class TestProbe:
     async def test_no_results(self) -> None:
         registry = _mock_registry(results=[])
         async with httpx.AsyncClient() as client:
-            prober = MiniSearchProber(
-                plugins=registry, http_client=client
-            )
+            prober = MiniSearchProber(plugins=registry, http_client=client)
             probe = await prober.probe("sto", "Nonexistent", 2000)
 
         assert probe.ok is True
@@ -79,9 +74,7 @@ class TestProbe:
         registry = MagicMock()
         registry.get.side_effect = KeyError("unknown")
         async with httpx.AsyncClient() as client:
-            prober = MiniSearchProber(
-                plugins=registry, http_client=client
-            )
+            prober = MiniSearchProber(plugins=registry, http_client=client)
             probe = await prober.probe("unknown", "query", 2000)
 
         assert probe.ok is False
@@ -89,13 +82,9 @@ class TestProbe:
 
     @respx.mock
     async def test_search_error(self) -> None:
-        registry = _mock_registry(
-            side_effect=RuntimeError("boom")
-        )
+        registry = _mock_registry(side_effect=RuntimeError("boom"))
         async with httpx.AsyncClient() as client:
-            prober = MiniSearchProber(
-                plugins=registry, http_client=client
-            )
+            prober = MiniSearchProber(plugins=registry, http_client=client)
             probe = await prober.probe("sto", "query", 2000)
 
         assert probe.ok is False
@@ -109,12 +98,8 @@ class TestProbe:
             respx.head(f"https://hoster.com/file/{i}").respond(200)
 
         async with httpx.AsyncClient() as client:
-            prober = MiniSearchProber(
-                plugins=registry, http_client=client
-            )
-            probe = await prober.probe(
-                "sto", "query", 2000, max_items=20
-            )
+            prober = MiniSearchProber(plugins=registry, http_client=client)
+            probe = await prober.probe("sto", "query", 2000, max_items=20)
 
         assert probe.items_found == 30
         assert probe.items_used == 20
@@ -128,9 +113,7 @@ class TestProbe:
         respx.head("https://hoster.com/file/2").respond(200)
 
         async with httpx.AsyncClient() as client:
-            prober = MiniSearchProber(
-                plugins=registry, http_client=client
-            )
+            prober = MiniSearchProber(plugins=registry, http_client=client)
             probe = await prober.probe("sto", "query", 2000)
 
         assert probe.hoster_checked == 3
@@ -147,9 +130,7 @@ class TestProbe:
         respx.head("https://hoster.com/file/2").respond(200)
 
         async with httpx.AsyncClient() as client:
-            prober = MiniSearchProber(
-                plugins=registry, http_client=client
-            )
+            prober = MiniSearchProber(plugins=registry, http_client=client)
             probe = await prober.probe("sto", "query", 2000)
 
         assert probe.hoster_checked == 3
@@ -159,9 +140,7 @@ class TestProbe:
     async def test_started_at_is_set(self) -> None:
         registry = _mock_registry(results=[])
         async with httpx.AsyncClient() as client:
-            prober = MiniSearchProber(
-                plugins=registry, http_client=client
-            )
+            prober = MiniSearchProber(plugins=registry, http_client=client)
             probe = await prober.probe("sto", "query", 2000)
 
         assert probe.started_at is not None

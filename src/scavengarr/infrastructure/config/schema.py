@@ -20,6 +20,97 @@ LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 LogFormat = Literal["json", "console"]
 
 
+class ScoringConfig(BaseModel):
+    """Background plugin scoring and probing configuration."""
+
+    enabled: bool = Field(
+        default=False,
+        description="Enable background plugin scoring and probing.",
+    )
+    health_halflife_days: float = Field(
+        default=2.0,
+        description="EWMA half-life for health probes (days).",
+    )
+    search_halflife_weeks: float = Field(
+        default=2.0,
+        description="EWMA half-life for search probes (weeks).",
+    )
+    health_interval_hours: float = Field(
+        default=24.0,
+        description="Interval between health probe cycles (hours).",
+    )
+    search_runs_per_week: int = Field(
+        default=2,
+        description="Number of search probe runs per week per plugin.",
+    )
+    health_timeout_seconds: float = Field(
+        default=5.0,
+        description="Timeout for health probe requests (seconds).",
+    )
+    search_timeout_seconds: float = Field(
+        default=10.0,
+        description="Timeout for mini-search probe requests (seconds).",
+    )
+    search_max_items: int = Field(
+        default=20,
+        description="Max items per mini-search probe.",
+    )
+    health_concurrency: int = Field(
+        default=5,
+        description="Max parallel health probes.",
+    )
+    search_concurrency: int = Field(
+        default=3,
+        description="Max parallel search probes.",
+    )
+    score_ttl_days: int = Field(
+        default=30,
+        description="TTL for persisted score snapshots (days).",
+    )
+    w_health: float = Field(
+        default=0.4,
+        description="Weight of health score in composite.",
+    )
+    w_search: float = Field(
+        default=0.6,
+        description="Weight of search score in composite.",
+    )
+
+
+class PluginOverride(BaseModel):
+    """Per-plugin configuration overrides."""
+
+    timeout: float | None = Field(
+        default=None,
+        description="Override plugin timeout (seconds).",
+    )
+    max_concurrent: int | None = Field(
+        default=None,
+        description="Override plugin max concurrent requests.",
+    )
+    max_results: int | None = Field(
+        default=None,
+        description="Override plugin max results.",
+    )
+    enabled: bool = Field(
+        default=True,
+        description="Set False to disable this plugin entirely.",
+    )
+
+
+class PluginsConfig(BaseModel):
+    """Plugin system configuration."""
+
+    plugin_dir: Path = Field(
+        default=Path("./plugins"),
+        description="Directory containing Python plugins.",
+    )
+    overrides: dict[str, PluginOverride] = Field(
+        default_factory=dict,
+        description="Per-plugin setting overrides keyed by plugin name.",
+    )
+
+
 def _normalize_path(value: Any) -> Path:
     """
     Normalize a path-like value without causing filesystem side-effects.
@@ -202,6 +293,32 @@ class StremioConfig(BaseModel):
         description="Per-URL Playwright Stealth timeout in seconds.",
     )
 
+    # Scored plugin selection (requires scoring.enabled=True)
+    scoring_enabled: bool = Field(
+        default=False,
+        description="Use scoring to limit plugin selection per request.",
+    )
+    stremio_deadline_ms: int = Field(
+        default=2000,
+        description="Overall deadline for stream search (ms).",
+    )
+    max_plugins_scored: int = Field(
+        default=5,
+        description="Top-N plugins when scoring is active.",
+    )
+    max_items_total: int = Field(
+        default=50,
+        description="Global result cap across all plugins.",
+    )
+    max_items_per_plugin: int = Field(
+        default=20,
+        description="Per-plugin result cap in scored mode.",
+    )
+    exploration_probability: float = Field(
+        default=0.15,
+        description="Chance to include a random mid-score plugin.",
+    )
+
 
 class AppConfig(BaseModel):
     """
@@ -220,7 +337,8 @@ class AppConfig(BaseModel):
         description="Runtime environment (affects defaults like log format).",
     )
 
-    # Plugins (YAML section: plugins.plugin_dir)
+    # Plugins (YAML section: plugins)
+    plugins: PluginsConfig = Field(default_factory=PluginsConfig)
     plugin_dir: Path = Field(
         default=Path("./plugins"),
         validation_alias=AliasChoices(
@@ -229,6 +347,9 @@ class AppConfig(BaseModel):
         ),
         description="Directory containing Python plugins.",
     )
+
+    # Scoring (YAML section: scoring)
+    scoring: ScoringConfig = Field(default_factory=ScoringConfig)
 
     # HTTP engine (YAML section: http.*)
     http_timeout_seconds: float = Field(
@@ -443,6 +564,11 @@ class EnvOverrides(BaseSettings):
 
     tmdb_api_key: str | None = None
 
+    # Scoring env overrides (flat)
+    scoring_enabled: bool | None = None
+    scoring_w_health: float | None = None
+    scoring_w_search: float | None = None
+
     @field_validator("plugin_dir", "cache_dir", mode="before")
     @classmethod
     def _validate_paths(cls, v: Any) -> Any:
@@ -455,5 +581,13 @@ class EnvOverrides(BaseSettings):
         Return only values that were actually provided (non-None), for merging.
         """
         data = self.model_dump(exclude_none=True)
-        # Ensure Paths are Path objects in update dict (caller can stringify if needed)
+        # Map flat scoring env vars into the scoring section.
+        scoring: dict[str, Any] = {}
+        for key in ("scoring_enabled", "scoring_w_health", "scoring_w_search"):
+            if key in data:
+                section_key = key.removeprefix("scoring_")
+                scoring[section_key] = data.pop(key)
+        if scoring:
+            data.setdefault("scoring", {})
+            data["scoring"].update(scoring)
         return data
