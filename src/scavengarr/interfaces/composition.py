@@ -336,6 +336,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         probe_fn=probe_fn,
         resolve_fn=state.hoster_resolver_registry.resolve,
         metrics=state.metrics,
+        score_store=state.plugin_score_store,
     )
     state.stremio_catalog_uc = StremioCatalogUseCase(tmdb=state.tmdb_client)
 
