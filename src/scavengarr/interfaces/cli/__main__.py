@@ -85,12 +85,19 @@ def start(argv: Iterable[str] | None = None) -> None:
     host = args.host or os.getenv("HOST", "0.0.0.0")
     port = int(args.port or os.getenv("PORT", "7979"))
 
+    log = structlog.get_logger(__name__)
     config_env = os.getenv("SCAVENGARR_CONFIG")
     if args.config:
         config_path: Path | None = Path(args.config)
     elif config_env and Path(config_env).exists():
         config_path = Path(config_env)
     else:
+        if config_env:
+            log.warning(
+                "config_file_not_found",
+                path=config_env,
+                hint="SCAVENGARR_CONFIG is set but file does not exist, using defaults",
+            )
         config_path = None
     dotenv_path = Path(args.dotenv) if args.dotenv else None
 
