@@ -13,7 +13,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "http": {
         "timeout_seconds": 30.0,
         "follow_redirects": True,
-        "user_agent": "Scavengarr/0.1.0 (+https://github.com/Strob0t/Scavengarr)",
+        "user_agent": "Scavengarr/0.1.0",
     },
     "playwright": {
         "headless": True,
@@ -29,7 +29,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "ttl_seconds": 3600,
     },
     "scoring": {
-        "enabled": False,
+        "enabled": True,
         "health_halflife_days": 2.0,
         "search_halflife_weeks": 2.0,
         "health_interval_hours": 24.0,
