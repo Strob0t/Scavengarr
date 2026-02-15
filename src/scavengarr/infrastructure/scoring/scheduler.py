@@ -115,18 +115,14 @@ class ScoringScheduler:
             # Update health EWMA for all category/bucket combos.
             for cat in _PROBE_CATEGORIES:
                 for bucket in _AGE_BUCKETS:
-                    snap = await self._store.get_snapshot(
-                        name, cat, bucket
-                    )
+                    snap = await self._store.get_snapshot(name, cat, bucket)
                     if snap is None:
                         snap = PluginScoreSnapshot(
                             plugin=name,
                             category=cat,
                             bucket=bucket,
                         )
-                    new_health = ewma_update(
-                        snap.health_score, obs, alpha, now
-                    )
+                    new_health = ewma_update(snap.health_score, obs, alpha, now)
                     score, conf = update_snapshot_scores(
                         new_health,
                         snap.search_score,
@@ -163,15 +159,11 @@ class ScoringScheduler:
         for name in stream_plugins:
             for cat in _PROBE_CATEGORIES:
                 for bucket in _AGE_BUCKETS:
-                    last = await self._store.get_last_run(
-                        "search", name, cat, bucket
-                    )
+                    last = await self._store.get_last_run("search", name, cat, bucket)
                     if last is not None and (now - last) < search_interval:
                         continue
 
-                    queries = await self._query_pool.get_queries(
-                        cat, bucket, count=1
-                    )
+                    queries = await self._query_pool.get_queries(cat, bucket, count=1)
                     if not queries:
                         continue
 
@@ -192,16 +184,12 @@ class ScoringScheduler:
                         self._config.search_halflife_weeks * 7.0,
                     )
 
-                    snap = await self._store.get_snapshot(
-                        name, cat, bucket
-                    )
+                    snap = await self._store.get_snapshot(name, cat, bucket)
                     if snap is None:
                         snap = PluginScoreSnapshot(
                             plugin=name, category=cat, bucket=bucket
                         )
-                    new_search = ewma_update(
-                        snap.search_score, obs, alpha, now
-                    )
+                    new_search = ewma_update(snap.search_score, obs, alpha, now)
                     score, conf = update_snapshot_scores(
                         snap.health_score,
                         new_search,
@@ -217,9 +205,7 @@ class ScoringScheduler:
                         updated_at=now,
                     )
                     await self._store.put_snapshot(updated)
-                    await self._store.set_last_run(
-                        "search", name, now, cat, bucket
-                    )
+                    await self._store.set_last_run("search", name, now, cat, bucket)
                     probed += 1
 
                     log.debug(

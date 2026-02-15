@@ -11,6 +11,25 @@ Massive expansion of the plugin ecosystem (2 → 40 plugins), Stremio addon inte
 hoster resolver system, plugin base class standardization, search result caching, and
 growth of the test suite from 160 to 3225 tests.
 
+### Plugin Scoring & Probing
+Background plugin scoring system that measures plugin health and search quality via
+EWMA-based probes, then selects only the top-N plugins per Stremio request.
+
+- Add domain entities: `ProbeResult`, `EwmaState`, `PluginScoreSnapshot` with age buckets
+- Add `PluginScoreStorePort` protocol and `CachePluginScoreStore` persistence (JSON via CachePort)
+- Add pure EWMA scoring functions: `alpha_from_halflife`, `ewma_update`, `compute_confidence`,
+  `compute_health_observation`, `compute_search_observation`, `compute_final_score`
+- Add `HealthProber` (HEAD with 405/501 GET fallback) and `MiniSearchProber` (limited search + hoster HEAD checks)
+- Add `QueryPoolBuilder` with dynamic TMDB-based query generation (trending + discover endpoints, weekly rotation, German locale, bundled fallback lists)
+- Add `ScoringScheduler` background task (health probes daily, search probes 2x/week per plugin/category/bucket)
+- Add `ScoringConfig` and extend `StremioConfig` with scoring budget parameters
+- Add per-plugin YAML overrides (`PluginOverride` model: timeout, max_concurrent, max_results, enabled)
+- Fix YAML config loading for `stremio` and `scoring` sections (pre-existing gap in `_SECTION_KEYS`)
+- Wire scoring components in composition root with clean cancellation on shutdown
+- Add scored plugin selection in `StremioStreamUseCase` with cold-start fallback and exploration slot
+- Add `GET /api/v1/stats/plugin-scores` debug endpoint with query filters
+- Add `PluginRegistry.remove()` method for disabling plugins via config overrides
+
 ### Stremio Playback: behaviorHints.proxyHeaders
 Pre-resolve hoster embed URLs at `/stream` time and emit `behaviorHints.proxyHeaders`
 so Stremio's local streaming server sends the correct `Referer` and `User-Agent` headers

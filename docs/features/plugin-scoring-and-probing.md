@@ -22,13 +22,30 @@ Background Probes                    Live Stremio Path
   │     HEAD/GET origin → ok/fail        │
   │     → EwmaState (health)             ├── Load PluginScoreSnapshots
   │                                      ├── Select top-N by final_score
-  └── MiniSearchProber (2×/week)         ├── Search plugins (deadline + early-stop)
-        query per (category, bucket)     ├── Cancel remaining on budget
+  └── MiniSearchProber (2×/week)         ├── Search plugins (bounded concurrency)
+        query per (category, bucket)     ├── Exploration slot (random mid-score)
         → EwmaState (search)             └── Return ranked streams
                 │
                 ▼
          PluginScoreStore (diskcache / Redis)
 ```
+
+### Key Files
+
+| Component | Path |
+|-----------|------|
+| Domain entities | `src/scavengarr/domain/entities/scoring.py` |
+| Score store port | `src/scavengarr/domain/ports/plugin_score_store.py` |
+| EWMA functions | `src/scavengarr/infrastructure/scoring/ewma.py` |
+| Health prober | `src/scavengarr/infrastructure/scoring/health_prober.py` |
+| Search prober | `src/scavengarr/infrastructure/scoring/search_prober.py` |
+| Query pool | `src/scavengarr/infrastructure/scoring/query_pool.py` |
+| Scheduler | `src/scavengarr/infrastructure/scoring/scheduler.py` |
+| Cache store | `src/scavengarr/infrastructure/persistence/plugin_score_cache.py` |
+| Config | `src/scavengarr/infrastructure/config/schema.py` (ScoringConfig) |
+| Composition | `src/scavengarr/interfaces/composition.py` (_wire_scoring) |
+| Use case | `src/scavengarr/application/use_cases/stremio_stream.py` (_select_plugins) |
+| Debug API | `src/scavengarr/interfaces/api/stats/router.py` |
 
 ---
 
@@ -67,6 +84,9 @@ Composite score for a plugin within a (category, bucket) context.
 
 | Field | Type | Description |
 |---|---|---|
+| `plugin` | `str` | Plugin name |
+| `category` | `int` | Torznab category (2000=movies, 5000=TV) |
+| `bucket` | `AgeBucket` | Age bucket ("current", "y1_2", "y5_10") |
 | `health_score` | `EwmaState` | Health probe EWMA |
 | `search_score` | `EwmaState` | Search probe EWMA |
 | `final_score` | `float` | Weighted composite score |
@@ -113,19 +133,23 @@ confidence   = clamp(sample_conf * recency_conf, 0, 1)
 All sub-scores are normalized to 0.0–1.0:
 
 ```
-final_score = wH * health_score + wS * search_score - wC * cost_penalty
+raw = wH * health_score + wS * search_score
+final_score = raw * (0.5 + 0.5 * confidence)
 ```
 
-Optionally discounted by confidence: `final_score *= (0.5 + 0.5 * confidence)`.
+Default weights: `w_health = 0.4`, `w_search = 0.6`.
 
-**Health score** combines:
-- Reachability (binary: ok or not)
-- Latency penalty (inverted speed score)
+**Health observation** (0.0–1.0):
+- `1.0` if ok, `0.0` if not
+- Latency penalty: `max(0, 1 - duration_ms / 5000)`
+- Combined: `0.5 * reachability + 0.5 * speed`
 
-**Search score** combines:
-- Success/timeout rate
-- Latency (clamped `duration_ms`)
-- Result quality: `min(items_found, limit) / limit`, hoster reachability ratio
+**Search observation** (0.0–1.0):
+- Success rate (binary ok/fail)
+- Latency penalty (clamped `duration_ms / 10000`)
+- Result quality: `min(items_found, limit) / limit`
+- Hoster reachability ratio
+- Combined with equal weights (0.25 each)
 
 ---
 
@@ -139,8 +163,8 @@ Lightweight availability check for each plugin's origin domain.
 |---|---|
 | Method | HEAD request; fallback GET with `Range: bytes=0-0` on 405/501 |
 | Target | Plugin base URL origin (scheme + host) |
-| Timeout | 2–5 seconds |
-| Concurrency | Semaphore-bounded to avoid system overload |
+| Timeout | Configurable (default 5s) |
+| Concurrency | Semaphore-bounded (default 5) |
 | Output | `ok`, `http_status`, `duration_ms`, `error_kind` |
 
 ### MiniSearchProber (2× per week)
@@ -149,12 +173,11 @@ Shallow search probe per (plugin, category, age bucket).
 
 | Aspect | Details |
 |---|---|
-| Pipeline | Existing search path, limited to 1 page |
-| Max items | 10–20 per plugin |
-| Timeout | 5–10 seconds per plugin |
-| Hoster sampling | HEAD-check up to 3–5 result links |
+| Pipeline | Existing plugin search path, limited scope |
+| Max items | 20 per plugin (configurable) |
+| Timeout | 10 seconds per plugin (configurable) |
+| Hoster sampling | HEAD-check up to 3 result links |
 | Output | Full `ProbeResult` with items, latency, hoster reachability |
-| Scope | Only categories the plugin declares; skip unknown |
 
 ---
 
@@ -162,147 +185,232 @@ Shallow search probe per (plugin, category, age bucket).
 
 ### Age Buckets
 
-| Bucket | Description |
-|---|---|
-| `current` | Recent releases (within ~1 year) |
-| `y1_2` | 1–2 years old |
-| `y5_10` | 5–10 years old |
+| Bucket | Description | TMDB Source |
+|---|---|---|
+| `current` | Recent releases | `/trending/{movie\|tv}/week` |
+| `y1_2` | 1–2 years old | `/discover/{movie\|tv}` with date range |
+| `y5_10` | 5–10 years old | `/discover/{movie\|tv}` with date range |
 
-### Query Pools
+### Dynamic Query Pools (TMDB)
 
-Static query lists per (category, bucket), e.g. 20–50 entries each. Rotation is deterministic per calendar week (seed = ISO week number) to ensure reproducibility.
+Query pools are **automatically generated from TMDB** — no static maintenance needed. The `QueryPoolBuilder` uses:
 
-Each probe selects 1–2 queries from the pool. Plugins are only probed for categories they declare; unknown categories use a fallback policy (skip or default set).
+- **`current` bucket**: TMDB trending endpoints (reuses existing caching)
+- **`y1_2` bucket**: TMDB discover with `primary_release_date.gte/lte` for 1–2 years ago
+- **`y5_10` bucket**: TMDB discover with `primary_release_date.gte/lte` for 5–10 years ago
+
+German titles are extracted from TMDB responses. Results are cached for 24h. Rotation is deterministic per ISO week number (seeded shuffle) to ensure reproducibility.
+
+**Fallback**: if TMDB is unavailable, bundled lists of well-known German titles are used (~10 titles per media type).
 
 ---
 
-## Persistence (PluginScoreStore)
+## Persistence (CachePluginScoreStore)
 
 ### Port Interface
 
 ```python
-class PluginScoreStore(Protocol):
+class PluginScoreStorePort(Protocol):
     async def get_snapshot(self, plugin: str, category: int, bucket: str) -> PluginScoreSnapshot | None: ...
     async def put_snapshot(self, snapshot: PluginScoreSnapshot) -> None: ...
     async def list_snapshots(self, plugin: str | None = None) -> list[PluginScoreSnapshot]: ...
-    async def get_last_run(self, probe_key: ProbeKey) -> datetime | None: ...
-    async def set_last_run(self, probe_key: ProbeKey, ts: datetime) -> None: ...
+    async def get_last_run(self, probe_type: str, plugin: str, category: int | None = None, bucket: str | None = None) -> datetime | None: ...
+    async def set_last_run(self, probe_type: str, plugin: str, ts: datetime, category: int | None = None, bucket: str | None = None) -> None: ...
 ```
 
 ### Key Schema
 
 | Key Pattern | Purpose |
 |---|---|
-| `score:{plugin}:{category}:{bucket}` | Score snapshot |
-| `lastrun:health:{plugin}` | Last health probe timestamp |
-| `lastrun:search:{plugin}:{category}:{bucket}` | Last search probe timestamp |
-| `rotation:{bucket}:{category}` | Query rotation cursor |
+| `score:{plugin}:{category}:{bucket}` | JSON-serialized PluginScoreSnapshot |
+| `score:_index` | JSON list of all (plugin, category, bucket) triples |
+| `lastrun:{probe_type}:{plugin}` | Last health probe timestamp |
+| `lastrun:{probe_type}:{plugin}:{category}:{bucket}` | Last search probe timestamp |
 
-Default backend: diskcache. Redis supported if already wired.
+Default TTL: 30 days (scores expire if probes stop running).
 
 ---
 
 ## Background Scheduler
 
-An asyncio background task runs during app lifespan with a periodic "due?" check loop:
+An asyncio background task runs during app lifespan with a 5-minute tick loop:
 
 | Probe | Due Condition |
 |---|---|
-| Health | `last_run > 24 hours ago` |
-| Search | 2× per week per (plugin, category, bucket), e.g. Mon/Thu |
+| Health | `last_run is None` or `now - last_run >= health_interval_hours` |
+| Search | Per (plugin, category, bucket): `7 / search_runs_per_week` days since last run |
 
 Safeguards:
-- Concurrency limits (semaphore) per probe type
-- Backoff/cooldown on CAPTCHA or rate-limit responses
-- Clean cancellation on app shutdown (lifespan integration)
+- 10-second initial delay after startup
+- Per-probe-type concurrency limits (semaphore)
+- Error logging with full traceback (no crash on individual probe failure)
+- Clean cancellation on app shutdown via `asyncio.CancelledError`
 
 ---
 
-## Live Integration (Stremio Router)
+## Live Integration (StremioStreamUseCase)
 
-When scoring is enabled, the Stremio stream endpoint applies budget constraints:
+When `stremio.scoring_enabled` is True and a `score_store` is provided, the use case applies scored plugin selection:
 
 | Parameter | Default | Description |
 |---|---|---|
-| `overall_deadline_ms` | 1500–3000 | Maximum wall-clock time for the entire search |
-| `max_plugins` | 3–5 | Top-N plugins selected by `final_score` |
-| `max_items_total` | 50 | Global result cap across all plugins |
-| `max_items_per_plugin` | 20 | Per-plugin result cap |
+| `scoring_enabled` | `false` | Use scores to limit plugin selection |
+| `stremio_deadline_ms` | `2000` | Overall deadline for stream search |
+| `max_plugins_scored` | `5` | Top-N plugins when scoring is active |
+| `max_items_total` | `50` | Global result cap across all plugins |
+| `max_items_per_plugin` | `20` | Per-plugin result cap |
+| `exploration_probability` | `0.15` | Chance to include a mid-score plugin |
 
 Behavior:
-1. Load `PluginScoreSnapshot` for all streaming plugins
-2. Select top-N by `final_score` (with confidence weighting)
-3. Search selected plugins in parallel with per-plugin timeout
-4. **Early-stop** when enough items collected or deadline reached
-5. Cancel remaining plugin tasks
-6. Optional **exploration**: 10–20% chance to include a mid-score plugin
+1. Load `PluginScoreSnapshot` for all streaming plugins (category, "current" bucket)
+2. **Cold-start guard**: if <50% of plugins have `confidence > 0.1`, fall back to all plugins
+3. Select top-N by `final_score` (descending)
+4. **Exploration slot**: with configured probability, add one random mid-score plugin (must have `confidence >= 0.1`)
+5. Search selected plugins in parallel with per-plugin timeout
+6. Apply title matching, sorting, probing, and resolution as normal
+
+---
+
+## Per-Plugin Configuration
+
+Users can override plugin defaults from YAML:
+
+```yaml
+plugins:
+  plugin_dir: ./plugins
+  overrides:
+    kinoger:
+      timeout: 20.0
+      max_concurrent: 5
+      max_results: 500
+      enabled: false
+    filmpalast:
+      timeout: 30.0
+    sto:
+      max_concurrent: 2
+```
+
+| Attribute | YAML key | Plugin attribute | Default |
+|-----------|----------|------------------|---------|
+| Timeout | `timeout` | `_timeout` | 15.0 |
+| Concurrency | `max_concurrent` | `_max_concurrent` | 3 |
+| Max results | `max_results` | `_max_results` | 1000 |
+| Enabled | `enabled` | _(registry removal)_ | true |
+
+Applied after `plugins.discover()` in the composition root. Unknown plugin names are logged as warnings.
 
 ---
 
 ## Debug Endpoint
 
 ```
-GET /api/v1/stats/plugin-scores
+GET /api/v1/stats/plugin-scores?plugin=sto&category=5000&bucket=current
 ```
 
-Returns current scoring state for all plugins:
+Returns JSON with all scoring state:
 
-| Field | Description |
-|---|---|
-| `final_score` | Composite score |
-| `health_score` | Health EWMA value |
-| `search_score` | Search EWMA value |
-| `confidence` | Score trustworthiness |
-| `last_probe_ts` | Last probe timestamp |
-| `last_errors` | Recent error classifications |
+```json
+{
+  "scores": [
+    {
+      "plugin": "sto",
+      "category": 5000,
+      "bucket": "current",
+      "health_score": {"value": 0.85, "n_samples": 12, "last_ts": "..."},
+      "search_score": {"value": 0.72, "n_samples": 8, "last_ts": "..."},
+      "final_score": 0.78,
+      "confidence": 0.65,
+      "updated_at": "..."
+    }
+  ],
+  "count": 1
+}
+```
 
-Supports optional query filters: `?plugin=sto&category=5000&bucket=current`.
+Returns `503` when scoring is not enabled.
 
 ---
 
 ## Configuration
 
-All settings are available via environment variables (pydantic-settings):
+### Scoring section (`scoring:` in YAML)
 
-| Setting | Default | Description |
-|---|---|---|
-| `SCAVENGARR_SCORING_ENABLED` | `false` | Enable/disable the scoring system |
-| `SCAVENGARR_SCORING_HEALTH_HALFLIFE_DAYS` | `2` | Health EWMA half-life |
-| `SCAVENGARR_SCORING_SEARCH_HALFLIFE_WEEKS` | `2` | Search EWMA half-life |
-| `SCAVENGARR_SCORING_HEALTH_INTERVAL_HOURS` | `24` | Hours between health probes |
-| `SCAVENGARR_SCORING_SEARCH_RUNS_PER_WEEK` | `2` | Search probes per week |
-| `SCAVENGARR_STREMIO_DEADLINE_MS` | `2000` | Stremio search deadline |
-| `SCAVENGARR_STREMIO_MAX_PLUGINS` | `5` | Max plugins per Stremio request |
-| `SCAVENGARR_STREMIO_MAX_ITEMS_TOTAL` | `50` | Global result cap |
-| `SCAVENGARR_STREMIO_MAX_ITEMS_PER_PLUGIN` | `20` | Per-plugin result cap |
+| Setting | YAML Key | Env Override | Default | Description |
+|---|---|---|---|---|
+| Enable scoring | `enabled` | `SCAVENGARR_SCORING_ENABLED` | `false` | Enable background probing |
+| Health half-life | `health_halflife_days` | — | `2.0` | Health EWMA half-life (days) |
+| Search half-life | `search_halflife_weeks` | — | `2.0` | Search EWMA half-life (weeks) |
+| Health interval | `health_interval_hours` | — | `24.0` | Hours between health probes |
+| Search frequency | `search_runs_per_week` | — | `2` | Search probes per week |
+| Health timeout | `health_timeout_seconds` | — | `5.0` | Health probe timeout |
+| Search timeout | `search_timeout_seconds` | — | `10.0` | Search probe timeout |
+| Search max items | `search_max_items` | — | `20` | Max items per search probe |
+| Health concurrency | `health_concurrency` | — | `5` | Parallel health probes |
+| Search concurrency | `search_concurrency` | — | `3` | Parallel search probes |
+| Score TTL | `score_ttl_days` | — | `30` | Score expiry (days) |
+| Health weight | `w_health` | `SCAVENGARR_SCORING_W_HEALTH` | `0.4` | Health weight in composite |
+| Search weight | `w_search` | `SCAVENGARR_SCORING_W_SEARCH` | `0.6` | Search weight in composite |
+
+### Stremio budget section (`stremio:` in YAML)
+
+| Setting | YAML Key | Env Override | Default | Description |
+|---|---|---|---|---|
+| Use scores | `scoring_enabled` | `SCAVENGARR_STREMIO_SCORING_ENABLED` | `false` | Enable scored plugin selection |
+| Deadline | `stremio_deadline_ms` | — | `2000` | Overall search deadline (ms) |
+| Max plugins | `max_plugins_scored` | — | `5` | Top-N plugins per request |
+| Max items total | `max_items_total` | — | `50` | Global result cap |
+| Max per plugin | `max_items_per_plugin` | — | `20` | Per-plugin result cap |
+| Exploration | `exploration_probability` | — | `0.15` | Mid-score plugin inclusion chance |
+
+### Example YAML
+
+```yaml
+scoring:
+  enabled: true
+  health_halflife_days: 2.0
+  search_halflife_weeks: 2.0
+  w_health: 0.4
+  w_search: 0.6
+
+stremio:
+  scoring_enabled: true
+  stremio_deadline_ms: 2000
+  max_plugins_scored: 5
+  exploration_probability: 0.15
+
+plugins:
+  overrides:
+    kinoger:
+      timeout: 20.0
+      enabled: false
+```
 
 ---
 
-## Testing Strategy
+## Testing
 
-### Unit Tests (pure logic)
+### Unit Tests
 
-- `alpha_from_halflife()` returns correct values for health (~0.2929) and search (~0.1591)
-- `ewma_update()` increases/decreases correctly, stays clamped
-- Confidence increases with samples, decays with age
-- Score composition produces expected rankings
+| Test File | Tests | Coverage |
+|-----------|-------|----------|
+| `test_ewma.py` | 31 | All pure scoring functions |
+| `test_plugin_score_cache.py` | 19 | Cache persistence + index management |
+| `test_query_pool.py` | 14 | TMDB query generation + fallback |
+| `test_health_prober.py` | 11 | HEAD/GET probing with respx mocks |
+| `test_search_prober.py` | 8 | Plugin search + hoster checks |
+| `test_scoring_scheduler.py` | 14 | Health/search cycles + tick |
 
-### Prober Tests (httpx mocked)
+### Running Tests
 
-- HealthProber: HEAD success, HEAD 405 → GET fallback, timeout → `ok=False`
-- MiniSearchProber: respects timeout and `max_items`, enforces hoster sampling limit
+```bash
+# All scoring tests:
+poetry run pytest tests/unit/infrastructure/test_ewma.py \
+  tests/unit/infrastructure/test_plugin_score_cache.py \
+  tests/unit/infrastructure/test_query_pool.py \
+  tests/unit/infrastructure/test_health_prober.py \
+  tests/unit/infrastructure/test_search_prober.py \
+  tests/unit/infrastructure/test_scoring_scheduler.py -v
 
-### Integration Tests (FastAPI)
-
-- Stremio endpoint returns within deadline when plugins hang
-- Plugin ranking follows `ScoreStore` ordering
-- Early-stop triggers when enough items are collected
-
----
-
-## Open Questions
-
-- How should "hoster reachable" be validated — download-link domain, redirect target, or known hoster list?
-- Should the Stremio endpoint return partial results when the deadline is reached?
-- What are the ideal default deadlines for warm vs. cold requests?
-- How should plugins without declared categories be handled (skip or probe with default set)?
+# Full suite:
+poetry run pytest
+```

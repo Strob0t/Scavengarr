@@ -289,7 +289,7 @@ The system provides a stable download endpoint that delivers a `.crawljob` file 
 - Integration: HTTP router ↔ use case ↔ adapter with HTTP mocking.
 - Optional E2E: real plugin fixtures, but deterministic (no external sites in CI).
 
-### Current test suite (3274 tests)
+### Current test suite (3461 tests)
 
 ```
 tests/
@@ -349,6 +349,12 @@ tests/
       test_uploaded_resolver.py        # Uploaded DDL hoster resolver
       test_vidguard_resolver.py        # VidGuard streaming resolver
       test_vidking_resolver.py         # Vidking streaming resolver
+      test_ewma.py                     # EWMA scoring functions (31 tests)
+      test_plugin_score_cache.py       # Cache persistence + index management (19 tests)
+      test_query_pool.py               # TMDB query generation + fallback (14 tests)
+      test_health_prober.py            # HEAD/GET probing with respx mocks (11 tests)
+      test_search_prober.py            # Plugin search + hoster checks (8 tests)
+      test_scoring_scheduler.py        # Health/search cycles + tick (14 tests)
       test_aniworld_plugin.py          # aniworld plugin tests
       test_boerse_plugin.py            # boerse plugin tests
       test_burningseries_plugin.py     # burningseries plugin tests
@@ -390,7 +396,7 @@ tests/
 
 Important mock patterns:
 - `PluginRegistryPort` is **synchronous** → use `MagicMock` (not `AsyncMock`).
-- `SearchEnginePort`, `CrawlJobRepository`, `CachePort` are **async** → use `AsyncMock`.
+- `SearchEnginePort`, `CrawlJobRepository`, `CachePort`, `PluginScoreStorePort` are **async** → use `AsyncMock`.
 - Hoster resolver tests use `respx` (httpx-native HTTP mocking), not `AsyncMock`/`MagicMock`.
 
 ### TDD loop (mandatory for agents)

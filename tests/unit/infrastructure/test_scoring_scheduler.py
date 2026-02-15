@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
+from unittest.mock import AsyncMock, MagicMock
 
 from scavengarr.domain.entities.scoring import (
     EwmaState,
@@ -43,9 +41,7 @@ def _make_scheduler(
     health_prober = AsyncMock()
     if health_results is None:
         health_results = {
-            name: ProbeResult(
-                started_at=_NOW, duration_ms=100.0, ok=True
-            )
+            name: ProbeResult(started_at=_NOW, duration_ms=100.0, ok=True)
             for name in plugin_names
         }
     health_prober.probe_all = AsyncMock(return_value=health_results)
@@ -71,9 +67,7 @@ def _make_scheduler(
     score_store = AsyncMock()
     score_store.get_snapshot = AsyncMock(return_value=stored_snapshot)
 
-    async def _get_last_run(
-        probe_type, plugin, category=None, bucket=None
-    ):
+    async def _get_last_run(probe_type, plugin, category=None, bucket=None):
         if probe_type == "health":
             return last_health_run
         return last_search_run
@@ -130,15 +124,11 @@ class TestHealthCycle:
 
         # set_last_run called once per plugin.
         calls = scheduler._store.set_last_run.call_args_list
-        health_calls = [
-            c for c in calls if c[0][0] == "health"
-        ]
+        health_calls = [c for c in calls if c[0][0] == "health"]
         assert len(health_calls) == 2
 
     async def test_creates_new_snapshot_if_missing(self) -> None:
-        scheduler = _make_scheduler(
-            last_health_run=None, stored_snapshot=None
-        )
+        scheduler = _make_scheduler(last_health_run=None, stored_snapshot=None)
         await scheduler._run_health_cycle(_NOW)
 
         # Snapshot should be created and stored.
@@ -152,13 +142,9 @@ class TestHealthCycle:
             plugin="sto",
             category=2000,
             bucket="current",
-            health_score=EwmaState(
-                value=0.5, last_ts=_NOW, n_samples=5
-            ),
+            health_score=EwmaState(value=0.5, last_ts=_NOW, n_samples=5),
         )
-        scheduler = _make_scheduler(
-            last_health_run=None, stored_snapshot=existing
-        )
+        scheduler = _make_scheduler(last_health_run=None, stored_snapshot=existing)
         await scheduler._run_health_cycle(_NOW)
 
         call = scheduler._store.put_snapshot.call_args_list[0]
@@ -194,9 +180,7 @@ class TestSearchCycle:
         assert call[0][1] == "Test Film"
 
     async def test_skips_when_no_queries(self) -> None:
-        scheduler = _make_scheduler(
-            last_search_run=None, query_titles=[]
-        )
+        scheduler = _make_scheduler(last_search_run=None, query_titles=[])
         await scheduler._run_search_cycle(_NOW)
 
         scheduler._search.probe.assert_not_awaited()

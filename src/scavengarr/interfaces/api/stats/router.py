@@ -44,23 +44,25 @@ async def plugin_scores(
             continue
         if bucket is not None and snap.bucket != bucket:
             continue
-        results.append({
-            "plugin": snap.plugin,
-            "category": snap.category,
-            "bucket": snap.bucket,
-            "health_score": {
-                "value": round(snap.health_score.value, 4),
-                "n_samples": snap.health_score.n_samples,
-                "last_ts": snap.health_score.last_ts.isoformat(),
-            },
-            "search_score": {
-                "value": round(snap.search_score.value, 4),
-                "n_samples": snap.search_score.n_samples,
-                "last_ts": snap.search_score.last_ts.isoformat(),
-            },
-            "final_score": round(snap.final_score, 4),
-            "confidence": round(snap.confidence, 4),
-            "updated_at": snap.updated_at.isoformat(),
-        })
+        results.append(
+            {
+                "plugin": snap.plugin,
+                "category": snap.category,
+                "bucket": snap.bucket,
+                "health_score": {
+                    "value": round(snap.health_score.value, 4),
+                    "n_samples": snap.health_score.n_samples,
+                    "last_ts": snap.health_score.last_ts.isoformat(),
+                },
+                "search_score": {
+                    "value": round(snap.search_score.value, 4),
+                    "n_samples": snap.search_score.n_samples,
+                    "last_ts": snap.search_score.last_ts.isoformat(),
+                },
+                "final_score": round(snap.final_score, 4),
+                "confidence": round(snap.confidence, 4),
+                "updated_at": snap.updated_at.isoformat(),
+            }
+        )
 
     return JSONResponse(content={"scores": results, "count": len(results)})
