@@ -1,3 +1,9 @@
+from .scoring import (
+    AgeBucket,
+    EwmaState,
+    PluginScoreSnapshot,
+    ProbeResult,
+)
 from .stremio import (
     RankedStream,
     StreamLanguage,
@@ -23,6 +29,10 @@ from .torznab import (
 )
 
 __all__ = [
+    "AgeBucket",
+    "EwmaState",
+    "PluginScoreSnapshot",
+    "ProbeResult",
     "RankedStream",
     "StreamLanguage",
     "StreamQuality",
