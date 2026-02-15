@@ -66,6 +66,7 @@ USER scavengarr
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     SCAVENGARR_ENVIRONMENT=prod \
+    SCAVENGARR_CONFIG=/data/config.yaml \
     SCAVENGARR_LOG_LEVEL=INFO \
     SCAVENGARR_LOG_FORMAT=json \
     SCAVENGARR_PLUGIN_DIR=/app/plugins \

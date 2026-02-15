@@ -85,7 +85,8 @@ def start(argv: Iterable[str] | None = None) -> None:
     host = args.host or os.getenv("HOST", "0.0.0.0")
     port = int(args.port or os.getenv("PORT", "7979"))
 
-    config_path = Path(args.config) if args.config else None
+    config_raw = args.config or os.getenv("SCAVENGARR_CONFIG")
+    config_path = Path(config_raw) if config_raw else None
     dotenv_path = Path(args.dotenv) if args.dotenv else None
 
     cli_overrides: dict[str, Any] = {}
