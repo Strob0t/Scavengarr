@@ -65,7 +65,7 @@ cache:
 
 # -- Scoring (background plugin probing) ------------------------------
 scoring:
-  enabled: false # env: SCAVENGARR_SCORING_ENABLED
+  enabled: true # env: SCAVENGARR_SCORING_ENABLED
   health_halflife_days: 2.0
   search_halflife_weeks: 2.0
   health_interval_hours: 24.0
