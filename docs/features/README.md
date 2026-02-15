@@ -34,6 +34,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Pro
 |---|---|
 | [Stremio Addon](./stremio-addon.md) | Stremio integration with catalog, streams, and hoster resolution |
 | [Hoster Resolvers](./hoster-resolvers.md) | 39 hoster resolvers (streaming + DDL + 15 XFS consolidated) |
+| [Plugin Scoring & Probing](./plugin-scoring-and-probing.md) | EWMA-based plugin ranking via background health and search probes |
 | [Mirror URL Fallback](./mirror-url-fallback.md) | Automatic domain fallback when primary mirrors are unreachable |
 | [Prowlarr Integration](./prowlarr-integration.md) | Step-by-step Prowlarr setup, endpoint mapping, category sync |
 
