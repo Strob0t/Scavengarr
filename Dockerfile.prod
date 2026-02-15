@@ -2,7 +2,7 @@
 # Multi-stage build: install deps → install Playwright → slim runtime
 #
 # Build:  docker build -f Dockerfile.prod -t scavengarr .
-# Run:    docker run -p 7979:7979 -v ./plugins:/app/plugins scavengarr
+# Run:    docker run -p 7979:7979 -v ./plugins:/app/plugins -v ./data:/data scavengarr
 
 # ── Stage 1: Install Python deps ─────────────────────────────────────────────
 FROM python:3.12-slim AS builder
@@ -26,11 +26,11 @@ WORKDIR /app
 # Playwright system dependencies + Chromium
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        libnss3 libnspr4 libdbus-1-3 libatk1.0-0 libatk-bridge2.0-0 \
-        libcups2 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 \
-        libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2 \
-        libatspi2.0-0 libxshmfence1 \
-        wget ca-certificates fonts-liberation && \
+    libnss3 libnspr4 libdbus-1-3 libatk1.0-0 libatk-bridge2.0-0 \
+    libcups2 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 \
+    libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2 \
+    libatspi2.0-0 libxshmfence1 \
+    wget ca-certificates fonts-liberation && \
     /app/.venv/bin/python -m playwright install chromium && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
@@ -40,11 +40,11 @@ FROM python:3.12-slim
 # Runtime deps for Playwright Chromium
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        libnss3 libnspr4 libdbus-1-3 libatk1.0-0 libatk-bridge2.0-0 \
-        libcups2 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 \
-        libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2 \
-        libatspi2.0-0 libxshmfence1 \
-        fonts-liberation curl && \
+    libnss3 libnspr4 libdbus-1-3 libatk1.0-0 libatk-bridge2.0-0 \
+    libcups2 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 \
+    libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2 \
+    libatspi2.0-0 libxshmfence1 \
+    fonts-liberation curl && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Non-root user
@@ -56,9 +56,10 @@ COPY --from=playwright /app/.venv /app/.venv
 COPY --from=playwright /app/src /app/src
 COPY --from=playwright /root/.cache/ms-playwright /home/scavengarr/.cache/ms-playwright
 
-# Default plugin and cache directories
+# Default config, plugin and cache directories
+COPY data/config.yaml /data/config.yaml
 RUN mkdir -p /app/plugins /app/cache && \
-    chown -R scavengarr:scavengarr /app /home/scavengarr
+    chown -R scavengarr:scavengarr /app /home/scavengarr /data
 
 USER scavengarr
 
