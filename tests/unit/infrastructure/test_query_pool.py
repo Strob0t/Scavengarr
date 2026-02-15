@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import httpx
-import pytest
 import respx
 
 from scavengarr.infrastructure.scoring.query_pool import (
-    QueryPoolBuilder,
     _FALLBACK_MOVIES,
     _FALLBACK_TV,
+    QueryPoolBuilder,
     _date_range_y1_2,
     _date_range_y5_10,
 )
@@ -31,22 +30,16 @@ def _make_builder(
 
 
 def _movie_results(titles: list[str]) -> dict:
-    return {
-        "results": [{"title": t, "id": i} for i, t in enumerate(titles)]
-    }
+    return {"results": [{"title": t, "id": i} for i, t in enumerate(titles)]}
 
 
 def _tv_results(titles: list[str]) -> dict:
-    return {
-        "results": [{"name": t, "id": i} for i, t in enumerate(titles)]
-    }
+    return {"results": [{"name": t, "id": i} for i, t in enumerate(titles)]}
 
 
 class TestGetQueries:
     @respx.mock
-    async def test_returns_titles_from_trending(
-        self, mock_cache: AsyncMock
-    ) -> None:
+    async def test_returns_titles_from_trending(self, mock_cache: AsyncMock) -> None:
         mock_cache.get = AsyncMock(return_value=None)
         titles = [f"Film {i}" for i in range(20)]
         respx.get(f"{_TMDB_BASE}/trending/movie/week").respond(
@@ -75,9 +68,7 @@ class TestGetQueries:
             assert t in _FALLBACK_MOVIES
 
     @respx.mock
-    async def test_uses_cached_pool(
-        self, mock_cache: AsyncMock
-    ) -> None:
+    async def test_uses_cached_pool(self, mock_cache: AsyncMock) -> None:
         titles = ["Cached Film 1", "Cached Film 2", "Cached Film 3"]
         mock_cache.get = AsyncMock(return_value=json.dumps(titles))
         builder = _make_builder(mock_cache)
@@ -89,9 +80,7 @@ class TestGetQueries:
             assert t in titles
 
     @respx.mock
-    async def test_tv_category_uses_tv_endpoint(
-        self, mock_cache: AsyncMock
-    ) -> None:
+    async def test_tv_category_uses_tv_endpoint(self, mock_cache: AsyncMock) -> None:
         mock_cache.get = AsyncMock(return_value=None)
         titles = ["Serie A", "Serie B", "Serie C"]
         respx.get(f"{_TMDB_BASE}/trending/tv/week").respond(
@@ -104,9 +93,7 @@ class TestGetQueries:
         assert len(result) == 2
 
     @respx.mock
-    async def test_discover_y1_2_uses_date_range(
-        self, mock_cache: AsyncMock
-    ) -> None:
+    async def test_discover_y1_2_uses_date_range(self, mock_cache: AsyncMock) -> None:
         mock_cache.get = AsyncMock(return_value=None)
         titles = ["Discover Film 1", "Discover Film 2"]
         respx.get(f"{_TMDB_BASE}/discover/movie").respond(
@@ -123,9 +110,7 @@ class TestGetQueries:
         assert b"primary_release_date.lte" in req.url.query
 
     @respx.mock
-    async def test_discover_y5_10_uses_date_range(
-        self, mock_cache: AsyncMock
-    ) -> None:
+    async def test_discover_y5_10_uses_date_range(self, mock_cache: AsyncMock) -> None:
         mock_cache.get = AsyncMock(return_value=None)
         titles = ["Old Film 1", "Old Film 2"]
         respx.get(f"{_TMDB_BASE}/discover/movie").respond(
@@ -161,9 +146,7 @@ class TestGetQueries:
 
         assert result1 == result2
 
-    async def test_tv_fallback_pool(
-        self, mock_cache: AsyncMock
-    ) -> None:
+    async def test_tv_fallback_pool(self, mock_cache: AsyncMock) -> None:
         mock_cache.get = AsyncMock(return_value=None)
         builder = _make_builder(mock_cache)
 

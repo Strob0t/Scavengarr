@@ -6,7 +6,6 @@ Titles are German-localised and rotated deterministically per ISO week.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import random
 from datetime import date, datetime, timezone
@@ -121,9 +120,7 @@ class QueryPoolBuilder:
         rng.shuffle(shuffled)
         return shuffled[:count]
 
-    async def _get_pool(
-        self, category: int, bucket: AgeBucket
-    ) -> list[str]:
+    async def _get_pool(self, category: int, bucket: AgeBucket) -> list[str]:
         """Fetch title pool, with 24h caching."""
         media = self._media_type(category)
         cache_key = f"querypool:{media}:{bucket}"
@@ -137,14 +134,10 @@ class QueryPoolBuilder:
 
         titles = await self._fetch_pool(media, bucket)
         if titles:
-            await self._cache.set(
-                cache_key, json.dumps(titles), ttl=_CACHE_TTL
-            )
+            await self._cache.set(cache_key, json.dumps(titles), ttl=_CACHE_TTL)
         return titles
 
-    async def _fetch_pool(
-        self, media: str, bucket: AgeBucket
-    ) -> list[str]:
+    async def _fetch_pool(self, media: str, bucket: AgeBucket) -> list[str]:
         """Fetch full title pool from TMDB."""
         if bucket == "current":
             return await self._fetch_trending(media)
@@ -163,15 +156,9 @@ class QueryPoolBuilder:
             return []
         return self._extract_titles(data.get("results", []), media)
 
-    async def _fetch_discover(
-        self, media: str, gte: str, lte: str
-    ) -> list[str]:
+    async def _fetch_discover(self, media: str, gte: str, lte: str) -> list[str]:
         """Fetch discover titles from TMDB with date range filter."""
-        date_field = (
-            "primary_release_date"
-            if media == "movie"
-            else "first_air_date"
-        )
+        date_field = "primary_release_date" if media == "movie" else "first_air_date"
         extra = {
             f"{date_field}.gte": gte,
             f"{date_field}.lte": lte,
@@ -195,15 +182,11 @@ class QueryPoolBuilder:
             resp.raise_for_status()
             return resp.json()
         except httpx.HTTPError:
-            log.warning(
-                "query_pool_tmdb_error", path=path, exc_info=True
-            )
+            log.warning("query_pool_tmdb_error", path=path, exc_info=True)
             return None
 
     @staticmethod
-    def _extract_titles(
-        results: list[dict], media: str
-    ) -> list[str]:
+    def _extract_titles(results: list[dict], media: str) -> list[str]:
         """Extract German titles from TMDB result list."""
         titles: list[str] = []
         title_key = "title" if media == "movie" else "name"
