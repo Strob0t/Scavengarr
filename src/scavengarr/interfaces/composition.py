@@ -129,7 +129,6 @@ def _wire_scoring(state: AppState, config: AppConfig) -> None:
         http_client=state.http_client,
     )
     query_pool = QueryPoolBuilder(
-        api_key=config.tmdb_api_key or "",
         http_client=state.http_client,
         cache=state.cache,
     )

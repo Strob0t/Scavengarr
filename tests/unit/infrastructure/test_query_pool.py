@@ -1,8 +1,9 @@
-"""Unit tests for QueryPoolBuilder."""
+"""Unit tests for QueryPoolBuilder (IMDB Suggest based)."""
 
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
 import httpx
@@ -14,36 +15,56 @@ from scavengarr.infrastructure.scoring.query_pool import (
     QueryPoolBuilder,
     _date_range_y1_2,
     _date_range_y5_10,
+    _year_in_range,
 )
 
-_TMDB_BASE = "https://api.themoviedb.org/3"
+_SUGGEST_BASE = "https://v2.sg.media-imdb.com/suggestion"
 
 
-def _make_builder(
-    mock_cache: AsyncMock,
-) -> QueryPoolBuilder:
+def _make_builder(mock_cache: AsyncMock) -> QueryPoolBuilder:
     return QueryPoolBuilder(
-        api_key="test-key",
         http_client=httpx.AsyncClient(),
         cache=mock_cache,
     )
 
 
-def _movie_results(titles: list[str]) -> dict:
-    return {"results": [{"title": t, "id": i} for i, t in enumerate(titles)]}
+def _suggest_response(entries: list[dict]) -> dict:
+    """Build an IMDB Suggest API response."""
+    return {"d": entries}
 
 
-def _tv_results(titles: list[str]) -> dict:
-    return {"results": [{"name": t, "id": i} for i, t in enumerate(titles)]}
+def _movie_entry(title: str, year: int) -> dict:
+    return {
+        "l": title,
+        "y": year,
+        "qid": "movie",
+        "id": f"tt{abs(hash(title)) % 10**7:07d}",
+    }
+
+
+def _tv_entry(title: str, year: int) -> dict:
+    return {
+        "l": title,
+        "y": year,
+        "qid": "tvSeries",
+        "id": f"tt{abs(hash(title)) % 10**7:07d}",
+    }
 
 
 class TestGetQueries:
     @respx.mock
-    async def test_returns_titles_from_trending(self, mock_cache: AsyncMock) -> None:
+    async def test_returns_titles_from_imdb_suggest(
+        self, mock_cache: AsyncMock
+    ) -> None:
         mock_cache.get = AsyncMock(return_value=None)
-        titles = [f"Film {i}" for i in range(20)]
-        respx.get(f"{_TMDB_BASE}/trending/movie/week").respond(
-            200, json=_movie_results(titles)
+        now = datetime.now(timezone.utc)
+
+        # Mock all suggest endpoints to return current-year movies.
+        respx.get(url__startswith=_SUGGEST_BASE).respond(
+            200,
+            json=_suggest_response(
+                [_movie_entry(f"Film {i}", now.year) for i in range(5)]
+            ),
         )
         builder = _make_builder(mock_cache)
 
@@ -54,11 +75,11 @@ class TestGetQueries:
             assert t.startswith("Film")
 
     @respx.mock
-    async def test_returns_fallback_on_tmdb_failure(
+    async def test_returns_fallback_on_imdb_failure(
         self, mock_cache: AsyncMock
     ) -> None:
         mock_cache.get = AsyncMock(return_value=None)
-        respx.get(f"{_TMDB_BASE}/trending/movie/week").respond(500)
+        respx.get(url__startswith=_SUGGEST_BASE).respond(500)
         builder = _make_builder(mock_cache)
 
         result = await builder.get_queries(2000, "current", count=2)
@@ -80,67 +101,92 @@ class TestGetQueries:
             assert t in titles
 
     @respx.mock
-    async def test_tv_category_uses_tv_endpoint(self, mock_cache: AsyncMock) -> None:
+    async def test_tv_category_filters_tv_entries(self, mock_cache: AsyncMock) -> None:
         mock_cache.get = AsyncMock(return_value=None)
-        titles = ["Serie A", "Serie B", "Serie C"]
-        respx.get(f"{_TMDB_BASE}/trending/tv/week").respond(
-            200, json=_tv_results(titles)
+        now = datetime.now(timezone.utc)
+
+        # Return mix of movies and TV — only TV should be collected.
+        respx.get(url__startswith=_SUGGEST_BASE).respond(
+            200,
+            json=_suggest_response(
+                [
+                    _movie_entry("Some Movie", now.year),
+                    _tv_entry("Serie A", now.year),
+                    _tv_entry("Serie B", now.year),
+                ]
+            ),
         )
         builder = _make_builder(mock_cache)
 
         result = await builder.get_queries(5000, "current", count=2)
 
         assert len(result) == 2
+        for t in result:
+            assert t.startswith("Serie")
 
     @respx.mock
-    async def test_discover_y1_2_uses_date_range(self, mock_cache: AsyncMock) -> None:
+    async def test_y1_2_filters_by_year_range(self, mock_cache: AsyncMock) -> None:
         mock_cache.get = AsyncMock(return_value=None)
-        titles = ["Discover Film 1", "Discover Film 2"]
-        respx.get(f"{_TMDB_BASE}/discover/movie").respond(
-            200, json=_movie_results(titles)
+        now = datetime.now(timezone.utc)
+
+        respx.get(url__startswith=_SUGGEST_BASE).respond(
+            200,
+            json=_suggest_response(
+                [
+                    _movie_entry("Too New", now.year),
+                    _movie_entry("In Range", now.year - 1),
+                    _movie_entry("Too Old", now.year - 5),
+                ]
+            ),
         )
         builder = _make_builder(mock_cache)
 
-        result = await builder.get_queries(2000, "y1_2", count=2)
+        result = await builder.get_queries(2000, "y1_2", count=10)
 
-        assert len(result) == 2
-        # Verify date params were sent.
-        req = respx.calls[0].request
-        assert b"primary_release_date.gte" in req.url.query
-        assert b"primary_release_date.lte" in req.url.query
+        assert "In Range" in result
+        assert "Too New" not in result
+        assert "Too Old" not in result
 
     @respx.mock
-    async def test_discover_y5_10_uses_date_range(self, mock_cache: AsyncMock) -> None:
+    async def test_y5_10_filters_by_year_range(self, mock_cache: AsyncMock) -> None:
         mock_cache.get = AsyncMock(return_value=None)
-        titles = ["Old Film 1", "Old Film 2"]
-        respx.get(f"{_TMDB_BASE}/discover/movie").respond(
-            200, json=_movie_results(titles)
+        now = datetime.now(timezone.utc)
+
+        respx.get(url__startswith=_SUGGEST_BASE).respond(
+            200,
+            json=_suggest_response(
+                [
+                    _movie_entry("Too New", now.year - 2),
+                    _movie_entry("In Range", now.year - 7),
+                    _movie_entry("Too Old", now.year - 15),
+                ]
+            ),
         )
         builder = _make_builder(mock_cache)
 
-        result = await builder.get_queries(2000, "y5_10", count=2)
+        result = await builder.get_queries(2000, "y5_10", count=10)
 
-        assert len(result) == 2
+        assert "In Range" in result
+        assert "Too New" not in result
+        assert "Too Old" not in result
 
     @respx.mock
     async def test_deterministic_rotation_same_week(
         self, mock_cache: AsyncMock
     ) -> None:
         mock_cache.get = AsyncMock(return_value=None)
-        titles = [f"Film {chr(65 + i)}" for i in range(20)]
-        respx.get(f"{_TMDB_BASE}/trending/movie/week").respond(
-            200, json=_movie_results(titles)
+        now = datetime.now(timezone.utc)
+        entries = [_movie_entry(f"Film {chr(65 + i)}", now.year) for i in range(20)]
+
+        respx.get(url__startswith=_SUGGEST_BASE).respond(
+            200, json=_suggest_response(entries)
         )
         builder = _make_builder(mock_cache)
 
-        # Two calls with same week should give same results.
         result1 = await builder.get_queries(2000, "current", count=3)
 
-        # Reset cache to force re-fetch for second call.
+        # Reset cache to force re-fetch.
         mock_cache.get = AsyncMock(return_value=None)
-        respx.get(f"{_TMDB_BASE}/trending/movie/week").respond(
-            200, json=_movie_results(titles)
-        )
 
         result2 = await builder.get_queries(2000, "current", count=3)
 
@@ -150,32 +196,76 @@ class TestGetQueries:
         mock_cache.get = AsyncMock(return_value=None)
         builder = _make_builder(mock_cache)
 
-        # Force fallback by not mocking any HTTP.
         with respx.mock:
-            respx.get(f"{_TMDB_BASE}/trending/tv/week").respond(500)
+            respx.get(url__startswith=_SUGGEST_BASE).respond(500)
             result = await builder.get_queries(5000, "current", count=2)
 
         assert len(result) == 2
         for t in result:
             assert t in _FALLBACK_TV
 
+    @respx.mock
+    async def test_deduplicates_titles(self, mock_cache: AsyncMock) -> None:
+        mock_cache.get = AsyncMock(return_value=None)
+        now = datetime.now(timezone.utc)
+
+        # Same title from every suggest query.
+        respx.get(url__startswith=_SUGGEST_BASE).respond(
+            200,
+            json=_suggest_response([_movie_entry("Dune", now.year)]),
+        )
+        builder = _make_builder(mock_cache)
+
+        result = await builder.get_queries(2000, "current", count=5)
+
+        assert result == ["Dune"]
+
+    @respx.mock
+    async def test_skips_entries_without_year(self, mock_cache: AsyncMock) -> None:
+        mock_cache.get = AsyncMock(return_value=None)
+
+        respx.get(url__startswith=_SUGGEST_BASE).respond(
+            200,
+            json=_suggest_response(
+                [
+                    {"l": "No Year Film", "qid": "movie", "id": "tt0000001"},
+                ]
+            ),
+        )
+        builder = _make_builder(mock_cache)
+
+        result = await builder.get_queries(2000, "current", count=5)
+
+        # No year means it can't match any bucket range.
+        assert "No Year Film" not in result
+
 
 class TestDateRanges:
     def test_y1_2_range(self) -> None:
-        gte, lte = _date_range_y1_2()
-        assert gte.endswith("-01-01")
-        assert lte.endswith("-12-31")
-        gte_year = int(gte[:4])
-        lte_year = int(lte[:4])
-        assert lte_year - gte_year == 1
+        lo, hi = _date_range_y1_2()
+        assert hi - lo == 1
 
     def test_y5_10_range(self) -> None:
-        gte, lte = _date_range_y5_10()
-        assert gte.endswith("-01-01")
-        assert lte.endswith("-12-31")
-        gte_year = int(gte[:4])
-        lte_year = int(lte[:4])
-        assert lte_year - gte_year == 5
+        lo, hi = _date_range_y5_10()
+        assert hi - lo == 5
+
+
+class TestYearInRange:
+    def test_in_range(self) -> None:
+        assert _year_in_range(2024, 2020, 2025) is True
+
+    def test_below_range(self) -> None:
+        assert _year_in_range(2019, 2020, 2025) is False
+
+    def test_above_range(self) -> None:
+        assert _year_in_range(2026, 2020, 2025) is False
+
+    def test_none_year(self) -> None:
+        assert _year_in_range(None, 2020, 2025) is False
+
+    def test_boundary_inclusive(self) -> None:
+        assert _year_in_range(2020, 2020, 2025) is True
+        assert _year_in_range(2025, 2020, 2025) is True
 
 
 class TestMediaTypeMapping:
