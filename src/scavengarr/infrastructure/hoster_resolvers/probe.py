@@ -160,33 +160,6 @@ async def probe_url(
     return outcome == _ProbeOutcome.ALIVE
 
 
-async def probe_urls(
-    http: httpx.AsyncClient,
-    urls: list[tuple[int, str]],
-    *,
-    concurrency: int = 10,
-    timeout: float = 10,
-) -> set[int]:
-    """Probe multiple URLs in parallel, return set of alive indices.
-
-    httpx-only variant. For Cloudflare bypass use ``probe_urls_stealth``.
-    """
-    if not urls:
-        return set()
-
-    semaphore = asyncio.Semaphore(concurrency)
-
-    async def _probe_one(idx: int, url: str) -> tuple[int, bool]:
-        async with semaphore:
-            alive = await probe_url(http, url, timeout=timeout)
-            return idx, alive
-
-    tasks = [_probe_one(idx, url) for idx, url in urls]
-    results = await asyncio.gather(*tasks)
-
-    return {idx for idx, alive in results if alive}
-
-
 # ------------------------------------------------------------------
 # Hybrid probe (httpx + Playwright Stealth)
 # ------------------------------------------------------------------

@@ -14,33 +14,8 @@ import httpx
 import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
-from scavengarr.infrastructure.hoster_resolvers import extract_domain
 
 log = structlog.get_logger(__name__)
-
-# Known Streamtape domains
-_DOMAINS = {
-    "streamtape",
-    "strtape",
-    "strcloud",
-    "shavetape",
-    "streamta",
-    "strtpe",
-    "streamadblocker",
-    "tapeadvertisement",
-    "watchadsontape",
-    "tapecontent",
-    "scloud",
-    "strtapeadblock",
-    "tapeblocker",
-    "streamtapeadblockuser",
-    "streamtapeadblock",
-}
-
-
-def _is_streamtape_domain(url: str) -> bool:
-    """Check if URL belongs to a Streamtape domain."""
-    return extract_domain(url) in _DOMAINS
 
 
 class StreamtapeResolver:

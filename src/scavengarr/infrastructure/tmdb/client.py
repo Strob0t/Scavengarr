@@ -138,14 +138,6 @@ class HttpxTmdbClient:
 
         return None
 
-    async def get_german_title(self, imdb_id: str) -> str | None:
-        """Get the German title for an IMDb ID. None if not found."""
-        result = await self.find_by_imdb_id(imdb_id)
-        if result is None:
-            return None
-        # Movies use "title", TV shows use "name"
-        return result.get("title") or result.get("name") or None
-
     async def get_title_and_year(self, imdb_id: str) -> TitleMatchInfo | None:
         """Get title and release year from TMDB /find endpoint.
 

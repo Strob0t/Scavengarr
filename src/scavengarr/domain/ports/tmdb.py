@@ -18,13 +18,6 @@ class TmdbClientPort(Protocol):
         """
         ...
 
-    async def get_german_title(self, imdb_id: str) -> str | None:
-        """Get the German title for an IMDb ID.
-
-        Returns None if not found.
-        """
-        ...
-
     async def get_title_and_year(self, imdb_id: str) -> TitleMatchInfo | None:
         """Get title and release year for an IMDb ID.
 

@@ -169,21 +169,6 @@ class ImdbFallbackClient:
         # Map to the same keys HttpxTmdbClient returns
         return {"title": title, "name": title, "id": entry.get("id", imdb_id)}
 
-    async def get_german_title(self, imdb_id: str) -> str | None:
-        """Return the German title via Wikidata, falling back to IMDB (English)."""
-        german, entry = await asyncio.gather(
-            self._fetch_wikidata_german_title(imdb_id),
-            self._fetch_suggest(imdb_id),
-        )
-        if german:
-            return german
-        if entry is None:
-            return None
-        title = entry.get("l")
-        if title:
-            log.info("imdb_title_resolved", imdb_id=imdb_id, title=title)
-        return title or None
-
     async def get_title_and_year(self, imdb_id: str) -> TitleMatchInfo | None:
         """Return title + year from IMDB Suggest API + Wikidata German title.
 

@@ -240,42 +240,6 @@ class TestFindByImdbId:
 
 
 # ---------------------------------------------------------------------------
-# get_german_title
-# ---------------------------------------------------------------------------
-
-
-class TestGetGermanTitle:
-    @respx.mock
-    @pytest.mark.asyncio()
-    async def test_movie_title(self, client: HttpxTmdbClient, cache: AsyncMock) -> None:
-        respx.get(f"{_BASE}/find/tt0103064").respond(json=_FIND_MOVIE_RESPONSE)
-
-        title = await client.get_german_title("tt0103064")
-
-        assert title == "Terminator 2 – Tag der Abrechnung"
-
-    @respx.mock
-    @pytest.mark.asyncio()
-    async def test_tv_title(self, client: HttpxTmdbClient, cache: AsyncMock) -> None:
-        respx.get(f"{_BASE}/find/tt0944947").respond(json=_FIND_TV_RESPONSE)
-
-        title = await client.get_german_title("tt0944947")
-
-        assert title == "Game of Thrones"
-
-    @respx.mock
-    @pytest.mark.asyncio()
-    async def test_not_found_returns_none(
-        self, client: HttpxTmdbClient, cache: AsyncMock
-    ) -> None:
-        respx.get(f"{_BASE}/find/tt0000000").respond(json=_FIND_EMPTY_RESPONSE)
-
-        title = await client.get_german_title("tt0000000")
-
-        assert title is None
-
-
-# ---------------------------------------------------------------------------
 # trending_movies / trending_tv
 # ---------------------------------------------------------------------------
 

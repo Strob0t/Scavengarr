@@ -138,54 +138,6 @@ def _make_client_with_handler(
 # ---------------------------------------------------------------------------
 
 
-class TestGetGermanTitle:
-    @pytest.mark.asyncio
-    async def test_resolves_title(self) -> None:
-        client, _ = _make_client()
-        title = await client.get_german_title("tt0371746")
-        assert title == "Iron Man"
-
-    @pytest.mark.asyncio
-    async def test_returns_none_for_empty_response(self) -> None:
-        client, _ = _make_client(response_text=_EMPTY_RESPONSE)
-        assert await client.get_german_title("tt9999999") is None
-
-    @pytest.mark.asyncio
-    async def test_returns_none_on_http_error(self) -> None:
-        client, _ = _make_client(status_code=500)
-        assert await client.get_german_title("tt0371746") is None
-
-    @pytest.mark.asyncio
-    async def test_result_is_cached(self) -> None:
-        client, cache = _make_client()
-        await client.get_german_title("tt0371746")
-
-        # Verify the cache was populated
-        cached = await cache.get("imdb:suggest:tt0371746")
-        assert cached is not None
-        assert cached["l"] == "Iron Man"
-
-        # Second call should use cache (even if transport would fail)
-        title = await client.get_german_title("tt0371746")
-        assert title == "Iron Man"
-
-    @pytest.mark.asyncio
-    async def test_returns_wikidata_german_title_when_available(self) -> None:
-        """get_german_title prefers Wikidata German title over IMDB English."""
-
-        def _handler(request: httpx.Request) -> httpx.Response:
-            url = str(request.url)
-            if "wikidata.org" in url and "wbgetentities" in url:
-                return httpx.Response(200, text=_WIKIDATA_ENTITY_Q172241_DE)
-            if "wikidata.org" in url:
-                return httpx.Response(200, text=_WIKIDATA_SEARCH_Q172241)
-            return httpx.Response(200, text=_SHAWSHANK_RESPONSE)
-
-        client, _ = _make_client_with_handler(_handler)
-        title = await client.get_german_title("tt0111161")
-        assert title == "Die Verurteilten"
-
-
 class TestFindByImdbId:
     @pytest.mark.asyncio
     async def test_returns_dict_with_title_keys(self) -> None:

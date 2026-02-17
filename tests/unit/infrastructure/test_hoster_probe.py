@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock
 
 import httpx
@@ -15,7 +14,6 @@ from scavengarr.infrastructure.hoster_resolvers.probe import (
     _probe_url_classified,
     _ProbeOutcome,
     probe_url,
-    probe_urls,
     probe_urls_stealth,
 )
 
@@ -278,80 +276,6 @@ class TestOfflineMarkerCoverage:
 # ---------------------------------------------------------------------------
 # probe_urls — Parallel probing
 # ---------------------------------------------------------------------------
-
-
-class TestProbeUrls:
-    async def test_parallel_probing_mixed_results(self) -> None:
-        """5 URLs: indices 0,2,4 alive, 1,3 dead → {0,2,4} returned."""
-        client = AsyncMock(spec=httpx.AsyncClient)
-
-        responses = {
-            "https://a.com/e/1": _mock_response(url="https://a.com/e/1"),
-            "https://b.com/e/2": _mock_response(
-                status_code=404, url="https://b.com/e/2"
-            ),
-            "https://c.com/e/3": _mock_response(url="https://c.com/e/3"),
-            "https://d.com/e/4": _mock_response(
-                text="File Not Found", url="https://d.com/e/4"
-            ),
-            "https://e.com/e/5": _mock_response(url="https://e.com/e/5"),
-        }
-
-        async def _fake_get(url: str, **_kw: object) -> httpx.Response:
-            return responses[url]
-
-        client.get = AsyncMock(side_effect=_fake_get)
-
-        urls = [
-            (0, "https://a.com/e/1"),
-            (1, "https://b.com/e/2"),
-            (2, "https://c.com/e/3"),
-            (3, "https://d.com/e/4"),
-            (4, "https://e.com/e/5"),
-        ]
-        alive = await probe_urls(client, urls, concurrency=5, timeout=5)
-        assert alive == {0, 2, 4}
-
-    async def test_empty_list_returns_empty_set(self) -> None:
-        client = AsyncMock(spec=httpx.AsyncClient)
-        alive = await probe_urls(client, [])
-        assert alive == set()
-
-    async def test_all_dead_returns_empty_set(self) -> None:
-        client = _mock_client(status_code=404)
-        urls = [(0, _TEST_URL), (1, _TEST_URL)]
-        alive = await probe_urls(client, urls)
-        assert alive == set()
-
-    async def test_all_alive_returns_all_indices(self) -> None:
-        client = _mock_client(status_code=200)
-        urls = [(0, _TEST_URL), (1, _TEST_URL), (2, _TEST_URL)]
-        alive = await probe_urls(client, urls)
-        assert alive == {0, 1, 2}
-
-    async def test_concurrency_bounded(self) -> None:
-        """Verify semaphore limits parallel probes."""
-        max_concurrent = 0
-        current_concurrent = 0
-        lock = asyncio.Lock()
-
-        async def _slow_get(url: str, **_kw: object) -> httpx.Response:
-            nonlocal max_concurrent, current_concurrent
-            async with lock:
-                current_concurrent += 1
-                max_concurrent = max(max_concurrent, current_concurrent)
-            await asyncio.sleep(0.01)
-            async with lock:
-                current_concurrent -= 1
-            return _mock_response()
-
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(side_effect=_slow_get)
-
-        urls = [(i, f"https://example.com/{i}") for i in range(10)]
-        await probe_urls(client, urls, concurrency=3, timeout=5)
-
-        assert max_concurrent <= 3
 
 
 # ---------------------------------------------------------------------------

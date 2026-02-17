@@ -9,22 +9,7 @@ import pytest
 
 from scavengarr.infrastructure.hoster_resolvers.streamtape import (
     StreamtapeResolver,
-    _is_streamtape_domain,
 )
-
-
-class TestIsStreamtapeDomain:
-    def test_main_domain(self) -> None:
-        assert _is_streamtape_domain("https://streamtape.com/v/abc") is True
-
-    def test_alt_domain(self) -> None:
-        assert _is_streamtape_domain("https://strtape.tech/e/abc") is True
-
-    def test_non_streamtape(self) -> None:
-        assert _is_streamtape_domain("https://voe.sx/e/abc") is False
-
-    def test_tapecontent(self) -> None:
-        assert _is_streamtape_domain("https://tapecontent.net/v/abc") is True
 
 
 class TestStreamtapeResolver:
