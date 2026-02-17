@@ -154,8 +154,10 @@ class HttpLinkValidator:
         if not urls:
             return {}
 
-        # Deduplicate while preserving order
-        unique_urls = list(dict.fromkeys(urls))
+        # Deduplicate while preserving order; reject non-HTTP strings
+        unique_urls = [
+            u for u in dict.fromkeys(urls) if u.startswith(("http://", "https://"))
+        ]
         dedup_count = len(urls) - len(unique_urls)
 
         log.info(
@@ -172,8 +174,9 @@ class HttpLinkValidator:
         # Build result dict from unique results
         unique_map = dict(zip(unique_urls, results))
 
-        # Propagate to all original URLs (including duplicates)
-        validation_map = {url: unique_map[url] for url in urls}
+        # Propagate to all original URLs (including duplicates);
+        # non-HTTP strings that were filtered out are marked invalid.
+        validation_map = {url: unique_map.get(url, False) for url in urls}
 
         valid_count = sum(1 for v in unique_map.values() if v)
         log.info(

@@ -119,6 +119,10 @@ def _collect_streams(
         if stream_url.startswith("//"):
             stream_url = f"https:{stream_url}"
 
+        # Reject non-HTTP URLs (API sometimes returns garbage like "http-equiv=")
+        if not stream_url.startswith(("http://", "https://")):
+            continue
+
         dedup_key = f"{release}|{_domain_from_url(stream_url)}"
         if dedup_key in seen:
             continue

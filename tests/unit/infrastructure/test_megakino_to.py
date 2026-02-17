@@ -269,6 +269,17 @@ class TestCollectStreams:
         _, links = mod._collect_streams(streams)
         assert len(links) == 1
 
+    def test_skips_non_url_stream_values(self, mod) -> None:
+        """API garbage like 'http-equiv=' is rejected."""
+        streams = [
+            {"stream": "http-equiv=", "release": "Garbage"},
+            {"stream": "javascript:void(0)", "release": "XSS"},
+            {"stream": "https://voe.sx/e/good", "release": "Good"},
+        ]
+        first, links = mod._collect_streams(streams)
+        assert len(links) == 1
+        assert first == "https://voe.sx/e/good"
+
 
 class TestExtractMetadata:
     def test_from_detail_json_string_tmdb(self, mod) -> None:

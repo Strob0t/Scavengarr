@@ -240,3 +240,19 @@ class TestValidateBatch:
         }
         # HEAD should have been called only 2 times (not 3)
         assert client.head.call_count == 2
+
+    async def test_non_http_urls_marked_invalid(self) -> None:
+        """Garbage strings like 'http-equiv=' are marked invalid without HTTP."""
+        client = _mock_client(status_code=200)
+        validator = HttpLinkValidator(client)
+        urls = [
+            "http-equiv=",
+            "javascript:void(0)",
+            "https://valid.com",
+        ]
+        result = await validator.validate_batch(urls)
+        assert result["http-equiv="] is False
+        assert result["javascript:void(0)"] is False
+        assert result["https://valid.com"] is True
+        # Only the valid URL should trigger HEAD
+        assert client.head.call_count == 1
