@@ -82,13 +82,12 @@ Entities are long-lived business objects with identity. They are implemented as 
 
 | Entity | File | Purpose |
 |---|---|---|
-| `TorznabQuery` | `entities/torznab.py` | Immutable (`frozen=True`) query parameters: action, plugin_name, query, category, pagination |
+| `TorznabQuery` | `entities/torznab.py` | Immutable (`frozen=True`) query parameters: action, plugin_name, query, category, offset, limit |
 | `TorznabItem` | `entities/torznab.py` | Immutable search result item: title, download_url, seeders, size, category, job_id |
 | `TorznabCaps` | `entities/torznab.py` | Server capabilities metadata (title, version, limits) |
 | `TorznabIndexInfo` | `entities/torznab.py` | Indexer info for listing (name, version, mode) |
 | `CrawlJob` | `entities/crawljob.py` | Mutable JDownloader `.crawljob` file representation with TTL and serialization |
 | `SearchResult` | `plugins/base.py` | Normalized scraping result with download links and metadata |
-| `StageResult` | `plugins/base.py` | Intermediate result from a single scraping stage |
 
 ### Value Objects
 

@@ -11,6 +11,18 @@ Massive expansion of the plugin ecosystem (2 → 40 plugins), Stremio addon inte
 hoster resolver system, plugin base class standardization, search result caching, and
 growth of the test suite from 160 to 3225 tests.
 
+### Torznab Pagination
+- Wire `TorznabQuery.offset`/`limit` fields through router → use case for server-side result pagination
+- Add `offset` and `limit` query parameters to the Torznab search endpoint (defaults: 0 / 100)
+- Prowlarr can now page through cached result sets via standard Torznab pagination
+
+### Cloudflare Detection in Health Probes
+- `HealthProber` now detects Cloudflare challenges during HEAD/GET probes:
+  - HEAD path: `cf-ray` header + 403/503 status code heuristic
+  - GET fallback: body-based marker detection via `is_cloudflare_challenge()`
+- `ProbeResult.captcha_detected` is now set by the health prober (was always `False`)
+- `compute_health_observation()` returns 0.0 for captcha-blocked probes — CF-blocked plugins rank lower
+
 ### Dead Code Cleanup
 - Remove empty `infrastructure/scraping/` package (stale from Scrapy removal)
 - Remove dead `TorznabAction` type alias (defined but never used)
@@ -25,6 +37,14 @@ growth of the test suite from 160 to 3225 tests.
 - Remove dead `PluginRegistry.load_all()` method (never called)
 - Remove dead `router` re-export from `interfaces/api/__init__.py`
 - Remove dead `PluginStats.last_search_ns` field (written but never read)
+- Remove dead `StageResult` dataclass from `domain/plugins/base.py`
+- Remove dead `PluginValidationError` from `domain/plugins/exceptions.py`
+- Remove dead `LinkValidatorPort` protocol (entire file deleted)
+- Remove dead `validation_schema.py` module (entire file deleted)
+- Remove dead `test_auth_env_resolution.py` test file (entire file deleted)
+- Remove dead `probe_urls()` function from `infrastructure/hoster_resolvers/probe.py`
+- Remove dead `_DOMAINS` set and `_is_streamtape_domain()` from `streamtape.py`
+- Remove dead `get_german_title()` from `TmdbClientPort`, `HttpxTmdbClient`, and `ImdbFallbackClient`
 
 ### HTTP Rate Limiting & 429 Retry (Defense in Depth)
 - Add `RetryTransport` — custom httpx transport wrapping all outgoing HTTP requests
@@ -43,7 +63,7 @@ EWMA-based probes, then selects only the top-N plugins per Stremio request.
 - Add `PluginScoreStorePort` protocol and `CachePluginScoreStore` persistence (JSON via CachePort)
 - Add pure EWMA scoring functions: `alpha_from_halflife`, `ewma_update`, `compute_confidence`,
   `compute_health_observation`, `compute_search_observation`, `compute_final_score`
-- Add `HealthProber` (HEAD with 405/501 GET fallback) and `MiniSearchProber` (limited search + hoster HEAD checks)
+- Add `HealthProber` (HEAD with 405/501 GET fallback, Cloudflare detection) and `MiniSearchProber` (limited search + hoster HEAD checks)
 - Enhance `MiniSearchProber` to filter HEAD-checks by supported hosters (from `HosterResolverRegistry`)
 - Add `supported_ratio` (5th component, weight 0.25) to `compute_search_observation()` — scores now reflect
   whether a plugin's result links point to hosters with registered resolvers
@@ -312,8 +332,8 @@ Five plugins updated to match changed website structures.
 - Fix movie4k: add GET fallback for domain verification (HEAD returns 405)
 - Fix streamkiste: rewrite detail parser to extract streams from meinecloud.click external script
 
-### Test Suite Growth (160 → 3225 tests)
-Test suite expanded from 160 to 3225 tests (3047 unit + 109 E2E + 31 integration + 38 live)
+### Test Suite Growth (160 → 3533 tests)
+Test suite expanded from 160 to 3533 tests (3355 unit + 109 E2E + 31 integration + 38 live)
 with comprehensive coverage across all layers.
 
 - Add unit tests for all 35 plugin test files

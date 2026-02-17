@@ -142,9 +142,10 @@ final_score = raw * (0.5 + 0.5 * confidence)
 Default weights: `w_health = 0.4`, `w_search = 0.6`.
 
 **Health observation** (0.0–1.0):
-- `1.0` if ok, `0.0` if not
-- Latency penalty: `max(0, 1 - duration_ms / 5000)`
-- Combined: `0.5 * reachability + 0.5 * speed`
+- `0.0` immediately if `captcha_detected` is True (Cloudflare challenge)
+- `1.0` if ok, `0.0` if not (70% weight)
+- Latency penalty: `1.0 - min(duration_ms / 10000, 1.0)` (30% weight)
+- Combined: `0.7 * reachability + 0.3 * speed`
 
 **Search observation** (0.0–1.0, 5 components):
 - Success rate (binary ok/fail) — weight 0.20
@@ -167,7 +168,14 @@ Lightweight availability check for each plugin's origin domain.
 | Target | Plugin base URL origin (scheme + host) |
 | Timeout | Configurable (default 5s) |
 | Concurrency | Semaphore-bounded (default 5) |
-| Output | `ok`, `http_status`, `duration_ms`, `error_kind` |
+| Cloudflare detection | HEAD: `cf-ray` header + 403/503; GET fallback: body-based `is_cloudflare_challenge()` |
+| Output | `ok`, `http_status`, `duration_ms`, `error_kind`, `captcha_detected` |
+
+**Cloudflare detection:** When the prober encounters a Cloudflare challenge page,
+`captcha_detected` is set to `True`, `ok` is forced to `False`, and `error_kind`
+is set to `"captcha"`. This feeds into EWMA scoring: `compute_health_observation()`
+returns `0.0` for captcha-blocked probes, causing the plugin to rank lower in
+scored selection.
 
 ### MiniSearchProber (2× per week)
 
@@ -394,10 +402,10 @@ plugins:
 
 | Test File | Tests | Coverage |
 |-----------|-------|----------|
-| `test_ewma.py` | 31 | All pure scoring functions |
+| `test_ewma.py` | 32 | All pure scoring functions (incl. captcha → 0.0) |
 | `test_plugin_score_cache.py` | 19 | Cache persistence + index management |
 | `test_query_pool.py` | 14 | TMDB query generation + fallback |
-| `test_health_prober.py` | 11 | HEAD/GET probing with respx mocks |
+| `test_health_prober.py` | 17 | HEAD/GET probing with respx mocks (incl. 6 Cloudflare detection) |
 | `test_search_prober.py` | 8 | Plugin search + hoster checks |
 | `test_scoring_scheduler.py` | 14 | Health/search cycles + tick |
 

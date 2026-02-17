@@ -289,7 +289,7 @@ The system provides a stable download endpoint that delivers a `.crawljob` file 
 - Integration: HTTP router ↔ use case ↔ adapter with HTTP mocking.
 - Optional E2E: real plugin fixtures, but deterministic (no external sites in CI).
 
-### Current test suite (3547 tests)
+### Current test suite (3533 tests)
 
 ```
 tests/
@@ -298,7 +298,7 @@ tests/
     domain/
       test_crawljob.py                 # CrawlJob entity, enums, serialization
       test_torznab_entities.py         # TorznabQuery/Item/Caps, exceptions
-      test_search_result.py            # SearchResult, StageResult
+      test_search_result.py            # SearchResult
       test_plugin_schema.py            # AuthConfig, HttpOverrides
     application/
       test_crawljob_factory.py         # SearchResult → CrawlJob conversion
@@ -312,7 +312,6 @@ tests/
       test_link_validator.py           # HTTP HEAD/GET validation
       test_search_engine.py            # HttpxSearchEngine validation/filtering
       test_crawljob_cache.py           # Cache repository (pickle storage)
-      test_auth_env_resolution.py      # AuthConfig env var resolution
       test_httpx_base.py               # HttpxPluginBase shared base class
       test_playwright_base.py          # PlaywrightPluginBase shared base class
       test_plugin_registry.py          # Plugin discovery and loading
@@ -344,10 +343,10 @@ tests/
       test_mediafire_resolver.py       # Mediafire DDL hoster resolver
       test_gofile_resolver.py          # GoFile DDL hoster resolver
       test_retry_transport.py          # RetryTransport (rate limit + 429/503 retry)
-      test_ewma.py                     # EWMA scoring functions (31 tests)
+      test_ewma.py                     # EWMA scoring functions (32 tests)
       test_plugin_score_cache.py       # Cache persistence + index management (19 tests)
       test_query_pool.py               # TMDB query generation + fallback (14 tests)
-      test_health_prober.py            # HEAD/GET probing with respx mocks (11 tests)
+      test_health_prober.py            # HEAD/GET probing + CF detection with respx mocks (17 tests)
       test_search_prober.py            # Plugin search + hoster checks (8 tests)
       test_scoring_scheduler.py        # Health/search cycles + tick (14 tests)
       test_aniworld_plugin.py          # aniworld plugin tests

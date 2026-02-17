@@ -12,6 +12,7 @@ Search result caching is fully implemented in `TorznabSearchUseCase`:
 - **Default TTL:** 900 seconds (15 minutes), configurable via `CACHE_SEARCH_TTL_SECONDS`
 - **Disable:** Set `search_ttl_seconds: 0` to disable caching
 - **HTTP header:** `X-Cache: HIT` or `X-Cache: MISS` on every search response
+- **Pagination:** Server-side slicing via `offset`/`limit` params works with cached results (subsequent pages hit cache)
 - **Error handling:** Cache read/write errors are logged but never fail the request
 - **Backend:** Uses existing `CachePort` (diskcache or Redis)
 

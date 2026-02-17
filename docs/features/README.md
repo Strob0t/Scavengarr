@@ -4,7 +4,7 @@
 
 Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Prowlarr and other Arr applications. It scrapes sources via Python plugins (httpx for static HTML, Playwright for JS-heavy sites) and delivers results through standard Torznab endpoints.
 
-**Version:** 0.1.0 | **Python:** 3.12+ | **Tests:** 3225+ | **Plugins:** 40 (31 httpx + 9 Playwright) | **Hoster Resolvers:** 39 | **Architecture:** Clean Architecture
+**Version:** 0.1.0 | **Python:** 3.12+ | **Tests:** 3533+ | **Plugins:** 40 (31 httpx + 9 Playwright) | **Hoster Resolvers:** 39 | **Architecture:** Clean Architecture
 
 ---
 
@@ -82,7 +82,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Pro
 | Caching | diskcache (+ optional Redis) | Search result and CrawlJob storage |
 | Logging | structlog | Structured JSON/console logging |
 | CLI | Typer | Local debugging and diagnostics |
-| Testing | pytest | 3225 tests across all layers (3047 unit + 109 E2E + 31 integration + 38 live) |
+| Testing | pytest | 3533 tests across all layers (3355 unit + 109 E2E + 31 integration + 38 live) |
 
 ---
 

@@ -187,6 +187,7 @@ Scavengarr exposes a Torznab-compatible API that integrates with Prowlarr, Sonar
 |---|---|---|
 | `t=caps` endpoint | [x] Implemented | Returns XML capabilities document |
 | `t=search` endpoint | [x] Implemented | Full-text search with category filtering |
+| Pagination (offset/limit) | [x] Implemented | Server-side slicing via `offset` and `limit` query params |
 | Torznab XML rendering | [x] Implemented | RSS 2.0 with `torznab:attr` extensions |
 | Per-plugin indexers | [x] Implemented | Each plugin gets its own Torznab endpoint |
 | Indexer listing | [x] Implemented | Discovery endpoint for all available plugins |
@@ -304,4 +305,4 @@ Infrastructure (implements Domain ports)
 | CLI | `src/scavengarr/interfaces/cli/` |
 | Python plugin example (httpx) | `plugins/filmpalast_to.py` |
 | Python plugin example (Playwright) | `plugins/boerse.py` |
-| Test suite (3225 tests) | `tests/` |
+| Test suite (3533 tests) | `tests/` |

@@ -140,6 +140,8 @@ searches.
 | `q` | string | yes | Search query (URL-encoded) |
 | `cat` | string | no | Category filter (e.g., `2000,5000`) |
 | `extended` | int | no | Prowlarr extended flag (`1` = test mode) |
+| `offset` | int | no | Result offset for pagination (default: `0`) |
+| `limit` | int | no | Maximum results to return (default: `100`) |
 
 **Response (200 OK):** `application/xml`
 
@@ -200,6 +202,21 @@ searches.
 > `downloadvolumefactor` and `uploadvolumefactor` are set to `0.0` and
 > `minimumratio`/`minimumseedtime` are set to `0`. This tells Prowlarr that
 > no seeding requirements apply.
+
+**Pagination:**
+
+The `offset` and `limit` parameters allow paging through result sets. The use
+case builds the full result list from the plugin, then applies server-side
+slicing: `items[offset : offset + limit]`. This works well with search result
+caching -- subsequent page requests hit the cache and only slice differently.
+
+```
+# First page (default):
+GET /api/v1/torznab/filmpalast?t=search&q=iron+man
+
+# Second page:
+GET /api/v1/torznab/filmpalast?t=search&q=iron+man&offset=100&limit=100
+```
 
 ---
 
