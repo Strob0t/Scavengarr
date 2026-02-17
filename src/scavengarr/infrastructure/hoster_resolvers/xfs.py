@@ -1,10 +1,13 @@
 """Generic XFileSharingPro (XFS) hoster resolver.
 
-Consolidates 20 identical XFS-based hoster resolvers into a single
-parameterised implementation.  Each hoster is described by an ``XFSConfig``
-— name, domains, file-ID regex, and offline markers — while the resolution
-logic (fetch page → check markers → check redirect) lives once in
-``XFSResolver``.
+Consolidates XFS-based hoster resolvers into a single parameterised
+implementation.  Each hoster is described by an ``XFSConfig`` — name,
+domains, file-ID regex, offline markers, and whether it's a video hoster —
+while the resolution logic lives once in ``XFSResolver``.
+
+Video hosters (``is_video_hoster=True``) get their embed page fetched and
+the actual video URL extracted (JWPlayer, packed JS, HLS patterns).
+DDL hosters (``is_video_hoster=False``) only validate file availability.
 
 Adding a new XFS hoster = adding a new ``XFSConfig`` constant + appending
 it to ``ALL_XFS_CONFIGS``.
@@ -13,7 +16,7 @@ it to ``ALL_XFS_CONFIGS``.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
 import httpx
@@ -21,8 +24,11 @@ import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
 from scavengarr.infrastructure.hoster_resolvers import extract_domain
+from scavengarr.infrastructure.hoster_resolvers._video_extract import extract_video_url
 
 log = structlog.get_logger(__name__)
+
+_BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
 
 # ---------------------------------------------------------------------------
@@ -38,6 +44,9 @@ class XFSConfig:
     domains: frozenset[str]
     file_id_re: re.Pattern[str]
     offline_markers: tuple[str, ...]
+    is_video_hoster: bool = False
+    needs_captcha: bool = False
+    extra_domains: frozenset[str] = field(default_factory=frozenset)
 
 
 # ---------------------------------------------------------------------------
@@ -53,7 +62,8 @@ def extract_xfs_file_id(url: str, config: XFSConfig) -> str | None:
     """
     try:
         domain = extract_domain(url)
-        if domain not in config.domains:
+        all_domains = config.domains | config.extra_domains
+        if domain not in all_domains:
             return None
         parsed = urlparse(url)
         match = config.file_id_re.search(parsed.path)
@@ -71,6 +81,11 @@ class XFSResolver:
     """Generic resolver for XFileSharingPro-based hosters.
 
     Satisfies ``HosterResolverPort``.
+
+    For video hosters: fetches the ``/e/{file_id}`` embed page and extracts
+    the actual video URL (HLS/MP4) from JWPlayer config or packed JS.
+
+    For DDL hosters: validates file availability by checking offline markers.
     """
 
     def __init__(
@@ -86,11 +101,10 @@ class XFSResolver:
         return self._config.name
 
     async def resolve(self, url: str) -> ResolvedStream | None:
-        """Validate an XFS link by fetching the file page.
+        """Resolve an XFS link.
 
-        Checks for offline markers to determine if the file is still
-        available.  Returns a ``ResolvedStream`` with the original URL on
-        success.
+        Video hosters: extract playable video URL from embed page.
+        DDL hosters: validate file availability and return original URL.
         """
         hoster = self._config.name
         file_id = extract_xfs_file_id(url, self._config)
@@ -98,6 +112,68 @@ class XFSResolver:
             log.warning(f"{hoster}_invalid_url", url=url)
             return None
 
+        if self._config.is_video_hoster:
+            if self._config.needs_captcha:
+                log.debug(f"{hoster}_needs_captcha", file_id=file_id)
+                return None
+            return await self._resolve_video(url, file_id, hoster)
+        return await self._resolve_ddl(url, file_id, hoster)
+
+    async def _resolve_video(
+        self, url: str, file_id: str, hoster: str
+    ) -> ResolvedStream | None:
+        """Fetch embed page and extract actual video URL."""
+        embed_url = self._build_embed_url(url, file_id)
+
+        try:
+            resp = await self._http.get(
+                embed_url,
+                follow_redirects=True,
+                timeout=15,
+                headers={"User-Agent": _BROWSER_UA},
+            )
+        except httpx.HTTPError:
+            log.warning(f"{hoster}_request_failed", url=embed_url)
+            return None
+
+        if resp.status_code != 200:
+            log.warning(
+                f"{hoster}_http_error",
+                status=resp.status_code,
+                url=embed_url,
+            )
+            return None
+
+        html = resp.text
+
+        for marker in self._config.offline_markers:
+            if marker in html:
+                log.info(f"{hoster}_file_offline", file_id=file_id, marker=marker)
+                return None
+
+        final_url = str(resp.url)
+        if "/404" in final_url or "error" in final_url:
+            log.info(f"{hoster}_error_redirect", file_id=file_id, url=final_url)
+            return None
+
+        video_url = extract_video_url(html)
+        if not video_url:
+            log.info(f"{hoster}_extraction_failed", file_id=file_id)
+            return None
+
+        is_hls = ".m3u8" in video_url
+        log.debug(f"{hoster}_video_extracted", file_id=file_id, url=video_url[:80])
+        return ResolvedStream(
+            video_url=video_url,
+            is_hls=is_hls,
+            quality=StreamQuality.UNKNOWN,
+            headers={"Referer": str(resp.url)},
+        )
+
+    async def _resolve_ddl(
+        self, url: str, file_id: str, hoster: str
+    ) -> ResolvedStream | None:
+        """Validate file availability (DDL hosters only)."""
         try:
             resp = await self._http.get(url, follow_redirects=True, timeout=15)
         except httpx.HTTPError:
@@ -127,6 +203,11 @@ class XFSResolver:
         log.debug(f"{hoster}_resolved", file_id=file_id)
         return ResolvedStream(video_url=url, quality=StreamQuality.UNKNOWN)
 
+    def _build_embed_url(self, url: str, file_id: str) -> str:
+        """Build the /e/{file_id} embed URL from the original URL."""
+        parsed = urlparse(url)
+        return f"{parsed.scheme}://{parsed.netloc}/e/{file_id}"
+
 
 # ---------------------------------------------------------------------------
 # Shared regex patterns
@@ -153,6 +234,8 @@ _EXTENDED_MARKERS = (
 # ---------------------------------------------------------------------------
 # Hoster configurations
 # ---------------------------------------------------------------------------
+
+# --- DDL (file download) hosters ---
 
 KATFILE = XFSConfig(
     name="katfile",
@@ -200,11 +283,21 @@ UPTOBOX = XFSConfig(
     ),
 )
 
+HOTLINK = XFSConfig(
+    name="hotlink",
+    domains=frozenset({"hotlink"}),
+    file_id_re=_BASIC_RE,
+    offline_markers=_STANDARD_MARKERS,
+)
+
+# --- Video hosters (embed page → JWPlayer/packed JS → HLS/MP4 URL) ---
+
 FUNXD = XFSConfig(
     name="funxd",
     domains=frozenset({"funxd"}),
     file_id_re=_ED_RE,
     offline_markers=_STANDARD_MARKERS,
+    is_video_hoster=True,
 )
 
 BIGWARP = XFSConfig(
@@ -215,6 +308,8 @@ BIGWARP = XFSConfig(
         *_EXTENDED_MARKERS,
         ">File is no longer available",
     ),
+    is_video_hoster=True,
+    extra_domains=frozenset({"bigwarp"}),
 )
 
 DROPLOAD = XFSConfig(
@@ -222,6 +317,7 @@ DROPLOAD = XFSConfig(
     domains=frozenset({"dropload"}),
     file_id_re=_EMBED_RE,
     offline_markers=_EXTENDED_MARKERS,
+    is_video_hoster=True,
 )
 
 SAVEFILES = XFSConfig(
@@ -229,6 +325,7 @@ SAVEFILES = XFSConfig(
     domains=frozenset({"savefiles"}),
     file_id_re=_EMBED_RE,
     offline_markers=_EXTENDED_MARKERS,
+    is_video_hoster=True,
 )
 
 STREAMWISH = XFSConfig(
@@ -273,6 +370,7 @@ STREAMWISH = XFSConfig(
         "This video has been locked watch or does not exist",
         "Video temporarily not available",
     ),
+    is_video_hoster=True,
 )
 
 VIDMOLY = XFSConfig(
@@ -283,6 +381,7 @@ VIDMOLY = XFSConfig(
         *_EXTENDED_MARKERS,
         "/notice.php",
     ),
+    is_video_hoster=True,
 )
 
 VIDOZA = XFSConfig(
@@ -295,6 +394,7 @@ VIDOZA = XFSConfig(
         "Reason for deletion:",
         "Conversion stage",
     ),
+    is_video_hoster=True,
 )
 
 VINOVO = XFSConfig(
@@ -305,6 +405,8 @@ VINOVO = XFSConfig(
         *_EXTENDED_MARKERS,
         "Video not found",
     ),
+    is_video_hoster=True,
+    needs_captcha=True,
 )
 
 VIDHIDE = XFSConfig(
@@ -328,6 +430,31 @@ VIDHIDE = XFSConfig(
         "Video embed restricted",
         "Downloads disabled",
     ),
+    is_video_hoster=True,
+    extra_domains=frozenset(
+        {
+            # JDownloader VidhideCom.java domain aliases
+            "moflix-stream",
+            "javplaya",
+            "alions",
+            "azipcdn",
+            "vidhidepre",
+            "nikaplayer",
+            "niikaplayerr",
+            "seraphinapl",
+            "taylorplayer",
+            "dinisglows",
+            "dingtezuni",
+            "dintezuvio",
+            "dhtpre",
+            "callistanise",
+            "mivalyo",
+            "minochinos",
+            "dlions",
+            "playrecord",
+            "mycloudz",
+        }
+    ),
 )
 
 
@@ -336,6 +463,7 @@ STREAMRUBY = XFSConfig(
     domains=frozenset({"streamruby"}),
     file_id_re=_EMBED_RE,
     offline_markers=_STANDARD_MARKERS,
+    is_video_hoster=True,
 )
 
 VEEV = XFSConfig(
@@ -343,6 +471,8 @@ VEEV = XFSConfig(
     domains=frozenset({"veev"}),
     file_id_re=re.compile(r"^/(?:e/|d/)?([a-zA-Z0-9]{12,})(?:/|$|\.html)"),
     offline_markers=_STANDARD_MARKERS,
+    is_video_hoster=True,
+    needs_captcha=True,
 )
 
 LULUSTREAM = XFSConfig(
@@ -350,6 +480,7 @@ LULUSTREAM = XFSConfig(
     domains=frozenset({"lulustream", "luluvdo", "luluvid", "lulu", "luluvdoo", "cdn1"}),
     file_id_re=_EMBED_RE,
     offline_markers=_STANDARD_MARKERS,
+    is_video_hoster=True,
 )
 
 UPSTREAM = XFSConfig(
@@ -357,6 +488,7 @@ UPSTREAM = XFSConfig(
     domains=frozenset({"upstream"}),
     file_id_re=_EMBED_RE,
     offline_markers=_STANDARD_MARKERS,
+    is_video_hoster=True,
 )
 
 WOLFSTREAM = XFSConfig(
@@ -364,6 +496,7 @@ WOLFSTREAM = XFSConfig(
     domains=frozenset({"wolfstream"}),
     file_id_re=_EMBED_RE,
     offline_markers=_STANDARD_MARKERS,
+    is_video_hoster=True,
 )
 
 VIDNEST = XFSConfig(
@@ -374,6 +507,7 @@ VIDNEST = XFSConfig(
         *_STANDARD_MARKERS,
         ">Download video</",
     ),
+    is_video_hoster=True,
 )
 
 MP4UPLOAD = XFSConfig(
@@ -381,6 +515,7 @@ MP4UPLOAD = XFSConfig(
     domains=frozenset({"mp4upload"}),
     file_id_re=_EMBED_RE,
     offline_markers=_STANDARD_MARKERS,
+    is_video_hoster=True,
 )
 
 UQLOAD = XFSConfig(
@@ -388,6 +523,7 @@ UQLOAD = XFSConfig(
     domains=frozenset({"uqload"}),
     file_id_re=_EMBED_RE,
     offline_markers=_STANDARD_MARKERS,
+    is_video_hoster=True,
 )
 
 VIDSHAR = XFSConfig(
@@ -395,6 +531,7 @@ VIDSHAR = XFSConfig(
     domains=frozenset({"vidshar", "vedshare"}),
     file_id_re=_EMBED_RE,
     offline_markers=_STANDARD_MARKERS,
+    is_video_hoster=True,
 )
 
 VIDROBA = XFSConfig(
@@ -402,13 +539,7 @@ VIDROBA = XFSConfig(
     domains=frozenset({"vidoba", "vidroba"}),
     file_id_re=_EMBED_RE,
     offline_markers=_STANDARD_MARKERS,
-)
-
-HOTLINK = XFSConfig(
-    name="hotlink",
-    domains=frozenset({"hotlink"}),
-    file_id_re=_BASIC_RE,
-    offline_markers=_STANDARD_MARKERS,
+    is_video_hoster=True,
 )
 
 VIDSPEED = XFSConfig(
@@ -416,6 +547,7 @@ VIDSPEED = XFSConfig(
     domains=frozenset({"vidspeed", "vidspeeds", "xvideosharing"}),
     file_id_re=_EMBED_RE,
     offline_markers=_STANDARD_MARKERS,
+    is_video_hoster=True,
 )
 
 

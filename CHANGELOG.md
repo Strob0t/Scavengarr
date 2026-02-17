@@ -11,6 +11,17 @@ Massive expansion of the plugin ecosystem (2 → 40 plugins), Stremio addon inte
 hoster resolver system, plugin base class standardization, search result caching, and
 growth of the test suite from 160 to 3225 tests.
 
+### XFS Video Hoster Extraction
+- Upgrade XFS resolver from validate-only to full video URL extraction for 18 video hosters
+- Extract playable HLS/MP4 URLs from embed pages via JWPlayer config, Dean Edwards packed JS, and Streamwish `hls2` patterns
+- Shared video extraction module (`_video_extract.py`) reused by both XFS and Filemoon resolvers
+- Add `is_video_hoster` / `needs_captcha` flags to `XFSConfig` for per-hoster behavior
+- Video hosters: fetch `/e/{file_id}` embed page → extract video URL → return `ResolvedStream` with Referer header
+- DDL hosters (katfile, hexupload, clicknupload, filestore, uptobox, hotlink): keep validate-only behavior
+- Captcha-required hosters (veev, vinovo): return None immediately (Cloudflare Turnstile required)
+- Add `extra_domains` field to `XFSConfig` for JDownloader-sourced domain aliases (vidhide has 19 aliases)
+- Supported video hosters: streamwish, vidmoly, vidoza, vidhide, lulustream, upstream, wolfstream, vidnest, mp4upload, uqload, vidshar, vidroba, vidspeed, bigwarp, dropload, savefiles, funxd, streamruby
+
 ### Stremio Playback Fixes
 - Filter non-video URLs from Stremio responses: `_is_direct_video_url()` detects embed pages vs actual video URLs (.mp4, .m3u8, HLS patterns)
 - Skip unplayable streams at search time: resolvers that only validate availability (XFS, DDL) but cannot extract video URLs are excluded from Stremio results instead of producing guaranteed-502 proxy URLs

@@ -28,6 +28,10 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.hashes import SHA256
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
+from scavengarr.infrastructure.hoster_resolvers._video_extract import (
+    extract_hls_from_unpacked,
+    unpack_p_a_c_k,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -156,90 +160,13 @@ def _build_attest_body(
 
 
 def _unpack_p_a_c_k(packed: str) -> str | None:
-    """Unpack Dean Edwards packed JavaScript.
-
-    Format: eval(function(p,a,c,k,e,d){...}('payload',base,count,'dict'.split('|')))
-
-    The algorithm replaces base-N encoded tokens in the payload
-    with words from the dictionary.
-    """
-    # Extract the parameters from the outer function call
-    match = re.search(
-        r"}\('(.*?)',\s*(\d+),\s*(\d+),\s*'([^']*)'\s*\.split\('\|'\)",
-        packed,
-        re.DOTALL,
-    )
-    if not match:
-        return None
-
-    payload = match.group(1)
-    base = int(match.group(2))
-    count = int(match.group(3))
-    keywords = match.group(4).split("|")
-
-    if len(keywords) < count:
-        # Pad with empty strings if dictionary is short
-        keywords.extend([""] * (count - len(keywords)))
-
-    def _base_n(num: int, radix: int) -> str:
-        """Convert integer to base-N string (supports up to base 36)."""
-        if num < 0:
-            return ""
-        chars = "0123456789abcdefghijklmnopqrstuvwxyz"
-        if num < radix:
-            return chars[num]
-        return _base_n(num // radix, radix) + chars[num % radix]
-
-    def _replace_word(match: re.Match[str]) -> str:
-        word = match.group(0)
-        # Convert the base-N token back to an integer index
-        try:
-            index = int(word, base)
-        except ValueError:
-            return word
-        if index < len(keywords) and keywords[index]:
-            return keywords[index]
-        return word
-
-    # Replace all word-boundary tokens with dictionary entries
-    result = re.sub(r"\b\w+\b", _replace_word, payload)
-    return result
+    """Unpack Dean Edwards packed JavaScript (delegates to shared module)."""
+    return unpack_p_a_c_k(packed)
 
 
 def _extract_hls_from_unpacked(js: str) -> str | None:
-    """Extract HLS m3u8 URL from unpacked JWPlayer config.
-
-    Handles both regular quotes and escaped quotes (\\' or \\")
-    that appear in unpacked output.
-    """
-    # Normalize escaped quotes for easier matching
-    normalized = js.replace("\\'", "'").replace('\\"', '"')
-
-    # Pattern 1: sources:[{file:"https://...master.m3u8"}]
-    match = re.search(
-        r"""sources\s*:\s*\[\s*\{[^}]*file\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)""",
-        normalized,
-    )
-    if match:
-        return match.group(1)
-
-    # Pattern 2: file:"https://...m3u8"
-    match = re.search(
-        r"""file\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)""",
-        normalized,
-    )
-    if match:
-        return match.group(1)
-
-    # Pattern 3: source:"https://..." (any video URL)
-    match = re.search(
-        r"""(?:source|src)\s*:\s*["'](https?://[^"']+\.(?:m3u8|mp4)[^"']*)""",
-        normalized,
-    )
-    if match:
-        return match.group(1)
-
-    return None
+    """Extract HLS URL from unpacked JWPlayer config (delegates to shared module)."""
+    return extract_hls_from_unpacked(js)
 
 
 class FilemoonResolver:

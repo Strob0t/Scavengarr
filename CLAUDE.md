@@ -289,7 +289,7 @@ The system provides a stable download endpoint that delivers a `.crawljob` file 
 - Integration: HTTP router ↔ use case ↔ adapter with HTTP mocking.
 - Optional E2E: real plugin fixtures, but deterministic (no external sites in CI).
 
-### Current test suite (3533 tests)
+### Current test suite (3590 tests)
 
 ```
 tests/
@@ -323,7 +323,8 @@ tests/
       test_stream_sorter.py            # Stremio stream sorting/ranking
       test_stream_link_cache.py        # Stream link cache repository
       test_hoster_registry.py          # HosterResolverRegistry
-      test_xfs_resolver.py             # Generic XFS resolver (26 hosters, parameterised)
+      test_xfs_resolver.py             # Generic XFS resolver (26 hosters, parameterised, video extraction)
+      test_video_extract.py            # Shared video URL extraction (packed JS, JWPlayer, HLS)
       test_voe_resolver.py             # VOE hoster resolver
       test_streamtape_resolver.py      # Streamtape hoster resolver
       test_supervideo_resolver.py      # SuperVideo hoster resolver
@@ -642,6 +643,14 @@ create_all_ddl_resolvers(http_client) -> list[GenericDDLResolver]  # factory fun
 
 26 XFS-based hosters are consolidated into a single generic `XFSResolver` with parameterised `XFSConfig` in `src/scavengarr/infrastructure/hoster_resolvers/xfs.py`. Adding a new XFS hoster = adding a new `XFSConfig` constant + appending it to `ALL_XFS_CONFIGS`.
 
+Two resolver modes:
+- **Video hosters** (`is_video_hoster=True`): fetch `/e/{file_id}` embed page, extract actual video URL (HLS/MP4) via JWPlayer config, packed JS, or `hls2` pattern. Returns `ResolvedStream` with Referer header.
+- **DDL hosters** (`is_video_hoster=False`): validate file availability only (check offline markers), return original URL.
+
+Hosters with `needs_captcha=True` (veev, vinovo) return `None` immediately — they require Cloudflare Turnstile.
+
+Shared video extraction utilities live in `_video_extract.py` (used by both XFS and Filemoon resolvers).
+
 ```python
 @dataclass(frozen=True)
 class XFSConfig:
@@ -649,8 +658,11 @@ class XFSConfig:
     domains: frozenset[str]            # e.g. frozenset({"katfile"})
     file_id_re: re.Pattern[str]        # e.g. re.compile(r"^/([a-zA-Z0-9]{12})(?:/|$)")
     offline_markers: tuple[str, ...]   # e.g. ("File Not Found", ...)
+    is_video_hoster: bool = False      # True → extract video URL from embed page
+    needs_captcha: bool = False        # True → return None (captcha required)
+    extra_domains: frozenset[str] = field(default_factory=frozenset)  # JDownloader aliases
 
-ALL_XFS_CONFIGS: tuple[XFSConfig, ...]  # all 21 configs
+ALL_XFS_CONFIGS: tuple[XFSConfig, ...]  # all 26 configs
 create_all_xfs_resolvers(http_client) -> list[XFSResolver]  # factory function
 ```
 
@@ -659,7 +671,7 @@ DDownload stays separate (`ddownload.py`) due to canonical URL normalization and
 #### Workflow for adding a new hoster resolver
 
 **For XFS-based hosters:**
-1. Add a new `XFSConfig` constant in `xfs.py` (name, domains, file_id_re, offline_markers)
+1. Add a new `XFSConfig` constant in `xfs.py` (name, domains, file_id_re, offline_markers, is_video_hoster)
 2. Append it to `ALL_XFS_CONFIGS`
 3. Tests are automatically parameterised — no new test file needed
 4. Composition root uses `create_all_xfs_resolvers()` — no wiring changes needed
