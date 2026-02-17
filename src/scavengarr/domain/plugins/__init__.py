@@ -1,9 +1,8 @@
-from .base import PluginProtocol, PluginProvides, SearchResult, StageResult
+from .base import PluginProtocol, PluginProvides, SearchResult
 from .exceptions import (
     DuplicatePluginError,
     PluginLoadError,
     PluginNotFoundError,
-    PluginValidationError,
 )
 from .plugin_schema import (
     AuthConfig,
@@ -18,7 +17,5 @@ __all__ = [
     "PluginNotFoundError",
     "PluginProtocol",
     "PluginProvides",
-    "PluginValidationError",
     "SearchResult",
-    "StageResult",
 ]

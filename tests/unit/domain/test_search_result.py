@@ -1,8 +1,8 @@
-"""Tests for SearchResult and StageResult domain entities."""
+"""Tests for SearchResult domain entity."""
 
 from __future__ import annotations
 
-from scavengarr.domain.plugins import SearchResult, StageResult
+from scavengarr.domain.plugins import SearchResult
 
 
 class TestSearchResult:
@@ -68,32 +68,3 @@ class TestSearchResult:
         assert r.seeders == 100
         assert r.download_links is not None
         assert len(r.download_links) == 1
-
-
-class TestStageResult:
-    def test_creation(self) -> None:
-        sr = StageResult(
-            url="https://example.com/search/test",
-            stage_name="search_results",
-            depth=0,
-            data={"title": "Test"},
-        )
-        assert sr.url == "https://example.com/search/test"
-        assert sr.stage_name == "search_results"
-        assert sr.depth == 0
-        assert sr.data == {"title": "Test"}
-
-    def test_default_links_empty(self) -> None:
-        sr = StageResult(
-            url="http://x",
-            stage_name="s",
-            depth=0,
-            data={},
-        )
-        assert sr.links == []
-
-    def test_links_mutable_default_independence(self) -> None:
-        sr1 = StageResult(url="a", stage_name="s", depth=0, data={})
-        sr2 = StageResult(url="b", stage_name="s", depth=0, data={})
-        sr1.links.append("http://link")
-        assert sr2.links == []

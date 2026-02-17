@@ -7,10 +7,6 @@ class PluginError(Exception):
     """Base class for all plugin-related errors."""
 
 
-class PluginValidationError(PluginError):
-    """Raised when a YAML plugin fails schema validation."""
-
-
 class PluginLoadError(PluginError):
     """Raised when a Python plugin fails to import or does not match the protocol."""
 

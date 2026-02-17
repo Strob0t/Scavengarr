@@ -43,21 +43,6 @@ class SearchResult:
     upload_volume_factor: float = 0.0
 
 
-@dataclass
-class StageResult:
-    """
-    Internal result from a single scraping stage.
-
-    Used during multi-stage processing before final normalization.
-    """
-
-    url: str
-    stage_name: str
-    depth: int
-    data: dict[str, Any]
-    links: list[str] = field(default_factory=list)
-
-
 class PluginProtocol(Protocol):
     """
     Protocol for Python plugins.

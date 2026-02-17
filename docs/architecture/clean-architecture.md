@@ -115,7 +115,6 @@ Ports define the boundaries between Application and Infrastructure. All are `Pro
 | `CachePort` | `ports/cache.py` | async | `get`, `set`, `delete`, `exists`, `clear`, `aclose` |
 | `SearchEnginePort` | `ports/search_engine.py` | async | `search`, `validate_results` |
 | `PluginRegistryPort` | `ports/plugin_registry.py` | sync | `discover`, `list_names`, `get` |
-| `LinkValidatorPort` | `ports/link_validator.py` | async | `validate`, `validate_batch` |
 | `CrawlJobRepository` | `ports/crawljob_repository.py` | async | `save`, `get` |
 
 Key design choice: `PluginRegistryPort` is **synchronous** (plugin files are loaded from disk, not from network). All other ports are **asynchronous** because they involve I/O (HTTP, cache, validation).
@@ -132,7 +131,6 @@ TorznabError (base)
 └── TorznabExternalError      → HTTP 502 (dev) / 200 (prod)
 
 PluginError (base)
-├── PluginValidationError     Plugin validation failure
 ├── PluginLoadError           Python plugin import failure
 ├── PluginNotFoundError       Plugin name not in registry
 └── DuplicatePluginError      Two plugins share the same name
@@ -222,7 +220,6 @@ Infrastructure implements the ports defined by Domain and provides concrete adap
 | `CachePort` | `RedisAdapter` | `cache/redis_adapter.py` |
 | `SearchEnginePort` | `HttpxSearchEngine` | `torznab/search_engine.py` |
 | `PluginRegistryPort` | `PluginRegistry` | `plugins/registry.py` |
-| `LinkValidatorPort` | `HttpLinkValidator` | `validation/http_link_validator.py` |
 | `CrawlJobRepository` | `CacheCrawlJobRepository` | `persistence/crawljob_cache.py` |
 
 ### Subsystems
@@ -461,13 +458,12 @@ src/scavengarr/
 │   │   ├── crawljob.py             # CrawlJob entity, BooleanStatus, Priority
 │   │   └── torznab.py              # TorznabQuery, Item, Caps, IndexInfo, exceptions
 │   ├── plugins/
-│   │   ├── base.py                 # SearchResult, StageResult, PluginProtocol
+│   │   ├── base.py                 # SearchResult, PluginProtocol
 │   │   ├── exceptions.py           # Plugin exception hierarchy
 │   │   └── plugin_schema.py        # Plugin definition value objects
 │   └── ports/
 │       ├── cache.py                # CachePort
 │       ├── crawljob_repository.py  # CrawlJobRepository
-│       ├── link_validator.py       # LinkValidatorPort
 │       ├── plugin_registry.py      # PluginRegistryPort
 │       └── search_engine.py        # SearchEnginePort
 │
