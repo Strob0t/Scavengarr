@@ -171,7 +171,7 @@ class TestXFSConfigInvariants:
 
     def test_captcha_count(self) -> None:
         captcha_count = sum(1 for c in ALL_XFS_CONFIGS if c.needs_captcha)
-        assert captcha_count == 2
+        assert captcha_count == 3
 
     def test_ddl_count(self) -> None:
         ddl_count = sum(1 for c in ALL_XFS_CONFIGS if not c.is_video_hoster)
@@ -604,6 +604,103 @@ class TestVideoExtraction:
 
         assert result is not None
         assert result.video_url == _VIDEO_HLS_URL
+
+
+# ---------------------------------------------------------------------------
+# XFS form POST flow (two-step embed: GET splash → POST /dl → player page)
+# ---------------------------------------------------------------------------
+
+
+_XFS_FORM_HTML = (
+    '<html><body><form id="F1" action="/dl" method="POST">'
+    '<input type="hidden" name="op" value="embed">'
+    '<input type="hidden" name="file_code" value="">'
+    '<input type="hidden" name="auto" value="1">'
+    '<input type="hidden" name="referer" value="">'
+    "</form></body></html>"
+)
+
+
+class TestXFSFormPost:
+    """XFS hosters that serve a form splash on GET need a POST to /dl."""
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_form_page_triggers_post(self) -> None:
+        """When GET returns an XFS form, resolver POSTs to /dl for the player."""
+        from scavengarr.infrastructure.hoster_resolvers.xfs import BIGWARP
+
+        url = "https://bigwarp.io/aBc123DeF456"
+        embed_url = "https://bigwarp.io/e/aBc123DeF456"
+        dl_url = "https://bigwarp.io/dl"
+
+        # GET returns the form splash
+        respx.get(embed_url).respond(200, text=_XFS_FORM_HTML)
+        # POST returns the actual player page
+        respx.post(dl_url).respond(200, text=_video_html_jwplayer())
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=BIGWARP, http_client=client)
+            result = await resolver.resolve(url)
+
+        assert result is not None
+        assert result.video_url == _VIDEO_HLS_URL
+        assert result.is_hls is True
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_form_post_network_error(self) -> None:
+        """POST failure returns None."""
+        from scavengarr.infrastructure.hoster_resolvers.xfs import SAVEFILES
+
+        url = "https://savefiles.com/aBc123DeF456"
+        embed_url = "https://savefiles.com/e/aBc123DeF456"
+        dl_url = "https://savefiles.com/dl"
+
+        respx.get(embed_url).respond(200, text=_XFS_FORM_HTML)
+        respx.post(dl_url).mock(side_effect=httpx.ConnectError("failed"))
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=SAVEFILES, http_client=client)
+            result = await resolver.resolve(url)
+        assert result is None
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_form_post_offline_marker(self) -> None:
+        """POST page with offline marker returns None."""
+        from scavengarr.infrastructure.hoster_resolvers.xfs import BIGWARP
+
+        url = "https://bigwarp.io/aBc123DeF456"
+        embed_url = "https://bigwarp.io/e/aBc123DeF456"
+        dl_url = "https://bigwarp.io/dl"
+
+        respx.get(embed_url).respond(200, text=_XFS_FORM_HTML)
+        respx.post(dl_url).respond(200, text="<html>File is no longer available</html>")
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=BIGWARP, http_client=client)
+            result = await resolver.resolve(url)
+        assert result is None
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_direct_embed_page_skips_form_post(self) -> None:
+        """When GET returns actual player HTML (no form), no POST is made."""
+        from scavengarr.infrastructure.hoster_resolvers.xfs import STREAMWISH
+
+        url = "https://streamwish.com/aBc123DeF456"
+        embed_url = "https://streamwish.com/e/aBc123DeF456"
+        # GET returns player directly (no form)
+        respx.get(embed_url).respond(200, text=_video_html_hls2())
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=STREAMWISH, http_client=client)
+            result = await resolver.resolve(url)
+
+        assert result is not None
+        assert result.video_url == _VIDEO_HLS_URL
+        # No POST route was defined — if it tried to POST, it would fail
 
 
 # ---------------------------------------------------------------------------

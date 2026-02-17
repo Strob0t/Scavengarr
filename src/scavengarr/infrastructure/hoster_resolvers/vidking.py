@@ -27,8 +27,11 @@ log = structlog.get_logger(__name__)
 # Known VidKing domains (second-level part only, for matching)
 _DOMAINS = {"vidking"}
 
-# File ID: alphanumeric from path, optionally prefixed with e/, d/, or embed/movie/
-_FILE_ID_RE = re.compile(r"^/(?:e/|d/|embed/movie/)?([a-zA-Z0-9]+)$")
+# File ID: alphanumeric from path, optionally prefixed with e/, d/,
+# embed/movie/{id}, or embed/tv/{id}/{season}/{episode}
+_FILE_ID_RE = re.compile(
+    r"^/(?:e/|d/|embed/(?:movie|tv)/)?([a-zA-Z0-9]+)(?:/\d+/\d+)?$"
+)
 
 # Offline markers
 _OFFLINE_MARKERS = (

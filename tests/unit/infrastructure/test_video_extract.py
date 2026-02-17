@@ -14,7 +14,6 @@ from scavengarr.infrastructure.hoster_resolvers._video_extract import (
     unpack_p_a_c_k,
 )
 
-
 # ---------------------------------------------------------------------------
 # unpack_p_a_c_k
 # ---------------------------------------------------------------------------
@@ -86,9 +85,7 @@ class TestExtractVideoUrl:
         assert result == "https://cdn.example.com/video.m3u8"
 
     def test_jwplayer_sources(self) -> None:
-        html = (
-            '<script>sources:[{file:"https://cdn.example.com/video.m3u8"}]</script>'
-        )
+        html = '<script>sources:[{file:"https://cdn.example.com/video.m3u8"}]</script>'
         result = extract_video_url(html)
         assert result == "https://cdn.example.com/video.m3u8"
 

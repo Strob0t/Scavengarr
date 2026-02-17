@@ -30,6 +30,10 @@ log = structlog.get_logger(__name__)
 
 _BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
+# Detects the XFS two-step form: GET returns a play-button splash with a
+# hidden form that must be POSTed to /dl to obtain the actual player page.
+_XFS_FORM_RE = re.compile(r'<form\s+id=["\']F1["\']\s+action=["\']\/dl["\']')
+
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -122,15 +126,23 @@ class XFSResolver:
     async def _resolve_video(
         self, url: str, file_id: str, hoster: str
     ) -> ResolvedStream | None:
-        """Fetch embed page and extract actual video URL."""
+        """Fetch embed page and extract actual video URL.
+
+        Many XFS hosters serve a form-based splash page on GET that requires
+        a POST to ``/dl`` with ``op=embed&file_code={id}&auto=1`` to return
+        the actual JWPlayer / packed-JS player page.  When the initial GET
+        response contains an XFS form (``<form id="F1" action="/dl"``), we
+        automatically submit it before attempting video URL extraction.
+        """
         embed_url = self._build_embed_url(url, file_id)
+        headers = {"User-Agent": _BROWSER_UA}
 
         try:
             resp = await self._http.get(
                 embed_url,
                 follow_redirects=True,
                 timeout=15,
-                headers={"User-Agent": _BROWSER_UA},
+                headers=headers,
             )
         except httpx.HTTPError:
             log.warning(f"{hoster}_request_failed", url=embed_url)
@@ -156,6 +168,13 @@ class XFSResolver:
             log.info(f"{hoster}_error_redirect", file_id=file_id, url=final_url)
             return None
 
+        # Many XFS hosters return a form-based splash on GET; POST to /dl
+        # to get the actual player page.
+        if _XFS_FORM_RE.search(html):
+            html = await self._post_xfs_form(url, file_id, hoster, headers)
+            if html is None:
+                return None
+
         video_url = extract_video_url(html)
         if not video_url:
             log.info(f"{hoster}_extraction_failed", file_id=file_id)
@@ -169,6 +188,50 @@ class XFSResolver:
             quality=StreamQuality.UNKNOWN,
             headers={"Referer": str(resp.url)},
         )
+
+    async def _post_xfs_form(
+        self,
+        url: str,
+        file_id: str,
+        hoster: str,
+        headers: dict[str, str],
+    ) -> str | None:
+        """Submit the XFS ``/dl`` form to obtain the real player page."""
+        parsed = urlparse(url)
+        dl_url = f"{parsed.scheme}://{parsed.netloc}/dl"
+        data = {
+            "op": "embed",
+            "file_code": file_id,
+            "auto": "1",
+            "referer": "",
+        }
+        try:
+            resp = await self._http.post(
+                dl_url,
+                data=data,
+                follow_redirects=True,
+                timeout=15,
+                headers=headers,
+            )
+        except httpx.HTTPError:
+            log.warning(f"{hoster}_form_post_failed", url=dl_url)
+            return None
+
+        if resp.status_code != 200:
+            log.warning(
+                f"{hoster}_form_post_error",
+                status=resp.status_code,
+                url=dl_url,
+            )
+            return None
+
+        html = resp.text
+        for marker in self._config.offline_markers:
+            if marker in html:
+                log.info(f"{hoster}_file_offline", file_id=file_id, marker=marker)
+                return None
+
+        return html
 
     async def _resolve_ddl(
         self, url: str, file_id: str, hoster: str
@@ -497,6 +560,7 @@ WOLFSTREAM = XFSConfig(
     file_id_re=_EMBED_RE,
     offline_markers=_STANDARD_MARKERS,
     is_video_hoster=True,
+    needs_captcha=True,  # anti-bot JS redirect on embed pages
 )
 
 VIDNEST = XFSConfig(
