@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from scavengarr.domain.entities.crawljob import CrawlJob
 
 
+@runtime_checkable
 class CrawlJobRepository(Protocol):
     """Async interface for storing and retrieving CrawlJob entities."""
 

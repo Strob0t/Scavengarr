@@ -9,7 +9,6 @@ import structlog
 
 from scavengarr.domain.entities.crawljob import BooleanStatus, CrawlJob, Priority
 from scavengarr.domain.ports.cache import CachePort
-from scavengarr.domain.ports.crawljob_repository import CrawlJobRepository
 
 log = structlog.get_logger(__name__)
 
@@ -75,7 +74,7 @@ def _deserialize_crawljob(data: str) -> CrawlJob:
     )
 
 
-class CacheCrawlJobRepository(CrawlJobRepository):
+class CacheCrawlJobRepository:
     """Stores CrawlJobs via CachePort (Redis or Diskcache)."""
 
     def __init__(self, cache: CachePort, ttl_seconds: int = 3600):

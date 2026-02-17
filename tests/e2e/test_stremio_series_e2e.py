@@ -33,6 +33,13 @@ from scavengarr.domain.entities.stremio import (
 )
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.config.schema import StremioConfig
+from scavengarr.infrastructure.plugins.constants import (
+    DEFAULT_USER_AGENT,
+    search_max_results,
+)
+from scavengarr.infrastructure.stremio.stream_converter import convert_search_results
+from scavengarr.infrastructure.stremio.stream_sorter import StreamSorter
+from scavengarr.infrastructure.stremio.title_matcher import filter_by_title_match
 from scavengarr.interfaces.api.stremio.router import router
 
 _PREFIX = "/api/v1"
@@ -167,6 +174,11 @@ def _make_series_app(
         plugins=registry,
         search_engine=engine,
         config=cfg,
+        sorter=StreamSorter(cfg),
+        convert_fn=convert_search_results,
+        filter_fn=filter_by_title_match,
+        user_agent=DEFAULT_USER_AGENT,
+        max_results_var=search_max_results,
         stream_link_repo=stream_link_repo,
     )
 

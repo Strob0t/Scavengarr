@@ -23,6 +23,13 @@ from scavengarr.domain.entities.stremio import (
 )
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.config.schema import StremioConfig
+from scavengarr.infrastructure.plugins.constants import (
+    DEFAULT_USER_AGENT,
+    search_max_results,
+)
+from scavengarr.infrastructure.stremio.stream_converter import convert_search_results
+from scavengarr.infrastructure.stremio.stream_sorter import StreamSorter
+from scavengarr.infrastructure.stremio.title_matcher import filter_by_title_match
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -87,11 +94,17 @@ def _make_use_case(
     if not search_engine:
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
         engine.search = AsyncMock(return_value=[])
+    cfg = config or _make_config()
     return StremioStreamUseCase(
         tmdb=tmdb or AsyncMock(),
         plugins=plugins or MagicMock(),
         search_engine=engine,
-        config=config or _make_config(),
+        config=cfg,
+        sorter=StreamSorter(cfg),
+        convert_fn=convert_search_results,
+        filter_fn=filter_by_title_match,
+        user_agent=DEFAULT_USER_AGENT,
+        max_results_var=search_max_results,
         stream_link_repo=stream_link_repo,
         probe_fn=probe_fn,
     )

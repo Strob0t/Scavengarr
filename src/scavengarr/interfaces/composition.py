@@ -59,11 +59,18 @@ from scavengarr.infrastructure.persistence.stream_link_cache import (
     CacheStreamLinkRepository,
 )
 from scavengarr.infrastructure.plugins import PluginRegistry
+from scavengarr.infrastructure.plugins.constants import (
+    DEFAULT_USER_AGENT,
+    search_max_results,
+)
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.scoring.health_prober import HealthProber
 from scavengarr.infrastructure.scoring.query_pool import QueryPoolBuilder
 from scavengarr.infrastructure.scoring.scheduler import ScoringScheduler
 from scavengarr.infrastructure.scoring.search_prober import MiniSearchProber
+from scavengarr.infrastructure.stremio.stream_converter import convert_search_results
+from scavengarr.infrastructure.stremio.stream_sorter import StreamSorter
+from scavengarr.infrastructure.stremio.title_matcher import filter_by_title_match
 from scavengarr.infrastructure.tmdb.client import HttpxTmdbClient
 from scavengarr.infrastructure.tmdb.imdb_fallback import ImdbFallbackClient
 from scavengarr.infrastructure.torznab.search_engine import HttpxSearchEngine
@@ -336,6 +343,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         plugins=state.plugins,
         search_engine=state.search_engine,
         config=config.stremio,
+        sorter=StreamSorter(config.stremio),
+        convert_fn=convert_search_results,
+        filter_fn=filter_by_title_match,
+        user_agent=DEFAULT_USER_AGENT,
+        max_results_var=search_max_results,
         stream_link_repo=state.stream_link_repo,
         probe_fn=probe_fn,
         resolve_fn=state.hoster_resolver_registry.resolve,

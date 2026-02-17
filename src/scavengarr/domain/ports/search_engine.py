@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from scavengarr.domain.plugins.base import SearchResult
 
 
+@runtime_checkable
 class SearchEnginePort(Protocol):
     """Async interface for validating search results."""
 

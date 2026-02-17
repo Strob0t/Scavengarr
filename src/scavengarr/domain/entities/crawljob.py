@@ -27,7 +27,7 @@ class Priority(str, Enum):
     LOWER = "LOWER"
 
 
-@dataclass
+@dataclass(frozen=True)
 class CrawlJob:
     """Represents a .crawljob file for JDownloader.
 

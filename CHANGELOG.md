@@ -48,6 +48,15 @@ EWMA-based probes, then selects only the top-N plugins per Stremio request.
 - Prevents duplicate links from the same hoster (e.g., 5 VOE links → 1 best VOE link)
 - Applied after sorting, before probing/caching — keeps highest-ranked link per hoster
 
+### Architecture Fixes (Clean Architecture Compliance)
+- Remove all infrastructure imports from `StremioStreamUseCase` (application layer)
+  - Define `_StremioConfig`, `_StreamSorter`, `_MetricsRecorder` protocols locally
+  - Inject `sorter`, `convert_fn`, `filter_fn`, `user_agent`, `max_results_var` via constructor
+  - Composition root (interfaces layer) now owns all infrastructure wiring
+- Add `@runtime_checkable` to all 9 domain Protocol ports (was only on 2 of 9)
+- Make `CrawlJob` entity immutable (`frozen=True`) — built once by factory, never mutated
+- Remove explicit Protocol inheritance from `CacheCrawlJobRepository` (duck-typing consistency)
+
 ### Stremio Playback: behaviorHints.proxyHeaders
 Pre-resolve hoster embed URLs at `/stream` time and emit `behaviorHints.proxyHeaders`
 so Stremio's local streaming server sends the correct `Referer` and `User-Agent` headers

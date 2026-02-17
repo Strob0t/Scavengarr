@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from scavengarr.domain.entities.scoring import PluginScoreSnapshot
 
 
+@runtime_checkable
 class PluginScoreStorePort(Protocol):
     """Async interface for storing and querying plugin score snapshots."""
 

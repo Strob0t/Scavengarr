@@ -12,8 +12,9 @@ import re
 import time
 import unicodedata
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from dataclasses import replace
-from typing import Any
+from typing import Any, Protocol
 from uuid import uuid4
 
 import structlog
@@ -33,15 +34,66 @@ from scavengarr.domain.ports.plugin_score_store import PluginScoreStorePort
 from scavengarr.domain.ports.search_engine import SearchEnginePort
 from scavengarr.domain.ports.stream_link_repository import StreamLinkRepository
 from scavengarr.domain.ports.tmdb import TmdbClientPort
-from scavengarr.infrastructure.config.schema import StremioConfig
-from scavengarr.infrastructure.metrics import MetricsCollector
-from scavengarr.infrastructure.plugins.constants import (
-    DEFAULT_USER_AGENT,
-    search_max_results,
-)
-from scavengarr.infrastructure.stremio.stream_converter import convert_search_results
-from scavengarr.infrastructure.stremio.stream_sorter import StreamSorter
-from scavengarr.infrastructure.stremio.title_matcher import filter_by_title_match
+
+# ---------------------------------------------------------------------------
+# Protocols — define what this use case needs from its dependencies.
+# Infrastructure components satisfy these via structural subtyping.
+# ---------------------------------------------------------------------------
+
+
+class _StremioConfig(Protocol):
+    """Configuration values consumed by StremioStreamUseCase."""
+
+    max_concurrent_plugins: int
+    plugin_timeout_seconds: float
+    title_match_threshold: float
+    title_year_bonus: float
+    title_year_penalty: float
+    title_sequel_penalty: float
+    title_year_tolerance_movie: int
+    title_year_tolerance_series: int
+    max_results_per_plugin: int
+    probe_at_stream_time: bool
+    max_probe_count: int
+    scoring_enabled: bool
+    max_plugins_scored: int
+    exploration_probability: float
+    stremio_deadline_ms: int
+    max_items_total: int
+    max_items_per_plugin: int
+
+
+class _StreamSorter(Protocol):
+    """Sorts RankedStreams by language, quality, and hoster scores."""
+
+    def sort(self, streams: list[RankedStream]) -> list[RankedStream]: ...
+
+
+class _MetricsRecorder(Protocol):
+    """Records search and probe metrics."""
+
+    def record_plugin_search(
+        self,
+        name: str,
+        duration_ns: int,
+        result_count: int,
+        *,
+        success: bool,
+    ) -> None: ...
+
+    def record_probe(
+        self,
+        total: int,
+        alive: int,
+        dead: int,
+        cf_blocked: int,
+        duration_ns: int,
+    ) -> None: ...
+
+
+# Type aliases for injected pure functions.
+_ConvertFn = Callable[..., list[RankedStream]]
+_TitleFilterFn = Callable[..., list[SearchResult]]
 
 log = structlog.get_logger(__name__)
 
@@ -323,7 +375,11 @@ ProbeCallback = Callable[[list[tuple[int, str]]], Awaitable[set[int]]]
 ResolveCallback = Callable[[str, str], Awaitable[ResolvedStream | None]]
 
 
-def _build_behavior_hints(resolved: ResolvedStream) -> dict[str, Any]:
+def _build_behavior_hints(
+    resolved: ResolvedStream,
+    *,
+    user_agent: str,
+) -> dict[str, Any]:
     """Build Stremio ``behaviorHints`` from a resolved stream.
 
     Sets ``notWebReady: true`` so Stremio routes the stream through its
@@ -333,7 +389,7 @@ def _build_behavior_hints(resolved: ResolvedStream) -> dict[str, Any]:
     Headers always include a browser User-Agent. If the resolver provided
     additional headers (e.g. Referer), they are merged in.
     """
-    request_headers: dict[str, str] = {"User-Agent": DEFAULT_USER_AGENT}
+    request_headers: dict[str, str] = {"User-Agent": user_agent}
     if resolved.headers:
         request_headers.update(resolved.headers)
 
@@ -364,17 +420,26 @@ class StremioStreamUseCase:
         tmdb: TmdbClientPort,
         plugins: PluginRegistryPort,
         search_engine: SearchEnginePort,
-        config: StremioConfig,
+        config: _StremioConfig,
+        sorter: _StreamSorter,
+        convert_fn: _ConvertFn,
+        filter_fn: _TitleFilterFn,
+        user_agent: str,
+        max_results_var: ContextVar[int | None],
         stream_link_repo: StreamLinkRepository | None = None,
         probe_fn: ProbeCallback | None = None,
         resolve_fn: ResolveCallback | None = None,
-        metrics: MetricsCollector | None = None,
+        metrics: _MetricsRecorder | None = None,
         score_store: PluginScoreStorePort | None = None,
     ) -> None:
         self._tmdb = tmdb
         self._plugins = plugins
         self._search_engine = search_engine
-        self._sorter = StreamSorter(config)
+        self._sorter = sorter
+        self._convert_fn = convert_fn
+        self._filter_fn = filter_fn
+        self._user_agent = user_agent
+        self._max_results_var = max_results_var
         self._max_concurrent = config.max_concurrent_plugins
         self._plugin_timeout = config.plugin_timeout_seconds
         self._title_match_threshold = config.title_match_threshold
@@ -460,7 +525,7 @@ class StremioStreamUseCase:
             return []
 
         # --- title-match filtering ---
-        filtered = filter_by_title_match(
+        filtered = self._filter_fn(
             all_results,
             title_info,
             self._title_match_threshold,
@@ -490,7 +555,7 @@ class StremioStreamUseCase:
             except Exception:  # noqa: BLE001
                 log.debug("stremio_plugin_language_lookup_failed", plugin=name)
 
-        ranked = convert_search_results(filtered, plugin_languages=plugin_languages)
+        ranked = self._convert_fn(filtered, plugin_languages=plugin_languages)
         sorted_streams = self._sorter.sort(ranked)
 
         # Keep only the best-ranked stream per hoster (already sorted best-first)
@@ -596,7 +661,7 @@ class StremioStreamUseCase:
             resolved = resolved_map.get(i)
             if resolved is not None:
                 # Direct video URL with proxyHeaders for Stremio's streaming server
-                hints = _build_behavior_hints(resolved)
+                hints = _build_behavior_hints(resolved, user_agent=self._user_agent)
                 proxied.append(
                     StremioStream(
                         name=stream.name,
@@ -807,13 +872,13 @@ class StremioStreamUseCase:
             ):
                 # Python plugin: call directly, validate results
                 # Set max_results context so plugins limit pagination
-                token = search_max_results.set(self._max_results_per_plugin)
+                token = self._max_results_var.set(self._max_results_per_plugin)
                 try:
                     raw = await plugin.search(
                         query, category=category, season=season, episode=episode
                     )
                 finally:
-                    search_max_results.reset(token)
+                    self._max_results_var.reset(token)
                 raw = _filter_by_episode(raw, season, episode)
                 results = await self._search_engine.validate_results(raw)
             else:

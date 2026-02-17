@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from scavengarr.domain.entities.stremio import StremioMetaPreview, TitleMatchInfo
 
 
+@runtime_checkable
 class TmdbClientPort(Protocol):
     """Async interface for TMDB API lookups."""
 
