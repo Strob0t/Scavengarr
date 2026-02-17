@@ -90,6 +90,7 @@ def _make_use_case(
     config: StremioConfig | None = None,
     stream_link_repo: AsyncMock | None = None,
     probe_fn: AsyncMock | None = None,
+    resolve_fn: AsyncMock | None = None,
 ) -> StremioStreamUseCase:
     engine = search_engine or AsyncMock()
     # Default: validate_results returns input unchanged
@@ -109,6 +110,7 @@ def _make_use_case(
         max_results_var=search_max_results,
         stream_link_repo=stream_link_repo,
         probe_fn=probe_fn,
+        resolve_fn=resolve_fn,
     )
 
 
@@ -1268,6 +1270,206 @@ class TestStreamLinkProxy:
 
         assert len(result) >= 1
         assert result[0].url == "https://voe.sx/e/abc"
+
+
+# ---------------------------------------------------------------------------
+# Resolver echo-URL filtering (skip unplayable streams)
+# ---------------------------------------------------------------------------
+
+
+class TestResolverEchoFiltering:
+    """Streams whose resolver only validates (echoes the URL) must be skipped."""
+
+    async def test_echo_url_streams_skipped(self) -> None:
+        """XFS-style resolver returns same URL → stream excluded from output."""
+        tmdb = AsyncMock()
+        tmdb.get_title_and_year = AsyncMock(
+            return_value=TitleMatchInfo(title="Iron Man", year=2008)
+        )
+
+        # One stream with an XFS embed URL (veev)
+        sr = _make_search_result(
+            title="Iron Man",
+            download_links=[
+                {"url": "https://veev.to/e/abc123456789", "hoster": "VEEV"},
+            ],
+        )
+
+        mock_plugin = AsyncMock()
+        mock_plugin.search = AsyncMock(return_value=[sr])
+        del mock_plugin.scraping
+
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(side_effect=lambda r: r)
+
+        plugins = MagicMock()
+        plugins.get_by_provides.side_effect = lambda p: (
+            ["hdfilme"] if p == "stream" else []
+        )
+        plugins.get.return_value = mock_plugin
+
+        # Resolver echoes the URL back (XFS behaviour)
+        async def _echo_resolve(url: str, hoster: str = "") -> ResolvedStream:
+            return ResolvedStream(video_url=url, quality=StreamQuality.UNKNOWN)
+
+        repo = AsyncMock()
+        uc = _make_use_case(
+            tmdb=tmdb,
+            plugins=plugins,
+            search_engine=engine,
+            stream_link_repo=repo,
+            resolve_fn=AsyncMock(side_effect=_echo_resolve),
+        )
+
+        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        # Stream should be skipped — not included in output
+        assert len(result) == 0
+
+    async def test_direct_video_url_streams_kept(self) -> None:
+        """Resolver extracting a real video URL → stream included."""
+        tmdb = AsyncMock()
+        tmdb.get_title_and_year = AsyncMock(
+            return_value=TitleMatchInfo(title="Iron Man", year=2008)
+        )
+
+        sr = _make_search_result(
+            title="Iron Man",
+            download_links=[
+                {"url": "https://voe.sx/e/abc123", "hoster": "VOE"},
+            ],
+        )
+
+        mock_plugin = AsyncMock()
+        mock_plugin.search = AsyncMock(return_value=[sr])
+        del mock_plugin.scraping
+
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(side_effect=lambda r: r)
+
+        plugins = MagicMock()
+        plugins.get_by_provides.side_effect = lambda p: (
+            ["hdfilme"] if p == "stream" else []
+        )
+        plugins.get.return_value = mock_plugin
+
+        # Resolver extracts a real HLS video URL
+        async def _real_resolve(url: str, hoster: str = "") -> ResolvedStream:
+            return ResolvedStream(
+                video_url="https://cdn.voe.sx/hls/master.m3u8",
+                is_hls=True,
+                headers={"Referer": "https://voe.sx/"},
+            )
+
+        repo = AsyncMock()
+        uc = _make_use_case(
+            tmdb=tmdb,
+            plugins=plugins,
+            search_engine=engine,
+            stream_link_repo=repo,
+            resolve_fn=AsyncMock(side_effect=_real_resolve),
+        )
+
+        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        assert len(result) >= 1
+        assert "master.m3u8" in result[0].url
+
+    async def test_mixed_streams_only_playable_kept(self) -> None:
+        """Mix of echo and real resolvers → only playable streams in output."""
+        tmdb = AsyncMock()
+        tmdb.get_title_and_year = AsyncMock(
+            return_value=TitleMatchInfo(title="Iron Man", year=2008)
+        )
+
+        sr = _make_search_result(
+            title="Iron Man",
+            download_links=[
+                {"url": "https://veev.to/e/abc123456789", "hoster": "VEEV"},
+                {"url": "https://voe.sx/e/def456", "hoster": "VOE"},
+            ],
+        )
+
+        mock_plugin = AsyncMock()
+        mock_plugin.search = AsyncMock(return_value=[sr])
+        del mock_plugin.scraping
+
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(side_effect=lambda r: r)
+
+        plugins = MagicMock()
+        plugins.get_by_provides.side_effect = lambda p: (
+            ["hdfilme"] if p == "stream" else []
+        )
+        plugins.get.return_value = mock_plugin
+
+        # VOE extracts real URL, Veev echoes
+        async def _mixed_resolve(url: str, hoster: str = "") -> ResolvedStream:
+            if "voe.sx" in url:
+                return ResolvedStream(
+                    video_url="https://cdn.voe.sx/hls/master.m3u8",
+                    is_hls=True,
+                    headers={"Referer": "https://voe.sx/"},
+                )
+            return ResolvedStream(video_url=url, quality=StreamQuality.UNKNOWN)
+
+        repo = AsyncMock()
+        uc = _make_use_case(
+            tmdb=tmdb,
+            plugins=plugins,
+            search_engine=engine,
+            stream_link_repo=repo,
+            resolve_fn=AsyncMock(side_effect=_mixed_resolve),
+        )
+
+        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        # Only the VOE stream should remain
+        assert len(result) == 1
+        assert "master.m3u8" in result[0].url
+
+    async def test_unresolved_streams_still_proxied(self) -> None:
+        """Streams that fail resolution (None) still get proxy URL."""
+        tmdb = AsyncMock()
+        tmdb.get_title_and_year = AsyncMock(
+            return_value=TitleMatchInfo(title="Iron Man", year=2008)
+        )
+
+        sr = _make_search_result(
+            title="Iron Man",
+            download_links=[
+                {"url": "https://unknown-hoster.com/v/abc", "hoster": "UNKNOWN"},
+            ],
+        )
+
+        mock_plugin = AsyncMock()
+        mock_plugin.search = AsyncMock(return_value=[sr])
+        del mock_plugin.scraping
+
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(side_effect=lambda r: r)
+
+        plugins = MagicMock()
+        plugins.get_by_provides.side_effect = lambda p: (
+            ["hdfilme"] if p == "stream" else []
+        )
+        plugins.get.return_value = mock_plugin
+
+        # Resolver returns None (no resolver found for hoster)
+        repo = AsyncMock()
+        uc = _make_use_case(
+            tmdb=tmdb,
+            plugins=plugins,
+            search_engine=engine,
+            stream_link_repo=repo,
+            resolve_fn=AsyncMock(return_value=None),
+        )
+
+        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        # Should still get a proxy URL as fallback
+        assert len(result) == 1
+        assert result[0].url.startswith("http://localhost:8080/api/v1/stremio/play/")
 
 
 # ---------------------------------------------------------------------------

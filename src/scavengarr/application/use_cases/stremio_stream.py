@@ -728,16 +728,8 @@ class StremioStreamUseCase:
                 else:
                     # Resolver only validated availability but returned the
                     # embed/download page URL — Stremio cannot play HTML pages.
-                    # Fall back to /play/ proxy for on-demand re-resolution.
+                    # Skip this stream; the /play/ proxy would always 502.
                     passthrough_count += 1
-                    proxy_url = f"{base_url}/api/v1/stremio/play/{sid}"
-                    proxied.append(
-                        StremioStream(
-                            name=stream.name,
-                            description=stream.description,
-                            url=proxy_url,
-                        )
-                    )
             else:
                 # Fallback: proxy through /play/ endpoint
                 proxy_url = f"{base_url}/api/v1/stremio/play/{sid}"
@@ -750,9 +742,9 @@ class StremioStreamUseCase:
                 )
         if passthrough_count:
             log.info(
-                "stremio_passthrough_rejected",
+                "stremio_streams_skipped",
                 count=passthrough_count,
-                msg="resolvers returned embed page URLs, not video URLs",
+                msg="resolvers returned embed page URLs, not playable video URLs",
             )
         return proxied
 
