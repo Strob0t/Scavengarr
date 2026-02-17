@@ -3,15 +3,17 @@
 Pure transformation logic — no I/O, no framework dependencies.
 Compares plugin SearchResult titles against a reference TitleMatchInfo
 to filter out wrong titles (sequels, spin-offs, unrelated results).
+
+Uses **rapidfuzz** for fast, robust fuzzy matching (C++ backend).
 """
 
 from __future__ import annotations
 
 import re
-from difflib import SequenceMatcher
 
 import structlog
 from guessit import guessit
+from rapidfuzz import fuzz
 
 from scavengarr.domain.entities.stremio import TitleMatchInfo
 from scavengarr.domain.plugins.base import SearchResult
@@ -61,20 +63,6 @@ def _sequel_number(title: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
-def _token_similarity(a: str, b: str) -> float:
-    """Overlap coefficient between token sets of *a* and *b*.
-
-    Returns ``|A ∩ B| / min(|A|, |B|)``, which handles token
-    reordering and partial subsets better than SequenceMatcher.
-    """
-    tokens_a = set(a.split())
-    tokens_b = set(b.split())
-    if not tokens_a or not tokens_b:
-        return 0.0
-    intersection = tokens_a & tokens_b
-    return len(intersection) / min(len(tokens_a), len(tokens_b))
-
-
 def _score_single_title(
     norm_ref: str,
     norm_res: str,
@@ -86,13 +74,34 @@ def _score_single_title(
     year_penalty: float = 0.3,
     sequel_penalty: float = 0.35,
 ) -> float:
-    """Score one normalised reference title against a normalised result title."""
+    """Score one normalised reference title against a normalised result.
+
+    Uses ``rapidfuzz.fuzz.token_sort_ratio`` (handles reordering) and
+    ``rapidfuzz.fuzz.token_set_ratio`` (handles subsets like "Dune" vs
+    "Dune Part One") — whichever is higher becomes the base score.
+    """
     if not norm_ref or not norm_res:
         return 0.0
 
-    seq_score = SequenceMatcher(None, norm_ref, norm_res).ratio()
-    tok_score = _token_similarity(norm_ref, norm_res)
-    score = max(seq_score, tok_score)
+    # rapidfuzz returns 0–100; normalise to 0.0–1.0.
+    # processor=None because we already normalised the strings.
+    sort_score = (
+        fuzz.token_sort_ratio(
+            norm_ref,
+            norm_res,
+            processor=None,
+        )
+        / 100.0
+    )
+    set_score = (
+        fuzz.token_set_ratio(
+            norm_ref,
+            norm_res,
+            processor=None,
+        )
+        / 100.0
+    )
+    score = max(sort_score, set_score)
 
     # --- year handling ---
     if reference_year is not None and result_year is not None:
@@ -102,9 +111,11 @@ def _score_single_title(
             score -= year_penalty
 
     # --- sequel detection ---
+    # Penalise ANY mismatch: "Iron Man" vs "Iron Man 2",
+    # "Iron Man 2" vs "Iron Man 3", or "Iron Man 2" vs "Iron Man".
     ref_sequel = _sequel_number(norm_ref)
     res_sequel = _sequel_number(norm_res)
-    if res_sequel is not None and ref_sequel is None:
+    if ref_sequel != res_sequel:
         score -= sequel_penalty
 
     return score
@@ -183,10 +194,11 @@ def score_title_match(
     The best score across all combinations is returned.
 
     Components per title variant:
-    - Base: ``max(SequenceMatcher.ratio(), token_overlap)`` (0.0–1.0)
-    - Year bonus: +*year_bonus* if year matches (tolerance depends on content type)
+
+    - Base: ``max(token_sort_ratio, token_set_ratio)`` via rapidfuzz
+    - Year bonus: +*year_bonus* if year matches (tolerance by type)
     - Year penalty: −*year_penalty* if year present but wrong
-    - Sequel penalty: −*sequel_penalty* if result has sequel number that reference lacks
+    - Sequel penalty: −*sequel_penalty* if sequel numbers differ
     """
     candidates = _extract_title_candidates(result)
     if not candidates:

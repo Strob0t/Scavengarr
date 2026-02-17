@@ -13,7 +13,6 @@ from scavengarr.infrastructure.stremio.title_matcher import (
     _normalize,
     _sequel_number,
     _strip_year,
-    _token_similarity,
     filter_by_title_match,
     score_title_match,
 )
@@ -189,6 +188,27 @@ class TestScoreTitleMatch:
         score = score_title_match(_sr("Iron Man 2"), ref)
         # exact match, no sequel penalty (both have "2")
         assert score >= 1.0
+
+    def test_sequel_ref_has_number_result_does_not(self) -> None:
+        """Ref 'Iron Man 2' vs result 'Iron Man' → sequel mismatch penalty."""
+        ref = TitleMatchInfo(title="Iron Man 2")
+        score = score_title_match(_sr("Iron Man"), ref)
+        assert score < 0.7
+
+    def test_sequel_different_numbers(self) -> None:
+        """Ref 'Iron Man 2' vs result 'Iron Man 3' → sequel mismatch penalty."""
+        ref = TitleMatchInfo(title="Iron Man 2")
+        score = score_title_match(_sr("Iron Man 3"), ref)
+        assert score < 0.7
+
+    def test_sequel_correct_number_among_many(self) -> None:
+        """The correct sequel scores highest among all sequels."""
+        ref = TitleMatchInfo(title="Iron Man 2")
+        s1 = score_title_match(_sr("Iron Man"), ref)
+        s2 = score_title_match(_sr("Iron Man 2"), ref)
+        s3 = score_title_match(_sr("Iron Man 3"), ref)
+        assert s2 > s1  # correct sequel beats no-number
+        assert s2 > s3  # correct sequel beats wrong sequel
 
     def test_case_insensitive(self) -> None:
         ref = TitleMatchInfo(title="IRON MAN")
@@ -442,53 +462,21 @@ class TestNormalizeUmlauts:
 
 
 # ---------------------------------------------------------------------------
-# _token_similarity
-# ---------------------------------------------------------------------------
-
-
-class TestTokenSimilarity:
-    def test_identical_tokens(self) -> None:
-        assert _token_similarity("iron man", "iron man") == pytest.approx(1.0)
-
-    def test_reordered_tokens(self) -> None:
-        assert _token_similarity("man iron", "iron man") == pytest.approx(1.0)
-
-    def test_subset_tokens(self) -> None:
-        """Overlap coefficient: all tokens of shorter set match."""
-        assert _token_similarity("iron man", "iron man returns") == pytest.approx(1.0)
-
-    def test_partial_overlap(self) -> None:
-        # "iron" overlaps, "man" vs "fist" don't → 1/2 = 0.5
-        assert _token_similarity("iron man", "iron fist") == pytest.approx(0.5)
-
-    def test_no_overlap(self) -> None:
-        assert _token_similarity("iron man", "spider verse") == pytest.approx(0.0)
-
-    def test_empty_string(self) -> None:
-        assert _token_similarity("", "iron man") == pytest.approx(0.0)
-
-    def test_both_empty(self) -> None:
-        assert _token_similarity("", "") == pytest.approx(0.0)
-
-
-# ---------------------------------------------------------------------------
-# score_title_match — token-based scoring
+# score_title_match — rapidfuzz token-based scoring
 # ---------------------------------------------------------------------------
 
 
 class TestTokenBasedScoring:
     def test_reordered_tokens_still_match(self) -> None:
-        """Token similarity rescues reordered titles that SequenceMatcher misses."""
+        """token_sort_ratio handles reordered titles."""
         ref = TitleMatchInfo(title="Man Iron")
         score = score_title_match(_sr("Iron Man"), ref)
-        # Token overlap is 1.0, SequenceMatcher would be lower
         assert score >= 1.0
 
     def test_token_scoring_picks_max(self) -> None:
-        """Score should be max(sequence, token), not average."""
+        """Score uses max(token_sort_ratio, token_set_ratio)."""
         ref = TitleMatchInfo(title="the iron man")
         score = score_title_match(_sr("iron man the"), ref)
-        # Token: 3/3 = 1.0; Sequence: < 1.0 → result should be 1.0
         assert score == pytest.approx(1.0)
 
 

@@ -28,6 +28,7 @@ guessit = "^3.8.0"
 playwright-stealth = "^2.0.0"
 pyyaml = "^6.0"
 cryptography = ">=43.0,<45"
+rapidfuzz = "^3.14.3"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0.2"
