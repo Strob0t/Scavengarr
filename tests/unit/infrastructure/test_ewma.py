@@ -130,6 +130,17 @@ class TestComputeHealthObservation:
         obs = compute_health_observation(probe)
         assert obs < 0.35
 
+    def test_captcha_detected_returns_zero(self) -> None:
+        probe = ProbeResult(
+            started_at=_NOW,
+            duration_ms=100.0,
+            ok=False,
+            captcha_detected=True,
+            error_kind="captcha",
+        )
+        obs = compute_health_observation(probe)
+        assert obs == 0.0
+
 
 class TestComputeSearchObservation:
     def test_perfect_probe(self) -> None:

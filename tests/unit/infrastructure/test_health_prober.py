@@ -97,6 +97,79 @@ class TestProbe:
         assert result.started_at.tzinfo is not None
 
 
+class TestCaptchaDetection:
+    @respx.mock
+    async def test_head_403_with_cf_ray_detects_captcha(self) -> None:
+        respx.head(_URL).respond(403, headers={"cf-ray": "abc123"})
+        async with httpx.AsyncClient() as client:
+            prober = HealthProber(http_client=client)
+            result = await prober.probe(_URL)
+
+        assert result.captcha_detected is True
+        assert result.ok is False
+        assert result.error_kind == "captcha"
+        assert result.http_status == 403
+
+    @respx.mock
+    async def test_head_503_with_cf_ray_detects_captcha(self) -> None:
+        respx.head(_URL).respond(503, headers={"cf-ray": "def456"})
+        async with httpx.AsyncClient() as client:
+            prober = HealthProber(http_client=client)
+            result = await prober.probe(_URL)
+
+        assert result.captcha_detected is True
+        assert result.ok is False
+        assert result.error_kind == "captcha"
+
+    @respx.mock
+    async def test_head_403_without_cf_ray_is_not_captcha(self) -> None:
+        respx.head(_URL).respond(403)
+        async with httpx.AsyncClient() as client:
+            prober = HealthProber(http_client=client)
+            result = await prober.probe(_URL)
+
+        assert result.captcha_detected is False
+        assert result.ok is False
+        assert result.error_kind is None
+
+    @respx.mock
+    async def test_get_fallback_with_cf_body_detects_captcha(self) -> None:
+        cf_html = "<html><title>Just a moment</title></html>"
+        respx.head(_URL).respond(405)
+        respx.get(_URL).respond(503, text=cf_html)
+        async with httpx.AsyncClient() as client:
+            prober = HealthProber(http_client=client)
+            result = await prober.probe(_URL)
+
+        assert result.captcha_detected is True
+        assert result.ok is False
+        assert result.error_kind == "captcha"
+        assert result.http_status == 503
+
+    @respx.mock
+    async def test_get_fallback_normal_page_not_captcha(self) -> None:
+        respx.head(_URL).respond(501)
+        respx.get(_URL).respond(200, text="<html>OK</html>")
+        async with httpx.AsyncClient() as client:
+            prober = HealthProber(http_client=client)
+            result = await prober.probe(_URL)
+
+        assert result.captcha_detected is False
+        assert result.ok is True
+        assert result.error_kind is None
+
+    @respx.mock
+    async def test_head_200_with_cf_ray_is_not_captcha(self) -> None:
+        """A 200 with cf-ray is fine — CF proxies all traffic."""
+        respx.head(_URL).respond(200, headers={"cf-ray": "ok123"})
+        async with httpx.AsyncClient() as client:
+            prober = HealthProber(http_client=client)
+            result = await prober.probe(_URL)
+
+        assert result.captcha_detected is False
+        assert result.ok is True
+
+
 class TestProbeAll:
     @respx.mock
     async def test_probes_multiple_plugins(self) -> None:

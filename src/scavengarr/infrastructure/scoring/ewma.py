@@ -83,7 +83,12 @@ def compute_health_observation(probe: ProbeResult) -> float:
     Combines binary reachability (70% weight) with an inverted latency
     penalty (30% weight).  A fast, reachable site scores ~1.0; a slow
     or unreachable site scores close to 0.0.
+
+    Captcha detection forces a 0.0 score — if the plugin's base URL
+    serves a Cloudflare challenge the site is effectively unreachable.
     """
+    if probe.captcha_detected:
+        return 0.0
     reachable = 1.0 if probe.ok else 0.0
     speed = 1.0 - min(probe.duration_ms / _MAX_LATENCY_MS, 1.0)
     return (1.0 - _LATENCY_WEIGHT) * reachable + _LATENCY_WEIGHT * speed

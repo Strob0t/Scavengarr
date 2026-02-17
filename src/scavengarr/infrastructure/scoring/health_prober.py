@@ -10,6 +10,9 @@ import httpx
 import structlog
 
 from scavengarr.domain.entities.scoring import ProbeResult
+from scavengarr.infrastructure.hoster_resolvers.cloudflare import (
+    is_cloudflare_challenge,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -42,6 +45,9 @@ class HealthProber:
                 timeout=self._timeout,
                 follow_redirects=True,
             )
+
+            captcha = False
+
             if resp.status_code in (405, 501):
                 resp = await self._http.get(
                     base_url,
@@ -49,15 +55,22 @@ class HealthProber:
                     follow_redirects=True,
                     headers={"Range": "bytes=0-0"},
                 )
+                # GET has a body — use full body-based CF detection
+                captcha = is_cloudflare_challenge(resp.status_code, resp.text)
+            else:
+                # HEAD has no body — heuristic: cf-ray header + 403/503
+                captcha = resp.status_code in (403, 503) and "cf-ray" in resp.headers
 
             duration_ms = (time.monotonic() - t0) * 1000
-            ok = resp.status_code < 400
+            ok = resp.status_code < 400 and not captcha
 
             return ProbeResult(
                 started_at=started_at,
                 duration_ms=duration_ms,
                 ok=ok,
                 http_status=resp.status_code,
+                captcha_detected=captcha,
+                error_kind="captcha" if captcha else None,
             )
         except httpx.TimeoutException:
             duration_ms = (time.monotonic() - t0) * 1000
