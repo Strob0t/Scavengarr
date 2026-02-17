@@ -328,6 +328,25 @@ async def stremio_play(
             headers=_CORS_HEADERS,
         )
 
+    # Guard: reject resolved URLs that are just the embed page echoed back.
+    # Stremio cannot play HTML pages — only redirect to actual video URLs.
+    if (
+        resolved.video_url == link.hoster_url
+        and not resolved.is_hls
+        and not resolved.headers
+    ):
+        log.warning(
+            "stremio_play_not_a_video",
+            stream_id=stream_id,
+            hoster=link.hoster,
+            url=link.hoster_url,
+        )
+        return JSONResponse(
+            status_code=502,
+            content={"error": "resolver returned embed page, not a video URL"},
+            headers=_CORS_HEADERS,
+        )
+
     log.info(
         "stremio_play_resolved",
         stream_id=stream_id,

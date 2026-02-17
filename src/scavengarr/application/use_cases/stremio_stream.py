@@ -363,6 +363,56 @@ def _build_search_query(title: str) -> str:
     return " ".join(cleaned.split())
 
 
+# Video file extensions that Stremio can play directly.
+_VIDEO_EXTENSIONS = frozenset(
+    {
+        ".mp4",
+        ".mkv",
+        ".m3u8",
+        ".ts",
+        ".webm",
+        ".avi",
+        ".flv",
+        ".mov",
+    }
+)
+
+# URL path fragments that indicate a direct video/HLS resource.
+_VIDEO_PATH_HINTS = ("master.m3u8", "index.m3u8", "/hls/", "/get_video")
+
+
+def _is_direct_video_url(resolved: ResolvedStream, original_url: str) -> bool:
+    """Check whether a resolved stream points to an actual video resource.
+
+    Returns ``False`` when the resolver merely validated availability and
+    echoed back the original embed/download page URL (which Stremio cannot
+    play).  Returns ``True`` when the resolver extracted a genuine video
+    URL (``is_hls``, video extension, or a different URL with playback
+    headers).
+    """
+    if resolved.is_hls:
+        return True
+
+    video_url_lower = resolved.video_url.lower()
+
+    # Check for video file extensions
+    for ext in _VIDEO_EXTENSIONS:
+        if ext in video_url_lower:
+            return True
+
+    # Check for known video path patterns (CDN paths, HLS paths)
+    for hint in _VIDEO_PATH_HINTS:
+        if hint in video_url_lower:
+            return True
+
+    # If the resolver returned a *different* URL AND set custom headers
+    # (e.g. Referer), it likely performed actual extraction.
+    if resolved.video_url != original_url and resolved.headers:
+        return True
+
+    return False
+
+
 # Callback type for probing hoster URLs at /stream time.
 # Accepts list of (index, url) tuples, returns set of alive indices.
 ProbeCallback = Callable[[list[tuple[int, str]]], Awaitable[set[int]]]
@@ -659,19 +709,35 @@ class StremioStreamUseCase:
         await asyncio.gather(*(self._stream_link_repo.save(lnk) for lnk in links))
 
         proxied: list[StremioStream] = []
+        passthrough_count = 0
         for i, (stream, sid) in enumerate(zip(streams, stream_ids)):
             resolved = resolved_map.get(i)
             if resolved is not None:
-                # Direct video URL with proxyHeaders for Stremio's streaming server
-                hints = _build_behavior_hints(resolved, user_agent=self._user_agent)
-                proxied.append(
-                    StremioStream(
-                        name=stream.name,
-                        description=stream.description,
-                        url=resolved.video_url,
-                        behavior_hints=hints,
+                original_url = ranked[i].url if i < len(ranked) else ""
+                if _is_direct_video_url(resolved, original_url):
+                    # Resolver extracted a genuine video URL
+                    hints = _build_behavior_hints(resolved, user_agent=self._user_agent)
+                    proxied.append(
+                        StremioStream(
+                            name=stream.name,
+                            description=stream.description,
+                            url=resolved.video_url,
+                            behavior_hints=hints,
+                        )
                     )
-                )
+                else:
+                    # Resolver only validated availability but returned the
+                    # embed/download page URL — Stremio cannot play HTML pages.
+                    # Fall back to /play/ proxy for on-demand re-resolution.
+                    passthrough_count += 1
+                    proxy_url = f"{base_url}/api/v1/stremio/play/{sid}"
+                    proxied.append(
+                        StremioStream(
+                            name=stream.name,
+                            description=stream.description,
+                            url=proxy_url,
+                        )
+                    )
             else:
                 # Fallback: proxy through /play/ endpoint
                 proxy_url = f"{base_url}/api/v1/stremio/play/{sid}"
@@ -682,6 +748,12 @@ class StremioStreamUseCase:
                         url=proxy_url,
                     )
                 )
+        if passthrough_count:
+            log.info(
+                "stremio_passthrough_rejected",
+                count=passthrough_count,
+                msg="resolvers returned embed page URLs, not video URLs",
+            )
         return proxied
 
     async def _resolve_top_streams(

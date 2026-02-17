@@ -12,10 +12,12 @@ from scavengarr.application.use_cases.stremio_stream import (
     _filter_by_episode,
     _filter_links_by_episode,
     _format_stream,
+    _is_direct_video_url,
     _parse_episode_from_label,
 )
 from scavengarr.domain.entities.stremio import (
     RankedStream,
+    ResolvedStream,
     StreamLanguage,
     StreamQuality,
     StremioStreamRequest,
@@ -1496,3 +1498,105 @@ class TestDeduplicateByHoster:
         result = _deduplicate_by_hoster(streams)
         assert len(result) == 1
         assert result[0].url == "https://voe.sx/e/0"
+
+
+# ---------------------------------------------------------------------------
+# _is_direct_video_url — detect actual video vs embed page URLs
+# ---------------------------------------------------------------------------
+
+
+class TestIsDirectVideoUrl:
+    """Ensure only genuine video URLs are sent to Stremio."""
+
+    def test_hls_m3u8_url(self) -> None:
+        resolved = ResolvedStream(
+            video_url="https://cdn.voe.sx/hls/master.m3u8",
+            is_hls=True,
+            headers={"Referer": "https://voe.sx/e/abc"},
+        )
+        assert _is_direct_video_url(resolved, "https://voe.sx/e/abc") is True
+
+    def test_mp4_url(self) -> None:
+        resolved = ResolvedStream(
+            video_url="https://cdn.example.com/video.mp4",
+        )
+        assert _is_direct_video_url(resolved, "https://voe.sx/e/abc") is True
+
+    def test_mkv_url(self) -> None:
+        resolved = ResolvedStream(
+            video_url="https://cdn.example.com/video.mkv",
+        )
+        assert _is_direct_video_url(resolved, "https://voe.sx/e/abc") is True
+
+    def test_hls_path_pattern(self) -> None:
+        resolved = ResolvedStream(
+            video_url="https://hfs.serversicuro.cc/hls/,token,.urlset/master.m3u8",
+            is_hls=True,
+        )
+        assert _is_direct_video_url(resolved, "https://supervideo.cc/e/abc") is True
+
+    def test_streamtape_get_video(self) -> None:
+        resolved = ResolvedStream(
+            video_url="https://streamtape.com/get_video?id=abc&stream=1",
+            headers={"Referer": "https://streamtape.com/"},
+        )
+        assert _is_direct_video_url(resolved, "https://streamtape.com/e/abc") is True
+
+    def test_xfs_embed_url_echoed_back(self) -> None:
+        """XFS resolver returning the embed URL unchanged — NOT a video."""
+        embed = "https://veev.to/e/2EwYsJS8frxAbWIzEhmWIJlqeGylzY9utsaUISu"
+        resolved = ResolvedStream(video_url=embed)
+        assert _is_direct_video_url(resolved, embed) is False
+
+    def test_xfs_embed_html_extension(self) -> None:
+        embed = "https://vidmoly.to/embed-bvhzy03fsrcx.html"
+        resolved = ResolvedStream(video_url=embed)
+        assert _is_direct_video_url(resolved, embed) is False
+
+    def test_ddl_url_echoed_back(self) -> None:
+        """DDL resolver returning the download page URL — NOT a video."""
+        page = "https://dropload.tv/n2sostug0kwa"
+        resolved = ResolvedStream(video_url=page)
+        assert _is_direct_video_url(resolved, page) is False
+
+    def test_mixdrop_embed_echoed_back(self) -> None:
+        page = "https://mixdrop.co/e/1vlvk1pli1w98k"
+        resolved = ResolvedStream(video_url=page)
+        assert _is_direct_video_url(resolved, page) is False
+
+    def test_different_url_with_headers(self) -> None:
+        """Resolver returned a different URL + headers = actual extraction."""
+        resolved = ResolvedStream(
+            video_url="https://cdn.voe.sx/redirect/abc123",
+            headers={"Referer": "https://voe.sx/e/abc"},
+        )
+        assert _is_direct_video_url(resolved, "https://voe.sx/e/abc") is True
+
+    def test_different_url_without_headers_no_extension(self) -> None:
+        """Different URL but no headers and no video extension — ambiguous, reject."""
+        resolved = ResolvedStream(
+            video_url="https://ddownload.com/abc123",
+        )
+        assert (
+            _is_direct_video_url(resolved, "https://ddownload.com/abc123/file") is False
+        )
+
+    def test_is_hls_flag_overrides_all(self) -> None:
+        """is_hls=True always means it's a video, regardless of URL."""
+        resolved = ResolvedStream(
+            video_url="https://weird-url.com/no-extension",
+            is_hls=True,
+        )
+        assert _is_direct_video_url(resolved, "https://embed.com/e/abc") is True
+
+    def test_webm_extension(self) -> None:
+        resolved = ResolvedStream(
+            video_url="https://cdn.example.com/clip.webm",
+        )
+        assert _is_direct_video_url(resolved, "https://example.com/e/abc") is True
+
+    def test_ts_extension(self) -> None:
+        resolved = ResolvedStream(
+            video_url="https://cdn.example.com/segment.ts",
+        )
+        assert _is_direct_video_url(resolved, "https://example.com/e/abc") is True

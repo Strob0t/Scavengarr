@@ -11,6 +11,11 @@ Massive expansion of the plugin ecosystem (2 → 40 plugins), Stremio addon inte
 hoster resolver system, plugin base class standardization, search result caching, and
 growth of the test suite from 160 to 3225 tests.
 
+### Stremio Playback Fixes
+- Filter non-video URLs from Stremio responses: `_is_direct_video_url()` detects embed pages vs actual video URLs (.mp4, .m3u8, HLS patterns)
+- Resolvers that only validate availability (XFS, DDL) now fall back to `/play/` proxy instead of sending embed page URLs to Stremio
+- Guard in `/play/` endpoint rejects resolved URLs that are just the embed page echoed back (returns 502 instead of redirecting to HTML)
+
 ### Production Bug Fixes (Stream Resolution)
 - Fix `http-equiv=` garbage treated as URL in megakino_to/movie4k `_collect_streams()` — reject non-HTTP stream values
 - Add belt-and-suspenders URL scheme validation in `HttpLinkValidator.validate_batch()`
