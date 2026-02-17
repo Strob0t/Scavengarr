@@ -28,10 +28,17 @@ _SEQUEL_RE = re.compile(r"\s+(\d{1,2})\s*$")
 # German umlaut → ASCII transliteration (applied after lowercasing).
 _UMLAUT_TABLE = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"})
 
+# Matches any character that is NOT a word character or whitespace.
+# Used to strip punctuation (colons, hyphens, apostrophes, etc.) so that
+# token matching is not broken by e.g. "dune:" vs "dune".
+_PUNCT_RE = re.compile(r"[^\w\s]")
+
 
 def _normalize(text: str) -> str:
-    """Lowercase, transliterate German umlauts, collapse whitespace."""
-    return " ".join(text.lower().translate(_UMLAUT_TABLE).split())
+    """Lowercase, transliterate umlauts, strip punctuation, collapse ws."""
+    text = text.lower().translate(_UMLAUT_TABLE)
+    text = _PUNCT_RE.sub(" ", text)
+    return " ".join(text.split())
 
 
 def _strip_year(text: str) -> str:

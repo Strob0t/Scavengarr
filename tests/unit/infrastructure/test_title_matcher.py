@@ -47,6 +47,18 @@ class TestNormalize:
     def test_empty(self) -> None:
         assert _normalize("") == ""
 
+    def test_strips_colon(self) -> None:
+        assert _normalize("Dune: Part One") == "dune part one"
+
+    def test_strips_hyphen(self) -> None:
+        assert _normalize("Spider-Man") == "spider man"
+
+    def test_strips_apostrophe(self) -> None:
+        assert _normalize("Ocean's Eleven") == "ocean s eleven"
+
+    def test_strips_mixed_punctuation(self) -> None:
+        assert _normalize("T2: Trainspotting!") == "t2 trainspotting"
+
 
 # ---------------------------------------------------------------------------
 # _strip_year
@@ -229,6 +241,20 @@ class TestScoreTitleMatch:
         ref = TitleMatchInfo(title="Der Eiserne", alt_titles=["Iron Man"])
         score = score_title_match(_sr("Iron Man 2"), ref)
         assert score < 0.7
+
+    def test_colon_in_reference_does_not_break_matching(self) -> None:
+        """'Dune' result must match 'Dune: Part One' reference (colon stripped)."""
+        ref = TitleMatchInfo(title="Dune: Part One", year=2021)
+        score = score_title_match(_sr("Dune 2021"), ref)
+        # token overlap: {"dune"} ⊂ {"dune", "part", "one"} → 1.0
+        # + year bonus 0.2 → 1.2
+        assert score >= 1.0
+
+    def test_hyphenated_title_matches(self) -> None:
+        """'Spider Man' result must match 'Spider-Man' reference."""
+        ref = TitleMatchInfo(title="Spider-Man")
+        score = score_title_match(_sr("Spider Man"), ref)
+        assert score >= 1.0
 
 
 # ---------------------------------------------------------------------------

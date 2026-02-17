@@ -363,6 +363,32 @@ def _build_search_query(title: str) -> str:
     return " ".join(cleaned.split())
 
 
+def _build_search_queries(title: str) -> list[str]:
+    """Build search query variants from a title.
+
+    Returns a deduplicated list of queries in priority order:
+
+    1. Full title (e.g. ``"Dune Part One"``)
+    2. Base title before the first colon, if any (e.g. ``"Dune"``)
+
+    Many German streaming sites list subtitled movies without the
+    subtitle (``"Dune"`` instead of ``"Dune: Part One"``), so
+    searching with only the full title misses results.  The title
+    matcher filters out false positives from the shorter query.
+    """
+    full_query = _build_search_query(title)
+    queries = [full_query]
+
+    if ":" in title:
+        base = title.split(":", maxsplit=1)[0].strip()
+        if base:
+            base_query = _build_search_query(base)
+            if base_query and base_query != full_query:
+                queries.append(base_query)
+
+    return queries
+
+
 # Video file extensions that Stremio can play directly.
 _VIDEO_EXTENSIONS = frozenset(
     {
@@ -529,7 +555,7 @@ class StremioStreamUseCase:
             log.warning("stremio_title_not_found", imdb_id=request.imdb_id)
             return []
 
-        query = _build_search_query(title)
+        queries = _build_search_queries(title)
         category = 2000 if request.content_type == "movie" else 5000
 
         plugin_names = self._plugins.get_by_provides("stream")
@@ -547,14 +573,14 @@ class StremioStreamUseCase:
             "stremio_search_start",
             imdb_id=request.imdb_id,
             title=title,
-            query=query,
+            queries=queries,
             plugin_count=len(selected),
             scored=len(selected) < len(all_names),
         )
 
-        all_results = await self._search_plugins(
+        all_results = await self._search_with_fallback(
             selected,
-            query,
+            queries,
             category,
             season=request.season,
             episode=request.episode,
@@ -564,7 +590,7 @@ class StremioStreamUseCase:
             log.info(
                 "stremio_search_no_results",
                 imdb_id=request.imdb_id,
-                query=query,
+                queries=queries,
             )
             return []
 
@@ -588,7 +614,7 @@ class StremioStreamUseCase:
             log.info(
                 "stremio_all_filtered",
                 imdb_id=request.imdb_id,
-                query=query,
+                query=queries[0],
                 total=len(all_results),
             )
             return []
@@ -631,7 +657,7 @@ class StremioStreamUseCase:
         log.info(
             "stremio_search_complete",
             imdb_id=request.imdb_id,
-            query=query,
+            query=queries[0],
             result_count=len(all_results),
             filtered_count=len(filtered),
             stream_count=len(streams),
@@ -879,6 +905,45 @@ class StremioStreamUseCase:
             total_available=len(all_names),
         )
         return selected_names
+
+    async def _search_with_fallback(
+        self,
+        plugin_names: list[str],
+        queries: list[str],
+        category: int | None = None,
+        *,
+        season: int | None = None,
+        episode: int | None = None,
+    ) -> list[SearchResult]:
+        """Search plugins with all query variants, deduplicate results.
+
+        The first query's results are always kept in full.  Subsequent
+        (fallback) queries only add results whose ``download_link`` was
+        not already seen, to avoid duplicates from the same plugin
+        matching on both the full title and the shorter base title.
+        """
+        search_tasks = [
+            self._search_plugins(
+                plugin_names,
+                q,
+                category,
+                season=season,
+                episode=episode,
+            )
+            for q in queries
+        ]
+        results_per_query = await asyncio.gather(*search_tasks)
+
+        # First query's results are kept unconditionally.
+        all_results: list[SearchResult] = list(results_per_query[0])
+        if len(results_per_query) > 1:
+            seen: set[str] = {r.download_link for r in all_results}
+            for results in results_per_query[1:]:
+                for r in results:
+                    if r.download_link not in seen:
+                        seen.add(r.download_link)
+                        all_results.append(r)
+        return all_results
 
     async def _search_plugins(
         self,

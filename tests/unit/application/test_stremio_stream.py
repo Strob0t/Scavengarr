@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from scavengarr.application.use_cases.stremio_stream import (
     StremioStreamUseCase,
+    _build_search_queries,
     _build_search_query,
     _deduplicate_by_hoster,
     _filter_by_episode,
@@ -486,6 +487,35 @@ class TestBuildSearchQuery:
 
     def test_preserves_apostrophe(self) -> None:
         assert _build_search_query("Ocean's Eleven") == "Ocean's Eleven"
+
+
+# ---------------------------------------------------------------------------
+# _build_search_queries (subtitle fallback)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildSearchQueries:
+    def test_no_colon_single_query(self) -> None:
+        assert _build_search_queries("Iron Man") == ["Iron Man"]
+
+    def test_colon_adds_base_title_fallback(self) -> None:
+        assert _build_search_queries("Dune: Part One") == [
+            "Dune Part One",
+            "Dune",
+        ]
+
+    def test_colon_spider_man(self) -> None:
+        queries = _build_search_queries("Spider-Man: No Way Home")
+        assert queries == ["Spider-Man No Way Home", "Spider-Man"]
+
+    def test_colon_same_as_full_no_duplicate(self) -> None:
+        """If base == full after cleaning, don't add a duplicate."""
+        assert _build_search_queries("Dune:") == ["Dune"]
+
+    def test_multiple_colons_uses_first(self) -> None:
+        queries = _build_search_queries("Star Wars: Episode IV: A New Hope")
+        assert queries[0] == "Star Wars Episode IV A New Hope"
+        assert queries[1] == "Star Wars"
 
 
 # ---------------------------------------------------------------------------
