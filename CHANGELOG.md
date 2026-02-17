@@ -43,6 +43,11 @@ EWMA-based probes, then selects only the top-N plugins per Stremio request.
 - Add new Vidsonic standalone HLS resolver with hex-obfuscated URL decoding
 - Wire StrmupResolver and VidsonicResolver in composition root
 
+### Stremio Stream Deduplication
+- Add per-hoster deduplication: only the best-ranked stream per hoster is returned
+- Prevents duplicate links from the same hoster (e.g., 5 VOE links → 1 best VOE link)
+- Applied after sorting, before probing/caching — keeps highest-ranked link per hoster
+
 ### Stremio Playback: behaviorHints.proxyHeaders
 Pre-resolve hoster embed URLs at `/stream` time and emit `behaviorHints.proxyHeaders`
 so Stremio's local streaming server sends the correct `Referer` and `User-Agent` headers

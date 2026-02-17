@@ -659,7 +659,9 @@ class TestBreakingBadE2E:
         resp = client.get(f"{_PREFIX}/stremio/stream/series/{self._IMDB}:5:3.json")
 
         streams = resp.json()["streams"]
-        assert len(streams) == 6
+        # 5 unique hosters: VOE, Filemoon, Streamtape, SuperVideo, DoodStream
+        # (per-hoster dedup removes the duplicate VOE from kinoger)
+        assert len(streams) == 5
 
         # German Dub results should rank before German Sub
         dub_indices = [
@@ -718,14 +720,22 @@ class TestSeriesEdgeCases:
         The router falls back to season=None, episode=None, so all results
         pass through the episode filter unfiltered.
         """
+        _hosters = ["VOE", "Streamtape", "Filemoon", "DoodStream", "Mixdrop"]
+        _domains = [
+            "voe.sx",
+            "streamtape.com",
+            "filemoon.sx",
+            "dood.re",
+            "mixdrop.ag",
+        ]
         results = [
             SearchResult(
                 title=f"Test Series S02E{ep:02d}",
-                download_link=f"https://voe.sx/e/s02e{ep:02d}",
+                download_link=f"https://{_domains[ep - 1]}/e/s02e{ep:02d}",
                 download_links=[
                     {
-                        "hoster": "VOE",
-                        "link": f"https://voe.sx/e/s02e{ep:02d}",
+                        "hoster": _hosters[ep - 1],
+                        "link": f"https://{_domains[ep - 1]}/e/s02e{ep:02d}",
                         "language": "German Dub",
                     }
                 ],
@@ -736,11 +746,11 @@ class TestSeriesEdgeCases:
         ] + [
             SearchResult(
                 title="Test Series S01E01",
-                download_link="https://voe.sx/e/s01e01",
+                download_link="https://vidmoly.me/e/s01e01",
                 download_links=[
                     {
-                        "hoster": "VOE",
-                        "link": "https://voe.sx/e/s01e01",
+                        "hoster": "Vidmoly",
+                        "link": "https://vidmoly.me/e/s01e01",
                         "language": "German Dub",
                     }
                 ],
@@ -757,7 +767,7 @@ class TestSeriesEdgeCases:
         resp = client.get(f"{_PREFIX}/stremio/stream/series/tt1234567:2.json")
 
         assert resp.status_code == 200
-        # All 6 results pass through since no season/episode filter is applied
+        # All 6 results pass through (different hosters, no episode filter)
         streams = resp.json()["streams"]
         assert len(streams) == 6
         call = plugin.calls[0]

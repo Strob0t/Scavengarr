@@ -267,6 +267,25 @@ _TRANSLITERATION = str.maketrans(
 )
 
 
+def _deduplicate_by_hoster(streams: list[RankedStream]) -> list[RankedStream]:
+    """Keep only the first (best-ranked) stream per hoster.
+
+    The input must already be sorted by rank (best first).  For each
+    hoster name, only the first occurrence is kept.  Streams with an
+    empty hoster string are always kept (no dedup key).
+    """
+    seen: set[str] = set()
+    result: list[RankedStream] = []
+    for s in streams:
+        if not s.hoster:
+            result.append(s)
+            continue
+        if s.hoster not in seen:
+            seen.add(s.hoster)
+            result.append(s)
+    return result
+
+
 def _build_search_query(title: str) -> str:
     """Build a search query string from title.
 
@@ -473,6 +492,9 @@ class StremioStreamUseCase:
 
         ranked = convert_search_results(filtered, plugin_languages=plugin_languages)
         sorted_streams = self._sorter.sort(ranked)
+
+        # Keep only the best-ranked stream per hoster (already sorted best-first)
+        sorted_streams = _deduplicate_by_hoster(sorted_streams)
 
         streams = [
             _format_stream(

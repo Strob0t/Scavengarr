@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 from scavengarr.application.use_cases.stremio_stream import (
     StremioStreamUseCase,
     _build_search_query,
+    _deduplicate_by_hoster,
     _filter_by_episode,
     _filter_links_by_episode,
     _format_stream,
@@ -909,7 +910,7 @@ class TestExecute:
         sr = _make_search_result(
             title="Movie",
             download_links=[
-                {"url": "https://voe.sx/e/low", "quality": "SD"},
+                {"url": "https://streamtape.com/v/low", "quality": "SD"},
                 {"url": "https://voe.sx/e/high", "quality": "1080p"},
             ],
         )
@@ -930,7 +931,7 @@ class TestExecute:
         uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
         result = await uc.execute(_make_request())
 
-        # Should have 2 streams (order depends on sorter)
+        # Should have 2 streams (different hosters, order depends on sorter)
         assert len(result) == 2
 
     async def test_plugin_without_search_method_skipped(self) -> None:
@@ -1259,6 +1260,20 @@ class TestStreamLinkProxy:
 # ---------------------------------------------------------------------------
 
 
+_PROBE_HOSTERS = [
+    "voe.sx",
+    "streamtape.com",
+    "dood.re",
+    "filemoon.sx",
+    "mixdrop.ag",
+    "vidmoly.me",
+    "streamwish.com",
+    "vidoza.net",
+    "upstream.to",
+    "wolfstream.tv",
+]
+
+
 def _probe_test_setup(
     *,
     result_count: int = 3,
@@ -1270,6 +1285,9 @@ def _probe_test_setup(
     Returns (use_case, repo_mock). The use case has a TMDB mock returning
     "Iron Man" (2008), a single plugin returning *result_count* streams,
     and a stream_link_repo mock for proxy URL generation.
+
+    Each stream uses a different hoster domain to survive per-hoster
+    deduplication.
     """
     tmdb = AsyncMock()
     tmdb.get_title_and_year = AsyncMock(
@@ -1279,7 +1297,13 @@ def _probe_test_setup(
     srs = [
         _make_search_result(
             title="Iron Man",
-            download_links=[{"url": f"https://voe.sx/e/stream{i}"}],
+            download_links=[
+                {
+                    "url": (
+                        f"https://{_PROBE_HOSTERS[i % len(_PROBE_HOSTERS)]}/e/stream{i}"
+                    )
+                }
+            ],
         )
         for i in range(result_count)
     ]
@@ -1377,3 +1401,85 @@ class TestStreamProbe:
             s.url.startswith("http://localhost:8080/api/v1/stremio/play/")
             for s in result
         )
+
+
+# ---------------------------------------------------------------------------
+# _deduplicate_by_hoster
+# ---------------------------------------------------------------------------
+
+
+class TestDeduplicateByHoster:
+    def test_keeps_best_per_hoster(self) -> None:
+        streams = [
+            RankedStream(url="https://voe.sx/e/a", hoster="voe", rank_score=100),
+            RankedStream(url="https://voe.sx/e/b", hoster="voe", rank_score=90),
+            RankedStream(
+                url="https://streamtape.com/v/c", hoster="streamtape", rank_score=80
+            ),
+        ]
+        result = _deduplicate_by_hoster(streams)
+        assert len(result) == 2
+        assert result[0].url == "https://voe.sx/e/a"
+        assert result[1].url == "https://streamtape.com/v/c"
+
+    def test_empty_hoster_always_kept(self) -> None:
+        streams = [
+            RankedStream(url="https://a.com/1", hoster="", rank_score=100),
+            RankedStream(url="https://b.com/2", hoster="", rank_score=90),
+            RankedStream(url="https://voe.sx/e/c", hoster="voe", rank_score=80),
+        ]
+        result = _deduplicate_by_hoster(streams)
+        assert len(result) == 3
+
+    def test_single_stream_unchanged(self) -> None:
+        streams = [
+            RankedStream(url="https://voe.sx/e/a", hoster="voe", rank_score=100),
+        ]
+        result = _deduplicate_by_hoster(streams)
+        assert len(result) == 1
+        assert result[0].url == "https://voe.sx/e/a"
+
+    def test_empty_list(self) -> None:
+        assert _deduplicate_by_hoster([]) == []
+
+    def test_all_unique_hosters(self) -> None:
+        streams = [
+            RankedStream(url="https://voe.sx/e/a", hoster="voe", rank_score=100),
+            RankedStream(
+                url="https://streamtape.com/v/b",
+                hoster="streamtape",
+                rank_score=90,
+            ),
+            RankedStream(url="https://dood.re/e/c", hoster="doodstream", rank_score=80),
+        ]
+        result = _deduplicate_by_hoster(streams)
+        assert len(result) == 3
+
+    def test_preserves_sort_order(self) -> None:
+        streams = [
+            RankedStream(url="https://voe.sx/e/a", hoster="voe", rank_score=100),
+            RankedStream(
+                url="https://streamtape.com/v/b",
+                hoster="streamtape",
+                rank_score=90,
+            ),
+            RankedStream(url="https://voe.sx/e/c", hoster="voe", rank_score=80),
+            RankedStream(url="https://dood.re/e/d", hoster="doodstream", rank_score=70),
+            RankedStream(
+                url="https://streamtape.com/v/e",
+                hoster="streamtape",
+                rank_score=60,
+            ),
+        ]
+        result = _deduplicate_by_hoster(streams)
+        assert len(result) == 3
+        assert [s.hoster for s in result] == ["voe", "streamtape", "doodstream"]
+
+    def test_many_duplicates(self) -> None:
+        streams = [
+            RankedStream(url=f"https://voe.sx/e/{i}", hoster="voe", rank_score=100 - i)
+            for i in range(10)
+        ]
+        result = _deduplicate_by_hoster(streams)
+        assert len(result) == 1
+        assert result[0].url == "https://voe.sx/e/0"
