@@ -323,7 +323,7 @@ tests/
       test_stream_sorter.py            # Stremio stream sorting/ranking
       test_stream_link_cache.py        # Stream link cache repository
       test_hoster_registry.py          # HosterResolverRegistry
-      test_xfs_resolver.py             # Generic XFS resolver (27 hosters, parameterised)
+      test_xfs_resolver.py             # Generic XFS resolver (26 hosters, parameterised)
       test_voe_resolver.py             # VOE hoster resolver
       test_streamtape_resolver.py      # Streamtape hoster resolver
       test_supervideo_resolver.py      # SuperVideo hoster resolver
@@ -374,6 +374,7 @@ tests/
       test_moflix_plugin.py            # moflix plugin tests
       test_movieblog_plugin.py         # movieblog plugin tests
       test_movie2k_plugin.py           # movie2k plugin tests
+      test_movie4k.py                  # movie4k plugin tests
       test_myboerse_plugin.py          # myboerse plugin tests
       test_mygully_plugin.py           # mygully plugin tests
       test_nima4k_plugin.py            # nima4k plugin tests
@@ -612,7 +613,7 @@ Hoster resolvers validate whether a URL on a file hosting service is still avail
 **DDL (Direct Download Link) resolvers** validate file availability without extracting a video URL:
 - Filer.net (API-based), Rapidgator, DDownload (page-scraping), Mediafire (API-based), GoFile (API + guest token)
 - 12 generic DDL hosters (alfafile, alphaddl, fastpic, filecrypt, filefactory, fsst, go4up, mixdrop, nitroflare, 1fichier, turbobit, uploaded)
-- 27 XFS-based hosters (katfile, hexupload, clicknupload, filestore, uptobox, funxd, bigwarp, dropload, goodstream, savefiles, streamwish, vidmoly, vidoza, vinovo, vidhide, streamruby, veev, lulustream, upstream, wolfstream, vidnest, mp4upload, uqload, vidshar, vidroba, hotlink, vidspeed)
+- 26 XFS-based hosters (katfile, hexupload, clicknupload, filestore, uptobox, funxd, bigwarp, dropload, savefiles, streamwish, vidmoly, vidoza, vinovo, vidhide, streamruby, veev, lulustream, upstream, wolfstream, vidnest, mp4upload, uqload, vidshar, vidroba, hotlink, vidspeed)
 - Return `ResolvedStream(video_url=<canonical_file_url>, quality=StreamQuality.UNKNOWN)`
 
 #### Shared URL utility
@@ -639,7 +640,7 @@ create_all_ddl_resolvers(http_client) -> list[GenericDDLResolver]  # factory fun
 
 #### XFileSharingPro (XFS) — consolidated resolver
 
-27 XFS-based hosters are consolidated into a single generic `XFSResolver` with parameterised `XFSConfig` in `src/scavengarr/infrastructure/hoster_resolvers/xfs.py`. Adding a new XFS hoster = adding a new `XFSConfig` constant + appending it to `ALL_XFS_CONFIGS`.
+26 XFS-based hosters are consolidated into a single generic `XFSResolver` with parameterised `XFSConfig` in `src/scavengarr/infrastructure/hoster_resolvers/xfs.py`. Adding a new XFS hoster = adding a new `XFSConfig` constant + appending it to `ALL_XFS_CONFIGS`.
 
 ```python
 @dataclass(frozen=True)

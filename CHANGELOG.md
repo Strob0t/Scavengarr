@@ -11,6 +11,13 @@ Massive expansion of the plugin ecosystem (2 → 40 plugins), Stremio addon inte
 hoster resolver system, plugin base class standardization, search result caching, and
 growth of the test suite from 160 to 3225 tests.
 
+### Production Bug Fixes (Stream Resolution)
+- Fix `http-equiv=` garbage treated as URL in megakino_to/movie4k `_collect_streams()` — reject non-HTTP stream values
+- Add belt-and-suspenders URL scheme validation in `HttpLinkValidator.validate_batch()`
+- Fix veev resolver regex: accept 12+ char alphanumeric IDs (was exactly 12, veev.to now uses 43-char IDs)
+- Fix vidking resolver regex: accept `/embed/movie/{id}` paths used by cineby/videasy plugins
+- Remove goodstream from XFS configs — URLs use custom player format, not XFS
+
 ### Torznab Pagination
 - Wire `TorznabQuery.offset`/`limit` fields through router → use case for server-side result pagination
 - Add `offset` and `limit` query parameters to the Torznab search endpoint (defaults: 0 / 100)
