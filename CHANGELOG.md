@@ -40,7 +40,8 @@ EWMA-based probes, then selects only the top-N plugins per Stremio request.
 - Add 5 new Streamtape domain aliases (scloud, strtapeadblock, tapeblocker, etc.)
 - Add new StreamUp (strmup) standalone HLS resolver with page + AJAX fallback extraction
 - Add `vidara` domain alias to StreamUp resolver (Vidara = StreamUp infrastructure)
-- Wire StrmupResolver in composition root
+- Add new Vidsonic standalone HLS resolver with hex-obfuscated URL decoding
+- Wire StrmupResolver and VidsonicResolver in composition root
 
 ### Stremio Playback: behaviorHints.proxyHeaders
 Pre-resolve hoster embed URLs at `/stream` time and emit `behaviorHints.proxyHeaders`

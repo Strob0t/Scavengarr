@@ -45,6 +45,7 @@ from scavengarr.infrastructure.hoster_resolvers.turbobit import TurbobitResolver
 from scavengarr.infrastructure.hoster_resolvers.uploaded import UploadedResolver
 from scavengarr.infrastructure.hoster_resolvers.vidguard import VidguardResolver
 from scavengarr.infrastructure.hoster_resolvers.vidking import VidkingResolver
+from scavengarr.infrastructure.hoster_resolvers.vidsonic import VidsonicResolver
 from scavengarr.infrastructure.hoster_resolvers.voe import VoeResolver
 from scavengarr.infrastructure.hoster_resolvers.xfs import create_all_xfs_resolvers
 from scavengarr.infrastructure.metrics import MetricsCollector
@@ -280,7 +281,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             UploadedResolver(http_client=state.http_client),
             VidguardResolver(http_client=state.http_client),
             VidkingResolver(http_client=state.http_client),
-            # XFS resolvers (consolidated — 15 hosters)
+            VidsonicResolver(http_client=state.http_client),
+            # XFS resolvers (consolidated — 21 hosters)
             *create_all_xfs_resolvers(http_client=state.http_client),
         ],
         http_client=state.http_client,

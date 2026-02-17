@@ -289,7 +289,7 @@ The system provides a stable download endpoint that delivers a `.crawljob` file 
 - Integration: HTTP router ↔ use case ↔ adapter with HTTP mocking.
 - Optional E2E: real plugin fixtures, but deterministic (no external sites in CI).
 
-### Current test suite (3570 tests)
+### Current test suite (3593 tests)
 
 ```
 tests/
@@ -350,6 +350,7 @@ tests/
       test_vidguard_resolver.py        # VidGuard streaming resolver
       test_vidking_resolver.py         # Vidking streaming resolver
       test_strmup_resolver.py          # StreamUp (strmup) HLS streaming resolver
+      test_vidsonic_resolver.py        # Vidsonic HLS streaming resolver
       test_ewma.py                     # EWMA scoring functions (31 tests)
       test_plugin_score_cache.py       # Cache persistence + index management (19 tests)
       test_query_pool.py               # TMDB query generation + fallback (14 tests)
@@ -613,7 +614,7 @@ Every plugin MUST implement the following search features:
 Hoster resolvers validate whether a URL on a file hosting service is still available. There are two resolver categories:
 
 **Streaming resolvers** extract a direct video URL (`.mp4`/`.m3u8`) from an embed page:
-- VOE, Streamtape, SuperVideo, DoodStream, Filemoon, StreamUp (strmup)
+- VOE, Streamtape, SuperVideo, DoodStream, Filemoon, StreamUp (strmup), Vidsonic
 - Return `ResolvedStream(video_url=<direct_video_url>, quality=...)`
 
 **DDL (Direct Download Link) resolvers** validate file availability without extracting a video URL:
