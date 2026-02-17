@@ -20,6 +20,10 @@ EWMA-based probes, then selects only the top-N plugins per Stremio request.
 - Add pure EWMA scoring functions: `alpha_from_halflife`, `ewma_update`, `compute_confidence`,
   `compute_health_observation`, `compute_search_observation`, `compute_final_score`
 - Add `HealthProber` (HEAD with 405/501 GET fallback) and `MiniSearchProber` (limited search + hoster HEAD checks)
+- Enhance `MiniSearchProber` to filter HEAD-checks by supported hosters (from `HosterResolverRegistry`)
+- Add `supported_ratio` (5th component, weight 0.25) to `compute_search_observation()` — scores now reflect
+  whether a plugin's result links point to hosters with registered resolvers
+- Add `hoster_supported` / `hoster_total` fields to `ProbeResult`
 - Add `QueryPoolBuilder` with dynamic TMDB-based query generation (trending + discover endpoints, weekly rotation, German locale, bundled fallback lists)
 - Add `ScoringScheduler` background task (health probes daily, search probes 2x/week per plugin/category/bucket)
 - Add `ScoringConfig` and extend `StremioConfig` with scoring budget parameters

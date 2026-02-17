@@ -30,6 +30,8 @@ class ProbeResult:
     items_used: int = 0
     hoster_checked: int = 0
     hoster_reachable: int = 0
+    hoster_supported: int = 0
+    hoster_total: int = 0
 
 
 @dataclass(frozen=True)

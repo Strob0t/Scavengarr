@@ -92,11 +92,16 @@ def compute_health_observation(probe: ProbeResult) -> float:
 def compute_search_observation(probe: ProbeResult, limit: int) -> float:
     """Convert a search probe result into a 0.0–1.0 observation.
 
-    Components (equally weighted):
-    1. Success (binary): 1.0 if ok, 0.0 otherwise
-    2. Latency: inverted, clamped to _MAX_LATENCY_MS
-    3. Result quality: ``min(items_found, limit) / limit``
-    4. Hoster reachability: ``reachable / checked`` (1.0 if none checked)
+    Components (5 weighted):
+    1. Success (binary): 1.0 if ok, 0.0 otherwise           (0.20)
+    2. Latency: inverted, clamped to _MAX_LATENCY_MS         (0.15)
+    3. Result quality: ``min(items_found, limit) / limit``   (0.20)
+    4. Hoster reachability: ``reachable / checked``           (0.20)
+    5. Supported-hoster ratio: ``supported / total``          (0.25)
+
+    The supported-hoster ratio gets the largest weight because it
+    directly measures whether a plugin's results can be resolved and
+    played by registered hoster resolvers.
     """
     success = 1.0 if probe.ok else 0.0
     speed = 1.0 - min(probe.duration_ms / _MAX_LATENCY_MS, 1.0)
@@ -109,7 +114,18 @@ def compute_search_observation(probe: ProbeResult, limit: int) -> float:
     else:
         hoster_ratio = 1.0
 
-    return 0.25 * success + 0.25 * speed + 0.25 * quality + 0.25 * hoster_ratio
+    if probe.hoster_total > 0:
+        supported_ratio = probe.hoster_supported / probe.hoster_total
+    else:
+        supported_ratio = 0.0
+
+    return (
+        0.20 * success
+        + 0.15 * speed
+        + 0.20 * quality
+        + 0.20 * hoster_ratio
+        + 0.25 * supported_ratio
+    )
 
 
 def compute_final_score(

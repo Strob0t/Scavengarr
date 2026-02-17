@@ -141,6 +141,8 @@ class TestComputeSearchObservation:
             items_used=20,
             hoster_checked=5,
             hoster_reachable=5,
+            hoster_supported=20,
+            hoster_total=20,
         )
         obs = compute_search_observation(probe, limit=20)
         assert obs > 0.9
@@ -153,7 +155,9 @@ class TestComputeSearchObservation:
             items_found=0,
         )
         obs = compute_search_observation(probe, limit=20)
-        assert obs < 0.35
+        # success=0, speed=0, quality=0, hoster_ratio=1.0, supported_ratio=0
+        # = 0.20*0 + 0.15*0 + 0.20*0 + 0.20*1.0 + 0.25*0 = 0.20
+        assert obs == pytest.approx(0.20, abs=0.01)
 
     def test_partial_results(self) -> None:
         probe = ProbeResult(
@@ -163,15 +167,94 @@ class TestComputeSearchObservation:
             items_found=5,
             hoster_checked=3,
             hoster_reachable=2,
+            hoster_supported=3,
+            hoster_total=5,
         )
         obs = compute_search_observation(probe, limit=20)
         assert 0.3 < obs < 0.8
 
     def test_zero_limit_safe(self) -> None:
-        probe = ProbeResult(started_at=_NOW, duration_ms=100.0, ok=True, items_found=5)
+        probe = ProbeResult(
+            started_at=_NOW,
+            duration_ms=100.0,
+            ok=True,
+            items_found=5,
+            hoster_supported=5,
+            hoster_total=5,
+        )
         obs = compute_search_observation(probe, limit=0)
         # limit=0 -> effective_limit=1, quality = min(5,1)/1 = 1.0
         assert obs > 0.5
+
+    def test_all_unsupported_hosters_low_score(self) -> None:
+        """Plugin returning only unsupported hoster links scores low."""
+        probe = ProbeResult(
+            started_at=_NOW,
+            duration_ms=200.0,
+            ok=True,
+            items_found=20,
+            items_used=20,
+            hoster_checked=0,
+            hoster_reachable=0,
+            hoster_supported=0,
+            hoster_total=20,
+        )
+        obs = compute_search_observation(probe, limit=20)
+        # success=1.0, speed~0.98, quality=1.0, hoster_ratio=1.0, supported=0.0
+        # = 0.20 + 0.15*0.98 + 0.20 + 0.20 + 0.0 = ~0.747
+        # Crucially lower than the "all supported" case.
+        assert obs < 0.80
+
+    def test_all_supported_hosters_high_score(self) -> None:
+        """Plugin returning only supported hoster links scores high."""
+        probe = ProbeResult(
+            started_at=_NOW,
+            duration_ms=200.0,
+            ok=True,
+            items_found=20,
+            items_used=20,
+            hoster_checked=3,
+            hoster_reachable=3,
+            hoster_supported=20,
+            hoster_total=20,
+        )
+        obs = compute_search_observation(probe, limit=20)
+        # success=1.0, speed~0.98, quality=1.0, hoster_ratio=1.0, supported=1.0
+        assert obs > 0.95
+
+    def test_supported_ratio_zero_when_no_links(self) -> None:
+        """When hoster_total is 0, supported_ratio defaults to 0.0."""
+        probe = ProbeResult(
+            started_at=_NOW,
+            duration_ms=100.0,
+            ok=True,
+            items_found=0,
+            hoster_total=0,
+            hoster_supported=0,
+        )
+        obs = compute_search_observation(probe, limit=20)
+        # success=1.0, speed~0.99, quality=0.0, hoster=1.0, supported=0.0
+        # = 0.20 + 0.15*0.99 + 0.0 + 0.20 + 0.0 = ~0.549
+        assert 0.5 < obs < 0.6
+
+    def test_half_supported_half_unsupported(self) -> None:
+        """50% supported hosters gives proportional supported_ratio."""
+        probe = ProbeResult(
+            started_at=_NOW,
+            duration_ms=200.0,
+            ok=True,
+            items_found=10,
+            items_used=10,
+            hoster_checked=3,
+            hoster_reachable=3,
+            hoster_supported=5,
+            hoster_total=10,
+        )
+        obs = compute_search_observation(probe, limit=20)
+        # supported_ratio = 0.5, quality = 10/20 = 0.5
+        # 0.20*1 + 0.15*~0.98 + 0.20*0.5 + 0.20*1.0 + 0.25*0.5
+        # = 0.20 + 0.147 + 0.10 + 0.20 + 0.125 = ~0.772
+        assert 0.7 < obs < 0.85
 
 
 class TestComputeFinalScore:

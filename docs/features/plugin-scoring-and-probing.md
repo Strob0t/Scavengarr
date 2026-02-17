@@ -65,8 +65,10 @@ Raw output from a single probe run.
 | `captcha_detected` | `bool` | Cloudflare or CAPTCHA challenge detected |
 | `items_found` | `int` | Raw search result count |
 | `items_used` | `int` | Results after limit application |
-| `hoster_checked` | `int` | Number of hoster URLs sampled |
+| `hoster_checked` | `int` | Number of supported hoster URLs HEAD-checked |
 | `hoster_reachable` | `int` | Reachable hosters from sample |
+| `hoster_supported` | `int` | Links pointing to hosters with registered resolvers |
+| `hoster_total` | `int` | Total links with extractable hoster names |
 
 ### EwmaState
 
@@ -144,12 +146,12 @@ Default weights: `w_health = 0.4`, `w_search = 0.6`.
 - Latency penalty: `max(0, 1 - duration_ms / 5000)`
 - Combined: `0.5 * reachability + 0.5 * speed`
 
-**Search observation** (0.0–1.0):
-- Success rate (binary ok/fail)
-- Latency penalty (clamped `duration_ms / 10000`)
-- Result quality: `min(items_found, limit) / limit`
-- Hoster reachability ratio
-- Combined with equal weights (0.25 each)
+**Search observation** (0.0–1.0, 5 components):
+- Success rate (binary ok/fail) — weight 0.20
+- Latency penalty (clamped `duration_ms / 10000`) — weight 0.15
+- Result quality: `min(items_found, limit) / limit` — weight 0.20
+- Hoster reachability ratio (only supported hosters are HEAD-checked) — weight 0.20
+- Supported-hoster ratio: `hoster_supported / hoster_total` — weight 0.25
 
 ---
 
@@ -176,8 +178,9 @@ Shallow search probe per (plugin, category, age bucket).
 | Pipeline | Existing plugin search path, limited scope |
 | Max items | 20 per plugin (configurable) |
 | Timeout | 10 seconds per plugin (configurable) |
-| Hoster sampling | HEAD-check up to 3 result links |
-| Output | Full `ProbeResult` with items, latency, hoster reachability |
+| Hoster sampling | HEAD-check up to 3 result links (only supported hosters) |
+| Supported-hoster filtering | Links are classified by whether their hoster has a registered resolver; only supported links are HEAD-checked |
+| Output | Full `ProbeResult` with items, latency, hoster reachability, supported-hoster counts |
 
 ---
 
@@ -185,23 +188,21 @@ Shallow search probe per (plugin, category, age bucket).
 
 ### Age Buckets
 
-| Bucket | Description | TMDB Source |
+| Bucket | Description | Year Range |
 |---|---|---|
-| `current` | Recent releases | `/trending/{movie\|tv}/week` |
-| `y1_2` | 1–2 years old | `/discover/{movie\|tv}` with date range |
-| `y5_10` | 5–10 years old | `/discover/{movie\|tv}` with date range |
+| `current` | Recent releases | Current year ± 1 |
+| `y1_2` | 1–2 years old | 1–2 years ago |
+| `y5_10` | 5–10 years old | 5–10 years ago |
 
-### Dynamic Query Pools (TMDB)
+### Dynamic Query Pools (IMDB Suggest API)
 
-Query pools are **automatically generated from TMDB** — no static maintenance needed. The `QueryPoolBuilder` uses:
+Query pools are **automatically generated from the free IMDB Suggest API** — no API key needed. The `QueryPoolBuilder` uses:
 
-- **`current` bucket**: TMDB trending endpoints (reuses existing caching)
-- **`y1_2` bucket**: TMDB discover with `primary_release_date.gte/lte` for 1–2 years ago
-- **`y5_10` bucket**: TMDB discover with `primary_release_date.gte/lte` for 5–10 years ago
+- Queries `v2.sg.media-imdb.com/suggestion/{letter}/{query}.json` with a set of letter prefixes and keywords
+- Filters results by content type (`movie`/`tvSeries`) and year range per bucket
+- Results are cached for 24h. Rotation is deterministic per ISO week number (seeded shuffle) to ensure reproducibility.
 
-German titles are extracted from TMDB responses. Results are cached for 24h. Rotation is deterministic per ISO week number (seeded shuffle) to ensure reproducibility.
-
-**Fallback**: if TMDB is unavailable, bundled lists of well-known German titles are used (~10 titles per media type).
+**Fallback**: if the IMDB Suggest API is unavailable, bundled lists of well-known German titles are used (~10 titles per media type).
 
 ---
 
