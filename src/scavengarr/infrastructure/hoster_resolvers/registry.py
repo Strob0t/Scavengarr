@@ -18,6 +18,9 @@ _CACHE_TTL_ALIVE = 3600  # 1 hour for successful resolutions
 _CACHE_TTL_DEAD = 900  # 15 minutes for failed resolutions
 _CACHE_TTL_REDIRECT = 3600  # 1 hour for redirect mappings
 
+# Evict expired entries every N resolve() calls
+_EVICT_INTERVAL = 100
+
 
 def extract_domain(url: str) -> str:
     """Extract the second-level domain from a URL.
@@ -69,6 +72,7 @@ class HosterResolverRegistry:
         self._resolve_timeout = resolve_timeout
         self._result_cache: dict[str, _CacheEntry] = {}
         self._redirect_cache: dict[str, _CacheEntry] = {}
+        self._resolve_count = 0
         for resolver in resolvers or []:
             self.register(resolver)
 
@@ -99,6 +103,11 @@ class HosterResolverRegistry:
         5. Fall back to content-type probing (HEAD request).
         6. Cache the result (alive or dead) and return.
         """
+        # Periodic eviction of expired cache entries
+        self._resolve_count += 1
+        if self._resolve_count % _EVICT_INTERVAL == 0:
+            self._evict_expired()
+
         # 0. Check result cache
         cached = self._result_cache.get(url)
         if cached is not None and not cached.is_expired:
@@ -157,6 +166,18 @@ class HosterResolverRegistry:
         """Cache a resolution result with appropriate TTL."""
         ttl = _CACHE_TTL_ALIVE if result is not None else _CACHE_TTL_DEAD
         self._result_cache[url] = _CacheEntry(result, ttl)
+
+    def _evict_expired(self) -> None:
+        """Remove expired entries from result and redirect caches."""
+        for cache in (self._result_cache, self._redirect_cache):
+            expired = [k for k, v in cache.items() if v.is_expired]
+            for k in expired:
+                del cache[k]
+        log.debug(
+            "hoster_cache_evict",
+            result_cache_size=len(self._result_cache),
+            redirect_cache_size=len(self._redirect_cache),
+        )
 
     async def _try_resolver(
         self,

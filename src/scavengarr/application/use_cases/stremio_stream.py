@@ -524,16 +524,20 @@ class StremioStreamUseCase:
             )
             return []
 
-        # --- title-match filtering ---
-        filtered = self._filter_fn(
-            all_results,
-            title_info,
-            self._title_match_threshold,
-            year_bonus=self._title_year_bonus,
-            year_penalty=self._title_year_penalty,
-            sequel_penalty=self._title_sequel_penalty,
-            year_tolerance_movie=self._title_year_tolerance_movie,
-            year_tolerance_series=self._title_year_tolerance_series,
+        # --- title-match filtering (CPU-bound guessit — offload to thread) ---
+        loop = asyncio.get_running_loop()
+        filtered = await loop.run_in_executor(
+            None,
+            lambda: self._filter_fn(
+                all_results,
+                title_info,
+                self._title_match_threshold,
+                year_bonus=self._title_year_bonus,
+                year_penalty=self._title_year_penalty,
+                sequel_penalty=self._title_sequel_penalty,
+                year_tolerance_movie=self._title_year_tolerance_movie,
+                year_tolerance_series=self._title_year_tolerance_series,
+            ),
         )
 
         if not filtered:
@@ -767,13 +771,18 @@ class StremioStreamUseCase:
             return all_names
 
         # Collect scores for each plugin (using "current" bucket as proxy)
-        scored: list[tuple[str, float, float]] = []
-        for name in all_names:
-            snap = await self._score_store.get_snapshot(name, category, "current")
-            if snap is not None:
-                scored.append((name, snap.final_score, snap.confidence))
-            else:
-                scored.append((name, 0.5, 0.0))
+        snapshots = await asyncio.gather(
+            *(
+                self._score_store.get_snapshot(name, category, "current")
+                for name in all_names
+            )
+        )
+        scored: list[tuple[str, float, float]] = [
+            (name, snap.final_score, snap.confidence)
+            if snap is not None
+            else (name, 0.5, 0.0)
+            for name, snap in zip(all_names, snapshots)
+        ]
 
         # Cold-start guard: need at least 50% of plugins with confidence > 0.1
         confident_count = sum(1 for _, _, c in scored if c > 0.1)

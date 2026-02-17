@@ -69,6 +69,12 @@ to hoster CDNs. This eliminates buffering caused by 403 rejections on missing he
 - Emit `behaviorHints.notWebReady` + `proxyHeaders.request` in Stremio stream JSON
 - Fallback to `/play/` proxy redirect for streams that fail pre-resolution
 
+### Performance (Audit)
+- Parallelize `_select_plugins()` score fetching with `asyncio.gather()` (was sequential await loop)
+- Parallelize `_run_search_cycle()` probes: collect all due probes first, then run concurrently with semaphore
+- Offload CPU-bound `filter_by_title_match()` (guessit + SequenceMatcher) to thread pool via `run_in_executor()`
+- Add periodic eviction of expired entries in `HosterResolverRegistry` caches (prevents unbounded memory growth)
+
 ### Code Quality (Audit)
 - Consolidate 12 identical DDL hoster resolvers into parameterised `GenericDDLConfig` + `GenericDDLResolver`
   (alfafile, alphaddl, fastpic, filecrypt, filefactory, fsst, go4up, mixdrop, nitroflare, 1fichier, turbobit, uploaded)

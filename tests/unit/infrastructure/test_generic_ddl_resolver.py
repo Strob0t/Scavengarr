@@ -1,4 +1,4 @@
-"""Tests for the consolidated generic DDL resolver (GenericDDLConfig + GenericDDLResolver).
+"""Tests for the consolidated generic DDL resolver.
 
 Covers:
 - GenericDDLConfig uniqueness invariants
@@ -256,9 +256,7 @@ class TestGenericDDLResolver:
         assert result is None
 
     @pytest.mark.asyncio()
-    async def test_returns_none_for_invalid_url(
-        self, config: GenericDDLConfig
-    ) -> None:
+    async def test_returns_none_for_invalid_url(self, config: GenericDDLConfig) -> None:
         async with httpx.AsyncClient() as client:
             resolver = GenericDDLResolver(config=config, http_client=client)
             result = await resolver.resolve("https://example.com/file/abc123def")

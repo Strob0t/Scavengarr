@@ -153,69 +153,72 @@ class ScoringScheduler:
             days=7.0 / max(self._config.search_runs_per_week, 1)
         )
         stream_plugins = self._plugins.get_by_provides("stream")
-        sem = asyncio.Semaphore(self._config.search_concurrency)
-        probed = 0
 
+        # 1. Collect due (name, cat, bucket, query) tuples
+        due: list[tuple[str, int, str, str]] = []
         for name in stream_plugins:
             for cat in _PROBE_CATEGORIES:
                 for bucket in _AGE_BUCKETS:
                     last = await self._store.get_last_run("search", name, cat, bucket)
                     if last is not None and (now - last) < search_interval:
                         continue
-
                     queries = await self._query_pool.get_queries(cat, bucket, count=1)
-                    if not queries:
-                        continue
+                    if queries:
+                        due.append((name, cat, bucket, queries[0]))
 
-                    async with sem:
-                        probe = await self._search.probe(
-                            name,
-                            queries[0],
-                            cat,
-                            max_items=self._config.search_max_items,
-                            timeout=self._config.search_timeout_seconds,
-                        )
+        if not due:
+            return
 
-                    obs = compute_search_observation(
-                        probe, self._config.search_max_items
-                    )
-                    alpha = alpha_from_halflife(
-                        7.0 / max(self._config.search_runs_per_week, 1),
-                        self._config.search_halflife_weeks * 7.0,
-                    )
+        # 2. Run all probes in parallel (bounded by semaphore)
+        sem = asyncio.Semaphore(self._config.search_concurrency)
 
-                    snap = await self._store.get_snapshot(name, cat, bucket)
-                    if snap is None:
-                        snap = PluginScoreSnapshot(
-                            plugin=name, category=cat, bucket=bucket
-                        )
-                    new_search = ewma_update(snap.search_score, obs, alpha, now)
-                    score, conf = update_snapshot_scores(
-                        snap.health_score,
-                        new_search,
-                        w_health=self._config.w_health,
-                        w_search=self._config.w_search,
-                        now=now,
-                    )
-                    updated = replace(
-                        snap,
-                        search_score=new_search,
-                        final_score=score,
-                        confidence=conf,
-                        updated_at=now,
-                    )
-                    await self._store.put_snapshot(updated)
-                    await self._store.set_last_run("search", name, now, cat, bucket)
-                    probed += 1
+        async def _probe_and_update(
+            name: str, cat: int, bucket: str, query: str
+        ) -> None:
+            async with sem:
+                probe = await self._search.probe(
+                    name,
+                    query,
+                    cat,
+                    max_items=self._config.search_max_items,
+                    timeout=self._config.search_timeout_seconds,
+                )
 
-                    log.debug(
-                        "search_probe_done",
-                        plugin=name,
-                        category=cat,
-                        bucket=bucket,
-                        ok=probe.ok,
-                        items=probe.items_found,
-                    )
+            obs = compute_search_observation(probe, self._config.search_max_items)
+            alpha = alpha_from_halflife(
+                7.0 / max(self._config.search_runs_per_week, 1),
+                self._config.search_halflife_weeks * 7.0,
+            )
 
-        if probed:
-            log.info("search_cycle_done", probed=probed)
+            snap = await self._store.get_snapshot(name, cat, bucket)
+            if snap is None:
+                snap = PluginScoreSnapshot(plugin=name, category=cat, bucket=bucket)
+            new_search = ewma_update(snap.search_score, obs, alpha, now)
+            score, conf = update_snapshot_scores(
+                snap.health_score,
+                new_search,
+                w_health=self._config.w_health,
+                w_search=self._config.w_search,
+                now=now,
+            )
+            updated = replace(
+                snap,
+                search_score=new_search,
+                final_score=score,
+                confidence=conf,
+                updated_at=now,
+            )
+            await self._store.put_snapshot(updated)
+            await self._store.set_last_run("search", name, now, cat, bucket)
+
+            log.debug(
+                "search_probe_done",
+                plugin=name,
+                category=cat,
+                bucket=bucket,
+                ok=probe.ok,
+                items=probe.items_found,
+            )
+
+        await asyncio.gather(*(_probe_and_update(n, c, b, q) for n, c, b, q in due))
+        log.info("search_cycle_done", probed=len(due))
