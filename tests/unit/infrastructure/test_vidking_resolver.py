@@ -28,6 +28,12 @@ class TestExtractFileId:
     def test_http_scheme(self) -> None:
         assert _extract_file_id("http://vidking.net/abc123def") == "abc123def"
 
+    def test_embed_movie_prefix(self) -> None:
+        assert _extract_file_id("https://vidking.net/embed/movie/563") == "563"
+
+    def test_embed_movie_long_id(self) -> None:
+        assert _extract_file_id("https://vidking.net/embed/movie/abc123") == "abc123"
+
     def test_non_matching_domain(self) -> None:
         assert _extract_file_id("https://example.com/abc123def") is None
 
@@ -50,6 +56,17 @@ class TestVidkingResolver:
     @pytest.mark.asyncio()
     async def test_resolves_valid_file(self) -> None:
         url = "https://vidking.net/abc123def"
+        respx.get(url).respond(200, text=_VALID_PAGE)
+
+        async with httpx.AsyncClient() as client:
+            result = await VidkingResolver(http_client=client).resolve(url)
+        assert result is not None
+        assert result.video_url == url
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_resolves_embed_movie_url(self) -> None:
+        url = "https://vidking.net/embed/movie/563"
         respx.get(url).respond(200, text=_VALID_PAGE)
 
         async with httpx.AsyncClient() as client:
