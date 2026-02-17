@@ -1,6 +1,6 @@
 """Generic XFileSharingPro (XFS) hoster resolver.
 
-Consolidates 21 identical XFS-based hoster resolvers into a single
+Consolidates 20 identical XFS-based hoster resolvers into a single
 parameterised implementation.  Each hoster is described by an ``XFSConfig``
 — name, domains, file-ID regex, and offline markers — while the resolution
 logic (fetch page → check markers → check redirect) lives once in
@@ -224,13 +224,6 @@ DROPLOAD = XFSConfig(
     offline_markers=_EXTENDED_MARKERS,
 )
 
-GOODSTREAM = XFSConfig(
-    name="goodstream",
-    domains=frozenset({"goodstream"}),
-    file_id_re=_EMBED_RE,
-    offline_markers=_EXTENDED_MARKERS,
-)
-
 SAVEFILES = XFSConfig(
     name="savefiles",
     domains=frozenset({"savefiles"}),
@@ -348,7 +341,7 @@ STREAMRUBY = XFSConfig(
 VEEV = XFSConfig(
     name="veev",
     domains=frozenset({"veev"}),
-    file_id_re=_ED_RE,
+    file_id_re=re.compile(r"^/(?:e/|d/)?([a-zA-Z0-9]{12,})(?:/|$|\.html)"),
     offline_markers=_STANDARD_MARKERS,
 )
 
@@ -439,7 +432,6 @@ ALL_XFS_CONFIGS: tuple[XFSConfig, ...] = (
     FUNXD,
     BIGWARP,
     DROPLOAD,
-    GOODSTREAM,
     SAVEFILES,
     STREAMWISH,
     VIDMOLY,
