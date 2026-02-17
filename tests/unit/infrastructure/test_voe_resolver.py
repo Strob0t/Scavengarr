@@ -12,7 +12,7 @@ from scavengarr.infrastructure.hoster_resolvers.voe import (
     _b64decode,
     _char_shift,
     _deobfuscate_mkgma,
-    _extract_tokens_from_html,
+    _extract_tokens,
     _is_valid_video_url,
     _parse_video_json,
     _replace_tokens,
@@ -76,11 +76,16 @@ class TestIsValidVideoUrl:
 class TestExtractTokens:
     def test_extracts_from_html(self) -> None:
         html = """var x = ['@$','^^','~@','%?','*~','!!','#&'], y = 5;"""
-        tokens = _extract_tokens_from_html(html)
+        tokens = _extract_tokens(html)
+        assert tokens == ["@$", "^^", "~@", "%?", "*~", "!!", "#&"]
+
+    def test_extracts_double_quoted(self) -> None:
+        html = """var x = ["@$","^^","~@","%?","*~","!!","#&"], y = 5;"""
+        tokens = _extract_tokens(html)
         assert tokens == ["@$", "^^", "~@", "%?", "*~", "!!", "#&"]
 
     def test_returns_none_when_missing(self) -> None:
-        assert _extract_tokens_from_html("<html></html>") is None
+        assert _extract_tokens("<html></html>") is None
 
 
 class TestParseVideoJson:
@@ -315,6 +320,141 @@ class TestVoeResolver:
 
         client = AsyncMock(spec=httpx.AsyncClient)
         client.get = AsyncMock(return_value=mock_resp)
+
+        resolver = VoeResolver(http_client=client)
+        result = await resolver.resolve("https://voe.sx/e/abc123")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_js_redirect_followed(self) -> None:
+        """VOE's JS redirect page should be detected and followed."""
+        redirect_html = (
+            "<!DOCTYPE html><html><head>"
+            "<title>Redirecting...</title></head><body><script>"
+            "window.location.href = 'https://lauradaydo.com/e/abc123';"
+            "</script></body></html>"
+        )
+        embed_html = """
+        <html><script>
+        var config = {'mp4': 'https://cdn.example.com/video.mp4'};
+        </script></html>
+        """
+
+        redirect_resp = MagicMock()
+        redirect_resp.status_code = 200
+        redirect_resp.text = redirect_html
+        redirect_resp.url = "https://voe.sx/e/abc123"
+
+        embed_resp = MagicMock()
+        embed_resp.status_code = 200
+        embed_resp.text = embed_html
+        embed_resp.url = "https://lauradaydo.com/e/abc123"
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(side_effect=[redirect_resp, embed_resp])
+
+        resolver = VoeResolver(http_client=client)
+        result = await resolver.resolve("https://voe.sx/e/abc123")
+
+        assert result is not None
+        assert result.video_url == "https://cdn.example.com/video.mp4"
+        assert client.get.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_js_redirect_target_fails(self) -> None:
+        """If the redirect target returns an error, resolve returns None."""
+        redirect_html = (
+            "<html><head><title>Redirecting...</title></head><body>"
+            "<script>window.location.href = "
+            "'https://lauradaydo.com/e/abc123';</script></body></html>"
+        )
+
+        redirect_resp = MagicMock()
+        redirect_resp.status_code = 200
+        redirect_resp.text = redirect_html
+        redirect_resp.url = "https://voe.sx/e/abc123"
+
+        target_resp = MagicMock()
+        target_resp.status_code = 503
+        target_resp.url = "https://lauradaydo.com/e/abc123"
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(side_effect=[redirect_resp, target_resp])
+
+        resolver = VoeResolver(http_client=client)
+        result = await resolver.resolve("https://voe.sx/e/abc123")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_mkgma_with_loader_tokens(self) -> None:
+        """MKGMa extraction fetches tokens from external loader.js."""
+        import base64
+        import json as json_mod
+
+        # Build an encoded payload using the deobfuscation chain in reverse
+        video_data = json_mod.dumps(
+            {"source": "https://cdn.example.com/engine/hls/master.m3u8"}
+        )
+        step7_encoded = base64.b64encode(video_data.encode()).decode()
+        reversed_step7 = step7_encoded[::-1]
+
+        from scavengarr.infrastructure.hoster_resolvers.voe import (
+            _rot13,
+        )
+
+        shifted = "".join(chr(ord(c) + 3) for c in reversed_step7)
+        step4 = base64.b64encode(shifted.encode()).decode()
+        # The chain: ROT13 → token replace → remove _ → b64decode = step4
+        # We need to insert tokens so that after ROT13 and token replace
+        # the underscores are removed to get step4.
+        # Simplest approach: no tokens to replace, just ROT13
+        rot13_of_step4 = _rot13(step4)
+
+        embed_html = (
+            '<html><script type="application/json">["' + rot13_of_step4 + '"]</script>'
+            '<script src="/js/loader.abc123.js"></script></html>'
+        )
+        loader_js = "var x = ['@$','^^','~@','%?','*~','!!','#&'], y = 5;"
+
+        embed_resp = MagicMock()
+        embed_resp.status_code = 200
+        embed_resp.text = embed_html
+        embed_resp.url = "https://lauradaydo.com/e/abc123"
+
+        loader_resp = MagicMock()
+        loader_resp.status_code = 200
+        loader_resp.text = loader_js
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(side_effect=[embed_resp, loader_resp])
+
+        resolver = VoeResolver(http_client=client)
+        result = await resolver.resolve("https://voe.sx/e/abc123")
+
+        assert result is not None
+        assert "master.m3u8" in result.video_url
+        assert result.is_hls is True
+
+    @pytest.mark.asyncio
+    async def test_loader_fetch_failure_graceful(self) -> None:
+        """If loader.js fetch fails, MKGMa method fails gracefully."""
+        embed_html = (
+            '<html><script type="application/json">["encoded"]</script>'
+            '<script src="/js/loader.abc123.js"></script></html>'
+        )
+
+        embed_resp = MagicMock()
+        embed_resp.status_code = 200
+        embed_resp.text = embed_html
+        embed_resp.url = "https://lauradaydo.com/e/abc123"
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(
+            side_effect=[
+                embed_resp,
+                httpx.ConnectError("loader failed"),
+            ]
+        )
 
         resolver = VoeResolver(http_client=client)
         result = await resolver.resolve("https://voe.sx/e/abc123")

@@ -15,6 +15,7 @@ growth of the test suite from 160 to 3225 tests.
 - Filter non-video URLs from Stremio responses: `_is_direct_video_url()` detects embed pages vs actual video URLs (.mp4, .m3u8, HLS patterns)
 - Resolvers that only validate availability (XFS, DDL) now fall back to `/play/` proxy instead of sending embed page URLs to Stremio
 - Guard in `/play/` endpoint rejects resolved URLs that are just the embed page echoed back (returns 502 instead of redirecting to HTML)
+- Fix VOE resolver: follow JS redirects from voe.sx → rotating domains (e.g. lauradaydo.com), fetch token array from external loader.js script
 
 ### Production Bug Fixes (Stream Resolution)
 - Fix `http-equiv=` garbage treated as URL in megakino_to/movie4k `_collect_streams()` — reject non-HTTP stream values

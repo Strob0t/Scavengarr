@@ -13,6 +13,7 @@ from __future__ import annotations
 import base64
 import json
 import re
+from urllib.parse import urljoin
 
 import httpx
 import structlog
@@ -25,6 +26,15 @@ log = structlog.get_logger(__name__)
 _BAIT_PATTERNS = re.compile(
     r"(banner|track|metric|pixel|adserv|analytics)", re.IGNORECASE
 )
+
+# JS redirect pattern: voe.sx now returns a redirect page instead of the embed
+_JS_REDIRECT_RE = re.compile(
+    r"window\.location\.href\s*=\s*['\"]"
+    r"(https?://(?!.*voe\.sx)[^'\"]+)['\"]"
+)
+
+# Token array pattern — 5-8 short separator tokens (e.g. ['@$','^^','~@',...])
+_TOKEN_ARRAY_RE = re.compile(r"=\s*(\[\s*(?:['\"][^'\"]{2,}['\"]\s*,?){5,8}\])\s*,")
 
 
 def _rot13(text: str) -> str:
@@ -81,9 +91,9 @@ def _deobfuscate_mkgma(encoded: str, tokens: list[str]) -> dict | None:
         return None
 
 
-def _extract_tokens_from_html(html: str) -> list[str] | None:
-    """Extract replacement token array from page or loader script reference."""
-    match = re.search(r"=\s*(\[\s*(?:'[^']{2,}'\s*,?){5,8}\])\s*,", html)
+def _extract_tokens(text: str) -> list[str] | None:
+    """Extract replacement token array from page HTML or script content."""
+    match = _TOKEN_ARRAY_RE.search(text)
     if match:
         try:
             raw = match.group(1).replace("'", '"')
@@ -135,32 +145,15 @@ class VoeResolver:
 
     async def resolve(self, url: str) -> ResolvedStream | None:
         """Fetch VOE embed page and extract video URL."""
-        try:
-            resp = await self._http.get(
-                url,
-                follow_redirects=True,
-                timeout=15,
-                headers={
-                    "User-Agent": (
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                    ),
-                },
-            )
-            if resp.status_code != 200:
-                log.warning("voe_http_error", status=resp.status_code, url=url)
-                return None
-
-            html = resp.text
-            embed_url = str(resp.url)
-        except httpx.HTTPError:
-            log.warning("voe_request_failed", url=url)
+        html, embed_url = await self._fetch_embed_page(url)
+        if html is None or embed_url is None:
             return None
 
         # Headers that the video CDN requires for playback
         playback_headers = {"Referer": embed_url}
 
         # Method 1: MKGMa deobfuscation
-        result = self._try_mkgma(html)
+        result = await self._try_mkgma(html, embed_url)
         if result:
             return ResolvedStream(
                 video_url=result.video_url,
@@ -202,7 +195,56 @@ class VoeResolver:
         log.warning("voe_all_methods_failed", url=url)
         return None
 
-    def _try_mkgma(self, html: str) -> ResolvedStream | None:
+    async def _fetch_embed_page(self, url: str) -> tuple[str | None, str | None]:
+        """Fetch the actual embed page, following JS redirects if needed."""
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            ),
+        }
+        try:
+            resp = await self._http.get(
+                url, follow_redirects=True, timeout=15, headers=headers
+            )
+            if resp.status_code != 200:
+                log.warning("voe_http_error", status=resp.status_code, url=url)
+                return None, None
+
+            html = resp.text
+            embed_url = str(resp.url)
+        except httpx.HTTPError:
+            log.warning("voe_request_failed", url=url)
+            return None, None
+
+        # VOE now returns a JS redirect page (window.location.href = '...')
+        # instead of the actual embed. Detect and follow it.
+        js_match = _JS_REDIRECT_RE.search(html)
+        if js_match and "<title>Redirecting" in html:
+            redirect_url = js_match.group(1)
+            log.debug("voe_js_redirect", target=redirect_url)
+            try:
+                resp = await self._http.get(
+                    redirect_url,
+                    follow_redirects=True,
+                    timeout=15,
+                    headers=headers,
+                )
+                if resp.status_code != 200:
+                    log.warning(
+                        "voe_redirect_error",
+                        status=resp.status_code,
+                        url=redirect_url,
+                    )
+                    return None, None
+                html = resp.text
+                embed_url = str(resp.url)
+            except httpx.HTTPError:
+                log.warning("voe_redirect_failed", url=redirect_url)
+                return None, None
+
+        return html, embed_url
+
+    async def _try_mkgma(self, html: str, embed_url: str) -> ResolvedStream | None:
         """Method 1: MKGMa or application/json deobfuscation."""
         encoded = None
 
@@ -223,7 +265,13 @@ class VoeResolver:
         if encoded is None:
             return None
 
-        tokens = _extract_tokens_from_html(html)
+        # Try extracting tokens from the HTML first
+        tokens = _extract_tokens(html)
+
+        # If not found, try the external loader script
+        if tokens is None:
+            tokens = await self._fetch_loader_tokens(html, embed_url)
+
         if tokens is None:
             log.debug("voe_mkgma_no_tokens")
             return None
@@ -242,6 +290,39 @@ class VoeResolver:
                 quality=StreamQuality.UNKNOWN,
             )
         return None
+
+    async def _fetch_loader_tokens(self, html: str, embed_url: str) -> list[str] | None:
+        """Fetch the external loader.js script to extract token array.
+
+        VOE moved the MKGMa replacement tokens from inline HTML to an
+        external ``/js/loader.*.js`` script.
+        """
+        match = re.search(r'src="(/js/loader\.[^"]+)"', html)
+        if not match:
+            return None
+
+        # Build absolute URL from embed page origin
+        loader_url = urljoin(embed_url, match.group(1))
+        log.debug("voe_fetching_loader", url=loader_url)
+
+        try:
+            resp = await self._http.get(
+                loader_url,
+                follow_redirects=True,
+                timeout=10,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                    ),
+                    "Referer": embed_url,
+                },
+            )
+            if resp.status_code != 200:
+                return None
+            return _extract_tokens(resp.text)
+        except httpx.HTTPError:
+            log.debug("voe_loader_fetch_failed", url=loader_url)
+            return None
 
     def _try_direct_regex(self, html: str) -> ResolvedStream | None:
         """Method 2: Direct mp4/hls key in page source."""
