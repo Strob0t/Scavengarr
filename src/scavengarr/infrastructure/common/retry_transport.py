@@ -59,9 +59,7 @@ class RetryTransport(httpx.AsyncBaseTransport):
         self._max_backoff = max_backoff
         self._retryable = retryable_status_codes
 
-    async def handle_async_request(
-        self, request: httpx.Request
-    ) -> httpx.Response:
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         """Send *request* through the wrapped transport with rate limiting.
 
         On retryable status codes, retries with exponential backoff.
@@ -100,9 +98,7 @@ class RetryTransport(httpx.AsyncBaseTransport):
         assert last_response is not None
         return last_response  # pragma: no cover
 
-    def _compute_delay(
-        self, response: httpx.Response, attempt: int
-    ) -> float:
+    def _compute_delay(self, response: httpx.Response, attempt: int) -> float:
         """Compute retry delay from Retry-After or exponential backoff."""
         retry_after = _parse_retry_after(response.headers)
         if retry_after is not None:

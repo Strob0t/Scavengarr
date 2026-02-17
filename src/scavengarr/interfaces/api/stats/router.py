@@ -65,4 +65,6 @@ async def plugin_scores(
             }
         )
 
+    results.sort(key=lambda r: r["final_score"], reverse=True)
+
     return JSONResponse(content={"scores": results, "count": len(results)})

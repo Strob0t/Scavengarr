@@ -68,9 +68,7 @@ class TestRetryTransport:
             _make_response(200),
         ]
         transport = _make_transport(responses)
-        with patch(
-            "scavengarr.infrastructure.common.retry_transport.asyncio"
-        ) as m:
+        with patch("scavengarr.infrastructure.common.retry_transport.asyncio") as m:
             m.sleep = AsyncMock()
             resp = await transport.handle_async_request(_make_request())
 
@@ -85,9 +83,7 @@ class TestRetryTransport:
             _make_response(200),
         ]
         transport = _make_transport(responses)
-        with patch(
-            "scavengarr.infrastructure.common.retry_transport.asyncio"
-        ) as m:
+        with patch("scavengarr.infrastructure.common.retry_transport.asyncio") as m:
             m.sleep = AsyncMock()
             resp = await transport.handle_async_request(_make_request())
 
@@ -101,9 +97,7 @@ class TestRetryTransport:
             _make_response(200),
         ]
         transport = _make_transport(responses)
-        with patch(
-            "scavengarr.infrastructure.common.retry_transport.asyncio"
-        ) as m:
+        with patch("scavengarr.infrastructure.common.retry_transport.asyncio") as m:
             m.sleep = AsyncMock()
             await transport.handle_async_request(_make_request())
 
@@ -116,9 +110,7 @@ class TestRetryTransport:
             _make_response(200),
         ]
         transport = _make_transport(responses, max_backoff=10.0)
-        with patch(
-            "scavengarr.infrastructure.common.retry_transport.asyncio"
-        ) as m:
+        with patch("scavengarr.infrastructure.common.retry_transport.asyncio") as m:
             m.sleep = AsyncMock()
             await transport.handle_async_request(_make_request())
 
@@ -130,9 +122,7 @@ class TestRetryTransport:
             _make_response(429),
             max_retries=2,
         )
-        with patch(
-            "scavengarr.infrastructure.common.retry_transport.asyncio"
-        ) as m:
+        with patch("scavengarr.infrastructure.common.retry_transport.asyncio") as m:
             m.sleep = AsyncMock()
             resp = await transport.handle_async_request(_make_request())
 
@@ -154,9 +144,7 @@ class TestRetryTransport:
             backoff_base=1.0,
             max_backoff=100.0,
         )
-        with patch(
-            "scavengarr.infrastructure.common.retry_transport.asyncio"
-        ) as m:
+        with patch("scavengarr.infrastructure.common.retry_transport.asyncio") as m:
             m.sleep = AsyncMock()
             with patch(
                 "scavengarr.infrastructure.common.retry_transport.random"
@@ -186,9 +174,7 @@ class TestRetryTransport:
         # Spy on the rate limiter
         transport._rate_limiter.acquire = AsyncMock()
 
-        with patch(
-            "scavengarr.infrastructure.common.retry_transport.asyncio"
-        ) as m:
+        with patch("scavengarr.infrastructure.common.retry_transport.asyncio") as m:
             m.sleep = AsyncMock()
             await transport.handle_async_request(_make_request())
 
