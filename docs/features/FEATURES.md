@@ -285,7 +285,7 @@ Infrastructure (implements Domain ports)
 
 | Component | Path |
 |---|---|
-| Domain entities | `src/scavengarr/domain/entities.py` |
+| Domain entities | `src/scavengarr/domain/entities/` |
 | Plugin domain models | `src/scavengarr/domain/plugins/` |
 | Domain ports | `src/scavengarr/domain/ports/` |
 | Use cases | `src/scavengarr/application/use_cases/` |

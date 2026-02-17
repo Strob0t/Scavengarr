@@ -11,6 +11,18 @@ Massive expansion of the plugin ecosystem (2 → 40 plugins), Stremio addon inte
 hoster resolver system, plugin base class standardization, search result caching, and
 growth of the test suite from 160 to 3225 tests.
 
+### Dead Code Cleanup
+- Remove empty `infrastructure/scraping/` package (stale from Scrapy removal)
+- Remove dead `TorznabAction` type alias (defined but never used)
+- Remove dead `CacheBackend` re-export from `infrastructure/cache/__init__.py`
+- Remove dead `AgeBucket` re-export from `domain/entities/__init__.py`
+- Fix duplicate `AgeBucket` in `query_pool.py` — import from domain instead of redefining
+- Remove 3 dead config field assignments in `StremioStreamUseCase` (`stremio_deadline_ms`,
+  `max_items_total`, `max_items_per_plugin`) — stored but never read
+- Delete dead `/indexers` data file (obsolete Scrapy reference)
+- Delete empty `.env.example`
+- Clean orphaned `__pycache__` directories
+
 ### HTTP Rate Limiting & 429 Retry (Defense in Depth)
 - Add `RetryTransport` — custom httpx transport wrapping all outgoing HTTP requests
   - Proactive: per-domain token-bucket rate limiting via existing `DomainRateLimiter` (5 RPS default)

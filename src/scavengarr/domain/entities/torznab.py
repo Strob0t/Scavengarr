@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
-
-TorznabAction = Literal["caps", "search"]
 
 
 @dataclass(frozen=True)

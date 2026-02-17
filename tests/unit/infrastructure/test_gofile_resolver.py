@@ -61,7 +61,8 @@ class TestGoFileResolver:
     async def test_resolves_valid_content(self) -> None:
         url = "https://gofile.io/d/abc123"
         respx.post(_TOKEN_URL).respond(
-            200, json={"status": "ok", "data": {"token": "testtoken123"}},
+            200,
+            json={"status": "ok", "data": {"token": "testtoken123"}},
         )
         respx.get(_CONTENT_URL).respond(
             200,
@@ -84,7 +85,8 @@ class TestGoFileResolver:
     async def test_returns_none_for_not_found(self) -> None:
         url = "https://gofile.io/d/abc123"
         respx.post(_TOKEN_URL).respond(
-            200, json={"status": "ok", "data": {"token": "testtoken123"}},
+            200,
+            json={"status": "ok", "data": {"token": "testtoken123"}},
         )
         respx.get(_CONTENT_URL).respond(404)
 
@@ -97,10 +99,12 @@ class TestGoFileResolver:
     async def test_returns_none_for_api_error(self) -> None:
         url = "https://gofile.io/d/abc123"
         respx.post(_TOKEN_URL).respond(
-            200, json={"status": "ok", "data": {"token": "testtoken123"}},
+            200,
+            json={"status": "ok", "data": {"token": "testtoken123"}},
         )
         respx.get(_CONTENT_URL).respond(
-            200, json={"status": "error-notFound", "data": {}},
+            200,
+            json={"status": "error-notFound", "data": {}},
         )
 
         async with httpx.AsyncClient() as client:
@@ -122,7 +126,8 @@ class TestGoFileResolver:
     async def test_returns_none_on_network_error(self) -> None:
         url = "https://gofile.io/d/abc123"
         respx.post(_TOKEN_URL).respond(
-            200, json={"status": "ok", "data": {"token": "testtoken123"}},
+            200,
+            json={"status": "ok", "data": {"token": "testtoken123"}},
         )
         respx.get(_CONTENT_URL).mock(side_effect=httpx.ConnectError("failed"))
 
@@ -144,7 +149,8 @@ class TestGoFileResolver:
     async def test_reuses_cached_token(self) -> None:
         url = "https://gofile.io/d/abc123"
         token_route = respx.post(_TOKEN_URL).respond(
-            200, json={"status": "ok", "data": {"token": "testtoken123"}},
+            200,
+            json={"status": "ok", "data": {"token": "testtoken123"}},
         )
         respx.get(_CONTENT_URL).respond(
             200,
@@ -164,7 +170,8 @@ class TestGoFileResolver:
     async def test_refreshes_expired_token(self) -> None:
         url = "https://gofile.io/d/abc123"
         token_route = respx.post(_TOKEN_URL).respond(
-            200, json={"status": "ok", "data": {"token": "testtoken123"}},
+            200,
+            json={"status": "ok", "data": {"token": "testtoken123"}},
         )
         respx.get(_CONTENT_URL).respond(
             200,
@@ -186,7 +193,8 @@ class TestGoFileResolver:
     async def test_returns_none_on_token_api_error(self) -> None:
         url = "https://gofile.io/d/abc123"
         respx.post(_TOKEN_URL).respond(
-            200, json={"status": "error", "data": {}},
+            200,
+            json={"status": "error", "data": {}},
         )
 
         async with httpx.AsyncClient() as client:

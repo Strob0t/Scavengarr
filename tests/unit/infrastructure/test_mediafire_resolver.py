@@ -20,7 +20,9 @@ class TestExtractFileId:
         assert _extract_file_id(url) == "abc123def"
 
     def test_file_path_no_filename(self) -> None:
-        assert _extract_file_id("https://www.mediafire.com/file/abc123def") == "abc123def"
+        assert (
+            _extract_file_id("https://www.mediafire.com/file/abc123def") == "abc123def"
+        )
 
     def test_download_path(self) -> None:
         assert _extract_file_id("https://www.mediafire.com/download/abc123") == "abc123"

@@ -1,5 +1,4 @@
 from .scoring import (
-    AgeBucket,
     EwmaState,
     PluginScoreSnapshot,
     ProbeResult,
@@ -14,7 +13,6 @@ from .stremio import (
     StremioStreamRequest,
 )
 from .torznab import (
-    TorznabAction,
     TorznabBadRequest,
     TorznabCaps,
     TorznabError,
@@ -29,7 +27,6 @@ from .torznab import (
 )
 
 __all__ = [
-    "AgeBucket",
     "EwmaState",
     "PluginScoreSnapshot",
     "ProbeResult",
@@ -40,7 +37,6 @@ __all__ = [
     "StremioMetaPreview",
     "StremioStream",
     "StremioStreamRequest",
-    "TorznabAction",
     "TorznabBadRequest",
     "TorznabCaps",
     "TorznabError",

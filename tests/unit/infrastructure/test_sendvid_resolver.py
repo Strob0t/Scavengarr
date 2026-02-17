@@ -48,10 +48,12 @@ class TestSendVidResolver:
     async def test_resolves_valid_file(self) -> None:
         url = "https://sendvid.com/abc123"
         respx.get("https://sendvid.com/api/v1/videos/abc123/status.json").respond(
-            200, json={"status": "ok"},
+            200,
+            json={"status": "ok"},
         )
         respx.get("https://sendvid.com/abc123").respond(
-            200, text='<video><source src="https://cdn.sendvid.com/v.mp4"></video>',
+            200,
+            text='<video><source src="https://cdn.sendvid.com/v.mp4"></video>',
         )
 
         async with httpx.AsyncClient() as client:
@@ -84,7 +86,8 @@ class TestSendVidResolver:
     async def test_returns_none_for_page_error(self) -> None:
         url = "https://sendvid.com/abc123"
         respx.get("https://sendvid.com/api/v1/videos/abc123/status.json").respond(
-            200, json={"status": "ok"},
+            200,
+            json={"status": "ok"},
         )
         respx.get("https://sendvid.com/abc123").respond(404)
 
@@ -118,10 +121,12 @@ class TestSendVidResolver:
     async def test_resolves_embed_url(self) -> None:
         url = "https://sendvid.com/embed/xyz789"
         respx.get("https://sendvid.com/api/v1/videos/xyz789/status.json").respond(
-            200, json={"status": "ok"},
+            200,
+            json={"status": "ok"},
         )
         respx.get("https://sendvid.com/xyz789").respond(
-            200, text="<video><source src='https://cdn.sendvid.com/v.mp4'></video>",
+            200,
+            text="<video><source src='https://cdn.sendvid.com/v.mp4'></video>",
         )
 
         async with httpx.AsyncClient() as client:

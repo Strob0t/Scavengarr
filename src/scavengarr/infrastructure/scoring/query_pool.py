@@ -11,16 +11,15 @@ import json
 import random
 import string
 from datetime import date, datetime, timezone
-from typing import Any, Literal
+from typing import Any
 
 import httpx
 import structlog
 
+from scavengarr.domain.entities.scoring import AgeBucket
 from scavengarr.domain.ports.cache import CachePort
 
 log = structlog.get_logger(__name__)
-
-AgeBucket = Literal["current", "y1_2", "y5_10"]
 
 _SUGGEST_URL = "https://v2.sg.media-imdb.com/suggestion/{letter}/{query}.json"
 _WIKIDATA_API = "https://www.wikidata.org/w/api.php"

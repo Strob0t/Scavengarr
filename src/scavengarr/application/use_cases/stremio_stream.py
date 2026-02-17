@@ -58,9 +58,6 @@ class _StremioConfig(Protocol):
     scoring_enabled: bool
     max_plugins_scored: int
     exploration_probability: float
-    stremio_deadline_ms: int
-    max_items_total: int
-    max_items_per_plugin: int
 
 
 class _StreamSorter(Protocol):
@@ -459,9 +456,6 @@ class StremioStreamUseCase:
         self._scoring_enabled = config.scoring_enabled
         self._max_plugins_scored = config.max_plugins_scored
         self._exploration_probability = config.exploration_probability
-        self._stremio_deadline_ms = config.stremio_deadline_ms
-        self._max_items_total = config.max_items_total
-        self._max_items_per_plugin = config.max_items_per_plugin
 
     async def execute(
         self,
