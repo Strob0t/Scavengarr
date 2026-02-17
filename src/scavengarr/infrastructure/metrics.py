@@ -22,7 +22,6 @@ class PluginStats:
     failures: int = 0
     total_results: int = 0
     total_duration_ns: int = 0
-    last_search_ns: int = 0
 
     def snapshot(self) -> dict[str, object]:
         """Return a JSON-serializable summary."""
@@ -100,7 +99,6 @@ class MetricsCollector:
 
         stats.searches += 1
         stats.total_duration_ns += duration_ns
-        stats.last_search_ns = time.perf_counter_ns()
 
         if success:
             stats.successes += 1

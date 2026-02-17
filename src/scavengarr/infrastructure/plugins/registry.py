@@ -8,7 +8,6 @@ from pathlib import Path
 import structlog
 
 from scavengarr.domain.plugins import (
-    DuplicatePluginError,
     PluginNotFoundError,
     PluginProtocol,
     PluginProvides,
@@ -172,24 +171,6 @@ class PluginRegistry:
         self._refs = [r for r in self._refs if self._peek_name(r) != name]
         self._python_cache.pop(name, None)
         self._meta_cache.pop(name, None)
-
-    def load_all(self) -> None:
-        """
-        Force-load all discovered plugins.
-
-        Note: This may raise DuplicatePluginError/validation/load errors, by design.
-        """
-        self.discover()
-
-        loaded_names: set[str] = set()
-
-        for ref in self._refs:
-            plugin = self._load_python(ref)
-            if plugin.name in loaded_names:
-                raise DuplicatePluginError(
-                    f"Plugin name '{plugin.name}' already exists"
-                )
-            loaded_names.add(plugin.name)
 
     def _load_python(self, ref: _PluginRef) -> PluginProtocol:
         plugin = load_python_plugin(ref.path)

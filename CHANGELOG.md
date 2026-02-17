@@ -22,6 +22,9 @@ growth of the test suite from 160 to 3225 tests.
 - Delete dead `/indexers` data file (obsolete Scrapy reference)
 - Delete empty `.env.example`
 - Clean orphaned `__pycache__` directories
+- Remove dead `PluginRegistry.load_all()` method (never called)
+- Remove dead `router` re-export from `interfaces/api/__init__.py`
+- Remove dead `PluginStats.last_search_ns` field (written but never read)
 
 ### HTTP Rate Limiting & 429 Retry (Defense in Depth)
 - Add `RetryTransport` — custom httpx transport wrapping all outgoing HTTP requests
