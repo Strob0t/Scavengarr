@@ -658,3 +658,141 @@ class TestSearchCaching:
 
         mock_cache.set.assert_awaited_once()
         assert mock_cache.set.call_args.kwargs["ttl"] == 120
+
+
+class TestPagination:
+    """Tests for offset/limit pagination in TorznabSearchUseCase."""
+
+    @staticmethod
+    def _make_results(n: int) -> list[SearchResult]:
+        return [
+            SearchResult(
+                title=f"Movie {i}",
+                download_link=f"https://example.com/dl/{i}",
+            )
+            for i in range(n)
+        ]
+
+    async def test_default_pagination_returns_first_100(
+        self,
+        mock_search_engine: AsyncMock,
+        mock_crawljob_repo: AsyncMock,
+    ) -> None:
+        results = self._make_results(150)
+        py_plugin = _FakePythonPlugin(name="filmpalast")
+        py_plugin._results = results
+
+        registry = MagicMock()
+        registry.get.return_value = py_plugin
+        mock_search_engine.validate_results.return_value = results
+
+        uc = _make_uc(registry, mock_search_engine, mock_crawljob_repo)
+        q = TorznabQuery(
+            action="search",
+            plugin_name="filmpalast",
+            query="test",
+        )
+        response = await uc.execute(q)
+        assert len(response.items) == 100
+        assert response.items[0].title == "Movie 0"
+        assert response.items[99].title == "Movie 99"
+
+    async def test_offset_slices_results(
+        self,
+        mock_search_engine: AsyncMock,
+        mock_crawljob_repo: AsyncMock,
+    ) -> None:
+        results = self._make_results(50)
+        py_plugin = _FakePythonPlugin(name="filmpalast")
+        py_plugin._results = results
+
+        registry = MagicMock()
+        registry.get.return_value = py_plugin
+        mock_search_engine.validate_results.return_value = results
+
+        uc = _make_uc(registry, mock_search_engine, mock_crawljob_repo)
+        q = TorznabQuery(
+            action="search",
+            plugin_name="filmpalast",
+            query="test",
+            offset=10,
+            limit=100,
+        )
+        response = await uc.execute(q)
+        assert len(response.items) == 40
+        assert response.items[0].title == "Movie 10"
+
+    async def test_limit_caps_results(
+        self,
+        mock_search_engine: AsyncMock,
+        mock_crawljob_repo: AsyncMock,
+    ) -> None:
+        results = self._make_results(50)
+        py_plugin = _FakePythonPlugin(name="filmpalast")
+        py_plugin._results = results
+
+        registry = MagicMock()
+        registry.get.return_value = py_plugin
+        mock_search_engine.validate_results.return_value = results
+
+        uc = _make_uc(registry, mock_search_engine, mock_crawljob_repo)
+        q = TorznabQuery(
+            action="search",
+            plugin_name="filmpalast",
+            query="test",
+            offset=0,
+            limit=5,
+        )
+        response = await uc.execute(q)
+        assert len(response.items) == 5
+        assert response.items[0].title == "Movie 0"
+        assert response.items[4].title == "Movie 4"
+
+    async def test_offset_beyond_results_returns_empty(
+        self,
+        mock_search_engine: AsyncMock,
+        mock_crawljob_repo: AsyncMock,
+    ) -> None:
+        results = self._make_results(10)
+        py_plugin = _FakePythonPlugin(name="filmpalast")
+        py_plugin._results = results
+
+        registry = MagicMock()
+        registry.get.return_value = py_plugin
+        mock_search_engine.validate_results.return_value = results
+
+        uc = _make_uc(registry, mock_search_engine, mock_crawljob_repo)
+        q = TorznabQuery(
+            action="search",
+            plugin_name="filmpalast",
+            query="test",
+            offset=100,
+            limit=100,
+        )
+        response = await uc.execute(q)
+        assert response.items == []
+
+    async def test_offset_plus_limit_partial_page(
+        self,
+        mock_search_engine: AsyncMock,
+        mock_crawljob_repo: AsyncMock,
+    ) -> None:
+        results = self._make_results(25)
+        py_plugin = _FakePythonPlugin(name="filmpalast")
+        py_plugin._results = results
+
+        registry = MagicMock()
+        registry.get.return_value = py_plugin
+        mock_search_engine.validate_results.return_value = results
+
+        uc = _make_uc(registry, mock_search_engine, mock_crawljob_repo)
+        q = TorznabQuery(
+            action="search",
+            plugin_name="filmpalast",
+            query="test",
+            offset=20,
+            limit=100,
+        )
+        response = await uc.execute(q)
+        assert len(response.items) == 5
+        assert response.items[0].title == "Movie 20"

@@ -17,9 +17,9 @@ class TorznabQuery:
     # Extended search parameters (Prowlarr)
     extended: int | None = None  # 1 = extended search mode
 
-    # Pagination (future)
-    offset: int | None = None
-    limit: int | None = None
+    # Pagination
+    offset: int = 0
+    limit: int = 100
 
 
 @dataclass(frozen=True)

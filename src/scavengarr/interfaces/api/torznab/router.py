@@ -173,6 +173,9 @@ async def _handle_search(
     q: str,
     cat: str,
     base_url: str,
+    *,
+    offset: int = 0,
+    limit: int = 100,
 ) -> Response:
     """Execute a search query and return RSS XML."""
     search_uc = TorznabSearchUseCase(
@@ -190,6 +193,8 @@ async def _handle_search(
             query=q,
             plugin_name=plugin_name,
             category=category,
+            offset=offset,
+            limit=limit,
         )
     )
     rendered = render_rss_xml(
@@ -257,6 +262,8 @@ async def torznab_plugin_api(
     q: str | None = Query(None, description="Search query"),
     cat: str = Query("", description="Category filter"),
     extended: int | None = Query(None, description="Prowlarr extended search flag"),
+    offset: int = Query(0, description="Result offset for pagination"),
+    limit: int = Query(100, description="Maximum results to return"),
 ) -> Response:
     state = cast(AppState, request.app.state)
     title = f"{state.config.app_name} ({plugin_name})"
@@ -274,7 +281,9 @@ async def torznab_plugin_api(
                 state, plugin_name, extended, title, base_url
             )
 
-        return await _handle_search(state, plugin_name, q, cat, base_url)
+        return await _handle_search(
+            state, plugin_name, q, cat, base_url, offset=offset, limit=limit
+        )
 
     except TorznabBadRequest as e:
         desc = str(e) if not _is_prod(state) else None

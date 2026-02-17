@@ -128,7 +128,8 @@ class TorznabSearchUseCase:
             return SearchResponse(items=[], cache_hit=cache_hit)
 
         items = await self._build_torznab_items(raw_results, q)
-        return SearchResponse(items=items, cache_hit=cache_hit)
+        paginated = items[q.offset : q.offset + q.limit]
+        return SearchResponse(items=paginated, cache_hit=cache_hit)
 
     async def _cache_read(self, cache_key: str, q: TorznabQuery) -> list[Any] | None:
         """Try to read cached search results. Returns None on miss or error."""

@@ -30,8 +30,11 @@ class TestTorznabQuery:
         q = TorznabQuery(action="search", plugin_name="test", query="hello")
         assert q.category is None
         assert q.extended is None
-        assert q.offset is None
-        assert q.limit is None
+
+    def test_pagination_defaults(self) -> None:
+        q = TorznabQuery(action="search", plugin_name="test", query="hello")
+        assert q.offset == 0
+        assert q.limit == 100
 
     def test_frozen_immutability(self) -> None:
         q = TorznabQuery(action="search", plugin_name="test", query="hello")
