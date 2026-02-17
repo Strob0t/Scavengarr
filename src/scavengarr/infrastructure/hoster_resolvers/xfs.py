@@ -1,6 +1,6 @@
 """Generic XFileSharingPro (XFS) hoster resolver.
 
-Consolidates 15 identical XFS-based hoster resolvers into a single
+Consolidates 20 identical XFS-based hoster resolvers into a single
 parameterised implementation.  Each hoster is described by an ``XFSConfig``
 — name, domains, file-ID regex, and offline markers — while the resolution
 logic (fetch page → check markers → check redirect) lives once in
@@ -252,6 +252,27 @@ STREAMWISH = XFSConfig(
             "swiftplayers",
             "davioad",
             "hglink",
+            # JDownloader StreamwishCom.java + user list
+            "obeywish",
+            "awish",
+            "embedwish",
+            "wishembed",
+            "wishonly",
+            "cloudwish",
+            "ultpreplayer",
+            "recordplay",
+            "hgplaycdn",
+            "hailindihg",
+            "auvexiug",
+            "habetar",
+            "kravaxxa",
+            "zuvioeb",
+            "tryzendm",
+            "yuguaab",
+            "xenolyzb",
+            "guxhag",
+            "dumbalag",
+            "haxloppd",
         }
     ),
     file_id_re=_EMBED_RE,
@@ -318,6 +339,42 @@ VIDHIDE = XFSConfig(
 )
 
 
+STREAMRUBY = XFSConfig(
+    name="streamruby",
+    domains=frozenset({"streamruby"}),
+    file_id_re=_EMBED_RE,
+    offline_markers=_STANDARD_MARKERS,
+)
+
+VEEV = XFSConfig(
+    name="veev",
+    domains=frozenset({"veev"}),
+    file_id_re=_ED_RE,
+    offline_markers=_STANDARD_MARKERS,
+)
+
+LULUSTREAM = XFSConfig(
+    name="lulustream",
+    domains=frozenset({"lulustream", "luluvdo", "luluvid", "lulu", "luluvdoo", "cdn1"}),
+    file_id_re=_EMBED_RE,
+    offline_markers=_STANDARD_MARKERS,
+)
+
+UPSTREAM = XFSConfig(
+    name="upstream",
+    domains=frozenset({"upstream"}),
+    file_id_re=_EMBED_RE,
+    offline_markers=_STANDARD_MARKERS,
+)
+
+WOLFSTREAM = XFSConfig(
+    name="wolfstream",
+    domains=frozenset({"wolfstream"}),
+    file_id_re=_EMBED_RE,
+    offline_markers=_STANDARD_MARKERS,
+)
+
+
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
@@ -338,6 +395,11 @@ ALL_XFS_CONFIGS: tuple[XFSConfig, ...] = (
     VIDOZA,
     VINOVO,
     VIDHIDE,
+    STREAMRUBY,
+    VEEV,
+    LULUSTREAM,
+    UPSTREAM,
+    WOLFSTREAM,
 )
 
 

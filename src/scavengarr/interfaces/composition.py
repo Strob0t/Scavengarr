@@ -39,6 +39,7 @@ from scavengarr.infrastructure.hoster_resolvers.serienstream import Serienstream
 from scavengarr.infrastructure.hoster_resolvers.stealth_pool import StealthPool
 from scavengarr.infrastructure.hoster_resolvers.stmix import StmixResolver
 from scavengarr.infrastructure.hoster_resolvers.streamtape import StreamtapeResolver
+from scavengarr.infrastructure.hoster_resolvers.strmup import StrmupResolver
 from scavengarr.infrastructure.hoster_resolvers.supervideo import SuperVideoResolver
 from scavengarr.infrastructure.hoster_resolvers.turbobit import TurbobitResolver
 from scavengarr.infrastructure.hoster_resolvers.uploaded import UploadedResolver
@@ -274,6 +275,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             OnefichierResolver(http_client=state.http_client),
             SerienstreamResolver(http_client=state.http_client),
             StmixResolver(http_client=state.http_client),
+            StrmupResolver(http_client=state.http_client),
             TurbobitResolver(http_client=state.http_client),
             UploadedResolver(http_client=state.http_client),
             VidguardResolver(http_client=state.http_client),

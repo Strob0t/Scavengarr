@@ -289,7 +289,7 @@ The system provides a stable download endpoint that delivers a `.crawljob` file 
 - Integration: HTTP router ↔ use case ↔ adapter with HTTP mocking.
 - Optional E2E: real plugin fixtures, but deterministic (no external sites in CI).
 
-### Current test suite (3465 tests)
+### Current test suite (3570 tests)
 
 ```
 tests/
@@ -324,7 +324,7 @@ tests/
       test_stream_sorter.py            # Stremio stream sorting/ranking
       test_stream_link_cache.py        # Stream link cache repository
       test_hoster_registry.py          # HosterResolverRegistry
-      test_xfs_resolver.py             # Generic XFS resolver (15 hosters, parameterised)
+      test_xfs_resolver.py             # Generic XFS resolver (20 hosters, parameterised)
       test_voe_resolver.py             # VOE hoster resolver
       test_streamtape_resolver.py      # Streamtape hoster resolver
       test_supervideo_resolver.py      # SuperVideo hoster resolver
@@ -349,6 +349,7 @@ tests/
       test_uploaded_resolver.py        # Uploaded DDL hoster resolver
       test_vidguard_resolver.py        # VidGuard streaming resolver
       test_vidking_resolver.py         # Vidking streaming resolver
+      test_strmup_resolver.py          # StreamUp (strmup) HLS streaming resolver
       test_ewma.py                     # EWMA scoring functions (31 tests)
       test_plugin_score_cache.py       # Cache persistence + index management (19 tests)
       test_query_pool.py               # TMDB query generation + fallback (14 tests)
@@ -612,17 +613,17 @@ Every plugin MUST implement the following search features:
 Hoster resolvers validate whether a URL on a file hosting service is still available. There are two resolver categories:
 
 **Streaming resolvers** extract a direct video URL (`.mp4`/`.m3u8`) from an embed page:
-- VOE, Streamtape, SuperVideo, DoodStream, Filemoon
+- VOE, Streamtape, SuperVideo, DoodStream, Filemoon, StreamUp (strmup)
 - Return `ResolvedStream(video_url=<direct_video_url>, quality=...)`
 
 **DDL (Direct Download Link) resolvers** validate file availability without extracting a video URL:
 - Filer.net (API-based), Rapidgator, DDownload (page-scraping)
-- 15 XFS-based hosters (katfile, hexupload, clicknupload, filestore, uptobox, funxd, bigwarp, dropload, goodstream, savefiles, streamwish, vidmoly, vidoza, vinovo, vidhide)
+- 20 XFS-based hosters (katfile, hexupload, clicknupload, filestore, uptobox, funxd, bigwarp, dropload, goodstream, savefiles, streamwish, vidmoly, vidoza, vinovo, vidhide, streamruby, veev, lulustream, upstream, wolfstream)
 - Return `ResolvedStream(video_url=<canonical_file_url>, quality=StreamQuality.UNKNOWN)`
 
 #### XFileSharingPro (XFS) — consolidated resolver
 
-15 XFS-based hosters are consolidated into a single generic `XFSResolver` with parameterised `XFSConfig` in `src/scavengarr/infrastructure/hoster_resolvers/xfs.py`. Each hoster is described by an `XFSConfig` — name, domains, file-ID regex, and offline markers — while the resolution logic lives once in `XFSResolver`.
+20 XFS-based hosters are consolidated into a single generic `XFSResolver` with parameterised `XFSConfig` in `src/scavengarr/infrastructure/hoster_resolvers/xfs.py`. Each hoster is described by an `XFSConfig` — name, domains, file-ID regex, and offline markers — while the resolution logic lives once in `XFSResolver`.
 
 ```python
 @dataclass(frozen=True)
@@ -632,7 +633,7 @@ class XFSConfig:
     file_id_re: re.Pattern[str]        # e.g. re.compile(r"^/([a-zA-Z0-9]{12})(?:/|$)")
     offline_markers: tuple[str, ...]   # e.g. ("File Not Found", ...)
 
-ALL_XFS_CONFIGS: tuple[XFSConfig, ...]  # all 15 configs
+ALL_XFS_CONFIGS: tuple[XFSConfig, ...]  # all 20 configs
 create_all_xfs_resolvers(http_client) -> list[XFSResolver]  # factory function
 ```
 

@@ -34,6 +34,13 @@ EWMA-based probes, then selects only the top-N plugins per Stremio request.
 - Add `GET /api/v1/stats/plugin-scores` debug endpoint with query filters
 - Add `PluginRegistry.remove()` method for disabling plugins via config overrides
 
+### Hoster Resolver Expansion
+- Add 5 new XFS hoster configs: StreamRuby, Veev, Lulustream, Upstream, Wolfstream (20 XFS hosters total)
+- Add 20 new StreamWish domain aliases from JDownloader (obeywish, awish, embedwish, etc.)
+- Add 5 new Streamtape domain aliases (scloud, strtapeadblock, tapeblocker, etc.)
+- Add new StreamUp (strmup) standalone HLS resolver with page + AJAX fallback extraction
+- Wire StrmupResolver in composition root
+
 ### Stremio Playback: behaviorHints.proxyHeaders
 Pre-resolve hoster embed URLs at `/stream` time and emit `behaviorHints.proxyHeaders`
 so Stremio's local streaming server sends the correct `Referer` and `User-Agent` headers

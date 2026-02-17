@@ -29,6 +29,11 @@ _DOMAINS = {
     "tapeadvertisement",
     "watchadsontape",
     "tapecontent",
+    "scloud",
+    "strtapeadblock",
+    "tapeblocker",
+    "streamtapeadblockuser",
+    "streamtapeadblock",
 }
 
 

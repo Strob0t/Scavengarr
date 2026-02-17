@@ -43,6 +43,11 @@ _TLD_MAP: dict[str, str] = {
     "vidoza": "net",
     "vinovo": "to",
     "vidhide": "com",
+    "streamruby": "com",
+    "veev": "to",
+    "lulustream": "com",
+    "upstream": "to",
+    "wolfstream": "tv",
 }
 
 # Standard file ID (uppercase+lowercase+digits, 12 chars)
@@ -97,7 +102,7 @@ class TestXFSConfigInvariants:
             assert len(cfg.offline_markers) > 0, f"{cfg.name} has no markers"
 
     def test_config_count(self) -> None:
-        assert len(ALL_XFS_CONFIGS) == 15
+        assert len(ALL_XFS_CONFIGS) == 20
 
     def test_configs_are_frozen(self) -> None:
         for cfg in ALL_XFS_CONFIGS:
