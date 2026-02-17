@@ -20,6 +20,7 @@ import httpx
 import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
+from scavengarr.infrastructure.hoster_resolvers import extract_domain
 
 log = structlog.get_logger(__name__)
 
@@ -51,12 +52,10 @@ def extract_xfs_file_id(url: str, config: XFSConfig) -> str | None:
     file-ID regex.
     """
     try:
-        parsed = urlparse(url)
-        hostname = parsed.hostname or ""
-        parts = hostname.split(".")
-        domain = parts[-2] if len(parts) >= 2 else ""
+        domain = extract_domain(url)
         if domain not in config.domains:
             return None
+        parsed = urlparse(url)
         match = config.file_id_re.search(parsed.path)
         return match.group(1) if match else None
     except Exception:  # noqa: BLE001

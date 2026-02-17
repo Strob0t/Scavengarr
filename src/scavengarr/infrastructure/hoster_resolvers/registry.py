@@ -19,19 +19,20 @@ _CACHE_TTL_DEAD = 900  # 15 minutes for failed resolutions
 _CACHE_TTL_REDIRECT = 3600  # 1 hour for redirect mappings
 
 
-def _extract_hoster_from_url(url: str) -> str:
-    """Extract hoster name from URL domain.
+def extract_domain(url: str) -> str:
+    """Extract the second-level domain from a URL.
 
-    Examples:
-        "https://voe.sx/e/abc" -> "voe"
-        "https://streamtape.com/v/abc" -> "streamtape"
+    Returns the second-to-last segment of the hostname (e.g.
+    ``"voe"`` from ``"https://voe.sx/e/abc"``).  Handles ``www.``
+    prefixes automatically since ``parts[-2]`` skips them.
+
+    Returns ``""`` when the URL cannot be parsed or has fewer than
+    two hostname segments.
     """
     try:
-        hostname = urlparse(url).hostname
-        if not hostname:
-            return ""
+        hostname = urlparse(url).hostname or ""
         parts = hostname.split(".")
-        return parts[-2] if len(parts) >= 2 else parts[0]
+        return parts[-2] if len(parts) >= 2 else ""
     except Exception:  # noqa: BLE001
         return ""
 
@@ -105,7 +106,7 @@ class HosterResolverRegistry:
             return cached.value
 
         # URL domain is authoritative; fall back to plugin-provided hint
-        hoster_name = _extract_hoster_from_url(url) or hoster
+        hoster_name = extract_domain(url) or hoster
 
         # 1. Try specific resolver for URL domain
         resolver = self._resolvers.get(hoster_name)
@@ -117,7 +118,7 @@ class HosterResolverRegistry:
         # 2. No resolver for this domain — try following redirects
         final_url = await self._follow_redirects(url)
         if final_url:
-            redirected_hoster = _extract_hoster_from_url(final_url)
+            redirected_hoster = extract_domain(final_url)
             resolver = self._resolvers.get(redirected_hoster)
             if resolver is not None:
                 log.info(

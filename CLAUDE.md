@@ -289,7 +289,7 @@ The system provides a stable download endpoint that delivers a `.crawljob` file 
 - Integration: HTTP router ↔ use case ↔ adapter with HTTP mocking.
 - Optional E2E: real plugin fixtures, but deterministic (no external sites in CI).
 
-### Current test suite (3614 tests)
+### Current test suite (3402 tests)
 
 ```
 tests/
@@ -333,20 +333,9 @@ tests/
       test_filernet_resolver.py        # Filer.net DDL hoster resolver
       test_rapidgator_resolver.py      # Rapidgator DDL hoster resolver
       test_ddownload_resolver.py       # DDownload DDL hoster resolver
-      test_alfafile_resolver.py        # Alfafile DDL hoster resolver
-      test_alphaddl_resolver.py        # AlphaDDL hoster resolver
-      test_fastpic_resolver.py         # Fastpic hoster resolver
-      test_filecrypt_resolver.py       # Filecrypt hoster resolver
-      test_filefactory_resolver.py     # FileFactory DDL hoster resolver
-      test_fsst_resolver.py            # FSST hoster resolver
-      test_go4up_resolver.py           # Go4up hoster resolver
-      test_mixdrop_resolver.py         # Mixdrop streaming resolver
-      test_nitroflare_resolver.py      # Nitroflare DDL hoster resolver
-      test_onefichier_resolver.py      # 1fichier DDL hoster resolver
+      test_generic_ddl_resolver.py     # Generic DDL resolver (12 hosters, parameterised)
       test_serienstream_resolver.py    # SerienStream resolver
       test_stmix_resolver.py           # Stmix streaming resolver
-      test_turbobit_resolver.py        # Turbobit DDL hoster resolver
-      test_uploaded_resolver.py        # Uploaded DDL hoster resolver
       test_vidguard_resolver.py        # VidGuard streaming resolver
       test_vidking_resolver.py         # Vidking streaming resolver
       test_strmup_resolver.py          # StreamUp (strmup) HLS streaming resolver
@@ -619,12 +608,35 @@ Hoster resolvers validate whether a URL on a file hosting service is still avail
 
 **DDL (Direct Download Link) resolvers** validate file availability without extracting a video URL:
 - Filer.net (API-based), Rapidgator, DDownload (page-scraping)
+- 12 generic DDL hosters (alfafile, alphaddl, fastpic, filecrypt, filefactory, fsst, go4up, mixdrop, nitroflare, 1fichier, turbobit, uploaded)
 - 21 XFS-based hosters (katfile, hexupload, clicknupload, filestore, uptobox, funxd, bigwarp, dropload, goodstream, savefiles, streamwish, vidmoly, vidoza, vinovo, vidhide, streamruby, veev, lulustream, upstream, wolfstream, vidnest)
 - Return `ResolvedStream(video_url=<canonical_file_url>, quality=StreamQuality.UNKNOWN)`
 
+#### Shared URL utility
+
+All resolvers share `extract_domain(url)` from `scavengarr.infrastructure.hoster_resolvers` for consistent second-level domain extraction (e.g. `"https://www.voe.sx/e/abc"` → `"voe"`).
+
+#### Generic DDL — consolidated resolver
+
+12 DDL-based hosters are consolidated into a single `GenericDDLResolver` with parameterised `GenericDDLConfig` in `src/scavengarr/infrastructure/hoster_resolvers/generic_ddl.py`. Adding a new DDL hoster = adding a new `GenericDDLConfig` constant + appending it to `ALL_DDL_CONFIGS`.
+
+```python
+@dataclass(frozen=True)
+class GenericDDLConfig:
+    name: str
+    domains: frozenset[str]
+    file_id_re: re.Pattern[str]
+    offline_markers: tuple[str, ...]
+    file_id_source: Literal["path", "query"] = "path"
+    min_file_id_len: int | None = None
+
+ALL_DDL_CONFIGS: tuple[GenericDDLConfig, ...]  # all 12 configs
+create_all_ddl_resolvers(http_client) -> list[GenericDDLResolver]  # factory function
+```
+
 #### XFileSharingPro (XFS) — consolidated resolver
 
-21 XFS-based hosters are consolidated into a single generic `XFSResolver` with parameterised `XFSConfig` in `src/scavengarr/infrastructure/hoster_resolvers/xfs.py`. Each hoster is described by an `XFSConfig` — name, domains, file-ID regex, and offline markers — while the resolution logic lives once in `XFSResolver`.
+21 XFS-based hosters are consolidated into a single generic `XFSResolver` with parameterised `XFSConfig` in `src/scavengarr/infrastructure/hoster_resolvers/xfs.py`. Adding a new XFS hoster = adding a new `XFSConfig` constant + appending it to `ALL_XFS_CONFIGS`.
 
 ```python
 @dataclass(frozen=True)
@@ -637,8 +649,6 @@ class XFSConfig:
 ALL_XFS_CONFIGS: tuple[XFSConfig, ...]  # all 21 configs
 create_all_xfs_resolvers(http_client) -> list[XFSResolver]  # factory function
 ```
-
-Adding a new XFS hoster = adding a new `XFSConfig` constant + appending it to `ALL_XFS_CONFIGS`.
 
 DDownload stays separate (`ddownload.py`) due to canonical URL normalization and metadata extraction.
 

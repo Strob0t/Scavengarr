@@ -14,6 +14,7 @@ import httpx
 import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
+from scavengarr.infrastructure.hoster_resolvers import extract_domain
 
 log = structlog.get_logger(__name__)
 
@@ -39,13 +40,7 @@ _DOMAINS = {
 
 def _is_streamtape_domain(url: str) -> bool:
     """Check if URL belongs to a Streamtape domain."""
-    try:
-        hostname = urlparse(url).hostname or ""
-        parts = hostname.split(".")
-        domain = parts[-2] if len(parts) >= 2 else parts[0]
-        return domain in _DOMAINS
-    except Exception:  # noqa: BLE001
-        return False
+    return extract_domain(url) in _DOMAINS
 
 
 class StreamtapeResolver:

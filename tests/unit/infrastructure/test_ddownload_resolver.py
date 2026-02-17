@@ -51,9 +51,9 @@ class TestExtractFileId:
     def test_invalid_url(self) -> None:
         assert _extract_file_id("not-a-url") is None
 
-    def test_subdomain_ignored(self) -> None:
-        """Dead subdomains like api.ddl.to should still extract if domain matches."""
-        assert _extract_file_id("https://api.ddl.to/abc123def456") is None
+    def test_subdomain_extracts(self) -> None:
+        """Subdomains like api.ddl.to still match the second-level domain."""
+        assert _extract_file_id("https://api.ddl.to/abc123def456") == "abc123def456"
 
 
 # ---------------------------------------------------------------------------

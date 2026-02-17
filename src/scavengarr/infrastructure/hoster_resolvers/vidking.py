@@ -20,6 +20,7 @@ import httpx
 import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
+from scavengarr.infrastructure.hoster_resolvers import extract_domain
 
 log = structlog.get_logger(__name__)
 
@@ -40,12 +41,10 @@ _OFFLINE_MARKERS = (
 def _extract_file_id(url: str) -> str | None:
     """Extract the file ID from a vidking URL."""
     try:
-        parsed = urlparse(url)
-        hostname = parsed.hostname or ""
-        parts = hostname.split(".")
-        domain = parts[-2] if len(parts) >= 2 else ""
+        domain = extract_domain(url)
         if domain not in _DOMAINS:
             return None
+        parsed = urlparse(url)
         match = _FILE_ID_RE.search(parsed.path)
         return match.group(1) if match else None
     except Exception:  # noqa: BLE001

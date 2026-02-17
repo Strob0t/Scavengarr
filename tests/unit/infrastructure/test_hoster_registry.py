@@ -8,27 +8,27 @@ import httpx
 import pytest
 
 from scavengarr.domain.entities.stremio import ResolvedStream
+from scavengarr.infrastructure.hoster_resolvers import extract_domain
 from scavengarr.infrastructure.hoster_resolvers.registry import (
     HosterResolverRegistry,
-    _extract_hoster_from_url,
 )
 
 
-class TestExtractHosterFromUrl:
+class TestExtractDomain:
     def test_standard_domain(self) -> None:
-        assert _extract_hoster_from_url("https://voe.sx/e/abc") == "voe"
+        assert extract_domain("https://voe.sx/e/abc") == "voe"
 
     def test_two_part_domain(self) -> None:
-        assert _extract_hoster_from_url("https://streamtape.com/v/abc") == "streamtape"
+        assert extract_domain("https://streamtape.com/v/abc") == "streamtape"
 
     def test_subdomain(self) -> None:
-        assert _extract_hoster_from_url("https://cdn.filemoon.sx/e/abc") == "filemoon"
+        assert extract_domain("https://cdn.filemoon.sx/e/abc") == "filemoon"
 
     def test_empty_url(self) -> None:
-        assert _extract_hoster_from_url("") == ""
+        assert extract_domain("") == ""
 
     def test_invalid_url(self) -> None:
-        assert _extract_hoster_from_url("not-a-url") == ""
+        assert extract_domain("not-a-url") == ""
 
 
 class TestHosterResolverRegistry:

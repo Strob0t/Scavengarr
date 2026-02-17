@@ -553,7 +553,11 @@ class StremioStreamUseCase:
                 if isinstance(lang, str):
                     plugin_languages[name] = lang
             except Exception:  # noqa: BLE001
-                log.debug("stremio_plugin_language_lookup_failed", plugin=name)
+                log.debug(
+                    "stremio_plugin_language_lookup_failed",
+                    plugin=name,
+                    exc_info=True,
+                )
 
         ranked = self._convert_fn(filtered, plugin_languages=plugin_languages)
         sorted_streams = self._sorter.sort(ranked)
@@ -706,6 +710,7 @@ class StremioStreamUseCase:
                         index=idx,
                         hoster=r.hoster,
                         url=r.url[:80],
+                        exc_info=True,
                     )
                     return idx, None
 
@@ -858,7 +863,7 @@ class StremioStreamUseCase:
         try:
             plugin = self._plugins.get(name)
         except Exception:
-            log.warning("stremio_plugin_not_found", plugin=name)
+            log.warning("stremio_plugin_not_found", plugin=name, exc_info=True)
             return []
 
         t0 = time.perf_counter_ns()

@@ -70,6 +70,10 @@ to hoster CDNs. This eliminates buffering caused by 403 rejections on missing he
 - Fallback to `/play/` proxy redirect for streams that fail pre-resolution
 
 ### Code Quality (Audit)
+- Consolidate 12 identical DDL hoster resolvers into parameterised `GenericDDLConfig` + `GenericDDLResolver`
+  (alfafile, alphaddl, fastpic, filecrypt, filefactory, fsst, go4up, mixdrop, nitroflare, 1fichier, turbobit, uploaded)
+- Add shared `extract_domain()` utility for URL domain extraction, replacing 15 inline duplicates across resolver modules
+- Add `exc_info=True` to 4 `except Exception` handlers in business logic (stremio_stream.py, composition.py)
 - Remove dead code across domain, application, infrastructure, and plugin layers
 - Consolidate duplicate constants and unused imports
 

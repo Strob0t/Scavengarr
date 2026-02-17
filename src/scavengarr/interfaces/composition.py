@@ -19,20 +19,13 @@ from scavengarr.domain.entities.crawljob import Priority
 from scavengarr.infrastructure.cache.cache_factory import create_cache
 from scavengarr.infrastructure.config.schema import AppConfig
 from scavengarr.infrastructure.hoster_resolvers import HosterResolverRegistry
-from scavengarr.infrastructure.hoster_resolvers.alfafile import AlfafileResolver
-from scavengarr.infrastructure.hoster_resolvers.alphaddl import AlphaddlResolver
 from scavengarr.infrastructure.hoster_resolvers.ddownload import DDownloadResolver
 from scavengarr.infrastructure.hoster_resolvers.doodstream import DoodStreamResolver
-from scavengarr.infrastructure.hoster_resolvers.fastpic import FastpicResolver
-from scavengarr.infrastructure.hoster_resolvers.filecrypt import FilecryptResolver
-from scavengarr.infrastructure.hoster_resolvers.filefactory import FilefactoryResolver
 from scavengarr.infrastructure.hoster_resolvers.filemoon import FilemoonResolver
 from scavengarr.infrastructure.hoster_resolvers.filernet import FilerNetResolver
-from scavengarr.infrastructure.hoster_resolvers.fsst import FsstResolver
-from scavengarr.infrastructure.hoster_resolvers.go4up import Go4upResolver
-from scavengarr.infrastructure.hoster_resolvers.mixdrop import MixdropResolver
-from scavengarr.infrastructure.hoster_resolvers.nitroflare import NitroflareResolver
-from scavengarr.infrastructure.hoster_resolvers.onefichier import OnefichierResolver
+from scavengarr.infrastructure.hoster_resolvers.generic_ddl import (
+    create_all_ddl_resolvers,
+)
 from scavengarr.infrastructure.hoster_resolvers.probe import probe_urls_stealth
 from scavengarr.infrastructure.hoster_resolvers.rapidgator import RapidgatorResolver
 from scavengarr.infrastructure.hoster_resolvers.serienstream import SerienstreamResolver
@@ -41,8 +34,6 @@ from scavengarr.infrastructure.hoster_resolvers.stmix import StmixResolver
 from scavengarr.infrastructure.hoster_resolvers.streamtape import StreamtapeResolver
 from scavengarr.infrastructure.hoster_resolvers.strmup import StrmupResolver
 from scavengarr.infrastructure.hoster_resolvers.supervideo import SuperVideoResolver
-from scavengarr.infrastructure.hoster_resolvers.turbobit import TurbobitResolver
-from scavengarr.infrastructure.hoster_resolvers.uploaded import UploadedResolver
 from scavengarr.infrastructure.hoster_resolvers.vidguard import VidguardResolver
 from scavengarr.infrastructure.hoster_resolvers.vidking import VidkingResolver
 from scavengarr.infrastructure.hoster_resolvers.vidsonic import VidsonicResolver
@@ -120,7 +111,7 @@ def _apply_plugin_overrides(plugins: PluginRegistry, config: AppConfig) -> None:
                 plugin._max_results = override.max_results  # noqa: SLF001
             log.info("plugin_override_applied", plugin=name, override=override)
         except Exception:
-            log.warning("plugin_override_unknown", plugin=name)
+            log.warning("plugin_override_unknown", plugin=name, exc_info=True)
 
 
 def _wire_scoring(state: AppState, config: AppConfig) -> None:
@@ -267,28 +258,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             ),
             DoodStreamResolver(http_client=state.http_client),
             FilemoonResolver(http_client=state.http_client),
-            # DDL resolvers (non-XFS)
+            # DDL resolvers (custom — non-generic)
             FilerNetResolver(http_client=state.http_client),
             RapidgatorResolver(http_client=state.http_client),
             DDownloadResolver(http_client=state.http_client),
-            AlfafileResolver(http_client=state.http_client),
-            AlphaddlResolver(http_client=state.http_client),
-            FastpicResolver(http_client=state.http_client),
-            FilecryptResolver(http_client=state.http_client),
-            FilefactoryResolver(http_client=state.http_client),
-            FsstResolver(http_client=state.http_client),
-            Go4upResolver(http_client=state.http_client),
-            MixdropResolver(http_client=state.http_client),
-            NitroflareResolver(http_client=state.http_client),
-            OnefichierResolver(http_client=state.http_client),
             SerienstreamResolver(http_client=state.http_client),
             StmixResolver(http_client=state.http_client),
             StrmupResolver(http_client=state.http_client),
-            TurbobitResolver(http_client=state.http_client),
-            UploadedResolver(http_client=state.http_client),
             VidguardResolver(http_client=state.http_client),
             VidkingResolver(http_client=state.http_client),
             VidsonicResolver(http_client=state.http_client),
+            # DDL resolvers (consolidated — 12 hosters)
+            *create_all_ddl_resolvers(http_client=state.http_client),
             # XFS resolvers (consolidated — 21 hosters)
             *create_all_xfs_resolvers(http_client=state.http_client),
         ],

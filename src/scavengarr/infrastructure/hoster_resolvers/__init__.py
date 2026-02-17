@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from .registry import HosterResolverRegistry
+from .registry import HosterResolverRegistry, extract_domain
 
-__all__ = ["HosterResolverRegistry"]
+__all__ = ["HosterResolverRegistry", "extract_domain"]

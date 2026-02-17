@@ -25,6 +25,7 @@ import httpx
 import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
+from scavengarr.infrastructure.hoster_resolvers import extract_domain
 
 log = structlog.get_logger(__name__)
 
@@ -56,8 +57,7 @@ def _extract_file_id(url: str) -> str | None:
             return match.group(1) if match else None
 
         # Check second-level domain for other domains
-        parts = hostname.split(".")
-        domain = parts[-2] if len(parts) >= 2 else ""
+        domain = extract_domain(url)
         if domain not in _DOMAINS:
             return None
         match = _FILE_ID_RE.search(parsed.path)
