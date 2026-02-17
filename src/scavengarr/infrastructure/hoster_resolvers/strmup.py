@@ -21,7 +21,7 @@ from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
 
 log = structlog.get_logger(__name__)
 
-_DOMAINS = frozenset({"strmup", "streamup"})
+_DOMAINS = frozenset({"strmup", "streamup", "vidara"})
 
 _FILE_ID_RE = re.compile(r"/(?:v/)?([A-Za-z0-9]{13})(?:/|$)")
 
@@ -129,9 +129,7 @@ class StrmupResolver:
             return match.group(1)
         return None
 
-    async def _ajax_fallback(
-        self, host: str, scheme: str, file_id: str
-    ) -> str | None:
+    async def _ajax_fallback(self, host: str, scheme: str, file_id: str) -> str | None:
         """Try AJAX endpoint to get streaming URL."""
         ajax_url = f"{scheme}://{host}/ajax/stream?filecode={file_id}"
         try:

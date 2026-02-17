@@ -1,6 +1,6 @@
 """Generic XFileSharingPro (XFS) hoster resolver.
 
-Consolidates 20 identical XFS-based hoster resolvers into a single
+Consolidates 21 identical XFS-based hoster resolvers into a single
 parameterised implementation.  Each hoster is described by an ``XFSConfig``
 — name, domains, file-ID regex, and offline markers — while the resolution
 logic (fetch page → check markers → check redirect) lives once in
@@ -374,6 +374,16 @@ WOLFSTREAM = XFSConfig(
     offline_markers=_STANDARD_MARKERS,
 )
 
+VIDNEST = XFSConfig(
+    name="vidnest",
+    domains=frozenset({"vidnest"}),
+    file_id_re=_EMBED_RE,
+    offline_markers=(
+        *_STANDARD_MARKERS,
+        ">Download video</",
+    ),
+)
+
 
 # ---------------------------------------------------------------------------
 # Registry
@@ -400,6 +410,7 @@ ALL_XFS_CONFIGS: tuple[XFSConfig, ...] = (
     LULUSTREAM,
     UPSTREAM,
     WOLFSTREAM,
+    VIDNEST,
 )
 
 

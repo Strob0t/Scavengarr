@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 import httpx
 import pytest
 import respx
@@ -85,7 +83,12 @@ class TestStrmupResolver:
     @pytest.mark.asyncio()
     async def test_resolves_hls_from_ajax_fallback(self) -> None:
         url = "https://strmup.to/abc1234567890"
-        html = "<html><head><title>Test Video - Some Long Title Here</title></head><body><div>no streaming url here but enough content to pass blank check</div></body></html>"
+        html = (
+            "<html><head><title>Test Video - Some Long Title"
+            "</title></head><body><div>no streaming url here"
+            " but enough content to pass blank check"
+            "</div></body></html>"
+        )
         ajax_data = {"streaming_url": _HLS_URL}
 
         respx.get("https://strmup.to/abc1234567890").respond(200, text=html)
@@ -151,7 +154,12 @@ class TestStrmupResolver:
     @pytest.mark.asyncio()
     async def test_returns_none_when_no_hls_found(self) -> None:
         url = "https://strmup.to/abc1234567890"
-        html = "<html><head><title>Test Video - Some Long Title Here</title></head><body><div>no video here at all just text content that is long enough</div></body></html>"
+        html = (
+            "<html><head><title>Test Video - Some Long Title"
+            "</title></head><body><div>no video here at all"
+            " just text content that is long enough"
+            "</div></body></html>"
+        )
         ajax_data = {"error": "not found"}
 
         respx.get("https://strmup.to/abc1234567890").respond(200, text=html)
@@ -201,7 +209,12 @@ class TestStrmupResolver:
     async def test_ajax_fallback_network_error(self) -> None:
         """AJAX fallback fails gracefully on network error."""
         url = "https://strmup.to/abc1234567890"
-        html = "<html><head><title>Test Video - Long Title</title></head><body><div>no streaming url in the page content but enough text to pass blank check</div></body></html>"
+        html = (
+            "<html><head><title>Test Video - Long Title"
+            "</title></head><body><div>no streaming url in"
+            " the page content but enough text to pass"
+            " blank check</div></body></html>"
+        )
 
         respx.get("https://strmup.to/abc1234567890").respond(200, text=html)
         respx.get("https://strmup.to/ajax/stream?filecode=abc1234567890").mock(

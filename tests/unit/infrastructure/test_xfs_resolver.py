@@ -48,6 +48,7 @@ _TLD_MAP: dict[str, str] = {
     "lulustream": "com",
     "upstream": "to",
     "wolfstream": "tv",
+    "vidnest": "io",
 }
 
 # Standard file ID (uppercase+lowercase+digits, 12 chars)
@@ -102,7 +103,7 @@ class TestXFSConfigInvariants:
             assert len(cfg.offline_markers) > 0, f"{cfg.name} has no markers"
 
     def test_config_count(self) -> None:
-        assert len(ALL_XFS_CONFIGS) == 20
+        assert len(ALL_XFS_CONFIGS) == 21
 
     def test_configs_are_frozen(self) -> None:
         for cfg in ALL_XFS_CONFIGS:

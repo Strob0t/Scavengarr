@@ -324,7 +324,7 @@ tests/
       test_stream_sorter.py            # Stremio stream sorting/ranking
       test_stream_link_cache.py        # Stream link cache repository
       test_hoster_registry.py          # HosterResolverRegistry
-      test_xfs_resolver.py             # Generic XFS resolver (20 hosters, parameterised)
+      test_xfs_resolver.py             # Generic XFS resolver (21 hosters, parameterised)
       test_voe_resolver.py             # VOE hoster resolver
       test_streamtape_resolver.py      # Streamtape hoster resolver
       test_supervideo_resolver.py      # SuperVideo hoster resolver
@@ -618,12 +618,12 @@ Hoster resolvers validate whether a URL on a file hosting service is still avail
 
 **DDL (Direct Download Link) resolvers** validate file availability without extracting a video URL:
 - Filer.net (API-based), Rapidgator, DDownload (page-scraping)
-- 20 XFS-based hosters (katfile, hexupload, clicknupload, filestore, uptobox, funxd, bigwarp, dropload, goodstream, savefiles, streamwish, vidmoly, vidoza, vinovo, vidhide, streamruby, veev, lulustream, upstream, wolfstream)
+- 21 XFS-based hosters (katfile, hexupload, clicknupload, filestore, uptobox, funxd, bigwarp, dropload, goodstream, savefiles, streamwish, vidmoly, vidoza, vinovo, vidhide, streamruby, veev, lulustream, upstream, wolfstream, vidnest)
 - Return `ResolvedStream(video_url=<canonical_file_url>, quality=StreamQuality.UNKNOWN)`
 
 #### XFileSharingPro (XFS) — consolidated resolver
 
-20 XFS-based hosters are consolidated into a single generic `XFSResolver` with parameterised `XFSConfig` in `src/scavengarr/infrastructure/hoster_resolvers/xfs.py`. Each hoster is described by an `XFSConfig` — name, domains, file-ID regex, and offline markers — while the resolution logic lives once in `XFSResolver`.
+21 XFS-based hosters are consolidated into a single generic `XFSResolver` with parameterised `XFSConfig` in `src/scavengarr/infrastructure/hoster_resolvers/xfs.py`. Each hoster is described by an `XFSConfig` — name, domains, file-ID regex, and offline markers — while the resolution logic lives once in `XFSResolver`.
 
 ```python
 @dataclass(frozen=True)
@@ -633,7 +633,7 @@ class XFSConfig:
     file_id_re: re.Pattern[str]        # e.g. re.compile(r"^/([a-zA-Z0-9]{12})(?:/|$)")
     offline_markers: tuple[str, ...]   # e.g. ("File Not Found", ...)
 
-ALL_XFS_CONFIGS: tuple[XFSConfig, ...]  # all 20 configs
+ALL_XFS_CONFIGS: tuple[XFSConfig, ...]  # all 21 configs
 create_all_xfs_resolvers(http_client) -> list[XFSResolver]  # factory function
 ```
 
