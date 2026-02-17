@@ -237,54 +237,38 @@ class SuperVideoResolver:
     async def _fetch_with_httpx(self, embed_url: str) -> tuple[str | None, bool]:
         """Fetch page via httpx. Returns (html, cloudflare_blocked).
 
-        Retries once on HTTP 429 (rate limit) with a short back-off delay,
-        since SuperVideo's CDN throttles burst requests.
+        429/503 retries are handled transparently by the RetryTransport
+        layer on the shared httpx client.
         """
-        max_attempts = 2
-        for attempt in range(max_attempts):
-            try:
-                headers = {**_BROWSER_HEADERS, "Referer": embed_url}
-                resp = await self._http.get(
-                    embed_url,
-                    follow_redirects=True,
-                    timeout=15,
-                    headers=headers,
+        try:
+            headers = {**_BROWSER_HEADERS, "Referer": embed_url}
+            resp = await self._http.get(
+                embed_url,
+                follow_redirects=True,
+                timeout=15,
+                headers=headers,
+            )
+
+            if is_cloudflare_challenge(resp.status_code, resp.text):
+                log.info(
+                    "supervideo_cloudflare_detected",
+                    status=resp.status_code,
+                    url=embed_url,
                 )
+                return None, True
 
-                if is_cloudflare_challenge(resp.status_code, resp.text):
-                    log.info(
-                        "supervideo_cloudflare_detected",
-                        status=resp.status_code,
-                        url=embed_url,
-                    )
-                    return None, True
-
-                if resp.status_code == 429 and attempt < max_attempts - 1:
-                    retry_after = int(resp.headers.get("Retry-After", "3"))
-                    delay = min(retry_after, 10)
-                    log.info(
-                        "supervideo_rate_limited_retrying",
-                        status=429,
-                        url=embed_url,
-                        delay=delay,
-                        attempt=attempt + 1,
-                    )
-                    await asyncio.sleep(delay)
-                    continue
-
-                if resp.status_code != 200:
-                    log.warning(
-                        "supervideo_http_error",
-                        status=resp.status_code,
-                        url=embed_url,
-                    )
-                    return None, False
-
-                return resp.text, False
-            except httpx.HTTPError:
-                log.warning("supervideo_request_failed", url=embed_url)
+            if resp.status_code != 200:
+                log.warning(
+                    "supervideo_http_error",
+                    status=resp.status_code,
+                    url=embed_url,
+                )
                 return None, False
-        return None, False
+
+            return resp.text, False
+        except httpx.HTTPError:
+            log.warning("supervideo_request_failed", url=embed_url)
+            return None, False
 
     async def _fetch_with_playwright(self, embed_url: str) -> str | None:
         """Fetch page via Playwright (Cloudflare bypass)."""

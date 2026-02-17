@@ -289,7 +289,7 @@ The system provides a stable download endpoint that delivers a `.crawljob` file 
 - Integration: HTTP router ↔ use case ↔ adapter with HTTP mocking.
 - Optional E2E: real plugin fixtures, but deterministic (no external sites in CI).
 
-### Current test suite (3402 tests)
+### Current test suite (3410 tests)
 
 ```
 tests/
@@ -340,6 +340,7 @@ tests/
       test_vidking_resolver.py         # Vidking streaming resolver
       test_strmup_resolver.py          # StreamUp (strmup) HLS streaming resolver
       test_vidsonic_resolver.py        # Vidsonic HLS streaming resolver
+      test_retry_transport.py          # RetryTransport (rate limit + 429/503 retry)
       test_ewma.py                     # EWMA scoring functions (31 tests)
       test_plugin_score_cache.py       # Cache persistence + index management (19 tests)
       test_query_pool.py               # TMDB query generation + fallback (14 tests)

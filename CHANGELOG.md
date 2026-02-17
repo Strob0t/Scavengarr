@@ -11,6 +11,15 @@ Massive expansion of the plugin ecosystem (2 → 40 plugins), Stremio addon inte
 hoster resolver system, plugin base class standardization, search result caching, and
 growth of the test suite from 160 to 3225 tests.
 
+### HTTP Rate Limiting & 429 Retry (Defense in Depth)
+- Add `RetryTransport` — custom httpx transport wrapping all outgoing HTTP requests
+  - Proactive: per-domain token-bucket rate limiting via existing `DomainRateLimiter` (5 RPS default)
+  - Reactive: automatic retry on 429/503 with exponential backoff + jitter + `Retry-After` header support
+  - Configurable: `retry_max_attempts` (default 3), `retry_backoff_base` (1s), `retry_max_backoff` (30s)
+- Wire `DomainRateLimiter` (previously dead code) into shared `httpx.AsyncClient` via transport layer
+- Remove manual 429 retry from `SuperVideoResolver` (now handled transparently by transport)
+- Add 3 config fields: `http.retry_max_attempts`, `http.retry_backoff_base`, `http.retry_max_backoff`
+
 ### Plugin Scoring & Probing
 Background plugin scoring system that measures plugin health and search quality via
 EWMA-based probes, then selects only the top-N plugins per Stremio request.

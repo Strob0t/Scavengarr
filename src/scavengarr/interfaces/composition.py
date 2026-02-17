@@ -17,6 +17,8 @@ from scavengarr.application.use_cases.stremio_catalog import StremioCatalogUseCa
 from scavengarr.application.use_cases.stremio_stream import StremioStreamUseCase
 from scavengarr.domain.entities.crawljob import Priority
 from scavengarr.infrastructure.cache.cache_factory import create_cache
+from scavengarr.infrastructure.common.rate_limiter import DomainRateLimiter
+from scavengarr.infrastructure.common.retry_transport import RetryTransport
 from scavengarr.infrastructure.config.schema import AppConfig
 from scavengarr.infrastructure.hoster_resolvers import HosterResolverRegistry
 from scavengarr.infrastructure.hoster_resolvers.ddownload import DDownloadResolver
@@ -183,13 +185,29 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await cache.clear()
         log.debug("cache_cleared", environment="dev")
 
-    # 2) HTTP client
+    # 2) HTTP client with per-domain rate limiting + 429/503 retry
+    rate_limiter = DomainRateLimiter(
+        default_rps=config.rate_limit_requests_per_second,
+        burst=10,
+    )
+    transport = RetryTransport(
+        wrapped=httpx.AsyncHTTPTransport(),
+        rate_limiter=rate_limiter,
+        max_retries=config.http_retry_max_attempts,
+        backoff_base=config.http_retry_backoff_base,
+        max_backoff=config.http_retry_max_backoff,
+    )
     state.http_client = httpx.AsyncClient(
+        transport=transport,
         timeout=httpx.Timeout(config.http_timeout_seconds),
         headers={"User-Agent": config.http_user_agent},
         follow_redirects=config.http_follow_redirects,
     )
-    log.info("http_client_initialized")
+    log.info(
+        "http_client_initialized",
+        rate_limit_rps=config.rate_limit_requests_per_second,
+        retry_max_attempts=config.http_retry_max_attempts,
+    )
 
     # 2b) Share HTTP client with httpx-based plugins
     HttpxPluginBase.set_shared_http_client(state.http_client)

@@ -38,6 +38,9 @@ http:
   user_agent: "Scavengarr/0.1.0 (+https://github.com/Strob0t/Scavengarr)"
   rate_limit_rps: 5.0 # env: SCAVENGARR_RATE_LIMIT_REQUESTS_PER_SECOND
   api_rate_limit_rpm: 120 # env: SCAVENGARR_API_RATE_LIMIT_RPM (0 = off)
+  retry_max_attempts: 3 # env: SCAVENGARR_HTTP_RETRY_MAX_ATTEMPTS (0 = off)
+  retry_backoff_base: 1.0 # env: SCAVENGARR_HTTP_RETRY_BACKOFF_BASE
+  retry_max_backoff: 30.0 # env: SCAVENGARR_HTTP_RETRY_MAX_BACKOFF
 
 # -- Link Validation -------------------------------------------------
 validate_download_links: true

@@ -489,6 +489,32 @@ class AppConfig(BaseModel):
         description="API rate limit per IP (requests/minute). 0 = unlimited.",
     )
 
+    # Retry on 429/503 (YAML section: http.*)
+    http_retry_max_attempts: int = Field(
+        default=3,
+        validation_alias=AliasChoices(
+            "http_retry_max_attempts",
+            AliasPath("http", "retry_max_attempts"),
+        ),
+        description="Max retry attempts on 429/503 responses. 0 = no retries.",
+    )
+    http_retry_backoff_base: float = Field(
+        default=1.0,
+        validation_alias=AliasChoices(
+            "http_retry_backoff_base",
+            AliasPath("http", "retry_backoff_base"),
+        ),
+        description="Base delay in seconds for exponential backoff.",
+    )
+    http_retry_max_backoff: float = Field(
+        default=30.0,
+        validation_alias=AliasChoices(
+            "http_retry_max_backoff",
+            AliasPath("http", "retry_max_backoff"),
+        ),
+        description="Maximum backoff delay in seconds.",
+    )
+
     @field_validator("http_timeout_seconds", "http_timeout_resolve_seconds")
     @classmethod
     def _validate_http_timeout(cls, v: float) -> float:
@@ -552,6 +578,10 @@ class EnvOverrides(BaseSettings):
 
     rate_limit_requests_per_second: float | None = None
     api_rate_limit_rpm: int | None = None
+
+    http_retry_max_attempts: int | None = None
+    http_retry_backoff_base: float | None = None
+    http_retry_max_backoff: float | None = None
 
     playwright_headless: bool | None = None
     playwright_timeout_ms: int | None = None
