@@ -571,3 +571,100 @@ class TestConfigurablePenalties:
             _sr("Iron Man 2011"), ref, year_tolerance_movie=5
         )
         assert score_lenient > score_strict
+
+
+# ---------------------------------------------------------------------------
+# score_title_match — Dune franchise disambiguation
+# ---------------------------------------------------------------------------
+
+
+class TestDuneFranchise:
+    """Real-world regression tests for Dune / Dune: Part Two matching.
+
+    German streaming sites list Dune under various titles:
+    "Dune", "Dune: Part One", "Dune (2021)", "Dune Part Two (2024)".
+    The matcher must accept the correct film and reject the other.
+    """
+
+    # --- Dune: Part One (2021) ---
+
+    def test_dune_part_one_exact(self) -> None:
+        ref = TitleMatchInfo(title="Dune: Part One", year=2021)
+        score = score_title_match(_sr("Dune: Part One (2021)"), ref)
+        assert score >= 1.0
+
+    def test_dune_short_title_matches_part_one(self) -> None:
+        """Sites listing 'Dune' should match 'Dune: Part One' ref."""
+        ref = TitleMatchInfo(title="Dune: Part One", year=2021)
+        score = score_title_match(_sr("Dune 2021"), ref)
+        assert score >= 1.0
+
+    def test_dune_part_one_release_name(self) -> None:
+        ref = TitleMatchInfo(title="Dune: Part One", year=2021)
+        sr = _sr(
+            "Dune",
+            release_name="Dune.Part.One.2021.German.DL.1080p.BluRay.x264",
+        )
+        score = score_title_match(sr, ref)
+        assert score >= 1.0
+
+    def test_dune_part_two_rejected_for_part_one_ref(self) -> None:
+        """Dune Part Two must NOT match when looking for Part One."""
+        ref = TitleMatchInfo(title="Dune: Part One", year=2021)
+        score_two = score_title_match(_sr("Dune: Part Two (2024)"), ref)
+        score_one = score_title_match(_sr("Dune: Part One (2021)"), ref)
+        assert score_one > score_two
+
+    # --- Dune: Part Two (2024) ---
+
+    def test_dune_part_two_exact(self) -> None:
+        ref = TitleMatchInfo(title="Dune: Part Two", year=2024)
+        score = score_title_match(_sr("Dune: Part Two (2024)"), ref)
+        assert score >= 1.0
+
+    def test_dune_part_two_release_name(self) -> None:
+        ref = TitleMatchInfo(title="Dune: Part Two", year=2024)
+        sr = _sr(
+            "Dune Part Two",
+            release_name="Dune.Part.Two.2024.German.DL.1080p.BluRay.x264",
+        )
+        score = score_title_match(sr, ref)
+        assert score >= 1.0
+
+    def test_dune_part_one_rejected_for_part_two_ref(self) -> None:
+        """Dune Part One must NOT match when looking for Part Two."""
+        ref = TitleMatchInfo(title="Dune: Part Two", year=2024)
+        score_one = score_title_match(_sr("Dune: Part One (2021)"), ref)
+        score_two = score_title_match(_sr("Dune: Part Two (2024)"), ref)
+        assert score_two > score_one
+
+    def test_dune_1984_rejected_for_2021(self) -> None:
+        """Original 1984 Dune must not match 2021 Dune ref."""
+        ref = TitleMatchInfo(title="Dune: Part One", year=2021)
+        score = score_title_match(_sr("Dune (1984)"), ref)
+        # year penalty should push it down
+        assert score < 1.0
+
+    def test_dune_part_two_scores_higher_than_part_one(self) -> None:
+        """When searching for Part Two, Part Two scores higher than Part One."""
+        ref = TitleMatchInfo(title="Dune: Part Two", year=2024)
+        results = [
+            _sr("Dune: Part One (2021)"),
+            _sr("Dune: Part Two (2024)"),
+            _sr("Dune (1984)"),
+        ]
+        scores = {r.title: score_title_match(r, ref) for r in results}
+        assert scores["Dune: Part Two (2024)"] > scores["Dune: Part One (2021)"]
+        assert scores["Dune: Part Two (2024)"] > scores["Dune (1984)"]
+
+    def test_dune_filter_keeps_correct_part(self) -> None:
+        """filter_by_title_match with Dune Part Two ref keeps Part Two."""
+        ref = TitleMatchInfo(title="Dune: Part Two", year=2024)
+        results = [
+            _sr("Dune: Part Two (2024)"),
+            _sr("Completely Unrelated Film"),
+        ]
+        kept = filter_by_title_match(results, ref, threshold=0.7)
+        titles = [r.title for r in kept]
+        assert "Dune: Part Two (2024)" in titles
+        assert "Completely Unrelated Film" not in titles
