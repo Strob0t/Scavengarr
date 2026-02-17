@@ -56,10 +56,7 @@ def _decode_hex_blob(blob: str) -> str | None:
     """
     try:
         hex_str = blob.replace("|", "")
-        chars = [
-            chr(int(hex_str[i : i + 2], 16))
-            for i in range(0, len(hex_str), 2)
-        ]
+        chars = [chr(int(hex_str[i : i + 2], 16)) for i in range(0, len(hex_str), 2)]
         decoded = "".join(chars)[::-1]
         if decoded.startswith("http"):
             return decoded

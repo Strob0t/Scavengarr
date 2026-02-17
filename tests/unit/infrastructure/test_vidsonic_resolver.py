@@ -111,9 +111,7 @@ class TestVidsonicResolver:
     async def test_resolves_hls_from_page(self) -> None:
         url = "https://vidsonic.net/e/abc123def456"
         html = _make_page(_HEX_BLOB)
-        respx.get("https://vidsonic.net/e/abc123def456").respond(
-            200, text=html
-        )
+        respx.get("https://vidsonic.net/e/abc123def456").respond(200, text=html)
 
         async with httpx.AsyncClient() as client:
             resolver = VidsonicResolver(http_client=client)
@@ -132,9 +130,7 @@ class TestVidsonicResolver:
             "<html><head><title>Not Found</title></head>"
             "<body><h1>Video Not Found</h1></body></html>"
         )
-        respx.get("https://vidsonic.net/e/abc123def456").respond(
-            200, text=html
-        )
+        respx.get("https://vidsonic.net/e/abc123def456").respond(200, text=html)
 
         async with httpx.AsyncClient() as client:
             resolver = VidsonicResolver(http_client=client)
@@ -146,14 +142,8 @@ class TestVidsonicResolver:
     @pytest.mark.asyncio()
     async def test_returns_none_on_video_id_required(self) -> None:
         url = "https://vidsonic.net/e/abc123def456"
-        html = (
-            "<html><body>"
-            "<p>Video ID is required</p>"
-            "</body></html>"
-        )
-        respx.get("https://vidsonic.net/e/abc123def456").respond(
-            200, text=html
-        )
+        html = "<html><body><p>Video ID is required</p></body></html>"
+        respx.get("https://vidsonic.net/e/abc123def456").respond(200, text=html)
 
         async with httpx.AsyncClient() as client:
             resolver = VidsonicResolver(http_client=client)
@@ -191,9 +181,7 @@ class TestVidsonicResolver:
     async def test_returns_none_for_invalid_url(self) -> None:
         async with httpx.AsyncClient() as client:
             resolver = VidsonicResolver(http_client=client)
-            result = await resolver.resolve(
-                "https://example.com/e/abc123def456"
-            )
+            result = await resolver.resolve("https://example.com/e/abc123def456")
 
         assert result is None
 
@@ -207,9 +195,7 @@ class TestVidsonicResolver:
             "<script>// no hex blob here</script>"
             "</body></html>"
         )
-        respx.get("https://vidsonic.net/e/abc123def456").respond(
-            200, text=html
-        )
+        respx.get("https://vidsonic.net/e/abc123def456").respond(200, text=html)
 
         async with httpx.AsyncClient() as client:
             resolver = VidsonicResolver(http_client=client)
