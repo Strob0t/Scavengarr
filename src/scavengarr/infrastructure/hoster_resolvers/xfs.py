@@ -104,6 +104,11 @@ class XFSResolver:
     def name(self) -> str:
         return self._config.name
 
+    @property
+    def supported_domains(self) -> frozenset[str]:
+        """All domains this resolver can handle (primary + aliases)."""
+        return self._config.domains | self._config.extra_domains
+
     async def resolve(self, url: str) -> ResolvedStream | None:
         """Resolve an XFS link.
 
@@ -516,10 +521,25 @@ VIDHIDE = XFSConfig(
             "dlions",
             "playrecord",
             "mycloudz",
+            # E2E-discovered vidhide aliases (parklogic.com anti-adblock)
+            "streamhide",
+            "louishide",
+            "streamvid",
+            "availedsmallest",
+            "tummulerviolableness",
+            "tubelessceliolymph",
         }
     ),
 )
 
+
+GOODSTREAM = XFSConfig(
+    name="goodstream",
+    domains=frozenset({"goodstream"}),
+    file_id_re=_EMBED_RE,
+    offline_markers=_STANDARD_MARKERS,
+    is_video_hoster=True,
+)
 
 STREAMRUBY = XFSConfig(
     name="streamruby",
@@ -628,6 +648,7 @@ ALL_XFS_CONFIGS: tuple[XFSConfig, ...] = (
     FUNXD,
     BIGWARP,
     DROPLOAD,
+    GOODSTREAM,
     SAVEFILES,
     STREAMWISH,
     VIDMOLY,

@@ -68,6 +68,7 @@ class HosterResolverRegistry:
         resolve_timeout: float = 15.0,
     ) -> None:
         self._resolvers: dict[str, HosterResolverPort] = {}
+        self._domain_map: dict[str, HosterResolverPort] = {}
         self._http_client = http_client
         self._resolve_timeout = resolve_timeout
         self._result_cache: dict[str, _CacheEntry] = {}
@@ -77,8 +78,18 @@ class HosterResolverRegistry:
             self.register(resolver)
 
     def register(self, resolver: HosterResolverPort) -> None:
-        """Register a resolver for a specific hoster."""
+        """Register a resolver for a specific hoster.
+
+        If the resolver exposes a ``supported_domains`` property, each
+        domain is also mapped so that URL-based dispatch finds the
+        resolver even when the URL domain differs from the resolver name
+        (e.g. ``filelions`` → vidhide resolver).
+        """
         self._resolvers[resolver.name] = resolver
+        domains: frozenset[str] | None = getattr(resolver, "supported_domains", None)
+        if domains:
+            for domain in domains:
+                self._domain_map[domain] = resolver
         log.debug("hoster_resolver_registered", hoster=resolver.name)
 
     @property
@@ -117,8 +128,8 @@ class HosterResolverRegistry:
         # URL domain is authoritative; fall back to plugin-provided hint
         hoster_name = extract_domain(url) or hoster
 
-        # 1. Try specific resolver for URL domain
-        resolver = self._resolvers.get(hoster_name)
+        # 1. Try specific resolver for URL domain (name match, then domain alias)
+        resolver = self._resolvers.get(hoster_name) or self._domain_map.get(hoster_name)
         if resolver is not None:
             result = await self._try_resolver(resolver, hoster_name, url)
             self._cache_result(url, result)
@@ -128,7 +139,9 @@ class HosterResolverRegistry:
         final_url = await self._follow_redirects(url)
         if final_url:
             redirected_hoster = extract_domain(final_url)
-            resolver = self._resolvers.get(redirected_hoster)
+            resolver = self._resolvers.get(redirected_hoster) or self._domain_map.get(
+                redirected_hoster
+            )
             if resolver is not None:
                 log.info(
                     "hoster_resolve_after_redirect",
@@ -145,7 +158,7 @@ class HosterResolverRegistry:
         # 3. Try hoster hint if different from URL domain
         #    Handles rotating redirect domains (e.g., lauradaydo.com for VOE)
         if hoster and hoster != hoster_name:
-            resolver = self._resolvers.get(hoster)
+            resolver = self._resolvers.get(hoster) or self._domain_map.get(hoster)
             if resolver is not None:
                 log.info(
                     "hoster_resolve_via_hint",

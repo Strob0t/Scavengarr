@@ -117,6 +117,11 @@ class GenericDDLResolver:
     def name(self) -> str:
         return self._config.name
 
+    @property
+    def supported_domains(self) -> frozenset[str]:
+        """All domains this resolver can handle."""
+        return self._config.domains
+
     async def resolve(self, url: str) -> ResolvedStream | None:
         """Validate a DDL link by fetching the file page.
 

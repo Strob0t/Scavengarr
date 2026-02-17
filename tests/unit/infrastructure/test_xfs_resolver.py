@@ -158,7 +158,7 @@ class TestXFSConfigInvariants:
             assert len(cfg.offline_markers) > 0, f"{cfg.name} has no markers"
 
     def test_config_count(self) -> None:
-        assert len(ALL_XFS_CONFIGS) == 26
+        assert len(ALL_XFS_CONFIGS) == 27
 
     def test_configs_are_frozen(self) -> None:
         for cfg in ALL_XFS_CONFIGS:
@@ -167,7 +167,7 @@ class TestXFSConfigInvariants:
 
     def test_video_hoster_count(self) -> None:
         video_count = sum(1 for c in ALL_XFS_CONFIGS if c.is_video_hoster)
-        assert video_count == 20
+        assert video_count == 21
 
     def test_captcha_count(self) -> None:
         captcha_count = sum(1 for c in ALL_XFS_CONFIGS if c.needs_captcha)

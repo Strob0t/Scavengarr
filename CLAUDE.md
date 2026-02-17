@@ -289,7 +289,7 @@ The system provides a stable download endpoint that delivers a `.crawljob` file 
 - Integration: HTTP router ↔ use case ↔ adapter with HTTP mocking.
 - Optional E2E: real plugin fixtures, but deterministic (no external sites in CI).
 
-### Current test suite (3590 tests)
+### Current test suite (3608 tests)
 
 ```
 tests/
@@ -614,7 +614,7 @@ Hoster resolvers validate whether a URL on a file hosting service is still avail
 **DDL (Direct Download Link) resolvers** validate file availability without extracting a video URL:
 - Filer.net (API-based), Rapidgator, DDownload (page-scraping), Mediafire (API-based), GoFile (API + guest token)
 - 12 generic DDL hosters (alfafile, alphaddl, fastpic, filecrypt, filefactory, fsst, go4up, mixdrop, nitroflare, 1fichier, turbobit, uploaded)
-- 26 XFS-based hosters (katfile, hexupload, clicknupload, filestore, uptobox, funxd, bigwarp, dropload, savefiles, streamwish, vidmoly, vidoza, vinovo, vidhide, streamruby, veev, lulustream, upstream, wolfstream, vidnest, mp4upload, uqload, vidshar, vidroba, hotlink, vidspeed)
+- 27 XFS-based hosters (katfile, hexupload, clicknupload, filestore, uptobox, funxd, bigwarp, dropload, goodstream, savefiles, streamwish, vidmoly, vidoza, vinovo, vidhide, streamruby, veev, lulustream, upstream, wolfstream, vidnest, mp4upload, uqload, vidshar, vidroba, hotlink, vidspeed)
 - Return `ResolvedStream(video_url=<canonical_file_url>, quality=StreamQuality.UNKNOWN)`
 
 #### Shared URL utility
@@ -641,13 +641,13 @@ create_all_ddl_resolvers(http_client) -> list[GenericDDLResolver]  # factory fun
 
 #### XFileSharingPro (XFS) — consolidated resolver
 
-26 XFS-based hosters are consolidated into a single generic `XFSResolver` with parameterised `XFSConfig` in `src/scavengarr/infrastructure/hoster_resolvers/xfs.py`. Adding a new XFS hoster = adding a new `XFSConfig` constant + appending it to `ALL_XFS_CONFIGS`.
+27 XFS-based hosters are consolidated into a single generic `XFSResolver` with parameterised `XFSConfig` in `src/scavengarr/infrastructure/hoster_resolvers/xfs.py`. Adding a new XFS hoster = adding a new `XFSConfig` constant + appending it to `ALL_XFS_CONFIGS`.
 
 Two resolver modes:
 - **Video hosters** (`is_video_hoster=True`): fetch `/e/{file_id}` embed page, extract actual video URL (HLS/MP4) via JWPlayer config, packed JS, or `hls2` pattern. Returns `ResolvedStream` with Referer header.
 - **DDL hosters** (`is_video_hoster=False`): validate file availability only (check offline markers), return original URL.
 
-Hosters with `needs_captcha=True` (veev, vinovo) return `None` immediately — they require Cloudflare Turnstile.
+Hosters with `needs_captcha=True` (veev, vinovo, wolfstream) return `None` immediately — they require Cloudflare Turnstile / anti-bot JS.
 
 Shared video extraction utilities live in `_video_extract.py` (used by both XFS and Filemoon resolvers).
 

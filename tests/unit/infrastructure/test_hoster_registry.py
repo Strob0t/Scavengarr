@@ -431,3 +431,65 @@ class TestHosterResolverRegistry:
         """resolve_timeout parameter is accepted."""
         registry = HosterResolverRegistry(resolve_timeout=5.0)
         assert registry._resolve_timeout == 5.0
+
+    @pytest.mark.asyncio
+    async def test_domain_alias_dispatch(self) -> None:
+        """Resolver with supported_domains is found via domain alias."""
+        expected = ResolvedStream(video_url="https://cdn.example.com/video.mp4")
+        resolver = MagicMock()
+        resolver.name = "vidhide"
+        resolver.supported_domains = frozenset({"vidhide", "filelions", "streamhide"})
+        resolver.resolve = AsyncMock(return_value=expected)
+
+        registry = HosterResolverRegistry(resolvers=[resolver])
+
+        # "filelions" is not the resolver name but is in supported_domains
+        result = await registry.resolve("https://filelions.live/v/abc123")
+        assert result is not None
+        assert result.video_url == "https://cdn.example.com/video.mp4"
+        resolver.resolve.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_domain_alias_dispatch_after_redirect(self) -> None:
+        """Redirect to a domain alias resolves via domain map."""
+        expected = ResolvedStream(video_url="https://cdn.example.com/video.mp4")
+        resolver = MagicMock()
+        resolver.name = "vidhide"
+        resolver.supported_domains = frozenset({"vidhide", "filelions"})
+        resolver.resolve = AsyncMock(return_value=expected)
+
+        mock_response = MagicMock()
+        mock_response.url = "https://filelions.live/v/abc123"
+
+        http_client = AsyncMock(spec=httpx.AsyncClient)
+        http_client.head = AsyncMock(return_value=mock_response)
+
+        registry = HosterResolverRegistry(resolvers=[resolver], http_client=http_client)
+        result = await registry.resolve("https://random-redirect.com/out/123")
+
+        assert result is not None
+        resolver.resolve.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_name_match_takes_priority_over_domain_alias(self) -> None:
+        """Resolver registered by name takes priority over domain alias map."""
+        name_resolver = MagicMock()
+        name_resolver.name = "filelions"
+        name_resolver.resolve = AsyncMock(
+            return_value=ResolvedStream(video_url="https://direct.filelions/v.mp4")
+        )
+
+        alias_resolver = MagicMock()
+        alias_resolver.name = "vidhide"
+        alias_resolver.supported_domains = frozenset({"vidhide", "filelions"})
+        alias_resolver.resolve = AsyncMock(
+            return_value=ResolvedStream(video_url="https://cdn.vidhide/v.mp4")
+        )
+
+        registry = HosterResolverRegistry(resolvers=[name_resolver, alias_resolver])
+        result = await registry.resolve("https://filelions.live/v/abc123")
+
+        assert result is not None
+        assert result.video_url == "https://direct.filelions/v.mp4"
+        name_resolver.resolve.assert_awaited_once()
+        alias_resolver.resolve.assert_not_awaited()

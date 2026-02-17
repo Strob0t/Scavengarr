@@ -12,6 +12,10 @@ hoster resolver system, plugin base class standardization, search result caching
 growth of the test suite from 160 to 3225 tests.
 
 ### E2E-Discovered Fixes (Stream Resolution)
+- **Domain alias dispatch**: `HosterResolverRegistry` now maps all `supported_domains` from XFS/DDL resolvers, not just the resolver name — fixes dispatch for vidhide family domains (filelions, streamhide, louishide, etc.)
+- **Drop unresolvable proxy streams**: when a resolve function is configured but returns `None`, the stream is excluded from Stremio responses instead of creating a `/play/` proxy URL that always 502s
+- **Add goodstream XFS config**: new video hoster resolver for goodstream.one/goodstream.uno (XFS-based, confirmed via JDownloader plugin)
+- **Add 6 vidhide domain aliases**: streamhide, louishide, streamvid, availedsmallest, tummulerviolableness, tubelessceliolymph (all parklogic.com anti-adblock protected vidhide family)
 - Fix XFS two-step form hosters: detect `<form id="F1" action="/dl">` splash pages and POST to `/dl` with `op=embed&file_code={id}&auto=1` to obtain the actual player page (affects bigwarp, savefiles, streamruby, and other form-based XFS hosters)
 - Mark wolfstream as `needs_captcha=True` — embed pages return obfuscated JS redirect (anti-bot), not extractable with httpx
 - Fix vidking resolver regex: accept `/embed/tv/{tmdb_id}/{season}/{episode}` paths for series content (was only matching `/embed/movie/`)
@@ -38,7 +42,7 @@ growth of the test suite from 160 to 3225 tests.
 - Add belt-and-suspenders URL scheme validation in `HttpLinkValidator.validate_batch()`
 - Fix veev resolver regex: accept 12+ char alphanumeric IDs (was exactly 12, veev.to now uses 43-char IDs)
 - Fix vidking resolver regex: accept `/embed/movie/{id}` paths used by cineby/videasy plugins
-- Remove goodstream from XFS configs — URLs use custom player format, not XFS
+- Re-add goodstream XFS config (previously removed in error — confirmed XFS-based via JDownloader GoodstreamUno.java plugin)
 
 ### Torznab Pagination
 - Wire `TorznabQuery.offset`/`limit` fields through router → use case for server-side result pagination

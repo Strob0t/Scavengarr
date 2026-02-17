@@ -709,7 +709,9 @@ class StremioStreamUseCase:
         await asyncio.gather(*(self._stream_link_repo.save(lnk) for lnk in links))
 
         proxied: list[StremioStream] = []
-        passthrough_count = 0
+        skipped_echo = 0
+        skipped_unresolved = 0
+        has_resolver = bool(self._resolve_fn)
         for i, (stream, sid) in enumerate(zip(streams, stream_ids)):
             resolved = resolved_map.get(i)
             if resolved is not None:
@@ -728,10 +730,13 @@ class StremioStreamUseCase:
                 else:
                     # Resolver only validated availability but returned the
                     # embed/download page URL — Stremio cannot play HTML pages.
-                    # Skip this stream; the /play/ proxy would always 502.
-                    passthrough_count += 1
+                    skipped_echo += 1
+            elif has_resolver:
+                # Resolver is configured but returned None — skip this stream.
+                # The /play/ proxy would also fail (502).
+                skipped_unresolved += 1
             else:
-                # Fallback: proxy through /play/ endpoint
+                # No resolver configured — proxy through /play/ endpoint
                 proxy_url = f"{base_url}/api/v1/stremio/play/{sid}"
                 proxied.append(
                     StremioStream(
@@ -740,11 +745,11 @@ class StremioStreamUseCase:
                         url=proxy_url,
                     )
                 )
-        if passthrough_count:
+        if skipped_echo or skipped_unresolved:
             log.info(
                 "stremio_streams_skipped",
-                count=passthrough_count,
-                msg="resolvers returned embed page URLs, not playable video URLs",
+                skipped_echo=skipped_echo,
+                skipped_unresolved=skipped_unresolved,
             )
         return proxied
 

@@ -1428,8 +1428,8 @@ class TestResolverEchoFiltering:
         assert len(result) == 1
         assert "master.m3u8" in result[0].url
 
-    async def test_unresolved_streams_still_proxied(self) -> None:
-        """Streams that fail resolution (None) still get proxy URL."""
+    async def test_unresolved_streams_dropped_when_resolver_configured(self) -> None:
+        """Streams that fail resolution (None) are dropped to avoid 502 proxy."""
         tmdb = AsyncMock()
         tmdb.get_title_and_year = AsyncMock(
             return_value=TitleMatchInfo(title="Iron Man", year=2008)
@@ -1467,9 +1467,8 @@ class TestResolverEchoFiltering:
 
         result = await uc.execute(_make_request(), base_url="http://localhost:8080")
 
-        # Should still get a proxy URL as fallback
-        assert len(result) == 1
-        assert result[0].url.startswith("http://localhost:8080/api/v1/stremio/play/")
+        # Unresolvable streams are dropped — the /play/ proxy would always 502
+        assert len(result) == 0
 
 
 # ---------------------------------------------------------------------------
