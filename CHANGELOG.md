@@ -44,7 +44,11 @@ EWMA-based probes, then selects only the top-N plugins per Stremio request.
 - Add `PluginRegistry.remove()` method for disabling plugins via config overrides
 
 ### Hoster Resolver Expansion
-- Add 6 new XFS hoster configs: StreamRuby, Veev, Lulustream, Upstream, Wolfstream, Vidnest (21 XFS hosters total)
+- Add 6 new XFS hoster configs: Mp4Upload, Uqload, Vidshar, Vidroba, Hotlink, Vidspeed (27 XFS hosters total)
+- Add new SendVid streaming resolver (two-stage: API status check + page video extraction)
+- Add new Mediafire DDL resolver (public file info API, offline detection via error 110 + delete_date)
+- Add new GoFile DDL resolver (ephemeral guest token with 25-min cache, content availability API)
+- Add 6 new XFS hoster configs: StreamRuby, Veev, Lulustream, Upstream, Wolfstream, Vidnest
 - Add 20 new StreamWish domain aliases from JDownloader (obeywish, awish, embedwish, etc.)
 - Add 5 new Streamtape domain aliases (scloud, strtapeadblock, tapeblocker, etc.)
 - Add new StreamUp (strmup) standalone HLS resolver with page + AJAX fallback extraction

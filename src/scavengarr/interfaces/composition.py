@@ -28,8 +28,11 @@ from scavengarr.infrastructure.hoster_resolvers.filernet import FilerNetResolver
 from scavengarr.infrastructure.hoster_resolvers.generic_ddl import (
     create_all_ddl_resolvers,
 )
+from scavengarr.infrastructure.hoster_resolvers.gofile import GoFileResolver
+from scavengarr.infrastructure.hoster_resolvers.mediafire import MediafireResolver
 from scavengarr.infrastructure.hoster_resolvers.probe import probe_urls_stealth
 from scavengarr.infrastructure.hoster_resolvers.rapidgator import RapidgatorResolver
+from scavengarr.infrastructure.hoster_resolvers.sendvid import SendVidResolver
 from scavengarr.infrastructure.hoster_resolvers.serienstream import SerienstreamResolver
 from scavengarr.infrastructure.hoster_resolvers.stealth_pool import StealthPool
 from scavengarr.infrastructure.hoster_resolvers.stmix import StmixResolver
@@ -286,9 +289,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             VidguardResolver(http_client=state.http_client),
             VidkingResolver(http_client=state.http_client),
             VidsonicResolver(http_client=state.http_client),
+            SendVidResolver(http_client=state.http_client),
+            # DDL resolvers (custom — non-XFS)
+            MediafireResolver(http_client=state.http_client),
+            GoFileResolver(http_client=state.http_client),
             # DDL resolvers (consolidated — 12 hosters)
             *create_all_ddl_resolvers(http_client=state.http_client),
-            # XFS resolvers (consolidated — 21 hosters)
+            # XFS resolvers (consolidated — 27 hosters)
             *create_all_xfs_resolvers(http_client=state.http_client),
         ],
         http_client=state.http_client,

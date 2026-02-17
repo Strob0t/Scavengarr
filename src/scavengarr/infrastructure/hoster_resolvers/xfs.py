@@ -383,6 +383,48 @@ VIDNEST = XFSConfig(
     ),
 )
 
+MP4UPLOAD = XFSConfig(
+    name="mp4upload",
+    domains=frozenset({"mp4upload"}),
+    file_id_re=_EMBED_RE,
+    offline_markers=_STANDARD_MARKERS,
+)
+
+UQLOAD = XFSConfig(
+    name="uqload",
+    domains=frozenset({"uqload"}),
+    file_id_re=_EMBED_RE,
+    offline_markers=_STANDARD_MARKERS,
+)
+
+VIDSHAR = XFSConfig(
+    name="vidshar",
+    domains=frozenset({"vidshar", "vedshare"}),
+    file_id_re=_EMBED_RE,
+    offline_markers=_STANDARD_MARKERS,
+)
+
+VIDROBA = XFSConfig(
+    name="vidroba",
+    domains=frozenset({"vidoba", "vidroba"}),
+    file_id_re=_EMBED_RE,
+    offline_markers=_STANDARD_MARKERS,
+)
+
+HOTLINK = XFSConfig(
+    name="hotlink",
+    domains=frozenset({"hotlink"}),
+    file_id_re=_BASIC_RE,
+    offline_markers=_STANDARD_MARKERS,
+)
+
+VIDSPEED = XFSConfig(
+    name="vidspeed",
+    domains=frozenset({"vidspeed", "vidspeeds", "xvideosharing"}),
+    file_id_re=_EMBED_RE,
+    offline_markers=_STANDARD_MARKERS,
+)
+
 
 # ---------------------------------------------------------------------------
 # Registry
@@ -410,6 +452,12 @@ ALL_XFS_CONFIGS: tuple[XFSConfig, ...] = (
     UPSTREAM,
     WOLFSTREAM,
     VIDNEST,
+    MP4UPLOAD,
+    UQLOAD,
+    VIDSHAR,
+    VIDROBA,
+    HOTLINK,
+    VIDSPEED,
 )
 
 

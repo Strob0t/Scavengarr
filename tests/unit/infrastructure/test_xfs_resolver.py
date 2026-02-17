@@ -103,7 +103,7 @@ class TestXFSConfigInvariants:
             assert len(cfg.offline_markers) > 0, f"{cfg.name} has no markers"
 
     def test_config_count(self) -> None:
-        assert len(ALL_XFS_CONFIGS) == 21
+        assert len(ALL_XFS_CONFIGS) == 27
 
     def test_configs_are_frozen(self) -> None:
         for cfg in ALL_XFS_CONFIGS:
