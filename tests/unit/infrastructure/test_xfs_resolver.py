@@ -331,6 +331,7 @@ class TestXFSResolverVideo:
         url = _make_url(config)
         embed_url = _make_embed_url(config)
         respx.get(embed_url).respond(200, text=_video_html_jwplayer())
+        respx.head(_VIDEO_HLS_URL).respond(200)
 
         async with httpx.AsyncClient() as client:
             resolver = XFSResolver(config=config, http_client=client)
@@ -349,6 +350,7 @@ class TestXFSResolverVideo:
         url = _make_url(config)
         embed_url = _make_embed_url(config)
         respx.get(embed_url).respond(200, text=_video_html_hls2())
+        respx.head(_VIDEO_HLS_URL).respond(200)
 
         async with httpx.AsyncClient() as client:
             resolver = XFSResolver(config=config, http_client=client)
@@ -502,6 +504,7 @@ class TestVideoExtraction:
         url = "https://streamwish.com/aBc123DeF456"
         embed_url = "https://streamwish.com/e/aBc123DeF456"
         respx.get(embed_url).respond(200, text=_video_html_jwplayer())
+        respx.head(_VIDEO_HLS_URL).respond(200)
 
         async with httpx.AsyncClient() as client:
             resolver = XFSResolver(config=STREAMWISH, http_client=client)
@@ -521,6 +524,7 @@ class TestVideoExtraction:
         url = "https://streamwish.com/aBc123DeF456"
         embed_url = "https://streamwish.com/e/aBc123DeF456"
         respx.get(embed_url).respond(200, text=_video_html_hls2())
+        respx.head(_VIDEO_HLS_URL).respond(200)
 
         async with httpx.AsyncClient() as client:
             resolver = XFSResolver(config=STREAMWISH, http_client=client)
@@ -538,6 +542,7 @@ class TestVideoExtraction:
         url = "https://vidmoly.me/aBc123DeF456"
         embed_url = "https://vidmoly.me/e/aBc123DeF456"
         respx.get(embed_url).respond(200, text=_video_html_packed_js())
+        respx.head(_VIDEO_HLS_URL).respond(200)
 
         async with httpx.AsyncClient() as client:
             resolver = XFSResolver(config=VIDMOLY, http_client=client)
@@ -556,6 +561,7 @@ class TestVideoExtraction:
         url = "https://vidoza.net/aBc123DeF456"
         embed_url = "https://vidoza.net/e/aBc123DeF456"
         respx.get(embed_url).respond(200, text=_video_html_direct_hls())
+        respx.head(_VIDEO_HLS_URL).respond(200)
 
         async with httpx.AsyncClient() as client:
             resolver = XFSResolver(config=VIDOZA, http_client=client)
@@ -578,6 +584,7 @@ class TestVideoExtraction:
             "</script></body></html>"
         )
         respx.get(embed_url).respond(200, text=html)
+        respx.head(_VIDEO_MP4_URL).respond(200)
 
         async with httpx.AsyncClient() as client:
             resolver = XFSResolver(config=MP4UPLOAD, http_client=client)
@@ -597,6 +604,7 @@ class TestVideoExtraction:
         url = "https://vidhide.com/f/abc123def456"
         embed_url = "https://vidhide.com/e/abc123def456"
         respx.get(embed_url).respond(200, text=_video_html_hls2())
+        respx.head(_VIDEO_HLS_URL).respond(200)
 
         async with httpx.AsyncClient() as client:
             resolver = XFSResolver(config=VIDHIDE, http_client=client)
@@ -638,6 +646,7 @@ class TestXFSFormPost:
         respx.get(embed_url).respond(200, text=_XFS_FORM_HTML)
         # POST returns the actual player page
         respx.post(dl_url).respond(200, text=_video_html_jwplayer())
+        respx.head(_VIDEO_HLS_URL).respond(200)
 
         async with httpx.AsyncClient() as client:
             resolver = XFSResolver(config=BIGWARP, http_client=client)
@@ -693,6 +702,7 @@ class TestXFSFormPost:
         embed_url = "https://streamwish.com/e/aBc123DeF456"
         # GET returns player directly (no form)
         respx.get(embed_url).respond(200, text=_video_html_hls2())
+        respx.head(_VIDEO_HLS_URL).respond(200)
 
         async with httpx.AsyncClient() as client:
             resolver = XFSResolver(config=STREAMWISH, http_client=client)
@@ -751,6 +761,108 @@ class TestErrorRedirectChain:
         async with httpx.AsyncClient(follow_redirects=True) as client:
             resolver = XFSResolver(config=KATFILE, http_client=client)
             result = await resolver.resolve(url)
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Video URL verification (HEAD check filters IP-locked CDN tokens)
+# ---------------------------------------------------------------------------
+
+
+class TestVideoUrlVerification:
+    """CDN HEAD check filters unreachable video URLs (e.g. IP-locked tokens)."""
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_403_from_cdn_returns_none(self) -> None:
+        """IP-locked CDN token (LULUVID/LULUVDOO) → 403 → resolver returns None."""
+        from scavengarr.infrastructure.hoster_resolvers.xfs import LULUSTREAM
+
+        url = "https://luluvid.com/aBc123DeF456"
+        embed_url = "https://luluvid.com/e/aBc123DeF456"
+        video_url = "https://cdn-locked.luluvid.com/hls/master.m3u8?token=abc"
+
+        html = f'<html><body><script>"hls2":"{video_url}"</script></body></html>'
+        respx.get(embed_url).respond(200, text=html)
+        respx.head(video_url).respond(403)
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=LULUSTREAM, http_client=client)
+            result = await resolver.resolve(url)
+
+        assert result is None
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_200_from_cdn_returns_stream(self) -> None:
+        """Accessible CDN URL → HEAD 200 → resolver returns ResolvedStream."""
+        from scavengarr.infrastructure.hoster_resolvers.xfs import DROPLOAD
+
+        url = "https://dropload.io/aBc123DeF456"
+        embed_url = "https://dropload.io/e/aBc123DeF456"
+
+        respx.get(embed_url).respond(200, text=_video_html_hls2())
+        respx.head(_VIDEO_HLS_URL).respond(200)
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=DROPLOAD, http_client=client)
+            result = await resolver.resolve(url)
+
+        assert result is not None
+        assert result.video_url == _VIDEO_HLS_URL
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_206_from_cdn_returns_stream(self) -> None:
+        """CDN returning 206 (partial content) is also accepted."""
+        from scavengarr.infrastructure.hoster_resolvers.xfs import STREAMRUBY
+
+        url = "https://streamruby.com/aBc123DeF456"
+        embed_url = "https://streamruby.com/e/aBc123DeF456"
+
+        respx.get(embed_url).respond(200, text=_video_html_hls2())
+        respx.head(_VIDEO_HLS_URL).respond(206)
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=STREAMRUBY, http_client=client)
+            result = await resolver.resolve(url)
+
+        assert result is not None
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_network_error_on_verify_returns_none(self) -> None:
+        """Network error during HEAD check → resolver returns None."""
+        from scavengarr.infrastructure.hoster_resolvers.xfs import SAVEFILES
+
+        url = "https://savefiles.com/aBc123DeF456"
+        embed_url = "https://savefiles.com/e/aBc123DeF456"
+
+        respx.get(embed_url).respond(200, text=_video_html_hls2())
+        respx.head(_VIDEO_HLS_URL).mock(side_effect=httpx.ConnectError("timeout"))
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=SAVEFILES, http_client=client)
+            result = await resolver.resolve(url)
+
+        assert result is None
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_500_from_cdn_returns_none(self) -> None:
+        """Server error from CDN → resolver returns None."""
+        from scavengarr.infrastructure.hoster_resolvers.xfs import VIDNEST
+
+        url = "https://vidnest.io/aBc123DeF456"
+        embed_url = "https://vidnest.io/e/aBc123DeF456"
+
+        respx.get(embed_url).respond(200, text=_video_html_jwplayer())
+        respx.head(_VIDEO_HLS_URL).respond(500)
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=VIDNEST, http_client=client)
+            result = await resolver.resolve(url)
+
         assert result is None
 
 

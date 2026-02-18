@@ -79,3 +79,65 @@ class TestCacheStreamLinkRepository:
         await repo.save(link)
         call_kwargs = mock_cache.set.call_args[1]
         assert call_kwargs["ttl"] == 7200
+
+    async def test_save_includes_hls_proxy_fields(self, mock_cache: AsyncMock) -> None:
+        link = CachedStreamLink(
+            stream_id="hls1",
+            hoster_url="https://dropload.io/e/abc123def456",
+            title="Movie",
+            hoster="dropload",
+            video_url="https://cdn.dropcdn.io/hls2/master.m3u8",
+            video_headers='{"Referer": "https://dropload.io/e/abc123def456"}',
+            is_hls=True,
+        )
+        repo = CacheStreamLinkRepository(cache=mock_cache)
+        await repo.save(link)
+
+        value = mock_cache.set.call_args[0][1]
+        restored = json.loads(value)
+        assert restored["video_url"] == "https://cdn.dropcdn.io/hls2/master.m3u8"
+        assert restored["is_hls"] is True
+        assert "Referer" in restored["video_headers"]
+
+    async def test_get_round_trips_hls_proxy_fields(
+        self, mock_cache: AsyncMock
+    ) -> None:
+        link = CachedStreamLink(
+            stream_id="hls2",
+            hoster_url="https://dropload.io/e/abc123def456",
+            title="Movie",
+            hoster="dropload",
+            video_url="https://cdn.dropcdn.io/hls2/master.m3u8",
+            video_headers='{"Referer": "https://dropload.io/"}',
+            is_hls=True,
+        )
+        serialized = _serialize_link(link)
+        mock_cache.get = AsyncMock(return_value=serialized)
+        repo = CacheStreamLinkRepository(cache=mock_cache)
+        result = await repo.get("hls2")
+
+        assert result is not None
+        assert result.video_url == "https://cdn.dropcdn.io/hls2/master.m3u8"
+        assert result.video_headers == '{"Referer": "https://dropload.io/"}'
+        assert result.is_hls is True
+
+    async def test_backward_compat_missing_hls_fields(
+        self, mock_cache: AsyncMock
+    ) -> None:
+        """Old cache entries without HLS fields still deserialize correctly."""
+        old_data = json.dumps(
+            {
+                "stream_id": "old1",
+                "hoster_url": "https://voe.sx/e/abc",
+                "title": "Old Movie",
+                "hoster": "voe",
+            }
+        )
+        mock_cache.get = AsyncMock(return_value=old_data)
+        repo = CacheStreamLinkRepository(cache=mock_cache)
+        result = await repo.get("old1")
+
+        assert result is not None
+        assert result.video_url == ""
+        assert result.video_headers == ""
+        assert result.is_hls is False

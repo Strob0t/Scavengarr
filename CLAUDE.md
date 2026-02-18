@@ -289,7 +289,7 @@ The system provides a stable download endpoint that delivers a `.crawljob` file 
 - Integration: HTTP router ↔ use case ↔ adapter with HTTP mocking.
 - Optional E2E: real plugin fixtures, but deterministic (no external sites in CI).
 
-### Current test suite (3963 tests)
+### Current test suite (3997 tests)
 
 ```
 tests/
@@ -322,6 +322,7 @@ tests/
       test_stream_converter.py         # SearchResult → RankedStream conversion
       test_stream_sorter.py            # Stremio stream sorting/ranking
       test_stream_link_cache.py        # Stream link cache repository
+      test_hls_proxy.py                # HLS proxy manifest rewriting + CDN fetch (18 tests)
       test_hoster_registry.py          # HosterResolverRegistry
       test_xfs_resolver.py             # Generic XFS resolver (27 hosters, parameterised, video extraction)
       test_video_extract.py            # Shared video URL extraction (packed JS, JWPlayer, HLS)

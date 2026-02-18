@@ -10,7 +10,14 @@ Format: version, date, grouped changes. Newest entries first.
 Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration,
 56 hoster resolvers, plugin base class standardization, search result caching, circuit
 breaker, global concurrency pool, graceful shutdown, multi-language search, and
-growth of the test suite from 160 to 3963 tests.
+growth of the test suite from 160 to 3997 tests.
+
+### HLS Proxy Endpoint & XFS Video Verification
+- **HLS proxy endpoint** (`GET /api/v1/stremio/proxy/{stream_id}/{path:path}`): proxies HLS manifest and segment requests with correct CDN headers (Referer etc.) for hosters like Dropload whose CDNs require headers on all sub-requests, not just the master manifest. Rewrites absolute CDN URLs in variant playlists so the HLS player routes all fetches through the proxy.
+- **XFS video URL verification**: after extracting a video URL from an XFS embed page, the resolver now performs a HEAD check against the CDN to verify the URL is actually reachable. Filters out IP-locked CDN tokens (e.g. LULUVID/LULUVDOO) that always return 403 because the token was bound to Cloudflare's edge IP.
+- **Extended CachedStreamLink entity**: new `video_url`, `video_headers`, and `is_hls` fields support HLS proxy routing. Backward-compatible deserialization for existing cache entries.
+- **New module** `infrastructure/stremio/hls_proxy.py`: manifest rewriting (`rewrite_manifest`), CDN base extraction (`cdn_base_from_url`), CDN fetch helper (`fetch_hls_resource`), URL builder (`build_cdn_url`).
+- **34 new tests**: HLS proxy helpers (18), XFS video verification (5), stream link cache HLS fields (3), E2E streamable assertion updated for proxy URLs.
 
 ### Container-Aware Resource Detection & Adaptive Auto-Tuning
 - **cgroup-aware resource detector** (`infrastructure/resource_detector.py`): reads actual CPU/memory limits from Linux cgroups (v2 → v1 → OS fallback) instead of host values. Detection order mirrors JVM `UseContainerSupport` and Go 1.25. On a 16-core/64GB host with `--cpus=2 --memory=2g`, the system now correctly sees 2 CPUs and 2GB RAM

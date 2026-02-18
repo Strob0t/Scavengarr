@@ -20,6 +20,9 @@ def _serialize_link(link: CachedStreamLink) -> str:
             "hoster_url": link.hoster_url,
             "title": link.title,
             "hoster": link.hoster,
+            "video_url": link.video_url,
+            "video_headers": link.video_headers,
+            "is_hls": link.is_hls,
         }
     )
 
@@ -32,6 +35,9 @@ def _deserialize_link(data: str) -> CachedStreamLink:
         hoster_url=d["hoster_url"],
         title=d.get("title", ""),
         hoster=d.get("hoster", ""),
+        video_url=d.get("video_url", ""),
+        video_headers=d.get("video_headers", ""),
+        is_hls=d.get("is_hls", False),
     )
 
 

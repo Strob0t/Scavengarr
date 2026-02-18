@@ -186,13 +186,47 @@ class XFSResolver:
             return None
 
         is_hls = ".m3u8" in video_url
+        cdn_headers = {"Referer": str(resp.url)}
+
+        # Verify CDN URL is actually reachable (filters IP-locked tokens).
+        if not await self._verify_video_url(video_url, cdn_headers, hoster):
+            return None
+
         log.debug(f"{hoster}_video_extracted", file_id=file_id, url=video_url[:80])
         return ResolvedStream(
             video_url=video_url,
             is_hls=is_hls,
             quality=StreamQuality.UNKNOWN,
-            headers={"Referer": str(resp.url)},
+            headers=cdn_headers,
         )
+
+    async def _verify_video_url(
+        self, url: str, headers: dict[str, str], hoster: str
+    ) -> bool:
+        """HEAD-check the CDN URL to verify it is accessible.
+
+        Filters out IP-locked CDN tokens (e.g. LULUVID/LULUVDOO) that
+        always return 403 regardless of headers because the token was
+        bound to Cloudflare's edge IP, not the client's.
+        """
+        try:
+            resp = await self._http.head(
+                url,
+                headers=headers,
+                follow_redirects=True,
+                timeout=8.0,
+            )
+            if resp.status_code in (200, 206):
+                return True
+            log.warning(
+                f"{hoster}_video_unreachable",
+                status=resp.status_code,
+                url=url[:120],
+            )
+            return False
+        except httpx.HTTPError:
+            log.warning(f"{hoster}_video_verify_failed", url=url[:120])
+            return False
 
     async def _post_xfs_form(
         self,

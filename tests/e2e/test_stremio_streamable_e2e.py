@@ -291,12 +291,19 @@ def _assert_streamable(stream: dict[str, Any]) -> None:
     hints = stream.get("behaviorHints")
 
     is_proxy = "/play/" in url
+    is_hls_proxy = "/proxy/" in url
     is_video = any(
         ext in url.lower() for ext in (".mp4", ".m3u8", ".mkv", ".ts", ".webm")
     )
 
     if is_proxy:
         # Proxy URLs don't need behaviorHints (resolved on-demand)
+        return
+
+    if is_hls_proxy:
+        # HLS proxy URLs handle headers server-side; only notWebReady needed
+        assert hints is not None, f"HLS proxy URL missing behaviorHints: {url}"
+        assert hints.get("notWebReady") is True, "notWebReady should be True"
         return
 
     if is_video:

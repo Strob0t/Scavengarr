@@ -1,18 +1,26 @@
-"""Stremio addon API endpoints (manifest, catalog, stream, play)."""
+"""Stremio addon API endpoints (manifest, catalog, stream, play, HLS proxy)."""
 
 from __future__ import annotations
 
+import json
 from typing import Any, cast
 
+import httpx
 import structlog
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 
 from scavengarr.domain.entities.stremio import (
     StremioContentType,
     StremioMetaPreview,
     StremioStream,
     StremioStreamRequest,
+)
+from scavengarr.infrastructure.stremio.hls_proxy import (
+    build_cdn_url,
+    cdn_base_from_url,
+    fetch_hls_resource,
+    rewrite_manifest,
 )
 from scavengarr.interfaces.app_state import AppState
 
@@ -357,6 +365,108 @@ async def stremio_play(
     return RedirectResponse(
         url=resolved.video_url,
         status_code=302,
+        headers=_CORS_HEADERS,
+    )
+
+
+@router.get("/proxy/{stream_id}/{path:path}", response_model=None)
+async def proxy_hls(
+    stream_id: str,
+    path: str,
+    request: Request,
+) -> Response | JSONResponse:
+    """Proxy HLS manifests and segments with correct CDN headers.
+
+    Some CDNs (e.g. Dropload's ``dropcdn.io``) require ``Referer`` on
+    **every** HLS sub-request.  Stremio's ``proxyHeaders`` only applies
+    headers to the initial manifest fetch, so variant playlists and
+    ``.ts`` segments get 403.  This endpoint fetches resources
+    server-side with the stored headers and rewrites manifest URLs so
+    the HLS player routes subsequent requests through the proxy too.
+    """
+    state = cast(AppState, request.app.state)
+
+    repo = getattr(state, "stream_link_repo", None)
+    if repo is None:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "stream link repository not configured"},
+            headers=_CORS_HEADERS,
+        )
+
+    link = await repo.get(stream_id)
+    if link is None:
+        log.warning("hls_proxy_not_found", stream_id=stream_id)
+        return JSONResponse(
+            status_code=404,
+            content={"error": "stream expired or not found"},
+            headers=_CORS_HEADERS,
+        )
+
+    if not link.video_url or not link.is_hls:
+        log.warning("hls_proxy_not_hls", stream_id=stream_id)
+        return JSONResponse(
+            status_code=400,
+            content={"error": "stream is not an HLS proxy stream"},
+            headers=_CORS_HEADERS,
+        )
+
+    # Reconstruct CDN headers
+    headers: dict[str, str] = {}
+    if link.video_headers:
+        try:
+            headers = json.loads(link.video_headers)
+        except (json.JSONDecodeError, ValueError):
+            log.warning("hls_proxy_bad_headers", stream_id=stream_id)
+
+    cdn_base = cdn_base_from_url(link.video_url)
+    query_string = request.url.query or ""
+    target_url = build_cdn_url(cdn_base, path, query_string)
+
+    try:
+        body, content_type = await fetch_hls_resource(
+            state.http_client, target_url, headers
+        )
+    except httpx.HTTPStatusError as exc:
+        log.warning(
+            "hls_proxy_cdn_error",
+            stream_id=stream_id,
+            status=exc.response.status_code,
+            url=target_url[:120],
+        )
+        return JSONResponse(
+            status_code=502,
+            content={"error": "CDN returned error"},
+            headers=_CORS_HEADERS,
+        )
+    except httpx.HTTPError:
+        log.warning(
+            "hls_proxy_network_error", stream_id=stream_id, url=target_url[:120]
+        )
+        return JSONResponse(
+            status_code=502,
+            content={"error": "CDN request failed"},
+            headers=_CORS_HEADERS,
+        )
+
+    # Rewrite manifest URLs so sub-requests go through the proxy
+    if path.endswith(".m3u8") or "mpegurl" in content_type.lower():
+        proxy_base = (
+            f"{str(request.base_url).rstrip('/')}/api/v1/stremio/proxy/{stream_id}/"
+        )
+        rewritten = rewrite_manifest(
+            body.decode("utf-8", errors="replace"), cdn_base, proxy_base
+        )
+        return Response(
+            content=rewritten,
+            media_type="application/vnd.apple.mpegurl",
+            headers=_CORS_HEADERS,
+        )
+
+    # Segments (.ts) — pass through as-is
+    return Response(
+        content=body,
+        media_type=content_type,
         headers=_CORS_HEADERS,
     )
 

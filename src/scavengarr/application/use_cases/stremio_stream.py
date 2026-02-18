@@ -7,6 +7,7 @@ IMDb ID -> TMDB title -> parallel plugin search
 from __future__ import annotations
 
 import asyncio
+import json
 import random
 import re
 import time
@@ -527,6 +528,69 @@ def _build_behavior_hints(
     }
 
 
+def _build_cache_links(
+    stream_ids: list[str],
+    ranked: list[RankedStream],
+    resolved_map: dict[int, ResolvedStream],
+) -> list[CachedStreamLink]:
+    """Build ``CachedStreamLink`` objects, enriching HLS streams with proxy metadata."""
+    links: list[CachedStreamLink] = []
+    for i, (sid, ranked_s) in enumerate(zip(stream_ids, ranked)):
+        resolved = resolved_map.get(i)
+        extra_kwargs: dict[str, str | bool] = {}
+        if resolved is not None and resolved.is_hls and resolved.headers:
+            extra_kwargs["video_url"] = resolved.video_url
+            extra_kwargs["video_headers"] = json.dumps(resolved.headers)
+            extra_kwargs["is_hls"] = True
+        links.append(
+            CachedStreamLink(
+                stream_id=sid,
+                hoster_url=ranked_s.url,
+                title=ranked_s.title,
+                hoster=ranked_s.hoster,
+                **extra_kwargs,
+            )
+        )
+    return links
+
+
+def _build_stream_from_resolved(
+    stream: StremioStream,
+    resolved: ResolvedStream,
+    original_url: str,
+    sid: str,
+    base_url: str,
+    user_agent: str,
+) -> StremioStream | None:
+    """Build a StremioStream for a resolved result, or ``None`` to skip.
+
+    Returns ``None`` when the resolver only echoed back the original URL
+    (embed/download page — Stremio cannot play HTML pages).
+    """
+    if not _is_direct_video_url(resolved, original_url):
+        return None
+
+    if resolved.is_hls and resolved.headers:
+        # HLS stream requiring headers on sub-requests — route through
+        # our proxy so manifests/segments get the correct Referer etc.
+        proxy_url = f"{base_url}/api/v1/stremio/proxy/{sid}/master.m3u8"
+        return StremioStream(
+            name=stream.name,
+            description=stream.description,
+            url=proxy_url,
+            behavior_hints={"notWebReady": True},
+        )
+
+    # Direct video URL (MP4 or HLS without special headers)
+    hints = _build_behavior_hints(resolved, user_agent=user_agent)
+    return StremioStream(
+        name=stream.name,
+        description=stream.description,
+        url=resolved.video_url,
+        behavior_hints=hints,
+    )
+
+
 class StremioStreamUseCase:
     """Resolve Stremio stream requests into sorted stream links.
 
@@ -856,15 +920,7 @@ class StremioStreamUseCase:
 
         # --- Cache step (parallel writes) ---
         stream_ids = [uuid4().hex for _ in streams]
-        links = [
-            CachedStreamLink(
-                stream_id=sid,
-                hoster_url=ranked_s.url,
-                title=ranked_s.title,
-                hoster=ranked_s.hoster,
-            )
-            for sid, ranked_s in zip(stream_ids, ranked)
-        ]
+        links = _build_cache_links(stream_ids, ranked, resolved_map)
         await asyncio.gather(*(self._stream_link_repo.save(lnk) for lnk in links))
 
         proxied: list[StremioStream] = []
@@ -875,20 +931,12 @@ class StremioStreamUseCase:
             resolved = resolved_map.get(i)
             if resolved is not None:
                 original_url = ranked[i].url if i < len(ranked) else ""
-                if _is_direct_video_url(resolved, original_url):
-                    # Resolver extracted a genuine video URL
-                    hints = _build_behavior_hints(resolved, user_agent=self._user_agent)
-                    proxied.append(
-                        StremioStream(
-                            name=stream.name,
-                            description=stream.description,
-                            url=resolved.video_url,
-                            behavior_hints=hints,
-                        )
-                    )
+                built = _build_stream_from_resolved(
+                    stream, resolved, original_url, sid, base_url, self._user_agent
+                )
+                if built is not None:
+                    proxied.append(built)
                 else:
-                    # Resolver only validated availability but returned the
-                    # embed/download page URL — Stremio cannot play HTML pages.
                     skipped_echo += 1
             elif has_resolver:
                 # Resolver is configured but returned None — skip this stream.
