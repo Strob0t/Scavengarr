@@ -68,7 +68,7 @@ fi
 # Claude: native install bevorzugt
 if ! command -v claude >/dev/null 2>&1; then
   echo "[devcontainer] Installing Claude Code (native)..."
-  curl -sSfL https://cli.anthropic.com/install.sh | sh
+  curl -sSfL https://claude.ai/install.sh | sh
   echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 else
   echo "[devcontainer] Claude CLI already installed."
