@@ -55,6 +55,7 @@ class _StremioConfig(Protocol):
     max_results_per_plugin: int
     probe_at_stream_time: bool
     max_probe_count: int
+    resolve_target_count: int
     scoring_enabled: bool
     max_plugins_scored: int
     exploration_probability: float
@@ -562,6 +563,7 @@ class StremioStreamUseCase:
         self._resolve_fn = resolve_fn
         self._probe_at_stream_time = config.probe_at_stream_time
         self._max_probe_count = config.max_probe_count
+        self._resolve_target = config.resolve_target_count
         self._metrics = metrics
         self._score_store = score_store
         self._scoring_enabled = config.scoring_enabled
@@ -784,7 +786,9 @@ class StremioStreamUseCase:
         to the ``/play/`` proxy endpoint.
         """
         # --- Probe step: filter dead links ---
-        if self._probe_fn and self._probe_at_stream_time:
+        # Skip probing when a resolve callback is configured because
+        # resolution implicitly checks liveness (failed → skipped).
+        if self._probe_fn and self._probe_at_stream_time and not self._resolve_fn:
             limit = min(len(ranked), self._max_probe_count)
             probe_targets = [(i, ranked[i].url) for i in range(limit)]
             t0_probe = time.perf_counter_ns()
@@ -884,6 +888,10 @@ class StremioStreamUseCase:
     ) -> dict[int, ResolvedStream]:
         """Resolve the top streams to direct video URLs in parallel.
 
+        Uses early-stop: once ``resolve_target_count`` genuine video URLs
+        have been extracted, remaining tasks are cancelled.  This avoids
+        waiting for slow hosters when enough playable streams are ready.
+
         Returns a mapping of stream index -> ResolvedStream for
         successfully resolved streams.  Failed resolutions are omitted
         (those streams fall back to the /play/ proxy).
@@ -906,21 +914,41 @@ class StremioStreamUseCase:
                     )
                     return idx, None
 
-        tasks = [_resolve_one(i) for i in range(limit)]
-        results = await asyncio.gather(*tasks)
-
-        resolved_count = 0
+        pending = {asyncio.create_task(_resolve_one(i)) for i in range(limit)}
         resolved_map: dict[int, ResolvedStream] = {}
-        for idx, resolved in results:
-            if resolved is not None:
-                resolved_map[idx] = resolved
-                resolved_count += 1
+        video_count = 0
+        target = self._resolve_target
+        attempted = 0
+
+        while pending:
+            done, pending = await asyncio.wait(
+                pending, return_when=asyncio.FIRST_COMPLETED
+            )
+            for task in done:
+                attempted += 1
+                idx, resolved = task.result()
+                if resolved is not None:
+                    resolved_map[idx] = resolved
+                    original_url = ranked[idx].url if idx < len(ranked) else ""
+                    if _is_direct_video_url(resolved, original_url):
+                        video_count += 1
+
+            if video_count >= target:
+                break
+
+        # Cancel remaining tasks once target reached
+        for t in pending:
+            t.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
         log.info(
             "stremio_resolve_complete",
             total=limit,
-            resolved=resolved_count,
-            failed=limit - resolved_count,
+            attempted=attempted,
+            resolved=len(resolved_map),
+            video_streams=video_count,
+            early_stop=video_count >= target,
         )
         return resolved_map
 
@@ -1034,11 +1062,17 @@ class StremioStreamUseCase:
     ) -> list[SearchResult]:
         """Search plugins with all query variants, deduplicate results.
 
+        A single shared semaphore bounds total concurrent plugin searches
+        across all query variants to prevent connection overload.
+
         The first query's results are always kept in full.  Subsequent
         (fallback) queries only add results whose ``download_link`` was
         not already seen, to avoid duplicates from the same plugin
         matching on both the full title and the shorter base title.
         """
+        semaphore = asyncio.Semaphore(self._max_concurrent)
+        pw_semaphore = asyncio.Semaphore(1)
+
         search_tasks = [
             self._search_plugins(
                 plugin_names,
@@ -1046,6 +1080,8 @@ class StremioStreamUseCase:
                 category,
                 season=season,
                 episode=episode,
+                semaphore=semaphore,
+                pw_semaphore=pw_semaphore,
             )
             for q in queries
         ]
@@ -1070,26 +1106,37 @@ class StremioStreamUseCase:
         *,
         season: int | None = None,
         episode: int | None = None,
+        semaphore: asyncio.Semaphore | None = None,
+        pw_semaphore: asyncio.Semaphore | None = None,
     ) -> list[SearchResult]:
-        """Search all plugins in parallel with bounded concurrency."""
-        semaphore = asyncio.Semaphore(self._max_concurrent)
+        """Search all plugins in parallel with bounded concurrency.
+
+        When *semaphore* is provided it is shared across query variants.
+        Playwright plugins additionally acquire *pw_semaphore* (limit 1)
+        to ensure only one browser session runs at a time.
+        """
+        sem = semaphore or asyncio.Semaphore(self._max_concurrent)
 
         async def _search_one(name: str) -> list[SearchResult]:
-            async with semaphore:
+            async with sem:
+                # Playwright plugins: also acquire the single-session lock
+                plugin = None
                 try:
-                    return await asyncio.wait_for(
-                        self._search_single_plugin(
-                            name, query, category, season=season, episode=episode
-                        ),
-                        timeout=self._plugin_timeout,
-                    )
-                except TimeoutError:
-                    log.warning(
-                        "stremio_plugin_timeout",
-                        plugin=name,
-                        timeout=self._plugin_timeout,
-                    )
+                    plugin = self._plugins.get(name)
+                except Exception:
+                    log.warning("stremio_plugin_not_found", plugin=name, exc_info=True)
                     return []
+
+                is_pw = getattr(plugin, "mode", "httpx") == "playwright"
+                if is_pw and pw_semaphore is not None:
+                    async with pw_semaphore:
+                        return await self._run_plugin_with_timeout(
+                            name, query, category, season=season, episode=episode
+                        )
+
+                return await self._run_plugin_with_timeout(
+                    name, query, category, season=season, episode=episode
+                )
 
         tasks = [_search_one(name) for name in plugin_names]
         results_per_plugin = await asyncio.gather(*tasks)
@@ -1098,6 +1145,31 @@ class StremioStreamUseCase:
         for results in results_per_plugin:
             all_results.extend(results)
         return all_results
+
+    async def _run_plugin_with_timeout(
+        self,
+        name: str,
+        query: str,
+        category: int | None,
+        *,
+        season: int | None = None,
+        episode: int | None = None,
+    ) -> list[SearchResult]:
+        """Run a single plugin search with timeout, catching errors."""
+        try:
+            return await asyncio.wait_for(
+                self._search_single_plugin(
+                    name, query, category, season=season, episode=episode
+                ),
+                timeout=self._plugin_timeout,
+            )
+        except TimeoutError:
+            log.warning(
+                "stremio_plugin_timeout",
+                plugin=name,
+                timeout=self._plugin_timeout,
+            )
+            return []
 
     async def _search_single_plugin(
         self,

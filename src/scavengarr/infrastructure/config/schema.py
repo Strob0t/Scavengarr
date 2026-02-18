@@ -207,7 +207,7 @@ class StremioConfig(BaseModel):
     )
 
     max_concurrent_plugins: int = Field(
-        default=5,
+        default=10,
         description="Max parallel plugin searches for stream resolution.",
     )
 
@@ -277,7 +277,15 @@ class StremioConfig(BaseModel):
     )
     max_probe_count: int = Field(
         default=50,
-        description="Max streams to probe at stream time (top-ranked first).",
+        description="Max streams to probe/resolve at stream time (top-ranked first).",
+    )
+    resolve_target_count: int = Field(
+        default=15,
+        description=(
+            "Target number of successfully resolved video streams. "
+            "Resolution stops early once this many genuine video URLs "
+            "have been extracted, cancelling remaining resolve tasks."
+        ),
     )
 
     probe_stealth_enabled: bool = Field(
