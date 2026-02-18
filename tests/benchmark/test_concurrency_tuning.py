@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import time
 from contextvars import ContextVar
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -32,9 +31,7 @@ from .conftest import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-_max_results_var: ContextVar[int | None] = ContextVar(
-    "bench_max_results", default=None
-)
+_max_results_var: ContextVar[int | None] = ContextVar("bench_max_results", default=None)
 
 
 def _noop_filter(results, *_args, **_kwargs):
@@ -140,7 +137,9 @@ class TestHttpxSlotSweep:
         results: list[BenchmarkResult] = []
 
         for n_plugins in _PLUGIN_COUNTS:
-            plugins = make_mixed_plugins(n_plugins, fast_latency=0.05, slow_latency=0.15)
+            plugins = make_mixed_plugins(
+                n_plugins, fast_latency=0.05, slow_latency=0.15
+            )
             n_pw = sum(1 for p in plugins if p.mode == "playwright")
 
             for n_requests in _CONCURRENT_REQUESTS:

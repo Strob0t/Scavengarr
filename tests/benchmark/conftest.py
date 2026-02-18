@@ -9,15 +9,13 @@ from __future__ import annotations
 
 import asyncio
 import statistics
-import time
 from dataclasses import dataclass, field
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
 from scavengarr.domain.plugins.base import SearchResult
-
 
 # ---------------------------------------------------------------------------
 # Fake plugin that simulates I/O with asyncio.sleep
@@ -265,16 +263,12 @@ def format_table(
         lines.append(f"{'=' * 60}")
     lines.append(sep)
     lines.append(
-        "|"
-        + "|".join(f" {h:>{col_widths[i]}} " for i, h in enumerate(headers))
-        + "|"
+        "|" + "|".join(f" {h:>{col_widths[i]}} " for i, h in enumerate(headers)) + "|"
     )
     lines.append(sep)
     for row in str_rows:
         lines.append(
-            "|"
-            + "|".join(f" {v:>{col_widths[i]}} " for i, v in enumerate(row))
-            + "|"
+            "|" + "|".join(f" {v:>{col_widths[i]}} " for i, v in enumerate(row)) + "|"
         )
     lines.append(sep)
     return "\n".join(lines)

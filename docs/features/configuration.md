@@ -369,6 +369,26 @@ The pool is created at composition time. Each concurrent request gets a
 fair share: `httpx_slots // active_requests` httpx permits and
 `pw_slots // active_requests` Playwright permits.
 
+### Auto-Tune (Container-Aware)
+
+When `stremio.auto_tune_all` is `true` (default), all concurrency parameters
+are automatically derived from detected container/host resources via cgroup
+v2/v1 at startup. Manual values in the config file are overridden.
+
+| Parameter | Formula | Min | Max (hard cap) |
+|---|---|---|---|
+| `max_concurrent_plugins` | `cpu * 3`, `mem_gb * 2` | 2 | 30 |
+| `max_concurrent_playwright` | `cpu`, `mem_gb / 0.15` | 1 | 10 |
+| `probe_concurrency` | `cpu * 4` | 4 | 100 |
+| `validation_max_concurrent` | `cpu * 5` | 5 | 120 |
+
+Hard caps for `probe_concurrency` and `validation_max_concurrent` are derived
+from synthetic benchmark diminishing-returns analysis (`tests/benchmark/`):
+throughput gains drop below 5% beyond these thresholds.
+
+Resource detection order: cgroup v2 → cgroup v1 → `os.cpu_count()` + psutil.
+See `src/scavengarr/infrastructure/resource_detector.py`.
+
 ### Scoring
 
 Controls the background plugin scoring and probing system.

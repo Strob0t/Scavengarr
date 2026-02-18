@@ -8,7 +8,6 @@ Run manually:  ``poetry run pytest tests/benchmark/test_formula_validation.py -s
 
 from __future__ import annotations
 
-import asyncio
 import time
 from contextvars import ContextVar
 from unittest.mock import patch
@@ -21,7 +20,6 @@ from scavengarr.infrastructure.resource_detector import DetectedResources
 from scavengarr.interfaces.composition import _auto_tune
 
 from .conftest import (
-    BenchmarkResult,
     FakePluginRegistry,
     FakeStremioConfig,
     format_table,
@@ -99,9 +97,7 @@ async def _measure_wall_time(
     plugin_names = registry.list_names()
     t0 = time.perf_counter_ns()
     async with pool.request() as budget:
-        await use_case._search_plugins(
-            plugin_names, "bench", 2000, budget=budget
-        )
+        await use_case._search_plugins(plugin_names, "bench", 2000, budget=budget)
     wall_ns = time.perf_counter_ns() - t0
     return wall_ns / 1_000_000
 
@@ -169,16 +165,18 @@ class TestFormulaValidation:
             )
 
             delta = formula_slots - best_slots
-            rows.append([
-                label,
-                cpus,
-                f"{ram_gb:.0f}",
-                formula_slots,
-                best_slots,
-                f"{delta:+d}",
-                f"{formula_wall:.0f}",
-                f"{best_wall:.0f}",
-            ])
+            rows.append(
+                [
+                    label,
+                    cpus,
+                    f"{ram_gb:.0f}",
+                    formula_slots,
+                    best_slots,
+                    f"{delta:+d}",
+                    f"{formula_wall:.0f}",
+                    f"{best_wall:.0f}",
+                ]
+            )
 
         print(format_table(headers, rows, title="FORMULA vs EMPIRICAL OPTIMAL"))
 

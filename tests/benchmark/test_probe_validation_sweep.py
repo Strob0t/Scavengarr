@@ -4,7 +4,9 @@ Simulates the ``asyncio.Semaphore(N) + asyncio.gather()`` pattern used
 by hoster probes and link validation to find diminishing-returns
 thresholds for concurrency caps.
 
-Run manually:  ``poetry run pytest tests/benchmark/test_probe_validation_sweep.py -s -v``
+Run manually::
+
+    poetry run pytest tests/benchmark/test_probe_validation_sweep.py -s -v
 """
 
 from __future__ import annotations
@@ -142,12 +144,14 @@ class TestProbeSweep:
                         threshold_tp = prev_tp
                         break
 
-            rows.append([
-                url_count,
-                threshold_conc,
-                f"{threshold_tp:.0f}",
-                "<5% gain after this",
-            ])
+            rows.append(
+                [
+                    url_count,
+                    threshold_conc,
+                    f"{threshold_tp:.0f}",
+                    "<5% gain after this",
+                ]
+            )
 
         print(format_table(headers, rows, title=f"{label} DIMINISHING RETURNS"))
 
@@ -213,12 +217,14 @@ class TestValidationSweep:
                         threshold_tp = prev_tp
                         break
 
-            rows2.append([
-                link_count,
-                threshold_conc,
-                f"{threshold_tp:.0f}",
-                "<5% gain",
-            ])
+            rows2.append(
+                [
+                    link_count,
+                    threshold_conc,
+                    f"{threshold_tp:.0f}",
+                    "<5% gain",
+                ]
+            )
 
         print(format_table(headers2, rows2, title="VALIDATION DIMINISHING RETURNS"))
 

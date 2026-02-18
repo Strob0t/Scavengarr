@@ -303,6 +303,10 @@ distribution across concurrent requests:
 - `pw_slots` = `max_concurrent_playwright` (default 5)
 - Fair share: `max(1, total_slots // active_requests)` per request
 
+When `auto_tune_all` is enabled (default), slot counts are derived from
+container resources at startup. See [Configuration → Auto-Tune](./configuration.md#auto-tune-container-aware)
+for formulas and caps.
+
 ### Multi-Language Search
 
 Plugins declare `languages: list[str]` (default `["de"]`). The use case groups plugins
