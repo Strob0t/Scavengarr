@@ -694,20 +694,24 @@ class StremioStreamUseCase:
     ) -> tuple[list[SearchResult], list[SearchResult]]:
         """Search and filter each language group, returning aggregated results.
 
+        Language groups are searched in parallel so that e.g. German and
+        English plugins start at the same time instead of sequentially.
+
         Returns (all_results, filtered_results).
         """
-        all_results: list[SearchResult] = []
-        filtered: list[SearchResult] = []
 
-        for lang_key, group_plugins in lang_groups.items():
+        async def _search_one_group(
+            lang_key: tuple[str, ...],
+            group_plugins: list[str],
+        ) -> tuple[list[SearchResult], list[SearchResult]]:
             plugin_langs = list(lang_key)
             ref = _build_multi_lang_reference(title_infos, plugin_langs)
             if ref is None:
-                continue
+                return [], []
 
             queries = _build_lang_group_queries(title_infos, plugin_langs)
             if not queries:
-                continue
+                return [], []
 
             log.info(
                 "stremio_search_start",
@@ -726,10 +730,9 @@ class StremioStreamUseCase:
                 season=request.season,
                 episode=request.episode,
             )
-            all_results.extend(group_results)
 
             if not group_results:
-                continue
+                return group_results, []
 
             loop = asyncio.get_running_loop()
             group_filtered = await loop.run_in_executor(
@@ -745,7 +748,19 @@ class StremioStreamUseCase:
                     year_tolerance_series=self._title_year_tolerance_series,
                 ),
             )
-            filtered.extend(group_filtered)
+            return group_results, group_filtered
+
+        group_tasks = [
+            _search_one_group(lang_key, group_plugins)
+            for lang_key, group_plugins in lang_groups.items()
+        ]
+        group_outcomes = await asyncio.gather(*group_tasks)
+
+        all_results: list[SearchResult] = []
+        filtered: list[SearchResult] = []
+        for group_all, group_filt in group_outcomes:
+            all_results.extend(group_all)
+            filtered.extend(group_filt)
 
         return all_results, filtered
 
