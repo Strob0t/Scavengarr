@@ -14,6 +14,7 @@ import httpx
 import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
+from scavengarr.infrastructure.hoster_resolvers._verify import verify_video_url
 
 log = structlog.get_logger(__name__)
 
@@ -98,18 +99,4 @@ class StreamtapeResolver:
 
     async def _verify_video_url(self, url: str, headers: dict[str, str]) -> bool:
         """HEAD-check the video URL to verify it is accessible."""
-        try:
-            resp = await self._http.head(
-                url, headers=headers, follow_redirects=True, timeout=8.0
-            )
-            if resp.status_code in (200, 206):
-                return True
-            log.warning(
-                "streamtape_video_head_failed",
-                status=resp.status_code,
-                url=url[:120],
-            )
-            return False
-        except httpx.HTTPError:
-            log.warning("streamtape_video_verify_error", url=url[:120])
-            return False
+        return await verify_video_url(self._http, url, headers, "streamtape")

@@ -24,6 +24,7 @@ import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
 from scavengarr.infrastructure.hoster_resolvers import extract_domain
+from scavengarr.infrastructure.hoster_resolvers._verify import verify_video_url
 from scavengarr.infrastructure.hoster_resolvers._video_extract import extract_video_url
 
 log = structlog.get_logger(__name__)
@@ -203,30 +204,8 @@ class XFSResolver:
     async def _verify_video_url(
         self, url: str, headers: dict[str, str], hoster: str
     ) -> bool:
-        """HEAD-check the CDN URL to verify it is accessible.
-
-        Filters out IP-locked CDN tokens (e.g. LULUVID/LULUVDOO) that
-        always return 403 regardless of headers because the token was
-        bound to Cloudflare's edge IP, not the client's.
-        """
-        try:
-            resp = await self._http.head(
-                url,
-                headers=headers,
-                follow_redirects=True,
-                timeout=8.0,
-            )
-            if resp.status_code in (200, 206):
-                return True
-            log.warning(
-                f"{hoster}_video_unreachable",
-                status=resp.status_code,
-                url=url[:120],
-            )
-            return False
-        except httpx.HTTPError:
-            log.warning(f"{hoster}_video_verify_failed", url=url[:120])
-            return False
+        """HEAD-check the CDN URL to verify it is accessible."""
+        return await verify_video_url(self._http, url, headers, hoster)
 
     async def _post_xfs_form(
         self,

@@ -152,6 +152,32 @@ class TestStreamtapeResolver:
         assert "strtape.tech" in result.video_url
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("head_status", [200, 206])
+    async def test_head_accepts_200_and_206(self, head_status: int) -> None:
+        """HEAD verification should accept both 200 and 206."""
+        html = """
+        <script>
+        var x = 'id=abc&expires=1700000000&ip=1.2.3.4&token=TOK'</script>
+        """
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = html
+        mock_resp.url = "https://streamtape.com/v/abc"
+
+        head_resp = MagicMock()
+        head_resp.status_code = head_status
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(return_value=mock_resp)
+        client.head = AsyncMock(return_value=head_resp)
+
+        resolver = StreamtapeResolver(http_client=client)
+        result = await resolver.resolve("https://streamtape.com/v/abc")
+
+        assert result is not None
+        assert "get_video" in result.video_url
+
+    @pytest.mark.asyncio
     async def test_returns_none_when_head_verification_fails(self) -> None:
         """Params extracted but HEAD returns 403 → None."""
         html = """

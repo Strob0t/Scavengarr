@@ -356,6 +356,32 @@ class TestSuperVideoResolver:
         assert result is None
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("head_status", [200, 206])
+    async def test_head_accepts_200_and_206(self, head_status: int) -> None:
+        """HEAD verification should accept both 200 and 206."""
+        html = """
+        <html><script>
+        sources: [{file:"https://sv1.supervideo.cc/v/abc.mp4"}]
+        </script></html>
+        """
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = html
+
+        head_resp = MagicMock()
+        head_resp.status_code = head_status
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(return_value=mock_resp)
+        client.head = AsyncMock(return_value=head_resp)
+
+        resolver = SuperVideoResolver(http_client=client)
+        result = await resolver.resolve("https://supervideo.cc/e/abc123def456")
+
+        assert result is not None
+        assert result.video_url == "https://sv1.supervideo.cc/v/abc.mp4"
+
+    @pytest.mark.asyncio
     async def test_returns_none_when_head_verification_fails(self) -> None:
         """Video URL extracted but HEAD returns 403 → None."""
         html = """
