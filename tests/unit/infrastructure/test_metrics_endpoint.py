@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 from fastapi.testclient import TestClient
 
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
@@ -71,7 +70,9 @@ class TestMetricsEndpoint:
         client = _build_app()
         # Record a search
         app = client.app
-        app.state.metrics.record_plugin_search("test-plugin", 1_000_000, 5, success=True)
+        app.state.metrics.record_plugin_search(
+            "test-plugin", 1_000_000, 5, success=True
+        )
         data = client.get("/api/v1/stats/metrics").json()
         assert "test-plugin" in data["plugins"]
         assert data["plugins"]["test-plugin"]["searches"] == 1

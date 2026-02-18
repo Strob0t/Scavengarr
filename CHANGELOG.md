@@ -11,6 +11,11 @@ Massive expansion of the plugin ecosystem (2 → 40 plugins), Stremio addon inte
 hoster resolver system, plugin base class standardization, search result caching, and
 growth of the test suite from 160 to 3225 tests.
 
+### Stremio Streamable Link E2E Tests
+- **Fix existing E2E tests**: `test_stremio_endpoint.py` and `test_stremio_series_e2e.py` updated to pass `pool=ConcurrencyPool()` and mock `get_languages`/`get_mode` on the plugin registry — required after the global concurrency pool became mandatory
+- **New `test_stremio_streamable_e2e.py`**: 31 comprehensive E2E tests verifying the full Stremio stream pipeline produces genuinely streamable links (direct `.mp4`/`.m3u8` video URLs with `behaviorHints`, or `/play/` proxy URLs). Covers movie resolution (MP4, HLS, mixed, echo filtering, dedup, behaviorHints), series resolution (episode filtering, multi-plugin, high episode numbers), circuit breaker integration, concurrency pool integration, edge cases (all plugins error, all resolvers fail/echo, empty results), and full pipeline roundtrips
+- **Test suite total**: 3900 unit + E2E tests (158 E2E)
+
 ### Global Concurrency Pool & Playwright Request Isolation
 - **ConcurrencyPool**: new infrastructure component (`infrastructure/concurrency.py`) provides a global concurrency budget with separate httpx and Playwright slot pools. Fair-share algorithm dynamically divides slots across active requests: `fair_share = max(1, total_slots // active_requests)`. When a request exits, remaining requests automatically get more slots
 - **Per-request BrowserContext isolation**: Playwright plugins now create a fresh `BrowserContext` per request via `isolated_search()`, preventing state corruption when concurrent requests hit the same singleton plugin. Uses `ContextVar[BrowserContext]` to pass the per-request context transparently through `_ensure_context()`

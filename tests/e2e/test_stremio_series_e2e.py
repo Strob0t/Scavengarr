@@ -32,6 +32,7 @@ from scavengarr.domain.entities.stremio import (
     TitleMatchInfo,
 )
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.concurrency import ConcurrencyPool
 from scavengarr.infrastructure.config.schema import StremioConfig
 from scavengarr.infrastructure.plugins.constants import (
     DEFAULT_USER_AGENT,
@@ -159,6 +160,8 @@ def _make_series_app(
         plugin_names if p == "stream" else []
     )
     registry.get.side_effect = lambda name: plugins[name]
+    registry.get_languages.return_value = ["de"]
+    registry.get_mode.return_value = "httpx"
 
     engine = AsyncMock()
     if validate_passthrough:
@@ -180,6 +183,7 @@ def _make_series_app(
         user_agent=DEFAULT_USER_AGENT,
         max_results_var=search_max_results,
         stream_link_repo=stream_link_repo,
+        pool=ConcurrencyPool(),
     )
 
     app = FastAPI()

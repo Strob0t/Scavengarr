@@ -32,6 +32,7 @@ from scavengarr.domain.entities.stremio import (
     TitleMatchInfo,
 )
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.concurrency import ConcurrencyPool
 from scavengarr.infrastructure.config.schema import StremioConfig
 from scavengarr.infrastructure.plugins.constants import (
     DEFAULT_USER_AGENT,
@@ -1121,6 +1122,8 @@ class TestStreamFullFlow:
         plugins = MagicMock()
         plugins.get_by_provides.return_value = names
         plugins.get.return_value = p
+        plugins.get_languages.return_value = ["de"]
+        plugins.get_mode.return_value = "httpx"
 
         engine = AsyncMock()
         engine.validate_results = AsyncMock(return_value=search_results or [])
@@ -1140,6 +1143,7 @@ class TestStreamFullFlow:
             user_agent=DEFAULT_USER_AGENT,
             max_results_var=search_max_results,
             stream_link_repo=stream_link_repo,
+            pool=ConcurrencyPool(),
         )
 
         app = FastAPI()
