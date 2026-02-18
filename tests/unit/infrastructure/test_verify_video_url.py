@@ -21,7 +21,10 @@ class TestVerifyVideoUrl:
         client.head = AsyncMock(return_value=head_resp)
 
         result = await verify_video_url(
-            client, "https://cdn.example.com/video.mp4", {"Referer": "https://example.com/"}, "test"
+            client,
+            "https://cdn.example.com/video.mp4",
+            {"Referer": "https://example.com/"},
+            "test",
         )
         assert result is True
 
@@ -35,7 +38,10 @@ class TestVerifyVideoUrl:
         client.head = AsyncMock(return_value=head_resp)
 
         result = await verify_video_url(
-            client, "https://cdn.example.com/video.mp4", {"Referer": "https://example.com/"}, "test"
+            client,
+            "https://cdn.example.com/video.mp4",
+            {"Referer": "https://example.com/"},
+            "test",
         )
         assert result is False
 
@@ -45,7 +51,10 @@ class TestVerifyVideoUrl:
         client.head = AsyncMock(side_effect=httpx.ConnectError("timeout"))
 
         result = await verify_video_url(
-            client, "https://cdn.example.com/video.mp4", {"Referer": "https://example.com/"}, "test"
+            client,
+            "https://cdn.example.com/video.mp4",
+            {"Referer": "https://example.com/"},
+            "test",
         )
         assert result is False
 
@@ -58,7 +67,9 @@ class TestVerifyVideoUrl:
         client.head = AsyncMock(return_value=head_resp)
 
         headers = {"Referer": "https://example.com/", "Authorization": "Bearer tok"}
-        await verify_video_url(client, "https://cdn.example.com/video.mp4", headers, "test")
+        await verify_video_url(
+            client, "https://cdn.example.com/video.mp4", headers, "test"
+        )
 
         client.head.assert_awaited_once()
         _, kwargs = client.head.call_args

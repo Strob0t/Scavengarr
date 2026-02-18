@@ -471,6 +471,40 @@ class TestHosterResolverRegistry:
         resolver.resolve.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_result_cache_respects_max_size(self) -> None:
+        """Result cache evicts oldest entries when exceeding max size."""
+        from scavengarr.infrastructure.hoster_resolvers import registry as reg_mod
+
+        resolver = MagicMock()
+        resolver.name = "voe"
+        resolver.resolve = AsyncMock(
+            return_value=ResolvedStream(video_url="https://cdn.example.com/v.mp4")
+        )
+
+        registry = HosterResolverRegistry(resolvers=[resolver])
+
+        original_max = reg_mod._MAX_CACHE_SIZE
+        try:
+            reg_mod._MAX_CACHE_SIZE = 5
+            for i in range(8):
+                # Reset resolve mock to always return a result
+                resolver.resolve = AsyncMock(
+                    return_value=ResolvedStream(
+                        video_url=f"https://cdn.example.com/v{i}.mp4"
+                    )
+                )
+                await registry.resolve(f"https://voe.sx/e/{i:012d}")
+
+            # Cache should be capped at 5
+            assert len(registry._result_cache) == 5
+            # Oldest entries (0, 1, 2) should have been evicted
+            assert f"https://voe.sx/e/{0:012d}" not in registry._result_cache
+            # Newest entries should remain
+            assert f"https://voe.sx/e/{7:012d}" in registry._result_cache
+        finally:
+            reg_mod._MAX_CACHE_SIZE = original_max
+
+    @pytest.mark.asyncio
     async def test_name_match_takes_priority_over_domain_alias(self) -> None:
         """Resolver registered by name takes priority over domain alias map."""
         name_resolver = MagicMock()

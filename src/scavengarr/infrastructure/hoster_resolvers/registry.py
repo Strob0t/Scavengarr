@@ -19,7 +19,10 @@ _CACHE_TTL_DEAD = 900  # 15 minutes for failed resolutions
 _CACHE_TTL_REDIRECT = 3600  # 1 hour for redirect mappings
 
 # Evict expired entries every N resolve() calls
-_EVICT_INTERVAL = 100
+_EVICT_INTERVAL = 1000
+
+# Maximum number of entries in each cache (result + redirect)
+_MAX_CACHE_SIZE = 10_000
 
 
 def extract_domain(url: str) -> str:
@@ -176,9 +179,14 @@ class HosterResolverRegistry:
         return result
 
     def _cache_result(self, url: str, result: ResolvedStream | None) -> None:
-        """Cache a resolution result with appropriate TTL."""
+        """Cache a resolution result with appropriate TTL.
+
+        When the cache exceeds ``_MAX_CACHE_SIZE``, the oldest entries
+        (by insertion order) are evicted to make room.
+        """
         ttl = _CACHE_TTL_ALIVE if result is not None else _CACHE_TTL_DEAD
         self._result_cache[url] = _CacheEntry(result, ttl)
+        self._enforce_max_size(self._result_cache)
 
     def _evict_expired(self) -> None:
         """Remove expired entries from result and redirect caches."""
@@ -191,6 +199,17 @@ class HosterResolverRegistry:
             result_cache_size=len(self._result_cache),
             redirect_cache_size=len(self._redirect_cache),
         )
+
+    @staticmethod
+    def _enforce_max_size(cache: dict[str, _CacheEntry]) -> None:
+        """Evict oldest entries when cache exceeds ``_MAX_CACHE_SIZE``."""
+        if len(cache) <= _MAX_CACHE_SIZE:
+            return
+        # Python dicts preserve insertion order; pop from the front
+        excess = len(cache) - _MAX_CACHE_SIZE
+        keys = list(cache.keys())[:excess]
+        for k in keys:
+            del cache[k]
 
     async def _try_resolver(
         self,
@@ -250,6 +269,7 @@ class HosterResolverRegistry:
                     final_url,
                     _CACHE_TTL_REDIRECT,  # type: ignore[arg-type]
                 )
+                self._enforce_max_size(self._redirect_cache)
                 return final_url
         except httpx.TimeoutException:
             log.debug("hoster_redirect_timeout", url=url)
