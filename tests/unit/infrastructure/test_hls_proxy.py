@@ -13,6 +13,7 @@ from scavengarr.infrastructure.stremio.hls_proxy import (
     fetch_hls_resource,
     rewrite_manifest,
 )
+from scavengarr.interfaces.api.stremio.router import _resolve_query_string
 
 
 @pytest.fixture(autouse=True)
@@ -210,3 +211,37 @@ class TestBuildCdnUrl:
         base = "https://cdn.example.com/hls/"
         result = build_cdn_url(base, "video/seg-1.ts", "t=abc")
         assert result == "https://cdn.example.com/hls/video/seg-1.ts?t=abc"
+
+
+# ---------------------------------------------------------------------------
+# _resolve_query_string (router helper)
+# ---------------------------------------------------------------------------
+
+
+class TestResolveQueryString:
+    def test_uses_request_query_when_present(self) -> None:
+        result = _resolve_query_string(
+            "t=abc&expires=123", "https://cdn.example.com/m.m3u8?t=old"
+        )
+        assert result == "t=abc&expires=123"
+
+    def test_falls_back_to_video_url_query(self) -> None:
+        result = _resolve_query_string(
+            "", "https://cdn.example.com/m.m3u8?t=abc&expires=123"
+        )
+        assert result == "t=abc&expires=123"
+
+    def test_returns_empty_when_both_empty(self) -> None:
+        result = _resolve_query_string("", "https://cdn.example.com/m.m3u8")
+        assert result == ""
+
+    def test_handles_none_like_empty(self) -> None:
+        # request.url.query could be an empty string
+        result = _resolve_query_string(
+            "", "https://cdn.example.com/hls/master.m3u8?token=xyz"
+        )
+        assert result == "token=xyz"
+
+    def test_request_query_takes_priority(self) -> None:
+        result = _resolve_query_string("new=1", "https://cdn.example.com/m.m3u8?old=2")
+        assert result == "new=1"

@@ -13,13 +13,16 @@ Endpoints covered:
     GET /api/v1/stremio/catalog/{type}/{id}/search={query}.json
     GET /api/v1/stremio/stream/{type}/{id}.json
     GET /api/v1/stremio/play/{stream_id}
+    GET /api/v1/stremio/proxy/{stream_id}/{path}
 """
 
 from __future__ import annotations
 
+import json
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -88,6 +91,7 @@ def _make_app(
     stremio_stream_uc: Any = None,
     stream_link_repo: AsyncMock | None = None,
     hoster_resolver_registry: Any = None,
+    http_client: Any = None,
 ) -> FastAPI:
     """Build a minimal FastAPI app with the stremio router + mocked state."""
     app = FastAPI()
@@ -103,6 +107,7 @@ def _make_app(
     app.state.stremio_stream_uc = stremio_stream_uc
     app.state.stream_link_repo = stream_link_repo
     app.state.hoster_resolver_registry = hoster_resolver_registry
+    app.state.http_client = http_client or MagicMock()
 
     return app
 
@@ -1251,3 +1256,249 @@ class TestStreamFullFlow:
             # Every URL should be a proxy play URL
             for s in streams:
                 assert "/api/v1/stremio/play/" in s["url"]
+
+
+# ---------------------------------------------------------------------------
+# HLS Proxy endpoint
+# ---------------------------------------------------------------------------
+
+_PROXY_MODULE = "scavengarr.interfaces.api.stremio.router"
+
+
+def _make_hls_link(
+    *,
+    stream_id: str = "hls-abc",
+    video_url: str = "https://cdn.dropcdn.io/hls2/01/video/master.m3u8?t=abc&expires=123",
+    video_headers: dict[str, str] | None = None,
+) -> CachedStreamLink:
+    headers = video_headers or {"Referer": "https://dropload.io/"}
+    return CachedStreamLink(
+        stream_id=stream_id,
+        hoster_url="https://dropload.io/e/xyz",
+        title="Test HLS",
+        hoster="dropload",
+        video_url=video_url,
+        video_headers=json.dumps(headers),
+        is_hls=True,
+    )
+
+
+class TestProxyHlsEndpoint:
+    """GET /api/v1/stremio/proxy/{stream_id}/{path}"""
+
+    @patch(f"{_PROXY_MODULE}.fetch_hls_resource", new_callable=AsyncMock)
+    def test_manifest_fetch_and_rewrite(self, mock_fetch: AsyncMock) -> None:
+        link = _make_hls_link()
+        manifest = (
+            b"#EXTM3U\n"
+            b"#EXT-X-TARGETDURATION:10\n"
+            b"#EXTINF:10.0,\n"
+            b"https://cdn.dropcdn.io/hls2/01/video/seg-1.ts?t=abc\n"
+            b"#EXT-X-ENDLIST\n"
+        )
+        mock_fetch.return_value = (manifest, "application/vnd.apple.mpegurl")
+
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=link)
+
+        app = _make_app(stream_link_repo=repo)
+        client = TestClient(app)
+
+        resp = client.get(
+            f"{_PREFIX}/stremio/proxy/hls-abc/master.m3u8?t=abc&expires=123"
+        )
+
+        assert resp.status_code == 200
+        assert "mpegurl" in resp.headers["content-type"]
+        body = resp.text
+        # CDN URLs should be rewritten to proxy URLs
+        assert "cdn.dropcdn.io" not in body
+        assert "/api/v1/stremio/proxy/hls-abc/seg-1.ts" in body
+        assert resp.headers.get("access-control-allow-origin") == "*"
+
+    @patch(f"{_PROXY_MODULE}.stream_hls_segment", new_callable=AsyncMock)
+    def test_segment_streaming(self, mock_stream: AsyncMock) -> None:
+        link = _make_hls_link()
+        segment_data = b"\x00\x01\x02segment-bytes"
+
+        async def _fake_iter() -> Any:
+            yield segment_data
+
+        mock_stream.return_value = (_fake_iter(), "video/mp2t")
+
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=link)
+
+        app = _make_app(stream_link_repo=repo)
+        client = TestClient(app)
+
+        resp = client.get(f"{_PREFIX}/stremio/proxy/hls-abc/seg-1.ts?t=abc&expires=123")
+
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "video/mp2t"
+        assert resp.content == segment_data
+
+    def test_proxy_not_found(self) -> None:
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=None)
+
+        app = _make_app(stream_link_repo=repo)
+        client = TestClient(app)
+
+        resp = client.get(f"{_PREFIX}/stremio/proxy/nonexistent/master.m3u8")
+
+        assert resp.status_code == 404
+        assert "expired" in resp.json()["error"] or "not found" in resp.json()["error"]
+
+    def test_proxy_not_hls(self) -> None:
+        link = CachedStreamLink(
+            stream_id="not-hls",
+            hoster_url="https://voe.sx/e/abc",
+            title="Not HLS",
+            hoster="voe",
+        )
+
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=link)
+
+        app = _make_app(stream_link_repo=repo)
+        client = TestClient(app)
+
+        resp = client.get(f"{_PREFIX}/stremio/proxy/not-hls/master.m3u8")
+
+        assert resp.status_code == 400
+        assert "not an HLS" in resp.json()["error"]
+
+    def test_proxy_no_repo(self) -> None:
+        app = _make_app(stream_link_repo=None)
+        client = TestClient(app)
+
+        resp = client.get(f"{_PREFIX}/stremio/proxy/hls-abc/master.m3u8")
+
+        assert resp.status_code == 503
+        assert "not configured" in resp.json()["error"]
+
+    @patch(f"{_PROXY_MODULE}.fetch_hls_resource", new_callable=AsyncMock)
+    def test_cdn_http_error_returns_502(self, mock_fetch: AsyncMock) -> None:
+        link = _make_hls_link()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 403
+        mock_fetch.side_effect = httpx.HTTPStatusError(
+            "Forbidden", request=MagicMock(), response=mock_resp
+        )
+
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=link)
+
+        app = _make_app(stream_link_repo=repo)
+        client = TestClient(app)
+
+        resp = client.get(f"{_PREFIX}/stremio/proxy/hls-abc/master.m3u8?t=abc")
+
+        assert resp.status_code == 502
+        assert "CDN" in resp.json()["error"]
+
+    @patch(f"{_PROXY_MODULE}.stream_hls_segment", new_callable=AsyncMock)
+    def test_segment_cdn_error_returns_502(self, mock_stream: AsyncMock) -> None:
+        link = _make_hls_link()
+        mock_stream.side_effect = httpx.ConnectError("connection refused")
+
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=link)
+
+        app = _make_app(stream_link_repo=repo)
+        client = TestClient(app)
+
+        resp = client.get(f"{_PREFIX}/stremio/proxy/hls-abc/seg-1.ts?t=abc")
+
+        assert resp.status_code == 502
+        assert "CDN" in resp.json()["error"]
+
+    @patch(f"{_PROXY_MODULE}.fetch_hls_resource", new_callable=AsyncMock)
+    def test_query_string_fallback_to_video_url(self, mock_fetch: AsyncMock) -> None:
+        """When request has no query params, falls back to cached video_url's query."""
+        link = _make_hls_link(
+            video_url="https://cdn.example.com/hls/master.m3u8?token=secret123"
+        )
+        mock_fetch.return_value = (
+            b"#EXTM3U\n#EXT-X-ENDLIST\n",
+            "application/vnd.apple.mpegurl",
+        )
+
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=link)
+
+        app = _make_app(stream_link_repo=repo)
+        client = TestClient(app)
+
+        resp = client.get(f"{_PREFIX}/stremio/proxy/hls-abc/master.m3u8")
+
+        assert resp.status_code == 200
+        # Verify the CDN URL was built with the fallback query string
+        call_args = mock_fetch.call_args
+        target_url = call_args[0][1]
+        assert "token=secret123" in target_url
+
+    @patch(f"{_PROXY_MODULE}.fetch_hls_resource", new_callable=AsyncMock)
+    def test_request_query_takes_priority(self, mock_fetch: AsyncMock) -> None:
+        """Request query params override video_url's query params."""
+        link = _make_hls_link(
+            video_url="https://cdn.example.com/hls/master.m3u8?token=old"
+        )
+        mock_fetch.return_value = (
+            b"#EXTM3U\n#EXT-X-ENDLIST\n",
+            "application/vnd.apple.mpegurl",
+        )
+
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=link)
+
+        app = _make_app(stream_link_repo=repo)
+        client = TestClient(app)
+
+        resp = client.get(f"{_PREFIX}/stremio/proxy/hls-abc/master.m3u8?token=new")
+
+        assert resp.status_code == 200
+        call_args = mock_fetch.call_args
+        target_url = call_args[0][1]
+        assert "token=new" in target_url
+        assert "token=old" not in target_url
+
+    @patch(f"{_PROXY_MODULE}.fetch_hls_resource", new_callable=AsyncMock)
+    def test_cors_headers_on_all_responses(self, mock_fetch: AsyncMock) -> None:
+        link = _make_hls_link()
+        mock_fetch.return_value = (b"#EXTM3U\n", "application/vnd.apple.mpegurl")
+
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=link)
+
+        app = _make_app(stream_link_repo=repo)
+        client = TestClient(app)
+
+        resp = client.get(f"{_PREFIX}/stremio/proxy/hls-abc/master.m3u8?t=abc")
+
+        assert resp.headers.get("access-control-allow-origin") == "*"
+
+    @patch(f"{_PROXY_MODULE}.fetch_hls_resource", new_callable=AsyncMock)
+    def test_headers_forwarded_to_cdn(self, mock_fetch: AsyncMock) -> None:
+        """Stored video_headers are forwarded to CDN fetch."""
+        link = _make_hls_link(
+            video_headers={
+                "Referer": "https://mysite.io/",
+                "Origin": "https://mysite.io",
+            }
+        )
+        mock_fetch.return_value = (b"#EXTM3U\n", "application/vnd.apple.mpegurl")
+
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=link)
+
+        app = _make_app(stream_link_repo=repo)
+        client = TestClient(app)
+
+        client.get(f"{_PREFIX}/stremio/proxy/hls-abc/master.m3u8?t=abc")
+
+        call_args = mock_fetch.call_args
+        forwarded_headers = call_args[0][2]
+        assert forwarded_headers["Referer"] == "https://mysite.io/"
+        assert forwarded_headers["Origin"] == "https://mysite.io"

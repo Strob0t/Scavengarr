@@ -736,7 +736,11 @@ class StremioStreamUseCase:
             if self._plugins.get_languages(name)
         }
 
-        ranked = self._convert_fn(filtered, plugin_languages=plugin_languages)
+        loop = asyncio.get_running_loop()
+        ranked = await loop.run_in_executor(
+            None,
+            lambda: self._convert_fn(filtered, plugin_languages=plugin_languages),
+        )
         sorted_streams = self._sorter.sort(ranked)
         sorted_streams = _deduplicate_by_hoster(sorted_streams)
 
@@ -1321,7 +1325,10 @@ class StremioStreamUseCase:
                     )
                 finally:
                     self._max_results_var.reset(token)
-                raw = _filter_by_episode(raw, season, episode)
+                loop = asyncio.get_running_loop()
+                raw = await loop.run_in_executor(
+                    None, _filter_by_episode, raw, season, episode
+                )
                 results = await self._search_engine.validate_results(raw)
             else:
                 # YAML plugin: delegate to search engine

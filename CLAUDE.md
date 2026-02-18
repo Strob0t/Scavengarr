@@ -289,7 +289,7 @@ The system provides a stable download endpoint that delivers a `.crawljob` file 
 - Integration: HTTP router ↔ use case ↔ adapter with HTTP mocking.
 - Optional E2E: real plugin fixtures, but deterministic (no external sites in CI).
 
-### Current test suite (4003 tests)
+### Current test suite (4042 tests)
 
 ```
 tests/
@@ -322,7 +322,7 @@ tests/
       test_stream_converter.py         # SearchResult → RankedStream conversion
       test_stream_sorter.py            # Stremio stream sorting/ranking
       test_stream_link_cache.py        # Stream link cache repository
-      test_hls_proxy.py                # HLS proxy manifest rewriting + CDN fetch (18 tests)
+      test_hls_proxy.py                # HLS proxy manifest rewriting + CDN fetch + query resolution (23 tests)
       test_hoster_registry.py          # HosterResolverRegistry
       test_xfs_resolver.py             # Generic XFS resolver (27 hosters, parameterised, video extraction)
       test_video_extract.py            # Shared video URL extraction (packed JS, JWPlayer, HLS)
@@ -391,7 +391,7 @@ tests/
       test_warezomen_plugin.py         # warezomen plugin tests
   e2e/
     test_torznab_endpoint.py           # 46 Torznab endpoint tests (caps, search, error responses)
-    test_stremio_endpoint.py           # Stremio endpoint E2E (mock plugins, full HTTP flow)
+    test_stremio_endpoint.py           # Stremio endpoint E2E (mock plugins, full HTTP flow, HLS proxy)
     test_stremio_series_e2e.py         # Stremio series E2E (season/episode filtering)
     test_stremio_streamable_e2e.py     # 31 streamable link verification tests
   integration/

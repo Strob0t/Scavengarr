@@ -12,6 +12,7 @@ from scavengarr.application.use_cases.stremio_stream import (
     _build_multi_lang_reference,
     _build_search_queries,
     _build_search_query,
+    _build_stream_from_resolved,
     _deduplicate_by_hoster,
     _filter_by_episode,
     _filter_links_by_episode,
@@ -24,6 +25,7 @@ from scavengarr.domain.entities.stremio import (
     ResolvedStream,
     StreamLanguage,
     StreamQuality,
+    StremioStream,
     StremioStreamRequest,
     TitleMatchInfo,
 )
@@ -2285,3 +2287,142 @@ class TestBrowserWarmup:
         # All 3 plugins searched — dynamic semaphore doesn't block
         assert plugins.get.call_count >= 3
         assert isinstance(result, list)
+
+
+# ---------------------------------------------------------------------------
+# _build_stream_from_resolved
+# ---------------------------------------------------------------------------
+
+
+class TestBuildStreamFromResolved:
+    """Unit tests for proxy URL construction in _build_stream_from_resolved."""
+
+    _STREAM = StremioStream(
+        name="Iron Man (2008) 1080p",
+        description="hdfilme | VOE",
+        url="placeholder",
+    )
+    _BASE_URL = "http://localhost:7979"
+    _SID = "abc123"
+    _UA = DEFAULT_USER_AGENT
+
+    def test_hls_with_headers_builds_proxy_url(self) -> None:
+        resolved = ResolvedStream(
+            video_url="https://cdn.dropcdn.io/hls2/video/master.m3u8?t=abc&expires=123",
+            is_hls=True,
+            headers={"Referer": "https://dropload.io/"},
+        )
+        result = _build_stream_from_resolved(
+            self._STREAM,
+            resolved,
+            "https://dropload.io/e/xyz",
+            self._SID,
+            self._BASE_URL,
+            self._UA,
+        )
+        assert result is not None
+        assert result.url == (
+            f"{self._BASE_URL}/api/v1/stremio/proxy/{self._SID}"
+            "/master.m3u8?t=abc&expires=123"
+        )
+        assert result.behavior_hints == {"notWebReady": True}
+
+    def test_hls_with_headers_preserves_custom_filename(self) -> None:
+        resolved = ResolvedStream(
+            video_url="https://cdn.example.com/hls/index-v1-a1.m3u8?token=xyz",
+            is_hls=True,
+            headers={"Referer": "https://example.com/"},
+        )
+        result = _build_stream_from_resolved(
+            self._STREAM,
+            resolved,
+            "https://example.com/e/abc",
+            self._SID,
+            self._BASE_URL,
+            self._UA,
+        )
+        assert result is not None
+        assert "/index-v1-a1.m3u8?token=xyz" in result.url
+
+    def test_hls_with_headers_no_query_string(self) -> None:
+        resolved = ResolvedStream(
+            video_url="https://cdn.example.com/hls/master.m3u8",
+            is_hls=True,
+            headers={"Referer": "https://example.com/"},
+        )
+        result = _build_stream_from_resolved(
+            self._STREAM,
+            resolved,
+            "https://example.com/e/abc",
+            self._SID,
+            self._BASE_URL,
+            self._UA,
+        )
+        assert result is not None
+        assert result.url.endswith(f"/proxy/{self._SID}/master.m3u8")
+        assert "?" not in result.url
+
+    def test_hls_without_headers_direct_url(self) -> None:
+        resolved = ResolvedStream(
+            video_url="https://cdn.example.com/video/master.m3u8",
+            is_hls=True,
+        )
+        result = _build_stream_from_resolved(
+            self._STREAM,
+            resolved,
+            "https://example.com/e/abc",
+            self._SID,
+            self._BASE_URL,
+            self._UA,
+        )
+        assert result is not None
+        assert result.url == "https://cdn.example.com/video/master.m3u8"
+        assert "proxyHeaders" in result.behavior_hints
+
+    def test_direct_mp4_builds_direct_url(self) -> None:
+        resolved = ResolvedStream(
+            video_url="https://delivery.voe.sx/video.mp4",
+            headers={"Referer": "https://voe.sx/"},
+        )
+        result = _build_stream_from_resolved(
+            self._STREAM,
+            resolved,
+            "https://voe.sx/e/abc",
+            self._SID,
+            self._BASE_URL,
+            self._UA,
+        )
+        assert result is not None
+        assert result.url == "https://delivery.voe.sx/video.mp4"
+        assert (
+            result.behavior_hints["proxyHeaders"]["request"]["Referer"]
+            == "https://voe.sx/"
+        )
+
+    def test_echo_url_returns_none(self) -> None:
+        """When resolver echoes back the embed page URL, skip it."""
+        original = "https://voe.sx/e/abc123"
+        resolved = ResolvedStream(video_url=original)
+        result = _build_stream_from_resolved(
+            self._STREAM, resolved, original, self._SID, self._BASE_URL, self._UA
+        )
+        assert result is None
+
+    @pytest.mark.parametrize("status", [200, 206])
+    def test_preserves_name_and_description(self, status: int) -> None:
+        resolved = ResolvedStream(
+            video_url="https://cdn.example.com/hls/master.m3u8",
+            is_hls=True,
+            headers={"Referer": "https://example.com/"},
+        )
+        result = _build_stream_from_resolved(
+            self._STREAM,
+            resolved,
+            "https://example.com/e/abc",
+            self._SID,
+            self._BASE_URL,
+            self._UA,
+        )
+        assert result is not None
+        assert result.name == self._STREAM.name
+        assert result.description == self._STREAM.description

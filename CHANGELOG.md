@@ -10,7 +10,13 @@ Format: version, date, grouped changes. Newest entries first.
 Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration,
 56 hoster resolvers, plugin base class standardization, search result caching, circuit
 breaker, global concurrency pool, graceful shutdown, multi-language search, and
-growth of the test suite from 160 to 4003 tests.
+growth of the test suite from 160 to 4042 tests.
+
+### Code Review: Tests, Performance & Quality
+- **HLS proxy E2E tests** (11 tests): full request-response cycle for `GET /proxy/{stream_id}/{path}` — manifest rewriting, segment streaming, error codes (400/404/502/503), query string fallback, CORS headers, header forwarding.
+- **`_build_stream_from_resolved` unit tests** (8 tests): proxy URL construction for HLS with/without headers, direct MP4, echo-URL skip, query string preservation, custom manifest filenames.
+- **`_resolve_query_string` unit tests** (5 tests): request query priority, video URL fallback, empty handling.
+- **guessit offloaded to thread pool**: `_filter_by_episode()` and `convert_search_results()` now run in `run_in_executor()` to avoid blocking the async event loop during CPU-bound release name parsing.
 
 ### HLS Proxy Query String Fix & Resolver HEAD Verification
 - **Fix: HLS proxy preserves CDN auth tokens**: proxy URL now extracts the actual manifest filename and query string from the video URL instead of hardcoding `master.m3u8`. CDN auth tokens (e.g. `?t=abc123&expires=...`) are forwarded correctly, fixing 403 errors on all HLS streams routed through the proxy.
