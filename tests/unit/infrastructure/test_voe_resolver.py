@@ -164,8 +164,12 @@ class TestVoeResolver:
         mock_resp.status_code = 200
         mock_resp.text = html
 
+        head_resp = MagicMock()
+        head_resp.status_code = 200
+
         client = AsyncMock(spec=httpx.AsyncClient)
         client.get = AsyncMock(return_value=mock_resp)
+        client.head = AsyncMock(return_value=head_resp)
 
         resolver = VoeResolver(http_client=client)
         result = await resolver.resolve("https://voe.sx/e/abc123")
@@ -185,8 +189,12 @@ class TestVoeResolver:
         mock_resp.status_code = 200
         mock_resp.text = html
 
+        head_resp = MagicMock()
+        head_resp.status_code = 200
+
         client = AsyncMock(spec=httpx.AsyncClient)
         client.get = AsyncMock(return_value=mock_resp)
+        client.head = AsyncMock(return_value=head_resp)
 
         resolver = VoeResolver(http_client=client)
         result = await resolver.resolve("https://voe.sx/e/abc123")
@@ -205,8 +213,12 @@ class TestVoeResolver:
         mock_resp.status_code = 200
         mock_resp.text = html
 
+        head_resp = MagicMock()
+        head_resp.status_code = 200
+
         client = AsyncMock(spec=httpx.AsyncClient)
         client.get = AsyncMock(return_value=mock_resp)
+        client.head = AsyncMock(return_value=head_resp)
 
         resolver = VoeResolver(http_client=client)
         result = await resolver.resolve("https://voe.sx/e/abc123")
@@ -230,8 +242,12 @@ class TestVoeResolver:
         mock_resp.status_code = 200
         mock_resp.text = html
 
+        head_resp = MagicMock()
+        head_resp.status_code = 200
+
         client = AsyncMock(spec=httpx.AsyncClient)
         client.get = AsyncMock(return_value=mock_resp)
+        client.head = AsyncMock(return_value=head_resp)
 
         resolver = VoeResolver(http_client=client)
         result = await resolver.resolve("https://voe.sx/e/abc123")
@@ -255,8 +271,12 @@ class TestVoeResolver:
         mock_resp.status_code = 200
         mock_resp.text = html
 
+        head_resp = MagicMock()
+        head_resp.status_code = 200
+
         client = AsyncMock(spec=httpx.AsyncClient)
         client.get = AsyncMock(return_value=mock_resp)
+        client.head = AsyncMock(return_value=head_resp)
 
         resolver = VoeResolver(http_client=client)
         result = await resolver.resolve("https://voe.sx/e/abc123")
@@ -284,8 +304,12 @@ class TestVoeResolver:
         mock_resp.status_code = 200
         mock_resp.text = html
 
+        head_resp = MagicMock()
+        head_resp.status_code = 200
+
         client = AsyncMock(spec=httpx.AsyncClient)
         client.get = AsyncMock(return_value=mock_resp)
+        client.head = AsyncMock(return_value=head_resp)
 
         resolver = VoeResolver(http_client=client)
         result = await resolver.resolve("https://voe.sx/e/abc123")
@@ -350,8 +374,12 @@ class TestVoeResolver:
         embed_resp.text = embed_html
         embed_resp.url = "https://lauradaydo.com/e/abc123"
 
+        head_resp = MagicMock()
+        head_resp.status_code = 200
+
         client = AsyncMock(spec=httpx.AsyncClient)
         client.get = AsyncMock(side_effect=[redirect_resp, embed_resp])
+        client.head = AsyncMock(return_value=head_resp)
 
         resolver = VoeResolver(http_client=client)
         result = await resolver.resolve("https://voe.sx/e/abc123")
@@ -425,8 +453,12 @@ class TestVoeResolver:
         loader_resp.status_code = 200
         loader_resp.text = loader_js
 
+        head_resp = MagicMock()
+        head_resp.status_code = 200
+
         client = AsyncMock(spec=httpx.AsyncClient)
         client.get = AsyncMock(side_effect=[embed_resp, loader_resp])
+        client.head = AsyncMock(return_value=head_resp)
 
         resolver = VoeResolver(http_client=client)
         result = await resolver.resolve("https://voe.sx/e/abc123")
@@ -455,6 +487,50 @@ class TestVoeResolver:
                 httpx.ConnectError("loader failed"),
             ]
         )
+
+        resolver = VoeResolver(http_client=client)
+        result = await resolver.resolve("https://voe.sx/e/abc123")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_head_verification_fails(self) -> None:
+        """Video URL extracted successfully but HEAD returns 403 → None."""
+        html = """
+        <html><script>
+        var config = {'mp4': 'https://cdn.voe.sx/video/abc123.mp4'};
+        </script></html>
+        """
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = html
+
+        head_resp = MagicMock()
+        head_resp.status_code = 403
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(return_value=mock_resp)
+        client.head = AsyncMock(return_value=head_resp)
+
+        resolver = VoeResolver(http_client=client)
+        result = await resolver.resolve("https://voe.sx/e/abc123")
+        assert result is None
+        client.head.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_head_network_error(self) -> None:
+        """Video URL extracted but HEAD request fails → None."""
+        html = """
+        <html><script>
+        var config = {'mp4': 'https://cdn.voe.sx/video/abc123.mp4'};
+        </script></html>
+        """
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = html
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(return_value=mock_resp)
+        client.head = AsyncMock(side_effect=httpx.ConnectError("timeout"))
 
         resolver = VoeResolver(http_client=client)
         result = await resolver.resolve("https://voe.sx/e/abc123")

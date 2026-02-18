@@ -83,10 +83,33 @@ class StreamtapeResolver:
         resp_host = urlparse(str(resp.url)).hostname or "streamtape.com"
 
         video_url = f"https://{resp_host}/get_video?{params_str}&stream=1"
+        playback_headers = {"Referer": f"https://{resp_host}/"}
+
+        if not await self._verify_video_url(video_url, playback_headers):
+            log.warning("streamtape_video_unreachable", url=video_url[:120])
+            return None
 
         log.debug("streamtape_resolved", video_url=video_url)
         return ResolvedStream(
             video_url=video_url,
             quality=StreamQuality.UNKNOWN,
-            headers={"Referer": f"https://{resp_host}/"},
+            headers=playback_headers,
         )
+
+    async def _verify_video_url(self, url: str, headers: dict[str, str]) -> bool:
+        """HEAD-check the video URL to verify it is accessible."""
+        try:
+            resp = await self._http.head(
+                url, headers=headers, follow_redirects=True, timeout=8.0
+            )
+            if resp.status_code in (200, 206):
+                return True
+            log.warning(
+                "streamtape_video_head_failed",
+                status=resp.status_code,
+                url=url[:120],
+            )
+            return False
+        except httpx.HTTPError:
+            log.warning("streamtape_video_verify_error", url=url[:120])
+            return False

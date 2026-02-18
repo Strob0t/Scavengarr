@@ -15,6 +15,7 @@ from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from dataclasses import replace
 from typing import Any, Protocol
+from urllib.parse import urlparse
 from uuid import uuid4
 
 import structlog
@@ -573,7 +574,11 @@ def _build_stream_from_resolved(
     if resolved.is_hls and resolved.headers:
         # HLS stream requiring headers on sub-requests — route through
         # our proxy so manifests/segments get the correct Referer etc.
-        proxy_url = f"{base_url}/api/v1/stremio/proxy/{sid}/master.m3u8"
+        # Preserve the original filename and CDN auth query params.
+        parsed_video = urlparse(resolved.video_url)
+        manifest_name = parsed_video.path.rsplit("/", 1)[-1] or "master.m3u8"
+        qs = f"?{parsed_video.query}" if parsed_video.query else ""
+        proxy_url = f"{base_url}/api/v1/stremio/proxy/{sid}/{manifest_name}{qs}"
         return StremioStream(
             name=stream.name,
             description=stream.description,

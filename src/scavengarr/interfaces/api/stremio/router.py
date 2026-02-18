@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from typing import Any, cast
+from urllib.parse import urlparse
 
 import httpx
 import structlog
@@ -369,6 +370,16 @@ async def stremio_play(
     )
 
 
+def _resolve_query_string(request_query: str, video_url: str) -> str:
+    """Return query string for CDN request, falling back to original URL."""
+    qs = request_query or ""
+    if not qs:
+        original_qs = urlparse(video_url).query
+        if original_qs:
+            return original_qs
+    return qs
+
+
 @router.get("/proxy/{stream_id}/{path:path}", response_model=None)
 async def proxy_hls(
     stream_id: str,
@@ -420,7 +431,7 @@ async def proxy_hls(
             log.warning("hls_proxy_bad_headers", stream_id=stream_id)
 
     cdn_base = cdn_base_from_url(link.video_url)
-    query_string = request.url.query or ""
+    query_string = _resolve_query_string(request.url.query or "", link.video_url)
     target_url = build_cdn_url(cdn_base, path, query_string)
 
     try:

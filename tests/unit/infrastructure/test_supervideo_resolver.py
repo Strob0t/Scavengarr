@@ -189,8 +189,12 @@ class TestSuperVideoResolver:
         mock_resp.status_code = 200
         mock_resp.text = html
 
+        head_resp = MagicMock()
+        head_resp.status_code = 200
+
         client = AsyncMock(spec=httpx.AsyncClient)
         client.get = AsyncMock(return_value=mock_resp)
+        client.head = AsyncMock(return_value=head_resp)
 
         resolver = SuperVideoResolver(http_client=client)
         result = await resolver.resolve("https://supervideo.cc/e/abc123def456")
@@ -210,8 +214,12 @@ class TestSuperVideoResolver:
         mock_resp.status_code = 200
         mock_resp.text = html
 
+        head_resp = MagicMock()
+        head_resp.status_code = 200
+
         client = AsyncMock(spec=httpx.AsyncClient)
         client.get = AsyncMock(return_value=mock_resp)
+        client.head = AsyncMock(return_value=head_resp)
 
         resolver = SuperVideoResolver(http_client=client)
         result = await resolver.resolve("https://supervideo.cc/e/abc123def456")
@@ -230,8 +238,12 @@ class TestSuperVideoResolver:
         mock_resp.status_code = 200
         mock_resp.text = html
 
+        head_resp = MagicMock()
+        head_resp.status_code = 200
+
         client = AsyncMock(spec=httpx.AsyncClient)
         client.get = AsyncMock(return_value=mock_resp)
+        client.head = AsyncMock(return_value=head_resp)
 
         resolver = SuperVideoResolver(http_client=client)
         result = await resolver.resolve("https://supervideo.cc/e/abc123def456")
@@ -284,8 +296,12 @@ class TestSuperVideoResolver:
         mock_resp.status_code = 200
         mock_resp.text = html
 
+        head_resp = MagicMock()
+        head_resp.status_code = 200
+
         client = AsyncMock(spec=httpx.AsyncClient)
         client.get = AsyncMock(return_value=mock_resp)
+        client.head = AsyncMock(return_value=head_resp)
 
         resolver = SuperVideoResolver(http_client=client)
         result = await resolver.resolve("https://supervideo.cc/abc123def456")
@@ -302,8 +318,12 @@ class TestSuperVideoResolver:
         mock_resp.status_code = 200
         mock_resp.text = html
 
+        head_resp = MagicMock()
+        head_resp.status_code = 200
+
         client = AsyncMock(spec=httpx.AsyncClient)
         client.get = AsyncMock(return_value=mock_resp)
+        client.head = AsyncMock(return_value=head_resp)
 
         resolver = SuperVideoResolver(http_client=client)
         await resolver.resolve("https://supervideo.cc/e/abc123def456")
@@ -335,6 +355,50 @@ class TestSuperVideoResolver:
         result = await resolver.resolve("https://supervideo.cc/e/abc123def456")
         assert result is None
 
+    @pytest.mark.asyncio
+    async def test_returns_none_when_head_verification_fails(self) -> None:
+        """Video URL extracted but HEAD returns 403 → None."""
+        html = """
+        <html><script>
+        sources: [{file:"https://sv1.supervideo.cc/v/abc.mp4"}]
+        </script></html>
+        """
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = html
+
+        head_resp = MagicMock()
+        head_resp.status_code = 403
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(return_value=mock_resp)
+        client.head = AsyncMock(return_value=head_resp)
+
+        resolver = SuperVideoResolver(http_client=client)
+        result = await resolver.resolve("https://supervideo.cc/e/abc123def456")
+        assert result is None
+        client.head.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_head_network_error(self) -> None:
+        """Video URL extracted but HEAD network error → None."""
+        html = """
+        <html><script>
+        sources: [{file:"https://sv1.supervideo.cc/v/abc.mp4"}]
+        </script></html>
+        """
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = html
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(return_value=mock_resp)
+        client.head = AsyncMock(side_effect=httpx.ConnectError("timeout"))
+
+        resolver = SuperVideoResolver(http_client=client)
+        result = await resolver.resolve("https://supervideo.cc/e/abc123def456")
+        assert result is None
+
 
 class TestSuperVideoPlaywrightFallback:
     """Tests for Cloudflare detection and StealthPool fallback."""
@@ -347,8 +411,12 @@ class TestSuperVideoPlaywrightFallback:
         cf_resp.status_code = 403
         cf_resp.text = "<title>Just a moment...</title>"
 
+        head_resp = MagicMock()
+        head_resp.status_code = 200
+
         client = AsyncMock(spec=httpx.AsyncClient)
         client.get = AsyncMock(return_value=cf_resp)
+        client.head = AsyncMock(return_value=head_resp)
 
         # StealthPool mock
         mock_page = AsyncMock()

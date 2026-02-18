@@ -31,8 +31,12 @@ class TestStreamtapeResolver:
         mock_resp.text = html
         mock_resp.url = "https://streamtape.com/v/abc123"
 
+        head_resp = MagicMock()
+        head_resp.status_code = 200
+
         client = AsyncMock(spec=httpx.AsyncClient)
         client.get = AsyncMock(return_value=mock_resp)
+        client.head = AsyncMock(return_value=head_resp)
 
         resolver = StreamtapeResolver(http_client=client)
         result = await resolver.resolve("https://streamtape.com/v/abc123")
@@ -57,8 +61,12 @@ class TestStreamtapeResolver:
         mock_resp.text = html
         mock_resp.url = "https://streamtape.com/v/abc"
 
+        head_resp = MagicMock()
+        head_resp.status_code = 200
+
         client = AsyncMock(spec=httpx.AsyncClient)
         client.get = AsyncMock(return_value=mock_resp)
+        client.head = AsyncMock(return_value=head_resp)
 
         resolver = StreamtapeResolver(http_client=client)
         result = await resolver.resolve("https://streamtape.com/v/abc")
@@ -130,11 +138,59 @@ class TestStreamtapeResolver:
         mock_resp.text = html
         mock_resp.url = "https://strtape.tech/v/abc"
 
+        head_resp = MagicMock()
+        head_resp.status_code = 200
+
         client = AsyncMock(spec=httpx.AsyncClient)
         client.get = AsyncMock(return_value=mock_resp)
+        client.head = AsyncMock(return_value=head_resp)
 
         resolver = StreamtapeResolver(http_client=client)
         result = await resolver.resolve("https://strtape.tech/v/abc")
 
         assert result is not None
         assert "strtape.tech" in result.video_url
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_head_verification_fails(self) -> None:
+        """Params extracted but HEAD returns 403 → None."""
+        html = """
+        <script>
+        var x = 'id=abc&expires=1700000000&ip=1.2.3.4&token=TOK'</script>
+        """
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = html
+        mock_resp.url = "https://streamtape.com/v/abc"
+
+        head_resp = MagicMock()
+        head_resp.status_code = 403
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(return_value=mock_resp)
+        client.head = AsyncMock(return_value=head_resp)
+
+        resolver = StreamtapeResolver(http_client=client)
+        result = await resolver.resolve("https://streamtape.com/v/abc")
+        assert result is None
+        client.head.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_head_network_error(self) -> None:
+        """Params extracted but HEAD network error → None."""
+        html = """
+        <script>
+        var x = 'id=abc&expires=1700000000&ip=1.2.3.4&token=TOK'</script>
+        """
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = html
+        mock_resp.url = "https://streamtape.com/v/abc"
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(return_value=mock_resp)
+        client.head = AsyncMock(side_effect=httpx.ConnectError("timeout"))
+
+        resolver = StreamtapeResolver(http_client=client)
+        result = await resolver.resolve("https://streamtape.com/v/abc")
+        assert result is None

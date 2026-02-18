@@ -10,7 +10,13 @@ Format: version, date, grouped changes. Newest entries first.
 Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration,
 56 hoster resolvers, plugin base class standardization, search result caching, circuit
 breaker, global concurrency pool, graceful shutdown, multi-language search, and
-growth of the test suite from 160 to 3997 tests.
+growth of the test suite from 160 to 4003 tests.
+
+### HLS Proxy Query String Fix & Resolver HEAD Verification
+- **Fix: HLS proxy preserves CDN auth tokens**: proxy URL now extracts the actual manifest filename and query string from the video URL instead of hardcoding `master.m3u8`. CDN auth tokens (e.g. `?t=abc123&expires=...`) are forwarded correctly, fixing 403 errors on all HLS streams routed through the proxy.
+- **Fix: proxy endpoint query string fallback**: when Stremio strips query params from the proxy URL, the endpoint falls back to the original video URL's query string to recover CDN auth tokens.
+- **HEAD verification for VOE, Streamtape, SuperVideo resolvers**: extracted video URLs are now HEAD-checked before returning. Unreachable CDN URLs (403, timeout) return `None` instead of reaching Stremio as "video is not supported".
+- **6 new tests**: HEAD verification failure tests for VOE (2), Streamtape (2), SuperVideo (2).
 
 ### HLS Proxy Endpoint & XFS Video Verification
 - **HLS proxy endpoint** (`GET /api/v1/stremio/proxy/{stream_id}/{path:path}`): proxies HLS manifest and segment requests with correct CDN headers (Referer etc.) for hosters like Dropload whose CDNs require headers on all sub-requests, not just the master manifest. Rewrites absolute CDN URLs in variant playlists so the HLS player routes all fetches through the proxy.

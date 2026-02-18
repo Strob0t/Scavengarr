@@ -212,11 +212,15 @@ class SuperVideoResolver:
         result = self._extract_video(html, url)
         if result is not None:
             # Add Referer header required for CDN playback
+            playback_headers = {"Referer": embed_url}
+            if not await self._verify_video_url(result.video_url, playback_headers):
+                log.warning("supervideo_video_unreachable", url=result.video_url[:120])
+                return None
             return ResolvedStream(
                 video_url=result.video_url,
                 is_hls=result.is_hls,
                 quality=result.quality,
-                headers={"Referer": embed_url},
+                headers=playback_headers,
             )
         return None
 
@@ -298,6 +302,24 @@ class SuperVideoResolver:
         finally:
             if page is not None and not page.is_closed():
                 await page.close()
+
+    async def _verify_video_url(self, url: str, headers: dict[str, str]) -> bool:
+        """HEAD-check the CDN URL to verify it is accessible."""
+        try:
+            resp = await self._http.head(
+                url, headers=headers, follow_redirects=True, timeout=8.0
+            )
+            if resp.status_code in (200, 206):
+                return True
+            log.warning(
+                "supervideo_video_head_failed",
+                status=resp.status_code,
+                url=url[:120],
+            )
+            return False
+        except httpx.HTTPError:
+            log.warning("supervideo_video_verify_error", url=url[:120])
+            return False
 
     # ------------------------------------------------------------------
     # Extraction

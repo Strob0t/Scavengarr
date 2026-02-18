@@ -152,48 +152,52 @@ class VoeResolver:
         # Headers that the video CDN requires for playback
         playback_headers = {"Referer": embed_url}
 
-        # Method 1: MKGMa deobfuscation
-        result = await self._try_mkgma(html, embed_url)
-        if result:
-            return ResolvedStream(
-                video_url=result.video_url,
-                is_hls=result.is_hls,
-                quality=result.quality,
-                headers=playback_headers,
-            )
+        # Try extraction methods in priority order
+        methods: list[tuple[str, ResolvedStream | None]] = [
+            ("mkgma", await self._try_mkgma(html, embed_url)),
+            ("direct_regex", self._try_direct_regex(html)),
+            ("b64_hls", self._try_b64_hls(html)),
+            ("b64_vars", self._try_b64_vars(html)),
+        ]
 
-        # Method 2: Direct mp4/hls regex
-        result = self._try_direct_regex(html)
-        if result:
-            return ResolvedStream(
+        for method_name, result in methods:
+            if result is None:
+                continue
+            stream = ResolvedStream(
                 video_url=result.video_url,
                 is_hls=result.is_hls,
                 quality=result.quality,
                 headers=playback_headers,
             )
-
-        # Method 3: Base64-encoded hls
-        result = self._try_b64_hls(html)
-        if result:
-            return ResolvedStream(
-                video_url=result.video_url,
-                is_hls=result.is_hls,
-                quality=result.quality,
-                headers=playback_headers,
-            )
-
-        # Method 4: Base64-encoded variables
-        result = self._try_b64_vars(html)
-        if result:
-            return ResolvedStream(
-                video_url=result.video_url,
-                is_hls=result.is_hls,
-                quality=result.quality,
-                headers=playback_headers,
-            )
+            if not await self._verify_video_url(stream.video_url, playback_headers):
+                log.warning(
+                    "voe_video_unreachable",
+                    method=method_name,
+                    url=stream.video_url[:120],
+                )
+                return None
+            return stream
 
         log.warning("voe_all_methods_failed", url=url)
         return None
+
+    async def _verify_video_url(self, url: str, headers: dict[str, str]) -> bool:
+        """HEAD-check the CDN URL to verify it is accessible."""
+        try:
+            resp = await self._http.head(
+                url, headers=headers, follow_redirects=True, timeout=8.0
+            )
+            if resp.status_code in (200, 206):
+                return True
+            log.warning(
+                "voe_video_head_failed",
+                status=resp.status_code,
+                url=url[:120],
+            )
+            return False
+        except httpx.HTTPError:
+            log.warning("voe_video_verify_error", url=url[:120])
+            return False
 
     async def _fetch_embed_page(self, url: str) -> tuple[str | None, str | None]:
         """Fetch the actual embed page, following JS redirects if needed."""
