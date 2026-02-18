@@ -19,10 +19,14 @@ import hashlib
 import os
 import re
 from html.parser import HTMLParser
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
+
+if TYPE_CHECKING:
+    from playwright.async_api import BrowserContext
 
 # ---------------------------------------------------------------------------
 # Configurable settings
@@ -239,97 +243,120 @@ class MyGullyPlugin(PlaywrightPluginBase):
 
     def __init__(self) -> None:
         super().__init__()
-        self._logged_in = False
+        self._logged_in: bool = False
+        self._session_cookies: list[dict] | None = None
+        self._login_lock = asyncio.Lock()
+
+    async def _prepare_context(self, ctx: BrowserContext) -> None:  # type: ignore[override]
+        """Inject session cookies into a per-request BrowserContext."""
+        if self._session_cookies:
+            await ctx.add_cookies(self._session_cookies)
 
     async def _ensure_session(self) -> None:
-        """Ensure we have an authenticated Playwright session."""
-        await self._ensure_browser()
-        if self._logged_in:
+        """Ensure we have authenticated session cookies.
+
+        Uses a temporary BrowserContext for login, exports cookies,
+        and stores them for injection into per-request contexts.
+        """
+        if self._logged_in and self._session_cookies:
             return
 
-        username = os.environ.get("SCAVENGARR_MYGULLY_USERNAME", "")
-        password = os.environ.get("SCAVENGARR_MYGULLY_PASSWORD", "")
+        async with self._login_lock:
+            # Double-check after acquiring lock
+            if self._logged_in and self._session_cookies:
+                return
 
-        if not username or not password:
-            raise RuntimeError(
-                "Missing credentials: set SCAVENGARR_MYGULLY_USERNAME "
-                "and SCAVENGARR_MYGULLY_PASSWORD"
-            )
+            username = os.environ.get("SCAVENGARR_MYGULLY_USERNAME", "")
+            password = os.environ.get("SCAVENGARR_MYGULLY_PASSWORD", "")
 
-        ctx = await self._ensure_context()
-        md5_pass = hashlib.md5(  # noqa: S324
-            password.encode(),
-        ).hexdigest()
-
-        for domain in self._domains:
-            domain_url = f"https://{domain}"
-            try:
-                page = await ctx.new_page()
-                try:
-                    # Load homepage to get the login form
-                    await page.goto(
-                        domain_url,
-                        wait_until="domcontentloaded",
-                    )
-                    await self._wait_for_cloudflare(page)
-
-                    # Fill and submit the vBulletin login form
-                    async with page.expect_navigation(
-                        wait_until="domcontentloaded",
-                        timeout=15_000,
-                    ):
-                        await page.evaluate(
-                            """([user, md5]) => {
-                                const f = document.querySelector(
-                                    'form[action*="login"]'
-                                );
-                                if (!f) throw new Error('no login form');
-                                const u = f.querySelector(
-                                    'input[name="vb_login_username"]'
-                                );
-                                const p = f.querySelector(
-                                    'input[name="vb_login_password"]'
-                                );
-                                const m = f.querySelector(
-                                    'input[name="vb_login_md5password"]'
-                                );
-                                if (u) u.value = user;
-                                if (p) p.value = '';
-                                if (m) m.value = md5;
-                                f.submit();
-                            }""",
-                            [username, md5_pass],
-                        )
-
-                    # Wait for redirect to complete
-                    try:
-                        await page.wait_for_load_state("networkidle", timeout=10_000)
-                    except Exception:  # noqa: BLE001
-                        pass
-
-                    # Verify login: check for session cookie
-                    cookies = await ctx.cookies()
-                    has_session = any(c["name"] == "bbsessionhash" for c in cookies)
-                    if has_session:
-                        self.base_url = domain_url
-                        self._logged_in = True
-                        self._log.info("mygully_login_success", domain=domain)
-                        await page.close()
-                        return
-
-                finally:
-                    if not page.is_closed():
-                        await page.close()
-
-            except Exception as exc:  # noqa: BLE001
-                self._log.warning(
-                    "mygully_domain_unreachable",
-                    domain=domain,
-                    error=str(exc),
+            if not username or not password:
+                raise RuntimeError(
+                    "Missing credentials: set SCAVENGARR_MYGULLY_USERNAME "
+                    "and SCAVENGARR_MYGULLY_PASSWORD"
                 )
-                continue
 
-        raise RuntimeError("All mygully domains failed during login")
+            browser = await self._ensure_browser()
+            md5_pass = hashlib.md5(  # noqa: S324
+                password.encode(),
+            ).hexdigest()
+
+            for domain in self._domains:
+                domain_url = f"https://{domain}"
+                login_ctx = await browser.new_context(
+                    user_agent=self._user_agent,
+                    viewport={"width": 1280, "height": 720},
+                )
+                try:
+                    page = await login_ctx.new_page()
+                    try:
+                        # Load homepage to get the login form
+                        await page.goto(
+                            domain_url,
+                            wait_until="domcontentloaded",
+                        )
+                        await self._wait_for_cloudflare(page)
+
+                        # Fill and submit the vBulletin login form
+                        async with page.expect_navigation(
+                            wait_until="domcontentloaded",
+                            timeout=15_000,
+                        ):
+                            await page.evaluate(
+                                """([user, md5]) => {
+                                    const f = document.querySelector(
+                                        'form[action*="login"]'
+                                    );
+                                    if (!f) throw new Error('no login form');
+                                    const u = f.querySelector(
+                                        'input[name="vb_login_username"]'
+                                    );
+                                    const p = f.querySelector(
+                                        'input[name="vb_login_password"]'
+                                    );
+                                    const m = f.querySelector(
+                                        'input[name="vb_login_md5password"]'
+                                    );
+                                    if (u) u.value = user;
+                                    if (p) p.value = '';
+                                    if (m) m.value = md5;
+                                    f.submit();
+                                }""",
+                                [username, md5_pass],
+                            )
+
+                        # Wait for redirect to complete
+                        try:
+                            await page.wait_for_load_state(
+                                "networkidle", timeout=10_000
+                            )
+                        except Exception:  # noqa: BLE001
+                            pass
+
+                        # Verify login: check for session cookie
+                        cookies = await login_ctx.cookies()
+                        has_session = any(c["name"] == "bbsessionhash" for c in cookies)
+                        if has_session:
+                            self.base_url = domain_url
+                            self._session_cookies = cookies
+                            self._logged_in = True
+                            self._log.info("mygully_login_success", domain=domain)
+                            return
+
+                    finally:
+                        if not page.is_closed():
+                            await page.close()
+
+                except Exception as exc:  # noqa: BLE001
+                    self._log.warning(
+                        "mygully_domain_unreachable",
+                        domain=domain,
+                        error=str(exc),
+                    )
+                    continue
+                finally:
+                    await login_ctx.close()
+
+            raise RuntimeError("All mygully domains failed during login")
 
     async def _submit_search_form(self, query: str, forum_id: str) -> str:
         """Submit the vBulletin search form and return results HTML."""
@@ -483,6 +510,7 @@ class MyGullyPlugin(PlaywrightPluginBase):
         """Close browser and reset login state."""
         await super().cleanup()
         self._logged_in = False
+        self._session_cookies = None
 
     async def search(
         self,

@@ -29,6 +29,10 @@ from scavengarr.domain.entities.stremio import (
     TitleMatchInfo,
 )
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.domain.ports.concurrency import (
+    ConcurrencyBudgetPort,
+    ConcurrencyPoolPort,
+)
 from scavengarr.domain.ports.plugin_registry import PluginRegistryPort
 from scavengarr.domain.ports.plugin_score_store import PluginScoreStorePort
 from scavengarr.domain.ports.search_engine import SearchEnginePort
@@ -546,6 +550,7 @@ class StremioStreamUseCase:
         metrics: _MetricsRecorder | None = None,
         score_store: PluginScoreStorePort | None = None,
         browser_warmup_fn: BrowserWarmupFn | None = None,
+        pool: ConcurrencyPoolPort | None = None,
     ) -> None:
         self._tmdb = tmdb
         self._plugins = plugins
@@ -577,6 +582,7 @@ class StremioStreamUseCase:
         self._max_plugins_scored = config.max_plugins_scored
         self._exploration_probability = config.exploration_probability
         self._browser_warmup_fn = browser_warmup_fn
+        self._pool = pool
 
     async def execute(
         self,
@@ -618,14 +624,27 @@ class StremioStreamUseCase:
 
         # --- Per-language-group search + filter ---
         lang_groups = self._group_by_languages(selected)
-        all_results, filtered = await self._search_lang_groups(
-            lang_groups,
-            title_infos,
-            request,
-            category,
-            all_names_count=len(all_names),
-            selected_count=len(selected),
-        )
+
+        if self._pool is not None:
+            async with self._pool.request() as budget:
+                all_results, filtered = await self._search_lang_groups(
+                    lang_groups,
+                    title_infos,
+                    request,
+                    category,
+                    all_names_count=len(all_names),
+                    selected_count=len(selected),
+                    budget=budget,
+                )
+        else:
+            all_results, filtered = await self._search_lang_groups(
+                lang_groups,
+                title_infos,
+                request,
+                category,
+                all_names_count=len(all_names),
+                selected_count=len(selected),
+            )
 
         if not filtered:
             if all_results:
@@ -701,6 +720,7 @@ class StremioStreamUseCase:
         *,
         all_names_count: int,
         selected_count: int,
+        budget: ConcurrencyBudgetPort | None = None,
     ) -> tuple[list[SearchResult], list[SearchResult]]:
         """Search and filter each language group, returning aggregated results.
 
@@ -739,6 +759,7 @@ class StremioStreamUseCase:
                 category,
                 season=request.season,
                 episode=request.episode,
+                budget=budget,
             )
 
             if not group_results:
@@ -1067,11 +1088,14 @@ class StremioStreamUseCase:
         *,
         season: int | None = None,
         episode: int | None = None,
+        budget: ConcurrencyBudgetPort | None = None,
     ) -> list[SearchResult]:
         """Search plugins with all query variants, deduplicate results.
 
-        A single shared semaphore bounds total concurrent plugin searches
-        across all query variants to prevent connection overload.
+        When a *budget* (from ConcurrencyPool) is provided, it manages
+        global concurrency via fair-share slots instead of local
+        semaphores.  When *budget* is ``None``, the original per-request
+        semaphore behavior is preserved (backward compatibility).
 
         When a browser warmup function is configured, a fire-and-forget
         warmup task starts the shared Chromium process in the background
@@ -1079,23 +1103,21 @@ class StremioStreamUseCase:
         shared browser from their injected pool reference (set at
         composition time).
 
-        The Playwright concurrency semaphore is dynamically sized to
-        ``min(pw_plugin_count, max_concurrent_playwright)`` so that
-        the semaphore never exceeds the actual number of PW plugins.
-
         The first query's results are always kept in full.  Subsequent
         (fallback) queries only add results whose ``download_link`` was
         not already seen, to avoid duplicates from the same plugin
         matching on both the full title and the shorter base title.
         """
-        semaphore = asyncio.Semaphore(self._max_concurrent)
-
-        # Dynamic PW semaphore: cap at actual PW plugin count
-        pw_count = sum(
-            1 for n in plugin_names if self._plugins.get_mode(n) == "playwright"
-        )
-        pw_limit = min(pw_count, self._max_concurrent_pw) if pw_count > 0 else 1
-        pw_semaphore = asyncio.Semaphore(pw_limit)
+        # --- Local semaphores (fallback when no global pool) ---
+        semaphore: asyncio.Semaphore | None = None
+        pw_semaphore: asyncio.Semaphore | None = None
+        if budget is None:
+            semaphore = asyncio.Semaphore(self._max_concurrent)
+            pw_count = sum(
+                1 for n in plugin_names if self._plugins.get_mode(n) == "playwright"
+            )
+            pw_limit = min(pw_count, self._max_concurrent_pw) if pw_count > 0 else 1
+            pw_semaphore = asyncio.Semaphore(pw_limit)
 
         # --- Fire-and-forget pre-warm for shared Playwright browser ---
         if self._browser_warmup_fn is not None:
@@ -1116,6 +1138,7 @@ class StremioStreamUseCase:
                 episode=episode,
                 semaphore=semaphore,
                 pw_semaphore=pw_semaphore,
+                budget=budget,
             )
             for q in queries
         ]
@@ -1142,24 +1165,39 @@ class StremioStreamUseCase:
         episode: int | None = None,
         semaphore: asyncio.Semaphore | None = None,
         pw_semaphore: asyncio.Semaphore | None = None,
+        budget: ConcurrencyBudgetPort | None = None,
     ) -> list[SearchResult]:
         """Search all plugins in parallel with bounded concurrency.
 
-        When *semaphore* is provided it is shared across query variants.
-        Playwright plugins additionally acquire *pw_semaphore* to bound
-        concurrent browser contexts on the shared Chromium process.
+        When *budget* is provided, uses the global concurrency pool's
+        fair-share slots instead of local semaphores.  When *budget* is
+        ``None``, falls back to the local semaphore behavior.
         """
-        sem = semaphore or asyncio.Semaphore(self._max_concurrent)
 
         async def _search_one(name: str) -> list[SearchResult]:
+            is_pw = self._plugins.get_mode(name) == "playwright"
+
+            if budget is not None:
+                # Global pool path: use fair-share budget slots
+                if is_pw:
+                    async with budget.acquire_pw():
+                        return await self._run_plugin_with_timeout(
+                            name, query, category, season=season, episode=episode
+                        )
+                else:
+                    async with budget.acquire_httpx():
+                        return await self._run_plugin_with_timeout(
+                            name, query, category, season=season, episode=episode
+                        )
+
+            # Local semaphore fallback
+            sem = semaphore or asyncio.Semaphore(self._max_concurrent)
             async with sem:
-                is_pw = self._plugins.get_mode(name) == "playwright"
                 if is_pw and pw_semaphore is not None:
                     async with pw_semaphore:
                         return await self._run_plugin_with_timeout(
                             name, query, category, season=season, episode=episode
                         )
-
                 return await self._run_plugin_with_timeout(
                     name, query, category, season=season, episode=episode
                 )
@@ -1231,9 +1269,21 @@ class StremioStreamUseCase:
                 # Set max_results context so plugins limit pagination
                 token = self._max_results_var.set(self._max_results_per_plugin)
                 try:
-                    raw = await plugin.search(
-                        query, category=category, season=season, episode=episode
-                    )
+                    # Use isolated_search() for per-request context isolation
+                    # when a concurrency pool is active; fall back to plain
+                    # search() otherwise (backward compat / tests).
+                    if (
+                        self._pool is not None
+                        and hasattr(plugin, "isolated_search")
+                        and callable(plugin.isolated_search)
+                    ):
+                        raw = await plugin.isolated_search(
+                            query, category, season=season, episode=episode
+                        )
+                    else:
+                        raw = await plugin.search(
+                            query, category=category, season=season, episode=episode
+                        )
                 finally:
                     self._max_results_var.reset(token)
                 raw = _filter_by_episode(raw, season, episode)

@@ -77,6 +77,7 @@ class MoflixPlugin(PlaywrightPluginBase):
     default_language = "de"
 
     _domains = _DOMAINS
+    _serialize_search = True
 
     async def _wait_for_cloudflare(self, page: "Page") -> bool:
         """Wait for the Cloudflare JS challenge to resolve."""

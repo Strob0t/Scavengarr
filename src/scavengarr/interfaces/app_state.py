@@ -24,6 +24,7 @@ if TYPE_CHECKING:
         StreamLinkRepository,
     )
     from scavengarr.domain.ports.tmdb import TmdbClientPort
+    from scavengarr.infrastructure.concurrency import ConcurrencyPool
     from scavengarr.infrastructure.hoster_resolvers import HosterResolverRegistry
     from scavengarr.infrastructure.hoster_resolvers.stealth_pool import StealthPool
     from scavengarr.infrastructure.metrics import MetricsCollector
@@ -69,6 +70,9 @@ class AppState(State):
     tmdb_client: TmdbClientPort | None
     stremio_stream_uc: StremioStreamUseCase | None
     stremio_catalog_uc: StremioCatalogUseCase | None
+
+    # Global concurrency pool (fair-share httpx + PW slots)
+    concurrency_pool: ConcurrencyPool | None
 
     # Plugin scoring (optional — requires scoring.enabled=True)
     plugin_score_store: PluginScoreStorePort | None

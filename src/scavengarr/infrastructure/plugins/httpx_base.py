@@ -253,6 +253,21 @@ class HttpxPluginBase:
         return asyncio.Semaphore(self._max_concurrent)
 
     # ------------------------------------------------------------------
+    # Per-request isolation (passthrough for httpx plugins)
+    # ------------------------------------------------------------------
+
+    async def isolated_search(
+        self,
+        query: str,
+        category: int | None = None,
+        *,
+        season: int | None = None,
+        episode: int | None = None,
+    ) -> list[SearchResult]:
+        """Run search — httpx plugins need no context isolation."""
+        return await self.search(query, category, season=season, episode=episode)
+
+    # ------------------------------------------------------------------
     # Abstract search (subclass must implement)
     # ------------------------------------------------------------------
 

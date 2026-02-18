@@ -218,6 +218,7 @@ class TestLogin:
         plugin._browser = _make_mock_browser(context)
         plugin._context = context
         plugin._logged_in = True
+        plugin._session_cookies = _SESSION_COOKIES
 
         await plugin._ensure_session()
         context.new_page.assert_not_awaited()
@@ -256,6 +257,7 @@ class TestSearch:
         plugin._browser = _make_mock_browser(context)
         plugin._context = context
         plugin._logged_in = True
+        plugin._session_cookies = _SESSION_COOKIES
         plugin.base_url = "https://mygully.com"
 
         results = await plugin.search("SpongeBob")
@@ -276,6 +278,7 @@ class TestSearch:
         plugin._browser = _make_mock_browser(context)
         plugin._context = context
         plugin._logged_in = True
+        plugin._session_cookies = _SESSION_COOKIES
         plugin.base_url = "https://mygully.com"
 
         results = await plugin.search("nonexistent")
@@ -320,6 +323,7 @@ class TestSearch:
         plugin._browser = _make_mock_browser(context)
         plugin._context = context
         plugin._logged_in = True
+        plugin._session_cookies = _SESSION_COOKIES
         plugin.base_url = "https://mygully.com"
 
         results = await plugin.search("test")
@@ -351,6 +355,7 @@ class TestSearch:
         plugin._browser = _make_mock_browser(context)
         plugin._context = context
         plugin._logged_in = True
+        plugin._session_cookies = _SESSION_COOKIES
         plugin.base_url = "https://mygully.com"
 
         results = await plugin.search("test")
@@ -366,6 +371,7 @@ class TestSearch:
         plugin._browser = _make_mock_browser(context)
         plugin._context = context
         plugin._logged_in = True
+        plugin._session_cookies = _SESSION_COOKIES
         plugin.base_url = "https://mygully.com"
 
         # Audio category (3000) should map to forum "26"
@@ -401,6 +407,7 @@ class TestCleanup:
         plugin._browser = browser
         plugin._context = context
         plugin._logged_in = True
+        plugin._session_cookies = _SESSION_COOKIES
 
         await plugin.cleanup()
 
@@ -408,6 +415,7 @@ class TestCleanup:
         browser.close.assert_awaited_once()
         pw.stop.assert_awaited_once()
         assert plugin._logged_in is False
+        assert plugin._session_cookies is None
         assert plugin._context is None
         assert plugin._browser is None
         assert plugin._pw is None

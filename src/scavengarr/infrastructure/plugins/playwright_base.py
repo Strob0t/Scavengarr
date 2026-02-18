@@ -69,6 +69,12 @@ class PlaywrightPluginBase:
     _cf_timeout_ms: int = 15_000
     _networkidle_timeout_ms: int = 10_000
 
+    # --- Request isolation ---
+    # When True, search() is serialized with a lock instead of using
+    # per-request BrowserContext isolation (for plugins that rely on
+    # persistent page state, e.g. streamworld, moflix).
+    _serialize_search: bool = False
+
     def __init__(self) -> None:
         self._pw: Playwright | None = None
         self._browser: Browser | None = None
@@ -81,6 +87,8 @@ class PlaywrightPluginBase:
         # pool.warmup() instead of launching a new Chromium process.
         self._shared_pool: object | None = None
         self._owns_browser: bool = True
+        # Lock for serialized search (used when _serialize_search=True)
+        self._search_lock = asyncio.Lock()
 
     @property
     def effective_max_results(self) -> int:
@@ -168,10 +176,24 @@ class PlaywrightPluginBase:
     async def _ensure_context(self) -> BrowserContext:
         """Create browser context with standard user-agent.
 
+        When a per-request ``BrowserContext`` is set in
+        :data:`~scavengarr.infrastructure.plugins.context_vars.request_browser_context`,
+        that context is returned instead of the singleton — unless
+        ``_serialize_search`` is True (persistent-page plugins).
+
         When ``_stealth`` is True, applies playwright-stealth evasions
         and blocks heavy resources (images, fonts, CSS) to reduce
         fingerprinting and speed up navigation.
         """
+        # Per-request isolation: if a ContextVar context was set by
+        # isolated_search(), prefer it over the singleton.
+        if not self._serialize_search:
+            from .context_vars import request_browser_context
+
+            req_ctx = request_browser_context.get(None)
+            if req_ctx is not None:
+                return req_ctx
+
         if self._context is None:
             browser = await self._ensure_browser()
             self._context = await browser.new_context(
@@ -381,6 +403,66 @@ class PlaywrightPluginBase:
             self._browser = None
             self._pw = None
         self._domain_verified = False
+
+    # ------------------------------------------------------------------
+    # Per-request isolation
+    # ------------------------------------------------------------------
+
+    async def _prepare_context(self, ctx: BrowserContext) -> None:
+        """Hook for subclasses to inject cookies/state into a fresh context.
+
+        Called by :meth:`isolated_search` after creating a per-request
+        BrowserContext.  Override this in authenticated plugins to copy
+        session cookies into *ctx* via ``ctx.add_cookies()``.
+        """
+
+    async def isolated_search(
+        self,
+        query: str,
+        category: int | None = None,
+        *,
+        season: int | None = None,
+        episode: int | None = None,
+    ) -> list[SearchResult]:
+        """Run *search()* with a per-request BrowserContext.
+
+        For serialized plugins (``_serialize_search = True``), search
+        is guarded by a lock instead of creating an isolated context.
+
+        For all other plugins, a fresh BrowserContext is created,
+        set into the ContextVar, and torn down after search completes.
+        """
+        if self._serialize_search:
+            async with self._search_lock:
+                return await self.search(
+                    query, category, season=season, episode=episode
+                )
+
+        from .context_vars import request_browser_context
+
+        browser = await self._ensure_browser()
+        ctx = await browser.new_context(
+            user_agent=self._user_agent,
+            viewport={"width": 1280, "height": 720},
+        )
+        if self._stealth:
+            from playwright_stealth import Stealth
+
+            await Stealth().apply_stealth_async(ctx)
+            await ctx.route(
+                "**/*.{png,jpg,jpeg,gif,svg,woff,woff2,ttf,css}",
+                lambda route: route.abort(),
+            )
+        await self._prepare_context(ctx)
+        token = request_browser_context.set(ctx)
+        try:
+            return await self.search(query, category, season=season, episode=episode)
+        finally:
+            request_browser_context.reset(token)
+            for page in ctx.pages:
+                if not page.is_closed():
+                    await page.close()
+            await ctx.close()
 
     # ------------------------------------------------------------------
     # Abstract search

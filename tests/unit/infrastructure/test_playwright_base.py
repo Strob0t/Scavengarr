@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
 # ---------------------------------------------------------------------------
@@ -24,6 +25,43 @@ class _SingleDomainPlugin(PlaywrightPluginBase):
     name = "single-pw"
     provides = "download"
     _domains = ["only.com"]
+
+
+class _ConcretePlugin(PlaywrightPluginBase):
+    """Plugin with a real search() for isolated_search tests."""
+
+    name = "concrete-pw"
+    provides = "stream"
+    _domains = ["example.com"]
+
+    async def search(
+        self,
+        query: str,
+        category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
+    ) -> list[SearchResult]:
+        # Access _ensure_context() to prove ContextVar is used
+        ctx = await self._ensure_context()
+        return [SearchResult(title=f"result-{id(ctx)}", download_link="https://x")]
+
+
+class _SerializedPlugin(PlaywrightPluginBase):
+    """Plugin with _serialize_search=True."""
+
+    name = "serial-pw"
+    provides = "stream"
+    _domains = ["example.com"]
+    _serialize_search = True
+
+    async def search(
+        self,
+        query: str,
+        category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
+    ) -> list[SearchResult]:
+        return [SearchResult(title="serial-result", download_link="https://x")]
 
 
 # ---------------------------------------------------------------------------
@@ -871,3 +909,237 @@ class TestSharedBrowserPool:
         assert browser is new_browser
         assert pw is new_pw
         dead_pw.stop.assert_awaited_once()  # old PW cleaned up
+
+
+# ---------------------------------------------------------------------------
+# _ensure_context with ContextVar
+# ---------------------------------------------------------------------------
+
+
+class TestEnsureContextWithContextVar:
+    @pytest.mark.asyncio
+    async def test_returns_contextvar_when_set(self) -> None:
+        """_ensure_context returns per-request context from ContextVar."""
+        from scavengarr.infrastructure.plugins.context_vars import (
+            request_browser_context,
+        )
+
+        plugin = _TestPlugin()
+        mock_req_ctx = AsyncMock()
+        token = request_browser_context.set(mock_req_ctx)
+        try:
+            ctx = await plugin._ensure_context()
+            assert ctx is mock_req_ctx
+        finally:
+            request_browser_context.reset(token)
+
+    @pytest.mark.asyncio
+    async def test_ignores_contextvar_when_serialize(self) -> None:
+        """_ensure_context ignores ContextVar for serialized plugins."""
+        from scavengarr.infrastructure.plugins.context_vars import (
+            request_browser_context,
+        )
+
+        plugin = _TestPlugin()
+        plugin._serialize_search = True
+        mock_req_ctx = AsyncMock()
+        mock_browser = _make_mock_browser()
+        mock_singleton_ctx = AsyncMock()
+        mock_browser.new_context = AsyncMock(return_value=mock_singleton_ctx)
+        plugin._browser = mock_browser
+
+        token = request_browser_context.set(mock_req_ctx)
+        try:
+            ctx = await plugin._ensure_context()
+            # Should NOT return the ContextVar context
+            assert ctx is not mock_req_ctx
+            assert ctx is mock_singleton_ctx
+        finally:
+            request_browser_context.reset(token)
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_singleton_when_no_contextvar(self) -> None:
+        """Without ContextVar, _ensure_context returns the singleton."""
+        plugin = _TestPlugin()
+        mock_context = AsyncMock()
+        mock_browser = _make_mock_browser()
+        mock_browser.new_context = AsyncMock(return_value=mock_context)
+        plugin._browser = mock_browser
+
+        ctx = await plugin._ensure_context()
+        assert ctx is mock_context
+        assert plugin._context is mock_context
+
+
+# ---------------------------------------------------------------------------
+# isolated_search
+# ---------------------------------------------------------------------------
+
+
+class TestIsolatedSearch:
+    @pytest.mark.asyncio
+    async def test_creates_and_cleans_context(self) -> None:
+        """isolated_search creates a fresh context and closes it after."""
+        plugin = _ConcretePlugin()
+
+        mock_page = AsyncMock()
+        mock_page.is_closed = MagicMock(return_value=False)
+
+        mock_ctx = AsyncMock()
+        mock_ctx.new_page = AsyncMock(return_value=mock_page)
+        mock_ctx.pages = [mock_page]
+
+        mock_browser = _make_mock_browser()
+        mock_browser.new_context = AsyncMock(return_value=mock_ctx)
+        plugin._browser = mock_browser
+
+        results = await plugin.isolated_search("test")
+
+        assert len(results) == 1
+        # Context was closed after search
+        mock_ctx.close.assert_awaited_once()
+        # Page was closed too
+        mock_page.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_cleans_context_on_error(self) -> None:
+        """isolated_search closes context even when search() raises."""
+
+        class _FailPlugin(PlaywrightPluginBase):
+            name = "fail-pw"
+            provides = "stream"
+            _domains = ["example.com"]
+
+            async def search(self, query, category=None, season=None, episode=None):
+                raise RuntimeError("search failed")
+
+        plugin = _FailPlugin()
+
+        mock_page = AsyncMock()
+        mock_page.is_closed = MagicMock(return_value=False)
+
+        mock_ctx = AsyncMock()
+        mock_ctx.pages = [mock_page]
+
+        mock_browser = _make_mock_browser()
+        mock_browser.new_context = AsyncMock(return_value=mock_ctx)
+        plugin._browser = mock_browser
+
+        with pytest.raises(RuntimeError, match="search failed"):
+            await plugin.isolated_search("test")
+
+        mock_ctx.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_serialized_uses_lock(self) -> None:
+        """Serialized plugins use _search_lock instead of a new context."""
+        plugin = _SerializedPlugin()
+
+        results = await plugin.isolated_search("test")
+
+        assert len(results) == 1
+        assert results[0].title == "serial-result"
+
+    @pytest.mark.asyncio
+    async def test_prepare_context_called(self) -> None:
+        """isolated_search calls _prepare_context on the new context."""
+        prepare_called = False
+
+        class _PrepPlugin(PlaywrightPluginBase):
+            name = "prep-pw"
+            provides = "stream"
+            _domains = ["example.com"]
+
+            async def _prepare_context(self, ctx):
+                nonlocal prepare_called
+                prepare_called = True
+
+            async def search(self, query, category=None, season=None, episode=None):
+                return []
+
+        plugin = _PrepPlugin()
+        mock_ctx = AsyncMock()
+        mock_ctx.pages = []
+        mock_browser = _make_mock_browser()
+        mock_browser.new_context = AsyncMock(return_value=mock_ctx)
+        plugin._browser = mock_browser
+
+        await plugin.isolated_search("test")
+
+        assert prepare_called is True
+
+    @pytest.mark.asyncio
+    async def test_contextvar_is_set_during_search(self) -> None:
+        """During isolated_search, _ensure_context returns the isolated ctx."""
+        from scavengarr.infrastructure.plugins.context_vars import (
+            request_browser_context,
+        )
+
+        captured_ctx = None
+
+        class _CapPlugin(PlaywrightPluginBase):
+            name = "cap-pw"
+            provides = "stream"
+            _domains = ["example.com"]
+
+            async def search(self, query, category=None, season=None, episode=None):
+                nonlocal captured_ctx
+                captured_ctx = request_browser_context.get(None)
+                return []
+
+        plugin = _CapPlugin()
+        mock_ctx = AsyncMock()
+        mock_ctx.pages = []
+        mock_browser = _make_mock_browser()
+        mock_browser.new_context = AsyncMock(return_value=mock_ctx)
+        plugin._browser = mock_browser
+
+        await plugin.isolated_search("test")
+
+        # The ContextVar was set to the newly created context during search
+        assert captured_ctx is mock_ctx
+
+    @pytest.mark.asyncio
+    async def test_contextvar_reset_after_search(self) -> None:
+        """After isolated_search completes, ContextVar is reset to None."""
+        from scavengarr.infrastructure.plugins.context_vars import (
+            request_browser_context,
+        )
+
+        class _SimplePlugin(PlaywrightPluginBase):
+            name = "simple-pw"
+            provides = "stream"
+            _domains = ["example.com"]
+
+            async def search(self, query, category=None, season=None, episode=None):
+                return []
+
+        plugin = _SimplePlugin()
+        mock_ctx = AsyncMock()
+        mock_ctx.pages = []
+        mock_browser = _make_mock_browser()
+        mock_browser.new_context = AsyncMock(return_value=mock_ctx)
+        plugin._browser = mock_browser
+
+        await plugin.isolated_search("test")
+
+        assert request_browser_context.get(None) is None
+
+
+# ---------------------------------------------------------------------------
+# _serialize_search attribute
+# ---------------------------------------------------------------------------
+
+
+class TestSerializeSearch:
+    def test_default_is_false(self) -> None:
+        plugin = _TestPlugin()
+        assert plugin._serialize_search is False
+
+    def test_serialized_plugin_has_true(self) -> None:
+        plugin = _SerializedPlugin()
+        assert plugin._serialize_search is True
+
+    def test_search_lock_created(self) -> None:
+        plugin = _TestPlugin()
+        assert isinstance(plugin._search_lock, asyncio.Lock)

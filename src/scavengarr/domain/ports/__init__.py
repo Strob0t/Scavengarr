@@ -1,4 +1,5 @@
 from .cache import CachePort
+from .concurrency import ConcurrencyBudgetPort, ConcurrencyPoolPort
 from .crawljob_repository import CrawlJobRepository
 from .hoster_resolver import HosterResolverPort
 from .plugin_registry import PluginRegistryPort
@@ -8,6 +9,8 @@ from .stream_link_repository import StreamLinkRepository
 
 __all__ = [
     "CachePort",
+    "ConcurrencyBudgetPort",
+    "ConcurrencyPoolPort",
     "CrawlJobRepository",
     "HosterResolverPort",
     "PluginRegistryPort",

@@ -19,6 +19,7 @@ from scavengarr.domain.entities.crawljob import Priority
 from scavengarr.infrastructure.cache.cache_factory import create_cache
 from scavengarr.infrastructure.common.rate_limiter import DomainRateLimiter
 from scavengarr.infrastructure.common.retry_transport import RetryTransport
+from scavengarr.infrastructure.concurrency import ConcurrencyPool
 from scavengarr.infrastructure.config.schema import AppConfig
 from scavengarr.infrastructure.hoster_resolvers import HosterResolverRegistry
 from scavengarr.infrastructure.hoster_resolvers.ddownload import DDownloadResolver
@@ -354,7 +355,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _inject_shared_browser_pool(state.plugins, state.shared_browser_pool)
     log.info("shared_browser_pool_configured")
 
-    # 13) Stremio use cases (always initialized — fallback handles missing key)
+    # 13) Global concurrency pool (fair-share httpx + PW slots across requests)
+    state.concurrency_pool = ConcurrencyPool(
+        httpx_slots=config.stremio.max_concurrent_plugins,
+        pw_slots=config.stremio.max_concurrent_playwright,
+    )
+    log.info(
+        "concurrency_pool_initialized",
+        httpx_slots=config.stremio.max_concurrent_plugins,
+        pw_slots=config.stremio.max_concurrent_playwright,
+    )
+
+    # 14) Stremio use cases (always initialized — fallback handles missing key)
     probe_fn = functools.partial(
         probe_urls_stealth,
         state.http_client,
@@ -380,6 +392,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         metrics=state.metrics,
         score_store=state.plugin_score_store,
         browser_warmup_fn=state.shared_browser_pool.warmup,
+        pool=state.concurrency_pool,
     )
     state.stremio_catalog_uc = StremioCatalogUseCase(tmdb=state.tmdb_client)
 

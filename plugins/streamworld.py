@@ -396,6 +396,7 @@ class StreamworldPlugin(PlaywrightPluginBase):
     default_language = "de"
 
     _domains = _DOMAINS
+    _serialize_search = True
 
     async def _wait_for_antibot(self, page: "Page") -> bool:
         """Wait for anti-bot JavaScript to finish on the homepage.
