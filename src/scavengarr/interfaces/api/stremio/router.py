@@ -136,6 +136,25 @@ def _format_stremio_stream(stream: StremioStream) -> dict[str, Any]:
     return data
 
 
+def _empty_metas() -> JSONResponse:
+    """Return an empty Stremio catalog response."""
+    return JSONResponse(content={"metas": []}, headers=_CORS_HEADERS)
+
+
+def _empty_streams() -> JSONResponse:
+    """Return an empty Stremio streams response."""
+    return JSONResponse(content={"streams": []}, headers=_CORS_HEADERS)
+
+
+def _error_json(status: int, message: str) -> JSONResponse:
+    """Return a JSON error response with CORS headers."""
+    return JSONResponse(
+        status_code=status,
+        content={"error": message},
+        headers=_CORS_HEADERS,
+    )
+
+
 def _format_meta_preview(m: StremioMetaPreview) -> dict[str, Any]:
     """Convert a StremioMetaPreview to Stremio JSON format."""
     return {
@@ -171,10 +190,10 @@ async def stremio_catalog(
 
     uc = getattr(state, "stremio_catalog_uc", None)
     if uc is None:
-        return JSONResponse(content={"metas": []}, headers=_CORS_HEADERS)
+        return _empty_metas()
 
     if content_type not in ("movie", "series"):
-        return JSONResponse(content={"metas": []}, headers=_CORS_HEADERS)
+        return _empty_metas()
 
     ct = cast(StremioContentType, content_type)
 
@@ -186,7 +205,7 @@ async def stremio_catalog(
             content_type=content_type,
             catalog_id=catalog_id,
         )
-        return JSONResponse(content={"metas": []}, headers=_CORS_HEADERS)
+        return _empty_metas()
 
     meta_list = [_format_meta_preview(m) for m in metas]
 
@@ -205,10 +224,10 @@ async def stremio_catalog_search(
 
     uc = getattr(state, "stremio_catalog_uc", None)
     if uc is None:
-        return JSONResponse(content={"metas": []}, headers=_CORS_HEADERS)
+        return _empty_metas()
 
     if content_type not in ("movie", "series"):
-        return JSONResponse(content={"metas": []}, headers=_CORS_HEADERS)
+        return _empty_metas()
 
     ct = cast(StremioContentType, content_type)
 
@@ -221,7 +240,7 @@ async def stremio_catalog_search(
             catalog_id=catalog_id,
             query=query,
         )
-        return JSONResponse(content={"metas": []}, headers=_CORS_HEADERS)
+        return _empty_metas()
 
     meta_list = [_format_meta_preview(m) for m in metas]
 
@@ -245,7 +264,7 @@ async def stremio_stream(
     # 1) Parse stream ID
     parsed = _parse_stream_id(content_type, stream_id)
     if parsed is None:
-        return JSONResponse(content={"streams": []}, headers=_CORS_HEADERS)
+        return _empty_streams()
 
     log.info(
         "stremio_stream_request",
@@ -258,7 +277,7 @@ async def stremio_stream(
     # 2) Delegate to use case
     uc = getattr(state, "stremio_stream_uc", None)
     if uc is None:
-        return JSONResponse(content={"streams": []}, headers=_CORS_HEADERS)
+        return _empty_streams()
 
     try:
         streams = await uc.execute(parsed, base_url=str(request.base_url).rstrip("/"))
@@ -270,7 +289,7 @@ async def stremio_stream(
             season=parsed.season,
             episode=parsed.episode,
         )
-        return JSONResponse(content={"streams": []}, headers=_CORS_HEADERS)
+        return _empty_streams()
 
     stremio_streams = [_format_stremio_stream(s) for s in streams]
 
@@ -300,30 +319,18 @@ async def stremio_play(
 
     repo = getattr(state, "stream_link_repo", None)
     if repo is None:
-        return JSONResponse(
-            status_code=503,
-            content={"error": "stream link repository not configured"},
-            headers=_CORS_HEADERS,
-        )
+        return _error_json(503, "stream link repository not configured")
 
     link = await repo.get(stream_id)
     if link is None:
         log.warning("stremio_play_not_found", stream_id=stream_id)
-        return JSONResponse(
-            status_code=404,
-            content={"error": "stream expired or not found"},
-            headers=_CORS_HEADERS,
-        )
+        return _error_json(404, "stream expired or not found")
 
     # Resolve hoster embed URL to actual video URL
     registry = getattr(state, "hoster_resolver_registry", None)
     if registry is None:
         log.warning("stremio_play_no_resolver", stream_id=stream_id)
-        return JSONResponse(
-            status_code=503,
-            content={"error": "hoster resolver not configured"},
-            headers=_CORS_HEADERS,
-        )
+        return _error_json(503, "hoster resolver not configured")
 
     resolved = await registry.resolve(link.hoster_url, hoster=link.hoster)
     if resolved is None:
@@ -333,11 +340,7 @@ async def stremio_play(
             hoster=link.hoster,
             url=link.hoster_url,
         )
-        return JSONResponse(
-            status_code=502,
-            content={"error": "could not extract video URL from hoster"},
-            headers=_CORS_HEADERS,
-        )
+        return _error_json(502, "could not extract video URL from hoster")
 
     # Guard: reject resolved URLs that are just the embed page echoed back.
     # Stremio cannot play HTML pages — only redirect to actual video URLs.
@@ -352,11 +355,7 @@ async def stremio_play(
             hoster=link.hoster,
             url=link.hoster_url,
         )
-        return JSONResponse(
-            status_code=502,
-            content={"error": "resolver returned embed page, not a video URL"},
-            headers=_CORS_HEADERS,
-        )
+        return _error_json(502, "resolver returned embed page, not a video URL")
 
     log.info(
         "stremio_play_resolved",
@@ -393,21 +392,13 @@ def _cdn_error_response(
             status=exc.response.status_code,
             url=target_url[:120],
         )
-        return JSONResponse(
-            status_code=502,
-            content={"error": "CDN returned error"},
-            headers=_CORS_HEADERS,
-        )
+        return _error_json(502, "CDN returned error")
     log.warning(
         "hls_proxy_network_error",
         stream_id=stream_id,
         url=target_url[:120],
     )
-    return JSONResponse(
-        status_code=502,
-        content={"error": "CDN request failed"},
-        headers=_CORS_HEADERS,
-    )
+    return _error_json(502, "CDN request failed")
 
 
 @router.get("/proxy/{stream_id}/{path:path}", response_model=None)
@@ -429,28 +420,16 @@ async def proxy_hls(
 
     repo = getattr(state, "stream_link_repo", None)
     if repo is None:
-        return JSONResponse(
-            status_code=503,
-            content={"error": "stream link repository not configured"},
-            headers=_CORS_HEADERS,
-        )
+        return _error_json(503, "stream link repository not configured")
 
     link = await repo.get(stream_id)
     if link is None:
         log.warning("hls_proxy_not_found", stream_id=stream_id)
-        return JSONResponse(
-            status_code=404,
-            content={"error": "stream expired or not found"},
-            headers=_CORS_HEADERS,
-        )
+        return _error_json(404, "stream expired or not found")
 
     if not link.video_url or not link.is_hls:
         log.warning("hls_proxy_not_hls", stream_id=stream_id)
-        return JSONResponse(
-            status_code=400,
-            content={"error": "stream is not an HLS proxy stream"},
-            headers=_CORS_HEADERS,
-        )
+        return _error_json(400, "stream is not an HLS proxy stream")
 
     # Reconstruct CDN headers
     headers: dict[str, str] = {}

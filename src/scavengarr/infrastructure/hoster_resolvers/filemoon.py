@@ -15,6 +15,7 @@ import json
 import os
 import re
 import uuid
+from typing import TypedDict
 
 import httpx
 import structlog
@@ -38,6 +39,59 @@ log = structlog.get_logger(__name__)
 _BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
 
+# ---------------------------------------------------------------------------
+# TypedDicts for Byse API responses
+# ---------------------------------------------------------------------------
+
+
+class ByseEncryptedPlayback(TypedDict, total=False):
+    """AES-256-GCM encrypted playback response."""
+
+    key_parts: list[str]
+    iv: str
+    payload: str
+
+
+class ByseSource(TypedDict, total=False):
+    """A single video source from the Byse playback response."""
+
+    url: str
+    file: str
+    mimeType: str
+    type: str
+
+
+class ByseChallengeResponse(TypedDict, total=False):
+    """Response from /api/videos/access/challenge."""
+
+    challenge_id: str
+    nonce: str
+    viewer_hint: str
+
+
+class ByseAttestResponse(TypedDict, total=False):
+    """Response from /api/videos/access/attest."""
+
+    token: str
+    viewer_id: str
+    device_id: str
+    confidence: float
+
+
+class BysePlaybackResponse(TypedDict, total=False):
+    """Response from /api/videos/{id}/embed/playback."""
+
+    playback: ByseEncryptedPlayback
+
+
+class ByseDetailsResponse(TypedDict, total=False):
+    """Response from /api/videos/{id}/embed/details."""
+
+    embed_frame_url: str
+    sources: list[ByseSource]
+    data: dict[str, object]
+
+
 def _b64url_encode(data: bytes) -> str:
     """Encode bytes to base64url without padding."""
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
@@ -52,7 +106,7 @@ def _b64url_decode(s: str) -> bytes:
     return base64.b64decode(s)
 
 
-def _decrypt_playback(encrypted: dict) -> dict | None:  # type: ignore[type-arg]
+def _decrypt_playback(encrypted: ByseEncryptedPlayback) -> dict[str, object] | None:
     """Decrypt AES-256-GCM encrypted playback response from Byse API.
 
     The key is formed by concatenating base64url-decoded key_parts.
@@ -79,7 +133,7 @@ def _build_attest_body(
     challenge_id: str,
     nonce: str,
     viewer_id: str,
-) -> dict:  # type: ignore[type-arg]
+) -> dict[str, object]:
     """Build the attestation request body with ECDSA signature.
 
     Generates a P-256 keypair, signs the nonce, and returns the
@@ -299,7 +353,7 @@ class FilemoonResolver:
 
     async def _byse_get_details(
         self, base_url: str, video_id: str, referer: str
-    ) -> dict | None:  # type: ignore[type-arg]
+    ) -> ByseDetailsResponse | None:
         """Fetch Byse embed details API."""
         api_url = f"{base_url}/api/videos/{video_id}/embed/details"
         try:
@@ -316,7 +370,7 @@ class FilemoonResolver:
                     url=api_url,
                 )
                 return None
-            return resp.json()  # type: ignore[no-any-return]
+            return resp.json()  # type: ignore[return-value]
         except Exception:  # noqa: BLE001
             log.debug("filemoon_byse_api_failed", url=api_url)
             return None
@@ -369,8 +423,8 @@ class FilemoonResolver:
         headers: dict[str, str],
         referer: str,
         token: str,
-        attest: dict,  # type: ignore[type-arg]
-        attest_body: dict,  # type: ignore[type-arg]
+        attest: dict[str, object],
+        attest_body: dict[str, object],
     ) -> ResolvedStream | None:
         """Fetch and decrypt Byse playback data."""
         playback_body = {
@@ -405,11 +459,11 @@ class FilemoonResolver:
         self,
         url: str,
         headers: dict[str, str],
-        body: dict | None = None,  # type: ignore[type-arg]
-    ) -> dict | None:  # type: ignore[type-arg]
+        body: dict[str, object] | None = None,
+    ) -> dict[str, object] | None:
         """POST to a Byse API endpoint and return JSON response."""
         try:
-            kwargs: dict = {  # type: ignore[type-arg]
+            kwargs: dict[str, object] = {
                 "headers": {**headers, "Content-Type": "application/json"},
                 "timeout": 15,
             }
@@ -419,7 +473,7 @@ class FilemoonResolver:
             if resp.status_code != 200:
                 log.debug("filemoon_byse_post_failed", url=url, status=resp.status_code)
                 return None
-            return resp.json()  # type: ignore[no-any-return]
+            return resp.json()  # type: ignore[return-value]
         except Exception:  # noqa: BLE001
             log.debug("filemoon_byse_post_error", url=url)
             return None
@@ -429,7 +483,7 @@ class FilemoonResolver:
         match = re.search(r"/(?:e|d|download)/([a-z0-9]+)", url)
         return match.group(1) if match else ""
 
-    def _parse_byse_sources(self, data: dict) -> ResolvedStream | None:  # type: ignore[type-arg]
+    def _parse_byse_sources(self, data: dict[str, object]) -> ResolvedStream | None:
         """Parse Byse API response for video sources."""
         sources = data.get("sources")
         if not isinstance(sources, list):

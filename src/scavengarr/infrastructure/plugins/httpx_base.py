@@ -163,6 +163,7 @@ class HttpxPluginBase:
                     )
                     return
             except Exception:  # noqa: BLE001
+                self._log.debug(f"{self.name}_domain_check_failed", domain=domain)
                 continue
 
         # All failed — keep primary

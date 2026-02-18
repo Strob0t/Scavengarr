@@ -284,7 +284,7 @@ class SuperVideoResolver:
             try:
                 await page.wait_for_load_state("networkidle", timeout=10_000)
             except Exception:  # noqa: BLE001
-                pass  # proceed — page may still be usable
+                log.debug("supervideo_networkidle_timeout", url=embed_url)
 
             html = await page.content()
             log.debug(

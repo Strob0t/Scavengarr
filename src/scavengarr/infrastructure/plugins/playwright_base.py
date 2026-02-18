@@ -191,7 +191,7 @@ class PlaywrightPluginBase:
                     try:
                         await pw.stop()
                     except Exception:  # noqa: BLE001
-                        pass
+                        self._log.debug("pw_stop_cleanup_failed", exc_info=True)
                 if attempt < retries:
                     self._log.warning(
                         f"{self.name}_browser_launch_retry",
@@ -269,6 +269,7 @@ class PlaywrightPluginBase:
             )
             return True
         except Exception:  # noqa: BLE001
+            self._log.debug("cf_wait_timeout", timeout_ms=self._cf_timeout_ms)
             return False
 
     async def _navigate_and_wait(
@@ -306,7 +307,7 @@ class PlaywrightPluginBase:
                     timeout=self._networkidle_timeout_ms,
                 )
             except Exception:  # noqa: BLE001
-                pass  # networkidle is best-effort
+                self._log.debug("networkidle_timeout", url=url)
 
         return True
 
@@ -343,6 +344,7 @@ class PlaywrightPluginBase:
                         self._log.info(f"{self.name}_domain_found", domain=domain)
                         return
             except Exception:  # noqa: BLE001
+                self._log.debug(f"{self.name}_domain_check_failed", domain=domain)
                 continue
 
         self.base_url = f"https://{self._domains[0]}"
@@ -385,7 +387,7 @@ class PlaywrightPluginBase:
                     timeout=self._networkidle_timeout_ms,
                 )
             except Exception:  # noqa: BLE001
-                pass  # networkidle is best-effort
+                self._log.debug("networkidle_timeout", url=url)
             return await page.content()
         except Exception as exc:  # noqa: BLE001
             self._log.warning(

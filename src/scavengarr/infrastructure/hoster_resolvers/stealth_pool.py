@@ -178,4 +178,4 @@ class StealthPool:
         try:
             await page.wait_for_function(js, timeout=int(timeout * 1000))
         except Exception:  # noqa: BLE001
-            pass  # proceed — page may still be usable
+            log.debug("stealth_cf_wait_timeout", timeout=timeout)

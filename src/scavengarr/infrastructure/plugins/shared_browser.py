@@ -70,7 +70,7 @@ class SharedBrowserPool:
                 try:
                     await self._pw.stop()
                 except Exception:  # noqa: BLE001
-                    pass
+                    log.debug("shared_browser_stale_pw_stop_error", exc_info=True)
                 self._pw = None
                 self._browser = None
 
