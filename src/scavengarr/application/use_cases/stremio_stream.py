@@ -10,7 +10,6 @@ import asyncio
 import random
 import re
 import time
-import unicodedata
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from dataclasses import replace
@@ -19,6 +18,7 @@ from uuid import uuid4
 
 import structlog
 from guessit import guessit
+from unidecode import unidecode as _unidecode
 
 from scavengarr.domain.entities.stremio import (
     CachedStreamLink,
@@ -293,29 +293,6 @@ def _format_stream(
     )
 
 
-# Transliteration table for characters that NFKD does not decompose.
-# Covers German, Scandinavian, Polish, and other common Latin-script specials.
-_TRANSLITERATION = str.maketrans(
-    {
-        "ß": "ss",
-        "æ": "ae",
-        "Æ": "Ae",
-        "œ": "oe",
-        "Œ": "Oe",
-        "ø": "o",
-        "Ø": "O",
-        "ð": "d",
-        "Ð": "D",
-        "þ": "th",
-        "Þ": "Th",
-        "ł": "l",
-        "Ł": "L",
-        "đ": "d",
-        "Đ": "D",
-    }
-)
-
-
 def _deduplicate_by_hoster(streams: list[RankedStream]) -> list[RankedStream]:
     """Keep only the first (best-ranked) stream per hoster.
 
@@ -342,24 +319,14 @@ def _build_search_query(title: str) -> str:
     are passed as separate parameters to each plugin so they can
     navigate directly to the correct content.
 
-    Applies fuzzy transliteration so titles from TMDB/Wikidata (which
-    may contain Unicode diacritics, ligatures, or special characters)
-    produce clean search queries that work on German streaming sites:
-
-    1. Explicit transliteration (ß→ss, æ→ae, ø→o, ł→l, …)
-    2. NFKD decomposition + combining-mark stripping (ū→u, é→e, ü→u)
-    3. Punctuation removal (colons, semicolons, etc.)
-    4. Whitespace normalization
+    Uses ``unidecode`` for universal Unicode→ASCII transliteration
+    (130+ scripts), then strips punctuation and normalizes whitespace.
     """
-    # 1) Transliterate characters that NFKD cannot decompose
-    text = title.translate(_TRANSLITERATION)
-    # 2) NFKD decomposes: ū → u + combining macron, é → e + combining acute
-    decomposed = unicodedata.normalize("NFKD", text)
-    # Strip combining marks (category "M") to get plain base characters
-    ascii_ish = "".join(c for c in decomposed if unicodedata.category(c)[0] != "M")
-    # 3) Remove punctuation that breaks site searches (keep hyphens and apostrophes)
-    cleaned = re.sub(r"[^\w\s\-']", " ", ascii_ish)
-    # 4) Collapse whitespace
+    # 1) Universal Unicode → ASCII transliteration
+    text = _unidecode(title)
+    # 2) Remove punctuation that breaks site searches (keep hyphens and apostrophes)
+    cleaned = re.sub(r"[^\w\s\-']", " ", text)
+    # 3) Collapse whitespace
     return " ".join(cleaned.split())
 
 

@@ -463,8 +463,8 @@ class TestBuildSearchQuery:
         assert _build_search_query("Die Straße") == "Die Strasse"
 
     def test_ligature_ae(self) -> None:
-        """æ must transliterate to 'ae'."""
-        assert _build_search_query("Ælfred") == "Aelfred"
+        """Æ must transliterate to 'AE' (unidecode preserves case)."""
+        assert _build_search_query("Ælfred") == "AElfred"
 
     def test_scandinavian_oe(self) -> None:
         """œ must transliterate to 'oe'."""
