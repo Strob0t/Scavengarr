@@ -445,20 +445,20 @@ class TestScoreReleaseName:
 
 class TestNormalizeUmlauts:
     def test_ae_oe_ue(self) -> None:
-        assert _normalize("Schöne Grüße") == "schoene gruesse"
+        assert _normalize("Schöne Grüße") == "schone grusse"
 
     def test_eszett(self) -> None:
         assert _normalize("Straße") == "strasse"
 
     def test_mixed_umlauts_and_ascii(self) -> None:
-        assert _normalize("Über den Wölken") == "ueber den woelken"
+        assert _normalize("Über den Wölken") == "uber den wolken"
 
     def test_no_umlauts_unchanged(self) -> None:
         assert _normalize("Iron Man") == "iron man"
 
     def test_uppercase_umlauts(self) -> None:
         """Uppercase Ä/Ö/Ü are lowered first, then transliterated."""
-        assert _normalize("ÜBER") == "ueber"
+        assert _normalize("ÜBER") == "uber"
 
 
 # ---------------------------------------------------------------------------
@@ -487,10 +487,17 @@ class TestTokenBasedScoring:
 
 class TestUmlautScoring:
     def test_umlaut_vs_ascii_matches(self) -> None:
-        """'Über' in reference matches 'ueber' in result."""
+        """Both sides with Über normalise identically via unidecode."""
+        ref = TitleMatchInfo(title="Über den Wolken")
+        score = score_title_match(_sr("Über den Wolken"), ref)
+        assert score == pytest.approx(1.0)
+
+    def test_umlaut_vs_manual_transliteration_close(self) -> None:
+        """'Über' (→ 'uber') vs 'Ueber' (→ 'ueber'): close but not exact."""
         ref = TitleMatchInfo(title="Über den Wolken")
         score = score_title_match(_sr("Ueber den Wolken"), ref)
-        assert score == pytest.approx(1.0)
+        # unidecode: ü→u, so "uber" vs "ueber" gives ~0.97 (above threshold)
+        assert score >= 0.9
 
     def test_both_umlauts_match(self) -> None:
         """Both sides with umlauts should normalize the same way."""

@@ -14,6 +14,7 @@ import re
 import structlog
 from guessit import guessit
 from rapidfuzz import fuzz
+from unidecode import unidecode as _unidecode
 
 from scavengarr.domain.entities.stremio import TitleMatchInfo
 from scavengarr.domain.plugins.base import SearchResult
@@ -27,9 +28,6 @@ _YEAR_RE = re.compile(r"\b((?:19|20)\d{2})\b")
 # Excludes 4-digit years like "2008".
 _SEQUEL_RE = re.compile(r"\s+(\d{1,2})\s*$")
 
-# German umlaut → ASCII transliteration (applied after lowercasing).
-_UMLAUT_TABLE = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"})
-
 # Matches any character that is NOT a word character or whitespace.
 # Used to strip punctuation (colons, hyphens, apostrophes, etc.) so that
 # token matching is not broken by e.g. "dune:" vs "dune".
@@ -37,8 +35,8 @@ _PUNCT_RE = re.compile(r"[^\w\s]")
 
 
 def _normalize(text: str) -> str:
-    """Lowercase, transliterate umlauts, strip punctuation, collapse ws."""
-    text = text.lower().translate(_UMLAUT_TABLE)
+    """Lowercase, transliterate Unicode→ASCII, strip punctuation, collapse ws."""
+    text = _unidecode(text.lower())
     text = _PUNCT_RE.sub(" ", text)
     return " ".join(text.split())
 

@@ -29,6 +29,7 @@ playwright-stealth = "^2.0.0"
 pyyaml = "^6.0"
 cryptography = ">=43.0,<45"
 rapidfuzz = "^3.14.3"
+unidecode = "^1.4.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0.2"
