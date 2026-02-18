@@ -228,6 +228,15 @@ class StremioConfig(BaseModel):
         ),
     )
 
+    auto_tune_all: bool = Field(
+        default=True,
+        description=(
+            "Auto-tune ALL concurrency parameters (plugins, Playwright, probes, "
+            "validation) based on detected container/host resources via cgroups. "
+            "Supersedes max_concurrent_plugins_auto."
+        ),
+    )
+
     max_results_per_plugin: int = Field(
         default=100,
         description=(
@@ -507,6 +516,35 @@ class AppConfig(BaseModel):
         description="API rate limit per IP (requests/minute). 0 = unlimited.",
     )
 
+    # Adaptive rate limiting (YAML section: http.*)
+    rate_limit_adaptive: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "rate_limit_adaptive",
+            AliasPath("http", "rate_limit_adaptive"),
+        ),
+        description=(
+            "Enable AIMD adaptive rate limiting per domain. "
+            "Rate increases on success, halves on 429/503, reduces on timeout."
+        ),
+    )
+    rate_limit_min_rps: float = Field(
+        default=0.5,
+        validation_alias=AliasChoices(
+            "rate_limit_min_rps",
+            AliasPath("http", "rate_limit_min_rps"),
+        ),
+        description="Minimum adaptive rate per domain (rps).",
+    )
+    rate_limit_max_rps: float = Field(
+        default=50.0,
+        validation_alias=AliasChoices(
+            "rate_limit_max_rps",
+            AliasPath("http", "rate_limit_max_rps"),
+        ),
+        description="Maximum adaptive rate per domain (rps).",
+    )
+
     # Retry on 429/503 (YAML section: http.*)
     http_retry_max_attempts: int = Field(
         default=3,
@@ -595,6 +633,9 @@ class EnvOverrides(BaseSettings):
     http_user_agent: str | None = None
 
     rate_limit_requests_per_second: float | None = None
+    rate_limit_adaptive: bool | None = None
+    rate_limit_min_rps: float | None = None
+    rate_limit_max_rps: float | None = None
     api_rate_limit_rpm: int | None = None
 
     http_retry_max_attempts: int | None = None

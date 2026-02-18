@@ -63,6 +63,7 @@ from scavengarr.infrastructure.plugins.constants import (
 )
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.shared_browser import SharedBrowserPool
+from scavengarr.infrastructure.resource_detector import detect_resources
 from scavengarr.infrastructure.scoring.health_prober import HealthProber
 from scavengarr.infrastructure.scoring.query_pool import QueryPoolBuilder
 from scavengarr.infrastructure.scoring.scheduler import ScoringScheduler
@@ -79,7 +80,11 @@ log = structlog.get_logger(__name__)
 
 
 def _auto_tune_concurrency(config: AppConfig) -> None:
-    """Auto-tune max_concurrent_plugins based on host CPU/RAM capacity."""
+    """Auto-tune max_concurrent_plugins based on host CPU/RAM capacity.
+
+    Legacy single-parameter tuning.  Superseded by :func:`_auto_tune` when
+    ``stremio.auto_tune_all`` is enabled.
+    """
     if not config.stremio.max_concurrent_plugins_auto:
         return
 
@@ -99,6 +104,41 @@ def _auto_tune_concurrency(config: AppConfig) -> None:
         cpu=cpu_count,
         mem_limit=mem_limit,
         result=auto_concurrent,
+    )
+
+
+def _auto_tune(config: AppConfig) -> None:
+    """Container-aware auto-tuning of ALL concurrency parameters.
+
+    Uses cgroup v2/v1 detection to read actual container limits instead of
+    host values.  Scales every concurrency parameter proportionally:
+
+    - ``max_concurrent_plugins``:  ``min(cpu*3, mem_gb*2, 30)``
+    - ``max_concurrent_playwright``: ``min(cpu, mem_gb/0.15, 10)``
+    - ``probe_concurrency``:       ``cpu * 4``
+    - ``validation_max_concurrent``: ``cpu * 5``
+    """
+    resources = detect_resources()
+    cpus = resources.cpu_cores
+    mem_gb = resources.memory_bytes / (1024**3)
+
+    s = config.stremio
+    s.max_concurrent_plugins = max(2, min(cpus * 3, int(mem_gb * 2), 30))
+    s.max_concurrent_playwright = max(1, min(cpus, int(mem_gb / 0.15), 10))
+    s.probe_concurrency = max(4, cpus * 4)
+    config.validation_max_concurrent = max(5, cpus * 5)
+
+    log.info(
+        "auto_tune_complete",
+        cpu_cores=cpus,
+        memory_mb=round(mem_gb * 1024),
+        cpu_source=resources.cpu_source,
+        mem_source=resources.mem_source,
+        cgroup_limited=resources.cgroup_limited,
+        max_concurrent_plugins=s.max_concurrent_plugins,
+        max_concurrent_playwright=s.max_concurrent_playwright,
+        probe_concurrency=s.probe_concurrency,
+        validation_max_concurrent=config.validation_max_concurrent,
     )
 
 
@@ -183,8 +223,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 0) Metrics collector (zero-overhead, must exist before components that record)
     state.metrics = MetricsCollector()
 
-    # 0b) Auto-tune max_concurrent_plugins based on host capacity
-    _auto_tune_concurrency(config)
+    # 0b) Auto-tune concurrency based on detected container/host resources
+    if config.stremio.auto_tune_all:
+        _auto_tune(config)
+    else:
+        _auto_tune_concurrency(config)
 
     # 1) Cache (must be first - other components depend on it)
     cache = create_cache(
@@ -207,6 +250,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     rate_limiter = DomainRateLimiter(
         default_rps=config.rate_limit_requests_per_second,
         burst=10,
+        adaptive=config.rate_limit_adaptive,
+        min_rate=config.rate_limit_min_rps,
+        max_rate=config.rate_limit_max_rps,
     )
     transport = RetryTransport(
         wrapped=httpx.AsyncHTTPTransport(),

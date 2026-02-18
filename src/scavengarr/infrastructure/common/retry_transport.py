@@ -63,17 +63,24 @@ class RetryTransport(httpx.AsyncBaseTransport):
         """Send *request* through the wrapped transport with rate limiting.
 
         On retryable status codes, retries with exponential backoff.
+        Feeds back success/throttle signals to the adaptive rate limiter.
         """
+        url_str = str(request.url)
         last_response: httpx.Response | None = None
 
         for attempt in range(1 + self._max_retries):
             # Proactive: per-domain rate limiting
-            await self._rate_limiter.acquire(str(request.url))
+            await self._rate_limiter.acquire(url_str)
 
             response = await self._wrapped.handle_async_request(request)
 
             if response.status_code not in self._retryable:
+                # Adaptive feedback: successful response
+                self._rate_limiter.record_success(url_str)
                 return response
+
+            # Adaptive feedback: throttled (429/503)
+            self._rate_limiter.record_throttle(url_str)
 
             # Last attempt — return whatever we got
             if attempt == self._max_retries:
@@ -87,7 +94,7 @@ class RetryTransport(httpx.AsyncBaseTransport):
             delay = self._compute_delay(response, attempt)
             log.info(
                 "http_retry",
-                url=str(request.url),
+                url=url_str,
                 status=response.status_code,
                 attempt=attempt + 1,
                 delay=round(delay, 2),

@@ -157,6 +157,9 @@ http:
   follow_redirects: true
   user_agent: "Scavengarr/0.1.0 (+https://github.com/Strob0t/Scavengarr)"
   rate_limit_rps: 10.0          # per-domain rate limit (schema default: 5)
+  rate_limit_adaptive: true     # AIMD: rate grows on success, halves on 429/503
+  rate_limit_min_rps: 0.5       # adaptive lower bound per domain
+  rate_limit_max_rps: 50.0      # adaptive upper bound per domain
   retry_max_attempts: 2         # retries on 429/503 (schema default: 3)
   retry_backoff_base: 0.5       # initial backoff (schema default: 1.0)
   retry_max_backoff: 10.0       # max backoff (schema default: 30)
@@ -168,6 +171,7 @@ playwright:
 stremio:
   max_concurrent_plugins: 15    # parallel plugin searches (schema default: 10)
   max_concurrent_plugins_auto: true
+  auto_tune_all: true           # container-aware auto-tune ALL concurrency params
   max_concurrent_playwright: 7  # parallel Playwright searches (schema default: 5)
   max_results_per_plugin: 50    # results per plugin (schema default: 100)
   plugin_timeout_seconds: 15.0  # per-plugin timeout (schema default: 30)
@@ -211,6 +215,9 @@ The configuration loader recognizes these top-level sections. Flat keys (like
 | `http_follow_redirects` | `http.follow_redirects` |
 | `http_user_agent` | `http.user_agent` |
 | `rate_limit_requests_per_second` | `http.rate_limit_rps` |
+| `rate_limit_adaptive` | `http.rate_limit_adaptive` |
+| `rate_limit_min_rps` | `http.rate_limit_min_rps` |
+| `rate_limit_max_rps` | `http.rate_limit_max_rps` |
 | `http_retry_max_attempts` | `http.retry_max_attempts` |
 | `http_retry_backoff_base` | `http.retry_backoff_base` |
 | `http_retry_max_backoff` | `http.retry_max_backoff` |
@@ -260,6 +267,9 @@ Controls the HTTP client used by httpx plugins for static HTML pages and API req
 | `http.follow_redirects` | bool | `true` | Whether the HTTP client follows redirects |
 | `http.user_agent` | string | `Scavengarr/0.1.0 (...)` | User-Agent header sent with every request |
 | `http.rate_limit_rps` | float | `5.0` | Per-domain rate limit (requests/second). 0 = unlimited |
+| `http.rate_limit_adaptive` | bool | `true` | Enable AIMD adaptive rate limiting per domain |
+| `http.rate_limit_min_rps` | float | `0.5` | Adaptive lower bound per domain (rps) |
+| `http.rate_limit_max_rps` | float | `50.0` | Adaptive upper bound per domain (rps) |
 | `http.api_rate_limit_rpm` | int | `120` | API rate limit per IP (requests/minute). 0 = unlimited |
 | `http.retry_max_attempts` | int | `3` | Max retry attempts on 429/503 responses. 0 = no retries |
 | `http.retry_backoff_base` | float | `1.0` | Base delay in seconds for exponential backoff |
@@ -312,6 +322,7 @@ matching, hoster probing, and scored plugin selection.
 | `stremio.max_concurrent_plugins` | int | `10` | Max parallel plugin searches |
 | `stremio.max_concurrent_playwright` | int | `5` | Max parallel Playwright plugin searches |
 | `stremio.max_concurrent_plugins_auto` | bool | `true` | Auto-tune concurrency based on host CPU/RAM |
+| `stremio.auto_tune_all` | bool | `true` | Container-aware auto-tune ALL concurrency params (cgroup v2/v1) |
 | `stremio.max_results_per_plugin` | int | `100` | Max results per plugin in Stremio search |
 | `stremio.plugin_timeout_seconds` | float | `30.0` | Per-plugin timeout for stream search |
 | `stremio.title_match_threshold` | float | `0.7` | Minimum title similarity score |

@@ -12,6 +12,22 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 breaker, global concurrency pool, graceful shutdown, multi-language search, and
 growth of the test suite from 160 to 3963 tests.
 
+### Container-Aware Resource Detection & Adaptive Auto-Tuning
+- **cgroup-aware resource detector** (`infrastructure/resource_detector.py`): reads actual CPU/memory limits from Linux cgroups (v2 → v1 → OS fallback) instead of host values. Detection order mirrors JVM `UseContainerSupport` and Go 1.25. On a 16-core/64GB host with `--cpus=2 --memory=2g`, the system now correctly sees 2 CPUs and 2GB RAM
+- **Extended auto-tuning** (`_auto_tune()` in composition root): when `stremio.auto_tune_all=true` (default), ALL concurrency parameters are scaled proportionally to detected resources:
+  - `max_concurrent_plugins`: `min(cpu*3, mem_gb*2, 30)` — was only CPU-based
+  - `max_concurrent_playwright`: `min(cpu, mem_gb/0.15, 10)` — RAM-limited (~150MB per BrowserContext)
+  - `probe_concurrency`: `cpu * 4` — lightweight HEAD requests scale linearly
+  - `validation_max_concurrent`: `cpu * 5` — same as probes
+- **Adaptive AIMD rate limiting** (`TokenBucket` in `rate_limiter.py`): per-domain request rates now adjust automatically based on target-server feedback using TCP-style AIMD (Additive Increase / Multiplicative Decrease):
+  - Success → rate increases by 10% (capped at `rate_limit_max_rps`, default 50)
+  - 429/503 → rate halved immediately (floored at `rate_limit_min_rps`, default 0.5)
+  - Timeout → rate reduced by 25%
+  - Each domain has its own independent adaptive rate — throttling on site A doesn't affect site B
+- **RetryTransport feedback integration**: after every HTTP response, the transport now calls `record_success()` or `record_throttle()` on the rate limiter, enabling real-time rate adaptation
+- **New config fields**: `stremio.auto_tune_all` (bool, default true), `http.rate_limit_adaptive` (bool, default true), `http.rate_limit_min_rps` (float, default 0.5), `http.rate_limit_max_rps` (float, default 50.0)
+- **48 new tests**: resource detector (cgroup v2/v1/fallback, fractional CPUs, unlimited, frozen dataclass), adaptive rate limiter (AIMD, min/max bounds, domain independence, compounding), auto-tune (5 container scenarios from 1CPU/512MB to 16CPU/64GB), retry transport feedback
+
 ### Performance Tuning
 - **Aggressive timeout cuts**: HTTP scraping 30→15s, hoster resolution 15→10s, Playwright page load 30→20s, plugin timeout 30→15s, probe timeout 10→5s, stealth probe 15→10s, link validation 5→3s
 - **Higher concurrency**: `max_concurrent_plugins` 5→15 with auto-tune cap raised 10→20, `max_concurrent_playwright` added at 7, `validation_max_concurrent` 20→30, `probe_concurrency` 10→20, `max_probe_count` 50→80, plugin default `_max_concurrent` 3→5
