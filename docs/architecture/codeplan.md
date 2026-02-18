@@ -1375,7 +1375,7 @@ class PluginProtocol(Protocol):
 
 ## Test Suite
 
-**3963 tests** across unit, integration, E2E, and live test categories.
+**3997 tests** across unit, integration, E2E, and live test categories.
 
 ### Test Configuration
 

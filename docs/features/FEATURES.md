@@ -80,6 +80,7 @@ Scavengarr includes a full Stremio addon that provides catalog browsing, search,
 | IMDB fallback | [x] Implemented | Title lookup without TMDB API key via Wikidata |
 | Per-plugin timeout | [x] Implemented | Slow plugins don't block the response |
 | behaviorHints.proxyHeaders | [x] Implemented | Pre-resolve hoster URLs, emit Referer/User-Agent for CDN playback |
+| HLS proxy endpoint | [x] Implemented | Server-side proxy for HLS streams requiring Referer on all sub-requests |
 | Circuit breaker integration | [x] Implemented | Skip consistently failing plugins |
 | Concurrency pool integration | [x] Implemented | Fair-share httpx/PW slots across concurrent requests |
 | Multi-language search | [x] Implemented | Per-language TMDB titles, plugins declare `languages` |
@@ -139,6 +140,7 @@ Validates file availability and extracts direct video URLs from streaming hoster
 | XFS consolidation | [x] Implemented | 27 XFS hosters share one parameterised resolver |
 | Generic DDL consolidation | [x] Implemented | 12 DDL hosters share one parameterised resolver |
 | Video extraction utilities | [x] Implemented | JWPlayer, packed JS, HLS `hls2` pattern extraction |
+| XFS video URL verification | [x] Implemented | HEAD check filters IP-locked CDN tokens (e.g. LULUVID) |
 | Domain alias mapping | [x] Implemented | All `supported_domains` mapped (e.g., vidhide family) |
 | respx-based tests | [x] Implemented | All resolver tests use httpx-native HTTP mocking |
 | Live contract tests | [x] Implemented | Skeleton for resolver live/dead URL validation |
@@ -314,4 +316,4 @@ Infrastructure (implements Domain ports)
 | Shared browser pool | `src/scavengarr/infrastructure/shared_browser.py` |
 | Metrics collector | `src/scavengarr/infrastructure/metrics.py` |
 | Plugin scoring | `src/scavengarr/infrastructure/scoring/` |
-| Test suite (3963 tests) | `tests/` |
+| Test suite (3997 tests) | `tests/` |

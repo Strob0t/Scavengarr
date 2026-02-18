@@ -14,7 +14,7 @@ The test suite now includes 221 non-unit tests across three categories:
 | E2E | `tests/e2e/` | 158 | 46 Torznab endpoint + 81 Stremio endpoint + 31 streamable link verification |
 | Live smoke | `tests/live/` | 38 | Plugin smoke tests + resolver contract tests |
 
-Total test suite: **3963 tests** (3742 unit + 158 E2E + 25 integration + 38 live).
+Total test suite: **3997 tests** (3776 unit + 158 E2E + 25 integration + 38 live).
 
 ## Original Problem
 

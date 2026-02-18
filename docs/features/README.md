@@ -4,7 +4,7 @@
 
 Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Prowlarr and other Arr applications. It scrapes sources via Python plugins (httpx for static HTML, Playwright for JS-heavy sites) and delivers results through standard Torznab endpoints.
 
-**Version:** 0.1.0 | **Python:** 3.12+ | **Tests:** 3963 | **Plugins:** 42 (33 httpx + 9 Playwright) | **Hoster Resolvers:** 56 | **Architecture:** Clean Architecture
+**Version:** 0.1.0 | **Python:** 3.12+ | **Tests:** 3997 | **Plugins:** 42 (33 httpx + 9 Playwright) | **Hoster Resolvers:** 56 | **Architecture:** Clean Architecture
 
 ---
 
@@ -82,7 +82,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Pro
 | Caching | diskcache (+ optional Redis) | Search result and CrawlJob storage |
 | Logging | structlog | Structured JSON/console logging |
 | CLI | Typer | Local debugging and diagnostics |
-| Testing | pytest | 3963 tests across all layers (3742 unit + 158 E2E + 25 integration + 38 live) |
+| Testing | pytest | 3997 tests across all layers (3776 unit + 158 E2E + 25 integration + 38 live) |
 
 ---
 
@@ -102,7 +102,7 @@ src/scavengarr/
     torznab/               # HttpxSearchEngine + XML presenter
     validation/            # Link validator (HEAD/GET)
     cache/                 # diskcache adapter
-    stremio/               # Stream converter, sorter, TMDB client, title matcher
+    stremio/               # Stream converter, sorter, TMDB client, title matcher, HLS proxy
     hoster_resolvers/      # 56 resolvers (27 XFS consolidated + 12 generic DDL + 17 individual)
     config/                # Settings, logging
     common/                # Parsers, converters, extractors, HTML selectors

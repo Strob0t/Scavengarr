@@ -13,7 +13,6 @@ from scavengarr.infrastructure.stremio.hls_proxy import (
     rewrite_manifest,
 )
 
-
 # ---------------------------------------------------------------------------
 # cdn_base_from_url
 # ---------------------------------------------------------------------------
@@ -22,7 +21,10 @@ from scavengarr.infrastructure.stremio.hls_proxy import (
 class TestCdnBaseFromUrl:
     def test_extracts_directory_from_hls_url(self) -> None:
         url = "https://ds7.dropcdn.io/hls2/01/00017/yw6c47u0v5nb_h/master.m3u8?t=abc"
-        assert cdn_base_from_url(url) == "https://ds7.dropcdn.io/hls2/01/00017/yw6c47u0v5nb_h/"
+        assert (
+            cdn_base_from_url(url)
+            == "https://ds7.dropcdn.io/hls2/01/00017/yw6c47u0v5nb_h/"
+        )
 
     def test_root_path(self) -> None:
         url = "https://cdn.example.com/master.m3u8"
@@ -79,8 +81,14 @@ class TestRewriteManifest:
         proxy_base = "http://localhost:7979/api/v1/stremio/proxy/abc123/"
         result = rewrite_manifest(_VARIANT_MANIFEST, cdn_base, proxy_base)
         assert cdn_base not in result
-        assert "http://localhost:7979/api/v1/stremio/proxy/abc123/seg-1-v1-a1.ts?t=abc" in result
-        assert "http://localhost:7979/api/v1/stremio/proxy/abc123/seg-2-v1-a1.ts?t=abc" in result
+        assert (
+            "http://localhost:7979/api/v1/stremio/proxy/abc123/seg-1-v1-a1.ts?t=abc"
+            in result
+        )
+        assert (
+            "http://localhost:7979/api/v1/stremio/proxy/abc123/seg-2-v1-a1.ts?t=abc"
+            in result
+        )
 
     def test_preserves_tags_and_comments(self) -> None:
         cdn_base = "https://cdn.example.com/"
@@ -118,7 +126,9 @@ class TestFetchHlsResource:
         )
 
         async with httpx.AsyncClient() as client:
-            body, ct = await fetch_hls_resource(client, url, {"Referer": "https://dropload.io/"})
+            body, ct = await fetch_hls_resource(
+                client, url, {"Referer": "https://dropload.io/"}
+            )
 
         assert body == content
         assert "mpegurl" in ct
@@ -152,7 +162,9 @@ class TestFetchHlsResource:
 
         async with httpx.AsyncClient() as client:
             with pytest.raises(httpx.HTTPStatusError):
-                await fetch_hls_resource(client, url, {"Referer": "https://dropload.io/"})
+                await fetch_hls_resource(
+                    client, url, {"Referer": "https://dropload.io/"}
+                )
 
     @respx.mock
     @pytest.mark.asyncio()

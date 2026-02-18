@@ -130,7 +130,7 @@ Adding a new generic DDL hoster requires only adding a `GenericDDLConfig` consta
 
 #### Video hosters (extract video URL)
 
-Fetch `/e/{file_id}` embed page, extract HLS/MP4 URL via JWPlayer config, Dean Edwards packed JS, or Streamwish `hls2` patterns. Return `ResolvedStream` with `Referer` header.
+Fetch `/e/{file_id}` embed page, extract HLS/MP4 URL via JWPlayer config, Dean Edwards packed JS, or Streamwish `hls2` patterns. After extraction, a **HEAD verification** against the CDN URL filters out IP-locked CDN tokens (e.g. LULUVID/LULUVDOO whose tokens are bound to Cloudflare's edge IP). Only URLs returning 200/206 are returned as `ResolvedStream` with `Referer` header.
 
 | Hoster | Domains | Notes |
 |---|---|---|

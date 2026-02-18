@@ -18,10 +18,11 @@ The addon supports both IMDb (`tt*`) and TMDB (`tmdb:*`) identifiers and ranks s
 
 ```
 Stremio App
-  ├── GET /manifest.json             → addon metadata + catalogs
-  ├── GET /catalog/{type}/{id}.json  → TMDB trending / search
-  ├── GET /stream/{type}/{id}.json   → plugin search → ranked streams
-  └── GET /play/{stream_id}          → hoster resolution → 302 video URL
+  ├── GET /manifest.json                     → addon metadata + catalogs
+  ├── GET /catalog/{type}/{id}.json          → TMDB trending / search
+  ├── GET /stream/{type}/{id}.json           → plugin search → ranked streams
+  ├── GET /play/{stream_id}                  → hoster resolution → 302 video URL
+  └── GET /proxy/{stream_id}/{path:path}     → HLS proxy (manifests + segments)
 ```
 
 ### Request Flow (Stream Resolution)
@@ -121,6 +122,28 @@ When a stream is pre-resolved at `/stream` time, the response includes `behavior
 | Web | Not supported (CORS restrictions) |
 
 Streams that fail pre-resolution fall back to the `/play/` proxy endpoint.
+
+### HLS Proxy
+
+```
+GET /api/v1/stremio/proxy/{stream_id}/{path:path}
+```
+
+Server-side proxy for HLS streams whose CDN requires headers (e.g. `Referer`) on **all** sub-requests — not just the master manifest, but also variant playlists and `.ts` segments.
+
+Stremio's `proxyHeaders` only applies headers to the initial manifest fetch. Internal HLS sub-requests (variant playlists, segments) are made by the player without the configured headers, causing 403 from CDNs like Dropload's `dropcdn.io`.
+
+**How it works:**
+1. Look up `CachedStreamLink` from cache (includes `video_url`, `video_headers`, `is_hls`)
+2. Build target CDN URL from `cdn_base + path` (preserving query parameters)
+3. Fetch from CDN with stored headers (Referer etc.)
+4. If response is a manifest (`.m3u8`): rewrite absolute CDN URLs → proxy URLs so subsequent requests also go through the proxy
+5. If response is a segment (`.ts`): pass through as-is
+
+**When is it used?**
+- Only for HLS streams that require headers (e.g. Dropload). Detected automatically: `resolved.is_hls and resolved.headers`.
+- HLS streams without special headers (STREAMRUBY, SAVEFILES, etc.) continue using direct URLs — no proxy overhead.
+- MP4 streams always use direct URLs with `behaviorHints.proxyHeaders`.
 
 ### Play (Proxy Fallback)
 
@@ -315,8 +338,9 @@ are collapsed to the single best-ranked VOE link).
 | `test_release_parser.py` | Quality/language parsing from release names |
 | `test_tmdb_client.py` | TMDB httpx client with caching |
 | `test_imdb_fallback.py` | IMDB Suggest + Wikidata fallback |
-| `test_stream_link_cache.py` | Stream link cache repository |
-| E2E tests | 112 Stremio endpoint tests (manifest, catalog, stream, play, streamable link verification) |
+| `test_stream_link_cache.py` | Stream link cache repository (incl. HLS proxy fields) |
+| `test_hls_proxy.py` | HLS proxy manifest rewriting + CDN fetch helpers (18 tests) |
+| E2E tests | 158 Stremio endpoint tests (manifest, catalog, stream, play, HLS proxy, streamable link verification) |
 
 ---
 
@@ -333,6 +357,7 @@ are collapsed to the single best-ranked VOE link).
 | Stream sorter | `src/scavengarr/infrastructure/stremio/stream_sorter.py` |
 | Title matcher | `src/scavengarr/infrastructure/stremio/title_matcher.py` |
 | Release parser | `src/scavengarr/infrastructure/stremio/release_parser.py` |
+| HLS proxy helpers | `src/scavengarr/infrastructure/stremio/hls_proxy.py` |
 | TMDB client | `src/scavengarr/infrastructure/tmdb/client.py` |
 | IMDB fallback | `src/scavengarr/infrastructure/tmdb/imdb_fallback.py` |
 | Stremio router | `src/scavengarr/interfaces/api/stremio/router.py` |

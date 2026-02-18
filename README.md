@@ -135,7 +135,7 @@ poetry run pre-commit install
 poetry run pytest
 ```
 
-The test suite includes 3963 tests (3742 unit + 158 E2E + 25 integration + 38 live smoke).
+The test suite includes 3997 tests (3776 unit + 158 E2E + 25 integration + 38 live smoke).
 
 ### Code Quality
 
@@ -157,7 +157,7 @@ src/scavengarr/
   infrastructure/   # Adapters (scraping, cache, plugins, resolvers, validation)
   interfaces/       # HTTP router (FastAPI), CLI (Typer), composition root
 plugins/            # 42 Python plugins (33 httpx + 9 Playwright)
-tests/              # 3963 tests (unit, E2E, integration, live)
+tests/              # 3997 tests (unit, E2E, integration, live)
 docs/               # Architecture, features, plans, refactor history
 ```
 
