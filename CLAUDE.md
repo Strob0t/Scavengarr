@@ -289,7 +289,7 @@ The system provides a stable download endpoint that delivers a `.crawljob` file 
 - Integration: HTTP router ↔ use case ↔ adapter with HTTP mocking.
 - Optional E2E: real plugin fixtures, but deterministic (no external sites in CI).
 
-### Current test suite (3625 tests)
+### Current test suite (3648 tests)
 
 ```
 tests/
@@ -574,7 +574,7 @@ Agents are ONLY for **simple, explicit, mechanical tasks** where the scope is 10
 **Step 2: Choose the correct base class**
 - Httpx plugins: inherit from `HttpxPluginBase` (`src/scavengarr/infrastructure/plugins/httpx_base.py`)
   - Provides: `_ensure_client()`, `_verify_domain()`, `cleanup()`, `_safe_fetch()`, `_safe_parse_json()`, `_new_semaphore()`
-  - Class attributes: `_domains`, `_max_concurrent` (default 3), `_max_results` (default 1000), `_timeout` (default 15), `_user_agent`
+  - Class attributes: `_domains`, `_max_concurrent` (default 3), `_max_results` (default 1000), `_timeout` (default 15), `_user_agent`, `languages` (default `["de"]`, override for non-German sites e.g. `["en"]`)
   - Instance: `self._client`, `self._log`, `self.base_url`, `self._domain_verified`
 - Playwright plugins: inherit from `PlaywrightPluginBase` (`src/scavengarr/infrastructure/plugins/playwright_base.py`)
   - Provides: `_ensure_browser()`, `_ensure_context()`, `_ensure_page()`, `_new_page()`, `_verify_domain()`, `_fetch_page_html()`, `cleanup()`

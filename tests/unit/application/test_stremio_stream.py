@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from scavengarr.application.use_cases.stremio_stream import (
     StremioStreamUseCase,
+    _build_multi_lang_reference,
     _build_search_queries,
     _build_search_query,
     _deduplicate_by_hoster,
@@ -99,9 +100,12 @@ def _make_use_case(
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
         engine.search = AsyncMock(return_value=[])
     cfg = config or _make_config()
+    if plugins is None:
+        plugins = MagicMock()
+        plugins.get_languages.return_value = ["de"]
     return StremioStreamUseCase(
         tmdb=tmdb or AsyncMock(),
-        plugins=plugins or MagicMock(),
+        plugins=plugins,
         search_engine=engine,
         config=cfg,
         sorter=StreamSorter(cfg),
@@ -683,6 +687,7 @@ class TestExecute:
         )
 
         plugins = MagicMock()
+        plugins.get_languages.return_value = ["de"]
         plugins.get_by_provides.return_value = []
 
         uc = _make_use_case(tmdb=tmdb, plugins=plugins)
@@ -711,6 +716,7 @@ class TestExecute:
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
 
         plugins = MagicMock()
+        plugins.get_languages.return_value = ["de"]
         plugins.get_by_provides.side_effect = lambda p: (
             ["hdfilme"] if p == "stream" else []
         )
@@ -724,7 +730,7 @@ class TestExecute:
         # Name should include reference title from TMDB
         assert "Iron Man" in result[0].name
         assert "(2008)" in result[0].name
-        tmdb.get_title_and_year.assert_awaited_once_with("tt1234567")
+        tmdb.get_title_and_year.assert_awaited_once_with("tt1234567", language="de")
         mock_plugin.search.assert_awaited_once_with(
             "Iron Man", category=2000, season=None, episode=None
         )
@@ -745,6 +751,7 @@ class TestExecute:
         engine.validate_results = AsyncMock(return_value=[])
 
         plugins = MagicMock()
+        plugins.get_languages.return_value = ["de"]
         plugins.get_by_provides.side_effect = lambda p: (
             ["aniworld"] if p == "stream" else []
         )
@@ -782,6 +789,7 @@ class TestExecute:
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
 
         plugins = MagicMock()
+        plugins.get_languages.return_value = ["de"]
         plugins.get_by_provides.side_effect = lambda p: (
             ["a", "b"] if p == "stream" else []
         )
@@ -815,6 +823,7 @@ class TestExecute:
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
 
         plugins = MagicMock()
+        plugins.get_languages.return_value = ["de"]
         plugins.get_by_provides.side_effect = lambda p: (
             ["good", "bad"] if p == "stream" else []
         )
@@ -834,6 +843,7 @@ class TestExecute:
         tmdb.get_title_and_year = AsyncMock(return_value=TitleMatchInfo(title="Movie"))
 
         plugins = MagicMock()
+        plugins.get_languages.return_value = ["de"]
         plugins.get_by_provides.side_effect = lambda p: (
             ["missing"] if p == "stream" else []
         )
@@ -855,6 +865,7 @@ class TestExecute:
         engine.validate_results = AsyncMock(return_value=[])
 
         plugins = MagicMock()
+        plugins.get_languages.return_value = ["de"]
         plugins.get_by_provides.side_effect = lambda p: (
             ["hdfilme"] if p == "stream" else []
         )
@@ -881,6 +892,7 @@ class TestExecute:
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
 
         plugins = MagicMock()
+        plugins.get_languages.return_value = ["de"]
         plugins.get_by_provides.side_effect = lambda p: (
             ["myplugin"] if p == "stream" else []
         )
@@ -909,6 +921,7 @@ class TestExecute:
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
 
         plugins = MagicMock()
+        plugins.get_languages.return_value = ["de"]
         # "stream" returns nothing, but "both" returns one plugin
         plugins.get_by_provides.side_effect = lambda p: (
             [] if p == "stream" else ["combo"]
@@ -938,6 +951,7 @@ class TestExecute:
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
 
         plugins = MagicMock()
+        plugins.get_languages.return_value = ["de"]
         # Same plugin name returned by both calls
         plugins.get_by_provides.side_effect = lambda p: (
             ["overlap"] if p in ("stream", "both") else []
@@ -970,6 +984,7 @@ class TestExecute:
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
 
         plugins = MagicMock()
+        plugins.get_languages.return_value = ["de"]
         plugins.get_by_provides.side_effect = lambda p: (
             ["hdfilme"] if p == "stream" else []
         )
@@ -989,6 +1004,7 @@ class TestExecute:
         no_search_plugin = MagicMock(spec=[])
 
         plugins = MagicMock()
+        plugins.get_languages.return_value = ["de"]
         plugins.get_by_provides.side_effect = lambda p: (
             ["nosearch"] if p == "stream" else []
         )
@@ -1011,6 +1027,7 @@ class TestExecute:
         engine.validate_results = AsyncMock(return_value=[])
 
         plugins = MagicMock()
+        plugins.get_languages.return_value = ["de"]
         many_names = [f"plugin_{i}" for i in range(10)]
         plugins.get_by_provides.side_effect = lambda p: (
             many_names if p == "stream" else []
@@ -1053,6 +1070,7 @@ class TestExecute:
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
 
         plugins = MagicMock()
+        plugins.get_languages.return_value = ["de"]
         plugins.get_by_provides.side_effect = lambda p: (
             ["fast", "slow"] if p == "stream" else []
         )
@@ -1106,6 +1124,7 @@ class TestTitleMatchFiltering:
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
 
         plugins = MagicMock()
+        plugins.get_languages.return_value = ["de"]
         plugins.get_by_provides.side_effect = lambda p: (
             ["test"] if p == "stream" else []
         )
@@ -1139,6 +1158,7 @@ class TestTitleMatchFiltering:
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
 
         plugins = MagicMock()
+        plugins.get_languages.return_value = ["de"]
         plugins.get_by_provides.side_effect = lambda p: (
             ["test"] if p == "stream" else []
         )
@@ -1172,6 +1192,7 @@ class TestTitleMatchFiltering:
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
 
         plugins = MagicMock()
+        plugins.get_languages.return_value = ["de"]
         plugins.get_by_provides.side_effect = lambda p: (
             ["test"] if p == "stream" else []
         )
@@ -1211,6 +1232,7 @@ class TestStreamLinkProxy:
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
 
         plugins = MagicMock()
+        plugins.get_languages.return_value = ["de"]
         plugins.get_by_provides.side_effect = lambda p: (
             ["hdfilme"] if p == "stream" else []
         )
@@ -1250,6 +1272,7 @@ class TestStreamLinkProxy:
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
 
         plugins = MagicMock()
+        plugins.get_languages.return_value = ["de"]
         plugins.get_by_provides.side_effect = lambda p: (
             ["hdfilme"] if p == "stream" else []
         )
@@ -1289,6 +1312,7 @@ class TestStreamLinkProxy:
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
 
         plugins = MagicMock()
+        plugins.get_languages.return_value = ["de"]
         plugins.get_by_provides.side_effect = lambda p: (
             ["hdfilme"] if p == "stream" else []
         )
@@ -1333,6 +1357,7 @@ class TestResolverEchoFiltering:
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
 
         plugins = MagicMock()
+        plugins.get_languages.return_value = ["de"]
         plugins.get_by_provides.side_effect = lambda p: (
             ["hdfilme"] if p == "stream" else []
         )
@@ -1378,6 +1403,7 @@ class TestResolverEchoFiltering:
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
 
         plugins = MagicMock()
+        plugins.get_languages.return_value = ["de"]
         plugins.get_by_provides.side_effect = lambda p: (
             ["hdfilme"] if p == "stream" else []
         )
@@ -1428,6 +1454,7 @@ class TestResolverEchoFiltering:
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
 
         plugins = MagicMock()
+        plugins.get_languages.return_value = ["de"]
         plugins.get_by_provides.side_effect = lambda p: (
             ["hdfilme"] if p == "stream" else []
         )
@@ -1480,6 +1507,7 @@ class TestResolverEchoFiltering:
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
 
         plugins = MagicMock()
+        plugins.get_languages.return_value = ["de"]
         plugins.get_by_provides.side_effect = lambda p: (
             ["hdfilme"] if p == "stream" else []
         )
@@ -1562,6 +1590,7 @@ def _probe_test_setup(
     engine.validate_results = AsyncMock(side_effect=lambda r: r)
 
     plugins = MagicMock()
+    plugins.get_languages.return_value = ["de"]
     plugins.get_by_provides.side_effect = lambda p: ["hdfilme"] if p == "stream" else []
     plugins.get.return_value = mock_plugin
 
@@ -1831,3 +1860,264 @@ class TestIsDirectVideoUrl:
             video_url="https://cdn.example.com/segment.ts",
         )
         assert _is_direct_video_url(resolved, "https://example.com/e/abc") is True
+
+
+# ---------------------------------------------------------------------------
+# _build_multi_lang_reference
+# ---------------------------------------------------------------------------
+
+
+class TestBuildMultiLangReference:
+    """Tests for _build_multi_lang_reference()."""
+
+    def test_single_language(self) -> None:
+        infos = {"de": TitleMatchInfo(title="Der Pate", year=1972)}
+        ref = _build_multi_lang_reference(infos, ["de"])
+        assert ref is not None
+        assert ref.title == "Der Pate"
+        assert ref.year == 1972
+        assert ref.alt_titles == []
+
+    def test_two_languages_merge(self) -> None:
+        infos = {
+            "de": TitleMatchInfo(title="Der Pate", year=1972),
+            "en": TitleMatchInfo(title="The Godfather", year=1972),
+        }
+        ref = _build_multi_lang_reference(infos, ["de", "en"])
+        assert ref is not None
+        assert ref.title == "Der Pate"
+        assert "The Godfather" in ref.alt_titles
+
+    def test_first_lang_missing_falls_through(self) -> None:
+        infos: dict[str, TitleMatchInfo | None] = {
+            "de": None,
+            "en": TitleMatchInfo(title="The Godfather", year=1972),
+        }
+        ref = _build_multi_lang_reference(infos, ["de", "en"])
+        assert ref is not None
+        assert ref.title == "The Godfather"
+
+    def test_all_langs_missing_returns_none(self) -> None:
+        infos: dict[str, TitleMatchInfo | None] = {"de": None, "en": None}
+        ref = _build_multi_lang_reference(infos, ["de", "en"])
+        assert ref is None
+
+    def test_alt_titles_from_secondary_included(self) -> None:
+        infos = {
+            "de": TitleMatchInfo(title="Der Pate", year=1972),
+            "en": TitleMatchInfo(
+                title="The Godfather",
+                year=1972,
+                alt_titles=["Il Padrino"],
+            ),
+        }
+        ref = _build_multi_lang_reference(infos, ["de", "en"])
+        assert ref is not None
+        assert "The Godfather" in ref.alt_titles
+        assert "Il Padrino" in ref.alt_titles
+
+    def test_duplicate_titles_not_repeated(self) -> None:
+        infos = {
+            "de": TitleMatchInfo(title="Dune", year=2021),
+            "en": TitleMatchInfo(title="Dune", year=2021),
+        }
+        ref = _build_multi_lang_reference(infos, ["de", "en"])
+        assert ref is not None
+        assert ref.title == "Dune"
+        # Same title shouldn't appear in alt_titles
+        assert "Dune" not in ref.alt_titles
+
+    def test_content_type_preserved(self) -> None:
+        infos = {
+            "de": TitleMatchInfo(title="Der Pate", year=1972, content_type="movie"),
+        }
+        ref = _build_multi_lang_reference(infos, ["de"])
+        assert ref is not None
+        assert ref.content_type == "movie"
+
+
+# ---------------------------------------------------------------------------
+# Multi-language search dispatch
+# ---------------------------------------------------------------------------
+
+
+class TestMultiLanguageDispatch:
+    """Tests for multi-language search dispatch in execute()."""
+
+    @staticmethod
+    def _make_plugins_mock(
+        names: list[str],
+        plugin_languages: dict[str, list[str]],
+        mock_plugin: AsyncMock,
+    ) -> MagicMock:
+        plugins = MagicMock()
+        plugins.get_by_provides.side_effect = lambda p: names if p == "stream" else []
+        plugins.get.return_value = mock_plugin
+        plugins.get_languages.side_effect = lambda n: plugin_languages.get(n, ["de"])
+        return plugins
+
+    async def test_german_only_plugin_uses_german_queries(self) -> None:
+        """Plugin with languages=["de"] searches with German title."""
+        tmdb = AsyncMock()
+        tmdb.get_title_and_year = AsyncMock(
+            side_effect=lambda imdb_id, language="de": (
+                TitleMatchInfo(title="Der Pate", year=1972)
+                if language == "de"
+                else TitleMatchInfo(title="The Godfather", year=1972)
+            )
+        )
+
+        sr = _make_search_result(
+            title="Der Pate",
+            download_links=[{"url": "https://voe.sx/e/pate"}],
+        )
+        mock_plugin = AsyncMock()
+        mock_plugin.search = AsyncMock(return_value=[sr])
+        del mock_plugin.scraping
+
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(side_effect=lambda r: r)
+
+        plugins = self._make_plugins_mock(
+            ["de-plugin"], {"de-plugin": ["de"]}, mock_plugin
+        )
+
+        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
+        result = await uc.execute(_make_request())
+
+        assert len(result) >= 1
+        # Should have been called with German language
+        tmdb.get_title_and_year.assert_any_await("tt1234567", language="de")
+        # Should NOT have been called with English
+        en_calls = [
+            c
+            for c in tmdb.get_title_and_year.call_args_list
+            if c.kwargs.get("language") == "en"
+        ]
+        assert len(en_calls) == 0
+
+    async def test_english_plugin_uses_english_queries(self) -> None:
+        """Plugin with languages=["en"] searches with English title."""
+        tmdb = AsyncMock()
+        tmdb.get_title_and_year = AsyncMock(
+            side_effect=lambda imdb_id, language="de": (
+                TitleMatchInfo(title="The Godfather", year=1972)
+                if language == "en"
+                else TitleMatchInfo(title="Der Pate", year=1972)
+            )
+        )
+
+        sr = _make_search_result(
+            title="The Godfather",
+            download_links=[{"url": "https://voe.sx/e/godfather"}],
+        )
+        mock_plugin = AsyncMock()
+        mock_plugin.search = AsyncMock(return_value=[sr])
+        del mock_plugin.scraping
+
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(side_effect=lambda r: r)
+
+        plugins = self._make_plugins_mock(
+            ["en-plugin"], {"en-plugin": ["en"]}, mock_plugin
+        )
+
+        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
+        result = await uc.execute(_make_request())
+
+        assert len(result) >= 1
+        # Should have fetched English title
+        tmdb.get_title_and_year.assert_any_await("tt1234567", language="en")
+
+    async def test_bilingual_plugin_gets_both_queries(self) -> None:
+        """Plugin with languages=["de", "en"] gets queries in both."""
+        tmdb = AsyncMock()
+        tmdb.get_title_and_year = AsyncMock(
+            side_effect=lambda imdb_id, language="de": (
+                TitleMatchInfo(title="Der Pate", year=1972)
+                if language == "de"
+                else TitleMatchInfo(title="The Godfather", year=1972)
+            )
+        )
+
+        sr = _make_search_result(
+            title="Der Pate",
+            download_links=[{"url": "https://voe.sx/e/pate"}],
+        )
+        mock_plugin = AsyncMock()
+        mock_plugin.search = AsyncMock(return_value=[sr])
+        del mock_plugin.scraping
+
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(side_effect=lambda r: r)
+
+        plugins = self._make_plugins_mock(
+            ["both-plugin"],
+            {"both-plugin": ["de", "en"]},
+            mock_plugin,
+        )
+
+        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
+        result = await uc.execute(_make_request())
+
+        assert len(result) >= 1
+        # Should have fetched both languages
+        tmdb.get_title_and_year.assert_any_await("tt1234567", language="de")
+        tmdb.get_title_and_year.assert_any_await("tt1234567", language="en")
+        # Plugin should have been searched with queries from both languages
+        search_calls = mock_plugin.search.call_args_list
+        all_queries = {c.args[0] for c in search_calls}
+        assert "Der Pate" in all_queries
+        assert "The Godfather" in all_queries
+
+    async def test_mixed_plugins_grouped_by_language(self) -> None:
+        """Plugins with different languages are searched independently."""
+        tmdb = AsyncMock()
+        tmdb.get_title_and_year = AsyncMock(
+            side_effect=lambda imdb_id, language="de": (
+                TitleMatchInfo(title="Der Pate", year=1972)
+                if language == "de"
+                else TitleMatchInfo(title="The Godfather", year=1972)
+            )
+        )
+
+        sr = _make_search_result(
+            title="Der Pate",
+            download_links=[{"url": "https://voe.sx/e/pate"}],
+        )
+        de_plugin = AsyncMock()
+        de_plugin.search = AsyncMock(return_value=[sr])
+        del de_plugin.scraping
+
+        sr_en = _make_search_result(
+            title="The Godfather",
+            download_link="https://filemoon.sx/e/godfather",
+            download_links=[{"url": "https://filemoon.sx/e/godfather"}],
+        )
+        en_plugin = AsyncMock()
+        en_plugin.search = AsyncMock(return_value=[sr_en])
+        del en_plugin.scraping
+
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(side_effect=lambda r: r)
+
+        plugins = MagicMock()
+        plugins.get_by_provides.side_effect = lambda p: (
+            ["de-site", "en-site"] if p == "stream" else []
+        )
+        plugins.get.side_effect = lambda n: {
+            "de-site": de_plugin,
+            "en-site": en_plugin,
+        }[n]
+        plugins.get_languages.side_effect = lambda n: {
+            "de-site": ["de"],
+            "en-site": ["en"],
+        }[n]
+
+        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
+        result = await uc.execute(_make_request())
+
+        assert len(result) >= 2
+        urls = {s.url for s in result}
+        assert "https://voe.sx/e/pate" in urls
+        assert "https://filemoon.sx/e/godfather" in urls

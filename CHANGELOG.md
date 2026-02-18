@@ -11,6 +11,14 @@ Massive expansion of the plugin ecosystem (2 → 40 plugins), Stremio addon inte
 hoster resolver system, plugin base class standardization, search result caching, and
 growth of the test suite from 160 to 3225 tests.
 
+### Multi-Language Search & unidecode Migration
+- **unidecode for universal transliteration**: replace manual 4-character German umlaut table (`_UMLAUT_TABLE`) and 15-character transliteration table (`_TRANSLITERATION`) with `unidecode` library — supports 130+ Unicode scripts for title matching and search query generation
+- **Multi-language plugin support**: plugins now declare `languages: list[str]` (default `["de"]`) instead of `default_language: str`. Backward-compatible property `default_language` returns `languages[0]`
+- **Per-language TMDB title resolution**: `get_title_and_year()` and `find_by_imdb_id()` accept a `language` parameter; cache keys include language to avoid cross-language collisions
+- **Wikidata title lookup generalized**: IMDB fallback client `_fetch_wikidata_title()` supports any language (was German-only)
+- **Multi-language search dispatch**: Stremio use case groups plugins by language, fetches TMDB titles for each unique language in parallel, and searches each group with language-specific queries. A plugin with `languages=["de", "en"]` gets searched with both German and English title queries. Combined `TitleMatchInfo` reference merges all language titles for the title matcher
+- **Registry `get_languages()`**: `PluginRegistryPort` exposes `get_languages(name)` to retrieve a plugin's language list
+
 ### E2E-Discovered Fixes (Stream Resolution)
 - **Domain alias dispatch**: `HosterResolverRegistry` now maps all `supported_domains` from XFS/DDL resolvers, not just the resolver name — fixes dispatch for vidhide family domains (filelions, streamhide, louishide, etc.)
 - **Drop unresolvable proxy streams**: when a resolve function is configured but returns `None`, the stream is excluded from Stremio responses instead of creating a `/play/` proxy URL that always 502s

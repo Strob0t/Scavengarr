@@ -356,6 +356,74 @@ def _build_search_queries(title: str) -> list[str]:
     return queries
 
 
+def _build_multi_lang_reference(
+    title_infos: dict[str, TitleMatchInfo | None],
+    languages: list[str],
+) -> TitleMatchInfo | None:
+    """Build a TitleMatchInfo combining titles from multiple languages.
+
+    The first available language becomes the primary title; additional
+    language titles are merged into ``alt_titles``.  This lets the title
+    matcher accept results in any of the plugin's configured languages.
+    """
+    primary: TitleMatchInfo | None = None
+    extra_titles: list[str] = []
+    for lang in languages:
+        info = title_infos.get(lang)
+        if not info:
+            continue
+        if primary is None:
+            primary = info
+        else:
+            if (
+                info.title
+                and info.title != primary.title
+                and info.title not in extra_titles
+            ):
+                extra_titles.append(info.title)
+            for alt in info.alt_titles:
+                if alt and alt != primary.title and alt not in extra_titles:
+                    extra_titles.append(alt)
+    if primary is None:
+        return None
+    # Merge, filtering out any that already appear in primary.alt_titles.
+    existing = set(primary.alt_titles)
+    merged = list(primary.alt_titles) + [t for t in extra_titles if t not in existing]
+    return replace(primary, alt_titles=merged)
+
+
+def _first_available_title(
+    title_infos: dict[str, TitleMatchInfo | None],
+    languages: list[str],
+) -> TitleMatchInfo | None:
+    """Return the first non-None TitleMatchInfo from the language list."""
+    for lang in languages:
+        info = title_infos.get(lang)
+        if info is not None:
+            return info
+    return None
+
+
+def _build_lang_group_queries(
+    title_infos: dict[str, TitleMatchInfo | None],
+    languages: list[str],
+) -> list[str]:
+    """Build deduplicated search queries for a group of languages."""
+    queries: list[str] = []
+    for lang in languages:
+        info = title_infos.get(lang)
+        if not info:
+            continue
+        for q in _build_search_queries(info.title):
+            if q not in queries:
+                queries.append(q)
+        for alt in info.alt_titles:
+            for q in _build_search_queries(alt):
+                if q not in queries:
+                    queries.append(q)
+    return queries
+
+
 # Video file extensions that Stremio can play directly.
 _VIDEO_EXTENSIONS = frozenset(
     {
@@ -516,13 +584,6 @@ class StremioStreamUseCase:
             Sorted list of StremioStream objects, best first.
             Empty list if title not found or no plugins match.
         """
-        title_info = await self._resolve_title_info(request)
-        title = title_info.title if title_info else None
-        if not title:
-            log.warning("stremio_title_not_found", imdb_id=request.imdb_id)
-            return []
-
-        queries = _build_search_queries(title)
         category = 2000 if request.content_type == "movie" else 5000
 
         plugin_names = self._plugins.get_by_provides("stream")
@@ -536,101 +597,157 @@ class StremioStreamUseCase:
         # Scored plugin selection (when enabled and scores are available)
         selected = await self._select_plugins(all_names, category)
 
-        log.info(
-            "stremio_search_start",
-            imdb_id=request.imdb_id,
-            title=title,
-            queries=queries,
-            plugin_count=len(selected),
-            scored=len(selected) < len(all_names),
-        )
+        # --- Multi-language title resolution ---
+        all_langs = self._collect_languages(selected)
+        title_infos = await self._resolve_title_infos(request, sorted(all_langs))
 
-        all_results = await self._search_with_fallback(
-            selected,
-            queries,
-            category,
-            season=request.season,
-            episode=request.episode,
-        )
-
-        if not all_results:
-            log.info(
-                "stremio_search_no_results",
-                imdb_id=request.imdb_id,
-                queries=queries,
-            )
+        primary_title_info = _first_available_title(title_infos, sorted(all_langs))
+        if primary_title_info is None:
+            log.warning("stremio_title_not_found", imdb_id=request.imdb_id)
             return []
 
-        # --- title-match filtering (CPU-bound guessit — offload to thread) ---
-        loop = asyncio.get_running_loop()
-        filtered = await loop.run_in_executor(
-            None,
-            lambda: self._filter_fn(
-                all_results,
-                title_info,
-                self._title_match_threshold,
-                year_bonus=self._title_year_bonus,
-                year_penalty=self._title_year_penalty,
-                sequel_penalty=self._title_sequel_penalty,
-                year_tolerance_movie=self._title_year_tolerance_movie,
-                year_tolerance_series=self._title_year_tolerance_series,
-            ),
+        # --- Per-language-group search + filter ---
+        lang_groups = self._group_by_languages(selected)
+        all_results, filtered = await self._search_lang_groups(
+            lang_groups,
+            title_infos,
+            request,
+            category,
+            all_names_count=len(all_names),
+            selected_count=len(selected),
         )
 
         if not filtered:
-            log.info(
-                "stremio_all_filtered",
-                imdb_id=request.imdb_id,
-                query=queries[0],
-                total=len(all_results),
-            )
+            if all_results:
+                log.info(
+                    "stremio_all_filtered",
+                    imdb_id=request.imdb_id,
+                    total=len(all_results),
+                )
+            else:
+                log.info(
+                    "stremio_search_no_results",
+                    imdb_id=request.imdb_id,
+                )
             return []
 
-        plugin_languages: dict[str, str] = {}
-        for name in selected:
-            try:
-                plugin = self._plugins.get(name)
-                lang = getattr(plugin, "default_language", None)
-                if isinstance(lang, str):
-                    plugin_languages[name] = lang
-            except Exception:  # noqa: BLE001
-                log.debug(
-                    "stremio_plugin_language_lookup_failed",
-                    plugin=name,
-                    exc_info=True,
-                )
+        plugin_languages: dict[str, str] = {
+            name: self._plugins.get_languages(name)[0]
+            for name in selected
+            if self._plugins.get_languages(name)
+        }
 
         ranked = self._convert_fn(filtered, plugin_languages=plugin_languages)
         sorted_streams = self._sorter.sort(ranked)
-
-        # Keep only the best-ranked stream per hoster (already sorted best-first)
         sorted_streams = _deduplicate_by_hoster(sorted_streams)
 
         streams = [
             _format_stream(
                 s,
-                reference_title=title_info.title if title_info else "",
-                year=title_info.year if title_info else None,
+                reference_title=primary_title_info.title,
+                year=primary_title_info.year,
                 season=request.season,
                 episode=request.episode,
             )
             for s in sorted_streams
         ]
 
-        # Cache hoster URLs and replace with proxy play links
         if self._stream_link_repo and base_url:
             streams = await self._cache_and_proxy(streams, sorted_streams, base_url)
 
         log.info(
             "stremio_search_complete",
             imdb_id=request.imdb_id,
-            query=queries[0],
             result_count=len(all_results),
             filtered_count=len(filtered),
             stream_count=len(streams),
         )
 
         return streams
+
+    def _collect_languages(self, plugin_names: list[str]) -> set[str]:
+        """Collect all unique languages across the given plugins."""
+        all_langs: set[str] = set()
+        for name in plugin_names:
+            all_langs.update(self._plugins.get_languages(name))
+        return all_langs
+
+    def _group_by_languages(
+        self, plugin_names: list[str]
+    ) -> dict[tuple[str, ...], list[str]]:
+        """Group plugin names by their identical language lists."""
+        groups: dict[tuple[str, ...], list[str]] = {}
+        for name in plugin_names:
+            key = tuple(self._plugins.get_languages(name))
+            groups.setdefault(key, []).append(name)
+        return groups
+
+    async def _search_lang_groups(
+        self,
+        lang_groups: dict[tuple[str, ...], list[str]],
+        title_infos: dict[str, TitleMatchInfo | None],
+        request: StremioStreamRequest,
+        category: int,
+        *,
+        all_names_count: int,
+        selected_count: int,
+    ) -> tuple[list[SearchResult], list[SearchResult]]:
+        """Search and filter each language group, returning aggregated results.
+
+        Returns (all_results, filtered_results).
+        """
+        all_results: list[SearchResult] = []
+        filtered: list[SearchResult] = []
+
+        for lang_key, group_plugins in lang_groups.items():
+            plugin_langs = list(lang_key)
+            ref = _build_multi_lang_reference(title_infos, plugin_langs)
+            if ref is None:
+                continue
+
+            queries = _build_lang_group_queries(title_infos, plugin_langs)
+            if not queries:
+                continue
+
+            log.info(
+                "stremio_search_start",
+                imdb_id=request.imdb_id,
+                title=ref.title,
+                queries=queries,
+                plugin_count=len(group_plugins),
+                languages=plugin_langs,
+                scored=selected_count < all_names_count,
+            )
+
+            group_results = await self._search_with_fallback(
+                group_plugins,
+                queries,
+                category,
+                season=request.season,
+                episode=request.episode,
+            )
+            all_results.extend(group_results)
+
+            if not group_results:
+                continue
+
+            loop = asyncio.get_running_loop()
+            group_filtered = await loop.run_in_executor(
+                None,
+                lambda ref=ref, gr=group_results: self._filter_fn(
+                    gr,
+                    ref,
+                    self._title_match_threshold,
+                    year_bonus=self._title_year_bonus,
+                    year_penalty=self._title_year_penalty,
+                    sequel_penalty=self._title_sequel_penalty,
+                    year_tolerance_movie=self._title_year_tolerance_movie,
+                    year_tolerance_series=self._title_year_tolerance_series,
+                ),
+            )
+            filtered.extend(group_filtered)
+
+        return all_results, filtered
 
     async def _cache_and_proxy(
         self,
@@ -795,6 +912,8 @@ class StremioStreamUseCase:
     async def _resolve_title_info(
         self,
         request: StremioStreamRequest,
+        *,
+        language: str = "de",
     ) -> TitleMatchInfo | None:
         """Resolve title + year from IMDb or TMDB ID for matching."""
         if request.imdb_id.startswith("tmdb:"):
@@ -805,10 +924,26 @@ class StremioStreamUseCase:
             if not title:
                 return None
             return TitleMatchInfo(title=title, content_type=request.content_type)
-        info = await self._tmdb.get_title_and_year(request.imdb_id)
+        info = await self._tmdb.get_title_and_year(request.imdb_id, language=language)
         if info is not None:
             return replace(info, content_type=request.content_type)
         return None
+
+    async def _resolve_title_infos(
+        self,
+        request: StremioStreamRequest,
+        languages: list[str],
+    ) -> dict[str, TitleMatchInfo | None]:
+        """Fetch title info for each language in parallel.
+
+        Returns a dict mapping language code to TitleMatchInfo (or None).
+        For ``tmdb:`` prefixed IDs (no language variants), the same
+        result is returned for every language.
+        """
+        infos = await asyncio.gather(
+            *(self._resolve_title_info(request, language=lang) for lang in languages)
+        )
+        return dict(zip(languages, infos))
 
     async def _select_plugins(
         self,
