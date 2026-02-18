@@ -119,11 +119,11 @@ src/scavengarr/
 │   │   ├── registry.py               # HosterResolverRegistry + domain matching
 │   │   ├── sendvid.py                # SendVid streaming resolver
 │   │   ├── serienstream.py           # SerienStream resolver
-│   │   ├── stealth_pool.py           # Playwright stealth probe pool
+│   │   ├── stealth_pool.py           # Playwright stealth pool (probes + SuperVideo CF bypass)
 │   │   ├── stmix.py                  # Stmix embed resolver
 │   │   ├── streamtape.py             # Streamtape token extraction
 │   │   ├── strmup.py                 # StreamUp HLS resolver
-│   │   ├── supervideo.py             # SuperVideo XFS + Playwright fallback
+│   │   ├── supervideo.py             # SuperVideo XFS + StealthPool CF fallback
 │   │   ├── vidguard.py               # VidGuard multi-domain resolver
 │   │   ├── vidking.py                # Vidking embed resolver
 │   │   ├── vidsonic.py               # Vidsonic hex-obfuscated HLS resolver
@@ -1121,7 +1121,7 @@ Central registry for all hoster resolvers. Features:
 |---|---|---|
 | VOE | `voe.py` | Multi-method: JSON extraction, obfuscated JS |
 | Streamtape | `streamtape.py` | Token extraction from page source |
-| SuperVideo | `supervideo.py` | XFS extraction + packed JS + Playwright fallback |
+| SuperVideo | `supervideo.py` | XFS extraction + packed JS + StealthPool CF fallback |
 | DoodStream | `doodstream.py` | `pass_md5` API endpoint extraction |
 | Filemoon | `filemoon.py` | Packed JS unpacker + Byse SPA challenge/decrypt flow |
 | Mixdrop | `mixdrop.py` | Token extraction, multi-domain |

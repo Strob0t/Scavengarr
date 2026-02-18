@@ -281,7 +281,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             reason="no API key, using IMDB suggest API",
         )
 
-    # 8) Hoster resolver registry (for extracting video URLs from embed pages)
+    # 8) Stealth pool (Playwright stealth browser for CF bypass — used by
+    #    SuperVideoResolver and optionally by stealth probes)
+    state.stealth_pool = StealthPool(
+        headless=config.playwright_headless,
+        timeout_ms=int(config.stremio.probe_stealth_timeout_seconds * 1000),
+    )
+    log.info("stealth_pool_configured")
+
+    # 9) Hoster resolver registry (for extracting video URLs from embed pages)
     state.hoster_resolver_registry = HosterResolverRegistry(
         resolvers=[
             # Streaming resolvers (extract direct video URLs)
@@ -289,8 +297,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             StreamtapeResolver(http_client=state.http_client),
             SuperVideoResolver(
                 http_client=state.http_client,
-                playwright_headless=config.playwright_headless,
-                playwright_timeout_ms=config.playwright_timeout_ms,
+                stealth_pool=state.stealth_pool,
             ),
             DoodStreamResolver(http_client=state.http_client),
             FilemoonResolver(http_client=state.http_client),
@@ -321,7 +328,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         hosters=state.hoster_resolver_registry.supported_hosters,
     )
 
-    # 9) Stream link repository (for Stremio play endpoint)
+    # 10) Stream link repository (for Stremio play endpoint)
     state.stream_link_repo = CacheStreamLinkRepository(
         cache=state.cache,
         ttl_seconds=config.stremio.stream_link_ttl_seconds,
@@ -331,7 +338,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         ttl_seconds=config.stremio.stream_link_ttl_seconds,
     )
 
-    # 10) Plugin scoring (optional — background health + search probes)
+    # 11) Plugin scoring (optional — background health + search probes)
     state.plugin_score_store = None
     state.scoring_scheduler = None
     state._scoring_task = None
@@ -339,17 +346,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if config.scoring.enabled:
         _wire_scoring(state, config)
 
-    # 11) Stealth pool (optional — for Cloudflare bypass probing)
-    if config.stremio.probe_stealth_enabled:
-        state.stealth_pool = StealthPool(
-            headless=config.playwright_headless,
-            timeout_ms=int(config.stremio.probe_stealth_timeout_seconds * 1000),
-        )
-        log.info("stealth_pool_configured")
-    else:
-        state.stealth_pool = None
-
     # 12) Shared browser pool for Playwright plugins (single Chromium process)
+    #     (must come after stealth pool — both use Playwright, but independently)
     state.shared_browser_pool = SharedBrowserPool(
         headless=config.playwright_headless,
     )

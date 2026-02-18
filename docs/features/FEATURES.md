@@ -98,7 +98,7 @@ Validates file availability and extracts direct video URLs from streaming hoster
 |---|---|---|
 | VOE | [x] Implemented | Multi-method extraction (JSON, obfuscated JS) |
 | Streamtape | [x] Implemented | Token extraction from page source |
-| SuperVideo | [x] Implemented | XFS extraction + Playwright Cloudflare fallback |
+| SuperVideo | [x] Implemented | XFS extraction + StealthPool Cloudflare fallback |
 | DoodStream | [x] Implemented | `pass_md5` API extraction |
 | Filemoon | [x] Implemented | Packed JS unpacker + Byse SPA challenge flow |
 | Mixdrop | [x] Implemented | Token extraction, multi-domain |

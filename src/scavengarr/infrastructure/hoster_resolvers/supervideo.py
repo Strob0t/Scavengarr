@@ -4,27 +4,24 @@ SuperVideo uses XFileSharingPro framework which embeds video URLs
 via JWPlayer sources or HTML5 video tags.
 Based on JD2 SupervideoTv.java (XFileSharingProBasic).
 
-Strategy: httpx-first (fast, stateless), Playwright-fallback on Cloudflare 403.
+Strategy: httpx-first (fast, stateless), StealthPool-fallback on Cloudflare 403.
 """
 
 from __future__ import annotations
 
-import asyncio
 import re
+from typing import TYPE_CHECKING
 
 import httpx
 import structlog
-from playwright.async_api import (
-    Browser,
-    BrowserContext,
-    Playwright,
-    async_playwright,
-)
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
 from scavengarr.infrastructure.hoster_resolvers.cloudflare import (
     is_cloudflare_challenge,
 )
+
+if TYPE_CHECKING:
+    from scavengarr.infrastructure.hoster_resolvers.stealth_pool import StealthPool
 
 log = structlog.get_logger(__name__)
 
@@ -179,7 +176,7 @@ class SuperVideoResolver:
     """Resolves SuperVideo embed pages to playable video URLs.
 
     Supports supervideo.cc, supervideo.tv.
-    Uses httpx by default; falls back to Playwright when Cloudflare
+    Uses httpx by default; falls back to StealthPool when Cloudflare
     JS challenge is detected (403 + "Just a moment").
     """
 
@@ -187,17 +184,10 @@ class SuperVideoResolver:
         self,
         http_client: httpx.AsyncClient,
         *,
-        playwright_headless: bool = True,
-        playwright_timeout_ms: int = 30_000,
+        stealth_pool: StealthPool | None = None,
     ) -> None:
         self._http = http_client
-        self._headless = playwright_headless
-        self._timeout_ms = playwright_timeout_ms
-        # Lazy Playwright state
-        self._playwright: Playwright | None = None
-        self._browser: Browser | None = None
-        self._context: BrowserContext | None = None
-        self._browser_lock = asyncio.Lock()
+        self._stealth_pool = stealth_pool
 
     @property
     def name(self) -> str:
@@ -271,85 +261,43 @@ class SuperVideoResolver:
             return None, False
 
     async def _fetch_with_playwright(self, embed_url: str) -> str | None:
-        """Fetch page via Playwright (Cloudflare bypass)."""
+        """Fetch page via StealthPool (Cloudflare bypass).
+
+        When no StealthPool is available, skips the Playwright fallback
+        and returns None (graceful degradation to httpx-only).
+        """
+        if self._stealth_pool is None:
+            log.info("supervideo_no_stealth_pool", url=embed_url)
+            return None
+
+        page = None
         try:
-            await self._ensure_browser()
-            if self._context is None:
-                log.warning("supervideo_no_browser_context", url=embed_url)
-                return None
+            page = await self._stealth_pool.new_page()
+            await page.goto(embed_url, wait_until="domcontentloaded")
+            await self._stealth_pool.wait_for_cloudflare(page)
 
-            page = await self._context.new_page()
             try:
-                await page.goto(embed_url, wait_until="domcontentloaded")
-                await self._wait_for_cloudflare(page)
+                await page.wait_for_load_state("networkidle", timeout=10_000)
+            except Exception:  # noqa: BLE001
+                pass  # proceed — page may still be usable
 
-                try:
-                    await page.wait_for_load_state("networkidle", timeout=10_000)
-                except Exception:  # noqa: BLE001
-                    pass  # proceed — page may still be usable
-
-                html = await page.content()
-                log.debug(
-                    "supervideo_playwright_page",
-                    url=embed_url,
-                    title=await page.title(),
-                    html_len=len(html),
-                    has_sources="sources" in html,
-                    has_video="<video" in html,
-                    has_jwplayer="jwplayer" in html,
-                )
-                return html
-            finally:
-                if not page.is_closed():
-                    await page.close()
+            html = await page.content()
+            log.debug(
+                "supervideo_playwright_page",
+                url=embed_url,
+                title=await page.title(),
+                html_len=len(html),
+                has_sources="sources" in html,
+                has_video="<video" in html,
+                has_jwplayer="jwplayer" in html,
+            )
+            return html
         except Exception:
             log.warning("supervideo_playwright_failed", url=embed_url, exc_info=True)
             return None
-
-    # ------------------------------------------------------------------
-    # Playwright lifecycle
-    # ------------------------------------------------------------------
-
-    async def _ensure_browser(self) -> None:
-        """Launch Chromium if not already running (double-check lock)."""
-        if self._browser is not None:
-            return
-        async with self._browser_lock:
-            if self._browser is not None:
-                return
-            self._playwright = await async_playwright().start()
-            self._browser = await self._playwright.chromium.launch(
-                headless=self._headless,
-            )
-            self._context = await self._browser.new_context(
-                user_agent=_BROWSER_HEADERS["User-Agent"],
-            )
-
-    async def _wait_for_cloudflare(self, page: object) -> None:
-        """Wait for Cloudflare challenge/block to resolve."""
-        try:
-            await page.wait_for_function(  # type: ignore[union-attr]
-                """() => {
-                    const t = document.title;
-                    return !t.includes('Just a moment')
-                        && !t.includes('Attention Required');
-                }""",
-                timeout=15_000,
-            )
-        except Exception:  # noqa: BLE001
-            pass  # proceed anyway — page may still be usable
-
-    async def cleanup(self) -> None:
-        """Close browser and Playwright resources."""
-        if self._context is not None:
-            await self._context.close()
-            self._context = None
-        if self._browser is not None:
-            await self._browser.close()
-            self._browser = None
-        if self._playwright is not None:
-            await self._playwright.stop()
-            self._playwright = None
+        finally:
+            if page is not None and not page.is_closed():
+                await page.close()
 
     # ------------------------------------------------------------------
     # Extraction

@@ -141,7 +141,7 @@ class StealthPool:
             )
 
             # Wait for Cloudflare challenge to resolve
-            await self._wait_for_cloudflare(page, timeout=timeout)
+            await self.wait_for_cloudflare(page, timeout=timeout)
 
             html = await page.content()
 
@@ -169,7 +169,7 @@ class StealthPool:
     # Internal
     # ------------------------------------------------------------------
 
-    async def _wait_for_cloudflare(self, page: Page, *, timeout: float = 10) -> None:
+    async def wait_for_cloudflare(self, page: Page, *, timeout: float = 10) -> None:
         """Wait until the page title no longer contains CF challenge markers."""
         cf_title_markers = [m for m in _CF_MARKERS if " " in m or m[0].isupper()]
         # "Just a moment", "Attention Required"

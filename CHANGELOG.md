@@ -12,6 +12,12 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 breaker, global concurrency pool, graceful shutdown, multi-language search, and
 growth of the test suite from 160 to 3963 tests.
 
+### Playwright Stealth Default
+- **Stealth mode now on by default**: `PlaywrightPluginBase._stealth` changed from `False` to `True` — all 9 Playwright plugins (boerse, mygully, moflix, streamworld, animeloads, byte, scnsrc, ddlvalley, ddlspot) now use stealth evasions automatically
+- **SuperVideoResolver uses shared StealthPool**: replaced dedicated Playwright browser lifecycle with injected `StealthPool` — eliminates a redundant Chromium process and reuses the stealth-enabled browser pool. Graceful degradation to httpx-only when no pool is available
+- **StealthPool `wait_for_cloudflare()` public**: renamed from `_wait_for_cloudflare()` to allow external callers (SuperVideoResolver) to use the Cloudflare wait logic
+- **StealthPool always created**: composition root now creates `StealthPool` unconditionally (was gated by `probe_stealth_enabled`), since SuperVideoResolver needs it regardless of probe configuration
+
 ### Plugin Fixes (megakino, boerse)
 - **megakino**: Fix broken plugin (0 results in live tests). Three issues resolved:
   1. Domain redirect: `megakino.me` now redirects to `megakino1.biz` — updated `_DOMAINS` list with 4 mirrors (`megakino1.biz`, `megakino1.ws`, `megakino1.net`, `megakino.me`)

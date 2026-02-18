@@ -61,7 +61,7 @@ Extract a direct video URL (`.mp4`/`.m3u8`) from an embed page.
 |---|---|---|
 | VOE | voe.sx + mirrors | Multi-method: JSON extraction, obfuscated JS |
 | Streamtape | streamtape.com + mirrors | Token extraction from page source |
-| SuperVideo | supervideo.cc | XFS extraction + Playwright Cloudflare fallback |
+| SuperVideo | supervideo.cc | XFS extraction + StealthPool Cloudflare fallback |
 | DoodStream | dood.wf + mirrors | `pass_md5` API endpoint extraction |
 | Filemoon | filemoon.sx + mirrors | Packed JS unpacker + Byse SPA challenge flow |
 | VidGuard | vidguard.to + mirrors | Multi-domain embed resolution |

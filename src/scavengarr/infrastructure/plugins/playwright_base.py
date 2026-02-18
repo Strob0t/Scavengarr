@@ -63,8 +63,8 @@ class PlaywrightPluginBase:
     _headless: bool = True
     cache_ttl: int | None = None
 
-    # --- Stealth mode (opt-in for Cloudflare bypass) ---
-    _stealth: bool = False
+    # --- Stealth mode (on by default) ---
+    _stealth: bool = True
 
     # --- Cloudflare / navigation timeouts ---
     _cf_timeout_ms: int = 15_000
