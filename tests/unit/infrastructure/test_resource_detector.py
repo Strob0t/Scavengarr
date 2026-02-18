@@ -96,10 +96,12 @@ class TestDetectCpuV1:
             _CGROUP_V1_CPU_QUOTA,
         )
 
-        with _mock_read_file({
-            _CGROUP_V1_CPU_QUOTA: "200000",
-            _CGROUP_V1_CPU_PERIOD: "100000",
-        }):
+        with _mock_read_file(
+            {
+                _CGROUP_V1_CPU_QUOTA: "200000",
+                _CGROUP_V1_CPU_PERIOD: "100000",
+            }
+        ):
             assert _detect_cpu_v1() == 2
 
     def test_unlimited_quota_minus_1(self) -> None:
@@ -108,10 +110,12 @@ class TestDetectCpuV1:
             _CGROUP_V1_CPU_QUOTA,
         )
 
-        with _mock_read_file({
-            _CGROUP_V1_CPU_QUOTA: "-1",
-            _CGROUP_V1_CPU_PERIOD: "100000",
-        }):
+        with _mock_read_file(
+            {
+                _CGROUP_V1_CPU_QUOTA: "-1",
+                _CGROUP_V1_CPU_PERIOD: "100000",
+            }
+        ):
             assert _detect_cpu_v1() is None
 
     def test_missing_quota_file(self) -> None:
@@ -133,10 +137,12 @@ class TestDetectCpuV1:
             _CGROUP_V1_CPU_QUOTA,
         )
 
-        with _mock_read_file({
-            _CGROUP_V1_CPU_QUOTA: "50000",
-            _CGROUP_V1_CPU_PERIOD: "100000",
-        }):
+        with _mock_read_file(
+            {
+                _CGROUP_V1_CPU_QUOTA: "50000",
+                _CGROUP_V1_CPU_PERIOD: "100000",
+            }
+        ):
             assert _detect_cpu_v1() == 1
 
 
