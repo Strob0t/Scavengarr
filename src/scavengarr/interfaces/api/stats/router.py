@@ -68,3 +68,41 @@ async def plugin_scores(
     results.sort(key=lambda r: r["final_score"], reverse=True)
 
     return JSONResponse(content={"scores": results, "count": len(results)})
+
+
+@router.get("/metrics")
+async def metrics(request: Request) -> JSONResponse:
+    """Return in-memory runtime metrics.
+
+    Includes plugin search stats, probe stats, circuit breaker state,
+    concurrency pool utilisation, and graceful-shutdown status.
+    """
+    state = cast(AppState, request.app.state)
+
+    data: dict[str, Any] = {}
+
+    # Plugin + probe metrics
+    m = getattr(state, "metrics", None)
+    if m is not None:
+        data.update(m.snapshot())
+
+    # Circuit breaker snapshot
+    cb = getattr(state, "circuit_breaker", None)
+    if cb is not None:
+        data["circuit_breaker"] = cb.snapshot()
+
+    # Concurrency pool utilisation
+    pool = getattr(state, "concurrency_pool", None)
+    if pool is not None:
+        data["concurrency_pool"] = pool.snapshot()
+
+    # Graceful shutdown
+    gs = getattr(state, "graceful_shutdown", None)
+    if gs is not None:
+        data["shutdown"] = {
+            "is_ready": gs.is_ready,
+            "is_shutting_down": gs.is_shutting_down,
+            "active_requests": gs.active_requests,
+        }
+
+    return JSONResponse(content=data)

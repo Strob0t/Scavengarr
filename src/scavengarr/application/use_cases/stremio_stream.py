@@ -94,6 +94,14 @@ class _MetricsRecorder(Protocol):
     ) -> None: ...
 
 
+class _CircuitBreaker(Protocol):
+    """Per-plugin circuit breaker (skip after N consecutive failures)."""
+
+    def allow(self, name: str) -> bool: ...
+    def record_success(self, name: str) -> None: ...
+    def record_failure(self, name: str) -> None: ...
+
+
 # Type aliases for injected pure functions.
 _ConvertFn = Callable[..., list[RankedStream]]
 _TitleFilterFn = Callable[..., list[SearchResult]]
@@ -550,7 +558,8 @@ class StremioStreamUseCase:
         metrics: _MetricsRecorder | None = None,
         score_store: PluginScoreStorePort | None = None,
         browser_warmup_fn: BrowserWarmupFn | None = None,
-        pool: ConcurrencyPoolPort | None = None,
+        pool: ConcurrencyPoolPort,
+        circuit_breaker: _CircuitBreaker | None = None,
     ) -> None:
         self._tmdb = tmdb
         self._plugins = plugins
@@ -583,6 +592,7 @@ class StremioStreamUseCase:
         self._exploration_probability = config.exploration_probability
         self._browser_warmup_fn = browser_warmup_fn
         self._pool = pool
+        self._circuit_breaker = circuit_breaker
 
     async def execute(
         self,
@@ -625,18 +635,7 @@ class StremioStreamUseCase:
         # --- Per-language-group search + filter ---
         lang_groups = self._group_by_languages(selected)
 
-        if self._pool is not None:
-            async with self._pool.request() as budget:
-                all_results, filtered = await self._search_lang_groups(
-                    lang_groups,
-                    title_infos,
-                    request,
-                    category,
-                    all_names_count=len(all_names),
-                    selected_count=len(selected),
-                    budget=budget,
-                )
-        else:
+        async with self._pool.request() as budget:
             all_results, filtered = await self._search_lang_groups(
                 lang_groups,
                 title_infos,
@@ -644,6 +643,7 @@ class StremioStreamUseCase:
                 category,
                 all_names_count=len(all_names),
                 selected_count=len(selected),
+                budget=budget,
             )
 
         if not filtered:
@@ -720,7 +720,7 @@ class StremioStreamUseCase:
         *,
         all_names_count: int,
         selected_count: int,
-        budget: ConcurrencyBudgetPort | None = None,
+        budget: ConcurrencyBudgetPort,
     ) -> tuple[list[SearchResult], list[SearchResult]]:
         """Search and filter each language group, returning aggregated results.
 
@@ -1088,14 +1088,12 @@ class StremioStreamUseCase:
         *,
         season: int | None = None,
         episode: int | None = None,
-        budget: ConcurrencyBudgetPort | None = None,
+        budget: ConcurrencyBudgetPort,
     ) -> list[SearchResult]:
         """Search plugins with all query variants, deduplicate results.
 
-        When a *budget* (from ConcurrencyPool) is provided, it manages
-        global concurrency via fair-share slots instead of local
-        semaphores.  When *budget* is ``None``, the original per-request
-        semaphore behavior is preserved (backward compatibility).
+        Concurrency is managed by the global *budget* (from
+        ConcurrencyPool) which provides fair-share httpx + PW slots.
 
         When a browser warmup function is configured, a fire-and-forget
         warmup task starts the shared Chromium process in the background
@@ -1108,17 +1106,6 @@ class StremioStreamUseCase:
         not already seen, to avoid duplicates from the same plugin
         matching on both the full title and the shorter base title.
         """
-        # --- Local semaphores (fallback when no global pool) ---
-        semaphore: asyncio.Semaphore | None = None
-        pw_semaphore: asyncio.Semaphore | None = None
-        if budget is None:
-            semaphore = asyncio.Semaphore(self._max_concurrent)
-            pw_count = sum(
-                1 for n in plugin_names if self._plugins.get_mode(n) == "playwright"
-            )
-            pw_limit = min(pw_count, self._max_concurrent_pw) if pw_count > 0 else 1
-            pw_semaphore = asyncio.Semaphore(pw_limit)
-
         # --- Fire-and-forget pre-warm for shared Playwright browser ---
         if self._browser_warmup_fn is not None:
             task = asyncio.create_task(
@@ -1136,8 +1123,6 @@ class StremioStreamUseCase:
                 category,
                 season=season,
                 episode=episode,
-                semaphore=semaphore,
-                pw_semaphore=pw_semaphore,
                 budget=budget,
             )
             for q in queries
@@ -1163,44 +1148,26 @@ class StremioStreamUseCase:
         *,
         season: int | None = None,
         episode: int | None = None,
-        semaphore: asyncio.Semaphore | None = None,
-        pw_semaphore: asyncio.Semaphore | None = None,
-        budget: ConcurrencyBudgetPort | None = None,
+        budget: ConcurrencyBudgetPort,
     ) -> list[SearchResult]:
         """Search all plugins in parallel with bounded concurrency.
 
-        When *budget* is provided, uses the global concurrency pool's
-        fair-share slots instead of local semaphores.  When *budget* is
-        ``None``, falls back to the local semaphore behavior.
+        Uses the global concurrency pool's fair-share budget to manage
+        httpx and Playwright slot allocation across requests.
         """
 
         async def _search_one(name: str) -> list[SearchResult]:
             is_pw = self._plugins.get_mode(name) == "playwright"
-
-            if budget is not None:
-                # Global pool path: use fair-share budget slots
-                if is_pw:
-                    async with budget.acquire_pw():
-                        return await self._run_plugin_with_timeout(
-                            name, query, category, season=season, episode=episode
-                        )
-                else:
-                    async with budget.acquire_httpx():
-                        return await self._run_plugin_with_timeout(
-                            name, query, category, season=season, episode=episode
-                        )
-
-            # Local semaphore fallback
-            sem = semaphore or asyncio.Semaphore(self._max_concurrent)
-            async with sem:
-                if is_pw and pw_semaphore is not None:
-                    async with pw_semaphore:
-                        return await self._run_plugin_with_timeout(
-                            name, query, category, season=season, episode=episode
-                        )
-                return await self._run_plugin_with_timeout(
-                    name, query, category, season=season, episode=episode
-                )
+            if is_pw:
+                async with budget.acquire_pw():
+                    return await self._run_plugin_with_timeout(
+                        name, query, category, season=season, episode=episode
+                    )
+            else:
+                async with budget.acquire_httpx():
+                    return await self._run_plugin_with_timeout(
+                        name, query, category, season=season, episode=episode
+                    )
 
         tasks = [_search_one(name) for name in plugin_names]
         results_per_plugin = await asyncio.gather(*tasks)
@@ -1220,6 +1187,11 @@ class StremioStreamUseCase:
         episode: int | None = None,
     ) -> list[SearchResult]:
         """Run a single plugin search with timeout, catching errors."""
+        # Circuit breaker: skip plugins that have been failing consistently
+        if self._circuit_breaker is not None and not self._circuit_breaker.allow(name):
+            log.debug("stremio_plugin_circuit_open", plugin=name)
+            return []
+
         try:
             return await asyncio.wait_for(
                 self._search_single_plugin(
@@ -1233,7 +1205,27 @@ class StremioStreamUseCase:
                 plugin=name,
                 timeout=self._plugin_timeout,
             )
+            if self._circuit_breaker is not None:
+                self._circuit_breaker.record_failure(name)
             return []
+
+    @staticmethod
+    async def _dispatch_search(
+        plugin: object,
+        query: str,
+        category: int | None = None,
+        *,
+        season: int | None = None,
+        episode: int | None = None,
+    ) -> list[SearchResult]:
+        """Dispatch to isolated_search() when available, else search()."""
+        if hasattr(plugin, "isolated_search") and callable(plugin.isolated_search):
+            return await plugin.isolated_search(
+                query, category, season=season, episode=episode
+            )
+        return await plugin.search(
+            query, category=category, season=season, episode=episode
+        )
 
     async def _search_single_plugin(
         self,
@@ -1258,6 +1250,7 @@ class StremioStreamUseCase:
 
         t0 = time.perf_counter_ns()
         success = False
+        cancelled = False
         results: list[SearchResult] = []
         try:
             if (
@@ -1269,21 +1262,9 @@ class StremioStreamUseCase:
                 # Set max_results context so plugins limit pagination
                 token = self._max_results_var.set(self._max_results_per_plugin)
                 try:
-                    # Use isolated_search() for per-request context isolation
-                    # when a concurrency pool is active; fall back to plain
-                    # search() otherwise (backward compat / tests).
-                    if (
-                        self._pool is not None
-                        and hasattr(plugin, "isolated_search")
-                        and callable(plugin.isolated_search)
-                    ):
-                        raw = await plugin.isolated_search(
-                            query, category, season=season, episode=episode
-                        )
-                    else:
-                        raw = await plugin.search(
-                            query, category=category, season=season, episode=episode
-                        )
+                    raw = await self._dispatch_search(
+                        plugin, query, category, season=season, episode=episode
+                    )
                 finally:
                     self._max_results_var.reset(token)
                 raw = _filter_by_episode(raw, season, episode)
@@ -1298,6 +1279,7 @@ class StremioStreamUseCase:
             log.warning("stremio_plugin_search_error", plugin=name, exc_info=True)
             results = []
         except BaseException:
+            cancelled = True
             log.warning("stremio_plugin_search_cancelled", plugin=name)
             raise
         finally:
@@ -1309,6 +1291,14 @@ class StremioStreamUseCase:
                     len(results),
                     success=success,
                 )
+            # Record circuit breaker outcome — but NOT on cancellation
+            # (BaseException), since the timeout handler in
+            # _run_plugin_with_timeout records that case instead.
+            if self._circuit_breaker is not None and not cancelled:
+                if success:
+                    self._circuit_breaker.record_success(name)
+                else:
+                    self._circuit_breaker.record_failure(name)
 
         # Tag results with source plugin for downstream use
         for r in results:

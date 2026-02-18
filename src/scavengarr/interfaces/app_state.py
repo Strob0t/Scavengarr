@@ -8,7 +8,9 @@ import httpx
 from starlette.datastructures import State
 
 from scavengarr.application.factories import CrawlJobFactory
+from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.config import AppConfig
+from scavengarr.infrastructure.graceful_shutdown import GracefulShutdown
 
 if TYPE_CHECKING:
     import asyncio
@@ -73,6 +75,12 @@ class AppState(State):
 
     # Global concurrency pool (fair-share httpx + PW slots)
     concurrency_pool: ConcurrencyPool | None
+
+    # Circuit breaker (skip plugins after consecutive failures)
+    circuit_breaker: PluginCircuitBreaker
+
+    # Graceful shutdown (request tracking + drain)
+    graceful_shutdown: GracefulShutdown
 
     # Plugin scoring (optional — requires scoring.enabled=True)
     plugin_score_store: PluginScoreStorePort | None

@@ -138,3 +138,13 @@ class ConcurrencyPool:
                 "request_budget_released",
                 active_requests=self._active_requests,
             )
+
+    def snapshot(self) -> dict[str, object]:
+        """Return a JSON-serializable snapshot for the /metrics endpoint."""
+        return {
+            "httpx_slots": self.httpx_slots,
+            "pw_slots": self.pw_slots,
+            "active_requests": self._active_requests,
+            "httpx_available": self._httpx_sem._value,
+            "pw_available": self._pw_sem._value,
+        }

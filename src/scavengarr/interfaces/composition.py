@@ -17,6 +17,7 @@ from scavengarr.application.use_cases.stremio_catalog import StremioCatalogUseCa
 from scavengarr.application.use_cases.stremio_stream import StremioStreamUseCase
 from scavengarr.domain.entities.crawljob import Priority
 from scavengarr.infrastructure.cache.cache_factory import create_cache
+from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.common.rate_limiter import DomainRateLimiter
 from scavengarr.infrastructure.common.retry_transport import RetryTransport
 from scavengarr.infrastructure.concurrency import ConcurrencyPool
@@ -366,7 +367,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         pw_slots=config.stremio.max_concurrent_playwright,
     )
 
-    # 14) Stremio use cases (always initialized — fallback handles missing key)
+    # 14) Circuit breaker (skip plugins after consecutive failures)
+    state.circuit_breaker = PluginCircuitBreaker(
+        failure_threshold=5,
+        cooldown_seconds=60.0,
+    )
+    log.info("circuit_breaker_initialized")
+
+    # 15) Stremio use cases (always initialized — fallback handles missing key)
     probe_fn = functools.partial(
         probe_urls_stealth,
         state.http_client,
@@ -393,14 +401,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         score_store=state.plugin_score_store,
         browser_warmup_fn=state.shared_browser_pool.warmup,
         pool=state.concurrency_pool,
+        circuit_breaker=state.circuit_breaker,
     )
     state.stremio_catalog_uc = StremioCatalogUseCase(tmdb=state.tmdb_client)
 
+    # Mark the application as ready for traffic
+    state.graceful_shutdown.mark_ready()
     log.info("app_startup_complete")
 
     try:
         yield
     finally:
+        # Drain in-flight requests before tearing down resources
+        await state.graceful_shutdown.wait_for_drain(timeout=10.0)
+
         if state._scoring_task is not None:
             state._scoring_task.cancel()
             with suppress(asyncio.CancelledError):

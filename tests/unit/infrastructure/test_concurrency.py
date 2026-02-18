@@ -8,7 +8,6 @@ import pytest
 
 from scavengarr.infrastructure.concurrency import ConcurrencyPool, RequestBudget
 
-
 # ---------------------------------------------------------------------------
 # ConcurrencyPool basics
 # ---------------------------------------------------------------------------
@@ -44,6 +43,15 @@ class TestConcurrencyPoolInit:
                 assert pool.active_requests == 2
             assert pool.active_requests == 1
         assert pool.active_requests == 0
+
+    def test_snapshot(self) -> None:
+        pool = ConcurrencyPool(httpx_slots=8, pw_slots=2)
+        snap = pool.snapshot()
+        assert snap["httpx_slots"] == 8
+        assert snap["pw_slots"] == 2
+        assert snap["httpx_available"] == 8
+        assert snap["pw_available"] == 2
+        assert snap["active_requests"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -231,6 +239,137 @@ class TestConcurrentRequests:
         # Greedy held 2, second held 1
         assert 2 in held_counts
         assert 1 in held_counts
+
+
+# ---------------------------------------------------------------------------
+# Integration-style concurrency tests
+# ---------------------------------------------------------------------------
+
+
+class TestConcurrencyIntegration:
+    @pytest.mark.asyncio
+    async def test_global_semaphore_blocks_excess(self) -> None:
+        """Once all global slots are taken, further acquires block."""
+        pool = ConcurrencyPool(httpx_slots=2, pw_slots=1)
+        blocked = asyncio.Event()
+        unblock = asyncio.Event()
+
+        async def _holder() -> None:
+            """Hold all 2 httpx slots until signalled."""
+            async with pool.request() as budget:
+                async with budget.acquire_httpx():
+                    async with budget.acquire_httpx():
+                        blocked.set()
+                        await unblock.wait()
+
+        async def _waiter() -> str:
+            """Try to acquire once the holder has both slots."""
+            await blocked.wait()
+            async with pool.request() as budget:
+                async with budget.acquire_httpx():
+                    return "acquired"
+            return "unreachable"  # pragma: no cover
+
+        async def _release_after_delay() -> None:
+            await blocked.wait()
+            await asyncio.sleep(0.05)
+            unblock.set()
+
+        results = await asyncio.gather(_holder(), _waiter(), _release_after_delay())
+        assert results[1] == "acquired"
+
+    @pytest.mark.asyncio
+    async def test_dynamic_expansion_unblocks_waiter(self) -> None:
+        """When one request exits, a blocked request gets unblocked."""
+        pool = ConcurrencyPool(httpx_slots=2, pw_slots=1)
+        order: list[str] = []
+
+        async def _request_a() -> None:
+            async with pool.request() as budget:
+                async with budget.acquire_httpx():
+                    async with budget.acquire_httpx():
+                        order.append("a-holding-2")
+                        await asyncio.sleep(0.05)
+            order.append("a-exited")
+
+        async def _request_b() -> None:
+            await asyncio.sleep(0.01)  # let A start first
+            async with pool.request() as budget:
+                async with budget.acquire_httpx():
+                    order.append("b-acquired")
+
+        await asyncio.gather(_request_a(), _request_b())
+        # B should only acquire after A releases
+        assert order.index("a-holding-2") < order.index("b-acquired")
+
+    @pytest.mark.asyncio
+    async def test_three_requests_all_complete(self) -> None:
+        """Three concurrent requests all complete with 4 httpx slots."""
+        pool = ConcurrencyPool(httpx_slots=4, pw_slots=2)
+        results: list[str] = []
+
+        async def _work(label: str) -> None:
+            async with pool.request() as budget:
+                async with budget.acquire_httpx():
+                    await asyncio.sleep(0.01)
+                    results.append(label)
+
+        await asyncio.gather(_work("a"), _work("b"), _work("c"))
+        assert sorted(results) == ["a", "b", "c"]
+
+    @pytest.mark.asyncio
+    async def test_pw_and_httpx_independent(self) -> None:
+        """PW and httpx slots are independent pools."""
+        pool = ConcurrencyPool(httpx_slots=1, pw_slots=1)
+        order: list[str] = []
+
+        async def _httpx_work() -> None:
+            async with pool.request() as budget:
+                async with budget.acquire_httpx():
+                    order.append("httpx-start")
+                    await asyncio.sleep(0.05)
+                    order.append("httpx-end")
+
+        async def _pw_work() -> None:
+            async with pool.request() as budget:
+                async with budget.acquire_pw():
+                    order.append("pw-start")
+                    await asyncio.sleep(0.05)
+                    order.append("pw-end")
+
+        await asyncio.gather(_httpx_work(), _pw_work())
+        # Both should start before either finishes (independent pools)
+        assert "httpx-start" in order
+        assert "pw-start" in order
+        httpx_start_idx = order.index("httpx-start")
+        pw_start_idx = order.index("pw-start")
+        httpx_end_idx = order.index("httpx-end")
+        pw_end_idx = order.index("pw-end")
+        # At least one pair should overlap (both started before one ended)
+        assert httpx_start_idx < pw_end_idx or pw_start_idx < httpx_end_idx
+
+    @pytest.mark.asyncio
+    async def test_error_in_request_releases_counter(self) -> None:
+        """If a request body raises, active_requests still decrements."""
+        pool = ConcurrencyPool(httpx_slots=2, pw_slots=1)
+        with pytest.raises(ValueError, match="boom"):
+            async with pool.request() as budget:
+                async with budget.acquire_httpx():
+                    raise ValueError("boom")
+        assert pool.active_requests == 0
+        # Slot is also released
+        snap = pool.snapshot()
+        assert snap["httpx_available"] == 2
+
+    @pytest.mark.asyncio
+    async def test_snapshot_reflects_held_slots(self) -> None:
+        """Snapshot shows reduced available slots while held."""
+        pool = ConcurrencyPool(httpx_slots=4, pw_slots=2)
+        async with pool.request() as budget:
+            async with budget.acquire_httpx():
+                snap = pool.snapshot()
+                assert snap["httpx_available"] == 3
+                assert snap["active_requests"] == 1
 
 
 # ---------------------------------------------------------------------------

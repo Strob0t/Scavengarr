@@ -19,7 +19,15 @@ growth of the test suite from 160 to 3225 tests.
 - **Cookie-based session transfer**: authenticated Playwright plugins (boerse, mygully) now login in a temporary BrowserContext, export cookies, and inject them into per-request contexts via `_prepare_context()` override — enables concurrent searches without session conflicts
 - **Domain ports**: `ConcurrencyPoolPort` and `ConcurrencyBudgetPort` protocols in `domain/ports/concurrency.py` keep the use case decoupled from the concrete infrastructure
 - **Composition root wiring**: `ConcurrencyPool` is created with `httpx_slots=max_concurrent_plugins` and `pw_slots=max_concurrent_playwright`, then injected into `StremioStreamUseCase`
-- **Backward compatible**: pool parameter is optional throughout — when `None`, the use case falls back to existing per-request semaphore behavior (all 3700 tests pass without modification)
+- **Unified code path**: pool is now required (not optional) — eliminated the dual code path that maintained a local semaphore fallback. `_dispatch_search()` static method cleanly routes to `isolated_search()` or `search()` based on plugin capability
+
+### Resilience & Observability Improvements
+- **Circuit breaker for plugins**: new `PluginCircuitBreaker` (infrastructure/circuit_breaker.py) tracks per-plugin failure counts. After 5 consecutive failures (configurable), the breaker opens and skips the plugin for 60s (configurable cooldown). Half-open state allows a single probe request. Integrated into `StremioStreamUseCase` — failures, timeouts, and successes are all recorded. `snapshot()` exposes per-plugin state for diagnostics
+- **Graceful shutdown**: new `GracefulShutdown` (infrastructure/graceful_shutdown.py) tracks in-flight HTTP requests via `request_started()` / `request_finished()`. On shutdown, `wait_for_drain(timeout=10.0)` blocks until all in-flight requests complete or the timeout elapses. Integrated into the HTTP middleware and composition root lifespan
+- **Health & readiness endpoints**: `/api/v1/healthz` (liveness) and `/api/v1/readyz` (readiness) — readiness returns 503 until startup is complete and during shutdown drain
+- **`/api/v1/stats/metrics` endpoint**: exposes runtime metrics as JSON — plugin search stats (count, success rate, avg duration), probe stats, circuit breaker state per plugin, concurrency pool utilisation (slots total/available/active), and shutdown status
+- **Playwright browser relaunch retry**: `_launch_standalone(*, retries=1)` retries browser launch once after a 1s delay on failure, with proper cleanup of partial Playwright state between attempts
+- **`isolated_search()` context leak fix**: moved `_prepare_context()` and stealth setup inside the `try` block so that the `BrowserContext` is always closed even if preparation fails. Uses `Token[BrowserContext | None] | None` pattern for safe ContextVar reset
 
 ### Cineby Plugin Timeout Fix
 - **Increase cineby concurrency**: override `_max_concurrent` from 3 → 8 (lightweight JSON API at db.videasy.net handles higher concurrency)

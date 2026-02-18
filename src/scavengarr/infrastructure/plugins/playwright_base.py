@@ -8,6 +8,7 @@ domain verification, and cleanup.
 from __future__ import annotations
 
 import asyncio
+from contextvars import Token
 
 import structlog
 from playwright.async_api import (
@@ -148,6 +149,9 @@ class PlaywrightPluginBase:
         launching a dedicated Chromium process.  This allows multiple
         Playwright plugins to share a single browser with separate
         contexts.
+
+        Includes a single retry with 1 s backoff when the launch fails
+        (e.g. transient OOM in a container).
         """
         # Check if existing browser is still connected
         if self._browser is not None and not self._browser.is_connected():
@@ -164,14 +168,38 @@ class PlaywrightPluginBase:
                 self._owns_browser = False
                 self._log.info(f"{self.name}_using_shared_browser")
             else:
-                # Standalone: launch own Playwright + Chromium
-                self._pw = await async_playwright().start()
-                self._browser = await self._pw.chromium.launch(
-                    headless=self._headless,
-                )
+                # Standalone: launch own Playwright + Chromium (1 retry)
+                self._browser = await self._launch_standalone(retries=1)
                 self._owns_browser = True
                 self._log.info(f"{self.name}_browser_launched")
         return self._browser
+
+    async def _launch_standalone(self, *, retries: int = 1) -> Browser:
+        """Launch a standalone Chromium, retrying once on failure."""
+        last_exc: Exception | None = None
+        for attempt in range(1 + retries):
+            try:
+                pw = await async_playwright().start()
+                browser = await pw.chromium.launch(headless=self._headless)
+                self._pw = pw
+                return browser
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                # Clean up partial state from failed attempt
+                if self._pw is None:
+                    # pw might have been assigned before launch failed
+                    try:
+                        await pw.stop()
+                    except Exception:  # noqa: BLE001
+                        pass
+                if attempt < retries:
+                    self._log.warning(
+                        f"{self.name}_browser_launch_retry",
+                        attempt=attempt + 1,
+                        error=str(exc),
+                    )
+                    await asyncio.sleep(1)
+        raise last_exc  # type: ignore[misc]
 
     async def _ensure_context(self) -> BrowserContext:
         """Create browser context with standard user-agent.
@@ -445,20 +473,22 @@ class PlaywrightPluginBase:
             user_agent=self._user_agent,
             viewport={"width": 1280, "height": 720},
         )
-        if self._stealth:
-            from playwright_stealth import Stealth
-
-            await Stealth().apply_stealth_async(ctx)
-            await ctx.route(
-                "**/*.{png,jpg,jpeg,gif,svg,woff,woff2,ttf,css}",
-                lambda route: route.abort(),
-            )
-        await self._prepare_context(ctx)
-        token = request_browser_context.set(ctx)
+        token: Token[BrowserContext | None] | None = None
         try:
+            if self._stealth:
+                from playwright_stealth import Stealth
+
+                await Stealth().apply_stealth_async(ctx)
+                await ctx.route(
+                    "**/*.{png,jpg,jpeg,gif,svg,woff,woff2,ttf,css}",
+                    lambda route: route.abort(),
+                )
+            await self._prepare_context(ctx)
+            token = request_browser_context.set(ctx)
             return await self.search(query, category, season=season, episode=episode)
         finally:
-            request_browser_context.reset(token)
+            if token is not None:
+                request_browser_context.reset(token)
             for page in ctx.pages:
                 if not page.is_closed():
                     await page.close()

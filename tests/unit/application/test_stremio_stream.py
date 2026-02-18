@@ -28,6 +28,7 @@ from scavengarr.domain.entities.stremio import (
     TitleMatchInfo,
 )
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.concurrency import ConcurrencyPool
 from scavengarr.infrastructure.config.schema import StremioConfig
 from scavengarr.infrastructure.plugins.constants import (
     DEFAULT_USER_AGENT,
@@ -118,6 +119,7 @@ def _make_use_case(
         stream_link_repo=stream_link_repo,
         probe_fn=probe_fn,
         resolve_fn=resolve_fn,
+        pool=ConcurrencyPool(httpx_slots=100, pw_slots=100),
     )
 
 
@@ -713,6 +715,7 @@ class TestExecute:
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
         del mock_plugin.scraping  # Ensure no scraping attr → Python plugin path
+        mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
@@ -733,8 +736,8 @@ class TestExecute:
         assert "Iron Man" in result[0].name
         assert "(2008)" in result[0].name
         tmdb.get_title_and_year.assert_awaited_once_with("tt1234567", language="de")
-        mock_plugin.search.assert_awaited_once_with(
-            "Iron Man", category=2000, season=None, episode=None
+        mock_plugin.isolated_search.assert_awaited_once_with(
+            "Iron Man", 2000, season=None, episode=None
         )
         engine.validate_results.assert_awaited_once()
 
@@ -748,6 +751,7 @@ class TestExecute:
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[])
         del mock_plugin.scraping
+        mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
         engine.validate_results = AsyncMock(return_value=[])
@@ -763,8 +767,8 @@ class TestExecute:
         uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
         await uc.execute(req)
 
-        mock_plugin.search.assert_awaited_once_with(
-            "Breaking Bad", category=5000, season=1, episode=5
+        mock_plugin.isolated_search.assert_awaited_once_with(
+            "Breaking Bad", 5000, season=1, episode=5
         )
 
     async def test_multiple_plugins_combined(self) -> None:
@@ -783,9 +787,11 @@ class TestExecute:
         plugin_a = AsyncMock()
         plugin_a.search = AsyncMock(return_value=[sr1])
         del plugin_a.scraping
+        plugin_a.isolated_search = plugin_a.search
         plugin_b = AsyncMock()
         plugin_b.search = AsyncMock(return_value=[sr2])
         del plugin_b.scraping
+        plugin_b.isolated_search = plugin_b.search
 
         engine = AsyncMock()
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
@@ -817,9 +823,11 @@ class TestExecute:
         good_plugin = AsyncMock()
         good_plugin.search = AsyncMock(return_value=[sr])
         del good_plugin.scraping
+        good_plugin.isolated_search = good_plugin.search
         bad_plugin = AsyncMock()
         bad_plugin.search = AsyncMock(side_effect=RuntimeError("boom"))
         del bad_plugin.scraping
+        bad_plugin.isolated_search = bad_plugin.search
 
         engine = AsyncMock()
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
@@ -862,6 +870,7 @@ class TestExecute:
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[])
         del mock_plugin.scraping
+        mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
         engine.validate_results = AsyncMock(return_value=[])
@@ -889,6 +898,7 @@ class TestExecute:
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
         del mock_plugin.scraping
+        mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
@@ -918,6 +928,7 @@ class TestExecute:
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
         del mock_plugin.scraping
+        mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
@@ -948,6 +959,7 @@ class TestExecute:
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
         del mock_plugin.scraping
+        mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
@@ -981,6 +993,7 @@ class TestExecute:
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
         del mock_plugin.scraping
+        mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
@@ -1024,6 +1037,7 @@ class TestExecute:
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[])
         del mock_plugin.scraping
+        mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
         engine.validate_results = AsyncMock(return_value=[])
@@ -1059,6 +1073,7 @@ class TestExecute:
         fast_plugin = AsyncMock()
         fast_plugin.search = AsyncMock(return_value=[sr])
         del fast_plugin.scraping
+        fast_plugin.isolated_search = fast_plugin.search
 
         async def _slow_search(*_a: object, **_kw: object) -> list[SearchResult]:
             await asyncio.sleep(10)
@@ -1067,6 +1082,7 @@ class TestExecute:
         slow_plugin = AsyncMock()
         slow_plugin.search = AsyncMock(side_effect=_slow_search)
         del slow_plugin.scraping
+        slow_plugin.isolated_search = slow_plugin.search
 
         engine = AsyncMock()
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
@@ -1121,6 +1137,7 @@ class TestTitleMatchFiltering:
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr_good, sr_sequel, sr_unrelated])
         del mock_plugin.scraping
+        mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
@@ -1155,6 +1172,7 @@ class TestTitleMatchFiltering:
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
         del mock_plugin.scraping
+        mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
@@ -1189,6 +1207,7 @@ class TestTitleMatchFiltering:
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr_good, sr_bad])
         del mock_plugin.scraping
+        mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
@@ -1229,6 +1248,7 @@ class TestStreamLinkProxy:
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
         del mock_plugin.scraping
+        mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
@@ -1269,6 +1289,7 @@ class TestStreamLinkProxy:
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
         del mock_plugin.scraping
+        mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
@@ -1309,6 +1330,7 @@ class TestStreamLinkProxy:
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
         del mock_plugin.scraping
+        mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
@@ -1354,6 +1376,7 @@ class TestResolverEchoFiltering:
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
         del mock_plugin.scraping
+        mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
@@ -1400,6 +1423,7 @@ class TestResolverEchoFiltering:
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
         del mock_plugin.scraping
+        mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
@@ -1451,6 +1475,7 @@ class TestResolverEchoFiltering:
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
         del mock_plugin.scraping
+        mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
@@ -1504,6 +1529,7 @@ class TestResolverEchoFiltering:
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
         del mock_plugin.scraping
+        mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
@@ -1587,6 +1613,7 @@ def _probe_test_setup(
     mock_plugin = AsyncMock()
     mock_plugin.search = AsyncMock(return_value=srs)
     del mock_plugin.scraping
+    mock_plugin.isolated_search = mock_plugin.search
 
     engine = AsyncMock()
     engine.validate_results = AsyncMock(side_effect=lambda r: r)
@@ -1976,6 +2003,7 @@ class TestMultiLanguageDispatch:
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
         del mock_plugin.scraping
+        mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
@@ -2016,6 +2044,7 @@ class TestMultiLanguageDispatch:
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
         del mock_plugin.scraping
+        mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
@@ -2049,6 +2078,7 @@ class TestMultiLanguageDispatch:
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
         del mock_plugin.scraping
+        mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
@@ -2090,6 +2120,7 @@ class TestMultiLanguageDispatch:
         de_plugin = AsyncMock()
         de_plugin.search = AsyncMock(return_value=[sr])
         del de_plugin.scraping
+        de_plugin.isolated_search = de_plugin.search
 
         sr_en = _make_search_result(
             title="The Godfather",
@@ -2099,6 +2130,7 @@ class TestMultiLanguageDispatch:
         en_plugin = AsyncMock()
         en_plugin.search = AsyncMock(return_value=[sr_en])
         del en_plugin.scraping
+        en_plugin.isolated_search = en_plugin.search
 
         engine = AsyncMock()
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
@@ -2145,6 +2177,7 @@ class TestBrowserWarmup:
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
         del mock_plugin.scraping
+        mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
@@ -2169,6 +2202,7 @@ class TestBrowserWarmup:
             user_agent=DEFAULT_USER_AGENT,
             max_results_var=search_max_results,
             browser_warmup_fn=warmup_fn,
+            pool=ConcurrencyPool(httpx_slots=100, pw_slots=100),
         )
 
         await uc.execute(_make_request())
@@ -2187,6 +2221,7 @@ class TestBrowserWarmup:
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
         del mock_plugin.scraping
+        mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
@@ -2216,6 +2251,7 @@ class TestBrowserWarmup:
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
         del mock_plugin.scraping
+        mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
         engine.validate_results = AsyncMock(side_effect=lambda r: r)
@@ -2242,6 +2278,7 @@ class TestBrowserWarmup:
             filter_fn=filter_by_title_match,
             user_agent=DEFAULT_USER_AGENT,
             max_results_var=search_max_results,
+            pool=ConcurrencyPool(httpx_slots=100, pw_slots=100),
         )
 
         result = await uc.execute(_make_request())

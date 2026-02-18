@@ -219,6 +219,54 @@ class TestEnsureBrowser:
         assert plugin._context is None
         assert plugin._page is None
 
+    @pytest.mark.asyncio
+    async def test_retries_on_launch_failure(self) -> None:
+        """Standalone launch retries once after a transient failure."""
+        plugin = _TestPlugin()
+
+        mock_browser = _make_mock_browser()
+        good_pw = AsyncMock()
+        good_pw.chromium.launch = AsyncMock(return_value=mock_browser)
+
+        bad_pw = AsyncMock()
+        bad_pw.chromium.launch = AsyncMock(side_effect=OSError("OOM"))
+
+        call_count = 0
+
+        async def _start():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return bad_pw
+            return good_pw
+
+        with patch(
+            "scavengarr.infrastructure.plugins.playwright_base.async_playwright"
+        ) as mock_apw:
+            mock_apw.return_value.start = AsyncMock(side_effect=_start)
+            with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+                browser = await plugin._ensure_browser()
+
+        assert browser is mock_browser
+        assert plugin._owns_browser is True
+        mock_sleep.assert_awaited_once_with(1)
+
+    @pytest.mark.asyncio
+    async def test_raises_after_all_retries_exhausted(self) -> None:
+        """When all retries fail, the last exception propagates."""
+        plugin = _TestPlugin()
+
+        bad_pw = AsyncMock()
+        bad_pw.chromium.launch = AsyncMock(side_effect=OSError("OOM"))
+
+        with patch(
+            "scavengarr.infrastructure.plugins.playwright_base.async_playwright"
+        ) as mock_apw:
+            mock_apw.return_value.start = AsyncMock(return_value=bad_pw)
+            with patch("asyncio.sleep", new_callable=AsyncMock):
+                with pytest.raises(OSError, match="OOM"):
+                    await plugin._ensure_browser()
+
 
 # ---------------------------------------------------------------------------
 # Context lifecycle
@@ -1124,6 +1172,34 @@ class TestIsolatedSearch:
         await plugin.isolated_search("test")
 
         assert request_browser_context.get(None) is None
+
+    @pytest.mark.asyncio
+    async def test_ctx_closed_when_prepare_context_fails(self) -> None:
+        """BrowserContext is closed even when _prepare_context() raises."""
+
+        class _BadPrepPlugin(PlaywrightPluginBase):
+            name = "badprep-pw"
+            provides = "stream"
+            _domains = ["example.com"]
+
+            async def _prepare_context(self, ctx):
+                raise RuntimeError("cookie injection failed")
+
+            async def search(self, query, category=None, season=None, episode=None):
+                return []
+
+        plugin = _BadPrepPlugin()
+        mock_ctx = AsyncMock()
+        mock_ctx.pages = []
+        mock_browser = _make_mock_browser()
+        mock_browser.new_context = AsyncMock(return_value=mock_ctx)
+        plugin._browser = mock_browser
+
+        with pytest.raises(RuntimeError, match="cookie injection failed"):
+            await plugin.isolated_search("test")
+
+        # Context MUST still be closed despite _prepare_context failure
+        mock_ctx.close.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
