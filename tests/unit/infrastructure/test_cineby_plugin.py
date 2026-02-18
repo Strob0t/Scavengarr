@@ -679,6 +679,129 @@ class TestPluginSearch:
         assert results[0].category == 2000
         assert "embed/movie/" in results[0].download_link
 
+    @pytest.mark.asyncio
+    async def test_detail_fetch_capped(self, cineby_mod, mock_client):
+        """Only first _MAX_DETAIL_FETCH results get detail-fetched."""
+        max_detail = cineby_mod._MAX_DETAIL_FETCH  # 25
+
+        # Build 40 movie entries (exceeds cap)
+        entries = [
+            {
+                "id": 1000 + i,
+                "title": f"Movie {i}",
+                "media_type": "movie",
+                "release_date": "2023-01-01",
+                "overview": f"Overview {i}",
+                "poster_path": "",
+                "vote_average": 5.0,
+                "genre_ids": [],
+            }
+            for i in range(40)
+        ]
+        search_resp_data = {
+            "page": 1,
+            "total_pages": 1,
+            "total_results": 40,
+            "results": entries,
+        }
+
+        detail_fetch_ids: list[int] = []
+
+        async def mock_get(url, **kwargs):
+            url_str = str(url)
+            if "/3/search/" in url_str:
+                return _make_json_response(search_resp_data)
+            if "/3/movie/" in url_str:
+                # Track which IDs got detail-fetched
+                tmdb_id = int(url_str.split("/3/movie/")[1].split("?")[0])
+                detail_fetch_ids.append(tmdb_id)
+                return _make_json_response(
+                    {"id": tmdb_id, "imdb_id": f"tt{tmdb_id}", "runtime": 120}
+                )
+            return _make_json_response({})
+
+        p = cineby_mod.CinebyPlugin()
+        p._client = mock_client
+        p.base_url = "https://www.cineby.gd"
+        mock_client.get = AsyncMock(side_effect=mock_get)
+
+        results = await p.search("movies")
+
+        # Only first _MAX_DETAIL_FETCH entries should have detail fetched
+        assert len(detail_fetch_ids) == max_detail
+        assert set(detail_fetch_ids) == {1000 + i for i in range(max_detail)}
+
+        # All 40 results should still be returned
+        assert len(results) == 40
+
+    @pytest.mark.asyncio
+    async def test_results_without_detail_still_valid(self, cineby_mod, mock_client):
+        """Results beyond detail cap have valid title/embed_url but empty imdb_id."""
+        max_detail = cineby_mod._MAX_DETAIL_FETCH
+
+        entries = [
+            {
+                "id": 2000 + i,
+                "title": f"Film {i}",
+                "media_type": "movie",
+                "release_date": "2024-06-15",
+                "overview": f"A film about {i}",
+                "poster_path": "",
+                "vote_average": 6.0,
+                "genre_ids": [],
+            }
+            for i in range(max_detail + 5)
+        ]
+        search_resp_data = {
+            "page": 1,
+            "total_pages": 1,
+            "total_results": len(entries),
+            "results": entries,
+        }
+
+        async def mock_get(url, **kwargs):
+            url_str = str(url)
+            if "/3/search/" in url_str:
+                return _make_json_response(search_resp_data)
+            if "/3/movie/" in url_str:
+                tmdb_id = int(url_str.split("/3/movie/")[1].split("?")[0])
+                return _make_json_response(
+                    {"id": tmdb_id, "imdb_id": f"tt{tmdb_id}", "runtime": 90}
+                )
+            return _make_json_response({})
+
+        p = cineby_mod.CinebyPlugin()
+        p._client = mock_client
+        p.base_url = "https://www.cineby.gd"
+        mock_client.get = AsyncMock(side_effect=mock_get)
+
+        results = await p.search("films")
+
+        # Results with detail should have imdb_id
+        for sr in results[:max_detail]:
+            assert sr.metadata["imdb_id"] != "", f"Expected imdb_id for {sr.title}"
+            assert sr.metadata["runtime"] == "90"
+
+        # Results without detail should have empty imdb_id but valid title/embed
+        for sr in results[max_detail:]:
+            assert sr.metadata["imdb_id"] == ""
+            assert sr.metadata["runtime"] == ""
+            assert sr.title  # non-empty title
+            assert "vidking.net/embed/movie/" in sr.download_link
+
+
+# ---------------------------------------------------------------------------
+# Detail fetch cap tests
+# ---------------------------------------------------------------------------
+
+
+class TestMaxConcurrent:
+    """Tests for increased _max_concurrent setting."""
+
+    def test_max_concurrent_is_eight(self, cineby_mod):
+        p = cineby_mod.CinebyPlugin()
+        assert p._max_concurrent == 8
+
 
 # ---------------------------------------------------------------------------
 # Cleanup tests

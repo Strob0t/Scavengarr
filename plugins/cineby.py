@@ -40,6 +40,7 @@ _API_BASE = "https://db.videasy.net"
 _EMBED_BASE = "https://www.vidking.net"
 _PER_PAGE = 20
 _MAX_PAGES = 50  # 50 × 20 = 1000
+_MAX_DETAIL_FETCH = 25  # cap detail fetches to avoid timeout on broad queries
 
 # TMDB genre ID → name mapping
 _GENRE_MAP: dict[int, str] = {
@@ -81,6 +82,7 @@ class CinebyPlugin(HttpxPluginBase):
     provides = "stream"
     languages = ["en"]
     _domains = _DOMAINS
+    _max_concurrent = 8  # lightweight JSON API, safe for higher concurrency
 
     categories = {
         2000: "Movies",
@@ -291,12 +293,27 @@ class CinebyPlugin(HttpxPluginBase):
         if not search_results:
             return []
 
+        # Cap detail fetches to avoid timeout on broad queries (100+ results).
+        # Results beyond the cap are built without detail (no imdb_id/runtime).
+        detail_batch = search_results[:_MAX_DETAIL_FETCH]
+        no_detail_batch = search_results[_MAX_DETAIL_FETCH:]
+
         # Fetch details with bounded concurrency
         sem = self._new_semaphore()
-        tasks = [self._process_entry(e, sem, season, episode) for e in search_results]
+        tasks = [self._process_entry(e, sem, season, episode) for e in detail_batch]
         task_results = await asyncio.gather(*tasks)
 
         results: list[SearchResult] = [sr for sr in task_results if sr is not None]
+
+        # Build remaining results without detail fetch
+        for entry in no_detail_batch:
+            tmdb_id = entry.get("id")
+            if not tmdb_id:
+                continue
+            mt = entry.get("media_type", "movie")
+            if mt not in ("movie", "tv"):
+                continue
+            results.append(self._build_search_result(entry, None, season, episode))
 
         return results[: self.effective_max_results]
 

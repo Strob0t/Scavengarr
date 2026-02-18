@@ -11,6 +11,10 @@ Massive expansion of the plugin ecosystem (2 → 40 plugins), Stremio addon inte
 hoster resolver system, plugin base class standardization, search result caching, and
 growth of the test suite from 160 to 3225 tests.
 
+### Cineby Plugin Timeout Fix
+- **Increase cineby concurrency**: override `_max_concurrent` from 3 → 8 (lightweight JSON API at db.videasy.net handles higher concurrency)
+- **Cap detail fetches**: add `_MAX_DETAIL_FETCH = 25` — only the first 25 search results get detail-fetched (IMDB ID, runtime); remaining results are built from search data only. Prevents timeout on broad queries like "Avengers" (100+ results × 3 concurrency = ~15s detail phase → now 25 results × 8 concurrency = ~1.5s)
+
 ### Multi-Language Search & unidecode Migration
 - **unidecode for universal transliteration**: replace manual 4-character German umlaut table (`_UMLAUT_TABLE`) and 15-character transliteration table (`_TRANSLITERATION`) with `unidecode` library — supports 130+ Unicode scripts for title matching and search query generation
 - **Multi-language plugin support**: plugins now declare `languages: list[str]` (default `["de"]`) instead of `default_language: str`. Backward-compatible property `default_language` returns `languages[0]`
