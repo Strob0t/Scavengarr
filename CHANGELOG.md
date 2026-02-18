@@ -10,7 +10,12 @@ Format: version, date, grouped changes. Newest entries first.
 Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration,
 56 hoster resolvers, plugin base class standardization, search result caching, circuit
 breaker, global concurrency pool, graceful shutdown, multi-language search, and
-growth of the test suite from 160 to 4042 tests.
+growth of the test suite from 160 to 4043 tests.
+
+### Concurrency Benchmark Suite & Auto-Tune Fix
+- **Benchmark suite** (`tests/benchmark/`): synthetic E2E benchmarks for ConcurrencyPool slot tuning, probe/validation semaphore sweeps, and formula-vs-empirical comparison. Runs manually via `poetry run pytest tests/benchmark/ -s -v` (excluded from CI via `addopts = "--ignore=tests/benchmark"`).
+- **Fix: probe/validation hard-caps**: `probe_concurrency` capped at 100 (was unbounded — 128 on 32 cores), `validation_max_concurrent` capped at 120 (was 160). Caps derived from benchmark diminishing-returns analysis (<5% throughput gain beyond threshold).
+- **New test**: `test_extreme_host_probe_validation_capped` verifies caps on 32-core hosts.
 
 ### Code Review: Tests, Performance & Quality
 - **HLS proxy E2E tests** (11 tests): full request-response cycle for `GET /proxy/{stream_id}/{path}` — manifest rewriting, segment streaming, error codes (400/404/502/503), query string fallback, CORS headers, header forwarding.

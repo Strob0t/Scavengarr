@@ -124,7 +124,7 @@ class TestAutoTuneAll:
         assert config.validation_max_concurrent == 40  # 8*5
 
     def test_very_large_host_capped_at_30(self) -> None:
-        """16 CPUs, 64GB → plugins capped at 30."""
+        """16 CPUs, 64GB → plugins capped at 30, probe/validation capped."""
         resources = DetectedResources(
             cpu_cores=16,
             memory_bytes=64 * 1024**3,
@@ -143,6 +143,29 @@ class TestAutoTuneAll:
         assert (
             config.stremio.max_concurrent_playwright == 10
         )  # min(16, 426, 10) → capped
+        assert config.stremio.probe_concurrency == 64  # min(16*4, 100) = 64
+        assert config.validation_max_concurrent == 80  # min(16*5, 120) = 80
+
+    def test_extreme_host_probe_validation_capped(self) -> None:
+        """32 CPUs, 64GB → probe capped at 100, validation at 120."""
+        resources = DetectedResources(
+            cpu_cores=32,
+            memory_bytes=64 * 1024**3,
+            cpu_source="os_fallback",
+            mem_source="os_fallback",
+            cgroup_limited=False,
+        )
+        config = AppConfig()
+        with patch(
+            "scavengarr.interfaces.composition.detect_resources",
+            return_value=resources,
+        ):
+            _auto_tune(config)
+
+        assert config.stremio.max_concurrent_plugins == 30  # min(96, 128, 30)
+        assert config.stremio.max_concurrent_playwright == 10  # min(32, 426, 10)
+        assert config.stremio.probe_concurrency == 100  # min(128, 100) → capped
+        assert config.validation_max_concurrent == 120  # min(160, 120) → capped
 
     def test_playwright_limited_by_memory(self) -> None:
         """4 CPUs but only 256MB → Playwright limited by RAM."""

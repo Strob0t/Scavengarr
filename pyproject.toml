@@ -51,7 +51,9 @@ asyncio_mode = "auto"
 markers = [
     "integration: Integration tests (real infrastructure, mocked HTTP)",
     "live: Live smoke tests against real websites (require network)",
+    "benchmark: Concurrency tuning benchmarks (slow, run manually)",
 ]
+addopts = "--ignore=tests/benchmark"
 filterwarnings = [
     "ignore:Stealth has already been applied:UserWarning",
 ]

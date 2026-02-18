@@ -113,10 +113,14 @@ def _auto_tune(config: AppConfig) -> None:
     Uses cgroup v2/v1 detection to read actual container limits instead of
     host values.  Scales every concurrency parameter proportionally:
 
-    - ``max_concurrent_plugins``:  ``min(cpu*3, mem_gb*2, 30)``
+    - ``max_concurrent_plugins``:    ``min(cpu*3, mem_gb*2, 30)``
     - ``max_concurrent_playwright``: ``min(cpu, mem_gb/0.15, 10)``
-    - ``probe_concurrency``:       ``cpu * 4``
-    - ``validation_max_concurrent``: ``cpu * 5``
+    - ``probe_concurrency``:         ``min(cpu*4, 100)``
+    - ``validation_max_concurrent``:  ``min(cpu*5, 120)``
+
+    Caps for probe/validation derived from benchmark diminishing-returns
+    analysis (tests/benchmark/): throughput gains < 5% beyond 64–100
+    for probes and 60–120 for validation across typical URL counts.
     """
     resources = detect_resources()
     cpus = resources.cpu_cores
@@ -125,8 +129,8 @@ def _auto_tune(config: AppConfig) -> None:
     s = config.stremio
     s.max_concurrent_plugins = max(2, min(cpus * 3, int(mem_gb * 2), 30))
     s.max_concurrent_playwright = max(1, min(cpus, int(mem_gb / 0.15), 10))
-    s.probe_concurrency = max(4, cpus * 4)
-    config.validation_max_concurrent = max(5, cpus * 5)
+    s.probe_concurrency = max(4, min(cpus * 4, 100))
+    config.validation_max_concurrent = max(5, min(cpus * 5, 120))
 
     log.info(
         "auto_tune_complete",

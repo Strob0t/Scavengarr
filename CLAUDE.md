@@ -289,7 +289,7 @@ The system provides a stable download endpoint that delivers a `.crawljob` file 
 - Integration: HTTP router ↔ use case ↔ adapter with HTTP mocking.
 - Optional E2E: real plugin fixtures, but deterministic (no external sites in CI).
 
-### Current test suite (4042 tests)
+### Current test suite (4043 tests)
 
 ```
 tests/
@@ -398,6 +398,11 @@ tests/
     test_config_loading.py             # Configuration precedence (YAML + ENV + defaults)
     test_crawljob_lifecycle.py         # CrawlJob creation, retrieval, TTL
     test_link_validation.py            # Link validator with mocked HTTP responses
+  benchmark/
+    conftest.py                        # LatencyPlugin, FakePluginRegistry, BenchmarkResult, timing utilities
+    test_concurrency_tuning.py         # ConcurrencyPool httpx-slot sweep, fair-share contention, timeout edge
+    test_probe_validation_sweep.py     # Probe/validation semaphore sweep, diminishing-returns analysis
+    test_formula_validation.py         # _auto_tune() formula vs empirical optimal, monotonic scaling, bounds
   live/
     test_plugin_smoke.py               # Plugin smoke tests (real HTTP, skip in CI)
     test_resolver_live.py              # Resolver contract tests (live URL validation)
