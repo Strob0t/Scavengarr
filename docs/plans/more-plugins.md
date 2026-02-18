@@ -29,7 +29,7 @@ Scavengarr ships with **42 plugins** covering German streaming, DDL, and anime s
 | kinoger | kinoger.com | stream | Domain fallback |
 | kinoking | kinoking.cc | stream | Movie/series detection |
 | kinox | kinox.to | stream | 9 mirror domains, AJAX embeds |
-| megakino | megakino.me | stream | |
+| megakino | megakino1.biz | stream | Domain fallback (4 mirrors) |
 | megakino_to | megakino.org | stream | JSON API |
 | movie2k | movie2k.cx | stream | 2-stage HTML scraping |
 | movie4k | movie4k.sx | stream | JSON API, multi-domain |
@@ -51,7 +51,7 @@ Scavengarr ships with **42 plugins** covering German streaming, DDL, and anime s
 | Plugin | Site | Type | Notes |
 |---|---|---|---|
 | animeloads | anime-loads.org | stream | DDoS-Guard bypass |
-| boerse | boerse.sx | download | Cloudflare + vBulletin auth |
+| boerse | boerse.sx | download | Cloudflare + vBulletin auth, 6 mirrors |
 | byte | byte.to | download | Cloudflare, iframe links |
 | ddlspot | ddlspot.com | download | Pagination up to 1000 |
 | ddlvalley | ddlvalley.me | download | WordPress pagination |

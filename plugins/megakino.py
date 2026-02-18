@@ -1,15 +1,15 @@
-"""megakino.me Python plugin for Scavengarr.
+"""megakino plugin for Scavengarr.
 
-Scrapes megakino.me (German streaming site, DLE-based CMS) with:
+Scrapes megakino (German streaming site, DLE-based CMS) with:
 - httpx for all requests (server-rendered HTML, no JS challenges)
 - POST /index.php?do=search with story={query} for keyword search
 - Pagination via search_start/result_from POST params (20 results/page)
-- Detail page scraping for stream tab links (film) and select hosters (series)
+- Detail page scraping for stream iframe URLs (film) and select hosters (series)
 - Series detection from "Serien" in genre text or "Staffel" in title
 - Category filtering (Movies/TV/Animation)
 - Bounded concurrency for detail page scraping
 
-Single domain: megakino.me (other megakino domains have JS challenges).
+Domain chain: megakino1.biz (primary), megakino1.ws, megakino1.net, megakino.me.
 No authentication required.
 """
 
@@ -26,7 +26,7 @@ from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 # ---------------------------------------------------------------------------
 # Configurable settings
 # ---------------------------------------------------------------------------
-_DOMAINS = ["megakino.me"]
+_DOMAINS = ["megakino1.biz", "megakino1.ws", "megakino1.net", "megakino.me"]
 _RESULTS_PER_PAGE = 20
 _MAX_PAGES = 50  # 1000 / 20
 
@@ -458,7 +458,13 @@ class _DetailPageParser(HTMLParser):
         elif tag == "div" and self._in_tabs_content:
             self._tabs_content_div_depth += 1
 
-        # <a href="/dl/..."> inside tabs-block__content
+        # <iframe data-src="https://voe.sx/e/..." /> inside tabs-block__content
+        if tag == "iframe" and self._in_tabs_content:
+            src = attr_dict.get("data-src", "") or attr_dict.get("src", "") or ""
+            if src and src.startswith("http"):
+                self._content_dl_href = src
+
+        # Legacy: <a href="/dl/..."> inside tabs-block__content
         if tag == "a" and self._in_tabs_content:
             href = attr_dict.get("href", "") or ""
             if href and "/dl/" in href:
@@ -604,11 +610,28 @@ class _DetailPageParser(HTMLParser):
 
 
 class MegakinoPlugin(HttpxPluginBase):
-    """Python plugin for megakino.me using httpx."""
+    """Python plugin for megakino using httpx."""
 
     name = "megakino"
     provides = "stream"
     _domains = _DOMAINS
+    _token_acquired = False
+
+    async def _ensure_token(self) -> None:
+        """Acquire the yg_token cookie required for detail page access.
+
+        The site returns a JS challenge on first GET unless the
+        ``yg_token`` cookie is present.  Fetching ``/index.php?yg=token``
+        sets this cookie via a 204 response.
+        """
+        if self._token_acquired:
+            return
+        client = await self._ensure_client()
+        try:
+            await client.get(f"{self.base_url}/index.php?yg=token")
+            self._token_acquired = True
+        except Exception:  # noqa: BLE001
+            self._log.debug("megakino_token_failed")
 
     async def _search_page(
         self,
@@ -759,7 +782,7 @@ class MegakinoPlugin(HttpxPluginBase):
         season: int | None = None,
         episode: int | None = None,
     ) -> list[SearchResult]:
-        """Search megakino.me and return results with stream links."""
+        """Search megakino and return results with stream links."""
         await self._ensure_client()
         await self._verify_domain()
 
@@ -769,6 +792,9 @@ class MegakinoPlugin(HttpxPluginBase):
         all_items = await self._search_all_pages(query)
         if not all_items:
             return []
+
+        # Token is required for detail page GET requests (JS challenge).
+        await self._ensure_token()
 
         # Scrape detail pages with bounded concurrency
         sem = self._new_semaphore()

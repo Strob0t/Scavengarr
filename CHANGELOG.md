@@ -12,6 +12,13 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 breaker, global concurrency pool, graceful shutdown, multi-language search, and
 growth of the test suite from 160 to 3963 tests.
 
+### Plugin Fixes (megakino, boerse)
+- **megakino**: Fix broken plugin (0 results in live tests). Three issues resolved:
+  1. Domain redirect: `megakino.me` now redirects to `megakino1.biz` — updated `_DOMAINS` list with 4 mirrors (`megakino1.biz`, `megakino1.ws`, `megakino1.net`, `megakino.me`)
+  2. yg_token JS challenge: detail page GET requests require a `yg_token` cookie — added `_ensure_token()` that fetches `/index.php?yg=token` (204 response sets cookie) before scraping detail pages
+  3. iframe extraction: site changed from `<a href="/dl/...">` to `<iframe data-src="https://voe.sx/e/...">` for hoster links — updated `_DetailPageParser` to extract iframe `data-src`/`src` attributes
+- **boerse**: Add missing `boerse.tw` mirror domain to `_DOMAINS` and `_INTERNAL_HOSTS` (6 mirrors total: am/tw/sx/im/ai/kz)
+
 ### Stremio Streamable Link E2E Tests
 - **Fix existing E2E tests**: `test_stremio_endpoint.py` and `test_stremio_series_e2e.py` updated to pass `pool=ConcurrencyPool()` and mock `get_languages`/`get_mode` on the plugin registry — required after the global concurrency pool became mandatory
 - **New `test_stremio_streamable_e2e.py`**: 31 comprehensive E2E tests verifying the full Stremio stream pipeline produces genuinely streamable links (direct `.mp4`/`.m3u8` video URLs with `behaviorHints`, or `/play/` proxy URLs). Covers movie resolution (MP4, HLS, mixed, echo filtering, dedup, behaviorHints), series resolution (episode filtering, multi-plugin, high episode numbers), circuit breaker integration, concurrency pool integration, edge cases (all plugins error, all resolvers fail/echo, empty results), and full pipeline roundtrips

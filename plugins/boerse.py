@@ -1,7 +1,7 @@
 """boerse.sx Python plugin for Scavengarr.
 
 Scrapes boerse.sx (vBulletin 3.8.12 forum) with:
-- Domain fallback across multiple mirrors
+- Domain fallback across 6 mirrors (am/tw/sx/im/ai/kz)
 - Playwright for Cloudflare JS challenge bypass
 - vBulletin form-based authentication (MD5 password hash)
 - Quick-search via #lsa_input form (includes securitytoken)
@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 _DOMAINS = [
     "boerse.am",
+    "boerse.tw",
     "boerse.sx",
     "boerse.im",
     "boerse.ai",
@@ -56,6 +57,7 @@ _CATEGORY_FORUM_MAP: dict[int, str] = {
 # Hosts that are internal (not download links)
 _INTERNAL_HOSTS = {
     "boerse.am",
+    "boerse.tw",
     "boerse.sx",
     "boerse.im",
     "boerse.ai",

@@ -105,11 +105,13 @@ zerstoert. Emmet muss seine Freunde retten.</div>
       <span>Doodstream</span>
     </div>
   </div>
-  <div class="tabs-block__content video-inside">
-    <a href="/dl/9586022"><img src="/static/stream-start.png" alt="Stream Start"></a>
+  <div class="tabs-block__content video-inside video-responsive">
+    <iframe id="film_main" data-src="https://voe.sx/e/w2a1rxa6c3en" \
+scrolling="no" frameborder="0" allowfullscreen></iframe>
   </div>
-  <div class="tabs-block__content video-inside">
-    <a href="/dl/9586023"><img src="/static/stream-start.png" alt="Stream Start"></a>
+  <div class="tabs-block__content d-none video-inside video-responsive">
+    <iframe id="film_main" data-src="https://d0000d.com/e/xgd6geij4okm" \
+scrolling="no" frameborder="0" allowfullscreen></iframe>
   </div>
 </div>
 </body></html>
@@ -189,7 +191,7 @@ def _mock_response(text: str, status_code: int = 200) -> httpx.Response:
     return httpx.Response(
         status_code=status_code,
         text=text,
-        request=httpx.Request("POST", "https://megakino.me/"),
+        request=httpx.Request("POST", "https://megakino1.biz/"),
     )
 
 
@@ -377,12 +379,12 @@ class TestDetailPageParser:
 
         first = parser.stream_links[0]
         assert first["hoster"] == "voe"
-        assert first["link"] == "https://megakino.me/dl/9586022"
+        assert first["link"] == "https://voe.sx/e/w2a1rxa6c3en"
         assert first["label"] == "Voe"
 
         second = parser.stream_links[1]
         assert second["hoster"] == "doodstream"
-        assert second["link"] == "https://megakino.me/dl/9586023"
+        assert second["link"] == "https://d0000d.com/e/xgd6geij4okm"
         assert second["label"] == "Doodstream"
 
     def test_parses_film_metadata(self) -> None:
@@ -514,6 +516,7 @@ class TestMegakinoPluginSearch:
         )
         mock_client.get = AsyncMock(
             side_effect=[
+                _mock_response("", 204),  # yg_token
                 _mock_response(_FILM_DETAIL_HTML),  # LEGO detail
                 _mock_response(_SERIES_DETAIL_HTML),  # Penguin detail
             ]
@@ -752,6 +755,7 @@ class TestMegakinoCategoryFiltering:
         )
         mock_client.get = AsyncMock(
             side_effect=[
+                _mock_response("", 204),  # yg_token
                 _mock_response(_FILM_DETAIL_HTML),  # Animation → 5070
                 _mock_response(_SERIES_DETAIL_HTML),  # Series → 5000
             ]
@@ -777,6 +781,7 @@ class TestMegakinoCategoryFiltering:
         )
         mock_client.get = AsyncMock(
             side_effect=[
+                _mock_response("", 204),  # yg_token
                 _mock_response(_FILM_DETAIL_HTML),  # Animation → 5070
                 _mock_response(_SERIES_DETAIL_HTML),  # Series → 5000
             ]
@@ -801,6 +806,7 @@ class TestMegakinoCategoryFiltering:
         )
         mock_client.get = AsyncMock(
             side_effect=[
+                _mock_response("", 204),  # yg_token
                 _mock_response(_FILM_DETAIL_HTML),
                 _mock_response(_SERIES_DETAIL_HTML),
             ]
@@ -823,7 +829,7 @@ class TestMegakinoDomainFallback:
         plug._client = mock_client
         await plug._verify_domain()
 
-        assert plug.base_url == "https://megakino.me"
+        assert plug.base_url == "https://megakino1.biz"
         assert plug._domain_verified is True
 
     @pytest.mark.asyncio
@@ -836,7 +842,7 @@ class TestMegakinoDomainFallback:
         plug._client = mock_client
         await plug._verify_domain()
 
-        assert plug.base_url == "https://megakino.me"
+        assert plug.base_url == "https://megakino1.biz"
         assert plug._domain_verified is True
 
     @pytest.mark.asyncio

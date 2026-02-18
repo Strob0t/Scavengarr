@@ -143,7 +143,7 @@ class TestLogin:
         fail_page.goto = AsyncMock(side_effect=Exception("unreachable"))
         fail_page.is_closed = MagicMock(return_value=False)
 
-        # Second page (boerse.sx) → succeeds
+        # Second page (boerse.tw) → succeeds
         ok_page = _make_mock_page(body_text="Danke testuser")
         context = _make_mock_context(
             pages=[fail_page, ok_page], cookies=_SESSION_COOKIES
@@ -160,12 +160,12 @@ class TestLogin:
             await plugin._ensure_session()
 
         assert plugin._logged_in is True
-        assert plugin.base_url == "https://boerse.sx"
+        assert plugin.base_url == "https://boerse.tw"
 
     async def test_login_all_domains_fail(self) -> None:
         plugin = _make_plugin()
 
-        pages = [_make_mock_page() for _ in range(5)]
+        pages = [_make_mock_page() for _ in range(6)]
         for p in pages:
             p.goto = AsyncMock(side_effect=Exception("unreachable"))
             p.is_closed = MagicMock(return_value=False)
