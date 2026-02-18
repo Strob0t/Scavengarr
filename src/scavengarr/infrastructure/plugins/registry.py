@@ -155,6 +155,13 @@ class PluginRegistry:
             return ["de"]
         return list(meta.languages)
 
+    def get_mode(self, name: str) -> str:
+        """Return the mode of a plugin (``'httpx'`` or ``'playwright'``)."""
+        self.discover()
+        self._ensure_meta_cache()
+        meta = self._meta_cache.get(name)
+        return meta.mode if meta is not None else "httpx"
+
     def _ensure_meta_cache(self) -> None:
         """Build metadata cache from all plugins (lazy, one-time)."""
         if self._meta_cached:

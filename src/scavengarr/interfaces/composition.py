@@ -120,6 +120,18 @@ def _apply_plugin_overrides(plugins: PluginRegistry, config: AppConfig) -> None:
             log.warning("plugin_override_unknown", plugin=name, exc_info=True)
 
 
+def _inject_shared_browser_pool(
+    plugins: PluginRegistry,
+    pool: SharedBrowserPool,
+) -> None:
+    """Inject the shared browser pool into all Playwright plugins."""
+    for name in plugins.list_names():
+        if plugins.get_mode(name) == "playwright":
+            plugin = plugins.get(name)
+            if hasattr(plugin, "set_shared_pool"):
+                plugin.set_shared_pool(pool)
+
+
 def _wire_scoring(state: AppState, config: AppConfig) -> None:
     """Wire scoring components when scoring is enabled."""
     state.plugin_score_store = CachePluginScoreStore(
@@ -339,6 +351,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     state.shared_browser_pool = SharedBrowserPool(
         headless=config.playwright_headless,
     )
+    _inject_shared_browser_pool(state.plugins, state.shared_browser_pool)
     log.info("shared_browser_pool_configured")
 
     # 13) Stremio use cases (always initialized — fallback handles missing key)

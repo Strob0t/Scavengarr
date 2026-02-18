@@ -77,11 +77,9 @@ class PlaywrightPluginBase:
         self._domain_verified: bool = False
         self.base_url: str = f"https://{self._domains[0]}" if self._domains else ""
         self._log = structlog.get_logger(self.name or __name__)
-        # Shared browser support: when set, _ensure_browser() awaits this
-        # task instead of launching a new Chromium process.
-        self._shared_browser_task: asyncio.Task[tuple[Browser, Playwright]] | None = (
-            None
-        )
+        # Shared browser support: when set, _ensure_browser() calls
+        # pool.warmup() instead of launching a new Chromium process.
+        self._shared_pool: object | None = None
         self._owns_browser: bool = True
 
     @property
@@ -112,21 +110,22 @@ class PlaywrightPluginBase:
         return False
 
     # ------------------------------------------------------------------
-    # Shared browser injection
+    # Shared browser pool injection
     # ------------------------------------------------------------------
 
-    def set_shared_browser_task(
-        self,
-        task: asyncio.Task[tuple[Browser, Playwright]],
-    ) -> None:
-        """Inject a shared browser warmup task.
+    def set_shared_pool(self, pool: object) -> None:
+        """Inject a :class:`SharedBrowserPool` reference.
 
-        When set, ``_ensure_browser()`` awaits this task instead of
-        launching a new Chromium process.  ``cleanup()`` will only
-        close the context and page — the shared browser is managed
-        externally (e.g. by ``SharedBrowserPool``).
+        When set, ``_ensure_browser()`` calls ``pool.warmup()`` to
+        obtain the shared Chromium browser instead of launching its
+        own process.  ``cleanup()`` will only close the context and
+        page — the browser is managed by the pool.
+
+        Typed as ``object`` to avoid importing infrastructure types
+        into the base class.  The pool must have an async
+        ``warmup() -> tuple[Browser, Playwright]`` method.
         """
-        self._shared_browser_task = task
+        self._shared_pool = pool
         self._owns_browser = False
 
     # ------------------------------------------------------------------
@@ -136,10 +135,11 @@ class PlaywrightPluginBase:
     async def _ensure_browser(self) -> Browser:
         """Return a connected Chromium browser, launching if needed.
 
-        When a shared browser task is set (via ``set_shared_browser_task``),
-        awaits that task to obtain the shared browser instead of launching
-        a dedicated Chromium process.  This allows multiple Playwright
-        plugins to share a single browser with separate contexts.
+        When a shared pool is set (via ``set_shared_pool``), calls
+        ``pool.warmup()`` to obtain the shared browser instead of
+        launching a dedicated Chromium process.  This allows multiple
+        Playwright plugins to share a single browser with separate
+        contexts.
         """
         # Check if existing browser is still connected
         if self._browser is not None and not self._browser.is_connected():
@@ -150,9 +150,9 @@ class PlaywrightPluginBase:
             self._page = None
 
         if self._browser is None:
-            if self._shared_browser_task is not None:
-                # Use shared browser from pool (awaited concurrently)
-                self._browser, self._pw = await self._shared_browser_task
+            if self._shared_pool is not None:
+                # Use shared browser from pool
+                self._browser, self._pw = await self._shared_pool.warmup()
                 self._owns_browser = False
                 self._log.info(f"{self.name}_using_shared_browser")
             else:

@@ -56,12 +56,14 @@ class SharedBrowserPool:
         If the browser has disconnected (crash, etc.), it is relaunched.
         """
         if self._browser is not None and self._browser.is_connected():
-            return self._browser, self._pw  # type: ignore[return-value]
+            assert self._pw is not None  # invariant: browser implies pw
+            return self._browser, self._pw
 
         async with self._lock:
             # Double-check after acquiring lock
             if self._browser is not None and self._browser.is_connected():
-                return self._browser, self._pw  # type: ignore[return-value]
+                assert self._pw is not None  # invariant: browser implies pw
+                return self._browser, self._pw
 
             # Clean up stale state if browser crashed
             if self._pw is not None:
@@ -85,12 +87,12 @@ class SharedBrowserPool:
             try:
                 await self._browser.close()
             except Exception:  # noqa: BLE001
-                pass
+                log.warning("shared_browser_close_error", exc_info=True)
             self._browser = None
         if self._pw is not None:
             try:
                 await self._pw.stop()
             except Exception:  # noqa: BLE001
-                pass
+                log.warning("shared_pw_stop_error", exc_info=True)
             self._pw = None
         log.info("shared_browser_cleaned_up")

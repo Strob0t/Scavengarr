@@ -1073,12 +1073,15 @@ class StremioStreamUseCase:
         A single shared semaphore bounds total concurrent plugin searches
         across all query variants to prevent connection overload.
 
-        When a browser warmup function is configured and Playwright
-        plugins are present, a browser warmup task is started as a
-        background task *before* searches begin — httpx plugins start
-        immediately while the browser warms up in parallel.  The warmup
-        task is injected into PW plugins so they can share a single
-        Chromium process via separate ``BrowserContext`` instances.
+        When a browser warmup function is configured, a fire-and-forget
+        warmup task starts the shared Chromium process in the background
+        while httpx plugins search.  Playwright plugins obtain the
+        shared browser from their injected pool reference (set at
+        composition time).
+
+        The Playwright concurrency semaphore is dynamically sized to
+        ``min(pw_plugin_count, max_concurrent_playwright)`` so that
+        the semaphore never exceeds the actual number of PW plugins.
 
         The first query's results are always kept in full.  Subsequent
         (fallback) queries only add results whose ``download_link`` was
@@ -1086,18 +1089,23 @@ class StremioStreamUseCase:
         matching on both the full title and the shorter base title.
         """
         semaphore = asyncio.Semaphore(self._max_concurrent)
-        pw_semaphore = asyncio.Semaphore(self._max_concurrent_pw)
 
-        # --- Pre-warm shared browser for Playwright plugins ---
-        warmup_task: asyncio.Task[tuple[Any, Any]] | None = None
+        # Dynamic PW semaphore: cap at actual PW plugin count
+        pw_count = sum(
+            1 for n in plugin_names if self._plugins.get_mode(n) == "playwright"
+        )
+        pw_limit = min(pw_count, self._max_concurrent_pw) if pw_count > 0 else 1
+        pw_semaphore = asyncio.Semaphore(pw_limit)
+
+        # --- Fire-and-forget pre-warm for shared Playwright browser ---
         if self._browser_warmup_fn is not None:
-            has_pw = any(
-                getattr(self._plugins.get(n), "mode", "httpx") == "playwright"
-                for n in plugin_names
-                if self._try_get_plugin(n) is not None
+            task = asyncio.create_task(
+                self._browser_warmup_fn(),
+                name="browser-warmup",
             )
-            if has_pw:
-                warmup_task = asyncio.create_task(self._browser_warmup_fn())
+            task.add_done_callback(
+                lambda t: t.exception() if not t.cancelled() else None
+            )
 
         search_tasks = [
             self._search_plugins(
@@ -1108,7 +1116,6 @@ class StremioStreamUseCase:
                 episode=episode,
                 semaphore=semaphore,
                 pw_semaphore=pw_semaphore,
-                browser_warmup_task=warmup_task,
             )
             for q in queries
         ]
@@ -1125,13 +1132,6 @@ class StremioStreamUseCase:
                         all_results.append(r)
         return all_results
 
-    def _try_get_plugin(self, name: str) -> Any | None:
-        """Get a plugin by name, returning None on error."""
-        try:
-            return self._plugins.get(name)
-        except Exception:
-            return None
-
     async def _search_plugins(
         self,
         plugin_names: list[str],
@@ -1142,42 +1142,23 @@ class StremioStreamUseCase:
         episode: int | None = None,
         semaphore: asyncio.Semaphore | None = None,
         pw_semaphore: asyncio.Semaphore | None = None,
-        browser_warmup_task: asyncio.Task[tuple[Any, Any]] | None = None,
     ) -> list[SearchResult]:
         """Search all plugins in parallel with bounded concurrency.
 
         When *semaphore* is provided it is shared across query variants.
         Playwright plugins additionally acquire *pw_semaphore* to bound
         concurrent browser contexts on the shared Chromium process.
-
-        When *browser_warmup_task* is provided, it is injected into
-        Playwright plugins via ``set_shared_browser_task()`` so they
-        share a single browser instead of each launching their own.
         """
         sem = semaphore or asyncio.Semaphore(self._max_concurrent)
 
         async def _search_one(name: str) -> list[SearchResult]:
             async with sem:
-                plugin = None
-                try:
-                    plugin = self._plugins.get(name)
-                except Exception:
-                    log.warning("stremio_plugin_not_found", plugin=name, exc_info=True)
-                    return []
-
-                is_pw = getattr(plugin, "mode", "httpx") == "playwright"
-                if is_pw:
-                    # Inject shared browser task if available
-                    if browser_warmup_task is not None and hasattr(
-                        plugin, "set_shared_browser_task"
-                    ):
-                        plugin.set_shared_browser_task(browser_warmup_task)
-
-                    if pw_semaphore is not None:
-                        async with pw_semaphore:
-                            return await self._run_plugin_with_timeout(
-                                name, query, category, season=season, episode=episode
-                            )
+                is_pw = self._plugins.get_mode(name) == "playwright"
+                if is_pw and pw_semaphore is not None:
+                    async with pw_semaphore:
+                        return await self._run_plugin_with_timeout(
+                            name, query, category, season=season, episode=episode
+                        )
 
                 return await self._run_plugin_with_timeout(
                     name, query, category, season=season, episode=episode

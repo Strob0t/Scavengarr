@@ -20,11 +20,14 @@ growth of the test suite from 160 to 3225 tests.
 
 ### Shared Playwright Browser Pool & Pre-Warming
 - **SharedBrowserPool**: new infrastructure component (`shared_browser.py`) manages a single Chromium process shared by all 9 Playwright plugins. Each plugin gets its own `BrowserContext` for isolation while sharing the underlying browser — eliminates per-plugin ~1-2s browser startup overhead
-- **Browser pre-warming**: when a Stremio search request arrives and Playwright plugins are present, the browser warmup starts as a background task immediately while httpx plugins begin searching. Playwright plugins await the (possibly already completed) warmup task when they need the browser
-- **Parallel Playwright plugins**: Playwright plugins now run concurrently on the shared browser (bounded by `max_concurrent_playwright`, default 3) instead of sequentially via `Semaphore(1)`. With 9 PW plugins and concurrency of 3, the PW search phase runs in ~3 rounds instead of 9 sequential rounds
-- **Add `max_concurrent_playwright` config** (default 3): controls how many Playwright plugins run concurrently on the shared browser
-- **Ownership-aware cleanup**: `PlaywrightPluginBase.cleanup()` now only closes the browser/Playwright when the plugin owns it (standalone mode). When using a shared browser, only the context and page are closed — the shared browser is managed by the pool
-- **Disconnection recovery**: `_ensure_browser()` checks `browser.is_connected()` and relaunches transparently if the browser has crashed or disconnected
+- **Composition-time pool injection**: plugins receive the shared pool reference at startup via `set_shared_pool()` instead of per-request task injection — eliminates race conditions on plugin state and simplifies the search orchestration
+- **Browser pre-warming**: when a Stremio search request arrives and Playwright plugins are present, the browser warmup fires as a background task (named `browser-warmup` with exception callback) immediately while httpx plugins begin searching
+- **Parallel Playwright plugins**: Playwright plugins now run concurrently on the shared browser (bounded by `max_concurrent_playwright`, default 5) instead of sequentially via `Semaphore(1)`. PW semaphore is dynamically sized to `min(pw_plugin_count, max_concurrent_playwright)` per request
+- **Add `max_concurrent_playwright` config** (default 5): upper bound for parallel Playwright plugin searches; actual concurrency is dynamically capped at the number of PW plugins in the request
+- **Ownership-aware cleanup**: `PlaywrightPluginBase.cleanup()` only closes the browser/Playwright when the plugin owns it (standalone mode). When using a shared pool, only the context and page are closed
+- **Disconnection recovery**: `_ensure_browser()` checks `browser.is_connected()` and relaunches transparently if the browser has crashed or disconnected. Context and page state are reset on disconnect
+- **Resilient cleanup**: `SharedBrowserPool.cleanup()` logs warnings instead of silently swallowing exceptions during browser close / Playwright stop
+- **`get_mode()` on PluginRegistryPort**: use case checks plugin mode without loading the full plugin object — avoids double plugin fetch in search orchestration
 
 ### Stremio Stream Resolution Performance
 - **Skip probe when resolve is active**: probe phase (`probe_at_stream_time`) is now skipped when a resolve callback is configured, since resolution implicitly checks liveness — saves one entire I/O phase (~5-10s)

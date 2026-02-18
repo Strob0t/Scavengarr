@@ -225,3 +225,44 @@ class TestGetLanguages:
     def test_unknown_plugin_returns_default(self, registry: PluginRegistry) -> None:
         """Unknown plugin name returns default ['de']."""
         assert registry.get_languages("nonexistent") == ["de"]
+
+
+class TestGetMode:
+    """Tests for get_mode() plugin mode lookup."""
+
+    def test_httpx_default(self, registry: PluginRegistry, tmp_path: Path) -> None:
+        """Plugin without explicit mode defaults to 'httpx'."""
+        _write_plugin(
+            tmp_path,
+            "httpx_plugin.py",
+            """\
+            class _Plugin:
+                name = "httpx-default"
+                async def search(self, query, category=None):
+                    return []
+            plugin = _Plugin()
+            """,
+        )
+
+        assert registry.get_mode("httpx-default") == "httpx"
+
+    def test_playwright_mode(self, registry: PluginRegistry, tmp_path: Path) -> None:
+        """Plugin with mode='playwright' is detected correctly."""
+        _write_plugin(
+            tmp_path,
+            "pw_plugin.py",
+            """\
+            class _Plugin:
+                name = "pw-plugin"
+                mode = "playwright"
+                async def search(self, query, category=None):
+                    return []
+            plugin = _Plugin()
+            """,
+        )
+
+        assert registry.get_mode("pw-plugin") == "playwright"
+
+    def test_unknown_plugin_returns_httpx(self, registry: PluginRegistry) -> None:
+        """Unknown plugin name returns 'httpx' as safe default."""
+        assert registry.get_mode("nonexistent") == "httpx"

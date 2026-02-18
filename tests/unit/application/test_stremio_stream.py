@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from scavengarr.application.use_cases.stremio_stream import (
     StremioStreamUseCase,
     _build_multi_lang_reference,
@@ -2121,3 +2123,128 @@ class TestMultiLanguageDispatch:
         urls = {s.url for s in result}
         assert "https://voe.sx/e/pate" in urls
         assert "https://filemoon.sx/e/godfather" in urls
+
+
+# ---------------------------------------------------------------------------
+# Browser warmup (pre-warming shared Playwright browser)
+# ---------------------------------------------------------------------------
+
+
+class TestBrowserWarmup:
+    """Tests for the fire-and-forget browser pre-warm in _search_with_fallback."""
+
+    @pytest.mark.asyncio
+    async def test_warmup_fn_called_when_configured(self) -> None:
+        """Browser warmup fn fires when configured, regardless of plugin mode."""
+        tmdb = AsyncMock()
+        tmdb.get_title_and_year = AsyncMock(
+            return_value=TitleMatchInfo(title="Test", year=2024)
+        )
+
+        sr = _make_search_result()
+        mock_plugin = AsyncMock()
+        mock_plugin.search = AsyncMock(return_value=[sr])
+        del mock_plugin.scraping
+
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(side_effect=lambda r: r)
+
+        plugins = MagicMock()
+        plugins.get_by_provides.side_effect = lambda p: (
+            ["test"] if p == "stream" else []
+        )
+        plugins.get.return_value = mock_plugin
+        plugins.get_languages.return_value = ["de"]
+        plugins.get_mode.return_value = "httpx"
+
+        warmup_fn = AsyncMock(return_value=(MagicMock(), MagicMock()))
+        uc = StremioStreamUseCase(
+            tmdb=tmdb,
+            plugins=plugins,
+            search_engine=engine,
+            config=_make_config(),
+            sorter=StreamSorter(_make_config()),
+            convert_fn=convert_search_results,
+            filter_fn=filter_by_title_match,
+            user_agent=DEFAULT_USER_AGENT,
+            max_results_var=search_max_results,
+            browser_warmup_fn=warmup_fn,
+        )
+
+        await uc.execute(_make_request())
+
+        warmup_fn.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_warmup_fn_not_called_when_not_configured(self) -> None:
+        """When no warmup fn is provided, no crash occurs."""
+        tmdb = AsyncMock()
+        tmdb.get_title_and_year = AsyncMock(
+            return_value=TitleMatchInfo(title="Test", year=2024)
+        )
+
+        sr = _make_search_result()
+        mock_plugin = AsyncMock()
+        mock_plugin.search = AsyncMock(return_value=[sr])
+        del mock_plugin.scraping
+
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(side_effect=lambda r: r)
+
+        plugins = MagicMock()
+        plugins.get_by_provides.side_effect = lambda p: (
+            ["test"] if p == "stream" else []
+        )
+        plugins.get.return_value = mock_plugin
+        plugins.get_languages.return_value = ["de"]
+
+        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
+
+        # Should not crash when browser_warmup_fn is None
+        result = await uc.execute(_make_request())
+        assert isinstance(result, list)
+
+    @pytest.mark.asyncio
+    async def test_pw_semaphore_dynamic_sizing(self) -> None:
+        """PW semaphore is capped at the actual PW plugin count."""
+        tmdb = AsyncMock()
+        tmdb.get_title_and_year = AsyncMock(
+            return_value=TitleMatchInfo(title="Test", year=2024)
+        )
+
+        sr = _make_search_result()
+        mock_plugin = AsyncMock()
+        mock_plugin.search = AsyncMock(return_value=[sr])
+        del mock_plugin.scraping
+
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(side_effect=lambda r: r)
+
+        # 2 PW + 1 httpx plugins
+        plugins = MagicMock()
+        plugins.get_by_provides.side_effect = lambda p: (
+            ["pw1", "pw2", "httpx1"] if p == "stream" else []
+        )
+        plugins.get.return_value = mock_plugin
+        plugins.get_languages.return_value = ["de"]
+        plugins.get_mode.side_effect = lambda n: (
+            "playwright" if n.startswith("pw") else "httpx"
+        )
+
+        config = _make_config(max_concurrent_playwright=10)
+        uc = StremioStreamUseCase(
+            tmdb=tmdb,
+            plugins=plugins,
+            search_engine=engine,
+            config=config,
+            sorter=StreamSorter(config),
+            convert_fn=convert_search_results,
+            filter_fn=filter_by_title_match,
+            user_agent=DEFAULT_USER_AGENT,
+            max_results_var=search_max_results,
+        )
+
+        result = await uc.execute(_make_request())
+        # All 3 plugins searched — dynamic semaphore doesn't block
+        assert plugins.get.call_count >= 3
+        assert isinstance(result, list)

@@ -94,39 +94,36 @@ class TestEnsureBrowser:
         assert browser is mock_browser
 
     @pytest.mark.asyncio
-    async def test_shared_browser_via_task(self) -> None:
-        """When a shared browser task is set, _ensure_browser uses it."""
+    async def test_shared_pool_provides_browser(self) -> None:
+        """When a shared pool is set, _ensure_browser uses it."""
         plugin = _TestPlugin()
         mock_browser = _make_mock_browser()
         mock_pw = AsyncMock()
 
-        async def _warmup() -> tuple:
-            return mock_browser, mock_pw
-
-        warmup_task = asyncio.create_task(_warmup())
-        plugin.set_shared_browser_task(warmup_task)
+        mock_pool = AsyncMock()
+        mock_pool.warmup = AsyncMock(return_value=(mock_browser, mock_pw))
+        plugin.set_shared_pool(mock_pool)
 
         browser = await plugin._ensure_browser()
 
         assert browser is mock_browser
         assert plugin._pw is mock_pw
         assert plugin._owns_browser is False
+        mock_pool.warmup.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_multiple_plugins_share_browser_task(self) -> None:
-        """Multiple plugins can await the same warmup task."""
+    async def test_multiple_plugins_share_pool(self) -> None:
+        """Multiple plugins sharing a pool get the same browser."""
         mock_browser = _make_mock_browser()
         mock_pw = AsyncMock()
 
-        async def _warmup() -> tuple:
-            return mock_browser, mock_pw
-
-        warmup_task = asyncio.create_task(_warmup())
+        mock_pool = AsyncMock()
+        mock_pool.warmup = AsyncMock(return_value=(mock_browser, mock_pw))
 
         plugin_a = _TestPlugin()
         plugin_b = _TestPlugin()
-        plugin_a.set_shared_browser_task(warmup_task)
-        plugin_b.set_shared_browser_task(warmup_task)
+        plugin_a.set_shared_pool(mock_pool)
+        plugin_b.set_shared_pool(mock_pool)
 
         browser_a = await plugin_a._ensure_browser()
         browser_b = await plugin_b._ensure_browser()
@@ -137,12 +134,36 @@ class TestEnsureBrowser:
         assert plugin_b._owns_browser is False
 
     @pytest.mark.asyncio
+    async def test_two_plugins_concurrent_ensure_browser(self) -> None:
+        """Two plugins calling _ensure_browser concurrently get the same browser."""
+        mock_browser = _make_mock_browser()
+        mock_pw = AsyncMock()
+
+        mock_pool = AsyncMock()
+        mock_pool.warmup = AsyncMock(return_value=(mock_browser, mock_pw))
+
+        plugin_a = _TestPlugin()
+        plugin_b = _TestPlugin()
+        plugin_a.set_shared_pool(mock_pool)
+        plugin_b.set_shared_pool(mock_pool)
+
+        b_a, b_b = await asyncio.gather(
+            plugin_a._ensure_browser(),
+            plugin_b._ensure_browser(),
+        )
+
+        assert b_a is mock_browser
+        assert b_b is mock_browser
+
+    @pytest.mark.asyncio
     async def test_relaunches_disconnected_browser(self) -> None:
         """A disconnected browser is replaced on next _ensure_browser call."""
         plugin = _TestPlugin()
         dead_browser = _make_mock_browser(connected=False)
         plugin._browser = dead_browser
         plugin._pw = AsyncMock()
+        plugin._context = AsyncMock()
+        plugin._page = AsyncMock()
 
         new_browser = _make_mock_browser()
         new_pw = AsyncMock()
@@ -156,6 +177,9 @@ class TestEnsureBrowser:
 
         assert browser is new_browser
         assert plugin._owns_browser is True
+        # Stale context and page must be cleared on disconnect
+        assert plugin._context is None
+        assert plugin._page is None
 
 
 # ---------------------------------------------------------------------------
@@ -632,8 +656,8 @@ class TestCleanup:
         assert plugin._domain_verified is False
 
     @pytest.mark.asyncio
-    async def test_shared_browser_not_closed(self) -> None:
-        """When using a shared browser, cleanup only closes context/page."""
+    async def test_shared_pool_browser_not_closed(self) -> None:
+        """When using a shared pool, cleanup only closes context/page."""
         plugin = _TestPlugin()
         mock_page = AsyncMock()
         mock_page.is_closed = MagicMock(return_value=False)
@@ -645,7 +669,9 @@ class TestCleanup:
         plugin._context = mock_context
         plugin._browser = mock_browser
         plugin._pw = mock_pw
-        plugin._owns_browser = False
+        # Simulate pool injection (set _owns_browser=False)
+        mock_pool = AsyncMock()
+        plugin.set_shared_pool(mock_pool)
 
         await plugin.cleanup()
 
@@ -783,6 +809,41 @@ class TestSharedBrowserPool:
 
         pool = SharedBrowserPool(headless=True)
         await pool.cleanup()  # Should not raise
+
+    @pytest.mark.asyncio
+    async def test_cleanup_resilient_to_browser_close_error(self) -> None:
+        """Cleanup completes even when browser.close() raises."""
+        from scavengarr.infrastructure.plugins.shared_browser import SharedBrowserPool
+
+        pool = SharedBrowserPool(headless=True)
+        mock_browser = _make_mock_browser()
+        mock_browser.close = AsyncMock(side_effect=Exception("boom"))
+        mock_pw = AsyncMock()
+        pool._browser = mock_browser
+        pool._pw = mock_pw
+
+        await pool.cleanup()  # Should not raise
+
+        mock_pw.stop.assert_awaited_once()  # pw cleaned up despite browser error
+        assert pool._browser is None
+        assert pool._pw is None
+
+    @pytest.mark.asyncio
+    async def test_cleanup_resilient_to_pw_stop_error(self) -> None:
+        """Cleanup completes even when pw.stop() raises."""
+        from scavengarr.infrastructure.plugins.shared_browser import SharedBrowserPool
+
+        pool = SharedBrowserPool(headless=True)
+        mock_browser = _make_mock_browser()
+        mock_pw = AsyncMock()
+        mock_pw.stop = AsyncMock(side_effect=Exception("boom"))
+        pool._browser = mock_browser
+        pool._pw = mock_pw
+
+        await pool.cleanup()  # Should not raise
+
+        mock_browser.close.assert_awaited_once()
+        assert pool._pw is None
 
     @pytest.mark.asyncio
     async def test_relaunches_after_disconnect(self) -> None:

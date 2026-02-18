@@ -212,11 +212,11 @@ class StremioConfig(BaseModel):
     )
 
     max_concurrent_playwright: int = Field(
-        default=3,
+        default=5,
         description=(
-            "Max parallel Playwright plugin searches on the shared browser. "
-            "Each Playwright plugin gets its own BrowserContext; this limits "
-            "how many contexts run concurrently to avoid RAM spikes."
+            "Upper bound for parallel Playwright plugin searches on the "
+            "shared browser. The actual concurrency is dynamically capped "
+            "at min(pw_plugin_count, this value) per request."
         ),
     )
 
