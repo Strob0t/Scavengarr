@@ -6,12 +6,20 @@ import httpx
 import pytest
 import respx
 
+from scavengarr.infrastructure.stremio import hls_proxy
 from scavengarr.infrastructure.stremio.hls_proxy import (
     build_cdn_url,
     cdn_base_from_url,
     fetch_hls_resource,
     rewrite_manifest,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clear_manifest_cache() -> None:
+    """Clear the module-level manifest cache between tests."""
+    hls_proxy._manifest_cache.clear()
+
 
 # ---------------------------------------------------------------------------
 # cdn_base_from_url

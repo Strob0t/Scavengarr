@@ -10,6 +10,7 @@ import httpx
 import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
+from starlette.responses import StreamingResponse
 
 from scavengarr.domain.entities.stremio import (
     StremioContentType,
@@ -22,6 +23,7 @@ from scavengarr.infrastructure.stremio.hls_proxy import (
     cdn_base_from_url,
     fetch_hls_resource,
     rewrite_manifest,
+    stream_hls_segment,
 )
 from scavengarr.interfaces.app_state import AppState
 
@@ -380,6 +382,34 @@ def _resolve_query_string(request_query: str, video_url: str) -> str:
     return qs
 
 
+def _cdn_error_response(
+    stream_id: str, target_url: str, exc: httpx.HTTPError
+) -> JSONResponse:
+    """Map a CDN httpx error to a 502 JSON response."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        log.warning(
+            "hls_proxy_cdn_error",
+            stream_id=stream_id,
+            status=exc.response.status_code,
+            url=target_url[:120],
+        )
+        return JSONResponse(
+            status_code=502,
+            content={"error": "CDN returned error"},
+            headers=_CORS_HEADERS,
+        )
+    log.warning(
+        "hls_proxy_network_error",
+        stream_id=stream_id,
+        url=target_url[:120],
+    )
+    return JSONResponse(
+        status_code=502,
+        content={"error": "CDN request failed"},
+        headers=_CORS_HEADERS,
+    )
+
+
 @router.get("/proxy/{stream_id}/{path:path}", response_model=None)
 async def proxy_hls(
     stream_id: str,
@@ -434,50 +464,39 @@ async def proxy_hls(
     query_string = _resolve_query_string(request.url.query or "", link.video_url)
     target_url = build_cdn_url(cdn_base, path, query_string)
 
+    # Segments (.ts) — stream without buffering full body
+    if not path.endswith(".m3u8"):
+        try:
+            chunk_iter, content_type = await stream_hls_segment(
+                state.http_client, target_url, headers
+            )
+        except httpx.HTTPError as exc:
+            return _cdn_error_response(stream_id, target_url, exc)
+        return StreamingResponse(
+            content=chunk_iter,
+            media_type=content_type,
+            headers=_CORS_HEADERS,
+        )
+
+    # Manifests (.m3u8) — fetch, rewrite URLs, return
     try:
         body, content_type = await fetch_hls_resource(
             state.http_client, target_url, headers
         )
-    except httpx.HTTPStatusError as exc:
-        log.warning(
-            "hls_proxy_cdn_error",
-            stream_id=stream_id,
-            status=exc.response.status_code,
-            url=target_url[:120],
-        )
-        return JSONResponse(
-            status_code=502,
-            content={"error": "CDN returned error"},
-            headers=_CORS_HEADERS,
-        )
-    except httpx.HTTPError:
-        log.warning(
-            "hls_proxy_network_error", stream_id=stream_id, url=target_url[:120]
-        )
-        return JSONResponse(
-            status_code=502,
-            content={"error": "CDN request failed"},
-            headers=_CORS_HEADERS,
-        )
+    except httpx.HTTPError as exc:
+        return _cdn_error_response(stream_id, target_url, exc)
 
-    # Rewrite manifest URLs so sub-requests go through the proxy
-    if path.endswith(".m3u8") or "mpegurl" in content_type.lower():
-        proxy_base = (
-            f"{str(request.base_url).rstrip('/')}/api/v1/stremio/proxy/{stream_id}/"
-        )
-        rewritten = rewrite_manifest(
-            body.decode("utf-8", errors="replace"), cdn_base, proxy_base
-        )
-        return Response(
-            content=rewritten,
-            media_type="application/vnd.apple.mpegurl",
-            headers=_CORS_HEADERS,
-        )
-
-    # Segments (.ts) — pass through as-is
+    proxy_base = (
+        f"{str(request.base_url).rstrip('/')}/api/v1/stremio/proxy/{stream_id}/"
+    )
+    rewritten = rewrite_manifest(
+        body.decode("utf-8", errors="replace"),
+        cdn_base,
+        proxy_base,
+    )
     return Response(
-        content=body,
-        media_type=content_type,
+        content=rewritten,
+        media_type="application/vnd.apple.mpegurl",
         headers=_CORS_HEADERS,
     )
 
