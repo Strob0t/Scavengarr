@@ -99,6 +99,20 @@ model, which reads them automatically.
 | `SCAVENGARR_CACHE_DIR` | path | `./.cache/scavengarr` | Cache directory for disk-based caching |
 | `SCAVENGARR_CACHE_TTL_SECONDS` | int | `3600` | Default TTL for cache entries in seconds |
 
+### Stremio & Scoring Variables
+
+Key Stremio and scoring settings are also overridable via environment variables:
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `SCAVENGARR_STREMIO_SCORING_ENABLED` | bool | `false` | Use scoring to limit plugin selection |
+| `SCAVENGARR_SCORING_ENABLED` | bool | `false` | Enable background probing |
+| `SCAVENGARR_SCORING_W_HEALTH` | float | `0.4` | Health weight in composite score |
+| `SCAVENGARR_SCORING_W_SEARCH` | float | `0.6` | Search weight in composite score |
+
+Most Stremio/scoring settings are best configured via the YAML `stremio:` and
+`scoring:` sections. See [Stremio](#stremio) and [Scoring](#scoring) below.
+
 ### Cache Variables (CACHE_ prefix)
 
 Cache-specific variables use the `CACHE_` prefix. These configure the cache
@@ -146,6 +160,21 @@ playwright:
   headless: true
   timeout_ms: 30000
 
+stremio:
+  max_concurrent_plugins: 10
+  max_concurrent_playwright: 5
+  plugin_timeout_seconds: 30.0
+  title_match_threshold: 0.7
+  resolve_target_count: 15
+  probe_at_stream_time: true
+
+scoring:
+  enabled: false
+  health_halflife_days: 2.0
+  search_halflife_weeks: 2.0
+  w_health: 0.4
+  w_search: 0.6
+
 logging:
   level: "INFO"
   format: "json"    # "json" or "console"; auto-derived from environment if omitted
@@ -175,6 +204,8 @@ The configuration loader recognizes these top-level sections. Flat keys (like
 | `log_format` | `logging.format` |
 | `cache_dir` | `cache.dir` |
 | `cache_ttl_seconds` | `cache.ttl_seconds` |
+| (nested object) | `stremio.*` |
+| (nested object) | `scoring.*` |
 
 ---
 
@@ -243,6 +274,89 @@ Controls the Playwright browser engine for JavaScript-heavy sites.
 
 Set `headless: false` only for local debugging -- it requires a display server
 (X11/Wayland) and is not supported in Docker containers.
+
+### Stremio
+
+Controls the Stremio addon behavior: stream ranking, plugin concurrency, title
+matching, hoster probing, and scored plugin selection.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `stremio.preferred_language` | string | `de` | Preferred audio language for stream ranking |
+| `stremio.language_scores` | dict | `{de: 1000, de-sub: 500, en-sub: 200, en: 150}` | Language ranking scores (higher = preferred) |
+| `stremio.default_language_score` | int | `100` | Score for unknown/undetected languages |
+| `stremio.quality_multiplier` | int | `10` | Multiplier for quality value in ranking |
+| `stremio.hoster_scores` | dict | `{supervideo: 5, voe: 4, filemoon: 3, ...}` | Hoster reliability bonus (tie-breaker) |
+| `stremio.max_concurrent_plugins` | int | `10` | Max parallel plugin searches |
+| `stremio.max_concurrent_playwright` | int | `5` | Max parallel Playwright plugin searches |
+| `stremio.max_concurrent_plugins_auto` | bool | `true` | Auto-tune concurrency based on host CPU/RAM |
+| `stremio.max_results_per_plugin` | int | `100` | Max results per plugin in Stremio search |
+| `stremio.plugin_timeout_seconds` | float | `30.0` | Per-plugin timeout for stream search |
+| `stremio.title_match_threshold` | float | `0.7` | Minimum title similarity score |
+| `stremio.title_year_bonus` | float | `0.2` | Score bonus for matching year |
+| `stremio.title_year_penalty` | float | `0.3` | Score penalty for non-matching year |
+| `stremio.title_sequel_penalty` | float | `0.35` | Score penalty for sequel number mismatch |
+| `stremio.title_year_tolerance_movie` | int | `1` | Allowed year difference for movies (±N) |
+| `stremio.title_year_tolerance_series` | int | `3` | Allowed year difference for series (±N) |
+| `stremio.stream_link_ttl_seconds` | int | `7200` | TTL for cached stream links (2h default) |
+| `stremio.probe_at_stream_time` | bool | `true` | Probe hoster URLs at /stream time |
+| `stremio.probe_concurrency` | int | `10` | Max parallel hoster probes |
+| `stremio.probe_timeout_seconds` | float | `10.0` | Per-URL probe timeout |
+| `stremio.max_probe_count` | int | `50` | Max streams to probe/resolve (top-ranked first) |
+| `stremio.resolve_target_count` | int | `15` | Stop resolving after this many successes |
+| `stremio.probe_stealth_enabled` | bool | `true` | Use Playwright Stealth for Cloudflare bypass |
+| `stremio.probe_stealth_concurrency` | int | `5` | Max parallel Playwright Stealth probes |
+| `stremio.probe_stealth_timeout_seconds` | float | `15.0` | Per-URL Playwright Stealth timeout |
+
+**Scored plugin selection** (requires `scoring.enabled=true`):
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `stremio.scoring_enabled` | bool | `false` | Use scores to limit plugin selection |
+| `stremio.stremio_deadline_ms` | int | `2000` | Overall search deadline (ms) |
+| `stremio.max_plugins_scored` | int | `5` | Top-N plugins when scoring is active |
+| `stremio.max_items_total` | int | `50` | Global result cap across all plugins |
+| `stremio.max_items_per_plugin` | int | `20` | Per-plugin result cap in scored mode |
+| `stremio.exploration_probability` | float | `0.15` | Chance to include random mid-score plugin |
+
+See [Stremio Addon](./stremio-addon.md) for the full feature description and
+[Plugin Scoring](./plugin-scoring-and-probing.md) for the scoring system.
+
+### Concurrency Pool
+
+The global concurrency pool distributes httpx and Playwright slots across
+concurrent requests using fair-share scheduling.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `stremio.max_concurrent_plugins` | int | `10` | Total httpx concurrency slots (shared globally) |
+| `stremio.max_concurrent_playwright` | int | `5` | Total Playwright concurrency slots |
+
+The pool is created at composition time. Each concurrent request gets a
+fair share: `httpx_slots // active_requests` httpx permits and
+`pw_slots // active_requests` Playwright permits.
+
+### Scoring
+
+Controls the background plugin scoring and probing system.
+See [Plugin Scoring & Probing](./plugin-scoring-and-probing.md) for the full
+architecture and data model.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `scoring.enabled` | bool | `false` | Enable background probing |
+| `scoring.health_halflife_days` | float | `2.0` | Health EWMA half-life (days) |
+| `scoring.search_halflife_weeks` | float | `2.0` | Search EWMA half-life (weeks) |
+| `scoring.health_interval_hours` | float | `24.0` | Hours between health probes |
+| `scoring.search_runs_per_week` | int | `2` | Search probes per week |
+| `scoring.health_timeout_seconds` | float | `5.0` | Health probe timeout |
+| `scoring.search_timeout_seconds` | float | `10.0` | Search probe timeout |
+| `scoring.search_max_items` | int | `20` | Max items per search probe |
+| `scoring.health_concurrency` | int | `5` | Parallel health probes |
+| `scoring.search_concurrency` | int | `3` | Parallel search probes |
+| `scoring.score_ttl_days` | int | `30` | Score expiry (days) |
+| `scoring.w_health` | float | `0.4` | Health weight in composite score |
+| `scoring.w_search` | float | `0.6` | Search weight in composite score |
 
 ### Logging
 

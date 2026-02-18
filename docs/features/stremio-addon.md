@@ -150,7 +150,7 @@ Title matching prevents false positives when plugin results include sequels, spi
 
 | Feature | Details |
 |---|---|
-| Scoring | `SequenceMatcher` ratio + token overlap coefficient |
+| Scoring | `rapidfuzz.fuzz.token_sort_ratio` + `token_set_ratio` (C++ backend) |
 | Year bonus | +0.2 if release year matches reference (within tolerance) |
 | Year penalty | -0.3 if year is present but wrong |
 | Sequel penalty | -0.35 if result has trailing number not in reference |
@@ -241,7 +241,7 @@ All Stremio settings are grouped under `StremioConfig`:
 
 | Setting | Default | Description |
 |---|---|---|
-| `max_concurrent_plugins` | 5 | Parallel plugin search limit |
+| `max_concurrent_plugins` | 10 | Parallel plugin search limit |
 | `max_results_per_plugin` | 100 | Results per plugin (Stremio limit) |
 | `plugin_timeout_seconds` | 30 | Per-plugin timeout |
 
@@ -254,12 +254,51 @@ All Stremio settings are grouped under `StremioConfig`:
 | `title_year_penalty` | -0.3 | Score penalty for year mismatch |
 | `title_sequel_penalty` | -0.35 | Penalty for sequels |
 
+### Resolution & Concurrency
+
+| Setting | Default | Description |
+|---|---|---|
+| `resolve_target_count` | 15 | Target resolved video streams before early-stop |
+| `max_concurrent_playwright` | 5 | Max parallel Playwright plugin searches |
+
+### Circuit Breaker
+
+| Setting | Default | Description |
+|---|---|---|
+| `failure_threshold` | 5 | Consecutive failures before opening circuit |
+| `cooldown_seconds` | 60 | Seconds to wait before half-open probe |
+
+When a plugin accumulates `failure_threshold` consecutive failures, the circuit breaker
+opens and skips the plugin for `cooldown_seconds`. After cooldown, a single probe request
+is allowed (half-open). If the probe succeeds, the breaker resets; if it fails, cooldown restarts.
+
+### Global Concurrency Pool
+
+The `ConcurrencyPool` provides separate httpx and Playwright slot pools with fair-share
+distribution across concurrent requests:
+- `httpx_slots` = `max_concurrent_plugins` (default 10)
+- `pw_slots` = `max_concurrent_playwright` (default 5)
+- Fair share: `max(1, total_slots // active_requests)` per request
+
+### Multi-Language Search
+
+Plugins declare `languages: list[str]` (default `["de"]`). The use case groups plugins
+by language, fetches TMDB titles for each unique language in parallel, and searches each
+group with language-specific queries. A plugin with `languages=["de", "en"]` gets searched
+with both German and English title queries.
+
+### Stream Deduplication
+
+After sorting, per-hoster deduplication keeps only the best-ranked stream per hoster.
+This prevents duplicate links from the same hoster (e.g., 5 VOE links from 5 plugins
+are collapsed to the single best-ranked VOE link).
+
 ### Caching & Probing
 
 | Setting | Default | Description |
 |---|---|---|
 | `stream_link_ttl_seconds` | 7200 (2h) | Hoster URL cache TTL |
-| `probe_at_stream_time` | true | Enable dead link filtering |
+| `probe_at_stream_time` | true | Enable dead link filtering (skipped when resolve_fn is active) |
 | `probe_concurrency` | 10 | Parallel probe limit |
 | `probe_timeout_seconds` | 10 | Per-URL probe timeout |
 | `max_probe_count` | 50 | Max streams to probe |
@@ -277,7 +316,7 @@ All Stremio settings are grouped under `StremioConfig`:
 | `test_tmdb_client.py` | TMDB httpx client with caching |
 | `test_imdb_fallback.py` | IMDB Suggest + Wikidata fallback |
 | `test_stream_link_cache.py` | Stream link cache repository |
-| E2E tests | 63 Stremio endpoint tests (manifest, catalog, stream, play) |
+| E2E tests | 112 Stremio endpoint tests (manifest, catalog, stream, play, streamable link verification) |
 
 ---
 

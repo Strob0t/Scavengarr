@@ -19,7 +19,6 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -27,7 +26,6 @@ from scavengarr.application.use_cases.stremio_stream import StremioStreamUseCase
 from scavengarr.domain.entities.stremio import (
     CachedStreamLink,
     ResolvedStream,
-    StremioStreamRequest,
     TitleMatchInfo,
 )
 from scavengarr.domain.plugins.base import SearchResult
@@ -294,8 +292,7 @@ def _assert_streamable(stream: dict[str, Any]) -> None:
 
     is_proxy = "/play/" in url
     is_video = any(
-        ext in url.lower()
-        for ext in (".mp4", ".m3u8", ".mkv", ".ts", ".webm")
+        ext in url.lower() for ext in (".mp4", ".m3u8", ".mkv", ".ts", ".webm")
     )
 
     if is_proxy:
@@ -461,9 +458,7 @@ class TestMovieStreamableResolution:
         """1 echo + 2 real videos -> only 2 streams returned."""
         call_idx = 0
 
-        async def _partial_resolve(
-            url: str, hoster: str
-        ) -> ResolvedStream | None:
+        async def _partial_resolve(url: str, hoster: str) -> ResolvedStream | None:
             nonlocal call_idx
             call_idx += 1
             if call_idx == 1:
@@ -644,7 +639,11 @@ class TestSeriesStreamableResolution:
         """Only matching S01E05 streams returned, all streamable."""
         results = [
             _series_result(
-                "Breaking Bad", 1, ep, hoster="VOE", file_id=f"ep{ep}",
+                "Breaking Bad",
+                1,
+                ep,
+                hoster="VOE",
+                file_id=f"ep{ep}",
                 plugin_name="hdfilme",
             )
             for ep in range(1, 11)
@@ -657,9 +656,7 @@ class TestSeriesStreamableResolution:
         )
         client = TestClient(app)
 
-        resp = client.get(
-            f"{_PREFIX}/stremio/stream/series/{self._IMDB}:1:5.json"
-        )
+        resp = client.get(f"{_PREFIX}/stremio/stream/series/{self._IMDB}:1:5.json")
 
         streams = resp.json()["streams"]
         assert len(streams) == 1
@@ -672,8 +669,13 @@ class TestSeriesStreamableResolution:
             "hdfilme",
             results=[
                 _series_result(
-                    "Breaking Bad", 5, 3, hoster="VOE", domain="voe.sx",
-                    file_id="a1", plugin_name="hdfilme",
+                    "Breaking Bad",
+                    5,
+                    3,
+                    hoster="VOE",
+                    domain="voe.sx",
+                    file_id="a1",
+                    plugin_name="hdfilme",
                 ),
             ],
         )
@@ -681,8 +683,13 @@ class TestSeriesStreamableResolution:
             "kinoger",
             results=[
                 _series_result(
-                    "Breaking Bad", 5, 3, hoster="Filemoon", domain="filemoon.sx",
-                    file_id="b1", plugin_name="kinoger",
+                    "Breaking Bad",
+                    5,
+                    3,
+                    hoster="Filemoon",
+                    domain="filemoon.sx",
+                    file_id="b1",
+                    plugin_name="kinoger",
                 ),
             ],
         )
@@ -693,9 +700,7 @@ class TestSeriesStreamableResolution:
         )
         client = TestClient(app)
 
-        resp = client.get(
-            f"{_PREFIX}/stremio/stream/series/{self._IMDB}:5:3.json"
-        )
+        resp = client.get(f"{_PREFIX}/stremio/stream/series/{self._IMDB}:5:3.json")
 
         streams = resp.json()["streams"]
         assert len(streams) == 2
@@ -707,9 +712,7 @@ class TestSeriesStreamableResolution:
         """resolve_fn returning None for some -> only resolved returned."""
         call_idx = 0
 
-        async def _resolve_every_other(
-            url: str, hoster: str
-        ) -> ResolvedStream | None:
+        async def _resolve_every_other(url: str, hoster: str) -> ResolvedStream | None:
             nonlocal call_idx
             call_idx += 1
             if call_idx % 2 == 0:
@@ -718,8 +721,13 @@ class TestSeriesStreamableResolution:
 
         results = [
             _series_result(
-                "Breaking Bad", 1, 5, hoster=h, domain=f"{h.lower()}.sx",
-                file_id=f"id{i}", plugin_name="hdfilme",
+                "Breaking Bad",
+                1,
+                5,
+                hoster=h,
+                domain=f"{h.lower()}.sx",
+                file_id=f"id{i}",
+                plugin_name="hdfilme",
             )
             for i, h in enumerate(["VOE", "Filemoon", "Streamtape"])
         ]
@@ -731,9 +739,7 @@ class TestSeriesStreamableResolution:
         )
         client = TestClient(app)
 
-        resp = client.get(
-            f"{_PREFIX}/stremio/stream/series/{self._IMDB}:1:5.json"
-        )
+        resp = client.get(f"{_PREFIX}/stremio/stream/series/{self._IMDB}:1:5.json")
 
         streams = resp.json()["streams"]
         # Some resolved, some filtered — all remaining are streamable
@@ -746,11 +752,19 @@ class TestSeriesStreamableResolution:
         title = TitleMatchInfo(title="One Piece", year=1999)
         results = [
             _series_result(
-                "One Piece", 21, 1042, hoster="VOE", file_id="op1042",
+                "One Piece",
+                21,
+                1042,
+                hoster="VOE",
+                file_id="op1042",
                 plugin_name="aniworld",
             ),
             _series_result(
-                "One Piece", 21, 1043, hoster="VOE", file_id="op1043",
+                "One Piece",
+                21,
+                1043,
+                hoster="VOE",
+                file_id="op1043",
                 plugin_name="aniworld",
             ),
         ]
@@ -762,9 +776,7 @@ class TestSeriesStreamableResolution:
         )
         client = TestClient(app)
 
-        resp = client.get(
-            f"{_PREFIX}/stremio/stream/series/tt0388629:21:1042.json"
-        )
+        resp = client.get(f"{_PREFIX}/stremio/stream/series/tt0388629:21:1042.json")
 
         streams = resp.json()["streams"]
         assert len(streams) == 1
@@ -834,7 +846,9 @@ class TestCircuitBreakerE2E:
             "plugin_a",
             results=[
                 _movie_result(
-                    title="Iron Man", hoster="VOE", file_id="a1",
+                    title="Iron Man",
+                    hoster="VOE",
+                    file_id="a1",
                     plugin_name="plugin_a",
                 ),
             ],
@@ -843,8 +857,11 @@ class TestCircuitBreakerE2E:
             "plugin_b",
             results=[
                 _movie_result(
-                    title="Iron Man", hoster="Filemoon", domain="filemoon.sx",
-                    file_id="b1", plugin_name="plugin_b",
+                    title="Iron Man",
+                    hoster="Filemoon",
+                    domain="filemoon.sx",
+                    file_id="b1",
+                    plugin_name="plugin_b",
                 ),
             ],
         )
@@ -1117,7 +1134,7 @@ class TestFullPipelineStreamable:
     """Complete pipeline verification: every stream passes _assert_streamable()."""
 
     def test_movie_full_pipeline(self) -> None:
-        """Complete: HTTP -> TMDB -> plugin -> convert -> sort -> dedup -> resolve -> hints."""
+        """Full pipeline: TMDB -> plugin -> sort -> dedup -> resolve."""
         title = TitleMatchInfo(title="Interstellar", year=2014)
         results = [
             _movie_result(
@@ -1128,11 +1145,13 @@ class TestFullPipelineStreamable:
                 quality=q,
                 plugin_name="hdfilme",
             )
-            for i, (h, q) in enumerate([
-                ("VOE", "1080p"),
-                ("Filemoon", "720p"),
-                ("Streamtape", "1080p"),
-            ])
+            for i, (h, q) in enumerate(
+                [
+                    ("VOE", "1080p"),
+                    ("Filemoon", "720p"),
+                    ("Streamtape", "1080p"),
+                ]
+            )
         ]
         plugin = _FakeStreamPlugin("hdfilme", results=results)
         app = _make_streamable_app(
@@ -1156,7 +1175,11 @@ class TestFullPipelineStreamable:
         title = TitleMatchInfo(title="Dark", year=2017)
         results = [
             _series_result(
-                "Dark", 1, ep, hoster="VOE", file_id=f"dark_ep{ep}",
+                "Dark",
+                1,
+                ep,
+                hoster="VOE",
+                file_id=f"dark_ep{ep}",
                 plugin_name="hdfilme",
             )
             for ep in range(1, 11)

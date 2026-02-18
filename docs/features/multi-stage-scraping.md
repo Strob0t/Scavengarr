@@ -96,7 +96,7 @@ class HttpxSearchEngine:
 
 ### Python Plugins
 
-All 40 plugins implement the multi-stage pattern directly in Python code. Httpx plugins
+All 42 plugins implement the multi-stage pattern directly in Python code. Httpx plugins
 use `self._safe_fetch()` for HTTP requests, while Playwright plugins use browser automation.
 Both types use `asyncio.Semaphore` for bounded concurrency when processing detail pages.
 

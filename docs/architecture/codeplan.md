@@ -56,6 +56,8 @@ src/scavengarr/
 │   ├── entities/
 │   │   ├── __init__.py               # Re-exports all Torznab types
 │   │   ├── crawljob.py               # CrawlJob entity + enums
+│   │   ├── scoring.py                # ProbeResult, EwmaState, PluginScoreSnapshot
+│   │   ├── stremio.py                # StremioStream, ResolvedStream, RankedStream, etc.
 │   │   └── torznab.py                # Torznab entities + exceptions
 │   ├── plugins/
 │   │   ├── __init__.py               # Re-exports SearchResult, plugin types, exceptions
@@ -65,10 +67,14 @@ src/scavengarr/
 │   └── ports/
 │       ├── __init__.py               # Re-exports all port protocols
 │       ├── cache.py                  # CachePort
+│       ├── concurrency.py            # ConcurrencyPoolPort, ConcurrencyBudgetPort
 │       ├── crawljob_repository.py    # CrawlJobRepository
-│       ├── link_validator.py         # LinkValidatorPort
+│       ├── hoster_resolver.py        # HosterResolverPort
 │       ├── plugin_registry.py        # PluginRegistryPort
-│       └── search_engine.py          # SearchEnginePort
+│       ├── plugin_score_store.py     # PluginScoreStorePort
+│       ├── search_engine.py          # SearchEnginePort
+│       ├── stream_link_repository.py # StreamLinkRepositoryPort
+│       └── tmdb.py                   # TmdbClientPort
 ├── application/
 │   ├── factories/
 │   │   ├── __init__.py               # Re-exports CrawlJobFactory
@@ -99,12 +105,30 @@ src/scavengarr/
 │   │   └── schema.py                 # AppConfig, CacheConfig, EnvOverrides
 │   ├── hoster_resolvers/
 │   │   ├── __init__.py
+│   │   ├── _video_extract.py         # Shared video extraction (JWPlayer, packed JS, HLS)
+│   │   ├── cloudflare.py             # Cloudflare detection utilities
+│   │   ├── ddownload.py              # DDownload DDL resolver
 │   │   ├── doodstream.py             # DoodStream pass_md5 extraction
 │   │   ├── filemoon.py               # Filemoon packed JS + Byse SPA flow
-│   │   ├── registry.py               # HosterResolverRegistry + content-type probing
+│   │   ├── filernet.py               # Filer.net public API resolver
+│   │   ├── generic_ddl.py            # 12 consolidated DDL resolvers
+│   │   ├── gofile.py                 # GoFile guest-token DDL resolver
+│   │   ├── mediafire.py              # Mediafire API DDL resolver
+│   │   ├── probe.py                  # Content-type probing
+│   │   ├── rapidgator.py             # Rapidgator DDL resolver
+│   │   ├── registry.py               # HosterResolverRegistry + domain matching
+│   │   ├── sendvid.py                # SendVid streaming resolver
+│   │   ├── serienstream.py           # SerienStream resolver
+│   │   ├── stealth_pool.py           # Playwright stealth probe pool
+│   │   ├── stmix.py                  # Stmix embed resolver
 │   │   ├── streamtape.py             # Streamtape token extraction
+│   │   ├── strmup.py                 # StreamUp HLS resolver
 │   │   ├── supervideo.py             # SuperVideo XFS + Playwright fallback
-│   │   └── voe.py                    # VOE multi-method extraction
+│   │   ├── vidguard.py               # VidGuard multi-domain resolver
+│   │   ├── vidking.py                # Vidking embed resolver
+│   │   ├── vidsonic.py               # Vidsonic hex-obfuscated HLS resolver
+│   │   ├── voe.py                    # VOE multi-method extraction
+│   │   └── xfs.py                    # 27 consolidated XFS resolvers
 │   ├── logging/
 │   │   ├── __init__.py
 │   │   └── setup.py                  # Structlog + QueueHandler setup
@@ -115,11 +139,10 @@ src/scavengarr/
 │   │   ├── __init__.py               # Re-exports PluginRegistry
 │   │   ├── adapters.py               # Pydantic → Domain model conversion
 │   │   ├── constants.py              # DEFAULT_USER_AGENT, DEFAULT_MAX_CONCURRENT, etc.
-│   │   ├── httpx_base.py             # HttpxPluginBase shared base for 20 plugins
-│   │   ├── loader.py                 # YAML + Python plugin loading
+│   │   ├── httpx_base.py             # HttpxPluginBase shared base for 33 plugins
+│   │   ├── loader.py                 # Python plugin loading
 │   │   ├── playwright_base.py        # PlaywrightPluginBase shared base for 9 plugins
-│   │   ├── registry.py               # PluginRegistry (lazy loading)
-│   │   └── validation_schema.py      # Pydantic validation models
+│   │   └── registry.py               # PluginRegistry (lazy loading)
 │   ├── stremio/
 │   │   ├── __init__.py
 │   │   ├── release_parser.py         # guessit-based release name parsing
@@ -133,9 +156,15 @@ src/scavengarr/
 │   ├── torznab/
 │   │   ├── presenter.py              # XML rendering (caps + RSS)
 │   │   └── search_engine.py          # HttpxSearchEngine
-│   └── validation/
-│       ├── __init__.py               # Re-exports HttpLinkValidator
-│       └── http_link_validator.py    # HEAD/GET link validation
+│   ├── validation/
+│   │   ├── __init__.py               # Re-exports HttpLinkValidator
+│   │   └── http_link_validator.py    # HEAD/GET link validation
+│   ├── circuit_breaker.py            # Per-plugin circuit breaker (open/closed/half-open)
+│   ├── concurrency.py                # Global fair-share concurrency pool (httpx + PW slots)
+│   ├── graceful_shutdown.py          # In-flight request tracking + drain on shutdown
+│   ├── metrics.py                    # Runtime metrics collector (plugin stats, uptime)
+│   ├── retry_transport.py            # Rate-limiting + 429/503 retry httpx transport
+│   └── shared_browser.py             # SharedBrowserPool (singleton Chromium for PW plugins)
 └── interfaces/
     ├── __init__.py
     ├── app.py                        # FastAPI factory (build_app)
@@ -147,6 +176,9 @@ src/scavengarr/
     │   ├── download/
     │   │   ├── __init__.py
     │   │   └── router.py             # CrawlJob download endpoints
+    │   ├── stats/
+    │   │   ├── __init__.py
+    │   │   └── router.py             # /stats/metrics, /stats/plugin-scores, /healthz, /readyz
     │   ├── stremio/
     │   │   ├── __init__.py
     │   │   └── router.py             # Stremio manifest, catalog, stream, play
@@ -157,21 +189,23 @@ src/scavengarr/
         ├── __init__.py
         └── __main__.py               # CLI entry point
 
-plugins/                              # 40 plugins (31 httpx + 9 Playwright)
+plugins/                              # 42 plugins (33 httpx + 9 Playwright)
 ├── filmpalast_to.py                  # Httpx plugin (streaming)
 ├── scnlog.py                         # Httpx plugin (scene log)
 ├── warezomen.py                      # Httpx plugin (DDL)
 ├── boerse.py                         # Playwright plugin (Cloudflare + vBulletin)
 ├── einschalten.py                    # Httpx plugin (JSON API)
 ├── movie4k.py                        # Httpx plugin (JSON API, multi-domain)
-└── ... (26 more Python plugins)
+└── ... (36 more Python plugins)
 
 tests/
 ├── conftest.py                       # Shared fixtures
-├── e2e/                              # 109 E2E tests
-│   ├── test_stremio_endpoint.py      # 63 Stremio endpoint tests
+├── e2e/                              # 158 E2E tests
+│   ├── test_stremio_endpoint.py      # Stremio endpoint tests
+│   ├── test_stremio_series_e2e.py    # Stremio series endpoint tests
+│   ├── test_stremio_streamable_e2e.py # Streamable link verification (31 tests)
 │   └── test_torznab_endpoint.py      # 46 Torznab endpoint tests
-├── integration/                      # 31 integration tests
+├── integration/                      # 25 integration tests
 │   ├── test_config_loading.py        # Config precedence + validation
 │   ├── test_crawljob_lifecycle.py    # CrawlJob create → retrieve → expire
 │   ├── test_link_validation.py       # HEAD/GET validation with mocked HTTP
@@ -182,7 +216,7 @@ tests/
 └── unit/
     ├── domain/                       # Pure entity/schema tests (6 files)
     ├── application/                  # Use case tests with mocked ports (7 files)
-    ├── infrastructure/               # Adapter, parser, plugin tests (~90 files)
+    ├── infrastructure/               # Adapter, parser, plugin, resolver tests (~90 files)
     └── interfaces/                   # Router tests (3 files)
 ```
 
@@ -195,8 +229,8 @@ tests/
 | Web Framework | FastAPI | ^0.128 | HTTP API server |
 | ASGI Server | Uvicorn | ^0.40 | Production ASGI server |
 | HTTP Client | httpx | ^0.28 | Async HTTP for scraping and validation |
-| HTML Parsing | BeautifulSoup4 | (transitive) | CSS selector extraction |
 | Browser Automation | Playwright | ^1.47 | JS-heavy site scraping (9 plugins) |
+| Title Matching | rapidfuzz | -- | Fuzzy string matching (C++ backend) |
 | Structured Logging | structlog | ^25.5 | JSON/console logging |
 | Cache (SQLite) | diskcache | ^5.6 | Local persistent cache |
 | Cache (Redis) | redis | ^7.1 | Optional distributed cache |
@@ -1301,9 +1335,9 @@ def start(argv: Iterable[str] | None = None) -> None:
 
 ## Plugin Files
 
-Scavengarr ships with **40 plugins** (31 httpx + 9 Playwright) in the `plugins/` directory. All plugins are Python-based.
+Scavengarr ships with **42 plugins** (33 httpx + 9 Playwright) in the `plugins/` directory. All plugins are Python-based.
 
-### Python Plugins -- Httpx (31)
+### Python Plugins -- Httpx (33)
 
 All httpx plugins extend `HttpxPluginBase` and follow a consistent pattern:
 - Configurable settings at top (`_DOMAINS`, `_MAX_PAGES`, `_PAGE_SIZE`)
@@ -1341,7 +1375,7 @@ class PluginProtocol(Protocol):
 
 ## Test Suite
 
-**3225 tests** across unit, integration, E2E, and live test categories.
+**3963 tests** across unit, integration, E2E, and live test categories.
 
 ### Test Configuration
 
@@ -1360,21 +1394,22 @@ Common test fixtures for entities, mock ports, and configuration.
 - `PluginRegistryPort` is synchronous -- use `MagicMock`.
 - `SearchEnginePort`, `CrawlJobRepository`, `CachePort` are async -- use `AsyncMock`.
 
-### E2E Tests (`tests/e2e/`) -- 109 tests
+### E2E Tests (`tests/e2e/`) -- 158 tests
 
 | File | Tests |
 |---|---|
 | `test_torznab_endpoint.py` | 46 tests: caps, search, indexers, download, error responses via full app |
-| `test_stremio_endpoint.py` | 63 tests: manifest, catalog, stream resolution, play endpoint via full app |
+| `test_stremio_endpoint.py` | Stremio endpoint E2E (mock plugins, full HTTP flow) |
+| `test_stremio_series_e2e.py` | Stremio series E2E (season/episode filtering) |
+| `test_stremio_streamable_e2e.py` | 31 streamable link verification tests |
 
-### Integration Tests (`tests/integration/`) -- 31 tests
+### Integration Tests (`tests/integration/`) -- 25 tests
 
 | File | Tests |
 |---|---|
 | `test_config_loading.py` | Configuration precedence (YAML + ENV + CLI + defaults) |
 | `test_crawljob_lifecycle.py` | CrawlJob create → retrieve → expire with real cache |
 | `test_link_validation.py` | HEAD/GET validation with mocked HTTP responses |
-| `test_plugin_pipeline.py` | Plugin load → search → result pipeline |
 
 ### Live Smoke Tests (`tests/live/`) -- 38 tests
 

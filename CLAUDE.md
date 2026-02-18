@@ -289,7 +289,7 @@ The system provides a stable download endpoint that delivers a `.crawljob` file 
 - Integration: HTTP router ↔ use case ↔ adapter with HTTP mocking.
 - Optional E2E: real plugin fixtures, but deterministic (no external sites in CI).
 
-### Current test suite (3648 tests)
+### Current test suite (3963 tests)
 
 ```
 tests/
@@ -323,7 +323,7 @@ tests/
       test_stream_sorter.py            # Stremio stream sorting/ranking
       test_stream_link_cache.py        # Stream link cache repository
       test_hoster_registry.py          # HosterResolverRegistry
-      test_xfs_resolver.py             # Generic XFS resolver (26 hosters, parameterised, video extraction)
+      test_xfs_resolver.py             # Generic XFS resolver (27 hosters, parameterised, video extraction)
       test_video_extract.py            # Shared video URL extraction (packed JS, JWPlayer, HLS)
       test_voe_resolver.py             # VOE hoster resolver
       test_streamtape_resolver.py      # Streamtape hoster resolver
@@ -388,6 +388,18 @@ tests/
       test_streamkiste_plugin.py       # streamkiste plugin tests
       test_streamworld_plugin.py       # streamworld plugin tests
       test_warezomen_plugin.py         # warezomen plugin tests
+  e2e/
+    test_torznab_endpoint.py           # 46 Torznab endpoint tests (caps, search, error responses)
+    test_stremio_endpoint.py           # Stremio endpoint E2E (mock plugins, full HTTP flow)
+    test_stremio_series_e2e.py         # Stremio series E2E (season/episode filtering)
+    test_stremio_streamable_e2e.py     # 31 streamable link verification tests
+  integration/
+    test_config_loading.py             # Configuration precedence (YAML + ENV + defaults)
+    test_crawljob_lifecycle.py         # CrawlJob creation, retrieval, TTL
+    test_link_validation.py            # Link validator with mocked HTTP responses
+  live/
+    test_plugin_smoke.py               # Plugin smoke tests (real HTTP, skip in CI)
+    test_resolver_live.py              # Resolver contract tests (live URL validation)
 ```
 
 Important mock patterns:

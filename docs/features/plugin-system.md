@@ -2,7 +2,7 @@
 
 # Plugin System
 
-> All 40 Scavengarr plugins are Python-based, inheriting from `HttpxPluginBase` (for static HTML / API sites) or `PlaywrightPluginBase` (for JS-heavy sites requiring browser automation).
+> All 42 Scavengarr plugins are Python-based, inheriting from `HttpxPluginBase` (for static HTML / API sites) or `PlaywrightPluginBase` (for JS-heavy sites requiring browser automation).
 
 ---
 
@@ -12,7 +12,7 @@ Scavengarr is plugin-driven. Each plugin defines how to scrape a specific indexe
 
 Key characteristics:
 - **Python-only:** All plugins are `.py` files implementing `PluginProtocol`
-- **Two base classes:** `HttpxPluginBase` (31 plugins) and `PlaywrightPluginBase` (9 plugins)
+- **Two base classes:** `HttpxPluginBase` (33 plugins) and `PlaywrightPluginBase` (9 plugins)
 - **Lazy-loaded:** Parsed only when first accessed, cached in memory afterward
 - **Multi-stage:** Plugins implement search-to-detail pipelines in their `search()` method
 - **Bounded concurrency:** Semaphore-limited parallel page scraping

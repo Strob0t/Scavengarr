@@ -8,7 +8,7 @@
 
 ## Overview
 
-Python plugins implement the `PluginProtocol` directly and handle their own scraping logic using httpx (for static HTML) or Playwright (for JS-heavy sites). All 40 plugins inherit from one of two base classes: `HttpxPluginBase` or `PlaywrightPluginBase`.
+Python plugins implement the `PluginProtocol` directly and handle their own scraping logic using httpx (for static HTML) or Playwright (for JS-heavy sites). All 42 plugins inherit from one of two base classes: `HttpxPluginBase` or `PlaywrightPluginBase`.
 
 **When to use HttpxPluginBase:**
 - The site is static HTML with server-rendered pages
@@ -101,7 +101,7 @@ class SearchResult:
 
 Most plugins should extend one of the shared base classes instead of implementing everything from scratch. The base classes provide client lifecycle, domain fallback, bounded concurrency, and error handling.
 
-### HttpxPluginBase (31 plugins use this)
+### HttpxPluginBase (33 plugins use this)
 
 For sites with JSON APIs or server-rendered HTML (no JavaScript needed):
 

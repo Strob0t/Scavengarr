@@ -1,14 +1,14 @@
 # Plan: Additional Plugins
 
-**Status:** Mostly Complete (40 plugins implemented)
+**Status:** Mostly Complete (42 plugins implemented)
 **Priority:** Low (ongoing)
 **Related:** `plugins/`, `docs/features/python-plugins.md`
 
 ## Current State
 
-Scavengarr ships with **40 plugins** covering German streaming, DDL, and anime sites:
+Scavengarr ships with **42 plugins** covering German streaming, DDL, and anime sites:
 
-### Httpx plugins (31)
+### Httpx plugins (33)
 
 | Plugin | Site | Type | Notes |
 |---|---|---|---|
@@ -25,6 +25,7 @@ Scavengarr ships with **40 plugins** covering German streaming, DDL, and anime s
 | hdfilme | hdfilme.legal | stream | MeineCloud link extraction |
 | hdsource | hd-source.to | download | DDL with multi-page scraping |
 | hdworld | hd-world.cc | download | WordPress REST API DDL |
+| jjs | jjs.at | download | DDL with multi-stage scraping |
 | kinoger | kinoger.com | stream | Domain fallback |
 | kinoking | kinoking.cc | stream | Movie/series detection |
 | kinox | kinox.to | stream | 9 mirror domains, AJAX embeds |
@@ -32,6 +33,7 @@ Scavengarr ships with **40 plugins** covering German streaming, DDL, and anime s
 | megakino_to | megakino.org | stream | JSON API |
 | movie2k | movie2k.cx | stream | 2-stage HTML scraping |
 | movie4k | movie4k.sx | stream | JSON API, multi-domain |
+| movieblog | movieblog.to | download | DDL blog, WordPress |
 | myboerse | myboerse.bz | download | DDL forum, multi-domain |
 | nima4k | nima4k.org | download | Category browsing |
 | nox | nox.to | download | JSON API, DDL archive |

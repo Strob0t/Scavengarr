@@ -4,7 +4,7 @@
 
 Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Prowlarr and other Arr applications. It scrapes sources via Python plugins (httpx for static HTML, Playwright for JS-heavy sites) and delivers results through standard Torznab endpoints.
 
-**Version:** 0.1.0 | **Python:** 3.12+ | **Tests:** 3533+ | **Plugins:** 40 (31 httpx + 9 Playwright) | **Hoster Resolvers:** 39 | **Architecture:** Clean Architecture
+**Version:** 0.1.0 | **Python:** 3.12+ | **Tests:** 3963 | **Plugins:** 42 (33 httpx + 9 Playwright) | **Hoster Resolvers:** 56 | **Architecture:** Clean Architecture
 
 ---
 
@@ -33,7 +33,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Pro
 | Document | Description |
 |---|---|
 | [Stremio Addon](./stremio-addon.md) | Stremio integration with catalog, streams, and hoster resolution |
-| [Hoster Resolvers](./hoster-resolvers.md) | 39 hoster resolvers (streaming + DDL + 15 XFS consolidated) |
+| [Hoster Resolvers](./hoster-resolvers.md) | 56 hoster resolvers (streaming + DDL + 27 XFS consolidated) |
 | [Plugin Scoring & Probing](./plugin-scoring-and-probing.md) | EWMA-based plugin ranking via background health and search probes |
 | [Mirror URL Fallback](./mirror-url-fallback.md) | Automatic domain fallback when primary mirrors are unreachable |
 | [Prowlarr Integration](./prowlarr-integration.md) | Step-by-step Prowlarr setup, endpoint mapping, category sync |
@@ -51,7 +51,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Pro
 |---|---|
 | [Playwright Engine](../plans/playwright-engine.md) | Browser pool and resource management for Playwright plugins |
 | [More Plugins](../plans/more-plugins.md) | Plugin inventory and remaining candidates |
-| [Integration Tests](../plans/integration-tests.md) | Implemented: 31 integration + 109 E2E + 38 live smoke tests |
+| [Integration Tests](../plans/integration-tests.md) | Implemented: 25 integration + 158 E2E + 38 live smoke tests |
 | [Search Caching](../plans/search-caching.md) | Implemented: 900s TTL with X-Cache header |
 
 ### Refactoring History
@@ -82,7 +82,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Pro
 | Caching | diskcache (+ optional Redis) | Search result and CrawlJob storage |
 | Logging | structlog | Structured JSON/console logging |
 | CLI | Typer | Local debugging and diagnostics |
-| Testing | pytest | 3533 tests across all layers (3355 unit + 109 E2E + 31 integration + 38 live) |
+| Testing | pytest | 3963 tests across all layers (3742 unit + 158 E2E + 25 integration + 38 live) |
 
 ---
 
@@ -103,7 +103,7 @@ src/scavengarr/
     validation/            # Link validator (HEAD/GET)
     cache/                 # diskcache adapter
     stremio/               # Stream converter, sorter, TMDB client, title matcher
-    hoster_resolvers/      # 39 resolvers (15 XFS consolidated + 24 non-XFS)
+    hoster_resolvers/      # 56 resolvers (27 XFS consolidated + 12 generic DDL + 17 individual)
     config/                # Settings, logging
     common/                # Parsers, converters, extractors, HTML selectors
   interfaces/              # Frameworks & drivers
@@ -111,14 +111,14 @@ src/scavengarr/
     cli/                   # Typer CLI
     composition/           # Dependency injection
 
-plugins/                   # Plugin directory (40 Python plugins)
+plugins/                   # Plugin directory (42 Python plugins)
   filmpalast_to.py         # Python plugin example (httpx)
   boerse.py                # Python plugin example (Playwright)
   einschalten.py           # Python plugin example (httpx API)
 
 tests/
-  e2e/                     # 109 E2E tests (Torznab + Stremio endpoints)
-  integration/             # 31 integration tests (config, crawljob, links, pipeline)
+  e2e/                     # 158 E2E tests (Torznab + Stremio endpoints)
+  integration/             # 25 integration tests (config, crawljob, links, pipeline)
   live/                    # 38 live smoke tests (plugins + resolver contract tests)
   unit/
     domain/                # Pure domain tests

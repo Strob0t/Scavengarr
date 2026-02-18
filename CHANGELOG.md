@@ -7,9 +7,10 @@ Format: version, date, grouped changes. Newest entries first.
 
 ## Unreleased (staging)
 
-Massive expansion of the plugin ecosystem (2 → 40 plugins), Stremio addon integration,
-hoster resolver system, plugin base class standardization, search result caching, and
-growth of the test suite from 160 to 3225 tests.
+Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration,
+56 hoster resolvers, plugin base class standardization, search result caching, circuit
+breaker, global concurrency pool, graceful shutdown, multi-language search, and
+growth of the test suite from 160 to 3963 tests.
 
 ### Stremio Streamable Link E2E Tests
 - **Fix existing E2E tests**: `test_stremio_endpoint.py` and `test_stremio_series_e2e.py` updated to pass `pool=ConcurrencyPool()` and mock `get_languages`/`get_mode` on the plugin registry — required after the global concurrency pool became mandatory
@@ -251,11 +252,11 @@ All 29 Python plugins migrated to shared base classes (`HttpxPluginBase` /
 - Reorganize configurable settings (`_DOMAINS`, `_MAX_PAGES`, etc.) to top of all 28 plugins with section headers (`a79fb8e`)
 - Replace hardcoded year boundary with dynamic `datetime.now().year + 1` in cine plugin (`b3e40e3`)
 
-### New Plugins (36 Python plugins added)
-Expanded from 2 plugins (filmpalast YAML + boerse Python) to 40 total plugins
-(3 YAML + 37 Python), covering German streaming, DDL, and anime sites.
+### New Plugins (40 Python plugins added)
+Expanded from 2 plugins (filmpalast YAML + boerse Python) to 42 total plugins
+(33 httpx + 9 Playwright), covering German streaming, DDL, and anime sites.
 
-**Httpx plugins (28):**
+**Httpx plugins (33):**
 - aniworld.to — anime streaming with domain fallback (`3321775`)
 - burningseries (bs.to) — series streaming (`b1e46ff`)
 - cine.to — movie streaming via JSON API (`3153df0`)
@@ -284,6 +285,9 @@ Expanded from 2 plugins (filmpalast YAML + boerse Python) to 40 total plugins
 - hd-source.to — DDL with multi-page scraping
 - hd-world.cc — DDL archive via WordPress REST API, movies + TV series
 - serienjunkies.org — DDL with captcha-protected links
+- filmpalast.to — movie/TV streaming (migrated from YAML)
+- scnlog.me — scene log with pagination (migrated from YAML)
+- warezomen.com — DDL site (migrated from YAML)
 
 **Playwright plugins (9):**
 - animeloads (anime-loads.org) — anime with DDoS-Guard bypass (`75176af`, `08cced5`)
@@ -296,10 +300,8 @@ Expanded from 2 plugins (filmpalast YAML + boerse Python) to 40 total plugins
 - scnsrc.me (SceneSource) — scene releases with multi-domain fallback (`cb34282`, `2d930bb`)
 - streamworld.ws — streaming (rewritten from httpx to Playwright, `de29957`)
 
-**YAML plugins (3):**
-- filmpalast.to — movie/TV streaming (original)
-- scnlog.me — scene log with pagination (`24dd4b3`, `a30164b`)
-- warezomen.com — DDL converted from Python to YAML (`1bba59a`, `a30164b`)
+**YAML plugins (removed):**
+- filmpalast.to, scnlog.me, warezomen.com — all migrated to Python httpx plugins (see YAML Plugin Infrastructure Removal)
 
 ### Stremio Addon
 Full Stremio addon integration with manifest, catalog search, and stream resolution.
@@ -323,10 +325,10 @@ Allows using Scavengarr as a Stremio source for all indexed plugins.
 - Add per-plugin timeout to prevent slow plugins blocking response (`c03a28b`)
 
 ### Hoster Resolver System
-39 hoster resolvers across three categories: 10 streaming resolvers (video URL extraction),
-14 DDL resolvers (file availability validation), and 15 XFS-consolidated resolvers
-(generic `XFSResolver` with parameterised `XFSConfig`). All resolver tests use respx
-(httpx-native HTTP mocking).
+56 hoster resolvers across three categories: 17 individual resolvers (streaming + DDL),
+12 generic DDL resolvers (parameterised `GenericDDLConfig`), and 27 XFS-consolidated
+resolvers (generic `XFSResolver` with parameterised `XFSConfig`). All resolver tests
+use respx (httpx-native HTTP mocking).
 
 **Core infrastructure:**
 - Add ResolvedStream entity and HosterResolverPort protocol (`f6a3676`)
@@ -373,10 +375,11 @@ Allows using Scavengarr as a Stremio source for all indexed plugins.
 - Add Turbobit DDL hoster resolver (multi-domain page scraping)
 - Add Uploaded DDL hoster resolver (uploaded.net / ul.to)
 
-**XFS consolidation (15 hosters):**
-- Add generic `XFSResolver` with `XFSConfig` dataclass consolidating 15 XFS hosters into one module (`xfs.py`)
-- Configs: Katfile, Hexupload, Clicknupload, Filestore, Uptobox, Funxd, Bigwarp, Dropload, Goodstream, Savefiles, Streamwish (9 domains), Vidmoly, Vidoza, Vinovo, Vidhide (6 domains)
-- Parameterised tests: 219 test cases auto-generated from 15 configs
+**XFS consolidation (27 hosters):**
+- Add generic `XFSResolver` with `XFSConfig` dataclass consolidating 27 XFS hosters into one module (`xfs.py`)
+- Original 15: Katfile, Hexupload, Clicknupload, Filestore, Uptobox, Funxd, Bigwarp, Dropload, Goodstream, Savefiles, Streamwish (9 domains), Vidmoly, Vidoza, Vinovo, Vidhide (6 domains)
+- Added 12 more: Mp4Upload, Uqload, Vidshar, Vidroba, Hotlink, Vidspeed, StreamRuby, Veev, Lulustream, Upstream, Wolfstream, Vidnest
+- Parameterised tests auto-generated from all 27 configs
 - Delete 15 individual resolver files + 15 individual test files (~4,200 lines removed)
 
 **Test improvements:**
@@ -424,21 +427,23 @@ Five plugins updated to match changed website structures.
 - Fix movie4k: add GET fallback for domain verification (HEAD returns 405)
 - Fix streamkiste: rewrite detail parser to extract streams from meinecloud.click external script
 
-### Test Suite Growth (160 → 3533 tests)
-Test suite expanded from 160 to 3533 tests (3355 unit + 109 E2E + 31 integration + 38 live)
+### Test Suite Growth (160 → 3963 tests)
+Test suite expanded from 160 to 3963 tests (3742 unit + 158 E2E + 25 integration + 38 live)
 with comprehensive coverage across all layers.
 
-- Add unit tests for all 35 plugin test files
-- Add unit tests for all 39 hoster resolvers (10 streaming + 14 DDL + 15 XFS consolidated)
+- Add unit tests for all 42 plugin test files
+- Add unit tests for all 56 hoster resolvers (17 individual + 12 generic DDL + 27 XFS consolidated)
 - Add unit tests for HttpxPluginBase and PlaywrightPluginBase
 - Add unit tests for Stremio components (stream converter, stream sorter, TMDB client, title matcher, IMDB fallback)
 - Add unit tests for release name parser, plugin registry, HTML selectors
 - Add unit tests for stream link cache and hoster registry
-- Add 109 E2E tests (46 Torznab endpoint + 63 Stremio endpoint)
-- Add 31 integration tests (config loading, crawljob lifecycle, link validation, plugin pipeline)
+- Add unit tests for circuit breaker, concurrency pool, graceful shutdown, metrics endpoint
+- Add unit tests for EWMA scoring, plugin score cache, query pool, health prober, search prober, scoring scheduler
+- Add 158 E2E tests (46 Torznab endpoint + 112 Stremio endpoint including 31 streamable link tests)
+- Add 25 integration tests (config loading, crawljob lifecycle, link validation, plugin pipeline)
 - Add 38 live smoke tests (plugin smoke tests + resolver contract tests)
 - Migrate all resolver tests from AsyncMock to respx (httpx-native HTTP mocking)
-- Add parameterised XFS resolver tests (219 test cases across 15 configs)
+- Add parameterised XFS resolver tests auto-generated from 27 configs
 
 ### Documentation
 - Add plugin search standards (categories + pagination up to 1000) (`c1fa2c4`)

@@ -6,15 +6,15 @@
 
 ## Implementation Summary
 
-The test suite now includes 178 non-unit tests across three categories:
+The test suite now includes 221 non-unit tests across three categories:
 
 | Category | Location | Count | Description |
 |---|---|---|---|
-| Integration | `tests/integration/` | 31 | Config loading, crawljob lifecycle, link validation, plugin pipeline |
-| E2E | `tests/e2e/` | 109 | 46 Torznab endpoint + 63 Stremio endpoint tests |
+| Integration | `tests/integration/` | 25 | Config loading, crawljob lifecycle, link validation, plugin pipeline |
+| E2E | `tests/e2e/` | 158 | 46 Torznab endpoint + 81 Stremio endpoint + 31 streamable link verification |
 | Live smoke | `tests/live/` | 38 | Plugin smoke tests + resolver contract tests |
 
-Total test suite: **3225 tests** (3047 unit + 109 E2E + 31 integration + 38 live).
+Total test suite: **3963 tests** (3742 unit + 158 E2E + 25 integration + 38 live).
 
 ## Original Problem
 
