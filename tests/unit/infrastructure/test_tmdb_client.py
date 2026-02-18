@@ -161,7 +161,7 @@ class TestFindByImdbId:
         # Verify cache was written
         cache.set.assert_awaited_once()
         call_args = cache.set.call_args
-        assert call_args[0][0] == "tmdb:find:tt0103064"
+        assert call_args[0][0] == "tmdb:find:tt0103064:de"
         assert call_args[1]["ttl"] == 86_400
 
     @respx.mock
@@ -595,6 +595,65 @@ class TestGetTitleAndYear:
         assert result is not None
         assert result.title == "No Date Movie"
         assert result.year is None
+
+
+# ---------------------------------------------------------------------------
+# Language parameter
+# ---------------------------------------------------------------------------
+
+
+class TestLanguageParameter:
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_find_by_imdb_id_uses_language_tag(
+        self, client: HttpxTmdbClient, cache: AsyncMock
+    ) -> None:
+        """find_by_imdb_id passes language tag to TMDB API."""
+        route = respx.get(f"{_BASE}/find/tt0103064").respond(json=_FIND_MOVIE_RESPONSE)
+
+        await client.find_by_imdb_id("tt0103064", language="en")
+
+        request = route.calls[0].request
+        assert "language=en-EN" in str(request.url)
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_find_by_imdb_id_cache_key_includes_language(
+        self, client: HttpxTmdbClient, cache: AsyncMock
+    ) -> None:
+        """Cache key includes language to avoid cross-language collisions."""
+        respx.get(f"{_BASE}/find/tt0103064").respond(json=_FIND_MOVIE_RESPONSE)
+
+        await client.find_by_imdb_id("tt0103064", language="en")
+
+        call_args = cache.set.call_args
+        assert call_args[0][0] == "tmdb:find:tt0103064:en"
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_get_title_and_year_passes_language(
+        self, client: HttpxTmdbClient, cache: AsyncMock
+    ) -> None:
+        """get_title_and_year forwards language to find_by_imdb_id."""
+        route = respx.get(f"{_BASE}/find/tt0103064").respond(json=_FIND_MOVIE_RESPONSE)
+
+        await client.get_title_and_year("tt0103064", language="en")
+
+        request = route.calls[0].request
+        assert "language=en-EN" in str(request.url)
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_default_language_is_german(
+        self, client: HttpxTmdbClient, cache: AsyncMock
+    ) -> None:
+        """Default language is de-DE (German)."""
+        route = respx.get(f"{_BASE}/find/tt0103064").respond(json=_FIND_MOVIE_RESPONSE)
+
+        await client.find_by_imdb_id("tt0103064")
+
+        request = route.calls[0].request
+        assert "language=de-DE" in str(request.url)
 
 
 # ---------------------------------------------------------------------------

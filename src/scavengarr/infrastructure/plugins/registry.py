@@ -30,7 +30,7 @@ class _PluginMeta:
     name: str
     provides: str
     mode: str
-    language: str
+    languages: tuple[str, ...]
 
 
 class PluginRegistry:
@@ -146,6 +146,15 @@ class PluginRegistry:
 
         return sorted(names)
 
+    def get_languages(self, name: str) -> list[str]:
+        """Return the languages list for a plugin (default ``["de"]``)."""
+        self.discover()
+        self._ensure_meta_cache()
+        meta = self._meta_cache.get(name)
+        if meta is None:
+            return ["de"]
+        return list(meta.languages)
+
     def _ensure_meta_cache(self) -> None:
         """Build metadata cache from all plugins (lazy, one-time)."""
         if self._meta_cached:
@@ -153,11 +162,14 @@ class PluginRegistry:
 
         for ref in self._refs:
             py_plugin = self._load_python(ref)
+            raw_langs = getattr(py_plugin, "languages", None)
+            if raw_langs is None:
+                raw_langs = ["de"]
             self._meta_cache[py_plugin.name] = _PluginMeta(
                 name=py_plugin.name,
                 provides=getattr(py_plugin, "provides", "download"),
                 mode=getattr(py_plugin, "mode", "httpx"),
-                language=getattr(py_plugin, "default_language", "de"),
+                languages=tuple(raw_langs),
             )
 
         self._meta_cached = True

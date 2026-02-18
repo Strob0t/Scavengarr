@@ -42,7 +42,7 @@ class HttpxPluginBase:
     - ``search()`` (the abstract stub raises ``NotImplementedError``)
 
     Subclasses **may** override:
-    - ``version``, ``mode``, ``default_language``
+    - ``version``, ``mode``, ``languages``
     - ``_max_concurrent``, ``_max_results``, ``_timeout``
     - ``_user_agent``
     """
@@ -57,7 +57,12 @@ class HttpxPluginBase:
     # --- Overridable defaults ---
     version: str = "1.0.0"
     mode: str = "httpx"
-    default_language: str = "de"
+    languages: list[str] = ["de"]  # noqa: RUF012  # subclass overrides
+
+    @property
+    def default_language(self) -> str:
+        """First language — backward-compatible property."""
+        return self.languages[0]
 
     _domains: list[str] = []  # noqa: RUF012  # subclass overrides
     _max_concurrent: int = DEFAULT_MAX_CONCURRENT

@@ -306,6 +306,70 @@ class TestGetTitleAndYear:
         assert call_count["wikidata"] == first_calls
 
 
+class TestLanguageParameter:
+    @pytest.mark.asyncio
+    async def test_english_language_returns_imdb_title(self) -> None:
+        """language='en' returns English title directly, no Wikidata."""
+        client, _ = _make_client(response_text=_IRON_MAN_RESPONSE)
+        result = await client.get_title_and_year("tt0371746", language="en")
+        assert result is not None
+        assert result.title == "Iron Man"
+        assert result.alt_titles == []
+
+    @pytest.mark.asyncio
+    async def test_german_language_uses_wikidata(self) -> None:
+        """language='de' (default) fetches German title from Wikidata."""
+
+        def _handler(request: httpx.Request) -> httpx.Response:
+            url = str(request.url)
+            if "wikidata.org" in url and "wbgetentities" in url:
+                return httpx.Response(200, text=_WIKIDATA_ENTITY_Q172241_DE)
+            if "wikidata.org" in url:
+                return httpx.Response(200, text=_WIKIDATA_SEARCH_Q172241)
+            return httpx.Response(200, text=_SHAWSHANK_RESPONSE)
+
+        client, _ = _make_client_with_handler(_handler)
+        result = await client.get_title_and_year("tt0111161", language="de")
+        assert result is not None
+        assert result.title == "Die Verurteilten"
+        assert "The Shawshank Redemption" in result.alt_titles
+
+    @pytest.mark.asyncio
+    async def test_other_language_uses_wikidata(self) -> None:
+        """Non-English, non-German language queries Wikidata."""
+        entity_fr = json.dumps(
+            {
+                "entities": {
+                    "Q172241": {
+                        "type": "item",
+                        "id": "Q172241",
+                        "labels": {
+                            "fr": {
+                                "language": "fr",
+                                "value": "Les Évadés",
+                            }
+                        },
+                    }
+                },
+                "success": 1,
+            }
+        )
+
+        def _handler(request: httpx.Request) -> httpx.Response:
+            url = str(request.url)
+            if "wikidata.org" in url and "wbgetentities" in url:
+                return httpx.Response(200, text=entity_fr)
+            if "wikidata.org" in url:
+                return httpx.Response(200, text=_WIKIDATA_SEARCH_Q172241)
+            return httpx.Response(200, text=_SHAWSHANK_RESPONSE)
+
+        client, _ = _make_client_with_handler(_handler)
+        result = await client.get_title_and_year("tt0111161", language="fr")
+        assert result is not None
+        assert result.title == "Les Évadés"
+        assert "The Shawshank Redemption" in result.alt_titles
+
+
 class TestUnsupportedMethods:
     @pytest.mark.asyncio
     async def test_tmdb_id_returns_none(self) -> None:

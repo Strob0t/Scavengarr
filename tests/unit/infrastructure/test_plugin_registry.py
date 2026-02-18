@@ -165,3 +165,63 @@ class TestMetadataCache:
         result1 = registry.get_by_provides("download")
         result2 = registry.get_by_provides("download")
         assert result1 == result2
+
+
+class TestGetLanguages:
+    """Tests for get_languages() filtering."""
+
+    def test_default_language(self, registry: PluginRegistry, tmp_path: Path) -> None:
+        """Plugin without languages attribute defaults to ['de']."""
+        _write_plugin(
+            tmp_path,
+            "default_lang.py",
+            """\
+            class _Plugin:
+                name = "default-lang"
+                async def search(self, query, category=None):
+                    return []
+            plugin = _Plugin()
+            """,
+        )
+
+        assert registry.get_languages("default-lang") == ["de"]
+
+    def test_explicit_single_language(
+        self, registry: PluginRegistry, tmp_path: Path
+    ) -> None:
+        """Plugin with languages=['en'] returns ['en']."""
+        _write_plugin(
+            tmp_path,
+            "en_plugin.py",
+            """\
+            class _Plugin:
+                name = "en-plugin"
+                languages = ["en"]
+                async def search(self, query, category=None):
+                    return []
+            plugin = _Plugin()
+            """,
+        )
+
+        assert registry.get_languages("en-plugin") == ["en"]
+
+    def test_multi_language(self, registry: PluginRegistry, tmp_path: Path) -> None:
+        """Plugin with languages=['de', 'en'] returns both."""
+        _write_plugin(
+            tmp_path,
+            "multi_lang.py",
+            """\
+            class _Plugin:
+                name = "multi-lang"
+                languages = ["de", "en"]
+                async def search(self, query, category=None):
+                    return []
+            plugin = _Plugin()
+            """,
+        )
+
+        assert registry.get_languages("multi-lang") == ["de", "en"]
+
+    def test_unknown_plugin_returns_default(self, registry: PluginRegistry) -> None:
+        """Unknown plugin name returns default ['de']."""
+        assert registry.get_languages("nonexistent") == ["de"]

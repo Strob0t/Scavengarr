@@ -48,7 +48,12 @@ class PlaywrightPluginBase:
     # --- Overridable defaults ---
     version: str = "1.0.0"
     mode: str = "playwright"
-    default_language: str = "de"
+    languages: list[str] = ["de"]  # noqa: RUF012  # subclass overrides
+
+    @property
+    def default_language(self) -> str:
+        """First language — backward-compatible property."""
+        return self.languages[0]
 
     _domains: list[str] = []  # noqa: RUF012
     _max_concurrent: int = DEFAULT_MAX_CONCURRENT

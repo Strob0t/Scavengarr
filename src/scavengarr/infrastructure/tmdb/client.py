@@ -42,15 +42,17 @@ class HttpxTmdbClient:
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _params(self, **extra: Any) -> dict[str, Any]:
-        """Build query params with api_key and German locale."""
-        return {"api_key": self._api_key, "language": "de-DE", **extra}
+    def _params(self, *, lang: str = "de-DE", **extra: Any) -> dict[str, Any]:
+        """Build query params with api_key and locale."""
+        return {"api_key": self._api_key, "language": lang, **extra}
 
-    async def _get(self, path: str, **extra: Any) -> dict[str, Any] | None:
+    async def _get(
+        self, path: str, *, lang: str = "de-DE", **extra: Any
+    ) -> dict[str, Any] | None:
         """GET request with error handling. Returns parsed JSON or None."""
         url = f"{_BASE_URL}{path}"
         try:
-            resp = await self._http.get(url, params=self._params(**extra))
+            resp = await self._http.get(url, params=self._params(lang=lang, **extra))
             if resp.status_code == 401:
                 log.error("tmdb_api_key_invalid", status=401)
                 return None
@@ -114,15 +116,19 @@ class HttpxTmdbClient:
     # Public API (TmdbClientPort)
     # ------------------------------------------------------------------
 
-    async def find_by_imdb_id(self, imdb_id: str) -> dict[str, Any] | None:
+    async def find_by_imdb_id(
+        self, imdb_id: str, *, language: str = "de"
+    ) -> dict[str, Any] | None:
         """Lookup TMDB entry by IMDb ID. Returns movie/TV metadata or None."""
-        cache_key = f"tmdb:find:{imdb_id}"
+        lang_tag = f"{language}-{language.upper()}" if len(language) == 2 else language
+        cache_key = f"tmdb:find:{imdb_id}:{language}"
         cached = await self._cache.get(cache_key)
         if cached is not None:
             return cached
 
         data = await self._get(
             f"/find/{imdb_id}",
+            lang=lang_tag,
             external_source="imdb_id",
         )
         if data is None:
@@ -138,14 +144,16 @@ class HttpxTmdbClient:
 
         return None
 
-    async def get_title_and_year(self, imdb_id: str) -> TitleMatchInfo | None:
+    async def get_title_and_year(
+        self, imdb_id: str, *, language: str = "de"
+    ) -> TitleMatchInfo | None:
         """Get title and release year from TMDB /find endpoint.
 
-        The primary title is the German localised title (language=de-DE).
+        The primary title is the localised title for *language*.
         When the original title differs, it is included in *alt_titles*
         so the title matcher can also match against the original language.
         """
-        result = await self.find_by_imdb_id(imdb_id)
+        result = await self.find_by_imdb_id(imdb_id, language=language)
         if result is None:
             return None
         title = result.get("title") or result.get("name")

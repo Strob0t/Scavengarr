@@ -79,6 +79,7 @@ class CinebyPlugin(HttpxPluginBase):
 
     name = "cineby"
     provides = "stream"
+    languages = ["en"]
     _domains = _DOMAINS
 
     categories = {

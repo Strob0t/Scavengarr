@@ -79,16 +79,18 @@ class ImdbFallbackClient:
         await self._cache.set(cache_key, entry, ttl=_TTL_TITLE)
         return entry
 
-    async def _fetch_wikidata_german_title(self, imdb_id: str) -> str | None:
-        """Resolve the German title via Wikidata (free, no API key).
+    async def _fetch_wikidata_title(
+        self, imdb_id: str, language: str = "de"
+    ) -> str | None:
+        """Resolve a localised title via Wikidata (free, no API key).
 
         Two-step approach:
         1. Search for the Wikidata entity by IMDB ID (P345 property).
-        2. Fetch the German label for that entity.
+        2. Fetch the label for *language* on that entity.
 
-        Returns the German title or None if unavailable.
+        Returns the localised title or None if unavailable.
         """
-        cache_key = f"wikidata:de:{imdb_id}"
+        cache_key = f"wikidata:{language}:{imdb_id}"
         cached = await self._cache.get(cache_key)
         if cached is not None:
             return cached
@@ -116,14 +118,14 @@ class ImdbFallbackClient:
             if not qid:
                 return None
 
-            # Step 2: Get German label
+            # Step 2: Get label in requested language
             resp2 = await self._http.get(
                 _WIKIDATA_API,
                 params={
                     "action": "wbgetentities",
                     "ids": qid,
                     "props": "labels",
-                    "languages": "de",
+                    "languages": language,
                     "format": "json",
                 },
                 timeout=10.0,
@@ -131,26 +133,28 @@ class ImdbFallbackClient:
             resp2.raise_for_status()
             data2 = resp2.json()
 
-            german_label = (
+            label = (
                 data2.get("entities", {})
                 .get(qid, {})
                 .get("labels", {})
-                .get("de", {})
+                .get(language, {})
                 .get("value")
             )
-            if german_label:
-                await self._cache.set(cache_key, german_label, ttl=_TTL_TITLE)
+            if label:
+                await self._cache.set(cache_key, label, ttl=_TTL_TITLE)
                 log.info(
-                    "wikidata_german_title_resolved",
+                    "wikidata_title_resolved",
                     imdb_id=imdb_id,
+                    language=language,
                     qid=qid,
-                    title=german_label,
+                    title=label,
                 )
-            return german_label
+            return label
         except (httpx.HTTPError, ValueError, KeyError, IndexError):
             log.debug(
-                "wikidata_german_title_failed",
+                "wikidata_title_failed",
                 imdb_id=imdb_id,
+                language=language,
                 exc_info=True,
             )
             return None
@@ -169,17 +173,21 @@ class ImdbFallbackClient:
         # Map to the same keys HttpxTmdbClient returns
         return {"title": title, "name": title, "id": entry.get("id", imdb_id)}
 
-    async def get_title_and_year(self, imdb_id: str) -> TitleMatchInfo | None:
-        """Return title + year from IMDB Suggest API + Wikidata German title.
+    async def get_title_and_year(
+        self, imdb_id: str, *, language: str = "de"
+    ) -> TitleMatchInfo | None:
+        """Return title + year from IMDB Suggest API + Wikidata title.
 
-        Runs IMDB Suggest and Wikidata lookups in parallel.  When the
-        German title is available it becomes the primary title (used as
-        search query for German plugins) with the English title as
-        alt_title for cross-language matching.
+        Runs IMDB Suggest (English) and Wikidata (requested *language*)
+        lookups in parallel.
+
+        - ``language="de"``: German primary, English alt (original behavior).
+        - ``language="en"``: English primary from IMDB Suggest, no alt.
+        - Other: Wikidata label primary, English alt.
         """
-        entry, german_title = await asyncio.gather(
+        entry, wikidata_title = await asyncio.gather(
             self._fetch_suggest(imdb_id),
-            self._fetch_wikidata_german_title(imdb_id),
+            self._fetch_wikidata_title(imdb_id, language),
         )
         if not entry or not entry.get("l"):
             return None
@@ -187,15 +195,20 @@ class ImdbFallbackClient:
         english_title = entry["l"]
         year = entry.get("y") if isinstance(entry.get("y"), int) else None
 
-        if german_title and german_title != english_title:
+        if language == "en":
+            # English requested — use IMDB Suggest title directly
+            return TitleMatchInfo(title=english_title, year=year)
+
+        if wikidata_title and wikidata_title != english_title:
             log.info(
-                "imdb_fallback_title_with_german",
+                "imdb_fallback_title_with_localized",
                 imdb_id=imdb_id,
-                german=german_title,
+                language=language,
+                localized=wikidata_title,
                 english=english_title,
             )
             return TitleMatchInfo(
-                title=german_title,
+                title=wikidata_title,
                 year=year,
                 alt_titles=[english_title],
             )
