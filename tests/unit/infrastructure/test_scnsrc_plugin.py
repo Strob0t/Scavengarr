@@ -61,6 +61,7 @@ def _make_mock_browser(
     context: AsyncMock | None = None,
 ) -> AsyncMock:
     browser = AsyncMock()
+    browser.is_connected = MagicMock(return_value=True)
     browser.new_context = AsyncMock(return_value=context or _make_mock_context())
     browser.close = AsyncMock()
     return browser

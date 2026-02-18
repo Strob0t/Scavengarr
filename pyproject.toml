@@ -52,6 +52,9 @@ markers = [
     "integration: Integration tests (real infrastructure, mocked HTTP)",
     "live: Live smoke tests against real websites (require network)",
 ]
+filterwarnings = [
+    "ignore:Stealth has already been applied:UserWarning",
+]
 
 [tool.ruff]
 target-version = "py312"
