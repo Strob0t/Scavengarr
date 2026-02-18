@@ -303,7 +303,7 @@ matching, hoster probing, and scored plugin selection.
 | `stremio.probe_concurrency` | int | `10` | Max parallel hoster probes |
 | `stremio.probe_timeout_seconds` | float | `10.0` | Per-URL probe timeout |
 | `stremio.max_probe_count` | int | `50` | Max streams to probe/resolve (top-ranked first) |
-| `stremio.resolve_target_count` | int | `15` | Stop resolving after this many successes |
+| `stremio.resolve_target_count` | int | `15` | Stop resolving after this many successes (0 = disabled) |
 | `stremio.probe_stealth_enabled` | bool | `true` | Use Playwright Stealth for Cloudflare bypass |
 | `stremio.probe_stealth_concurrency` | int | `5` | Max parallel Playwright Stealth probes |
 | `stremio.probe_stealth_timeout_seconds` | float | `15.0` | Per-URL Playwright Stealth timeout |

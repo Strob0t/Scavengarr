@@ -123,6 +123,9 @@ stremio:
   probe_timeout_seconds: 10.0
   max_probe_count: 50
 
+  # Resolution early-stop (0 = disabled, resolve all streams)
+  resolve_target_count: 0
+
   # Stealth probing (Playwright, Cloudflare bypass)
   probe_stealth_enabled: true
   probe_stealth_concurrency: 5

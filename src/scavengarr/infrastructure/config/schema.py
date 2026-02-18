@@ -293,7 +293,8 @@ class StremioConfig(BaseModel):
         description=(
             "Target number of successfully resolved video streams. "
             "Resolution stops early once this many genuine video URLs "
-            "have been extracted, cancelling remaining resolve tasks."
+            "have been extracted, cancelling remaining resolve tasks. "
+            "Set to 0 to disable early-stop (resolve all streams)."
         ),
     )
 

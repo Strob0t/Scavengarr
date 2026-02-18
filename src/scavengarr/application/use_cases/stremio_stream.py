@@ -962,7 +962,7 @@ class StremioStreamUseCase:
                     if _is_direct_video_url(resolved, original_url):
                         video_count += 1
 
-            if video_count >= target:
+            if target > 0 and video_count >= target:
                 break
 
         # Cancel remaining tasks once target reached
@@ -977,7 +977,7 @@ class StremioStreamUseCase:
             attempted=attempted,
             resolved=len(resolved_map),
             video_streams=video_count,
-            early_stop=video_count >= target,
+            early_stop=target > 0 and video_count >= target,
         )
         return resolved_map
 
