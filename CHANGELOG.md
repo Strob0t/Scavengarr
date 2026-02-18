@@ -12,6 +12,15 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 breaker, global concurrency pool, graceful shutdown, multi-language search, and
 growth of the test suite from 160 to 3963 tests.
 
+### Performance Tuning
+- **Aggressive timeout cuts**: HTTP scraping 30→15s, hoster resolution 15→10s, Playwright page load 30→20s, plugin timeout 30→15s, probe timeout 10→5s, stealth probe 15→10s, link validation 5→3s
+- **Higher concurrency**: `max_concurrent_plugins` 5→15 with auto-tune cap raised 10→20, `max_concurrent_playwright` added at 7, `validation_max_concurrent` 20→30, `probe_concurrency` 10→20, `max_probe_count` 50→80, plugin default `_max_concurrent` 3→5
+- **Configurable resolve semaphore**: `_resolve_top_streams()` now uses `probe_concurrency` from config (was hardcoded at 10)
+- **Faster retries**: `retry_max_attempts` 3→2, `retry_backoff_base` 1.0→0.5s, `retry_max_backoff` 30→10s
+- **Higher throughput**: `rate_limit_rps` 5→10 per domain, `max_results_per_plugin` 100→50 (less work per plugin, faster turnaround)
+- **Longer cache**: `search_ttl_seconds` 900→1800 (30min cache for repeated searches)
+- **`resolve_target_count` convention**: 0 = disabled (resolve all streams), replaces magic number
+
 ### Playwright Stealth Default
 - **Stealth mode now on by default**: `PlaywrightPluginBase._stealth` changed from `False` to `True` — all 9 Playwright plugins (boerse, mygully, moflix, streamworld, animeloads, byte, scnsrc, ddlvalley, ddlspot) now use stealth evasions automatically
 - **SuperVideoResolver uses shared StealthPool**: replaced dedicated Playwright browser lifecycle with injected `StealthPool` — eliminates a redundant Chromium process and reuses the stealth-enabled browser pool. Graceful degradation to httpx-only when no pool is available

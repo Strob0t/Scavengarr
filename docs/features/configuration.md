@@ -152,21 +152,31 @@ plugins:
   plugin_dir: "/app/plugins"
 
 http:
-  timeout_seconds: 30.0
+  timeout_seconds: 15.0         # scraping timeout (schema default: 30)
+  timeout_resolve_seconds: 10.0 # hoster resolution timeout (schema default: 15)
   follow_redirects: true
   user_agent: "Scavengarr/0.1.0 (+https://github.com/Strob0t/Scavengarr)"
+  rate_limit_rps: 10.0          # per-domain rate limit (schema default: 5)
+  retry_max_attempts: 2         # retries on 429/503 (schema default: 3)
+  retry_backoff_base: 0.5       # initial backoff (schema default: 1.0)
+  retry_max_backoff: 10.0       # max backoff (schema default: 30)
 
 playwright:
   headless: true
-  timeout_ms: 30000
+  timeout_ms: 20000             # page load timeout (schema default: 30000)
 
 stremio:
-  max_concurrent_plugins: 10
-  max_concurrent_playwright: 5
-  plugin_timeout_seconds: 30.0
+  max_concurrent_plugins: 15    # parallel plugin searches (schema default: 10)
+  max_concurrent_plugins_auto: true
+  max_concurrent_playwright: 7  # parallel Playwright searches (schema default: 5)
+  max_results_per_plugin: 50    # results per plugin (schema default: 100)
+  plugin_timeout_seconds: 15.0  # per-plugin timeout (schema default: 30)
   title_match_threshold: 0.7
-  resolve_target_count: 15
+  resolve_target_count: 0       # 0 = disabled, resolve all streams (schema default: 15)
   probe_at_stream_time: true
+  probe_concurrency: 20         # parallel probes (schema default: 10)
+  probe_timeout_seconds: 5.0    # probe timeout (schema default: 10)
+  max_probe_count: 80           # streams to probe (schema default: 50)
 
 scoring:
   enabled: false
@@ -183,6 +193,7 @@ cache:
   backend: "diskcache"           # "diskcache" or "redis"
   dir: "/app/cache/scavengarr"
   ttl_seconds: 3600
+  search_ttl_seconds: 1800      # search result cache (schema default: 900)
   # redis_url: "redis://redis:6379/0"  # uncomment when backend=redis
 ```
 
@@ -196,8 +207,13 @@ The configuration loader recognizes these top-level sections. Flat keys (like
 |---------------------|----------------------|
 | `plugin_dir` | `plugins.plugin_dir` |
 | `http_timeout_seconds` | `http.timeout_seconds` |
+| `http_timeout_resolve_seconds` | `http.timeout_resolve_seconds` |
 | `http_follow_redirects` | `http.follow_redirects` |
 | `http_user_agent` | `http.user_agent` |
+| `rate_limit_requests_per_second` | `http.rate_limit_rps` |
+| `http_retry_max_attempts` | `http.retry_max_attempts` |
+| `http_retry_backoff_base` | `http.retry_backoff_base` |
+| `http_retry_max_backoff` | `http.retry_max_backoff` |
 | `playwright_headless` | `playwright.headless` |
 | `playwright_timeout_ms` | `playwright.timeout_ms` |
 | `log_level` | `logging.level` |
@@ -240,10 +256,16 @@ Controls the HTTP client used by httpx plugins for static HTML pages and API req
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `http.timeout_seconds` | float | `30.0` | Request timeout for scraping operations |
+| `http.timeout_resolve_seconds` | float | `15.0` | Timeout for hoster resolution requests |
 | `http.follow_redirects` | bool | `true` | Whether the HTTP client follows redirects |
 | `http.user_agent` | string | `Scavengarr/0.1.0 (...)` | User-Agent header sent with every request |
+| `http.rate_limit_rps` | float | `5.0` | Per-domain rate limit (requests/second). 0 = unlimited |
+| `http.api_rate_limit_rpm` | int | `120` | API rate limit per IP (requests/minute). 0 = unlimited |
+| `http.retry_max_attempts` | int | `3` | Max retry attempts on 429/503 responses. 0 = no retries |
+| `http.retry_backoff_base` | float | `1.0` | Base delay in seconds for exponential backoff |
+| `http.retry_max_backoff` | float | `30.0` | Maximum backoff delay in seconds |
 
-**Validation:** `timeout_seconds` must be greater than 0.
+**Validation:** `timeout_seconds` and `timeout_resolve_seconds` must be greater than 0.
 
 ### Link Validation
 
@@ -396,6 +418,7 @@ environment variables are never logged.
 | `cache.dir` | path | `./cache/scavengarr` | SQLite database path (diskcache only) |
 | `cache.redis_url` | string | `redis://localhost:6379/0` | Redis connection URL (redis only) |
 | `cache.ttl_seconds` | int | `3600` | Default time-to-live for cache entries (seconds) |
+| `cache.search_ttl_seconds` | int | `900` | TTL for cached search results (seconds). 0 = disabled |
 | `cache.max_concurrent` | int | `10` | Semaphore limit for parallel cache operations |
 
 **Validation:** `ttl_seconds` must be >= 0 (0 disables expiration).

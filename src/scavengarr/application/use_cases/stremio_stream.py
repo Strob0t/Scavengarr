@@ -584,6 +584,7 @@ class StremioStreamUseCase:
         self._resolve_fn = resolve_fn
         self._probe_at_stream_time = config.probe_at_stream_time
         self._max_probe_count = config.max_probe_count
+        self._probe_concurrency = config.probe_concurrency
         self._resolve_target = config.resolve_target_count
         self._metrics = metrics
         self._score_store = score_store
@@ -926,7 +927,7 @@ class StremioStreamUseCase:
         (those streams fall back to the /play/ proxy).
         """
         limit = min(len(ranked), self._max_probe_count)
-        semaphore = asyncio.Semaphore(10)
+        semaphore = asyncio.Semaphore(self._probe_concurrency)
 
         async def _resolve_one(idx: int) -> tuple[int, ResolvedStream | None]:
             async with semaphore:

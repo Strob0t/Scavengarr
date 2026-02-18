@@ -32,25 +32,25 @@ plugins:
 
 # -- HTTP / Scraping --------------------------------------------------
 http:
-  timeout_seconds: 30.0 # env: SCAVENGARR_HTTP_TIMEOUT_SECONDS
-  timeout_resolve_seconds: 15.0 # env: SCAVENGARR_HTTP_TIMEOUT_RESOLVE_SECONDS
+  timeout_seconds: 15.0 # was 30 — cut slow requests faster
+  timeout_resolve_seconds: 10.0 # was 15 — hosters that need >10s are likely dead
   follow_redirects: true # env: SCAVENGARR_HTTP_FOLLOW_REDIRECTS
   user_agent: "Scavengarr/0.1.0 (+https://github.com/Strob0t/Scavengarr)"
-  rate_limit_rps: 5.0 # env: SCAVENGARR_RATE_LIMIT_REQUESTS_PER_SECOND
+  rate_limit_rps: 10.0 # was 5 — double throughput per domain
   api_rate_limit_rpm: 120 # env: SCAVENGARR_API_RATE_LIMIT_RPM (0 = off)
-  retry_max_attempts: 3 # env: SCAVENGARR_HTTP_RETRY_MAX_ATTEMPTS (0 = off)
-  retry_backoff_base: 1.0 # env: SCAVENGARR_HTTP_RETRY_BACKOFF_BASE
-  retry_max_backoff: 30.0 # env: SCAVENGARR_HTTP_RETRY_MAX_BACKOFF
+  retry_max_attempts: 2 # was 3 — fewer retries, fail faster
+  retry_backoff_base: 0.5 # was 1.0 — shorter initial backoff
+  retry_max_backoff: 10.0 # was 30 — cap retry wait at 10s instead of 30s
 
 # -- Link Validation -------------------------------------------------
 validate_download_links: true
-validation_timeout_seconds: 5.0
-validation_max_concurrent: 20
+validation_timeout_seconds: 3.0 # was 5.0 — HEAD checks should be fast
+validation_max_concurrent: 30 # was 20 — more parallel validations
 
 # -- Playwright -------------------------------------------------------
 playwright:
   headless: true # env: SCAVENGARR_PLAYWRIGHT_HEADLESS
-  timeout_ms: 30000 # env: SCAVENGARR_PLAYWRIGHT_TIMEOUT_MS
+  timeout_ms: 20000 # was 30000 — 20s is plenty for page load
 
 # -- Logging ----------------------------------------------------------
 logging:
@@ -62,7 +62,7 @@ cache:
   backend: "diskcache" # diskcache | redis
   dir: "/data/cache" # env: SCAVENGARR_CACHE_DIR
   ttl_seconds: 3600 # env: SCAVENGARR_CACHE_TTL_SECONDS
-  search_ttl_seconds: 900 # env: CACHE_SEARCH_TTL_SECONDS (0 = off)
+  search_ttl_seconds: 1800 # was 900 — 30min cache, repeated searches are instant
   max_concurrent: 10 # env: CACHE_MAX_CONCURRENT
   # redis_url: "redis://redis:6379/0"      # env: CACHE_REDIS_URL (only for backend: redis)
 
@@ -101,10 +101,11 @@ stremio:
     "doodstream": 1
 
   # Concurrency
-  max_concurrent_plugins: 5
+  max_concurrent_plugins: 15 # was 5 — let auto-tune go higher
   max_concurrent_plugins_auto: true # auto-tune based on CPU/RAM
-  max_results_per_plugin: 100
-  plugin_timeout_seconds: 30.0
+  max_concurrent_playwright: 7 # was 5 — more parallel PW plugins
+  max_results_per_plugin: 50 # was 100 — fewer results per plugin, faster turnaround
+  plugin_timeout_seconds: 15.0 # was 30 — cut slow plugins at 15s
 
   # Title matching
   title_match_threshold: 0.7
@@ -119,9 +120,9 @@ stremio:
 
   # Link probing at /stream time
   probe_at_stream_time: true
-  probe_concurrency: 10
-  probe_timeout_seconds: 10.0
-  max_probe_count: 50
+  probe_concurrency: 20 # was 10 — double probe parallelism
+  probe_timeout_seconds: 5.0 # was 10 — fast HEAD probes
+  max_probe_count: 80 # was 50 — probe more streams
 
   # Resolution early-stop (0 = disabled, resolve all streams)
   resolve_target_count: 0
@@ -129,7 +130,7 @@ stremio:
   # Stealth probing (Playwright, Cloudflare bypass)
   probe_stealth_enabled: true
   probe_stealth_concurrency: 5
-  probe_stealth_timeout_seconds: 15.0
+  probe_stealth_timeout_seconds: 10.0 # was 15 — tighter stealth timeout
 
   # Scored plugin selection (requires scoring.enabled: true)
   scoring_enabled: false

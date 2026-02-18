@@ -92,7 +92,7 @@ def _auto_tune_concurrency(config: AppConfig) -> None:
     except ImportError:
         mem_limit = 8  # conservative default without psutil
 
-    auto_concurrent = max(2, min(cpu_count, mem_limit, 10))
+    auto_concurrent = max(2, min(cpu_count, mem_limit, 20))
     config.stremio.max_concurrent_plugins = auto_concurrent
     log.info(
         "auto_concurrency",
