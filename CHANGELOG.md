@@ -18,12 +18,19 @@ growth of the test suite from 160 to 3225 tests.
 ### Parallel Language Group Search
 - **Parallelize `_search_lang_groups()`**: language groups (e.g. German plugins + English plugins) now search concurrently via `asyncio.gather()` instead of sequentially. Saves ~2-5s on multi-language requests where the slower group no longer blocks the faster one
 
+### Shared Playwright Browser Pool & Pre-Warming
+- **SharedBrowserPool**: new infrastructure component (`shared_browser.py`) manages a single Chromium process shared by all 9 Playwright plugins. Each plugin gets its own `BrowserContext` for isolation while sharing the underlying browser — eliminates per-plugin ~1-2s browser startup overhead
+- **Browser pre-warming**: when a Stremio search request arrives and Playwright plugins are present, the browser warmup starts as a background task immediately while httpx plugins begin searching. Playwright plugins await the (possibly already completed) warmup task when they need the browser
+- **Parallel Playwright plugins**: Playwright plugins now run concurrently on the shared browser (bounded by `max_concurrent_playwright`, default 3) instead of sequentially via `Semaphore(1)`. With 9 PW plugins and concurrency of 3, the PW search phase runs in ~3 rounds instead of 9 sequential rounds
+- **Add `max_concurrent_playwright` config** (default 3): controls how many Playwright plugins run concurrently on the shared browser
+- **Ownership-aware cleanup**: `PlaywrightPluginBase.cleanup()` now only closes the browser/Playwright when the plugin owns it (standalone mode). When using a shared browser, only the context and page are closed — the shared browser is managed by the pool
+- **Disconnection recovery**: `_ensure_browser()` checks `browser.is_connected()` and relaunches transparently if the browser has crashed or disconnected
+
 ### Stremio Stream Resolution Performance
 - **Skip probe when resolve is active**: probe phase (`probe_at_stream_time`) is now skipped when a resolve callback is configured, since resolution implicitly checks liveness — saves one entire I/O phase (~5-10s)
 - **Early-stop resolve**: `_resolve_top_streams()` now uses `asyncio.wait(FIRST_COMPLETED)` and stops once `resolve_target_count` (default 15) genuine video URLs have been extracted, cancelling remaining tasks. Avoids waiting for slow hosters when enough playable streams are ready
 - **Add `resolve_target_count` config** (default 15): target number of successfully resolved video streams before early-stop
 - **Shared semaphore across query variants**: `_search_with_fallback()` now shares a single semaphore across all query variants (e.g. "Dune: Part Two" + "Dune") instead of creating independent semaphores per variant — prevents connection overload
-- **Playwright single-session lock**: Playwright plugins additionally acquire a `Semaphore(1)` to ensure only one browser session runs at a time, preventing RAM spikes
 - **Increase `max_concurrent_plugins` default** from 5 → 10: allows more httpx plugins to search in parallel
 
 ### Multi-Language Search & unidecode Migration

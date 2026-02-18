@@ -60,6 +60,7 @@ from scavengarr.infrastructure.plugins.constants import (
     search_max_results,
 )
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
+from scavengarr.infrastructure.plugins.shared_browser import SharedBrowserPool
 from scavengarr.infrastructure.scoring.health_prober import HealthProber
 from scavengarr.infrastructure.scoring.query_pool import QueryPoolBuilder
 from scavengarr.infrastructure.scoring.scheduler import ScoringScheduler
@@ -334,7 +335,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     else:
         state.stealth_pool = None
 
-    # 12) Stremio use cases (always initialized — fallback handles missing key)
+    # 12) Shared browser pool for Playwright plugins (single Chromium process)
+    state.shared_browser_pool = SharedBrowserPool(
+        headless=config.playwright_headless,
+    )
+    log.info("shared_browser_pool_configured")
+
+    # 13) Stremio use cases (always initialized — fallback handles missing key)
     probe_fn = functools.partial(
         probe_urls_stealth,
         state.http_client,
@@ -359,6 +366,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         resolve_fn=state.hoster_resolver_registry.resolve,
         metrics=state.metrics,
         score_store=state.plugin_score_store,
+        browser_warmup_fn=state.shared_browser_pool.warmup,
     )
     state.stremio_catalog_uc = StremioCatalogUseCase(tmdb=state.tmdb_client)
 
@@ -372,6 +380,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             with suppress(asyncio.CancelledError):
                 await state._scoring_task
             log.info("scoring_scheduler_stopped")
+
+        if state.shared_browser_pool is not None:
+            await state.shared_browser_pool.cleanup()
+            log.info("shared_browser_pool_cleaned_up")
 
         if state.stealth_pool is not None:
             await state.stealth_pool.cleanup()

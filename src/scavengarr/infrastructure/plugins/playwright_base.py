@@ -77,6 +77,12 @@ class PlaywrightPluginBase:
         self._domain_verified: bool = False
         self.base_url: str = f"https://{self._domains[0]}" if self._domains else ""
         self._log = structlog.get_logger(self.name or __name__)
+        # Shared browser support: when set, _ensure_browser() awaits this
+        # task instead of launching a new Chromium process.
+        self._shared_browser_task: asyncio.Task[tuple[Browser, Playwright]] | None = (
+            None
+        )
+        self._owns_browser: bool = True
 
     @property
     def effective_max_results(self) -> int:
@@ -106,17 +112,57 @@ class PlaywrightPluginBase:
         return False
 
     # ------------------------------------------------------------------
+    # Shared browser injection
+    # ------------------------------------------------------------------
+
+    def set_shared_browser_task(
+        self,
+        task: asyncio.Task[tuple[Browser, Playwright]],
+    ) -> None:
+        """Inject a shared browser warmup task.
+
+        When set, ``_ensure_browser()`` awaits this task instead of
+        launching a new Chromium process.  ``cleanup()`` will only
+        close the context and page — the shared browser is managed
+        externally (e.g. by ``SharedBrowserPool``).
+        """
+        self._shared_browser_task = task
+        self._owns_browser = False
+
+    # ------------------------------------------------------------------
     # Browser lifecycle
     # ------------------------------------------------------------------
 
     async def _ensure_browser(self) -> Browser:
-        """Launch Chromium browser if not already running."""
+        """Return a connected Chromium browser, launching if needed.
+
+        When a shared browser task is set (via ``set_shared_browser_task``),
+        awaits that task to obtain the shared browser instead of launching
+        a dedicated Chromium process.  This allows multiple Playwright
+        plugins to share a single browser with separate contexts.
+        """
+        # Check if existing browser is still connected
+        if self._browser is not None and not self._browser.is_connected():
+            self._log.warning(f"{self.name}_browser_disconnected")
+            self._browser = None
+            self._pw = None
+            self._context = None
+            self._page = None
+
         if self._browser is None:
-            self._pw = await async_playwright().start()
-            self._browser = await self._pw.chromium.launch(
-                headless=self._headless,
-            )
-            self._log.info(f"{self.name}_browser_launched")
+            if self._shared_browser_task is not None:
+                # Use shared browser from pool (awaited concurrently)
+                self._browser, self._pw = await self._shared_browser_task
+                self._owns_browser = False
+                self._log.info(f"{self.name}_using_shared_browser")
+            else:
+                # Standalone: launch own Playwright + Chromium
+                self._pw = await async_playwright().start()
+                self._browser = await self._pw.chromium.launch(
+                    headless=self._headless,
+                )
+                self._owns_browser = True
+                self._log.info(f"{self.name}_browser_launched")
         return self._browser
 
     async def _ensure_context(self) -> BrowserContext:
@@ -311,18 +357,28 @@ class PlaywrightPluginBase:
     # ------------------------------------------------------------------
 
     async def cleanup(self) -> None:
-        """Close page, context, browser, and Playwright."""
+        """Close page, context, and optionally browser + Playwright.
+
+        When using a shared browser (via ``set_shared_browser_task``),
+        only the context and page are closed — the browser and Playwright
+        instances are managed by the external ``SharedBrowserPool``.
+        """
         if self._page is not None and not self._page.is_closed():
             await self._page.close()
             self._page = None
         if self._context is not None:
             await self._context.close()
             self._context = None
-        if self._browser is not None:
-            await self._browser.close()
+        if self._owns_browser:
+            if self._browser is not None:
+                await self._browser.close()
+                self._browser = None
+            if self._pw is not None:
+                await self._pw.stop()
+                self._pw = None
+        else:
+            # Shared browser — just clear references
             self._browser = None
-        if self._pw is not None:
-            await self._pw.stop()
             self._pw = None
         self._domain_verified = False
 

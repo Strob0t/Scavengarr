@@ -211,6 +211,15 @@ class StremioConfig(BaseModel):
         description="Max parallel plugin searches for stream resolution.",
     )
 
+    max_concurrent_playwright: int = Field(
+        default=3,
+        description=(
+            "Max parallel Playwright plugin searches on the shared browser. "
+            "Each Playwright plugin gets its own BrowserContext; this limits "
+            "how many contexts run concurrently to avoid RAM spikes."
+        ),
+    )
+
     max_concurrent_plugins_auto: bool = Field(
         default=True,
         description=(

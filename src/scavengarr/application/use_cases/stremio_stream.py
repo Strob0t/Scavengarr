@@ -45,6 +45,7 @@ class _StremioConfig(Protocol):
     """Configuration values consumed by StremioStreamUseCase."""
 
     max_concurrent_plugins: int
+    max_concurrent_playwright: int
     plugin_timeout_seconds: float
     title_match_threshold: float
     title_year_bonus: float
@@ -483,6 +484,10 @@ ProbeCallback = Callable[[list[tuple[int, str]]], Awaitable[set[int]]]
 # Accepts (url, hoster_hint), returns ResolvedStream or None.
 ResolveCallback = Callable[[str, str], Awaitable[ResolvedStream | None]]
 
+# Callback type for warming up a shared Playwright browser.
+# Returns (browser, playwright) tuple — opaque at this layer.
+BrowserWarmupFn = Callable[[], Awaitable[tuple[Any, Any]]]
+
 
 def _build_behavior_hints(
     resolved: ResolvedStream,
@@ -540,6 +545,7 @@ class StremioStreamUseCase:
         resolve_fn: ResolveCallback | None = None,
         metrics: _MetricsRecorder | None = None,
         score_store: PluginScoreStorePort | None = None,
+        browser_warmup_fn: BrowserWarmupFn | None = None,
     ) -> None:
         self._tmdb = tmdb
         self._plugins = plugins
@@ -550,6 +556,7 @@ class StremioStreamUseCase:
         self._user_agent = user_agent
         self._max_results_var = max_results_var
         self._max_concurrent = config.max_concurrent_plugins
+        self._max_concurrent_pw = config.max_concurrent_playwright
         self._plugin_timeout = config.plugin_timeout_seconds
         self._title_match_threshold = config.title_match_threshold
         self._title_year_bonus = config.title_year_bonus
@@ -569,6 +576,7 @@ class StremioStreamUseCase:
         self._scoring_enabled = config.scoring_enabled
         self._max_plugins_scored = config.max_plugins_scored
         self._exploration_probability = config.exploration_probability
+        self._browser_warmup_fn = browser_warmup_fn
 
     async def execute(
         self,
@@ -1065,13 +1073,31 @@ class StremioStreamUseCase:
         A single shared semaphore bounds total concurrent plugin searches
         across all query variants to prevent connection overload.
 
+        When a browser warmup function is configured and Playwright
+        plugins are present, a browser warmup task is started as a
+        background task *before* searches begin — httpx plugins start
+        immediately while the browser warms up in parallel.  The warmup
+        task is injected into PW plugins so they can share a single
+        Chromium process via separate ``BrowserContext`` instances.
+
         The first query's results are always kept in full.  Subsequent
         (fallback) queries only add results whose ``download_link`` was
         not already seen, to avoid duplicates from the same plugin
         matching on both the full title and the shorter base title.
         """
         semaphore = asyncio.Semaphore(self._max_concurrent)
-        pw_semaphore = asyncio.Semaphore(1)
+        pw_semaphore = asyncio.Semaphore(self._max_concurrent_pw)
+
+        # --- Pre-warm shared browser for Playwright plugins ---
+        warmup_task: asyncio.Task[tuple[Any, Any]] | None = None
+        if self._browser_warmup_fn is not None:
+            has_pw = any(
+                getattr(self._plugins.get(n), "mode", "httpx") == "playwright"
+                for n in plugin_names
+                if self._try_get_plugin(n) is not None
+            )
+            if has_pw:
+                warmup_task = asyncio.create_task(self._browser_warmup_fn())
 
         search_tasks = [
             self._search_plugins(
@@ -1082,6 +1108,7 @@ class StremioStreamUseCase:
                 episode=episode,
                 semaphore=semaphore,
                 pw_semaphore=pw_semaphore,
+                browser_warmup_task=warmup_task,
             )
             for q in queries
         ]
@@ -1098,6 +1125,13 @@ class StremioStreamUseCase:
                         all_results.append(r)
         return all_results
 
+    def _try_get_plugin(self, name: str) -> Any | None:
+        """Get a plugin by name, returning None on error."""
+        try:
+            return self._plugins.get(name)
+        except Exception:
+            return None
+
     async def _search_plugins(
         self,
         plugin_names: list[str],
@@ -1108,18 +1142,22 @@ class StremioStreamUseCase:
         episode: int | None = None,
         semaphore: asyncio.Semaphore | None = None,
         pw_semaphore: asyncio.Semaphore | None = None,
+        browser_warmup_task: asyncio.Task[tuple[Any, Any]] | None = None,
     ) -> list[SearchResult]:
         """Search all plugins in parallel with bounded concurrency.
 
         When *semaphore* is provided it is shared across query variants.
-        Playwright plugins additionally acquire *pw_semaphore* (limit 1)
-        to ensure only one browser session runs at a time.
+        Playwright plugins additionally acquire *pw_semaphore* to bound
+        concurrent browser contexts on the shared Chromium process.
+
+        When *browser_warmup_task* is provided, it is injected into
+        Playwright plugins via ``set_shared_browser_task()`` so they
+        share a single browser instead of each launching their own.
         """
         sem = semaphore or asyncio.Semaphore(self._max_concurrent)
 
         async def _search_one(name: str) -> list[SearchResult]:
             async with sem:
-                # Playwright plugins: also acquire the single-session lock
                 plugin = None
                 try:
                     plugin = self._plugins.get(name)
@@ -1128,11 +1166,18 @@ class StremioStreamUseCase:
                     return []
 
                 is_pw = getattr(plugin, "mode", "httpx") == "playwright"
-                if is_pw and pw_semaphore is not None:
-                    async with pw_semaphore:
-                        return await self._run_plugin_with_timeout(
-                            name, query, category, season=season, episode=episode
-                        )
+                if is_pw:
+                    # Inject shared browser task if available
+                    if browser_warmup_task is not None and hasattr(
+                        plugin, "set_shared_browser_task"
+                    ):
+                        plugin.set_shared_browser_task(browser_warmup_task)
+
+                    if pw_semaphore is not None:
+                        async with pw_semaphore:
+                            return await self._run_plugin_with_timeout(
+                                name, query, category, season=season, episode=episode
+                            )
 
                 return await self._run_plugin_with_timeout(
                     name, query, category, season=season, episode=episode
