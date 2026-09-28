@@ -12,6 +12,9 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 breaker, global concurrency pool, graceful shutdown, multi-language search, and
 growth of the test suite from 160 to 4043 tests.
 
+### Dev Container Git Access
+- **Push without DevPod tunnel**: the devcontainer installs `gh` (feature `github-cli`) and `setup.sh` runs `gh auth setup-git` when `GH_TOKEN` is set in `.env.devcontainer`, so `git push`/`gh pr` work even when the DevPod credential tunnel (`localhost:12049`) is down. `setup.sh` also sets `user.name`/`user.email` from `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL`.
+
 ### JDownloader Reference Sync
 - **Auto-updating JDownloader sources**: `.devcontainer/sync-jdownloader.sh` keeps `.devdata/JDownloader2/plugins/` and `controlling/` as SVN working copies of `svn://svn.jdownloader.org/jdownloader/trunk/src/jd/` (replaces the former manual copies). Runs on every devcontainer start via `postStartCommand`, never blocks startup on network errors, and writes changed files + commit messages of the last update to `.devdata/JDownloader2/CHANGES.md`.
 

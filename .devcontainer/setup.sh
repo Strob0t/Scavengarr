@@ -22,6 +22,24 @@ else
 JSON
 fi
 
+# Git access independent of the DevPod credential tunnel (localhost:12049),
+# which only lives while a DevPod/IDE connection forwards host credentials.
+# GH_TOKEN and GIT_AUTHOR_NAME/GIT_AUTHOR_EMAIL come from .env.devcontainer.
+echo "[devcontainer] Configuring git..."
+if [ -n "${GIT_AUTHOR_NAME:-}" ] && [ -n "${GIT_AUTHOR_EMAIL:-}" ]; then
+  git config --global user.name "$GIT_AUTHOR_NAME"
+  git config --global user.email "$GIT_AUTHOR_EMAIL"
+else
+  echo "WARN: GIT_AUTHOR_NAME/GIT_AUTHOR_EMAIL not set, commits need a git identity"
+fi
+if [ -n "${GH_TOKEN:-}" ] && command -v gh >/dev/null 2>&1; then
+  # Scoped to github.com: resets the DevPod helper there, other hosts keep it.
+  gh auth setup-git --hostname github.com \
+    || echo "WARN: gh auth setup-git failed, falling back to DevPod credentials"
+else
+  echo "WARN: GH_TOKEN or gh missing, git push relies on DevPod credential forwarding"
+fi
+
 echo "[devcontainer] Checking for npm..."
 
 apt_update() {

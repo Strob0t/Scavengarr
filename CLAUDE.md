@@ -566,6 +566,9 @@ Agents are ONLY for **simple, explicit, mechanical tasks** where the scope is 10
 
 ## 15. Development workflow (general)
 
+### Dev container git access
+`git push` and `gh` authenticate via `GH_TOKEN` from `.env.devcontainer` (gitignored): `.devcontainer/setup.sh` runs `gh auth setup-git` on attach, independent of DevPod credential forwarding. Git identity comes from `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL` in the same file. Changes to `.env.devcontainer` need a container rebuild/restart.
+
 ### Quick commands (examples)
 - `poetry install`
 - `poetry run pytest`
