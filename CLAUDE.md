@@ -659,6 +659,10 @@ Hoster resolvers validate whether a URL on a file hosting service is still avail
 - 27 XFS-based hosters (katfile, hexupload, clicknupload, filestore, uptobox, funxd, bigwarp, dropload, goodstream, savefiles, streamwish, vidmoly, vidoza, vinovo, vidhide, streamruby, veev, lulustream, upstream, wolfstream, vidnest, mp4upload, uqload, vidshar, vidroba, hotlink, vidspeed)
 - Return `ResolvedStream(video_url=<canonical_file_url>, quality=StreamQuality.UNKNOWN)`
 
+#### JDownloader reference sources
+
+`.devdata/JDownloader2/plugins/` and `.devdata/JDownloader2/controlling/` (gitignored) are SVN working copies of `svn://svn.jdownloader.org/jdownloader/trunk/src/jd/{plugins,controlling}`. Use the JDownloader hoster/decrypter plugins there as reference when adding or fixing resolvers. `.devcontainer/sync-jdownloader.sh` checks them out or runs `svn update` on every container start (`postStartCommand`); run it manually for an ad-hoc refresh. Files and commit messages pulled in by the last sync that brought changes are listed in `.devdata/JDownloader2/CHANGES.md`.
+
 #### Shared URL utility
 
 All resolvers share `extract_domain(url)` from `scavengarr.infrastructure.hoster_resolvers` for consistent second-level domain extraction (e.g. `"https://www.voe.sx/e/abc"` → `"voe"`).

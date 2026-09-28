@@ -12,6 +12,9 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 breaker, global concurrency pool, graceful shutdown, multi-language search, and
 growth of the test suite from 160 to 4043 tests.
 
+### JDownloader Reference Sync
+- **Auto-updating JDownloader sources**: `.devcontainer/sync-jdownloader.sh` keeps `.devdata/JDownloader2/plugins/` and `controlling/` as SVN working copies of `svn://svn.jdownloader.org/jdownloader/trunk/src/jd/` (replaces the former manual copies). Runs on every devcontainer start via `postStartCommand`, never blocks startup on network errors, and writes changed files + commit messages of the last update to `.devdata/JDownloader2/CHANGES.md`.
+
 ### Documentation Drift Fixes
 - **CLI docs corrected**: the CLI uses stdlib `argparse` (entry point `poetry run start` → `scavengarr.interfaces.cli:start`), not Typer. Fixed in `CLAUDE.md`, `AGENTS.md`, `README.md`, `docs/features/`.
 - **Test inventory**: `CLAUDE.md` test tree now lists all 21 previously missing test files (incl. new `unit/interfaces/`); test counts updated across docs (4137 total = 3905 unit + 169 E2E + 25 integration + 38 live).

@@ -23,6 +23,7 @@
     16686
   ],
   "postCreateCommand": "mkdir -p ~/continue && cp .continue/config.yaml ~/continue/config.yaml",
+  "postStartCommand": "bash .devcontainer/sync-jdownloader.sh || true",
   "postAttachCommand": "bash .devcontainer/setup.sh",
   "customizations": {
     "vscode": {
