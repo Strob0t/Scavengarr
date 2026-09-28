@@ -40,7 +40,7 @@ class PluginRegistry:
     discover():
       - indexes .py files only (no Python execution)
 
-    get()/load_all()/list_names():
+    get()/list_names():
       - may load on demand and cache results
 
     Metadata caching:

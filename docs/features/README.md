@@ -89,7 +89,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** and **S
 |---|---|---|
 | Web framework | FastAPI + Uvicorn | HTTP API (Torznab, Stremio, stats, download) |
 | Static scraping | httpx | HTTP client for httpx plugins and hoster resolvers |
-| HTML parsing | lxml, BeautifulSoup4 | HTML extraction in plugins |
+| HTML parsing | stdlib `html.parser` | HTML extraction in plugins (`HTMLParser` subclasses) |
 | Dynamic scraping | Playwright (Chromium), playwright-stealth | JS-heavy sites, Cloudflare bypass |
 | Title matching | rapidfuzz | Fuzzy title scoring for Stremio |
 | Release parsing | guessit | Release name parsing for title matching |
