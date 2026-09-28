@@ -49,7 +49,7 @@ Video-extracting resolvers set `ResolvedStream.headers` with the headers require
 | Resolver | Headers |
 |---|---|
 | VOE | `Referer: <embed_url>` |
-| Filemoon | `Referer: <embed URL after redirects>` |
+| Filemoon | Legacy page: `Referer: <embed URL after redirects>`; Byse player: `Referer` of the captured stream request (the player's frame origin) |
 | SuperVideo | `Referer: <embed_url>` |
 | Streamtape | `Referer: https://<response host>/` |
 | DoodStream | `Referer: <base_url>` |
@@ -60,6 +60,15 @@ Video-extracting resolvers set `ResolvedStream.headers` with the headers require
 ### CDN verification
 
 `_verify.py` provides `verify_video_url()`: a HEAD request (8 s timeout, redirects followed) with the playback headers. Only `200`/`206` counts as reachable. It is used by the XFS video path, VOE, Streamtape, and SuperVideo, and filters out IP-locked CDN tokens (e.g. LULUVID/LULUVDOO tokens bound to Cloudflare's edge IP).
+
+### Browser capture
+
+Some players create the stream URL only while they run. Filemoon's Byse player shows "Click play button in order to verify you're a human" and then runs a fingerprint attestation, a proof-of-work captcha (a custom memory-hard hash, not SHA-256, about 65k attempts at difficulty 16) and an AES-GCM encrypted playback call. Replaying that flow in Python is slow and breaks with every Byse update, so the resolver lets the player do it: `StealthPool.capture_media(url, timeout=...)` opens the embed page in the Patchright stealth context, solves a Cloudflare challenge if present, waits 3 s for autoplay, then clicks the page centre (the play button) up to 3 times, 5 s apart, and returns the first request for a `.m3u8`/`.mpd`/`.mp4`/`master.txt` URL as `CapturedMedia(url, referer)`.
+
+- The page loads with stylesheets and fonts (a page route overrides the context's resource block): without CSS the play button is not where the click lands. Only `media` downloads are aborted; their URL is already known when requested.
+- Popups opened by ad scripts (often on the first click) are closed.
+- Shares the `fetch_text()` concurrency limit (`fetch_concurrency`, at most 2 pages).
+- Resolvers call it only at play time (`/stremio/play/{id}` resolves one link), so a few seconds per resolve are acceptable (Filemoon live: 2–5 s).
 
 ---
 
@@ -75,7 +84,7 @@ Extract a direct video URL (`.mp4`/`.m3u8`) from an embed page.
 | Streamtape | `streamtape` | `streamtape`, `streamta`, `strtape`, `shavetape`, `tapeblocker`, `streamtapeadblock(user)`, `gettapeads`, … (13 names) | Token extraction from page source |
 | SuperVideo | `supervideo` | `supervideo.*` | XFS-style JWPlayer extraction; `StealthPool` (Playwright) fallback on a Cloudflare 403 |
 | DoodStream | `doodstream` | `dood`, `doods`, `doodstream`, `ds2play`, `d0o0d`, `vidply`, `myvidplay`, `playmogo`, … (23 names; all mirrors currently redirect to `playmogo.com`) | `pass_md5` endpoint extraction |
-| Filemoon | `filemoon` | `filemoon.*` | Packed JS unpacker + Byse challenge/attest/playback API flow |
+| Filemoon | `filemoon` | `filemoon.*` | Packed JS unpacker (legacy pages); Byse player pages via browser capture (`StealthPool.capture_media`) |
 | StreamUp | `strmup` | `strmup`, `streamup`, `vidara` | `streaming_url` from page, AJAX `/ajax/stream` fallback; HLS |
 | Vidsonic | `vidsonic` | `vidsonic` | Hex-obfuscated, pipe-delimited HLS URL decoding |
 

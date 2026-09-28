@@ -106,7 +106,7 @@ Validates file availability and extracts direct video URLs from streaming hoster
 | Streamtape | [x] Implemented | Token extraction from page source |
 | SuperVideo | [x] Implemented | XFS extraction + StealthPool Cloudflare fallback |
 | DoodStream | [x] Implemented | `pass_md5` API extraction |
-| Filemoon | [x] Implemented | Packed JS unpacker + Byse SPA challenge flow |
+| Filemoon | [x] Implemented | Packed JS unpacker + browser capture of the Byse player's stream |
 | StreamUp (strmup) | [x] Implemented | HLS extraction with page + AJAX fallback |
 | Vidsonic | [x] Implemented | HLS extraction with hex-obfuscated URL decoding |
 

@@ -10,7 +10,9 @@ Resource blocking (images, fonts, CSS, media) keeps navigation fast.
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 from urllib.parse import urlparse
 
@@ -59,6 +61,27 @@ _FETCH_RAW_JS = """async (url) => {
 }"""
 
 
+# Requests a hoster's player makes for the stream: HLS/DASH manifests,
+# progressive MP4 (VOE-style "master.txt" manifests included)
+_MEDIA_URL_RE = re.compile(
+    r"\.(?:m3u8|mpd|mp4)(?:$|\?)|/master\.txt(?:$|\?)", re.IGNORECASE
+)
+# capture_media(): wait this long for autoplay, then click the player up to
+# _MEDIA_PLAY_CLICKS times (on ad-funded hosters the first click often only
+# opens a popup), waiting _MEDIA_CLICK_WAIT_S after each click
+_MEDIA_AUTOPLAY_WAIT_S = 3.0
+_MEDIA_CLICK_WAIT_S = 5.0
+_MEDIA_PLAY_CLICKS = 3
+
+
+@dataclass(frozen=True)
+class CapturedMedia:
+    """Stream URL requested by a hoster's player, with that request's Referer."""
+
+    url: str
+    referer: str | None
+
+
 async def _read_body(page: Page, url: str) -> str | None:
     """Rendered DOM for HTML, raw in-page fetch for other types (JSON)."""
     if await page.evaluate("() => document.contentType") == "text/html":
@@ -72,6 +95,40 @@ async def _block_resources(route: Route) -> None:
         await route.abort()
     else:
         await route.continue_()
+
+
+async def _allow_player_resources(route: Route) -> None:
+    """Load a player page fully (layout decides where the play button is);
+    only media downloads are cut, their URL is known once requested."""
+    if route.request.resource_type == "media":
+        await route.abort()
+    else:
+        await route.continue_()
+
+
+async def _close_popup(popup: Page) -> None:
+    """Close ad popups opened by clicks on a player."""
+    try:
+        await popup.close()
+    except Exception:  # noqa: BLE001
+        log.debug("stealth_popup_close_error", exc_info=True)
+
+
+async def _start_player(
+    page: Page, found: asyncio.Future[CapturedMedia]
+) -> CapturedMedia | None:
+    """Wait for autoplay, then click the page centre (the player) until the
+    player requests its stream or the clicks are used up."""
+    waits = (_MEDIA_AUTOPLAY_WAIT_S, *(_MEDIA_CLICK_WAIT_S,) * _MEDIA_PLAY_CLICKS)
+    for attempt, wait_s in enumerate(waits):
+        if attempt:
+            size = page.viewport_size or {"width": 1280, "height": 720}
+            await page.mouse.click(size["width"] / 2, size["height"] / 2)
+        try:
+            return await asyncio.wait_for(asyncio.shield(found), wait_s)
+        except TimeoutError:
+            continue
+    return None
 
 
 class StealthPool:
@@ -257,6 +314,56 @@ class StealthPool:
                 return await read_when_settled(page, lambda: _read_body(page, url))
             except Exception:  # noqa: BLE001
                 log.debug("stealth_fetch_error", url=url, exc_info=True)
+                return None
+            finally:
+                if page is not None and not page.is_closed():
+                    await page.close()
+
+    async def capture_media(self, url: str, *, timeout: float) -> CapturedMedia | None:
+        """Open *url*, start its player and return the stream URL it requests.
+
+        For hosters whose stream URL exists only in the running player
+        (token or proof-of-work flows such as Filemoon's "click play to
+        verify you're a human") or whose embed page sits behind Cloudflare.
+        The page loads with styles (the context blocks them) so the click
+        on the page centre hits the play button; ad popups are closed.
+        *timeout* bounds navigation and the Cloudflare challenge.
+        """
+        timeout_ms = int(timeout * 1000)
+        async with self._fetch_sem:
+            page: Page | None = None
+            try:
+                page = await self.new_page()
+                found: asyncio.Future[CapturedMedia] = (
+                    asyncio.get_running_loop().create_future()
+                )
+
+                def _on_request(request: Request) -> None:
+                    if not found.done() and _MEDIA_URL_RE.search(request.url):
+                        found.set_result(
+                            CapturedMedia(request.url, request.headers.get("referer"))
+                        )
+
+                page.on("request", _on_request)
+                page.on("popup", _close_popup)
+                await page.route("**/*", _allow_player_resources)
+                if not await self._navigate(
+                    page,
+                    url,
+                    wait_until="domcontentloaded",
+                    timeout_ms=timeout_ms,
+                    done=found.done,
+                ):
+                    return None
+                if not found.done() and not await solve_cloudflare(
+                    page, timeout_ms=timeout_ms
+                ):
+                    return None
+                media = await _start_player(page, found)
+                log.debug("stealth_capture", url=url, found=media is not None)
+                return media
+            except Exception:  # noqa: BLE001
+                log.debug("stealth_capture_error", url=url, exc_info=True)
                 return None
             finally:
                 if page is not None and not page.is_closed():

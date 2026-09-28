@@ -6,7 +6,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
-Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 56 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4290 tests (4253 excluding the opt-in live tests).
+Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 56 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4293 tests (4256 excluding the opt-in live tests).
+
+### Fix: Filemoon Streams via Browser Capture
+- **Filemoon resolved nothing**: the Byse player added a proof-of-work captcha ("click play to verify you're a human") between attestation and playback, and the attestation now rejects the invented viewer/device IDs (HTTP 400). The PoW is a custom memory-hard hash (~65k attempts at difficulty 16), far too slow in Python and one more thing that changes with every Byse update.
+- **`StealthPool.capture_media(url, timeout=...)`**: opens a player page in the stealth browser (Cloudflare solved if present), waits for autoplay, clicks the play button up to 3 times (ad popups closed) and returns the first stream request (`.m3u8`/`.mpd`/`.mp4`/`master.txt`) with its Referer. The page loads with CSS (only media downloads are cut) so the click hits the button.
+- **Filemoon** parses legacy pages (packed JS, direct HLS) as before and captures the stream of Byse player pages or blocked pages from the browser. Live: `filemoon.to` → HLS master playlist in 2–5 s, playlist fetchable with the returned Referer. The Byse API code (ECDSA attestation, AES-GCM decryption) is gone, and with it the `cryptography` dependency.
 
 ### Fix: Hoster Mirror Domains Reach Their Resolver
 - **Mirror dispatch**: DoodStream, VidGuard, Strmup, DDownload and Serienstream kept their mirror lists private (`_DOMAINS` checked inside `resolve()`), so the registry never routed `d0000d.com`, `dood.to`, `myvidplay.com`, `vgembed.com`, `vidara.so`, … to them; without a plugin hint such links fell through to content-type probing. They now expose `supported_domains`. Streamtape gets a mirror list (JD2 `StreamtapeCom` + mirrors seen on plugin sites: `streamta.pe`, `strtape`, `shavetape`, `tapeblocker`, `streamtapeadblockuser`, `gettapeads`, …), DoodStream adds `playmogo`/`pooop` (every dood mirror currently redirects to `playmogo.com`).

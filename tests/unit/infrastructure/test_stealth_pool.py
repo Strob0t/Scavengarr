@@ -524,3 +524,137 @@ class TestStealthPoolResolveRedirect:
             )
             is None
         )
+
+
+# ------------------------------------------------------------------
+# capture_media
+# ------------------------------------------------------------------
+
+
+def _player_page(
+    *,
+    on_load: list[str] | None = None,
+    on_click: list[list[str]] | None = None,
+    status: int = 200,
+) -> MagicMock:
+    """Page whose player requests *on_load* URLs while loading and the
+    i-th list of *on_click* on the i-th mouse click."""
+    page = _mock_page(title="Player")
+    listeners: list[object] = []
+
+    def _on(event: str, callback: object) -> None:
+        if event == "request":
+            listeners.append(callback)
+
+    def _emit(urls: list[str]) -> None:
+        for url in urls:
+            request = _request(url, navigation=False)
+            request.headers = {"referer": "https://player.example/"}
+            for callback in listeners:
+                callback(request)  # type: ignore[operator]
+
+    async def _goto(url: str, **_: object) -> MagicMock:
+        _emit(on_load or [])
+        return MagicMock(status=status)
+
+    clicks = iter(on_click or [])
+
+    async def _click(*_: object) -> None:
+        _emit(next(clicks, []))
+
+    page.on = MagicMock(side_effect=_on)
+    page.goto = AsyncMock(side_effect=_goto)
+    page.route = AsyncMock()
+    page.viewport_size = {"width": 1280, "height": 720}
+    page.mouse = MagicMock()
+    page.mouse.click = AsyncMock(side_effect=_click)
+    return page
+
+
+@pytest.fixture
+def _fast_capture(monkeypatch: pytest.MonkeyPatch) -> None:
+    from scavengarr.infrastructure.browser import stealth_pool as mod
+
+    monkeypatch.setattr(mod, "_MEDIA_AUTOPLAY_WAIT_S", 0.01)
+    monkeypatch.setattr(mod, "_MEDIA_CLICK_WAIT_S", 0.01)
+
+
+@pytest.mark.usefixtures("_fast_capture")
+class TestStealthPoolCaptureMedia:
+    async def _capture(self, page: MagicMock) -> object:
+        shared_pool, _, context = _mock_pool_stack()
+        context.new_page = AsyncMock(return_value=page)
+        return await StealthPool(browser_pool=shared_pool).capture_media(
+            "https://filemoon.to/e/abc", timeout=10
+        )
+
+    async def test_autoplay_request_is_captured(self) -> None:
+        page = _player_page(
+            on_load=[
+                "https://player.example/assets/app.js",
+                "https://cdn.example/hls2/abc/master.m3u8?t=tok",
+            ]
+        )
+
+        media = await self._capture(page)
+
+        assert media is not None
+        assert media.url == "https://cdn.example/hls2/abc/master.m3u8?t=tok"
+        assert media.referer == "https://player.example/"
+        page.mouse.click.assert_not_awaited()
+        page.close.assert_awaited_once()
+
+    async def test_clicks_player_until_media_is_requested(self) -> None:
+        """First click only opens an ad popup, the second starts playback."""
+        page = _player_page(on_click=[[], ["https://cdn.example/v/x.mp4?t=1"]])
+
+        media = await self._capture(page)
+
+        assert media is not None
+        assert media.url == "https://cdn.example/v/x.mp4?t=1"
+        assert page.mouse.click.await_count == 2
+        page.mouse.click.assert_awaited_with(640, 360)
+
+    async def test_no_media_after_all_clicks_returns_none(self) -> None:
+        from scavengarr.infrastructure.browser import stealth_pool as mod
+
+        page = _player_page(on_click=[["https://ads.example/pop.js"]])
+
+        assert await self._capture(page) is None
+        assert page.mouse.click.await_count == mod._MEDIA_PLAY_CLICKS
+        page.close.assert_awaited_once()
+
+    async def test_unsolved_challenge_returns_none(self) -> None:
+        page = _player_page(status=403)
+
+        with patch(
+            "scavengarr.infrastructure.browser.stealth_pool.solve_cloudflare",
+            AsyncMock(return_value=False),
+        ):
+            assert await self._capture(page) is None
+        page.mouse.click.assert_not_awaited()
+
+    async def test_navigation_error_returns_none(self) -> None:
+        page = _player_page()
+        page.goto = AsyncMock(side_effect=RuntimeError("net::ERR_CONNECTION_CLOSED"))
+
+        assert await self._capture(page) is None
+        page.close.assert_awaited_once()
+
+    async def test_player_page_loads_styles_but_not_media(self) -> None:
+        """Players need CSS for layout (the click lands on the play button);
+        the context-wide resource block is overridden for this page only."""
+        from scavengarr.infrastructure.browser.stealth_pool import (
+            _allow_player_resources,
+        )
+
+        page = _player_page(on_load=["https://cdn.example/x.m3u8"])
+        await self._capture(page)
+        page.route.assert_awaited_once_with("**/*", _allow_player_resources)
+
+        for rtype, aborted in (("stylesheet", False), ("media", True)):
+            route = AsyncMock()
+            route.request.resource_type = rtype
+            await _allow_player_resources(route)
+            assert route.abort.await_count == int(aborted)
+            assert route.continue_.await_count == int(not aborted)

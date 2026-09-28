@@ -364,7 +364,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 stealth_pool=state.stealth_pool,
             ),
             DoodStreamResolver(http_client=state.http_client),
-            FilemoonResolver(http_client=state.http_client),
+            FilemoonResolver(
+                http_client=state.http_client,
+                stealth_pool=state.stealth_pool,
+            ),
             # DDL resolvers (custom — non-generic)
             FilerNetResolver(http_client=state.http_client),
             RapidgatorResolver(http_client=state.http_client),
