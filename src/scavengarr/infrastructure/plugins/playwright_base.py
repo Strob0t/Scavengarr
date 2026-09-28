@@ -17,11 +17,16 @@ from patchright.async_api import (
     BrowserContext,
     Page,
     Playwright,
+    Response,
     async_playwright,
 )
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.browser.display import resolve_headless
+from scavengarr.infrastructure.browser.turnstile import (
+    is_challenge_page,
+    solve_cloudflare,
+)
 
 from .constants import (
     DEFAULT_DOMAIN_CHECK_TIMEOUT,
@@ -78,7 +83,8 @@ class PlaywrightPluginBase:
     _block_resources: bool = True
 
     # --- Cloudflare / navigation timeouts ---
-    _cf_timeout_ms: int = 15_000
+    # Covers an interactive Turnstile click; only spent while a challenge shows.
+    _cf_timeout_ms: int = 30_000
     _networkidle_timeout_ms: int = 10_000
 
     # --- Request isolation ---
@@ -272,21 +278,26 @@ class PlaywrightPluginBase:
     # ------------------------------------------------------------------
 
     async def _wait_for_cloudflare(self, page: Page) -> bool:
-        """Wait for a Cloudflare challenge to resolve on *page*.
+        """Solve a Cloudflare challenge on *page* (Turnstile click included).
 
-        Checks whether the page title still contains the CF challenge
-        marker (``'Just a moment'``).  Returns ``True`` if the page
-        appears usable, ``False`` if the wait timed out.
+        Returns ``True`` if the page is usable, ``False`` if the challenge
+        is still shown after ``_cf_timeout_ms``.
         """
-        try:
-            await page.wait_for_function(
-                "() => !document.title.includes('Just a moment')",
-                timeout=self._cf_timeout_ms,
-            )
-            return True
-        except Exception:  # noqa: BLE001
-            self._log.debug("cf_wait_timeout", timeout_ms=self._cf_timeout_ms)
+        return await solve_cloudflare(page, timeout_ms=self._cf_timeout_ms)
+
+    async def _passes_cloudflare(self, page: Page, resp: Response | None) -> bool:
+        """Accept a navigation, solving a Cloudflare challenge if one is shown.
+
+        Challenges arrive as 403/503, so an error status only fails the
+        navigation when the page is not a challenge page.
+        """
+        if (
+            resp is not None
+            and resp.status >= 400
+            and not await is_challenge_page(page)
+        ):
             return False
+        return await self._wait_for_cloudflare(page)
 
     async def _navigate_and_wait(
         self,
@@ -305,16 +316,17 @@ class PlaywrightPluginBase:
         ``False`` otherwise.  Goto exceptions propagate to the caller.
         """
         resp = await page.goto(url, wait_until="domcontentloaded")
-        if resp and resp.status >= 400:
+        if wait_for_cf:
+            ok = await self._passes_cloudflare(page, resp)
+        else:
+            ok = not (resp and resp.status >= 400)
+        if not ok:
             self._log.warning(
                 f"{self.name}_navigate_error",
                 url=url,
-                status=resp.status,
+                status=resp.status if resp else None,
             )
             return False
-
-        if wait_for_cf:
-            await self._wait_for_cloudflare(page)
 
         if wait_for_idle:
             try:
@@ -334,10 +346,9 @@ class PlaywrightPluginBase:
     async def _verify_domain(self) -> None:
         """Find a working domain by navigating in the browser.
 
-        After a successful HTTP response (status < 400) the method also
-        waits for a potential Cloudflare challenge to resolve.  If the
-        CF wait times out the domain is considered unreachable and the
-        next candidate is tried.
+        A domain counts as reachable when it answers with status < 400 or
+        with a Cloudflare challenge that gets solved.  Otherwise the next
+        candidate is tried.
         """
         if self._domain_verified or len(self._domains) <= 1:
             self._domain_verified = True
@@ -352,13 +363,11 @@ class PlaywrightPluginBase:
                     timeout=int(DEFAULT_DOMAIN_CHECK_TIMEOUT * 1000),
                     wait_until="domcontentloaded",
                 )
-                if resp and resp.status < 400:
-                    cf_ok = await self._wait_for_cloudflare(page)
-                    if cf_ok:
-                        self.base_url = f"https://{domain}"
-                        self._domain_verified = True
-                        self._log.info(f"{self.name}_domain_found", domain=domain)
-                        return
+                if resp and await self._passes_cloudflare(page, resp):
+                    self.base_url = f"https://{domain}"
+                    self._domain_verified = True
+                    self._log.info(f"{self.name}_domain_found", domain=domain)
+                    return
             except Exception:  # noqa: BLE001
                 self._log.debug(f"{self.name}_domain_check_failed", domain=domain)
                 continue
@@ -389,14 +398,13 @@ class PlaywrightPluginBase:
         page = await self._new_page()
         try:
             resp = await page.goto(url, wait_until=wait_until, timeout=timeout)
-            if resp and resp.status >= 400:
+            if not await self._passes_cloudflare(page, resp):
                 self._log.warning(
                     f"{self.name}_page_error",
                     url=url,
-                    status=resp.status,
+                    status=resp.status if resp else None,
                 )
                 return ""
-            await self._wait_for_cloudflare(page)
             try:
                 await page.wait_for_load_state(
                     "networkidle",

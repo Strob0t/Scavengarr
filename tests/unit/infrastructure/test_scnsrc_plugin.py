@@ -549,8 +549,7 @@ class TestCloudflareWait:
     async def test_no_challenge_passes(self) -> None:
         plugin = _make_plugin()
         page = _make_mock_page()
-        await plugin._wait_for_cloudflare(page)
-        page.wait_for_function.assert_awaited_once()
+        assert await plugin._wait_for_cloudflare(page) is True
 
     async def test_timeout_does_not_raise(self) -> None:
         plugin = _make_plugin()
@@ -579,12 +578,10 @@ class TestVerifyDomain:
         plugin = _make_plugin()
 
         # Base class _verify_domain uses a single persistent page.
-        # First domain: goto succeeds but CF wait times out.
-        # Second domain: goto succeeds and CF wait passes.
+        # First domain: goto succeeds but the CF challenge is not solved.
+        # Second domain: goto succeeds and the CF check passes.
         page = _make_mock_page()
-        page.wait_for_function = AsyncMock(
-            side_effect=[TimeoutError("CF timeout"), None],
-        )
+        plugin._wait_for_cloudflare = AsyncMock(side_effect=[False, True])
         context = _make_mock_context(pages=[page])
 
         plugin._browser = _make_mock_browser(context)
@@ -598,9 +595,9 @@ class TestVerifyDomain:
     async def test_all_domains_fail_uses_primary(self) -> None:
         plugin = _make_plugin()
 
-        # Single page, CF wait always times out for all domains.
+        # Single page, the CF challenge is never solved on any domain.
         page = _make_mock_page()
-        page.wait_for_function = AsyncMock(side_effect=TimeoutError("CF timeout"))
+        plugin._wait_for_cloudflare = AsyncMock(return_value=False)
         context = _make_mock_context(pages=[page])
 
         plugin._browser = _make_mock_browser(context)

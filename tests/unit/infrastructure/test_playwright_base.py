@@ -581,12 +581,12 @@ class TestFetchPageHtml:
         mock_context = AsyncMock()
         mock_context.new_page = AsyncMock(return_value=mock_page)
         plugin._context = mock_context
+        plugin._wait_for_cloudflare = AsyncMock(return_value=True)
 
         html = await plugin._fetch_page_html("https://example.com/page")
 
         assert html == "<html>cf-ok</html>"
-        # CF wait calls wait_for_function
-        mock_page.wait_for_function.assert_awaited_once()
+        plugin._wait_for_cloudflare.assert_awaited_once_with(mock_page)
         # networkidle wait
         mock_page.wait_for_load_state.assert_awaited_once()
 
@@ -618,50 +618,45 @@ class TestFetchPageHtml:
 
 class TestWaitForCloudflare:
     @pytest.mark.asyncio
-    async def test_returns_true_when_cf_resolves(self) -> None:
-        plugin = _TestPlugin()
-        mock_page = AsyncMock()
-        mock_page.wait_for_function = AsyncMock()  # resolves immediately
-
-        result = await plugin._wait_for_cloudflare(mock_page)
-
-        assert result is True
-        mock_page.wait_for_function.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_returns_false_on_timeout(self) -> None:
-        plugin = _TestPlugin()
-        mock_page = AsyncMock()
-        mock_page.wait_for_function = AsyncMock(
-            side_effect=Exception("Timeout 15000ms exceeded"),
-        )
-
-        result = await plugin._wait_for_cloudflare(mock_page)
-
-        assert result is False
-
-    @pytest.mark.asyncio
-    async def test_uses_configurable_timeout(self) -> None:
+    @pytest.mark.parametrize("solved", [True, False])
+    async def test_delegates_to_turnstile_solver(self, solved: bool) -> None:
         plugin = _TestPlugin()
         plugin._cf_timeout_ms = 5_000
-        mock_page = AsyncMock()
-        mock_page.wait_for_function = AsyncMock()
+        page = AsyncMock()
 
-        await plugin._wait_for_cloudflare(mock_page)
+        with patch(
+            "scavengarr.infrastructure.plugins.playwright_base.solve_cloudflare",
+            AsyncMock(return_value=solved),
+        ) as mock_solve:
+            result = await plugin._wait_for_cloudflare(page)
 
-        call_kwargs = mock_page.wait_for_function.call_args
-        assert call_kwargs[1]["timeout"] == 5_000
+        assert result is solved
+        mock_solve.assert_awaited_once_with(page, timeout_ms=5_000)
+
+    def test_default_timeout_covers_a_turnstile_click(self) -> None:
+        assert _TestPlugin()._cf_timeout_ms == 30_000
+
+
+class TestPassesCloudflare:
+    @pytest.mark.asyncio
+    async def test_error_status_without_challenge_fails(self) -> None:
+        plugin = _TestPlugin()
+        resp = MagicMock(status=404)
+        page = AsyncMock()
+        page.title = AsyncMock(return_value="Not Found")
+        plugin._wait_for_cloudflare = AsyncMock(return_value=True)
+
+        assert await plugin._passes_cloudflare(page, resp) is False
+        plugin._wait_for_cloudflare.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_checks_just_a_moment_title(self) -> None:
+    async def test_ok_status_still_checks_for_challenge(self) -> None:
         plugin = _TestPlugin()
-        mock_page = AsyncMock()
-        mock_page.wait_for_function = AsyncMock()
+        page = AsyncMock()
+        plugin._wait_for_cloudflare = AsyncMock(return_value=True)
 
-        await plugin._wait_for_cloudflare(mock_page)
-
-        js_code = mock_page.wait_for_function.call_args[0][0]
-        assert "Just a moment" in js_code
+        assert await plugin._passes_cloudflare(page, MagicMock(status=200)) is True
+        plugin._wait_for_cloudflare.assert_awaited_once_with(page)
 
 
 # ---------------------------------------------------------------------------
@@ -678,13 +673,47 @@ class TestNavigateAndWait:
 
         mock_page = AsyncMock()
         mock_page.goto = AsyncMock(return_value=mock_resp)
+        plugin._wait_for_cloudflare = AsyncMock(return_value=True)
 
         result = await plugin._navigate_and_wait(mock_page, "https://example.com")
 
         assert result is True
         mock_page.goto.assert_awaited_once()
-        mock_page.wait_for_function.assert_awaited_once()  # CF wait
+        plugin._wait_for_cloudflare.assert_awaited_once()  # CF check
         mock_page.wait_for_load_state.assert_awaited_once()  # networkidle
+
+    @pytest.mark.asyncio
+    async def test_solves_cloudflare_challenge_on_403(self) -> None:
+        """A 403 challenge page is solved instead of failing the navigation."""
+        plugin = _TestPlugin()
+        mock_resp = MagicMock()
+        mock_resp.status = 403
+
+        mock_page = AsyncMock()
+        mock_page.goto = AsyncMock(return_value=mock_resp)
+        mock_page.title = AsyncMock(return_value="Just a moment...")
+        plugin._wait_for_cloudflare = AsyncMock(return_value=True)
+
+        result = await plugin._navigate_and_wait(mock_page, "https://example.com")
+
+        assert result is True
+        plugin._wait_for_cloudflare.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_unsolved_cloudflare_challenge_fails(self) -> None:
+        plugin = _TestPlugin()
+        mock_resp = MagicMock()
+        mock_resp.status = 403
+
+        mock_page = AsyncMock()
+        mock_page.goto = AsyncMock(return_value=mock_resp)
+        mock_page.title = AsyncMock(return_value="Just a moment...")
+        plugin._wait_for_cloudflare = AsyncMock(return_value=False)
+
+        result = await plugin._navigate_and_wait(mock_page, "https://example.com")
+
+        assert result is False
+        mock_page.wait_for_load_state.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_returns_false_on_error_status(self) -> None:
@@ -725,13 +754,14 @@ class TestNavigateAndWait:
 
         mock_page = AsyncMock()
         mock_page.goto = AsyncMock(return_value=mock_resp)
+        plugin._wait_for_cloudflare = AsyncMock(return_value=True)
 
         result = await plugin._navigate_and_wait(
             mock_page, "https://example.com", wait_for_idle=False
         )
 
         assert result is True
-        mock_page.wait_for_function.assert_awaited_once()
+        plugin._wait_for_cloudflare.assert_awaited_once()
         mock_page.wait_for_load_state.assert_not_awaited()
 
     @pytest.mark.asyncio

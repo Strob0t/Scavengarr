@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 import structlog
 from patchright.async_api import Browser, BrowserContext, Page, Route
 
-from scavengarr.infrastructure.browser.cloudflare import _CF_MARKERS
+from scavengarr.infrastructure.browser.turnstile import solve_cloudflare
 
 if TYPE_CHECKING:
     from scavengarr.infrastructure.browser.shared_browser import SharedBrowserPool
@@ -176,13 +176,6 @@ class StealthPool:
     # Internal
     # ------------------------------------------------------------------
 
-    async def wait_for_cloudflare(self, page: Page, *, timeout: float = 10) -> None:
-        """Wait until the page title no longer contains CF challenge markers."""
-        cf_title_markers = [m for m in _CF_MARKERS if " " in m or m[0].isupper()]
-        # "Just a moment", "Attention Required"
-        js_check = " && ".join(f"!t.includes('{m}')" for m in cf_title_markers)
-        js = f"() => {{ const t = document.title; return {js_check}; }}"
-        try:
-            await page.wait_for_function(js, timeout=int(timeout * 1000))
-        except Exception:  # noqa: BLE001
-            log.debug("stealth_cf_wait_timeout", timeout=timeout)
+    async def wait_for_cloudflare(self, page: Page, *, timeout: float = 10) -> bool:
+        """Solve a Cloudflare challenge on *page* (Turnstile click included)."""
+        return await solve_cloudflare(page, timeout_ms=int(timeout * 1000))

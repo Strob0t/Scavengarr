@@ -372,8 +372,7 @@ class TestCloudflareWait:
     async def test_wait_passes_when_no_challenge(self) -> None:
         p = _make_plugin()
         page = _make_mock_page()
-        await p._wait_for_cloudflare(page)
-        page.wait_for_function.assert_awaited_once()
+        assert await p._wait_for_cloudflare(page) is True
 
     async def test_timeout_does_not_raise(self) -> None:
         p = _make_plugin()
