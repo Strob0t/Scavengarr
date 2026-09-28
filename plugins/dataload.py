@@ -32,6 +32,7 @@ _MAX_PAGES = 50  # ~20 results/page → 50 pages for 1000
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
+_CSRF_RE = re.compile(r'data-csrf="([^"]+)"')
 
 # Torznab category → list of XenForo forum node IDs.
 _TORZNAB_TO_NODE_IDS: dict[int, list[int]] = {
@@ -267,8 +268,11 @@ class _SearchResultParser(HTMLParser):
             self._current_forum = ""
             self._current_forum_href = href
 
-        # Pagination link
-        if tag == "a" and href and "page-" in href:
+        # Pagination: XenForo marks the next-page link; search result pages
+        # use "?page=N", thread lists "page-N"
+        if tag == "a" and "pageNav-jump--next" in (attr_dict.get("class") or ""):
+            self.next_page_url = href
+        elif tag == "a" and href and ("page-" in href or "page=" in href):
             self._in_nav_a = True
             self._nav_a_href = href
             self._nav_a_text = ""
@@ -414,6 +418,7 @@ class DataloadPlugin(HttpxPluginBase):
     def __init__(self) -> None:
         super().__init__()
         self._logged_in = False
+        self._csrf_token = ""  # XenForo _xfToken of the logged-in session
 
     async def _login(self) -> None:
         """Authenticate with XenForo using CSRF token."""
@@ -458,6 +463,13 @@ class DataloadPlugin(HttpxPluginBase):
         if not has_session:
             raise RuntimeError("Login failed: no session cookie received")
 
+        # Every XenForo POST form needs the session's CSRF token; each page
+        # carries it as <html data-csrf="...">
+        csrf = _CSRF_RE.search(login_resp.text)
+        if csrf is None:
+            raise RuntimeError("Login failed: no CSRF token on the page")
+        self._csrf_token = csrf.group(1)
+
         self._logged_in = True
         self._log.info("dataload_login_success")
 
@@ -477,6 +489,7 @@ class DataloadPlugin(HttpxPluginBase):
                 "keywords": query,
                 "c[title_only]": "1",
                 "order": "date",
+                "_xfToken": self._csrf_token,
             }
             if node_ids:
                 params["c[nodes][]"] = [str(nid) for nid in node_ids]
@@ -602,6 +615,7 @@ class DataloadPlugin(HttpxPluginBase):
         """Close httpx client and reset login state."""
         await super().cleanup()
         self._logged_in = False
+        self._csrf_token = ""
 
 
 plugin = DataloadPlugin()

@@ -95,6 +95,15 @@ class TestLoginTokenParser:
 
 
 class TestSearchResultParser:
+    def test_next_page_from_page_nav_jump(self) -> None:
+        html = (
+            '<a href="/search/67317750/?page=2&amp;q=Iron+Man" '
+            'class="pageNav-jump pageNav-jump--next">Weiter</a>'
+        )
+        parser = _SearchResultParser("https://www.data-load.me")
+        parser.feed(html)
+        assert parser.next_page_url == "/search/67317750/?page=2&q=Iron+Man"
+
     def test_parses_search_results(self) -> None:
         html = """
         <html><body>
@@ -396,6 +405,7 @@ class TestLogin:
         login_resp.text = login_html
         login_resp.raise_for_status = MagicMock()
         post_resp = MagicMock()
+        post_resp.text = '<html data-csrf="1790609416,eaeb52c0"><body></body></html>'
         post_resp.raise_for_status = MagicMock()
 
         mock_client.get = AsyncMock(return_value=login_resp)
@@ -409,7 +419,35 @@ class TestLogin:
             await plugin._login()
 
         assert plugin._logged_in is True
+        assert plugin._csrf_token == "1790609416,eaeb52c0"
         mock_client.post.assert_awaited_once()
+
+    async def test_login_without_csrf_token_raises(self) -> None:
+        plugin = _make_plugin()
+
+        mock_cookie = MagicMock()
+        mock_cookie.name = "xf_user"
+        mock_jar = MagicMock()
+        mock_jar.__iter__ = MagicMock(return_value=iter([mock_cookie]))
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        login_resp = MagicMock()
+        login_resp.text = '<input type="hidden" name="_xfToken" value="token123">'
+        login_resp.raise_for_status = MagicMock()
+        post_resp = MagicMock()
+        post_resp.text = "<html><body></body></html>"
+        post_resp.raise_for_status = MagicMock()
+        mock_client.get = AsyncMock(return_value=login_resp)
+        mock_client.post = AsyncMock(return_value=post_resp)
+        mock_client.cookies = MagicMock()
+        mock_client.cookies.jar = mock_jar
+        plugin._client = mock_client
+
+        with (
+            patch.dict(os.environ, _TEST_CREDENTIALS),
+            pytest.raises(RuntimeError, match="no CSRF token"),
+        ):
+            await plugin._login()
 
     async def test_login_missing_credentials_raises(self) -> None:
         plugin = _make_plugin()
@@ -511,11 +549,15 @@ class TestSearch:
         mock_client.post = AsyncMock(return_value=search_resp)
         mock_client.get = AsyncMock(return_value=thread_resp)
         plugin._client = mock_client
+        plugin._csrf_token = "1790609416,eaeb52c0"
 
         results = await plugin.search("batman")
 
         assert len(results) == 1
         assert results[0].title == "Batman 4K"
+        # XenForo rejects POST forms without the session's CSRF token (400)
+        sent = mock_client.post.call_args.kwargs["data"]
+        assert sent["_xfToken"] == "1790609416,eaeb52c0"
         assert "hide.cx" in results[0].download_link
         assert len(results[0].download_links) == 2
         assert results[0].download_links[0]["hoster"] == "rapidgator"
