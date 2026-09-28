@@ -135,7 +135,7 @@ poetry run pre-commit install
 poetry run pytest
 ```
 
-The test suite includes 4137 tests: 4099 offline (unit + E2E + integration) plus 38 live smoke tests.
+The test suite includes 4151 tests: 4113 offline (unit + E2E + integration) plus 38 live smoke tests.
 Concurrency benchmarks run separately: `poetry run pytest tests/benchmark/ -s -v`.
 
 ### Code Quality
@@ -158,7 +158,7 @@ src/scavengarr/
   infrastructure/   # Adapters (scraping, cache, plugins, resolvers, validation)
   interfaces/       # HTTP router (FastAPI), CLI (argparse), composition root
 plugins/            # 42 Python plugins (33 httpx + 9 Playwright)
-tests/              # 4137 tests (unit, E2E, integration, live) + benchmarks
+tests/              # 4151 tests (unit, E2E, integration, live) + benchmarks
 docs/               # Architecture, features, plans, refactor history
 ```
 

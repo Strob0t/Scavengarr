@@ -316,4 +316,4 @@ Infrastructure (implements Domain ports)
 | Shared browser pool | `src/scavengarr/infrastructure/shared_browser.py` |
 | Metrics collector | `src/scavengarr/infrastructure/metrics.py` |
 | Plugin scoring | `src/scavengarr/infrastructure/scoring/` |
-| Test suite (4099 tests + 38 live) | `tests/` |
+| Test suite (4113 tests + 38 live) | `tests/` |

@@ -65,7 +65,7 @@ class FakePluginRegistry:
     """Minimal PluginRegistryPort implementation for benchmarks.
 
     Stores LatencyPlugin instances and satisfies the synchronous
-    protocol used by StremioStreamUseCase._search_plugins.
+    protocol used by PluginSearchRunner.search_plugins.
     """
 
     def __init__(self, plugins: list[LatencyPlugin]) -> None:

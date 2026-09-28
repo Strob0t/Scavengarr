@@ -1348,7 +1348,7 @@ class TestMultiLanguageDispatch:
 
 
 class TestBrowserWarmup:
-    """Tests for the fire-and-forget browser pre-warm in _search_with_fallback."""
+    """Tests for the fire-and-forget browser pre-warm in PluginSearchRunner."""
 
     @pytest.mark.asyncio
     async def test_warmup_fn_called_when_configured(self) -> None:

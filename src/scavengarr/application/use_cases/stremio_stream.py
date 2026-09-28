@@ -12,11 +12,17 @@ import time
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from dataclasses import replace
-from typing import Any, Protocol
+from typing import Protocol
 from uuid import uuid4
 
 import structlog
 
+from scavengarr.application.stremio.plugin_search import (
+    BrowserWarmupFn,
+    CircuitBreaker,
+    EpisodeFilterFn,
+    PluginSearchRunner,
+)
 from scavengarr.application.stremio.queries import (
     build_lang_group_queries,
     build_multi_lang_reference,
@@ -56,8 +62,6 @@ from scavengarr.domain.ports.tmdb import TmdbClientPort
 class _StremioConfig(Protocol):
     """Configuration values consumed by StremioStreamUseCase."""
 
-    max_concurrent_plugins: int
-    max_concurrent_playwright: int
     plugin_timeout_seconds: float
     title_match_threshold: float
     title_year_bonus: float
@@ -68,6 +72,7 @@ class _StremioConfig(Protocol):
     max_results_per_plugin: int
     probe_at_stream_time: bool
     max_probe_count: int
+    probe_concurrency: int
     resolve_target_count: int
     scoring_enabled: bool
     max_plugins_scored: int
@@ -102,20 +107,9 @@ class _MetricsRecorder(Protocol):
     ) -> None: ...
 
 
-class _CircuitBreaker(Protocol):
-    """Per-plugin circuit breaker (skip after N consecutive failures)."""
-
-    def allow(self, name: str) -> bool: ...
-    def record_success(self, name: str) -> None: ...
-    def record_failure(self, name: str) -> None: ...
-
-
 # Type aliases for injected pure functions.
 _ConvertFn = Callable[..., list[RankedStream]]
 _TitleFilterFn = Callable[..., list[SearchResult]]
-_EpisodeFilterFn = Callable[
-    [list[SearchResult], int | None, int | None], list[SearchResult]
-]
 
 log = structlog.get_logger(__name__)
 
@@ -127,10 +121,6 @@ ProbeCallback = Callable[[list[tuple[int, str]]], Awaitable[set[int]]]
 # Callback type for resolving hoster embed URLs to playable video URLs.
 # Accepts (url, hoster_hint), returns ResolvedStream or None.
 ResolveCallback = Callable[[str, str], Awaitable[ResolvedStream | None]]
-
-# Callback type for warming up a shared Playwright browser.
-# Returns (browser, playwright) tuple — opaque at this layer.
-BrowserWarmupFn = Callable[[], Awaitable[tuple[Any, Any]]]
 
 
 class StremioStreamUseCase:
@@ -156,7 +146,7 @@ class StremioStreamUseCase:
         sorter: _StreamSorter,
         convert_fn: _ConvertFn,
         filter_fn: _TitleFilterFn,
-        episode_filter_fn: _EpisodeFilterFn,
+        episode_filter_fn: EpisodeFilterFn,
         user_agent: str,
         max_results_var: ContextVar[int | None],
         stream_link_repo: StreamLinkRepository | None = None,
@@ -166,27 +156,31 @@ class StremioStreamUseCase:
         score_store: PluginScoreStorePort | None = None,
         browser_warmup_fn: BrowserWarmupFn | None = None,
         pool: ConcurrencyPoolPort,
-        circuit_breaker: _CircuitBreaker | None = None,
+        circuit_breaker: CircuitBreaker | None = None,
     ) -> None:
         self._tmdb = tmdb
         self._plugins = plugins
-        self._search_engine = search_engine
         self._sorter = sorter
         self._convert_fn = convert_fn
         self._filter_fn = filter_fn
-        self._episode_filter_fn = episode_filter_fn
         self._user_agent = user_agent
-        self._max_results_var = max_results_var
-        self._max_concurrent = config.max_concurrent_plugins
-        self._max_concurrent_pw = config.max_concurrent_playwright
-        self._plugin_timeout = config.plugin_timeout_seconds
+        self._search_runner = PluginSearchRunner(
+            plugins=plugins,
+            search_engine=search_engine,
+            episode_filter_fn=episode_filter_fn,
+            max_results_var=max_results_var,
+            plugin_timeout=config.plugin_timeout_seconds,
+            max_results_per_plugin=config.max_results_per_plugin,
+            metrics=metrics,
+            circuit_breaker=circuit_breaker,
+            browser_warmup_fn=browser_warmup_fn,
+        )
         self._title_match_threshold = config.title_match_threshold
         self._title_year_bonus = config.title_year_bonus
         self._title_year_penalty = config.title_year_penalty
         self._title_sequel_penalty = config.title_sequel_penalty
         self._title_year_tolerance_movie = config.title_year_tolerance_movie
         self._title_year_tolerance_series = config.title_year_tolerance_series
-        self._max_results_per_plugin = config.max_results_per_plugin
         self._stream_link_repo = stream_link_repo
         self._probe_fn = probe_fn
         self._resolve_fn = resolve_fn
@@ -199,9 +193,7 @@ class StremioStreamUseCase:
         self._scoring_enabled = config.scoring_enabled
         self._max_plugins_scored = config.max_plugins_scored
         self._exploration_probability = config.exploration_probability
-        self._browser_warmup_fn = browser_warmup_fn
         self._pool = pool
-        self._circuit_breaker = circuit_breaker
 
     async def execute(
         self,
@@ -366,7 +358,7 @@ class StremioStreamUseCase:
                 scored=selected_count < all_names_count,
             )
 
-            group_results = await self._search_with_fallback(
+            group_results = await self._search_runner.search_with_fallback(
                 group_plugins,
                 queries,
                 category,
@@ -676,238 +668,3 @@ class StremioStreamUseCase:
             total_available=len(all_names),
         )
         return selected_names
-
-    async def _search_with_fallback(
-        self,
-        plugin_names: list[str],
-        queries: list[str],
-        category: int | None = None,
-        *,
-        season: int | None = None,
-        episode: int | None = None,
-        budget: ConcurrencyBudgetPort,
-    ) -> list[SearchResult]:
-        """Search plugins with all query variants, deduplicate results.
-
-        Concurrency is managed by the global *budget* (from
-        ConcurrencyPool) which provides fair-share httpx + PW slots.
-
-        When a browser warmup function is configured, a fire-and-forget
-        warmup task starts the shared Chromium process in the background
-        while httpx plugins search.  Playwright plugins obtain the
-        shared browser from their injected pool reference (set at
-        composition time).
-
-        The first query's results are always kept in full.  Subsequent
-        (fallback) queries only add results whose ``download_link`` was
-        not already seen, to avoid duplicates from the same plugin
-        matching on both the full title and the shorter base title.
-        """
-        # --- Fire-and-forget pre-warm for shared Playwright browser ---
-        if self._browser_warmup_fn is not None:
-            task = asyncio.create_task(
-                self._browser_warmup_fn(),
-                name="browser-warmup",
-            )
-            task.add_done_callback(
-                lambda t: t.exception() if not t.cancelled() else None
-            )
-
-        search_tasks = [
-            self._search_plugins(
-                plugin_names,
-                q,
-                category,
-                season=season,
-                episode=episode,
-                budget=budget,
-            )
-            for q in queries
-        ]
-        results_per_query = await asyncio.gather(*search_tasks)
-
-        # First query's results are kept unconditionally.
-        all_results: list[SearchResult] = list(results_per_query[0])
-        if len(results_per_query) > 1:
-            seen: set[str] = {r.download_link for r in all_results}
-            for results in results_per_query[1:]:
-                for r in results:
-                    if r.download_link not in seen:
-                        seen.add(r.download_link)
-                        all_results.append(r)
-        return all_results
-
-    async def _search_plugins(
-        self,
-        plugin_names: list[str],
-        query: str,
-        category: int | None = None,
-        *,
-        season: int | None = None,
-        episode: int | None = None,
-        budget: ConcurrencyBudgetPort,
-    ) -> list[SearchResult]:
-        """Search all plugins in parallel with bounded concurrency.
-
-        Uses the global concurrency pool's fair-share budget to manage
-        httpx and Playwright slot allocation across requests.
-        """
-
-        async def _search_one(name: str) -> list[SearchResult]:
-            is_pw = self._plugins.get_mode(name) == "playwright"
-            if is_pw:
-                async with budget.acquire_pw():
-                    return await self._run_plugin_with_timeout(
-                        name, query, category, season=season, episode=episode
-                    )
-            else:
-                async with budget.acquire_httpx():
-                    return await self._run_plugin_with_timeout(
-                        name, query, category, season=season, episode=episode
-                    )
-
-        tasks = [_search_one(name) for name in plugin_names]
-        results_per_plugin = await asyncio.gather(*tasks)
-
-        all_results: list[SearchResult] = []
-        for results in results_per_plugin:
-            all_results.extend(results)
-        return all_results
-
-    async def _run_plugin_with_timeout(
-        self,
-        name: str,
-        query: str,
-        category: int | None,
-        *,
-        season: int | None = None,
-        episode: int | None = None,
-    ) -> list[SearchResult]:
-        """Run a single plugin search with timeout, catching errors."""
-        # Circuit breaker: skip plugins that have been failing consistently
-        if self._circuit_breaker is not None and not self._circuit_breaker.allow(name):
-            log.debug("stremio_plugin_circuit_open", plugin=name)
-            return []
-
-        try:
-            return await asyncio.wait_for(
-                self._search_single_plugin(
-                    name, query, category, season=season, episode=episode
-                ),
-                timeout=self._plugin_timeout,
-            )
-        except TimeoutError:
-            log.warning(
-                "stremio_plugin_timeout",
-                plugin=name,
-                timeout=self._plugin_timeout,
-            )
-            if self._circuit_breaker is not None:
-                self._circuit_breaker.record_failure(name)
-            return []
-
-    @staticmethod
-    async def _dispatch_search(
-        plugin: object,
-        query: str,
-        category: int | None = None,
-        *,
-        season: int | None = None,
-        episode: int | None = None,
-    ) -> list[SearchResult]:
-        """Dispatch to isolated_search() when available, else search()."""
-        if hasattr(plugin, "isolated_search") and callable(plugin.isolated_search):
-            return await plugin.isolated_search(
-                query, category, season=season, episode=episode
-            )
-        return await plugin.search(
-            query, category=category, season=season, episode=episode
-        )
-
-    async def _search_single_plugin(
-        self,
-        name: str,
-        query: str,
-        category: int | None = None,
-        *,
-        season: int | None = None,
-        episode: int | None = None,
-    ) -> list[SearchResult]:
-        """Search a single plugin, catching and logging errors.
-
-        Python plugins (with search() but no scraping stages) are called
-        directly, then their results are validated via SearchEngine.
-        YAML plugins (with scraping stages) are delegated to the SearchEngine.
-        """
-        try:
-            plugin = self._plugins.get(name)
-        except Exception:
-            log.warning("stremio_plugin_not_found", plugin=name, exc_info=True)
-            return []
-
-        t0 = time.perf_counter_ns()
-        success = False
-        cancelled = False
-        results: list[SearchResult] = []
-        try:
-            if (
-                hasattr(plugin, "search")
-                and callable(plugin.search)
-                and not hasattr(plugin, "scraping")
-            ):
-                # Python plugin: call directly, validate results
-                # Set max_results context so plugins limit pagination
-                token = self._max_results_var.set(self._max_results_per_plugin)
-                try:
-                    raw = await self._dispatch_search(
-                        plugin, query, category, season=season, episode=episode
-                    )
-                finally:
-                    self._max_results_var.reset(token)
-                loop = asyncio.get_running_loop()
-                raw = await loop.run_in_executor(
-                    None, self._episode_filter_fn, raw, season, episode
-                )
-                results = await self._search_engine.validate_results(raw)
-            else:
-                # YAML plugin: delegate to search engine
-                results = await self._search_engine.search(
-                    plugin, query, category=category
-                )
-            success = True
-        except Exception:
-            log.warning("stremio_plugin_search_error", plugin=name, exc_info=True)
-            results = []
-        except BaseException:
-            cancelled = True
-            log.warning("stremio_plugin_search_cancelled", plugin=name)
-            raise
-        finally:
-            duration_ns = time.perf_counter_ns() - t0
-            if self._metrics is not None:
-                self._metrics.record_plugin_search(
-                    name,
-                    duration_ns,
-                    len(results),
-                    success=success,
-                )
-            # Record circuit breaker outcome — but NOT on cancellation
-            # (BaseException), since the timeout handler in
-            # _run_plugin_with_timeout records that case instead.
-            if self._circuit_breaker is not None and not cancelled:
-                if success:
-                    self._circuit_breaker.record_success(name)
-                else:
-                    self._circuit_breaker.record_failure(name)
-
-        # Tag results with source plugin for downstream use
-        for r in results:
-            if isinstance(r, SearchResult) and not r.metadata.get("source_plugin"):
-                r.metadata["source_plugin"] = name
-
-        log.debug(
-            "stremio_plugin_search_done",
-            plugin=name,
-            result_count=len(results),
-        )
-        return results

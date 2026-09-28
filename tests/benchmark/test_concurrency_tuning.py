@@ -14,17 +14,16 @@ from contextvars import ContextVar
 
 import pytest
 
+from scavengarr.application.stremio.plugin_search import PluginSearchRunner
 from scavengarr.infrastructure.concurrency import ConcurrencyPool
 from scavengarr.infrastructure.stremio.episode_filter import filter_by_episode
 
 from .conftest import (
     BenchmarkResult,
     FakePluginRegistry,
-    FakeStremioConfig,
     LatencyPlugin,
     format_table,
     make_fake_search_engine,
-    make_fake_tmdb,
     make_mixed_plugins,
 )
 
@@ -33,16 +32,6 @@ from .conftest import (
 # ---------------------------------------------------------------------------
 
 _max_results_var: ContextVar[int | None] = ContextVar("bench_max_results", default=None)
-
-
-def _noop_filter(results, *_args, **_kwargs):
-    """Title filter that accepts everything."""
-    return results
-
-
-def _noop_convert(results, **_kwargs):
-    """Convert function that returns empty (we only measure scheduling)."""
-    return []
 
 
 async def _run_scenario(
@@ -55,32 +44,19 @@ async def _run_scenario(
 ) -> BenchmarkResult:
     """Run a single benchmark scenario and return timing results.
 
-    Creates a ConcurrencyPool, builds a minimal StremioStreamUseCase
-    (bypassing TMDB/convert/sort — only _search_plugins is exercised),
-    and fires ``concurrent_requests`` parallel search calls.
+    Creates a ConcurrencyPool and a PluginSearchRunner (the plugin
+    fan-out of the Stremio stream use case) and fires
+    ``concurrent_requests`` parallel search calls.
     """
-    from scavengarr.application.use_cases.stremio_stream import StremioStreamUseCase
-
     pool = ConcurrencyPool(httpx_slots=httpx_slots, pw_slots=pw_slots)
     registry = FakePluginRegistry(plugins)
-    config = FakeStremioConfig(
-        max_concurrent_plugins=httpx_slots,
-        max_concurrent_playwright=pw_slots,
-        plugin_timeout_seconds=plugin_timeout,
-    )
-
-    use_case = StremioStreamUseCase(
-        tmdb=make_fake_tmdb(),
+    runner = PluginSearchRunner(
         plugins=registry,
         search_engine=make_fake_search_engine(),
-        config=config,
-        sorter=type("S", (), {"sort": staticmethod(lambda x: x)})(),
-        convert_fn=_noop_convert,
-        filter_fn=_noop_filter,
         episode_filter_fn=filter_by_episode,
-        user_agent="benchmark/1.0",
         max_results_var=_max_results_var,
-        pool=pool,
+        plugin_timeout=plugin_timeout,
+        max_results_per_plugin=100,
     )
 
     plugin_names = registry.list_names()
@@ -92,7 +68,7 @@ async def _run_scenario(
         t0 = time.perf_counter_ns()
         try:
             async with pool.request() as budget:
-                await use_case._search_plugins(
+                await runner.search_plugins(
                     plugin_names,
                     "benchmark query",
                     2000,

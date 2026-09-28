@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 import pytest
 
+from scavengarr.application.stremio.plugin_search import PluginSearchRunner
 from scavengarr.infrastructure.concurrency import ConcurrencyPool
 from scavengarr.infrastructure.config.schema import AppConfig
 from scavengarr.infrastructure.resource_detector import DetectedResources
@@ -22,10 +23,8 @@ from scavengarr.interfaces.composition import _auto_tune
 
 from .conftest import (
     FakePluginRegistry,
-    FakeStremioConfig,
     format_table,
     make_fake_search_engine,
-    make_fake_tmdb,
     make_mixed_plugins,
 )
 
@@ -49,14 +48,6 @@ _max_results_var: ContextVar[int | None] = ContextVar(
 )
 
 
-def _noop_filter(results, *_args, **_kwargs):
-    return results
-
-
-def _noop_convert(results, **_kwargs):
-    return []
-
-
 # ---------------------------------------------------------------------------
 # Empirical sweep helper
 # ---------------------------------------------------------------------------
@@ -72,34 +63,22 @@ async def _measure_wall_time(
 
     Returns wall time in milliseconds.
     """
-    from scavengarr.application.use_cases.stremio_stream import StremioStreamUseCase
-
     plugins = make_mixed_plugins(plugin_count, fast_latency=0.05, slow_latency=0.15)
     pool = ConcurrencyPool(httpx_slots=httpx_slots, pw_slots=pw_slots)
     registry = FakePluginRegistry(plugins)
-    config = FakeStremioConfig(
-        max_concurrent_plugins=httpx_slots,
-        max_concurrent_playwright=pw_slots,
-    )
-
-    use_case = StremioStreamUseCase(
-        tmdb=make_fake_tmdb(),
+    runner = PluginSearchRunner(
         plugins=registry,
         search_engine=make_fake_search_engine(),
-        config=config,
-        sorter=type("S", (), {"sort": staticmethod(lambda x: x)})(),
-        convert_fn=_noop_convert,
-        filter_fn=_noop_filter,
         episode_filter_fn=filter_by_episode,
-        user_agent="benchmark/1.0",
         max_results_var=_max_results_var,
-        pool=pool,
+        plugin_timeout=30.0,
+        max_results_per_plugin=100,
     )
 
     plugin_names = registry.list_names()
     t0 = time.perf_counter_ns()
     async with pool.request() as budget:
-        await use_case._search_plugins(plugin_names, "bench", 2000, budget=budget)
+        await runner.search_plugins(plugin_names, "bench", 2000, budget=budget)
     wall_ns = time.perf_counter_ns() - t0
     return wall_ns / 1_000_000
 

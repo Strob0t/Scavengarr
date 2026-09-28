@@ -81,6 +81,7 @@ src/scavengarr/
 │   │   └── crawljob_factory.py       # SearchResult → CrawlJob conversion
 │   ├── stremio/                      # Helpers for StremioStreamUseCase
 │   │   ├── __init__.py
+│   │   ├── plugin_search.py          # PluginSearchRunner: plugin fan-out, timeout, circuit breaker
 │   │   ├── queries.py                # Search query + multi-language reference building
 │   │   └── stream_builder.py         # Stream formatting, dedup, proxy/behaviorHints
 │   └── use_cases/
@@ -621,7 +622,7 @@ Resolves IMDb IDs to ranked streams for the Stremio addon.
 
 **`execute(imdb_id, content_type, season, episode) -> list[RankedStream]`** -- Flow:
 1. Look up title and year via TMDB client (or IMDB fallback).
-2. Search all compatible plugins in parallel (with per-plugin timeout).
+2. Search all compatible plugins in parallel via `PluginSearchRunner` (`application/stremio/plugin_search.py`): fair-share concurrency budget, per-plugin timeout, circuit breaker, metrics, episode filtering and result validation.
 3. Convert SearchResults to streams via stream converter.
 4. Score and rank streams via title matcher and stream sorter.
 5. Return ranked streams for Stremio display.
@@ -1380,7 +1381,7 @@ class PluginProtocol(Protocol):
 
 ## Test Suite
 
-**4137 tests** across unit, integration, E2E, and live test categories.
+**4151 tests** across unit, integration, E2E, and live test categories.
 
 ### Test Configuration
 
@@ -1443,6 +1444,7 @@ Common test fixtures for entities, mock ports, and configuration.
 | `test_torznab_search.py` | Full search flow, caching, plugin dispatch |
 | `test_stremio_catalog.py` | Stremio catalog use case (trending, search) |
 | `test_stremio_stream.py` | Stremio stream resolution (IMDb → ranked streams) |
+| `test_plugin_search_runner.py` | Plugin fan-out: fallback dedup, timeout, circuit breaker, dispatch |
 | `test_stremio_queries.py` | Search query normalisation, fallback queries, multi-language references |
 | `test_stremio_stream_builder.py` | Stream formatting, dedup, direct-video detection, proxy URLs |
 

@@ -291,7 +291,7 @@ The system provides a stable download endpoint that delivers a `.crawljob` file 
 - Integration: HTTP router ↔ use case ↔ adapter with HTTP mocking.
 - Optional E2E: real plugin fixtures, but deterministic (no external sites in CI).
 
-### Current test suite (4099 tests)
+### Current test suite (4113 tests)
 
 ```
 tests/
@@ -310,6 +310,7 @@ tests/
       test_torznab_search.py           # Search use case (validation, error paths)
       test_stremio_catalog.py          # Stremio catalog use case
       test_stremio_stream.py           # Stremio stream use case (search, filter, resolve, rank)
+      test_plugin_search_runner.py     # PluginSearchRunner (fan-out, timeout, circuit breaker)
       test_stremio_queries.py          # Search query + multi-language reference building
       test_stremio_stream_builder.py   # Stream formatting, dedup, direct-video detection, proxy URLs
     infrastructure/
