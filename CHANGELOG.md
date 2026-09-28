@@ -38,6 +38,9 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 - **No forced User-Agent in browser contexts**: contexts keep Patchright's real UA (a fixed Chrome 131 UA disagreed with the Chromium client hints). New `_browser_user_agent` (default `None`) and `_context_options()`, also used by the boerse/mygully login contexts; `_user_agent` stays for httpx side requests.
 - **`PlaywrightPluginBase._stealth` renamed to `_block_resources`**: it now only controls aborting image/font/CSS requests; singleton and per-request contexts share `_configure_context()`. `StealthPool` no longer applies playwright-stealth.
 
+### Test: Live Smoke Caps Results at 50
+- `tests/live/conftest.py` sets `search_max_results` to 50 (autouse fixture, same mechanism as the Stremio path): smoke tests check that a plugin works, not that it scrapes 1000 items within 90 s. Playwright smoke now: animeloads, ddlspot, ddlvalley, moflix, scnsrc pass; byte (timeout), boerse (network error), streamworld (0 results) remain for `docs/plans/plugin-repair.md`.
+
 ### Fix: scnsrc
 - **Back to results** (live: 37 of 42 posts for "Iron Man", was 0): search pages now list only title and category, so release name and links are loaded from each post page (new `_PostPageParser`, covers the TV `tvshow_info` layout and the film/P2P info table; only Torrent/Usenet/NZB anchors inside `storycontent`). Titles are the scene release names. Post pages are rate-limited (nginx 503): concurrency 2 with retry backoff; search pages skip `networkidle`.
 

@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from scavengarr.infrastructure.plugins.constants import search_max_results
 from scavengarr.infrastructure.plugins.registry import PluginRegistry
 
 # ---------------------------------------------------------------------------
@@ -64,6 +65,18 @@ async def chromium_available() -> bool:
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+
+# Smoke tests check that a plugin works, not that it scrapes 1000 items within
+# the per-test timeout. Same cap mechanism the Stremio path uses.
+_SMOKE_MAX_RESULTS = 50
+
+
+@pytest.fixture(autouse=True)
+def _cap_results() -> object:
+    token = search_max_results.set(_SMOKE_MAX_RESULTS)
+    yield
+    search_max_results.reset(token)
 
 
 @pytest.fixture(scope="session")
