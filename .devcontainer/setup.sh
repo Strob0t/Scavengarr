@@ -88,4 +88,14 @@ echo "[devcontainer] Installing Chromium for @playwright/mcp@${PLAYWRIGHT_MCP_VE
 npx -y -p "@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}" playwright install --with-deps chromium \
   || echo "WARN: Chromium install for playwright-mcp failed (optional)"
 
+# Virtual display for headful browsers: interactive Cloudflare Turnstile
+# rejects every headless browser, headful Patchright under Xvfb passes
+# (see docs/plans/antibot-patchright.md). Run via `xvfb-run -a <cmd>`.
+if ! command -v Xvfb >/dev/null 2>&1; then
+  echo "[devcontainer] Installing Xvfb..."
+  sudo apt-get update -qq \
+    && sudo apt-get install -y -qq --no-install-recommends xvfb \
+    || echo "WARN: Xvfb install failed (needed for headful browser tests)"
+fi
+
 echo "[devcontainer] Setup complete."

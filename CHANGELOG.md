@@ -12,6 +12,9 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 - **All text files normalized to LF**: `.gitattributes` widened from `*.md` to `* text=auto eol=lf` and the index renormalized (227 files, mostly `.py`; EOL-only, `git diff --ignore-cr-at-eol` is empty). New `mixed-line-ending --fix=lf` pre-commit hook catches CRLF before commit.
 - **Claude Code hooks fixed and versioned**: `.claude/hooks/` and `.claude/commands/` are no longer gitignored. Both hooks had CRLF shebangs, failed with exit 127 and therefore never ran (Claude Code treats non-2 exits as non-blocking). `block-dangerous.sh` rewritten: one `jq` call, no `grep` subprocesses, per-command matching (no false hits across `&&`/`;`/`|`), and new blocks for `git push -f`/`+refspec`, pushes to `…:main`, commits/pushes while `main` is checked out, `rm -fr`/`--recursive` on `/`, `~`, `$HOME`, and `git clean -f`; `--force-with-lease` is allowed.
 
+### Chore: Xvfb in the Dev Container
+- **`.devcontainer/setup.sh` installs `xvfb`** (only if `Xvfb` is missing): interactive Cloudflare Turnstile rejects every headless browser, while headful Patchright under `xvfb-run` clears filmfans, kinoger, serienfans, ddlspot, ddlvalley and scnsrc (anti-bot Phase 0, `docs/plans/antibot-patchright.md`).
+
 ### Docs: Audit and Style Unification
 - **Every doc checked against the code**: all feature, architecture, plan, refactor and OpenSpec documents plus README were audited claim by claim and corrected. Among the fixes:
   - health endpoints are `/api/v1/healthz` and `/api/v1/readyz`, including the Docker healthcheck examples
@@ -659,4 +662,4 @@ Foundation of the project: FastAPI server, Scrapy scraping engine, plugin loader
 Current known issues:
 
 - **11 httpx plugins return 0 results** (live smoke tests, 2026-09-28): filmfans, kinoger, serienfans (Cloudflare 403), fireani, nox (search API 404), dataload (search form 400), scnlog, kinoking (selectors/search), hdfilme (domain moved), streamcloud, streamkiste (stream source changed). Triage and fix plan: `docs/plans/plugin-repair.md`.
-- **Cloudflare-heavy sites:** ddlspot, ddlvalley, scnsrc (Playwright) and filmfans, kinoger, serienfans (httpx) sit behind an interactive Cloudflare Turnstile challenge that no headless browser passes (Playwright + stealth, Patchright, Camoufox, nodriver tested 2026-09-28; see `docs/plans/antibot-patchright.md`). byte is not Cloudflare-blocked; its 0 results are a parser issue (`docs/plans/plugin-repair.md`).
+- **Cloudflare-heavy sites:** ddlspot, ddlvalley, scnsrc (Playwright) and filmfans, kinoger, serienfans (httpx) sit behind an interactive Cloudflare Turnstile challenge that no headless browser passes (Playwright + stealth, Patchright, Camoufox, nodriver tested 2026-09-28). Headful Patchright under Xvfb with one checkbox click passes all six; the fix is planned in `docs/plans/antibot-patchright.md` (Phase 1 + 2). byte is not Cloudflare-blocked; its 0 results are a parser issue (`docs/plans/plugin-repair.md`).

@@ -127,7 +127,7 @@ Step-by-step guides:
 ## 9. Dev container
 
 - **Git access**: `git push` and `gh` use `GH_TOKEN` from `.env.devcontainer` (not versioned); `.devcontainer/setup.sh` runs `gh auth setup-git` on attach. Git identity: `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL` in the same file. Changes need a container rebuild/restart.
-- **No Docker**: `playwright-mcp` runs over stdio from `.mcp.json` (`npx @playwright/mcp@<pinned>`). `setup.sh` installs the matching Chromium (`playwright install --with-deps chromium`); keep `PLAYWRIGHT_MCP_VERSION` in `setup.sh` in sync with `.mcp.json`.
+- **No Docker**: `playwright-mcp` runs over stdio from `.mcp.json` (`npx @playwright/mcp@<pinned>`). `setup.sh` installs the matching Chromium (`playwright install --with-deps chromium`) and `xvfb` (headful browser tests: `xvfb-run -a <cmd>`); keep `PLAYWRIGHT_MCP_VERSION` in `setup.sh` in sync with `.mcp.json`.
 - **Node 22** comes from the devcontainer `node` feature (nvm, `/usr/local/share/nvm/current/bin`), not apt (Debian's Node 18 breaks `npx skills`). `setup.sh` installs npm globals without `sudo` (openspec, `@caveman-ai/cli`) and the caveman skills on every attach.
 - **Broken `.venv` shebangs** (`Command not found: pytest`) after a workspace path change: `poetry env remove --all && poetry install --with dev`.
 - **Line endings**: all text files are LF, enforced editor-independently by `.gitattributes` (`* text=auto eol=lf`) and the `mixed-line-ending --fix=lf` pre-commit hook. Shell scripts with CRLF fail at the shebang (exit 127): a CRLF Claude Code hook silently allows everything.
