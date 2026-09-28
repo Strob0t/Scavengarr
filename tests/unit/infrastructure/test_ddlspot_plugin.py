@@ -6,9 +6,7 @@ import importlib.util
 from pathlib import Path
 from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock, patch
-
-import httpx
-import respx
+from urllib.parse import urlparse
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "ddlspot.py"
 _PW_PATCH = "scavengarr.infrastructure.plugins.playwright_base.async_playwright"
@@ -180,6 +178,15 @@ def _make_plugin() -> object:
     return _DDLSpotPlugin()
 
 
+def _mock_details(plugin: object, pages: dict[str, str]) -> None:
+    """Serve detail-page HTML by URL path ("" = fetch failed)."""
+
+    async def _fetch(url: str) -> str:
+        return pages.get(urlparse(url).path, "")
+
+    plugin._fetch_detail_page = _fetch  # type: ignore[attr-defined]
+
+
 # ---------------------------------------------------------------------------
 # Tests: Plugin attributes
 # ---------------------------------------------------------------------------
@@ -261,6 +268,54 @@ class TestSearchResultParser:
 # ---------------------------------------------------------------------------
 # Tests: DetailPageParser
 # ---------------------------------------------------------------------------
+
+
+class TestSearchResultTitles:
+    def test_prefers_full_title_attribute(self) -> None:
+        html = (
+            "<table class='download'><tbody><tr class='row'><td class='c'>"
+            '<a href="/file/1/x/" title="Iron Man 2008 IMAX 2160p-PSA | Rapidgator">'
+            "<b>Iron</b> <b>Man</b> 2008 IMAX 21..</a></td><td>1 day</td>"
+            "<td>Movies</td><td>9 GB</td><td>1</td></tr>"
+            "<tr><td colspan='5' class='links'>x</td></tr></tbody></table>"
+        )
+        parser = _ddlspot._SearchResultParser()
+        parser.feed(html)
+        assert parser.results[0]["title"] == "Iron Man 2008 IMAX 2160p-PSA"
+
+    def test_bold_chunks_keep_spaces_without_title_attribute(self) -> None:
+        html = (
+            "<table class='download'><tbody><tr class='row'><td class='c'>"
+            '<a href="/file/1/x/"><b>Iron</b> <b>Man</b> 2008</a></td>'
+            "<td>1 day</td><td>Movies</td><td>9 GB</td><td>1</td></tr>"
+            "<tr><td colspan='5' class='links'>x</td></tr></tbody></table>"
+        )
+        parser = _ddlspot._SearchResultParser()
+        parser.feed(html)
+        assert parser.results[0]["title"] == "Iron Man 2008"
+
+
+class TestFetchDetailPage:
+    async def test_returns_html_via_browser(self) -> None:
+        plugin = _make_plugin()
+        page = _make_mock_page("<div class='links-box'>https://a/b</div>")
+        plugin._context = _make_mock_context(pages=[page])
+        plugin._browser = _make_mock_browser(plugin._context)
+
+        html = await plugin._fetch_detail_page("https://www.ddlspot.com/file/1/x/")
+
+        assert "links-box" in html
+        page.close.assert_awaited_once()
+
+    async def test_navigation_error_returns_empty(self) -> None:
+        plugin = _make_plugin()
+        page = _make_mock_page()
+        page.goto = AsyncMock(side_effect=RuntimeError("net::ERR_FAILED"))
+        plugin._context = _make_mock_context(pages=[page])
+        plugin._browser = _make_mock_browser(plugin._context)
+
+        assert await plugin._fetch_detail_page("https://www.ddlspot.com/f/") == ""
+        page.close.assert_awaited_once()
 
 
 class TestDetailPageParser:
@@ -438,17 +493,17 @@ class TestSearchResultParserPagination:
 
 
 class TestSearch:
-    @respx.mock
     async def test_search_returns_results(self) -> None:
         plugin = _make_plugin()
+        _mock_details(
+            plugin,
+            {
+                "/file/123/iron-man-2008/": _DETAIL_HTML_SINGLE,
+                "/file/456/ubuntu-24/": _DETAIL_HTML_MULTI,
+            },
+        )
 
         # Mock detail page responses
-        respx.get("https://ddlspot.com/file/123/iron-man-2008/").mock(
-            return_value=httpx.Response(200, text=_DETAIL_HTML_SINGLE)
-        )
-        respx.get("https://ddlspot.com/file/456/ubuntu-24/").mock(
-            return_value=httpx.Response(200, text=_DETAIL_HTML_MULTI)
-        )
 
         # Set up Playwright mocks (search page + empty page 2)
         search_page = _make_mock_page(_SEARCH_HTML)
@@ -480,7 +535,6 @@ class TestSearch:
         assert r2.category == 4000
         assert len(r2.download_links) == 3
 
-    @respx.mock
     async def test_search_no_results(self) -> None:
         plugin = _make_plugin()
 
@@ -496,14 +550,11 @@ class TestSearch:
 
         assert results == []
 
-    @respx.mock
     async def test_search_with_category_filter(self) -> None:
         plugin = _make_plugin()
+        _mock_details(plugin, {"/file/123/iron-man-2008/": _DETAIL_HTML_SINGLE})
 
         # Only the Movies detail page should be fetched
-        respx.get("https://ddlspot.com/file/123/iron-man-2008/").mock(
-            return_value=httpx.Response(200, text=_DETAIL_HTML_SINGLE)
-        )
 
         search_page = _make_mock_page(_SEARCH_HTML)
         empty_page = _make_mock_page(_SEARCH_HTML_NO_TABLE)
@@ -521,17 +572,17 @@ class TestSearch:
         assert results[0].title == "Iron Man 2008 1080p"
         assert results[0].category == 2000
 
-    @respx.mock
     async def test_search_detail_page_failure_skips_result(self) -> None:
         plugin = _make_plugin()
+        _mock_details(
+            plugin,
+            {
+                "/file/123/iron-man-2008/": "",
+                "/file/456/ubuntu-24/": _DETAIL_HTML_MULTI,
+            },
+        )
 
         # Detail page returns 500
-        respx.get("https://ddlspot.com/file/123/iron-man-2008/").mock(
-            return_value=httpx.Response(500)
-        )
-        respx.get("https://ddlspot.com/file/456/ubuntu-24/").mock(
-            return_value=httpx.Response(200, text=_DETAIL_HTML_MULTI)
-        )
 
         search_page = _make_mock_page(_SEARCH_HTML)
         empty_page = _make_mock_page(_SEARCH_HTML_NO_TABLE)
@@ -548,15 +599,14 @@ class TestSearch:
         assert len(results) == 1
         assert results[0].title == "Ubuntu 24.04 LTS"
 
-    @respx.mock
     async def test_search_detail_page_empty_links_skips_result(self) -> None:
         plugin = _make_plugin()
-
-        respx.get("https://ddlspot.com/file/123/iron-man-2008/").mock(
-            return_value=httpx.Response(200, text=_DETAIL_HTML_EMPTY)
-        )
-        respx.get("https://ddlspot.com/file/456/ubuntu-24/").mock(
-            return_value=httpx.Response(200, text=_DETAIL_HTML_MULTI)
+        _mock_details(
+            plugin,
+            {
+                "/file/123/iron-man-2008/": _DETAIL_HTML_EMPTY,
+                "/file/456/ubuntu-24/": _DETAIL_HTML_MULTI,
+            },
         )
 
         search_page = _make_mock_page(_SEARCH_HTML)
@@ -573,7 +623,6 @@ class TestSearch:
         assert len(results) == 1
         assert results[0].title == "Ubuntu 24.04 LTS"
 
-    @respx.mock
     async def test_search_reuses_browser(self) -> None:
         """Second search call reuses the existing browser context."""
         plugin = _make_plugin()
@@ -593,10 +642,17 @@ class TestSearch:
         # new_page should have been called twice (one per search)
         assert context.new_page.await_count == 2
 
-    @respx.mock
     async def test_search_paginates(self) -> None:
         """Verify pagination follows Next Page links."""
         plugin = _make_plugin()
+        _mock_details(
+            plugin,
+            {
+                "/file/123/iron-man-2008/": _DETAIL_HTML_SINGLE,
+                "/file/456/ubuntu-24/": _DETAIL_HTML_MULTI,
+                "/file/789/game-title/": _DETAIL_HTML_SINGLE,
+            },
+        )
 
         # Page 1: has results + "Next Page" link
         page1_html = (
@@ -609,15 +665,6 @@ class TestSearch:
         page2_html = _SEARCH_HTML_SINGLE
 
         # Mock detail pages for all 3 results
-        respx.get("https://ddlspot.com/file/123/iron-man-2008/").mock(
-            return_value=httpx.Response(200, text=_DETAIL_HTML_SINGLE)
-        )
-        respx.get("https://ddlspot.com/file/456/ubuntu-24/").mock(
-            return_value=httpx.Response(200, text=_DETAIL_HTML_MULTI)
-        )
-        respx.get("https://ddlspot.com/file/789/game-title/").mock(
-            return_value=httpx.Response(200, text=_DETAIL_HTML_SINGLE)
-        )
 
         search_p1 = _make_mock_page(page1_html)
         search_p2 = _make_mock_page(page2_html)

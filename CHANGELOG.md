@@ -38,6 +38,9 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 - **No forced User-Agent in browser contexts**: contexts keep Patchright's real UA (a fixed Chrome 131 UA disagreed with the Chromium client hints). New `_browser_user_agent` (default `None`) and `_context_options()`, also used by the boerse/mygully login contexts; `_user_agent` stays for httpx side requests.
 - **`PlaywrightPluginBase._stealth` renamed to `_block_resources`**: it now only controls aborting image/font/CSS requests; singleton and per-request contexts share `_configure_context()`. `StealthPool` no longer applies playwright-stealth.
 
+### Fix: ddlspot
+- **Back to results** (live: 30 hits for "Iron Man" in 8 s): Turnstile solved by the new solver; detail pages now load in the cleared browser context (plain HTTP gets an empty 200 body, which silently yielded 0 links); domain `www.ddlspot.com` (bare domain redirects); full titles from the link's `title` attribute instead of the truncated, space-less link text.
+
 ### Anti-Bot: Turnstile Solver
 - **New `infrastructure/browser/turnstile.py`**: `solve_cloudflare(page, timeout_ms=...)` returns at once on a normal page, gives a challenge ~3 s to auto-clear, then clicks the Turnstile checkbox inside the `challenges.cloudflare.com` iframe (re-click every 8 s). Used by `PlaywrightPluginBase._wait_for_cloudflare()` (timeout default 15 s → 30 s) and `StealthPool.wait_for_cloudflare()`. Live: ddlspot and scnsrc challenges solved with one click in ~4 s (headful).
 - **Challenge responses no longer abort navigation**: Cloudflare answers with 403/503, and `_navigate_and_wait()`, `_fetch_page_html()` and `_verify_domain()` gave up on any status `>= 400` before the challenge could be solved. New `_passes_cloudflare()` only fails on error statuses that are not a challenge page.

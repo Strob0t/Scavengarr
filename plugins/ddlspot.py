@@ -1,8 +1,9 @@
 """ddlspot.com Python plugin for Scavengarr.
 
 Scrapes ddlspot.com (DDL indexer) with:
-- Playwright for Cloudflare Turnstile bypass on search pages
-- httpx for detail pages (no Cloudflare, parallel fetching)
+- Playwright for search and detail pages: Cloudflare Turnstile guards the
+  search, and detail pages answer plain HTTP with an empty 200 body
+- Bounded parallel detail fetching in the (cleared) browser context
 - Flat table parsing (alternating title/detail row pairs)
 - Download link extraction from detail page links-box
 
@@ -15,15 +16,13 @@ import asyncio
 from html.parser import HTMLParser
 from urllib.parse import quote_plus, urljoin
 
-import httpx
-
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
 # ---------------------------------------------------------------------------
 # Configurable settings
 # ---------------------------------------------------------------------------
-_DOMAINS = ["ddlspot.com"]
+_DOMAINS = ["www.ddlspot.com"]  # bare ddlspot.com redirects here
 _MAX_PAGES = 50  # 20 results/page → 50 pages for 1000
 
 # ---------------------------------------------------------------------------
@@ -77,6 +76,7 @@ class _SearchResultParser(HTMLParser):
 
         # Current row data
         self._current_title = ""
+        self._current_title_attr = ""
         self._current_detail_url = ""
         self._current_size = ""
         self._current_type = ""
@@ -117,6 +117,11 @@ class _SearchResultParser(HTMLParser):
             href = attr_dict.get("href", "")
             if href:
                 self._current_detail_url = href
+            # The link text is truncated ("...X265-Me.."); the title attribute
+            # holds the full name as "<name> | <hosters>".
+            full = (attr_dict.get("title") or "").split(" | ")[0].strip()
+            if full:
+                self._current_title_attr = full
             self._in_a = True
 
     def _handle_tr(self, attr_dict: dict[str, str | None]) -> None:
@@ -127,6 +132,7 @@ class _SearchResultParser(HTMLParser):
             self._in_detail_row = False
             self._td_index = 0
             self._current_title = ""
+            self._current_title_attr = ""
             self._current_detail_url = ""
             self._current_size = ""
             self._current_type = ""
@@ -149,7 +155,9 @@ class _SearchResultParser(HTMLParser):
 
         if self._in_title_row:
             if self._td_index == 1 and self._in_a:
-                self._current_title += text
+                # <b>Iron</b> <b>Man</b> ... arrives as separate chunks
+                sep = " " if self._current_title else ""
+                self._current_title += sep + text
             elif self._td_index == 3:
                 self._current_type = text
             elif self._td_index == 4:
@@ -170,10 +178,11 @@ class _SearchResultParser(HTMLParser):
         elif self._in_detail_row:
             self._in_detail_row = False
             self._expect_detail_row = False
-            if self._current_title and self._current_detail_url:
+            title = self._current_title_attr or self._current_title
+            if title and self._current_detail_url:
                 self.results.append(
                     {
-                        "title": self._current_title,
+                        "title": title,
                         "detail_url": self._current_detail_url,
                         "size": self._current_size,
                         "type_str": self._current_type,
@@ -245,36 +254,38 @@ class DDLSpotPlugin(PlaywrightPluginBase):
 
     _domains = _DOMAINS
 
+    async def _fetch_detail_page(self, url: str) -> str:
+        """Fetch a detail page in the browser context ("" on failure).
+
+        Plain HTTP gets an empty 200 body here; the browser context carries
+        the Cloudflare clearance from the search page.
+        """
+        ctx = await self._ensure_context()
+        page = await ctx.new_page()
+        try:
+            if not await self._navigate_and_wait(page, url, wait_for_idle=False):
+                return ""
+            return await page.content()
+        except Exception as exc:  # noqa: BLE001
+            self._log.warning("ddlspot_detail_fetch_failed", url=url, error=str(exc))
+            return ""
+        finally:
+            if not page.is_closed():
+                await page.close()
+
     async def _fetch_detail_links(self, urls: list[str]) -> dict[str, list[str]]:
         """Fetch detail pages in parallel, return {detail_url: [download_urls]}."""
-        result: dict[str, list[str]] = {}
         sem = self._new_semaphore()
 
-        async def _fetch_one(client: httpx.AsyncClient, url: str) -> None:
+        async def _fetch_one(url: str) -> tuple[str, list[str]]:
             async with sem:
-                try:
-                    resp = await client.get(url)
-                    resp.raise_for_status()
-                    parser = _DetailPageParser()
-                    parser.feed(resp.text)
-                    result[url] = parser.urls
-                except Exception as exc:  # noqa: BLE001
-                    self._log.warning(
-                        "ddlspot_detail_fetch_failed",
-                        url=url,
-                        error=str(exc),
-                    )
-                    result[url] = []
+                html = await self._fetch_detail_page(url)
+            parser = _DetailPageParser()
+            parser.feed(html)
+            return url, parser.urls
 
-        async with httpx.AsyncClient(
-            timeout=15.0,
-            follow_redirects=True,
-            headers={"User-Agent": self._user_agent},
-        ) as client:
-            tasks = [_fetch_one(client, url) for url in urls]
-            await asyncio.gather(*tasks)
-
-        return result
+        pairs = await asyncio.gather(*(_fetch_one(url) for url in urls))
+        return dict(pairs)
 
     async def _fetch_search_page(self, url: str) -> str:
         """Fetch a search page via Playwright and return HTML."""
