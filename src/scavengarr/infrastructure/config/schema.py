@@ -160,7 +160,9 @@ class CacheConfig(BaseSettings):
     )
 
     model_config = SettingsConfigDict(
-        env_prefix="CACHE_",  # Env vars: CACHE_BACKEND, CACHE_REDIS_URL, ...
+        # Not read: this section is validated from the merged config dict.
+        # Env overrides are SCAVENGARR_CACHE_* (see EnvOverrides).
+        env_prefix="CACHE_",
         case_sensitive=False,
     )
 
@@ -650,6 +652,9 @@ class EnvOverrides(BaseSettings):
 
     cache_dir: Path | None = None
     cache_ttl_seconds: int | None = None
+    cache_backend: Literal["diskcache", "redis"] | None = None
+    cache_redis_url: str | None = None
+    cache_max_concurrent: int | None = None
 
     tmdb_api_key: str | None = None
 

@@ -75,7 +75,7 @@ class TestTorznabCaps:
             server_version="0.1.0",
         )
         assert caps.limits_max == 100
-        assert caps.limits_default == 50
+        assert caps.limits_default == 100
 
     def test_custom_limits(self) -> None:
         caps = TorznabCaps(

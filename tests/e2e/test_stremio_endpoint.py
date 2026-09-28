@@ -37,6 +37,7 @@ from scavengarr.domain.entities.stremio import (
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.concurrency import ConcurrencyPool
 from scavengarr.infrastructure.config.schema import StremioConfig
+from scavengarr.infrastructure.hoster_resolvers import HosterResolverRegistry
 from scavengarr.infrastructure.plugins.constants import (
     DEFAULT_USER_AGENT,
     search_max_results,
@@ -989,8 +990,8 @@ class TestHealthEndpoint:
         plugins = MagicMock()
         plugins.get_by_provides.return_value = ["hdfilme", "aniworld"]
 
-        resolver = MagicMock()
-        resolver.list_hosters.return_value = ["voe", "streamtape"]
+        resolver = MagicMock(spec=HosterResolverRegistry)
+        resolver.supported_hosters = ["voe", "streamtape"]
 
         app = _make_app(
             plugins=plugins,

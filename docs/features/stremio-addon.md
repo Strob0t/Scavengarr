@@ -167,9 +167,7 @@ Fallback endpoint for cached stream links (see the known issue above for when it
 GET /api/v1/stremio/health
 ```
 
-Reports component status (`tmdb_configured`, `stream_plugin_count`, `stream_plugins`, use case/resolver/link-cache flags), `supported_hosters`, and a metrics snapshot. Returns `200` when healthy and `503` otherwise; healthy requires a title client (`tmdb_configured` is also `true` for the IMDB fallback client), both use cases, the resolver registry, the stream link cache, and at least one `stream` plugin.
-
-> **Known issue:** the endpoint calls `list_hosters()`, which `HosterResolverRegistry` does not have (it exposes `supported_hosters`). The error is swallowed, so `supported_hosters` is always an empty list.
+Reports component status (`tmdb_configured`, `stream_plugin_count`, `stream_plugins`, use case/resolver/link-cache flags), `supported_hosters` (resolver names from `HosterResolverRegistry.supported_hosters`), and a metrics snapshot. Returns `200` when healthy and `503` otherwise; healthy requires a title client (`tmdb_configured` is also `true` for the IMDB fallback client), both use cases, the resolver registry, the stream link cache, and at least one `stream` plugin.
 
 ---
 

@@ -61,12 +61,12 @@ logging:
 
 # -- Cache ------------------------------------------------------------
 cache:
-  backend: "diskcache" # diskcache | redis
+  backend: "diskcache" # diskcache | redis; env: SCAVENGARR_CACHE_BACKEND
   dir: "/data/cache" # env: SCAVENGARR_CACHE_DIR
   ttl_seconds: 3600 # env: SCAVENGARR_CACHE_TTL_SECONDS
   search_ttl_seconds: 1800 # was 900 — 30min cache, repeated searches are instant
-  max_concurrent: 10 # YAML only
-  # redis_url: "redis://redis:6379/0"      # YAML only (only for backend: redis)
+  max_concurrent: 10 # env: SCAVENGARR_CACHE_MAX_CONCURRENT
+  # redis_url: "redis://redis:6379/0"      # env: SCAVENGARR_CACHE_REDIS_URL (only for backend: redis)
 
 # -- Scoring (background plugin probing) ------------------------------
 scoring:

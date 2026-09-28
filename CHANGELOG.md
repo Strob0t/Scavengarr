@@ -8,6 +8,14 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 56 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4151 tests (4113 excluding the opt-in live tests).
 
+### Fix: Bugs Found by the Docs Audit
+- **Torznab: unknown plugin returns 404 everywhere**: `/torznab/{plugin}/health` and the `extended=1` test probe caught only `TorznabPluginNotFound`, but the registry raises `PluginNotFoundError`, so unknown plugins produced 500 (dev) / 200 (prod). Both exceptions are now mapped to 404. E2E tests now mock the real registry exception (the old mocks hid the bug).
+- **Torznab: non-numeric `cat` returns 400**: `cat=abc` raised an unhandled `ValueError` (500). It now raises `TorznabBadRequest` → empty feed with HTTP 400.
+- **Torznab caps: `limits default` is 100**: caps advertised `default="50"` while search defaults to `limit=100`; `TorznabCaps.limits_default` now matches.
+- **Config: rate-limit/retry env vars work**: `SCAVENGARR_RATE_LIMIT_ADAPTIVE`, `_MIN_RPS`, `_MAX_RPS` and `SCAVENGARR_HTTP_RETRY_MAX_ATTEMPTS`, `_BACKOFF_BASE`, `_MAX_BACKOFF` were read by `EnvOverrides` but dropped by the loader (missing from its flat-key map); they now apply.
+- **Config: cache backend via env**: new `SCAVENGARR_CACHE_BACKEND`, `SCAVENGARR_CACHE_REDIS_URL` and `SCAVENGARR_CACHE_MAX_CONCURRENT`. The unprefixed `CACHE_*` variables suggested by a comment were never read (the section is validated from the merged dict); the comment now says so.
+- **Stremio `/health` lists supported hosters**: the endpoint called a non-existent `list_hosters()` and swallowed the error, so `supported_hosters` was always empty. It now reads `HosterResolverRegistry.supported_hosters`; the E2E test mock is spec'd against the real class.
+
 ### Chore: LF Line Endings and Versioned Claude Code Hooks
 - **All text files normalized to LF**: `.gitattributes` widened from `*.md` to `* text=auto eol=lf` and the index renormalized (227 files, mostly `.py`; EOL-only, `git diff --ignore-cr-at-eol` is empty). New `mixed-line-ending --fix=lf` pre-commit hook catches CRLF before commit.
 - **Claude Code hooks fixed and versioned**: `.claude/hooks/` and `.claude/commands/` are no longer gitignored. Both hooks had CRLF shebangs, failed with exit 127 and therefore never ran (Claude Code treats non-2 exits as non-blocking). `block-dangerous.sh` rewritten: one `jq` call, no `grep` subprocesses, per-command matching (no false hits across `&&`/`;`/`|`), and new blocks for `git push -f`/`+refspec`, pushes to `…:main`, commits/pushes while `main` is checked out, `rm -fr`/`--recursive` on `/`, `~`, `$HOME`, and `git clean -f`; `--force-with-lease` is allowed.

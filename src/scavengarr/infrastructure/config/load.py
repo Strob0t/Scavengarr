@@ -77,6 +77,12 @@ def _normalize_layer(data: Mapping[str, Any]) -> dict[str, Any]:
         "http_follow_redirects": ("http", "follow_redirects"),
         "http_user_agent": ("http", "user_agent"),
         "rate_limit_requests_per_second": ("http", "rate_limit_rps"),
+        "rate_limit_adaptive": ("http", "rate_limit_adaptive"),
+        "rate_limit_min_rps": ("http", "rate_limit_min_rps"),
+        "rate_limit_max_rps": ("http", "rate_limit_max_rps"),
+        "http_retry_max_attempts": ("http", "retry_max_attempts"),
+        "http_retry_backoff_base": ("http", "retry_backoff_base"),
+        "http_retry_max_backoff": ("http", "retry_max_backoff"),
         "api_rate_limit_rpm": ("http", "api_rate_limit_rpm"),
         "playwright_headless": ("playwright", "headless"),
         "playwright_timeout_ms": ("playwright", "timeout_ms"),
@@ -84,6 +90,9 @@ def _normalize_layer(data: Mapping[str, Any]) -> dict[str, Any]:
         "log_format": ("logging", "format"),
         "cache_dir": ("cache", "dir"),
         "cache_ttl_seconds": ("cache", "ttl_seconds"),
+        "cache_backend": ("cache", "backend"),
+        "cache_redis_url": ("cache", "redis_url"),
+        "cache_max_concurrent": ("cache", "max_concurrent"),
     }
 
     for flat_key, (section, section_key) in flat_map.items():

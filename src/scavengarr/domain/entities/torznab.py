@@ -46,7 +46,7 @@ class TorznabCaps:
     server_title: str
     server_version: str
     limits_max: int = 100
-    limits_default: int = 50
+    limits_default: int = 100
 
 
 @dataclass(frozen=True)

@@ -63,8 +63,9 @@ Key environment variables:
 - `SCAVENGARR_PLUGIN_DIR` — path to the plugin directory (default: `./plugins`)
 - `SCAVENGARR_LOG_LEVEL` — `DEBUG`, `INFO`, `WARNING`, or `ERROR` (default: `INFO`)
 - `SCAVENGARR_TMDB_API_KEY` — TMDB API key for Stremio catalog/title resolution (optional; IMDB fallback without it)
+- `SCAVENGARR_CACHE_BACKEND` / `SCAVENGARR_CACHE_REDIS_URL` — `diskcache` (default) or `redis` plus its URL
 
-The cache backend (diskcache or Redis) can only be set in YAML (`cache.backend`, `cache.redis_url`). See [docs/features/configuration.md](docs/features/configuration.md) for all settings.
+The same settings can be set in YAML (`cache.backend`, `cache.redis_url`). See [docs/features/configuration.md](docs/features/configuration.md) for all settings.
 
 ### Run
 

@@ -19,8 +19,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from scavengarr.application.factories import CrawlJobFactory
-from scavengarr.domain.entities import TorznabPluginNotFound
-from scavengarr.domain.plugins import SearchResult
+from scavengarr.domain.plugins import PluginNotFoundError, SearchResult
 from scavengarr.interfaces.api.torznab.router import router
 
 _TORZNAB_NS = "http://torznab.com/schemas/2015/feed"
@@ -243,7 +242,7 @@ class TestCapsEndpoint:
         limits = root.find("limits")
         assert limits is not None
         assert limits.get("max") == "100"
-        assert limits.get("default") == "50"
+        assert limits.get("default") == "100"
 
     def test_caps_has_categories(self) -> None:
         plugins = MagicMock()
@@ -281,7 +280,7 @@ class TestCapsEndpoint:
 
     def test_caps_plugin_not_found(self) -> None:
         plugins = MagicMock()
-        plugins.get.side_effect = TorznabPluginNotFound("ghost")
+        plugins.get.side_effect = PluginNotFoundError("ghost")
 
         app = _make_app(plugins=plugins)
         client = TestClient(app)
@@ -624,9 +623,35 @@ class TestSearchEmptyQuery:
 class TestSearchErrorHandling:
     """Error paths for /torznab/{plugin}?t=search"""
 
+    def test_extended_probe_plugin_not_found_returns_404(self) -> None:
+        plugins = MagicMock()
+        plugins.get.side_effect = PluginNotFoundError("ghost")
+
+        app = _make_app(plugins=plugins)
+        client = TestClient(app)
+
+        resp = client.get(f"{_PREFIX}/torznab/ghost?t=search&extended=1")
+
+        assert resp.status_code == 404
+        assert _parse_xml(resp.content).tag == "rss"
+
+    def test_non_numeric_category_returns_400(self) -> None:
+        plugins = MagicMock()
+        plugins.get.return_value = _FakePythonPlugin()
+
+        app = _make_app(plugins=plugins)
+        client = TestClient(app)
+
+        resp = client.get(f"{_PREFIX}/torznab/filmpalast?t=search&q=test&cat=abc")
+
+        assert resp.status_code == 400
+        desc = _parse_xml(resp.content).findtext(".//channel/description")
+        assert desc is not None
+        assert "cat" in desc
+
     def test_plugin_not_found_returns_404(self) -> None:
         plugins = MagicMock()
-        plugins.get.side_effect = TorznabPluginNotFound("missing")
+        plugins.get.side_effect = PluginNotFoundError("missing")
 
         app = _make_app(plugins=plugins)
         client = TestClient(app)
@@ -759,7 +784,7 @@ class TestSearchProdMode:
 
     def test_plugin_not_found_no_details_prod(self) -> None:
         plugins = MagicMock()
-        plugins.get.side_effect = TorznabPluginNotFound("secret")
+        plugins.get.side_effect = PluginNotFoundError("secret")
 
         app = _make_app(plugins=plugins, environment="prod")
         client = TestClient(app)
@@ -864,7 +889,7 @@ class TestHealthEndpoint:
 
     def test_plugin_not_found(self) -> None:
         plugins = MagicMock()
-        plugins.get.side_effect = TorznabPluginNotFound("ghost")
+        plugins.get.side_effect = PluginNotFoundError("ghost")
 
         app = _make_app(plugins=plugins)
         client = TestClient(app)

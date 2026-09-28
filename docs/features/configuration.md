@@ -98,6 +98,12 @@ These variables are read by the `EnvOverrides` Pydantic Settings model (case-ins
 | `SCAVENGARR_HTTP_FOLLOW_REDIRECTS` | bool | `true` | `http.follow_redirects` |
 | `SCAVENGARR_HTTP_USER_AGENT` | string | `Scavengarr/0.1.0` | `http.user_agent` |
 | `SCAVENGARR_RATE_LIMIT_REQUESTS_PER_SECOND` | float | `5.0` | `http.rate_limit_rps` |
+| `SCAVENGARR_RATE_LIMIT_ADAPTIVE` | bool | `true` | `http.rate_limit_adaptive` |
+| `SCAVENGARR_RATE_LIMIT_MIN_RPS` | float | `0.5` | `http.rate_limit_min_rps` |
+| `SCAVENGARR_RATE_LIMIT_MAX_RPS` | float | `50.0` | `http.rate_limit_max_rps` |
+| `SCAVENGARR_HTTP_RETRY_MAX_ATTEMPTS` | int | `3` | `http.retry_max_attempts` |
+| `SCAVENGARR_HTTP_RETRY_BACKOFF_BASE` | float | `1.0` | `http.retry_backoff_base` |
+| `SCAVENGARR_HTTP_RETRY_MAX_BACKOFF` | float | `30.0` | `http.retry_max_backoff` |
 | `SCAVENGARR_API_RATE_LIMIT_RPM` | int | `120` | `http.api_rate_limit_rpm` |
 | `SCAVENGARR_PLAYWRIGHT_HEADLESS` | bool | `true` | `playwright.headless` |
 | `SCAVENGARR_PLAYWRIGHT_TIMEOUT_MS` | int | `30000` | `playwright.timeout_ms` (currently unused, no effect) |
@@ -105,16 +111,15 @@ These variables are read by the `EnvOverrides` Pydantic Settings model (case-ins
 | `SCAVENGARR_LOG_FORMAT` | string | (auto) | `logging.format` |
 | `SCAVENGARR_CACHE_DIR` | path | `./.cache/scavengarr` | `cache.dir` |
 | `SCAVENGARR_CACHE_TTL_SECONDS` | int | `3600` | `cache.ttl_seconds` |
+| `SCAVENGARR_CACHE_BACKEND` | string | `diskcache` | `cache.backend` (`diskcache`, `redis`) |
+| `SCAVENGARR_CACHE_REDIS_URL` | string | `redis://localhost:6379/0` | `cache.redis_url` (only for `backend: redis`) |
+| `SCAVENGARR_CACHE_MAX_CONCURRENT` | int | `10` | `cache.max_concurrent` |
 | `SCAVENGARR_TMDB_API_KEY` | string | — | `tmdb_api_key` |
 | `SCAVENGARR_SCORING_ENABLED` | bool | `true` | `scoring.enabled` |
 | `SCAVENGARR_SCORING_W_HEALTH` | float | `0.4` | `scoring.w_health` |
 | `SCAVENGARR_SCORING_W_SEARCH` | float | `0.6` | `scoring.w_search` |
 
-All other settings (including the whole `stremio:` section, the link validation keys, and the cache backend) are YAML-only.
-
-> **Known issue:** `SCAVENGARR_RATE_LIMIT_ADAPTIVE`, `SCAVENGARR_RATE_LIMIT_MIN_RPS`, `SCAVENGARR_RATE_LIMIT_MAX_RPS`, `SCAVENGARR_HTTP_RETRY_MAX_ATTEMPTS`, `SCAVENGARR_HTTP_RETRY_BACKOFF_BASE`, and `SCAVENGARR_HTTP_RETRY_MAX_BACKOFF` are read by `EnvOverrides` but dropped during merging, so they have no effect. Set these values in YAML (`http.*`).
-
-> **Known issue:** The `CACHE_*` variables (`CACHE_BACKEND`, `CACHE_DIR`, `CACHE_REDIS_URL`, `CACHE_TTL_SECONDS`, `CACHE_MAX_CONCURRENT`) are ignored. The cache backend and Redis URL can only be set in YAML (`cache.backend`, `cache.redis_url`); cache dir and TTL also via `SCAVENGARR_CACHE_DIR` / `SCAVENGARR_CACHE_TTL_SECONDS`.
+All other settings (including the whole `stremio:` section and the link validation keys) are YAML-only. Unprefixed `CACHE_*` variables are not read; use the `SCAVENGARR_CACHE_*` names above.
 
 ### Plugin Credentials
 
@@ -213,6 +218,8 @@ The loader recognizes the sections `plugins`, `http`, `playwright`, `logging`, `
 | `http_follow_redirects` | `http.follow_redirects` |
 | `http_user_agent` | `http.user_agent` |
 | `rate_limit_requests_per_second` | `http.rate_limit_rps` |
+| `rate_limit_adaptive`, `rate_limit_min_rps`, `rate_limit_max_rps` | `http.rate_limit_adaptive`, `http.rate_limit_min_rps`, `http.rate_limit_max_rps` |
+| `http_retry_max_attempts`, `http_retry_backoff_base`, `http_retry_max_backoff` | `http.retry_max_attempts`, `http.retry_backoff_base`, `http.retry_max_backoff` |
 | `api_rate_limit_rpm` | `http.api_rate_limit_rpm` |
 | `playwright_headless` | `playwright.headless` |
 | `playwright_timeout_ms` | `playwright.timeout_ms` |
@@ -220,9 +227,10 @@ The loader recognizes the sections `plugins`, `http`, `playwright`, `logging`, `
 | `log_format` | `logging.format` |
 | `cache_dir` | `cache.dir` |
 | `cache_ttl_seconds` | `cache.ttl_seconds` |
+| `cache_backend`, `cache_redis_url`, `cache_max_concurrent` | `cache.backend`, `cache.redis_url`, `cache.max_concurrent` |
 | `scoring_enabled`, `scoring_w_health`, `scoring_w_search` | `scoring.enabled`, `scoring.w_health`, `scoring.w_search` |
 
-Other flat keys are dropped (see the known issue under [Application Variables](#application-variables-scavengarr_-prefix)).
+Other flat keys are dropped.
 
 ---
 
@@ -250,7 +258,7 @@ The `environment` setting controls several behavioral defaults (see [Environment
 | `plugins.overrides.<name>.max_results` | int | — | Override the plugin's max results |
 | `plugins.overrides.<name>.enabled` | bool | `true` | `false` removes the plugin from the registry |
 
-The plugin registry scans the plugin directory at startup for `.py` files. Plugins are loaded lazily on first access and cached in memory. Unknown plugin names in `overrides` are logged as a warning. See [Plugin System](./plugin-system.md) and [Per-Plugin Overrides](./plugin-system.md#per-plugin-overrides) for details.
+The plugin registry scans the plugin directory at startup for `.py` files. All plugins are imported once during startup wiring and cached in memory. Unknown plugin names in `overrides` are logged as a warning. See [Plugin System](./plugin-system.md) and [Per-Plugin Overrides](./plugin-system.md#per-plugin-overrides) for details.
 
 ```yaml
 plugins:
@@ -273,13 +281,13 @@ Controls the shared HTTP client used by httpx plugins, hoster resolvers, and API
 | `http.follow_redirects` | bool | `true` | Whether the HTTP client follows redirects |
 | `http.user_agent` | string | `Scavengarr/0.1.0` | User-Agent header sent with every request |
 | `http.rate_limit_rps` | float | `5.0` | Per-domain rate limit (requests/second). 0 = unlimited |
-| `http.rate_limit_adaptive` | bool | `true` | Enable AIMD adaptive rate limiting per domain (YAML-only) |
-| `http.rate_limit_min_rps` | float | `0.5` | Adaptive lower bound per domain (YAML-only) |
-| `http.rate_limit_max_rps` | float | `50.0` | Adaptive upper bound per domain (YAML-only) |
+| `http.rate_limit_adaptive` | bool | `true` | Enable AIMD adaptive rate limiting per domain (`SCAVENGARR_RATE_LIMIT_ADAPTIVE`) |
+| `http.rate_limit_min_rps` | float | `0.5` | Adaptive lower bound per domain (`SCAVENGARR_RATE_LIMIT_MIN_RPS`) |
+| `http.rate_limit_max_rps` | float | `50.0` | Adaptive upper bound per domain (`SCAVENGARR_RATE_LIMIT_MAX_RPS`) |
 | `http.api_rate_limit_rpm` | int | `120` | Incoming API requests per client IP per minute (sliding window, HTTP 429 when exceeded). 0 = unlimited |
-| `http.retry_max_attempts` | int | `3` | Max retry attempts on 429/503 responses. 0 = no retries (YAML-only) |
-| `http.retry_backoff_base` | float | `1.0` | Base delay in seconds for exponential backoff (YAML-only) |
-| `http.retry_max_backoff` | float | `30.0` | Maximum backoff delay in seconds (YAML-only) |
+| `http.retry_max_attempts` | int | `3` | Max retry attempts on 429/503 responses. 0 = no retries (`SCAVENGARR_HTTP_RETRY_MAX_ATTEMPTS`) |
+| `http.retry_backoff_base` | float | `1.0` | Base delay in seconds for exponential backoff (`SCAVENGARR_HTTP_RETRY_BACKOFF_BASE`) |
+| `http.retry_max_backoff` | float | `30.0` | Maximum backoff delay in seconds (`SCAVENGARR_HTTP_RETRY_MAX_BACKOFF`) |
 
 **Validation:** `timeout_seconds` and `timeout_resolve_seconds` must be greater than 0.
 
@@ -433,12 +441,12 @@ Logs are structured via `structlog` with ISO UTC timestamps and include context 
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `cache.backend` | string | `diskcache` | Backend: `diskcache` (SQLite-based) or `redis` (YAML-only) |
+| `cache.backend` | string | `diskcache` | Backend: `diskcache` (SQLite-based) or `redis` (`SCAVENGARR_CACHE_BACKEND`) |
 | `cache.dir` | path | `./.cache/scavengarr` | SQLite database path (diskcache only) |
-| `cache.redis_url` | string | `redis://localhost:6379/0` | Redis connection URL (redis only, YAML-only) |
+| `cache.redis_url` | string | `redis://localhost:6379/0` | Redis connection URL (redis only, `SCAVENGARR_CACHE_REDIS_URL`) |
 | `cache.ttl_seconds` | int | `3600` | Default time-to-live for cache entries (seconds) |
 | `cache.search_ttl_seconds` | int | `900` | TTL for cached search results (seconds). 0 = disabled (YAML-only) |
-| `cache.max_concurrent` | int | `10` | Semaphore limit for parallel cache operations (YAML-only) |
+| `cache.max_concurrent` | int | `10` | Semaphore limit for parallel cache operations (`SCAVENGARR_CACHE_MAX_CONCURRENT`) |
 
 The top-level key `cache_dir` also exists in the schema but is currently unused (no effect); only `cache.dir` is used.
 
@@ -574,7 +582,7 @@ docker run -d --name scavengarr \
 
 ### With Redis Cache
 
-The Redis backend can only be enabled via YAML. Mount a config file containing:
+Select the Redis backend via environment variables (`SCAVENGARR_CACHE_BACKEND=redis`, `SCAVENGARR_CACHE_REDIS_URL=...`) or a mounted config file containing:
 
 ```yaml
 cache:

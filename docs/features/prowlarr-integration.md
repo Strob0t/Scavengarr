@@ -115,7 +115,7 @@ services:
 
 ### Docker Compose with Redis
 
-The cache backend can only be selected in the YAML config — there is no environment variable for `cache.backend` or `cache.redis_url`. Put this in the mounted `./data/config.yaml`:
+Select Redis either with `SCAVENGARR_CACHE_BACKEND=redis` and `SCAVENGARR_CACHE_REDIS_URL` in the service's `environment`, or in the mounted `./data/config.yaml`:
 
 ```yaml
 cache:
@@ -203,7 +203,7 @@ Scavengarr answers the two request types Prowlarr uses for indexer setup:
 1. `GET /api/v1/torznab/{plugin_name}?t=caps` — returns static capabilities (free-text search only; categories 2000/5000/8000).
 1. `GET /api/v1/torznab/{plugin_name}?t=search&extended=1` (no `q`) — a lightweight HTTP probe of the plugin's `base_url` instead of a full scrape. Any HTTP response counts as reachable and yields one synthetic test item (200); a connection error yields an empty feed with HTTP 503.
 
-See [Prowlarr Test Mode](./torznab-api.md#prowlarr-test-mode) for all outcomes, including the known issue with unknown plugin names.
+See [Prowlarr Test Mode](./torznab-api.md#prowlarr-test-mode) for all outcomes (an unknown plugin name returns HTTP 404).
 
 ### Multiple Plugins
 

@@ -102,6 +102,36 @@ class TestEnvOverrides:
         assert config.environment == "prod"
         assert config.log_format == "json"  # prod → json
 
+    def test_env_rate_limit_and_retry_vars_apply(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SCAVENGARR_RATE_LIMIT_ADAPTIVE", "false")
+        monkeypatch.setenv("SCAVENGARR_RATE_LIMIT_MIN_RPS", "0.25")
+        monkeypatch.setenv("SCAVENGARR_RATE_LIMIT_MAX_RPS", "12.5")
+        monkeypatch.setenv("SCAVENGARR_HTTP_RETRY_MAX_ATTEMPTS", "7")
+        monkeypatch.setenv("SCAVENGARR_HTTP_RETRY_BACKOFF_BASE", "2.5")
+        monkeypatch.setenv("SCAVENGARR_HTTP_RETRY_MAX_BACKOFF", "45")
+
+        config = load_config()
+        assert config.rate_limit_adaptive is False
+        assert config.rate_limit_min_rps == 0.25
+        assert config.rate_limit_max_rps == 12.5
+        assert config.http_retry_max_attempts == 7
+        assert config.http_retry_backoff_base == 2.5
+        assert config.http_retry_max_backoff == 45.0
+
+    def test_env_cache_backend_vars_apply(
+        self, yaml_config: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SCAVENGARR_CACHE_BACKEND", "redis")
+        monkeypatch.setenv("SCAVENGARR_CACHE_REDIS_URL", "redis://redis:6379/1")
+        monkeypatch.setenv("SCAVENGARR_CACHE_MAX_CONCURRENT", "25")
+
+        config = load_config(config_path=yaml_config)
+        assert config.cache.backend == "redis"
+        assert config.cache.redis_url == "redis://redis:6379/1"
+        assert config.cache.max_concurrent == 25
+
 
 class TestCliOverrides:
     """CLI overrides beat everything (highest precedence)."""

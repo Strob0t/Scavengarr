@@ -24,6 +24,7 @@ from scavengarr.domain.entities import (
     TorznabUnsupportedPlugin,
 )
 from scavengarr.domain.entities.torznab import TorznabItem
+from scavengarr.domain.plugins import PluginNotFoundError
 from scavengarr.infrastructure.torznab.presenter import render_caps_xml, render_rss_xml
 from scavengarr.interfaces.app_state import AppState
 
@@ -167,6 +168,17 @@ async def _handle_extended_probe(
     return _xml(rendered.payload, status_code=503)
 
 
+def _parse_category(cat: str) -> int | None:
+    """Return the first Torznab category ID from ``cat`` (``"2000,5000"``)."""
+    first = cat.split(",")[0].strip()
+    if not first:
+        return None
+    try:
+        return int(first)
+    except ValueError:
+        raise TorznabBadRequest(f"Invalid cat={cat!r}: expected numeric IDs") from None
+
+
 async def _handle_search(
     state: AppState,
     plugin_name: str,
@@ -186,7 +198,7 @@ async def _handle_search(
         cache=getattr(state, "cache", None),
         search_ttl=state.config.cache.search_ttl_seconds,
     )
-    category = int(cat.split(",")[0]) if cat else None
+    category = _parse_category(cat)
     response = await search_uc.execute(
         TorznabQuery(
             action="search",
@@ -289,7 +301,7 @@ async def torznab_plugin_api(
         desc = str(e) if not _is_prod(state) else None
         return _error_xml(title, desc, base_url, 400)
 
-    except TorznabPluginNotFound:
+    except (TorznabPluginNotFound, PluginNotFoundError):
         desc = "plugin not found" if not _is_prod(state) else None
         return _error_xml(title, desc, base_url, 404)
 
@@ -327,7 +339,7 @@ async def torznab_plugin_health(request: Request, plugin_name: str) -> JSONRespo
 
     try:
         plugin = state.plugins.get(plugin_name)
-    except TorznabPluginNotFound:
+    except (TorznabPluginNotFound, PluginNotFoundError):
         return JSONResponse(
             status_code=404,
             content={

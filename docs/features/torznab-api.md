@@ -85,13 +85,11 @@ Returns Torznab capabilities XML for the plugin. Prowlarr queries this endpoint 
 | Element | Description |
 |---|---|
 | `<server>` | `{app_name} ({plugin.name})`; version is hardcoded to `0.1.0` |
-| `<limits>` | `max=100`, `default=50` (from `TorznabCaps`) |
+| `<limits>` | `max=100`, `default=100` (from `TorznabCaps`, matches the search `limit` default) |
 | `<searching>` | Only free-text search (`supportedParams="q"`) |
 | `<categories>` | Always `2000`, `5000`, `8000` — identical for every plugin; plugin-specific (sub)categories are not advertised |
 
 Movie-search (`imdbid`) and TV-search (`tvdbid`, `season`, `ep`) are not supported. An unknown plugin returns an empty RSS feed (not a caps document) with HTTP 404.
-
-> **Known issue:** caps advertises `default="50"`, but the search endpoint's `limit` parameter defaults to `100`.
 
 ### Search
 
@@ -106,12 +104,10 @@ Runs the plugin's search and returns the results as a Torznab RSS 2.0 feed.
 | `plugin_name` | path | yes | Plugin identifier |
 | `t` | query | yes | Must be `search` (any other value except `caps` → 422) |
 | `q` | query | no | Search query; if missing, see [Prowlarr Test Mode](#prowlarr-test-mode) |
-| `cat` | query | no | Comma-separated category IDs; only the first ID is passed to the plugin |
+| `cat` | query | no | Comma-separated category IDs; only the first ID is passed to the plugin. A non-numeric value returns an empty feed with HTTP 400 |
 | `extended` | query | no | Only evaluated when `q` is missing (`1` = reachability probe) |
 | `offset` | query | no | Result offset (default `0`) |
 | `limit` | query | no | Maximum results returned (default `100`) |
-
-> **Known issue:** a non-numeric `cat` value (e.g. `cat=abc`) raises an unhandled `ValueError`, which returns HTTP 500 in dev/test (an empty feed with HTTP 200 in prod).
 
 **Response (200 OK):** `application/xml`, plus an `X-Cache: HIT|MISS` header indicating whether the plugin results came from the search cache.
 
@@ -184,9 +180,7 @@ The site counts as reachable when any HTTP response arrives — the status code 
 | Site reachable | RSS with one synthetic item titled `{app_name} ({plugin}) - reachable` | 200 |
 | Site unreachable (DNS/TCP/TLS/timeout) | Empty RSS feed | 503 |
 | Plugin has no `base_url` | Empty RSS feed | 422 |
-| Unknown plugin | Empty RSS feed | 500 (dev/test), 200 (prod) |
-
-> **Known issue:** an unknown plugin name on the probe returns 500 (dev/test) / 200 (prod) instead of 404, because the registry raises `PluginNotFoundError`, which the router does not map.
+| Unknown plugin | Empty RSS feed | 404 |
 
 If `q` is missing and `extended` is not `1`, the API returns an empty RSS feed with HTTP 200. Outside prod, the channel description reads `Missing query parameter 'q'`.
 
@@ -217,9 +211,8 @@ The response gains a `mirrors` key only if the plugin sets a `mirror_urls` attri
 |---|---|
 | 200 | Probe executed (check `reachable`) |
 | 422 | Plugin has no `base_url` |
-| 500 (dev/test) / 200 (prod) | Unknown plugin or other registry error; body `{"plugin": ..., "reachable": false, "error": ...}` |
-
-> **Known issue:** an unknown plugin name returns 500 (dev/test) / 200 (prod) instead of 404, because the registry raises `PluginNotFoundError` rather than `TorznabPluginNotFound`.
+| 404 | Unknown plugin; body `{"plugin": ..., "reachable": false, "error": "plugin not found"}` |
+| 500 (dev/test) / 200 (prod) | Other registry error; body `{"plugin": ..., "reachable": false, "error": ...}` |
 
 ---
 
@@ -345,11 +338,11 @@ Scavengarr maps domain exceptions on the Torznab endpoint (`/api/v1/torznab/{plu
 
 | Exception | Status (dev/test) | Status (prod) | Trigger |
 |---|---|---|---|
-| `TorznabBadRequest` | 400 | 400 | Invalid query (defensive; the router handles missing `q` before the use case) |
-| `TorznabPluginNotFound` | 404 | 404 | Unknown plugin on `t=caps` or `t=search` with `q` |
+| `TorznabBadRequest` | 400 | 400 | Invalid query, e.g. non-numeric `cat` |
+| `TorznabPluginNotFound` / `PluginNotFoundError` | 404 | 404 | Unknown plugin (caps, search, test probe) |
 | `TorznabUnsupportedAction` | 422 | 422 | `t` is neither `caps` nor `search` |
 | `TorznabExternalError` | 502 | **200** | Plugin search or link validation failed |
-| Any other exception | 500 | **200** | Unexpected internal error (incl. unknown plugin on the probe, non-numeric `cat`) |
+| Any other exception | 500 | **200** | Unexpected internal error |
 
 ### Production Error Behavior
 
