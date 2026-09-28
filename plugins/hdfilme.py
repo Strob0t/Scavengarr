@@ -1,6 +1,6 @@
-"""hdfilme.legal Python plugin for Scavengarr.
+"""hdfilme.cafe Python plugin for Scavengarr.
 
-Scrapes hdfilme.legal (German streaming site, DLE-based CMS) with:
+Scrapes hdfilme.cafe (German streaming site, DLE-based CMS) with:
 - httpx for all requests (server-rendered HTML search + detail pages)
 - GET /?story={query}&do=search&subaction=search for keyword search
 - Detail page scraping for metadata (genres, year, duration, IMDb, TMDB)
@@ -9,9 +9,14 @@ Scrapes hdfilme.legal (German streaming site, DLE-based CMS) with:
 - Category detection from detail page: /serien/ genre link → TV (5000)
 - Bounded concurrency for detail page scraping
 
-Mirror domains: hdfilme.legal (primary), hdfilme.my → hdfilme.app → hdfilme.uno,
-hdfilme.best → www6.hdfilme.best (redirects, less reliable).
+Domain: hdfilme.cafe (2026-09-28: hdfilme.legal → .press → .party → .bid all
+redirect here).
 No authentication required.
+
+Known upstream breakage (2026-09-28): the site's own search answers with a
+PHP fatal error (``engine/mods/sfilter/filter.php``), and film links moved
+from meinecloud.click to devideosrc.co, where they sit behind a Turnstile
+gate. The plugin returns nothing until the site fixes its search.
 """
 
 from __future__ import annotations
@@ -27,7 +32,7 @@ from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 # ---------------------------------------------------------------------------
 # Configurable settings
 # ---------------------------------------------------------------------------
-_DOMAINS = ["hdfilme.legal"]
+_DOMAINS = ["hdfilme.cafe"]
 _MEINECLOUD_BASE = "https://meinecloud.click"
 
 # ---------------------------------------------------------------------------
@@ -64,7 +69,7 @@ def _filter_by_category(
 
 
 class _SearchResultParser(HTMLParser):
-    """Parse hdfilme.legal search result cards.
+    """Parse hdfilme.cafe search result cards.
 
     Each result card has this structure::
 
@@ -205,7 +210,7 @@ class _SearchResultParser(HTMLParser):
 
 
 class _DetailPageParser(HTMLParser):
-    """Parse hdfilme.legal film/series detail page.
+    """Parse hdfilme.cafe film/series detail page.
 
     Extracts:
     - IMDb ID from ``<script src="meinecloud.click/ddl/{imdb_id}">``
@@ -558,7 +563,7 @@ def _parse_meinecloud_script(script_text: str) -> list[dict[str, str]]:
 
 
 class HdfilmePlugin(HttpxPluginBase):
-    """Python plugin for hdfilme.legal using httpx."""
+    """Python plugin for hdfilme.cafe using httpx."""
 
     name = "hdfilme"
     provides = "stream"
@@ -874,7 +879,7 @@ class HdfilmePlugin(HttpxPluginBase):
         season: int | None = None,
         episode: int | None = None,
     ) -> list[SearchResult]:
-        """Search hdfilme.legal and return results with stream links."""
+        """Search hdfilme.cafe and return results with stream links."""
         await self._ensure_client()
 
         if query:

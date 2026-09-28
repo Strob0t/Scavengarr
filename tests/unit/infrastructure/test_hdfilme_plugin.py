@@ -1,4 +1,4 @@
-"""Tests for the hdfilme.legal Python plugin (httpx-based)."""
+"""Tests for the hdfilme.cafe Python plugin (httpx-based)."""
 
 from __future__ import annotations
 
@@ -100,9 +100,9 @@ _FILM_DETAIL_HTML = """\
       <h1 class="font-bold">Batman hdfilme</h1>
       <div class="border-b border-gray-700 font-extralight mb-3">
         <span>
-          <a href="https://hdfilme.legal/fantasy/">Fantasy</a>&nbsp;
-          <a href="https://hdfilme.legal/action/">Action</a>&nbsp;
-          <a href="https://hdfilme.legal/krimi/">Krimi</a>
+          <a href="https://hdfilme.cafe/fantasy/">Fantasy</a>&nbsp;
+          <a href="https://hdfilme.cafe/action/">Action</a>&nbsp;
+          <a href="https://hdfilme.cafe/krimi/">Krimi</a>
         </span>
         <span class="align-text-bottom divider text-gray-500">|</span>
         <span>
@@ -141,9 +141,9 @@ _SERIES_DETAIL_HTML = """\
       <h1 class="font-bold">Stranger Things hdfilme</h1>
       <div class="border-b border-gray-700 font-extralight mb-3">
         <span>
-          <a href="https://hdfilme.legal/serien/">Serien</a>&nbsp;
-          <a href="https://hdfilme.legal/drama/">Drama</a>&nbsp;
-          <a href="https://hdfilme.legal/sci-fi/">Sci-Fi</a>
+          <a href="https://hdfilme.cafe/serien/">Serien</a>&nbsp;
+          <a href="https://hdfilme.cafe/drama/">Drama</a>&nbsp;
+          <a href="https://hdfilme.cafe/sci-fi/">Sci-Fi</a>
         </span>
         <span class="align-text-bottom divider text-gray-500">|</span>
         <span>Staffel/Episode: 5x08</span>
@@ -250,14 +250,14 @@ class TestSearchResultParser:
     """Tests for _SearchResultParser."""
 
     def test_parses_search_results(self) -> None:
-        parser = _SearchResultParser("https://hdfilme.legal")
+        parser = _SearchResultParser("https://hdfilme.cafe")
         parser.feed(_SEARCH_HTML)
 
         assert len(parser.results) == 2
 
         first = parser.results[0]
         assert first["title"] == "Batman"
-        assert first["url"] == "https://hdfilme.legal/filme1/23004-batman-stream.html"
+        assert first["url"] == "https://hdfilme.cafe/filme1/23004-batman-stream.html"
         assert first["year"] == "1989"
         assert first["duration"] == "126 min"
         assert first["quality"] == "HD"
@@ -268,7 +268,7 @@ class TestSearchResultParser:
 
     def test_empty_page_returns_no_results(self) -> None:
         html = "<html><body><div class='content'>Nothing here</div></body></html>"
-        parser = _SearchResultParser("https://hdfilme.legal")
+        parser = _SearchResultParser("https://hdfilme.cafe")
         parser.feed(html)
         assert len(parser.results) == 0
 
@@ -282,7 +282,7 @@ class TestSearchResultParser:
           </div>
         </div>
         """
-        parser = _SearchResultParser("https://hdfilme.legal")
+        parser = _SearchResultParser("https://hdfilme.cafe")
         parser.feed(html)
         assert len(parser.results) == 0
 
@@ -291,7 +291,7 @@ class TestDetailPageParser:
     """Tests for _DetailPageParser."""
 
     def test_parses_film_detail(self) -> None:
-        parser = _DetailPageParser("https://hdfilme.legal")
+        parser = _DetailPageParser("https://hdfilme.cafe")
         parser.feed(_FILM_DETAIL_HTML)
 
         assert parser.imdb_id == "tt0096895"
@@ -306,7 +306,7 @@ class TestDetailPageParser:
         assert "themoviedb.org/movie/268" in parser.tmdb_url
 
     def test_parses_series_detail(self) -> None:
-        parser = _DetailPageParser("https://hdfilme.legal")
+        parser = _DetailPageParser("https://hdfilme.cafe")
         parser.feed(_SERIES_DETAIL_HTML)
 
         assert parser.title == "Stranger Things"
@@ -317,7 +317,7 @@ class TestDetailPageParser:
         assert "themoviedb.org/tv/66732" in parser.tmdb_url
 
     def test_series_episode_links(self) -> None:
-        parser = _DetailPageParser("https://hdfilme.legal")
+        parser = _DetailPageParser("https://hdfilme.cafe")
         parser.feed(_SERIES_DETAIL_HTML)
 
         # Should have episode links from both seasons
@@ -336,24 +336,24 @@ class TestDetailPageParser:
         <div class="info md:pl-5 md:flex-grow">
           <div class="border-b border-gray-700 font-extralight mb-3">
             <span>
-              <a href="https://hdfilme.legal/serien/">Serien</a>
+              <a href="https://hdfilme.cafe/serien/">Serien</a>
             </span>
           </div>
         </div>
         """
-        parser = _DetailPageParser("https://hdfilme.legal")
+        parser = _DetailPageParser("https://hdfilme.cafe")
         parser.feed(html)
         assert parser.is_series is True
 
     def test_series_detected_by_tmdb_tv_url(self) -> None:
         html = '<a href="https://www.themoviedb.org/tv/12345">TMDB</a>'
-        parser = _DetailPageParser("https://hdfilme.legal")
+        parser = _DetailPageParser("https://hdfilme.cafe")
         parser.feed(html)
         assert parser.is_series is True
 
     def test_series_detected_by_h2_text(self) -> None:
         html = "<h2>Test (2020) stream serien kostenlos online:</h2>"
-        parser = _DetailPageParser("https://hdfilme.legal")
+        parser = _DetailPageParser("https://hdfilme.cafe")
         parser.feed(html)
         assert parser.is_series is True
 
@@ -363,12 +363,12 @@ class TestDetailPageParser:
           1x1 Episode 1 - <a href="https://supervideo.tv/test.html">Supervideo</a>
         </div>
         """
-        parser = _DetailPageParser("https://hdfilme.legal")
+        parser = _DetailPageParser("https://hdfilme.cafe")
         parser.feed(html)
         assert parser.is_series is True
 
     def test_empty_detail_page(self) -> None:
-        parser = _DetailPageParser("https://hdfilme.legal")
+        parser = _DetailPageParser("https://hdfilme.cafe")
         parser.feed("<html><body></body></html>")
         assert parser.imdb_id == ""
         assert parser.is_series is False
@@ -379,14 +379,14 @@ class TestDetailPageParser:
         html = """\
         <a href="https://www.imdb.com/title/tt4574334" title="IMDb">IMDb</a>
         """
-        parser = _DetailPageParser("https://hdfilme.legal")
+        parser = _DetailPageParser("https://hdfilme.cafe")
         parser.feed(html)
         assert parser.imdb_id == "tt4574334"
         assert "imdb.com/title/tt4574334" in parser.imdb_url
 
     def test_h1_title_strips_hdfilme_suffix(self) -> None:
         html = '<h1 class="font-bold">Test Movie hdfilme</h1>'
-        parser = _DetailPageParser("https://hdfilme.legal")
+        parser = _DetailPageParser("https://hdfilme.cafe")
         parser.feed(html)
         assert parser.title == "Test Movie"
 
@@ -439,7 +439,7 @@ def _mock_response(text: str, status_code: int = 200) -> httpx.Response:
     return httpx.Response(
         status_code=status_code,
         text=text,
-        request=httpx.Request("GET", "https://hdfilme.legal/"),
+        request=httpx.Request("GET", "https://hdfilme.cafe/"),
     )
 
 
