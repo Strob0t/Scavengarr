@@ -62,7 +62,6 @@ coverage.xml
 
 # ── AI Tools ───────────────────────────────────────
 .claude/
-.mcp.json
 .llm-context
 .continue
 .cursorignore

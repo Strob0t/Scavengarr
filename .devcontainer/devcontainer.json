@@ -11,17 +11,10 @@
     "${localWorkspaceFolder}/.env.devcontainer"
   ],
   "features": {
-    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
     "ghcr.io/devcontainers/features/github-cli:1": {}
   },
   "forwardPorts": [
-    4317,
-    6280,
-    7979,
-    8001,
-    9000,
-    14268,
-    16686
+    7979
   ],
   "postCreateCommand": "mkdir -p ~/continue && cp .continue/config.yaml ~/continue/config.yaml",
   "postStartCommand": "bash .devcontainer/sync-jdownloader.sh || true",

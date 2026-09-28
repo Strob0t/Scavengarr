@@ -183,6 +183,8 @@ When writing code that uses packages from `pyproject.toml`, use the **docs-mcp-s
 
 This ensures code is written against the actual API of the installed package versions.
 
+**Currently not configured** (removed with the Docker MCP stack, 2026-09-28): fall back to the installed package source in `.venv` and the official online docs.
+
 ### Dependency principles
 - Keep third-party dependencies minimal: prefer stdlib, then established libraries, only then custom code.
 - Avoid building internal “mini-frameworks”.
@@ -576,8 +578,7 @@ Agents are ONLY for **simple, explicit, mechanical tasks** where the scope is 10
 `git push` and `gh` authenticate via `GH_TOKEN` from `.env.devcontainer` (gitignored): `.devcontainer/setup.sh` runs `gh auth setup-git` on attach, independent of DevPod credential forwarding. Git identity comes from `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL` in the same file. Changes to `.env.devcontainer` need a container rebuild/restart.
 
 ### Dev container pitfalls (learned 2026-09-28)
-- **Docker-in-docker on nftables-only hosts** (CachyOS/Arch): the dind feature pins `iptables-legacy`, dockerd then dies with "can't initialize iptables table `nat'" (see `/tmp/dockerd.log`). `setup.sh` switches to `iptables-nft` and restarts dockerd; check with `docker ps`.
-- **MCP stack**: `docs-mcp-server` is paused (commented out in `docker-compose.yml`, it needs an embedding endpoint). `playwright-mcp` reads `.devdata/playwright-mcp/playwright-mcp.json` (gitignored); do not pin `executablePath` there, the `@playwright/mcp@latest` browser revision changes.
+- **No Docker in the devcontainer**: the devcontainer starts no containers. `playwright-mcp` runs over stdio, started by Claude Code from the committed `.mcp.json` (`npx @playwright/mcp@<pinned>`). `setup.sh` installs the matching Chromium plus system libraries (`playwright install --with-deps chromium`); keep `PLAYWRIGHT_MCP_VERSION` in `setup.sh` in sync with `.mcp.json`. The former `docker-compose.yml` MCP stack (docs-mcp, llm-context, jaeger, proxy) was removed; none of it was used by Scavengarr.
 - **Broken `.venv` shebangs**: a `.venv` created under a different workspace path (e.g. `/workspaces/Scavengarr`) makes `poetry run pytest` fail with `Command not found: pytest`. Fix: `poetry env remove --all && poetry install --with dev`.
 - **Line endings are mixed** (most `.py`/`.md` files are CRLF, some LF). Preserve each file's existing EOL when editing with scripts; a text-mode rewrite turns a one-line change into a whole-file diff.
 - **Live tests are opt-in**: `poetry run pytest` skips `tests/live` (`-m "not live"` in `addopts`); run them with `poetry run pytest -m live`.

@@ -2,26 +2,6 @@
 
 set -euo pipefail
 
-mkdir -p "$HOME/.docker"
-
-# Wenn config.json existiert, credsStore entfernen
-if [ -f "$HOME/.docker/config.json" ]; then
-  python - <<'PY'
-import json, pathlib
-p = pathlib.Path.home() / ".docker" / "config.json"
-data = json.loads(p.read_text() or "{}")
-data.pop("credsStore", None)
-p.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
-PY
-else
-  # Minimal config ohne credsStore
-  cat > "$HOME/.docker/config.json" <<'JSON'
-{
-  "auths": {}
-}
-JSON
-fi
-
 # Git access independent of the DevPod credential tunnel (localhost:12049),
 # which only lives while a DevPod/IDE connection forwards host credentials.
 # GH_TOKEN and GIT_AUTHOR_NAME/GIT_AUTHOR_EMAIL come from .env.devcontainer.
@@ -112,30 +92,13 @@ echo "[devcontainer] Activating virtualenv..."
 # shellcheck disable=SC1091
 . .venv/bin/activate
 
-# The docker-in-docker feature pins iptables-legacy. Hosts with
-# nftables-only kernels (e.g. CachyOS/Arch) have no legacy nat table, so
-# dockerd fails with "can't initialize iptables table `nat'". Switch to
-# iptables-nft and restart dockerd via the feature's init script.
-if ! docker info >/dev/null 2>&1 && ! sudo iptables-legacy -t nat -L -n >/dev/null 2>&1; then
-  echo "[devcontainer] Legacy iptables unavailable, switching to iptables-nft..."
-  sudo update-alternatives --set iptables /usr/sbin/iptables-nft
-  sudo update-alternatives --set ip6tables /usr/sbin/ip6tables-nft
-  /usr/local/share/docker-init.sh true || echo "WARN: docker restart failed"
-fi
-
-echo "[devcontainer] Waiting for Docker daemon..."
-for _ in $(seq 1 30); do
-  docker info >/dev/null 2>&1 && break
-  sleep 1
-done
-# MCP stack is optional tooling for the AI assistant — never block setup on it.
-if docker info >/dev/null 2>&1; then
-  echo "[devcontainer] Starting MCP docker stack..."
-  docker compose --env-file ./.env.devcontainer up -d \
-    || echo "WARN: MCP docker stack failed to start (optional)"
-  docker compose ps || true
-else
-  echo "WARN: Docker daemon not reachable, skipping MCP stack (optional)"
-fi
+# Browser for the playwright-mcp server. Claude Code starts the server itself
+# over stdio (see .mcp.json), so no container or daemon is needed here.
+# Keep PLAYWRIGHT_MCP_VERSION in sync with the version pinned in .mcp.json.
+# --with-deps installs the system libraries (apt via sudo) Chromium needs.
+PLAYWRIGHT_MCP_VERSION="0.0.82"
+echo "[devcontainer] Installing Chromium for @playwright/mcp@${PLAYWRIGHT_MCP_VERSION}..."
+npx -y -p "@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}" playwright install --with-deps chromium \
+  || echo "WARN: Chromium install for playwright-mcp failed (optional)"
 
 echo "[devcontainer] Setup complete."

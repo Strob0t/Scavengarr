@@ -70,11 +70,14 @@ See [docs/features/configuration.md](docs/features/configuration.md) for all set
 poetry run start --factory --host 0.0.0.0 --port 7979
 ```
 
-### Run with Docker Compose
+### Run with Docker
 
 ```bash
-docker compose up --build
+docker build -f Dockerfile.prod -t scavengarr .
+docker run -p 7979:7979 -v ./plugins:/app/plugins -v ./data:/app/config scavengarr
 ```
+
+A `docker-compose.yml` example (incl. Redis) is in `docs/features/prowlarr-integration.md`.
 
 ### Add to Prowlarr
 

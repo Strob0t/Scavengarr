@@ -69,7 +69,7 @@ Live test for a single plugin: `poetry run pytest -m live -k "<plugin>" -v`.
 
 ## Prerequisites
 
-- Site analysis per CLAUDE.md needs `playwright-mcp` (Docker MCP stack). The
-  stack did not run before 2026-09-28 because dockerd failed on the
-  nftables-only host kernel; `.devcontainer/setup.sh` now switches to
-  `iptables-nft`. Verify after the next container recreate with `docker ps`.
+- Site analysis per CLAUDE.md uses `playwright-mcp`. It runs over stdio from the
+  committed `.mcp.json` (no Docker); `.devcontainer/setup.sh` installs Chromium
+  with its system libraries. Verify after the next container recreate that the
+  `playwright-mcp` tools are available in Claude Code.
