@@ -37,7 +37,8 @@ Triage method (2026-09-28, from inside the devcontainer, no proxy):
 
 Quick wins first: scnlog, hdfilme, fireani, nox (selector/domain/endpoint).
 The three Cloudflare plugins need a design decision (Playwright plugin vs.
-shared StealthPool for httpx plugins).
+shared StealthPool for httpx plugins). Decided: browser fallback port for
+httpx plugins, see `docs/plans/antibot-patchright.md`.
 
 ## Repro script
 

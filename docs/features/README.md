@@ -52,6 +52,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Pro
 | [Playwright Engine](../plans/playwright-engine.md) | Browser pool and resource management for Playwright plugins |
 | [More Plugins](../plans/more-plugins.md) | Plugin inventory and remaining candidates |
 | [Integration Tests](../plans/integration-tests.md) | Implemented: 25 integration + 158 E2E + 38 live smoke tests |
+| [Anti-Bot Hardening](../plans/antibot-patchright.md) | Planned: Patchright instead of playwright-stealth, browser fallback port for httpx plugins |
 | [Search Caching](../plans/search-caching.md) | Implemented: 900s TTL with X-Cache header |
 
 ### Refactoring History
