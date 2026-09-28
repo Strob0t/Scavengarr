@@ -42,4 +42,4 @@ stremio:
 ## Dependencies
 
 - `playwright` package (already in `pyproject.toml`)
-- Browser binaries installed in container (`python -m playwright install chromium` in `Dockerfile.prod`)
+- Browser binaries installed in container (`python -m patchright install chromium` in `Dockerfile.prod`)

@@ -102,4 +102,10 @@ if ! command -v Xvfb >/dev/null 2>&1; then
     || echo "WARN: Xvfb install failed (needed for headful browser tests)"
 fi
 
+# Chromium for the app itself (Patchright, Python venv). Separate from the
+# playwright-mcp browser above; system libraries come from --with-deps there.
+echo "[devcontainer] Installing Patchright Chromium for the venv..."
+python -m patchright install chromium \
+  || echo "WARN: Patchright Chromium install failed (Playwright plugins, live tests)"
+
 echo "[devcontainer] Setup complete."

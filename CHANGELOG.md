@@ -34,9 +34,12 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 - **`tests/live/conftest.py` Chromium check is async**: it used the sync API inside the running event loop, raised every time and made all Playwright smoke tests skip with "Chromium not installed". With the fix, 2 of 9 Playwright plugins pass live (animeloads, moflix); ddlspot, ddlvalley, scnsrc (Cloudflare Turnstile) and streamworld fail; boerse, byte hit a network error; myboerse, mygully need credentials. Findings in `docs/plans/plugin-repair.md`.
 
 ### Anti-Bot: Patchright instead of playwright + playwright-stealth
-- **Browser driver swapped to Patchright** (`patchright` 1.57.x, drop-in Playwright fork): removes the `Runtime.enable`/`Console.enable` and automation-flag leaks that Cloudflare detects. `playwright` and `playwright-stealth` are no longer dependencies; all imports use `patchright.async_api`.
+- **Browser driver swapped to Patchright** (`patchright` ^1.63, Chromium 153; drop-in Playwright fork): removes the `Runtime.enable`/`Console.enable` and automation-flag leaks that Cloudflare detects. `playwright` and `playwright-stealth` are no longer dependencies; all imports use `patchright.async_api`.
 - **No forced User-Agent in browser contexts**: contexts keep Patchright's real UA (a fixed Chrome 131 UA disagreed with the Chromium client hints). New `_browser_user_agent` (default `None`) and `_context_options()`, also used by the boerse/mygully login contexts; `_user_agent` stays for httpx side requests.
 - **`PlaywrightPluginBase._stealth` renamed to `_block_resources`**: it now only controls aborting image/font/CSS requests; singleton and per-request contexts share `_configure_context()`. `StealthPool` no longer applies playwright-stealth.
+
+### Chore: Patchright Chromium Install
+- `Dockerfile.prod` installs the browser with `python -m patchright install chromium` (stage renamed `browsers`; cache path `~/.cache/ms-playwright` unchanged). `.devcontainer/setup.sh` installs the Patchright Chromium for the venv on every attach.
 
 ### Chore: Xvfb in the Dev Container
 - **`.devcontainer/setup.sh` installs `xvfb`** (only if `Xvfb` is missing): interactive Cloudflare Turnstile rejects every headless browser, while headful Patchright under `xvfb-run` clears filmfans, kinoger, serienfans, ddlspot, ddlvalley and scnsrc (anti-bot Phase 0, `docs/plans/antibot-patchright.md`).
