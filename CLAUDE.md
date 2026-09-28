@@ -129,7 +129,7 @@ Step-by-step guides:
 - **No Docker**: `playwright-mcp` runs over stdio from `.mcp.json` (`npx @playwright/mcp@<pinned>`). `setup.sh` installs the matching Chromium (`playwright install --with-deps chromium`); keep `PLAYWRIGHT_MCP_VERSION` in `setup.sh` in sync with `.mcp.json`.
 - **Node 22** comes from the devcontainer `node` feature (nvm, `/usr/local/share/nvm/current/bin`), not apt (Debian's Node 18 breaks `npx skills`). `setup.sh` installs npm globals without `sudo` (openspec, `@caveman-ai/cli`) and the caveman skills on every attach.
 - **Broken `.venv` shebangs** (`Command not found: pytest`) after a workspace path change: `poetry env remove --all && poetry install --with dev`.
-- **Mixed line endings** (most `.py`/`.md` CRLF, some LF): preserve each file's EOL when editing with scripts.
+- **Line endings**: `.md` files are LF (enforced via `.gitattributes`). `.py` files are still mixed (most CRLF, some LF): preserve each file's EOL when editing with scripts.
 
 ***
 

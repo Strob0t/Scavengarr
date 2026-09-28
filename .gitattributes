@@ -1,0 +1,2 @@
+# Markdown docs use LF line endings
+*.md text eol=lf

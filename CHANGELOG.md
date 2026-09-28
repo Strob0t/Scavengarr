@@ -14,6 +14,7 @@ growth of the test suite from 160 to 4043 tests.
 
 ### Docs: Slim CLAUDE.md
 - **`CLAUDE.md` cut from 42 KB to 9 KB**: it is loaded into every AI session, so it now keeps only the rules that apply to every change (workflow, dependency rule, Python rules, mock patterns, dev container pitfalls) and links to `docs/` for details. The hand-maintained test file tree was dropped (derivable from `tests/`), the unconfigured docs-mcp-server section removed.
+- **Markdown line endings unified**: all `.md` files converted to LF; `.gitattributes` enforces `eol=lf` for `*.md`.
 - **Guides moved to feature docs**: "Adding a New Plugin" (site analysis, mandatory search standards) now lives in `docs/features/python-plugins.md`, "Adding a New Resolver" (non-XFS workflow, test checklist, JDownloader sources) in `docs/features/hoster-resolvers.md`.
 
 ### Refactor: StremioStreamUseCase Split
