@@ -289,7 +289,7 @@ The system provides a stable download endpoint that delivers a `.crawljob` file 
 - Integration: HTTP router ↔ use case ↔ adapter with HTTP mocking.
 - Optional E2E: real plugin fixtures, but deterministic (no external sites in CI).
 
-### Current test suite (4043 tests)
+### Current test suite (4099 tests)
 
 ```
 tests/
@@ -351,6 +351,7 @@ tests/
       test_health_prober.py            # HEAD/GET probing + CF detection with respx mocks (17 tests)
       test_search_prober.py            # Plugin search + hoster checks (8 tests)
       test_scoring_scheduler.py        # Health/search cycles + tick (14 tests)
+      test_animeloads_plugin.py        # animeloads plugin tests (Playwright, DDoS-Guard, pagination)
       test_aniworld_plugin.py          # aniworld plugin tests
       test_boerse_plugin.py            # boerse plugin tests
       test_burningseries_plugin.py     # burningseries plugin tests

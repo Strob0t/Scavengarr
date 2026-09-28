@@ -12,6 +12,9 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 breaker, global concurrency pool, graceful shutdown, multi-language search, and
 growth of the test suite from 160 to 4043 tests.
 
+### animeloads Plugin Tests
+- **56 unit tests** for the `animeloads` Playwright plugin (`tests/unit/infrastructure/test_animeloads_plugin.py`): category mapping/filtering, `SearchResult` building (embed vs. media page links, metadata, truncation), search flow incl. season/episode restriction, pagination (page URLs, empty page stop, `_MAX_PAGES`, `max_results`), DDoS-Guard wait handling, and page cleanup on errors. `animeloads` was the only plugin without unit tests.
+
 ### Dependency Cleanup
 - **Fix: uninstallable lockfile**: `poetry.lock` pinned `lancedb 0.5.7` (pulled in via `crewai-tools`), which no longer exists on PyPI — `poetry install` failed on every fresh environment. Removed the unused dev dependencies `crewai`, `crewai-tools[mcp]`, `openinference-instrumentation-crewai` and `mcp` (not imported anywhere) and re-locked; ~100 transitive packages dropped.
 
