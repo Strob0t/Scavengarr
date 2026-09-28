@@ -230,7 +230,7 @@ Always obtain pages via `_new_page()` / `_ensure_page()` (or the context from `_
 - `_verify_domain()` — navigates the persistent page to each domain (5 s timeout); status `< 400` and a resolved Cloudflare challenge are required; otherwise the next domain is tried
 - `isolated_search()` — creates a fresh `BrowserContext` per call (stealth applied), calls `_prepare_context(ctx)`, runs `search()` with the context set in a `ContextVar`, then closes all pages and the context
 - `_prepare_context(ctx)` — hook for authenticated plugins to inject session cookies (`ctx.add_cookies()`) into the per-request context
-- `_serialize_search` (default `False`) — when `True`, `isolated_search()` runs `search()` behind a lock on the persistent context instead (plugins that depend on page state, e.g. `moflix`, `streamworld`)
+- `_serialize_search` (default `False`) — when `True`, `isolated_search()` runs `search()` behind a lock on the persistent context instead (plugins that depend on page state, e.g. `moflix`)
 - `cleanup()` — closes page and context; closes browser and Playwright only when the plugin launched them itself (not with the shared pool)
 
 ---

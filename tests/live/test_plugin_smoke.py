@@ -66,7 +66,6 @@ PLAYWRIGHT_PLUGINS: list[tuple[str, str]] = [
     ("moflix", "Iron Man"),
     ("mygully", "Iron Man"),
     ("scnsrc", "Iron Man"),
-    ("streamworld", "Iron Man"),
 ]
 
 # ---------------------------------------------------------------------------

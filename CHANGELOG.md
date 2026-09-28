@@ -38,6 +38,9 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 - **No forced User-Agent in browser contexts**: contexts keep Patchright's real UA (a fixed Chrome 131 UA disagreed with the Chromium client hints). New `_browser_user_agent` (default `None`) and `_context_options()`, also used by the boerse/mygully login contexts; `_user_agent` stays for httpx side requests.
 - **`PlaywrightPluginBase._stealth` renamed to `_block_resources`**: it now only controls aborting image/font/CSS requests; singleton and per-request contexts share `_configure_context()`. `StealthPool` no longer applies playwright-stealth.
 
+### Removed: streamworld Plugin
+- The site is gone: streamworld.ws serves an empty web-server page and streamworld.co became a legal watchlist/subscription app without hoster links. Plugin, unit tests and live smoke entry removed; 41 plugins (34 httpx + 7 Playwright).
+
 ### Test: Live Smoke Tests Use the Browser Fallback
 - `tests/live/conftest.py` wires the Cloudflare browser fallback (`StealthPool` via `HttpxPluginBase.set_browser_fetcher`) like `composition.py`, per test and lazily (Chromium only starts on the first browser fetch). Before, filmfans, kinoger and serienfans failed the live smoke with 0 results although they work in the app. filmfans and serienfans still hit the 60 s smoke budget (the sites rate-limit, a full run takes ~140 s) and show up as skipped.
 
@@ -783,5 +786,5 @@ Foundation of the project: FastAPI server, Scrapy scraping engine, plugin loader
 
 Current known issues:
 
-- **Plugins still returning 0 results** (live smoke, 2026-09-28): hdfilme (site search answers with a PHP fatal error; its film links moved to the devideosrc.co player, which the shared helper supports), streamworld (site gone: streamworld.ws is an empty web server, streamworld.co became a legal watchlist app without links; disable it with `plugins.overrides.streamworld.enabled: false`). Triage and fix plan: `docs/plans/plugin-repair.md`.
+- **Plugins still returning 0 results** (live smoke, 2026-09-28): hdfilme (site search answers with a PHP fatal error; its film links moved to the devideosrc.co player, which the shared helper supports). Triage and fix plan: `docs/plans/plugin-repair.md`.
 - **Cloudflare-protected sites need a headful browser**: ddlspot, ddlvalley, scnsrc, filmfans, kinoger and serienfans only pass the interactive Turnstile with Patchright headful (Xvfb, `playwright.headless: false`) and `playwright.browser_fallback: true`. filmfans and serienfans rate-limit bursts (429): an uncached search takes ~2–2.5 min and can exceed Prowlarr's request timeout. See `docs/plans/antibot-patchright.md`.

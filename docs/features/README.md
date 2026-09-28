@@ -12,7 +12,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** and **S
 |---|---|
 | Version | 0.1.0 |
 | Python | 3.12–3.13 |
-| Plugins | 42 (34 httpx + 8 Playwright) |
+| Plugins | 41 (34 httpx + 7 Playwright) |
 | Hoster resolvers | 56 (18 individual + 12 generic DDL + 26 XFS) |
 | Tests | 4113 offline (3919 unit + 169 E2E + 25 integration) + 38 live |
 | Architecture | Clean Architecture |
@@ -64,7 +64,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** and **S
 | [More Plugins](../plans/more-plugins.md) | Plugin inventory and remaining candidates |
 | [Integration Tests](../plans/integration-tests.md) | Implemented: integration, E2E, and live smoke tests |
 | [Search Caching](../plans/search-caching.md) | Implemented: search result cache with `X-Cache` header |
-| [Plugin Repair](../plans/plugin-repair.md) | Done: repaired plugins; hdfilme (site search broken) and streamworld (site gone) remain |
+| [Plugin Repair](../plans/plugin-repair.md) | Done: repaired plugins; hdfilme (site search broken) remains; streamworld removed (site gone) |
 | [Anti-Bot Hardening](../plans/antibot-patchright.md) | Done: Patchright instead of playwright-stealth, Turnstile solver, browser fallback port for httpx plugins |
 
 ### Refactoring History

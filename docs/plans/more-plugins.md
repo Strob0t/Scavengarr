@@ -2,13 +2,13 @@
 
 # Plan: Additional Plugins
 
-**Status:** Mostly complete — 42 plugins implemented (verified 2026-09-28; 11 currently broken, see `docs/plans/plugin-repair.md`)
+**Status:** Mostly complete — 41 plugins implemented (2026-09-28: streamworld removed, site gone; hdfilme blocked upstream, see `docs/plans/plugin-repair.md`)
 **Priority:** Low (ongoing)
 **Related:** `plugins/`, `docs/features/python-plugins.md`
 
 ## Current State
 
-Scavengarr ships with **42 plugins** covering German and English streaming, DDL, and anime sites:
+Scavengarr ships with **41 plugins** covering German and English streaming, DDL, and anime sites:
 
 ### Httpx plugins (33)
 
@@ -60,7 +60,7 @@ Scavengarr ships with **42 plugins** covering German and English streaming, DDL,
 | moflix | moflix-stream.xyz | stream | Internal API, Cloudflare |
 | mygully | mygully.com | download | Cloudflare + vBulletin auth |
 | scnsrc | scnsrc.me | download | Scene releases, multi-domain |
-| streamworld | streamworld.ws | stream | Playwright mode |
+| ~~streamworld~~ | streamworld.ws | stream | removed 2026-09-28 (site gone) |
 
 ## Remaining Candidates
 

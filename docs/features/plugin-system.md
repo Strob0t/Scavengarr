@@ -2,7 +2,7 @@
 
 # Plugin System
 
-> How Scavengarr discovers, loads, configures and calls its 42 Python plugins. For writing a plugin, see [Python Plugins](./python-plugins.md).
+> How Scavengarr discovers, loads, configures and calls its 41 Python plugins. For writing a plugin, see [Python Plugins](./python-plugins.md).
 
 ---
 

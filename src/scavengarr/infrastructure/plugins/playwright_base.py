@@ -94,7 +94,7 @@ class PlaywrightPluginBase:
     # --- Request isolation ---
     # When True, search() is serialized with a lock instead of using
     # per-request BrowserContext isolation (for plugins that rely on
-    # persistent page state, e.g. streamworld, moflix).
+    # persistent page state, e.g. moflix).
     _serialize_search: bool = False
 
     def __init__(self) -> None:
