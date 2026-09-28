@@ -257,6 +257,8 @@ class TestSearch:
         assert results[0].title == "SpongeBob S01"
         assert "keeplinks.org" in results[0].download_link
         assert len(results[0].download_links) == 2
+        # the session (login + Cloudflare clearance) reaches the search context
+        context.add_cookies.assert_awaited_with(_SESSION_COOKIES)
         assert results[0].download_links[0]["hoster"] == "rapidgator"
         assert results[0].download_links[1]["hoster"] == "ddownload"
 
@@ -536,6 +538,35 @@ class TestPostLinkParser:
 
 
 class TestThreadLinkParser:
+    def test_result_anchors_win_over_sidebar_links(self) -> None:
+        html = """
+        <a href="showthread.php?t=3795558">Myst Masterpiece Edition</a>
+        <a href="showthread.php?t=111" id="thread_title_111">Iron Man 3</a>
+        <a href="showthread.php?t=222&amp;highlight=iron"
+           id="thread_title_222">Iron Man 2</a>
+        <a href="showthread.php?t=111&amp;goto=newpost">new</a>
+        """
+        parser = _ThreadLinkParser("https://boerse.am")
+        parser.feed(html)
+        assert parser.thread_urls == [
+            "https://boerse.am/showthread.php?t=111",
+            "https://boerse.am/showthread.php?t=222",
+        ]
+
+    def test_next_page_is_rel_next_not_last(self) -> None:
+        html = """
+        <a rel="next" href="search.php?searchid=1&amp;pp=30&amp;page=2">›</a>
+        <a href="search.php?searchid=1&amp;pp=30&amp;page=13">»</a>
+        """
+        parser = _ThreadLinkParser("https://boerse.am")
+        parser.feed(html)
+        assert parser.next_page_url == "search.php?searchid=1&pp=30&page=2"
+
+    def test_last_page_link_alone_is_not_next(self) -> None:
+        parser = _ThreadLinkParser("https://boerse.am")
+        parser.feed('<a href="search.php?searchid=1&amp;page=13">»</a>')
+        assert parser.next_page_url == ""
+
     def test_thread_links_extracted(self) -> None:
         html = """
         <a href="showthread.php?t=123">Thread 1</a>

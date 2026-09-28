@@ -143,49 +143,67 @@ class _PostLinkParser(HTMLParser):
 class _ThreadLinkParser(HTMLParser):
     """Extract thread links from vBulletin search results page.
 
-    Normalizes URLs by thread ID to avoid duplicates from
-    highlight/goto/post variants of the same thread.
-    Also detects the "Next Page" navigation link for pagination.
+    Search results are the ``<a id="thread_title_NNN">`` anchors; when a page
+    has them, other thread links (sidebar "latest threads" etc.) are ignored.
+    Normalizes URLs by thread ID to avoid duplicates from highlight/goto/post
+    variants of the same thread. The "Next Page" link is ``rel="next"``
+    (text ``›``); ``»`` is the *last* page.
     """
 
     def __init__(self, base_url: str) -> None:
         super().__init__()
-        self.thread_urls: list[str] = []
         self.next_page_url: str = ""
         self._base_url = base_url
-        self._seen_ids: set[str] = set()
+        self._titled: list[str] = []  # from thread_title_* anchors
+        self._other: list[str] = []
+        self._seen_titled: set[str] = set()
+        self._seen_other: set[str] = set()
         self._in_nav_a = False
         self._nav_a_href = ""
         self._nav_a_text = ""
 
-    def _handle_thread_link(self, href: str) -> None:
+    @property
+    def thread_urls(self) -> list[str]:
+        return self._titled or self._other
+
+    def _thread_url(self, href: str) -> str:
         m = re.search(r"[?&]t=(\d+)", href)
         if m:
-            tid = m.group(1)
-            if tid in self._seen_ids:
-                return
-            self._seen_ids.add(tid)
-            url = f"{self._base_url}/showthread.php?t={tid}"
-            self.thread_urls.append(url)
-        elif "/threads/" in href:
-            if not href.startswith("http"):
-                href = f"{self._base_url}/{href.lstrip('/')}"
-            if href not in self.thread_urls:
-                self.thread_urls.append(href)
+            return f"{self._base_url}/showthread.php?t={m.group(1)}"
+        if "/threads/" in href:
+            return (
+                href
+                if href.startswith("http")
+                else f"{self._base_url}/{href.lstrip('/')}"
+            )
+        return ""
+
+    def _add(self, url: str, *, titled: bool) -> None:
+        urls, seen = (
+            (self._titled, self._seen_titled)
+            if titled
+            else (self._other, self._seen_other)
+        )
+        if url and url not in seen:
+            seen.add(url)
+            urls.append(url)
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag != "a":
             return
         attr_dict = dict(attrs)
-        href = attr_dict.get("href", "")
+        href = attr_dict.get("href", "") or ""
         if not href:
             return
 
         if "showthread.php" in href or "/threads/" in href:
-            self._handle_thread_link(href)
+            titled = (attr_dict.get("id") or "").startswith("thread_title_")
+            self._add(self._thread_url(href), titled=titled)
 
-        # Detect pagination links (search.php?...&page=N)
+        # Pagination links (search.php?...&page=N)
         if "search.php" in href and "page=" in href:
+            if attr_dict.get("rel") == "next":
+                self.next_page_url = href
             self._in_nav_a = True
             self._nav_a_href = href
             self._nav_a_text = ""
@@ -198,8 +216,7 @@ class _ThreadLinkParser(HTMLParser):
         if tag == "a" and self._in_nav_a:
             self._in_nav_a = False
             text = self._nav_a_text.strip().lower()
-            # vBulletin ">" or "Next" link
-            if text in {">", "next", "»"}:
+            if not self.next_page_url and text in {">", "›", "next"}:
                 self.next_page_url = self._nav_a_href
 
 
@@ -518,6 +535,10 @@ class BoersePlugin(PlaywrightPluginBase):
     ) -> list[SearchResult]:
         """Search boerse.sx and return results with download links."""
         await self._ensure_session()
+        # isolated_search() prepares its context before the login above, and
+        # plain search() uses the singleton context: hand the session (login
+        # + Cloudflare clearance) to the context this search really uses
+        await self._prepare_context(await self._ensure_context())
 
         forum_id = _CATEGORY_FORUM_MAP.get(category or 2000, "30")
         thread_urls = await self._search_threads(query, forum_id)

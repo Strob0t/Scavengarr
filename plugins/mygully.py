@@ -518,6 +518,10 @@ class MyGullyPlugin(PlaywrightPluginBase):
     ) -> list[SearchResult]:
         """Search mygully.com and return results with download links."""
         await self._ensure_session()
+        # isolated_search() prepares its context before the login above, and
+        # plain search() uses the singleton context: hand the session (login
+        # + Cloudflare clearance) to the context this search really uses
+        await self._prepare_context(await self._ensure_context())
 
         forum_id = _CATEGORY_FORUM_MAP.get(category or 2000, _DEFAULT_FORUM_ID)
         thread_urls = await self._search_threads(query, forum_id)

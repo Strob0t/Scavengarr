@@ -38,6 +38,10 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 - **No forced User-Agent in browser contexts**: contexts keep Patchright's real UA (a fixed Chrome 131 UA disagreed with the Chromium client hints). New `_browser_user_agent` (default `None`) and `_context_options()`, also used by the boerse/mygully login contexts; `_user_agent` stays for httpx side requests.
 - **`PlaywrightPluginBase._stealth` renamed to `_block_resources`**: it now only controls aborting image/font/CSS requests; singleton and per-request contexts share `_configure_context()`. `StealthPool` no longer applies playwright-stealth.
 
+### Fix: boerse (and mygully session hand-over)
+- **Back to results** (live: 74 relevant results for "Iron Man", ~200 s; was a "network error"): the login ran in its own context, but its session cookies (and Cloudflare clearance) only reached a context through `_prepare_context()`, which `isolated_search()` calls *before* `search()` logs in, and a plain `search()` never. The search page therefore met a fresh challenge without session ("no searchform"). `search()` now hands the session to the context it actually uses right after `_ensure_session()`; mygully uses the same pattern and gets the same fix.
+- Search results are the `a#thread_title_NNN` anchors only; the sidebar's "latest threads" links used to leak in (games like "Caves of Qud" for "Iron Man"). The next page is the `rel="next"` link (`›`); `»` is vBulletin's *last* page and used to skip straight to it.
+
 ### Fix: dataload
 - **Back to results** (live: 107 for "Iron Man" in ~34 s; was 0): the search POST lacked XenForo's CSRF field, which the forum now enforces (HTTP 400). The session token is read from the post-login page (`<html data-csrf="...">`) and sent as `_xfToken`. Search result pages paginate with `?page=N`, which the parser missed (it only knew `page-N`); the next page now comes from XenForo's `pageNav-jump--next` link, so pagination works again (was 1 page).
 
@@ -776,5 +780,5 @@ Foundation of the project: FastAPI server, Scrapy scraping engine, plugin loader
 
 Current known issues:
 
-- **Plugins still returning 0 results** (live smoke, 2026-09-28): hdfilme (site search answers with a PHP fatal error; its film links moved to the devideosrc.co player, which the shared helper supports), streamworld (site gone: streamworld.ws is an empty web server, streamworld.co became a legal watchlist app without links; disable it with `plugins.overrides.streamworld.enabled: false`), boerse (plugin reports a network error). Triage and fix plan: `docs/plans/plugin-repair.md`.
+- **Plugins still returning 0 results** (live smoke, 2026-09-28): hdfilme (site search answers with a PHP fatal error; its film links moved to the devideosrc.co player, which the shared helper supports), streamworld (site gone: streamworld.ws is an empty web server, streamworld.co became a legal watchlist app without links; disable it with `plugins.overrides.streamworld.enabled: false`). Triage and fix plan: `docs/plans/plugin-repair.md`.
 - **Cloudflare-protected sites need a headful browser**: ddlspot, ddlvalley, scnsrc, filmfans, kinoger and serienfans only pass the interactive Turnstile with Patchright headful (Xvfb, `playwright.headless: false`) and `playwright.browser_fallback: true`. filmfans and serienfans rate-limit bursts (429): an uncached search takes ~2–2.5 min and can exceed Prowlarr's request timeout. See `docs/plans/antibot-patchright.md`.
