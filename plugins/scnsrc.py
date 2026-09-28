@@ -4,7 +4,8 @@ Scrapes scnsrc.me (WordPress scene info blog) with:
 - Playwright for Cloudflare Turnstile bypass
 - WordPress search via /?s=query
 - Category filtering via /category/xxx/?s=query URL prefix
-- Single-stage: all data (title, release name, download links) on listing pages
+- Two-stage: search pages list posts (title, category); release name and
+  download links come from each post page (bounded parallel fetches)
 - Download links point to torrent search (limetorrents) and usenet (nzbindex)
 - Multi-domain support with automatic fallback (scnsrc.me, scenesource.me, scnsrc.net)
 
@@ -13,6 +14,7 @@ No authentication required.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from html.parser import HTMLParser
 from urllib.parse import urljoin
@@ -31,6 +33,8 @@ _DOMAINS = [
     "www.scnsrc.net",
     "scnsrc.net",
 ]
+
+_RETRY_BACKOFF_S: tuple[float, ...] = (2.0, 4.0)  # rate-limited pages
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -298,6 +302,67 @@ def _category_to_torznab(category_name: str) -> int:
     return _CATEGORY_NAME_MAP.get(key, 2000)
 
 
+class _PostPageParser(HTMLParser):
+    """Extract release name and download links from a single post page.
+
+    Covers both layouts: TV posts (``tvshow_info`` block) and film/P2P posts
+    (info table). In both, the release name is the first ``<strong>`` that
+    looks like a scene name, and the download links are anchors labelled
+    Torrent / Usenet / NZB inside ``div.storycontent``.
+    """
+
+    _LINK_LABELS = frozenset({"torrent", "usenet", "nzb"})
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.release_name = ""
+        self.links: list[dict[str, str]] = []
+        self._story_depth = 0  # >0 while inside div.storycontent
+        self._in_strong = False
+        self._strong_text = ""
+        self._href = ""
+        self._a_text = ""
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attr_dict = dict(attrs)
+        if tag == "div":
+            classes = (attr_dict.get("class") or "").split()
+            if self._story_depth:
+                self._story_depth += 1
+            elif "storycontent" in classes:
+                self._story_depth = 1
+        if not self._story_depth:
+            return
+        if tag == "strong":
+            self._in_strong = True
+            self._strong_text = ""
+        elif tag == "a":
+            self._href = attr_dict.get("href") or ""
+            self._a_text = ""
+
+    def handle_data(self, data: str) -> None:
+        if self._in_strong:
+            self._strong_text += data
+        if self._href:
+            self._a_text += data
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "div" and self._story_depth:
+            self._story_depth -= 1
+        elif tag == "strong" and self._in_strong:
+            self._in_strong = False
+            text = self._strong_text.strip()
+            if not self.release_name and "." in text and len(text) > 10:
+                self.release_name = text
+        elif tag == "a" and self._href:
+            label = self._a_text.strip().lower()
+            if label in self._LINK_LABELS and self._href.startswith("http"):
+                self.links.append(
+                    {"hoster": label, "link": _clean_wayback_url(self._href)}
+                )
+            self._href = ""
+
+
 class ScnSrcPlugin(PlaywrightPluginBase):
     """Python plugin for scnsrc.me using Playwright.
 
@@ -312,17 +377,32 @@ class ScnSrcPlugin(PlaywrightPluginBase):
     default_language = "en"
 
     _domains = _DOMAINS
+    # nginx rate-limits post pages (503) under parallel fetches
+    _max_concurrent = 2
 
     async def _fetch_page(self, url: str) -> str:
-        """Navigate to a URL and return page content."""
-        ctx = await self._ensure_context()
-        page = await ctx.new_page()
-        try:
-            await self._navigate_and_wait(page, url)
-            return await page.content()
-        finally:
-            if not page.is_closed():
-                await page.close()
+        """Navigate to a URL and return page content ("" on failure).
+
+        Server-rendered WordPress, so no ``networkidle`` wait. Rate-limit
+        503s are retried with backoff.
+        """
+        return await self._fetch_page_html(
+            url, wait_for_idle=False, retry_backoff_s=_RETRY_BACKOFF_S
+        )
+
+    async def _enrich_post(
+        self, post: dict[str, str | list[dict[str, str]]]
+    ) -> dict[str, str | list[dict[str, str]]]:
+        """Fill release name and links from the post page.
+
+        Search pages only list title and category; the ``tvshow_info`` block
+        with the download links lives on the post page.
+        """
+        if post.get("links") or not post.get("url"):
+            return post
+        parser = _PostPageParser()
+        parser.feed(await self._fetch_page(str(post["url"])))
+        return {**post, "release_name": parser.release_name, "links": parser.links}
 
     async def _search_page(
         self,
@@ -387,6 +467,16 @@ class ScnSrcPlugin(PlaywrightPluginBase):
 
         all_posts = all_posts[: self.effective_max_results]
 
+        sem = self._new_semaphore()
+
+        async def _bounded_enrich(
+            post: dict[str, str | list[dict[str, str]]],
+        ) -> dict[str, str | list[dict[str, str]]]:
+            async with sem:
+                return await self._enrich_post(post)
+
+        all_posts = list(await asyncio.gather(*map(_bounded_enrich, all_posts)))
+
         results: list[SearchResult] = []
         for post in all_posts:
             links = post.get("links", [])
@@ -397,9 +487,11 @@ class ScnSrcPlugin(PlaywrightPluginBase):
             cat_name = post.get("category", "")
             torznab_cat = category if category else _category_to_torznab(str(cat_name))
 
+            # Scene release name (from the post page) parses best downstream
+            title = str(post.get("release_name") or post["title"])
             results.append(
                 SearchResult(
-                    title=str(post["title"]),
+                    title=title,
                     download_link=primary_link,
                     download_links=links,
                     source_url=str(post.get("url", "")),

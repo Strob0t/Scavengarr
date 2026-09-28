@@ -427,6 +427,67 @@ class TestDomains:
 # ---------------------------------------------------------------------------
 
 
+_FILM_POST_HTML = """
+<div class="post" id="post-9"><h2><a href="/iron-cross/">Iron Cross</a></h2>
+<div class="storycontent">
+  <p>Group <strong>CMRG </strong>has released 1080p WEB-DL.</p>
+  <table><tr><td><p>
+    <strong>Genre:</strong> War <a href="https://www.imdb.com/title/tt1/">IMDB</a>
+  </p><p>
+    <strong>Iron.Cross.The.Road.to.Normandy.2022.1080p.WEB-DL.DD5.1.H.264-CMRG</strong>
+    <a href="https://nfomation.net/info/1.nfo">NFO </a>|
+    <a href="https://www.limetorrents.cc/search/all/Iron.Cross.2022">Torrent</a> |
+    <a href="https://nzbindex.nl/search?q=Iron.Cross.2022">Usenet</a>
+  </p></td></tr></table>
+</div></div>
+<div class="sidebar"><a href="https://rapidgator.net/ad">Download</a></div>
+"""
+
+
+class TestPostPageParser:
+    """Post pages: release name + Torrent/Usenet links from storycontent."""
+
+    def test_film_layout(self) -> None:
+        parser = _mod._PostPageParser()
+        parser.feed(_FILM_POST_HTML)
+
+        assert parser.release_name == (
+            "Iron.Cross.The.Road.to.Normandy.2022.1080p.WEB-DL.DD5.1.H.264-CMRG"
+        )
+        assert parser.links == [
+            {
+                "hoster": "torrent",
+                "link": "https://www.limetorrents.cc/search/all/Iron.Cross.2022",
+            },
+            {
+                "hoster": "usenet",
+                "link": "https://nzbindex.nl/search?q=Iron.Cross.2022",
+            },
+        ]
+
+    def test_tv_layout(self) -> None:
+        html = """
+        <div class="storycontent"><div class="tvshow_info">
+          <p><strong>Iron.Man.2011.S01E12.720p.HDTV.x264-MOMENTUM</strong></p>
+          <p><strong>Download:</strong>
+            <a href="https://www.limetorrents.cc/search/all/Iron.Man">Torrent</a>
+            <a href="https://nzbindex.nl/search?q=Iron.Man">Usenet</a></p>
+          <p><strong>Info:</strong> <a href="https://www.imdb.com/x">IMDB</a></p>
+        </div></div>
+        """
+        parser = _mod._PostPageParser()
+        parser.feed(html)
+
+        assert parser.release_name == "Iron.Man.2011.S01E12.720p.HDTV.x264-MOMENTUM"
+        assert [link["hoster"] for link in parser.links] == ["torrent", "usenet"]
+
+    def test_ignores_links_outside_storycontent(self) -> None:
+        parser = _mod._PostPageParser()
+        parser.feed('<div class="sidebar"><a href="https://x/t">Torrent</a></div>')
+        assert parser.links == []
+        assert parser.release_name == ""
+
+
 class TestPluginSearch:
     async def test_search_returns_results(self) -> None:
         plugin = _make_plugin()
@@ -514,13 +575,54 @@ class TestPluginSearch:
         """
         search_page = _make_mock_page(html)
         empty_page = _make_mock_page("<html></html>")
-        context = _make_mock_context(pages=[search_page, empty_page])
+        post_page = _make_mock_page(html)  # post page has no links either
+        context = _make_mock_context(pages=[search_page, empty_page, post_page])
 
         plugin._browser = _make_mock_browser(context)
         plugin._context = context
 
         results = await plugin.search("test")
         assert results == []
+
+    async def test_links_loaded_from_post_page(self) -> None:
+        """Search pages list only title/category; links come from the post."""
+        plugin = _make_plugin()
+        plugin._domain_verified = True
+
+        listing = """
+        <div class="post" id="post-7">
+          <h2><a href="https://www.scnsrc.me/iron-man-s01e12/">Iron Man S01E12</a></h2>
+          <div class="cat meta"><a href="/category/tv/" rel="category tag">TV</a></div>
+        </div>
+        """
+        post = """
+        <div class="post" id="post-7">
+          <h2><a href="https://www.scnsrc.me/iron-man-s01e12/">Iron Man S01E12</a></h2>
+          <div class="storycontent"><div class="tvshow_info">
+            <p><strong>Iron.Man.2011.S01E12.720p.HDTV.x264-MOMENTUM</strong></p>
+            <p><strong>Download:</strong>
+              <a href="https://www.limetorrents.cc/search/all/Iron.Man">Torrent</a>
+              <a href="https://nzbindex.nl/search?q=Iron.Man">Usenet</a></p>
+          </div></div>
+        </div>
+        """
+        context = _make_mock_context(
+            pages=[
+                _make_mock_page(listing),
+                _make_mock_page("<html></html>"),
+                _make_mock_page(post),
+            ]
+        )
+        plugin._browser = _make_mock_browser(context)
+        plugin._context = context
+
+        results = await plugin.search("iron man")
+
+        assert len(results) == 1
+        assert results[0].title == "Iron.Man.2011.S01E12.720p.HDTV.x264-MOMENTUM"
+        assert results[0].download_link.startswith("https://www.limetorrents.cc/")
+        assert len(results[0].download_links) == 2
+        assert results[0].category == 5000
 
     async def test_search_paginates(self) -> None:
         """Verify pagination fetches multiple pages."""
