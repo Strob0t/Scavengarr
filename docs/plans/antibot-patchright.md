@@ -2,7 +2,7 @@
 
 # Plan: Anti-Bot Hardening (Patchright + Browser Fallback)
 
-**Status:** Phase 0 done (2026-09-28): headless fails everywhere, headful Patchright under Xvfb passes 6/6 → Phase 1 + 2 go, headful required
+**Status:** Phase 0 done (2026-09-28): headless fails everywhere, headful Patchright under Xvfb passes 6/6 → Phase 1 + 2 go, headful required; decisions recorded, Phase 1 next
 **Priority:** High (blocks 6 plugins and 3 hoster resolvers)
 **Related:** `docs/plans/plugin-repair.md`, `CHANGELOG.md` → `KNOWN_ISSUES`, `src/scavengarr/infrastructure/plugins/{playwright_base,shared_browser,httpx_base}.py`, `src/scavengarr/infrastructure/hoster_resolvers/{stealth_pool,cloudflare,supervideo,probe,xfs}.py`, `src/scavengarr/interfaces/composition.py`
 
@@ -98,6 +98,12 @@ Conclusions:
 
 Decision: go ahead with Phase 1 and Phase 2, headful under Xvfb.
 
+### Decisions (user, 2026-09-28)
+
+- **Order**: anti-bot Phase 1 + 2 first, then the non-Cloudflare repairs from `plugin-repair.md`.
+- **RAM budget**: production hosts have 1–4 GB free. Headful only when a display is available (Xvfb present, `DISPLAY` set); otherwise headless with a warning. Browser fallback for httpx plugins stays on by default, but browser fetches are capped at 2 concurrent pages (`min(stremio.max_concurrent_playwright, 2)`, no new knob). Phase 1 measures headful vs. headless RSS and records it here.
+- **Captcha hosters** (veev, vinovo, wolfstream): after Phase 2, collect current embed URLs via working plugins and test them headful; flip `needs_captcha` per hoster only if they pass.
+
 ## Phase 1 — Patchright instead of playwright + playwright-stealth
 
 Changes:
@@ -133,7 +139,7 @@ Design:
 
   Returns the rendered page body after the challenge cleared, `None` on failure. Two implementations are planned (StealthPool now, FlareSolverr in Phase 3), so the port is justified.
 
-- **Browser package** `src/scavengarr/infrastructure/browser/`: move `SharedBrowserPool` (from `plugins/`), `StealthPool` (from `hoster_resolvers/`) and `cloudflare.py` here, keeping re-exports at the old paths only if needed for a transition commit. `StealthPool` obtains its browser from `SharedBrowserPool.warmup()` instead of launching a second Chromium → one browser process instead of two. Cloudflare handling gains a click step: wait briefly for auto-clear, then click the Turnstile checkbox via the challenge iframe locator (`iframe[src*="challenges.cloudflare.com"]` → `input[type=checkbox]`), then wait for the title to change; one shared helper used by `StealthPool` and `PlaywrightPluginBase._wait_for_cloudflare()` (the latter fixes ddlspot/ddlvalley/scnsrc). `StealthPool.fetch_text()` reuses the `goto` + this CF helper and is bounded by a semaphore sized from the existing `stremio.max_concurrent_playwright` setting (auto-tuned, no new knob).
+- **Browser package** `src/scavengarr/infrastructure/browser/`: move `SharedBrowserPool` (from `plugins/`), `StealthPool` (from `hoster_resolvers/`) and `cloudflare.py` here, keeping re-exports at the old paths only if needed for a transition commit. `StealthPool` obtains its browser from `SharedBrowserPool.warmup()` instead of launching a second Chromium → one browser process instead of two. Cloudflare handling gains a click step: wait briefly for auto-clear, then click the Turnstile checkbox via the challenge iframe locator (`iframe[src*="challenges.cloudflare.com"]` → `input[type=checkbox]`), then wait for the title to change; one shared helper used by `StealthPool` and `PlaywrightPluginBase._wait_for_cloudflare()` (the latter fixes ddlspot/ddlvalley/scnsrc). `StealthPool.fetch_text()` reuses the `goto` + this CF helper and is bounded by a semaphore of `min(stremio.max_concurrent_playwright, 2)` (RAM budget decision above; no new knob).
 
 - **HttpxPluginBase**:
   - `set_browser_fetcher(fetcher: BrowserFetcherPort | None)` classmethod, wired in `composition.py` next to `set_shared_http_client()`.
