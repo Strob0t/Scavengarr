@@ -10,6 +10,20 @@ from scavengarr.domain.plugins import SearchResult
 
 
 class TestCrawlJobFactoryCreate:
+    def test_resolve_plugin_defaults_to_none(
+        self, crawljob_factory: CrawlJobFactory, search_result: SearchResult
+    ) -> None:
+        job = crawljob_factory.create_from_search_result(search_result)
+        assert job.resolve_plugin is None
+
+    def test_passes_resolve_plugin(
+        self, crawljob_factory: CrawlJobFactory, search_result: SearchResult
+    ) -> None:
+        job = crawljob_factory.create_from_search_result(
+            search_result, resolve_plugin="nox"
+        )
+        assert job.resolve_plugin == "nox"
+
     def test_maps_title_to_package_name(
         self, crawljob_factory: CrawlJobFactory, search_result: SearchResult
     ) -> None:

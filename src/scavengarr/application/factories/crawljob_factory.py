@@ -41,12 +41,15 @@ class CrawlJobFactory:
         result: SearchResult,
         *,
         job_id: str | None = None,
+        resolve_plugin: str | None = None,
     ) -> CrawlJob:
         """Create CrawlJob from validated SearchResult.
 
         Args:
             result: Validated search result (with reachable download_link).
             job_id: Optional custom job ID (default: auto-generated UUID4).
+            resolve_plugin: Plugin that resolves the links at grab time
+                (``GrabResolvingPlugin``); ``None`` if the links are final.
 
         Returns:
             CrawlJob entity with JDownloader-compatible fields.
@@ -73,6 +76,7 @@ class CrawlJobFactory:
             auto_start=BooleanStatus.TRUE if self.auto_start else BooleanStatus.FALSE,
             priority=self.default_priority,
             filename=result.release_name,  # Override filename if present
+            resolve_plugin=resolve_plugin,
         )
 
         log.debug(

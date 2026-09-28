@@ -27,6 +27,10 @@ class Priority(str, Enum):
     LOWER = "LOWER"
 
 
+class CrawlJobResolveError(Exception):
+    """Grab-time link resolution failed (plugin error or no links left)."""
+
+
 @dataclass(frozen=True)
 class CrawlJob:
     """Represents a .crawljob file for JDownloader.
@@ -49,6 +53,8 @@ class CrawlJob:
         source_url: Original indexer page URL.
         created_at: Timestamp when job was created.
         expires_at: Expiration timestamp (default: 1 hour after creation).
+        resolve_plugin: Plugin that resolves ``validated_urls`` at grab time
+            (``GrabResolvingPlugin``); ``None`` once the links are final.
 
     JDownloader behavior flags:
         auto_start: Auto-start download when added (TRUE/FALSE/UNSET).
@@ -78,6 +84,7 @@ class CrawlJob:
     expires_at: datetime = field(
         default_factory=lambda: datetime.now(timezone.utc) + timedelta(hours=1)
     )
+    resolve_plugin: str | None = None
 
     # === Download Configuration ===
     download_folder: str | None = None

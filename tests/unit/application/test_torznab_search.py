@@ -40,6 +40,13 @@ class _FakePythonPlugin:
         return self._results
 
 
+class _FakeGrabResolvingPlugin(_FakePythonPlugin):
+    """Fake plugin that resolves its links at grab time."""
+
+    async def resolve_download(self, url: str) -> list[str]:
+        return [url]
+
+
 def _make_uc(
     registry: MagicMock | AsyncMock,
     engine: AsyncMock,
@@ -796,3 +803,28 @@ class TestPagination:
         response = await uc.execute(q)
         assert len(response.items) == 5
         assert response.items[0].title == "Movie 20"
+
+
+class TestGrabTimeResolution:
+    async def _saved_job(self, plugin: _FakePythonPlugin) -> Any:
+        result = SearchResult(title="Iron Man", download_link="https://nox.to/m?r=1")
+        plugin._results = [result]
+        registry = MagicMock()
+        registry.get.return_value = plugin
+        engine = AsyncMock()
+        engine.validate_results.return_value = [result]
+        repo = AsyncMock()
+
+        await _make_uc(registry, engine, repo).execute(
+            TorznabQuery(action="search", plugin_name=plugin.name, query="iron man")
+        )
+
+        return repo.save.call_args.args[0]
+
+    async def test_jobs_of_grab_resolving_plugins_are_marked(self) -> None:
+        job = await self._saved_job(_FakeGrabResolvingPlugin(name="nox"))
+        assert job.resolve_plugin == "nox"
+
+    async def test_jobs_of_other_plugins_are_final(self) -> None:
+        job = await self._saved_job(_FakePythonPlugin(name="filmpalast"))
+        assert job.resolve_plugin is None

@@ -121,6 +121,8 @@ class PluginProtocol(Protocol):
     ) -> list[SearchResult]: ...
 ```
 
+Optional capability: a plugin whose links sit behind a captcha or a download quota also implements `GrabResolvingPlugin` (`async def resolve_download(self, url: str) -> list[str]`). Its search results keep page URLs; the links are resolved only when an Arr app grabs the result (see [Grab-Time Resolution](./crawljob-system.md#grab-time-resolution); example: `plugins/nox.py`).
+
 ### Contract Requirements
 
 | Requirement | Details |

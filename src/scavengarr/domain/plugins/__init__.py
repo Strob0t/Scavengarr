@@ -1,4 +1,9 @@
-from .base import PluginProtocol, PluginProvides, SearchResult
+from .base import (
+    GrabResolvingPlugin,
+    PluginProtocol,
+    PluginProvides,
+    SearchResult,
+)
 from .exceptions import (
     DuplicatePluginError,
     PluginLoadError,
@@ -12,6 +17,7 @@ from .plugin_schema import (
 __all__ = [
     "AuthConfig",
     "DuplicatePluginError",
+    "GrabResolvingPlugin",
     "HttpOverrides",
     "PluginLoadError",
     "PluginNotFoundError",

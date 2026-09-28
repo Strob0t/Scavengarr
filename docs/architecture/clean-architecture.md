@@ -99,7 +99,7 @@ Entities and value types are implemented as `@dataclass` classes.
 | `StremioStreamRequest`, `StremioStream`, `StremioMetaPreview`, `RankedStream`, `StreamLanguage`, `TitleMatchInfo`, `CachedStreamLink`, `ResolvedStream` | `entities/stremio.py` | Frozen Stremio types: parsed request, output stream, catalog preview, ranked candidate, language, title info, cached hoster link, resolved video URL |
 | `ProbeResult`, `EwmaState`, `PluginScoreSnapshot` | `entities/scoring.py` | Frozen plugin-scoring types (probe outcome, EWMA state, per-plugin score snapshot) |
 
-`plugins/base.py` also defines `PluginProtocol` (`name`, `provides`, `async search(query, category, season, episode)`) and `PluginProvides = Literal["stream", "download", "both"]`.
+`plugins/base.py` also defines `PluginProtocol` (`name`, `provides`, `async search(query, category, season, episode)`), `PluginProvides = Literal["stream", "download", "both"]` and the optional, `runtime_checkable` capability `GrabResolvingPlugin` (`async resolve_download(url) -> list[str]`, links resolved when a CrawlJob is grabbed).
 
 ### Value Objects
 
@@ -174,6 +174,7 @@ The Application layer contains use cases that orchestrate business logic. It kno
 | Use Case | File | Type | Description |
 |---|---|---|---|
 | `TorznabSearchUseCase` | `use_cases/torznab_search.py` | async | Validate query, resolve plugin, cache lookup, `plugin.search()` + `engine.validate_results()`, cache write, build `TorznabItem`s + CrawlJobs, paginate; returns `SearchResponse(items, cache_hit)` |
+| `CrawlJobResolveUseCase` | `use_cases/crawljob_resolve.py` | async | Grab time: resolve a job's page URLs via its `GrabResolvingPlugin`, store and return the resolved job; `CrawlJobResolveError` → HTTP 502 |
 | `TorznabCapsUseCase` | `use_cases/torznab_caps.py` | sync | Build `TorznabCaps` for a named plugin (XML is rendered by the presenter) |
 | `TorznabIndexersUseCase` | `use_cases/torznab_indexers.py` | sync | List all discovered plugins with version/mode (returns `list[dict]`) |
 | `StremioStreamUseCase` | `use_cases/stremio_stream.py` | async | IMDb ID → title(s) → plugin fan-out → title/episode filter → convert, sort, dedup → cached play/proxy links; returns `list[StremioStream]` |

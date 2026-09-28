@@ -78,6 +78,7 @@ The frozen `CrawlJob` dataclass models a JDownloader `.crawljob` file with the f
 | `source_url` | `str \| None` | `None` | Original indexer detail page URL |
 | `created_at` | `datetime` | `now(UTC)` | Creation timestamp |
 | `expires_at` | `datetime` | `now(UTC) + 1h` | Expiration timestamp |
+| `resolve_plugin` | `str \| None` | `None` | Plugin that resolves `validated_urls` at grab time (see [Grab-Time Resolution](#grab-time-resolution)); `None` once the links are final |
 
 ### JDownloader Behavior Flags
 
@@ -286,7 +287,20 @@ A corrupt cache entry is therefore treated like a missing job (HTTP 404).
 - Content type `application/x-crawljob`
 - `Content-Disposition: attachment; filename="{package_name}_{job_id[:8]}.crawljob"` — characters other than letters, digits, space, `-` and `_` in the package name are replaced with `_`
 - Custom headers `X-CrawlJob-ID`, `X-CrawlJob-Package`, `X-CrawlJob-Links`
-- `404` — job not found or expired; `500` — repository or serialization failure
+- `404` — job not found or expired; `500` — repository or serialization failure; `502` — grab-time resolution failed (the Arr app treats the grab as failed and can try another release)
+
+### Grab-Time Resolution
+
+Some sites put their real download links behind a captcha or count every unlocked link against a download quota (nox: ALTCHA gateway plus hourly/weekly limits). Resolving those links for every search result would burn the quota on results nobody downloads. Such plugins implement the optional `GrabResolvingPlugin` protocol (`domain/plugins/base.py`):
+
+```python
+async def resolve_download(self, url: str) -> list[str]: ...
+```
+
+- At search time `TorznabSearchUseCase` stores the plugin name in `CrawlJob.resolve_plugin`; `validated_urls` still hold the page URLs the plugin returned.
+- When the job is grabbed, `CrawlJobResolveUseCase` (`application/use_cases/crawljob_resolve.py`) calls `resolve_download()` for each URL, drops duplicates, stores the job again with the resolved links and without `resolve_plugin`, and serves it. A repeated grab of the same job reuses the stored links (no second captcha).
+- No links, an unknown plugin or a plugin error → `CrawlJobResolveError` → HTTP `502`.
+- `/download/{job_id}/info` shows the stored (possibly unresolved) state and never triggers resolution.
 
 ### Job Info
 

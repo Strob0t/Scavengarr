@@ -40,6 +40,7 @@ def _serialize_crawljob(job: CrawlJob) -> str:
             "add_offline_link": job.add_offline_link,
             "overwrite_packagizer_enabled": job.overwrite_packagizer_enabled,
             "set_before_packagizer_enabled": job.set_before_packagizer_enabled,
+            "resolve_plugin": job.resolve_plugin,
         }
     )
 
@@ -71,6 +72,7 @@ def _deserialize_crawljob(data: str) -> CrawlJob:
         add_offline_link=d.get("add_offline_link", True),
         overwrite_packagizer_enabled=d.get("overwrite_packagizer_enabled", False),
         set_before_packagizer_enabled=d.get("set_before_packagizer_enabled", False),
+        resolve_plugin=d.get("resolve_plugin"),
     )
 
 

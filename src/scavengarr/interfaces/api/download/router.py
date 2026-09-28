@@ -8,6 +8,8 @@ import structlog
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 
+from scavengarr.application.use_cases.crawljob_resolve import CrawlJobResolveUseCase
+from scavengarr.domain.entities.crawljob import CrawlJobResolveError
 from scavengarr.interfaces.app_state import AppState
 
 log = structlog.get_logger(__name__)
@@ -29,6 +31,7 @@ async def download_crawljob(
     Raises:
         HTTPException(404): CrawlJob not found or expired.
         HTTPException(500): Repository or serialization failure.
+        HTTPException(502): Grab-time link resolution failed.
     """
     state = cast(AppState, request.app.state)
 
@@ -64,6 +67,18 @@ async def download_crawljob(
             status_code=404,
             detail=f"CrawlJob expired: {job_id}",
         )
+
+    resolve_uc = CrawlJobResolveUseCase(
+        plugins=state.plugins, crawljob_repo=state.crawljob_repo
+    )
+    try:
+        crawl_job = await resolve_uc.execute(crawl_job)
+    except CrawlJobResolveError as e:
+        log.warning("crawljob_resolve_failed", job_id=job_id, error=str(e))
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not resolve download links: {job_id}",
+        ) from e
 
     try:
         crawljob_content = crawl_job.to_crawljob_format()

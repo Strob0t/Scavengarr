@@ -73,3 +73,13 @@ class TestCacheCrawlJobRepository:
         assert result.priority == crawljob.priority
         assert result.auto_start == crawljob.auto_start
         assert result.validated_urls == crawljob.validated_urls
+
+
+async def test_roundtrip_preserves_resolve_plugin(mock_cache: AsyncMock) -> None:
+    job = CrawlJob(text="https://nox.to/media/x?release=1", resolve_plugin="nox")
+    mock_cache.get = AsyncMock(return_value=_serialize_crawljob(job))
+
+    result = await CacheCrawlJobRepository(cache=mock_cache).get(job.job_id)
+
+    assert result is not None
+    assert result.resolve_plugin == "nox"

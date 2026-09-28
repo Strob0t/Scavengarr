@@ -18,6 +18,7 @@ from scavengarr.domain.entities import (
     TorznabPluginNotFound,
     TorznabQuery,
 )
+from scavengarr.domain.plugins import GrabResolvingPlugin
 from scavengarr.domain.ports import PluginRegistryPort
 from scavengarr.domain.ports.cache import CachePort
 from scavengarr.domain.ports.crawljob_repository import CrawlJobRepository
@@ -127,7 +128,7 @@ class TorznabSearchUseCase:
             )
             return SearchResponse(items=[], cache_hit=cache_hit)
 
-        items = await self._build_torznab_items(raw_results, q)
+        items = await self._build_torznab_items(raw_results, q, plugin)
         paginated = items[q.offset : q.offset + q.limit]
         return SearchResponse(items=paginated, cache_hit=cache_hit)
 
@@ -208,8 +209,13 @@ class TorznabSearchUseCase:
         self,
         raw_results: list[Any],
         q: TorznabQuery,
+        plugin: Any,
     ) -> list[TorznabItem]:
         """Transform SearchResults into TorznabItems with CrawlJob generation."""
+        # Links behind a captcha/quota are resolved when the job is grabbed.
+        resolve_plugin = (
+            q.plugin_name if isinstance(plugin, GrabResolvingPlugin) else None
+        )
         items: list[TorznabItem] = []
         save_coros: list[Any] = []
         for raw_result in raw_results:
@@ -232,7 +238,9 @@ class TorznabSearchUseCase:
                     category=cast(int, getattr(raw_result, "category", 2000)),
                 )
 
-                crawljob = self.crawljob_factory.create_from_search_result(raw_result)
+                crawljob = self.crawljob_factory.create_from_search_result(
+                    raw_result, resolve_plugin=resolve_plugin
+                )
                 save_coros.append(self.crawljob_repo.save(crawljob))
                 enriched_item = dataclass_replace(base_item, job_id=crawljob.job_id)
                 items.append(enriched_item)

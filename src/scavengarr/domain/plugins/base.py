@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, runtime_checkable
 
 PluginProvides = Literal["stream", "download", "both"]
 
@@ -63,3 +63,17 @@ class PluginProtocol(Protocol):
         season: int | None = None,
         episode: int | None = None,
     ) -> list[SearchResult]: ...
+
+
+@runtime_checkable
+class GrabResolvingPlugin(Protocol):
+    """Optional plugin capability: resolve download links at grab time.
+
+    For sites whose real links cost a captcha or count against a download
+    quota: search results keep a page URL, and the download endpoint calls
+    ``resolve_download`` only when an Arr app actually grabs the result.
+    """
+
+    async def resolve_download(self, url: str) -> list[str]:
+        """Return the download links behind *url* (empty list if none)."""
+        ...
