@@ -38,6 +38,9 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 - **No forced User-Agent in browser contexts**: contexts keep Patchright's real UA (a fixed Chrome 131 UA disagreed with the Chromium client hints). New `_browser_user_agent` (default `None`) and `_context_options()`, also used by the boerse/mygully login contexts; `_user_agent` stays for httpx side requests.
 - **`PlaywrightPluginBase._stealth` renamed to `_block_resources`**: it now only controls aborting image/font/CSS requests; singleton and per-request contexts share `_configure_context()`. `StealthPool` no longer applies playwright-stealth.
 
+### Fix: kinoger
+- **Back to results** (live: 4 streams for "Iron Man" in 7 s, was 0): search and detail pages go through `_fetch_text()` (Cloudflare → browser fallback). Stream links point to external hosters and need no resolution. In the Stremio path (`plugin_timeout_seconds` 15 s in `data/config.yaml`) the very first search after start can time out while the challenge is solved; later searches reuse the clearance cookie of the stealth context.
+
 ### Fix: filmfans
 - **Back to results** (live: 13 releases of "Iron Man" 2008, was 0): search API, movie pages and the release API go through `_fetch_text()` (Cloudflare → browser fallback); `/external/<hash>` download links are resolved to their filecrypt containers, dead ones dropped. The site rate-limits bursts (429): an uncached search takes ~2–2.5 min, which can exceed Prowlarr's request timeout (results are cached 15 min).
 

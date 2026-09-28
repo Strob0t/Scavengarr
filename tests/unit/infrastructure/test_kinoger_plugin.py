@@ -452,6 +452,49 @@ class TestKinogerPluginAttributes:
         assert plug.provides == "stream"
 
 
+class TestKinogerCloudflareFallback:
+    """kinoger answers httpx with a Cloudflare challenge: pages via browser."""
+
+    @pytest.mark.asyncio
+    async def test_search_and_details_load_through_browser(self) -> None:
+        from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
+
+        plug = _make_plugin()
+        plug._domain_verified = True
+
+        async def _challenge(url: str, **kwargs: object) -> httpx.Response:
+            request = httpx.Request("GET", url, params=kwargs.get("params"))
+            return httpx.Response(
+                403,
+                text="<title>Just a moment...</title><div id='challenge-platform'>",
+                request=request,
+            )
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=_challenge)
+        plug._client = mock_client
+
+        async def _browser(url: str, *, timeout: float) -> str:
+            if "search_start=2" in url:
+                return ""
+            if "do=search" in url:
+                return _SEARCH_HTML
+            return _SERIES_DETAIL_HTML if "stranger" in url else _DETAIL_HTML
+
+        fetcher = AsyncMock()
+        fetcher.fetch_text = AsyncMock(side_effect=_browser)
+        HttpxPluginBase.set_browser_fetcher(fetcher)
+        try:
+            results = await plug.search("Batman")
+        finally:
+            HttpxPluginBase.set_browser_fetcher(None)
+
+        assert {r.title for r in results} == {"Batman Begins", "Stranger Things"}
+        # Only the first request tried httpx; the host memo sent the rest
+        # straight to the browser.
+        assert mock_client.get.await_count == 1
+
+
 class TestKinogerPluginSearch:
     """Tests for KinogerPlugin search with mocked HTTP."""
 

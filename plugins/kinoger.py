@@ -1,7 +1,9 @@
 """kinoger.com Python plugin for Scavengarr.
 
 Scrapes kinoger.com (German streaming site, DLE-based CMS) with:
-- httpx for all requests (server-rendered HTML, no JS challenges)
+- httpx requests via ``_fetch_text()``; the site sits behind a Cloudflare
+  Turnstile challenge, so pages load through the browser fallback
+  (``playwright.browser_fallback``)
 - GET /index.php?do=search&subaction=search&story={query} for keyword search
 - Pagination via search_start={N} parameter (12 results/page, up to 84 pages)
 - Detail page scraping for stream tabs (iframe URLs from tab sections)
@@ -594,8 +596,6 @@ class KinogerPlugin(HttpxPluginBase):
         Pagination::
             GET /index.php?do=search&subaction=search&search_start={N}&story={query}
         """
-        client = await self._ensure_client()
-
         params: dict[str, str] = {
             "do": "search",
             "subaction": "search",
@@ -604,23 +604,15 @@ class KinogerPlugin(HttpxPluginBase):
         if page > 1:
             params["search_start"] = str(page)
 
-        try:
-            resp = await client.get(
-                f"{self.base_url}/index.php",
-                params=params,
-            )
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning(
-                "kinoger_search_failed",
-                query=query,
-                page=page,
-                error=str(exc),
-            )
+        # Cloudflare Turnstile: _fetch_text falls back to the browser
+        html = await self._fetch_text(
+            f"{self.base_url}/index.php", params=params, context=f"search:{page}"
+        )
+        if html is None:
             return []
 
         parser = _SearchResultParser(self.base_url)
-        parser.feed(resp.text)
+        parser.feed(html)
 
         self._log.info(
             "kinoger_search_page",
@@ -652,22 +644,14 @@ class KinogerPlugin(HttpxPluginBase):
         result: dict[str, str | list[str] | bool],
     ) -> SearchResult | None:
         """Scrape a detail page for stream tabs and metadata."""
-        client = await self._ensure_client()
         detail_url = str(result["url"])
 
-        try:
-            resp = await client.get(detail_url)
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning(
-                "kinoger_detail_failed",
-                url=detail_url,
-                error=str(exc),
-            )
+        html = await self._fetch_text(detail_url, context="detail")
+        if html is None:
             return None
 
         parser = _DetailPageParser(self.base_url)
-        parser.feed(resp.text)
+        parser.feed(html)
         parser.finalize()
 
         if not parser.stream_links:
