@@ -4,7 +4,8 @@ SuperVideo uses XFileSharingPro framework which embeds video URLs
 via JWPlayer sources or HTML5 video tags.
 Based on JD2 SupervideoTv.java (XFileSharingProBasic).
 
-Strategy: httpx-first (fast, stateless), StealthPool-fallback on Cloudflare 403.
+Strategy: httpx-first (fast, stateless); on a Cloudflare 403 the stream request
+of the player is captured from the stealth browser (``capture_stream``).
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
 from scavengarr.infrastructure.browser.cloudflare import (
     is_cloudflare_challenge,
 )
+from scavengarr.infrastructure.hoster_resolvers._browser import capture_stream
 from scavengarr.infrastructure.hoster_resolvers._verify import verify_video_url
 
 if TYPE_CHECKING:
@@ -197,15 +199,16 @@ class SuperVideoResolver:
     async def resolve(self, url: str) -> ResolvedStream | None:
         """Fetch SuperVideo embed page and extract video URL.
 
-        Tries httpx first; falls back to Playwright on Cloudflare block.
+        Tries httpx first; on a Cloudflare block the browser captures the
+        player's stream request.
         """
         embed_url = self._normalize_embed_url(url)
 
         html, cloudflare_blocked = await self._fetch_with_httpx(embed_url)
 
         if html is None and cloudflare_blocked:
-            log.info("supervideo_playwright_fallback", url=embed_url)
-            html = await self._fetch_with_playwright(embed_url)
+            log.info("supervideo_browser_fallback", url=embed_url)
+            return await capture_stream(self._stealth_pool, embed_url, "supervideo")
 
         if html is None:
             return None
@@ -264,45 +267,6 @@ class SuperVideoResolver:
         except httpx.HTTPError:
             log.warning("supervideo_request_failed", url=embed_url)
             return None, False
-
-    async def _fetch_with_playwright(self, embed_url: str) -> str | None:
-        """Fetch page via StealthPool (Cloudflare bypass).
-
-        When no StealthPool is available, skips the Playwright fallback
-        and returns None (graceful degradation to httpx-only).
-        """
-        if self._stealth_pool is None:
-            log.info("supervideo_no_stealth_pool", url=embed_url)
-            return None
-
-        page = None
-        try:
-            page = await self._stealth_pool.new_page()
-            await page.goto(embed_url, wait_until="domcontentloaded")
-            await self._stealth_pool.wait_for_cloudflare(page)
-
-            try:
-                await page.wait_for_load_state("networkidle", timeout=10_000)
-            except Exception:  # noqa: BLE001
-                log.debug("supervideo_networkidle_timeout", url=embed_url)
-
-            html = await page.content()
-            log.debug(
-                "supervideo_playwright_page",
-                url=embed_url,
-                title=await page.title(),
-                html_len=len(html),
-                has_sources="sources" in html,
-                has_video="<video" in html,
-                has_jwplayer="jwplayer" in html,
-            )
-            return html
-        except Exception:
-            log.warning("supervideo_playwright_failed", url=embed_url, exc_info=True)
-            return None
-        finally:
-            if page is not None and not page.is_closed():
-                await page.close()
 
     async def _verify_video_url(self, url: str, headers: dict[str, str]) -> bool:
         """HEAD-check the CDN URL to verify it is accessible."""

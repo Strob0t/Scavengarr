@@ -17,15 +17,21 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 import httpx
 import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
+from scavengarr.infrastructure.browser.cloudflare import is_cloudflare_challenge
 from scavengarr.infrastructure.hoster_resolvers import extract_domain
+from scavengarr.infrastructure.hoster_resolvers._browser import capture_stream
 from scavengarr.infrastructure.hoster_resolvers._verify import verify_video_url
 from scavengarr.infrastructure.hoster_resolvers._video_extract import extract_video_url
+
+if TYPE_CHECKING:
+    from scavengarr.infrastructure.browser.stealth_pool import StealthPool
 
 log = structlog.get_logger(__name__)
 
@@ -97,9 +103,12 @@ class XFSResolver:
         self,
         config: XFSConfig,
         http_client: httpx.AsyncClient,
+        *,
+        stealth_pool: StealthPool | None = None,
     ) -> None:
         self._config = config
         self._http = http_client
+        self._stealth_pool = stealth_pool
 
     @property
     def name(self) -> str:
@@ -154,6 +163,11 @@ class XFSResolver:
             log.warning(f"{hoster}_request_failed", url=embed_url)
             return None
 
+        if is_cloudflare_challenge(resp.status_code, resp.text):
+            # The player behind the challenge: let the stealth browser run it
+            log.info(f"{hoster}_cloudflare_browser_fallback", url=embed_url)
+            return await capture_stream(self._stealth_pool, embed_url, hoster)
+
         if resp.status_code != 200:
             log.warning(
                 f"{hoster}_http_error",
@@ -162,17 +176,9 @@ class XFSResolver:
             )
             return None
 
-        html = resp.text
-
-        for marker in self._config.offline_markers:
-            if marker in html:
-                log.info(f"{hoster}_file_offline", file_id=file_id, marker=marker)
-                return None
-
-        final_url = str(resp.url)
-        if "/404" in final_url or "error" in final_url:
-            log.info(f"{hoster}_error_redirect", file_id=file_id, url=final_url)
+        if self._is_dead(resp, file_id, hoster):
             return None
+        html = resp.text
 
         # Many XFS hosters return a form-based splash on GET; POST to /dl
         # to get the actual player page.
@@ -200,6 +206,21 @@ class XFSResolver:
             quality=StreamQuality.UNKNOWN,
             headers=cdn_headers,
         )
+
+    def _offline_marker(self, html: str) -> str | None:
+        return next((m for m in self._config.offline_markers if m in html), None)
+
+    def _is_dead(self, resp: httpx.Response, file_id: str, hoster: str) -> bool:
+        """Offline marker in the page, or a redirect to an error page."""
+        marker = self._offline_marker(resp.text)
+        if marker:
+            log.info(f"{hoster}_file_offline", file_id=file_id, marker=marker)
+            return True
+        final_url = str(resp.url)
+        if "/404" in final_url or "error" in final_url:
+            log.info(f"{hoster}_error_redirect", file_id=file_id, url=final_url)
+            return True
+        return False
 
     async def _verify_video_url(
         self, url: str, headers: dict[str, str], hoster: str
@@ -243,13 +264,11 @@ class XFSResolver:
             )
             return None
 
-        html = resp.text
-        for marker in self._config.offline_markers:
-            if marker in html:
-                log.info(f"{hoster}_file_offline", file_id=file_id, marker=marker)
-                return None
-
-        return html
+        marker = self._offline_marker(resp.text)
+        if marker:
+            log.info(f"{hoster}_file_offline", file_id=file_id, marker=marker)
+            return None
+        return resp.text
 
     async def _resolve_ddl(
         self, url: str, file_id: str, hoster: str
@@ -269,16 +288,7 @@ class XFSResolver:
             )
             return None
 
-        html = resp.text
-
-        for marker in self._config.offline_markers:
-            if marker in html:
-                log.info(f"{hoster}_file_offline", file_id=file_id, marker=marker)
-                return None
-
-        final_url = str(resp.url)
-        if "/404" in final_url or "error" in final_url:
-            log.info(f"{hoster}_error_redirect", file_id=file_id, url=final_url)
+        if self._is_dead(resp, file_id, hoster):
             return None
 
         log.debug(f"{hoster}_resolved", file_id=file_id)
@@ -675,6 +685,15 @@ ALL_XFS_CONFIGS: tuple[XFSConfig, ...] = (
 
 def create_all_xfs_resolvers(
     http_client: httpx.AsyncClient,
+    *,
+    stealth_pool: StealthPool | None = None,
 ) -> list[XFSResolver]:
-    """Create ``XFSResolver`` instances for all known XFS hosters."""
-    return [XFSResolver(config=cfg, http_client=http_client) for cfg in ALL_XFS_CONFIGS]
+    """Create ``XFSResolver`` instances for all known XFS hosters.
+
+    *stealth_pool* serves the video hosters whose embed page sits behind a
+    Cloudflare challenge.
+    """
+    return [
+        XFSResolver(config=cfg, http_client=http_client, stealth_pool=stealth_pool)
+        for cfg in ALL_XFS_CONFIGS
+    ]

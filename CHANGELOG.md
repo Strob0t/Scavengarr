@@ -6,7 +6,13 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
-Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 56 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4293 tests (4256 excluding the opt-in live tests).
+Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 56 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4306 tests (4269 excluding the opt-in live tests).
+
+### Fix: Cloudflare-Protected Hoster Players via Browser Capture
+- **XFS video hosters, DoodStream and SuperVideo fall back to the stealth browser** when the embed page answers with a Cloudflare challenge: savefiles, bigwarp, streamwish mirrors and every dood mirror (all redirect to the challenged `playmogo.com`) returned `None` before. The shared helper `hoster_resolvers/_browser.py` (`capture_stream`) turns `StealthPool.capture_media` into a `ResolvedStream`; `create_all_xfs_resolvers()` and `DoodStreamResolver` take an optional `stealth_pool`, wired in `composition.py`. SuperVideo's own Playwright HTML fetch is replaced by the same capture (live: `supervideo.cc` behind Cloudflare → HLS master in 1.2 s).
+- **Dead files end the capture early**: `capture_media` checks the page title and visible text for dead-file notices after the Cloudflare step and after every play click. Live: a dead dood link fails in 0.7 s, a dead savefiles link (the notice appears only after the click) in 8.5 s instead of 18 s.
+- **XFS**: offline-marker and error-redirect checks shared by the video and DDL paths (`_is_dead`).
+- Known issue: SuperVideo's CDN redirects non-browser clients to ad trackers (see `docs/features/hoster-resolvers.md`).
 
 ### Fix: Filemoon Streams via Browser Capture
 - **Filemoon resolved nothing**: the Byse player added a proof-of-work captcha ("click play to verify you're a human") between attestation and playback, and the attestation now rejects the invented viewer/device IDs (HTTP 400). The PoW is a custom memory-hard hash (~65k attempts at difficulty 16), far too slow in Python and one more thing that changes with every Byse update.
@@ -810,5 +816,6 @@ Foundation of the project: FastAPI server, Scrapy scraping engine, plugin loader
 
 Current known issues:
 
+- **SuperVideo streams need a browser-like player** (2026-09-28): the CDN (`*.serversicuro.cc`) answers non-browser clients with a JavaScript redirect and then ad-tracker redirects; resolution works, playback in players without JavaScript does not.
 - **hdfilme keyword search broken upstream** (2026-09-28): the site's own search answers with a PHP fatal error, so keyword searches return nothing; category browsing (empty query + category) works. Triage and fix plan: `docs/plans/plugin-repair.md`.
 - **Cloudflare-protected sites need a headful browser**: ddlspot, ddlvalley, scnsrc, filmfans, kinoger and serienfans only pass the interactive Turnstile with Patchright headful (Xvfb, `playwright.headless: false`) and `playwright.browser_fallback: true`. filmfans and serienfans rate-limit bursts (429): an uncached search takes ~2–2.5 min and can exceed Prowlarr's request timeout. See `docs/plans/antibot-patchright.md`.

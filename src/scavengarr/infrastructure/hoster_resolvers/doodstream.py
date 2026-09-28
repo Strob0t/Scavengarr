@@ -4,6 +4,10 @@ Extraction: GET embed page → extract /pass_md5/ URL + token →
 GET pass_md5 endpoint → append token + expiry to get video URL.
 Based on JD2 DoodstreamCom.java.
 
+Every mirror currently redirects to playmogo.com, which sits behind a
+Cloudflare challenge; then the stealth browser runs the player and its
+stream request is captured instead (``capture_stream``).
+
 NOTE: May fail if captcha (reCaptchaV2/Turnstile) is required.
 In that case, resolve() returns None gracefully.
 """
@@ -12,11 +16,18 @@ from __future__ import annotations
 
 import re
 import time
+from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
 import httpx
 import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
+from scavengarr.infrastructure.browser.cloudflare import is_cloudflare_challenge
+from scavengarr.infrastructure.hoster_resolvers._browser import capture_stream
+
+if TYPE_CHECKING:
+    from scavengarr.infrastructure.browser.stealth_pool import StealthPool
 
 log = structlog.get_logger(__name__)
 
@@ -55,8 +66,14 @@ class DoodStreamResolver:
     Returns None if captcha is required (no automated captcha solving).
     """
 
-    def __init__(self, http_client: httpx.AsyncClient) -> None:
+    def __init__(
+        self,
+        http_client: httpx.AsyncClient,
+        *,
+        stealth_pool: StealthPool | None = None,
+    ) -> None:
         self._http = http_client
+        self._stealth_pool = stealth_pool
 
     @property
     def name(self) -> str:
@@ -83,6 +100,9 @@ class DoodStreamResolver:
                     ),
                 },
             )
+            if is_cloudflare_challenge(resp.status_code, resp.text):
+                log.info("doodstream_cloudflare_browser_fallback", url=embed_url)
+                return await capture_stream(self._stealth_pool, embed_url, "doodstream")
             if resp.status_code != 200:
                 log.warning(
                     "doodstream_http_error",
@@ -123,37 +143,8 @@ class DoodStreamResolver:
 
         token = token_match.group(1)
 
-        # Build full pass_md5 URL from the response domain
-        from urllib.parse import urlparse
-
-        parsed = urlparse(base_url)
-        full_pass_url = f"{parsed.scheme}://{parsed.hostname}{pass_url}"
-
-        # GET pass_md5 endpoint
-        try:
-            pass_resp = await self._http.get(
-                full_pass_url,
-                follow_redirects=True,
-                timeout=10,
-                headers={
-                    "X-Requested-With": "XMLHttpRequest",
-                    "Referer": base_url,
-                },
-            )
-            if pass_resp.status_code != 200:
-                log.warning(
-                    "doodstream_pass_md5_error",
-                    status=pass_resp.status_code,
-                )
-                return None
-
-            video_base = pass_resp.text.strip()
-        except httpx.HTTPError:
-            log.warning("doodstream_pass_md5_failed", url=full_pass_url)
-            return None
-
-        if not video_base.startswith("http"):
-            log.warning("doodstream_invalid_video_base", base=video_base[:50])
+        video_base = await self._fetch_video_base(pass_url, base_url)
+        if video_base is None:
             return None
 
         # Append token and expiry
@@ -166,6 +157,32 @@ class DoodStreamResolver:
             quality=StreamQuality.UNKNOWN,
             headers={"Referer": base_url},
         )
+
+    async def _fetch_video_base(self, pass_url: str, base_url: str) -> str | None:
+        """GET the /pass_md5/ endpoint (on the response host) for the CDN base."""
+        parsed = urlparse(base_url)
+        full_pass_url = f"{parsed.scheme}://{parsed.hostname}{pass_url}"
+        try:
+            pass_resp = await self._http.get(
+                full_pass_url,
+                follow_redirects=True,
+                timeout=10,
+                headers={
+                    "X-Requested-With": "XMLHttpRequest",
+                    "Referer": base_url,
+                },
+            )
+        except httpx.HTTPError:
+            log.warning("doodstream_pass_md5_failed", url=full_pass_url)
+            return None
+        if pass_resp.status_code != 200:
+            log.warning("doodstream_pass_md5_error", status=pass_resp.status_code)
+            return None
+        video_base = pass_resp.text.strip()
+        if not video_base.startswith("http"):
+            log.warning("doodstream_invalid_video_base", base=video_base[:50])
+            return None
+        return video_base
 
     def _normalize_embed_url(self, url: str) -> str:
         """Ensure URL uses the /e/ embed format."""

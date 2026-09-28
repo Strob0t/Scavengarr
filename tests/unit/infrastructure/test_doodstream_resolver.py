@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 
+from scavengarr.infrastructure.browser.stealth_pool import CapturedMedia
 from scavengarr.infrastructure.hoster_resolvers.doodstream import (
     DoodStreamResolver,
 )
@@ -316,3 +317,43 @@ class TestDoodStreamResolver:
         resolver = DoodStreamResolver(http_client=client)
         result = await resolver.resolve("https://dood.re/e/xyz123")
         assert result is None
+
+
+class TestDoodStreamCloudflare:
+    """Every dood mirror redirects to playmogo.com, which sits behind a
+    Cloudflare challenge: the stealth browser captures the player's stream."""
+
+    @staticmethod
+    def _cf_client() -> AsyncMock:
+        resp = MagicMock()
+        resp.status_code = 403
+        resp.text = "<title>Just a moment...</title>"
+        resp.url = "https://playmogo.com/e/w71gg51eat6x"
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(return_value=resp)
+        return client
+
+    @pytest.mark.asyncio
+    async def test_challenge_captures_player_stream(self) -> None:
+        media = CapturedMedia(
+            url="https://abc.cloudatacdn.com/u5kj/x.mp4?token=t&expiry=1",
+            referer="https://playmogo.com/",
+        )
+        pool = AsyncMock()
+        pool.capture_media = AsyncMock(return_value=media)
+
+        resolver = DoodStreamResolver(http_client=self._cf_client(), stealth_pool=pool)
+        result = await resolver.resolve("https://dood.to/d/w71gg51eat6x")
+
+        assert result is not None
+        assert result.video_url == media.url
+        assert result.headers == {"Referer": "https://playmogo.com/"}
+        assert pool.capture_media.await_args.args[0] == (
+            "https://dood.to/e/w71gg51eat6x"
+        )
+
+    @pytest.mark.asyncio
+    async def test_challenge_without_browser_returns_none(self) -> None:
+        resolver = DoodStreamResolver(http_client=self._cf_client())
+
+        assert await resolver.resolve("https://dood.to/e/w71gg51eat6x") is None

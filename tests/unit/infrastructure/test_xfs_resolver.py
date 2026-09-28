@@ -12,11 +12,14 @@ Covers:
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import httpx
 import pytest
 import respx
 
 from scavengarr.domain.entities.stremio import StreamQuality
+from scavengarr.infrastructure.browser.stealth_pool import CapturedMedia
 from scavengarr.infrastructure.hoster_resolvers.xfs import (
     ALL_XFS_CONFIGS,
     XFSConfig,
@@ -837,3 +840,71 @@ class TestCreateAllXfsResolvers:
         resolver_names = {r.name for r in resolvers}
         config_names = {c.name for c in ALL_XFS_CONFIGS}
         assert resolver_names == config_names
+
+
+# ---------------------------------------------------------------------------
+# Cloudflare in front of the embed page
+# ---------------------------------------------------------------------------
+
+_CF_PAGE = "<html><head><title>Just a moment...</title></head><body></body></html>"
+
+
+class TestXFSResolverCloudflare:
+    """savefiles, bigwarp, ...: a Cloudflare challenge on the embed page is
+    handed to the stealth browser, which captures the player's stream."""
+
+    @staticmethod
+    def _config(name: str) -> XFSConfig:
+        return next(c for c in ALL_XFS_CONFIGS if c.name == name)
+
+    @respx.mock
+    async def test_challenge_captures_player_stream(self) -> None:
+        cfg = self._config("savefiles")
+        respx.get(_make_embed_url(cfg)).respond(403, text=_CF_PAGE)
+        media = CapturedMedia(
+            url="https://s3.savefiles.com/hls2/x/master.m3u8?t=tok",
+            referer="https://savefiles.com/",
+        )
+        pool = AsyncMock()
+        pool.capture_media = AsyncMock(return_value=media)
+
+        resolver = XFSResolver(
+            config=cfg, http_client=httpx.AsyncClient(), stealth_pool=pool
+        )
+        result = await resolver.resolve(_make_url(cfg))
+
+        assert result is not None
+        assert result.video_url == media.url
+        assert result.is_hls is True
+        assert result.headers == {"Referer": "https://savefiles.com/"}
+        assert pool.capture_media.await_args.args[0] == _make_embed_url(cfg)
+
+    @respx.mock
+    async def test_challenge_without_browser_returns_none(self) -> None:
+        cfg = self._config("savefiles")
+        respx.get(_make_embed_url(cfg)).respond(403, text=_CF_PAGE)
+
+        resolver = XFSResolver(config=cfg, http_client=httpx.AsyncClient())
+
+        assert await resolver.resolve(_make_url(cfg)) is None
+
+    @respx.mock
+    async def test_plain_403_does_not_start_browser(self) -> None:
+        cfg = self._config("savefiles")
+        respx.get(_make_embed_url(cfg)).respond(403, text="Forbidden")
+        pool = AsyncMock()
+
+        resolver = XFSResolver(
+            config=cfg, http_client=httpx.AsyncClient(), stealth_pool=pool
+        )
+
+        assert await resolver.resolve(_make_url(cfg)) is None
+        pool.capture_media.assert_not_awaited()
+
+    def test_factory_passes_browser_to_video_hosters(self) -> None:
+        pool = AsyncMock()
+        resolvers = create_all_xfs_resolvers(
+            http_client=httpx.AsyncClient(), stealth_pool=pool
+        )
+
+        assert all(r._stealth_pool is pool for r in resolvers)

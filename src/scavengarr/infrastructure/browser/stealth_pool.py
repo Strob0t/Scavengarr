@@ -72,6 +72,21 @@ _MEDIA_URL_RE = re.compile(
 _MEDIA_AUTOPLAY_WAIT_S = 3.0
 _MEDIA_CLICK_WAIT_S = 5.0
 _MEDIA_PLAY_CLICKS = 3
+# Dead-file notices of player pages, matched against the visible text only
+# (player scripts carry such strings as error templates)
+_PLAYER_OFFLINE_TEXT: tuple[str, ...] = (
+    "video not found",
+    "file not found",
+    "no such file",
+    "no longer available",
+    "has been removed",
+    "has been deleted",
+    "file was removed",
+    "deleted by the owner",
+)
+_VISIBLE_TEXT_JS = (
+    "() => document.title + '\\n' + (document.body ? document.body.innerText : '')"
+)
 
 
 @dataclass(frozen=True)
@@ -114,11 +129,28 @@ async def _close_popup(popup: Page) -> None:
         log.debug("stealth_popup_close_error", exc_info=True)
 
 
+async def _shows_offline_notice(page: Page) -> bool:
+    """True when the player page (title or visible text) says the file is gone.
+
+    Unreadable pages (a navigation in flight) count as not offline.
+    """
+    try:
+        text = await page.evaluate(_VISIBLE_TEXT_JS)
+    except Exception:  # noqa: BLE001
+        log.debug("stealth_page_text_unreadable", exc_info=True)
+        return False
+    if not isinstance(text, str):
+        return False
+    lowered = text.lower()
+    return any(marker in lowered for marker in _PLAYER_OFFLINE_TEXT)
+
+
 async def _start_player(
     page: Page, found: asyncio.Future[CapturedMedia]
 ) -> CapturedMedia | None:
     """Wait for autoplay, then click the page centre (the player) until the
-    player requests its stream or the clicks are used up."""
+    player requests its stream, says the file is gone (some players tell
+    only after the click) or the clicks are used up."""
     waits = (_MEDIA_AUTOPLAY_WAIT_S, *(_MEDIA_CLICK_WAIT_S,) * _MEDIA_PLAY_CLICKS)
     for attempt, wait_s in enumerate(waits):
         if attempt:
@@ -127,7 +159,10 @@ async def _start_player(
         try:
             return await asyncio.wait_for(asyncio.shield(found), wait_s)
         except TimeoutError:
-            continue
+            pass
+        if attempt and await _shows_offline_notice(page):
+            log.info("stealth_capture_offline", url=page.url, clicks=attempt)
+            return None
     return None
 
 
@@ -355,10 +390,12 @@ class StealthPool:
                     done=found.done,
                 ):
                     return None
-                if not found.done() and not await solve_cloudflare(
-                    page, timeout_ms=timeout_ms
-                ):
-                    return None
+                if not found.done():
+                    if not await solve_cloudflare(page, timeout_ms=timeout_ms):
+                        return None
+                    if await _shows_offline_notice(page):
+                        log.info("stealth_capture_offline", url=url)
+                        return None
                 media = await _start_player(page, found)
                 log.debug("stealth_capture", url=url, found=media is not None)
                 return media

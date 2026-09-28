@@ -21,6 +21,7 @@ import httpx
 import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
+from scavengarr.infrastructure.hoster_resolvers._browser import capture_stream
 from scavengarr.infrastructure.hoster_resolvers._video_extract import (
     extract_hls_from_unpacked,
     unpack_p_a_c_k,
@@ -32,10 +33,6 @@ if TYPE_CHECKING:
 log = structlog.get_logger(__name__)
 
 _BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-
-# Navigation + Cloudflare budget of the browser capture (the player clicks
-# after it are bounded by StealthPool's own waits)
-_CAPTURE_TIMEOUT_S = 15.0
 
 
 def _unpack_p_a_c_k(packed: str) -> str | None:
@@ -102,26 +99,7 @@ class FilemoonResolver:
             # Cloudflare / geo block: the browser may still get through
             log.info("filemoon_http_error", status=resp.status_code, url=embed_url)
 
-        return await self._capture_player_stream(embed_url)
-
-    async def _capture_player_stream(self, embed_url: str) -> ResolvedStream | None:
-        """Run the player in the stealth browser and take its stream request."""
-        if self._stealth_pool is None:
-            log.warning("filemoon_extraction_failed", url=embed_url, browser=False)
-            return None
-        media = await self._stealth_pool.capture_media(
-            embed_url, timeout=_CAPTURE_TIMEOUT_S
-        )
-        if media is None:
-            log.warning("filemoon_extraction_failed", url=embed_url, browser=True)
-            return None
-        log.debug("filemoon_player_stream", url=media.url[:80])
-        return ResolvedStream(
-            video_url=media.url,
-            is_hls=".m3u8" in media.url,
-            quality=StreamQuality.UNKNOWN,
-            headers={"Referer": media.referer or embed_url},
-        )
+        return await capture_stream(self._stealth_pool, embed_url, "filemoon")
 
     def _try_packed_js(self, html: str) -> ResolvedStream | None:
         """Extract HLS URL from packed JavaScript blocks.

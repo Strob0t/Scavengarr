@@ -363,7 +363,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 http_client=state.http_client,
                 stealth_pool=state.stealth_pool,
             ),
-            DoodStreamResolver(http_client=state.http_client),
+            DoodStreamResolver(
+                http_client=state.http_client,
+                stealth_pool=state.stealth_pool,
+            ),
             FilemoonResolver(
                 http_client=state.http_client,
                 stealth_pool=state.stealth_pool,
@@ -386,7 +389,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             # DDL resolvers (consolidated — 12 hosters)
             *create_all_ddl_resolvers(http_client=state.http_client),
             # XFS resolvers (consolidated — 27 hosters)
-            *create_all_xfs_resolvers(http_client=state.http_client),
+            *create_all_xfs_resolvers(
+                http_client=state.http_client,
+                stealth_pool=state.stealth_pool,
+            ),
         ],
         http_client=state.http_client,
         resolve_timeout=config.http_timeout_resolve_seconds,

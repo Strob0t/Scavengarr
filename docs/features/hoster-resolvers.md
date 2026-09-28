@@ -69,6 +69,20 @@ Some players create the stream URL only while they run. Filemoon's Byse player s
 - Popups opened by ad scripts (often on the first click) are closed.
 - Shares the `fetch_text()` concurrency limit (`fetch_concurrency`, at most 2 pages).
 - Resolvers call it only at play time (`/stremio/play/{id}` resolves one link), so a few seconds per resolve are acceptable (Filemoon live: 2–5 s).
+- Dead files end the capture early: the page title and visible text (not the HTML, player scripts carry such strings as error templates) are checked for notices like "Video not found", "File is no longer available", "No such file", "has been removed" after the Cloudflare step and after every click (savefiles says so only after the play click). Live: dead dood link 0.7 s, dead savefiles link 8.5 s instead of 18 s.
+
+`_browser.py` (`capture_stream(stealth_pool, embed_url, hoster)`) turns a capture into a `ResolvedStream` (`is_hls` from `.m3u8`, `Referer` of the captured request, else the embed URL) and is shared by:
+
+| Resolver | When |
+|---|---|
+| Filemoon | Byse player pages, or a non-200 embed page |
+| XFS video hosters (savefiles, bigwarp, streamwish, …) | Cloudflare challenge on the embed page |
+| DoodStream | Cloudflare challenge (every mirror redirects to `playmogo.com`, which is challenged) |
+| SuperVideo | Cloudflare challenge (replaces its own Playwright HTML fetch) |
+
+Without a `StealthPool` (tests, `stealth_pool=None`) these paths return `None`. Captured URLs are not HEAD-verified: the browser just requested them.
+
+> **Known issue:** SuperVideo's CDN (`*.serversicuro.cc`) answers non-browser clients with a "Loading..." page whose script redirects to a tokenized URL, which in turn redirects curl/httpx to ad trackers, even with the browser's User-Agent and cookie. The resolved URL plays in a browser but not in players that do not run JavaScript.
 
 ---
 
@@ -82,8 +96,8 @@ Extract a direct video URL (`.mp4`/`.m3u8`) from an embed page.
 |---|---|---|---|
 | VOE | `voe` | `voe.*`; rotating mirrors via redirect or hoster hint | Multi-method: `application/json` deobfuscation chain, direct regex, base64 variables |
 | Streamtape | `streamtape` | `streamtape`, `streamta`, `strtape`, `shavetape`, `tapeblocker`, `streamtapeadblock(user)`, `gettapeads`, … (13 names) | Token extraction from page source |
-| SuperVideo | `supervideo` | `supervideo.*` | XFS-style JWPlayer extraction; `StealthPool` (Playwright) fallback on a Cloudflare 403 |
-| DoodStream | `doodstream` | `dood`, `doods`, `doodstream`, `ds2play`, `d0o0d`, `vidply`, `myvidplay`, `playmogo`, … (23 names; all mirrors currently redirect to `playmogo.com`) | `pass_md5` endpoint extraction |
+| SuperVideo | `supervideo` | `supervideo.*` | XFS-style JWPlayer extraction; browser capture on a Cloudflare 403 |
+| DoodStream | `doodstream` | `dood`, `doods`, `doodstream`, `ds2play`, `d0o0d`, `vidply`, `myvidplay`, `playmogo`, … (23 names; all mirrors currently redirect to `playmogo.com`) | `pass_md5` endpoint extraction; browser capture on a Cloudflare challenge |
 | Filemoon | `filemoon` | `filemoon.*` | Packed JS unpacker (legacy pages); Byse player pages via browser capture (`StealthPool.capture_media`) |
 | StreamUp | `strmup` | `strmup`, `streamup`, `vidara` | `streaming_url` from page, AJAX `/ajax/stream` fallback; HLS |
 | Vidsonic | `vidsonic` | `vidsonic` | Hex-obfuscated, pipe-delimited HLS URL decoding |

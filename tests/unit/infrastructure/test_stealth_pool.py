@@ -658,3 +658,77 @@ class TestStealthPoolCaptureMedia:
             await _allow_player_resources(route)
             assert route.abort.await_count == int(aborted)
             assert route.continue_.await_count == int(not aborted)
+
+
+@pytest.mark.usefixtures("_fast_capture")
+class TestStealthPoolCaptureMediaOffline:
+    """Dead files: the player page says so, no need to click for 18 s."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Video not found",  # DoodStream / playmogo
+            "File is no longer available as it expired or has been deleted.",
+            "No such file",  # GoodStream
+            "The video has been removed.",  # Veev
+        ],
+    )
+    async def test_offline_player_page_returns_none_without_clicking(
+        self, text: str
+    ) -> None:
+        shared_pool, _, context = _mock_pool_stack()
+        page = _player_page(on_click=[["https://cdn.example/x.m3u8"]])
+        page.evaluate = AsyncMock(return_value=text)
+        context.new_page = AsyncMock(return_value=page)
+
+        media = await StealthPool(browser_pool=shared_pool).capture_media(
+            "https://playmogo.com/e/abc", timeout=10
+        )
+
+        assert media is None
+        page.mouse.click.assert_not_awaited()
+
+    async def test_player_text_mentioning_errors_is_not_offline(self) -> None:
+        shared_pool, _, context = _mock_pool_stack()
+        page = _player_page(on_click=[["https://cdn.example/x.m3u8"]])
+        page.evaluate = AsyncMock(return_value="Oppenheimer 2023 1080p  Play")
+        context.new_page = AsyncMock(return_value=page)
+
+        media = await StealthPool(browser_pool=shared_pool).capture_media(
+            "https://filemoon.to/e/abc", timeout=10
+        )
+
+        assert media is not None
+
+    async def test_offline_notice_after_click_stops_clicking(self) -> None:
+        """savefiles: the play click posts the XFS form, /dl says the file
+        is gone; no further clicks."""
+        shared_pool, _, context = _mock_pool_stack()
+        page = _player_page()
+        page.evaluate = AsyncMock(
+            side_effect=[
+                "Play",
+                "File is no longer available as it expired or has been deleted.",
+            ]
+        )
+        context.new_page = AsyncMock(return_value=page)
+
+        media = await StealthPool(browser_pool=shared_pool).capture_media(
+            "https://savefiles.com/e/abc", timeout=10
+        )
+
+        assert media is None
+        assert page.mouse.click.await_count == 1
+
+    async def test_unreadable_page_text_is_not_offline(self) -> None:
+        """A navigation in flight destroys the JS context; keep clicking."""
+        shared_pool, _, context = _mock_pool_stack()
+        page = _player_page(on_click=[[], ["https://cdn.example/x.m3u8"]])
+        page.evaluate = AsyncMock(side_effect=RuntimeError("context destroyed"))
+        context.new_page = AsyncMock(return_value=page)
+
+        media = await StealthPool(browser_pool=shared_pool).capture_media(
+            "https://savefiles.com/e/abc", timeout=10
+        )
+
+        assert media is not None
