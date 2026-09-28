@@ -41,16 +41,20 @@ def has_auth(plugin_name: str) -> bool:
 _CHROMIUM_AVAILABLE: bool | None = None
 
 
-def chromium_available() -> bool:
-    """Check if Playwright Chromium is installed (result is cached)."""
+async def chromium_available() -> bool:
+    """Check if Playwright Chromium is installed (result is cached).
+
+    Async on purpose: the smoke tests run inside an event loop, where the
+    sync API raises and the check would always report "not installed".
+    """
     global _CHROMIUM_AVAILABLE  # noqa: PLW0603
     if _CHROMIUM_AVAILABLE is None:
         try:
-            from patchright.sync_api import sync_playwright
+            from patchright.async_api import async_playwright
 
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True)
-                browser.close()
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                await browser.close()
             _CHROMIUM_AVAILABLE = True
         except Exception:
             _CHROMIUM_AVAILABLE = False

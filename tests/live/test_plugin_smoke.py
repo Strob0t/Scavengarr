@@ -169,7 +169,7 @@ async def test_playwright_plugin_smoke(
     plugin_registry: PluginRegistry,
 ) -> None:
     """Playwright plugins: browser-based search."""
-    if not chromium_available():
+    if not await chromium_available():
         pytest.skip("Chromium not installed — skipping Playwright tests.")
 
     if not has_auth(plugin_name):
