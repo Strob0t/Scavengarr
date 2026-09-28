@@ -81,6 +81,7 @@ src/scavengarr/
 │   │   └── crawljob_factory.py       # SearchResult → CrawlJob conversion
 │   ├── stremio/                      # Helpers for StremioStreamUseCase
 │   │   ├── __init__.py
+│   │   ├── queries.py                # Search query + multi-language reference building
 │   │   └── stream_builder.py         # Stream formatting, dedup, proxy/behaviorHints
 │   └── use_cases/
 │       ├── __init__.py
@@ -1442,6 +1443,7 @@ Common test fixtures for entities, mock ports, and configuration.
 | `test_torznab_search.py` | Full search flow, caching, plugin dispatch |
 | `test_stremio_catalog.py` | Stremio catalog use case (trending, search) |
 | `test_stremio_stream.py` | Stremio stream resolution (IMDb → ranked streams) |
+| `test_stremio_queries.py` | Search query normalisation, fallback queries, multi-language references |
 | `test_stremio_stream_builder.py` | Stream formatting, dedup, direct-video detection, proxy URLs |
 
 ### Infrastructure Tests (`tests/unit/infrastructure/`) -- ~90 files

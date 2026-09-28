@@ -310,6 +310,7 @@ tests/
       test_torznab_search.py           # Search use case (validation, error paths)
       test_stremio_catalog.py          # Stremio catalog use case
       test_stremio_stream.py           # Stremio stream use case (search, filter, resolve, rank)
+      test_stremio_queries.py          # Search query + multi-language reference building
       test_stremio_stream_builder.py   # Stream formatting, dedup, direct-video detection, proxy URLs
     infrastructure/
       test_converters.py               # to_int()

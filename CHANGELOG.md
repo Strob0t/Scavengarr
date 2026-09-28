@@ -15,6 +15,7 @@ growth of the test suite from 160 to 4043 tests.
 ### Refactor: StremioStreamUseCase Split
 - **Episode filter moved to infrastructure**: `filter_by_episode()` (guessit-based) now lives in `infrastructure/stremio/episode_filter.py` and is injected into `StremioStreamUseCase` as `episode_filter_fn`. The application layer no longer imports guessit directly.
 - **Stream building extracted**: stream formatting, hoster dedup, direct-video detection, behaviorHints, cache links and proxy URL building moved to `application/stremio/stream_builder.py` (pure functions, tests in `test_stremio_stream_builder.py`).
+- **Query building extracted**: search query normalisation, base-title fallback queries and multi-language reference/query construction moved to `application/stremio/queries.py` (tests in `test_stremio_queries.py`).
 
 ### Live Tests Opt-In
 - **`poetry run pytest` excludes live tests by default** (`addopts = "--ignore=tests/benchmark -m \"not live\""`). Live smoke tests hit real websites, so broken external sites made the mandatory pre-commit test run permanently red. Run them explicitly with `poetry run pytest -m live`.
