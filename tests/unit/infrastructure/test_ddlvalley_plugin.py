@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 from types import ModuleType
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "ddlvalley.py"
 
@@ -441,6 +441,42 @@ class TestPluginSearch:
 
         results = await plugin.search("test")
         assert results == []
+
+
+class TestFetchDetailHtml:
+    """Rate-limited post pages (nginx 503) are retried with backoff."""
+
+    @staticmethod
+    def _page_with_statuses(statuses: list[int]) -> AsyncMock:
+        page = _make_mock_page("<html>post</html>")
+        page.goto = AsyncMock(side_effect=[MagicMock(status=s) for s in statuses])
+        page.title = AsyncMock(return_value="503 Service Temporarily Unavailable")
+        return page
+
+    async def test_retries_after_rate_limit(self) -> None:
+        plugin = _make_plugin()
+        page = self._page_with_statuses([503, 200])
+        plugin._context = _make_mock_context(pages=[page])
+        plugin._wait_for_cloudflare = AsyncMock(return_value=True)
+
+        with patch.object(_mod.asyncio, "sleep", AsyncMock()) as mock_sleep:
+            html = await plugin._fetch_detail_html("https://www.ddlvalley.me/p/")
+
+        assert html == "<html>post</html>"
+        mock_sleep.assert_awaited_once_with(2.0)
+
+    async def test_gives_up_after_retries(self) -> None:
+        plugin = _make_plugin()
+        page = self._page_with_statuses([503, 503, 503])
+        plugin._context = _make_mock_context(pages=[page])
+
+        with patch.object(_mod.asyncio, "sleep", AsyncMock()) as mock_sleep:
+            html = await plugin._fetch_detail_html("https://www.ddlvalley.me/p/")
+
+        assert html is None
+        assert page.goto.await_count == 3
+        assert [c.args[0] for c in mock_sleep.await_args_list] == [2.0, 4.0]
+        page.close.assert_awaited_once()
 
 
 class TestCloudflareWait:

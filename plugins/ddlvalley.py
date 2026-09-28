@@ -25,6 +25,7 @@ from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBa
 # ---------------------------------------------------------------------------
 _DOMAINS = ["www.ddlvalley.me"]
 _MAX_PAGES = 100  # ~10 posts/page → 100 pages for 1000
+_RETRY_BACKOFF_S: tuple[float, ...] = (2.0, 4.0)  # rate-limited post pages
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -207,6 +208,9 @@ class DDLValleyPlugin(PlaywrightPluginBase):
     default_language = "en"
 
     _domains = _DOMAINS
+    # nginx rate-limits post pages (503 "Service Temporarily Unavailable"):
+    # 5 parallel fetches lost ~75% of the posts in a live run.
+    _max_concurrent = 2
 
     async def _search_posts(
         self,
@@ -231,7 +235,8 @@ class DDLValleyPlugin(PlaywrightPluginBase):
         ctx = await self._ensure_context()
         page = await ctx.new_page()
         try:
-            await self._navigate_and_wait(page, url)
+            # Server-rendered WordPress: no need to wait for networkidle
+            await self._navigate_and_wait(page, url, wait_for_idle=False)
 
             html = await page.content()
             parser = _SearchResultParser(self.base_url)
@@ -249,20 +254,31 @@ class DDLValleyPlugin(PlaywrightPluginBase):
             if not page.is_closed():
                 await page.close()
 
-    async def _scrape_detail(self, post: dict[str, str]) -> SearchResult | None:
-        """Scrape a detail page for download links."""
+    async def _fetch_detail_html(self, url: str) -> str | None:
+        """Load a post page, retrying rate-limit errors with backoff."""
         ctx = await self._ensure_context()
         page = await ctx.new_page()
         try:
-            await self._navigate_and_wait(page, post["url"], wait_for_idle=False)
-
-            html = await page.content()
+            for attempt, backoff in enumerate((*_RETRY_BACKOFF_S, None)):
+                if await self._navigate_and_wait(page, url, wait_for_idle=False):
+                    return await page.content()
+                if backoff is None:
+                    return None
+                self._log.debug("ddlvalley_detail_retry", url=url, attempt=attempt + 1)
+                await asyncio.sleep(backoff)
+            return None
         except Exception:  # noqa: BLE001
-            self._log.warning("ddlvalley_detail_fetch_failed", url=post["url"])
+            self._log.warning("ddlvalley_detail_fetch_failed", url=url)
             return None
         finally:
             if not page.is_closed():
                 await page.close()
+
+    async def _scrape_detail(self, post: dict[str, str]) -> SearchResult | None:
+        """Scrape a detail page for download links."""
+        html = await self._fetch_detail_html(post["url"])
+        if html is None:
+            return None
 
         # Extract title from <title> tag (more reliable than search page)
         title_parser = _TitleParser()
