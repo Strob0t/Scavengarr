@@ -162,6 +162,8 @@ plugin = MySitePlugin()
 - `isolated_search()` — plain passthrough to `search()`
 - `cleanup()` — closes a private client (never the shared one)
 
+**devideosrc.co player** (`scavengarr.infrastructure.plugins.devideosrc`): DLE streaming sites such as streamcloud embed a devideosrc player (`devideosrc.co/movie/<imdb>`, `devideosrc.co/serial/<imdb>`) instead of listing hoster links. `find_player(html)` detects it on a detail page, `fetch_links(client, player, **request_kwargs)` returns the hoster embeds (movie: best rank first; series: every episode, labelled `<season>x<episode> <hoster>`). The player page is always loaded past Cloudflare's cache (cached copies carry expired tokens and even cached 429s); a 429 there is retried with a fresh URL. Only the separate download embed (`/embed/download/<imdb>`) sits behind Turnstile.
+
 ### PlaywrightPluginBase
 
 For sites requiring JavaScript execution or Cloudflare bypass:

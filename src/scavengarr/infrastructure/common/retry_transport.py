@@ -13,6 +13,8 @@ from scavengarr.infrastructure.common.rate_limiter import DomainRateLimiter
 log = structlog.get_logger(__name__)
 
 _DEFAULT_RETRYABLE = frozenset({429, 503})
+# cf-cache-status values of responses served from Cloudflare's cache
+_CACHED_STATUSES = frozenset({"HIT", "STALE", "UPDATING"})
 
 
 def _parse_retry_after(headers: httpx.Headers) -> float | None:
@@ -77,6 +79,12 @@ class RetryTransport(httpx.AsyncBaseTransport):
             if response.status_code not in self._retryable:
                 # Adaptive feedback: successful response
                 self._rate_limiter.record_success(url_str)
+                return response
+
+            # A cached 429/503 (Cloudflare can cache them for hours) comes back
+            # unchanged on retry and says nothing about the origin's load now
+            if response.headers.get("cf-cache-status") in _CACHED_STATUSES:
+                log.debug("http_cached_error", url=url_str, status=response.status_code)
                 return response
 
             # Adaptive feedback: throttled (429/503)

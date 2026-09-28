@@ -1,18 +1,19 @@
-"""streamcloud.plus Python plugin for Scavengarr.
+"""streamcloud Python plugin for Scavengarr.
 
-Scrapes streamcloud.plus (German streaming site, DLE-based CMS) with:
+Scrapes streamcloud.download (German streaming site, DLE-based CMS) with:
 - httpx for all requests (server-rendered HTML, no JS challenges)
 - GET /?do=search&subaction=search&story={query} for keyword search
 - POST-based pagination via search_start={N}&result_from={offset}
   (12 results/page, up to 84 pages for ~1000 results)
-- Detail page scraping for stream/hoster links:
-  - Movies: hosters injected via meinecloud.click script (window.open URLs)
-  - Series: season/episode tabs with data-link attributes on <li> elements
-- Series detection from detail page structure (season/episode tabs)
+- Detail page scraping for metadata; stream/hoster links come from the
+  embedded devideosrc player (movie or series, see
+  ``scavengarr.infrastructure.plugins.devideosrc``)
+- Series detection from the player kind and the "Serien" genre
 - Category filtering (Movies/TV/Anime)
 - Bounded concurrency for detail page scraping
 
-Multi-domain support: streamcloud.plus (primary), streamcloud.my (fallback).
+Multi-domain support: streamcloud.download (primary; streamcloud.plus and
+streamcloud.uno redirect there), streamcloud.my (fallback).
 No authentication required.
 """
 
@@ -21,15 +22,16 @@ from __future__ import annotations
 import asyncio
 import re
 from html.parser import HTMLParser
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins import devideosrc
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
 # Configurable settings
 # ---------------------------------------------------------------------------
-_DOMAINS = ["streamcloud.plus", "streamcloud.my"]
+_DOMAINS = ["streamcloud.download", "streamcloud.my"]
 _RESULTS_PER_PAGE = 12
 _MAX_PAGES = 84  # 12 results/page → 84 pages for ~1000
 
@@ -110,16 +112,6 @@ def _clean_title(title: str) -> str:
             title = title[: -len(suffix)].strip()
     title = re.sub(r"\s*\(\d{4}\)\s*$", "", title)
     return title.strip()
-
-
-def _domain_from_url(url: str) -> str:
-    """Extract domain name from a URL for hoster labeling."""
-    try:
-        host = urlparse(url).hostname or ""
-        parts = host.replace("www.", "").split(".")
-        return parts[0] if parts and parts[0] else "unknown"
-    except Exception:  # noqa: BLE001
-        return "unknown"
 
 
 _EPISODE_NUM_RE = re.compile(r"(\d{1,2})\s*[xX]\s*(\d{1,4})")
@@ -309,265 +301,127 @@ class _SearchResultParser(HTMLParser):
 
 
 class _DetailPageParser(HTMLParser):
-    """Parse streamcloud.plus detail page for metadata and stream links.
+    """Parse streamcloud detail page metadata.
 
-    Movies have hosters injected via meinecloud.click script::
+    Stream links are not on the page itself; they come from the embedded
+    devideosrc player (see ``scavengarr.infrastructure.plugins.devideosrc``).
 
-        <a onclick="window.open( 'https://supervideo.cc/...' )" class="streams">
-          <span class="streaming">Supervideo</span>
-          <mark>1080p</mark>
-          <span>1.2GB</span>
-        </a>
+    Metadata fields (value in a ``<div>`` or ``<span>`` after the label)::
 
-    Series have season/episode tabs::
-
-        <div id="season-1">
-          <ul>
-            <li>
-              <a data-link="https://supervideo.cc/embed-..." data-num="1x1"
-                 data-title="Episode 1">1</a>
-              <div class="mirrors">
-                <a data-m="supervideo" data-link="https://supervideo.cc/...">
-                  Supervideo</a>
-                <a data-m="streamtape" data-link="/player/...">Streamtape</a>
-              </div>
-            </li>
-          </ul>
-        </div>
-
-    Metadata fields::
-
-        <strong>Genres:</strong> <span>Action / Adventure</span>
-        <strong>Veröffentlicht:</strong> <a>2024</a>
-        <strong>Spielzeit:</strong> <span>121 min</span>
+        <strong>Genres: </strong> <div>Serien / Krimi / Drama</div>
+        <strong>Veröffentlicht: </strong> <div><a href="/xfsearch/2008">2008</a></div>
+        <strong>Spielzeit: </strong> <div>50 min</div>
         IMDb link: <a href="https://www.imdb.com/title/ttXXXXX/">6.1/10</a>
     """
+
+    _VALUE_TAGS = ("span", "div")
 
     def __init__(self, base_url: str) -> None:
         super().__init__()
         self._base_url = base_url
 
-        # Stream links (movies)
-        self.stream_links: list[dict[str, str]] = []
-
-        # Movie hoster tracking (onclick window.open links)
-        self._in_streams_a = False
-        self._current_stream_url = ""
-        self._in_streaming_span = False
-        self._streaming_hoster_name = ""
-        self._in_quality_mark = False
-        self._quality_text = ""
-        self._in_size_span = False
-        self._size_text = ""
-
-        # Series episode/mirror links (data-link attributes)
-        self._series_links: list[dict[str, str]] = []
-        self._has_season_tabs = False
-        self._last_data_num = ""  # Track last episode label for mirrors
-
         # Metadata
-        self.title = ""
         self.year = ""
         self.genres: list[str] = []
         self.description = ""
-        self.quality = ""
         self.imdb_rating = ""
         self.imdb_id = ""
         self.runtime = ""
-        self.is_series = False
 
         # Description tracking
         self._in_desc_p = False
         self._desc_text = ""
 
-        # Metadata field tracking
+        # Metadata field tracking: value element after a <strong> label
         self._last_strong_text = ""
         self._in_strong = False
-        self._in_genre_span = False
-        self._genre_text = ""
+        self._value_field = ""  # "genres" | "runtime" while inside the value
+        self._value_tag = ""
+        self._value_depth = 0
+        self._value_text = ""
         self._in_year_a = False
         self._year_text = ""
-        self._in_runtime_span = False
-        self._runtime_text = ""
 
         # IMDb link tracking
         self._in_imdb_a = False
         self._imdb_text = ""
 
-        # HD | Deutsch quality tracking
-        self._in_quality_div = False
-        self._quality_div_text = ""
+    @property
+    def is_series(self) -> bool:
+        return _detect_series(self.genres)
 
-    def handle_starttag(  # noqa: C901
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attr_dict = dict(attrs)
-        classes = (attr_dict.get("class") or "").split()
 
-        # -- Movie hosters: <a class="streams" onclick="window.open('URL')"> --
-        if tag == "a" and "streams" in classes:
-            onclick = attr_dict.get("onclick", "") or ""
-            m = re.search(r"window\.open\(\s*'([^']+)'\s*\)", onclick)
-            if m:
-                self._in_streams_a = True
-                self._current_stream_url = m.group(1)
-                self._streaming_hoster_name = ""
-                self._quality_text = ""
-                self._size_text = ""
+        if self._value_field and tag == self._value_tag:
+            self._value_depth += 1
 
-        # Hoster name inside <span class="streaming">
-        if tag == "span" and "streaming" in classes and self._in_streams_a:
-            self._in_streaming_span = True
-            self._streaming_hoster_name = ""
-
-        # Quality inside <mark>
-        if tag == "mark" and self._in_streams_a:
-            self._in_quality_mark = True
-            self._quality_text = ""
-
-        # -- Series episode links: <a data-link="..." data-num="1x1"> --
-        if tag == "a":
-            data_link = attr_dict.get("data-link", "") or ""
-            data_num = attr_dict.get("data-num", "") or ""
-            data_m = attr_dict.get("data-m", "") or ""
-            data_title = attr_dict.get("data-title", "") or ""
-
-            if data_link and data_num:
-                # Episode primary link
-                full_url = urljoin(self._base_url, data_link)
-                self._last_data_num = data_num
-                self._series_links.append(
-                    {
-                        "hoster": _domain_from_url(full_url),
-                        "link": full_url,
-                        "label": f"{data_num} {data_title}".strip(),
-                    }
-                )
-                self._has_season_tabs = True
-            elif data_link and data_m:
-                # Mirror link inside <div class="mirrors">
-                full_url = urljoin(self._base_url, data_link)
-                label = (
-                    f"{self._last_data_num} {data_m}" if self._last_data_num else data_m
-                )
-                self._series_links.append(
-                    {
-                        "hoster": data_m,
-                        "link": full_url,
-                        "label": label,
-                    }
-                )
-                self._has_season_tabs = True
-
-        # Season tab divs
-        if tag == "div":
-            div_id = attr_dict.get("id", "") or ""
-            if div_id.startswith("season-"):
-                self._has_season_tabs = True
-
-        # -- Metadata: <strong>Genres:</strong> --
         if tag == "strong":
             self._in_strong = True
             self._last_strong_text = ""
 
-        # Genre text after "Genres:" strong
-        if tag == "span" and self._last_strong_text == "Genres:":
-            self._in_genre_span = True
-            self._genre_text = ""
+        # Value element right after "Genres:" / "Spielzeit:"
+        if tag in self._VALUE_TAGS and not self._value_field:
+            field = {"Genres:": "genres", "Spielzeit:": "runtime"}.get(
+                self._last_strong_text
+            )
+            if field:
+                self._value_field = field
+                self._value_tag = tag
+                self._value_depth = 1
+                self._value_text = ""
+                self._last_strong_text = ""
 
-        # Year link after "Veröffentlicht:" strong
         if tag == "a":
             href = attr_dict.get("href", "") or ""
-            if self._last_strong_text == "Veröffentlicht:" or "/xfsearch/" in href:
-                if re.search(r"/xfsearch/\d{4}$", href):
-                    self._in_year_a = True
-                    self._year_text = ""
+            # Year link: <a href="/xfsearch/2008">
+            if re.search(r"/xfsearch/\d{4}$", href):
+                self._in_year_a = True
+                self._year_text = ""
 
             # IMDb link
             if "imdb.com/title/" in href:
                 self._in_imdb_a = True
                 self._imdb_text = ""
-                # Extract IMDb ID
                 m = re.search(r"(tt\d+)", href)
                 if m:
                     self.imdb_id = m.group(1)
-
-        # Runtime span after "Spielzeit:" strong
-        if tag == "span" and self._last_strong_text == "Spielzeit:":
-            self._in_runtime_span = True
-            self._runtime_text = ""
 
         # Description paragraph (first <p> inside the detail info area)
         if tag == "p" and not self._in_desc_p and not self.description:
             self._in_desc_p = True
             self._desc_text = ""
 
-    def handle_data(self, data: str) -> None:  # noqa: C901
+    def handle_data(self, data: str) -> None:
         if self._in_strong:
             self._last_strong_text += data
-
-        if self._in_streaming_span:
-            self._streaming_hoster_name += data
-
-        if self._in_quality_mark:
-            self._quality_text += data
-
-        if self._in_genre_span:
-            self._genre_text += data
-
+        if self._value_field:
+            self._value_text += data
         if self._in_year_a:
             self._year_text += data
-
         if self._in_imdb_a:
             self._imdb_text += data
-
-        if self._in_runtime_span:
-            self._runtime_text += data
-
         if self._in_desc_p:
             self._desc_text += data
 
-    def handle_endtag(self, tag: str) -> None:  # noqa: C901
+    def _end_value(self) -> None:
+        """Store the label value that just closed."""
+        raw = " ".join(self._value_text.split())
+        if self._value_field == "genres":
+            self.genres = [g.strip() for g in raw.split("/") if g.strip()]
+        else:
+            self.runtime = raw
+        self._value_field = ""
+
+    def handle_endtag(self, tag: str) -> None:
         if tag == "strong" and self._in_strong:
             self._in_strong = False
             self._last_strong_text = self._last_strong_text.strip()
 
-        # End of movie hoster anchor
-        if tag == "a" and self._in_streams_a:
-            self._in_streams_a = False
-            if self._current_stream_url:
-                hoster = self._streaming_hoster_name.strip()
-                quality = self._quality_text.strip()
-                size = self._size_text.strip()
-                label_parts = [hoster]
-                if quality:
-                    label_parts.append(quality)
-                if size:
-                    label_parts.append(size)
-
-                self.stream_links.append(
-                    {
-                        "hoster": _domain_from_url(self._current_stream_url)
-                        if not hoster
-                        else hoster.lower().replace(" ", ""),
-                        "link": self._current_stream_url,
-                        "label": " ".join(label_parts),
-                        "quality": quality,
-                        "size": size,
-                    }
-                )
-
-        if tag == "span" and self._in_streaming_span:
-            self._in_streaming_span = False
-
-        if tag == "mark" and self._in_quality_mark:
-            self._in_quality_mark = False
-
-        if tag == "span" and self._in_genre_span:
-            self._in_genre_span = False
-            raw = self._genre_text.strip()
-            if raw:
-                self.genres = [g.strip() for g in raw.split("/") if g.strip()]
+        if self._value_field and tag == self._value_tag:
+            self._value_depth -= 1
+            if not self._value_depth:
+                self._end_value()
 
         if tag == "a" and self._in_year_a:
             self._in_year_a = False
@@ -577,42 +431,15 @@ class _DetailPageParser(HTMLParser):
 
         if tag == "a" and self._in_imdb_a:
             self._in_imdb_a = False
-            text = self._imdb_text.strip()
-            m = re.search(r"(\d+\.?\d*)/10", text)
+            m = re.search(r"(\d+\.?\d*)/10", self._imdb_text.strip())
             if m:
                 self.imdb_rating = m.group(1)
-
-        if tag == "span" and self._in_runtime_span:
-            self._in_runtime_span = False
-            self.runtime = self._runtime_text.strip()
 
         if tag == "p" and self._in_desc_p:
             self._in_desc_p = False
             text = self._desc_text.strip()
             if len(text) > 20:
                 self.description = text
-
-    def finalize(self) -> None:
-        """Post-processing after parsing."""
-        # Series detection: presence of season/episode tabs
-        if self._has_season_tabs:
-            self.is_series = True
-
-        # Also detect from genres
-        if _detect_series(self.genres):
-            self.is_series = True
-
-        # For series, use the episode links as stream_links
-        if self.is_series and self._series_links and not self.stream_links:
-            self.stream_links = self._series_links
-
-        # Set quality from first stream link if not set
-        if not self.quality and self.stream_links:
-            for sl in self.stream_links:
-                q = sl.get("quality", "")
-                if q:
-                    self.quality = q
-                    break
 
 
 class StreamcloudPlugin(HttpxPluginBase):
@@ -713,31 +540,30 @@ class StreamcloudPlugin(HttpxPluginBase):
         season: int | None = None,
         episode: int | None = None,
     ) -> SearchResult | None:
-        """Scrape a detail page for stream links and metadata."""
-        client = await self._ensure_client()
+        """Scrape a detail page for metadata, then load its devideosrc links."""
         detail_url = result["url"]
-
-        try:
-            resp = await client.get(detail_url)
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning(
-                "streamcloud_detail_failed",
-                url=detail_url,
-                error=str(exc),
-            )
+        html = await self._fetch_text(detail_url, context="detail")
+        if html is None:
             return None
 
         parser = _DetailPageParser(self.base_url)
-        parser.feed(resp.text)
-        parser.finalize()
+        parser.feed(html)
+
+        player = devideosrc.find_player(html)
+        if player is None:
+            self._log.debug("streamcloud_no_player", url=detail_url)
+            return None
+        is_series = player.kind == "tv" or parser.is_series
+
+        client = await self._ensure_client()
+        links = await devideosrc.fetch_links(
+            client, player, **self._request_kwargs(client)
+        )
 
         # Filter series links to requested season/episode
-        if parser.is_series and season is not None and parser.stream_links:
-            filtered = _filter_episode_links(parser.stream_links, season, episode)
-            if filtered:
-                parser.stream_links = filtered
-            else:
+        if is_series and season is not None and links:
+            links = _filter_episode_links(links, season, episode)
+            if not links:
                 self._log.debug(
                     "streamcloud_no_episode_match",
                     url=detail_url,
@@ -746,15 +572,13 @@ class StreamcloudPlugin(HttpxPluginBase):
                 )
                 return None
 
-        if not parser.stream_links:
+        if not links:
             self._log.debug("streamcloud_no_streams", url=detail_url)
             return None
 
         title = _clean_title(result.get("title", ""))
         year = parser.year or result.get("year", "")
         genres = parser.genres
-        is_series = parser.is_series
-        quality = parser.quality
         category = _detect_category(genres, is_series)
 
         description_parts: list[str] = []
@@ -769,16 +593,15 @@ class StreamcloudPlugin(HttpxPluginBase):
         metadata: dict[str, str] = {
             "year": year,
             "genres": ", ".join(genres),
-            "quality": quality,
             "imdb_rating": parser.imdb_rating,
-            "imdb_id": parser.imdb_id,
+            "imdb_id": parser.imdb_id or player.imdb_id,
             "runtime": parser.runtime,
         }
 
         return SearchResult(
             title=title,
-            download_link=parser.stream_links[0]["link"],
-            download_links=parser.stream_links,
+            download_link=links[0]["link"],
+            download_links=links,
             source_url=detail_url,
             category=category,
             description=description,

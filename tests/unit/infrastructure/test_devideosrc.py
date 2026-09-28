@@ -1,0 +1,293 @@
+"""Tests for the devideosrc.co embed API helper."""
+
+from __future__ import annotations
+
+import json
+
+import httpx
+import pytest
+import respx
+
+from scavengarr.infrastructure.plugins import devideosrc
+from scavengarr.infrastructure.plugins.devideosrc import DevideosrcPlayer
+
+_MOVIE = DevideosrcPlayer(kind="movie", imdb_id="tt0371746")
+_SERIES = DevideosrcPlayer(kind="tv", imdb_id="tt0903747")
+_EMBED_LINKS = "https://devideosrc.co/api/embed-links"
+_TOKEN = "bW92aWV8dHQwMzcxNzQ2fDB8MHwxNzkwNjA4MjAw.e9d906486a7eb6f7"
+
+_PLAYER_HTML = f"""
+<script>
+fetch('/api/embed-links', {{
+    method: 'POST',
+    body: JSON.stringify({{ type: 'movie', id: "tt0371746", token: "{_TOKEN}" }})
+}})
+</script>
+"""
+
+_MOVIE_PAYLOAD = {
+    "ok": True,
+    "type": "movie",
+    "sources": [
+        {
+            "name": "dropload.io",
+            "url": "https://dr0pstream.com/e/4x0n7a8agp0m",
+            "rank": 2,
+        },
+        {
+            "name": "doodstream.com",
+            "url": "https://doodstream.com/e/98bs427knuk1",
+            "rank": 1,
+        },
+        {"name": "broken", "url": "", "rank": 3},
+    ],
+}
+
+_TV_PAYLOAD = {
+    "ok": True,
+    "type": "tv",
+    "tv": {
+        "seasons": [
+            {
+                "season_number": 1,
+                "episodes": [
+                    {
+                        "episode_number": 1,
+                        "sources": [
+                            {"name": "dropload.io", "url": "https://dr0pstream.com/e/a"}
+                        ],
+                    },
+                    {"episode_number": 2, "sources": []},
+                ],
+            },
+            {
+                "season_number": 2,
+                "episodes": [
+                    {
+                        "episode_number": 3,
+                        "sources": [{"name": "", "url": "https://www.mxdrop.to/e/b"}],
+                    }
+                ],
+            },
+        ]
+    },
+}
+
+
+class TestFindPlayer:
+    def test_movie_iframe(self) -> None:
+        html = '<iframe src="https://devideosrc.co/movie/tt2395427"></iframe>'
+        assert devideosrc.find_player(html) == DevideosrcPlayer("movie", "tt2395427")
+
+    def test_serial_script_with_imdb_var(self) -> None:
+        html = (
+            "<script>var imdb = 'tt0903747';"
+            "iframe.src = 'https://devideosrc.co/serial/' + imdb;</script>"
+        )
+        assert devideosrc.find_player(html) == DevideosrcPlayer("tv", "tt0903747")
+
+    def test_serial_imdb_from_download_embed(self) -> None:
+        html = (
+            "<script>iframe.src = 'https://devideosrc.co/serial/' + x;</script>"
+            '<iframe src="https://devideosrc.co/embed/download/tt0903747"></iframe>'
+        )
+        assert devideosrc.find_player(html) == DevideosrcPlayer("tv", "tt0903747")
+
+    def test_download_embed_alone_is_no_player(self) -> None:
+        html = '<iframe src="https://devideosrc.co/embed/download/tt1"></iframe>'
+        assert devideosrc.find_player(html) is None
+
+    def test_no_player(self) -> None:
+        assert devideosrc.find_player("<html></html>") is None
+
+
+class TestPlayerUrl:
+    def test_movie(self) -> None:
+        assert devideosrc.player_url(_MOVIE) == (
+            "https://devideosrc.co/movie/tt0371746"
+        )
+
+    def test_series(self) -> None:
+        assert devideosrc.player_url(_SERIES) == (
+            "https://devideosrc.co/serial/tt0903747"
+        )
+
+
+class TestParsePayload:
+    def test_movie_links_ranked_and_filtered(self) -> None:
+        assert devideosrc.movie_links(_MOVIE_PAYLOAD) == [
+            {
+                "hoster": "doodstream",
+                "link": "https://doodstream.com/e/98bs427knuk1",
+                "label": "doodstream",
+            },
+            {
+                "hoster": "dropload",
+                "link": "https://dr0pstream.com/e/4x0n7a8agp0m",
+                "label": "dropload",
+            },
+        ]
+
+    def test_tv_links_labelled_by_episode(self) -> None:
+        links = devideosrc.tv_links(_TV_PAYLOAD)
+
+        assert [(link["label"], link["hoster"]) for link in links] == [
+            ("1x1 dropload", "dropload"),
+            ("2x3 mxdrop", "mxdrop"),  # no name -> URL host
+        ]
+
+    def test_malformed_payloads(self) -> None:
+        assert devideosrc.movie_links({"sources": "x"}) == []
+        assert devideosrc.tv_links({"tv": None}) == []
+        assert devideosrc.tv_links({"tv": {"seasons": [None, {"episodes": 1}]}}) == []
+
+
+class TestFetchLinks:
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_movie_flow(self) -> None:
+        respx.get(url__startswith="https://devideosrc.co/movie/tt0371746").respond(
+            200, text=_PLAYER_HTML
+        )
+        route = respx.post(_EMBED_LINKS).respond(200, json=_MOVIE_PAYLOAD)
+
+        async with httpx.AsyncClient() as client:
+            links = await devideosrc.fetch_links(client, _MOVIE)
+
+        assert [link["hoster"] for link in links] == ["doodstream", "dropload"]
+        assert json.loads(route.calls[0].request.content) == {
+            "type": "movie",
+            "id": "tt0371746",
+            "token": _TOKEN,
+        }
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_series_flow(self) -> None:
+        respx.get(url__startswith="https://devideosrc.co/serial/tt0903747").respond(
+            200, text=_PLAYER_HTML
+        )
+        route = respx.post(_EMBED_LINKS).respond(200, json=_TV_PAYLOAD)
+
+        async with httpx.AsyncClient() as client:
+            links = await devideosrc.fetch_links(client, _SERIES)
+
+        assert len(links) == 2
+        assert json.loads(route.calls[0].request.content)["type"] == "tv"
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_no_token(self) -> None:
+        respx.get(url__startswith="https://devideosrc.co/movie/tt0371746").respond(
+            200, text=""
+        )
+        route = respx.post(_EMBED_LINKS)
+
+        async with httpx.AsyncClient() as client:
+            assert await devideosrc.fetch_links(client, _MOVIE) == []
+        assert not route.called
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_not_ok(self) -> None:
+        respx.get(url__startswith="https://devideosrc.co/movie/tt0371746").respond(
+            200, text=_PLAYER_HTML
+        )
+        respx.post(_EMBED_LINKS).respond(200, json={"ok": False})
+
+        async with httpx.AsyncClient() as client:
+            assert await devideosrc.fetch_links(client, _MOVIE) == []
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_http_errors(self) -> None:
+        respx.get(url__startswith="https://devideosrc.co/movie/tt0371746").respond(
+            200, text=_PLAYER_HTML
+        )
+        respx.post(_EMBED_LINKS).respond(500)
+        respx.get(url__startswith="https://devideosrc.co/serial/tt0903747").mock(
+            side_effect=httpx.ConnectError("down")
+        )
+
+        async with httpx.AsyncClient() as client:
+            assert await devideosrc.fetch_links(client, _MOVIE) == []
+            assert await devideosrc.fetch_links(client, _SERIES) == []
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_invalid_json(self) -> None:
+        respx.get(url__startswith="https://devideosrc.co/movie/tt0371746").respond(
+            200, text=_PLAYER_HTML
+        )
+        respx.post(_EMBED_LINKS).respond(200, text="not json")
+
+        async with httpx.AsyncClient() as client:
+            assert await devideosrc.fetch_links(client, _MOVIE) == []
+
+
+class TestPlayerPageCache:
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_page_always_loaded_past_cache(self) -> None:
+        page = respx.get(
+            url__startswith="https://devideosrc.co/movie/tt0371746"
+        ).respond(200, text=_PLAYER_HTML)
+        respx.post(_EMBED_LINKS).respond(200, json=_MOVIE_PAYLOAD)
+
+        async with httpx.AsyncClient() as client:
+            await devideosrc.fetch_links(client, _MOVIE)
+
+        assert page.calls[0].request.url.params["r"]
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_429_retried_with_fresh_url(self, monkeypatch) -> None:
+        sleeps: list[float] = []
+
+        async def _sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+
+        monkeypatch.setattr(devideosrc.asyncio, "sleep", _sleep)
+        page = respx.get(url__startswith="https://devideosrc.co/movie/tt0371746").mock(
+            side_effect=[
+                httpx.Response(429),
+                httpx.Response(200, text=_PLAYER_HTML),
+            ]
+        )
+        respx.post(_EMBED_LINKS).respond(200, json=_MOVIE_PAYLOAD)
+
+        async with httpx.AsyncClient() as client:
+            links = await devideosrc.fetch_links(client, _MOVIE)
+
+        assert len(links) == 2
+        first, retry = (c.request.url.params["r"] for c in page.calls)
+        assert first != retry  # a cached 429 would come back on the same URL
+        assert sleeps == [devideosrc._PAGE_RETRY_DELAY_S]
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_persistent_429_gives_up(self, monkeypatch) -> None:
+        async def _sleep(seconds: float) -> None:
+            return None
+
+        monkeypatch.setattr(devideosrc.asyncio, "sleep", _sleep)
+        page = respx.get(
+            url__startswith="https://devideosrc.co/movie/tt0371746"
+        ).respond(429)
+
+        async with httpx.AsyncClient() as client:
+            assert await devideosrc.fetch_links(client, _MOVIE) == []
+        assert page.call_count == devideosrc._PAGE_ATTEMPTS
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_embed_links_errors_not_retried_here(self) -> None:
+        """POST backoff (429/503) is the shared RetryTransport's job."""
+        respx.get(url__startswith="https://devideosrc.co/movie/tt0371746").respond(
+            200, text=_PLAYER_HTML
+        )
+        route = respx.post(_EMBED_LINKS).respond(429)
+
+        async with httpx.AsyncClient() as client:
+            assert await devideosrc.fetch_links(client, _MOVIE) == []
+        assert route.call_count == 1

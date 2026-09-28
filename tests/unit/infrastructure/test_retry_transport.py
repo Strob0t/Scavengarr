@@ -196,3 +196,40 @@ class TestRetryTransport:
         resp = await transport.handle_async_request(_make_request())
         assert resp.status_code == 429
         assert transport._wrapped.handle_async_request.call_count == 1
+
+
+class TestCachedRetryableResponse:
+    """A 429/503 served from Cloudflare's cache won't change on retry."""
+
+    @pytest.mark.asyncio()
+    @pytest.mark.parametrize("cache_status", ["HIT", "STALE", "UPDATING"])
+    async def test_cached_429_returned_without_retry(self, cache_status: str) -> None:
+        transport = _make_transport(
+            [_make_response(429, {"cf-cache-status": cache_status})]
+        )
+        with (
+            patch.object(transport._rate_limiter, "record_throttle") as throttle,
+            patch("scavengarr.infrastructure.common.retry_transport.asyncio") as m,
+        ):
+            m.sleep = AsyncMock()
+            resp = await transport.handle_async_request(_make_request())
+
+        assert resp.status_code == 429
+        assert transport._wrapped.handle_async_request.call_count == 1
+        m.sleep.assert_not_awaited()
+        throttle.assert_not_called()  # the origin did not throttle us now
+
+    @pytest.mark.asyncio()
+    async def test_uncached_429_still_retried(self) -> None:
+        transport = _make_transport(
+            [
+                _make_response(429, {"cf-cache-status": "MISS"}),
+                _make_response(200),
+            ]
+        )
+        with patch("scavengarr.infrastructure.common.retry_transport.asyncio") as m:
+            m.sleep = AsyncMock()
+            resp = await transport.handle_async_request(_make_request())
+
+        assert resp.status_code == 200
+        assert transport._wrapped.handle_async_request.call_count == 2

@@ -111,7 +111,7 @@ Each plugin sets `_MAX_PAGES` from the site's results-per-page (e.g. 200/page = 
 ## Rate Limiting and Errors
 
 - **Rate limiting:** httpx plugins share one app-wide client whose `RetryTransport` applies a per-domain token-bucket rate limiter (`DomainRateLimiter`, optionally adaptive) before every request. Plugins do not add their own delays. Playwright traffic does not go through this client.
-- **429 / 503:** retried automatically by `RetryTransport` with exponential backoff, honouring `Retry-After`.
+- **429 / 503:** retried automatically by `RetryTransport` with exponential backoff, honouring `Retry-After`. A 429/503 served from Cloudflare's cache (`cf-cache-status: HIT/STALE/UPDATING`) is returned at once: it would come back unchanged on retry, and it does not lower the domain's adaptive rate.
 - **Other HTTP errors, timeouts, network errors:** `_safe_fetch()` logs a warning and returns `None`; the plugin skips that page or item.
 - **Unreachable domains:** handled once per plugin lifetime by `_verify_domain()`, not per request (see [Mirror URL Fallback](./mirror-url-fallback.md)).
 

@@ -38,6 +38,13 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 - **No forced User-Agent in browser contexts**: contexts keep Patchright's real UA (a fixed Chrome 131 UA disagreed with the Chromium client hints). New `_browser_user_agent` (default `None`) and `_context_options()`, also used by the boerse/mygully login contexts; `_user_agent` stays for httpx side requests.
 - **`PlaywrightPluginBase._stealth` renamed to `_block_resources`**: it now only controls aborting image/font/CSS requests; singleton and per-request contexts share `_configure_context()`. `StealthPool` no longer applies playwright-stealth.
 
+### Fix: streamcloud
+- **Back to results** (live: 52 for "Iron Man" in ~16 s, 24 for "Breaking Bad"; was 0): hoster links moved from meinecloud.click and the season tabs to an embedded **devideosrc.co** player (`/movie/<imdb>`, `/serial/<imdb>`). New shared helper `scavengarr.infrastructure.plugins.devideosrc`: detects the player on a detail page, reads the signed token from the player page and loads the hoster embeds from `POST /api/embed-links` (no captcha; only the separate download embed is Turnstile-gated). Series links are labelled `<season>x<episode> <hoster>`, so the existing season/episode filter keeps working. The detail parser now reads metadata only (values in `<div>` or `<span>`); dead meinecloud/tab parsing and `_domain_from_url` are gone. `_DOMAINS` is now `streamcloud.download` (`.plus` → `.uno` → `.download`).
+- devideosrc's player pages are always loaded past Cloudflare's cache (cached copies carry expired tokens and even cached 429 answers); a 429 there is retried with a fresh URL.
+
+### Fix: RetryTransport Retried Cached 429s
+- A 429/503 served from Cloudflare's cache (`cf-cache-status: HIT/STALE/UPDATING`) is now returned at once. Before, the transport retried it with backoff although a cached answer never changes, and each retry halved the domain's adaptive rate (a streamcloud search slowed from ~16 s to ~140 s).
+
 ### Fix: nox
 - **Back to results** (live: 31 for "Iron Man" in ~1.5 s; browse: 73 recent releases; was 0): the `/api/frontend/...` API is gone. Search now pages through `GET /api/search?q=&page=` (media entries, 20 per page, up to 10 pages) and lists each entry's releases from `GET /api/media/{slug}` (bounded concurrency; releases without online links are skipped). Browse (empty query) uses `GET /api/releases/recent/{days}`. Release links point to the new release page `/media/{slug}?release={id}` (the old `/release/{slug}` is 404); posters come from `/api/image/w342/…`. Type `episode` is now `series`; documentaries (`doku`) map to 5080. Category filtering uses the shared `_category_matches()`.
 
@@ -760,5 +767,5 @@ Foundation of the project: FastAPI server, Scrapy scraping engine, plugin loader
 
 Current known issues:
 
-- **Plugins still returning 0 results** (live smoke, 2026-09-28): dataload (search form 400), kinoking (selectors/search), hdfilme (site search answers with a PHP fatal error, links behind Turnstile on devideosrc.co), streamcloud, streamkiste (stream source changed), streamworld (0 results), boerse (plugin reports a network error). Triage and fix plan: `docs/plans/plugin-repair.md`.
+- **Plugins still returning 0 results** (live smoke, 2026-09-28): dataload (search form 400), kinoking (selectors/search), hdfilme (site search answers with a PHP fatal error, links behind Turnstile on devideosrc.co), streamkiste (stream source changed), streamworld (0 results), boerse (plugin reports a network error). Triage and fix plan: `docs/plans/plugin-repair.md`.
 - **Cloudflare-protected sites need a headful browser**: ddlspot, ddlvalley, scnsrc, filmfans, kinoger and serienfans only pass the interactive Turnstile with Patchright headful (Xvfb, `playwright.headless: false`) and `playwright.browser_fallback: true`. filmfans and serienfans rate-limit bursts (429): an uncached search takes ~2–2.5 min and can exceed Prowlarr's request timeout. See `docs/plans/antibot-patchright.md`.

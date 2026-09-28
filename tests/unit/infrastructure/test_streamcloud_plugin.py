@@ -1,14 +1,16 @@
-"""Tests for the streamcloud.plus Python plugin (httpx-based)."""
+"""Tests for the streamcloud.download Python plugin (httpx-based)."""
 
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+import respx
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "streamcloud.py"
 
@@ -31,8 +33,10 @@ _DetailPageParser = _mod._DetailPageParser
 _clean_title = _mod._clean_title
 _detect_series = _mod._detect_series
 _detect_category = _mod._detect_category
-_domain_from_url = _mod._domain_from_url
 _filter_by_category = _mod._filter_by_category
+
+
+_BASE = "https://streamcloud.download"
 
 
 def _make_plugin() -> object:
@@ -53,24 +57,24 @@ _SEARCH_HTML = """\
 
 <div class="item cf item-video post-1515412 post type-post" style="position:relative;">
   <div class="thumb" title="Justice League">
-    <a href="https://streamcloud.plus/7244-justice-league-stream-deutsch.html">\
+    <a href="https://streamcloud.download/7244-justice-league-stream-deutsch.html">\
 <img src="/uploads/thumb/poster.jpg" alt="Justice League"><span class="overlay">\
 </span></a>
   </div>
   <div class="f_title">\
-<a href="https://streamcloud.plus/7244-justice-league-stream-deutsch.html">\
+<a href="https://streamcloud.download/7244-justice-league-stream-deutsch.html">\
 Justice League</a></div>
   <div class="f_year">2017</div>
 </div>
 
 <div class="item cf item-video post-1515412 post type-post" style="position:relative;">
   <div class="thumb" title="The Batman">
-    <a href="https://streamcloud.plus/39187-the-batman-stream-deutsch.html">\
+    <a href="https://streamcloud.download/39187-the-batman-stream-deutsch.html">\
 <img src="/uploads/thumb/poster2.jpg" alt="The Batman"><span class="overlay">\
 </span></a>
   </div>
   <div class="f_title">\
-<a href="https://streamcloud.plus/39187-the-batman-stream-deutsch.html">\
+<a href="https://streamcloud.download/39187-the-batman-stream-deutsch.html">\
 The Batman</a></div>
   <div class="f_year">2004</div>
 </div>
@@ -78,64 +82,38 @@ The Batman</a></div>
 </body></html>
 """
 
+# Movie: devideosrc movie player iframe; label values in <div>
 _MOVIE_DETAIL_HTML = """\
 <html><body><main>
-<script src="https://meinecloud.click/ddl/tt0974015"></script>
-<div class="dark"><div id="streams">\
-<a id="stream_yes_access" style="cursor:pointer" \
-onclick="window.open( 'https://supervideo.cc/hvl13tlrh31o' )" \
-target="_blank" rel="noreferrer" class="streams">\
-<div><span class="streaming">Supervideo</span>\
-<span class="quality"><mark>1080p</mark></span>\
-<span style="width:auto; float:right; padding:10px;">\
-<span style="color:#999;">1.1GB</span></span></div></a>\
-<a id="stream_yes_access" style="cursor:pointer" \
-onclick="window.open( 'https://dropload.tv/g70obtkey4gw' )" \
-target="_blank" rel="noreferrer" class="streams">\
-<div><span class="streaming">Dropload</span>\
-<span class="quality"><mark>1080p</mark></span>\
-<span style="width:auto; float:right; padding:10px;">\
-<span style="color:#999;">1.0GB</span></span></div></a>\
-</div></div>
+<div id="movie_container">
+<iframe src="https://devideosrc.co/movie/tt0974015" allowfullscreen></iframe>
+</div>
 <p>Bruce Wayne alias Batman hat wieder Vertrauen in die Menschheit.</p>
-<strong>Genres:</strong> <span>Action / Abenteuer / Sci-Fi / Fantasy</span>
-<strong>Veröffentlicht:</strong> <a href="/xfsearch/2017">2017</a>
-<strong>Spielzeit:</strong> <span>121 min</span>
+<div><strong>Genres: </strong> <div>Action / Abenteuer / Sci-Fi / Fantasy</div></div>
+<div><strong>Veröffentlicht: </strong>
+<div><a href="/xfsearch/2017">2017</a></div></div>
+<div><strong>Spielzeit: </strong> <div>121 min</div></div>
 <a href="https://www.imdb.com/title/tt0974015/">6.1/10</a>
+<iframe src="https://devideosrc.co/embed/download/tt0974015"></iframe>
 </main></body></html>
 """
 
+# Series: player iframe filled by script; label values in <span>
 _SERIES_DETAIL_HTML = """\
 <html><body><main>
-<div class="tab-pane fade active show" id="season-1">
-  <ul>
-    <li class="active">
-      <a href="#" data-link="https://supervideo.cc/embed-a7jl6afezqxu.html" \
-id="serie-1_1" data-num="1x1" data-title="Episode 1">1</a>
-      <div class="mirrors">
-        <a href="#" data-m="supervideo" \
-data-link="https://supervideo.cc/embed-a7jl6afezqxu.html">Supervideo</a>
-        <a href="#" data-m="streamtape" \
-data-link="/player/player.php?id=39187&amp;s=1">Streamtape</a>
-      </div>
-    </li>
-    <li>
-      <a href="#" data-link="https://supervideo.cc/embed-76jhsp47ukjk.html" \
-id="serie-1_2" data-num="1x2" data-title="Episode 2">2</a>
-      <div class="mirrors">
-        <a href="#" data-m="supervideo" \
-data-link="https://supervideo.cc/embed-76jhsp47ukjk.html">Supervideo</a>
-      </div>
-    </li>
-  </ul>
-</div>
+<iframe id="serial_iframe" src="" allowfullscreen></iframe>
 <p>Joker hat ein Gas entwickelt, mit dem er ganz Gotham City beherrschen kann.</p>
 <strong>Genres:</strong> <span>Serien / Animation / Action</span>
 <strong>Veröffentlicht:</strong> <a href="/xfsearch/2004">2004</a>
-<strong>Staffel:</strong> <span>2</span>
-<strong>Episode:</strong> <span>13</span>
 <strong>Spielzeit:</strong> <span>20 min</span>
 <a href="https://www.imdb.com/title/tt0398417/">7.4/10</a>
+<script>
+(function() {
+  var imdb = 'tt0398417';
+  var iframe = document.getElementById('serial_iframe');
+  iframe.src = 'https://devideosrc.co/serial/' + imdb;
+})();
+</script>
 </main></body></html>
 """
 
@@ -146,19 +124,101 @@ _EMPTY_DETAIL_HTML = """\
 </main></body></html>
 """
 
+_MOVIE_PLAYER = "https://devideosrc.co/movie/tt0974015"
+_SERIES_PLAYER = "https://devideosrc.co/serial/tt0398417"
+_EMBED_LINKS = "https://devideosrc.co/api/embed-links"
 
-# ---------------------------------------------------------------------------
-# Helper functions
-# ---------------------------------------------------------------------------
 
-
-def _mock_response(text: str, status_code: int = 200) -> httpx.Response:
-    """Create a mock httpx.Response."""
-    return httpx.Response(
-        status_code=status_code,
-        text=text,
-        request=httpx.Request("GET", "https://streamcloud.plus/"),
+def _player_html(kind: str, imdb: str) -> str:
+    return (
+        "<script>fetch('/api/embed-links', {method: 'POST', "
+        "body: JSON.stringify({ type: '" + kind + "', id: \"" + imdb + '", '
+        'token: "dG9rZW4.abc123" }) })</script>'
     )
+
+
+_MOVIE_LINKS_JSON = {
+    "ok": True,
+    "type": "movie",
+    "sources": [
+        {
+            "id": "dropload-io-15",
+            "name": "dropload.io",
+            "url": "https://dr0pstream.com/e/g70obtkey4gw",
+            "rank": 2,
+        },
+        {
+            "id": "supervideo-cc-3",
+            "name": "supervideo.cc",
+            "url": "https://supervideo.cc/e/hvl13tlrh31o",
+            "rank": 1,
+        },
+    ],
+}
+
+_SERIES_LINKS_JSON = {
+    "ok": True,
+    "type": "tv",
+    "tv": {
+        "seasons": [
+            {
+                "season_number": 1,
+                "episodes": [
+                    {
+                        "episode_number": 1,
+                        "sources": [
+                            {
+                                "name": "supervideo.cc",
+                                "url": "https://supervideo.cc/e/a7jl6afezqxu",
+                            }
+                        ],
+                    },
+                    {
+                        "episode_number": 2,
+                        "sources": [
+                            {
+                                "name": "supervideo.cc",
+                                "url": "https://supervideo.cc/e/76jhsp47ukjk",
+                            }
+                        ],
+                    },
+                ],
+            }
+        ]
+    },
+}
+
+
+def _embed_links(request: httpx.Request) -> httpx.Response:
+    body = json.loads(request.content)
+    payload = _MOVIE_LINKS_JSON if body["type"] == "movie" else _SERIES_LINKS_JSON
+    return httpx.Response(200, json=payload)
+
+
+def _mock_site(search_html: str, details: dict[str, str]) -> None:
+    """Route search (page 1 GET, page 2+ POST), detail pages and devideosrc."""
+    respx.get(_BASE + "/").respond(200, text=search_html)
+    respx.post(_BASE + "/index.php").respond(200, text="")
+    for url, html in details.items():
+        respx.get(url).respond(200, text=html)
+    respx.get(_MOVIE_PLAYER).respond(200, text=_player_html("movie", "tt0974015"))
+    respx.get(_SERIES_PLAYER).respond(200, text=_player_html("tv", "tt0398417"))
+    respx.post(_EMBED_LINKS).mock(side_effect=_embed_links)
+
+
+_JL_URL = _BASE + "/7244-justice-league-stream-deutsch.html"
+_BATMAN_URL = _BASE + "/39187-the-batman-stream-deutsch.html"
+_BOTH_DETAILS = {_JL_URL: _MOVIE_DETAIL_HTML, _BATMAN_URL: _SERIES_DETAIL_HTML}
+
+
+def _single_search(title: str, url: str, year: str = "2024") -> str:
+    return f"""\
+<div class="item cf item-video">
+  <div class="thumb" title="{title}"><a href="{url}"><img></a></div>
+  <div class="f_title"><a href="{url}">{title}</a></div>
+  <div class="f_year">{year}</div>
+</div>
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -220,32 +280,11 @@ class TestDetectCategory:
         assert _detect_category(["Animation", "Action"], is_series=True) == 5070
 
 
-class TestDomainFromUrl:
-    """Tests for _domain_from_url."""
-
-    def test_extracts_domain(self) -> None:
-        assert _domain_from_url("https://supervideo.cc/embed-abc123") == "supervideo"
-
-    def test_strips_www(self) -> None:
-        assert _domain_from_url("https://www.example.com/page") == "example"
-
-    def test_invalid_url(self) -> None:
-        assert _domain_from_url("not-a-url") == "unknown"
-
-    def test_dropload(self) -> None:
-        assert _domain_from_url("https://dropload.tv/g70obtkey4gw") == "dropload"
-
-
-# ---------------------------------------------------------------------------
-# Parser unit tests
-# ---------------------------------------------------------------------------
-
-
 class TestSearchResultParser:
     """Tests for _SearchResultParser."""
 
     def test_parses_search_results(self) -> None:
-        parser = _SearchResultParser("https://streamcloud.plus")
+        parser = _SearchResultParser("https://streamcloud.download")
         parser.feed(_SEARCH_HTML)
 
         assert len(parser.results) == 2
@@ -254,7 +293,7 @@ class TestSearchResultParser:
         assert first["title"] == "Justice League"
         assert (
             first["url"]
-            == "https://streamcloud.plus/7244-justice-league-stream-deutsch.html"
+            == "https://streamcloud.download/7244-justice-league-stream-deutsch.html"
         )
         assert first["year"] == "2017"
 
@@ -263,7 +302,7 @@ class TestSearchResultParser:
         assert second["year"] == "2004"
 
     def test_empty_page(self) -> None:
-        parser = _SearchResultParser("https://streamcloud.plus")
+        parser = _SearchResultParser("https://streamcloud.download")
         parser.feed("<html><body>No results</body></html>")
         assert len(parser.results) == 0
 
@@ -277,7 +316,7 @@ class TestSearchResultParser:
           <div class="f_year">2024</div>
         </div>
         """
-        parser = _SearchResultParser("https://streamcloud.plus")
+        parser = _SearchResultParser("https://streamcloud.download")
         parser.feed(html)
         # Empty title → skipped
         assert len(parser.results) == 0
@@ -291,93 +330,47 @@ class TestSearchResultParser:
           <div class="f_year">2024</div>
         </div>
         """
-        parser = _SearchResultParser("https://streamcloud.plus")
+        parser = _SearchResultParser("https://streamcloud.download")
         parser.feed(html)
         assert len(parser.results) == 1
         assert parser.results[0]["title"] == "Fallback Title"
 
 
-class TestDetailPageParserMovie:
-    """Tests for _DetailPageParser with movie detail pages."""
+class TestDetailPageParser:
+    """Tests for _DetailPageParser (metadata only)."""
 
-    def test_parses_movie_hosters(self) -> None:
-        parser = _DetailPageParser("https://streamcloud.plus")
+    def test_movie_metadata_in_divs(self) -> None:
+        parser = _DetailPageParser(_BASE)
         parser.feed(_MOVIE_DETAIL_HTML)
-        parser.finalize()
 
-        assert len(parser.stream_links) == 2
-
-        first = parser.stream_links[0]
-        assert first["link"] == "https://supervideo.cc/hvl13tlrh31o"
-        assert first["hoster"] == "supervideo"
-        assert first["quality"] == "1080p"
-
-        second = parser.stream_links[1]
-        assert second["link"] == "https://dropload.tv/g70obtkey4gw"
-        assert second["hoster"] == "dropload"
-
-    def test_parses_movie_metadata(self) -> None:
-        parser = _DetailPageParser("https://streamcloud.plus")
-        parser.feed(_MOVIE_DETAIL_HTML)
-        parser.finalize()
-
-        assert "Action" in parser.genres
-        assert "Abenteuer" in parser.genres
-        assert "Sci-Fi" in parser.genres
-        assert "Fantasy" in parser.genres
+        assert parser.genres == ["Action", "Abenteuer", "Sci-Fi", "Fantasy"]
         assert parser.year == "2017"
-        assert parser.imdb_rating == "6.1"
-        assert parser.imdb_id == "tt0974015"
         assert parser.runtime == "121 min"
+        assert parser.imdb_id == "tt0974015"
+        assert parser.imdb_rating == "6.1"
+        assert parser.description.startswith("Bruce Wayne")
         assert parser.is_series is False
 
-    def test_parses_movie_description(self) -> None:
-        parser = _DetailPageParser("https://streamcloud.plus")
-        parser.feed(_MOVIE_DETAIL_HTML)
-        parser.finalize()
-
-        assert "Bruce Wayne" in parser.description
-
-
-class TestDetailPageParserSeries:
-    """Tests for _DetailPageParser with series detail pages."""
-
-    def test_parses_series_episode_links(self) -> None:
-        parser = _DetailPageParser("https://streamcloud.plus")
+    def test_series_metadata_in_spans(self) -> None:
+        parser = _DetailPageParser(_BASE)
         parser.feed(_SERIES_DETAIL_HTML)
-        parser.finalize()
 
-        assert parser.is_series is True
-        assert len(parser.stream_links) > 0
-
-        # Should have episode primary links + mirrors
-        links = parser.stream_links
-        ep1_links = [sl for sl in links if "1x1" in sl.get("label", "")]
-        assert len(ep1_links) >= 1
-
-    def test_series_metadata(self) -> None:
-        parser = _DetailPageParser("https://streamcloud.plus")
-        parser.feed(_SERIES_DETAIL_HTML)
-        parser.finalize()
-
-        assert parser.year == "2004"
+        assert parser.genres == ["Serien", "Animation", "Action"]
+        assert parser.runtime == "20 min"
         assert parser.imdb_rating == "7.4"
-        assert parser.imdb_id == "tt0398417"
-        assert "Serien" in parser.genres
-        assert "Animation" in parser.genres
         assert parser.is_series is True
 
-    def test_empty_detail(self) -> None:
-        parser = _DetailPageParser("https://streamcloud.plus")
+    def test_empty_page(self) -> None:
+        parser = _DetailPageParser(_BASE)
         parser.feed(_EMPTY_DETAIL_HTML)
-        parser.finalize()
 
-        assert len(parser.stream_links) == 0
+        assert parser.genres == []
+        assert parser.imdb_id == ""
         assert parser.is_series is False
 
 
 # ---------------------------------------------------------------------------
-# Plugin integration tests (mocked HTTP)
+# Plugin integration tests (respx)
 # ---------------------------------------------------------------------------
 
 
@@ -388,286 +381,223 @@ class TestStreamcloudPluginAttributes:
         plug = _make_plugin()
         assert plug.name == "streamcloud"
 
-    def test_plugin_version(self) -> None:
-        plug = _make_plugin()
-        assert plug.version == "1.0.0"
-
     def test_plugin_mode(self) -> None:
         plug = _make_plugin()
         assert plug.mode == "httpx"
+
+    def test_primary_domain(self) -> None:
+        assert _StreamcloudPlugin().base_url == _BASE
 
 
 class TestStreamcloudPluginSearch:
     """Tests for StreamcloudPlugin search with mocked HTTP."""
 
+    @respx.mock
     @pytest.mark.asyncio
     async def test_search_returns_results(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
+        _mock_site(_SEARCH_HTML, _BOTH_DETAILS)
 
-        # Page 1 is GET, detail pages are GET
-        mock_client.get = AsyncMock(
-            side_effect=[
-                _mock_response(_SEARCH_HTML),  # search page 1 (GET)
-                _mock_response(_MOVIE_DETAIL_HTML),  # Justice League detail
-                _mock_response(_SERIES_DETAIL_HTML),  # The Batman detail
-            ]
-        )
-        # Page 2+ is POST → empty to stop pagination
-        mock_client.post = AsyncMock(
-            return_value=_mock_response(""),
-        )
-
-        plug._client = mock_client
         results = await plug.search("Batman")
+        await plug.cleanup()
 
-        assert len(results) == 2
-        titles = {r.title for r in results}
-        assert "Justice League" in titles
-        assert "The Batman" in titles
+        assert {r.title for r in results} == {"Justice League", "The Batman"}
 
+    @respx.mock
     @pytest.mark.asyncio
-    async def test_search_movie_result(self) -> None:
+    async def test_movie_links_from_devideosrc(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
-
-        search_html = """\
-        <div class="item cf item-video">
-          <div class="thumb" title="Justice League">
-            <a href="https://streamcloud.plus/7244-justice-league.html"><img></a>
-          </div>
-          <div class="f_title">\
-<a href="https://streamcloud.plus/7244-justice-league.html">\
-Justice League</a></div>
-          <div class="f_year">2017</div>
-        </div>
-        """
-
-        mock_client.get = AsyncMock(
-            side_effect=[
-                _mock_response(search_html),  # search page 1 (GET)
-                _mock_response(_MOVIE_DETAIL_HTML),  # detail (GET)
-            ]
+        _mock_site(
+            _single_search("Justice League", _JL_URL, "2017"),
+            {_JL_URL: _MOVIE_DETAIL_HTML},
         )
-        mock_client.post = AsyncMock(return_value=_mock_response(""))
 
-        plug._client = mock_client
         results = await plug.search("Justice League")
+        await plug.cleanup()
 
         assert len(results) == 1
         first = results[0]
-        assert first.title == "Justice League"
         assert first.category == 2000
-        assert first.download_link.startswith("https://")
-        assert first.download_links is not None
-        assert len(first.download_links) == 2
+        # best rank first
+        assert first.download_links == [
+            {
+                "hoster": "supervideo",
+                "link": "https://supervideo.cc/e/hvl13tlrh31o",
+                "label": "supervideo",
+            },
+            {
+                "hoster": "dropload",
+                "link": "https://dr0pstream.com/e/g70obtkey4gw",
+                "label": "dropload",
+            },
+        ]
+        assert first.download_link == "https://supervideo.cc/e/hvl13tlrh31o"
 
+    @respx.mock
     @pytest.mark.asyncio
-    async def test_search_series_result(self) -> None:
+    async def test_series_result(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
-
-        search_html = """\
-        <div class="item cf item-video">
-          <div class="thumb" title="The Batman">
-            <a href="https://streamcloud.plus/39187-the-batman.html"><img></a>
-          </div>
-          <div class="f_title">\
-<a href="https://streamcloud.plus/39187-the-batman.html">\
-The Batman</a></div>
-          <div class="f_year">2004</div>
-        </div>
-        """
-
-        mock_client.get = AsyncMock(
-            side_effect=[
-                _mock_response(search_html),  # search page 1 (GET)
-                _mock_response(_SERIES_DETAIL_HTML),  # detail (GET)
-            ]
+        _mock_site(
+            _single_search("The Batman", _BATMAN_URL, "2004"),
+            {_BATMAN_URL: _SERIES_DETAIL_HTML},
         )
-        mock_client.post = AsyncMock(return_value=_mock_response(""))
 
-        plug._client = mock_client
         results = await plug.search("The Batman")
+        await plug.cleanup()
 
         assert len(results) == 1
         first = results[0]
-        assert first.title == "The Batman"
         assert first.category == 5070  # Animation series → anime
+        assert [link["label"] for link in first.download_links] == [
+            "1x1 supervideo",
+            "1x2 supervideo",
+        ]
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_series_episode_filter(self) -> None:
+        plug = _make_plugin()
+        _mock_site(
+            _single_search("The Batman", _BATMAN_URL, "2004"),
+            {_BATMAN_URL: _SERIES_DETAIL_HTML},
+        )
+
+        results = await plug.search("The Batman", season=1, episode=2)
+        await plug.cleanup()
+
+        assert [r.download_link for r in results] == [
+            "https://supervideo.cc/e/76jhsp47ukjk"
+        ]
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_series_missing_episode_skipped(self) -> None:
+        plug = _make_plugin()
+        _mock_site(
+            _single_search("The Batman", _BATMAN_URL, "2004"),
+            {_BATMAN_URL: _SERIES_DETAIL_HTML},
+        )
+
+        results = await plug.search("The Batman", season=3, episode=1)
+        await plug.cleanup()
+
+        assert results == []
 
     @pytest.mark.asyncio
     async def test_search_empty_query_returns_empty(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
-        plug._client = mock_client
+        plug._client = AsyncMock()
 
-        results = await plug.search("")
-        assert results == []
+        assert await plug.search("") == []
 
+    @respx.mock
     @pytest.mark.asyncio
     async def test_search_no_results(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
+        _mock_site("<html><body>No results</body></html>", {})
 
-        mock_client.get = AsyncMock(
-            return_value=_mock_response("<html><body>No results</body></html>")
-        )
-
-        plug._client = mock_client
         results = await plug.search("xyznonexistent")
+        await plug.cleanup()
 
         assert results == []
 
+    @respx.mock
     @pytest.mark.asyncio
     async def test_search_http_error(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=httpx.ConnectError("connection failed"))
+        respx.get(_BASE + "/").mock(side_effect=httpx.ConnectError("down"))
 
-        plug._client = mock_client
         results = await plug.search("test")
+        await plug.cleanup()
 
         assert results == []
 
+    @respx.mock
     @pytest.mark.asyncio
     async def test_detail_page_error_skips_result(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
+        url = _BASE + "/12345-test.html"
+        _mock_site(_single_search("Test", url), {})
+        respx.get(url).respond(500)
 
-        search_html = """\
-        <div class="item cf item-video">
-          <div class="thumb" title="Test">
-            <a href="https://streamcloud.plus/12345-test.html"><img></a>
-          </div>
-          <div class="f_title">\
-<a href="https://streamcloud.plus/12345-test.html">Test</a></div>
-          <div class="f_year">2024</div>
-        </div>
-        """
-
-        mock_client.get = AsyncMock(
-            side_effect=[
-                _mock_response(search_html),  # search page 1 (GET)
-                httpx.ConnectError("detail failed"),  # detail page error
-            ]
-        )
-        mock_client.post = AsyncMock(return_value=_mock_response(""))
-
-        plug._client = mock_client
         results = await plug.search("test")
+        await plug.cleanup()
 
         assert results == []
 
+    @respx.mock
     @pytest.mark.asyncio
-    async def test_detail_without_streams_skips_result(self) -> None:
+    async def test_detail_without_player_skips_result(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
+        url = _BASE + "/12345-test.html"
+        _mock_site(_single_search("Test", url), {url: _EMPTY_DETAIL_HTML})
 
-        search_html = """\
-        <div class="item cf item-video">
-          <div class="thumb" title="Test">
-            <a href="https://streamcloud.plus/12345-test.html"><img></a>
-          </div>
-          <div class="f_title">\
-<a href="https://streamcloud.plus/12345-test.html">Test</a></div>
-          <div class="f_year">2024</div>
-        </div>
-        """
-
-        mock_client.get = AsyncMock(
-            side_effect=[
-                _mock_response(search_html),  # search page 1 (GET)
-                _mock_response(_EMPTY_DETAIL_HTML),  # detail without streams
-            ]
-        )
-        mock_client.post = AsyncMock(return_value=_mock_response(""))
-
-        plug._client = mock_client
         results = await plug.search("test")
+        await plug.cleanup()
+
+        assert results == []
+        assert not any("devideosrc" in str(c.request.url) for c in respx.calls)
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_devideosrc_error_skips_result(self) -> None:
+        plug = _make_plugin()
+        _mock_site(
+            _single_search("Justice League", _JL_URL, "2017"),
+            {_JL_URL: _MOVIE_DETAIL_HTML},
+        )
+        respx.post(_EMBED_LINKS).respond(500)
+
+        results = await plug.search("Justice League")
+        await plug.cleanup()
 
         assert results == []
 
+    @respx.mock
     @pytest.mark.asyncio
     async def test_result_metadata(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
-
-        search_html = """\
-        <div class="item cf item-video">
-          <div class="thumb" title="Justice League">
-            <a href="https://streamcloud.plus/7244-jl.html"><img></a>
-          </div>
-          <div class="f_title">\
-<a href="https://streamcloud.plus/7244-jl.html">\
-Justice League</a></div>
-          <div class="f_year">2017</div>
-        </div>
-        """
-
-        mock_client.get = AsyncMock(
-            side_effect=[
-                _mock_response(search_html),  # search page 1 (GET)
-                _mock_response(_MOVIE_DETAIL_HTML),  # detail (GET)
-            ]
+        _mock_site(
+            _single_search("Justice League", _JL_URL, "2017"),
+            {_JL_URL: _MOVIE_DETAIL_HTML},
         )
-        mock_client.post = AsyncMock(return_value=_mock_response(""))
 
-        plug._client = mock_client
         results = await plug.search("Justice League")
+        await plug.cleanup()
 
-        first = results[0]
-        assert first.metadata.get("quality") == "1080p"
-        assert first.metadata.get("imdb_rating") == "6.1"
-        assert first.metadata.get("imdb_id") == "tt0974015"
-        assert "Action" in first.metadata.get("genres", "")
-        assert first.metadata.get("year") == "2017"
-        assert first.metadata.get("runtime") == "121 min"
+        assert results[0].metadata == {
+            "year": "2017",
+            "genres": "Action, Abenteuer, Sci-Fi, Fantasy",
+            "imdb_rating": "6.1",
+            "imdb_id": "tt0974015",
+            "runtime": "121 min",
+        }
 
 
 class TestStreamcloudCategoryFiltering:
     """Tests for category filtering."""
 
+    @respx.mock
     @pytest.mark.asyncio
     async def test_filter_movies_only(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
+        _mock_site(_SEARCH_HTML, _BOTH_DETAILS)
 
-        mock_client.get = AsyncMock(
-            side_effect=[
-                _mock_response(_SEARCH_HTML),  # search page 1 (GET)
-                _mock_response(_MOVIE_DETAIL_HTML),  # Justice League (movie)
-                _mock_response(_SERIES_DETAIL_HTML),  # The Batman (series)
-            ]
-        )
-        mock_client.post = AsyncMock(return_value=_mock_response(""))
-
-        plug._client = mock_client
         results = await plug.search("test", category=2000)
+        await plug.cleanup()
 
-        # Only movie should remain
-        assert len(results) == 1
-        assert results[0].title == "Justice League"
+        assert [r.title for r in results] == ["Justice League"]
 
+    @respx.mock
     @pytest.mark.asyncio
     async def test_filter_series_only(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
+        _mock_site(_SEARCH_HTML, _BOTH_DETAILS)
 
-        mock_client.get = AsyncMock(
-            side_effect=[
-                _mock_response(_SEARCH_HTML),  # search page 1 (GET)
-                _mock_response(_MOVIE_DETAIL_HTML),  # Justice League (movie)
-                _mock_response(_SERIES_DETAIL_HTML),  # The Batman (series)
-            ]
-        )
-        mock_client.post = AsyncMock(return_value=_mock_response(""))
-
-        plug._client = mock_client
         results = await plug.search("test", category=5000)
+        await plug.cleanup()
 
-        # Only series should remain
-        assert len(results) == 1
-        assert results[0].title == "The Batman"
+        assert [r.title for r in results] == ["The Batman"]
 
 
 class TestStreamcloudDomainFallback:
@@ -684,7 +614,7 @@ class TestStreamcloudDomainFallback:
         ok_resp.url = httpx.URL("https://streamcloud.my/")
         mock_client.head = AsyncMock(
             side_effect=[
-                httpx.ConnectError("streamcloud.plus down"),
+                httpx.ConnectError("streamcloud.download down"),
                 ok_resp,
             ]
         )
@@ -706,7 +636,7 @@ class TestStreamcloudDomainFallback:
         plug._client = mock_client
         await plug._verify_domain()
 
-        assert plug.base_url == "https://streamcloud.plus"
+        assert plug.base_url == "https://streamcloud.download"
         assert plug._domain_verified is True
 
     @pytest.mark.asyncio
