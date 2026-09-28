@@ -21,6 +21,7 @@ from patchright.async_api import (
     async_playwright,
 )
 
+from scavengarr.infrastructure.browser.display import resolve_headless
 from scavengarr.infrastructure.hoster_resolvers.cloudflare import _CF_MARKERS
 
 log = structlog.get_logger(__name__)
@@ -58,7 +59,7 @@ class StealthPool:
 
     Usage::
 
-        pool = StealthPool(headless=True, timeout_ms=15_000)
+        pool = StealthPool(headless=False, timeout_ms=15_000)
         alive = await pool.probe_url("https://example.com/embed/abc")
         await pool.cleanup()
     """
@@ -66,7 +67,7 @@ class StealthPool:
     def __init__(
         self,
         *,
-        headless: bool = True,
+        headless: bool = False,
         timeout_ms: int = 15_000,
     ) -> None:
         self._headless = headless
@@ -89,15 +90,16 @@ class StealthPool:
                 return self._context
 
             self._playwright = await async_playwright().start()
+            headless = resolve_headless(self._headless)
             self._browser = await self._playwright.chromium.launch(
-                headless=self._headless,
+                headless=headless,
             )
             self._context = await self._browser.new_context()
 
             # Block heavy resources on all pages in this context
             await self._context.route("**/*", _block_resources)
 
-            log.info("stealth_pool_started", headless=self._headless)
+            log.info("stealth_pool_started", headless=headless)
             return self._context
 
     async def cleanup(self) -> None:

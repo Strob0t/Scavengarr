@@ -208,7 +208,7 @@ plugin = MyJsSitePlugin()
 Always obtain pages via `_new_page()` / `_ensure_page()` (or the context from `_ensure_context()`), never via `self._context` directly: under `isolated_search()` the active context is a per-request one and `self._context` may be `None`.
 
 **Provided by `PlaywrightPluginBase`:**
-- `_headless` (default `True`), `_cf_timeout_ms` (default `15_000`), `_networkidle_timeout_ms` (default `10_000`)
+- `_headless` (default `False` = headful when `DISPLAY` exists, else headless fallback via `resolve_headless()`; standalone launches only, the shared pool follows `playwright.headless`), `_cf_timeout_ms` (default `15_000`), `_networkidle_timeout_ms` (default `10_000`)
 - `_block_resources` (default `True`) — aborts image, font and CSS requests in each new context. Anti-bot evasion comes from Patchright itself (imports use `patchright.async_api`); its Console domain is disabled, so `page.on("console")` never fires
 - `set_shared_pool(pool)` — the composition root injects the `SharedBrowserPool`; `_ensure_browser()` then reuses the shared Chromium instead of launching its own
 - `_ensure_browser()` — shared browser, or a standalone Chromium launch with one retry; reconnects if the browser disconnected

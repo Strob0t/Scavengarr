@@ -105,7 +105,7 @@ These variables are read by the `EnvOverrides` Pydantic Settings model (case-ins
 | `SCAVENGARR_HTTP_RETRY_BACKOFF_BASE` | float | `1.0` | `http.retry_backoff_base` |
 | `SCAVENGARR_HTTP_RETRY_MAX_BACKOFF` | float | `30.0` | `http.retry_max_backoff` |
 | `SCAVENGARR_API_RATE_LIMIT_RPM` | int | `120` | `http.api_rate_limit_rpm` |
-| `SCAVENGARR_PLAYWRIGHT_HEADLESS` | bool | `true` | `playwright.headless` |
+| `SCAVENGARR_PLAYWRIGHT_HEADLESS` | bool | `false` | `playwright.headless` |
 | `SCAVENGARR_PLAYWRIGHT_TIMEOUT_MS` | int | `30000` | `playwright.timeout_ms` (currently unused, no effect) |
 | `SCAVENGARR_LOG_LEVEL` | string | `INFO` | `logging.level` |
 | `SCAVENGARR_LOG_FORMAT` | string | (auto) | `logging.format` |
@@ -177,7 +177,7 @@ validation_timeout_seconds: 3.0 # default: 5.0
 validation_max_concurrent: 30   # default: 20 (auto-tuned when stremio.auto_tune_all)
 
 playwright:
-  headless: true
+  headless: false               # headful under Xvfb, headless fallback without DISPLAY
 
 stremio:
   auto_tune_all: true           # container-aware auto-tune of concurrency params
@@ -309,12 +309,12 @@ Controls the Playwright browser engine for JavaScript-heavy sites.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `playwright.headless` | bool | `true` | Run the browsers (shared pool and stealth pool) in headless mode |
+| `playwright.headless` | bool | `false` | `false`: headful when a display exists (`DISPLAY`, e.g. Xvfb), otherwise headless with one `browser_headful_no_display` warning. `true`: always headless |
 | `playwright.timeout_ms` | int | `30000` | Currently unused (no effect) |
 
 **Validation:** `timeout_ms` must be greater than 0.
 
-Set `headless: false` only for local debugging — it requires a display server (X11/Wayland) and is not supported in Docker containers.
+Headful is the default because interactive Cloudflare Turnstile rejects every headless browser while headful Patchright passes (`docs/plans/antibot-patchright.md`). The Docker image starts Xvfb itself; locally, run under `xvfb-run -a` or on a desktop session. Cost (measured 2026-09-28, PSS): Chromium idle 230 → 420 MiB, with 3 pages 451 → 697 MiB, plus about 70 MiB for Xvfb. Set `headless: true` on hosts where that is too much; Cloudflare-protected plugins then fail.
 
 ### Stremio
 
@@ -554,10 +554,10 @@ The production image (`Dockerfile.prod`) sets these defaults:
 | `SCAVENGARR_LOG_FORMAT` | `json` |
 | `SCAVENGARR_PLUGIN_DIR` | `/app/plugins` |
 | `SCAVENGARR_CACHE_DIR` | `/app/cache` |
-| `SCAVENGARR_PLAYWRIGHT_HEADLESS` | `true` |
+| `SCAVENGARR_PLAYWRIGHT_HEADLESS` | `false` |
 | `HOST` / `PORT` | `0.0.0.0` / `7979` |
 
-The entrypoint is `python -m scavengarr.interfaces.cli`, so CLI flags can be appended to `docker run`. Plugins are not bundled in the image.
+The entrypoint is `docker/entrypoint.sh`: it starts Xvfb on `:99` (unless `DISPLAY` is already set) and then `exec`s `python -m scavengarr.interfaces.cli`, so the app stays the signal recipient (graceful shutdown) and CLI flags can still be appended to `docker run`. Plugins are not bundled in the image.
 
 ### Minimal Production
 

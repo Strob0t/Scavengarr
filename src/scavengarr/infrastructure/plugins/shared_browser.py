@@ -17,6 +17,8 @@ import asyncio
 import structlog
 from patchright.async_api import Browser, Playwright, async_playwright
 
+from scavengarr.infrastructure.browser.display import resolve_headless
+
 log = structlog.get_logger(__name__)
 
 
@@ -25,7 +27,7 @@ class SharedBrowserPool:
 
     Usage::
 
-        pool = SharedBrowserPool(headless=True)
+        pool = SharedBrowserPool(headless=False)
 
         # Called from use case (as background task while httpx plugins search):
         browser, pw = await pool.warmup()
@@ -36,7 +38,7 @@ class SharedBrowserPool:
         await pool.cleanup()
     """
 
-    def __init__(self, *, headless: bool = True) -> None:
+    def __init__(self, *, headless: bool = False) -> None:
         self._headless = headless
         self._pw: Playwright | None = None
         self._browser: Browser | None = None
@@ -75,10 +77,9 @@ class SharedBrowserPool:
                 self._browser = None
 
             self._pw = await async_playwright().start()
-            self._browser = await self._pw.chromium.launch(
-                headless=self._headless,
-            )
-            log.info("shared_browser_launched")
+            headless = resolve_headless(self._headless)
+            self._browser = await self._pw.chromium.launch(headless=headless)
+            log.info("shared_browser_launched", headless=headless)
             return self._browser, self._pw
 
     async def cleanup(self) -> None:

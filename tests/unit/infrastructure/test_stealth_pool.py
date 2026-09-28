@@ -102,6 +102,28 @@ class TestStealthPoolLifecycle:
         context.route.assert_awaited_once()
 
     @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright")
+    @pytest.mark.parametrize(
+        ("display", "expected_headless"), [(":99", False), (None, True)]
+    )
+    async def test_headful_only_with_display(
+        self,
+        mock_ap: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+        display: str | None,
+        expected_headless: bool,
+    ) -> None:
+        if display is None:
+            monkeypatch.delenv("DISPLAY", raising=False)
+        else:
+            monkeypatch.setenv("DISPLAY", display)
+        pw, browser, context = _mock_playwright_stack()
+        mock_ap.return_value.start = AsyncMock(return_value=pw)
+
+        await StealthPool(headless=False)._ensure_context()
+
+        pw.chromium.launch.assert_awaited_once_with(headless=expected_headless)
+
+    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright")
     async def test_ensure_context_reuses_existing(self, mock_ap: MagicMock) -> None:
         pw, browser, context = _mock_playwright_stack()
         mock_ap.return_value.start = AsyncMock(return_value=pw)

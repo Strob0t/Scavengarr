@@ -44,7 +44,7 @@ RUN apt-get update && \
     libcups2 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 \
     libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2 \
     libatspi2.0-0 libxshmfence1 \
-    fonts-liberation curl && \
+    fonts-liberation curl xvfb && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Non-root user
@@ -58,7 +58,10 @@ COPY --from=browsers /root/.cache/ms-playwright /home/scavengarr/.cache/ms-playw
 
 # Default config, plugin and cache directories
 COPY data/config.yaml /app/config/config.yaml
-RUN mkdir -p /app/plugins /app/cache && \
+COPY docker/entrypoint.sh /app/entrypoint.sh
+# /tmp/.X11-unix must exist up front: the non-root Xvfb cannot create it
+RUN mkdir -p /app/plugins /app/cache /tmp/.X11-unix && \
+    chmod 1777 /tmp/.X11-unix && \
     chown -R scavengarr:scavengarr /app /home/scavengarr
 
 USER scavengarr
@@ -72,7 +75,7 @@ ENV PATH="/app/.venv/bin:$PATH" \
     SCAVENGARR_LOG_FORMAT=json \
     SCAVENGARR_PLUGIN_DIR=/app/plugins \
     SCAVENGARR_CACHE_DIR=/app/cache \
-    SCAVENGARR_PLAYWRIGHT_HEADLESS=true \
+    SCAVENGARR_PLAYWRIGHT_HEADLESS=false \
     HOST=0.0.0.0 \
     PORT=7979
 
@@ -81,4 +84,5 @@ EXPOSE 7979
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -sf http://localhost:7979/api/v1/healthz || exit 1
 
-ENTRYPOINT ["python", "-m", "scavengarr.interfaces.cli"]
+# Starts Xvfb (headful browser for Cloudflare Turnstile), then execs the app.
+ENTRYPOINT ["/app/entrypoint.sh"]

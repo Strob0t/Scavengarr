@@ -123,6 +123,33 @@ class TestEnsureBrowser:
         assert plugin._owns_browser is True
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("display", "expected_headless"), [(":99", False), (None, True)]
+    )
+    async def test_standalone_headful_only_with_display(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        display: str | None,
+        expected_headless: bool,
+    ) -> None:
+        """Default is headful; without DISPLAY it falls back to headless."""
+        if display is None:
+            monkeypatch.delenv("DISPLAY", raising=False)
+        else:
+            monkeypatch.setenv("DISPLAY", display)
+        plugin = _TestPlugin()
+        mock_pw = AsyncMock()
+        mock_pw.chromium.launch = AsyncMock(return_value=_make_mock_browser())
+
+        with patch(
+            "scavengarr.infrastructure.plugins.playwright_base.async_playwright"
+        ) as mock_apw:
+            mock_apw.return_value.start = AsyncMock(return_value=mock_pw)
+            await plugin._ensure_browser()
+
+        mock_pw.chromium.launch.assert_awaited_once_with(headless=expected_headless)
+
+    @pytest.mark.asyncio
     async def test_reuses_existing_browser(self) -> None:
         plugin = _TestPlugin()
         mock_browser = _make_mock_browser()
@@ -883,6 +910,34 @@ class TestSharedBrowserPool:
         assert browser is mock_browser
         assert pw is mock_pw
         assert pool.is_running is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("display", "expected_headless"), [(":99", False), (None, True)]
+    )
+    async def test_warmup_headful_only_with_display(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        display: str | None,
+        expected_headless: bool,
+    ) -> None:
+        from scavengarr.infrastructure.plugins.shared_browser import SharedBrowserPool
+
+        if display is None:
+            monkeypatch.delenv("DISPLAY", raising=False)
+        else:
+            monkeypatch.setenv("DISPLAY", display)
+        pool = SharedBrowserPool(headless=False)
+        mock_pw = AsyncMock()
+        mock_pw.chromium.launch = AsyncMock(return_value=_make_mock_browser())
+
+        with patch(
+            "scavengarr.infrastructure.plugins.shared_browser.async_playwright"
+        ) as mock_apw:
+            mock_apw.return_value.start = AsyncMock(return_value=mock_pw)
+            await pool.warmup()
+
+        mock_pw.chromium.launch.assert_awaited_once_with(headless=expected_headless)
 
     @pytest.mark.asyncio
     async def test_warmup_is_idempotent(self) -> None:

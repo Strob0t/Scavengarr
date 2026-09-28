@@ -51,7 +51,7 @@ validation_max_concurrent: 30 # was 20 — more parallel validations
 
 # -- Playwright -------------------------------------------------------
 playwright:
-  headless: true # env: SCAVENGARR_PLAYWRIGHT_HEADLESS
+  headless: false # headful under Xvfb (Cloudflare Turnstile), headless fallback without DISPLAY; env: SCAVENGARR_PLAYWRIGHT_HEADLESS
   timeout_ms: 20000 # was 30000 — 20s is plenty for page load
 
 # -- Logging ----------------------------------------------------------

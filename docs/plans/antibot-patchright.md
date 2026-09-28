@@ -2,7 +2,7 @@
 
 # Plan: Anti-Bot Hardening (Patchright + Browser Fallback)
 
-**Status:** Phase 0 done (2026-09-28): headless fails everywhere, headful Patchright under Xvfb passes 6/6 → Phase 1 + 2 go, headful required; decisions recorded, Phase 1 next
+**Status:** Phase 0 + Phase 1 done (2026-09-28): Patchright ^1.63, no forced browser UA, headful by default (Xvfb). Phase 2 next (Turnstile click, pool consolidation, httpx fallback)
 **Priority:** High (blocks 6 plugins and 3 hoster resolvers)
 **Related:** `docs/plans/plugin-repair.md`, `CHANGELOG.md` → `KNOWN_ISSUES`, `src/scavengarr/infrastructure/plugins/{playwright_base,shared_browser,httpx_base}.py`, `src/scavengarr/infrastructure/hoster_resolvers/{stealth_pool,cloudflare,supervideo,probe,xfs}.py`, `src/scavengarr/interfaces/composition.py`
 
@@ -125,6 +125,14 @@ Tests:
 Acceptance: offline suite + pre-commit green; no Playwright plugin regresses in live smoke; ddlspot, ddlvalley and scnsrc pass the challenge once the click step (Phase 2 design, shared helper) is in place; SuperVideo stealth fallback still resolves.
 
 Rollback: revert the commit(s); dependency swap is self-contained.
+
+### Phase 1 results (2026-09-28)
+
+Done on `staging`: Patchright 1.57 swap (then ^1.63), `_stealth` → `_block_resources`, `_browser_user_agent`/`_context_options()` (no forced UA), `resolve_headless()` + headful default, Xvfb entrypoint in `Dockerfile.prod`, Patchright Chromium install in `setup.sh`. Side fix: the live Chromium check used the sync API inside the event loop, so Playwright smoke tests had always been skipped.
+
+- Live smoke, 9 Playwright plugins: identical on the old stack, Patchright 1.57, Patchright 1.63 and Patchright 1.63 headful: animeloads, moflix pass; ddlspot, ddlvalley, scnsrc fail (Turnstile click missing → Phase 2); streamworld fails (not Cloudflare, see `plugin-repair.md`); boerse, byte network error; myboerse, mygully no credentials.
+- RAM (PSS of the Chromium process tree, 3 pages in one context): headless idle 230 MiB / loaded 451 MiB; headful idle 420 MiB / loaded 697 MiB; Xvfb ~70 MiB. With the 1–4 GB budget the second Chromium of `StealthPool` matters (worst case ~1.2–1.4 GB with both pools headful), so the pool consolidation below is a priority in Phase 2.
+- Not verified: building `Dockerfile.prod` (no Docker in the devcontainer). `docker/entrypoint.sh` was smoke-tested directly (starts Xvfb `:99`, exports `DISPLAY`, execs the CLI).
 
 ## Phase 2 — Browser fallback port for httpx plugins
 

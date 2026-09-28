@@ -38,6 +38,11 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 - **No forced User-Agent in browser contexts**: contexts keep Patchright's real UA (a fixed Chrome 131 UA disagreed with the Chromium client hints). New `_browser_user_agent` (default `None`) and `_context_options()`, also used by the boerse/mygully login contexts; `_user_agent` stays for httpx side requests.
 - **`PlaywrightPluginBase._stealth` renamed to `_block_resources`**: it now only controls aborting image/font/CSS requests; singleton and per-request contexts share `_configure_context()`. `StealthPool` no longer applies playwright-stealth.
 
+### Anti-Bot: Headful Browser by Default (Xvfb)
+- **`playwright.headless` now defaults to `false`**: headful Chromium when a display exists, because interactive Cloudflare Turnstile rejects every headless browser. New `infrastructure/browser/display.py` (`resolve_headless()`): without `DISPLAY` all three launch sites (shared pool, stealth pool, standalone plugin) fall back to headless and log `browser_headful_no_display` once.
+- **Docker**: runtime image installs `xvfb`; new `docker/entrypoint.sh` starts Xvfb on `:99` and `exec`s the CLI (SIGTERM still reaches the app). `SCAVENGARR_PLAYWRIGHT_HEADLESS=false`.
+- **RAM** (PSS, measured): Chromium idle 230 → 420 MiB, 3 pages 451 → 697 MiB, Xvfb ~70 MiB.
+
 ### Chore: Patchright Chromium Install
 - `Dockerfile.prod` installs the browser with `python -m patchright install chromium` (stage renamed `browsers`; cache path `~/.cache/ms-playwright` unchanged). `.devcontainer/setup.sh` installs the Patchright Chromium for the venv on every attach.
 

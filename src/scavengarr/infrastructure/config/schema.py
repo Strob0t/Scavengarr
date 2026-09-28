@@ -430,12 +430,16 @@ class AppConfig(BaseModel):
 
     # Playwright (YAML section: playwright.*)
     playwright_headless: bool = Field(
-        default=True,
+        default=False,
         validation_alias=AliasChoices(
             "playwright_headless",
             AliasPath("playwright", "headless"),
         ),
-        description="Run Playwright headless.",
+        description=(
+            "Run the browser headless. Default false: headful when a display "
+            "(DISPLAY, e.g. Xvfb) exists, needed to pass Cloudflare Turnstile; "
+            "falls back to headless with a warning when there is no display."
+        ),
     )
     playwright_timeout_ms: int = Field(
         default=30_000,

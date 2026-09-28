@@ -21,6 +21,7 @@ from patchright.async_api import (
 )
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.browser.display import resolve_headless
 
 from .constants import (
     DEFAULT_DOMAIN_CHECK_TIMEOUT,
@@ -65,7 +66,9 @@ class PlaywrightPluginBase:
     # the client hints (sec-ch-ua) and gets flagged by Cloudflare.
     _user_agent: str = DEFAULT_USER_AGENT
     _browser_user_agent: str | None = None
-    _headless: bool = True
+    # False = headful when a display exists (needed for Cloudflare Turnstile),
+    # see resolve_headless().
+    _headless: bool = False
     cache_ttl: int | None = None
 
     # --- Abort image/font/CSS requests (on by default) ---
@@ -188,7 +191,9 @@ class PlaywrightPluginBase:
         for attempt in range(1 + retries):
             try:
                 pw = await async_playwright().start()
-                browser = await pw.chromium.launch(headless=self._headless)
+                browser = await pw.chromium.launch(
+                    headless=resolve_headless(self._headless)
+                )
                 self._pw = pw
                 return browser
             except Exception as exc:  # noqa: BLE001

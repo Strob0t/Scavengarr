@@ -16,7 +16,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "user_agent": "Scavengarr/0.1.0",
     },
     "playwright": {
-        "headless": True,
+        "headless": False,
         "timeout_ms": 30_000,
     },
     "logging": {
