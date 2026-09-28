@@ -38,6 +38,9 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 - **No forced User-Agent in browser contexts**: contexts keep Patchright's real UA (a fixed Chrome 131 UA disagreed with the Chromium client hints). New `_browser_user_agent` (default `None`) and `_context_options()`, also used by the boerse/mygully login contexts; `_user_agent` stays for httpx side requests.
 - **`PlaywrightPluginBase._stealth` renamed to `_block_resources`**: it now only controls aborting image/font/CSS requests; singleton and per-request contexts share `_configure_context()`. `StealthPool` no longer applies playwright-stealth.
 
+### Fix: nox
+- **Back to results** (live: 31 for "Iron Man" in ~1.5 s; browse: 73 recent releases; was 0): the `/api/frontend/...` API is gone. Search now pages through `GET /api/search?q=&page=` (media entries, 20 per page, up to 10 pages) and lists each entry's releases from `GET /api/media/{slug}` (bounded concurrency; releases without online links are skipped). Browse (empty query) uses `GET /api/releases/recent/{days}`. Release links point to the new release page `/media/{slug}?release={id}` (the old `/release/{slug}` is 404); posters come from `/api/image/w342/…`. Type `episode` is now `series`; documentaries (`doku`) map to 5080. Category filtering uses the shared `_category_matches()`.
+
 ### Fix: fireani
 - **Back to results** (live: 4 for "Naruto", 32 over 2 pages for "one", ~2–4 s; was 0): the REST API (`/api/anime/...`) is gone. Search is now server-rendered: `/search?q=&page=` is parsed from the page's `__NUXT_DATA__` payload (small devalue resolver in the plugin; 30 per page, paginated up to ~1000 items). Seasons and links come from the site's Connect RPC endpoints (`POST /api.v1.anime.AnimeService/GetAnime` and `/GetEpisode`, JSON). Fields are camelCase now (`animeSeasons`, `animeEpisodeLinks`, `voteAvg`). The site's player sits behind a Turnstile check, but only in the browser: the RPC answers without a token.
 
@@ -757,5 +760,5 @@ Foundation of the project: FastAPI server, Scrapy scraping engine, plugin loader
 
 Current known issues:
 
-- **Plugins still returning 0 results** (live smoke, 2026-09-28): nox (search API 404), dataload (search form 400), kinoking (selectors/search), hdfilme (site search answers with a PHP fatal error, links behind Turnstile on devideosrc.co), streamcloud, streamkiste (stream source changed), streamworld (0 results), boerse (plugin reports a network error). Triage and fix plan: `docs/plans/plugin-repair.md`.
+- **Plugins still returning 0 results** (live smoke, 2026-09-28): dataload (search form 400), kinoking (selectors/search), hdfilme (site search answers with a PHP fatal error, links behind Turnstile on devideosrc.co), streamcloud, streamkiste (stream source changed), streamworld (0 results), boerse (plugin reports a network error). Triage and fix plan: `docs/plans/plugin-repair.md`.
 - **Cloudflare-protected sites need a headful browser**: ddlspot, ddlvalley, scnsrc, filmfans, kinoger and serienfans only pass the interactive Turnstile with Patchright headful (Xvfb, `playwright.headless: false`) and `playwright.browser_fallback: true`. filmfans and serienfans rate-limit bursts (429): an uncached search takes ~2–2.5 min and can exceed Prowlarr's request timeout. See `docs/plans/antibot-patchright.md`.

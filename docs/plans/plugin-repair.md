@@ -24,7 +24,7 @@ Triage method (2026-09-28, from inside the devcontainer, no proxy):
 | kinoger | Cloudflare blocks httpx | `kinoger.com` + `kinoger.to` → 403 CF challenge; search URL 403 | Same as filmfans |
 | serienfans | Cloudflare on detail pages | Search API still works (`serienfans_search_api count=1`), `https://serienfans.org/breaking-bad` → 403 | Same as filmfans (only detail stage needs a browser) |
 | fireani | API endpoint removed | `GET https://fireani.me/api/anime/search` → 404; homepage 200 | Find the new search endpoint (inspect site XHR) — **Fixed 2026-09-28:** search from the SSR /search payload, seasons/links via Connect RPC (AnimeService/GetAnime, GetEpisode) |
-| nox | API endpoint removed | `GET https://nox.to/api/frontend/search/Iron%20Man` → 404; `nox.tv` → 301 `nox.to` | Find the new search endpoint |
+| nox | API endpoint removed | `GET https://nox.to/api/frontend/search/Iron%20Man` → 404; `nox.tv` → 301 `nox.to` | Find the new search endpoint — **Fixed 2026-09-28:** new API: /api/search (media) + /api/media/{slug} (releases), browse via /api/releases/recent/{days} |
 | dataload | Search form changed | Login OK (`dataload_login_success`), `POST https://www.data-load.me/search/search` → 400 | Inspect the vBulletin/XenForo search form (new token/field names) |
 | scnlog | Selectors broken | `https://scnlog.me/?s=Iron+Man` → 200, HTML contains "iron man" 119×, parser finds 0 | Update search result selectors — **Fixed 2026-09-28:** new layout (li.row search results, h1.single-title, plain links in div.download) |
 | kinoking | Search yields nothing | `https://kinoking.cc/?s=Iron+Man` → 200 (250 KB), query term absent, plugin logs `count=0` | Check whether search moved (JS/API) or needs another URL |
