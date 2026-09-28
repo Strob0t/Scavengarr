@@ -1,3 +1,5 @@
+[← Back to Index](../../features/README.md)
+
 # Refactor: German to English Translation
 
 **Status:** Completed
@@ -6,14 +8,11 @@
 
 ## Summary
 
-All German-language comments, docstrings, and log messages throughout the codebase
-were translated to English for international readability and consistency.
+All German-language comments, docstrings, and log messages throughout the codebase were translated to English for international readability and consistency.
 
 ## Motivation
 
-The project was initially developed with German comments and docstrings. As the
-project matured and documentation standards were established, English was chosen as
-the single language for all code artifacts:
+The project was initially developed with German comments and docstrings. As the project matured and documentation standards were established, English was chosen as the single language for all code artifacts:
 
 - International collaboration requires a common language
 - Mixed German/English was inconsistent and confusing

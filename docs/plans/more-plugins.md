@@ -1,12 +1,14 @@
+[← Back to Index](../features/README.md)
+
 # Plan: Additional Plugins
 
-**Status:** Mostly Complete (42 plugins implemented)
+**Status:** Mostly complete — 42 plugins implemented (verified 2026-09-28; 11 currently broken, see `docs/plans/plugin-repair.md`)
 **Priority:** Low (ongoing)
 **Related:** `plugins/`, `docs/features/python-plugins.md`
 
 ## Current State
 
-Scavengarr ships with **42 plugins** covering German streaming, DDL, and anime sites:
+Scavengarr ships with **42 plugins** covering German and English streaming, DDL, and anime sites:
 
 ### Httpx plugins (33)
 
@@ -25,7 +27,7 @@ Scavengarr ships with **42 plugins** covering German streaming, DDL, and anime s
 | hdfilme | hdfilme.legal | stream | MeineCloud link extraction |
 | hdsource | hd-source.to | download | DDL with multi-page scraping |
 | hdworld | hd-world.cc | download | WordPress REST API DDL |
-| jjs | jjs.at | download | DDL with multi-stage scraping |
+| jjs | jjs.page | download | DDL with multi-stage scraping |
 | kinoger | kinoger.com | stream | Domain fallback |
 | kinoking | kinoking.cc | stream | Movie/series detection |
 | kinox | kinox.to | stream | 9 mirror domains, AJAX embeds |
@@ -50,7 +52,7 @@ Scavengarr ships with **42 plugins** covering German streaming, DDL, and anime s
 
 | Plugin | Site | Type | Notes |
 |---|---|---|---|
-| animeloads | anime-loads.org | stream | DDoS-Guard bypass |
+| animeloads | anime-loads.org | both | DDoS-Guard bypass |
 | boerse | boerse.sx | download | Cloudflare + vBulletin auth, 6 mirrors |
 | byte | byte.to | download | Cloudflare, iframe links |
 | ddlspot | ddlspot.com | download | Pagination up to 1000 |
@@ -77,10 +79,10 @@ Every new plugin must meet these standards:
 - [ ] Configurable settings at top of file with section headers (`_DOMAINS`, `_MAX_PAGES`, etc.)
 - [ ] Category filtering via site's filter system mapped to Torznab categories
 - [ ] Pagination up to 1000 items (`_MAX_PAGES` based on results-per-page)
-- [ ] Bounded concurrency via `self._new_semaphore()` (default 3)
+- [ ] Bounded concurrency via `self._new_semaphore()` (default 5, `_max_concurrent`)
 - [ ] `season`/`episode` params in `search()` signature
 - [ ] `provides` attribute set to `"stream"` or `"download"`
-- [ ] `default_language` attribute set (typically `"de"`)
+- [ ] `languages` attribute set (default `["de"]`, e.g. `["en"]` for English sites; `default_language` is a derived property)
 - [ ] Unit tests with mocked HTTP responses
 - [ ] Live smoke test entry in `tests/live/`
 - [ ] Handles missing fields gracefully (partial results, not crashes)

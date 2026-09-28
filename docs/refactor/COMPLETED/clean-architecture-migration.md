@@ -1,24 +1,23 @@
+[← Back to Index](../../features/README.md)
+
 # Refactor: Clean Architecture Migration
 
 **Status:** Completed
-**Commits:** `7726ba8` through `6f770b8` (plus follow-up commits through `a9eab40`)
+**Commits:** `7726ba8` through `6f770b8` (plus follow-up commits through `028c932`)
 **Date:** Pre-v0.1.0
 
 ## Summary
 
-The codebase was restructured from a flat, ad-hoc layout into four Clean Architecture
-layers: Domain, Application, Infrastructure, and Interfaces. This was the largest
-refactoring effort in the project's history, executed in three phases plus several
-follow-up commits.
+The codebase was restructured into four Clean Architecture layers: Domain, Application, Infrastructure, and Interfaces. The migration ran in three phases plus several follow-up commits. Some modules named below were later removed or renamed; this is noted inline as "(later removed in …)" or "(now …)".
 
 ## Motivation
 
 The original codebase had:
-- Pydantic `BaseModel` in domain entities (framework dependency in the innermost layer)
-- `SearchResult` defined in multiple places with inconsistent fields
-- Adapter logic (scraping, caching, presentation) mixed into application and domain layers
+- Pydantic `BaseModel` in the domain plugin layer (`StageResult`, plugin schema in `domain/plugins/schema.py`) — a framework dependency in the innermost layer
+- `SearchResult` defined twice (domain and the Torznab search engine adapter)
+- Adapter logic (scraping, presentation) spread across `adapters/`, `interfaces/` and `infrastructure/`
 - No clear separation between "what the system does" (use cases) and "how it does it" (adapters)
-- The composition root lived in the wrong layer
+- The composition root lived in the wrong layer (`infrastructure/composition.py`)
 
 Clean Architecture provides:
 - Testability: inner layers can be tested without frameworks or I/O
@@ -27,87 +26,102 @@ Clean Architecture provides:
 
 ## Phase 1: Remove Pydantic from Domain Layer
 
-**Commit:** `7726ba8` - *refactor(phase1): remove Pydantic from Domain layer*
+**Commit:** `7726ba8` — *refactor(phase1): remove Pydantic from Domain layer*
 
 ### What Changed
-Domain entities (`TorznabQuery`, `TorznabItem`, `TorznabCaps`, `CrawlJob`, etc.) were
-converted from Pydantic `BaseModel` subclasses to plain Python `@dataclass` classes.
+
+The Torznab entities (`TorznabQuery`, `TorznabItem`, `TorznabCaps`) and `CrawlJob` were already plain `@dataclass` classes. Phase 1 removed the remaining Pydantic models from the domain:
+
+- `StageResult` in `domain/plugins/base.py` converted from `BaseModel` to `@dataclass` (later removed in `03454a8`)
+- `domain/plugins/schema.py` (Pydantic plugin schema) deleted and replaced by pure dataclasses in `domain/plugins/plugin_schema.py` (YAML-related parts such as `YamlPluginDefinition` later removed in `42fced9`; `AuthConfig` and `HttpOverrides` remain)
+- Pydantic validation moved to `infrastructure/plugins/validation_schema.py` (later removed in `b72c420`) with an adapter layer `infrastructure/plugins/adapters.py` converting Pydantic models to domain dataclasses (later removed in `352f7ca`)
+- `SearchResult.metadata` got a `field(default_factory=dict)` default instead of a shared `None`/mutable default
 
 ### Before
+
 ```python
 from pydantic import BaseModel
 
-class TorznabQuery(BaseModel):
-    t: str
-    q: str | None = None
-    cat: list[int] = []
+class StageResult(BaseModel):
+    ...
 ```
 
 ### After
+
 ```python
 from dataclasses import dataclass, field
 
 @dataclass
-class TorznabQuery:
-    t: str
-    q: str | None = None
-    cat: list[int] = field(default_factory=list)
+class StageResult:
+    ...
+
+@dataclass
+class SearchResult:
+    ...
+    metadata: dict[str, Any] = field(default_factory=dict)
 ```
 
 ### Key Decisions
-- Used `field(default_factory=list)` to avoid mutable default arguments
+
+- Used `field(default_factory=...)` to avoid mutable default arguments
 - Kept `frozen=True` for value objects (immutable by design)
-- Moved validation logic to factory functions in the Application layer
+- Moved Pydantic validation of plugin definitions to the Infrastructure layer (validate with Pydantic, then convert to domain dataclasses)
 - Pydantic remained in the Infrastructure layer for config parsing (`pydantic-settings`)
 
 See also: `docs/refactor/COMPLETED/pydantic-domain-removal.md` for detailed entity changes.
 
 ## Phase 2: Consolidate SearchResult Definition
 
-**Commit:** `b7bc0be` - *refactor(phase2): consolidate SearchResult definition*
+**Commit:** `b7bc0be` — *refactor(phase2): consolidate SearchResult definition*
 
 ### What Changed
-`SearchResult` was defined in multiple modules with slightly different fields. All
-definitions were consolidated into a single canonical location in the Domain layer.
+
+`SearchResult` was defined twice. The duplicate in the Torznab search engine adapter was removed, so a single canonical definition remains in the Domain layer.
 
 ### Before
-- `SearchResult` in scraping adapter (with adapter-specific fields)
-- `SearchResult` in domain (minimal)
-- Implicit result dicts in some code paths
+
+- `SearchResult` in `infrastructure/torznab/httpx_scrapy_engine.py` (adapter copy)
+- `SearchResult` in `domain/plugins/base.py`
+- `application/factories/crawljob_factory.py` imported `SearchResult` from infrastructure (`TYPE_CHECKING` import)
 
 ### After
+
 - Single `SearchResult` dataclass in `src/scavengarr/domain/plugins/base.py`
 - All layers import from this single source
-- Fields: `title`, `download_link`, `download_links`, `source_url`, `category`, `size`, `description`
+- The adapter's `_convert_to_result` populates all `SearchResult` fields
+- Current fields: `title`, `download_link`, `seeders`, `leechers`, `size`, `release_name`, `description`, `published_date`, `download_links`, `source_url`, `scraped_from_stage`, `validated_links`, `metadata`, `category`, `grabs`, `download_volume_factor`, `upload_volume_factor`
 
 ## Phase 3: Reorganize Adapters to Infrastructure Layer
 
-**Commit:** `d97d7a3` - *refactor(phase3): reorganize adapters to infrastructure layer*
+**Commit:** `d97d7a3` — *refactor(phase3): reorganize adapters to infrastructure layer*
 
 ### What Changed
-Adapter implementations were moved from scattered locations into the
-`src/scavengarr/infrastructure/` namespace, organized by concern:
+
+The last package under `src/scavengarr/adapters/` (the Scrapy scraping adapter) moved into the `src/scavengarr/infrastructure/` namespace. Together with the follow-up commits, infrastructure was organized by concern:
 
 ```text
 infrastructure/
-  cache/               # DiskcacheAdapter, RedisAdapter, factory
+  cache/               # DiskcacheAdapter, RedisAdapter, factory (added in d32066c)
   config/              # YAML/ENV/CLI configuration loading
   logging/             # structlog setup, formatters
-  plugins/             # Plugin registry, YAML parser, Python loader
-  scraping/            # ScrapyAdapter (search engine)
-  torznab/             # Presenter, XML rendering
+  persistence/         # CrawlJob cache repository
+  plugins/             # Plugin registry, YAML loader (later removed in 42fced9), Python loader
+  scraping/            # ScrapyAdapter (later removed in 42fced9)
+  torznab/             # Search engine, presenter (XML rendering)
   validation/          # HttpLinkValidator
-  common/              # Shared utilities (parsers, converters, extractors)
+  common/              # Shared utilities (parsers, converters; extractors later removed in 6314d34)
 ```
 
 ### Key Moves
-| Before | After |
-|---|---|
-| `adapters/scrapy_engine.py` | `infrastructure/scraping/search_engine.py` |
-| `adapters/presenter.py` | `infrastructure/torznab/presenter.py` |
-| `adapters/cache.py` | `infrastructure/cache/diskcache_adapter.py` |
-| `core/plugin_loader.py` | `infrastructure/plugins/registry.py` |
-| Various utility functions | `infrastructure/common/{parsers,converters,extractors}.py` |
+
+| Before | After | Commit |
+|---|---|---|
+| `adapters/scraping/scrapy_adapter.py` | `infrastructure/scraping/scrapy_adapter.py` (later removed in `42fced9`) | `d97d7a3` |
+| `interfaces/api/torznab/presenter.py` | `infrastructure/torznab/presenter.py` | `8729319` |
+| `infrastructure/torznab/httpx_scrapy_engine.py` | `infrastructure/torznab/search_engine.py` | `56b48df` |
+| (new) | `infrastructure/cache/{cache_factory,diskcache_adapter,redis_adapter}.py` | `d32066c` |
+| Various utility functions | `infrastructure/common/{parsers,converters,extractors}.py` (extractors later removed in `6314d34`) | `b0f4cca` |
+| `infrastructure/composition.py` | `interfaces/composition.py` | `a9eab40` |
 
 ## Follow-Up Commits
 
@@ -117,8 +131,8 @@ After the three main phases, several commits completed the migration:
 |---|---|
 | `8729319` | Move presenter to infrastructure layer |
 | `56b48df` | Rename `httpx_scrapy_engine` to `search_engine` |
-| `d32066c` | Rename cache factory for consistency |
-| `de788dc` | Use shared size parser in interfaces |
+| `d32066c` | Add cache adapters and factory (`cache_factory.py`) |
+| `de788dc` | Use shared size parser in the presenter |
 | `7610b9b` | Consolidate duplicate int parsing |
 | `b0f4cca` | Add common utils structure |
 | `a9eab40` | Move composition root to interfaces layer |
@@ -127,11 +141,13 @@ After the three main phases, several commits completed the migration:
 
 ## Final Architecture
 
+As of `028c932`:
+
 ```text
 src/scavengarr/
   domain/              # Entities, value objects, protocols (ports)
     entities/          # CrawlJob, TorznabQuery, TorznabItem, etc.
-    plugins/           # SearchResult, plugin base definitions
+    plugins/           # SearchResult, plugin protocol, plugin_schema dataclasses
     ports/             # CachePort, SearchEnginePort, PluginRegistryPort, etc.
   application/         # Use cases, factories
     use_cases/         # TorznabSearchUseCase, TorznabCapsUseCase, etc.
@@ -140,16 +156,20 @@ src/scavengarr/
     cache/             # Diskcache, Redis adapters
     config/            # Configuration loading
     logging/           # Structured logging
+    persistence/       # CrawlJob cache repository
     plugins/           # Plugin registry and loaders
-    scraping/          # ScrapyAdapter (search engine)
-    torznab/           # XML presenter
+    scraping/          # ScrapyAdapter (later removed in 42fced9)
+    torznab/           # Search engine, XML presenter
     validation/        # Link validator
-    common/            # Shared parsers, converters, extractors
-  interfaces/          # HTTP router, CLI, composition root
-    http/              # FastAPI router
-    cli/               # Typer CLI
-    deps.py            # Dependency injection (composition root)
+    common/            # Shared parsers, converters, extractors (extractors later removed in 6314d34)
+  interfaces/          # HTTP routers, CLI, composition root
+    api/               # FastAPI routers (torznab/, download/)
+    cli/               # argparse CLI (cli.py, now __main__.py)
+    main.py            # FastAPI app factory (now app.py)
+    composition.py     # Dependency injection (composition root)
 ```
+
+Since then the tree grew: `domain/entities/` gained `stremio.py` and `scoring.py`, `application/` gained `stremio/`, `infrastructure/` gained `hoster_resolvers/`, `scoring/`, `stremio/`, `tmdb/` and top-level modules such as `circuit_breaker.py`, `concurrency.py` and `metrics.py`, and `interfaces/api/` gained `stremio/` and `stats/` routers. See `docs/architecture/codeplan.md` for the current layout.
 
 ## Dependency Rule Verification
 
@@ -161,14 +181,7 @@ After migration, the dependency rule holds:
 
 ## Lessons Learned
 
-1. **Do it in phases.** Attempting all three phases at once would have been error-prone.
-   Each phase had a clear scope and could be tested independently.
-
-2. **Keep the test suite green.** Every phase commit passed all existing tests. This
-   required updating imports throughout, but the test suite caught every missed reference.
-
-3. **Pydantic belongs in Infrastructure.** Using it for domain entities was convenient
-   but violated the dependency rule. `@dataclass` is sufficient for entities.
-
-4. **Composition root placement matters.** Initially it lived in the application layer,
-   but it belongs in interfaces (the outermost layer that knows about all concrete types).
+1. **Do it in phases.** Attempting all three phases at once would have been error-prone. Each phase had a clear scope and could be tested independently.
+2. **Keep the test suite green.** Every phase commit passed all existing tests. This required updating imports throughout, but the test suite caught every missed reference.
+3. **Pydantic belongs in Infrastructure.** Using it for domain entities was convenient but violated the dependency rule. `@dataclass` is sufficient for entities.
+4. **Composition root placement matters.** Initially it lived in the infrastructure layer, but it belongs in interfaces (the outermost layer that knows about all concrete types).

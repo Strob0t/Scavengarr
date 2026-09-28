@@ -1,4 +1,4 @@
-[< Back to Index](./README.md)
+[← Back to Index](./README.md)
 
 # Stremio Addon
 
@@ -8,9 +8,9 @@
 
 ## Overview
 
-Scavengarr includes a full **Stremio addon** that provides catalog browsing, search, and stream resolution. It bridges plugin search results with Stremio's stream protocol, resolving hoster embed URLs into direct video playback links.
+Scavengarr includes a **Stremio addon** that provides catalog browsing, catalog search, and stream resolution. It bridges plugin search results with Stremio's stream protocol and resolves hoster embed URLs into direct video playback links via the [Hoster Resolver System](./hoster-resolvers.md).
 
-The addon supports both IMDb (`tt*`) and TMDB (`tmdb:*`) identifiers and ranks streams by language, quality, and hoster reliability.
+The addon accepts IMDb (`tt*`) and TMDB (`tmdb:*`) identifiers and ranks streams by language, quality, and hoster reliability.
 
 ---
 
@@ -19,35 +19,38 @@ The addon supports both IMDb (`tt*`) and TMDB (`tmdb:*`) identifiers and ranks s
 ```text
 Stremio App
   ├── GET /manifest.json                     → addon metadata + catalogs
-  ├── GET /catalog/{type}/{id}.json          → TMDB trending / search
-  ├── GET /stream/{type}/{id}.json           → plugin search → ranked streams
+  ├── GET /catalog/{type}/{id}.json          → TMDB trending
+  ├── GET /catalog/{type}/{id}/search={q}.json → TMDB search
+  ├── GET /stream/{type}/{id}.json           → plugin search → resolved, ranked streams
   ├── GET /play/{stream_id}                  → hoster resolution → 302 video URL
-  └── GET /proxy/{stream_id}/{path:path}     → HLS proxy (manifests + segments)
+  ├── GET /proxy/{stream_id}/{path:path}     → HLS proxy (manifests + segments)
+  └── GET /health                            → component status
 ```
 
 ### Request Flow (Stream Resolution)
 
 ```text
-IMDb ID → TMDB title lookup → parallel plugin search → title matching
-  → quality/language parsing → ranking → dead link probing → proxy caching
-  → sorted StremioStream list
+IMDb/TMDB ID → title lookup per plugin language → plugin search → episode filter
+  → link validation → title matching → quality/language parsing → ranking
+  → per-hoster dedup → hoster resolution (early stop) → link cache → StremioStream list
 ```
 
-1. **Title resolution** — Look up the German title + year via TMDB (or IMDB/Wikidata fallback)
-2. **Plugin search** — Search all streaming plugins in parallel (bounded concurrency)
-3. **Title matching** — Filter false positives (sequels, spin-offs) via scoring
-4. **Stream conversion** — Convert `SearchResult` objects into `RankedStream` with parsed quality/language
-5. **Ranking** — Sort by language preference, quality, and hoster bonus
-6. **Probing** — Optionally probe top N hoster URLs to filter dead links
-7. **Pre-resolution** — Resolve top N hoster embed URLs to direct video URLs (for `behaviorHints.proxyHeaders`)
-8. **Caching** — Cache resolved URLs; generate `/play/{stream_id}` fallback for unresolved streams
-9. **Formatting** — Return sorted `StremioStream` objects with `behaviorHints` to the Stremio app
+1. **Plugin selection** — all plugins with `provides` = `stream` or `both`, or the scored top-N when scored selection is active (see [Plugin Scoring & Probing](./plugin-scoring-and-probing.md)).
+1. **Title resolution** — per plugin language, look up title + year via TMDB `/find` (or the IMDB Suggest/Wikidata fallback); `tmdb:` IDs are resolved via the TMDB ID.
+1. **Plugin search** — `PluginSearchRunner` searches each language group with the full title and, if the title contains `:`, the base title before the colon; bounded by the global `ConcurrencyPool`, with per-plugin timeout and circuit breaker. Results of fallback queries are deduplicated by `download_link`.
+1. **Episode filtering** — for series requests, results are filtered by season/episode (guessit on release names, falling back to episode labels such as `1x5` or `S01E05` in `download_links`).
+1. **Link validation** — Python plugin results are validated by the search engine.
+1. **Title matching** — false positives (sequels, spin-offs) are filtered via fuzzy scoring.
+1. **Stream conversion** — `SearchResult` objects become `RankedStream` objects with parsed quality/language.
+1. **Ranking + dedup** — sort by language, quality, and hoster bonus; keep the best stream per hoster.
+1. **Resolution** — the top `max_probe_count` streams are resolved in parallel (bounded by `probe_concurrency`) via `HosterResolverRegistry.resolve`; resolution stops early once `resolve_target_count` genuine video URLs exist.
+1. **Caching + formatting** — every stream gets a `CachedStreamLink` in the stream link cache; resolved streams are returned with a direct URL or an HLS proxy URL. Streams that are not resolved (failed, only echoed the embed URL, beyond `max_probe_count`, or cancelled by the early stop) are dropped.
 
 ---
 
 ## Endpoints
 
-All endpoints are prefixed with `/api/v1/stremio/`.
+All endpoints are prefixed with `/api/v1/stremio/`. All responses carry `Access-Control-Allow-Origin: *`.
 
 ### Manifest
 
@@ -56,9 +59,10 @@ GET /api/v1/stremio/manifest.json
 ```
 
 Returns the Stremio addon manifest with:
+
 - Addon ID: `community.scavengarr`
 - Supported types: `movie`, `series`
-- Catalogs: trending movies, trending series
+- Catalogs: `scavengarr-trending-movies`, `scavengarr-trending-series` (both with optional `search` extra)
 - ID prefixes: `tt` (IMDb), `tmdb:` (TMDB)
 - Resources: `catalog`, `stream`
 
@@ -69,9 +73,9 @@ GET /api/v1/stremio/catalog/{content_type}/{catalog_id}.json
 GET /api/v1/stremio/catalog/{content_type}/{catalog_id}/search={query}.json
 ```
 
-- Trending: returns TMDB trending movies or series
-- Search: full-text search via TMDB API (German locale)
-- Response: `{"metas": [StremioMetaPreview, ...]}`
+- Trending: TMDB trending movies or series for `content_type` (`catalog_id` is not evaluated).
+- Search: TMDB search (German locale), or IMDB Suggest without a TMDB key.
+- Response: `{"metas": [StremioMetaPreview, ...]}`; errors and unknown types return an empty list.
 
 ### Stream Resolution
 
@@ -80,40 +84,45 @@ GET /api/v1/stremio/stream/{content_type}/{stream_id}.json
 ```
 
 - Movie: `stream_id` = `tt1234567` or `tmdb:12345`
-- Series: `stream_id` = `tt1234567:1:5` (season 1, episode 5)
+- Series: `stream_id` = `tt1234567:1:5` or `tmdb:12345:1:5` (season 1, episode 5)
 - Response: `{"streams": [StremioStream, ...]}`
 
 Each stream contains:
-- `name` — Title with year and quality badge
-- `description` — Plugin source, language, hoster, file size
-- `url` — Direct video URL (pre-resolved) or proxy URL (`/play/{stream_id}`) as fallback
-- `behaviorHints` — (optional) Stremio playback hints including `proxyHeaders`
+
+- `name` — reference title + ` (year)` for movies or ` SxxEyy` for series, followed by the quality label (e.g. `HD 1080P`); falls back to the release name.
+- `description` — `plugin | language | HOSTER | size`
+- `url` — direct video URL, or `/api/v1/stremio/proxy/{stream_id}/{manifest}` for HLS streams that need headers
+- `behaviorHints` — Stremio playback hints (see below)
+
+> **Known issue:** `/play/{stream_id}` URLs are only emitted when no hoster resolver is wired into the use case. The default composition always wires `HosterResolverRegistry.resolve`, so unresolved streams are omitted from the response instead of falling back to `/play/`.
 
 ### Stream behaviorHints (proxyHeaders)
 
-When a stream is pre-resolved at `/stream` time, the response includes `behaviorHints`:
+Direct (non-proxied) resolved streams include `behaviorHints` with a browser `User-Agent` merged with the resolver's headers:
 
 ```json
 {
-  "name": "Movie Title [1080p]",
+  "name": "Movie Title (2021) HD 1080P",
+  "description": "kinoger | German Dub | VOE | 1.4 GB",
   "url": "https://cdn.hoster.com/video.mp4",
   "behaviorHints": {
     "notWebReady": true,
     "proxyHeaders": {
       "request": {
         "User-Agent": "Mozilla/5.0 ...",
-        "Referer": "https://hoster.com/"
+        "Referer": "https://hoster.com/e/abc"
       }
     }
   }
 }
 ```
 
-- `notWebReady: true` activates Stremio's local streaming server proxy
-- `proxyHeaders.request` tells Stremio what HTTP headers to send when fetching video content
-- This is required because most hoster CDNs reject requests without a valid `Referer` header
+- `notWebReady: true` routes playback through Stremio's local streaming server.
+- `proxyHeaders.request` tells Stremio which HTTP headers to send when fetching the video.
+- Most hoster CDNs reject requests without a valid `Referer` header.
 
 **Platform support:**
+
 | Platform | Status |
 |---|---|
 | Desktop (Electron) | Full support |
@@ -121,29 +130,23 @@ When a stream is pre-resolved at `/stream` time, the response includes `behavior
 | iOS | Partial (KSPlayer engine only) |
 | Web | Not supported (CORS restrictions) |
 
-Streams that fail pre-resolution fall back to the `/play/` proxy endpoint.
-
 ### HLS Proxy
 
 ```http
 GET /api/v1/stremio/proxy/{stream_id}/{path:path}
 ```
 
-Server-side proxy for HLS streams whose CDN requires headers (e.g. `Referer`) on **all** sub-requests — not just the master manifest, but also variant playlists and `.ts` segments.
+Server-side proxy for HLS streams whose CDN requires headers (e.g. `Referer`) on **all** sub-requests — the master manifest, variant playlists, and segments. Stremio's `proxyHeaders` only applies to the initial manifest fetch, so sub-requests would otherwise get `403` from CDNs such as Dropload's `dropcdn.io`.
 
-Stremio's `proxyHeaders` only applies headers to the initial manifest fetch. Internal HLS sub-requests (variant playlists, segments) are made by the player without the configured headers, causing 403 from CDNs like Dropload's `dropcdn.io`.
+**When is it used?** For every resolved stream with `is_hls` and non-empty `headers`. This covers all XFS video hosters (they always set `Referer`), StreamUp, Vidsonic, and any other resolver that returns HLS with headers. Such streams get `behaviorHints: {"notWebReady": true}` only. MP4 streams and HLS streams without headers use the direct URL with `proxyHeaders`.
 
 **How it works:**
-1. Look up `CachedStreamLink` from cache (includes `video_url`, `video_headers`, `is_hls`)
-2. Build target CDN URL from `cdn_base + path` (preserving query parameters)
-3. Fetch from CDN with stored headers (Referer etc.)
-4. If response is a manifest (`.m3u8`): rewrite absolute CDN URLs → proxy URLs so subsequent requests also go through the proxy
-5. If response is a segment (`.ts`): pass through as-is
 
-**When is it used?**
-- Only for HLS streams that require headers (e.g. Dropload). Detected automatically: `resolved.is_hls and resolved.headers`.
-- HLS streams without special headers (STREAMRUBY, SAVEFILES, etc.) continue using direct URLs — no proxy overhead.
-- MP4 streams always use direct URLs with `behaviorHints.proxyHeaders`.
+1. Look up the `CachedStreamLink` (`video_url`, `video_headers`, `is_hls`); `404` if missing, `400` if it is not an HLS proxy stream.
+1. Build the CDN URL from the CDN base of `video_url` + `path`, using the request query string or, if empty, the original `video_url` query (auth tokens).
+1. Paths not ending in `.m3u8` are streamed from the CDN as segments (`StreamingResponse`).
+1. `.m3u8` manifests are fetched with the stored headers (cached for 60 s), and URI lines starting with the CDN base are rewritten to proxy URLs; relative URIs are left as-is because they resolve against the proxy URL.
+1. CDN fetches share a global semaphore (50); CDN errors return `502`.
 
 ### Play (Proxy Fallback)
 
@@ -151,11 +154,12 @@ Stremio's `proxyHeaders` only applies headers to the initial manifest fetch. Int
 GET /api/v1/stremio/play/{stream_id}
 ```
 
-Fallback endpoint for streams that could not be pre-resolved at `/stream` time:
-1. Look up `stream_id` in the stream link cache
-2. Resolve via `HosterResolverRegistry` (e.g., VOE, Filemoon, Streamtape)
-3. Return **302 redirect** to the direct `.mp4`/`.m3u8` URL
-4. Return **502** if resolution fails (never redirects to embed pages)
+Fallback endpoint for cached stream links (see the known issue above for when its URLs are emitted):
+
+1. Look up `stream_id` in the stream link cache (`404` if expired).
+1. Resolve via `HosterResolverRegistry` using the cached hoster URL and hoster hint.
+1. Return a **302 redirect** to the resolved `.mp4`/`.m3u8` URL.
+1. Return **502** if resolution fails or the resolver only echoed the embed page (never redirects to embed pages).
 
 ### Health
 
@@ -163,7 +167,9 @@ Fallback endpoint for streams that could not be pre-resolved at `/stream` time:
 GET /api/v1/stremio/health
 ```
 
-Reports component status, supported hosters, and metrics.
+Reports component status (`tmdb_configured`, `stream_plugin_count`, `stream_plugins`, use case/resolver/link-cache flags), `supported_hosters`, and a metrics snapshot. Returns `200` when healthy and `503` otherwise; healthy requires a title client (`tmdb_configured` is also `true` for the IMDB fallback client), both use cases, the resolver registry, the stream link cache, and at least one `stream` plugin.
+
+> **Known issue:** the endpoint calls `list_hosters()`, which `HosterResolverRegistry` does not have (it exposes `supported_hosters`). The error is swallowed, so `supported_hosters` is always an empty list.
 
 ---
 
@@ -173,24 +179,26 @@ Title matching prevents false positives when plugin results include sequels, spi
 
 | Feature | Details |
 |---|---|
-| Scoring | `rapidfuzz.fuzz.token_sort_ratio` + `token_set_ratio` (C++ backend) |
-| Year bonus | +0.2 if release year matches reference (within tolerance) |
-| Year penalty | -0.3 if year is present but wrong |
-| Sequel penalty | -0.35 if result has trailing number not in reference |
-| Threshold | 0.7 minimum score (configurable) |
-| Year tolerance | Movies: +/-1 year, Series: +/-3 years |
-| Title candidates | 4 candidates per result (raw, guessit-parsed, release name) |
-| Alt titles | Matches against both German and English titles |
+| Scoring | `max(token_sort_ratio, token_set_ratio) / 100` via `rapidfuzz` on normalised strings (lowercase, Unicode → ASCII, punctuation stripped) |
+| Year bonus | `+title_year_bonus` (0.2) if the result year is within tolerance |
+| Year penalty | `-title_year_penalty` (0.3) if a year is present but outside tolerance |
+| Sequel penalty | `-title_sequel_penalty` (0.35) if the trailing sequel numbers differ (either side) |
+| Threshold | `title_match_threshold` (0.7) minimum score |
+| Year tolerance | Movies ±1 year, series ±3 years |
+| Title candidates | Up to 4 deduplicated candidates: raw title, guessit title of `title`, guessit title of `release_name`, raw `release_name` |
+| Reference titles | Primary (localised) title plus `alt_titles` (TMDB original title when it differs) |
 
 ---
 
 ## Stream Ranking
 
-Streams are ranked using a weighted scoring formula:
+Streams are ranked with a weighted score:
 
 ```text
 rank_score = language_score + (quality.value * quality_multiplier) + hoster_bonus
 ```
+
+After sorting, `deduplicate_by_hoster()` keeps only the best-ranked stream per hoster (e.g. 5 VOE links from 5 plugins collapse to one). Streams without a hoster name are always kept.
 
 ### Default Weights
 
@@ -200,24 +208,25 @@ rank_score = language_score + (quality.value * quality_multiplier) + hoster_bonu
 | German Sub (`de-sub`) | 500 |
 | English Sub (`en-sub`) | 200 |
 | English Dub (`en`) | 150 |
-| Unknown | 100 |
+| Unknown (`default_language_score`) | 100 |
 
 | Quality | Value |
 |---|---|
-| UHD 4K | 60 |
-| HD 1080p | 50 |
-| HD 720p | 40 |
-| SD | 30 |
-| TS | 20 |
-| CAM | 10 |
+| `UHD_4K` | 60 |
+| `HD_1080P` | 50 |
+| `HD_720P` | 40 |
+| `SD` | 30 |
+| `TS` | 20 |
+| `CAM` | 10 |
+| `UNKNOWN` | 0 |
 
 | Hoster | Bonus |
 |---|---|
-| SuperVideo | 5 |
-| VOE | 4 |
-| Filemoon | 3 |
-| Streamtape | 2 |
-| DoodStream | 1 |
+| `supervideo` | 5 |
+| `voe` | 4 |
+| `filemoon` | 3 |
+| `streamtape` | 2 |
+| `doodstream` | 1 |
 
 ---
 
@@ -227,141 +236,153 @@ The addon uses TMDB for title resolution and catalog browsing.
 
 | Feature | Details |
 |---|---|
-| Title resolution | `find_by_imdb_id()` — IMDb-to-TMDB lookup |
-| German titles | `language=de-DE` locale in all requests |
-| Alt titles | English title included as alternative for matching |
-| Trending | `/trending/movie` and `/trending/tv` endpoints |
-| Search | `/search/movie` and `/search/tv` with German locale |
+| Title resolution | `find_by_imdb_id()` / `get_title_and_year()` via `/find/{imdb_id}` |
+| TMDB IDs | `get_title_by_tmdb_id()` for `tmdb:` IDs from the own catalog |
+| Locale | `de-DE` by default; `/find` lookups use each plugin language (`{lang}-{LANG}`) |
+| Alt titles | Original title (`original_title`/`original_name`) when it differs from the localised title |
+| Trending | `/trending/movie/week` and `/trending/tv/week` |
+| Search | `/search/movie` and `/search/tv` |
 | Posters | `https://image.tmdb.org/t/p/w500{poster_path}` |
-| Caching | Find: 24h, Trending: 6h, Search: 1h |
+| Caching | Find: 24 h, trending: 6 h, search: 1 h |
 
 ### IMDB Fallback (No API Key)
 
-When no TMDB API key is configured, the addon falls back to free sources:
+Without a TMDB API key, `ImdbFallbackClient` is used:
 
 | Source | Purpose |
 |---|---|
-| IMDB Suggest API | Title resolution and search |
-| Wikidata API | German title lookup via IMDB property (P345) |
+| IMDB Suggest API | Title resolution and catalog search |
+| Wikidata API | Localised title lookup via the IMDb property (`P345`) |
 
-Limitations: no trending catalogs, no TMDB numeric ID resolution.
+Limitations: no trending catalogs and no resolution of `tmdb:` IDs.
 
 ---
 
 ## Configuration
 
-All Stremio settings are grouped under `StremioConfig`:
+Stremio settings live in `StremioConfig` (YAML section `stremio:`). See [Configuration](./configuration.md#stremio) for the full reference.
 
 ### Stream Ranking
 
 | Setting | Default | Description |
 |---|---|---|
-| `language_scores` | de=1000, de-sub=500, ... | Language weight map |
-| `quality_multiplier` | 10 | Quality as tie-breaker |
-| `hoster_scores` | supervideo=5, voe=4, ... | Hoster reliability bonus |
+| `language_scores` | `de`=1000, `de-sub`=500, `en-sub`=200, `en`=150 | Language weight map |
+| `default_language_score` | 100 | Score for unknown languages |
+| `quality_multiplier` | 10 | Multiplier for the quality value |
+| `hoster_scores` | `supervideo`=5, `voe`=4, `filemoon`=3, `streamtape`=2, `doodstream`=1 | Hoster reliability bonus |
+| `preferred_language` | `de` | Currently unused (no effect) |
 
 ### Plugin Search
 
 | Setting | Default | Description |
 |---|---|---|
-| `max_concurrent_plugins` | 10 | Parallel plugin search limit |
-| `max_results_per_plugin` | 100 | Results per plugin (Stremio limit) |
+| `max_concurrent_plugins` | 10 | httpx slots of the global concurrency pool |
+| `max_concurrent_playwright` | 5 | Playwright slots of the global concurrency pool |
+| `max_results_per_plugin` | 100 | Per-plugin result limit in Stremio searches |
 | `plugin_timeout_seconds` | 30 | Per-plugin timeout |
+| `max_concurrent_plugins_auto` | `true` | Auto-tune `max_concurrent_plugins` (superseded by `auto_tune_all`) |
+| `auto_tune_all` | `true` | Auto-tune all concurrency parameters from container resources |
 
 ### Title Matching
 
 | Setting | Default | Description |
 |---|---|---|
-| `title_match_threshold` | 0.7 | Minimum score to keep result |
-| `title_year_bonus` | 0.2 | Score bonus for year match |
-| `title_year_penalty` | -0.3 | Score penalty for year mismatch |
-| `title_sequel_penalty` | -0.35 | Penalty for sequels |
+| `title_match_threshold` | 0.7 | Minimum score to keep a result |
+| `title_year_bonus` | 0.2 | Added when the year matches |
+| `title_year_penalty` | 0.3 | Subtracted when the year does not match |
+| `title_sequel_penalty` | 0.35 | Subtracted when sequel numbers differ |
+| `title_year_tolerance_movie` | 1 | Allowed year difference for movies |
+| `title_year_tolerance_series` | 3 | Allowed year difference for series |
 
-### Resolution & Concurrency
+### Resolution, Probing & Caching
 
 | Setting | Default | Description |
 |---|---|---|
-| `resolve_target_count` | 15 | Target resolved video streams before early-stop |
-| `max_concurrent_playwright` | 5 | Max parallel Playwright plugin searches |
+| `max_probe_count` | 50 | Top-ranked streams to probe/resolve; streams beyond are dropped |
+| `probe_concurrency` | 10 | Parallel probes and parallel resolutions |
+| `resolve_target_count` | 15 | Stop resolving after this many genuine video URLs (`0` = resolve all) |
+| `stream_link_ttl_seconds` | 7200 | TTL of cached stream links (`streamlink:{stream_id}`) |
+| `probe_at_stream_time` | `true` | Dead-link probe before caching (see known issue) |
+| `probe_timeout_seconds` | 10 | Per-URL httpx probe timeout |
+| `probe_stealth_concurrency` | 5 | Parallel Playwright Stealth probes |
+| `probe_stealth_timeout_seconds` | 15 | Stealth probe timeout; also the `StealthPool` timeout used by SuperVideo |
+| `probe_stealth_enabled` | `true` | Currently unused (no effect) — the stealth phase always receives the `StealthPool` |
+
+> **Known issue:** the dead-link probe (`probe_urls_stealth()`) only runs when no resolve callback is configured. The default composition always wires `HosterResolverRegistry.resolve`, so `probe_at_stream_time` currently has no effect; resolution acts as the liveness check.
+
+Scored plugin selection keys (`scoring_enabled`, `max_plugins_scored`, `exploration_probability`, …) are documented in [Plugin Scoring & Probing](./plugin-scoring-and-probing.md#configuration).
 
 ### Circuit Breaker
 
-| Setting | Default | Description |
-|---|---|---|
-| `failure_threshold` | 5 | Consecutive failures before opening circuit |
-| `cooldown_seconds` | 60 | Seconds to wait before half-open probe |
-
-When a plugin accumulates `failure_threshold` consecutive failures, the circuit breaker
-opens and skips the plugin for `cooldown_seconds`. After cooldown, a single probe request
-is allowed (half-open). If the probe succeeds, the breaker resets; if it fails, cooldown restarts.
+`PluginCircuitBreaker` is created in the composition root with hardcoded values (`failure_threshold=5`, `cooldown_seconds=60.0`); they are not configurable. After 5 consecutive failures (exceptions or timeouts) a plugin is skipped for 60 s. After the cooldown a single probe request is allowed (half-open); success resets the breaker, failure restarts the cooldown.
 
 ### Global Concurrency Pool
 
-The `ConcurrencyPool` provides separate httpx and Playwright slot pools with fair-share
-distribution across concurrent requests:
-- `httpx_slots` = `max_concurrent_plugins` (default 10)
-- `pw_slots` = `max_concurrent_playwright` (default 5)
-- Fair share: `max(1, total_slots // active_requests)` per request
+`ConcurrencyPool` holds separate httpx and Playwright slot pools with fair-share distribution across concurrent requests:
 
-When `auto_tune_all` is enabled (default), slot counts are derived from
-container resources at startup. See [Configuration → Auto-Tune](./configuration.md#auto-tune-container-aware)
-for formulas and caps.
+- `httpx_slots` = `max_concurrent_plugins`
+- `pw_slots` = `max_concurrent_playwright`
+- Fair share per request: `max(1, total_slots // active_requests)`
+
+When `auto_tune_all` is enabled (default), slot counts are derived from container resources at startup. See [Configuration → Auto-Tune](./configuration.md#auto-tune-container-aware) for formulas and caps.
 
 ### Multi-Language Search
 
-Plugins declare `languages: list[str]` (default `["de"]`). The use case groups plugins
-by language, fetches TMDB titles for each unique language in parallel, and searches each
-group with language-specific queries. A plugin with `languages=["de", "en"]` gets searched
-with both German and English title queries.
-
-### Stream Deduplication
-
-After sorting, per-hoster deduplication keeps only the best-ranked stream per hoster.
-This prevents duplicate links from the same hoster (e.g., 5 VOE links from 5 plugins
-are collapsed to the single best-ranked VOE link).
-
-### Caching & Probing
-
-| Setting | Default | Description |
-|---|---|---|
-| `stream_link_ttl_seconds` | 7200 (2h) | Hoster URL cache TTL |
-| `probe_at_stream_time` | true | Enable dead link filtering (skipped when resolve_fn is active) |
-| `probe_concurrency` | 10 | Parallel probe limit |
-| `probe_timeout_seconds` | 10 | Per-URL probe timeout |
-| `max_probe_count` | 50 | Max streams to probe |
+Plugins declare `languages: list[str]` (default `["de"]`). The use case groups plugins by identical language lists, fetches TMDB titles for each unique language in parallel, and searches each group with language-specific queries. A plugin with `languages=["de", "en"]` is searched with both German and English title queries.
 
 ---
 
 ## Testing
 
-| Test File | Coverage |
+| Test file | Coverage |
 |---|---|
-| `test_stream_converter.py` | SearchResult to RankedStream conversion |
-| `test_stream_sorter.py` | Stream ranking and sorting |
-| `test_title_matcher.py` | Title-match scoring and filtering |
-| `test_release_parser.py` | Quality/language parsing from release names |
-| `test_tmdb_client.py` | TMDB httpx client with caching |
-| `test_imdb_fallback.py` | IMDB Suggest + Wikidata fallback |
-| `test_stream_link_cache.py` | Stream link cache repository (incl. HLS proxy fields) |
-| `test_hls_proxy.py` | HLS proxy manifest rewriting + CDN fetch helpers (18 tests) |
-| E2E tests | 158 Stremio endpoint tests (manifest, catalog, stream, play, HLS proxy, streamable link verification) |
+| `tests/unit/application/test_stremio_stream.py` | Stream use case (search, filter, resolve, rank) |
+| `tests/unit/application/test_stremio_catalog.py` | Catalog use case |
+| `tests/unit/application/test_plugin_search_runner.py` | `PluginSearchRunner` (fan-out, timeout, circuit breaker) |
+| `tests/unit/application/test_stremio_queries.py` | Search queries and multi-language references |
+| `tests/unit/application/test_stremio_stream_builder.py` | Stream formatting, dedup, direct-video detection, proxy URLs |
+| `tests/unit/infrastructure/test_stream_converter.py` | `SearchResult` → `RankedStream` conversion |
+| `tests/unit/infrastructure/test_stream_sorter.py` | Stream ranking and sorting |
+| `tests/unit/infrastructure/test_title_matcher.py` | Title-match scoring and filtering |
+| `tests/unit/infrastructure/test_episode_filter.py` | Season/episode filtering |
+| `tests/unit/infrastructure/test_release_parser.py` | Quality/language parsing from release names |
+| `tests/unit/infrastructure/test_tmdb_client.py` | TMDB client with caching |
+| `tests/unit/infrastructure/test_imdb_fallback.py` | IMDB Suggest + Wikidata fallback |
+| `tests/unit/infrastructure/test_stream_link_cache.py` | Stream link cache repository (incl. HLS proxy fields) |
+| `tests/unit/infrastructure/test_hls_proxy.py` | HLS manifest rewriting, CDN fetch, query resolution |
+| `tests/unit/infrastructure/test_circuit_breaker.py` | `PluginCircuitBreaker` |
+| `tests/unit/infrastructure/test_concurrency.py` | `ConcurrencyPool` + budgets |
+| `tests/unit/interfaces/test_stremio_router.py` | Router endpoints |
+| `tests/e2e/test_stremio_endpoint.py` | Full HTTP flow (manifest, catalog, stream, play, HLS proxy, health) |
+| `tests/e2e/test_stremio_series_e2e.py` | Series season/episode filtering |
+| `tests/e2e/test_stremio_streamable_e2e.py` | Streamable link verification |
 
 ---
 
-## Source Code
+## Source Code References
 
 | Component | Path |
 |---|---|
 | Domain entities | `src/scavengarr/domain/entities/stremio.py` |
 | TMDB port | `src/scavengarr/domain/ports/tmdb.py` |
 | Stream link port | `src/scavengarr/domain/ports/stream_link_repository.py` |
+| Concurrency port | `src/scavengarr/domain/ports/concurrency.py` |
 | Stream use case | `src/scavengarr/application/use_cases/stremio_stream.py` |
 | Catalog use case | `src/scavengarr/application/use_cases/stremio_catalog.py` |
+| Plugin search runner | `src/scavengarr/application/stremio/plugin_search.py` |
+| Query building | `src/scavengarr/application/stremio/queries.py` |
+| Stream building | `src/scavengarr/application/stremio/stream_builder.py` |
 | Stream converter | `src/scavengarr/infrastructure/stremio/stream_converter.py` |
 | Stream sorter | `src/scavengarr/infrastructure/stremio/stream_sorter.py` |
 | Title matcher | `src/scavengarr/infrastructure/stremio/title_matcher.py` |
+| Episode filter | `src/scavengarr/infrastructure/stremio/episode_filter.py` |
 | Release parser | `src/scavengarr/infrastructure/stremio/release_parser.py` |
 | HLS proxy helpers | `src/scavengarr/infrastructure/stremio/hls_proxy.py` |
+| Stream link cache | `src/scavengarr/infrastructure/persistence/stream_link_cache.py` |
+| Circuit breaker | `src/scavengarr/infrastructure/circuit_breaker.py` |
+| Concurrency pool | `src/scavengarr/infrastructure/concurrency.py` |
 | TMDB client | `src/scavengarr/infrastructure/tmdb/client.py` |
 | IMDB fallback | `src/scavengarr/infrastructure/tmdb/imdb_fallback.py` |
+| Stremio config | `src/scavengarr/infrastructure/config/schema.py` (`StremioConfig`) |
+| Composition wiring | `src/scavengarr/interfaces/composition.py` |
 | Stremio router | `src/scavengarr/interfaces/api/stremio/router.py` |

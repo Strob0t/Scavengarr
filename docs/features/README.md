@@ -1,10 +1,21 @@
 # Scavengarr Feature Documentation
 
-> Central index for all feature documentation. Start here to navigate the system.
+> Central index for all feature documentation — start here to navigate the system.
 
-Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Prowlarr and other Arr applications. It scrapes sources via Python plugins (httpx for static HTML, Playwright for JS-heavy sites) and delivers results through standard Torznab endpoints.
+---
 
-**Version:** 0.1.0 | **Python:** 3.12+ | **Tests:** 4113 (+38 live) | **Plugins:** 42 (33 httpx + 9 Playwright) | **Hoster Resolvers:** 56 | **Architecture:** Clean Architecture
+## At a Glance
+
+Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** and **Stremio addon** for Prowlarr and other Arr applications. It scrapes sources via Python plugins (httpx for static HTML, Playwright for JS-heavy sites) and delivers results through standard Torznab endpoints and a Stremio addon.
+
+| Fact | Value |
+|---|---|
+| Version | 0.1.0 |
+| Python | 3.12–3.13 |
+| Plugins | 42 (33 httpx + 9 Playwright) |
+| Hoster resolvers | 56 (17 individual + 12 generic DDL + 27 XFS) |
+| Tests | 4113 offline (3919 unit + 169 E2E + 25 integration) + 38 live |
+| Architecture | Clean Architecture |
 
 ---
 
@@ -14,17 +25,17 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Pro
 
 | Document | Description |
 |---|---|
-| [FEATURES.md](./FEATURES.md) | Compact feature handbook -- all features at a glance |
+| [FEATURES.md](./FEATURES.md) | Compact feature handbook — all features at a glance |
 
 ### Core Features
 
 | Document | Description |
 |---|---|
-| [Plugin System](./plugin-system.md) | Python plugin authoring, base classes, protocol, discovery |
+| [Plugin System](./plugin-system.md) | Python plugin authoring, base classes, protocol, discovery, per-plugin overrides |
 | [Python Plugins](./python-plugins.md) | Detailed Python plugin development, base class reference, examples |
-| [Multi-Stage Scraping](./multi-stage-scraping.md) | Search-Detail-Links pipeline, stage types, parallel execution |
+| [Multi-Stage Scraping](./multi-stage-scraping.md) | Search → detail → links inside plugins, bounded parallel execution |
 | [CrawlJob System](./crawljob-system.md) | Multi-link packaging for JDownloader integration |
-| [Torznab API](./torznab-api.md) | Torznab/Newznab endpoint reference, XML format, Prowlarr compat |
+| [Torznab API](./torznab-api.md) | Torznab/Newznab endpoint reference, XML format, Prowlarr compatibility |
 | [Link Validation](./link-validation.md) | HEAD/GET validation strategy, parallel checking, status policies |
 | [Configuration](./configuration.md) | YAML/ENV/CLI config, precedence rules, all settings |
 
@@ -33,7 +44,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Pro
 | Document | Description |
 |---|---|
 | [Stremio Addon](./stremio-addon.md) | Stremio integration with catalog, streams, and hoster resolution |
-| [Hoster Resolvers](./hoster-resolvers.md) | 56 hoster resolvers (streaming + DDL + 27 XFS consolidated) |
+| [Hoster Resolvers](./hoster-resolvers.md) | Streaming, DDL, and XFS hoster resolvers |
 | [Plugin Scoring & Probing](./plugin-scoring-and-probing.md) | EWMA-based plugin ranking via background health and search probes |
 | [Mirror URL Fallback](./mirror-url-fallback.md) | Automatic domain fallback when primary mirrors are unreachable |
 | [Prowlarr Integration](./prowlarr-integration.md) | Step-by-step Prowlarr setup, endpoint mapping, category sync |
@@ -51,9 +62,10 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Pro
 |---|---|
 | [Playwright Engine](../plans/playwright-engine.md) | Browser pool and resource management for Playwright plugins |
 | [More Plugins](../plans/more-plugins.md) | Plugin inventory and remaining candidates |
-| [Integration Tests](../plans/integration-tests.md) | Implemented: 25 integration + 158 E2E + 38 live smoke tests |
+| [Integration Tests](../plans/integration-tests.md) | Implemented: integration, E2E, and live smoke tests |
+| [Search Caching](../plans/search-caching.md) | Implemented: search result cache with `X-Cache` header |
+| [Plugin Repair](../plans/plugin-repair.md) | Triaged: repair plugins that currently return no results |
 | [Anti-Bot Hardening](../plans/antibot-patchright.md) | Planned: Patchright instead of playwright-stealth, browser fallback port for httpx plugins |
-| [Search Caching](../plans/search-caching.md) | Implemented: 900s TTL with X-Cache header |
 
 ### Refactoring History
 
@@ -75,15 +87,17 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Pro
 
 | Component | Technology | Purpose |
 |---|---|---|
-| Web framework | FastAPI + Uvicorn | HTTP API (Torznab endpoints) |
-| Static scraping | httpx | HTML parsing for Python plugins |
-| Dynamic scraping | Playwright (Chromium) | JS-heavy sites, Cloudflare bypass |
+| Web framework | FastAPI + Uvicorn | HTTP API (Torznab, Stremio, stats, download) |
+| Static scraping | httpx | HTTP client for httpx plugins and hoster resolvers |
+| HTML parsing | lxml, BeautifulSoup4 | HTML extraction in plugins |
+| Dynamic scraping | Playwright (Chromium), playwright-stealth | JS-heavy sites, Cloudflare bypass |
+| Title matching | rapidfuzz | Fuzzy title scoring for Stremio |
 | Release parsing | guessit | Release name parsing for title matching |
-| Configuration | pydantic-settings | Typed config with env/YAML/CLI support |
-| Caching | diskcache (+ optional Redis) | Search result and CrawlJob storage |
+| Configuration | pydantic-settings, PyYAML, python-dotenv | Typed config with env/YAML/CLI support |
+| Caching | diskcache (+ optional Redis via YAML) | Search results, CrawlJobs, stream links, plugin scores |
 | Logging | structlog | Structured JSON/console logging |
 | CLI | argparse (stdlib) | Server startup with config overrides |
-| Testing | pytest | 4151 tests across all layers (3919 unit + 169 E2E + 25 integration + 38 live) |
+| Testing | pytest, respx | 4113 offline tests + 38 live smoke tests |
 
 ---
 
@@ -91,41 +105,54 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Pro
 
 ```text
 src/scavengarr/
-  domain/                  # Enterprise business rules
-    entities.py            # TorznabQuery, TorznabItem, TorznabCaps
-    plugins/               # Plugin schema, protocol, exceptions
-    ports/                 # Abstract contracts (Protocol classes)
-  application/             # Application business rules
-    use_cases/             # TorznabSearch, TorznabCaps, TorznabIndexers
-    factories/             # CrawlJob factory
-  infrastructure/          # Interface adapters
-    plugins/               # Registry, loader, base classes (HttpxPluginBase, PlaywrightPluginBase)
-    torznab/               # HttpxSearchEngine + XML presenter
-    validation/            # Link validator (HEAD/GET)
-    cache/                 # diskcache adapter
-    stremio/               # Stream converter, sorter, TMDB client, title matcher, HLS proxy
-    hoster_resolvers/      # 56 resolvers (27 XFS consolidated + 12 generic DDL + 17 individual)
-    config/                # Settings, logging
-    common/                # Parsers, converters, extractors, HTML selectors
-  interfaces/              # Frameworks & drivers
-    api/                   # FastAPI routers (Torznab + Stremio)
-    cli/                   # argparse CLI
-    composition/           # Dependency injection
+  domain/                    # Enterprise business rules
+    entities/                # Torznab, Stremio, CrawlJob, scoring entities
+    plugins/                 # SearchResult, PluginProtocol, plugin schema, exceptions
+    ports/                   # Abstract contracts (Protocol classes)
+  application/               # Application business rules
+    use_cases/               # TorznabSearch/Caps/Indexers, StremioCatalog, StremioStream
+    factories/               # CrawlJob factory
+    stremio/                 # Plugin search, query building, stream builder
+  infrastructure/            # Interface adapters
+    plugins/                 # Registry, loader, HttpxPluginBase, PlaywrightPluginBase, shared browser pool
+    torznab/                 # HttpxSearchEngine + XML presenter
+    validation/              # HttpLinkValidator (HEAD/GET)
+    cache/                   # diskcache + Redis adapters, cache factory
+    persistence/             # CrawlJob, stream link, and plugin score repositories
+    stremio/                 # Stream converter/sorter, title matcher, release parser, episode filter, HLS proxy
+    tmdb/                    # TMDB client + IMDB fallback
+    hoster_resolvers/        # Hoster resolvers (individual + generic DDL + XFS), probes, stealth pool
+    scoring/                 # EWMA scoring, health/search probers, scheduler
+    config/                  # Pydantic schema, loader, defaults
+    logging/                 # structlog setup
+    common/                  # Parsers, converters, rate limiter, retry transport
+    circuit_breaker.py       # Per-plugin circuit breaker
+    concurrency.py           # Global concurrency pool
+    graceful_shutdown.py     # Drain in-flight requests
+    metrics.py               # Metrics collector
+    resource_detector.py     # cgroup v2/v1 CPU/memory detection
+  interfaces/                # Frameworks & drivers
+    api/                     # FastAPI routers (torznab, stremio, download, stats) + rate-limit middleware
+    cli/                     # argparse CLI (`poetry run start`)
+    app.py                   # FastAPI app factory, health endpoints
+    app_state.py             # Typed application state
+    composition.py           # Dependency injection (lifespan)
 
-plugins/                   # Plugin directory (42 Python plugins)
-  filmpalast_to.py         # Python plugin example (httpx)
-  boerse.py                # Python plugin example (Playwright)
-  einschalten.py           # Python plugin example (httpx API)
+plugins/                     # Plugin directory (Python plugins)
+  filmpalast_to.py           # Python plugin example (httpx)
+  boerse.py                  # Python plugin example (Playwright)
+  einschalten.py             # Python plugin example (httpx API)
 
 tests/
-  e2e/                     # 158 E2E tests (Torznab + Stremio endpoints)
-  integration/             # 25 integration tests (config, crawljob, links, pipeline)
-  live/                    # 38 live smoke tests (plugins + resolver contract tests)
   unit/
-    domain/                # Pure domain tests
-    application/           # Use case tests (mocked ports)
-    infrastructure/        # Adapter, parser, resolver, and plugin tests (~90 files)
-    interfaces/            # Router tests
+    domain/                  # Pure domain tests
+    application/             # Use case tests (mocked ports)
+    infrastructure/          # Adapter, parser, resolver, and plugin tests
+    interfaces/              # Router tests
+  e2e/                       # Torznab + Stremio endpoint tests
+  integration/               # Config loading, CrawlJob lifecycle, link validation
+  live/                      # Live smoke tests (plugins + resolver contract tests)
+  benchmark/                 # Concurrency tuning benchmarks (run manually)
 ```
 
 ---
@@ -133,8 +160,8 @@ tests/
 ## How to Use These Docs
 
 1. **New to Scavengarr?** Start with [FEATURES.md](./FEATURES.md) for a bird's-eye view.
-2. **Writing a new plugin?** Read [Plugin System](./plugin-system.md) and [Python Plugins](./python-plugins.md).
-3. **Understanding multi-stage scraping?** Read [Multi-Stage Scraping](./multi-stage-scraping.md).
-4. **Setting up Prowlarr?** Read [Prowlarr Integration](./prowlarr-integration.md) and [Torznab API](./torznab-api.md).
-5. **Understanding the architecture?** Read [Clean Architecture](../architecture/clean-architecture.md).
-6. **Configuring the system?** Read [Configuration](./configuration.md).
+1. **Writing a new plugin?** Read [Plugin System](./plugin-system.md) and [Python Plugins](./python-plugins.md).
+1. **Understanding multi-stage scraping?** Read [Multi-Stage Scraping](./multi-stage-scraping.md).
+1. **Setting up Prowlarr?** Read [Prowlarr Integration](./prowlarr-integration.md) and [Torznab API](./torznab-api.md).
+1. **Understanding the architecture?** Read [Clean Architecture](../architecture/clean-architecture.md).
+1. **Configuring the system?** Read [Configuration](./configuration.md).

@@ -1,18 +1,18 @@
+[← Back to Index](../../features/README.md)
+
 # Refactor: Pydantic Removal from Domain Layer
 
 **Status:** Completed
-**Commit:** `7726ba8` - *refactor(phase1): remove Pydantic from Domain layer*
+**Commit:** `7726ba8` — *refactor(phase1): remove Pydantic from Domain layer*
 **Date:** Pre-v0.1.0
 
 ## Summary
 
-All domain entities were converted from Pydantic `BaseModel` subclasses to plain
-Python `@dataclass` classes. This was Phase 1 of the Clean Architecture migration.
+The remaining Pydantic models in the Domain layer — `StageResult` and the YAML plugin schema — were converted to plain Python `@dataclass` classes. The Torznab entities and `CrawlJob` were already dataclasses before this commit. This was Phase 1 of the Clean Architecture migration.
 
 ## Motivation
 
-The Domain layer must be framework-free per Clean Architecture. Pydantic is an
-external framework, and using it in the innermost layer meant:
+The Domain layer must be framework-free per Clean Architecture. Pydantic is an external framework, and using it in the innermost layer meant:
 
 - Domain entities carried runtime validation overhead not needed internally
 - Tests required Pydantic to be installed even for pure business logic
@@ -21,67 +21,68 @@ external framework, and using it in the innermost layer meant:
 
 ## What Changed
 
-### Entities Converted
+### Models Converted
 
-| Entity | Before | After |
+| Model | Before | After |
 |---|---|---|
-| `TorznabQuery` | `BaseModel` | `@dataclass` |
-| `TorznabItem` | `BaseModel` | `@dataclass` |
-| `TorznabCaps` | `BaseModel` | `@dataclass` |
-| `SearchResult` | `BaseModel` | `@dataclass` |
-| `CrawlJob` | `BaseModel` | `@dataclass` |
-| `StageResult` | `BaseModel` | `@dataclass` |
-| `YamlPluginDefinition` | `BaseModel` | `@dataclass` |
+| `StageResult` (`domain/plugins/base.py`) | `BaseModel` | `@dataclass` (later removed in `03454a8`) |
+| `HttpOverrides`, `AuthConfig` | `BaseModel` in `domain/plugins/schema.py` | `@dataclass(frozen=True)` in `domain/plugins/plugin_schema.py` (still present) |
+| `PaginationConfig`, `NestedSelector`, `StageSelectors`, `ScrapingStage`, `ScrapySelectors`, `PlaywrightLocators`, `ScrapingConfig`, `YamlPluginDefinition` | `BaseModel` in `domain/plugins/schema.py` | `@dataclass(frozen=True)` in `domain/plugins/plugin_schema.py` (later removed with the YAML plugin system in `42fced9`) |
+
+Already dataclasses before `7726ba8` (unchanged): `TorznabQuery`, `TorznabItem`, `TorznabCaps` (`domain/entities/torznab.py`, `frozen=True`), `CrawlJob` (`domain/entities/crawljob.py`), `SearchResult` (`domain/plugins/base.py`).
+
+`domain/plugins/schema.py` was deleted. The Pydantic validation moved to `infrastructure/plugins/validation_schema.py` (later removed in `b72c420`), and `infrastructure/plugins/adapters.py` converted validated Pydantic models into the domain dataclasses (later removed in `352f7ca`).
 
 ### Pattern Changes
 
-**Default values with mutable types:**
+**Default values with mutable types** (`SearchResult.metadata`):
+
 ```python
-# Before (Pydantic handles this automatically)
-class TorznabQuery(BaseModel):
-    cat: list[int] = []
+# Before (shared mutable/None default)
+@dataclass
+class SearchResult:
+    metadata: Dict[str, Any] = None
 
 # After (explicit factory to avoid mutable default gotcha)
 @dataclass
-class TorznabQuery:
-    cat: list[int] = field(default_factory=list)
+class SearchResult:
+    metadata: dict[str, Any] = field(default_factory=dict)
 ```
 
 **Immutable value objects:**
+
 ```python
 # Before
-class TorznabCaps(BaseModel):
-    class Config:
-        frozen = True
+class AuthConfig(BaseModel):
+    ...
 
 # After
 @dataclass(frozen=True)
-class TorznabCaps:
+class AuthConfig:
     ...
 ```
 
-**Validation moved to factories:**
-```python
-# Before: validation in entity
-class TorznabQuery(BaseModel):
-    @validator("t")
-    def validate_type(cls, v):
-        if v not in ("search", "caps"):
-            raise ValueError(...)
+**Validation moved to infrastructure:**
 
-# After: validation in application-layer factory
-def create_torznab_query(t: str, **kwargs) -> TorznabQuery:
-    if t not in ("search", "caps"):
-        raise TorznabError(...)
-    return TorznabQuery(t=t, **kwargs)
+```python
+# Before: validators on the domain model (domain/plugins/schema.py)
+class YamlPluginDefinition(BaseModel):
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, v: str) -> str:
+        return v.strip()
+
+# After: Pydantic validation in infrastructure/plugins/validation_schema.py,
+# then conversion to the pure domain dataclass via infrastructure/plugins/adapters.py
 ```
+
+Torznab request validation never lived in an entity: it is done in `TorznabSearchUseCase.execute()` (raises `TorznabBadRequest`) and in the Torznab router (raises `TorznabUnsupportedAction` for actions other than `caps`/`search`).
 
 ## Where Pydantic Remains
 
-Pydantic was only removed from the Domain layer. It is still used in:
+Pydantic was only removed from the Domain layer. Today it is used only in:
 
-- **Infrastructure/Config:** `pydantic-settings` for configuration loading and validation
-- **Interfaces/HTTP:** FastAPI request/response models (where Pydantic is appropriate)
+- **Infrastructure/Config:** `pydantic-settings` for configuration loading and validation (`src/scavengarr/infrastructure/config/schema.py`)
 
 This is correct per Clean Architecture: frameworks belong in the outer layers.
 

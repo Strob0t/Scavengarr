@@ -1,22 +1,32 @@
 # Changelog
 
-All notable changes to Scavengarr are documented in this file.
-Format: version, date, grouped changes. Newest entries first.
+All notable changes to Scavengarr are documented in this file. Format: version, date, grouped changes. Newest entries first.
 
 ---
 
 ## Unreleased (staging)
 
-Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration,
-56 hoster resolvers, plugin base class standardization, search result caching, circuit
-breaker, global concurrency pool, graceful shutdown, multi-language search, and
-growth of the test suite from 160 to 4043 tests.
+Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 56 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4151 tests (4113 excluding the opt-in live tests).
 
 ### Chore: LF Line Endings and Versioned Claude Code Hooks
 - **All text files normalized to LF**: `.gitattributes` widened from `*.md` to `* text=auto eol=lf` and the index renormalized (227 files, mostly `.py`; EOL-only, `git diff --ignore-cr-at-eol` is empty). New `mixed-line-ending --fix=lf` pre-commit hook catches CRLF before commit.
 - **Claude Code hooks fixed and versioned**: `.claude/hooks/` and `.claude/commands/` are no longer gitignored. Both hooks had CRLF shebangs, failed with exit 127 and therefore never ran (Claude Code treats non-2 exits as non-blocking). `block-dangerous.sh` rewritten: one `jq` call, no `grep` subprocesses, per-command matching (no false hits across `&&`/`;`/`|`), and new blocks for `git push -f`/`+refspec`, pushes to `…:main`, commits/pushes while `main` is checked out, `rm -fr`/`--recursive` on `/`, `~`, `$HOME`, and `git clean -f`; `--force-with-lease` is allowed.
 
 ### Docs: Audit and Style Unification
+- **Every doc checked against the code**: all feature, architecture, plan, refactor and OpenSpec documents plus README were audited claim by claim and corrected. Among the fixes:
+  - health endpoints are `/api/v1/healthz` and `/api/v1/readyz`, including the Docker healthcheck examples
+  - `CACHE_*` env vars are ignored, so Redis is configured via YAML
+  - CrawlJob TTL is fixed at 1 h, and CrawlJobs are stored as JSON, not pickle
+  - the plugin concurrency default is 5, not 3
+  - all plugins are imported at startup, not lazily
+  - `HttpxSearchEngine` only validates links
+  - removed non-existent APIs: `LinkValidatorPort`, `PluginValidationError`, `load_all()`, the stage engine and result dedup
+  - effective config defaults are documented
+  - README facts corrected: license GPL-3.0, Python 3.12–3.13, clone URL, no `--factory` flag
+- **Current behaviour documented**: known bugs are documented as they behave today, with `Known issue` notes, and config keys nothing reads are marked "currently unused". Code fixes follow separately.
+- **Consolidation**: `plugin-system.md` covers discovery, registry, overrides and dispatch, and `python-plugins.md` is the plugin author guide. `docs/architecture/codeplan.md` shrank from 1641 to 270 lines (module map, design invariants, dependency chains). Plans and OpenSpec changes carry accurate, dated status lines and ticked checklists.
+- **Unified style**: every doc has the same header (back link, H1, one-line summary), `---` between sections, unwrapped paragraphs, ` — ` dashes and a `Source Code References` table.
+- **Config comments**: `data/config.yaml` comments now state the real precedence (`.env` acts as env vars) and that `cache.max_concurrent`/`cache.redis_url` are YAML-only. The remaining German comments in `pyproject.toml`, `.pre-commit-config.yaml` and `Dockerfile` are translated.
 - **Markdown syntax cleanup**: every code fence now declares a language (`text`, `python`, `http`, `bash`, ...), `***` separators replaced by `---`, non-breaking hyphens in `docs/PYTHON-BEST-PRACTICES.md` replaced so its table-of-contents anchors resolve.
 - **Root `AGENTS.md` reduced** to the `openspec update`-managed block (restored missing `<!-- OPENSPEC:START -->` marker) plus a pointer to `CLAUDE.md`. The removed agent guide was outdated (Docker commands, `commitlint`/`mypy` pre-commit hooks and a `redact_config_for_logging()` helper that do not exist). The Conventional Commits rule moved into `CLAUDE.md`.
 
@@ -60,7 +70,7 @@ growth of the test suite from 160 to 4043 tests.
 - **Fix: uninstallable lockfile**: `poetry.lock` pinned `lancedb 0.5.7` (pulled in via `crewai-tools`), which no longer exists on PyPI — `poetry install` failed on every fresh environment. Removed the unused dev dependencies `crewai`, `crewai-tools[mcp]`, `openinference-instrumentation-crewai` and `mcp` (not imported anywhere) and re-locked; ~100 transitive packages dropped.
 
 ### Concurrency Benchmark Suite & Auto-Tune Fix
-- **Benchmark suite** (`tests/benchmark/`): synthetic E2E benchmarks for ConcurrencyPool slot tuning, probe/validation semaphore sweeps, and formula-vs-empirical comparison. Runs manually via `poetry run pytest tests/benchmark/ -s -v` (excluded from CI via `addopts = "--ignore=tests/benchmark"`).
+- **Benchmark suite** (`tests/benchmark/`): synthetic E2E benchmarks for ConcurrencyPool slot tuning, probe/validation semaphore sweeps, and formula-vs-empirical comparison. Runs manually via `poetry run pytest tests/benchmark/ -s -v` (excluded from the default `pytest` run via `addopts = "--ignore=tests/benchmark"`).
 - **Fix: probe/validation hard-caps**: `probe_concurrency` capped at 100 (was unbounded — 128 on 32 cores), `validation_max_concurrent` capped at 120 (was 160). Caps derived from benchmark diminishing-returns analysis (<5% throughput gain beyond threshold).
 - **New test**: `test_extreme_host_probe_validation_capped` verifies caps on 32-core hosts.
 
@@ -231,8 +241,7 @@ growth of the test suite from 160 to 4043 tests.
 - Remove dead `CacheBackend` re-export from `infrastructure/cache/__init__.py`
 - Remove dead `AgeBucket` re-export from `domain/entities/__init__.py`
 - Fix duplicate `AgeBucket` in `query_pool.py` — import from domain instead of redefining
-- Remove 3 dead config field assignments in `StremioStreamUseCase` (`stremio_deadline_ms`,
-  `max_items_total`, `max_items_per_plugin`) — stored but never read
+- Remove 3 dead config field assignments in `StremioStreamUseCase` (`stremio_deadline_ms`, `max_items_total`, `max_items_per_plugin`) — stored but never read
 - Delete dead `/indexers` data file (obsolete Scrapy reference)
 - Delete empty `.env.example`
 - Clean orphaned `__pycache__` directories
@@ -258,17 +267,14 @@ growth of the test suite from 160 to 4043 tests.
 - Add 3 config fields: `http.retry_max_attempts`, `http.retry_backoff_base`, `http.retry_max_backoff`
 
 ### Plugin Scoring & Probing
-Background plugin scoring system that measures plugin health and search quality via
-EWMA-based probes, then selects only the top-N plugins per Stremio request.
+Background plugin scoring system that measures plugin health and search quality via EWMA-based probes, then selects only the top-N plugins per Stremio request.
 
 - Add domain entities: `ProbeResult`, `EwmaState`, `PluginScoreSnapshot` with age buckets
 - Add `PluginScoreStorePort` protocol and `CachePluginScoreStore` persistence (JSON via CachePort)
-- Add pure EWMA scoring functions: `alpha_from_halflife`, `ewma_update`, `compute_confidence`,
-  `compute_health_observation`, `compute_search_observation`, `compute_final_score`
+- Add pure EWMA scoring functions: `alpha_from_halflife`, `ewma_update`, `compute_confidence`, `compute_health_observation`, `compute_search_observation`, `compute_final_score`
 - Add `HealthProber` (HEAD with 405/501 GET fallback, Cloudflare detection) and `MiniSearchProber` (limited search + hoster HEAD checks)
 - Enhance `MiniSearchProber` to filter HEAD-checks by supported hosters (from `HosterResolverRegistry`)
-- Add `supported_ratio` (5th component, weight 0.25) to `compute_search_observation()` — scores now reflect
-  whether a plugin's result links point to hosters with registered resolvers
+- Add `supported_ratio` (5th component, weight 0.25) to `compute_search_observation()` — scores now reflect whether a plugin's result links point to hosters with registered resolvers
 - Add `hoster_supported` / `hoster_total` fields to `ProbeResult`
 - Add `QueryPoolBuilder` with dynamic TMDB-based query generation (trending + discover endpoints, weekly rotation, German locale, bundled fallback lists)
 - Add `ScoringScheduler` background task (health probes daily, search probes 2x/week per plugin/category/bucket)
@@ -308,9 +314,7 @@ EWMA-based probes, then selects only the top-N plugins per Stremio request.
 - Remove explicit Protocol inheritance from `CacheCrawlJobRepository` (duck-typing consistency)
 
 ### Stremio Playback: behaviorHints.proxyHeaders
-Pre-resolve hoster embed URLs at `/stream` time and emit `behaviorHints.proxyHeaders`
-so Stremio's local streaming server sends the correct `Referer` and `User-Agent` headers
-to hoster CDNs. This eliminates buffering caused by 403 rejections on missing headers.
+Pre-resolve hoster embed URLs at `/stream` time and emit `behaviorHints.proxyHeaders` so Stremio's local streaming server sends the correct `Referer` and `User-Agent` headers to hoster CDNs. This eliminates buffering caused by 403 rejections on missing headers.
 
 - Add `behavior_hints` field to `StremioStream` domain entity
 - Add `_build_behavior_hints()` and `_resolve_top_streams()` to `StremioStreamUseCase`
@@ -326,19 +330,14 @@ to hoster CDNs. This eliminates buffering caused by 403 rejections on missing he
 - Add periodic eviction of expired entries in `HosterResolverRegistry` caches (prevents unbounded memory growth)
 
 ### Code Quality (Audit)
-- Consolidate 12 identical DDL hoster resolvers into parameterised `GenericDDLConfig` + `GenericDDLResolver`
-  (alfafile, alphaddl, fastpic, filecrypt, filefactory, fsst, go4up, mixdrop, nitroflare, 1fichier, turbobit, uploaded)
+- Consolidate 12 identical DDL hoster resolvers into parameterised `GenericDDLConfig` + `GenericDDLResolver` (alfafile, alphaddl, fastpic, filecrypt, filefactory, fsst, go4up, mixdrop, nitroflare, 1fichier, turbobit, uploaded)
 - Add shared `extract_domain()` utility for URL domain extraction, replacing 15 inline duplicates across resolver modules
 - Add `exc_info=True` to 4 `except Exception` handlers in business logic (stremio_stream.py, composition.py)
 - Remove dead code across domain, application, infrastructure, and plugin layers
 - Consolidate duplicate constants and unused imports
 
 ### YAML Plugin Infrastructure Removal (Refactor)
-Migrated 3 remaining YAML plugins (warezomen, filmpalast, scnlog) to Python httpx
-plugins. Removed entire YAML plugin infrastructure: ScrapyAdapter, YAML schema models,
-YAML loader, YAML discovery, and all associated tests (~3,500 lines deleted). Renamed
-`HttpxScrapySearchEngine` to `HttpxSearchEngine`. Removed `scrapy` and `beautifulsoup4`
-dependencies from `pyproject.toml`.
+Migrated 3 remaining YAML plugins (warezomen, filmpalast, scnlog) to Python httpx plugins. Removed entire YAML plugin infrastructure: ScrapyAdapter, YAML schema models, YAML loader, YAML discovery, and all associated tests (~3,500 lines deleted). Renamed `HttpxScrapySearchEngine` to `HttpxSearchEngine`. Removed the `scrapy` dependency from `pyproject.toml`.
 
 - Add warezomen Python httpx plugin replacing YAML (`fd4bc98`)
 - Add filmpalast Python httpx plugin replacing YAML (`3ae7921`)
@@ -347,9 +346,7 @@ dependencies from `pyproject.toml`.
 - Rename HttpxScrapySearchEngine to HttpxSearchEngine (`12aa0a5`)
 
 ### Plugin Standardization (Refactor)
-All 29 Python plugins migrated to shared base classes (`HttpxPluginBase` /
-`PlaywrightPluginBase`), eliminating 50–100 lines of duplicated boilerplate per plugin
-(client setup, domain fallback, cleanup, semaphore, user-agent).
+All 29 Python plugins migrated to shared base classes (`HttpxPluginBase` / `PlaywrightPluginBase`), eliminating 50–100 lines of duplicated boilerplate per plugin (client setup, domain fallback, cleanup, semaphore, user-agent).
 
 - Add `HttpxPluginBase` shared base class for httpx plugins (`16b084b`)
 - Add `PlaywrightPluginBase` shared base class for Playwright plugins (`16b084b`)
@@ -362,8 +359,7 @@ All 29 Python plugins migrated to shared base classes (`HttpxPluginBase` /
 - Replace hardcoded year boundary with dynamic `datetime.now().year + 1` in cine plugin (`b3e40e3`)
 
 ### New Plugins (40 Python plugins added)
-Expanded from 2 plugins (filmpalast YAML + boerse Python) to 42 total plugins
-(33 httpx + 9 Playwright), covering German streaming, DDL, and anime sites.
+Expanded from 2 plugins (filmpalast YAML + boerse Python) to 42 total plugins (33 httpx + 9 Playwright), covering German streaming, DDL, and anime sites.
 
 **Httpx plugins (33):**
 - aniworld.to — anime streaming with domain fallback (`3321775`)
@@ -371,7 +367,7 @@ Expanded from 2 plugins (filmpalast YAML + boerse Python) to 42 total plugins
 - cine.to — movie streaming via JSON API (`3153df0`)
 - dataload (data-load.me) — DDL forum with vBulletin auth (`94004e6`)
 - einschalten.in — streaming via JSON API (`a729041`)
-- filmfans.org — movie streaming with release parsing (`7924969` → `7cd46ed`)
+- filmfans.org — movie DDL with release parsing (`7924969` → `7cd46ed`)
 - fireani.me — anime via JSON API (`160171f`)
 - haschcon.com — streaming (`0d65a50`)
 - hdfilme.legal — streaming with MeineCloud link extraction (`fdaf283`)
@@ -393,6 +389,8 @@ Expanded from 2 plugins (filmpalast YAML + boerse Python) to 42 total plugins
 - crawli.net — single-stage download search engine
 - hd-source.to — DDL with multi-page scraping
 - hd-world.cc — DDL archive via WordPress REST API, movies + TV series
+- jjs (jjs.page) — DDL with multi-stage scraping
+- movieblog.to — DDL blog (WordPress)
 - serienjunkies.org — DDL with captcha-protected links
 - filmpalast.to — movie/TV streaming (migrated from YAML)
 - scnlog.me — scene log with pagination (migrated from YAML)
@@ -413,12 +411,11 @@ Expanded from 2 plugins (filmpalast YAML + boerse Python) to 42 total plugins
 - filmpalast.to, scnlog.me, warezomen.com — all migrated to Python httpx plugins (see YAML Plugin Infrastructure Removal)
 
 ### Stremio Addon
-Full Stremio addon integration with manifest, catalog search, and stream resolution.
-Allows using Scavengarr as a Stremio source for all indexed plugins.
+Full Stremio addon integration with manifest, catalog search, and stream resolution. Allows using Scavengarr as a Stremio source for all indexed plugins.
 
 - Add Stremio domain entities, TMDB port, and StremioConfig (`c055303`)
 - Add TMDB httpx client with caching and German locale (`c7950ef`)
-- Add release name parser with guessit integration (`89b8ca9`, `e8a07b`)
+- Add release name parser with guessit integration (`89b8ca9`)
 - Add stream converter for SearchResult → RankedStream (`a4b2e0c`)
 - Add configurable stream sorter for Stremio addon (`015dde6`)
 - Add StremioCatalogUseCase for TMDB trending and search (`8d7dfbc`)
@@ -428,16 +425,13 @@ Allows using Scavengarr as a Stremio source for all indexed plugins.
 - Add `get_title_and_year()` to TMDB client and IMDB fallback (`55a7bf7`, `2af65b1`)
 - Add IMDB fallback title resolver for Stremio without API key (`23fe5c4`)
 - Add Wikidata German title lookup for IMDB fallback client (`eb8094a`)
-- Robust title matching via guessit + multi-candidate scoring (`e8a07b`)
+- Robust title matching via guessit + multi-candidate scoring (`e0b6e76`)
 - Thread `plugin_default_language` through stream converter (`8bf0911`)
 - Add `default_language` attribute to all plugins (`c53e04c`)
 - Add per-plugin timeout to prevent slow plugins blocking response (`c03a28b`)
 
 ### Hoster Resolver System
-56 hoster resolvers across three categories: 17 individual resolvers (streaming + DDL),
-12 generic DDL resolvers (parameterised `GenericDDLConfig`), and 27 XFS-consolidated
-resolvers (generic `XFSResolver` with parameterised `XFSConfig`). All resolver tests
-use respx (httpx-native HTTP mocking).
+56 hoster resolvers across three categories: 17 individual resolvers (streaming + DDL), 12 generic DDL resolvers (parameterised `GenericDDLConfig`), and 27 XFS-consolidated resolvers (generic `XFSResolver` with parameterised `XFSConfig`). All resolver tests use respx (httpx-native HTTP mocking).
 
 **Core infrastructure:**
 - Add ResolvedStream entity and HosterResolverPort protocol (`f6a3676`)
@@ -467,7 +461,7 @@ use respx (httpx-native HTTP mocking).
 - Add Stmix hoster resolver with embed page validation
 - Add SerienStream hoster resolver (s.to / serien.sx domain matching)
 
-**DDL resolvers (14):**
+**DDL resolvers (15):**
 - Add filer.net DDL hoster resolver via public status API
 - Add Katfile DDL hoster resolver (XFS offline marker detection)
 - Add Rapidgator DDL hoster resolver (website scraping validation)
@@ -537,8 +531,7 @@ Five plugins updated to match changed website structures.
 - Fix streamkiste: rewrite detail parser to extract streams from meinecloud.click external script
 
 ### Test Suite Growth (160 → 3963 tests)
-Test suite expanded from 160 to 3963 tests (3742 unit + 158 E2E + 25 integration + 38 live)
-with comprehensive coverage across all layers.
+Test suite expanded from 160 to 3963 tests (3742 unit + 158 E2E + 25 integration + 38 live) with comprehensive coverage across all layers.
 
 - Add unit tests for all 42 plugin test files
 - Add unit tests for all 56 hoster resolvers (17 individual + 12 generic DDL + 27 XFS consolidated)
@@ -549,7 +542,7 @@ with comprehensive coverage across all layers.
 - Add unit tests for circuit breaker, concurrency pool, graceful shutdown, metrics endpoint
 - Add unit tests for EWMA scoring, plugin score cache, query pool, health prober, search prober, scoring scheduler
 - Add 158 E2E tests (46 Torznab endpoint + 112 Stremio endpoint including 31 streamable link tests)
-- Add 25 integration tests (config loading, crawljob lifecycle, link validation, plugin pipeline)
+- Add 25 integration tests (config loading, crawljob lifecycle, link validation)
 - Add 38 live smoke tests (plugin smoke tests + resolver contract tests)
 - Migrate all resolver tests from AsyncMock to respx (httpx-native HTTP mocking)
 - Add parameterised XFS resolver tests auto-generated from 27 configs
@@ -564,13 +557,10 @@ with comprehensive coverage across all layers.
 
 ## v0.1.0 - 2025-XX-XX (Initial Release)
 
-First release of Scavengarr as a self-hosted Torznab/Newznab indexer. Includes the
-core scraping pipeline, plugin system (YAML + Python), Torznab API, CrawlJob packaging,
-link validation, and a comprehensive unit test suite.
+First release of Scavengarr as a self-hosted Torznab/Newznab indexer. Includes the core scraping pipeline, plugin system (YAML + Python), Torznab API, CrawlJob packaging, link validation, and a comprehensive unit test suite.
 
 ### Boerse Plugin Rewrite
-Complete rewrite of the boerse.sx plugin to handle the real site structure, including
-Cloudflare JS challenge bypass via Playwright and vBulletin form-based authentication.
+Complete rewrite of the boerse.sx plugin to handle the real site structure, including Cloudflare JS challenge bypass via Playwright and vBulletin form-based authentication.
 
 - Rewrite boerse.py plugin with Playwright for Cloudflare JS challenge bypass (`502c2b7`)
 - Rewrite login, search, and link extraction to match real vBulletin site structure (`7e41ad3`)
@@ -579,8 +569,7 @@ Cloudflare JS challenge bypass via Playwright and vBulletin form-based authentic
 - Read boerse credentials lazily in `_ensure_session()` to avoid startup failures when env vars are not yet set (`e090033`)
 
 ### Mirror URL Fallback
-Automatic domain failover for plugins with multiple mirror URLs. When the primary
-domain is unreachable, the system probes mirrors and falls back transparently.
+Automatic domain failover for plugins with multiple mirror URLs. When the primary domain is unreachable, the system probes mirrors and falls back transparently.
 
 - Add `mirror_urls` field to YAML plugin schema for declaring alternative domains (`1591072`)
 - Add mirror domain fallback to ScrapyAdapter: probe mirrors on connection failure (`9543e2c`)
@@ -588,16 +577,13 @@ domain is unreachable, the system probes mirrors and falls back transparently.
 - Merge `mirror_urls` into `base_url` as a single-or-list field for simpler plugin config (`4eab6b5`)
 
 ### Multi-Link CrawlJob Packaging
-CrawlJob system extended to bundle multiple validated download links from different
-hosters into a single `.crawljob` file, with automatic promotion of alternatives when
-primary links are dead.
+CrawlJob system extended to bundle multiple validated download links from different hosters into a single `.crawljob` file, with automatic promotion of alternatives when primary links are dead.
 
 - Multi-link CrawlJob packaging: bundle all valid hoster URLs into a single `.crawljob` artifact (`35326b7`)
 - Promote alternative download links when primary link fails HEAD/GET validation (`078fcae`)
 
 ### Python Plugin System
-New imperative plugin type for sites that require complex logic beyond what YAML
-selectors can express (authentication, JavaScript interaction, custom parsing).
+New imperative plugin type for sites that require complex logic beyond what YAML selectors can express (authentication, JavaScript interaction, custom parsing).
 
 - Add boerse.sx Python plugin with domain fallback across 5 mirrors and anonymizer link handling (`bf0a9d3`)
 - Add Python plugin dispatch to TorznabSearchUseCase: detect `.py` plugins and call their `search()` method (`98e6081`)
@@ -605,15 +591,13 @@ selectors can express (authentication, JavaScript interaction, custom parsing).
 - Align `PluginRegistryPort.get()` return type with concrete registry implementation (`a73c6b9`)
 
 ### Link Validation
-HTTP-based link validation with parallel execution, HEAD-first strategy, and GET
-fallback for hosters that block HEAD requests.
+HTTP-based link validation with parallel execution, HEAD-first strategy, and GET fallback for hosters that block HEAD requests.
 
 - Add GET fallback to HttpLinkValidator for hosters that return 403/405 on HEAD requests (`e69cd54`)
 - Add `validate_results()` method to SearchEnginePort protocol for post-search filtering (`d7d1dab`)
 
 ### Test Suite
-Comprehensive unit test suite covering all three architecture layers with proper
-mock patterns (sync MagicMock for PluginRegistryPort, AsyncMock for async ports).
+Comprehensive unit test suite covering all three architecture layers with proper mock patterns (sync MagicMock for PluginRegistryPort, AsyncMock for async ports).
 
 - Add comprehensive unit test suite: 160+ tests across domain, application, and infrastructure (`e0674c5`)
   - Domain: CrawlJob entity, TorznabQuery/Item/Caps, SearchResult, plugin schema validation
@@ -622,9 +606,7 @@ mock patterns (sync MagicMock for PluginRegistryPort, AsyncMock for async ports)
 - Apply ruff format to test files for consistent style (`2040852`)
 
 ### Clean Architecture Refactor
-Three-phase migration from flat codebase to Clean Architecture with Domain,
-Application, Infrastructure, and Interfaces layers. See
-`docs/refactor/COMPLETED/clean-architecture-migration.md` for full details.
+Three-phase migration from flat codebase to Clean Architecture with Domain, Application, Infrastructure, and Interfaces layers. See `docs/refactor/COMPLETED/clean-architecture-migration.md` for full details.
 
 **Phase 1: Domain layer cleanup**
 - Remove Pydantic from Domain layer, convert all entities to `@dataclass` (`7726ba8`)
@@ -648,8 +630,7 @@ Application, Infrastructure, and Interfaces layers. See
 - Prevent duplicate search results from multi-stage scraping via dedup logic (`6b7fd8d`)
 
 ### Code Quality
-Codebase-wide standardization of typing patterns, docstring conventions, and
-language consistency.
+Codebase-wide standardization of typing patterns, docstring conventions, and language consistency.
 
 - Standardize typing to modern Python 3.10+ syntax (`T | None`, `list[T]`, `dict[K, V]`) and replace ABC with Protocol across all ports (`84995a1`)
 - Standardize docstrings: remove redundant comments, ensure consistent English documentation (`2c6278a`)
@@ -657,16 +638,14 @@ language consistency.
 - Apply pre-commit auto-fixes: trailing whitespace, end-of-file, import sorting (`dccc4ad`, `0e6c937`)
 
 ### Documentation
-Project documentation covering architecture, coding standards, plugin system, and
-test suite organization.
+Project documentation covering architecture, coding standards, plugin system, and test suite organization.
 
 - Add comprehensive project documentation covering all architecture layers (`d1d4a56`)
 - Add typing standards and test suite information to CLAUDE.md (`9c7106a`)
 - Document all infrastructure components and their responsibilities in CLAUDE.md (`9abf1c3`)
 
 ### Core Infrastructure (Initial)
-Foundation of the project: FastAPI server, Scrapy scraping engine, plugin loader,
-configuration system, and CrawlJob generation.
+Foundation of the project: FastAPI server, Scrapy scraping engine, plugin loader, configuration system, and CrawlJob generation.
 
 - Initial content commit: FastAPI/Uvicorn server, Scrapy-based scraping, Playwright integration, structlog logging, diskcache backend (`7fd6747`)
 - Add YAML configuration system with pydantic-settings and plugin loader with filesystem discovery (`3889847`)

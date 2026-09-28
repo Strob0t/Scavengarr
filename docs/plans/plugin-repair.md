@@ -1,3 +1,5 @@
+[← Back to Index](../features/README.md)
+
 # Plan: Repair Broken Plugins
 
 **Status:** Triaged, not started (2026-09-28)
@@ -6,18 +8,13 @@
 
 ## Context
 
-`poetry run pytest -m live` (live smoke tests against the real sites) fails for
-11 httpx plugins. Every failure is `returned 0 results`. The offline suite is
-green, so the parsers still match their fixtures; the sites changed.
+`poetry run pytest -m live` (live smoke tests against the real sites) fails for 11 httpx plugins. Every failure is `returned 0 results`. The offline suite is green, so the parsers still match their fixtures; the sites changed.
 
 Triage method (2026-09-28, from inside the devcontainer, no proxy):
 
-1. `curl` each domain in `_DOMAINS` with a browser User-Agent: status code,
-   redirect target, Cloudflare/DDoS-Guard markers.
-2. Run the plugin's `search()` directly with DEBUG logging and read the
-   warning events (script below).
-3. For "0 results without an error" cases: fetch the search URL and check
-   whether the query term appears in the HTML (parser vs. site problem).
+1. `curl` each domain in `_DOMAINS` with a browser User-Agent: status code, redirect target, Cloudflare/DDoS-Guard markers.
+2. Run the plugin's `search()` directly with DEBUG logging and read the warning events (script below).
+3. For "0 results without an error" cases: fetch the search URL and check whether the query term appears in the HTML (parser vs. site problem).
 
 ## Findings
 
@@ -36,10 +33,7 @@ Triage method (2026-09-28, from inside the devcontainer, no proxy):
 | streamcloud | Detail page structure changed | Search works (domain now `streamcloud.download`, `.plus` → 301 `.uno`), every detail page logs `streamcloud_no_streams` | Update detail/stream selectors; update `_DOMAINS` |
 | streamkiste | Stream source changed | Search works (`streamkiste.taxi` → 301 `.bid`), detail pages `no_streams`, `https://meinecloud.click/ddl/tt…` → 404 | Update stream extraction (MeineCloud endpoint gone); update `_DOMAINS` |
 
-Quick wins first: scnlog, byte, hdfilme, fireani, nox (selector/domain/endpoint).
-The three Cloudflare plugins need a design decision (Playwright plugin vs.
-shared StealthPool for httpx plugins). Decided: browser fallback port for
-httpx plugins, see `docs/plans/antibot-patchright.md`.
+Quick wins first: scnlog, byte, hdfilme, fireani, nox (selector/domain/endpoint). The three Cloudflare plugins need a design decision (Playwright plugin vs. shared StealthPool for httpx plugins). Decided: browser fallback port for httpx plugins, see `docs/plans/antibot-patchright.md`.
 
 ## Repro script
 
@@ -71,7 +65,4 @@ Live test for a single plugin: `poetry run pytest -m live -k "<plugin>" -v`.
 
 ## Prerequisites
 
-- Site analysis per CLAUDE.md uses `playwright-mcp`. It runs over stdio from the
-  committed `.mcp.json` (no Docker); `.devcontainer/setup.sh` installs Chromium
-  with its system libraries. Verify after the next container recreate that the
-  `playwright-mcp` tools are available in Claude Code.
+- Site analysis per `docs/features/python-plugins.md` ("Adding a New Plugin") uses `playwright-mcp`. It runs over stdio from the committed `.mcp.json` (no Docker); `.devcontainer/setup.sh` installs Chromium with its system libraries. Verify after the next container recreate that the `playwright-mcp` tools are available in Claude Code.

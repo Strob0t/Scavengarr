@@ -1,14 +1,10 @@
+[← Back to Index](./features/README.md)
+
 # Python Performance Best Practices
 
-**Version 1.0.0**
-Target: High-throughput Python backends and scrapers (FastAPI, httpx, diskcache, structlog, Playwright/scraping engines)
-February 2026
+> Performance rules for high-throughput async Python backends and scrapers (FastAPI, httpx, diskcache, structlog, Playwright).
 
-> **Note**
-> This document is mainly for agents and LLMs to follow when maintaining,
-> generating, or refactoring Python codebases with async I/O (FastAPI, httpx,
-> scraping pipelines). Humans may also find it useful, but guidance here is
-> optimized for automation and consistency by AI-assisted workflows.
+**Note:** This document is mainly for agents and LLMs to follow when maintaining, generating, or refactoring Python codebases with async I/O (FastAPI, httpx, scraping pipelines). Humans may also find it useful, but guidance here is optimized for automation and consistency by AI-assisted workflows. Notes marked **Scavengarr** describe how the project actually implements a rule; the code is the source of truth.
 
 ---
 
@@ -27,7 +23,7 @@ Each rule includes:
 
 - A clear **intent** and **impact level**
 - One or more **Incorrect** vs **Correct** examples
-- Concrete hints for stacks similar to **Scavengarr** (FastAPI + httpx + diskcache + structlog)
+- Concrete hints for stacks similar to **Scavengarr** (FastAPI + httpx + diskcache + structlog, optional Redis)
 
 Use this as a checklist when creating or modifying code. For non-trivial changes, prefer measuring with a profiler before and after the refactor to confirm impact. [blog.poespas](https://blog.poespas.me/posts/2024/04/27-optimizing-python-asyncio-for-high-performance/)
 
@@ -151,7 +147,7 @@ async def fetch_page(url: str) -> str:
 **Correct: shared client with connection pooling**
 
 ```python
-# app_lifespan.py
+# lifespan module — generic example (Scavengarr: src/scavengarr/interfaces/composition.py)
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -191,7 +187,7 @@ async def fetch_page(request: Request, url: str) -> str:
 ```
 
 > **Scavengarr hint**
-> Ensure all scraping engines and reachability checks use the **injected** `httpx.AsyncClient` from your `AppState`, never create a new client inside scraping functions.
+> Ensure all scraping engines and reachability checks use the **injected** `httpx.AsyncClient` from your `AppState`, never create a new client inside scraping functions. Scavengarr: `AppState` extends Starlette `State` (`src/scavengarr/interfaces/app_state.py`) and is attached in `create_app()` (`src/scavengarr/interfaces/app.py`); `lifespan()` creates the shared client and injects it into httpx plugins via `HttpxPluginBase.set_shared_http_client()`.
 
 ---
 
@@ -235,7 +231,7 @@ async def fetch_many(urls: list[str], client: httpx.AsyncClient, max_concurrency
 ```
 
 > **Scavengarr hint**
-> Apply **per-site** concurrency limits (e.g. 5–10 parallel requests per tracker) and per-process global limits (e.g. `max_connections=100` in httpx). This is especially important in multi-stage scraping engines.
+> Apply **per-site** concurrency limits and per-process global limits. This is especially important in multi-stage scraping. Scavengarr: the shared client uses `RetryTransport` + `DomainRateLimiter` for per-domain rate limiting and 429/503 retries (`src/scavengarr/infrastructure/common/`); each plugin bounds its own parallelism via `_new_semaphore()` (`_max_concurrent`, default `5`); `ConcurrencyPool` (`src/scavengarr/infrastructure/concurrency.py`) shares httpx and Playwright slots fairly across requests. No explicit `httpx.Limits` is set.
 
 ---
 
@@ -312,12 +308,7 @@ async def healthz():
 ```
 
 > **Scavengarr hint**
-> Your composition root should create:
-> - `AppConfig`
-> - shared `httpx.AsyncClient`
-> - `Cache` (diskcache)
-> - plugin registry + scraping engine
-> and attach them to `AppState` once. Endpoints should only read `request.app.state`.
+> Your composition root should create shared resources once and attach them to `AppState`. Endpoints should only read `request.app.state`. Scavengarr: `lifespan()` in `src/scavengarr/interfaces/composition.py` creates the `CachePort` via `create_cache()` (diskcache or Redis), the shared `httpx.AsyncClient`, `PluginRegistry`, `HttpxSearchEngine`, repositories, `HosterResolverRegistry`, browser/concurrency pools and the Stremio use cases. `AppConfig` is loaded by the CLI (`load_config()`) and stored in `create_app()`.
 
 ---
 
@@ -445,7 +436,7 @@ class Scraper:
 ```
 
 > **Scavengarr hint**
-> Apply this pattern both in **list pages** and **detail pages** within your multi-stage scraping engine to avoid revisiting the same torrents/releases across queries.
+> Apply this pattern in **list pages** and **detail pages** to avoid refetching the same release pages. Scavengarr: there is no central multi-stage engine — each plugin implements its own search → detail → links stages; there is currently no shared visited-URL cache.
 
 ---
 
@@ -524,10 +515,8 @@ def get_tracker_caps(tracker_id: str) -> dict:
 
 **Scavengarr hint**
 
-- Cache:
-  - Per-plugin **caps** responses (Torznab `t=caps`)
-  - Health-check reachability results for a short TTL (e.g. 30–60 seconds)
-- Do **not** over-cache search queries that must reflect current tracker state.
+- Candidates: per-plugin **caps** responses (Torznab `t=caps`) and health-check reachability results for a short TTL (e.g. 30–60 seconds). Scavengarr currently caches neither — both are cheap.
+- Scavengarr caches Torznab search results (`cache.search_ttl_seconds`, default 900 s; a plugin's `cache_ttl` overrides it) and link-validation outcomes in memory (valid 6 h, invalid 15 min). Keep search TTLs short so results reflect current site state.
 
 ---
 
@@ -668,7 +657,7 @@ async def fetch_with_retry(
 
 **Impact: MEDIUM**
 
-For errors that indicate **configuration issues** (e.g. invalid plugin definition, missing base URL, invalid schema), fail fast:
+For errors that indicate **configuration issues** (e.g. a plugin module without a `plugin` object, `name` or `search` — Scavengarr raises `PluginLoadError` in `src/scavengarr/infrastructure/plugins/loader.py` — or a missing base URL), fail fast:
 
 - Raise explicit exceptions
 - Return **422/400** responses for invalid client input
@@ -782,6 +771,9 @@ Recommended tools:
 - **Black** or **Ruff** for formatting
 - **Ruff**, **Flake8**, or similar for linting
 - **mypy** for type checking (especially across `AppState`, async boundaries, and DI)
+
+> **Scavengarr hint**
+> Scavengarr uses **Ruff** only (lint + format, configured in `pyproject.toml`, run via `pre-commit`). No type checker is configured.
 
 These make it safer for LLMs and humans to apply aggressive optimizations.
 

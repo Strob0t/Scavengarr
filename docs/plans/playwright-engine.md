@@ -1,18 +1,18 @@
-# Plan: Playwright Engine -- Browser Pool & Resource Management
+[← Back to Index](../features/README.md)
 
-**Status:** Implemented
+# Plan: Playwright Engine — Browser Pool & Resource Management
+
+**Status:** Implemented (verified 2026-09-28)
 **Priority:** Medium
-**Related:** `src/scavengarr/infrastructure/shared_browser.py`, `src/scavengarr/infrastructure/plugins/playwright_base.py`
+**Related:** `src/scavengarr/infrastructure/plugins/shared_browser.py`, `src/scavengarr/infrastructure/plugins/playwright_base.py`
 
 ## Implementation Summary
 
-Scavengarr now has a `SharedBrowserPool` that manages a single Chromium process shared
-by all 9 Playwright plugins. Each plugin gets its own `BrowserContext` for isolation
-while sharing the underlying browser — eliminating per-plugin ~1-2s browser startup overhead.
+Scavengarr now has a `SharedBrowserPool` that manages a single Chromium process shared by all 9 Playwright plugins. Each plugin gets its own `BrowserContext` for isolation while sharing the underlying browser — eliminating per-plugin ~1-2s browser startup overhead.
 
 ### Key components
 
-- **SharedBrowserPool** (`infrastructure/shared_browser.py`): singleton Chromium process, pre-warmed on first Stremio request
+- **SharedBrowserPool** (`src/scavengarr/infrastructure/plugins/shared_browser.py`): singleton Chromium process, pre-warmed on first Stremio request
 - **Composition-time pool injection**: plugins receive the shared pool via `set_shared_pool()` at startup
 - **Per-request BrowserContext isolation**: `isolated_search()` creates a fresh `BrowserContext` per request, preventing state corruption
 - **`_serialize_search` mode**: plugins that rely on persistent page state (streamworld, moflix) serialize via `asyncio.Lock`
@@ -29,7 +29,7 @@ playwright:
   timeout_ms: 30000
 
 stremio:
-  max_concurrent_playwright: 5  # upper bound for parallel PW plugin searches
+  max_concurrent_playwright: 5  # upper bound for parallel PW plugin searches (auto-tuned when stremio.auto_tune_all=true)
 ```
 
 ### Testing
@@ -37,10 +37,9 @@ stremio:
 - Unit tests for `PlaywrightPluginBase` shared base class
 - Unit tests for `isolated_search()` and `_serialize_search` modes
 - E2E tests covering concurrent Playwright plugin search via `ConcurrencyPool`
-- 158 E2E tests total (including Stremio streamable link verification)
+- 169 E2E tests total (including Stremio streamable link verification)
 
 ## Dependencies
 
 - `playwright` package (already in `pyproject.toml`)
-- Browser binaries installed in container (`playwright install chromium`)
-- Sufficient shared memory for Chromium (`shm_size: "1gb"` in Docker)
+- Browser binaries installed in container (`python -m playwright install chromium` in `Dockerfile.prod`)

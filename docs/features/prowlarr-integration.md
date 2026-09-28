@@ -2,114 +2,111 @@
 
 # Prowlarr Integration Guide
 
-This guide explains how to deploy Scavengarr and integrate it with Prowlarr,
-Sonarr, Radarr, and JDownloader. It covers the complete setup from Docker
-deployment to the end-to-end download flow.
+> How to deploy Scavengarr and connect it to Prowlarr, Sonarr/Radarr and JDownloader, from the Docker build to the end-to-end download flow.
 
 ---
 
 ## Overview
 
-Scavengarr acts as a **Torznab-compatible indexer** that Prowlarr can query like
-any other torrent indexer. The key difference is that Scavengarr serves direct
-download links (via `.crawljob` files) instead of torrent files.
-
-**Integration flow:**
+Scavengarr is a Torznab-compatible indexer that Prowlarr queries like any torrent indexer. The difference is that it serves direct download links packaged as `.crawljob` files instead of torrent files.
 
 ```text
 Prowlarr                Scavengarr              Target Site
    |                        |                        |
    |-- search request ----->|                        |
-   |                        |-- multi-stage scrape ->|
+   |                        |-- plugin scrape ------>|
    |                        |<-- HTML/JS results ----|
-   |                        |                        |
    |<-- RSS XML results ----|                        |
-   |                        |                        |
-Sonarr/Radarr           Scavengarr
    |                        |
+Sonarr/Radarr (Blackhole client)
    |-- download request --->|
    |<-- .crawljob file -----|
-   |                        |
-JDownloader
+   |-- saves to watch dir
    |
-   |-- processes .crawljob
-   |-- downloads files
+JDownloader (FolderWatch)
+   |-- processes .crawljob, downloads files
 ```
 
-**Components involved:**
-
 | Component | Role |
-|-----------|------|
-| **Prowlarr** | Indexer manager -- sends search queries, aggregates results |
-| **Scavengarr** | Torznab indexer -- scrapes sites, serves RSS results and `.crawljob` files |
-| **Sonarr/Radarr** | Media managers -- request downloads from search results |
-| **JDownloader** | Download manager -- processes `.crawljob` files, downloads actual files |
+|---|---|
+| Prowlarr | Indexer manager — sends search queries, syncs indexers to the Arr apps |
+| Scavengarr | Torznab indexer — scrapes sites, serves RSS results and `.crawljob` files |
+| Sonarr/Radarr | Media managers — grab results via a Blackhole-type download client |
+| JDownloader | Download manager — picks up `.crawljob` files via FolderWatch |
 
 ---
 
 ## Prerequisites
 
-Before setting up the integration, ensure you have:
-
-1. **Scavengarr** deployed and running (see [Deployment](#deployment) below)
-2. **Prowlarr** installed and accessible
-3. **At least one plugin** in Scavengarr's plugin directory
-4. (Optional) **JDownloader** configured with folder watch for `.crawljob` files
+- Scavengarr deployed and running (see [Deployment](#deployment)).
+- Prowlarr installed and able to reach Scavengarr over the network.
+- At least one plugin (`*.py`) in Scavengarr's plugin directory.
+- For downloads: JDownloader with the FolderWatch extension, and a Blackhole-type download client in Sonarr/Radarr whose folder is JDownloader's watch directory.
 
 ---
 
 ## Deployment
 
-### Docker (Recommended)
+### Build the Image
 
-The simplest way to deploy Scavengarr is with Docker:
+No prebuilt image is referenced by the repository; build it locally from `Dockerfile.prod`:
+
+```bash
+docker build -f Dockerfile.prod -t scavengarr .
+```
+
+The image runs `python -m scavengarr.interfaces.cli` as a non-root user and sets these defaults:
+
+| Env var | Value |
+|---|---|
+| `SCAVENGARR_ENVIRONMENT` | `prod` |
+| `SCAVENGARR_CONFIG` | `/app/config/config.yaml` |
+| `SCAVENGARR_PLUGIN_DIR` | `/app/plugins` |
+| `SCAVENGARR_CACHE_DIR` | `/app/cache` |
+| `SCAVENGARR_LOG_LEVEL` / `SCAVENGARR_LOG_FORMAT` | `INFO` / `json` |
+| `HOST` / `PORT` | `0.0.0.0` / `7979` |
+
+It also has a built-in `HEALTHCHECK` against `/api/v1/healthz`. The image ships a default `config.yaml` (a copy of `data/config.yaml`) but **no plugins** — the plugin directory must be mounted.
+
+### Docker Run
 
 ```bash
 docker run -d \
   --name scavengarr \
   -p 7979:7979 \
   -v ./plugins:/app/plugins \
+  -v ./data:/app/config \
   -v ./cache:/app/cache \
-  -e SCAVENGARR_ENVIRONMENT=prod \
-  -e SCAVENGARR_LOG_LEVEL=INFO \
-  scavengarr:latest
+  scavengarr
 ```
 
-**Volume mounts:**
+| Host path | Container path | Purpose |
+|---|---|---|
+| `./plugins` | `/app/plugins` | Python plugin files — required, the image ships none |
+| `./data` | `/app/config` | Must contain `config.yaml` (read via `SCAVENGARR_CONFIG`); replaces the built-in default |
+| `./cache` | `/app/cache` | Diskcache storage (search cache, CrawlJobs, other cached data) |
 
-| Host Path | Container Path | Purpose |
-|-----------|----------------|---------|
-| `./plugins` | `/app/plugins` | Plugin YAML/Python files (required) |
-| `./cache` | `/app/cache` | Cache storage for CrawlJobs (recommended) |
+Environment variables override values from `config.yaml` (precedence: CLI > ENV > YAML > defaults), so `SCAVENGARR_CACHE_DIR=/app/cache` from the image wins over `cache.dir` in the YAML.
 
 ### Docker Compose
 
-For a complete stack with health checks:
-
 ```yaml
-# docker-compose.yml
-version: "3.8"
-
 services:
   scavengarr:
-    image: scavengarr:latest
+    image: scavengarr
     container_name: scavengarr
     ports:
       - "7979:7979"
     volumes:
       - ./plugins:/app/plugins
+      - ./data:/app/config
       - ./cache:/app/cache
     environment:
       SCAVENGARR_ENVIRONMENT: prod
       SCAVENGARR_LOG_LEVEL: INFO
-      SCAVENGARR_PLUGIN_DIR: /app/plugins
-      HOST: 0.0.0.0
-      PORT: 7979
-      CACHE_BACKEND: diskcache
-      CACHE_DIR: /app/cache/scavengarr
-      CACHE_TTL_SECONDS: 3600
+      SCAVENGARR_CACHE_TTL_SECONDS: 3600
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:7979/healthz"]
+      test: ["CMD", "curl", "-f", "http://localhost:7979/api/v1/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -118,33 +115,29 @@ services:
 
 ### Docker Compose with Redis
 
-For multi-instance deployments or shared cache:
+The cache backend can only be selected in the YAML config — there is no environment variable for `cache.backend` or `cache.redis_url`. Put this in the mounted `./data/config.yaml`:
 
 ```yaml
-# docker-compose.yml
-version: "3.8"
+cache:
+  backend: "redis"
+  redis_url: "redis://redis:6379/0"
+```
 
+```yaml
 services:
   scavengarr:
-    image: scavengarr:latest
+    image: scavengarr
     container_name: scavengarr
     ports:
       - "7979:7979"
     volumes:
       - ./plugins:/app/plugins
+      - ./data:/app/config
     environment:
       SCAVENGARR_ENVIRONMENT: prod
-      SCAVENGARR_LOG_LEVEL: INFO
-      CACHE_BACKEND: redis
-      CACHE_REDIS_URL: redis://redis:6379/0
     depends_on:
       redis:
         condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:7979/healthz"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
     restart: unless-stopped
 
   redis:
@@ -161,25 +154,25 @@ services:
 ### Local Development
 
 ```bash
-# Install dependencies
 poetry install
-
-# Start the server
 poetry run start --host 0.0.0.0 --port 7979 --log-level DEBUG
 ```
 
+Available CLI flags: `--host`, `--port`, `--config`, `--dotenv`, `--plugin-dir`, `--log-level`, `--log-format`. Without `--config` or `SCAVENGARR_CONFIG`, built-in defaults are used (environment `dev`).
+
 ### Verify Deployment
 
-After starting Scavengarr, verify it is running:
-
 ```bash
-# Application health
-curl http://localhost:7979/healthz
-# Expected: {"status": "ok"}
+# Liveness
+curl http://localhost:7979/api/v1/healthz
+# {"status": "ok", "plugins": <count>, "hosters": [...]}
+
+# Readiness (200 once startup has completed, 503 before)
+curl http://localhost:7979/api/v1/readyz
 
 # List available plugins
 curl http://localhost:7979/api/v1/torznab/indexers
-# Expected: {"indexers": [{"name": "...", "version": "...", "mode": "..."}]}
+# {"indexers": [{"name": "...", "version": "...", "mode": "..."}]}
 ```
 
 ---
@@ -189,131 +182,67 @@ curl http://localhost:7979/api/v1/torznab/indexers
 ### Step-by-Step Setup
 
 1. Open Prowlarr and go to **Settings > Indexers**.
-
-2. Click **Add Indexer** (the `+` button).
-
-3. In the search box, type **Torznab** and select **Generic Torznab**.
-
-4. Configure the indexer:
+1. Click **Add Indexer** and select **Generic Torznab**.
+1. Configure the indexer:
 
    | Field | Value |
-   |-------|-------|
-   | **Name** | Any descriptive name (e.g., `Scavengarr - filmpalast`) |
-   | **URL** | `http://<scavengarr-host>:7979/api/v1/torznab/<plugin_name>` |
-   | **API Key** | Leave empty (not required) |
-   | **Categories** | `2000` (Movies), `5000` (TV) |
+   |---|---|
+   | Name | Any name (e.g. `Scavengarr - filmpalast`) |
+   | URL | `http://<scavengarr-host>:7979/api/v1/torznab/<plugin_name>` |
+   | API Key | Leave empty (no authentication) |
+   | Categories | `2000` (Movies), `5000` (TV) |
 
-   Replace `<scavengarr-host>` with the hostname or IP where Scavengarr is
-   running. If both services are in Docker on the same network, use the
-   container name (e.g., `http://scavengarr:7979/...`).
+   Use the container name as host when both run in the same Docker network (e.g. `http://scavengarr:7979/...`). `<plugin_name>` is the exact (case-sensitive) name listed by `/api/v1/torznab/indexers`.
 
-   Replace `<plugin_name>` with the name of the plugin you want to use
-   (as shown by the `/api/v1/torznab/indexers` endpoint).
-
-5. Click **Test** to verify connectivity.
-
-6. Click **Save** if the test passes.
+1. Click **Test**, then **Save**.
 
 ### What Happens During the Test
 
-When you click "Test" in Prowlarr, it sends two requests:
+Scavengarr answers the two request types Prowlarr uses for indexer setup:
 
-1. **Capabilities request:** `GET /api/v1/torznab/{plugin_name}?t=caps`
-   - Prowlarr learns the supported search types and categories.
+1. `GET /api/v1/torznab/{plugin_name}?t=caps` — returns static capabilities (free-text search only; categories 2000/5000/8000).
+1. `GET /api/v1/torznab/{plugin_name}?t=search&extended=1` (no `q`) — a lightweight HTTP probe of the plugin's `base_url` instead of a full scrape. Any HTTP response counts as reachable and yields one synthetic test item (200); a connection error yields an empty feed with HTTP 503.
 
-2. **Test search:** `GET /api/v1/torznab/{plugin_name}?t=search&extended=1`
-   - Scavengarr performs a lightweight HTTP probe against the plugin's
-     `base_url` (not a full scrape).
-   - If the target site is reachable, a synthetic test item is returned.
-   - If unreachable, an empty RSS feed is returned and the test may fail.
+See [Prowlarr Test Mode](./torznab-api.md#prowlarr-test-mode) for all outcomes, including the known issue with unknown plugin names.
 
 ### Multiple Plugins
 
-If Scavengarr has multiple plugins loaded, add each one as a separate indexer
-in Prowlarr. Each plugin has its own URL:
+Add each plugin as a separate indexer; each has its own URL:
 
 ```text
 http://scavengarr:7979/api/v1/torznab/filmpalast
-http://scavengarr:7979/api/v1/torznab/example-site
-http://scavengarr:7979/api/v1/torznab/another-plugin
+http://scavengarr:7979/api/v1/torznab/<other_plugin>
 ```
 
-Use the indexers endpoint to discover all available plugins:
-
-```bash
-curl http://scavengarr:7979/api/v1/torznab/indexers
-```
+Many plugin indexers on one Prowlarr instance all come from the same client IP and share the [API rate limit](#api-rate-limit).
 
 ---
 
 ## Connecting to Sonarr and Radarr
 
-Prowlarr syncs indexers to Sonarr and Radarr automatically. After adding
-Scavengarr as an indexer in Prowlarr:
+Prowlarr syncs indexers to Sonarr and Radarr:
 
-1. Go to Prowlarr **Settings > Apps**.
-2. Add your Sonarr and/or Radarr instances (if not already configured).
-3. Prowlarr will push the Scavengarr indexer to each connected app.
-4. Sonarr/Radarr will now include Scavengarr in their automatic and manual
-   searches.
+1. In Prowlarr, open **Settings > Apps** and add your Sonarr/Radarr instances.
+1. Prowlarr pushes the Scavengarr indexers to each connected app.
+1. Use Prowlarr's sync profiles to limit indexers to specific apps (e.g. a movie plugin only to Radarr).
 
-### Sync Profiles
+### Download Client (Required)
 
-You can control which indexers sync to which apps using Prowlarr's sync
-profiles. For example, you might sync a movie-focused plugin only to Radarr
-and a TV-focused plugin only to Sonarr.
+Scavengarr results are `.crawljob` files, not torrents, so a regular torrent client cannot handle them. Sonarr/Radarr need a Blackhole-type download client whose drop/watch folder is JDownloader's FolderWatch directory. The Arr app then fetches the `.crawljob` file on grab and saves it into that folder, where JDownloader picks it up. Both containers need access to the same directory (e.g. a shared volume).
 
 ---
 
 ## Download Flow
 
-Understanding the complete download flow helps with troubleshooting:
+1. **Search** — Sonarr/Radarr search through Prowlarr, which calls `GET /api/v1/torznab/{plugin}?t=search&q=...`.
+1. **Scraping** — the plugin performs its own multi-stage scrape (search page → detail pages → links).
+1. **Link validation** — download links are validated in parallel with HEAD/GET (see [Link Validation](./link-validation.md)).
+1. **CrawlJob creation** — every remaining result becomes its own CrawlJob with a fixed 1-hour lifetime (see [CrawlJob System](./crawljob-system.md)).
+1. **RSS response** — each `<item>` has `<link>`/`<enclosure>` pointing to `/api/v1/download/{job_id}` and a `<guid>` with the primary download URL.
+1. **Grab** — the Blackhole download client requests `/api/v1/download/{job_id}` and saves the `.crawljob` file into JDownloader's watch folder.
+1. **JDownloader** — FolderWatch processes the file and downloads the links.
 
-### 1. Search Request
-
-Sonarr/Radarr sends a search query through Prowlarr to Scavengarr:
-
-```http
-GET /api/v1/torznab/filmpalast?t=search&q=iron+man
-```
-
-### 2. Multi-Stage Scraping
-
-Scavengarr executes the plugin's scraping pipeline:
-
-1. **Search stage:** Queries the target site, extracts result rows.
-2. **Detail stage:** Visits each detail page, extracts download links.
-3. **Link validation:** Validates download links in parallel (HEAD/GET probes).
-4. **CrawlJob creation:** Bundles validated links into CrawlJobs with TTL.
-
-### 3. RSS Response
-
-Scavengarr returns Torznab RSS XML where each `<item>` contains:
-- `<link>` and `<enclosure>` pointing to the Scavengarr download endpoint
-- `<guid>` containing the original source URL (for deduplication)
-- `<torznab:attr>` elements with metadata (size, category, etc.)
-
-### 4. Download Request
-
-When a user grabs a result (or automatic download triggers), Sonarr/Radarr
-requests the download:
-
-```http
-GET /api/v1/download/{job_id}
-```
-
-Scavengarr serves the `.crawljob` file containing validated download links.
-
-### 5. JDownloader Processing
-
-The `.crawljob` file is placed in JDownloader's folder watch directory.
-JDownloader processes it and starts downloading the actual files.
-
-**JDownloader folder watch setup:**
-
-1. Open JDownloader > Settings > Extensions > Folder Watch.
-2. Set the watch folder to the same directory where `.crawljob` files are saved.
-3. JDownloader will automatically process new `.crawljob` files.
+JDownloader side: enable the FolderWatch extension in JDownloader's settings and point it to the same directory the Arr download client writes to.
 
 ---
 
@@ -321,16 +250,10 @@ JDownloader processes it and starts downloading the actual files.
 
 ### Application Health
 
-Use the `/healthz` endpoint for container health checks:
-
-```bash
-curl http://scavengarr:7979/healthz
-# {"status": "ok"}
-```
+- `GET /api/v1/healthz` — liveness; returns `{"status": "ok", "plugins": ..., "hosters": [...]}`.
+- `GET /api/v1/readyz` — readiness; 200 after startup, 503 while starting.
 
 ### Plugin Health
-
-Check individual plugin reachability:
 
 ```bash
 curl http://scavengarr:7979/api/v1/torznab/filmpalast/health
@@ -347,47 +270,47 @@ curl http://scavengarr:7979/api/v1/torznab/filmpalast/health
 }
 ```
 
-If a plugin's target site is down, Scavengarr will return empty results for
-that plugin but continue serving other plugins normally.
+`reachable` only means that an HTTP response arrived; check `status_code` for 403/5xx. If a plugin's site is down during a search, prod returns an empty feed with HTTP 200 for that plugin; dev/test return HTTP 502 with the error in the channel description.
 
 ### CrawlJob Inspection
-
-Inspect a CrawlJob's metadata without downloading the file:
 
 ```bash
 curl http://scavengarr:7979/api/v1/download/{job_id}/info
 ```
 
-This is useful for verifying that a CrawlJob was created correctly and checking
-its expiration status.
+Shows a job's links and expiration status without downloading the file.
 
 ---
 
-## Startup Sequence
+## Startup and Shutdown
 
-Understanding the startup sequence helps diagnose issues:
+### Startup Sequence
 
-1. **CLI** parses command-line arguments.
-2. **Configuration** loaded with layered precedence (defaults < YAML < ENV < CLI).
-3. **Logging** configured (structured logging via structlog).
-4. **FastAPI** application created.
-5. **Lifespan** hook initializes resources in order:
-   - Cache backend (diskcache or Redis)
-   - HTTP client (httpx.AsyncClient)
-   - Plugin registry (discovers and loads plugins)
-   - Search engine
-   - CrawlJob repository
-   - CrawlJob factory
-6. **Uvicorn** starts serving on `host:port`.
+1. The CLI parses arguments and resolves the config file (`--config` or `SCAVENGARR_CONFIG`).
+1. Configuration is loaded with layered precedence (defaults < YAML < ENV < CLI).
+1. Logging (structlog) is configured.
+1. The FastAPI app is created (API rate-limit middleware, routers, health probes).
+1. The lifespan hook initializes resources, in order:
+   - metrics collector and concurrency auto-tuning (`stremio.auto_tune_all`)
+   - cache backend (diskcache or Redis); in `dev` the cache is cleared
+   - shared HTTP client with per-domain rate limiting and 429/503 retries
+   - plugin registry (discovery + per-plugin overrides from `plugins.overrides`)
+   - search engine (link validation), CrawlJob repository, CrawlJob factory
+   - TMDB/IMDB client, stealth pool, hoster resolvers, stream link repository, optional plugin scoring, shared browser pool, concurrency pool, circuit breaker, Stremio use cases
+1. The app is marked ready (`/api/v1/readyz` returns 200) and Uvicorn serves on `host:port`.
 
 ### Shutdown
 
-Graceful shutdown closes resources in reverse order:
+1. In-flight requests get up to 10 seconds to drain.
+1. The scoring task is cancelled; shared browser pool, stealth pool and hoster resolvers are cleaned up.
+1. The HTTP client is closed.
+1. The cache is closed.
 
-1. HTTP client closed.
-2. Cache closed.
+---
 
-Active requests are allowed to complete before shutdown.
+## API Rate Limit
+
+Scavengarr limits requests per client IP with a sliding one-minute window: default `120` requests/minute, configured via `http.api_rate_limit_rpm` or `SCAVENGARR_API_RATE_LIMIT_RPM` (`0` disables it). Excess requests get HTTP 429 with a JSON body (`{"error": "Rate limit exceeded", "retry_after_seconds": 60}`) and a `Retry-After: 60` header — also on Torznab endpoints. If Prowlarr fans out to many plugin indexers, raise the limit or set it to `0`. See [Rate Limiting](./torznab-api.md#rate-limiting).
 
 ---
 
@@ -395,57 +318,28 @@ Active requests are allowed to complete before shutdown.
 
 ### Prowlarr Test Fails
 
-**Symptom:** Prowlarr shows "Unable to connect" or "Indexer returned 0 results"
-when testing.
-
-**Possible causes:**
-
-1. **Scavengarr not running:** Verify with `curl http://<host>:7979/healthz`.
-2. **Wrong URL:** Check the plugin name matches exactly (case-sensitive). Use
-   `/api/v1/torznab/indexers` to list available plugins.
-3. **Target site unreachable:** Check plugin health with
-   `/api/v1/torznab/{plugin_name}/health`. The target website may be down or
-   blocking requests.
-4. **Network issue:** If running in Docker, ensure both containers are on the
-   same network. Use the container name instead of `localhost`.
+- **Scavengarr not running** — check `curl http://<host>:7979/api/v1/healthz`.
+- **Wrong URL** — the plugin name is case-sensitive; list names with `/api/v1/torznab/indexers`.
+- **Target site unreachable** — check `/api/v1/torznab/{plugin_name}/health`; the site may be down or blocking requests.
+- **Network issue** — in Docker, put both containers on the same network and use the container name instead of `localhost`.
+- **HTTP 429** — the [API rate limit](#api-rate-limit) was hit.
 
 ### Empty Search Results
 
-**Symptom:** Searches return no results even though the target site has content.
-
-**Possible causes:**
-
-1. **Selectors outdated:** The target site may have changed its HTML structure.
-   Check the plugin's selectors against the current site layout.
-2. **All links invalid:** Link validation may be filtering out all results.
-   Check logs for validation failures. Temporarily set
-   `validate_download_links=false` to test.
-3. **Scraping blocked:** The target site may be blocking automated requests.
-   Check the HTTP user agent and consider using Playwright mode for
-   JavaScript-heavy sites.
+- **Site layout changed** — the plugin's selectors may be outdated; the plugin needs a code update.
+- **All links invalid** — link validation may drop every result; check the logs for `links_filtered`. To test, set `validate_download_links: false` in `config.yaml` (there is no environment variable for it).
+- **Scraping blocked** — the site may block automated requests (Cloudflare, DDoS-Guard). The engine is fixed per plugin by its base class; a site that needs a browser requires the plugin to be built on `PlaywrightPluginBase`.
 
 ### CrawlJob Download Returns 404
 
-**Symptom:** Sonarr/Radarr gets 404 when trying to download.
+- **CrawlJob expired** — jobs live for 1 hour after the search, not after the grab. The lifetime is fixed and not configurable; re-run the search.
+- **Cache cleared** — in the `dev` environment the cache is cleared on every startup. Use `SCAVENGARR_ENVIRONMENT=prod` (the Docker image default).
+- **Container restart** — with diskcache, mount the cache directory as a volume.
 
-**Possible causes:**
+### No Log Output
 
-1. **CrawlJob expired:** Default TTL is 1 hour. Increase `CACHE_TTL_SECONDS`
-   if needed.
-2. **Cache cleared:** In dev mode, cache is cleared on startup. Use
-   `SCAVENGARR_ENVIRONMENT=prod` to persist cache.
-3. **Container restart:** If using diskcache, ensure the cache directory is
-   mounted as a volume.
-
-### Logs Show No Output
-
-**Symptom:** No log output visible.
-
-**Possible causes:**
-
-1. **Wrong log level:** Set `SCAVENGARR_LOG_LEVEL=DEBUG` for maximum verbosity.
-2. **Wrong log format:** JSON logs may not be visible in a terminal. Set
-   `SCAVENGARR_LOG_FORMAT=console` for human-readable output.
+- **Log level** — set `SCAVENGARR_LOG_LEVEL=DEBUG`.
+- **Log format** — JSON is the default in prod; set `SCAVENGARR_LOG_FORMAT=console` for human-readable output.
 
 ---
 
@@ -453,14 +347,10 @@ when testing.
 
 ### Docker Networking
 
-When running Prowlarr and Scavengarr in Docker, they need to communicate over
-a shared network:
-
 ```yaml
-# docker-compose.yml
 services:
   scavengarr:
-    # ... (see Docker Compose examples above)
+    # ... see the Compose examples above
     networks:
       - arr-network
 
@@ -468,23 +358,19 @@ services:
     image: lscr.io/linuxserver/prowlarr:latest
     networks:
       - arr-network
-    # ... other prowlarr config
 
 networks:
   arr-network:
     driver: bridge
 ```
 
-With this setup, use `http://scavengarr:7979/...` as the indexer URL in Prowlarr
-(using the container name for DNS resolution).
+Use `http://scavengarr:7979/...` as indexer URL in Prowlarr.
 
 ### Reverse Proxy
 
-If running behind a reverse proxy (nginx, Caddy, Traefik), ensure the proxy
-passes the full path and preserves headers:
+Pass the full path through and preserve headers. The feed's channel `<link>` and the download URLs are built from the request's base URL.
 
 ```nginx
-# nginx example
 location /scavengarr/ {
     proxy_pass http://scavengarr:7979/;
     proxy_set_header Host $host;
@@ -492,38 +378,35 @@ location /scavengarr/ {
 }
 ```
 
-When using a path prefix, update the Prowlarr indexer URL accordingly:
-
-```text
-http://proxy-host/scavengarr/api/v1/torznab/{plugin_name}
-```
+With a path prefix, the Prowlarr indexer URL becomes `http://proxy-host/scavengarr/api/v1/torznab/{plugin_name}`.
 
 ---
 
 ## Configuration Reference
 
-Key configuration options for Prowlarr integration:
-
-| Setting | Recommended Value | Purpose |
-|---------|-------------------|---------|
-| `SCAVENGARR_ENVIRONMENT` | `prod` | Stable error handling for Prowlarr |
+| Setting | Recommended | Purpose |
+|---|---|---|
+| `SCAVENGARR_ENVIRONMENT` | `prod` | Prowlarr-friendly error handling (empty feed with 200), persistent cache |
 | `SCAVENGARR_LOG_LEVEL` | `INFO` | Balanced logging |
-| `CACHE_TTL_SECONDS` | `3600` (1 hour) | CrawlJob availability window |
-| `HOST` | `0.0.0.0` | Accept connections from all interfaces |
-| `PORT` | `7979` | Default Scavengarr port |
+| `SCAVENGARR_API_RATE_LIMIT_RPM` | `120` or `0` | Per-IP API rate limit |
+| `SCAVENGARR_CACHE_TTL_SECONDS` | `3600` | Default cache entry TTL (does not affect the fixed CrawlJob lifetime) |
+| `HOST` | `0.0.0.0` | Bind address |
+| `PORT` | `7979` | Bind port |
 
-For the complete configuration reference, see [Configuration](./configuration.md).
-
-For the full API specification, see [Torznab API Reference](./torznab-api.md).
+See [Configuration](./configuration.md) for the complete reference and [Torznab API Reference](./torznab-api.md) for the API specification.
 
 ---
 
 ## Source Code References
 
-| Component | File |
-|-----------|------|
+| Component | Path |
+|---|---|
 | Torznab router | `src/scavengarr/interfaces/api/torznab/router.py` |
 | Download router | `src/scavengarr/interfaces/api/download/router.py` |
-| Application composition | `src/scavengarr/interfaces/composition.py` |
+| App factory (health probes, middleware) | `src/scavengarr/interfaces/app.py` |
+| API rate limit middleware | `src/scavengarr/interfaces/api/middleware.py` |
+| Composition root (lifespan) | `src/scavengarr/interfaces/composition.py` |
 | Application state | `src/scavengarr/interfaces/app_state.py` |
-| CLI entry point | `src/scavengarr/interfaces/cli/main.py` |
+| CLI entry point | `src/scavengarr/interfaces/cli/__main__.py` |
+| Config schema | `src/scavengarr/infrastructure/config/schema.py` |
+| Production image | `Dockerfile.prod` |
