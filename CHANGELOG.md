@@ -6,7 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
-Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 56 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4306 tests (4269 excluding the opt-in live tests).
+Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 56 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4310 tests (4273 excluding the opt-in live tests).
+
+### Fix: GoodStream Links on goodstream.one
+- GoodStream moved from `.uno` to `.one` and links now look like `/video/embed/4Ky4/680x420` (short IDs); the resolver rejected them as `invalid_url`. The config accepts `/video/embed/<id>` next to the 12-character XFS IDs and knows the new dead-file page ("No such file").
 
 ### Fix: Cloudflare-Protected Hoster Players via Browser Capture
 - **XFS video hosters, DoodStream and SuperVideo fall back to the stealth browser** when the embed page answers with a Cloudflare challenge: savefiles, bigwarp, streamwish mirrors and every dood mirror (all redirect to the challenged `playmogo.com`) returned `None` before. The shared helper `hoster_resolvers/_browser.py` (`capture_stream`) turns `StealthPool.capture_media` into a `ResolvedStream`; `create_all_xfs_resolvers()` and `DoodStreamResolver` take an optional `stealth_pool`, wired in `composition.py`. SuperVideo's own Playwright HTML fetch is replaced by the same capture (live: `supervideo.cc` behind Cloudflare → HLS master in 1.2 s).
@@ -816,6 +819,7 @@ Foundation of the project: FastAPI server, Scrapy scraping engine, plugin loader
 
 Current known issues:
 
+- **Vidmoly unreachable behind ad blockers** (2026-09-28): the embed page's script redirect sends non-browser clients (and the stealth browser, when the network blocks ad domains, e.g. Pi-hole) to an ad click tracker; no stream is reachable then.
 - **SuperVideo streams need a browser-like player** (2026-09-28): the CDN (`*.serversicuro.cc`) answers non-browser clients with a JavaScript redirect and then ad-tracker redirects; resolution works, playback in players without JavaScript does not.
 - **hdfilme keyword search broken upstream** (2026-09-28): the site's own search answers with a PHP fatal error, so keyword searches return nothing; category browsing (empty query + category) works. Triage and fix plan: `docs/plans/plugin-repair.md`.
 - **Cloudflare-protected sites need a headful browser**: ddlspot, ddlvalley, scnsrc, filmfans, kinoger and serienfans only pass the interactive Turnstile with Patchright headful (Xvfb, `playwright.headless: false`) and `playwright.browser_fallback: true`. filmfans and serienfans rate-limit bursts (429): an uncached search takes ~2–2.5 min and can exceed Prowlarr's request timeout. See `docs/plans/antibot-patchright.md`.

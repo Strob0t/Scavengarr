@@ -908,3 +908,36 @@ class TestXFSResolverCloudflare:
         )
 
         assert all(r._stealth_pool is pool for r in resolvers)
+
+
+class TestGoodStream:
+    """goodstream.one (formerly .uno) links: /video/embed/<short id>/<size>."""
+
+    @staticmethod
+    def _config() -> XFSConfig:
+        return next(c for c in ALL_XFS_CONFIGS if c.name == "goodstream")
+
+    @pytest.mark.parametrize(
+        ("url", "file_id"),
+        [
+            ("https://goodstream.uno/video/embed/4Ky4/680x420", "4Ky4"),
+            ("https://goodstream.one/video/embed/4Dmr", "4Dmr"),
+            ("https://goodstream.one/e/abcdefghijkl", "abcdefghijkl"),
+        ],
+    )
+    def test_file_id(self, url: str, file_id: str) -> None:
+        assert extract_xfs_file_id(url, self._config()) == file_id
+
+    @respx.mock
+    async def test_no_such_file_is_offline(self) -> None:
+        route = respx.get("https://goodstream.uno/e/4Ky4").respond(
+            200, text="<html><body>Login Register No such file</body></html>"
+        )
+        resolver = XFSResolver(config=self._config(), http_client=httpx.AsyncClient())
+
+        result = await resolver.resolve(
+            "https://goodstream.uno/video/embed/4Ky4/680x420"
+        )
+
+        assert result is None
+        assert route.called

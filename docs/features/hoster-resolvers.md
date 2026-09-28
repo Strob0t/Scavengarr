@@ -180,10 +180,10 @@ The resolver fetches `/e/{file_id}`, checks offline markers and error redirects,
 | Funxd | `funxd` | `/e/` or `/d/` prefix |
 | Bigwarp | `bigwarp` | Custom offline markers |
 | Dropload | `dropload` | Extended markers |
-| Goodstream | `goodstream` | Standard markers |
+| Goodstream | `goodstream` | `/video/embed/<short id>/<size>` links (goodstream.one, formerly .uno; the `/e/<id>` route serves the same page); `No such file` offline marker |
 | Savefiles | `savefiles` | Extended markers |
 | Streamwish | 32 domains (`streamwish`, `dwish`, `hglink`, `obeywish`, `awish`, `embedwish`, …) | Extended markers + Streamwish-specific markers |
-| Vidmoly | `vidmoly` | `/w/` path prefix support |
+| Vidmoly | `vidmoly` | `/w/` path prefix support. Known issue: the embed page is a "Loading..." script redirect (`?ch=1&js=<JWT>`) that sends non-browser clients, and on networks that block ad domains (Pi-hole) even the stealth browser, to `click-v4.plarclck.com`; no stream is reachable then |
 | Vidoza | `vidoza`, `videzz` | Custom markers |
 | Vidhide | 6 primary (`vidhide`, `filelions`, …) + 25 aliases (`streamhide`, `louishide`, `moflix-stream`, …) | Lowercase-only file IDs |
 | Mp4Upload | `mp4upload` | Standard markers |

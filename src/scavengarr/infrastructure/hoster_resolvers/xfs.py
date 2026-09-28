@@ -559,8 +559,13 @@ VIDHIDE = XFSConfig(
 GOODSTREAM = XFSConfig(
     name="goodstream",
     domains=frozenset({"goodstream"}),
-    file_id_re=_EMBED_RE,
-    offline_markers=_STANDARD_MARKERS,
+    # goodstream.one (formerly .uno) links: /video/embed/<short id>/<size>;
+    # its /e/<id> route serves the same page
+    file_id_re=re.compile(
+        r"^/(?:(?:e/|d/|embed-)?(?=[a-zA-Z0-9]{12}(?:/|$|\.html))|video/embed/)"
+        r"([a-zA-Z0-9]+)(?:/|$|\.html)"
+    ),
+    offline_markers=(*_STANDARD_MARKERS, "No such file"),
     is_video_hoster=True,
 )
 
