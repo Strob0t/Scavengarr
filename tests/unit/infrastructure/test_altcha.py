@@ -9,6 +9,7 @@ import struct
 from typing import Any
 
 import pytest
+
 from scavengarr.infrastructure.captcha import altcha
 from scavengarr.infrastructure.captcha.altcha import AltchaError, solve_altcha
 

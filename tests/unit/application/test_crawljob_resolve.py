@@ -6,8 +6,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from scavengarr.application.use_cases.crawljob_resolve import CrawlJobResolveUseCase
 
+from scavengarr.application.use_cases.crawljob_resolve import CrawlJobResolveUseCase
 from scavengarr.domain.entities.crawljob import CrawlJob, CrawlJobResolveError
 
 _PAGE = "https://nox.to/media/iron-man?release=1"
