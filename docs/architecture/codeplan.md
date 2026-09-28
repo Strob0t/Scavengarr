@@ -145,6 +145,7 @@ src/scavengarr/
 │   │   └── registry.py               # PluginRegistry (lazy loading)
 │   ├── stremio/
 │   │   ├── __init__.py
+│   │   ├── episode_filter.py         # Season/episode filtering (guessit + link labels)
 │   │   ├── release_parser.py         # guessit-based release name parsing
 │   │   ├── stream_converter.py       # SearchResult → RankedStream conversion
 │   │   ├── stream_sorter.py          # Configurable stream ranking/sorting
@@ -1467,6 +1468,7 @@ Stremio components:
 | `test_stream_sorter.py` | Stream ranking and sorting |
 | `test_title_matcher.py` | Multi-candidate title scoring |
 | `test_release_parser.py` | guessit release name parsing |
+| `test_episode_filter.py` | Season/episode filtering of search results |
 | `test_tmdb_client.py` | TMDB API client |
 | `test_imdb_fallback.py` | IMDB/Wikidata title fallback |
 

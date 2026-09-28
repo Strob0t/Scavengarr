@@ -36,6 +36,7 @@ from scavengarr.infrastructure.plugins.constants import (
     DEFAULT_USER_AGENT,
     search_max_results,
 )
+from scavengarr.infrastructure.stremio.episode_filter import filter_by_episode
 from scavengarr.infrastructure.stremio.stream_converter import convert_search_results
 from scavengarr.infrastructure.stremio.stream_sorter import StreamSorter
 from scavengarr.infrastructure.stremio.title_matcher import filter_by_title_match
@@ -153,6 +154,7 @@ def _make_streamable_app(
         sorter=StreamSorter(cfg),
         convert_fn=convert_search_results,
         filter_fn=filter_by_title_match,
+        episode_filter_fn=filter_by_episode,
         user_agent=DEFAULT_USER_AGENT,
         max_results_var=search_max_results,
         stream_link_repo=stream_link_repo,

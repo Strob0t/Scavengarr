@@ -321,6 +321,7 @@ tests/
       test_playwright_base.py          # PlaywrightPluginBase shared base class
       test_plugin_registry.py          # Plugin discovery and loading
       test_release_parser.py           # guessit release name parsing
+      test_episode_filter.py           # Season/episode filtering (guessit + link labels)
       test_title_matcher.py            # Title-match scoring for Stremio
       test_imdb_fallback.py            # IMDB suggest API fallback client
       test_tmdb_client.py              # TMDB httpx client

@@ -12,6 +12,9 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 breaker, global concurrency pool, graceful shutdown, multi-language search, and
 growth of the test suite from 160 to 4043 tests.
 
+### Refactor: StremioStreamUseCase Split
+- **Episode filter moved to infrastructure**: `filter_by_episode()` (guessit-based) now lives in `infrastructure/stremio/episode_filter.py` and is injected into `StremioStreamUseCase` as `episode_filter_fn`. The application layer no longer imports guessit directly.
+
 ### Live Tests Opt-In
 - **`poetry run pytest` excludes live tests by default** (`addopts = "--ignore=tests/benchmark -m \"not live\""`). Live smoke tests hit real websites, so broken external sites made the mandatory pre-commit test run permanently red. Run them explicitly with `poetry run pytest -m live`.
 

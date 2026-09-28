@@ -17,6 +17,7 @@ import pytest
 from scavengarr.infrastructure.concurrency import ConcurrencyPool
 from scavengarr.infrastructure.config.schema import AppConfig
 from scavengarr.infrastructure.resource_detector import DetectedResources
+from scavengarr.infrastructure.stremio.episode_filter import filter_by_episode
 from scavengarr.interfaces.composition import _auto_tune
 
 from .conftest import (
@@ -89,6 +90,7 @@ async def _measure_wall_time(
         sorter=type("S", (), {"sort": staticmethod(lambda x: x)})(),
         convert_fn=_noop_convert,
         filter_fn=_noop_filter,
+        episode_filter_fn=filter_by_episode,
         user_agent="benchmark/1.0",
         max_results_var=_max_results_var,
         pool=pool,
