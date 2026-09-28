@@ -1,15 +1,17 @@
 {
   "name": "Scanvengarr MCP Full",
   "build": {
-    "dockerfile": "Dockerfile"
+    "dockerfile": "Dockerfile",
+    "options": [
+      "--network=host"
+    ]
   },
   "runArgs": [
-    "--add-host=host.docker.internal:host-gateway",
     "--env-file",
-    "./.env.devcontainer"
+    "${localWorkspaceFolder}/.env.devcontainer"
   ],
   "features": {
-    "ghcr.io/devcontainers/features/docker-in-docker:1": {}
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
   },
   "forwardPorts": [
     4317,

@@ -68,7 +68,8 @@ fi
 # Claude: native install bevorzugt
 if ! command -v claude >/dev/null 2>&1; then
   echo "[devcontainer] Installing Claude Code (native)..."
-  curl -sSfL https://claude.ai/install.sh | sh
+  curl -sSfL https://claude.ai/install.sh | bash
+  # shellcheck disable=SC2016  # literal $PATH for .bashrc
   echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 else
   echo "[devcontainer] Claude CLI already installed."
@@ -93,8 +94,19 @@ echo "[devcontainer] Activating virtualenv..."
 # shellcheck disable=SC1091
 . .venv/bin/activate
 
-echo "[devcontainer] Starting MCP docker stack..."
-docker compose --env-file ./.env.devcontainer up -d
-docker compose ps
+echo "[devcontainer] Waiting for Docker daemon..."
+for _ in $(seq 1 30); do
+  docker info >/dev/null 2>&1 && break
+  sleep 1
+done
+# MCP stack is optional tooling for the AI assistant — never block setup on it.
+if docker info >/dev/null 2>&1; then
+  echo "[devcontainer] Starting MCP docker stack..."
+  docker compose --env-file ./.env.devcontainer up -d \
+    || echo "WARN: MCP docker stack failed to start (optional)"
+  docker compose ps || true
+else
+  echo "WARN: Docker daemon not reachable, skipping MCP stack (optional)"
+fi
 
 echo "[devcontainer] Setup complete."
