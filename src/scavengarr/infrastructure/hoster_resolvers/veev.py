@@ -24,10 +24,14 @@ import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
 from scavengarr.infrastructure.hoster_resolvers import extract_domain
+from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 
 log = structlog.get_logger(__name__)
 
 _DOMAINS = frozenset({"veev"})
+# veevcdn binds the stream token to the resolving User-Agent (another UA
+# gets 403), so resolve with a browser UA and hand it on for playback
+_USER_AGENT = DEFAULT_USER_AGENT
 _FILE_ID_RE = re.compile(r"^/(?:e/|d/)?([A-Za-z0-9]{12,})(?:/|$|\.html)")
 _TOKEN_RE = re.compile(r'window\._vvto\s*\[\s*\w+\s*\]\s*=\s*"([^"]+)"')
 _OFFLINE_RE = re.compile(
@@ -136,7 +140,12 @@ class VeevResolver:
         embed_url = f"{origin}/e/{file_code}"
 
         try:
-            page = await self._http.get(embed_url, follow_redirects=True, timeout=15)
+            page = await self._http.get(
+                embed_url,
+                follow_redirects=True,
+                timeout=15,
+                headers={"User-Agent": _USER_AGENT},
+            )
         except httpx.HTTPError:
             log.warning("veev_request_failed", url=url)
             return None
@@ -169,7 +178,7 @@ class VeevResolver:
         return ResolvedStream(
             video_url=video_url,
             quality=StreamQuality.UNKNOWN,
-            headers={"Referer": f"{origin}/"},
+            headers={"Referer": f"{origin}/", "User-Agent": _USER_AGENT},
         )
 
     async def _player_source(
@@ -187,7 +196,11 @@ class VeevResolver:
                     "ch": ch,
                     "ie": "1",
                 },
-                headers={"X-Requested-With": "XMLHttpRequest", "Referer": embed_url},
+                headers={
+                    "X-Requested-With": "XMLHttpRequest",
+                    "Referer": embed_url,
+                    "User-Agent": _USER_AGENT,
+                },
                 timeout=15,
             )
             data = resp.json()

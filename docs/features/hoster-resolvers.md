@@ -54,6 +54,7 @@ Video-extracting resolvers set `ResolvedStream.headers` with the headers require
 | Streamtape | `Referer: https://<response host>/` |
 | DoodStream | `Referer: <base_url>` |
 | XFS video hosters | `Referer: <embed URL after redirects>` |
+| Veev | `Referer: <origin>/`, `User-Agent: <UA used to resolve>` (token is UA-bound) |
 | StreamUp (strmup) | `Origin: <scheme>://<host>`, `Referer: <scheme>://<host>/` |
 | Vidsonic | `Origin: <scheme>://<host>`, `Referer: <scheme>://<host>/` |
 
@@ -113,7 +114,7 @@ Check availability and return the original URL without headers. The Stremio addo
 | Stmix | `stmix` | `stmix.io` | Page validation |
 | SerienStream | `serienstream` | `s.to`, `www.s.to`, `serienstream.*`, `serien.*` | Page validation (`/serie/` or `/serien/` slug) |
 | SendVid | `sendvid` | `sendvid.com` | Status API (`/api/v1/videos/{id}/status.json`, 404 = offline) + page 200 check |
-| Veev | `veev` | `veev.to` (`/e/`, `/d/` or bare ID, 12+ chars) | Player API without captcha: LZW-decode the `window._vvto` token, `/dl?op=player_api&cmd=gi`, decode `file.dv[0].s` → direct MP4 (port of JDownloader `VeevTo`); offline on `Watch video - Veev.to` title or "File not found" |
+| Veev | `veev` | `veev.to` (`/e/`, `/d/` or bare ID, 12+ chars) | Player API without captcha: LZW-decode the `window._vvto` token, `/dl?op=player_api&cmd=gi`, decode `file.dv[0].s` → direct MP4 (port of JDownloader `VeevTo`); offline on `Watch video - Veev.to` title or "File not found". Resolves with a browser User-Agent and returns it in the playback headers: veevcdn binds the stream token to that UA (another UA gets 403) |
 
 ### DDL resolvers (individual)
 

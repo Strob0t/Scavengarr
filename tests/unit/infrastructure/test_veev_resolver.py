@@ -119,6 +119,24 @@ class TestVeevResolver:
         assert request.headers["X-Requested-With"] == "XMLHttpRequest"
 
     @respx.mock
+    async def test_playback_uses_the_resolving_user_agent(self) -> None:
+        """veevcdn binds the stream token to the User-Agent that resolved it
+        (other UA → 403), so playback must send the same one."""
+        page = respx.get(_EMBED).respond(200, text=_EMBED_HTML)
+        api = respx.get(_API).respond(
+            200, json={"status": "success", "file": {"dv": [{"s": _SOURCE_S}]}}
+        )
+
+        async with httpx.AsyncClient(headers={"User-Agent": "Scavengarr/0.1"}) as c:
+            result = await VeevResolver(http_client=c).resolve(_EMBED)
+
+        assert result is not None
+        ua = result.headers["User-Agent"]
+        assert ua.startswith("Mozilla/5.0")
+        assert page.calls.last.request.headers["User-Agent"] == ua
+        assert api.calls.last.request.headers["User-Agent"] == ua
+
+    @respx.mock
     @pytest.mark.parametrize(
         "html",
         [

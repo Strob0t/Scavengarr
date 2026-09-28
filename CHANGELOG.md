@@ -6,7 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
-Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 56 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4310 tests (4273 excluding the opt-in live tests).
+Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 56 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4311 tests (4274 excluding the opt-in live tests).
+
+### Fix: Veev Streams Failed to Play in Stremio
+- veevcdn binds the stream token to the User-Agent that resolved it. The resolver used the app client's UA (`Scavengarr/0.1.0`), Stremio played with the browser UA from `proxyHeaders`, and every veev stream answered 403 (found by the end-to-end Stremio run: resolved, listed, unplayable). The resolver now resolves with the browser UA and returns it in `ResolvedStream.headers`, which `build_behavior_hints` passes on (live: 206 with the returned headers).
 
 ### Fix: GoodStream Links on goodstream.one
 - GoodStream moved from `.uno` to `.one` and links now look like `/video/embed/4Ky4/680x420` (short IDs); the resolver rejected them as `invalid_url`. The config accepts `/video/embed/<id>` next to the 12-character XFS IDs and knows the new dead-file page ("No such file").
