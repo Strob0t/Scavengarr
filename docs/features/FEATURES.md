@@ -279,7 +279,7 @@ Infrastructure (implements Domain ports)
 | **Domain** | Entities, value objects, protocols (ports) | `SearchResult`, `PluginProtocol`, `TorznabQuery` |
 | **Application** | Use cases, factories, policies | `TorznabSearchUseCase`, `CrawlJobFactory` |
 | **Infrastructure** | Adapters, engine, validation, cache | `PluginRegistry`, `SearchEngine`, `LinkValidator` |
-| **Interfaces** | HTTP router, CLI, composition root | FastAPI router, Typer CLI |
+| **Interfaces** | HTTP router, CLI, composition root | FastAPI router, argparse CLI |
 
 **Dependency rule:** Inner layers never import outer layers. Domain is framework-free and I/O-free.
 
@@ -316,4 +316,4 @@ Infrastructure (implements Domain ports)
 | Shared browser pool | `src/scavengarr/infrastructure/shared_browser.py` |
 | Metrics collector | `src/scavengarr/infrastructure/metrics.py` |
 | Plugin scoring | `src/scavengarr/infrastructure/scoring/` |
-| Test suite (3997 tests) | `tests/` |
+| Test suite (4099 tests + 38 live) | `tests/` |

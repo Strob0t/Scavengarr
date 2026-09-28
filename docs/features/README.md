@@ -4,7 +4,7 @@
 
 Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Prowlarr and other Arr applications. It scrapes sources via Python plugins (httpx for static HTML, Playwright for JS-heavy sites) and delivers results through standard Torznab endpoints.
 
-**Version:** 0.1.0 | **Python:** 3.12+ | **Tests:** 3997 | **Plugins:** 42 (33 httpx + 9 Playwright) | **Hoster Resolvers:** 56 | **Architecture:** Clean Architecture
+**Version:** 0.1.0 | **Python:** 3.12+ | **Tests:** 4099 (+38 live) | **Plugins:** 42 (33 httpx + 9 Playwright) | **Hoster Resolvers:** 56 | **Architecture:** Clean Architecture
 
 ---
 
@@ -81,8 +81,8 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Pro
 | Configuration | pydantic-settings | Typed config with env/YAML/CLI support |
 | Caching | diskcache (+ optional Redis) | Search result and CrawlJob storage |
 | Logging | structlog | Structured JSON/console logging |
-| CLI | Typer | Local debugging and diagnostics |
-| Testing | pytest | 3997 tests across all layers (3776 unit + 158 E2E + 25 integration + 38 live) |
+| CLI | argparse (stdlib) | Server startup with config overrides |
+| Testing | pytest | 4137 tests across all layers (3905 unit + 169 E2E + 25 integration + 38 live) |
 
 ---
 
@@ -108,7 +108,7 @@ src/scavengarr/
     common/                # Parsers, converters, extractors, HTML selectors
   interfaces/              # Frameworks & drivers
     api/                   # FastAPI routers (Torznab + Stremio)
-    cli/                   # Typer CLI
+    cli/                   # argparse CLI
     composition/           # Dependency injection
 
 plugins/                   # Plugin directory (42 Python plugins)

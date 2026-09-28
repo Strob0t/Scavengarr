@@ -63,7 +63,7 @@ These decisions are **non-negotiable** across all changes:
 
 | Contract | Value | Source |
 |----------|-------|--------|
-| **Entry Point** | `poetry run scavengarr` (CLI via Typer at `src/scavengarr/application/cli.py:start`) | `pyproject.toml` `[tool.poetry.scripts]` |
+| **Entry Point** | `poetry run start` (argparse CLI at `src/scavengarr/interfaces/cli/__main__.py:start`) | `pyproject.toml` `[tool.poetry.scripts]` |
 | **Config Prefix** | `SCAVENGARR_` (all env vars) | `add-config-system` change |
 | **Plugin Directory** | Configurable via `SCAVENGARR_PLUGIN_DIR` (default: `./plugins`) | `add-plugin-loader` change |
 | **Plugin Formats** | Python only (httpx + Playwright base classes) | `add-plugin-loader` change |
@@ -310,7 +310,7 @@ See `src/scavengarr/config/schema.py:AppConfig` for canonical fields:
 - **Log levels**: `DEBUG`, `INFO`, `WARNING`, `ERROR` (configured via `SCAVENGARR_LOG_LEVEL`)
 
 ### What to Log
-- **User-visible output**: Use `typer.echo()` for CLI, FastAPI response messages for HTTP (not logs)
+- **User-visible output**: Use stdout for CLI (currently it only starts the server), FastAPI response messages for HTTP (not logs)
 - **Application events** (`INFO`): Plugin loaded, scraping started/completed, config loaded
   - **Always include context**: `plugin_name`, `query`, `results_count`, `duration_ms`
 - **Debug** (`DEBUG`): Selector matching details, HTTP request/response bodies, plugin discovery paths

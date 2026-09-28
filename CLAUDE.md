@@ -161,7 +161,7 @@ Rule: Infrastructure may use external libraries but must connect to Application 
 
 ### Interfaces (frameworks & drivers)
 - HTTP (FastAPI router): request parsing, response formatting, error mapping.
-- CLI (Typer): local debugging/diagnostics/plugin checks.
+- CLI (argparse, stdlib): server startup with config overrides (`poetry run start`).
 - Composition root: dependency injection and wiring.
 
 Rule: Interfaces contain no business rules, only input/output.
@@ -171,7 +171,7 @@ Rule: Interfaces contain no business rules, only input/output.
 ## 5. Technology stack (dependencies)
 
 The source of truth for dependencies is `pyproject.toml`.
-Scavengarr uses FastAPI/Uvicorn, Playwright, structlog, diskcache, Typer, pydantic-settings, httpx, and optionally Redis.
+Scavengarr uses FastAPI/Uvicorn, Playwright, structlog, diskcache, pydantic-settings, httpx, and optionally Redis.
 
 ### Package documentation (docs-mcp-server)
 
@@ -300,11 +300,14 @@ tests/
       test_torznab_entities.py         # TorznabQuery/Item/Caps, exceptions
       test_search_result.py            # SearchResult
       test_plugin_schema.py            # AuthConfig, HttpOverrides
+      test_stremio_entities.py         # Stremio domain entities
     application/
       test_crawljob_factory.py         # SearchResult → CrawlJob conversion
       test_torznab_caps.py             # Capabilities use case
       test_torznab_indexers.py         # Indexer listing use case
       test_torznab_search.py           # Search use case (validation, error paths)
+      test_stremio_catalog.py          # Stremio catalog use case
+      test_stremio_stream.py           # Stremio stream use case (search, filter, resolve, rank)
     infrastructure/
       test_converters.py               # to_int()
       test_parsers.py                  # parse_size_to_bytes()
@@ -345,6 +348,20 @@ tests/
       test_mediafire_resolver.py       # Mediafire DDL hoster resolver
       test_gofile_resolver.py          # GoFile DDL hoster resolver
       test_retry_transport.py          # RetryTransport (rate limit + 429/503 retry)
+      test_rate_limiter.py             # DomainRateLimiter + TokenBucket
+      test_adaptive_rate_limiter.py    # Adaptive AIMD rate limiting
+      test_concurrency.py              # ConcurrencyPool + RequestBudget
+      test_auto_concurrency.py         # Container-aware auto-tuning of concurrency
+      test_resource_detector.py        # cgroup v2/v1 CPU/memory detection
+      test_circuit_breaker.py          # PluginCircuitBreaker
+      test_graceful_shutdown.py        # GracefulShutdown
+      test_metrics.py                  # MetricsCollector
+      test_metrics_endpoint.py         # /api/v1/stats/metrics endpoint
+      test_api_middleware.py           # RateLimitMiddleware
+      test_cloudflare.py               # Shared Cloudflare challenge detection
+      test_stealth_pool.py             # StealthPool (Playwright Stealth browser pool)
+      test_hoster_probe.py             # Hoster embed URL liveness probe
+      test_verify_video_url.py         # Shared verify_video_url helper
       test_ewma.py                     # EWMA scoring functions (32 tests)
       test_plugin_score_cache.py       # Cache persistence + index management (19 tests)
       test_query_pool.py               # TMDB query generation + fallback (14 tests)
@@ -364,10 +381,12 @@ tests/
       test_ddlvalley_plugin.py         # ddlvalley plugin tests
       test_einschalten_plugin.py       # einschalten plugin tests
       test_filmfans_plugin.py          # filmfans plugin tests
+      test_filmpalast_plugin.py        # filmpalast_to plugin tests
       test_fireani_plugin.py           # fireani plugin tests
       test_haschcon_plugin.py          # haschcon plugin tests
       test_hdfilme_plugin.py           # hdfilme plugin tests
       test_hdsource_plugin.py          # hdsource plugin tests
+      test_hdworld_plugin.py           # hdworld plugin tests
       test_jjs_plugin.py               # jjs plugin tests
       test_kinoger_plugin.py           # kinoger plugin tests
       test_kinoking_plugin.py          # kinoking plugin tests
@@ -382,6 +401,7 @@ tests/
       test_mygully_plugin.py           # mygully plugin tests
       test_nima4k_plugin.py            # nima4k plugin tests
       test_nox_plugin.py               # nox plugin tests
+      test_scnlog_plugin.py            # scnlog plugin tests
       test_scnsrc_plugin.py            # scnsrc plugin tests
       test_serienfans_plugin.py        # serienfans plugin tests
       test_serienjunkies_plugin.py     # serienjunkies plugin tests
@@ -390,6 +410,9 @@ tests/
       test_streamkiste_plugin.py       # streamkiste plugin tests
       test_streamworld_plugin.py       # streamworld plugin tests
       test_warezomen_plugin.py         # warezomen plugin tests
+    interfaces/
+      test_router_category.py          # Torznab router category parsing
+      test_stremio_router.py           # Stremio addon router endpoints
   e2e/
     test_torznab_endpoint.py           # 46 Torznab endpoint tests (caps, search, error responses)
     test_stremio_endpoint.py           # Stremio endpoint E2E (mock plugins, full HTTP flow, HLS proxy)
@@ -572,7 +595,7 @@ Agents are ONLY for **simple, explicit, mechanical tasks** where the scope is 10
 | Hoster resolvers | `src/scavengarr/infrastructure/hoster_resolvers/` |
 | HTTP router / CLI | `src/scavengarr/interfaces/...` |
 | Stremio addon | `src/scavengarr/interfaces/api/stremio/` |
-| Tests | `tests/unit/{domain,application,infrastructure}/...` |
+| Tests | `tests/unit/{domain,application,infrastructure,interfaces}/...` |
 | Feature documentation | `docs/features/` (README.md is the index) |
 | Architecture documentation | `docs/architecture/` (clean-architecture.md, codeplan.md) |
 | Future plans | `docs/plans/` (playwright-engine, more-plugins, integration-tests, search-caching) |

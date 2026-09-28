@@ -105,7 +105,7 @@ See [docs/features/stremio-addon.md](docs/features/stremio-addon.md) for details
 | Configuration | pydantic-settings |
 | Caching | diskcache (SQLite) / Redis |
 | Logging | structlog |
-| CLI | Typer |
+| CLI | argparse (stdlib) |
 
 ## Plugins
 
@@ -135,7 +135,7 @@ poetry run pre-commit install
 poetry run pytest
 ```
 
-The test suite includes 4043 tests (unit + E2E + integration + live smoke).
+The test suite includes 4137 tests: 4099 offline (unit + E2E + integration) plus 38 live smoke tests.
 Concurrency benchmarks run separately: `poetry run pytest tests/benchmark/ -s -v`.
 
 ### Code Quality
@@ -156,9 +156,9 @@ src/scavengarr/
   domain/           # Entities, value objects, protocols (ports)
   application/      # Use cases, factories
   infrastructure/   # Adapters (scraping, cache, plugins, resolvers, validation)
-  interfaces/       # HTTP router (FastAPI), CLI (Typer), composition root
+  interfaces/       # HTTP router (FastAPI), CLI (argparse), composition root
 plugins/            # 42 Python plugins (33 httpx + 9 Playwright)
-tests/              # 4043 tests (unit, E2E, integration, live, benchmark)
+tests/              # 4137 tests (unit, E2E, integration, live) + benchmarks
 docs/               # Architecture, features, plans, refactor history
 ```
 
