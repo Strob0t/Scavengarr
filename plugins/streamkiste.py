@@ -1,16 +1,20 @@
-"""streamkiste.taxi Python plugin for Scavengarr.
+"""streamkiste Python plugin for Scavengarr.
 
-Scrapes streamkiste.taxi (German streaming site, DLE-based CMS) with:
+Scrapes streamkiste.bid (German streaming site, DLE-based CMS) with:
 - httpx for all requests (server-rendered HTML, no JS challenges)
 - GET /index.php?do=search&subaction=search&story={query} for page 1
 - POST /index.php?do=search for page 2+ with form data
 - 21 results per page, up to 48 pages for ~1000 results
-- Detail page scraping for stream links (onclick-based URLs in a.streams)
-- Series detection from genre text ("Serien" in release info)
+- Detail page scraping for metadata; stream/hoster links come from the
+  embedded devideosrc player (``scavengarr.infrastructure.plugins.devideosrc``)
+- Series detection from the player answer and the "Serien" genre; the site
+  embeds the series player for movies too
+- Season/episode filtering of series links
 - Category filtering (Movies/TV/Anime)
 - Bounded concurrency for detail page scraping
 
-Multi-domain support: streamkiste.taxi (primary), .tv, .sx, .al, .city.
+Multi-domain support: streamkiste.bid (primary; .taxi redirects there), .taxi,
+.tv, .sx, .al, .city.
 No authentication required.
 """
 
@@ -19,15 +23,17 @@ from __future__ import annotations
 import asyncio
 import re
 from html.parser import HTMLParser
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins import devideosrc
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
 # Configurable settings
 # ---------------------------------------------------------------------------
 _DOMAINS = [
+    "streamkiste.bid",
     "streamkiste.taxi",
     "streamkiste.tv",
     "streamkiste.sx",
@@ -44,12 +50,6 @@ _TV_CATEGORIES = frozenset({5000, 5010, 5020, 5030, 5040, 5050, 5060, 5070, 5080
 _MOVIE_CATEGORIES = frozenset({2000, 2010, 2020, 2030, 2040, 2045, 2050, 2060})
 
 _SERIES_KEYWORDS = frozenset({"serie", "serien"})
-
-# Regex to extract URL from onclick="window.open('...')" (with optional spaces)
-_ONCLICK_URL_RE = re.compile(r"window\.open\(\s*['\"]([^'\"]+)['\"]\s*\)")
-
-# Regex to extract IMDB ID from meinecloud.click script/iframe src
-_IMDB_ID_RE = re.compile(r"meinecloud\.click/(?:ddl|movie)/(tt\d+)")
 
 
 def _filter_by_category(
@@ -88,40 +88,6 @@ def _clean_title(title: str) -> str:
             title = title[: -len(suffix)].strip()
     title = re.sub(r"\s*\(\d{4}\)\s*$", "", title)
     return title.strip()
-
-
-def _domain_from_url(url: str) -> str:
-    """Extract domain name from a URL for hoster labeling."""
-    try:
-        host = urlparse(url).hostname or ""
-        parts = host.replace("www.", "").split(".")
-        return parts[0] if parts and parts[0] else "unknown"
-    except Exception:  # noqa: BLE001
-        return "unknown"
-
-
-def _extract_onclick_url(onclick: str) -> str:
-    """Extract URL from onclick=\"window.open('...')\" attribute."""
-    m = _ONCLICK_URL_RE.search(onclick)
-    return m.group(1).strip() if m else ""
-
-
-def _reconstruct_html_from_js(js_text: str) -> str:
-    """Extract HTML from meinecloud.click document.write() JavaScript.
-
-    The meinecloud DDL endpoint returns JS like::
-
-        document.write('<a onclick="window.open( \\'url\\' )" class="streams">'+
-        '<span class="streaming">Hoster</span>'+
-        '</a>');
-
-    This reconstructs the HTML by extracting string literals and unescaping.
-    """
-    parts: list[str] = []
-    for m in re.finditer(r"'((?:[^'\\]|\\.)*)'", js_text):
-        raw = m.group(1)
-        parts.append(raw.replace("\\'", "'").replace("\\\\", "\\"))
-    return "".join(parts)
 
 
 def _parse_release_text(text: str) -> tuple[str, list[str]]:
@@ -307,15 +273,10 @@ class _SearchResultParser(HTMLParser):
 
 
 class _DetailPageParser(HTMLParser):
-    """Parse streamkiste.taxi detail page for download links and metadata.
+    """Parse streamkiste detail page metadata.
 
-    Download links have structure::
-
-        <a class="streams" onclick="window.open('https://host.com/id')">
-          <span class="streaming">Supervideo</span>
-          <mark>1080p</mark>
-          <span>1.0GB</span>
-        </a>
+    Stream links are not on the page itself; they come from the embedded
+    devideosrc player (see ``scavengarr.infrastructure.plugins.devideosrc``).
 
     Metadata:
     - Title from h1
@@ -329,28 +290,12 @@ class _DetailPageParser(HTMLParser):
         super().__init__()
         self._base_url = base_url
 
-        # Download links
-        self.stream_links: list[dict[str, str]] = []
-        self._in_stream_a = False
-        self._stream_url = ""
-        self._stream_hoster = ""
-        self._stream_quality = ""
-        self._stream_size = ""
-
-        self._in_streaming_span = False
-        self._streaming_text = ""
-        self._in_mark = False
-        self._mark_text = ""
-        self._in_stream_size_span = False
-        self._size_text = ""
-
         # Metadata
         self.title = ""
         self.year = ""
         self.genres: list[str] = []
         self.description = ""
         self.imdb_rating = ""
-        self.is_series = False
 
         # Title tracking (h1)
         self._in_h1 = False
@@ -379,6 +324,10 @@ class _DetailPageParser(HTMLParser):
         self._in_average_span = False
         self._average_text = ""
 
+    @property
+    def is_series(self) -> bool:
+        return _detect_series(self.genres)
+
     def handle_starttag(  # noqa: C901
         self,
         tag: str,
@@ -386,28 +335,6 @@ class _DetailPageParser(HTMLParser):
     ) -> None:
         attr_dict = dict(attrs)
         classes = (attr_dict.get("class") or "").split()
-
-        # Stream link: <a class="streams" onclick="window.open('...')">
-        if tag == "a" and "streams" in classes:
-            onclick = attr_dict.get("onclick", "") or ""
-            url = _extract_onclick_url(onclick)
-            if url:
-                self._in_stream_a = True
-                self._stream_url = url
-                self._stream_hoster = ""
-                self._stream_quality = ""
-                self._stream_size = ""
-
-        if self._in_stream_a:
-            if tag == "span" and "streaming" in classes:
-                self._in_streaming_span = True
-                self._streaming_text = ""
-            elif tag == "span" and not self._in_streaming_span:
-                self._in_stream_size_span = True
-                self._size_text = ""
-            if tag == "mark":
-                self._in_mark = True
-                self._mark_text = ""
 
         # h1
         if tag == "h1":
@@ -453,64 +380,42 @@ class _DetailPageParser(HTMLParser):
             self._desc_text = ""
 
         # Rating span inside .average
-        if tag == "span" and self._in_average and not self._in_stream_a:
+        if tag == "span" and self._in_average:
             self._in_average_span = True
             self._average_text = ""
 
     def handle_data(self, data: str) -> None:
         if self._in_h1:
             self._h1_text += data
-
         if self._in_release:
             self._release_text += data
-
         if self._in_category_a:
             self._category_text += data
-
         if self._in_desc_p:
             self._desc_text += data
-
         if self._in_average_span:
             self._average_text += data
 
-        if self._in_streaming_span:
-            self._streaming_text += data
+    def _end_div(self) -> None:
+        if self._in_categories:
+            if self._categories_div_depth > 0:
+                self._categories_div_depth -= 1
+            else:
+                self._in_categories = False
 
-        if self._in_mark:
-            self._mark_text += data
+        if self._in_info_right:
+            if self._info_right_div_depth > 0:
+                self._info_right_div_depth -= 1
+            else:
+                self._in_info_right = False
 
-        if self._in_stream_size_span:
-            self._size_text += data
+        if self._in_average:
+            if self._average_div_depth > 0:
+                self._average_div_depth -= 1
+            else:
+                self._in_average = False
 
     def handle_endtag(self, tag: str) -> None:  # noqa: C901
-        # Stream link end
-        if tag == "a" and self._in_stream_a:
-            self._in_stream_a = False
-            if self._stream_url:
-                hoster = self._stream_hoster.strip() or _domain_from_url(
-                    self._stream_url
-                )
-                self.stream_links.append(
-                    {
-                        "hoster": hoster,
-                        "link": self._stream_url,
-                        "quality": self._stream_quality.strip(),
-                        "size": self._stream_size.strip(),
-                    }
-                )
-
-        if tag == "span" and self._in_streaming_span:
-            self._in_streaming_span = False
-            self._stream_hoster = self._streaming_text.strip()
-
-        if tag == "span" and self._in_stream_size_span:
-            self._in_stream_size_span = False
-            self._stream_size = self._size_text.strip()
-
-        if tag == "mark" and self._in_mark:
-            self._in_mark = False
-            self._stream_quality = self._mark_text.strip()
-
         if tag == "h1" and self._in_h1:
             self._in_h1 = False
             self.title = _clean_title(self._h1_text)
@@ -534,33 +439,12 @@ class _DetailPageParser(HTMLParser):
 
         if tag == "span" and self._in_average_span:
             self._in_average_span = False
-            text = self._average_text.strip()
-            m = re.search(r"(\d+\.?\d*)", text)
+            m = re.search(r"(\d+\.?\d*)", self._average_text.strip())
             if m:
                 self.imdb_rating = m.group(1)
 
         if tag == "div":
-            if self._in_categories:
-                if self._categories_div_depth > 0:
-                    self._categories_div_depth -= 1
-                else:
-                    self._in_categories = False
-
-            if self._in_info_right:
-                if self._info_right_div_depth > 0:
-                    self._info_right_div_depth -= 1
-                else:
-                    self._in_info_right = False
-
-            if self._in_average:
-                if self._average_div_depth > 0:
-                    self._average_div_depth -= 1
-                else:
-                    self._in_average = False
-
-    def finalize(self) -> None:
-        """Post-processing: detect series from genres."""
-        self.is_series = _detect_series(self.genres)
+            self._end_div()
 
 
 class StreamkistePlugin(HttpxPluginBase):
@@ -644,80 +528,45 @@ class StreamkistePlugin(HttpxPluginBase):
 
         return all_results[: self.effective_max_results]
 
-    async def _fetch_meinecloud_streams(self, imdb_id: str) -> list[dict[str, str]]:
-        """Fetch stream links from meinecloud.click DDL endpoint.
-
-        The endpoint returns JavaScript with ``document.write()`` calls that
-        inject ``<a class="streams" onclick="window.open('url')">`` HTML.
-        We reconstruct the HTML and parse it with ``_DetailPageParser``.
-        """
-        client = await self._ensure_client()
-        url = f"https://meinecloud.click/ddl/{imdb_id}"
-
-        try:
-            resp = await client.get(url)
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning(
-                "streamkiste_meinecloud_failed",
-                imdb_id=imdb_id,
-                error=str(exc),
-            )
-            return []
-
-        html = _reconstruct_html_from_js(resp.text)
-        if not html.strip():
-            return []
-
-        stream_parser = _DetailPageParser(self.base_url)
-        stream_parser.feed(html)
-        return stream_parser.stream_links
-
     async def _scrape_detail(
         self,
         result: dict[str, str | list[str] | bool],
+        season: int | None = None,
+        episode: int | None = None,
     ) -> SearchResult | None:
-        """Scrape a detail page for download links and metadata."""
-        client = await self._ensure_client()
+        """Scrape a detail page for metadata, then load its devideosrc links."""
         detail_url = str(result["url"])
-
-        try:
-            resp = await client.get(detail_url)
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning(
-                "streamkiste_detail_failed",
-                url=detail_url,
-                error=str(exc),
-            )
+        html = await self._fetch_text(detail_url, context="detail")
+        if html is None:
             return None
 
         parser = _DetailPageParser(self.base_url)
-        parser.feed(resp.text)
-        parser.finalize()
+        parser.feed(html)
 
-        # Stream links are loaded via external JS from meinecloud.click —
-        # not present in static HTML. Extract IMDB ID and fetch directly.
-        if not parser.stream_links:
-            m = _IMDB_ID_RE.search(resp.text)
-            if m:
-                parser.stream_links = await self._fetch_meinecloud_streams(m.group(1))
+        player = devideosrc.find_player(html)
+        if player is None:
+            self._log.debug("streamkiste_no_player", url=detail_url)
+            return None
 
-        if not parser.stream_links:
+        client = await self._ensure_client()
+        found = await devideosrc.fetch_links(
+            client, player, **self._request_kwargs(client)
+        )
+        links = found.links
+        # the site embeds the series player for movies too: trust the answer
+        is_series = found.kind == "tv" or parser.is_series
+
+        if is_series and season is not None and links:
+            links = devideosrc.filter_episodes(links, season, episode)
+
+        if not links:
             self._log.debug("streamkiste_no_streams", url=detail_url)
             return None
 
         title = parser.title or str(result.get("title", ""))
         genres = parser.genres or list(result.get("genres", []))
-        is_series = parser.is_series or bool(result.get("is_series", False))
         year = parser.year or str(result.get("year", ""))
         category = _detect_category(genres, is_series)
-
-        quality = ""
-        for link in parser.stream_links:
-            if link.get("quality"):
-                quality = link["quality"]
-                break
 
         description_parts: list[str] = []
         if genres:
@@ -731,14 +580,14 @@ class StreamkistePlugin(HttpxPluginBase):
         metadata: dict[str, str] = {
             "year": year,
             "genres": ", ".join(genres),
-            "quality": quality,
             "imdb_rating": parser.imdb_rating,
+            "imdb_id": player.imdb_id,
         }
 
         return SearchResult(
             title=title,
-            download_link=parser.stream_links[0]["link"],
-            download_links=parser.stream_links,
+            download_link=links[0]["link"],
+            download_links=links,
             source_url=detail_url,
             category=category,
             description=description,
@@ -769,7 +618,7 @@ class StreamkistePlugin(HttpxPluginBase):
             r: dict[str, str | list[str] | bool],
         ) -> SearchResult | None:
             async with sem:
-                return await self._scrape_detail(r)
+                return await self._scrape_detail(r, season=season, episode=episode)
 
         gathered = await asyncio.gather(
             *[_bounded(r) for r in all_items],

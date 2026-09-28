@@ -114,34 +114,6 @@ def _clean_title(title: str) -> str:
     return title.strip()
 
 
-_EPISODE_NUM_RE = re.compile(r"(\d{1,2})\s*[xX]\s*(\d{1,4})")
-
-
-def _filter_episode_links(
-    links: list[dict[str, str]],
-    season: int,
-    episode: int | None,
-) -> list[dict[str, str]]:
-    """Filter series download_links to the requested season/episode.
-
-    Parses ``NxM`` patterns from link labels (e.g. ``1x5 Episode 5``).
-    Links without episode info are dropped (they belong to other episodes).
-    """
-    matched: list[dict[str, str]] = []
-    for link in links:
-        label = link.get("label", "")
-        m = _EPISODE_NUM_RE.search(label)
-        if not m:
-            continue
-        s, e = int(m.group(1)), int(m.group(2))
-        if s != season:
-            continue
-        if episode is not None and e != episode:
-            continue
-        matched.append(link)
-    return matched
-
-
 class _SearchResultParser(HTMLParser):
     """Parse streamcloud.plus DLE search result page.
 
@@ -553,16 +525,16 @@ class StreamcloudPlugin(HttpxPluginBase):
         if player is None:
             self._log.debug("streamcloud_no_player", url=detail_url)
             return None
-        is_series = player.kind == "tv" or parser.is_series
-
         client = await self._ensure_client()
-        links = await devideosrc.fetch_links(
+        found = await devideosrc.fetch_links(
             client, player, **self._request_kwargs(client)
         )
+        links = found.links
+        is_series = found.kind == "tv" or parser.is_series
 
         # Filter series links to requested season/episode
         if is_series and season is not None and links:
-            links = _filter_episode_links(links, season, episode)
+            links = devideosrc.filter_episodes(links, season, episode)
             if not links:
                 self._log.debug(
                     "streamcloud_no_episode_match",

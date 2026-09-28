@@ -1,14 +1,16 @@
-"""Tests for the streamkiste.taxi Python plugin (httpx-based)."""
+"""Tests for the streamkiste Python plugin (httpx-based)."""
 
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+import respx
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "streamkiste.py"
 
@@ -31,8 +33,6 @@ _DetailPageParser = _mod._DetailPageParser
 _clean_title = _mod._clean_title
 _detect_series = _mod._detect_series
 _detect_category = _mod._detect_category
-_domain_from_url = _mod._domain_from_url
-_extract_onclick_url = _mod._extract_onclick_url
 _parse_release_text = _mod._parse_release_text
 
 
@@ -72,7 +72,24 @@ Stranger Things</a>
 </body></html>
 """
 
-_DETAIL_HTML = """\
+_BASE = "https://streamkiste.bid"
+
+
+def _player_script(imdb: str) -> str:
+    """The site embeds devideosrc's *series* player for every title."""
+    return f"""
+<iframe id="serial_iframe" src="" allowfullscreen></iframe>
+<script>
+(function() {{
+  var imdb = '{imdb}';
+  var iframe = document.getElementById('serial_iframe');
+  iframe.src = 'https://devideosrc.co/serial/' + imdb;
+}})();
+</script>
+"""
+
+
+_DETAIL_HTML = f"""\
 <html><body>
 <div class="info-right">
   <div class="title"><h1>Batman Begins</h1></div>
@@ -84,20 +101,11 @@ _DETAIL_HTML = """\
   <p>Ein junger Bruce Wayne reist nach Osten, um dort Kampftechniken zu erlernen.</p>
 </div>
 <div class="average"><span>7.8</span></div>
-<a class="streams" onclick="window.open('https://supervideo.cc/abc123')">
-  <span class="streaming">Supervideo</span>
-  <mark>1080p</mark>
-  <span>1.0GB</span>
-</a>
-<a class="streams" onclick="window.open('https://dropload.io/xyz789')">
-  <span class="streaming">Dropload</span>
-  <mark>HD</mark>
-  <span>1.1GB</span>
-</a>
+{_player_script("tt0372784")}
 </body></html>
 """
 
-_SERIES_DETAIL_HTML = """\
+_SERIES_DETAIL_HTML = f"""\
 <html><body>
 <div class="info-right">
   <div class="title"><h1>Stranger Things Serie</h1></div>
@@ -109,11 +117,7 @@ _SERIES_DETAIL_HTML = """\
   <p>Nach dem Verschwinden eines Jungen werden Ereignisse aufgedeckt.</p>
 </div>
 <div class="average"><span>8.7</span></div>
-<a class="streams" onclick="window.open('https://supervideo.cc/st001')">
-  <span class="streaming">Supervideo</span>
-  <mark>1080p</mark>
-  <span>2.5GB</span>
-</a>
+{_player_script("tt4574334")}
 </body></html>
 """
 
@@ -139,19 +143,92 @@ _ANIME_SEARCH_HTML = """\
 </body></html>
 """
 
+_EMBED_LINKS = "https://devideosrc.co/api/embed-links"
+_TOKEN_PAGE = (
+    "<script>body: JSON.stringify({ type: 'tv', id: \"x\", "
+    'token: "dG9rZW4.abc123" })</script>'
+)
 
-# ---------------------------------------------------------------------------
-# Helper functions
-# ---------------------------------------------------------------------------
+_MOVIE_LINKS_JSON = {
+    "ok": True,
+    "sources": [
+        {"name": "supervideo.cc", "url": "https://supervideo.cc/e/abc123", "rank": 1},
+        {"name": "dropload.io", "url": "https://dr0pstream.com/e/xyz789", "rank": 2},
+    ],
+}
+
+_SERIES_LINKS_JSON = {
+    "ok": True,
+    "tv": {
+        "seasons": [
+            {
+                "season_number": 1,
+                "episodes": [
+                    {
+                        "episode_number": 1,
+                        "sources": [
+                            {
+                                "name": "supervideo.cc",
+                                "url": "https://supervideo.cc/e/st101",
+                            }
+                        ],
+                    },
+                    {
+                        "episode_number": 2,
+                        "sources": [
+                            {
+                                "name": "supervideo.cc",
+                                "url": "https://supervideo.cc/e/st102",
+                            }
+                        ],
+                    },
+                ],
+            }
+        ]
+    },
+}
 
 
-def _mock_response(text: str, status_code: int = 200) -> httpx.Response:
-    """Create a mock httpx.Response."""
-    return httpx.Response(
-        status_code=status_code,
-        text=text,
-        request=httpx.Request("GET", "https://streamkiste.taxi/"),
+def _embed_links(request: httpx.Request) -> httpx.Response:
+    body = json.loads(request.content)
+    payload = _MOVIE_LINKS_JSON if body["type"] == "movie" else _SERIES_LINKS_JSON
+    return httpx.Response(200, json=payload)
+
+
+def _mock_site(search_html: str, details: dict[str, str]) -> None:
+    """Route search, detail pages and devideosrc.
+
+    Batman (tt0372784) is a movie: its series page has no token, the movie
+    page does. Stranger Things (tt4574334) answers on the series page.
+    """
+    respx.get(_BASE + "/index.php").respond(200, text=search_html)
+    respx.post(url__startswith=_BASE + "/index.php").respond(200, text="")
+    for url, html in details.items():
+        respx.get(url).respond(200, text=html)
+    respx.get(url__startswith="https://devideosrc.co/serial/tt0372784").respond(
+        200, text="<html>no token</html>"
     )
+    respx.get(url__startswith="https://devideosrc.co/movie/tt0372784").respond(
+        200, text=_TOKEN_PAGE
+    )
+    respx.get(url__startswith="https://devideosrc.co/serial/tt4574334").respond(
+        200, text=_TOKEN_PAGE
+    )
+    respx.post(_EMBED_LINKS).mock(side_effect=_embed_links)
+
+
+_BATMAN_URL = _BASE + "/film/12345-batman-begins.html"
+_ST_URL = _BASE + "/film/67890-stranger-things.html"
+_BOTH_DETAILS = {_BATMAN_URL: _DETAIL_HTML, _ST_URL: _SERIES_DETAIL_HTML}
+
+
+def _single_search(title: str, href: str, release: str = "2025 - Action") -> str:
+    return f"""\
+<div class="movie-preview res_item">
+  <div class="movie-title"><a href="{href}" title="{title}">{title}</a></div>
+  <div class="movie-release">{release}</div>
+</div>
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -213,41 +290,6 @@ class TestDetectCategory:
         assert _detect_category(["Anime", "Action"], is_series=False) == 5070
 
 
-class TestDomainFromUrl:
-    """Tests for _domain_from_url."""
-
-    def test_extracts_domain(self) -> None:
-        assert _domain_from_url("https://supervideo.cc/abc123") == "supervideo"
-
-    def test_strips_www(self) -> None:
-        assert _domain_from_url("https://www.example.com/page") == "example"
-
-    def test_invalid_url(self) -> None:
-        assert _domain_from_url("not-a-url") == "unknown"
-
-
-class TestExtractOnclickUrl:
-    """Tests for _extract_onclick_url."""
-
-    def test_single_quotes(self) -> None:
-        assert (
-            _extract_onclick_url("window.open('https://example.com/abc')")
-            == "https://example.com/abc"
-        )
-
-    def test_double_quotes(self) -> None:
-        assert (
-            _extract_onclick_url('window.open("https://example.com/xyz")')
-            == "https://example.com/xyz"
-        )
-
-    def test_no_match(self) -> None:
-        assert _extract_onclick_url("someOtherFunction()") == ""
-
-    def test_empty_string(self) -> None:
-        assert _extract_onclick_url("") == ""
-
-
 class TestParseReleaseText:
     """Tests for _parse_release_text."""
 
@@ -289,14 +331,14 @@ class TestSearchResultParser:
     """Tests for _SearchResultParser."""
 
     def test_parses_search_results(self) -> None:
-        parser = _SearchResultParser("https://streamkiste.taxi")
+        parser = _SearchResultParser("https://streamkiste.bid")
         parser.feed(_SEARCH_HTML)
 
         assert len(parser.results) == 2
 
         first = parser.results[0]
         assert first["title"] == "Batman Begins"
-        assert first["url"] == "https://streamkiste.taxi/film/12345-batman-begins.html"
+        assert first["url"] == "https://streamkiste.bid/film/12345-batman-begins.html"
         assert first["year"] == "2025"
         assert "Action" in first["genres"]
         assert "Abenteuer" in first["genres"]
@@ -309,7 +351,7 @@ class TestSearchResultParser:
         assert second["is_series"] is True
 
     def test_empty_page(self) -> None:
-        parser = _SearchResultParser("https://streamkiste.taxi")
+        parser = _SearchResultParser("https://streamkiste.bid")
         parser.feed("<html><body>No results</body></html>")
         assert len(parser.results) == 0
 
@@ -319,12 +361,12 @@ class TestSearchResultParser:
           <div class="movie-release">2025 - Action</div>
         </div>
         """
-        parser = _SearchResultParser("https://streamkiste.taxi")
+        parser = _SearchResultParser("https://streamkiste.bid")
         parser.feed(html)
         assert len(parser.results) == 0
 
     def test_anime_search_result(self) -> None:
-        parser = _SearchResultParser("https://streamkiste.taxi")
+        parser = _SearchResultParser("https://streamkiste.bid")
         parser.feed(_ANIME_SEARCH_HTML)
 
         assert len(parser.results) == 1
@@ -343,7 +385,7 @@ class TestSearchResultParser:
           <div class="movie-release">2025 - Action</div>
         </div>
         """
-        parser = _SearchResultParser("https://streamkiste.taxi")
+        parser = _SearchResultParser("https://streamkiste.bid")
         parser.feed(html)
 
         assert len(parser.results) == 1
@@ -351,93 +393,48 @@ class TestSearchResultParser:
 
 
 class TestDetailPageParser:
-    """Tests for _DetailPageParser."""
-
-    def test_parses_stream_links(self) -> None:
-        parser = _DetailPageParser("https://streamkiste.taxi")
-        parser.feed(_DETAIL_HTML)
-        parser.finalize()
-
-        assert len(parser.stream_links) == 2
-
-        first = parser.stream_links[0]
-        assert first["hoster"] == "Supervideo"
-        assert first["link"] == "https://supervideo.cc/abc123"
-        assert first["quality"] == "1080p"
-        assert first["size"] == "1.0GB"
-
-        second = parser.stream_links[1]
-        assert second["hoster"] == "Dropload"
-        assert second["link"] == "https://dropload.io/xyz789"
-        assert second["quality"] == "HD"
-        assert second["size"] == "1.1GB"
+    """Tests for _DetailPageParser (metadata only)."""
 
     def test_parses_metadata(self) -> None:
-        parser = _DetailPageParser("https://streamkiste.taxi")
+        parser = _DetailPageParser(_BASE)
         parser.feed(_DETAIL_HTML)
-        parser.finalize()
 
         assert parser.title == "Batman Begins"
         assert parser.year == "2025"
         assert parser.imdb_rating == "7.8"
-        assert "Action" in parser.genres
-        assert "Abenteuer" in parser.genres
+        assert parser.genres == ["Action", "Abenteuer"]
         assert parser.is_series is False
 
     def test_parses_description(self) -> None:
-        parser = _DetailPageParser("https://streamkiste.taxi")
+        parser = _DetailPageParser(_BASE)
         parser.feed(_DETAIL_HTML)
-        parser.finalize()
 
         assert "Kampftechniken" in parser.description
 
     def test_series_detail(self) -> None:
-        parser = _DetailPageParser("https://streamkiste.taxi")
+        parser = _DetailPageParser(_BASE)
         parser.feed(_SERIES_DETAIL_HTML)
-        parser.finalize()
 
         assert parser.title == "Stranger Things"
         assert parser.is_series is True
         assert parser.year == "2024"
         assert parser.imdb_rating == "8.7"
-        assert len(parser.stream_links) == 1
 
     def test_empty_detail(self) -> None:
-        parser = _DetailPageParser("https://streamkiste.taxi")
+        parser = _DetailPageParser(_BASE)
         parser.feed(_EMPTY_DETAIL_HTML)
-        parser.finalize()
 
         assert parser.title == "No Streams"
-        assert len(parser.stream_links) == 0
         assert parser.is_series is False
 
     def test_imdb_rating_extraction(self) -> None:
-        html = '<div class="average"><span>8.5</span></div>'
-        parser = _DetailPageParser("https://streamkiste.taxi")
-        parser.feed(html)
+        parser = _DetailPageParser(_BASE)
+        parser.feed('<div class="average"><span>8.5</span></div>')
         assert parser.imdb_rating == "8.5"
-
-    def test_stream_without_onclick_skipped(self) -> None:
-        html = '<a class="streams" href="#">No onclick</a>'
-        parser = _DetailPageParser("https://streamkiste.taxi")
-        parser.feed(html)
-        assert len(parser.stream_links) == 0
-
-    def test_hoster_falls_back_to_domain(self) -> None:
-        html = """\
-        <a class="streams" onclick="window.open('https://newhost.io/vid123')">
-          <mark>720p</mark>
-        </a>
-        """
-        parser = _DetailPageParser("https://streamkiste.taxi")
-        parser.feed(html)
-
-        assert len(parser.stream_links) == 1
-        assert parser.stream_links[0]["hoster"] == "newhost"
 
 
 # ---------------------------------------------------------------------------
-# Plugin integration tests (mocked HTTP)
+# Plugin integration tests (respx)
 # ---------------------------------------------------------------------------
 
 
@@ -448,309 +445,199 @@ class TestStreamkistePluginAttributes:
         plug = _make_plugin()
         assert plug.name == "streamkiste"
 
-    def test_plugin_version(self) -> None:
-        plug = _make_plugin()
-        assert plug.version == "1.0.0"
-
     def test_plugin_mode(self) -> None:
         plug = _make_plugin()
         assert plug.mode == "httpx"
+
+    def test_primary_domain(self) -> None:
+        assert _StreamkistePlugin().base_url == _BASE
 
 
 class TestStreamkistePluginSearch:
     """Tests for StreamkistePlugin search with mocked HTTP."""
 
+    @respx.mock
     @pytest.mark.asyncio
     async def test_search_returns_results(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
+        _mock_site(_SEARCH_HTML, _BOTH_DETAILS)
 
-        mock_client.get = AsyncMock(
-            side_effect=[
-                _mock_response(_SEARCH_HTML),  # search page 1 (GET)
-                _mock_response(_DETAIL_HTML),  # Batman detail (GET)
-                _mock_response(_SERIES_DETAIL_HTML),  # Stranger Things detail (GET)
-            ]
-        )
-        mock_client.post = AsyncMock(
-            return_value=_mock_response(""),  # search page 2 (POST, empty)
-        )
-
-        plug._client = mock_client
         results = await plug.search("Batman")
+        await plug.cleanup()
 
-        assert len(results) == 2
-        titles = {r.title for r in results}
-        assert "Batman Begins" in titles
-        assert "Stranger Things" in titles
+        assert {r.title for r in results} == {"Batman Begins", "Stranger Things"}
 
+    @respx.mock
     @pytest.mark.asyncio
-    async def test_search_movie_result(self) -> None:
+    async def test_movie_behind_series_player(self) -> None:
+        """Series player without token -> movie player answers."""
         plug = _make_plugin()
-        mock_client = AsyncMock()
-
-        search_html = """\
-        <div class="movie-preview res_item">
-          <div class="movie-title">
-            <a href="/film/12345-batman.html" title="Batman Begins">\
-Batman Begins</a>
-          </div>
-          <div class="movie-release">2025 - Action kinofilme</div>
-          <div class="ico-bar"><span class="icon-hd"></span></div>
-        </div>
-        """
-
-        mock_client.get = AsyncMock(
-            side_effect=[
-                _mock_response(search_html),  # search page 1 (GET)
-                _mock_response(_DETAIL_HTML),  # detail (GET)
-            ]
-        )
-        mock_client.post = AsyncMock(
-            return_value=_mock_response(""),  # search page 2 (POST, empty)
+        _mock_site(
+            _single_search("Batman Begins", "/film/12345-batman-begins.html"),
+            {_BATMAN_URL: _DETAIL_HTML},
         )
 
-        plug._client = mock_client
         results = await plug.search("Batman")
+        await plug.cleanup()
 
         assert len(results) == 1
         first = results[0]
-        assert first.title == "Batman Begins"
         assert first.category == 2000
-        assert first.download_link.startswith("https://")
-        assert first.download_links is not None
-        assert len(first.download_links) == 2
+        assert [link["link"] for link in first.download_links] == [
+            "https://supervideo.cc/e/abc123",
+            "https://dr0pstream.com/e/xyz789",
+        ]
+        assert first.metadata == {
+            "year": "2025",
+            "genres": "Action, Abenteuer",
+            "imdb_rating": "7.8",
+            "imdb_id": "tt0372784",
+        }
 
+    @respx.mock
     @pytest.mark.asyncio
-    async def test_search_series_result(self) -> None:
+    async def test_series_result(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
-
-        search_html = """\
-        <div class="movie-preview res_item">
-          <div class="movie-title">
-            <a href="/film/67890-stranger-things.html" \
-title="Stranger Things">Stranger Things</a>
-          </div>
-          <div class="movie-release">2024 - Drama Serien</div>
-        </div>
-        """
-
-        mock_client.get = AsyncMock(
-            side_effect=[
-                _mock_response(search_html),  # search page 1 (GET)
-                _mock_response(_SERIES_DETAIL_HTML),  # detail (GET)
-            ]
-        )
-        mock_client.post = AsyncMock(
-            return_value=_mock_response(""),  # search page 2 (POST, empty)
+        _mock_site(
+            _single_search(
+                "Stranger Things", "/film/67890-stranger-things.html", "2024 - Serien"
+            ),
+            {_ST_URL: _SERIES_DETAIL_HTML},
         )
 
-        plug._client = mock_client
         results = await plug.search("Stranger Things")
+        await plug.cleanup()
 
         assert len(results) == 1
         first = results[0]
         assert first.title == "Stranger Things"
         assert first.category == 5000
+        assert [link["label"] for link in first.download_links] == [
+            "1x1 supervideo",
+            "1x2 supervideo",
+        ]
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_series_episode_filter(self) -> None:
+        plug = _make_plugin()
+        _mock_site(
+            _single_search(
+                "Stranger Things", "/film/67890-stranger-things.html", "2024 - Serien"
+            ),
+            {_ST_URL: _SERIES_DETAIL_HTML},
+        )
+
+        results = await plug.search("Stranger Things", season=1, episode=2)
+        await plug.cleanup()
+
+        assert [r.download_link for r in results] == ["https://supervideo.cc/e/st102"]
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_season_request_drops_movies(self) -> None:
+        plug = _make_plugin()
+        _mock_site(_SEARCH_HTML, _BOTH_DETAILS)
+
+        results = await plug.search("x", season=1)
+        await plug.cleanup()
+
+        assert [r.title for r in results] == ["Stranger Things"]
 
     @pytest.mark.asyncio
     async def test_search_empty_query_returns_empty(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
-        plug._client = mock_client
+        plug._client = AsyncMock()
 
-        results = await plug.search("")
-        assert results == []
+        assert await plug.search("") == []
 
+    @respx.mock
     @pytest.mark.asyncio
     async def test_search_no_results(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
+        _mock_site("<html><body>No results</body></html>", {})
 
-        mock_client.get = AsyncMock(
-            return_value=_mock_response("<html><body>No results</body></html>")
-        )
-
-        plug._client = mock_client
         results = await plug.search("xyznonexistent")
+        await plug.cleanup()
 
         assert results == []
 
+    @respx.mock
     @pytest.mark.asyncio
     async def test_search_http_error(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=httpx.ConnectError("connection failed"))
+        respx.get(_BASE + "/index.php").mock(side_effect=httpx.ConnectError("down"))
 
-        plug._client = mock_client
         results = await plug.search("test")
+        await plug.cleanup()
 
         assert results == []
 
+    @respx.mock
     @pytest.mark.asyncio
     async def test_detail_page_error_skips_result(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
+        _mock_site(_single_search("Test", "/film/12345-test.html"), {})
+        respx.get(_BASE + "/film/12345-test.html").respond(500)
 
-        search_html = """\
-        <div class="movie-preview res_item">
-          <div class="movie-title">
-            <a href="/film/12345-test.html" title="Test">Test</a>
-          </div>
-          <div class="movie-release">2025 - Action</div>
-        </div>
-        """
-
-        mock_client.get = AsyncMock(
-            side_effect=[
-                _mock_response(search_html),  # search page 1 (GET)
-                httpx.ConnectError("detail failed"),  # detail page error (GET)
-            ]
-        )
-        mock_client.post = AsyncMock(
-            return_value=_mock_response(""),  # search page 2 (POST, empty)
-        )
-
-        plug._client = mock_client
         results = await plug.search("test")
+        await plug.cleanup()
 
         assert results == []
 
+    @respx.mock
     @pytest.mark.asyncio
-    async def test_detail_without_streams_skips_result(self) -> None:
+    async def test_detail_without_player_skips_result(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
-
-        search_html = """\
-        <div class="movie-preview res_item">
-          <div class="movie-title">
-            <a href="/film/12345-test.html" title="Test">Test</a>
-          </div>
-          <div class="movie-release">2025 - Action</div>
-        </div>
-        """
-
-        mock_client.get = AsyncMock(
-            side_effect=[
-                _mock_response(search_html),  # search page 1 (GET)
-                _mock_response(_EMPTY_DETAIL_HTML),  # detail without streams (GET)
-            ]
-        )
-        mock_client.post = AsyncMock(
-            return_value=_mock_response(""),  # search page 2 (POST, empty)
+        url = _BASE + "/film/12345-test.html"
+        _mock_site(
+            _single_search("Test", "/film/12345-test.html"), {url: _EMPTY_DETAIL_HTML}
         )
 
-        plug._client = mock_client
         results = await plug.search("test")
+        await plug.cleanup()
 
         assert results == []
+        assert not any("devideosrc" in str(c.request.url) for c in respx.calls)
 
-    @pytest.mark.asyncio
-    async def test_result_metadata(self) -> None:
-        plug = _make_plugin()
-        mock_client = AsyncMock()
-
-        search_html = """\
-        <div class="movie-preview res_item">
-          <div class="movie-title">
-            <a href="/film/12345-batman.html" title="Batman Begins">\
-Batman Begins</a>
-          </div>
-          <div class="movie-release">2025 - Action</div>
-        </div>
-        """
-
-        mock_client.get = AsyncMock(
-            side_effect=[
-                _mock_response(search_html),  # search page 1 (GET)
-                _mock_response(_DETAIL_HTML),  # detail (GET)
-            ]
-        )
-        mock_client.post = AsyncMock(
-            return_value=_mock_response(""),  # search page 2 (POST, empty)
-        )
-
-        plug._client = mock_client
-        results = await plug.search("Batman")
-
-        first = results[0]
-        assert first.metadata.get("quality") == "1080p"
-        assert first.metadata.get("imdb_rating") == "7.8"
-        assert "Action" in first.metadata.get("genres", "")
-
+    @respx.mock
     @pytest.mark.asyncio
     async def test_pagination_uses_post_for_page_2(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
+        _mock_site(_SEARCH_HTML, {})
 
-        # Page 1 returns results via GET, page 2 via POST
-        mock_client.get = AsyncMock(
-            side_effect=[
-                _mock_response(_SEARCH_HTML),  # search page 1 (GET)
-            ]
-        )
-        mock_client.post = AsyncMock(
-            side_effect=[
-                _mock_response(""),  # search page 2 (POST, empty → stop)
-            ]
-        )
-
-        plug._client = mock_client
-        # Use _search_all_pages to trigger pagination
         results = await plug._search_all_pages("test")
+        await plug.cleanup()
 
         assert len(results) == 2
-        mock_client.get.assert_called_once()
-        mock_client.post.assert_called_once()
+        methods = [c.request.method for c in respx.calls]
+        assert methods == ["GET", "POST"]
 
 
 class TestStreamkisteCategoryFiltering:
     """Tests for category filtering."""
 
+    @respx.mock
     @pytest.mark.asyncio
     async def test_filter_movies_only(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
+        _mock_site(_SEARCH_HTML, _BOTH_DETAILS)
 
-        mock_client.get = AsyncMock(
-            side_effect=[
-                _mock_response(_SEARCH_HTML),  # search page 1 (GET)
-                _mock_response(_DETAIL_HTML),  # Batman (movie, GET)
-                _mock_response(_SERIES_DETAIL_HTML),  # Stranger Things (series, GET)
-            ]
-        )
-        mock_client.post = AsyncMock(
-            return_value=_mock_response(""),  # search page 2 (POST, empty)
-        )
-
-        plug._client = mock_client
         results = await plug.search("test", category=2000)
+        await plug.cleanup()
 
-        assert len(results) == 1
-        assert results[0].title == "Batman Begins"
+        assert [r.title for r in results] == ["Batman Begins"]
 
+    @respx.mock
     @pytest.mark.asyncio
     async def test_filter_series_only(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
+        _mock_site(_SEARCH_HTML, _BOTH_DETAILS)
 
-        mock_client.get = AsyncMock(
-            side_effect=[
-                _mock_response(_SEARCH_HTML),  # search page 1 (GET)
-                _mock_response(_DETAIL_HTML),  # Batman (movie, GET)
-                _mock_response(_SERIES_DETAIL_HTML),  # Stranger Things (series, GET)
-            ]
-        )
-        mock_client.post = AsyncMock(
-            return_value=_mock_response(""),  # search page 2 (POST, empty)
-        )
-
-        plug._client = mock_client
         results = await plug.search("test", category=5000)
+        await plug.cleanup()
 
-        assert len(results) == 1
-        assert results[0].title == "Stranger Things"
+        assert [r.title for r in results] == ["Stranger Things"]
 
 
 class TestStreamkisteDomainFallback:
@@ -767,8 +654,8 @@ class TestStreamkisteDomainFallback:
         ok_resp.url = httpx.URL("https://streamkiste.sx/")
         mock_client.head = AsyncMock(
             side_effect=[
+                httpx.ConnectError("streamkiste.bid down"),
                 httpx.ConnectError("streamkiste.taxi down"),
-                httpx.ConnectError("streamkiste.tv down"),
                 ok_resp,
             ]
         )
@@ -790,7 +677,7 @@ class TestStreamkisteDomainFallback:
         plug._client = mock_client
         await plug._verify_domain()
 
-        assert plug.base_url == "https://streamkiste.taxi"
+        assert plug.base_url == "https://streamkiste.bid"
         assert plug._domain_verified is True
 
     @pytest.mark.asyncio

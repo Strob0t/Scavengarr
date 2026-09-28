@@ -44,6 +44,7 @@ _MOVIE_PLAYER_RE = re.compile(r"devideosrc\.co/movie/(tt\d+)")
 _SERIAL_PLAYER_RE = re.compile(r"devideosrc\.co/serial/")
 _IMDB_RE = re.compile(r"devideosrc\.co/(?:embed/download|serial)/(tt\d+)")
 _IMDB_VAR_RE = re.compile(r"""var\s+imdb\s*=\s*['"](tt\d+)['"]""")
+_EPISODE_LABEL_RE = re.compile(r"(\d+)x(\d+) ")
 _TOKEN_RE = re.compile(r"""token:\s*["']([A-Za-z0-9_.=-]+)["']""")
 
 
@@ -134,6 +135,24 @@ def tv_links(payload: dict[str, Any]) -> list[dict[str, str]]:
     return links
 
 
+def filter_episodes(
+    links: list[dict[str, str]], season: int, episode: int | None
+) -> list[dict[str, str]]:
+    """Series links of *season* (and *episode*, when given).
+
+    Uses the ``<season>x<episode>`` label prefix set by :func:`tv_links`.
+    """
+    matched: list[dict[str, str]] = []
+    for link in links:
+        m = _EPISODE_LABEL_RE.match(link.get("label", ""))
+        if not m or int(m.group(1)) != season:
+            continue
+        if episode is not None and int(m.group(2)) != episode:
+            continue
+        matched.append(link)
+    return matched
+
+
 def _uncached(url: str) -> str:
     """*url* with a unique query string, past Cloudflare's page cache."""
     return f"{url}?r={time.monotonic_ns()}"
@@ -153,13 +172,22 @@ async def _get_page(
     return resp
 
 
+@dataclass(frozen=True)
+class PlayerLinks:
+    """Hoster links of a player; *kind* is the player that answered."""
+
+    kind: PlayerKind
+    links: list[dict[str, str]]
+
+
 async def _embed_links(
-    client: httpx.AsyncClient,
-    player: DevideosrcPlayer,
-    page_url: str,
-    **request_kwargs: Any,
-) -> httpx.Response | None:
-    """Read the token from *page_url* and POST it to ``/api/embed-links``."""
+    client: httpx.AsyncClient, player: DevideosrcPlayer, **request_kwargs: Any
+) -> dict[str, Any] | None:
+    """Read the player page's token and POST it to ``/api/embed-links``.
+
+    ``None`` when the page carries no token (devideosrc has no such title).
+    """
+    page_url = player_url(player)
     page = await _get_page(client, page_url, **request_kwargs)
     token = _TOKEN_RE.search(page.text)
     if token is None:
@@ -171,28 +199,31 @@ async def _embed_links(
         **request_kwargs,
     )
     resp.raise_for_status()
-    return resp
+    payload = resp.json()
+    return payload if isinstance(payload, dict) else None
 
 
 async def fetch_links(
     client: httpx.AsyncClient,
     player: DevideosrcPlayer,
     **request_kwargs: Any,
-) -> list[dict[str, str]]:
-    """Load *player*'s hoster links (``[]`` when unavailable).
+) -> PlayerLinks:
+    """Load *player*'s hoster links (empty ``links`` when unavailable).
 
-    *request_kwargs* (timeout, headers) are passed to both requests.
+    Some sites (streamkiste) embed the series player for movies too; when the
+    series page has no token, the movie player is tried instead.
+    *request_kwargs* (timeout, headers) are passed to every request.
     """
-    page_url = player_url(player)
     try:
-        resp = await _embed_links(client, player, page_url, **request_kwargs)
-        if resp is None:
-            return []
-        payload = resp.json()
+        payload = await _embed_links(client, player, **request_kwargs)
+        if payload is None and player.kind == "tv":
+            player = DevideosrcPlayer(kind="movie", imdb_id=player.imdb_id)
+            payload = await _embed_links(client, player, **request_kwargs)
     except (httpx.HTTPError, ValueError) as exc:
-        log.warning("devideosrc_fetch_failed", url=page_url, error=str(exc))
-        return []
+        log.warning("devideosrc_fetch_failed", url=player_url(player), error=str(exc))
+        return PlayerLinks(kind=player.kind, links=[])
 
-    if not isinstance(payload, dict) or not payload.get("ok"):
-        return []
-    return movie_links(payload) if player.kind == "movie" else tv_links(payload)
+    if payload is None or not payload.get("ok"):
+        return PlayerLinks(kind=player.kind, links=[])
+    links = movie_links(payload) if player.kind == "movie" else tv_links(payload)
+    return PlayerLinks(kind=player.kind, links=links)

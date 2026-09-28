@@ -152,7 +152,7 @@ class TestFetchLinks:
         route = respx.post(_EMBED_LINKS).respond(200, json=_MOVIE_PAYLOAD)
 
         async with httpx.AsyncClient() as client:
-            links = await devideosrc.fetch_links(client, _MOVIE)
+            links = (await devideosrc.fetch_links(client, _MOVIE)).links
 
         assert [link["hoster"] for link in links] == ["doodstream", "dropload"]
         assert json.loads(route.calls[0].request.content) == {
@@ -170,7 +170,7 @@ class TestFetchLinks:
         route = respx.post(_EMBED_LINKS).respond(200, json=_TV_PAYLOAD)
 
         async with httpx.AsyncClient() as client:
-            links = await devideosrc.fetch_links(client, _SERIES)
+            links = (await devideosrc.fetch_links(client, _SERIES)).links
 
         assert len(links) == 2
         assert json.loads(route.calls[0].request.content)["type"] == "tv"
@@ -184,7 +184,7 @@ class TestFetchLinks:
         route = respx.post(_EMBED_LINKS)
 
         async with httpx.AsyncClient() as client:
-            assert await devideosrc.fetch_links(client, _MOVIE) == []
+            assert (await devideosrc.fetch_links(client, _MOVIE)).links == []
         assert not route.called
 
     @respx.mock
@@ -196,7 +196,7 @@ class TestFetchLinks:
         respx.post(_EMBED_LINKS).respond(200, json={"ok": False})
 
         async with httpx.AsyncClient() as client:
-            assert await devideosrc.fetch_links(client, _MOVIE) == []
+            assert (await devideosrc.fetch_links(client, _MOVIE)).links == []
 
     @respx.mock
     @pytest.mark.asyncio
@@ -210,8 +210,8 @@ class TestFetchLinks:
         )
 
         async with httpx.AsyncClient() as client:
-            assert await devideosrc.fetch_links(client, _MOVIE) == []
-            assert await devideosrc.fetch_links(client, _SERIES) == []
+            assert (await devideosrc.fetch_links(client, _MOVIE)).links == []
+            assert (await devideosrc.fetch_links(client, _SERIES)).links == []
 
     @respx.mock
     @pytest.mark.asyncio
@@ -222,7 +222,7 @@ class TestFetchLinks:
         respx.post(_EMBED_LINKS).respond(200, text="not json")
 
         async with httpx.AsyncClient() as client:
-            assert await devideosrc.fetch_links(client, _MOVIE) == []
+            assert (await devideosrc.fetch_links(client, _MOVIE)).links == []
 
 
 class TestPlayerPageCache:
@@ -235,7 +235,7 @@ class TestPlayerPageCache:
         respx.post(_EMBED_LINKS).respond(200, json=_MOVIE_PAYLOAD)
 
         async with httpx.AsyncClient() as client:
-            await devideosrc.fetch_links(client, _MOVIE)
+            (await devideosrc.fetch_links(client, _MOVIE)).links
 
         assert page.calls[0].request.url.params["r"]
 
@@ -257,7 +257,7 @@ class TestPlayerPageCache:
         respx.post(_EMBED_LINKS).respond(200, json=_MOVIE_PAYLOAD)
 
         async with httpx.AsyncClient() as client:
-            links = await devideosrc.fetch_links(client, _MOVIE)
+            links = (await devideosrc.fetch_links(client, _MOVIE)).links
 
         assert len(links) == 2
         first, retry = (c.request.url.params["r"] for c in page.calls)
@@ -276,7 +276,7 @@ class TestPlayerPageCache:
         ).respond(429)
 
         async with httpx.AsyncClient() as client:
-            assert await devideosrc.fetch_links(client, _MOVIE) == []
+            assert (await devideosrc.fetch_links(client, _MOVIE)).links == []
         assert page.call_count == devideosrc._PAGE_ATTEMPTS
 
     @respx.mock
@@ -289,5 +289,78 @@ class TestPlayerPageCache:
         route = respx.post(_EMBED_LINKS).respond(429)
 
         async with httpx.AsyncClient() as client:
-            assert await devideosrc.fetch_links(client, _MOVIE) == []
+            assert (await devideosrc.fetch_links(client, _MOVIE)).links == []
         assert route.call_count == 1
+
+
+class TestSeriesPlayerForMovies:
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_falls_back_to_movie_player(self) -> None:
+        serial = respx.get(
+            url__startswith="https://devideosrc.co/serial/tt0903747"
+        ).respond(200, text="<html>no token</html>")
+        respx.get(url__startswith="https://devideosrc.co/movie/tt0903747").respond(
+            200, text=_PLAYER_HTML
+        )
+        route = respx.post(_EMBED_LINKS).respond(200, json=_MOVIE_PAYLOAD)
+
+        async with httpx.AsyncClient() as client:
+            found = await devideosrc.fetch_links(client, _SERIES)
+
+        assert serial.called
+        assert found.kind == "movie"
+        assert len(found.links) == 2
+        assert json.loads(route.calls[0].request.content)["type"] == "movie"
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_series_answer_keeps_tv_kind(self) -> None:
+        respx.get(url__startswith="https://devideosrc.co/serial/tt0903747").respond(
+            200, text=_PLAYER_HTML
+        )
+        respx.post(_EMBED_LINKS).respond(200, json=_TV_PAYLOAD)
+
+        async with httpx.AsyncClient() as client:
+            found = await devideosrc.fetch_links(client, _SERIES)
+
+        assert found.kind == "tv"
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_movie_without_token_does_not_try_series(self) -> None:
+        respx.get(url__startswith="https://devideosrc.co/movie/tt0371746").respond(
+            200, text=""
+        )
+        serial = respx.get(url__startswith="https://devideosrc.co/serial/")
+
+        async with httpx.AsyncClient() as client:
+            found = await devideosrc.fetch_links(client, _MOVIE)
+
+        assert found.links == []
+        assert not serial.called
+
+
+class TestFilterEpisodes:
+    _LINKS = [  # noqa: RUF012
+        {"hoster": "a", "link": "https://a/1", "label": "1x1 a"},
+        {"hoster": "a", "link": "https://a/2", "label": "1x2 a"},
+        {"hoster": "b", "link": "https://b/2", "label": "1x2 b"},
+        {"hoster": "a", "link": "https://a/3", "label": "2x1 a"},
+        {"hoster": "a", "link": "https://a/x", "label": "a"},
+    ]
+
+    def test_season_and_episode(self) -> None:
+        links = devideosrc.filter_episodes(self._LINKS, 1, 2)
+        assert [link["link"] for link in links] == ["https://a/2", "https://b/2"]
+
+    def test_whole_season(self) -> None:
+        assert len(devideosrc.filter_episodes(self._LINKS, 1, None)) == 3
+
+    def test_unlabelled_and_other_seasons_dropped(self) -> None:
+        assert devideosrc.filter_episodes(self._LINKS, 3, None) == []
+
+    def test_multi_digit_numbers(self) -> None:
+        links = [{"hoster": "a", "link": "https://a", "label": "12x105 a"}]
+        assert devideosrc.filter_episodes(links, 12, 105) == links
+        assert devideosrc.filter_episodes(links, 1, 2) == []
