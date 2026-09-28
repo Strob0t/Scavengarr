@@ -2,7 +2,7 @@
 
 # Plan: Anti-Bot Hardening (Patchright + Browser Fallback)
 
-**Status:** Phase 0–2 done (2026-09-28): all six Cloudflare-blocked plugins return results again. Phase 3 (FlareSolverr/Byparr) not needed. Open: captcha hosters (veev, vinovo, wolfstream)
+**Status:** Phase 0–2 done (2026-09-28): all six Cloudflare-blocked plugins return results again. Phase 3 (FlareSolverr/Byparr) not needed. Captcha hosters settled: veev works via its player API (`VeevResolver`); vinovo and wolfstream stay disabled (captcha per request)
 **Priority:** High (blocks 6 plugins and 3 hoster resolvers)
 **Related:** `docs/plans/plugin-repair.md`, `CHANGELOG.md` → `KNOWN_ISSUES`, `src/scavengarr/infrastructure/plugins/{playwright_base,shared_browser,httpx_base}.py`, `src/scavengarr/infrastructure/hoster_resolvers/{stealth_pool,cloudflare,supervideo,probe,xfs}.py`, `src/scavengarr/interfaces/composition.py`
 

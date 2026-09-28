@@ -64,8 +64,8 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** and **S
 | [More Plugins](../plans/more-plugins.md) | Plugin inventory and remaining candidates |
 | [Integration Tests](../plans/integration-tests.md) | Implemented: integration, E2E, and live smoke tests |
 | [Search Caching](../plans/search-caching.md) | Implemented: search result cache with `X-Cache` header |
-| [Plugin Repair](../plans/plugin-repair.md) | Triaged: repair plugins that currently return no results |
-| [Anti-Bot Hardening](../plans/antibot-patchright.md) | In progress: Patchright instead of playwright-stealth, browser fallback port for httpx plugins |
+| [Plugin Repair](../plans/plugin-repair.md) | Done: repaired plugins; hdfilme (site search broken) and streamworld (site gone) remain |
+| [Anti-Bot Hardening](../plans/antibot-patchright.md) | Done: Patchright instead of playwright-stealth, Turnstile solver, browser fallback port for httpx plugins |
 
 ### Refactoring History
 
