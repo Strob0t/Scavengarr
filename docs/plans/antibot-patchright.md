@@ -2,7 +2,7 @@
 
 # Plan: Anti-Bot Hardening (Patchright + Browser Fallback)
 
-**Status:** Phase 0 + Phase 1 done (2026-09-28): Patchright ^1.63, no forced browser UA, headful by default (Xvfb). Phase 2 next (Turnstile click, pool consolidation, httpx fallback)
+**Status:** Phase 0–2 done (2026-09-28): all six Cloudflare-blocked plugins return results again. Phase 3 (FlareSolverr/Byparr) not needed. Open: captcha hosters (veev, vinovo, wolfstream)
 **Priority:** High (blocks 6 plugins and 3 hoster resolvers)
 **Related:** `docs/plans/plugin-repair.md`, `CHANGELOG.md` → `KNOWN_ISSUES`, `src/scavengarr/infrastructure/plugins/{playwright_base,shared_browser,httpx_base}.py`, `src/scavengarr/infrastructure/hoster_resolvers/{stealth_pool,cloudflare,supervideo,probe,xfs}.py`, `src/scavengarr/interfaces/composition.py`
 
@@ -172,6 +172,24 @@ Tests:
 - Composition: fetcher injected when enabled, not injected when disabled.
 
 Acceptance: filmfans, kinoger, serienfans return results in live smoke; no httpx plugin without Cloudflare changes behavior.
+
+### Phase 2 results (2026-09-28)
+
+Done on `staging`: pools in `infrastructure/browser/` with one Chromium; `turnstile.py` (`solve_cloudflare`, post-challenge settle, `read_when_settled`); `_passes_cloudflare()` (403/503 challenge no longer aborts navigation); `_fetch_page_html()` retry for transient statuses; `BrowserFetcherPort` with `StealthPool.fetch_text()` and `resolve_redirect()`; `HttpxPluginBase._fetch_text()`, `_resolve_redirect()`, `_resolve_result_links()`, Cloudflare host memo; config `playwright.browser_fallback`.
+
+| Plugin | Live result (headful) | Was |
+|---|---|---|
+| ddlspot | 30 results for "Iron Man" in 8 s | 0 |
+| ddlvalley | 250 results (full scrape) | 0 |
+| scnsrc | 37 of 42 posts | 0 |
+| filmfans | 13 releases, filecrypt links, ~140 s (429 backoff) | 0 |
+| kinoger | 4 streams in 7 s | 0 |
+| serienfans | 35 releases for "Breaking Bad", ~146 s (429 backoff) | 0 |
+
+Findings beyond the plan:
+- Several failures were not the challenge itself: `_navigate_and_wait()` aborted on the challenge's 403 before solving; ddlspot detail pages answer plain HTTP with an empty 200; scnsrc moved links to post pages; ddlvalley/scnsrc (nginx 503) and filmfans/serienfans (429) rate-limit bursts.
+- filmfans/serienfans `/external/<hash>` links sit behind Cloudflare too, so they are resolved to filecrypt containers (Playwright routes do not see redirect hops; `request` events do).
+- Limits: an uncached filmfans/serienfans search takes ~2–2.5 min and may exceed Prowlarr's request timeout; kinoger's first Stremio search after start can exceed the 15 s plugin timeout.
 
 ## Phase 3 — Optional: FlareSolverr/Byparr adapter
 

@@ -35,7 +35,7 @@ Triage method (2026-09-28, from inside the devcontainer, no proxy):
 | streamcloud | Detail page structure changed | Search works (domain now `streamcloud.download`, `.plus` → 301 `.uno`), every detail page logs `streamcloud_no_streams` | Update detail/stream selectors; update `_DOMAINS` |
 | streamkiste | Stream source changed | Search works (`streamkiste.taxi` → 301 `.bid`), detail pages `no_streams`, `https://meinecloud.click/ddl/tt…` → 404 | Update stream extraction (MeineCloud endpoint gone); update `_DOMAINS` |
 
-Quick wins first: scnlog, byte, hdfilme, fireani, nox (selector/domain/endpoint). The three Cloudflare plugins need a design decision (Playwright plugin vs. shared StealthPool for httpx plugins). Decided: browser fallback port for httpx plugins, see `docs/plans/antibot-patchright.md`.
+Quick wins first: scnlog, byte, hdfilme, fireani, nox (selector/domain/endpoint). The three Cloudflare plugins need a design decision (Playwright plugin vs. shared StealthPool for httpx plugins). Decided and done (2026-09-28): browser fallback port for httpx plugins; filmfans, kinoger, serienfans (and ddlspot, ddlvalley, scnsrc) return results again, see `docs/plans/antibot-patchright.md`.
 
 ## Repro script
 
