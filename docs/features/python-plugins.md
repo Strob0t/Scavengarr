@@ -86,7 +86,7 @@ Both base classes live in `src/scavengarr/infrastructure/plugins/` and share the
 | `_domains` | `[]` | Domains in fallback order (must be set) |
 | `_max_concurrent` | `5` | Semaphore size for `_new_semaphore()` |
 | `_max_results` | `1000` | Upper bound for pagination |
-| `_user_agent` | Chrome 131 UA | `User-Agent` header / browser context UA |
+| `_user_agent` | Chrome 131 UA | `User-Agent` header for httpx requests (Playwright plugins: side requests only) |
 | `cache_ttl` | `None` | Torznab search cache TTL in seconds (`None` = global default) |
 
 Shared helpers in both classes:
@@ -212,7 +212,9 @@ Always obtain pages via `_new_page()` / `_ensure_page()` (or the context from `_
 - `_block_resources` (default `True`) — aborts image, font and CSS requests in each new context. Anti-bot evasion comes from Patchright itself (imports use `patchright.async_api`); its Console domain is disabled, so `page.on("console")` never fires
 - `set_shared_pool(pool)` — the composition root injects the `SharedBrowserPool`; `_ensure_browser()` then reuses the shared Chromium instead of launching its own
 - `_ensure_browser()` — shared browser, or a standalone Chromium launch with one retry; reconnects if the browser disconnected
-- `_ensure_context()` — returns the per-request context from `isolated_search()` if set, otherwise a persistent context (1280x720 viewport, `_user_agent`, stealth)
+- `_browser_user_agent` (default `None`) — browser contexts keep Patchright's real User-Agent; a forced UA disagrees with the client hints (`sec-ch-ua`) and gets flagged. Set it only when a site needs a specific UA
+- `_context_options()` — keyword arguments for `browser.new_context()` (1280x720 viewport, `_browser_user_agent` if set); use it for extra contexts such as login contexts
+- `_ensure_context()` — returns the per-request context from `isolated_search()` if set, otherwise a persistent context built from `_context_options()` plus resource blocking
 - `_ensure_page()` — persistent page in the current context; `_new_page()` — fresh page, caller closes it
 - `_wait_for_cloudflare(page) -> bool` — waits until the title no longer contains `Just a moment`; `False` on timeout
 - `_navigate_and_wait(page, url, *, wait_for_cf=True, wait_for_idle=True) -> bool` — `goto` (`domcontentloaded`), Cloudflare wait, `networkidle`; `False` on status `>= 400`
@@ -343,7 +345,7 @@ The login flow uses MD5-hashed passwords (a vBulletin 3.x convention) in a tempo
 # plugins/boerse.py (simplified)
 md5_pass = hashlib.md5(password.encode()).hexdigest()
 
-login_ctx = await browser.new_context(user_agent=self._user_agent, ...)
+login_ctx = await browser.new_context(**self._context_options())
 page = await login_ctx.new_page()
 await page.goto(domain_url, wait_until="domcontentloaded")
 await self._wait_for_cloudflare(page)

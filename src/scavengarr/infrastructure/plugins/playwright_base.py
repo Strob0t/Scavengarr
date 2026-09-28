@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from contextvars import Token
+from typing import Any
 
 import structlog
 from patchright.async_api import (
@@ -59,7 +60,11 @@ class PlaywrightPluginBase:
     _domains: list[str] = []  # noqa: RUF012
     _max_concurrent: int = DEFAULT_MAX_CONCURRENT
     _max_results: int = DEFAULT_MAX_RESULTS
+    # HTTP-only UA (httpx side requests). Browser contexts keep Patchright's
+    # real UA unless _browser_user_agent is set: a forced UA disagrees with
+    # the client hints (sec-ch-ua) and gets flagged by Cloudflare.
     _user_agent: str = DEFAULT_USER_AGENT
+    _browser_user_agent: str | None = None
     _headless: bool = True
     cache_ttl: int | None = None
 
@@ -205,7 +210,7 @@ class PlaywrightPluginBase:
         raise last_exc  # type: ignore[misc]
 
     async def _ensure_context(self) -> BrowserContext:
-        """Create browser context with standard user-agent.
+        """Create the browser context (no forced user-agent by default).
 
         When a per-request ``BrowserContext`` is set in
         :data:`~scavengarr.infrastructure.plugins.context_vars.request_browser_context`,
@@ -226,12 +231,16 @@ class PlaywrightPluginBase:
 
         if self._context is None:
             browser = await self._ensure_browser()
-            self._context = await browser.new_context(
-                user_agent=self._user_agent,
-                viewport={"width": 1280, "height": 720},
-            )
+            self._context = await browser.new_context(**self._context_options())
             await self._configure_context(self._context)
         return self._context
+
+    def _context_options(self) -> dict[str, Any]:
+        """Keyword arguments for ``browser.new_context()``."""
+        options: dict[str, Any] = {"viewport": {"width": 1280, "height": 720}}
+        if self._browser_user_agent is not None:
+            options["user_agent"] = self._browser_user_agent
+        return options
 
     async def _configure_context(self, ctx: BrowserContext) -> None:
         """Apply per-context settings shared by singleton and isolated contexts."""
@@ -473,10 +482,7 @@ class PlaywrightPluginBase:
         from .context_vars import request_browser_context
 
         browser = await self._ensure_browser()
-        ctx = await browser.new_context(
-            user_agent=self._user_agent,
-            viewport={"width": 1280, "height": 720},
-        )
+        ctx = await browser.new_context(**self._context_options())
         token: Token[BrowserContext | None] | None = None
         try:
             await self._configure_context(ctx)

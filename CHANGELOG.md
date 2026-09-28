@@ -35,6 +35,7 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 
 ### Anti-Bot: Patchright instead of playwright + playwright-stealth
 - **Browser driver swapped to Patchright** (`patchright` 1.57.x, drop-in Playwright fork): removes the `Runtime.enable`/`Console.enable` and automation-flag leaks that Cloudflare detects. `playwright` and `playwright-stealth` are no longer dependencies; all imports use `patchright.async_api`.
+- **No forced User-Agent in browser contexts**: contexts keep Patchright's real UA (a fixed Chrome 131 UA disagreed with the Chromium client hints). New `_browser_user_agent` (default `None`) and `_context_options()`, also used by the boerse/mygully login contexts; `_user_agent` stays for httpx side requests.
 - **`PlaywrightPluginBase._stealth` renamed to `_block_resources`**: it now only controls aborting image/font/CSS requests; singleton and per-request contexts share `_configure_context()`. `StealthPool` no longer applies playwright-stealth.
 
 ### Chore: Xvfb in the Dev Container

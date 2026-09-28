@@ -281,10 +281,7 @@ class BoersePlugin(PlaywrightPluginBase):
 
             for domain in self._domains:
                 domain_url = f"https://{domain}"
-                login_ctx = await browser.new_context(
-                    user_agent=self._user_agent,
-                    viewport={"width": 1280, "height": 720},
-                )
+                login_ctx = await browser.new_context(**self._context_options())
                 try:
                     page = await login_ctx.new_page()
                     try:

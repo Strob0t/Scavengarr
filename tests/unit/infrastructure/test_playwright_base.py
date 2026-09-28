@@ -311,6 +311,32 @@ class TestEnsureContext:
         assert "png" in pattern and "css" in pattern
 
     @pytest.mark.asyncio
+    async def test_no_user_agent_forced_by_default(self) -> None:
+        """Patchright's real UA must match the browser's client hints."""
+        plugin = _TestPlugin()
+        mock_browser = _make_mock_browser()
+        mock_browser.new_context = AsyncMock(return_value=AsyncMock())
+        plugin._browser = mock_browser
+
+        await plugin._ensure_context()
+
+        kwargs = mock_browser.new_context.await_args.kwargs
+        assert "user_agent" not in kwargs
+        assert kwargs["viewport"] == {"width": 1280, "height": 720}
+
+    @pytest.mark.asyncio
+    async def test_browser_user_agent_override_is_passed(self) -> None:
+        plugin = _TestPlugin()
+        plugin._browser_user_agent = "Custom/1.0"
+        mock_browser = _make_mock_browser()
+        mock_browser.new_context = AsyncMock(return_value=AsyncMock())
+        plugin._browser = mock_browser
+
+        await plugin._ensure_context()
+
+        assert mock_browser.new_context.await_args.kwargs["user_agent"] == "Custom/1.0"
+
+    @pytest.mark.asyncio
     async def test_resource_blocking_can_be_disabled(self) -> None:
         plugin = _TestPlugin()
         plugin._block_resources = False
@@ -1075,6 +1101,19 @@ class TestIsolatedSearch:
         mock_ctx.close.assert_awaited_once()
         # Page was closed too
         mock_page.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_isolated_context_forces_no_user_agent(self) -> None:
+        plugin = _ConcretePlugin()
+        mock_ctx = AsyncMock()
+        mock_ctx.pages = []
+        mock_browser = _make_mock_browser()
+        mock_browser.new_context = AsyncMock(return_value=mock_ctx)
+        plugin._browser = mock_browser
+
+        await plugin.isolated_search("test")
+
+        assert "user_agent" not in mock_browser.new_context.await_args.kwargs
 
     @pytest.mark.asyncio
     async def test_isolated_context_blocks_heavy_resources(self) -> None:
