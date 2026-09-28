@@ -1,21 +1,27 @@
 """fireani.me Python plugin for Scavengarr.
 
-Scrapes fireani.me (German anime streaming site, Nuxt.js SPA with JSON API) with:
-- httpx for all requests (pure JSON API, no HTML parsing needed)
-- GET /api/anime/search?q={query} for keyword search (max 30 results)
-- GET /api/anime?slug={slug} for anime detail (seasons, episodes)
-- GET /api/anime/episode?slug={slug}&season={s}&episode={e} for streaming links
-- Streaming links filtered to VOE hosters only (skips internal proxy players)
+Scrapes fireani.me (German anime streaming site, Nuxt.js SPA) with:
+- httpx for all requests
+- GET /search?q={query}&page={n} for keyword search: server-rendered, results
+  read from the ``__NUXT_DATA__`` payload (30 per page, ``pages`` total)
+- Connect RPC (JSON over POST) for everything else:
+  - ``api.v1.anime.AnimeService/GetAnime`` {slug} for seasons/episodes
+  - ``api.v1.anime.AnimeService/GetEpisode`` {slug, season, episode} for links
+- Streaming links filtered to external hosters (skips internal proxy players)
 - Category: always 5070 (Anime) since site is anime-only
 - Bounded concurrency for episode link fetching
 
-No Cloudflare protection. No authentication required.
+The site gates its player behind a Turnstile check, but only in the browser:
+the RPC endpoints answer without a token.
+No authentication required.
 No working alternative domains (fireanime.to is parked, others don't resolve).
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
+import re
 from typing import Any
 
 from scavengarr.domain.plugins.base import SearchResult
@@ -25,10 +31,13 @@ from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 # Configurable settings
 # ---------------------------------------------------------------------------
 _DOMAINS = ["fireani.me"]
+_MAX_PAGES = 34  # 30 results per page -> ~1000 items
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
+_RPC_PATH = "/api.v1.anime.AnimeService/"
+_SEARCH_KEY_PREFIX = "anime-search:/search"
 
 # Internal proxy player names to exclude from results.
 _EXCLUDED_PLAYERS = frozenset({"proxyplayerslow", "proxyplayer"})
@@ -39,6 +48,63 @@ _LANG_LABELS: dict[str, str] = {
     "ger-sub": "German Sub",
     "eng-sub": "English Sub",
 }
+
+_NUXT_DATA_RE = re.compile(
+    r'<script[^>]*id="__NUXT_DATA__"[^>]*>(.*?)</script>', re.DOTALL
+)
+# devalue wrappers Nuxt uses around a single value
+_NUXT_WRAPPERS = frozenset(
+    {"Reactive", "ShallowReactive", "Ref", "ShallowRef", "ProtobufMessage"}
+)
+
+
+def _resolve_nuxt(data: list[Any], index: int) -> Any:
+    """Resolve entry *index* of a Nuxt (devalue) payload into plain values.
+
+    The payload is a flat list; containers hold indices into it. Lists that
+    start with a type tag (``["Reactive", i]``, ``["Set", i, ...]``) wrap
+    other entries.
+    """
+    value = data[index]
+    if isinstance(value, dict):
+        return {key: _resolve_nuxt(data, i) for key, i in value.items()}
+    if not isinstance(value, list):
+        return value
+    if value and isinstance(value[0], str):
+        tag, args = value[0], value[1:]
+        if tag in _NUXT_WRAPPERS and args:
+            return _resolve_nuxt(data, args[0])
+        if tag == "Set":
+            return [_resolve_nuxt(data, i) for i in args]
+        return None  # EmptyRef, Date, Map, ...: nothing the plugin needs
+    return [_resolve_nuxt(data, i) for i in value]
+
+
+def _parse_search_payload(html: str) -> tuple[list[dict[str, Any]], int]:
+    """Return ``(anime entries, page count)`` from a /search page."""
+    match = _NUXT_DATA_RE.search(html)
+    if match is None:
+        return [], 0
+    try:
+        data = json.loads(match.group(1))
+        state = _resolve_nuxt(data, 0)
+    except (ValueError, IndexError, TypeError, RecursionError):
+        return [], 0
+
+    entries = state.get("data") if isinstance(state, dict) else None
+    if not isinstance(entries, dict):
+        return [], 0
+    for key, entry in entries.items():
+        if key.startswith(_SEARCH_KEY_PREFIX) and isinstance(entry, dict):
+            items = entry.get("data")
+            pages = entry.get("pages")
+            return (
+                [i for i in items if isinstance(i, dict)]
+                if isinstance(items, list)
+                else [],
+                pages if isinstance(pages, int) else 0,
+            )
+    return [], 0
 
 
 def _build_description(anime: dict[str, Any]) -> str:
@@ -76,14 +142,14 @@ def _build_metadata(anime: dict[str, Any]) -> dict[str, str]:
         "genres": ", ".join(str(g) for g in genres),
     }
     for key, field in [
-        ("rating", "vote_avg"),
-        ("votes", "vote_count"),
+        ("rating", "voteAvg"),
+        ("votes", "voteCount"),
         ("tmdb", "tmdb"),
         ("imdb", "imdb"),
         ("year", "start"),
     ]:
         val = anime.get(field)
-        if val is not None:
+        if val not in (None, "", 0):
             metadata[key] = str(val)
 
     return metadata
@@ -121,59 +187,68 @@ def _build_stream_links(
 
 
 class FireaniPlugin(HttpxPluginBase):
-    """Python plugin for fireani.me using httpx (JSON API)."""
+    """Python plugin for fireani.me using httpx (SSR search + Connect RPC)."""
 
     name = "fireani"
+    version = "1.1.0"
     provides = "stream"
     _domains = _DOMAINS
 
-    async def _api_search(self, query: str) -> list[dict[str, Any]]:
-        """Search via GET /api/anime/search?q={query}.
-
-        Returns list of anime dicts from the API response.
-        The API returns max 30 results with no pagination support.
-        """
-        resp = await self._safe_fetch(
-            f"{self.base_url}/api/anime/search",
+    async def _search_page(
+        self, query: str, page: int
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Fetch one /search page; returns ``(anime entries, page count)``."""
+        html = await self._fetch_text(
+            f"{self.base_url}/search",
+            params={"q": query, "page": str(page)},
             context="search",
-            params={"q": query},
         )
-        if resp is None:
-            return []
+        if html is None:
+            return [], 0
+        return _parse_search_payload(html)
 
-        data = self._safe_parse_json(resp, context="search")
-        if not isinstance(data, dict) or data.get("status") != 200:
-            return []
-
-        items = data.get("data", [])
-        if not isinstance(items, list):
-            return []
+    async def _api_search(self, query: str) -> list[dict[str, Any]]:
+        """Collect search entries across pages (up to ``effective_max_results``)."""
+        limit = self.effective_max_results
+        items, pages = await self._search_page(query, 1)
+        for page in range(2, min(pages, _MAX_PAGES) + 1):
+            if len(items) >= limit:
+                break
+            more, _ = await self._search_page(query, page)
+            if not more:
+                break
+            items.extend(more)
 
         self._log.info(
             "fireani_search_results",
             query=query,
             results=len(items),
+            pages=pages,
         )
-        return items
+        return items[:limit]
 
-    async def _get_anime_detail(self, slug: str) -> dict[str, Any] | None:
-        """Fetch anime detail via GET /api/anime?slug={slug}.
-
-        Returns the anime data dict with seasons and episode lists.
-        """
+    async def _rpc(
+        self, method: str, body: dict[str, str], *, context: str
+    ) -> dict[str, Any] | None:
+        """Call an AnimeService Connect RPC method; returns its ``data``."""
         resp = await self._safe_fetch(
-            f"{self.base_url}/api/anime",
-            context="detail",
-            params={"slug": slug},
+            f"{self.base_url}{_RPC_PATH}{method}",
+            method="POST",
+            json=body,
+            context=context,
         )
         if resp is None:
             return None
 
-        data = self._safe_parse_json(resp, context="detail")
-        if not isinstance(data, dict) or data.get("status") != 200:
+        payload = self._safe_parse_json(resp, context=context)
+        if not isinstance(payload, dict) or payload.get("status") != 200:
             return None
+        data = payload.get("data")
+        return data if isinstance(data, dict) else None
 
-        return data.get("data")
+    async def _get_anime_detail(self, slug: str) -> dict[str, Any] | None:
+        """Fetch anime detail (seasons and episode lists) via GetAnime."""
+        return await self._rpc("GetAnime", {"slug": slug}, context="detail")
 
     async def _get_episode_links(
         self,
@@ -181,28 +256,16 @@ class FireaniPlugin(HttpxPluginBase):
         season: str,
         episode: str,
     ) -> list[dict[str, str]]:
-        """Fetch streaming links for a specific episode.
-
-        Calls GET /api/anime/episode?slug={slug}&season={s}&episode={e}
-        and returns filtered hoster links.
-        """
-        resp = await self._safe_fetch(
-            f"{self.base_url}/api/anime/episode",
+        """Fetch streaming links for a specific episode via GetEpisode."""
+        ep_data = await self._rpc(
+            "GetEpisode",
+            {"slug": slug, "season": season, "episode": episode},
             context="episode",
-            params={"slug": slug, "season": season, "episode": episode},
         )
-        if resp is None:
+        if ep_data is None:
             return []
 
-        data = self._safe_parse_json(resp, context="episode")
-        if not isinstance(data, dict) or data.get("status") != 200:
-            return []
-
-        ep_data = data.get("data", {})
-        if not isinstance(ep_data, dict):
-            return []
-
-        raw_links = ep_data.get("anime_episode_links", [])
+        raw_links = ep_data.get("animeEpisodeLinks", [])
         if not isinstance(raw_links, list):
             return []
 
@@ -217,7 +280,7 @@ class FireaniPlugin(HttpxPluginBase):
         Returns (season, episode) tuple or None if no episodes found.
         Prefers numbered seasons over "Filme" (movies).
         """
-        seasons = anime_detail.get("anime_seasons", [])
+        seasons = anime_detail.get("animeSeasons", [])
         if not isinstance(seasons, list) or not seasons:
             return None
 
@@ -228,7 +291,7 @@ class FireaniPlugin(HttpxPluginBase):
             if not isinstance(s, dict):
                 continue
             season_name = str(s.get("season", ""))
-            episodes = s.get("anime_episodes", [])
+            episodes = s.get("animeEpisodes", [])
             if not isinstance(episodes, list) or not episodes:
                 continue
             if season_name.isdigit():
@@ -245,7 +308,7 @@ class FireaniPlugin(HttpxPluginBase):
 
         first_season = ordered[0]
         season_name = str(first_season.get("season", ""))
-        episodes = first_season.get("anime_episodes", [])
+        episodes = first_season.get("animeEpisodes", [])
 
         if not episodes:
             return None
@@ -293,6 +356,7 @@ class FireaniPlugin(HttpxPluginBase):
         if not slug or not title:
             return None
 
+        info = anime
         if season is not None and episode is not None:
             hoster_links = await self._get_episode_links(
                 slug, str(season), str(episode)
@@ -300,23 +364,22 @@ class FireaniPlugin(HttpxPluginBase):
         else:
             detail = await self._get_anime_detail(slug)
             hoster_links = await self._fetch_hoster_links(slug, detail)
+            if detail:
+                # GetAnime fills in imdb/tmdb, which search entries lack
+                info = {**detail, **anime}
 
         if not hoster_links:
             self._log.debug("fireani_no_hosters", slug=slug)
             return None
 
-        description = _build_description(anime)
-        metadata = _build_metadata(anime)
-        source_url = f"{self.base_url}/anime/{slug}"
-
         return SearchResult(
             title=title,
             download_link=hoster_links[0]["link"],
             download_links=hoster_links,
-            source_url=source_url,
+            source_url=f"{self.base_url}/anime/{slug}",
             category=5070,
-            description=description,
-            metadata=metadata,
+            description=_build_description(info),
+            metadata=_build_metadata(info),
         )
 
     async def search(

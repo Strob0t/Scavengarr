@@ -73,8 +73,8 @@ _SEARCH_RESPONSE = {
             "start": 2002,
             "end": 2007,
             "poster": "abc.png",
-            "vote_avg": 8.355,
-            "vote_count": 5431,
+            "voteAvg": 8.355,
+            "voteCount": 5431,
         },
         {
             "id": 1144,
@@ -89,8 +89,8 @@ _SEARCH_RESPONSE = {
             "start": 2007,
             "end": 2017,
             "poster": "def.png",
-            "vote_avg": 8.547,
-            "vote_count": 8019,
+            "voteAvg": 8.547,
+            "voteCount": 8019,
         },
     ],
     "pages": 1,
@@ -103,12 +103,12 @@ _ANIME_DETAIL_RESPONSE = {
         "slug": "naruto",
         "title": "Naruto",
         "generes": ["Fighting-Shounen", "Action"],
-        "anime_seasons": [
+        "animeSeasons": [
             {
                 "id": 1839,
                 "season": "Filme",
                 "anime_id": 1143,
-                "anime_episodes": [
+                "animeEpisodes": [
                     {
                         "id": 27901,
                         "episode": "1",
@@ -122,7 +122,7 @@ _ANIME_DETAIL_RESPONSE = {
                 "id": 1840,
                 "season": "1",
                 "anime_id": 1143,
-                "anime_episodes": [
+                "animeEpisodes": [
                     {
                         "id": 27907,
                         "episode": "1",
@@ -143,7 +143,7 @@ _ANIME_DETAIL_RESPONSE = {
                 "id": 1841,
                 "season": "2",
                 "anime_id": 1143,
-                "anime_episodes": [
+                "animeEpisodes": [
                     {
                         "id": 27960,
                         "episode": "1",
@@ -168,7 +168,7 @@ _EPISODE_RESPONSE = {
         "has_ger_sub": True,
         "has_ger_dub": True,
         "has_eng_sub": True,
-        "anime_episode_links": [
+        "animeEpisodeLinks": [
             {
                 "id": 12828954,
                 "link": "https://voe.sx/e/l2pwwfwxravg",
@@ -214,7 +214,7 @@ _EPISODE_RESPONSE_PROXY_ONLY = {
     "data": {
         "id": 99999,
         "episode": "1",
-        "anime_episode_links": [
+        "animeEpisodeLinks": [
             {
                 "id": 1,
                 "link": "http://0.0.0.0:3002/embed?id=abc",
@@ -238,14 +238,14 @@ class TestBuildStreamLinks:
 
     def test_filters_proxy_players(self) -> None:
         """ProxyPlayerSlow links are excluded."""
-        links = _build_stream_links(_EPISODE_RESPONSE["data"]["anime_episode_links"])
+        links = _build_stream_links(_EPISODE_RESPONSE["data"]["animeEpisodeLinks"])
         assert len(links) == 3
         for link in links:
             assert link["hoster"] != "proxyplayerslow"
 
     def test_builds_correct_format(self) -> None:
         """Each link has hoster, link, and language keys."""
-        links = _build_stream_links(_EPISODE_RESPONSE["data"]["anime_episode_links"])
+        links = _build_stream_links(_EPISODE_RESPONSE["data"]["animeEpisodeLinks"])
         for link in links:
             assert "hoster" in link
             assert "link" in link
@@ -254,7 +254,7 @@ class TestBuildStreamLinks:
 
     def test_language_labels(self) -> None:
         """Language keys are mapped to human-readable labels."""
-        links = _build_stream_links(_EPISODE_RESPONSE["data"]["anime_episode_links"])
+        links = _build_stream_links(_EPISODE_RESPONSE["data"]["animeEpisodeLinks"])
         languages = {link["language"] for link in links}
         assert "German Dub" in languages
         assert "English Sub" in languages
@@ -313,10 +313,10 @@ class TestFindFirstEpisode:
         """Falls back to Filme season if no numbered seasons."""
         plug = _make_plugin()
         detail = {
-            "anime_seasons": [
+            "animeSeasons": [
                 {
                     "season": "Filme",
-                    "anime_episodes": [
+                    "animeEpisodes": [
                         {"episode": "1"},
                         {"episode": "2"},
                     ],
@@ -329,10 +329,10 @@ class TestFindFirstEpisode:
     def test_empty_seasons(self) -> None:
         """Returns None when no seasons."""
         plug = _make_plugin()
-        assert plug._find_first_episode({"anime_seasons": []}) is None
+        assert plug._find_first_episode({"animeSeasons": []}) is None
 
     def test_no_seasons_key(self) -> None:
-        """Returns None when anime_seasons missing."""
+        """Returns None when animeSeasons missing."""
         plug = _make_plugin()
         assert plug._find_first_episode({}) is None
 
@@ -340,11 +340,11 @@ class TestFindFirstEpisode:
         """Skips seasons with empty episode lists."""
         plug = _make_plugin()
         detail = {
-            "anime_seasons": [
-                {"season": "1", "anime_episodes": []},
+            "animeSeasons": [
+                {"season": "1", "animeEpisodes": []},
                 {
                     "season": "2",
-                    "anime_episodes": [{"episode": "1"}],
+                    "animeEpisodes": [{"episode": "1"}],
                 },
             ],
         }
@@ -355,14 +355,14 @@ class TestFindFirstEpisode:
         """Season '2' comes before '10' in sorting."""
         plug = _make_plugin()
         detail = {
-            "anime_seasons": [
+            "animeSeasons": [
                 {
                     "season": "10",
-                    "anime_episodes": [{"episode": "1"}],
+                    "animeEpisodes": [{"episode": "1"}],
                 },
                 {
                     "season": "2",
-                    "anime_episodes": [{"episode": "1"}],
+                    "animeEpisodes": [{"episode": "1"}],
                 },
             ],
         }
@@ -373,10 +373,10 @@ class TestFindFirstEpisode:
         """First episode is selected by numeric sort."""
         plug = _make_plugin()
         detail = {
-            "anime_seasons": [
+            "animeSeasons": [
                 {
                     "season": "1",
-                    "anime_episodes": [
+                    "animeEpisodes": [
                         {"episode": "10"},
                         {"episode": "2"},
                         {"episode": "1"},
@@ -413,41 +413,73 @@ class TestConstants:
 # ---------------------------------------------------------------------------
 
 
-def _route_get(
+def _nuxt_html(search: dict, key: str = "anime-search:/search?q=x&page=1") -> str:
+    """Render *search* ({"data": [...], "pages": n}) as a Nuxt SSR page."""
+    flat: list[object] = []
+
+    def enc(value: object) -> int:
+        index = len(flat)
+        flat.append(None)
+        if isinstance(value, dict):
+            flat[index] = {k: enc(v) for k, v in value.items()}
+        elif isinstance(value, list):
+            flat[index] = [enc(v) for v in value]
+        else:
+            flat[index] = value
+        return index
+
+    state = {"data": {"anime-search:genres": [], key: search}, "state": {}}
+    flat.append(["ShallowReactive", 1])
+    flat.append(None)
+    flat[1] = {k: enc(v) for k, v in state.items()}
+    return (
+        '<html><body><script type="application/json" id="__NUXT_DATA__" '
+        f'data-ssr="true">{json.dumps(flat)}</script></body></html>'
+    )
+
+
+def _route_client(
     search_resp: dict | None = None,
     detail_resp: dict | None = None,
     episode_resp: dict | None = None,
 ) -> AsyncMock:
-    """Build a mock client.get that routes by URL path.
+    """Build a mock client routing GET /search and POST RPC calls.
 
-    Routes:
-    - /api/anime/search → search_resp
-    - /api/anime/episode → episode_resp
-    - /api/anime → detail_resp (must be checked last, as it's a prefix)
+    - GET /search → Nuxt payload page built from search_resp (a dict
+      without a ``data`` list answers HTTP 500)
+    - POST .../GetEpisode → episode_resp
+    - POST .../GetAnime → detail_resp
     """
 
-    async def _side_effect(url: str, **kwargs: object) -> httpx.Response:
+    async def _get(url: str, **kwargs: object) -> httpx.Response:
+        search = (
+            search_resp
+            if search_resp is not None
+            else {"data": [], "pages": 1, "status": 200}
+        )
+        if not isinstance(search.get("data"), list):
+            return _mock_response("error", status_code=500)
+        return _mock_response(_nuxt_html(search))
+
+    async def _post(url: str, **kwargs: object) -> httpx.Response:
         url_str = str(url)
-        if "/api/anime/search" in url_str:
-            return _mock_response(
-                search_resp
-                if search_resp is not None
-                else {"data": [], "pages": 1, "status": 200}
-            )
-        if "/api/anime/episode" in url_str:
+        if "GetEpisode" in url_str:
             return _mock_response(
                 episode_resp
                 if episode_resp is not None
                 else {"data": {}, "status": 200}
             )
-        if "/api/anime" in url_str:
+        if "GetAnime" in url_str:
             return _mock_response(
                 detail_resp if detail_resp is not None else {"data": {}, "status": 200}
             )
         return _mock_response({"error": "Not Found"}, status_code=404)
 
-    mock = AsyncMock(side_effect=_side_effect)
-    return mock
+    client = AsyncMock()
+    client.get = AsyncMock(side_effect=_get)
+    client.post = AsyncMock(side_effect=_post)
+    client.aclose = AsyncMock()
+    return client
 
 
 class TestSearchIntegration:
@@ -457,8 +489,7 @@ class TestSearchIntegration:
     async def test_search_returns_results(self) -> None:
         """Search with valid results returns SearchResult list."""
         plug = _make_plugin()
-        mock_client = AsyncMock()
-        mock_client.get = _route_get(
+        mock_client = _route_client(
             search_resp=_SEARCH_RESPONSE,
             detail_resp=_ANIME_DETAIL_RESPONSE,
             episode_resp=_EPISODE_RESPONSE,
@@ -479,8 +510,7 @@ class TestSearchIntegration:
     async def test_search_metadata(self) -> None:
         """Search results contain expected metadata."""
         plug = _make_plugin()
-        mock_client = AsyncMock()
-        mock_client.get = _route_get(
+        mock_client = _route_client(
             search_resp=_SEARCH_RESPONSE,
             detail_resp=_ANIME_DETAIL_RESPONSE,
             episode_resp=_EPISODE_RESPONSE,
@@ -502,8 +532,7 @@ class TestSearchIntegration:
     async def test_search_description(self) -> None:
         """Search results have a description with genres and year range."""
         plug = _make_plugin()
-        mock_client = AsyncMock()
-        mock_client.get = _route_get(
+        mock_client = _route_client(
             search_resp=_SEARCH_RESPONSE,
             detail_resp=_ANIME_DETAIL_RESPONSE,
             episode_resp=_EPISODE_RESPONSE,
@@ -536,8 +565,7 @@ class TestSearchIntegration:
     async def test_search_anime_category_passes(self) -> None:
         """Anime category 5070 returns results normally."""
         plug = _make_plugin()
-        mock_client = AsyncMock()
-        mock_client.get = _route_get(
+        mock_client = _route_client(
             search_resp=_SEARCH_RESPONSE,
             detail_resp=_ANIME_DETAIL_RESPONSE,
             episode_resp=_EPISODE_RESPONSE,
@@ -552,8 +580,7 @@ class TestSearchIntegration:
     async def test_search_parent_tv_category_allowed(self) -> None:
         """Parent category 5000 (any TV) must include anime (5070)."""
         plug = _make_plugin()
-        mock_client = AsyncMock()
-        mock_client.get = _route_get(
+        mock_client = _route_client(
             search_resp=_SEARCH_RESPONSE,
             detail_resp=_ANIME_DETAIL_RESPONSE,
             episode_resp=_EPISODE_RESPONSE,
@@ -568,8 +595,7 @@ class TestSearchIntegration:
     async def test_search_no_results(self) -> None:
         """Search returning empty data returns empty list."""
         plug = _make_plugin()
-        mock_client = AsyncMock()
-        mock_client.get = _route_get(
+        mock_client = _route_client(
             search_resp={"data": [], "pages": 1, "status": 200},
         )
         mock_client.aclose = AsyncMock()
@@ -582,8 +608,7 @@ class TestSearchIntegration:
     async def test_search_api_error(self) -> None:
         """Search API returning error status is handled gracefully."""
         plug = _make_plugin()
-        mock_client = AsyncMock()
-        mock_client.get = _route_get(
+        mock_client = _route_client(
             search_resp={"error": "Internal Server Error", "status": 500},
         )
         mock_client.aclose = AsyncMock()
@@ -610,8 +635,7 @@ class TestSearchIntegration:
     async def test_search_proxy_only_episodes_skipped(self) -> None:
         """Anime with only proxy player links are skipped."""
         plug = _make_plugin()
-        mock_client = AsyncMock()
-        mock_client.get = _route_get(
+        mock_client = _route_client(
             search_resp={
                 "data": [
                     {
@@ -678,15 +702,15 @@ class TestScrapeAnime:
         async def _side_effect(url: str, **kwargs: object) -> httpx.Response:
             url_str = str(url)
             call_log.append(url_str)
-            if "/api/anime/episode" in url_str:
+            if "GetEpisode" in url_str:
                 return _mock_response(_EPISODE_RESPONSE)
-            if "/api/anime" in url_str:
+            if "GetAnime" in url_str:
                 # Detail fails
                 return _mock_response({"error": "Not Found"}, status_code=404)
             return _mock_response({}, status_code=404)
 
         mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=_side_effect)
+        mock_client.post = AsyncMock(side_effect=_side_effect)
         mock_client.aclose = AsyncMock()
         plug._client = mock_client
 
@@ -703,7 +727,7 @@ class TestScrapeAnime:
         assert result is not None
         assert result.title == "Naruto"
         # Check that episode API was called (fallback path)
-        episode_calls = [c for c in call_log if "/api/anime/episode" in c]
+        episode_calls = [c for c in call_log if "GetEpisode" in c]
         assert len(episode_calls) == 1
 
 
@@ -751,7 +775,7 @@ class TestModuleExport:
 
     def test_plugin_version(self) -> None:
         """Plugin has expected version."""
-        assert _mod.plugin.version == "1.0.0"
+        assert _mod.plugin.version == "1.1.0"
 
     def test_plugin_mode(self) -> None:
         """Plugin mode is httpx."""
@@ -764,47 +788,102 @@ class TestModuleExport:
 
 
 class TestApiSearch:
-    """Tests for FireaniPlugin._api_search edge cases."""
+    """Tests for FireaniPlugin._api_search (SSR search payload)."""
 
     @pytest.mark.asyncio
-    async def test_invalid_json_response(self) -> None:
-        """Non-JSON response is handled gracefully."""
+    async def test_page_without_payload(self) -> None:
+        """A page without __NUXT_DATA__ yields no results."""
         plug = _make_plugin()
         mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=_mock_response("not json at all"))
-        mock_client.aclose = AsyncMock()
+        mock_client.get = AsyncMock(return_value=_mock_response("<html></html>"))
         plug._client = mock_client
 
-        result = await plug._api_search("test")
-        assert result == []
+        assert await plug._api_search("test") == []
 
     @pytest.mark.asyncio
-    async def test_wrong_status_in_body(self) -> None:
-        """JSON response with non-200 status field returns empty."""
-        plug = _make_plugin()
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(
-            return_value=_mock_response({"data": [], "status": 500, "error": "fail"})
-        )
-        mock_client.aclose = AsyncMock()
-        plug._client = mock_client
-
-        result = await plug._api_search("test")
-        assert result == []
-
-    @pytest.mark.asyncio
-    async def test_data_not_list(self) -> None:
-        """JSON response with non-list data returns empty."""
+    async def test_invalid_payload_json(self) -> None:
+        """A broken payload is handled gracefully."""
         plug = _make_plugin()
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(
-            return_value=_mock_response({"data": "not a list", "status": 200})
+            return_value=_mock_response('<script id="__NUXT_DATA__">[not json</script>')
         )
-        mock_client.aclose = AsyncMock()
         plug._client = mock_client
 
-        result = await plug._api_search("test")
-        assert result == []
+        assert await plug._api_search("test") == []
+
+    @pytest.mark.asyncio
+    async def test_payload_without_search_key(self) -> None:
+        """Payload lacking the anime-search entry yields no results."""
+        plug = _make_plugin()
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(
+            return_value=_mock_response(
+                _nuxt_html(_SEARCH_RESPONSE, key="anime-search:genres-x")
+            )
+        )
+        plug._client = mock_client
+
+        assert await plug._api_search("test") == []
+
+    @pytest.mark.asyncio
+    async def test_paginates_over_pages(self) -> None:
+        """Follows ``pages`` from the payload, one request per page."""
+        plug = _make_plugin()
+        first = {"data": _SEARCH_RESPONSE["data"][:1], "pages": 2}
+        second = {"data": _SEARCH_RESPONSE["data"][1:], "pages": 2}
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(
+            side_effect=[
+                _mock_response(_nuxt_html(first)),
+                _mock_response(_nuxt_html(second)),
+            ]
+        )
+        plug._client = mock_client
+
+        items = await plug._api_search("naruto")
+
+        assert [i["slug"] for i in items] == ["naruto", "naruto-shippuden"]
+        pages = [c.kwargs["params"]["page"] for c in mock_client.get.call_args_list]
+        assert pages == ["1", "2"]
+        assert mock_client.get.call_args_list[0].kwargs["params"]["q"] == "naruto"
+
+    @pytest.mark.asyncio
+    async def test_search_entries_resolved(self) -> None:
+        """Nested payload values (genre lists) are resolved to plain values."""
+        plug = _make_plugin()
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(
+            return_value=_mock_response(_nuxt_html(_SEARCH_RESPONSE))
+        )
+        plug._client = mock_client
+
+        items = await plug._api_search("naruto")
+
+        assert items[0]["generes"] == ["Fighting-Shounen", "Action", "Abenteuer"]
+        assert items[0]["voteAvg"] == 8.355
+
+
+class TestRpc:
+    """Tests for the Connect RPC calls."""
+
+    @pytest.mark.asyncio
+    async def test_episode_rpc_request(self) -> None:
+        """GetEpisode is a JSON POST to the AnimeService path."""
+        plug = _make_plugin()
+        plug.base_url = "https://fireani.me"
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=_mock_response(_EPISODE_RESPONSE))
+        plug._client = mock_client
+
+        links = await plug._get_episode_links("naruto", "1", "1")
+
+        assert len(links) == 3
+        call = mock_client.post.call_args
+        assert call.args[0] == (
+            "https://fireani.me/api.v1.anime.AnimeService/GetEpisode"
+        )
+        assert call.kwargs["json"] == {"slug": "naruto", "season": "1", "episode": "1"}
 
 
 # ---------------------------------------------------------------------------
@@ -821,13 +900,13 @@ class TestGetEpisodeLinks:
         plug = _make_plugin()
         plug.base_url = "https://fireani.me"
         mock_client = AsyncMock()
-        mock_client.get = AsyncMock(
+        mock_client.post = AsyncMock(
             return_value=_mock_response(
                 {
                     "data": {
                         "id": 1,
                         "episode": "1",
-                        "anime_episode_links": [],
+                        "animeEpisodeLinks": [],
                     },
                     "status": 200,
                 }
@@ -845,13 +924,13 @@ class TestGetEpisodeLinks:
         plug = _make_plugin()
         plug.base_url = "https://fireani.me"
         mock_client = AsyncMock()
-        mock_client.get = AsyncMock(
+        mock_client.post = AsyncMock(
             return_value=_mock_response(
                 {
                     "data": {
                         "id": 1,
                         "episode": "1",
-                        "anime_episode_links": None,
+                        "animeEpisodeLinks": None,
                     },
                     "status": 200,
                 }
@@ -869,7 +948,7 @@ class TestGetEpisodeLinks:
         plug = _make_plugin()
         plug.base_url = "https://fireani.me"
         mock_client = AsyncMock()
-        mock_client.get = AsyncMock(
+        mock_client.post = AsyncMock(
             side_effect=httpx.ConnectError("Connection refused")
         )
         mock_client.aclose = AsyncMock()
@@ -893,7 +972,7 @@ class TestGetAnimeDetail:
         plug = _make_plugin()
         plug.base_url = "https://fireani.me"
         mock_client = AsyncMock()
-        mock_client.get = AsyncMock(
+        mock_client.post = AsyncMock(
             return_value=_mock_response({"error": "Not Found"}, status_code=404)
         )
         mock_client.aclose = AsyncMock()
@@ -908,14 +987,16 @@ class TestGetAnimeDetail:
         plug = _make_plugin()
         plug.base_url = "https://fireani.me"
         mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=_mock_response(_ANIME_DETAIL_RESPONSE))
+        mock_client.post = AsyncMock(
+            return_value=_mock_response(_ANIME_DETAIL_RESPONSE)
+        )
         mock_client.aclose = AsyncMock()
         plug._client = mock_client
 
         result = await plug._get_anime_detail("naruto")
         assert result is not None
         assert result["slug"] == "naruto"
-        assert len(result["anime_seasons"]) == 3
+        assert len(result["animeSeasons"]) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -936,14 +1017,14 @@ class TestDescriptionFormatting:
 
         async def _side_effect(url: str, **kwargs: object) -> httpx.Response:
             url_str = str(url)
-            if "/api/anime/episode" in url_str:
+            if "GetEpisode" in url_str:
                 return _mock_response(_EPISODE_RESPONSE)
-            if "/api/anime" in url_str:
+            if "GetAnime" in url_str:
                 return _mock_response(_ANIME_DETAIL_RESPONSE)
             return _mock_response({}, status_code=404)
 
         mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=_side_effect)
+        mock_client.post = AsyncMock(side_effect=_side_effect)
         mock_client.aclose = AsyncMock()
         plug._client = mock_client
 
@@ -970,14 +1051,14 @@ class TestDescriptionFormatting:
 
         async def _side_effect(url: str, **kwargs: object) -> httpx.Response:
             url_str = str(url)
-            if "/api/anime/episode" in url_str:
+            if "GetEpisode" in url_str:
                 return _mock_response(_EPISODE_RESPONSE)
-            if "/api/anime" in url_str:
+            if "GetAnime" in url_str:
                 return _mock_response(_ANIME_DETAIL_RESPONSE)
             return _mock_response({}, status_code=404)
 
         mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=_side_effect)
+        mock_client.post = AsyncMock(side_effect=_side_effect)
         mock_client.aclose = AsyncMock()
         plug._client = mock_client
 
