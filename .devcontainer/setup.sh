@@ -103,9 +103,12 @@ if ! command -v Xvfb >/dev/null 2>&1; then
 fi
 
 # Chromium for the app itself (Patchright, Python venv). Separate from the
-# playwright-mcp browser above; system libraries come from --with-deps there.
+# playwright-mcp browser above. --with-deps here as well: the app browser must
+# not depend on the optional playwright-mcp step for its system libraries
+# (libatk etc.); Patchright ships its own Node driver, so the system Node
+# version does not matter.
 echo "[devcontainer] Installing Patchright Chromium for the venv..."
-python -m patchright install chromium \
+python -m patchright install --with-deps chromium \
   || echo "WARN: Patchright Chromium install failed (Playwright plugins, live tests)"
 
 echo "[devcontainer] Setup complete."
