@@ -38,6 +38,9 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 - **No forced User-Agent in browser contexts**: contexts keep Patchright's real UA (a fixed Chrome 131 UA disagreed with the Chromium client hints). New `_browser_user_agent` (default `None`) and `_context_options()`, also used by the boerse/mygully login contexts; `_user_agent` stays for httpx side requests.
 - **`PlaywrightPluginBase._stealth` renamed to `_block_resources`**: it now only controls aborting image/font/CSS requests; singleton and per-request contexts share `_configure_context()`. `StealthPool` no longer applies playwright-stealth.
 
+### Fix: serienfans
+- **Back to results** (live: 35 releases for "Breaking Bad", was 0): search API, series pages, season API and index pages go through `_fetch_text()` (Cloudflare → browser fallback); `/external/2/<hash>` links of the returned results are resolved to their filecrypt containers. Same 429 rate limit as filmfans (~2.5 min uncached).
+
 ### Fix: kinoger
 - **Back to results** (live: 4 streams for "Iron Man" in 7 s, was 0): search and detail pages go through `_fetch_text()` (Cloudflare → browser fallback). Stream links point to external hosters and need no resolution. In the Stremio path (`plugin_timeout_seconds` 15 s in `data/config.yaml`) the very first search after start can time out while the challenge is solved; later searches reuse the clearance cookie of the stealth context.
 
@@ -738,5 +741,5 @@ Foundation of the project: FastAPI server, Scrapy scraping engine, plugin loader
 
 Current known issues:
 
-- **11 httpx plugins return 0 results** (live smoke tests, 2026-09-28): filmfans, kinoger, serienfans (Cloudflare 403), fireani, nox (search API 404), dataload (search form 400), scnlog, kinoking (selectors/search), hdfilme (domain moved), streamcloud, streamkiste (stream source changed). Triage and fix plan: `docs/plans/plugin-repair.md`.
-- **Cloudflare-heavy sites:** ddlspot, ddlvalley, scnsrc (Playwright) and filmfans, kinoger, serienfans (httpx) sit behind an interactive Cloudflare Turnstile challenge that no headless browser passes (Playwright + stealth, Patchright, Camoufox, nodriver tested 2026-09-28). Headful Patchright under Xvfb with one checkbox click passes all six; the fix is planned in `docs/plans/antibot-patchright.md` (Phase 1 + 2). byte is not Cloudflare-blocked; its 0 results are a parser issue (`docs/plans/plugin-repair.md`).
+- **Plugins still returning 0 results** (live smoke, 2026-09-28): fireani, nox (search API 404), dataload (search form 400), scnlog, kinoking (selectors/search), hdfilme (domain moved), streamcloud, streamkiste (stream source changed), streamworld (0 results), boerse and byte (plugin reports a network error). Triage and fix plan: `docs/plans/plugin-repair.md`.
+- **Cloudflare-protected sites need a headful browser**: ddlspot, ddlvalley, scnsrc, filmfans, kinoger and serienfans only pass the interactive Turnstile with Patchright headful (Xvfb, `playwright.headless: false`) and `playwright.browser_fallback: true`. filmfans and serienfans rate-limit bursts (429): an uncached search takes ~2–2.5 min and can exceed Prowlarr's request timeout. See `docs/plans/antibot-patchright.md`.

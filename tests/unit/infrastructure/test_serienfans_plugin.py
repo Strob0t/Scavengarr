@@ -9,8 +9,21 @@ from types import ModuleType
 from unittest.mock import AsyncMock
 
 import httpx
+import pytest
+
+from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "serienfans.py"
+
+
+@pytest.fixture(autouse=True)
+def _identity_link_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep /external/ links as-is (resolution is covered in httpx_base tests)."""
+
+    async def _same(self: object, url: str, *, context: str = "") -> str:
+        return url
+
+    monkeypatch.setattr(HttpxPluginBase, "_resolve_redirect", _same)
 
 
 def _load_serienfans_module() -> ModuleType:
@@ -481,6 +494,7 @@ class TestSearchApi:
         search_response.status_code = 200
         search_response.json.return_value = _SEARCH_API_RESPONSE
         search_response.raise_for_status = lambda: None
+        search_response.text = json.dumps(search_response.json.return_value)
 
         # Mock detail page response
         detail_response = AsyncMock(spec=httpx.Response)
@@ -493,6 +507,7 @@ class TestSearchApi:
         season_response.status_code = 200
         season_response.json.return_value = _SEASON_API_RESPONSE
         season_response.raise_for_status = lambda: None
+        season_response.text = json.dumps(season_response.json.return_value)
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(
@@ -518,6 +533,7 @@ class TestSearchApi:
         search_response.status_code = 200
         search_response.json.return_value = _EMPTY_SEARCH_RESPONSE
         search_response.raise_for_status = lambda: None
+        search_response.text = json.dumps(search_response.json.return_value)
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(return_value=search_response)
@@ -537,6 +553,7 @@ class TestSearchApi:
         search_response.status_code = 200
         search_response.json.return_value = _EMPTY_SEARCH_RESPONSE
         search_response.raise_for_status = lambda: None
+        search_response.text = json.dumps(search_response.json.return_value)
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(return_value=search_response)
@@ -564,6 +581,7 @@ class TestSearchApi:
         search_response.status_code = 200
         search_response.json.side_effect = json.JSONDecodeError("err", "", 0)
         search_response.raise_for_status = lambda: None
+        search_response.text = "not json"
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(return_value=search_response)
@@ -587,6 +605,7 @@ class TestCategoryFiltering:
         search_response.status_code = 200
         search_response.json.return_value = _EMPTY_SEARCH_RESPONSE
         search_response.raise_for_status = lambda: None
+        search_response.text = json.dumps(search_response.json.return_value)
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(return_value=search_response)
@@ -615,6 +634,7 @@ class TestCategoryFiltering:
         search_response.status_code = 200
         search_response.json.return_value = _EMPTY_SEARCH_RESPONSE
         search_response.raise_for_status = lambda: None
+        search_response.text = json.dumps(search_response.json.return_value)
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(return_value=search_response)
@@ -648,6 +668,7 @@ class TestSearchResultConstruction:
             "resultCounterPart": [],
         }
         search_response.raise_for_status = lambda: None
+        search_response.text = json.dumps(search_response.json.return_value)
 
         detail_response = AsyncMock(spec=httpx.Response)
         detail_response.status_code = 200
@@ -658,6 +679,7 @@ class TestSearchResultConstruction:
         season_response.status_code = 200
         season_response.json.return_value = _SEASON_API_RESPONSE
         season_response.raise_for_status = lambda: None
+        season_response.text = json.dumps(season_response.json.return_value)
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(
@@ -687,6 +709,7 @@ class TestSearchResultConstruction:
             "resultCounterPart": [],
         }
         search_response.raise_for_status = lambda: None
+        search_response.text = json.dumps(search_response.json.return_value)
 
         detail_response = AsyncMock(spec=httpx.Response)
         detail_response.status_code = 200
@@ -697,6 +720,7 @@ class TestSearchResultConstruction:
         season_response.status_code = 200
         season_response.json.return_value = _SEASON_API_RESPONSE
         season_response.raise_for_status = lambda: None
+        season_response.text = json.dumps(season_response.json.return_value)
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(
@@ -725,6 +749,7 @@ class TestSearchResultConstruction:
             "resultCounterPart": [],
         }
         search_response.raise_for_status = lambda: None
+        search_response.text = json.dumps(search_response.json.return_value)
 
         detail_response = AsyncMock(spec=httpx.Response)
         detail_response.status_code = 200
@@ -735,6 +760,7 @@ class TestSearchResultConstruction:
         season_response.status_code = 200
         season_response.json.return_value = _SEASON_API_RESPONSE
         season_response.raise_for_status = lambda: None
+        season_response.text = json.dumps(season_response.json.return_value)
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(
@@ -756,6 +782,7 @@ class TestSearchResultConstruction:
             "resultCounterPart": [],
         }
         search_response.raise_for_status = lambda: None
+        search_response.text = json.dumps(search_response.json.return_value)
 
         detail_response = AsyncMock(spec=httpx.Response)
         detail_response.status_code = 200
@@ -766,6 +793,7 @@ class TestSearchResultConstruction:
         season_response.status_code = 200
         season_response.json.return_value = _SEASON_API_RESPONSE
         season_response.raise_for_status = lambda: None
+        season_response.text = json.dumps(season_response.json.return_value)
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(
@@ -788,6 +816,7 @@ class TestSearchResultConstruction:
             "resultCounterPart": [],
         }
         search_response.raise_for_status = lambda: None
+        search_response.text = json.dumps(search_response.json.return_value)
 
         detail_response = AsyncMock(spec=httpx.Response)
         detail_response.status_code = 200
@@ -798,6 +827,7 @@ class TestSearchResultConstruction:
         season_response.status_code = 200
         season_response.json.return_value = _SEASON_API_RESPONSE
         season_response.raise_for_status = lambda: None
+        season_response.text = json.dumps(season_response.json.return_value)
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(
@@ -820,6 +850,7 @@ class TestSearchResultConstruction:
             "resultCounterPart": [],
         }
         search_response.raise_for_status = lambda: None
+        search_response.text = json.dumps(search_response.json.return_value)
 
         detail_response = AsyncMock(spec=httpx.Response)
         detail_response.status_code = 200
@@ -830,6 +861,7 @@ class TestSearchResultConstruction:
         season_response.status_code = 200
         season_response.json.return_value = _SEASON_API_RESPONSE
         season_response.raise_for_status = lambda: None
+        season_response.text = json.dumps(season_response.json.return_value)
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(
@@ -858,6 +890,7 @@ class TestSeasonFiltering:
             "resultCounterPart": [],
         }
         search_response.raise_for_status = lambda: None
+        search_response.text = json.dumps(search_response.json.return_value)
 
         detail_response = AsyncMock(spec=httpx.Response)
         detail_response.status_code = 200
@@ -868,6 +901,7 @@ class TestSeasonFiltering:
         season_response.status_code = 200
         season_response.json.return_value = _SEASON_API_RESPONSE
         season_response.raise_for_status = lambda: None
+        season_response.text = json.dumps(season_response.json.return_value)
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(
@@ -891,6 +925,7 @@ class TestSeasonFiltering:
             "resultCounterPart": [],
         }
         search_response.raise_for_status = lambda: None
+        search_response.text = json.dumps(search_response.json.return_value)
 
         detail_response = AsyncMock(spec=httpx.Response)
         detail_response.status_code = 200
@@ -901,6 +936,7 @@ class TestSeasonFiltering:
         season_response.status_code = 200
         season_response.json.return_value = _SEASON_API_RESPONSE
         season_response.raise_for_status = lambda: None
+        season_response.text = json.dumps(season_response.json.return_value)
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(
@@ -934,6 +970,7 @@ class TestDetailPageErrors:
             "resultCounterPart": [],
         }
         search_response.raise_for_status = lambda: None
+        search_response.text = json.dumps(search_response.json.return_value)
 
         detail_response = AsyncMock(spec=httpx.Response)
         detail_response.status_code = 200
@@ -944,6 +981,7 @@ class TestDetailPageErrors:
         season_response.status_code = 200
         season_response.json.return_value = _SEASON_API_RESPONSE
         season_response.raise_for_status = lambda: None
+        season_response.text = json.dumps(season_response.json.return_value)
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(
@@ -971,6 +1009,7 @@ class TestDetailPageErrors:
             "resultCounterPart": [],
         }
         search_response.raise_for_status = lambda: None
+        search_response.text = json.dumps(search_response.json.return_value)
 
         detail_response = AsyncMock(spec=httpx.Response)
         detail_response.status_code = 200
@@ -997,6 +1036,7 @@ class TestDetailPageErrors:
             "resultCounterPart": [],
         }
         search_response.raise_for_status = lambda: None
+        search_response.text = json.dumps(search_response.json.return_value)
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(return_value=search_response)
@@ -1017,6 +1057,7 @@ class TestDetailPageErrors:
             "resultCounterPart": [],
         }
         search_response.raise_for_status = lambda: None
+        search_response.text = json.dumps(search_response.json.return_value)
 
         detail_response = AsyncMock(spec=httpx.Response)
         detail_response.status_code = 200

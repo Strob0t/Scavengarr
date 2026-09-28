@@ -16,7 +16,6 @@ No authentication required. No active alternative domains.
 from __future__ import annotations
 
 import asyncio
-import json
 import re
 from html.parser import HTMLParser
 
@@ -390,22 +389,13 @@ class SerienfansPlugin(HttpxPluginBase):
 
     async def _search_api(self, query: str) -> list[dict[str, str | int]]:
         """Execute JSON search API and return series entries."""
-        client = await self._ensure_client()
-
-        try:
-            resp = await client.get(
-                f"{self.base_url}/api/v2/search",
-                params={"q": query, "ql": "DE"},
-            )
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning("serienfans_search_failed", query=query, error=str(exc))
-            return []
-
-        try:
-            data = resp.json()
-        except (json.JSONDecodeError, ValueError):
-            self._log.warning("serienfans_invalid_json", query=query)
+        body = await self._fetch_text(
+            f"{self.base_url}/api/v2/search",
+            params={"q": query, "ql": "DE"},
+            context="search",
+        )
+        data = self._parse_json_text(body, "search")
+        if data is None:
             return []
 
         series = data.get("result", [])
@@ -428,17 +418,9 @@ class SerienfansPlugin(HttpxPluginBase):
         rating, runtime, seasons_count, description, cover_url.
         Returns None on failure.
         """
-        client = await self._ensure_client()
-        url = f"{self.base_url}/{url_id}"
-
-        try:
-            resp = await client.get(url)
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning("serienfans_detail_failed", url_id=url_id, error=str(exc))
+        html = await self._fetch_text(f"{self.base_url}/{url_id}", context=url_id)
+        if html is None:
             return None
-
-        html = resp.text
 
         # Extract series_id from initSeason() call
         m = _INIT_SEASON_RE.search(html)
@@ -499,31 +481,14 @@ class SerienfansPlugin(HttpxPluginBase):
 
         Returns (releases, episodes) tuple.
         """
-        client = await self._ensure_client()
-
-        try:
-            resp = await client.get(
-                f"{self.base_url}/api/v1/{series_id}/season/{season}",
-                params={"lang": "ALL"},
-            )
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning(
-                "serienfans_season_failed",
-                series_id=series_id,
-                season=season,
-                error=str(exc),
-            )
-            return [], []
-
-        try:
-            data = resp.json()
-        except (json.JSONDecodeError, ValueError):
-            self._log.warning(
-                "serienfans_season_invalid_json",
-                series_id=series_id,
-                season=season,
-            )
+        context = f"{series_id}:season:{season}"
+        body = await self._fetch_text(
+            f"{self.base_url}/api/v1/{series_id}/season/{season}",
+            params={"lang": "ALL"},
+            context=context,
+        )
+        data = self._parse_json_text(body, context)
+        if data is None:
             return [], []
 
         html = data.get("html", "")
@@ -615,18 +580,14 @@ class SerienfansPlugin(HttpxPluginBase):
 
     async def _browse_index(self, letter: str) -> list[dict[str, str]]:
         """Fetch an index page and return series entries."""
-        client = await self._ensure_client()
-        url = f"{self.base_url}/index/{letter}"
-
-        try:
-            resp = await client.get(url)
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning("serienfans_index_failed", letter=letter, error=str(exc))
+        html = await self._fetch_text(
+            f"{self.base_url}/index/{letter}", context=f"index:{letter}"
+        )
+        if html is None:
             return []
 
         parser = _IndexPageParser()
-        parser.feed(resp.text)
+        parser.feed(html)
         return parser.series
 
     # ------------------------------------------------------------------
@@ -741,7 +702,9 @@ class SerienfansPlugin(HttpxPluginBase):
             if len(results) >= self.effective_max_results:
                 break
 
-        return results[: self.effective_max_results]
+        # /external/2/<hash> links sit behind Cloudflare: resolve them to the
+        # hoster / link container (only for the results returned)
+        return await self._resolve_result_links(results[: self.effective_max_results])
 
 
 plugin = SerienfansPlugin()
