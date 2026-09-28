@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -38,6 +39,15 @@ class TestHosterResolverRegistry:
         registry = HosterResolverRegistry(resolvers=[resolver])
 
         assert "voe" in registry.supported_hosters
+
+    def test_supported_domains_include_aliases(self) -> None:
+        vidhide = SimpleNamespace(
+            name="vidhide", supported_domains=frozenset({"vidhide", "filelions"})
+        )
+        voe = SimpleNamespace(name="voe")
+        registry = HosterResolverRegistry(resolvers=[vidhide, voe])
+
+        assert registry.supported_domains == frozenset({"vidhide", "filelions", "voe"})
 
     @pytest.mark.asyncio
     async def test_dispatches_to_registered_resolver(self) -> None:

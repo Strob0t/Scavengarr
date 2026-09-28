@@ -192,7 +192,7 @@ def _wire_scoring(state: AppState, config: AppConfig) -> None:
     search_prober = MiniSearchProber(
         plugins=state.plugins,
         http_client=state.http_client,
-        supported_hosters=frozenset(state.hoster_resolver_registry.supported_hosters),
+        supported_hosters=state.hoster_resolver_registry.supported_domains,
     )
     query_pool = QueryPoolBuilder(
         http_client=state.http_client,

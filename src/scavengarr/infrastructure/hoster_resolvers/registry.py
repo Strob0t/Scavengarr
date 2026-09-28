@@ -100,6 +100,15 @@ class HosterResolverRegistry:
         """Return list of hosters with registered resolvers."""
         return list(self._resolvers.keys())
 
+    @property
+    def supported_domains(self) -> frozenset[str]:
+        """Return second-level domains that dispatch to a resolver.
+
+        Resolver names plus every alias from ``supported_domains``
+        (e.g. ``filelions`` for the vidhide resolver).
+        """
+        return frozenset(self._resolvers) | frozenset(self._domain_map)
+
     async def cleanup(self) -> None:
         """Close resources held by resolvers that have a cleanup method."""
         for resolver in self._resolvers.values():

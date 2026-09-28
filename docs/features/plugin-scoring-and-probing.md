@@ -30,9 +30,7 @@ Background Probes (ScoringScheduler)       Live Stremio Path
          PluginScoreStore (CachePort: diskcache / Redis)
 ```
 
-Probes cover the Torznab categories `2000` (movies) and `5000` (TV) and the three age buckets. A health probe updates the health EWMA of all six (category, bucket) snapshots of a plugin; a search probe updates one snapshot.
-
-> **Known issue:** the scheduler probes only plugins with `provides="stream"`, while live selection also includes `provides="both"` plugins. `both` plugins never get snapshots; in scored selection they count as score 0.5 with confidence 0.0, which also counts against the cold-start guard.
+The scheduler probes every plugin returned by `get_by_provides("stream")`, which includes `provides="both"` plugins. Probes cover the Torznab categories `2000` (movies) and `5000` (TV) and the three age buckets. A health probe updates the health EWMA of all six (category, bucket) snapshots of a plugin; a search probe updates one snapshot.
 
 ---
 
@@ -172,12 +170,10 @@ Shallow search probe per (plugin, category, age bucket).
 | Search | Direct `plugin.search(query, category=...)` call under `asyncio.wait_for`; no search engine or link validation |
 | Timeout | `search_timeout_seconds` (default 10 s) |
 | Items analysed | First `search_max_items` (default 20) results; the plugin's own pagination is not limited |
-| Hoster classification | The second-level domain of each `download_link` is compared with the registered resolver names |
+| Hoster classification | The second-level domain of each `download_link` is compared with `HosterResolverRegistry.supported_domains` (resolver names plus alias domains such as `filelions` for Vidhide) |
 | Hoster sampling | HEAD-check (5 s timeout) up to 3 links to supported hosters; status `< 400` = reachable |
 | Concurrency | Semaphore, `search_concurrency` (default 3) |
 | Output | `ProbeResult` with items, latency, hoster reachability, supported-hoster counts |
-
-> **Known issue:** supported hosters are taken from `HosterResolverRegistry.supported_hosters`, which lists resolver names only. Links on alias domains (e.g. `filelions` for Vidhide, `luluvdo` for Lulustream) are counted as unsupported, which lowers the supported-hoster ratio.
 
 ---
 
