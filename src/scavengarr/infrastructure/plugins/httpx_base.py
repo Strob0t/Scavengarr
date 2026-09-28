@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
+from urllib.parse import urljoin, urlparse
 
 import httpx
 import structlog
@@ -33,6 +35,10 @@ from .constants import (
 
 # Browser fallback budget per page: covers a Turnstile click + redirect
 _BROWSER_FETCH_TIMEOUT_S = 30.0
+# Same-host redirects followed by _resolve_redirect() before giving up
+_MAX_REDIRECT_HOPS = 5
+# How long a host that showed a Cloudflare challenge skips plain httpx
+_CF_BLOCK_MEMO_S = 30 * 60
 
 
 class HttpxPluginBase:
@@ -56,6 +62,10 @@ class HttpxPluginBase:
     _shared_http_client: httpx.AsyncClient | None = None
     # --- Browser fallback for Cloudflare challenges (set once, optional) ---
     _browser_fetcher: BrowserFetcherPort | None = None
+    # host -> monotonic deadline: hosts that answered with a challenge go
+    # straight to the browser (a doomed httpx request still counts against
+    # the site's rate limit)
+    _cf_blocked_until: dict[str, float] = {}  # noqa: RUF012  # shared on purpose
 
     # --- Must be set by subclass ---
     name: str = ""
@@ -96,6 +106,19 @@ class HttpxPluginBase:
         the fallback (``playwright.browser_fallback: false``).
         """
         HttpxPluginBase._browser_fetcher = fetcher
+        HttpxPluginBase._cf_blocked_until.clear()
+
+    def _cf_fetcher_for(self, url: str) -> BrowserFetcherPort | None:
+        """The browser fetcher if *url*'s host recently showed a challenge."""
+        fetcher = self._browser_fetcher
+        host = urlparse(url).hostname or ""
+        if fetcher is None or self._cf_blocked_until.get(host, 0.0) < time.monotonic():
+            return None
+        return fetcher
+
+    def _mark_cf_blocked(self, url: str) -> None:
+        host = urlparse(url).hostname or ""
+        self._cf_blocked_until[host] = time.monotonic() + _CF_BLOCK_MEMO_S
 
     def __init__(self) -> None:
         self._client: httpx.AsyncClient | None = None
@@ -261,15 +284,20 @@ class HttpxPluginBase:
         When the site answers with a Cloudflare challenge and a browser
         fetcher is injected, the same URL (query string included) is loaded
         through the browser instead.  Without a fetcher this behaves like a
-        plain GET with ``_safe_fetch()``-style logging.
+        plain GET with ``_safe_fetch()``-style logging.  A host that showed
+        a challenge within ``_CF_BLOCK_MEMO_S`` goes straight to the browser.
         """
+        memo_fetcher = self._cf_fetcher_for(url)
+        if memo_fetcher is not None:
+            full_url = str(httpx.URL(url, params=params)) if params else url
+            return await memo_fetcher.fetch_text(
+                full_url, timeout=_BROWSER_FETCH_TIMEOUT_S
+            )
+
         client = await self._ensure_client()
-        kwargs: dict[str, object] = {}
+        kwargs = self._request_kwargs(client)
         if params:
             kwargs["params"] = params
-        if client is self._shared_http_client:
-            kwargs["timeout"] = httpx.Timeout(self._timeout)
-            kwargs["headers"] = {"User-Agent": self._user_agent}
 
         try:
             resp = await client.get(url, **kwargs)
@@ -290,6 +318,7 @@ class HttpxPluginBase:
             self._log.info(
                 f"{self.name}_browser_fallback", url=str(resp.url), context=context
             )
+            self._mark_cf_blocked(url)
             return await fetcher.fetch_text(
                 str(resp.url), timeout=_BROWSER_FETCH_TIMEOUT_S
             )
@@ -300,6 +329,125 @@ class HttpxPluginBase:
             status=resp.status_code,
             context=context,
         )
+        return None
+
+    def _parse_json_text(self, body: str | None, context: str = "") -> dict | None:
+        """Decode a JSON object from ``_fetch_text()`` (``None`` on failure)."""
+        if body is None:
+            return None
+        try:
+            data = json.loads(body)
+        except (json.JSONDecodeError, ValueError):
+            self._log.warning(f"{self.name}_invalid_json", context=context)
+            return None
+        return data if isinstance(data, dict) else None
+
+    async def _resolve_own_links(
+        self, links: list[dict[str, str]]
+    ) -> list[dict[str, str]]:
+        """Replace link-out URLs on the plugin's own host by their targets.
+
+        Sites like filmfans/serienfans hand out ``/external/<hash>`` URLs that
+        redirect to the hoster or link container. Behind Cloudflare nobody
+        downstream (link validation, JDownloader) can follow them, so they are
+        resolved here; links that do not resolve are dropped. Links on other
+        hosts are kept as they are.
+        """
+        own_host = urlparse(self.base_url).hostname
+
+        async def _one(link: dict[str, str]) -> dict[str, str] | None:
+            url = link.get("link", "")
+            if urlparse(url).hostname != own_host:
+                return link
+            target = await self._resolve_redirect(url, context="link")
+            return {**link, "link": target} if target else None
+
+        resolved = await asyncio.gather(*(_one(link) for link in links))
+        return [link for link in resolved if link is not None]
+
+    async def _resolve_result_links(
+        self, results: list[SearchResult]
+    ) -> list[SearchResult]:
+        """Apply ``_resolve_own_links()`` to final results (after capping).
+
+        Results left without any usable link are dropped. Call this on the
+        results actually returned so only their links cost a round trip.
+        """
+
+        async def _one(result: SearchResult) -> SearchResult | None:
+            links = result.download_links or [
+                {"hoster": "", "link": result.download_link}
+            ]
+            resolved = await self._resolve_own_links(links)
+            if not resolved:
+                return None
+            result.download_link = resolved[0]["link"]
+            result.download_links = resolved
+            return result
+
+        updated = await asyncio.gather(*(_one(r) for r in results))
+        return [r for r in updated if r is not None]
+
+    def _request_kwargs(self, client: httpx.AsyncClient) -> dict[str, object]:
+        """Per-plugin timeout and User-Agent when using the shared client."""
+        if client is not self._shared_http_client:
+            return {}
+        return {
+            "timeout": httpx.Timeout(self._timeout),
+            "headers": {"User-Agent": self._user_agent},
+        }
+
+    async def _resolve_redirect(self, url: str, *, context: str = "") -> str | None:
+        """Return the off-site target of a link-out URL (``/external/<hash>``).
+
+        Follows same-host redirects (up to ``_MAX_REDIRECT_HOPS``) and returns
+        the first ``Location`` on another host, without loading it. When the
+        site answers with a Cloudflare challenge, the injected browser fetcher
+        resolves it instead (directly, if the host showed a challenge within
+        ``_CF_BLOCK_MEMO_S``).  ``None`` when *url* does not leave its host.
+        """
+        memo_fetcher = self._cf_fetcher_for(url)
+        if memo_fetcher is not None:
+            return await memo_fetcher.resolve_redirect(
+                url, timeout=_BROWSER_FETCH_TIMEOUT_S
+            )
+
+        client = await self._ensure_client()
+        kwargs = self._request_kwargs(client)
+        current = url
+        for _ in range(_MAX_REDIRECT_HOPS):
+            try:
+                resp = await client.get(current, follow_redirects=False, **kwargs)
+            except Exception as exc:  # noqa: BLE001
+                self._log.warning(
+                    f"{self.name}_redirect_error",
+                    url=current,
+                    error=str(exc),
+                    context=context,
+                )
+                return None
+            location = resp.headers.get("location") if resp.is_redirect else None
+            if location:
+                target = urljoin(current, location)
+                if urlparse(target).hostname != urlparse(url).hostname:
+                    return target
+                current = target
+                continue
+            fetcher = self._browser_fetcher
+            if fetcher is not None and is_cloudflare_challenge(
+                resp.status_code, resp.text
+            ):
+                self._mark_cf_blocked(current)
+                return await fetcher.resolve_redirect(
+                    current, timeout=_BROWSER_FETCH_TIMEOUT_S
+                )
+            self._log.debug(
+                f"{self.name}_no_redirect",
+                url=current,
+                status=resp.status_code,
+                context=context,
+            )
+            return None
         return None
 
     def _safe_parse_json(

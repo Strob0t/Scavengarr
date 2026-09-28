@@ -153,6 +153,10 @@ plugin = MySitePlugin()
 - `_ensure_client()` — returns the shared client, or creates a private client (timeout, redirects, user agent) when none was injected
 - `_verify_domain()` — sends `HEAD https://{domain}/` (5 s timeout) for each domain; the first status `< 400` wins and `base_url` is taken from the final URL after redirects (e.g. a `www.` prefix); if all fail, `_domains[0]` is kept and a warning is logged
 - `_fetch_text(url, *, params=None, context="") -> str | None` — GET returning the body text; when the site answers with a Cloudflare challenge (`is_cloudflare_challenge`) and a browser fetcher is injected (`HttpxPluginBase.set_browser_fetcher()`, wired to the `StealthPool` when `playwright.browser_fallback` is on), the same URL (query string included) is loaded through the browser instead. JSON comes back as raw text: parse it with `json.loads`. Use it for every request of a Cloudflare-protected site
+- `_parse_json_text(body, context="") -> dict | None` — decodes a JSON object from `_fetch_text()` (logs `{name}_invalid_json`)
+- `_resolve_redirect(url, *, context="") -> str | None` — first off-site `Location` of a link-out URL (follows same-host hops); behind Cloudflare the browser fetcher resolves it
+- `_resolve_result_links(results)` — replaces link-out URLs on the plugin's own host (e.g. `/external/<hash>`) by their targets in the final results and drops results left without links; call it on the capped result list only (each link costs a round trip)
+- Hosts that answered with a Cloudflare challenge skip plain httpx for 30 min and go straight to the browser (a doomed request still counts against the site's rate limit)
 - `_safe_fetch(url, *, method="GET", context="", **kwargs)` — request with `raise_for_status()`; returns `None` (and logs `{name}_timeout` / `{name}_http_error` / `{name}_fetch_error`) on timeout, non-2xx status or any other error; applies the plugin's `_timeout` and `_user_agent` per request when using the shared client
 - `_safe_parse_json(response, context="")` — returns parsed JSON or `None`
 - `isolated_search()` — plain passthrough to `search()`

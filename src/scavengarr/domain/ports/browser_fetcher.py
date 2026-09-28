@@ -20,3 +20,12 @@ class BrowserFetcherPort(Protocol):
         not solved within *timeout* seconds.
         """
         ...
+
+    async def resolve_redirect(self, url: str, *, timeout: float) -> str | None:
+        """Return the first off-site URL that *url* redirects to.
+
+        For link-out endpoints (e.g. ``/external/<hash>`` → hoster or link
+        container). The target page itself is not loaded. Returns None when
+        *url* does not leave its host within *timeout* seconds.
+        """
+        ...

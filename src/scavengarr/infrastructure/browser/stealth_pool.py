@@ -10,10 +10,12 @@ Resource blocking (images, fonts, CSS, media) keeps navigation fast.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Literal
+from urllib.parse import urlparse
 
 import structlog
-from patchright.async_api import Browser, BrowserContext, Page, Route
+from patchright.async_api import Browser, BrowserContext, Page, Request, Route
 
 from scavengarr.infrastructure.browser.turnstile import (
     is_challenge_page,
@@ -45,6 +47,10 @@ _OFFLINE_MARKERS: tuple[str, ...] = (
     'class="fake-signup"',
 )
 
+
+# fetch_text() retries: rate limits / overloaded origin, then give up
+_RETRY_STATUSES = frozenset({429, 502, 503, 504})
+_RETRY_BACKOFF_S: tuple[float, ...] = (2.0, 5.0, 10.0)
 
 # In-page fetch for non-HTML responses (null on HTTP error)
 _FETCH_RAW_JS = """async (url) => {
@@ -193,6 +199,42 @@ class StealthPool:
             if page is not None and not page.is_closed():
                 await page.close()
 
+    async def _navigate(
+        self,
+        page: Page,
+        url: str,
+        *,
+        wait_until: Literal["commit", "domcontentloaded"],
+        timeout_ms: int,
+        done: Callable[[], bool] = lambda: False,
+    ) -> bool:
+        """Navigate *page* to *url*, retrying rate limits / overloaded origins.
+
+        Returns False on a permanent error status (not a challenge page).
+        429/502/503/504 are retried after each backoff in ``_RETRY_BACKOFF_S``;
+        the caller's fetch slot stays taken while waiting, which also throttles
+        the other fetches. *done* short-circuits (and swallows the aborted
+        navigation) once the caller has what it needs.
+        """
+        for backoff in (*_RETRY_BACKOFF_S, None):
+            try:
+                resp = await page.goto(url, wait_until=wait_until, timeout=timeout_ms)
+            except Exception:
+                if done():
+                    return True
+                raise
+            if done() or resp is None or resp.status < 400:
+                return True
+            if await is_challenge_page(page):
+                return True
+            log.info(
+                "stealth_http_error", url=url, status=resp.status, retry_in_s=backoff
+            )
+            if backoff is None or resp.status not in _RETRY_STATUSES:
+                return False
+            await asyncio.sleep(backoff)
+        return False  # pragma: no cover  (loop always returns)
+
     async def fetch_text(self, url: str, *, timeout: float) -> str | None:
         """Return the body of *url*, solving a Cloudflare challenge first.
 
@@ -201,21 +243,16 @@ class StealthPool:
         raw body rather than Chrome's viewer markup. Same cookies and TLS
         fingerprint as the cleared page.
         """
+        timeout_ms = int(timeout * 1000)
         async with self._fetch_sem:
             page: Page | None = None
             try:
                 page = await self.new_page()
-                resp = await page.goto(
-                    url, wait_until="domcontentloaded", timeout=int(timeout * 1000)
-                )
-                if (
-                    resp is not None
-                    and resp.status >= 400
-                    and not await is_challenge_page(page)
+                if not await self._navigate(
+                    page, url, wait_until="domcontentloaded", timeout_ms=timeout_ms
                 ):
-                    log.info("stealth_fetch_http_error", url=url, status=resp.status)
                     return None
-                if not await solve_cloudflare(page, timeout_ms=int(timeout * 1000)):
+                if not await solve_cloudflare(page, timeout_ms=timeout_ms):
                     return None
                 return await read_when_settled(page, lambda: _read_body(page, url))
             except Exception:  # noqa: BLE001
@@ -224,6 +261,50 @@ class StealthPool:
             finally:
                 if page is not None and not page.is_closed():
                     await page.close()
+
+    async def resolve_redirect(self, url: str, *, timeout: float) -> str | None:
+        """Return the first off-site URL *url* redirects to.
+
+        Implements ``BrowserFetcherPort``. Listens to ``request`` events,
+        which fire for every redirect hop (routes only see the first URL of a
+        chain), and records the first navigation that leaves the origin host.
+        Navigation waits only for ``commit``; the target may well be dead
+        (e.g. a removed link container) — link validation decides that.
+        """
+        origin = urlparse(url).hostname
+        targets: list[str] = []
+
+        def _on_request(request: Request) -> None:
+            if (
+                not targets
+                and request.is_navigation_request()
+                and urlparse(request.url).hostname != origin
+            ):
+                targets.append(request.url)
+
+        timeout_ms = int(timeout * 1000)
+        async with self._fetch_sem:
+            page: Page | None = None
+            try:
+                page = await self.new_page()
+                page.on("request", _on_request)
+                if not await self._navigate(
+                    page,
+                    url,
+                    wait_until="commit",
+                    timeout_ms=timeout_ms,
+                    done=lambda: bool(targets),
+                ):
+                    return None
+                # A challenge page redirects once solved; the listener sees it
+                if not targets and await is_challenge_page(page):
+                    await solve_cloudflare(page, timeout_ms=timeout_ms)
+            except Exception:  # noqa: BLE001
+                log.debug("stealth_redirect_error", url=url, exc_info=True)
+            finally:
+                if page is not None and not page.is_closed():
+                    await page.close()
+        return targets[0] if targets else None
 
     # ------------------------------------------------------------------
     # Internal

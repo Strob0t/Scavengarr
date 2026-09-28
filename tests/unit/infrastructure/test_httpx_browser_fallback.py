@@ -25,14 +25,174 @@ class _Plugin(HttpxPluginBase):
 
 @pytest.fixture(autouse=True)
 def _reset_fetcher() -> Iterator[None]:
+    HttpxPluginBase._cf_blocked_until.clear()
     yield
     HttpxPluginBase.set_browser_fetcher(None)
+    HttpxPluginBase._cf_blocked_until.clear()
 
 
 async def _plugin_with_client(client: httpx.AsyncClient) -> _Plugin:
     plugin = _Plugin()
     plugin._client = client
     return plugin
+
+
+class TestResolveRedirect:
+    @respx.mock
+    async def test_returns_offsite_location(self) -> None:
+        respx.get("https://cf.example/external/abc").respond(
+            302, headers={"Location": "https://filecrypt.cc/Container/x.html"}
+        )
+
+        async with httpx.AsyncClient() as client:
+            plugin = await _plugin_with_client(client)
+            target = await plugin._resolve_redirect("https://cf.example/external/abc")
+
+        assert target == "https://filecrypt.cc/Container/x.html"
+
+    @respx.mock
+    async def test_follows_same_host_hops(self) -> None:
+        respx.get("https://cf.example/external/abc").respond(
+            302, headers={"Location": "/go/abc"}
+        )
+        respx.get("https://cf.example/go/abc").respond(
+            301, headers={"Location": "https://rapidgator.net/file/1"}
+        )
+
+        async with httpx.AsyncClient() as client:
+            plugin = await _plugin_with_client(client)
+            target = await plugin._resolve_redirect("https://cf.example/external/abc")
+
+        assert target == "https://rapidgator.net/file/1"
+
+    @respx.mock
+    async def test_challenge_uses_browser(self) -> None:
+        respx.get("https://cf.example/external/abc").respond(403, text=_CF_CHALLENGE)
+        fetcher = AsyncMock()
+        fetcher.resolve_redirect = AsyncMock(
+            return_value="https://filecrypt.cc/Container/y.html"
+        )
+        HttpxPluginBase.set_browser_fetcher(fetcher)
+
+        async with httpx.AsyncClient() as client:
+            plugin = await _plugin_with_client(client)
+            target = await plugin._resolve_redirect("https://cf.example/external/abc")
+
+        assert target == "https://filecrypt.cc/Container/y.html"
+        fetcher.resolve_redirect.assert_awaited_once()
+        assert fetcher.resolve_redirect.await_args.args[0] == (
+            "https://cf.example/external/abc"
+        )
+
+    @respx.mock
+    async def test_no_redirect_returns_none(self) -> None:
+        respx.get("https://cf.example/external/abc").respond(200, text="page")
+
+        async with httpx.AsyncClient() as client:
+            plugin = await _plugin_with_client(client)
+            assert (
+                await plugin._resolve_redirect("https://cf.example/external/abc")
+                is None
+            )
+
+
+class TestCloudflareHostMemo:
+    """After one challenge, the host goes straight to the browser.
+
+    The doomed httpx request would otherwise count against the site's rate
+    limit (filmfans answers bursts with 429).
+    """
+
+    @respx.mock
+    async def test_second_request_skips_httpx(self) -> None:
+        route = respx.get(url__startswith="https://cf.example/").respond(
+            403, text=_CF_CHALLENGE
+        )
+        fetcher = AsyncMock()
+        fetcher.fetch_text = AsyncMock(return_value="<html>ok</html>")
+        HttpxPluginBase.set_browser_fetcher(fetcher)
+
+        async with httpx.AsyncClient() as client:
+            plugin = await _plugin_with_client(client)
+            await plugin._fetch_text("https://cf.example/a")
+            await plugin._fetch_text("https://cf.example/b", params={"q": "x"})
+
+        assert route.call_count == 1
+        urls = [c.args[0] for c in fetcher.fetch_text.await_args_list]
+        assert urls == ["https://cf.example/a", "https://cf.example/b?q=x"]
+
+    @respx.mock
+    async def test_memo_also_covers_redirects(self) -> None:
+        route = respx.get(url__startswith="https://cf.example/").respond(
+            403, text=_CF_CHALLENGE
+        )
+        fetcher = AsyncMock()
+        fetcher.fetch_text = AsyncMock(return_value="<html>ok</html>")
+        fetcher.resolve_redirect = AsyncMock(return_value="https://filecrypt.cc/c")
+        HttpxPluginBase.set_browser_fetcher(fetcher)
+
+        async with httpx.AsyncClient() as client:
+            plugin = await _plugin_with_client(client)
+            await plugin._fetch_text("https://cf.example/a")
+            target = await plugin._resolve_redirect("https://cf.example/external/x")
+
+        assert target == "https://filecrypt.cc/c"
+        assert route.call_count == 1
+
+    @respx.mock
+    async def test_memo_expires(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        route = respx.get(url__startswith="https://cf.example/").respond(
+            403, text=_CF_CHALLENGE
+        )
+        fetcher = AsyncMock()
+        fetcher.fetch_text = AsyncMock(return_value="<html>ok</html>")
+        HttpxPluginBase.set_browser_fetcher(fetcher)
+        clock = {"now": 1000.0}
+        monkeypatch.setattr(
+            "scavengarr.infrastructure.plugins.httpx_base.time.monotonic",
+            lambda: clock["now"],
+        )
+
+        async with httpx.AsyncClient() as client:
+            plugin = await _plugin_with_client(client)
+            await plugin._fetch_text("https://cf.example/a")
+            clock["now"] += 31 * 60
+            await plugin._fetch_text("https://cf.example/b")
+
+        assert route.call_count == 2
+
+
+class TestResolveOwnLinks:
+    async def test_resolves_own_host_and_keeps_others(self) -> None:
+        plugin = _Plugin()
+
+        async def _resolve(url: str, *, context: str = "") -> str | None:
+            return {
+                "https://cf.example/external/a": "https://filecrypt.cc/Container/a",
+            }.get(url)
+
+        plugin._resolve_redirect = _resolve  # type: ignore[method-assign]
+        links = [
+            {"hoster": "rapidgator", "link": "https://cf.example/external/a"},
+            {"hoster": "ddownload", "link": "https://cf.example/external/dead"},
+            {"hoster": "nitroflare", "link": "https://nitroflare.com/view/x"},
+        ]
+
+        resolved = await plugin._resolve_own_links(links)
+
+        assert resolved == [
+            {"hoster": "rapidgator", "link": "https://filecrypt.cc/Container/a"},
+            {"hoster": "nitroflare", "link": "https://nitroflare.com/view/x"},
+        ]
+
+
+class TestParseJsonText:
+    def test_valid_object(self) -> None:
+        assert _Plugin()._parse_json_text('{"a": 1}') == {"a": 1}
+
+    @pytest.mark.parametrize("body", [None, "not json", "[1, 2]"])
+    def test_invalid_returns_none(self, body: str | None) -> None:
+        assert _Plugin()._parse_json_text(body) is None
 
 
 class TestFetchText:

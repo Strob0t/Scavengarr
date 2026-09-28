@@ -38,6 +38,12 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 - **No forced User-Agent in browser contexts**: contexts keep Patchright's real UA (a fixed Chrome 131 UA disagreed with the Chromium client hints). New `_browser_user_agent` (default `None`) and `_context_options()`, also used by the boerse/mygully login contexts; `_user_agent` stays for httpx side requests.
 - **`PlaywrightPluginBase._stealth` renamed to `_block_resources`**: it now only controls aborting image/font/CSS requests; singleton and per-request contexts share `_configure_context()`. `StealthPool` no longer applies playwright-stealth.
 
+### Anti-Bot: Link-Out Resolution, Rate-Limit Retry, Host Memo
+- **`BrowserFetcherPort.resolve_redirect()`** / `StealthPool.resolve_redirect()`: first off-site URL of a redirect chain, via `request` events (routes only see the first URL of a chain). `HttpxPluginBase._resolve_redirect()` tries httpx first (`Location` header), `_resolve_result_links()` applies it to final results: `/external/<hash>` links behind Cloudflare would otherwise fail link validation and downloaders.
+- **Rate limits**: `StealthPool.fetch_text()`/`resolve_redirect()` retry 429/502/503/504 after 2 s, 5 s, 10 s (shared `_navigate()`).
+- **Cloudflare host memo**: after a challenge, a host skips plain httpx for 30 min (`HttpxPluginBase._cf_blocked_until`).
+- `HttpxPluginBase._parse_json_text()` for JSON bodies from `_fetch_text()`.
+
 ### Anti-Bot: Browser Fallback for httpx Plugins
 - **New port `BrowserFetcherPort`** (`domain/ports/browser_fetcher.py`): `fetch_text(url, *, timeout) -> str | None`.
 - **`StealthPool.fetch_text()`** implements it: navigate, solve the challenge, return the DOM for HTML or re-fetch non-HTML (JSON) in-page for the raw body; bounded by `fetch_concurrency` (`min(stremio.max_concurrent_playwright, 2)`). Live: filmfans page 22 s (challenge) then its JSON API 2 s, kinoger search 13 s, serienfans detail 5 s.

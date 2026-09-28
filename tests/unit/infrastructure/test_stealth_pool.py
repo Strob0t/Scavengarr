@@ -350,3 +350,177 @@ class TestStealthPoolFetchText:
         )
 
         assert active["max"] == 2
+
+    async def test_rate_limit_is_retried_with_backoff(self) -> None:
+        shared_pool, _, context = _mock_pool_stack()
+        page = _fetch_page(title="Too Many Requests")
+        page.goto = AsyncMock(
+            side_effect=[MagicMock(status=429), MagicMock(status=200)]
+        )
+        page.title = AsyncMock(side_effect=["Too Many Requests", "Real Page"])
+        context.new_page = AsyncMock(return_value=page)
+
+        with patch(
+            "scavengarr.infrastructure.browser.stealth_pool.asyncio.sleep",
+            AsyncMock(),
+        ) as mock_sleep:
+            text = await StealthPool(browser_pool=shared_pool).fetch_text(
+                "https://filmfans.org/x", timeout=10
+            )
+
+        assert text == "<html><body>real page</body></html>"
+        mock_sleep.assert_awaited_once_with(2.0)
+
+    async def test_rate_limit_gives_up_after_backoffs(self) -> None:
+        shared_pool, _, context = _mock_pool_stack()
+        page = _fetch_page(title="Too Many Requests")
+        page.goto = AsyncMock(return_value=MagicMock(status=429))
+        context.new_page = AsyncMock(return_value=page)
+
+        with patch(
+            "scavengarr.infrastructure.browser.stealth_pool.asyncio.sleep",
+            AsyncMock(),
+        ) as mock_sleep:
+            text = await StealthPool(browser_pool=shared_pool).fetch_text(
+                "https://filmfans.org/x", timeout=10
+            )
+
+        assert text is None
+        assert [c.args[0] for c in mock_sleep.await_args_list] == [2.0, 5.0, 10.0]
+        assert page.goto.await_count == 4
+
+
+# ------------------------------------------------------------------
+# StealthPool.resolve_redirect
+# ------------------------------------------------------------------
+
+
+def _request(url: str, *, navigation: bool = True) -> MagicMock:
+    request = MagicMock()
+    request.url = url
+    request.is_navigation_request = MagicMock(return_value=navigation)
+    return request
+
+
+def _redirect_page(hops: list[tuple[list[str], int]]) -> MagicMock:
+    """Page whose goto() emits a "request" event per redirect hop.
+
+    Each entry is (urls requested in order, final HTTP status). Playwright
+    routes only see the first URL of a redirect chain, but "request" events
+    fire for every hop, which is what resolve_redirect listens to.
+    """
+    page = _mock_page(title="FilmFans")
+    listeners: list[object] = []
+
+    def _on(event: str, callback: object) -> None:
+        if event == "request":
+            listeners.append(callback)
+
+    calls = iter(hops)
+
+    async def _goto(url: str, **_: object) -> MagicMock:
+        urls, status = next(calls)
+        for hop in urls:
+            for callback in listeners:
+                callback(_request(hop))  # type: ignore[operator]
+        return MagicMock(status=status)
+
+    page.on = MagicMock(side_effect=_on)
+    page.goto = AsyncMock(side_effect=_goto)
+    return page
+
+
+class TestStealthPoolResolveRedirect:
+    async def test_returns_first_offsite_hop(self) -> None:
+        shared_pool, _, context = _mock_pool_stack()
+        page = _redirect_page(
+            [
+                (
+                    [
+                        "https://filmfans.org/external/abc",
+                        "https://filecrypt.cc/Container/2bdf64bab2.html?mirror=0",
+                        "https://filecrypt.cc/404.html",
+                    ],
+                    404,  # dead container: still reported, validation decides
+                )
+            ]
+        )
+        context.new_page = AsyncMock(return_value=page)
+
+        target = await StealthPool(browser_pool=shared_pool).resolve_redirect(
+            "https://filmfans.org/external/abc", timeout=10
+        )
+
+        assert target == "https://filecrypt.cc/Container/2bdf64bab2.html?mirror=0"
+        page.close.assert_awaited_once()
+
+    async def test_same_host_only_returns_none(self) -> None:
+        shared_pool, _, context = _mock_pool_stack()
+        page = _redirect_page([(["https://filmfans.org/external/abc"], 200)])
+        context.new_page = AsyncMock(return_value=page)
+        pool = StealthPool(browser_pool=shared_pool)
+
+        assert (
+            await pool.resolve_redirect("https://filmfans.org/external/abc", timeout=10)
+            is None
+        )
+
+    async def test_ignores_subresource_requests(self) -> None:
+        shared_pool, _, context = _mock_pool_stack()
+        page = _redirect_page([(["https://filmfans.org/external/abc"], 200)])
+        context.new_page = AsyncMock(return_value=page)
+        pool = StealthPool(browser_pool=shared_pool)
+        callbacks: list[object] = []
+        page.on = MagicMock(side_effect=lambda event, cb: callbacks.append(cb))
+
+        async def _goto(url: str, **_: object) -> MagicMock:
+            callbacks[0](_request("https://cdn.example/app.js", navigation=False))
+            return MagicMock(status=200)
+
+        page.goto = AsyncMock(side_effect=_goto)
+
+        assert (
+            await pool.resolve_redirect("https://filmfans.org/external/abc", timeout=10)
+            is None
+        )
+
+    async def test_retries_rate_limit(self) -> None:
+        shared_pool, _, context = _mock_pool_stack()
+        page = _redirect_page(
+            [
+                (["https://filmfans.org/external/abc"], 429),
+                (
+                    [
+                        "https://filmfans.org/external/abc",
+                        "https://filecrypt.cc/Container/x.html",
+                    ],
+                    200,
+                ),
+            ]
+        )
+        page.title = AsyncMock(return_value="Too Many Requests")
+        context.new_page = AsyncMock(return_value=page)
+
+        with patch(
+            "scavengarr.infrastructure.browser.stealth_pool.asyncio.sleep",
+            AsyncMock(),
+        ) as mock_sleep:
+            target = await StealthPool(browser_pool=shared_pool).resolve_redirect(
+                "https://filmfans.org/external/abc", timeout=10
+            )
+
+        assert target == "https://filecrypt.cc/Container/x.html"
+        mock_sleep.assert_awaited_once_with(2.0)
+
+    async def test_http_error_returns_none(self) -> None:
+        shared_pool, _, context = _mock_pool_stack()
+        page = _redirect_page([(["https://filmfans.org/external/gone"], 404)])
+        page.title = AsyncMock(return_value="Not Found")
+        context.new_page = AsyncMock(return_value=page)
+
+        assert (
+            await StealthPool(browser_pool=shared_pool).resolve_redirect(
+                "https://filmfans.org/external/gone", timeout=10
+            )
+            is None
+        )
