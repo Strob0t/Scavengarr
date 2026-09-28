@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -10,6 +12,8 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 import respx
+
+from scavengarr.domain.plugins import GrabResolvingPlugin
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "nox.py"
 _BASE = "https://nox.to"
@@ -532,3 +536,148 @@ class TestNoxCleanup:
         p = _make_plugin(nox_mod)
 
         await p.cleanup()  # Should not raise
+
+
+# ---------------------------------------------------------------------------
+# Grab-time link resolution
+# ---------------------------------------------------------------------------
+
+_RELEASE_PAGE = "https://nox.to/media/iron-man-3-r1rz58EAW-?release=122846"
+_RELEASE_SLUG = "iron-man-3-german-dl-1080p-bluray-x264-exquisite"
+
+# cost 1 + one-hex-digit prefix: solved within a few attempts
+_CHALLENGE = {
+    "parameters": {
+        "algorithm": "PBKDF2/SHA-256",
+        "cost": 1,
+        "keyLength": 32,
+        "keyPrefix": "0",
+        "nonce": "819e0a36785d38c70fc29964db8e2344",
+        "salt": "03e7caa891db9dec7ae70c388b35dd8a",
+    },
+    "signature": "sig",
+}
+
+_LINKS = [
+    {"id": 1, "hoster": "filer.net", "isOffline": False, "downloadToken": "tokA"},
+    {"id": 2, "hoster": "rapidgator.net", "isOffline": True, "downloadToken": "tokB"},
+    {"id": 3, "hoster": "tolink.to", "isOffline": False, "downloadToken": "tokC"},
+]
+
+
+def _mock_gateway(
+    *,
+    base: str = _BASE,
+    verify_status: int = 200,
+    links: list[dict] | None = None,
+) -> respx.Route:
+    """Route media, release, captcha and gateway endpoints; returns verify."""
+    respx.get(f"{base}/api/media/iron-man-3-r1rz58EAW-").respond(200, json=_MEDIA_MOVIE)
+    respx.get(f"{base}/api/releases/{_RELEASE_SLUG}").respond(
+        200, json={"links": _LINKS if links is None else links}
+    )
+    respx.get(f"{base}/api/captcha/challenge").respond(200, json=_CHALLENGE)
+    verify = respx.post(f"{base}/api/captcha/verify").respond(
+        verify_status,
+        json={"token": "pass"} if verify_status == 200 else {"error": "invalid"},
+    )
+    respx.get(f"{base}/go/tokA/url", params={"cp": "pass"}).respond(
+        200, json={"url": "https://filer.net/folder/a"}
+    )
+    respx.get(f"{base}/go/tokC/url", params={"cp": "pass"}).respond(
+        200, json={"url": "https://tolink.to/f/c"}
+    )
+    return verify
+
+
+def _gateway_calls() -> list[str]:
+    return [str(c.request.url) for c in respx.calls if "/go/" in str(c.request.url)]
+
+
+class TestNoxResolveDownload:
+    """Tests for NoxPlugin.resolve_download() (ALTCHA gateway)."""
+
+    @pytest.fixture()
+    def plugin(self, nox_mod):
+        return _make_plugin(nox_mod)
+
+    def test_is_grab_resolving(self, plugin):
+        assert isinstance(plugin, GrabResolvingPlugin)
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_online_links_are_unlocked_with_one_captcha(self, plugin):
+        verify = _mock_gateway()
+
+        urls = await plugin.resolve_download(_RELEASE_PAGE)
+        await plugin.cleanup()
+
+        assert urls == ["https://filer.net/folder/a", "https://tolink.to/f/c"]
+        assert verify.call_count == 1
+        payload = json.loads(verify.calls[0].request.content)["payload"]
+        body = json.loads(base64.b64decode(payload))
+        assert body["challenge"]["signature"] == "sig"
+        assert body["solution"]["derivedKey"].startswith("0")
+        assert not any("tokB" in url for url in _gateway_calls())
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_failed_captcha_returns_nothing(self, plugin):
+        _mock_gateway(verify_status=400)
+
+        urls = await plugin.resolve_download(_RELEASE_PAGE)
+        await plugin.cleanup()
+
+        assert urls == []
+        assert _gateway_calls() == []
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_blocked_link_is_skipped(self, plugin):
+        _mock_gateway()
+        respx.get(f"{_BASE}/go/tokC/url", params={"cp": "pass"}).respond(
+            403, json={"message": "blocked", "reason": "hourly_limit"}
+        )
+
+        urls = await plugin.resolve_download(_RELEASE_PAGE)
+        await plugin.cleanup()
+
+        assert urls == ["https://filer.net/folder/a"]
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_offline_release_needs_no_captcha(self, plugin):
+        verify = _mock_gateway(links=[_LINKS[1]])
+
+        urls = await plugin.resolve_download(_RELEASE_PAGE)
+        await plugin.cleanup()
+
+        assert urls == []
+        assert verify.call_count == 0
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_unknown_release_returns_nothing(self, plugin):
+        _mock_gateway()
+
+        urls = await plugin.resolve_download(
+            "https://nox.to/media/iron-man-3-r1rz58EAW-?release=1"
+        )
+        await plugin.cleanup()
+
+        assert urls == []
+
+    @pytest.mark.asyncio
+    async def test_non_release_url_returns_nothing(self, plugin):
+        assert await plugin.resolve_download("https://filer.net/folder/a") == []
+        assert await plugin.resolve_download(f"{_BASE}/media/x") == []
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_uses_the_domain_of_the_url(self, plugin):
+        _mock_gateway(base="https://nox.tv")
+
+        urls = await plugin.resolve_download(_RELEASE_PAGE.replace("nox.to", "nox.tv"))
+        await plugin.cleanup()
+
+        assert urls == ["https://filer.net/folder/a", "https://tolink.to/f/c"]

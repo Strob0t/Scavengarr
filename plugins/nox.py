@@ -7,7 +7,10 @@ Scrapes nox.to (German DDL archive) via its JSON API:
 
 Covers movies, TV series and documentaries. Games, e-books and audio are
 excluded (no Torznab mapping). Download links point to the release page
-(``/media/{slug}?release={id}``); the actual downloads sit behind a captcha.
+(``/media/{slug}?release={id}``). The hoster links behind it are resolved only
+when a result is grabbed (``resolve_download``): nox's download gateway needs
+an ALTCHA proof-of-work captcha (solved in-process) and every unlocked link
+counts against its hourly/weekly limit for anonymous users.
 Two domains: nox.to (primary), nox.tv (alias, 301 redirect).
 No authentication required.
 """
@@ -17,8 +20,10 @@ from __future__ import annotations
 import asyncio
 import re
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.captcha.altcha import AltchaError, solve_altcha
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -46,6 +51,9 @@ _TYPE_TO_CATEGORY: dict[str, int] = {
 }
 
 _POSTER_URL_TEMPLATE = "/api/image/w342/{path}"
+
+# Release page built by _build_result: /media/{media_slug}?release={id}
+_MEDIA_PATH_RE = re.compile(r"^/media/([^/]+)/?$")
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +95,7 @@ class NoxPlugin(HttpxPluginBase):
     """Python plugin for nox.to using httpx (JSON API)."""
 
     name = "nox"
-    version = "1.1.0"
+    version = "1.2.0"
     provides = "download"
     default_language = "de"
     _domains = _DOMAINS
@@ -294,6 +302,105 @@ class NoxPlugin(HttpxPluginBase):
                 if len(results) >= self.effective_max_results:
                     break
         return results
+
+    # ------------------------------------------------------------------
+    # Grab-time link resolution (GrabResolvingPlugin)
+    # ------------------------------------------------------------------
+
+    async def resolve_download(self, url: str) -> list[str]:
+        """Resolve a release page URL to the hoster links behind it.
+
+        One ALTCHA pass token unlocks every link of the release via
+        ``/go/{downloadToken}/url?cp={token}``. Offline links are skipped
+        before the captcha, so a dead release costs no download quota.
+        """
+        parts = urlsplit(url)
+        match = _MEDIA_PATH_RE.match(parts.path)
+        release_id = parse_qs(parts.query).get("release", [""])[0]
+        if match is None or not release_id or not parts.netloc:
+            self._log.warning("nox_resolve_unsupported_url", url=url)
+            return []
+        origin = f"{parts.scheme}://{parts.netloc}"
+
+        media = await self._get_json(
+            f"{origin}/api/media/{match.group(1)}", context="resolve_media"
+        )
+        releases = media.get("releases") if isinstance(media, dict) else None
+        release_slug = next(
+            (
+                r.get("slug")
+                for r in releases or []
+                if isinstance(r, dict) and str(r.get("id")) == release_id
+            ),
+            None,
+        )
+        if not release_slug:
+            self._log.warning("nox_resolve_release_missing", url=url)
+            return []
+
+        release = await self._get_json(
+            f"{origin}/api/releases/{release_slug}", context="resolve_release"
+        )
+        links = release.get("links") if isinstance(release, dict) else None
+        tokens = [
+            str(link["downloadToken"])
+            for link in links or []
+            if isinstance(link, dict)
+            and link.get("downloadToken")
+            and not link.get("isOffline")
+        ]
+        if not tokens:
+            self._log.info("nox_resolve_no_online_links", url=url)
+            return []
+
+        pass_token = await self._captcha_pass(origin)
+        if pass_token is None:
+            return []
+
+        unlocked = await asyncio.gather(
+            *(self._unlock(origin, token, pass_token) for token in tokens)
+        )
+        urls = [u for u in unlocked if u]
+        self._log.info(
+            "nox_resolved",
+            url=url,
+            links=len(tokens),
+            results_count=len(urls),
+        )
+        return urls
+
+    async def _captcha_pass(self, origin: str) -> str | None:
+        """Solve the gateway's ALTCHA challenge and return the pass token."""
+        challenge = await self._get_json(
+            f"{origin}/api/captcha/challenge", context="captcha_challenge"
+        )
+        if not isinstance(challenge, dict):
+            return None
+        try:
+            payload = await asyncio.to_thread(solve_altcha, challenge)
+        except AltchaError as exc:
+            self._log.warning("nox_captcha_unsolvable", error=str(exc))
+            return None
+        verified = await self._get_json(
+            f"{origin}/api/captcha/verify",
+            context="captcha_verify",
+            method="POST",
+            json={"payload": payload},
+        )
+        token = verified.get("token") if isinstance(verified, dict) else None
+        return token if isinstance(token, str) and token else None
+
+    async def _unlock(self, origin: str, token: str, pass_token: str) -> str | None:
+        """Return the hoster URL behind one gateway link (``None`` if refused)."""
+        data = await self._get_json(
+            f"{origin}/go/{token}/url",
+            context="unlock",
+            params={"cp": pass_token},
+        )
+        target = data.get("url") if isinstance(data, dict) else None
+        if isinstance(target, str) and target.startswith(("http://", "https://")):
+            return target
+        return None
 
 
 plugin = NoxPlugin()

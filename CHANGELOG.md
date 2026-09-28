@@ -6,7 +6,15 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
-Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 56 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4151 tests (4113 excluding the opt-in live tests).
+Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 56 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4263 tests (4226 excluding the opt-in live tests).
+
+### Captcha: nox Download Links via ALTCHA, Resolved at Grab Time
+- **ALTCHA solver** (`infrastructure/captcha/altcha.py`): solves ALTCHA v2 proof-of-work challenges (PBKDF2/SHA-256/384/512) in-process, no browser and no external service. ALTCHA is a cost-based captcha, not a human test; nox's challenge (cost 5000, prefix `00`) takes well under a second (run via `asyncio.to_thread`).
+- **Grab-time link resolution**: new optional plugin capability `GrabResolvingPlugin.resolve_download(url)`. Jobs of such plugins carry `CrawlJob.resolve_plugin`; `GET /api/v1/download/{job_id}` resolves the links through `CrawlJobResolveUseCase` when the job is grabbed, stores the resolved job (repeated grabs need no second captcha) and answers `502` if nothing could be resolved. Links behind a captcha or a download quota are no longer resolved for every search result.
+- **nox serves real hoster links** (live: release page → `https://filer.net/folder/…` in 0.8 s): the crawljob used to contain only the release page, which JDownloader cannot handle. `resolve_download()` looks up the release's online links, solves one ALTCHA challenge for a pass token that unlocks all of them (`/go/{downloadToken}/url?cp=…`) and skips offline links before the captcha. Every unlocked link counts against nox's hourly/weekly limit for anonymous users, hence grab time instead of search time.
+
+### Fix: Devcontainer Chromium System Libraries
+- `setup.sh` installs the app's Patchright Chromium with `--with-deps`: the system libraries (`libatk` etc.) came only from the optional playwright-mcp step, and when that failed no browser could start, headless or headful.
 
 ### Chore: Leaner Claude Code Context
 - **Slash commands → skills**: `.claude/commands/` replaced by `.claude/skills/` (`commit`, `test`, `new-plugin`, `new-resolver`). Skills load only their description up front and can be picked by the model itself. `new-plugin` no longer describes the removed YAML/Scrapy plugins; `new-resolver` is new and checks XFS/generic-DDL reuse and JDownloader sources first.
