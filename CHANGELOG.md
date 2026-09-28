@@ -776,5 +776,5 @@ Foundation of the project: FastAPI server, Scrapy scraping engine, plugin loader
 
 Current known issues:
 
-- **Plugins still returning 0 results** (live smoke, 2026-09-28): hdfilme (site search answers with a PHP fatal error; its film links moved to the devideosrc.co player, which the shared helper supports), streamworld (0 results), boerse (plugin reports a network error). Triage and fix plan: `docs/plans/plugin-repair.md`.
+- **Plugins still returning 0 results** (live smoke, 2026-09-28): hdfilme (site search answers with a PHP fatal error; its film links moved to the devideosrc.co player, which the shared helper supports), streamworld (site gone: streamworld.ws is an empty web server, streamworld.co became a legal watchlist app without links; disable it with `plugins.overrides.streamworld.enabled: false`), boerse (plugin reports a network error). Triage and fix plan: `docs/plans/plugin-repair.md`.
 - **Cloudflare-protected sites need a headful browser**: ddlspot, ddlvalley, scnsrc, filmfans, kinoger and serienfans only pass the interactive Turnstile with Patchright headful (Xvfb, `playwright.headless: false`) and `playwright.browser_fallback: true`. filmfans and serienfans rate-limit bursts (429): an uncached search takes ~2–2.5 min and can exceed Prowlarr's request timeout. See `docs/plans/antibot-patchright.md`.

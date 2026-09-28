@@ -11,7 +11,10 @@ Scrapes streamworld.ws (German streaming link aggregator) via Playwright:
 Mirror domains: streamworld.ws, streamworld.co
 Anti-bot JS protection requires browser-based access (Playwright mode).
 
-Note: Site appears abandoned (latest content from 2022), small catalog.
+Note: the site is gone (2026-09-28): streamworld.ws serves an empty default
+web-server page and streamworld.co became a legal watchlist/subscription
+app without hoster links. The plugin returns nothing; disable it with
+``plugins.overrides.streamworld.enabled: false``.
 """
 
 from __future__ import annotations
