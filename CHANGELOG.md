@@ -21,6 +21,10 @@ growth of the test suite from 160 to 4043 tests.
 ### Live Tests Opt-In
 - **`poetry run pytest` excludes live tests by default** (`addopts = "--ignore=tests/benchmark -m \"not live\""`). Live smoke tests hit real websites, so broken external sites made the mandatory pre-commit test run permanently red. Run them explicitly with `poetry run pytest -m live`.
 
+### Dev Container: Node 22 + Caveman
+- **Node 22 via devcontainer feature**: `ghcr.io/devcontainers/features/node:1` (version 22) replaces the apt `nodejs` fallback in `setup.sh` (Debian bookworm ships Node 18, too old for the `skills` CLI). `setup.sh` now fails early if Node lacks `node:util.styleText` (< 20.12) and installs npm globals without `sudo` (nvm prefix).
+- **Caveman auto-install**: `setup.sh` installs the `@caveman-ai/cli` CLI and the `JuliusBrussee/caveman` Claude Code skills (`npx skills add ... -g -a claude-code`) on every attach, so a rebuilt container needs no manual setup. Failures only warn.
+
 ### Dev Container: No Docker, playwright-mcp via stdio
 - **Docker removed from the devcontainer**: the docker-in-docker feature never worked on nftables-only host kernels ("can't initialize iptables table `nat'"), and the `docker-compose.yml` MCP stack (docs-mcp-server, llm-context, jaeger, nginx proxy) was unused by Scavengarr. Removed the dind feature, the compose file, the Docker steps in `setup.sh` and the MCP `forwardPorts` (only 7979 remains).
 - **playwright-mcp over stdio**: `.mcp.json` is now committed and starts `@playwright/mcp@0.0.82` via `npx` (headless Chromium, isolated profile). `setup.sh` installs the matching Chromium with system dependencies. No container, port or daemon needed.

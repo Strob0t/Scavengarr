@@ -20,48 +20,35 @@ else
   echo "WARN: GH_TOKEN or gh missing, git push relies on DevPod credential forwarding"
 fi
 
-echo "[devcontainer] Checking for npm..."
-
-apt_update() {
-  echo "[devcontainer] Running apt-get update..."
-  if sudo apt-get update; then
-    return 0
-  fi
-
-  echo "[devcontainer] apt-get update failed, trying to disable Yarn APT repo..."
-
-  # Yarn-Repo mit kaputtem GPG-Key deaktivieren
-  if [ -d /etc/apt/sources.list.d ]; then
-    for f in /etc/apt/sources.list.d/*.list; do
-      if [ -f "$f" ] && grep -q "dl.yarnpkg.com/debian" "$f"; then
-        echo "[devcontainer] Disabling Yarn repo in $f"
-        sudo sed -i 's|^deb |# deb |' "$f"
-      fi
-    done
-  fi
-
-  echo "[devcontainer] Retrying apt-get update without Yarn repo..."
-  sudo apt-get update
-}
-
-if ! command -v npm >/dev/null 2>&1; then
-  echo "[devcontainer] npm not found, installing nodejs + npm..."
-
-  apt_update
-
-  # In Debian Bookworm heißt das Paket nodejs, npm ist separat
-  sudo apt-get install -y --no-install-recommends nodejs npm
+# Node comes from the devcontainer feature `node` (version 22, via nvm, see
+# devcontainer.json). Debian's apt nodejs (18) is too old: the `skills` CLI
+# used for the caveman skills needs node:util.styleText (Node >= 20.12).
+echo "[devcontainer] Checking Node.js..."
+if ! command -v node >/dev/null 2>&1 \
+  || ! node -e 'process.exit(require("node:util").styleText ? 0 : 1)'; then
+  echo "[devcontainer] ERROR: Node.js >= 20.12 required, found: $(node --version 2>/dev/null || echo none)"
+  echo "[devcontainer] Rebuild the container so the node feature from devcontainer.json is applied."
+  exit 1
 fi
+echo "[devcontainer] node $(node --version), npm $(npm --version)"
 
-echo "[devcontainer] npm version: $(npm --version)"
-
+# No sudo for npm -g: the global prefix is the nvm dir (group nvm, writable
+# for vscode), and sudo's secure_path would not find the nvm node anyway.
 echo "[devcontainer] Installing openspec globally via npm..."
-sudo npm install -g @fission-ai/openspec@latest
+npm install -g @fission-ai/openspec@latest
 
 if ! command -v openspec >/dev/null 2>&1; then
   echo "[devcontainer] ERROR: openspec CLI not found after npm install -g @fission-ai/openspec@latest"
   exit 1
 fi
+
+# Caveman: CLI (`caveman claude`) + Claude Code skills from JuliusBrussee/caveman.
+# Optional tooling, so failures only warn.
+echo "[devcontainer] Installing caveman CLI + skills..."
+npm install -g @caveman-ai/cli \
+  || echo "WARN: caveman CLI install failed (optional)"
+npx -y skills add JuliusBrussee/caveman -g -a claude-code -s '*' -y </dev/null \
+  || echo "WARN: caveman skills install failed (optional)"
 
 # Claude: native install bevorzugt
 if ! command -v claude >/dev/null 2>&1; then
