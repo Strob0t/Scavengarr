@@ -10,7 +10,6 @@ discovered.  Keep the dictionaries keyed by resolver name.
 Run:
     poetry run pytest tests/live/test_resolver_live.py -v
     poetry run pytest -m live -v               # all live tests
-    poetry run pytest -m "not live"             # skip live tests
 """
 
 from __future__ import annotations

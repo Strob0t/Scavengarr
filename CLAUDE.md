@@ -30,6 +30,8 @@ poetry run pytest
 
 `pre-commit` is part of the dev toolchain and a `.pre-commit-config.yaml` exists in the repository.
 
+`poetry run pytest` excludes live tests (`addopts = -m "not live"`) and benchmarks. Live smoke tests hit real websites and are run explicitly with `poetry run pytest -m live`; their failures signal broken plugins/resolvers, not a commit blocker.
+
 Rules:
 - Fix all errors before committing (warnings can be acceptable depending on the check).
 - Make small, atomic commits (do not batch unrelated changes).
@@ -428,7 +430,7 @@ tests/
     test_probe_validation_sweep.py     # Probe/validation semaphore sweep, diminishing-returns analysis
     test_formula_validation.py         # _auto_tune() formula vs empirical optimal, monotonic scaling, bounds
   live/
-    test_plugin_smoke.py               # Plugin smoke tests (real HTTP, skip in CI)
+    test_plugin_smoke.py               # Plugin smoke tests (real HTTP, opt-in via -m live)
     test_resolver_live.py              # Resolver contract tests (live URL validation)
 ```
 

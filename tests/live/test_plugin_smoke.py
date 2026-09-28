@@ -5,9 +5,8 @@ valid results. Network errors and Cloudflare blocks are handled gracefully
 via pytest.skip() — broken selectors or empty results cause a FAIL.
 
 Run:
-    poetry run pytest tests/live/ -v          # live tests only
-    poetry run pytest                         # all tests incl. live
-    poetry run pytest -m "not live"           # skip live tests
+    poetry run pytest -m live -v               # live tests only
+    poetry run pytest                         # default: live tests excluded
 """
 
 from __future__ import annotations

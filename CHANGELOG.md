@@ -12,6 +12,9 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 breaker, global concurrency pool, graceful shutdown, multi-language search, and
 growth of the test suite from 160 to 4043 tests.
 
+### Live Tests Opt-In
+- **`poetry run pytest` excludes live tests by default** (`addopts = "--ignore=tests/benchmark -m \"not live\""`). Live smoke tests hit real websites, so broken external sites made the mandatory pre-commit test run permanently red. Run them explicitly with `poetry run pytest -m live`.
+
 ### Dev Container Git Access
 - **Push without DevPod tunnel**: the devcontainer installs `gh` (feature `github-cli`) and `setup.sh` runs `gh auth setup-git` when `GH_TOKEN` is set in `.env.devcontainer`, so `git push`/`gh pr` work even when the DevPod credential tunnel (`localhost:12049`) is down. `setup.sh` also sets `user.name`/`user.email` from `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL`.
 

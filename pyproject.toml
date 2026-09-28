@@ -49,7 +49,7 @@ markers = [
     "live: Live smoke tests against real websites (require network)",
     "benchmark: Concurrency tuning benchmarks (slow, run manually)",
 ]
-addopts = "--ignore=tests/benchmark"
+addopts = "--ignore=tests/benchmark -m \"not live\""
 filterwarnings = [
     "ignore:Stealth has already been applied:UserWarning",
 ]
