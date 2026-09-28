@@ -1,3 +1,4 @@
+from .browser_fetcher import BrowserFetcherPort
 from .cache import CachePort
 from .concurrency import ConcurrencyBudgetPort, ConcurrencyPoolPort
 from .crawljob_repository import CrawlJobRepository
@@ -8,6 +9,7 @@ from .search_engine import SearchEnginePort
 from .stream_link_repository import StreamLinkRepository
 
 __all__ = [
+    "BrowserFetcherPort",
     "CachePort",
     "ConcurrencyBudgetPort",
     "ConcurrencyPoolPort",

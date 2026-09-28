@@ -17,6 +17,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "playwright": {
         "headless": False,
+        "browser_fallback": True,
         "timeout_ms": 30_000,
     },
     "logging": {

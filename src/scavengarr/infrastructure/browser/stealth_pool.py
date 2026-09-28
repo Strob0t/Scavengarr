@@ -15,7 +15,11 @@ from typing import TYPE_CHECKING
 import structlog
 from patchright.async_api import Browser, BrowserContext, Page, Route
 
-from scavengarr.infrastructure.browser.turnstile import solve_cloudflare
+from scavengarr.infrastructure.browser.turnstile import (
+    is_challenge_page,
+    read_when_settled,
+    solve_cloudflare,
+)
 
 if TYPE_CHECKING:
     from scavengarr.infrastructure.browser.shared_browser import SharedBrowserPool
@@ -40,6 +44,20 @@ _OFFLINE_MARKERS: tuple[str, ...] = (
     'class="deleted"',
     'class="fake-signup"',
 )
+
+
+# In-page fetch for non-HTML responses (null on HTTP error)
+_FETCH_RAW_JS = """async (url) => {
+    const resp = await fetch(url, {credentials: "include"});
+    return resp.ok ? await resp.text() : null;
+}"""
+
+
+async def _read_body(page: Page, url: str) -> str | None:
+    """Rendered DOM for HTML, raw in-page fetch for other types (JSON)."""
+    if await page.evaluate("() => document.contentType") == "text/html":
+        return await page.content()
+    return await page.evaluate(_FETCH_RAW_JS, url)
 
 
 async def _block_resources(route: Route) -> None:
@@ -69,9 +87,12 @@ class StealthPool:
         *,
         browser_pool: SharedBrowserPool,
         timeout_ms: int = 15_000,
+        fetch_concurrency: int = 2,
     ) -> None:
         self._browser_pool = browser_pool
         self._timeout_ms = timeout_ms
+        # Bounds fetch_text() pages (RAM budget: headful pages are heavy)
+        self._fetch_sem = asyncio.Semaphore(fetch_concurrency)
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
         self._lock = asyncio.Lock()
@@ -171,6 +192,38 @@ class StealthPool:
         finally:
             if page is not None and not page.is_closed():
                 await page.close()
+
+    async def fetch_text(self, url: str, *, timeout: float) -> str | None:
+        """Return the body of *url*, solving a Cloudflare challenge first.
+
+        Implements ``BrowserFetcherPort``. HTML pages come back as rendered
+        DOM; other types (JSON) are re-fetched in-page so the caller gets the
+        raw body rather than Chrome's viewer markup. Same cookies and TLS
+        fingerprint as the cleared page.
+        """
+        async with self._fetch_sem:
+            page: Page | None = None
+            try:
+                page = await self.new_page()
+                resp = await page.goto(
+                    url, wait_until="domcontentloaded", timeout=int(timeout * 1000)
+                )
+                if (
+                    resp is not None
+                    and resp.status >= 400
+                    and not await is_challenge_page(page)
+                ):
+                    log.info("stealth_fetch_http_error", url=url, status=resp.status)
+                    return None
+                if not await solve_cloudflare(page, timeout_ms=int(timeout * 1000)):
+                    return None
+                return await read_when_settled(page, lambda: _read_body(page, url))
+            except Exception:  # noqa: BLE001
+                log.debug("stealth_fetch_error", url=url, exc_info=True)
+                return None
+            finally:
+                if page is not None and not page.is_closed():
+                    await page.close()
 
     # ------------------------------------------------------------------
     # Internal

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -216,3 +217,136 @@ class TestStealthPoolProbe:
 
         # CF wait timed out but page content is alive
         assert result is True
+
+
+# ------------------------------------------------------------------
+# StealthPool.fetch_text (BrowserFetcherPort)
+# ------------------------------------------------------------------
+
+
+def _fetch_page(
+    *,
+    status: int = 200,
+    content_type: str = "text/html",
+    html: str = "<html><body>real page</body></html>",
+    title: str = "Real Page",
+    fetched: str | None = '{"result": []}',
+) -> AsyncMock:
+    page = _mock_page(html=html, title=title)
+    page.goto = AsyncMock(return_value=MagicMock(status=status))
+
+    async def _evaluate(script: str, *args: object) -> object:
+        return content_type if "contentType" in script else fetched
+
+    page.evaluate = AsyncMock(side_effect=_evaluate)
+    return page
+
+
+class TestStealthPoolFetchText:
+    async def test_is_a_browser_fetcher(self) -> None:
+        from scavengarr.domain.ports import BrowserFetcherPort
+
+        shared_pool, _, _ = _mock_pool_stack()
+        assert isinstance(StealthPool(browser_pool=shared_pool), BrowserFetcherPort)
+
+    async def test_returns_html_for_html_pages(self) -> None:
+        shared_pool, _, context = _mock_pool_stack()
+        page = _fetch_page()
+        context.new_page = AsyncMock(return_value=page)
+
+        text = await StealthPool(browser_pool=shared_pool).fetch_text(
+            "https://filmfans.org/x", timeout=10
+        )
+
+        assert text == "<html><body>real page</body></html>"
+        page.close.assert_awaited_once()
+
+    async def test_returns_raw_body_for_non_html(self) -> None:
+        """JSON is re-fetched in-page: raw text, not Chrome's JSON viewer."""
+        shared_pool, _, context = _mock_pool_stack()
+        page = _fetch_page(content_type="application/json")
+        context.new_page = AsyncMock(return_value=page)
+
+        text = await StealthPool(browser_pool=shared_pool).fetch_text(
+            "https://filmfans.org/api/v2/search?q=x", timeout=10
+        )
+
+        assert text == '{"result": []}'
+
+    async def test_solves_challenge_before_reading(self) -> None:
+        shared_pool, _, context = _mock_pool_stack()
+        page = _fetch_page(status=403, title="Just a moment...")
+        context.new_page = AsyncMock(return_value=page)
+        pool = StealthPool(browser_pool=shared_pool)
+
+        with patch(
+            "scavengarr.infrastructure.browser.stealth_pool.solve_cloudflare",
+            AsyncMock(return_value=True),
+        ) as mock_solve:
+            text = await pool.fetch_text("https://filmfans.org/x", timeout=10)
+
+        assert text == "<html><body>real page</body></html>"
+        mock_solve.assert_awaited_once_with(page, timeout_ms=10_000)
+
+    async def test_unsolved_challenge_returns_none(self) -> None:
+        shared_pool, _, context = _mock_pool_stack()
+        context.new_page = AsyncMock(
+            return_value=_fetch_page(status=403, title="Just a moment...")
+        )
+        pool = StealthPool(browser_pool=shared_pool)
+
+        with patch(
+            "scavengarr.infrastructure.browser.stealth_pool.solve_cloudflare",
+            AsyncMock(return_value=False),
+        ):
+            assert await pool.fetch_text("https://filmfans.org/x", timeout=10) is None
+
+    async def test_http_error_without_challenge_returns_none(self) -> None:
+        shared_pool, _, context = _mock_pool_stack()
+        context.new_page = AsyncMock(
+            return_value=_fetch_page(status=404, title="Not Found")
+        )
+
+        text = await StealthPool(browser_pool=shared_pool).fetch_text(
+            "https://filmfans.org/missing", timeout=10
+        )
+
+        assert text is None
+
+    async def test_navigation_error_returns_none(self) -> None:
+        shared_pool, _, context = _mock_pool_stack()
+        page = _fetch_page()
+        page.goto = AsyncMock(side_effect=RuntimeError("net::ERR_FAILED"))
+        context.new_page = AsyncMock(return_value=page)
+
+        text = await StealthPool(browser_pool=shared_pool).fetch_text(
+            "https://filmfans.org/x", timeout=10
+        )
+
+        assert text is None
+        page.close.assert_awaited_once()
+
+    async def test_concurrency_is_bounded(self) -> None:
+        shared_pool, _, context = _mock_pool_stack()
+        active = {"now": 0, "max": 0}
+
+        async def _goto(*_: object, **__: object) -> MagicMock:
+            active["now"] += 1
+            active["max"] = max(active["max"], active["now"])
+            await asyncio.sleep(0.01)
+            active["now"] -= 1
+            return MagicMock(status=200)
+
+        def _new_page() -> AsyncMock:
+            page = _fetch_page()
+            page.goto = AsyncMock(side_effect=_goto)
+            return page
+
+        context.new_page = AsyncMock(side_effect=lambda: _new_page())
+        pool = StealthPool(browser_pool=shared_pool, fetch_concurrency=2)
+
+        await asyncio.gather(
+            *(pool.fetch_text(f"https://x.org/{i}", timeout=10) for i in range(6))
+        )
+
+        assert active["max"] == 2

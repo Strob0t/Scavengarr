@@ -9,8 +9,47 @@ import pytest
 from scavengarr.infrastructure.browser import turnstile
 from scavengarr.infrastructure.browser.turnstile import (
     is_challenge_page,
+    read_when_settled,
     solve_cloudflare,
 )
+
+
+class TestReadWhenSettled:
+    """Reads that race a post-challenge navigation are retried."""
+
+    async def test_returns_first_successful_read(self) -> None:
+        page = MagicMock(wait_for_load_state=AsyncMock())
+        read = AsyncMock(return_value="<html/>")
+
+        assert await read_when_settled(page, read) == "<html/>"
+        page.wait_for_load_state.assert_not_awaited()
+
+    async def test_retries_after_navigation_error(self) -> None:
+        page = MagicMock(wait_for_load_state=AsyncMock())
+        read = AsyncMock(
+            side_effect=[
+                RuntimeError("Execution context was destroyed, most likely ..."),
+                "<html/>",
+            ]
+        )
+
+        assert await read_when_settled(page, read) == "<html/>"
+        page.wait_for_load_state.assert_awaited_once_with("domcontentloaded")
+
+    async def test_other_errors_propagate(self) -> None:
+        page = MagicMock(wait_for_load_state=AsyncMock())
+        read = AsyncMock(side_effect=RuntimeError("Target closed"))
+
+        with pytest.raises(RuntimeError, match="Target closed"):
+            await read_when_settled(page, read)
+
+    async def test_gives_up_after_attempts(self) -> None:
+        page = MagicMock(wait_for_load_state=AsyncMock())
+        read = AsyncMock(side_effect=RuntimeError("page is navigating"))
+
+        with pytest.raises(RuntimeError):
+            await read_when_settled(page, read, attempts=3)
+        assert read.await_count == 3
 
 
 def _frame(url: str, *, click_error: Exception | None = None) -> MagicMock:

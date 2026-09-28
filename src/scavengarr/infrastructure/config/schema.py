@@ -441,6 +441,18 @@ class AppConfig(BaseModel):
             "falls back to headless with a warning when there is no display."
         ),
     )
+    playwright_browser_fallback: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "playwright_browser_fallback",
+            AliasPath("playwright", "browser_fallback"),
+        ),
+        description=(
+            "Let httpx plugins load Cloudflare-challenged pages through the "
+            "shared browser (at most 2 pages at a time). Disable on hosts "
+            "without RAM headroom for the browser."
+        ),
+    )
     playwright_timeout_ms: int = Field(
         default=30_000,
         validation_alias=AliasChoices(
@@ -649,6 +661,7 @@ class EnvOverrides(BaseSettings):
     http_retry_max_backoff: float | None = None
 
     playwright_headless: bool | None = None
+    playwright_browser_fallback: bool | None = None
     playwright_timeout_ms: int | None = None
 
     log_level: LogLevel | None = None

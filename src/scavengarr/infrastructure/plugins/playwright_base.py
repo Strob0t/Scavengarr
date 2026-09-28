@@ -25,6 +25,7 @@ from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.browser.display import resolve_headless
 from scavengarr.infrastructure.browser.turnstile import (
     is_challenge_page,
+    read_when_settled,
     solve_cloudflare,
 )
 
@@ -426,7 +427,7 @@ class PlaywrightPluginBase:
                     )
                 except Exception:  # noqa: BLE001
                     self._log.debug("networkidle_timeout", url=url)
-            return await page.content()
+            return await read_when_settled(page, page.content)
         except Exception as exc:  # noqa: BLE001
             self._log.warning(
                 f"{self.name}_page_failed",

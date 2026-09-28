@@ -106,6 +106,7 @@ These variables are read by the `EnvOverrides` Pydantic Settings model (case-ins
 | `SCAVENGARR_HTTP_RETRY_MAX_BACKOFF` | float | `30.0` | `http.retry_max_backoff` |
 | `SCAVENGARR_API_RATE_LIMIT_RPM` | int | `120` | `http.api_rate_limit_rpm` |
 | `SCAVENGARR_PLAYWRIGHT_HEADLESS` | bool | `false` | `playwright.headless` |
+| `SCAVENGARR_PLAYWRIGHT_BROWSER_FALLBACK` | bool | `true` | `playwright.browser_fallback` |
 | `SCAVENGARR_PLAYWRIGHT_TIMEOUT_MS` | int | `30000` | `playwright.timeout_ms` (currently unused, no effect) |
 | `SCAVENGARR_LOG_LEVEL` | string | `INFO` | `logging.level` |
 | `SCAVENGARR_LOG_FORMAT` | string | (auto) | `logging.format` |
@@ -178,6 +179,7 @@ validation_max_concurrent: 30   # default: 20 (auto-tuned when stremio.auto_tune
 
 playwright:
   headless: false               # headful under Xvfb, headless fallback without DISPLAY
+  browser_fallback: true        # httpx plugins: Cloudflare pages via browser
 
 stremio:
   auto_tune_all: true           # container-aware auto-tune of concurrency params
@@ -222,6 +224,7 @@ The loader recognizes the sections `plugins`, `http`, `playwright`, `logging`, `
 | `http_retry_max_attempts`, `http_retry_backoff_base`, `http_retry_max_backoff` | `http.retry_max_attempts`, `http.retry_backoff_base`, `http.retry_max_backoff` |
 | `api_rate_limit_rpm` | `http.api_rate_limit_rpm` |
 | `playwright_headless` | `playwright.headless` |
+| `playwright_browser_fallback` | `playwright.browser_fallback` |
 | `playwright_timeout_ms` | `playwright.timeout_ms` |
 | `log_level` | `logging.level` |
 | `log_format` | `logging.format` |
@@ -310,6 +313,7 @@ Controls the Playwright browser engine for JavaScript-heavy sites.
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `playwright.headless` | bool | `false` | `false`: headful when a display exists (`DISPLAY`, e.g. Xvfb), otherwise headless with one `browser_headful_no_display` warning. `true`: always headless |
+| `playwright.browser_fallback` | bool | `true` | httpx plugins load pages that answer with a Cloudflare challenge through the shared browser (stealth context, at most `min(stremio.max_concurrent_playwright, 2)` pages at a time). `false`: no browser for httpx plugins; Cloudflare-protected httpx plugins (filmfans, kinoger, serienfans) then return nothing |
 | `playwright.timeout_ms` | int | `30000` | Currently unused (no effect) |
 
 **Validation:** `timeout_ms` must be greater than 0.

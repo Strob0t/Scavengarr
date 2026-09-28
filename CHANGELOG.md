@@ -38,6 +38,13 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 - **No forced User-Agent in browser contexts**: contexts keep Patchright's real UA (a fixed Chrome 131 UA disagreed with the Chromium client hints). New `_browser_user_agent` (default `None`) and `_context_options()`, also used by the boerse/mygully login contexts; `_user_agent` stays for httpx side requests.
 - **`PlaywrightPluginBase._stealth` renamed to `_block_resources`**: it now only controls aborting image/font/CSS requests; singleton and per-request contexts share `_configure_context()`. `StealthPool` no longer applies playwright-stealth.
 
+### Anti-Bot: Browser Fallback for httpx Plugins
+- **New port `BrowserFetcherPort`** (`domain/ports/browser_fetcher.py`): `fetch_text(url, *, timeout) -> str | None`.
+- **`StealthPool.fetch_text()`** implements it: navigate, solve the challenge, return the DOM for HTML or re-fetch non-HTML (JSON) in-page for the raw body; bounded by `fetch_concurrency` (`min(stremio.max_concurrent_playwright, 2)`). Live: filmfans page 22 s (challenge) then its JSON API 2 s, kinoger search 13 s, serienfans detail 5 s.
+- **`HttpxPluginBase._fetch_text(url, params=...)`**: plain GET; on a Cloudflare challenge the injected fetcher loads the URL instead. `HttpxPluginBase.set_browser_fetcher()` is wired in composition.
+- **New config `playwright.browser_fallback`** (default `true`, env `SCAVENGARR_PLAYWRIGHT_BROWSER_FALLBACK`).
+- **`read_when_settled()`**: page reads that race a post-challenge reload ("Execution context was destroyed") are retried after `domcontentloaded`; used by `fetch_text()` and `_fetch_page_html()`.
+
 ### Test: Live Smoke Caps Results at 50
 - `tests/live/conftest.py` sets `search_max_results` to 50 (autouse fixture, same mechanism as the Stremio path): smoke tests check that a plugin works, not that it scrapes 1000 items within 90 s. Playwright smoke now: animeloads, ddlspot, ddlvalley, moflix, scnsrc pass; byte (timeout), boerse (network error), streamworld (0 results) remain for `docs/plans/plugin-repair.md`.
 

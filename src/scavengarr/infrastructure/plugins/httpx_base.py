@@ -19,6 +19,8 @@ import httpx
 import structlog
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort
+from scavengarr.infrastructure.browser.cloudflare import is_cloudflare_challenge
 
 from .constants import (
     DEFAULT_CLIENT_TIMEOUT,
@@ -28,6 +30,9 @@ from .constants import (
     DEFAULT_USER_AGENT,
     search_max_results,
 )
+
+# Browser fallback budget per page: covers a Turnstile click + redirect
+_BROWSER_FETCH_TIMEOUT_S = 30.0
 
 
 class HttpxPluginBase:
@@ -49,6 +54,8 @@ class HttpxPluginBase:
 
     # --- Shared HTTP client (set once, used by all instances) ---
     _shared_http_client: httpx.AsyncClient | None = None
+    # --- Browser fallback for Cloudflare challenges (set once, optional) ---
+    _browser_fetcher: BrowserFetcherPort | None = None
 
     # --- Must be set by subclass ---
     name: str = ""
@@ -80,6 +87,15 @@ class HttpxPluginBase:
         so each plugin's overrides still work.
         """
         cls._shared_http_client = client
+
+    @staticmethod
+    def set_browser_fetcher(fetcher: BrowserFetcherPort | None) -> None:
+        """Inject the browser used when a site answers with a CF challenge.
+
+        Set on the base class so every plugin sees it; ``None`` disables
+        the fallback (``playwright.browser_fallback: false``).
+        """
+        HttpxPluginBase._browser_fetcher = fetcher
 
     def __init__(self) -> None:
         self._client: httpx.AsyncClient | None = None
@@ -231,6 +247,59 @@ class HttpxPluginBase:
                 error=str(exc),
                 context=context,
             )
+        return None
+
+    async def _fetch_text(
+        self,
+        url: str,
+        *,
+        params: dict[str, str] | None = None,
+        context: str = "",
+    ) -> str | None:
+        """GET *url* and return the body text (``None`` on failure).
+
+        When the site answers with a Cloudflare challenge and a browser
+        fetcher is injected, the same URL (query string included) is loaded
+        through the browser instead.  Without a fetcher this behaves like a
+        plain GET with ``_safe_fetch()``-style logging.
+        """
+        client = await self._ensure_client()
+        kwargs: dict[str, object] = {}
+        if params:
+            kwargs["params"] = params
+        if client is self._shared_http_client:
+            kwargs["timeout"] = httpx.Timeout(self._timeout)
+            kwargs["headers"] = {"User-Agent": self._user_agent}
+
+        try:
+            resp = await client.get(url, **kwargs)
+        except httpx.TimeoutException:
+            self._log.warning(f"{self.name}_timeout", url=url, context=context)
+            return None
+        except Exception as exc:  # noqa: BLE001
+            self._log.warning(
+                f"{self.name}_fetch_error", url=url, error=str(exc), context=context
+            )
+            return None
+
+        if resp.status_code < 400:
+            return resp.text
+
+        fetcher = self._browser_fetcher
+        if fetcher is not None and is_cloudflare_challenge(resp.status_code, resp.text):
+            self._log.info(
+                f"{self.name}_browser_fallback", url=str(resp.url), context=context
+            )
+            return await fetcher.fetch_text(
+                str(resp.url), timeout=_BROWSER_FETCH_TIMEOUT_S
+            )
+
+        self._log.warning(
+            f"{self.name}_http_error",
+            url=url,
+            status=resp.status_code,
+            context=context,
+        )
         return None
 
     def _safe_parse_json(

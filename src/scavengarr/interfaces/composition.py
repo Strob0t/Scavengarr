@@ -341,8 +341,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     state.stealth_pool = StealthPool(
         browser_pool=state.shared_browser_pool,
         timeout_ms=int(config.stremio.probe_stealth_timeout_seconds * 1000),
+        # RAM budget: at most 2 browser-fetched pages at a time
+        fetch_concurrency=min(config.stremio.max_concurrent_playwright, 2),
     )
     log.info("stealth_pool_configured")
+
+    # 8b) httpx plugins fall back to the stealth browser on CF challenges
+    HttpxPluginBase.set_browser_fetcher(
+        state.stealth_pool if config.playwright_browser_fallback else None
+    )
+    log.info("browser_fallback_configured", enabled=config.playwright_browser_fallback)
 
     # 9) Hoster resolver registry (for extracting video URLs from embed pages)
     state.hoster_resolver_registry = HosterResolverRegistry(

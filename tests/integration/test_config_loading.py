@@ -174,3 +174,29 @@ class TestCliOverrides:
         assert config.app_name == "custom-app"
         assert config.environment == "prod"
         assert config.log_format == "json"
+
+
+class TestPlaywrightBrowserSettings:
+    """playwright.headless / playwright.browser_fallback (anti-bot defaults)."""
+
+    def test_defaults_headful_with_browser_fallback(self) -> None:
+        config = load_config()
+        assert config.playwright_headless is False
+        assert config.playwright_browser_fallback is True
+
+    def test_yaml_disables_browser_fallback(self, tmp_path: Path) -> None:
+        path = tmp_path / "pw.yaml"
+        path.write_text(
+            yaml.dump({"playwright": {"browser_fallback": False}}), encoding="utf-8"
+        )
+
+        config = load_config(config_path=path)
+
+        assert config.playwright_browser_fallback is False
+        assert config.playwright_headless is False  # default preserved
+
+    def test_env_overrides_browser_fallback(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SCAVENGARR_PLAYWRIGHT_BROWSER_FALLBACK", "false")
+        assert load_config().playwright_browser_fallback is False

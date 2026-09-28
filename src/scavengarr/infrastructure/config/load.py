@@ -47,7 +47,7 @@ def _normalize_layer(data: Mapping[str, Any]) -> dict[str, Any]:
     - app_name, environment
     - plugins.plugin_dir
     - http.timeout_seconds, http.follow_redirects, http.user_agent
-    - playwright.headless, playwright.timeout_ms
+    - playwright.headless, playwright.browser_fallback, playwright.timeout_ms
     - logging.level, logging.format
     - cache.dir, cache.ttl_seconds
     """
@@ -85,6 +85,7 @@ def _normalize_layer(data: Mapping[str, Any]) -> dict[str, Any]:
         "http_retry_max_backoff": ("http", "retry_max_backoff"),
         "api_rate_limit_rpm": ("http", "api_rate_limit_rpm"),
         "playwright_headless": ("playwright", "headless"),
+        "playwright_browser_fallback": ("playwright", "browser_fallback"),
         "playwright_timeout_ms": ("playwright", "timeout_ms"),
         "log_level": ("logging", "level"),
         "log_format": ("logging", "format"),

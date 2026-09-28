@@ -10,9 +10,13 @@ shadow root, and only a headful browser passes the check
 from __future__ import annotations
 
 import time
+from collections.abc import Awaitable, Callable
+from typing import TypeVar
 
 import structlog
 from patchright.async_api import Page
+
+T = TypeVar("T")
 
 log = structlog.get_logger(__name__)
 
@@ -60,6 +64,29 @@ async def _click_checkbox(page: Page) -> bool:
         except Exception:  # noqa: BLE001  (widget not rendered yet)
             log.debug("turnstile_click_failed", exc_info=True)
     return False
+
+
+_NAVIGATION_ERRORS = ("execution context was destroyed", "page is navigating")
+
+
+async def read_when_settled(
+    page: Page, read: Callable[[], Awaitable[T]], *, attempts: int = 3
+) -> T:
+    """Run *read* (e.g. ``page.content``), retrying while *page* navigates.
+
+    Cloudflare can reload the page once more after the challenge cleared,
+    without a ``__cf_chl`` marker that ``_settle`` could wait for.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            return await read()
+        except Exception as exc:
+            navigating = any(m in str(exc).lower() for m in _NAVIGATION_ERRORS)
+            if not navigating or attempt == attempts:
+                raise
+            log.debug("page_read_retry_navigation", url=page.url, attempt=attempt)
+            await page.wait_for_load_state("domcontentloaded")
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 async def _settle(page: Page) -> None:
