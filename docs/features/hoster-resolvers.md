@@ -187,6 +187,27 @@ The `_video_extract.py` module provides shared utilities for extracting video UR
 
 ---
 
+## Adding a New Resolver
+
+**XFS-based hoster:** add an `XFSConfig` constant in `xfs.py` (name, domains, file_id_re, offline_markers, is_video_hoster) and append it to `ALL_XFS_CONFIGS`. **Generic DDL hoster:** add a `GenericDDLConfig` constant in `generic_ddl.py` and append it to `ALL_DDL_CONFIGS`. In both cases tests are parameterised automatically and the composition root picks the config up via `create_all_xfs_resolvers()` / `create_all_ddl_resolvers()`.
+
+**Any other hoster:**
+
+1. Create `src/scavengarr/infrastructure/hoster_resolvers/<name>.py`:
+   - Module level: `_DOMAINS` frozenset, `_FILE_ID_RE` regex, helpers such as `_extract_file_id()`.
+   - A class with a `name` property and `async def resolve(self, url: str) -> ResolvedStream | None`; the constructor takes `http_client: httpx.AsyncClient`; log via `structlog.get_logger(__name__)`.
+   - Flow: extract file ID → build canonical URL → fetch page/API → check offline markers → return `ResolvedStream` or `None`.
+   - Streaming resolvers return the direct video URL; DDL resolvers return the canonical file URL with `StreamQuality.UNKNOWN`.
+   - Use `extract_domain(url)` from `scavengarr.infrastructure.hoster_resolvers` for domain matching (`"https://www.voe.sx/e/abc"` → `"voe"`).
+2. Add `tests/unit/infrastructure/test_<name>_resolver.py` with `respx` mocks (see [Testing](#testing)):
+   - `TestExtractFileId`: valid domains, `www` prefix, http scheme, invalid/short IDs, non-matching domains.
+   - `TestResolver`: `test_name`, valid file, one test per offline marker, HTTP errors, network errors, invalid URLs, error redirects.
+3. Wire it into the `resolvers=[...]` list in `src/scavengarr/interfaces/composition.py`: `<Name>Resolver(http_client=state.http_client)`.
+
+**JDownloader reference sources:** `.devdata/JDownloader2/plugins/` and `.devdata/JDownloader2/controlling/` (not versioned) are SVN working copies of `svn://svn.jdownloader.org/jdownloader/trunk/src/jd/{plugins,controlling}`; use the JDownloader hoster/decrypter plugins there as reference when adding or fixing resolvers. `.devcontainer/sync-jdownloader.sh` checks them out or runs `svn update` on every container start; files pulled in by the last sync that brought changes are listed in `.devdata/JDownloader2/CHANGES.md`.
+
+---
+
 ## Testing
 
 All resolver tests use **respx** (httpx-native HTTP mocking) for realistic test coverage:

@@ -12,6 +12,10 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 breaker, global concurrency pool, graceful shutdown, multi-language search, and
 growth of the test suite from 160 to 4043 tests.
 
+### Docs: Slim CLAUDE.md
+- **`CLAUDE.md` cut from 42 KB to 9 KB**: it is loaded into every AI session, so it now keeps only the rules that apply to every change (workflow, dependency rule, Python rules, mock patterns, dev container pitfalls) and links to `docs/` for details. The hand-maintained test file tree was dropped (derivable from `tests/`), the unconfigured docs-mcp-server section removed.
+- **Guides moved to feature docs**: "Adding a New Plugin" (site analysis, mandatory search standards) now lives in `docs/features/python-plugins.md`, "Adding a New Resolver" (non-XFS workflow, test checklist, JDownloader sources) in `docs/features/hoster-resolvers.md`.
+
 ### Refactor: StremioStreamUseCase Split
 - **Episode filter moved to infrastructure**: `filter_by_episode()` (guessit-based) now lives in `infrastructure/stremio/episode_filter.py` and is injected into `StremioStreamUseCase` as `episode_filter_fn`. The application layer no longer imports guessit directly.
 - **Stream building extracted**: stream formatting, hoster dedup, direct-video detection, behaviorHints, cache links and proxy URL building moved to `application/stremio/stream_builder.py` (pure functions, tests in `test_stremio_stream_builder.py`).

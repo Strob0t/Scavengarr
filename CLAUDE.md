@@ -1,769 +1,147 @@
 # CLAUDE.md
 
-Instructions for developers and AI assistants (Claude, GPT, etc.) working on Scavengarr.
+Instructions for developers and AI assistants working on Scavengarr. Details live in `docs/`; this file holds the rules that apply to every change.
 
 ***
 
 ## 1. Workflow (IMPORTANT!)
 
-This section defines the day-to-day workflow rules for contributions to Scavengarr.
+### Branches
+- `staging`: development branch (commit here). `main`: production (merge via PR only).
+- Never commit to `main`. Never merge into `main` without an explicit user request.
 
-### Branch rules
-
-| Branch | Purpose |
-|---|---|
-| `staging` | Development branch (commit here). |
-| `main` | Production branch (merge via PR only). |
-
-Rules:
-- Never commit directly to `main`.
-- Never merge into `main` without an explicit user request.
-
-### Commit rules
-
-Before every commit, you must run:
+### Before every commit
 
 ```bash
 poetry run pre-commit run --all-files
 poetry run pytest
 ```
 
-`pre-commit` is part of the dev toolchain and a `.pre-commit-config.yaml` exists in the repository.
-
-`poetry run pytest` excludes live tests (`addopts = -m "not live"`) and benchmarks. Live smoke tests hit real websites and are run explicitly with `poetry run pytest -m live`; their failures signal broken plugins/resolvers, not a commit blocker.
+`poetry run pytest` excludes live tests (`addopts = -m "not live"`) and benchmarks. Live smoke tests hit real websites and run with `poetry run pytest -m live`; their failures signal broken plugins/resolvers, not a commit blocker.
 
 Rules:
 - Fix all errors before committing (warnings can be acceptable depending on the check).
-- Make small, atomic commits (do not batch unrelated changes).
-- **Update documentation before every commit**: if the change affects behavior, features, architecture, or configuration, update the relevant docs (`CHANGELOG.md`, `docs/features/`, `docs/architecture/`, `CLAUDE.md`, `README.md`) as part of the same commit. Documentation is not a follow-up task — it ships with the code.
-- Push after each successful change:
+- Small, atomic commits; commit after each isolated subtask, never batch unrelated changes.
+- **Docs ship with the code**: if behavior, features, architecture or configuration change, update `CHANGELOG.md`, `docs/features/`, `docs/architecture/`, `docs/plans/`, `CLAUDE.md`, `README.md` or `openspec/changes/...` in the same commit.
+- Push after each successful change: `git push origin staging`.
+- Larger refactors: write a brief Markdown plan (problem, design, affected files, tests) first.
 
-```bash
-git add .
-git commit -m "description"
-git push origin staging
-```
-
-Never:
-- Commit to `main`.
-- Merge to `main` on your own.
-- Accumulate multiple changes without committing.
-- Commit without running `poetry run pre-commit run --all-files`.
-- Commit code changes without updating relevant documentation.
-
-### Merge to main (only when the user requests it)
-
-When the user explicitly requests a release/merge to `main`:
-
-1. Bump the version in `pyproject.toml` (PATCH +1 by default unless the change warrants MINOR/MAJOR).
-2. Update the changelog (see “Version & changelog” below).
+### Merge to main (only on explicit user request)
+1. Bump the version in `pyproject.toml` (PATCH +1 unless MINOR/MAJOR is warranted).
+2. Update `CHANGELOG.md` (newest entry on top with version, date, changes; current bugs under `KNOWN_ISSUES`).
 3. Commit & push to `staging`.
-4. Create and merge a PR:
-
-```bash
-gh pr create --base main --head staging --title "..." --body "..."
-gh pr merge --merge
-```
-
-5. Sync `staging` back with `main`:
-
-```bash
-git fetch origin
-git merge origin/main
-git push origin staging
-```
-
-### Version & changelog
-
-- Version source of truth: `pyproject.toml`.
-- Version bump policy: bump only when merging to `main` (default: PATCH +1).
-- Changelog policy: keep a single changelog at repository root (recommended name: `CHANGELOG.md`), newest entry at the top, include `version`, `date`, and `changes[]`.
-
-If you decide to track known issues, keep them in the changelog under a `KNOWN_ISSUES` section (current bugs only).
-
-### Documentation
-
-When changing behavior or adding features, update the relevant documentation:
-- `CLAUDE.md` when architecture or constraints change.
-- `README.md` when setup/run instructions change.
-- `docs/features/` for feature documentation (plugins, API, config, scraping, validation).
-- `docs/architecture/` for architecture docs (clean-architecture.md, codeplan.md).
-- `docs/plans/` for planned features (playwright-engine, more-plugins, integration-tests, search-caching, plugin-repair).
-- `CHANGELOG.md` when adding notable changes.
-- OpenSpec documents under `openspec/changes/...` when the change is specified or tracked there.
+4. `gh pr create --base main --head staging --title "..." --body "..."` then `gh pr merge --merge`.
+5. Sync back: `git fetch origin && git merge origin/main && git push origin staging`.
 
 ***
 
 ## 2. Project overview
 
-Scavengarr is a self-hosted, container-ready Torznab/Newznab indexer for Prowlarr and other Arr applications.
-The system scrapes sources via two engines (httpx for static HTML, Playwright for JavaScript-heavy sites) and delivers results through Torznab endpoints like `caps` and `search`.
+Scavengarr is a self-hosted Torznab/Newznab indexer for Prowlarr and other Arr apps, plus a Stremio addon. Plugins scrape sites with httpx (static HTML) or Playwright (JS-heavy sites); results are served via Torznab endpoints (`caps`, `search`) and Stremio streams.
 
-### Core ideas (target architecture)
-- Plugin-driven: Python plugins (httpx or Playwright-based) define site-specific logic without touching core code.
-- Dual engine: httpx + Playwright are equal-weight backends; selection per plugin depends on "JS-heavy" classification.
-- Multi-stage scraping is a core feature: “Search → Detail → Links” is the norm.
-- I/O dominates runtime: architecture and code must be non-blocking (no mutual blocking).
-- CrawlJob system: multiple validated links are bundled into a `.crawljob` file (multi-link packaging).
+Request flow: request (HTTP/CLI) → use case loads plugin from registry (lazy) → plugin runs multi-stage search (search page → detail pages → links) → links validated in parallel → optional `.crawljob` bundle → presenter renders Torznab XML.
+
+Feature docs: `docs/features/README.md` (index). Architecture: `docs/architecture/clean-architecture.md`.
 
 ***
 
 ## 3. Clean Architecture (dependency rule)
 
-```
-┌────────────────────────────────────────────────┐
-│  Interfaces (Controllers, CLI, HTTP Router)    │ ← Frameworks & Drivers
-├────────────────────────────────────────────────┤
-│  Adapters (httpx, Playwright, DiskCache)       │ ← Interface Adapters
-├────────────────────────────────────────────────┤
-│  Application (Use Cases, Factories, Services)  │ ← Application Business Rules
-├────────────────────────────────────────────────┤
-│  Domain (Entities, Value Objects, Protocols)   │ ← Enterprise Business Rules
-└────────────────────────────────────────────────┘
-```
+Layers under `src/scavengarr/`, outer depends on inner only:
 
-Dependency rule: inner layers never know about outer layers.
-✅ Application imports Domain
-✅ Infrastructure implements Domain Protocols
-❌ Domain NEVER imports FastAPI, httpx, diskcache
-
-***
-
-## 4. Architecture layers (organization)
-
-Note: this structure is the target architecture; parts of the current organization may be discarded.
-Currently, Clean Architecture namespace blocks exist as top-level packages under `src/scavengarr/` (including `domain/`, `application/`, `infrastructure/`, `interfaces/`).
-
-### Domain (enterprise business rules)
-- Entities: long-lived business objects with identity (e.g., SearchResult, CrawlJob, query objects).
-- Value objects: immutable values (e.g., plugin configuration, categories, query parameters).
-- Protocols (ports): abstract contracts (ScrapingEngine, PluginRegistry, LinkValidator, Cache).
-
-Rule: Domain is framework-free, I/O-free, and kept simple.
-
-### Application (application business rules)
-- Use cases: orchestrate the flow “Query → Plugin → Scrape → Validate → Present”.
-- Factories: build domain objects consistently (IDs, TTL, normalization).
-- Policies: quotas, limits, timeouts, retries (as rules, not framework code).
-
-Rule: Application knows ports (protocols) but not concrete adapters.
-
-### Infrastructure (interface adapters)
-- Plugins: discovery/loading/validation for Python plugins.
-- Search engine: orchestrates link validation and result filtering.
-- Validation: HTTP link validator (HEAD/GET strategies, redirects, parallelism).
-- Cache: diskcache adapter (Redis optional only if already present).
-- Persistence: repository implementations (CrawlJob cache repository).
-- Torznab: presenter for XML generation, field mapping, attribute handling.
-- Configuration: YAML/ENV/CLI loading with precedence, validation via Pydantic.
-- Logging: structured logging setup (structlog + stdlib, async queue handler).
-- Common utilities: parsers, converters, extractors for data transformation.
-
-Rule: Infrastructure may use external libraries but must connect to Application via ports.
-
-### Interfaces (frameworks & drivers)
-- HTTP (FastAPI router): request parsing, response formatting, error mapping.
-- CLI (argparse, stdlib): server startup with config overrides (`poetry run start`).
-- Composition root: dependency injection and wiring.
-
-Rule: Interfaces contain no business rules, only input/output.
-
-***
-
-## 5. Technology stack (dependencies)
-
-The source of truth for dependencies is `pyproject.toml`.
-Scavengarr uses FastAPI/Uvicorn, Playwright, structlog, diskcache, pydantic-settings, httpx, and optionally Redis.
-
-### Package documentation (docs-mcp-server)
-
-When writing code that uses packages from `pyproject.toml`, use the **docs-mcp-server** MCP tools to look up current API documentation:
-- `search_docs(library, query)` — search indexed docs for a package
-- `scrape_docs(url, library)` — index new package docs if not yet available
-
-This ensures code is written against the actual API of the installed package versions.
-
-**Currently not configured** (removed with the Docker MCP stack, 2026-09-28): fall back to the installed package source in `.venv` and the official online docs.
-
-### Dependency principles
-- Keep third-party dependencies minimal: prefer stdlib, then established libraries, only then custom code.
-- Avoid building internal “mini-frameworks”.
-- New dependencies require explicit justification (security, maintainability, tests, API stability).
-
-***
-
-## 6. Core components (terminology)
-
-| Term | Brief description |
-|---|---|
-| Torznab query | Normalized input (e.g., `t=search`, `q=...`, categories, extended). |
-| Plugin | Describes how to scrape (Python: httpx or Playwright). |
-| Stage | One step in the pipeline (e.g., `search_results`, `movie_detail`). |
-| SearchResult | Domain entity: a found item, including metadata and links. |
-| Link validation | I/O-heavy filter that removes dead/blocked links. |
-| CrawlJob | Bundle of multiple validated links in `.crawljob` (multi-link packaging). |
-| Presenter/renderer | Translates domain results into Torznab XML (Prowlarr-compatible). |
-
-***
-
-## 7. Request flow (high-level)
-
-Goal: HTTP/CLI only provide input/output; the use case orchestrates; adapters perform I/O.
-
-1. Request arrives (HTTP `caps/search/...` or CLI).
-2. Use case loads plugin from registry (lazy).
-3. Plugin executes the search (httpx or Playwright).
-4. Link validator checks links in parallel (not sequentially).
-5. CrawlJob generates `.crawljob` for multiple links (if feature is active).
-6. Presenter renders the Torznab XML response.
-
-***
-
-## 8. Configuration system (precedence + logging)
-
-### Precedence (high → low)
-1. CLI arguments (e.g., `--config`, `--plugin-dir`, `--log-level`).
-2. Environment variables (`SCAVENGARR_*`).
-3. YAML config file.
-4. `.env` (optional).
-5. Defaults (in code).
-
-### Configuration categories (incomplete)
-| Category | Typical contents | Purpose |
+| Layer | Contains | Rule |
 |---|---|---|
-| General | environment, base_url, app_name | deterministic behavior |
-| Plugins | plugin_dir, discovery rules | reproducible plugin loading |
-| Scraping | timeouts, user agent, redirects | stable requests |
-| Playwright | headless, navigation timeouts, concurrency | controlled resources |
-| Validation | HEAD/GET policy, timeouts, parallel limits | fast filtering |
-| Cache | backend, ttl, storage path | less I/O |
-| Logging | level, format (json/console), correlation fields | observability without noise |
+| `interfaces/` | FastAPI routers, CLI, composition root (DI wiring) | I/O only, no business rules |
+| `infrastructure/` | plugins, hoster resolvers, link validation, cache, Torznab presenter, config, logging | implements domain ports |
+| `application/` | use cases, factories, policies (limits, timeouts, retries) | knows ports, not adapters |
+| `domain/` | entities, value objects, `Protocol` ports | framework-free, I/O-free |
 
-### Logging (as a config topic)
-- Logs are structured (JSON/console depending on environment) and include context fields like `plugin`, `stage`, `duration_ms`, `results_count`.
-- Logging must never output secrets from config/env (masking/redaction).
+Domain never imports FastAPI, httpx or diskcache.
 
-***
-
-## 9. Plugin system & multi-stage scraping
-
-### Plugin types
-- Httpx plugins: Python plugins using httpx for static HTML scraping (inherit from `HttpxPluginBase`).
-- Playwright plugins: Python plugins using Playwright for JS-heavy sites (inherit from `PlaywrightPluginBase`).
-
-### Plugin discovery & loading (agent-relevant)
-- Discovery: registry scans plugin dir for `.py` files.
-- Lazy loading: plugins are imported on first access.
-- Caching: once loaded, plugins remain in the process cache.
-
-### Multi-stage execution (semantics)
-- Plugins implement multi-stage scraping internally (search page → detail pages → links).
-- Within a stage, independent URLs are processed in parallel (bounded concurrency) to prevent blocking.
+Invariants:
+- I/O dominates runtime: nothing may block the event loop. Independent URLs (detail pages, link validation) run in parallel with bounded concurrency.
+- Link validation: `HEAD` with redirects first, `GET` fallback only when needed; short timeouts, semaphore-limited.
+- CrawlJobs contain only validated links, in deterministic order; job IDs are stable, TTL configurable.
+- Config precedence (high → low): CLI args → `SCAVENGARR_*` env → YAML → `.env` → defaults. See `docs/features/configuration.md`.
+- Logging: `structlog`, structured, with context fields (`plugin`, `stage`, `duration_ms`, `results_count`); never log secrets.
 
 ***
 
-## 10. Link validation strategy (non-blocking)
+## 4. Dependencies
 
-Link validation is I/O-dominant and must run in parallel.
-Rule: no sequential URL checking in loops when parallelism is possible.
-
-### Recommended policies
-- Primary `HEAD` with redirects; fallback `GET` only when necessary (some hosters block HEAD).
-- Keep timeout short, limit parallelism (semaphore), log results cleanly.
-- Status-based decision (example): `200` ok; `403/404/timeout` invalid, optionally configurable per plugin.
+- Source of truth: `pyproject.toml`. For package APIs, read the installed source in `.venv` or the official docs.
+- Prefer stdlib, then established libraries, then custom code. No internal mini-frameworks. New dependencies need explicit justification.
 
 ***
 
-## 11. CrawlJob system (multi-link packaging)
+## 5. Python rules (MUST READ!)
 
-CrawlJob is a domain concept: a job bundles multiple validated links into a `.crawljob` artifact.
-The system provides a stable download endpoint that delivers a `.crawljob` file for a job.
+- `from __future__ import annotations` in every file.
+- Modern typing only: `T | None`, `list[T]`, `dict[K, V]`, `collections.abc.Iterable`; never `Optional`/`List`/`Dict`/`typing.Iterable`. From `typing` import only `Any`, `Protocol`, `Literal`, `TypeVar`, `runtime_checkable`.
+- Fully typed signatures. Ports use `Protocol` (not `ABC`). Entities/value objects are `@dataclass` (`frozen=True` for immutables). `Literal` for fixed values; casts only with runtime checks.
+- No mutable default arguments (use `None` + create inside). Never swallow exceptions (`except: pass`); log and re-raise or map cleanly.
+- Async: `asyncio.gather` over sequential `await` in loops; CPU-bound parsing goes to `run_in_executor`.
+- Prefer small functions/modules over deep class hierarchies; dependencies injected explicitly via constructors/factories.
+- Scraping: specific but robust selectors, `urljoin` for URLs, missing fields → partial result + warning instead of abort.
+- Playwright: no `sleep()` waits (use conditions/locators), close contexts/pages deterministically, limit browser parallelism with a semaphore.
 
-### Rules
-- Job ID is stable, TTL is configurable, storage is interchangeable (cache port).
-- `.crawljob` contains multiple links; order is deterministic (stable for tests).
-- Never write unvalidated links into CrawlJobs (policy: validate-first).
+Performance guide: `docs/PYTHON-BEST-PRACTICES.md`.
 
 ***
 
-## 12. Testing strategy (TDD + layers)
+## 6. Testing (TDD mandatory)
 
-### Test layering
-- Unit: Domain (pure), Application (use cases with mocks/fakes), Infrastructure (parser/mapping).
-- Integration: HTTP router ↔ use case ↔ adapter with HTTP mocking.
-- Optional E2E: real plugin fixtures, but deterministic (no external sites in CI).
+Loop: write test → run (red) → implement minimally (green) → refactor (green) → checkpoint commit.
 
-### Current test suite (4113 tests)
+Layout: `tests/unit/{domain,application,infrastructure,interfaces}`, `tests/integration`, `tests/e2e`, `tests/benchmark`, `tests/live` (opt-in). Plugin tests: `tests/unit/infrastructure/test_<name>_plugin.py`; resolver tests: `test_<name>_resolver.py`. E2E tests are deterministic (no external sites).
 
-```
-tests/
-  conftest.py                          # Shared fixtures (entities, mock ports)
-  unit/
-    domain/
-      test_crawljob.py                 # CrawlJob entity, enums, serialization
-      test_torznab_entities.py         # TorznabQuery/Item/Caps, exceptions
-      test_search_result.py            # SearchResult
-      test_plugin_schema.py            # AuthConfig, HttpOverrides
-      test_stremio_entities.py         # Stremio domain entities
-    application/
-      test_crawljob_factory.py         # SearchResult → CrawlJob conversion
-      test_torznab_caps.py             # Capabilities use case
-      test_torznab_indexers.py         # Indexer listing use case
-      test_torznab_search.py           # Search use case (validation, error paths)
-      test_stremio_catalog.py          # Stremio catalog use case
-      test_stremio_stream.py           # Stremio stream use case (search, filter, resolve, rank)
-      test_plugin_search_runner.py     # PluginSearchRunner (fan-out, timeout, circuit breaker)
-      test_stremio_queries.py          # Search query + multi-language reference building
-      test_stremio_stream_builder.py   # Stream formatting, dedup, direct-video detection, proxy URLs
-    infrastructure/
-      test_converters.py               # to_int()
-      test_parsers.py                  # parse_size_to_bytes()
-      test_presenter.py                # Torznab XML rendering (caps + RSS)
-      test_link_validator.py           # HTTP HEAD/GET validation
-      test_search_engine.py            # HttpxSearchEngine validation/filtering
-      test_crawljob_cache.py           # Cache repository (pickle storage)
-      test_httpx_base.py               # HttpxPluginBase shared base class
-      test_playwright_base.py          # PlaywrightPluginBase shared base class
-      test_plugin_registry.py          # Plugin discovery and loading
-      test_release_parser.py           # guessit release name parsing
-      test_episode_filter.py           # Season/episode filtering (guessit + link labels)
-      test_title_matcher.py            # Title-match scoring for Stremio
-      test_imdb_fallback.py            # IMDB suggest API fallback client
-      test_tmdb_client.py              # TMDB httpx client
-      test_stream_converter.py         # SearchResult → RankedStream conversion
-      test_stream_sorter.py            # Stremio stream sorting/ranking
-      test_stream_link_cache.py        # Stream link cache repository
-      test_hls_proxy.py                # HLS proxy manifest rewriting + CDN fetch + query resolution (23 tests)
-      test_hoster_registry.py          # HosterResolverRegistry
-      test_xfs_resolver.py             # Generic XFS resolver (27 hosters, parameterised, video extraction)
-      test_video_extract.py            # Shared video URL extraction (packed JS, JWPlayer, HLS)
-      test_voe_resolver.py             # VOE hoster resolver
-      test_streamtape_resolver.py      # Streamtape hoster resolver
-      test_supervideo_resolver.py      # SuperVideo hoster resolver
-      test_doodstream_resolver.py      # DoodStream hoster resolver
-      test_filemoon_resolver.py        # Filemoon hoster resolver
-      test_filernet_resolver.py        # Filer.net DDL hoster resolver
-      test_rapidgator_resolver.py      # Rapidgator DDL hoster resolver
-      test_ddownload_resolver.py       # DDownload DDL hoster resolver
-      test_generic_ddl_resolver.py     # Generic DDL resolver (12 hosters, parameterised)
-      test_serienstream_resolver.py    # SerienStream resolver
-      test_stmix_resolver.py           # Stmix streaming resolver
-      test_vidguard_resolver.py        # VidGuard streaming resolver
-      test_vidking_resolver.py         # Vidking streaming resolver
-      test_strmup_resolver.py          # StreamUp (strmup) HLS streaming resolver
-      test_vidsonic_resolver.py        # Vidsonic HLS streaming resolver
-      test_sendvid_resolver.py         # SendVid streaming resolver
-      test_mediafire_resolver.py       # Mediafire DDL hoster resolver
-      test_gofile_resolver.py          # GoFile DDL hoster resolver
-      test_retry_transport.py          # RetryTransport (rate limit + 429/503 retry)
-      test_rate_limiter.py             # DomainRateLimiter + TokenBucket
-      test_adaptive_rate_limiter.py    # Adaptive AIMD rate limiting
-      test_concurrency.py              # ConcurrencyPool + RequestBudget
-      test_auto_concurrency.py         # Container-aware auto-tuning of concurrency
-      test_resource_detector.py        # cgroup v2/v1 CPU/memory detection
-      test_circuit_breaker.py          # PluginCircuitBreaker
-      test_graceful_shutdown.py        # GracefulShutdown
-      test_metrics.py                  # MetricsCollector
-      test_metrics_endpoint.py         # /api/v1/stats/metrics endpoint
-      test_api_middleware.py           # RateLimitMiddleware
-      test_cloudflare.py               # Shared Cloudflare challenge detection
-      test_stealth_pool.py             # StealthPool (Playwright Stealth browser pool)
-      test_hoster_probe.py             # Hoster embed URL liveness probe
-      test_verify_video_url.py         # Shared verify_video_url helper
-      test_ewma.py                     # EWMA scoring functions (32 tests)
-      test_plugin_score_cache.py       # Cache persistence + index management (19 tests)
-      test_query_pool.py               # TMDB query generation + fallback (14 tests)
-      test_health_prober.py            # HEAD/GET probing + CF detection with respx mocks (17 tests)
-      test_search_prober.py            # Plugin search + hoster checks (8 tests)
-      test_scoring_scheduler.py        # Health/search cycles + tick (14 tests)
-      test_animeloads_plugin.py        # animeloads plugin tests (Playwright, DDoS-Guard, pagination)
-      test_aniworld_plugin.py          # aniworld plugin tests
-      test_boerse_plugin.py            # boerse plugin tests
-      test_burningseries_plugin.py     # burningseries plugin tests
-      test_byte_plugin.py              # byte plugin tests
-      test_cineby_plugin.py            # cineby plugin tests
-      test_cine_plugin.py              # cine plugin tests
-      test_crawli_plugin.py            # crawli plugin tests
-      test_dataload_plugin.py          # dataload plugin tests
-      test_ddlspot_plugin.py           # ddlspot plugin tests
-      test_ddlvalley_plugin.py         # ddlvalley plugin tests
-      test_einschalten_plugin.py       # einschalten plugin tests
-      test_filmfans_plugin.py          # filmfans plugin tests
-      test_filmpalast_plugin.py        # filmpalast_to plugin tests
-      test_fireani_plugin.py           # fireani plugin tests
-      test_haschcon_plugin.py          # haschcon plugin tests
-      test_hdfilme_plugin.py           # hdfilme plugin tests
-      test_hdsource_plugin.py          # hdsource plugin tests
-      test_hdworld_plugin.py           # hdworld plugin tests
-      test_jjs_plugin.py               # jjs plugin tests
-      test_kinoger_plugin.py           # kinoger plugin tests
-      test_kinoking_plugin.py          # kinoking plugin tests
-      test_kinox_plugin.py             # kinox plugin tests
-      test_megakino_plugin.py          # megakino plugin tests
-      test_megakino_to.py              # megakino_to plugin tests
-      test_moflix_plugin.py            # moflix plugin tests
-      test_movieblog_plugin.py         # movieblog plugin tests
-      test_movie2k_plugin.py           # movie2k plugin tests
-      test_movie4k.py                  # movie4k plugin tests
-      test_myboerse_plugin.py          # myboerse plugin tests
-      test_mygully_plugin.py           # mygully plugin tests
-      test_nima4k_plugin.py            # nima4k plugin tests
-      test_nox_plugin.py               # nox plugin tests
-      test_scnlog_plugin.py            # scnlog plugin tests
-      test_scnsrc_plugin.py            # scnsrc plugin tests
-      test_serienfans_plugin.py        # serienfans plugin tests
-      test_serienjunkies_plugin.py     # serienjunkies plugin tests
-      test_sto_plugin.py               # sto plugin tests
-      test_streamcloud_plugin.py       # streamcloud plugin tests
-      test_streamkiste_plugin.py       # streamkiste plugin tests
-      test_streamworld_plugin.py       # streamworld plugin tests
-      test_warezomen_plugin.py         # warezomen plugin tests
-    interfaces/
-      test_router_category.py          # Torznab router category parsing
-      test_stremio_router.py           # Stremio addon router endpoints
-  e2e/
-    test_torznab_endpoint.py           # 46 Torznab endpoint tests (caps, search, error responses)
-    test_stremio_endpoint.py           # Stremio endpoint E2E (mock plugins, full HTTP flow, HLS proxy)
-    test_stremio_series_e2e.py         # Stremio series E2E (season/episode filtering)
-    test_stremio_streamable_e2e.py     # 31 streamable link verification tests
-  integration/
-    test_config_loading.py             # Configuration precedence (YAML + ENV + defaults)
-    test_crawljob_lifecycle.py         # CrawlJob creation, retrieval, TTL
-    test_link_validation.py            # Link validator with mocked HTTP responses
-  benchmark/
-    conftest.py                        # LatencyPlugin, FakePluginRegistry, BenchmarkResult, timing utilities
-    test_concurrency_tuning.py         # ConcurrencyPool httpx-slot sweep, fair-share contention, timeout edge
-    test_probe_validation_sweep.py     # Probe/validation semaphore sweep, diminishing-returns analysis
-    test_formula_validation.py         # _auto_tune() formula vs empirical optimal, monotonic scaling, bounds
-  live/
-    test_plugin_smoke.py               # Plugin smoke tests (real HTTP, opt-in via -m live)
-    test_resolver_live.py              # Resolver contract tests (live URL validation)
-```
-
-Important mock patterns:
-- `PluginRegistryPort` is **synchronous** → use `MagicMock` (not `AsyncMock`).
-- `SearchEnginePort`, `CrawlJobRepository`, `CachePort`, `PluginScoreStorePort` are **async** → use `AsyncMock`.
+Mock patterns:
+- `PluginRegistryPort` is **synchronous** → `MagicMock` (not `AsyncMock`).
+- `SearchEnginePort`, `CrawlJobRepository`, `CachePort`, `PluginScoreStorePort` are **async** → `AsyncMock`.
 - Hoster resolver tests use `respx` (httpx-native HTTP mocking), not `AsyncMock`/`MagicMock`.
 
-### TDD loop (mandatory for agents)
-1. Write test first (precise acceptance, small scope).
-2. Run test (must be red).
-3. Implement minimally (green).
-4. Refactor (stay green).
-5. Checkpoint commit (small, auditable).
+***
+
+## 7. Plugins & hoster resolvers
+
+- 42 plugins in `plugins/`, all inheriting from `HttpxPluginBase` (`src/scavengarr/infrastructure/plugins/httpx_base.py`) or `PlaywrightPluginBase` (`playwright_base.py`). Never duplicate base-class boilerplate.
+- Every plugin MUST do category filtering, pagination up to 1000 items and bounded-concurrency detail scraping. Site analysis with `playwright-mcp` comes before any code.
+- Hoster resolvers live in `src/scavengarr/infrastructure/hoster_resolvers/`: individual streaming/DDL resolvers, 12 generic DDL hosters (`generic_ddl.py`, `GenericDDLConfig`), 27 XFS hosters (`xfs.py`, `XFSConfig`). New XFS/DDL hoster = new config constant, no new tests or wiring.
+- JDownloader plugin sources for resolver work: `.devdata/JDownloader2/` (synced on container start).
+
+Step-by-step guides:
+- New plugin: `docs/features/python-plugins.md` → "Adding a New Plugin".
+- New resolver: `docs/features/hoster-resolvers.md` → "Adding a New Resolver".
 
 ***
 
-## 13. Python best practices (MUST READ!)
+## 8. Subagents
 
-Zen of Python (PEP 20): explicit is better than implicit; simple is better than complex; readability counts.
+- Only for mechanical, fully specified tasks (same attribute in many files, renames, boilerplate from a precise spec). Anything needing architecture understanding (use cases, ports, DI wiring, cross-layer refactors, mock-pattern test updates) is done directly.
+- 1 file = 1 agent; tight scope (what to do and what not); include conventions (`structlog`, typing rules, naming) in the prompt.
+- Review every agent output; run the full test suite + pre-commit afterwards.
 
-### Architecture patterns for AI collaboration
-- Atomic task pattern: tasks at file/function level (“Convert X to asyncio” instead of “Make faster”).
-- Functional over OOP: prefer functions/small modules over deep class hierarchies (fewer side effects).
-- Dependency injection: dependencies explicit via constructors/factory functions.
+***
 
-### Typing standards (modern Python 3.10+ syntax, MANDATORY)
+## 9. Dev container
 
-ALWAYS use modern syntax everywhere (classes, functions, variables, return types, parameters):
+- **Git access**: `git push` and `gh` use `GH_TOKEN` from `.env.devcontainer` (not versioned); `.devcontainer/setup.sh` runs `gh auth setup-git` on attach. Git identity: `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL` in the same file. Changes need a container rebuild/restart.
+- **No Docker**: `playwright-mcp` runs over stdio from `.mcp.json` (`npx @playwright/mcp@<pinned>`). `setup.sh` installs the matching Chromium (`playwright install --with-deps chromium`); keep `PLAYWRIGHT_MCP_VERSION` in `setup.sh` in sync with `.mcp.json`.
+- **Node 22** comes from the devcontainer `node` feature (nvm, `/usr/local/share/nvm/current/bin`), not apt (Debian's Node 18 breaks `npx skills`). `setup.sh` installs npm globals without `sudo` (openspec, `@caveman-ai/cli`) and the caveman skills on every attach.
+- **Broken `.venv` shebangs** (`Command not found: pytest`) after a workspace path change: `poetry env remove --all && poetry install --with dev`.
+- **Mixed line endings** (most `.py`/`.md` CRLF, some LF): preserve each file's EOL when editing with scripts.
 
-```python
-from __future__ import annotations   # ALWAYS include in every file
+***
 
-# ✅ correct
-def process(items: list[str], default: int | None = None) -> dict[str, int]: ...
+## 10. Navigation
 
-# ❌ wrong (legacy typing)
-from typing import List, Optional, Dict
-def process(items: List[str], default: Optional[int] = None) -> Dict[str, int]: ...
-```
-
-| Modern syntax | Legacy (forbidden) |
+| Area | Path |
 |---|---|
-| `T \| None` | `Optional[T]` |
-| `list[T]` | `List[T]` |
-| `dict[K, V]` | `Dict[K, V]` |
-| `set[T]` | `Set[T]` |
-| `tuple[T, ...]` | `Tuple[T, ...]` |
-| `collections.abc.Iterable` | `typing.Iterable` |
-
-Additional rules:
-- Fully type all function signatures (parameters + return types).
-- Only import from `typing`: `Any`, `Protocol`, `Literal`, `TypeVar`, `runtime_checkable`.
-- All ports/interfaces use `Protocol` (not `ABC`).
-- Use `@dataclass` for entities and value objects (`frozen=True` for immutables).
-
-### Dignified Python (safety rules)
-- No mutable default arguments (`def f(x=[]): ...` is forbidden).
-- Don't swallow exceptions (`except: pass` is forbidden); log + re-raise or cleanly map.
-- Take type hints seriously: use `Literal` for fixed values; casts only with runtime checks.
-
-### Async/await: non-blocking I/O is mandatory
-
-```python
-# ✅ correct: parallel (bounded elsewhere)
-tasks = [fetch(url) for url in urls]
-pages = await asyncio.gather(*tasks)
-
-# ❌ wrong: sequential (blocks)
-pages = []
-for url in urls:
-    pages.append(await fetch(url))
-```
-
-When CPU-bound parsing is unavoidable, move it out of the event loop (`run_in_executor`) to avoid blocking everything.
-
-### HTML scraping patterns
-- Selectors: as specific as needed, as robust as possible (don't match too broadly).
-- URL handling: `urljoin` instead of string concatenation.
-- Degradation: missing fields → partial result + warning, not a full abort.
-
-### Playwright-specific patterns
-- No `sleep()` delays as “waiting”; use conditions/events (`wait_until="networkidle"`, locators).
-- Resources: close contexts/pages deterministically (avoid leaks).
-- Concurrency: strictly limit browser parallelism (semaphore) to avoid RAM spikes.
-
-### Mutable default arguments (classic Python gotcha)
-
-```python
-# ❌ wrong: mutable default shared between calls
-def add_item(item: str, items: list[str] = []) -> list[str]:
-    items.append(item)
-    return items
-
-# ✅ correct: None default + factory
-def add_item(item: str, items: list[str] | None = None) -> list[str]:
-    if items is None:
-        items = []
-    items.append(item)
-    return items
-```
-
-***
-
-## 14. Team Agents (when to use, when not to)
-
-### When to use agents
-Agents are ONLY for **simple, explicit, mechanical tasks** where the scope is 100% clear:
-- Adding the same attribute to many files (e.g., `default_language = "de"` to 28 plugins)
-- Renaming a variable across a codebase
-- Generating boilerplate from a precise spec
-- Running isolated, well-defined subtasks that don't require project context
-
-### When NOT to use agents (do it yourself!)
-**Any task that requires understanding project architecture, cross-file dependencies, or design decisions MUST be done manually.** This includes:
-- Use cases, domain logic, application services
-- Refactoring that spans multiple layers (router → use case → infrastructure)
-- Functions/classes that interact with ports, protocols, or DI wiring
-- Test updates that require understanding mock patterns and dispatch logic
-- Any code where a wrong decision cascades into other files
-
-**Rule of thumb:** If the task needs project overview → do it yourself. If it's purely mechanical → agent is OK.
-
-### Task assignment (when agents are used)
-- **1 file = 1 agent** — Never assign two agents to modify the same file.
-- **Tight, explicit scope** — Define exactly what the agent should do AND what it should not.
-- **Include project conventions in the prompt** — Agents don't know codebase style. Always specify: `structlog` (not `logging`), typing conventions, ID formats, naming patterns, etc.
-
-### Quality control
-- **Review is mandatory** — Every agent output must be reviewed before committing.
-- **Don't trust, verify** — Run full test suite + pre-commit after merging agent outputs.
-- **Don't wait for notifications** — Actively check output files instead of waiting for async notifications.
-
-***
-
-## 15. Development workflow (general)
-
-### Dev container git access
-`git push` and `gh` authenticate via `GH_TOKEN` from `.env.devcontainer` (gitignored): `.devcontainer/setup.sh` runs `gh auth setup-git` on attach, independent of DevPod credential forwarding. Git identity comes from `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL` in the same file. Changes to `.env.devcontainer` need a container rebuild/restart.
-
-### Dev container pitfalls (learned 2026-09-28)
-- **No Docker in the devcontainer**: the devcontainer starts no containers. `playwright-mcp` runs over stdio, started by Claude Code from the committed `.mcp.json` (`npx @playwright/mcp@<pinned>`). `setup.sh` installs the matching Chromium plus system libraries (`playwright install --with-deps chromium`); keep `PLAYWRIGHT_MCP_VERSION` in `setup.sh` in sync with `.mcp.json`. The former `docker-compose.yml` MCP stack (docs-mcp, llm-context, jaeger, proxy) was removed; none of it was used by Scavengarr.
-- **Node 22 comes from the devcontainer `node` feature** (nvm, `/usr/local/share/nvm/current/bin`), not apt: Debian's Node 18 breaks `npx skills` (`styleText` missing). `setup.sh` installs npm globals without `sudo` (openspec, `@caveman-ai/cli`) and the caveman skills (`npx skills add JuliusBrussee/caveman -g -a claude-code`) on every attach.
-- **Broken `.venv` shebangs**: a `.venv` created under a different workspace path (e.g. `/workspaces/Scavengarr`) makes `poetry run pytest` fail with `Command not found: pytest`. Fix: `poetry env remove --all && poetry install --with dev`.
-- **Line endings are mixed** (most `.py`/`.md` files are CRLF, some LF). Preserve each file's existing EOL when editing with scripts; a text-mode rewrite turns a one-line change into a whole-file diff.
-- **Live tests are opt-in**: `poetry run pytest` skips `tests/live` (`-m "not live"` in `addopts`); run them with `poetry run pytest -m live`.
-
-### Quick commands (examples)
-- `poetry install`
-- `poetry run pytest`
-- `poetry run ruff check .` and `poetry run ruff format .`
-
-### Checkpoint commits
-- Commit after each isolated subtask (audit trail).
-- Avoid “mega-commits”; prefer small, green-tested steps.
-
-### Planning mode (for larger changes)
-- Before major refactors: write a brief Markdown plan (problem, design, affected files, tests).
-- Then implement.
-
-***
-
-## 16. Important files (project navigation)
-
-| Area | Path (example/pattern) |
-|---|---|
-| Dependencies & tooling | `pyproject.toml` |
-| Pre-commit configuration | `.pre-commit-config.yaml` |
-| Changelog | `CHANGELOG.md` |
-| Domain entities/ports | `src/scavengarr/domain/...` |
-| Use cases | `src/scavengarr/application/...` |
-| Adapters (scraping/cache/plugins) | `src/scavengarr/infrastructure/...` |
-| Plugin base classes | `src/scavengarr/infrastructure/plugins/httpx_base.py`, `playwright_base.py` |
-| Hoster resolvers | `src/scavengarr/infrastructure/hoster_resolvers/` |
-| HTTP router / CLI | `src/scavengarr/interfaces/...` |
+| Dependencies & tooling | `pyproject.toml`, `.pre-commit-config.yaml` |
+| Domain / use cases / adapters | `src/scavengarr/{domain,application,infrastructure}/` |
+| HTTP router, CLI, composition root | `src/scavengarr/interfaces/` (`composition.py`) |
 | Stremio addon | `src/scavengarr/interfaces/api/stremio/` |
-| Tests | `tests/unit/{domain,application,infrastructure,interfaces}/...` |
-| Feature documentation | `docs/features/` (README.md is the index) |
-| Architecture documentation | `docs/architecture/` (clean-architecture.md, codeplan.md) |
-| Future plans | `docs/plans/` (playwright-engine, more-plugins, integration-tests, search-caching, plugin-repair) |
+| Plugins | `plugins/` |
+| Feature docs / architecture / plans | `docs/features/`, `docs/architecture/`, `docs/plans/` |
 | Refactor history | `docs/refactor/COMPLETED/` |
-| Python best practices | `docs/PYTHON-BEST-PRACTICES.md` |
-| Plugins (42 total) | `plugins/` (all Python, inheriting from httpx or Playwright base classes) |
-| OpenSpec change specs | `openspec/changes/...` |
-
-### Adding a new plugin (general workflow)
-
-**Step 1: Thorough site analysis (MANDATORY before writing any code)**
-- Use Playwright MCP to visit and inspect all relevant pages (search, categories, detail pages, download pages)
-- Document HTML structure precisely (selectors, tables, link patterns, pagination)
-- Check for JS dependencies (Cloudflare, dynamic loading, SPAs)
-- Identify auth mechanisms (login, cookies, tokens)
-- Map URL patterns (search, detail, download)
-
-**Step 2: Choose the correct base class**
-- Httpx plugins: inherit from `HttpxPluginBase` (`src/scavengarr/infrastructure/plugins/httpx_base.py`)
-  - Provides: `_ensure_client()`, `_verify_domain()`, `cleanup()`, `_safe_fetch()`, `_safe_parse_json()`, `_new_semaphore()`
-  - Class attributes: `_domains`, `_max_concurrent` (default 3), `_max_results` (default 1000), `_timeout` (default 15), `_user_agent`, `languages` (default `["de"]`, override for non-German sites e.g. `["en"]`)
-  - Instance: `self._client`, `self._log`, `self.base_url`, `self._domain_verified`
-- Playwright plugins: inherit from `PlaywrightPluginBase` (`src/scavengarr/infrastructure/plugins/playwright_base.py`)
-  - Provides: `_ensure_browser()`, `_ensure_context()`, `_ensure_page()`, `_new_page()`, `_verify_domain()`, `_fetch_page_html()`, `cleanup()`
-  - Instance: `self._pw`, `self._browser`, `self._context`, `self._page`, `self._log`, `self.base_url`
-- All Python plugins MUST inherit from one of these base classes. Do NOT duplicate boilerplate (client setup, domain fallback, cleanup, semaphore, user-agent).
-
-**Step 3: Implement (MANDATORY search standards for ALL plugins)**
-
-Every plugin MUST implement the following search features:
-
-1. **Category filtering**: Use the site's category/filter system in the search URL whenever available (dropdown IDs, URL path segments, forum IDs, etc.). Map Torznab categories → site categories and pass them in the search request.
-2. **Pagination up to 1000 items**: Scrape multiple search result pages to collect up to 1000 items total. Parse pagination links/hit counts from the first page to determine how many pages exist, then fetch subsequent pages sequentially until 1000 items or no more results. Define `_MAX_PAGES` based on the site's results-per-page (e.g., 200/page → 5 pages, 50/page → 20 pages, 10/page → 100 pages).
-3. **Bounded concurrency** for detail page scraping: Use `asyncio.Semaphore(3)` to scrape detail pages in parallel without overwhelming the target.
-
-#### Adding a new Python plugin (httpx)
-1. Create `plugins/<sitename>.py`, inherit from `HttpxPluginBase`.
-2. Set `name`, `_domains = [...]`, and optionally override `_max_results`, `_max_concurrent`, `categories`.
-3. Implement `async def search(self, query, category, season, episode) -> list[SearchResult]`.
-4. Use `self._safe_fetch()` for HTTP requests, `self._new_semaphore()` for concurrency, `self._log` for logging.
-5. Add comprehensive unit tests in `tests/unit/infrastructure/test_<sitename>_plugin.py`.
-
-#### Adding a new Python plugin (Playwright)
-1. Create `plugins/<sitename>.py`, inherit from `PlaywrightPluginBase`.
-2. Set `name`, `_domains = [...]`, add `from playwright.async_api import Page` if using `Page` type hints.
-3. Implement `async def search(self, query, category, season, episode) -> list[SearchResult]`.
-4. Use `self._ensure_context()` / `self._ensure_page()` for browser management, `self._new_semaphore()` for concurrency.
-5. Add comprehensive unit tests; patch `async_playwright` at `scavengarr.infrastructure.plugins.playwright_base.async_playwright`.
-
-### Adding a new hoster resolver
-
-Hoster resolvers validate whether a URL on a file hosting service is still available. There are two resolver categories:
-
-**Streaming resolvers** extract a direct video URL (`.mp4`/`.m3u8`) from an embed page:
-- VOE, Streamtape, SuperVideo, DoodStream, Filemoon, StreamUp (strmup), Vidsonic, SendVid
-- Return `ResolvedStream(video_url=<direct_video_url>, quality=...)`
-
-**DDL (Direct Download Link) resolvers** validate file availability without extracting a video URL:
-- Filer.net (API-based), Rapidgator, DDownload (page-scraping), Mediafire (API-based), GoFile (API + guest token)
-- 12 generic DDL hosters (alfafile, alphaddl, fastpic, filecrypt, filefactory, fsst, go4up, mixdrop, nitroflare, 1fichier, turbobit, uploaded)
-- 27 XFS-based hosters (katfile, hexupload, clicknupload, filestore, uptobox, funxd, bigwarp, dropload, goodstream, savefiles, streamwish, vidmoly, vidoza, vinovo, vidhide, streamruby, veev, lulustream, upstream, wolfstream, vidnest, mp4upload, uqload, vidshar, vidroba, hotlink, vidspeed)
-- Return `ResolvedStream(video_url=<canonical_file_url>, quality=StreamQuality.UNKNOWN)`
-
-#### JDownloader reference sources
-
-`.devdata/JDownloader2/plugins/` and `.devdata/JDownloader2/controlling/` (gitignored) are SVN working copies of `svn://svn.jdownloader.org/jdownloader/trunk/src/jd/{plugins,controlling}`. Use the JDownloader hoster/decrypter plugins there as reference when adding or fixing resolvers. `.devcontainer/sync-jdownloader.sh` checks them out or runs `svn update` on every container start (`postStartCommand`); run it manually for an ad-hoc refresh. Files and commit messages pulled in by the last sync that brought changes are listed in `.devdata/JDownloader2/CHANGES.md`.
-
-#### Shared URL utility
-
-All resolvers share `extract_domain(url)` from `scavengarr.infrastructure.hoster_resolvers` for consistent second-level domain extraction (e.g. `"https://www.voe.sx/e/abc"` → `"voe"`).
-
-#### Generic DDL — consolidated resolver
-
-12 DDL-based hosters are consolidated into a single `GenericDDLResolver` with parameterised `GenericDDLConfig` in `src/scavengarr/infrastructure/hoster_resolvers/generic_ddl.py`. Adding a new DDL hoster = adding a new `GenericDDLConfig` constant + appending it to `ALL_DDL_CONFIGS`.
-
-```python
-@dataclass(frozen=True)
-class GenericDDLConfig:
-    name: str
-    domains: frozenset[str]
-    file_id_re: re.Pattern[str]
-    offline_markers: tuple[str, ...]
-    file_id_source: Literal["path", "query"] = "path"
-    min_file_id_len: int | None = None
-
-ALL_DDL_CONFIGS: tuple[GenericDDLConfig, ...]  # all 12 configs
-create_all_ddl_resolvers(http_client) -> list[GenericDDLResolver]  # factory function
-```
-
-#### XFileSharingPro (XFS) — consolidated resolver
-
-27 XFS-based hosters are consolidated into a single generic `XFSResolver` with parameterised `XFSConfig` in `src/scavengarr/infrastructure/hoster_resolvers/xfs.py`. Adding a new XFS hoster = adding a new `XFSConfig` constant + appending it to `ALL_XFS_CONFIGS`.
-
-Two resolver modes:
-- **Video hosters** (`is_video_hoster=True`): fetch `/e/{file_id}` embed page, extract actual video URL (HLS/MP4) via JWPlayer config, packed JS, or `hls2` pattern. Returns `ResolvedStream` with Referer header.
-- **DDL hosters** (`is_video_hoster=False`): validate file availability only (check offline markers), return original URL.
-
-Hosters with `needs_captcha=True` (veev, vinovo, wolfstream) return `None` immediately — they require Cloudflare Turnstile / anti-bot JS.
-
-Shared video extraction utilities live in `_video_extract.py` (used by both XFS and Filemoon resolvers).
-
-```python
-@dataclass(frozen=True)
-class XFSConfig:
-    name: str                          # e.g. "katfile"
-    domains: frozenset[str]            # e.g. frozenset({"katfile"})
-    file_id_re: re.Pattern[str]        # e.g. re.compile(r"^/([a-zA-Z0-9]{12})(?:/|$)")
-    offline_markers: tuple[str, ...]   # e.g. ("File Not Found", ...)
-    is_video_hoster: bool = False      # True → extract video URL from embed page
-    needs_captcha: bool = False        # True → return None (captcha required)
-    extra_domains: frozenset[str] = field(default_factory=frozenset)  # JDownloader aliases
-
-ALL_XFS_CONFIGS: tuple[XFSConfig, ...]  # all 26 configs
-create_all_xfs_resolvers(http_client) -> list[XFSResolver]  # factory function
-```
-
-DDownload stays separate (`ddownload.py`) due to canonical URL normalization and metadata extraction.
-
-#### Workflow for adding a new hoster resolver
-
-**For XFS-based hosters:**
-1. Add a new `XFSConfig` constant in `xfs.py` (name, domains, file_id_re, offline_markers, is_video_hoster)
-2. Append it to `ALL_XFS_CONFIGS`
-3. Tests are automatically parameterised — no new test file needed
-4. Composition root uses `create_all_xfs_resolvers()` — no wiring changes needed
-
-**For non-XFS hosters:**
-1. **Create resolver** at `src/scavengarr/infrastructure/hoster_resolvers/<name>.py`:
-   - Module-level: `_DOMAINS` set/frozenset, `_FILE_ID_RE` regex, helper functions (`_extract_file_id()`)
-   - Class with `name` property and `async def resolve(self, url: str) -> ResolvedStream | None`
-   - Constructor takes `http_client: httpx.AsyncClient`
-   - Use `structlog.get_logger(__name__)` for logging
-   - Pattern: extract file ID → build canonical URL → fetch page/API → check offline → return `ResolvedStream` or `None`
-
-2. **Write tests** at `tests/unit/infrastructure/test_<name>_resolver.py`:
-   - `TestExtractFileId`: URL parsing tests (valid domains, www prefix, http scheme, invalid/short IDs, non-matching domains)
-   - `TestResolver`: `test_name`, valid file resolution, offline markers (one test per marker), HTTP errors, network errors, invalid URLs, error redirects
-   - Use `respx` for HTTP mocking (not `AsyncMock`/`MagicMock`):
-     ```python
-     @respx.mock
-     @pytest.mark.asyncio()
-     async def test_resolves_valid_file(self) -> None:
-         respx.get(url).respond(200, text=html)
-         async with httpx.AsyncClient() as client:
-             result = await Resolver(http_client=client).resolve(url)
-     ```
-
-3. **Wire into composition root** at `src/scavengarr/interfaces/composition.py`:
-   - Add import: `from scavengarr.infrastructure.hoster_resolvers.<name> import <Name>Resolver`
-   - Add to `resolvers=[...]` list: `<Name>Resolver(http_client=state.http_client)`
-
-4. Run `poetry run pre-commit run --all-files` and `poetry run pytest -x`
-5. Commit and push to staging
+| OpenSpec change specs | `openspec/changes/` |

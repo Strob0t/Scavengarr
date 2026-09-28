@@ -630,6 +630,29 @@ async def test_search_returns_results():
 
 ---
 
+## Adding a New Plugin
+
+**Step 1: Site analysis (mandatory before writing code).** Use the `playwright-mcp` server to inspect all relevant pages (search, categories, detail, download). Document selectors, link patterns and pagination, check for JS dependencies (Cloudflare, dynamic loading, SPAs), auth (login, cookies, tokens) and URL patterns.
+
+**Step 2: Choose the base class.** Every plugin inherits from `HttpxPluginBase` (static HTML/JSON) or `PlaywrightPluginBase` (JS-heavy sites); see [Plugin Base Classes](#plugin-base-classes). Never duplicate base-class boilerplate (client setup, domain fallback, cleanup, semaphore, user agent).
+
+- `HttpxPluginBase` class attributes: `_domains`, `_max_concurrent` (default 3), `_max_results` (default 1000), `_timeout` (default 15), `_user_agent`, `languages` (default `["de"]`, e.g. `["en"]` for English sites).
+- Playwright plugins: add `from playwright.async_api import Page` when using `Page` type hints.
+
+**Step 3: Mandatory search standards (all plugins).**
+
+1. **Category filtering**: map Torznab categories to the site's filter system (dropdown IDs, URL path segments, forum IDs) and pass them in the search request.
+2. **Pagination up to 1000 items**: parse pagination links/hit counts from the first page, then fetch further pages until 1000 items or no more results. Set `_MAX_PAGES` from the site's page size (200/page → 5, 50/page → 20, 10/page → 100).
+3. **Bounded concurrency** for detail pages: `self._new_semaphore()` (default 3 parallel requests).
+
+**Step 4: Implement and test.**
+
+1. Create `plugins/<sitename>.py`, set `name` and `_domains`, optionally override `_max_results`, `_max_concurrent`, `categories`.
+2. Implement `async def search(self, query, category, season, episode) -> list[SearchResult]` using `self._safe_fetch()` (httpx) or `self._ensure_context()` / `self._ensure_page()` (Playwright), and `self._log` for logging.
+3. Add unit tests in `tests/unit/infrastructure/test_<sitename>_plugin.py`. For Playwright plugins, patch `scavengarr.infrastructure.plugins.playwright_base.async_playwright`.
+
+---
+
 ## Httpx vs Playwright Plugin Comparison
 
 | Aspect | HttpxPluginBase | PlaywrightPluginBase |

@@ -2,7 +2,7 @@
 
 **Status:** Implemented
 **Priority:** High
-**Related:** `tests/`, `CLAUDE.md` section 12
+**Related:** `tests/`, `CLAUDE.md` section 6 (Testing)
 
 ## Implementation Summary
 
