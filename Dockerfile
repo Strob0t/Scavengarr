@@ -11,4 +11,4 @@ RUN pip install --no-cache-dir poetry pipx
 # KEIN WORKDIR / COPY / RUN poetry – das nach Mount!
 
 EXPOSE 8000 8001 3000
-CMD ["/bin/sh"]  # Interaktiv für DevContainers
+CMD ["/bin/sh"]  # Interactive shell for dev containers

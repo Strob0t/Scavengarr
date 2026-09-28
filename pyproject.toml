@@ -59,7 +59,7 @@ target-version = "py312"
 line-length = 88
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "C90", "I"]  # I = Import sorting (isort-Äquivalent)
+select = ["E", "F", "W", "C90", "I"]  # I = Import sorting (isort equivalent)
 
 [tool.ruff.format]
 quote-style = "double"

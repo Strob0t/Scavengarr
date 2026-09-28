@@ -3,10 +3,9 @@
 # ----------------------------------------------------------------------
 # Precedence (high → low):
 #   1. CLI arguments (--log-level, --config, etc.)
-#   2. Environment variables (SCAVENGARR_*)
+#   2. Environment variables (SCAVENGARR_*; .env values via --dotenv count as env, real env wins)
 #   3. This YAML file
-#   4. .env file
-#   5. Built-in defaults
+#   4. Built-in defaults
 # ----------------------------------------------------------------------
 
 # -- General ----------------------------------------------------------
@@ -66,8 +65,8 @@ cache:
   dir: "/data/cache" # env: SCAVENGARR_CACHE_DIR
   ttl_seconds: 3600 # env: SCAVENGARR_CACHE_TTL_SECONDS
   search_ttl_seconds: 1800 # was 900 — 30min cache, repeated searches are instant
-  max_concurrent: 10 # env: CACHE_MAX_CONCURRENT
-  # redis_url: "redis://redis:6379/0"      # env: CACHE_REDIS_URL (only for backend: redis)
+  max_concurrent: 10 # YAML only
+  # redis_url: "redis://redis:6379/0"      # YAML only (only for backend: redis)
 
 # -- Scoring (background plugin probing) ------------------------------
 scoring:
