@@ -2,7 +2,7 @@
 
 # Plan: Anti-Bot Hardening (Patchright + Browser Fallback)
 
-**Status:** Phase 0 done, gate failed for all headless variants; headful test pending (2026-09-28)
+**Status:** Phase 0 done (2026-09-28): headless fails everywhere, headful Patchright under Xvfb passes 6/6 → Phase 1 + 2 go, headful required
 **Priority:** High (blocks 6 plugins and 3 hoster resolvers)
 **Related:** `docs/plans/plugin-repair.md`, `CHANGELOG.md` → `KNOWN_ISSUES`, `src/scavengarr/infrastructure/plugins/{playwright_base,shared_browser,httpx_base}.py`, `src/scavengarr/infrastructure/hoster_resolvers/{stealth_pool,cloudflare,supervideo,probe,xfs}.py`, `src/scavengarr/interfaces/composition.py`
 
@@ -80,8 +80,23 @@ Conclusions:
 - Patchright alone gives **no improvement** over today's stack on these targets. Fingerprint, User-Agent and automation-protocol leaks are not the deciding factor; every headless browser is rejected at the Turnstile step.
 - **byte is not Cloudflare-blocked**: every variant gets HTTP 200 with search hits. Its 0 results are a parser problem → moved to `plugin-repair.md`.
 - Veev/vinovo/wolfstream were not measured (no known-good embed URLs).
-- Remaining untested variable: **headful browser on a virtual display** (variant D as planned). A user-space Xvfb cannot start without root (`/usr/bin/xkbcomp` is hard-wired), so this needs `xvfb` installed in the container. The same applies to FlareSolverr/Byparr, whose images run a headful browser under Xvfb.
-- Next step: headful run of variants B/Camoufox/nodriver under `xvfb-run`. If headful passes → Phase 1 + Phase 2 with a headful StealthPool (Xvfb in `Dockerfile.prod`). If headful also fails → the three httpx plugins and the three Playwright plugins stay broken without a CAPTCHA-solving service (non-goal); drop Phase 1/2 and document them as unsupported.
+- Headful follow-up (Xvfb installed via `.devcontainer/setup.sh`), one run per target, Turnstile checkbox clicked once:
+
+| Target | Patchright headful (Xvfb) | Playwright + stealth headful (Xvfb) |
+|---|---|---|
+| filmfans | cleared after 1 click ("FilmFans") | blocked after 3 clicks |
+| kinoger | cleared after 1 click ("Website-Suche") | blocked after 3 clicks |
+| serienfans (detail) | cleared after 1 click ("Breaking Bad \| SerienFans") | blocked after 3 clicks |
+| ddlspot | cleared after 1 click ("Iron Man (30 Downloads)") | blocked after 3 clicks |
+| ddlvalley | cleared after 1 click (search results) | blocked after 3 clicks |
+| scnsrc | cleared after 1 click (search results) | blocked after 3 clicks |
+
+- **Both are required**: Patchright *and* a headful browser. Headless Patchright fails, headful Playwright + stealth fails.
+- The challenge does not auto-clear; a click on the Turnstile checkbox is needed. A Patchright locator click (`iframe[src*="challenges.cloudflare.com"]` frame → `input[type=checkbox]`, closed shadow root) works headful as well (kinoger cleared, `cf_clearance` set), so no coordinate clicking is needed.
+- Measured wall time per page ≈ 21 s including fixed 6 s + 8 s benchmark waits; the real solve time is lower and has to be measured in Phase 2.
+- Camoufox and nodriver were not re-run headful: Patchright passes and keeps the Playwright API, so they are not needed.
+
+Decision: go ahead with Phase 1 and Phase 2, headful under Xvfb.
 
 ## Phase 1 — Patchright instead of playwright + playwright-stealth
 
@@ -90,7 +105,7 @@ Changes:
 2. Imports `playwright.async_api` → `patchright.async_api` in `playwright_base.py`, `shared_browser.py`, `stealth_pool.py`, `context_vars.py`, plugins `animeloads`, `boerse`, `byte`, `moflix`, `mygully`, `streamworld`, and `tests/live/{conftest,test_plugin_smoke}.py`. Unit tests patch `scavengarr.…async_playwright`, so their patch targets stay valid in Phase 1 (the Phase 2 module move changes them, see Phase 2 tests).
 3. Remove `Stealth().apply_stealth_async(...)` from `PlaywrightPluginBase._ensure_context()`, `PlaywrightPluginBase.isolated_search()` and `StealthPool._ensure_context()`. Patchright and playwright-stealth must not be combined. Keep the resource blocking routes. `_stealth` then only controls resource blocking → rename to `_block_resources`. ddlspot, ddlvalley and scnsrc set `_stealth = True`, which equals the default; drop those redundant lines when renaming. Note that `stealth_pool.py` already has a module-level route handler named `_block_resources`.
 4. Stop forcing a User-Agent in browser contexts: `new_context()` no longer passes `user_agent=` by default (Patchright recommendation). A plugin may still opt in via an explicit override. httpx plugins keep `DEFAULT_USER_AGENT`.
-5. Headless stays driven by `playwright.headless`. Headful/xvfb only if Phase 0 variant D was clearly better — then add `xvfb` to `Dockerfile.prod` and document the RAM cost.
+5. Headful is required (Phase 0). Keep `playwright.headless` as the switch but change its default to `false`; the process needs a display: `Dockerfile.prod` installs `xvfb` and starts the app under `xvfb-run -a` (or an Xvfb entrypoint). Without `DISPLAY`, fall back to headless with a warning log instead of crashing. Measure and document the RAM cost of headful Chromium.
 6. `Dockerfile.prod`: `python -m patchright install chromium`; verify the browser cache path (`/root/.cache/ms-playwright` today) and adjust the `COPY` line. `.devcontainer/setup.sh`: install the Patchright Chromium for the Python venv (the existing `npx @playwright/mcp` install is for the MCP server only).
 7. XFS captcha hosters: flip `needs_captcha` for veev/vinovo/wolfstream only if Phase 0 showed they pass. They are resolved via httpx today, so passing requires routing them through the browser port (Phase 2), one commit per hoster.
 
@@ -101,7 +116,7 @@ Tests:
 - `test_playwright_base.py`: add tests that no stealth is applied, no `user_agent` is passed by default, and an explicit override is still honored.
 - Live: `poetry run pytest -m live -k "ddlspot or ddlvalley or scnsrc or byte"` plus all 9 Playwright plugins — must not regress vs. baseline.
 
-Acceptance: offline suite + pre-commit green; no Playwright plugin regresses in live smoke; the four Cloudflare Playwright plugins match the Phase 0 result; SuperVideo stealth fallback still resolves.
+Acceptance: offline suite + pre-commit green; no Playwright plugin regresses in live smoke; ddlspot, ddlvalley and scnsrc pass the challenge once the click step (Phase 2 design, shared helper) is in place; SuperVideo stealth fallback still resolves.
 
 Rollback: revert the commit(s); dependency swap is self-contained.
 
@@ -118,7 +133,7 @@ Design:
 
   Returns the rendered page body after the challenge cleared, `None` on failure. Two implementations are planned (StealthPool now, FlareSolverr in Phase 3), so the port is justified.
 
-- **Browser package** `src/scavengarr/infrastructure/browser/`: move `SharedBrowserPool` (from `plugins/`), `StealthPool` (from `hoster_resolvers/`) and `cloudflare.py` here, keeping re-exports at the old paths only if needed for a transition commit. `StealthPool` obtains its browser from `SharedBrowserPool.warmup()` instead of launching a second Chromium → one browser process instead of two. `StealthPool.fetch_text()` reuses the `goto` + `wait_for_cloudflare` logic of `probe_url()` and is bounded by a semaphore sized from the existing `stremio.max_concurrent_playwright` setting (auto-tuned, no new knob).
+- **Browser package** `src/scavengarr/infrastructure/browser/`: move `SharedBrowserPool` (from `plugins/`), `StealthPool` (from `hoster_resolvers/`) and `cloudflare.py` here, keeping re-exports at the old paths only if needed for a transition commit. `StealthPool` obtains its browser from `SharedBrowserPool.warmup()` instead of launching a second Chromium → one browser process instead of two. Cloudflare handling gains a click step: wait briefly for auto-clear, then click the Turnstile checkbox via the challenge iframe locator (`iframe[src*="challenges.cloudflare.com"]` → `input[type=checkbox]`), then wait for the title to change; one shared helper used by `StealthPool` and `PlaywrightPluginBase._wait_for_cloudflare()` (the latter fixes ddlspot/ddlvalley/scnsrc). `StealthPool.fetch_text()` reuses the `goto` + this CF helper and is bounded by a semaphore sized from the existing `stremio.max_concurrent_playwright` setting (auto-tuned, no new knob).
 
 - **HttpxPluginBase**:
   - `set_browser_fetcher(fetcher: BrowserFetcherPort | None)` classmethod, wired in `composition.py` next to `set_shared_http_client()`.
