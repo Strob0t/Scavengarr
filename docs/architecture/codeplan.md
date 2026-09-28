@@ -94,7 +94,7 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 | `tests/unit/` | Unit tests per layer (`domain/`, `application/`, `infrastructure/`, `interfaces/`) |
 | `tests/integration/` | Config loading, CrawlJob lifecycle with a real `DiskcacheAdapter`, link validation |
 | `tests/e2e/` | Full-app Torznab and Stremio endpoint tests via `TestClient` |
-| `tests/live/` | Opt-in (`-m live`) plugin smoke tests and resolver contract tests against real sites |
+| `tests/live/` | Opt-in (`-m live`) plugin smoke tests, resolver contract tests and the Stremio end-to-end use case (`test_stremio_e2e_live.py`) against real sites |
 | `tests/benchmark/` | Concurrency/probe/auto-tune benchmarks (ignored by default `addopts`) |
 | `tests/fixtures/` | HTML fixtures |
 

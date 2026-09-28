@@ -155,6 +155,7 @@ These resolvers confirm the embed URL is alive and return it unchanged.
 | Domain alias mapping | [x] Implemented | All `supported_domains` mapped (e.g., vidhide family) |
 | respx-based tests | [x] Implemented | All resolver tests use httpx-native HTTP mocking |
 | Live contract tests | [x] Implemented | Opt-in resolver live/dead URL validation (`tests/live/test_resolver_live.py`) |
+| Live Stremio use case | [x] Implemented | Opt-in end-to-end run of the in-process app: stream list for a film and a series episode, then playlist + first segment of a stream like a player (`tests/live/test_stremio_e2e_live.py`) |
 
 **Detailed docs:** [Hoster Resolvers](./hoster-resolvers.md)
 
