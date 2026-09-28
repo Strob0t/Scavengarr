@@ -7,11 +7,15 @@ are handled gracefully via pytest.skip().
 from __future__ import annotations
 
 import os
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
 
+from scavengarr.infrastructure.browser.shared_browser import SharedBrowserPool
+from scavengarr.infrastructure.browser.stealth_pool import StealthPool
 from scavengarr.infrastructure.plugins.constants import search_max_results
+from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.registry import PluginRegistry
 
 # ---------------------------------------------------------------------------
@@ -77,6 +81,25 @@ def _cap_results() -> object:
     token = search_max_results.set(_SMOKE_MAX_RESULTS)
     yield
     search_max_results.reset(token)
+
+
+@pytest.fixture(autouse=True)
+async def _browser_fallback() -> AsyncIterator[None]:
+    """Wire the Cloudflare browser fallback like ``composition.py`` does.
+
+    Without it, httpx plugins behind a Cloudflare challenge (filmfans,
+    kinoger, serienfans) report 0 results here although they work in the
+    app. Chromium only starts on the first browser fetch.
+    """
+    shared = SharedBrowserPool(headless=False)  # headless without a display
+    stealth = StealthPool(browser_pool=shared)
+    HttpxPluginBase.set_browser_fetcher(stealth)
+    try:
+        yield
+    finally:
+        HttpxPluginBase.set_browser_fetcher(None)
+        await stealth.cleanup()
+        await shared.cleanup()
 
 
 @pytest.fixture(scope="session")
