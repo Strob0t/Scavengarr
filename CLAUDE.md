@@ -88,7 +88,7 @@ When changing behavior or adding features, update the relevant documentation:
 - `README.md` when setup/run instructions change.
 - `docs/features/` for feature documentation (plugins, API, config, scraping, validation).
 - `docs/architecture/` for architecture docs (clean-architecture.md, codeplan.md).
-- `docs/plans/` for planned features (playwright-engine, more-plugins, integration-tests, search-caching).
+- `docs/plans/` for planned features (playwright-engine, more-plugins, integration-tests, search-caching, plugin-repair).
 - `CHANGELOG.md` when adding notable changes.
 - OpenSpec documents under `openspec/changes/...` when the change is specified or tracked there.
 
@@ -575,6 +575,13 @@ Agents are ONLY for **simple, explicit, mechanical tasks** where the scope is 10
 ### Dev container git access
 `git push` and `gh` authenticate via `GH_TOKEN` from `.env.devcontainer` (gitignored): `.devcontainer/setup.sh` runs `gh auth setup-git` on attach, independent of DevPod credential forwarding. Git identity comes from `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL` in the same file. Changes to `.env.devcontainer` need a container rebuild/restart.
 
+### Dev container pitfalls (learned 2026-09-28)
+- **Docker-in-docker on nftables-only hosts** (CachyOS/Arch): the dind feature pins `iptables-legacy`, dockerd then dies with "can't initialize iptables table `nat'" (see `/tmp/dockerd.log`). `setup.sh` switches to `iptables-nft` and restarts dockerd; check with `docker ps`.
+- **MCP stack**: `docs-mcp-server` is paused (commented out in `docker-compose.yml`, it needs an embedding endpoint). `playwright-mcp` reads `.devdata/playwright-mcp/playwright-mcp.json` (gitignored); do not pin `executablePath` there, the `@playwright/mcp@latest` browser revision changes.
+- **Broken `.venv` shebangs**: a `.venv` created under a different workspace path (e.g. `/workspaces/Scavengarr`) makes `poetry run pytest` fail with `Command not found: pytest`. Fix: `poetry env remove --all && poetry install --with dev`.
+- **Line endings are mixed** (most `.py`/`.md` files are CRLF, some LF). Preserve each file's existing EOL when editing with scripts; a text-mode rewrite turns a one-line change into a whole-file diff.
+- **Live tests are opt-in**: `poetry run pytest` skips `tests/live` (`-m "not live"` in `addopts`); run them with `poetry run pytest -m live`.
+
 ### Quick commands (examples)
 - `poetry install`
 - `poetry run pytest`
@@ -607,7 +614,7 @@ Agents are ONLY for **simple, explicit, mechanical tasks** where the scope is 10
 | Tests | `tests/unit/{domain,application,infrastructure,interfaces}/...` |
 | Feature documentation | `docs/features/` (README.md is the index) |
 | Architecture documentation | `docs/architecture/` (clean-architecture.md, codeplan.md) |
-| Future plans | `docs/plans/` (playwright-engine, more-plugins, integration-tests, search-caching) |
+| Future plans | `docs/plans/` (playwright-engine, more-plugins, integration-tests, search-caching, plugin-repair) |
 | Refactor history | `docs/refactor/COMPLETED/` |
 | Python best practices | `docs/PYTHON-BEST-PRACTICES.md` |
 | Plugins (42 total) | `plugins/` (all Python, inheriting from httpx or Playwright base classes) |
