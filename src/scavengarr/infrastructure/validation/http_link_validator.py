@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import defaultdict
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
 import structlog
-from httpx import HTTPError, TimeoutException
+from httpx import ConnectError, ConnectTimeout, HTTPError, TimeoutException
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -17,6 +19,17 @@ log = structlog.get_logger(__name__)
 # Cache TTLs for validation results
 _CACHE_TTL_VALID = 21600  # 6 hours for valid links
 _CACHE_TTL_INVALID = 900  # 15 minutes for invalid links
+
+# A host that refused or dropped the connection is not contacted again for
+# this long: its other links count as invalid without a request
+_UNREACHABLE_HOST_TTL = 900
+# Parallel validations per host, so one dead hoster with hundreds of links
+# cannot open hundreds of connections before it is known to be unreachable
+_MAX_CONCURRENT_PER_HOST = 4
+
+
+class _Unreachable(Exception):  # noqa: N818
+    """HEAD could not even connect (host down, refused, filtered)."""
 
 
 class _ValidationCacheEntry:
@@ -43,6 +56,12 @@ class HttpLinkValidator:
     Features:
         - URL deduplication: each unique URL is validated once per batch.
         - Result caching: validation outcomes are cached in-memory with TTL.
+        - Unreachable hosts: after a connection-level failure (refused,
+          connect timeout) a host is skipped for ``_UNREACHABLE_HOST_TTL``
+          and no GET retry is sent. Dead hosters with hundreds of links
+          otherwise cause connection bursts that home routers treat as a
+          port scan (they block the machine: "No route to host").
+        - At most ``_MAX_CONCURRENT_PER_HOST`` validations per host at once.
 
     Args:
         http_client: Shared httpx.AsyncClient (injected).
@@ -60,6 +79,19 @@ class HttpLinkValidator:
         self.timeout = timeout_seconds
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._cache: dict[str, _ValidationCacheEntry] = {}
+        self._unreachable_until: dict[str, float] = {}
+        self._host_semaphores: defaultdict[str, asyncio.Semaphore] = defaultdict(
+            lambda: asyncio.Semaphore(_MAX_CONCURRENT_PER_HOST)
+        )
+
+    def _is_unreachable(self, host: str) -> bool:
+        until = self._unreachable_until.get(host)
+        if until is None:
+            return False
+        if time.monotonic() >= until:
+            del self._unreachable_until[host]
+            return False
+        return True
 
     async def validate(self, url: str) -> bool:
         """Validate single URL (HEAD first, GET fallback).
@@ -72,17 +104,31 @@ class HttpLinkValidator:
         if cached is not None and not cached.is_expired:
             return cached.is_valid
 
-        async with self._semaphore:
-            if await self._try_head(url):
-                self._cache[url] = _ValidationCacheEntry(True, _CACHE_TTL_VALID)
-                return True
+        host = urlparse(url).hostname or ""
+        async with self._host_semaphores[host], self._semaphore:
+            # re-check: another task may have found the host dead meanwhile
+            if self._is_unreachable(host):
+                log.debug("link_host_unreachable_skipped", url=url, host=host)
+                return False
+            try:
+                if await self._try_head(url):
+                    self._cache[url] = _ValidationCacheEntry(True, _CACHE_TTL_VALID)
+                    return True
+            except _Unreachable:
+                self._unreachable_until[host] = time.monotonic() + _UNREACHABLE_HOST_TTL
+                log.info("link_host_unreachable", host=host, url=url)
+                self._cache[url] = _ValidationCacheEntry(False, _CACHE_TTL_INVALID)
+                return False
             is_valid = await self._try_get(url)
             ttl = _CACHE_TTL_VALID if is_valid else _CACHE_TTL_INVALID
             self._cache[url] = _ValidationCacheEntry(is_valid, ttl)
             return is_valid
 
     async def _try_head(self, url: str) -> bool:
-        """Try HEAD request. Returns True if 2xx/3xx."""
+        """Try HEAD request. Returns True if 2xx/3xx.
+
+        Raises ``_Unreachable`` when no connection could be made at all.
+        """
         try:
             response = await self.http_client.head(
                 url,
@@ -99,6 +145,9 @@ class HttpLinkValidator:
             )
             return is_valid
 
+        except (ConnectError, ConnectTimeout) as e:
+            log.debug("link_head_connect_failed", url=url, error=str(e))
+            raise _Unreachable from e
         except TimeoutException:
             log.debug("link_head_timeout", url=url)
             return False

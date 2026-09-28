@@ -173,7 +173,7 @@ The Application layer contains use cases that orchestrate business logic. It kno
 
 | Use Case | File | Type | Description |
 |---|---|---|---|
-| `TorznabSearchUseCase` | `use_cases/torznab_search.py` | async | Validate query, resolve plugin, cache lookup, `plugin.search()` + `engine.validate_results()`, cache write, build `TorznabItem`s + CrawlJobs, paginate; returns `SearchResponse(items, cache_hit)` |
+| `TorznabSearchUseCase` | `use_cases/torznab_search.py` | async | Validate query, resolve plugin, cache lookup, `plugin.search()`, cache write (unvalidated), `engine.validate_results()` chunk-wise until the requested page is full, build `TorznabItem`s + CrawlJobs for that page; returns `SearchResponse(items, cache_hit)` |
 | `CrawlJobResolveUseCase` | `use_cases/crawljob_resolve.py` | async | Grab time: resolve a job's page URLs via its `GrabResolvingPlugin`, store and return the resolved job; `CrawlJobResolveError` → HTTP 502 |
 | `TorznabCapsUseCase` | `use_cases/torznab_caps.py` | sync | Build `TorznabCaps` for a named plugin (XML is rendered by the presenter) |
 | `TorznabIndexersUseCase` | `use_cases/torznab_indexers.py` | sync | List all discovered plugins with version/mode (returns `list[dict]`) |
@@ -195,10 +195,11 @@ async def execute(self, q: TorznabQuery) -> SearchResponse:
     # 2. Resolve plugin from PluginRegistryPort (→ TorznabPluginNotFound)
     # 3. Cache read (key: sha256 of plugin:query:category)
     # 4. On miss: plugin.search(q.query, category=q.category)
-    #    → engine.validate_results(results) → cache write (plugin.cache_ttl or search_ttl)
-    # 5. Convert SearchResults → TorznabItems + CrawlJobs (factory)
-    # 6. Save all CrawlJobs in parallel (asyncio.gather)
-    # 7. Paginate items[offset : offset + limit] → SearchResponse(items, cache_hit)
+    #    → cache write of the unvalidated results (plugin.cache_ttl or search_ttl)
+    # 5. engine.validate_results() on chunks of `limit` results, in order,
+    #    until offset + limit valid ones exist → page = valid[offset : offset + limit]
+    # 6. Convert the page → TorznabItems + CrawlJobs (factory), save in parallel
+    # 7. → SearchResponse(items, cache_hit)
 ```
 
 **Dependency injection:** The use case receives all dependencies via constructor (`__init__`), never creating them internally:
@@ -266,7 +267,7 @@ Infrastructure implements the ports defined by Domain and provides concrete adap
 - **Plugins** (`plugins/`): discovery, loading and caching of Python plugins. `PluginRegistry` indexes `.py` files lazily and caches loaded plugins in memory. All plugins inherit from `HttpxPluginBase` or `PlaywrightPluginBase`; Playwright plugins share one Chromium via `SharedBrowserPool`.
 - **Search Engine** (`torznab/search_engine.py`): `HttpxSearchEngine` validates links on plugin results — batch HEAD/GET via `HttpLinkValidator`, promotes alternative links when the primary is dead, drops results with no valid link; results with `validated_links` already set pass through unchanged.
 - **Presenter** (`torznab/presenter.py`): renders Domain entities (`TorznabCaps`, `TorznabItem`) to Torznab-compliant RSS 2.0 XML.
-- **Validation** (`validation/`): HTTP link validation with HEAD-first, GET-fallback strategy, bounded concurrency (semaphore) and an in-memory TTL result cache.
+- **Validation** (`validation/`): HTTP link validation with HEAD-first, GET-fallback strategy, bounded concurrency (global and per host), an in-memory TTL result cache and a 15-minute skip list for hosts that refuse connections.
 - **Persistence** (`persistence/`): `CachePort`-backed repositories (CrawlJobs, stream links, plugin scores) with JSON serialization.
 - **Configuration** (`config/`): layered config loading (defaults < YAML < ENV < CLI) with Pydantic validation.
 - **Logging** (`logging/`): structured logging via structlog with an async `QueueHandler` for non-blocking emission.
@@ -374,14 +375,16 @@ HTTP GET /api/v1/torznab/filmpalast?t=search&q=iron+man
 │   ├─ PluginRegistry.get("filmpalast") → Python plugin
 │   ├─ cache.get(key) → hit? skip plugin
 │   ├─ miss: plugin.search("iron man", category=…) → list[SearchResult]
-│   │   ├─ SearchEngine.validate_results(results)
-│   │   │   └─ LinkValidator.validate_batch(all_urls) → filter dead links
-│   │   └─ cache.set(key, results, ttl)
-│   ├─ For each SearchResult:
+│   │   └─ cache.set(key, results, ttl)            (unvalidated)
+│   ├─ Page validation: for each chunk of `limit` results, in order,
+│   │   ├─ SearchEngine.validate_results(chunk)
+│   │   │   └─ LinkValidator.validate_batch(chunk_urls) → filter dead links
+│   │   └─ stop once offset + limit valid results exist
+│   ├─ For each SearchResult of the page:
 │   │   ├─ CrawlJobFactory.create_from_search_result() → CrawlJob
 │   │   └─ TorznabItem with job_id
-│   ├─ asyncio.gather(CrawlJobRepository.save(...) for all jobs)
-│   └─ Return SearchResponse(items[offset:offset+limit], cache_hit)
+│   ├─ asyncio.gather(CrawlJobRepository.save(...) for the page's jobs)
+│   └─ Return SearchResponse(page items, cache_hit)
 │
 ├─ render_rss_xml(title=…, items=…, scavengarr_base_url=…) → RSS 2.0 XML
 │

@@ -143,10 +143,10 @@ Runs the plugin's search and returns the results as a Torznab RSS 2.0 feed.
 **Search flow (what happens internally):**
 
 1. `TorznabSearchUseCase` resolves the plugin from the registry and looks up the search cache (key `search:<sha256(plugin:query:category)>`).
-1. On a cache miss it calls `plugin.search(query, category=...)`; the plugin performs its own multi-stage scraping (search → detail → links).
-1. `HttpxSearchEngine.validate_results()` validates the download links in parallel (see [Link Validation](./link-validation.md)). Non-empty results are written to the search cache with TTL `cache.search_ttl_seconds` (default `900`, `0` disables caching) or the plugin's `cache_ttl` attribute if set.
-1. `CrawlJobFactory` turns every result into its own `CrawlJob`; all jobs are saved to the repository in parallel.
-1. The item list is sliced to `[offset : offset + limit]` and rendered by the presenter.
+1. On a cache miss it calls `plugin.search(query, category=...)`; the plugin performs its own multi-stage scraping (search → detail → links). Non-empty (unvalidated) results are written to the search cache with TTL `cache.search_ttl_seconds` (default `900`, `0` disables caching) or the plugin's `cache_ttl` attribute if set.
+1. Only the requested page is validated: `HttpxSearchEngine.validate_results()` checks the results in order, `limit` at a time, until `offset + limit` valid results exist (see [Link Validation](./link-validation.md)). A 1000-result search with `limit=100` checks ~300 links instead of ~3000; later pages get the already checked links from the validator's cache.
+1. `CrawlJobFactory` turns every result of the page into its own `CrawlJob`; the jobs are saved to the repository in parallel.
+1. The page is rendered by the presenter.
 
 **Key XML fields:**
 

@@ -22,6 +22,11 @@ from scavengarr.domain.entities import (
 from scavengarr.domain.plugins import SearchResult
 
 
+async def _identity(results: list[Any]) -> list[Any]:
+    """Engine stand-in: every result is valid."""
+    return results
+
+
 class _FakePythonPlugin:
     """Minimal fake Python plugin for inline test use."""
 
@@ -145,7 +150,7 @@ class TestSearchExecution:
 
         registry = MagicMock()
         registry.get.return_value = py_plugin
-        mock_search_engine.validate_results.return_value = [result]
+        mock_search_engine.validate_results.side_effect = _identity
 
         uc = _make_uc(registry, mock_search_engine, mock_crawljob_repo)
         q = TorznabQuery(
@@ -171,7 +176,7 @@ class TestSearchExecution:
 
         registry = MagicMock()
         registry.get.return_value = py_plugin
-        mock_search_engine.validate_results.return_value = []
+        mock_search_engine.validate_results.side_effect = _identity
 
         uc = _make_uc(registry, mock_search_engine, mock_crawljob_repo)
         q = TorznabQuery(
@@ -220,7 +225,7 @@ class TestSearchExecution:
 
         registry = MagicMock()
         registry.get.return_value = py_plugin
-        mock_search_engine.validate_results.return_value = [result]
+        mock_search_engine.validate_results.side_effect = _identity
 
         uc = _make_uc(registry, mock_search_engine, mock_crawljob_repo)
         q = TorznabQuery(
@@ -242,7 +247,7 @@ class TestSearchExecution:
 
         registry = MagicMock()
         registry.get.return_value = py_plugin
-        mock_search_engine.validate_results.return_value = [search_result]
+        mock_search_engine.validate_results.side_effect = _identity
 
         uc = _make_uc(registry, mock_search_engine, mock_crawljob_repo)
         q = TorznabQuery(
@@ -326,6 +331,7 @@ class TestSearchCaching:
         search_result: SearchResult,
     ) -> None:
         mock_cache.get.return_value = [search_result]
+        mock_search_engine.validate_results.side_effect = _identity
         uc = _make_uc(
             mock_plugin_registry,
             mock_search_engine,
@@ -353,7 +359,7 @@ class TestSearchCaching:
     ) -> None:
         mock_cache.get.return_value = None
         fake_plugin._results = [search_result]
-        mock_search_engine.validate_results.return_value = [search_result]
+        mock_search_engine.validate_results.side_effect = _identity
         uc = _make_uc(
             mock_plugin_registry,
             mock_search_engine,
@@ -381,7 +387,7 @@ class TestSearchCaching:
     ) -> None:
         mock_cache.get.return_value = None
         fake_plugin._results = [search_result]
-        mock_search_engine.validate_results.return_value = [search_result]
+        mock_search_engine.validate_results.side_effect = _identity
         uc = _make_uc(
             mock_plugin_registry,
             mock_search_engine,
@@ -407,7 +413,7 @@ class TestSearchCaching:
         mock_crawljob_repo: AsyncMock,
         mock_cache: AsyncMock,
     ) -> None:
-        mock_search_engine.validate_results.return_value = []
+        mock_search_engine.validate_results.side_effect = _identity
         uc = _make_uc(
             mock_plugin_registry,
             mock_search_engine,
@@ -431,7 +437,7 @@ class TestSearchCaching:
         mock_search_engine: AsyncMock,
         mock_crawljob_repo: AsyncMock,
     ) -> None:
-        mock_search_engine.validate_results.return_value = []
+        mock_search_engine.validate_results.side_effect = _identity
         uc = _make_uc(
             mock_plugin_registry,
             mock_search_engine,
@@ -457,7 +463,7 @@ class TestSearchCaching:
     ) -> None:
         mock_cache.get.side_effect = RuntimeError("cache down")
         fake_plugin._results = [search_result]
-        mock_search_engine.validate_results.return_value = [search_result]
+        mock_search_engine.validate_results.side_effect = _identity
         uc = _make_uc(
             mock_plugin_registry,
             mock_search_engine,
@@ -486,7 +492,7 @@ class TestSearchCaching:
         mock_cache.get.return_value = None
         mock_cache.set.side_effect = RuntimeError("cache write failed")
         fake_plugin._results = [search_result]
-        mock_search_engine.validate_results.return_value = [search_result]
+        mock_search_engine.validate_results.side_effect = _identity
         uc = _make_uc(
             mock_plugin_registry,
             mock_search_engine,
@@ -510,7 +516,7 @@ class TestSearchCaching:
         mock_cache: AsyncMock,
     ) -> None:
         mock_cache.get.return_value = None
-        mock_search_engine.validate_results.return_value = []
+        mock_search_engine.validate_results.side_effect = _identity
         uc = _make_uc(
             mock_plugin_registry,
             mock_search_engine,
@@ -535,6 +541,7 @@ class TestSearchCaching:
         search_result: SearchResult,
     ) -> None:
         mock_cache.get.return_value = [search_result]
+        mock_search_engine.validate_results.side_effect = _identity
         uc = _make_uc(
             mock_plugin_registry,
             mock_search_engine,
@@ -558,7 +565,7 @@ class TestSearchCaching:
         mock_search_engine: AsyncMock,
         mock_crawljob_repo: AsyncMock,
     ) -> None:
-        mock_search_engine.validate_results.return_value = []
+        mock_search_engine.validate_results.side_effect = _identity
         uc = _make_uc(
             mock_plugin_registry,
             mock_search_engine,
@@ -586,7 +593,7 @@ class TestSearchCaching:
         registry = MagicMock()
         registry.get.return_value = plugin
         mock_cache.get.return_value = None
-        mock_search_engine.validate_results.return_value = [search_result]
+        mock_search_engine.validate_results.side_effect = _identity
         uc = _make_uc(
             registry,
             mock_search_engine,
@@ -616,7 +623,7 @@ class TestSearchCaching:
         """Plugin without cache_ttl should use global search_ttl."""
         mock_cache.get.return_value = None
         fake_plugin._results = [search_result]
-        mock_search_engine.validate_results.return_value = [search_result]
+        mock_search_engine.validate_results.side_effect = _identity
         uc = _make_uc(
             mock_plugin_registry,
             mock_search_engine,
@@ -648,7 +655,7 @@ class TestSearchCaching:
         registry = MagicMock()
         registry.get.return_value = plugin
         mock_cache.get.return_value = None
-        mock_search_engine.validate_results.return_value = [search_result]
+        mock_search_engine.validate_results.side_effect = _identity
         uc = _make_uc(
             registry,
             mock_search_engine,
@@ -691,7 +698,7 @@ class TestPagination:
 
         registry = MagicMock()
         registry.get.return_value = py_plugin
-        mock_search_engine.validate_results.return_value = results
+        mock_search_engine.validate_results.side_effect = _identity
 
         uc = _make_uc(registry, mock_search_engine, mock_crawljob_repo)
         q = TorznabQuery(
@@ -715,7 +722,7 @@ class TestPagination:
 
         registry = MagicMock()
         registry.get.return_value = py_plugin
-        mock_search_engine.validate_results.return_value = results
+        mock_search_engine.validate_results.side_effect = _identity
 
         uc = _make_uc(registry, mock_search_engine, mock_crawljob_repo)
         q = TorznabQuery(
@@ -740,7 +747,7 @@ class TestPagination:
 
         registry = MagicMock()
         registry.get.return_value = py_plugin
-        mock_search_engine.validate_results.return_value = results
+        mock_search_engine.validate_results.side_effect = _identity
 
         uc = _make_uc(registry, mock_search_engine, mock_crawljob_repo)
         q = TorznabQuery(
@@ -766,7 +773,7 @@ class TestPagination:
 
         registry = MagicMock()
         registry.get.return_value = py_plugin
-        mock_search_engine.validate_results.return_value = results
+        mock_search_engine.validate_results.side_effect = _identity
 
         uc = _make_uc(registry, mock_search_engine, mock_crawljob_repo)
         q = TorznabQuery(
@@ -790,7 +797,7 @@ class TestPagination:
 
         registry = MagicMock()
         registry.get.return_value = py_plugin
-        mock_search_engine.validate_results.return_value = results
+        mock_search_engine.validate_results.side_effect = _identity
 
         uc = _make_uc(registry, mock_search_engine, mock_crawljob_repo)
         q = TorznabQuery(
@@ -828,3 +835,131 @@ class TestGrabTimeResolution:
     async def test_jobs_of_other_plugins_are_final(self) -> None:
         job = await self._saved_job(_FakePythonPlugin(name="filmpalast"))
         assert job.resolve_plugin is None
+
+
+class TestPageValidation:
+    """Only the requested page is validated (Prowlarr asks for limit=100).
+
+    A 1000-result search used to validate ~3000 hoster links before slicing,
+    which took minutes and made home routers block the machine.
+    """
+
+    @staticmethod
+    def _results(n: int) -> list[SearchResult]:
+        return [
+            SearchResult(title=f"Movie {i}", download_link=f"https://h.example/{i}")
+            for i in range(n)
+        ]
+
+    @staticmethod
+    def _uc(
+        results: list[SearchResult],
+        engine: AsyncMock,
+        repo: AsyncMock,
+        cache: AsyncMock | None = None,
+    ) -> TorznabSearchUseCase:
+        plugin = _FakePythonPlugin(name="filmpalast")
+        plugin._results = results
+        registry = MagicMock()
+        registry.get.return_value = plugin
+        return _make_uc(registry, engine, repo, cache=cache)
+
+    @staticmethod
+    def _validated(engine: AsyncMock) -> list[str]:
+        return [
+            r.title
+            for call in engine.validate_results.await_args_list
+            for r in call.args[0]
+        ]
+
+    async def test_validates_only_requested_page(
+        self, mock_search_engine: AsyncMock, mock_crawljob_repo: AsyncMock
+    ) -> None:
+        mock_search_engine.validate_results.side_effect = _identity
+        uc = self._uc(self._results(1000), mock_search_engine, mock_crawljob_repo)
+
+        response = await uc.execute(
+            TorznabQuery(
+                action="search", plugin_name="filmpalast", query="x", limit=100
+            )
+        )
+
+        assert len(response.items) == 100
+        assert len(self._validated(mock_search_engine)) == 100
+
+    async def test_keeps_validating_until_page_is_full(
+        self, mock_search_engine: AsyncMock, mock_crawljob_repo: AsyncMock
+    ) -> None:
+        async def _every_second(results: list[SearchResult]) -> list[SearchResult]:
+            return [r for r in results if int(r.title.split()[1]) % 2 == 0]
+
+        mock_search_engine.validate_results.side_effect = _every_second
+        uc = self._uc(self._results(1000), mock_search_engine, mock_crawljob_repo)
+
+        response = await uc.execute(
+            TorznabQuery(
+                action="search", plugin_name="filmpalast", query="x", limit=100
+            )
+        )
+
+        assert [i.title for i in response.items][:3] == [
+            "Movie 0",
+            "Movie 2",
+            "Movie 4",
+        ]
+        assert len(response.items) == 100
+        assert len(self._validated(mock_search_engine)) == 200
+
+    async def test_offset_page(
+        self, mock_search_engine: AsyncMock, mock_crawljob_repo: AsyncMock
+    ) -> None:
+        mock_search_engine.validate_results.side_effect = _identity
+        uc = self._uc(self._results(1000), mock_search_engine, mock_crawljob_repo)
+
+        response = await uc.execute(
+            TorznabQuery(
+                action="search",
+                plugin_name="filmpalast",
+                query="x",
+                offset=100,
+                limit=100,
+            )
+        )
+
+        assert response.items[0].title == "Movie 100"
+        assert len(response.items) == 100
+        assert len(self._validated(mock_search_engine)) == 200
+
+    async def test_crawljobs_only_for_returned_page(
+        self, mock_search_engine: AsyncMock, mock_crawljob_repo: AsyncMock
+    ) -> None:
+        mock_search_engine.validate_results.side_effect = _identity
+        uc = self._uc(self._results(1000), mock_search_engine, mock_crawljob_repo)
+
+        await uc.execute(
+            TorznabQuery(action="search", plugin_name="filmpalast", query="x", limit=10)
+        )
+
+        assert mock_crawljob_repo.save.await_count == 10
+
+    async def test_cache_keeps_unvalidated_results(
+        self,
+        mock_search_engine: AsyncMock,
+        mock_crawljob_repo: AsyncMock,
+        mock_cache: AsyncMock,
+    ) -> None:
+        async def _none_valid(results: list[SearchResult]) -> list[SearchResult]:
+            return []
+
+        mock_search_engine.validate_results.side_effect = _none_valid
+        mock_cache.get.return_value = None
+        results = self._results(5)
+        uc = self._uc(results, mock_search_engine, mock_crawljob_repo, cache=mock_cache)
+
+        response = await uc.execute(
+            TorznabQuery(action="search", plugin_name="filmpalast", query="x")
+        )
+
+        assert response.items == []
+        # the raw plugin results are cached; each page validates on demand
+        assert mock_cache.set.await_args.args[1] == results

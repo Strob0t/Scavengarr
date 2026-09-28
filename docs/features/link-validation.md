@@ -106,18 +106,25 @@ async def validate(self, url: str) -> bool:
     if cached is not None and not cached.is_expired:
         return cached.is_valid
 
-    async with self._semaphore:
-        if await self._try_head(url):
-            self._cache[url] = _ValidationCacheEntry(True, _CACHE_TTL_VALID)
-            return True
+    host = urlparse(url).hostname or ""
+    async with self._host_semaphores[host], self._semaphore:
+        if self._is_unreachable(host):          # host failed to connect lately
+            return False
+        try:
+            if await self._try_head(url):
+                self._cache[url] = _ValidationCacheEntry(True, _CACHE_TTL_VALID)
+                return True
+        except _Unreachable:                    # ConnectError / ConnectTimeout
+            self._unreachable_until[host] = time.monotonic() + _UNREACHABLE_HOST_TTL
+            self._cache[url] = _ValidationCacheEntry(False, _CACHE_TTL_INVALID)
+            return False                        # no GET retry
         is_valid = await self._try_get(url)
-        ttl = _CACHE_TTL_VALID if is_valid else _CACHE_TTL_INVALID
-        self._cache[url] = _ValidationCacheEntry(is_valid, ttl)
-        return is_valid
+        ...
 ```
 
-- The semaphore wraps HEAD and the optional GET, so at most `max_concurrent` URLs are checked at once.
+- The semaphore wraps HEAD and the optional GET, so at most `max_concurrent` URLs are checked at once; per host at most `_MAX_CONCURRENT_PER_HOST` (4).
 - `_try_head()` and `_try_get()` both send the request with `follow_redirects=True` and the validator's timeout; status `< 400` is valid.
+- **Unreachable hosts:** when HEAD cannot even connect (`ConnectError`, `ConnectTimeout`), the host is skipped for `_UNREACHABLE_HOST_TTL` (15 min) and no GET retry is sent. Search results carry hundreds of links on dead hosters (uploaded.net, ul.to, go4up, uptobox, ...); one connection attempt per link used to produce bursts that home routers treat as a port scan — they then block the machine ("No route to host") and every other request fails too.
 - Exceptions never propagate: every failure returns `False`.
 
 ### Result Cache

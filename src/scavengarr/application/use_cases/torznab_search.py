@@ -128,9 +128,39 @@ class TorznabSearchUseCase:
             )
             return SearchResponse(items=[], cache_hit=cache_hit)
 
-        items = await self._build_torznab_items(raw_results, q, plugin)
-        paginated = items[q.offset : q.offset + q.limit]
-        return SearchResponse(items=paginated, cache_hit=cache_hit)
+        page = await self._validated_page(raw_results, q)
+        items = await self._build_torznab_items(page, q, plugin)
+        return SearchResponse(items=items, cache_hit=cache_hit)
+
+    async def _validated_page(
+        self,
+        raw_results: list[Any],
+        q: TorznabQuery,
+    ) -> list[Any]:
+        """Validate results in order, only as far as the requested page needs.
+
+        Clients ask for one page (Prowlarr: ``limit=100``). Validating every
+        result of a 1000-item search first meant ~3000 link checks per
+        request: minutes of runtime and connection bursts that home routers
+        treat as a port scan. Results are validated in chunks until
+        ``offset + limit`` valid ones exist; earlier chunks of later pages
+        come from the link validator's cache.
+        """
+        needed = q.offset + q.limit
+        chunk = max(q.limit, 1)
+        valid: list[Any] = []
+        for start in range(0, len(raw_results), chunk):
+            try:
+                valid.extend(
+                    await self.engine.validate_results(
+                        raw_results[start : start + chunk]
+                    )
+                )
+            except Exception as e:
+                raise TorznabExternalError(f"Result validation error: {e!s}") from e
+            if len(valid) >= needed:
+                break
+        return valid[q.offset : needed]
 
     async def _cache_read(self, cache_key: str, q: TorznabQuery) -> list[Any] | None:
         """Try to read cached search results. Returns None on miss or error."""
@@ -194,16 +224,11 @@ class TorznabSearchUseCase:
         plugin: Any,
         q: TorznabQuery,
     ) -> list[Any]:
-        """Execute search via Python plugin and validate results."""
+        """Execute search via Python plugin (links are validated per page)."""
         try:
-            raw_results = await plugin.search(q.query, category=q.category)
+            return await plugin.search(q.query, category=q.category)
         except Exception as e:
             raise TorznabExternalError(f"Plugin search error: {e!s}") from e
-
-        try:
-            return await self.engine.validate_results(raw_results)
-        except Exception as e:
-            raise TorznabExternalError(f"Result validation error: {e!s}") from e
 
     async def _build_torznab_items(
         self,

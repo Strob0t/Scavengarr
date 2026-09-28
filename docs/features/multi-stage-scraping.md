@@ -119,7 +119,7 @@ Each plugin sets `_MAX_PAGES` from the site's results-per-page (e.g. 200/page = 
 
 ## Link Validation
 
-Link validation is not part of the plugin. For Torznab searches, the use case passes the plugin's results to `HttpxSearchEngine.validate_results()`, which batch-checks `download_link` and every `download_links` entry, promotes the first valid alternative when the primary link is dead, and drops results without any valid link. Results that already carry `validated_links` are passed through unchecked. Details: [Link Validation](./link-validation.md).
+Link validation is not part of the plugin. For Torznab searches, the use case passes the plugin's results page by page (only as many as the requested `offset + limit` need) to `HttpxSearchEngine.validate_results()`, which batch-checks `download_link` and every `download_links` entry, promotes the first valid alternative when the primary link is dead, and drops results without any valid link. Results that already carry `validated_links` are passed through unchecked. Details: [Link Validation](./link-validation.md).
 
 There is no result-level deduplication after the plugin; plugins that can return duplicates must de-duplicate themselves.
 

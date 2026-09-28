@@ -256,3 +256,88 @@ class TestValidateBatch:
         assert result["https://valid.com"] is True
         # Only the valid URL should trigger HEAD
         assert client.head.call_count == 1
+
+
+class TestUnreachableHosts:
+    """Connection-level failures: remember the host, stop hammering it.
+
+    Hundreds of links on a dead hoster (uploaded.net, ul.to, ...) used to
+    mean hundreds of connection attempts per search, each followed by a GET
+    retry. Home routers read such bursts as a port scan and block the host.
+    """
+
+    async def test_connect_error_skips_get_fallback(self) -> None:
+        client = _mock_client(side_effect=httpx.ConnectError("refused"))
+        validator = HttpLinkValidator(client)
+
+        assert await validator.validate("https://dead-host.example/a") is False
+        client.get.assert_not_called()
+
+    async def test_connect_timeout_skips_get_fallback(self) -> None:
+        client = _mock_client(side_effect=httpx.ConnectTimeout("timeout"))
+        validator = HttpLinkValidator(client)
+
+        assert await validator.validate("https://dead-host.example/a") is False
+        client.get.assert_not_called()
+
+    async def test_unreachable_host_not_contacted_again(self) -> None:
+        client = _mock_client(side_effect=httpx.ConnectError("refused"))
+        validator = HttpLinkValidator(client)
+
+        assert await validator.validate("https://dead-host.example/a") is False
+        assert await validator.validate("https://dead-host.example/b") is False
+        assert await validator.validate("http://dead-host.example/c") is False
+
+        assert client.head.await_count == 1
+
+    async def test_other_hosts_unaffected(self) -> None:
+        client = _mock_client(status_code=200)
+        dead = httpx.ConnectError("refused")
+        ok = MagicMock(status_code=200)
+
+        async def _head(url: str, **kwargs: object) -> object:
+            if "dead-host" in url:
+                raise dead
+            return ok
+
+        client.head = AsyncMock(side_effect=_head)
+        validator = HttpLinkValidator(client)
+
+        assert await validator.validate("https://dead-host.example/a") is False
+        assert await validator.validate("https://alive.example/a") is True
+
+    async def test_unreachable_host_expires(self, monkeypatch) -> None:
+        from scavengarr.infrastructure.validation import http_link_validator as mod
+
+        now = [1000.0]
+        monkeypatch.setattr(mod.time, "monotonic", lambda: now[0])
+        client = _mock_client(side_effect=httpx.ConnectError("refused"))
+        validator = HttpLinkValidator(client)
+
+        await validator.validate("https://dead-host.example/a")
+        now[0] += mod._UNREACHABLE_HOST_TTL + 1
+        await validator.validate("https://dead-host.example/b")
+
+        assert client.head.await_count == 2
+
+    async def test_batch_contacts_dead_host_at_most_per_host_limit(self) -> None:
+        from scavengarr.infrastructure.validation import http_link_validator as mod
+
+        client = _mock_client(side_effect=httpx.ConnectError("refused"))
+        validator = HttpLinkValidator(client, max_concurrent=20)
+        urls = [f"https://uploaded.example/file/{i}" for i in range(200)]
+
+        result = await validator.validate_batch(urls)
+
+        assert not any(result.values())
+        # only the first wave (per-host limit) reaches the network
+        assert client.head.await_count <= mod._MAX_CONCURRENT_PER_HOST
+
+    async def test_http_status_failure_does_not_mark_host(self) -> None:
+        client = _mock_client(status_code=404, get_status_code=404)
+        validator = HttpLinkValidator(client)
+
+        assert await validator.validate("https://host.example/a") is False
+        assert await validator.validate("https://host.example/b") is False
+
+        assert client.head.await_count == 2
