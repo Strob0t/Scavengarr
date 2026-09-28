@@ -680,4 +680,4 @@ configuration system, and CrawlJob generation.
 Current known issues:
 
 - **11 httpx plugins return 0 results** (live smoke tests, 2026-09-28): filmfans, kinoger, serienfans (Cloudflare 403), fireani, nox (search API 404), dataload (search form 400), scnlog, kinoking (selectors/search), hdfilme (domain moved), streamcloud, streamkiste (stream source changed). Triage and fix plan: `docs/plans/plugin-repair.md`.
-- **Cloudflare-heavy sites:** Several Playwright plugins (ddlspot, ddlvalley, scnsrc, byte) return 0 results when Cloudflare challenges cannot be bypassed in headless mode.
+- **Cloudflare-heavy sites:** ddlspot, ddlvalley, scnsrc (Playwright) and filmfans, kinoger, serienfans (httpx) sit behind an interactive Cloudflare Turnstile challenge that no headless browser passes (Playwright + stealth, Patchright, Camoufox, nodriver tested 2026-09-28; see `docs/plans/antibot-patchright.md`). byte is not Cloudflare-blocked; its 0 results are a parser issue (`docs/plans/plugin-repair.md`).

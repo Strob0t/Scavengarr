@@ -1,7 +1,7 @@
 # Plan: Anti-Bot Hardening (Patchright + Browser Fallback)
 
-**Status:** Planned, not started (2026-09-28)
-**Priority:** High (blocks 7 plugins and 3 hoster resolvers)
+**Status:** Phase 0 done, gate failed for all headless variants; headful test pending (2026-09-28)
+**Priority:** High (blocks 6 plugins and 3 hoster resolvers)
 **Related:** `docs/plans/plugin-repair.md`, `CHANGELOG.md` → `KNOWN_ISSUES`,
 `src/scavengarr/infrastructure/plugins/{playwright_base,shared_browser,httpx_base}.py`,
 `src/scavengarr/infrastructure/hoster_resolvers/{stealth_pool,cloudflare,supervideo,probe,xfs}.py`,
@@ -15,7 +15,7 @@ Bot protection currently blocks:
 |---|---|---|
 | filmfans, kinoger | httpx | Cloudflare JS challenge (403) on every page |
 | serienfans | httpx | Search API works, detail pages 403 (Cloudflare) |
-| ddlspot, ddlvalley, scnsrc, byte | Playwright + playwright-stealth | 0 results, Cloudflare challenge not cleared headless |
+| ddlspot, ddlvalley, scnsrc | Playwright + playwright-stealth | 0 results, Cloudflare challenge not cleared headless |
 | veev, vinovo, wolfstream (XFS resolvers) | httpx | `needs_captcha=True`, resolver returns `None` (Turnstile / anti-bot JS) |
 
 Current browser stack:
@@ -71,6 +71,50 @@ Gate:
 - B (or D) clears ≥ 4 of the 7 site targets → continue with Phase 1.
 - Nothing beats A → stop; evaluate nodriver/Camoufox or jump to Phase 3.
 - Record the result table in this file before starting Phase 1.
+
+### Phase 0 results (2026-09-28)
+
+Setup: devcontainer, residential IP (AS3209 Vodafone), 2 rounds per variant,
+30 s wait per page. playwright 1.57.0 (Chromium 143) + playwright-stealth 2.0.1,
+Patchright 1.63.0 (Chromium 153), Camoufox 0.5.6 (Firefox 152), nodriver 0.50.3.
+
+| Target | A today | A2 PW new headless | B Patchright | C Patchright + UA | D Patchright new headless |
+|---|---|---|---|---|---|
+| filmfans | 403, blocked | 403, blocked | 403, blocked | 403, blocked | 403, blocked |
+| kinoger | 403, blocked | 403, blocked | 403, blocked | 403, blocked | 403, blocked |
+| serienfans (detail) | 403, blocked | 403, blocked | 403, blocked | 403, blocked | 403, blocked |
+| ddlspot | 403, blocked | 403, blocked | 403, blocked | 403, blocked | 403, blocked |
+| ddlvalley | 403, blocked | 403, blocked | 403, blocked | 403, blocked | 403, blocked |
+| scnsrc | 403, blocked | 403, blocked | 403, blocked | 403, blocked | 403, blocked |
+| byte | 200, results | 200, results | 200, results | 200, results | 200, results |
+
+Follow-up diagnosis on filmfans:
+- The challenge is Cloudflare **managed** (`cType: 'managed'`) and renders an
+  **interactive Turnstile checkbox** ("Verify you are human"); it never
+  auto-clears.
+- A real mouse click on the checkbox (verified by screenshot) is rejected:
+  Cloudflare re-issues the challenge with a new Ray ID. Tried with Patchright
+  (Chromium new headless), Camoufox (headless, `humanize=True`) and nodriver
+  (`tab.verify_cf()`), 3 attempts each. All rejected.
+- Not the IP: residential ISP address.
+
+Conclusions:
+- Patchright alone gives **no improvement** over today's stack on these
+  targets. Fingerprint, User-Agent and automation-protocol leaks are not the
+  deciding factor; every headless browser is rejected at the Turnstile step.
+- **byte is not Cloudflare-blocked**: every variant gets HTTP 200 with search
+  hits. Its 0 results are a parser problem → moved to `plugin-repair.md`.
+- Veev/vinovo/wolfstream were not measured (no known-good embed URLs).
+- Remaining untested variable: **headful browser on a virtual display**
+  (variant D as planned). A user-space Xvfb cannot start without root
+  (`/usr/bin/xkbcomp` is hard-wired), so this needs `xvfb` installed in the
+  container. The same applies to FlareSolverr/Byparr, whose images run a
+  headful browser under Xvfb.
+- Next step: headful run of variants B/Camoufox/nodriver under `xvfb-run`.
+  If headful passes → Phase 1 + Phase 2 with a headful StealthPool (Xvfb in
+  `Dockerfile.prod`). If headful also fails → the three httpx plugins and the
+  three Playwright plugins stay broken without a CAPTCHA-solving service
+  (non-goal); drop Phase 1/2 and document them as unsupported.
 
 ## Phase 1 — Patchright instead of playwright + playwright-stealth
 

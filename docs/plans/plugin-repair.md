@@ -31,11 +31,12 @@ Triage method (2026-09-28, from inside the devcontainer, no proxy):
 | dataload | Search form changed | Login OK (`dataload_login_success`), `POST https://www.data-load.me/search/search` → 400 | Inspect the vBulletin/XenForo search form (new token/field names) |
 | scnlog | Selectors broken | `https://scnlog.me/?s=Iron+Man` → 200, HTML contains "iron man" 119×, parser finds 0 | Update search result selectors |
 | kinoking | Search yields nothing | `https://kinoking.cc/?s=Iron+Man` → 200 (250 KB), query term absent, plugin logs `count=0` | Check whether search moved (JS/API) or needs another URL |
+| byte (Playwright) | Parser, not Cloudflare | Anti-bot benchmark 2026-09-28: `https://byte.to/?q=Iron+Man&t=1` → 200 with hits in every browser variant, yet the plugin returns 0 | Re-check result selectors / iframe link extraction |
 | hdfilme | Domain moved | `hdfilme.legal` → 301 `hdfilme.press` → `hdfilme.cafe`; DLE search there returns only 749 bytes | Update `_DOMAINS`, re-check search URL on the new domain |
 | streamcloud | Detail page structure changed | Search works (domain now `streamcloud.download`, `.plus` → 301 `.uno`), every detail page logs `streamcloud_no_streams` | Update detail/stream selectors; update `_DOMAINS` |
 | streamkiste | Stream source changed | Search works (`streamkiste.taxi` → 301 `.bid`), detail pages `no_streams`, `https://meinecloud.click/ddl/tt…` → 404 | Update stream extraction (MeineCloud endpoint gone); update `_DOMAINS` |
 
-Quick wins first: scnlog, hdfilme, fireani, nox (selector/domain/endpoint).
+Quick wins first: scnlog, byte, hdfilme, fireani, nox (selector/domain/endpoint).
 The three Cloudflare plugins need a design decision (Playwright plugin vs.
 shared StealthPool for httpx plugins). Decided: browser fallback port for
 httpx plugins, see `docs/plans/antibot-patchright.md`.
