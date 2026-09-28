@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 from types import ModuleType
 from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+import respx
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "hdfilme.py"
 
@@ -26,7 +28,6 @@ _mod = _load_module()
 _HdfilmePlugin = _mod.HdfilmePlugin
 _SearchResultParser = _mod._SearchResultParser
 _DetailPageParser = _mod._DetailPageParser
-_parse_meinecloud_script = _mod._parse_meinecloud_script
 
 
 def _make_plugin() -> object:
@@ -90,7 +91,7 @@ _SEARCH_HTML = """\
 
 _FILM_DETAIL_HTML = """\
 <html><body>
-<script src="https://meinecloud.click/ddl/tt0096895" type="text/javascript"></script>
+<iframe src="https://devideosrc.co/movie/tt0096895" allowfullscreen></iframe>
 <section class=" detail mt-5">
   <div class="md:flex items-center">
     <div class="poster md:flex-none text-center">
@@ -166,79 +167,17 @@ _SERIES_DETAIL_HTML = """\
       </div>
     </section>
   </div>
-  <div class="su-spoiler-btn">Komplette Linkliste</div>
-  <div class="su-spoiler su-spoiler-style-default">
-    <div class="su-spoiler-title" data-toggle="collapse" data-target="#se-ac-1">
-      <span class="su-spoiler-icon"></span>Staffel 1
-    </div>
-    <div class="su-spoiler-content su-clearfix collapse"
-         id="se-ac-1">
-      1x1 Episode 1 \u2013
-      <a href="https://supervideo.tv/abc123.html">Supervideo</a>
-      &nbsp; <a href="https://dropload.io/def456">Dropload</a>
-      &nbsp;<a href="/engine/player.php?id=29460&amp;s=1">
-        Player HD/4K</a><br>
-      1x2 Episode 2 \u2013
-      <a href="https://supervideo.tv/ghi789.html">Supervideo</a>
-      &nbsp; <a href="https://dropload.io/jkl012">Dropload</a>
-      <br>
-    </div>
-  </div>
-  <div class="su-spoiler su-spoiler-style-default">
-    <div class="su-spoiler-title" data-toggle="collapse" data-target="#se-ac-2">
-      <span class="su-spoiler-icon"></span>Staffel 2
-    </div>
-    <div class="su-spoiler-content su-clearfix collapse"
-         id="se-ac-2">
-      2x1 Episode 1 \u2013
-      <a href="https://supervideo.tv/mno345.html">Supervideo</a>
-      &nbsp; <a href="https://dropload.io/pqr678">Dropload</a>
-      <br>
-    </div>
-  </div>
+  <iframe id="serial_iframe" src="" allowfullscreen></iframe>
+  <script>
+  (function() {
+    var imdb = 'tt4574334';
+    var iframe = document.getElementById('serial_iframe');
+    iframe.src = 'https://devideosrc.co/serial/' + imdb;
+  })();
+  </script>
 </section>
 </body></html>
 """
-
-
-def _mc_line(url: str, hoster: str, size: str) -> str:
-    """Build one meinecloud document.write() line."""
-    bs = "\\"
-    dq = bs + '"'
-    sq = bs + "'"
-    return (
-        f"document.write('<a onclick={dq}"
-        f"window.open({sq}{url}{sq}){dq}"
-        f" class={dq}streams{dq}>"
-        f"<span class={dq}streaming{dq}>"
-        f"{hoster}</span>"
-        f"<mark>1080p</mark>"
-        f"<span style={dq}color:#999;{dq}>"
-        f"{size}</span></a>')"
-    )
-
-
-_MEINECLOUD_SCRIPT = "\n".join(
-    [
-        "document.write('<div id=\\\"streams\\\">')",
-        _mc_line(
-            "https://supervideo.cc/c12pdf9x7oi4",
-            "Supervideo",
-            "1.0GB",
-        ),
-        _mc_line(
-            "https://dropload.tv/i6yeojjbilif",
-            "Dropload",
-            "1.2GB",
-        ),
-        _mc_line(
-            "https://doodstream.com/d/jud9plfzzhf0",
-            "Doodstream",
-            "1.1GB",
-        ),
-        "document.write('</div>')",
-    ]
-)
 
 
 # ---------------------------------------------------------------------------
@@ -294,7 +233,6 @@ class TestDetailPageParser:
         parser = _DetailPageParser("https://hdfilme.cafe")
         parser.feed(_FILM_DETAIL_HTML)
 
-        assert parser.imdb_id == "tt0096895"
         assert parser.title == "Batman"
         assert parser.year == "1989"
         assert parser.duration == "126 min"
@@ -315,21 +253,6 @@ class TestDetailPageParser:
         assert "Serien" in parser.genres
         assert "Drama" in parser.genres
         assert "themoviedb.org/tv/66732" in parser.tmdb_url
-
-    def test_series_episode_links(self) -> None:
-        parser = _DetailPageParser("https://hdfilme.cafe")
-        parser.feed(_SERIES_DETAIL_HTML)
-
-        # Should have episode links from both seasons
-        # Filtering out /engine/player.php links
-        assert len(parser.episode_links) >= 4
-        hosters = [e["hoster"] for e in parser.episode_links]
-        assert "supervideo" in hosters
-        assert "dropload" in hosters
-
-        # Check full URLs
-        for link in parser.episode_links:
-            assert link["link"].startswith("https://")
 
     def test_series_detected_by_serien_genre(self) -> None:
         html = """\
@@ -357,23 +280,12 @@ class TestDetailPageParser:
         parser.feed(html)
         assert parser.is_series is True
 
-    def test_series_detected_by_spoiler_content(self) -> None:
-        html = """\
-        <div class="su-spoiler-content su-clearfix collapse" id="se-ac-1">
-          1x1 Episode 1 - <a href="https://supervideo.tv/test.html">Supervideo</a>
-        </div>
-        """
-        parser = _DetailPageParser("https://hdfilme.cafe")
-        parser.feed(html)
-        assert parser.is_series is True
-
     def test_empty_detail_page(self) -> None:
         parser = _DetailPageParser("https://hdfilme.cafe")
         parser.feed("<html><body></body></html>")
         assert parser.imdb_id == ""
         assert parser.is_series is False
         assert len(parser.genres) == 0
-        assert len(parser.episode_links) == 0
 
     def test_imdb_id_from_imdb_link(self) -> None:
         html = """\
@@ -391,179 +303,301 @@ class TestDetailPageParser:
         assert parser.title == "Test Movie"
 
 
-class TestMeineCloudParser:
-    """Tests for _parse_meinecloud_script."""
-
-    def test_parses_stream_links(self) -> None:
-        links = _parse_meinecloud_script(_MEINECLOUD_SCRIPT)
-
-        assert len(links) == 3
-
-        supervideo = links[0]
-        assert supervideo["hoster"] == "supervideo"
-        assert supervideo["link"] == "https://supervideo.cc/c12pdf9x7oi4"
-        assert supervideo["quality"] == "1080p"
-        assert supervideo["size"] == "1.0GB"
-
-        dropload = links[1]
-        assert dropload["hoster"] == "dropload"
-        assert dropload["link"] == "https://dropload.tv/i6yeojjbilif"
-
-        doodstream = links[2]
-        assert doodstream["hoster"] == "doodstream"
-        assert doodstream["link"] == "https://doodstream.com/d/jud9plfzzhf0"
-
-    def test_empty_script(self) -> None:
-        links = _parse_meinecloud_script("")
-        assert links == []
-
-    def test_no_window_open(self) -> None:
-        links = _parse_meinecloud_script("document.write('hello')")
-        assert links == []
-
-    def test_extracts_from_url_domain_fallback(self) -> None:
-        script = r"window.open('https://newsite.example.com/abc123')"
-        links = _parse_meinecloud_script(script)
-        assert len(links) == 1
-        assert links[0]["hoster"] == "newsite"
-        assert links[0]["link"] == "https://newsite.example.com/abc123"
-
-
 # ---------------------------------------------------------------------------
-# Plugin integration tests (mocked HTTP)
+# Plugin tests (respx)
 # ---------------------------------------------------------------------------
 
+_BASE = "https://hdfilme.cafe"
+_BATMAN_URL = _BASE + "/filme1/23004-batman-stream.html"
+_THE_BATMAN_URL = _BASE + "/filme1/39187-the-batman-stream.html"
+_ST_URL = _BASE + "/filme1/29460-stranger-things-stream.html"
+_EMBED_LINKS = "https://devideosrc.co/api/embed-links"
+_TOKEN_PAGE = '<script>body: JSON.stringify({ token: "dG9rZW4.abc" })</script>'
 
-def _mock_response(text: str, status_code: int = 200) -> httpx.Response:
-    """Create a mock httpx.Response."""
-    return httpx.Response(
-        status_code=status_code,
-        text=text,
-        request=httpx.Request("GET", "https://hdfilme.cafe/"),
+_MOVIE_LINKS_JSON = {
+    "ok": True,
+    "sources": [
+        {
+            "name": "supervideo.cc",
+            "url": "https://supervideo.cc/e/c12pdf9x7oi4",
+            "rank": 1,
+        },
+        {
+            "name": "dropload.io",
+            "url": "https://dr0pstream.com/e/i6yeojjbilif",
+            "rank": 2,
+        },
+        {
+            "name": "doodstream.com",
+            "url": "https://doodstream.com/e/jud9plfzzhf0",
+            "rank": 3,
+        },
+    ],
+}
+
+_SERIES_LINKS_JSON = {
+    "ok": True,
+    "tv": {
+        "seasons": [
+            {
+                "season_number": 1,
+                "episodes": [
+                    {
+                        "episode_number": 1,
+                        "sources": [
+                            {
+                                "name": "supervideo.cc",
+                                "url": "https://supervideo.cc/e/s1e1",
+                            }
+                        ],
+                    },
+                    {
+                        "episode_number": 2,
+                        "sources": [
+                            {
+                                "name": "dropload.io",
+                                "url": "https://dr0pstream.com/e/s1e2",
+                            }
+                        ],
+                    },
+                ],
+            },
+            {
+                "season_number": 2,
+                "episodes": [
+                    {
+                        "episode_number": 1,
+                        "sources": [
+                            {
+                                "name": "supervideo.cc",
+                                "url": "https://supervideo.cc/e/s2e1",
+                            }
+                        ],
+                    }
+                ],
+            },
+        ]
+    },
+}
+
+
+def _embed_links(request: httpx.Request) -> httpx.Response:
+    body = json.loads(request.content)
+    payload = _MOVIE_LINKS_JSON if body["type"] == "movie" else _SERIES_LINKS_JSON
+    return httpx.Response(200, json=payload)
+
+
+def _search_html(*items: tuple[str, str]) -> str:
+    return "".join(
+        f"""
+        <div class="item relative mt-3">
+          <div class="flex flex-col h-full">
+            <a class="movie-title" title="{title}" href="{href}"><h3> {title} </h3></a>
+            <div class="meta"><span>2020</span></div>
+          </div>
+        </div>"""
+        for title, href in items
     )
+
+
+def _mock_site(listing: str, details: dict[str, str]) -> respx.Route:
+    """Route search/browse listing, detail pages and devideosrc."""
+    listing_route = respx.get(
+        url__regex=rf"^{_BASE}/(\?.*|filme1/(page/\d+/)?|serien/(page/\d+/)?)$"
+    ).mock(
+        side_effect=lambda request: httpx.Response(
+            200, text="" if "/page/" in request.url.path else listing
+        )
+    )
+    for url, html in details.items():
+        respx.get(url).respond(200, text=html)
+    respx.get(url__startswith="https://devideosrc.co/movie/").respond(
+        200, text=_TOKEN_PAGE
+    )
+    respx.get(url__startswith="https://devideosrc.co/serial/").respond(
+        200, text=_TOKEN_PAGE
+    )
+    respx.post(_EMBED_LINKS).mock(side_effect=_embed_links)
+    return listing_route
 
 
 class TestHdfilmePlugin:
     """Tests for HdfilmePlugin with mocked HTTP."""
 
+    @respx.mock
     @pytest.mark.asyncio
     async def test_search_returns_film_results(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
-
-        mock_client.get = AsyncMock(
-            side_effect=[
-                _mock_response(_SEARCH_HTML),  # search page
-                _mock_response(_FILM_DETAIL_HTML),  # Batman detail
-                _mock_response(_MEINECLOUD_SCRIPT),  # meinecloud for Batman
-                _mock_response(_FILM_DETAIL_HTML),  # The Batman detail
-                _mock_response(_MEINECLOUD_SCRIPT),  # meinecloud for The Batman
-            ]
+        _mock_site(
+            _SEARCH_HTML,
+            {_BATMAN_URL: _FILM_DETAIL_HTML, _THE_BATMAN_URL: _FILM_DETAIL_HTML},
         )
 
-        plug._client = mock_client
         results = await plug.search("Batman")
+        await plug.cleanup()
 
         assert len(results) == 2
         assert results[0].title == "Batman"
         assert results[0].category == 2000  # Film
-        assert results[0].download_link.startswith("https://")
+        assert [link["link"] for link in results[0].download_links] == [
+            "https://supervideo.cc/e/c12pdf9x7oi4",
+            "https://dr0pstream.com/e/i6yeojjbilif",
+            "https://doodstream.com/e/jud9plfzzhf0",
+        ]
 
+    @respx.mock
     @pytest.mark.asyncio
     async def test_search_returns_series_results(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
-
-        # Search returns one result, detail shows it's a series
-        search_html = """\
-        <div class="item relative mt-3">
-          <div class="flex flex-col h-full">
-            <a class="movie-title" title="Stranger Things"
-               href="/filme1/29460-stranger-things-stream.html">
-              <h3> Stranger Things </h3>
-            </a>
-            <div class="meta"><span>2016</span></div>
-          </div>
-        </div>
-        """
-
-        mock_client.get = AsyncMock(
-            side_effect=[
-                _mock_response(search_html),  # search page
-                _mock_response(_SERIES_DETAIL_HTML),  # series detail
-            ]
+        _mock_site(
+            _search_html(
+                ("Stranger Things", "/filme1/29460-stranger-things-stream.html")
+            ),
+            {_ST_URL: _SERIES_DETAIL_HTML},
         )
 
-        plug._client = mock_client
         results = await plug.search("Stranger Things")
+        await plug.cleanup()
 
         assert len(results) == 1
         assert results[0].title == "Stranger Things"
         assert results[0].category == 5000  # Series
-        assert len(results[0].download_links) >= 4
+        assert [link["label"] for link in results[0].download_links] == [
+            "1x1 supervideo",
+            "1x2 dropload",
+            "2x1 supervideo",
+        ]
 
+    @respx.mock
     @pytest.mark.asyncio
-    async def test_search_empty_query(self) -> None:
+    async def test_season_episode_filter(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
+        _mock_site(
+            _search_html(
+                ("Batman", "/filme1/23004-batman-stream.html"),
+                ("Stranger Things", "/filme1/29460-stranger-things-stream.html"),
+            ),
+            {_BATMAN_URL: _FILM_DETAIL_HTML, _ST_URL: _SERIES_DETAIL_HTML},
+        )
 
-        empty_html = "<html><body>No results</body></html>"
-        mock_client.get = AsyncMock(return_value=_mock_response(empty_html))
+        results = await plug.search("x", season=1, episode=2)
+        await plug.cleanup()
 
-        plug._client = mock_client
-        results = await plug.search("xy")
+        # the film is skipped, the series narrowed to 1x2
+        assert [r.download_link for r in results] == ["https://dr0pstream.com/e/s1e2"]
 
-        assert results == []
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_search_empty_results(self) -> None:
+        plug = _make_plugin()
+        _mock_site("<html><body>No results</body></html>", {})
 
+        assert await plug.search("xy") == []
+        await plug.cleanup()
+
+    @respx.mock
     @pytest.mark.asyncio
     async def test_search_handles_http_error(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=httpx.ConnectError("connection failed"))
+        respx.get(url__startswith=_BASE).mock(side_effect=httpx.ConnectError("down"))
 
-        plug._client = mock_client
-        results = await plug.search("test")
+        assert await plug.search("test") == []
+        await plug.cleanup()
 
-        assert results == []
-
+    @respx.mock
     @pytest.mark.asyncio
     async def test_detail_page_error_skips_result(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
+        _mock_site(_SEARCH_HTML, {})
+        respx.get(_BATMAN_URL).respond(500)
+        respx.get(_THE_BATMAN_URL).respond(500)
 
-        mock_client.get = AsyncMock(
-            side_effect=[
-                _mock_response(_SEARCH_HTML),  # search page
-                httpx.ConnectError("detail failed"),  # Batman detail
-                httpx.ConnectError("detail failed"),  # The Batman detail
-            ]
+        assert await plug.search("Batman") == []
+        await plug.cleanup()
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_detail_without_player_skips_result(self) -> None:
+        plug = _make_plugin()
+        _mock_site(
+            _search_html(("Batman", "/filme1/23004-batman-stream.html")),
+            {_BATMAN_URL: "<html><body><h1>Batman hdfilme</h1></body></html>"},
         )
 
-        plug._client = mock_client
-        results = await plug.search("Batman")
+        assert await plug.search("Batman") == []
+        await plug.cleanup()
+        assert not any("devideosrc" in str(c.request.url) for c in respx.calls)
 
-        assert results == []
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_devideosrc_error_returns_no_result(self) -> None:
+        plug = _make_plugin()
+        _mock_site(
+            _search_html(("Batman", "/filme1/23004-batman-stream.html")),
+            {_BATMAN_URL: _FILM_DETAIL_HTML},
+        )
+        respx.post(_EMBED_LINKS).respond(500)
+
+        assert await plug.search("Batman") == []
+        await plug.cleanup()
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_film_result_metadata(self) -> None:
+        plug = _make_plugin()
+        _mock_site(
+            _search_html(("Batman", "/filme1/23004-batman-stream.html")),
+            {_BATMAN_URL: _FILM_DETAIL_HTML},
+        )
+
+        results = await plug.search("Batman")
+        await plug.cleanup()
+
+        first = results[0]
+        assert first.metadata.get("year") == "1989"
+        assert "Action" in first.metadata.get("genres", "")
+        assert first.metadata.get("imdb_id") == "tt0096895"
+        assert "themoviedb.org/movie/268" in first.metadata.get("tmdb_url", "")
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_category_filter_series_only(self) -> None:
+        plug = _make_plugin()
+        _mock_site(
+            _search_html(
+                ("Batman", "/filme1/23004-batman-stream.html"),
+                ("Stranger Things", "/filme1/29460-stranger-things-stream.html"),
+            ),
+            {_BATMAN_URL: _FILM_DETAIL_HTML, _ST_URL: _SERIES_DETAIL_HTML},
+        )
+
+        results = await plug.search("test", category=5000)
+        await plug.cleanup()
+
+        assert [r.title for r in results] == ["Stranger Things"]
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_browse_category_no_query(self) -> None:
+        plug = _make_plugin()
+        listing = _mock_site(
+            _search_html(("Batman", "/filme1/23004-batman-stream.html")),
+            {_BATMAN_URL: _FILM_DETAIL_HTML},
+        )
+
+        results = await plug.search("", category=2000)
+        await plug.cleanup()
+
+        assert len(results) == 1
+        paths = [c.request.url.path for c in listing.calls]
+        assert paths == ["/filme1/", "/filme1/page/2/"]
 
     @pytest.mark.asyncio
-    async def test_meinecloud_error_returns_empty_links(self) -> None:
+    async def test_no_query_no_category_returns_empty(self) -> None:
         plug = _make_plugin()
-        mock_client = AsyncMock()
+        plug._client = AsyncMock()
 
-        mock_client.get = AsyncMock(
-            side_effect=[
-                _mock_response(_SEARCH_HTML),  # search page
-                _mock_response(_FILM_DETAIL_HTML),  # Batman detail
-                httpx.ConnectError("meinecloud failed"),  # meinecloud
-                _mock_response(_FILM_DETAIL_HTML),  # The Batman detail
-                httpx.ConnectError("meinecloud failed"),  # meinecloud
-            ]
-        )
-
-        plug._client = mock_client
-        results = await plug.search("Batman")
-
-        # No results because meinecloud failed → no download links
-        assert results == []
+        assert await plug.search("") == []
 
     @pytest.mark.asyncio
     async def test_cleanup_closes_client(self) -> None:
@@ -575,155 +609,3 @@ class TestHdfilmePlugin:
 
         mock_client.aclose.assert_called_once()
         assert plug._client is None
-
-    @pytest.mark.asyncio
-    async def test_film_result_has_download_links(self) -> None:
-        plug = _make_plugin()
-        mock_client = AsyncMock()
-
-        search_html = """\
-        <div class="item relative mt-3">
-          <div class="flex flex-col h-full">
-            <a class="movie-title" title="Batman"
-               href="/filme1/23004-batman-stream.html">
-              <h3> Batman </h3>
-            </a>
-            <div class="meta"><span>1989</span></div>
-          </div>
-        </div>
-        """
-
-        mock_client.get = AsyncMock(
-            side_effect=[
-                _mock_response(search_html),  # search page
-                _mock_response(_FILM_DETAIL_HTML),  # detail
-                _mock_response(_MEINECLOUD_SCRIPT),  # meinecloud
-            ]
-        )
-
-        plug._client = mock_client
-        results = await plug.search("Batman")
-
-        assert len(results) == 1
-        first = results[0]
-        assert first.download_links is not None
-        assert len(first.download_links) == 3
-        assert first.download_link.startswith("https://")
-
-    @pytest.mark.asyncio
-    async def test_film_result_metadata(self) -> None:
-        plug = _make_plugin()
-        mock_client = AsyncMock()
-
-        search_html = """\
-        <div class="item relative mt-3">
-          <div class="flex flex-col h-full">
-            <a class="movie-title" title="Batman"
-               href="/filme1/23004-batman-stream.html">
-              <h3> Batman </h3>
-            </a>
-            <div class="meta"><span>1989</span></div>
-          </div>
-        </div>
-        """
-
-        mock_client.get = AsyncMock(
-            side_effect=[
-                _mock_response(search_html),  # search page
-                _mock_response(_FILM_DETAIL_HTML),  # detail
-                _mock_response(_MEINECLOUD_SCRIPT),  # meinecloud
-            ]
-        )
-
-        plug._client = mock_client
-        results = await plug.search("Batman")
-
-        first = results[0]
-        assert first.metadata.get("year") == "1989"
-        assert "Action" in first.metadata.get("genres", "")
-        assert first.metadata.get("imdb_id") == "tt0096895"
-        assert first.metadata.get("tmdb_url") is not None
-
-    @pytest.mark.asyncio
-    async def test_category_filter_series_only(self) -> None:
-        plug = _make_plugin()
-        mock_client = AsyncMock()
-
-        # Search returns mixed results, but one detail is series, other is film
-        search_html = """\
-        <div class="item relative mt-3">
-          <div class="flex flex-col h-full">
-            <a class="movie-title" title="Batman"
-               href="/filme1/23004-batman-stream.html">
-              <h3> Batman </h3>
-            </a>
-            <div class="meta"><span>1989</span></div>
-          </div>
-        </div>
-        <div class="item relative mt-3">
-          <div class="flex flex-col h-full">
-            <a class="movie-title" title="Stranger Things"
-               href="/filme1/29460-stranger-things-stream.html">
-              <h3> Stranger Things </h3>
-            </a>
-            <div class="meta"><span>2016</span></div>
-          </div>
-        </div>
-        """
-
-        mock_client.get = AsyncMock(
-            side_effect=[
-                _mock_response(search_html),  # search page
-                _mock_response(_FILM_DETAIL_HTML),  # Batman detail (film)
-                _mock_response(_MEINECLOUD_SCRIPT),  # meinecloud for Batman
-                _mock_response(_SERIES_DETAIL_HTML),  # Stranger Things (series)
-            ]
-        )
-
-        plug._client = mock_client
-        results = await plug.search("test", category=5000)
-
-        # Only series should remain
-        assert len(results) == 1
-        assert results[0].title == "Stranger Things"
-
-    @pytest.mark.asyncio
-    async def test_browse_category_no_query(self) -> None:
-        plug = _make_plugin()
-        mock_client = AsyncMock()
-
-        browse_html = """\
-        <div class="item relative mt-3">
-          <div class="flex flex-col h-full">
-            <a class="movie-title" title="Some Movie"
-               href="/filme1/12345-some-movie-stream.html">
-              <h3> Some Movie </h3>
-            </a>
-            <div class="meta"><span>2023</span></div>
-          </div>
-        </div>
-        """
-
-        # First call is browse page, then detail + meinecloud
-        mock_client.get = AsyncMock(
-            side_effect=[
-                _mock_response(browse_html),  # browse page 1
-                _mock_response(""),  # browse page 2 (empty)
-                _mock_response(_FILM_DETAIL_HTML),  # detail
-                _mock_response(_MEINECLOUD_SCRIPT),  # meinecloud
-            ]
-        )
-
-        plug._client = mock_client
-        results = await plug.search("", category=2000)
-
-        assert len(results) == 1
-
-    @pytest.mark.asyncio
-    async def test_no_query_no_category_returns_empty(self) -> None:
-        plug = _make_plugin()
-        mock_client = AsyncMock()
-        plug._client = mock_client
-
-        results = await plug.search("")
-        assert results == []

@@ -4,8 +4,8 @@ Scrapes hdfilme.cafe (German streaming site, DLE-based CMS) with:
 - httpx for all requests (server-rendered HTML search + detail pages)
 - GET /?story={query}&do=search&subaction=search for keyword search
 - Detail page scraping for metadata (genres, year, duration, IMDb, TMDB)
-- Film stream links via meinecloud.click/ddl/{imdb_id} external JS
-- Series episode links via su-spoiler-content divs (direct hoster links)
+- Stream links from the embedded devideosrc.co player (movies and series,
+  see ``scavengarr.infrastructure.plugins.devideosrc``)
 - Category detection from detail page: /serien/ genre link → TV (5000)
 - Bounded concurrency for detail page scraping
 
@@ -13,10 +13,9 @@ Domain: hdfilme.cafe (2026-09-28: hdfilme.legal → .press → .party → .bid a
 redirect here).
 No authentication required.
 
-Known upstream breakage (2026-09-28): the site's own search answers with a
-PHP fatal error (``engine/mods/sfilter/filter.php``), and film links moved
-from meinecloud.click to devideosrc.co, where they sit behind a Turnstile
-gate. The plugin returns nothing until the site fixes its search.
+Known upstream breakage (2026-09-28): the site's own keyword search answers
+with a PHP fatal error (``engine/mods/sfilter/filter.php``); browsing a
+category (empty query) works.
 """
 
 from __future__ import annotations
@@ -27,13 +26,13 @@ from html.parser import HTMLParser
 from urllib.parse import urljoin
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins import devideosrc
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
 # Configurable settings
 # ---------------------------------------------------------------------------
 _DOMAINS = ["hdfilme.cafe"]
-_MEINECLOUD_BASE = "https://meinecloud.click"
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -212,16 +211,16 @@ class _SearchResultParser(HTMLParser):
 class _DetailPageParser(HTMLParser):
     """Parse hdfilme.cafe film/series detail page.
 
+    Stream links are not on the page; they come from the embedded
+    devideosrc player.
+
     Extracts:
-    - IMDb ID from ``<script src="meinecloud.click/ddl/{imdb_id}">``
-    - IMDb ID from ``<iframe src="meinecloud.click/movie/{imdb_id}">``
     - Genres from ``<a href="/{genre}/">GenreName</a>`` in info section
     - Year, duration, quality from metadata spans
     - TMDB URL from ``<a href="themoviedb.org/...">``
     - IMDb URL from ``<a href="imdb.com/title/...">``
     - Description from h2 heading (distinguishes film/series)
     - Series detection from ``Staffel/Episode:`` in metadata or /serien/ genre
-    - Series episode links from su-spoiler-content divs
     """
 
     def __init__(self, base_url: str) -> None:
@@ -239,9 +238,6 @@ class _DetailPageParser(HTMLParser):
         self.is_series = False
         self.title = ""
         self.description = ""
-
-        # meinecloud script/iframe tracking
-        self._found_meinecloud = False
 
         # Info section tracking
         self._in_info = False
@@ -269,37 +265,12 @@ class _DetailPageParser(HTMLParser):
         self._prose_text = ""
         self._in_prose_a = False
 
-        # Series episode links
-        self._in_spoiler_content = False
-        self._spoiler_content_text = ""
-        self._spoiler_season = ""
-        self._in_spoiler_title = False
-        self._spoiler_title_text = ""
-        self.episode_links: list[dict[str, str]] = []
-        self._in_episode_a = False
-        self._episode_a_href = ""
-        self._episode_a_text = ""
-
     def handle_starttag(  # noqa: C901
         self, tag: str, attrs: list[tuple[str, str | None]]
     ) -> None:
         attr_dict = dict(attrs)
         classes = (attr_dict.get("class") or "").split()
         href = attr_dict.get("href", "") or ""
-        src = attr_dict.get("src", "") or ""
-
-        # meinecloud.click script tag
-        if tag == "script" and "meinecloud.click/ddl/" in src:
-            m = re.search(r"/ddl/(tt\d+)", src)
-            if m:
-                self.imdb_id = m.group(1)
-                self._found_meinecloud = True
-
-        # meinecloud.click iframe
-        if tag == "iframe" and "meinecloud.click/movie/" in src:
-            m = re.search(r"/movie/(tt\d+)", src)
-            if m and not self.imdb_id:
-                self.imdb_id = m.group(1)
 
         # h1
         if tag == "h1":
@@ -364,24 +335,6 @@ class _DetailPageParser(HTMLParser):
         if self._in_prose and tag == "a":
             self._in_prose_a = True
 
-        # Series spoiler title: <div class="su-spoiler-title" ...>
-        if tag == "div" and "su-spoiler-title" in classes:
-            self._in_spoiler_title = True
-            self._spoiler_title_text = ""
-
-        # Series spoiler content: <div class="su-spoiler-content" ...>
-        if tag == "div" and "su-spoiler-content" in classes:
-            self._in_spoiler_content = True
-            self._spoiler_content_text = ""
-            self.is_series = True
-
-        # Episode links inside spoiler content
-        if self._in_spoiler_content and tag == "a":
-            if href and "/engine/player.php" not in href:
-                self._in_episode_a = True
-                self._episode_a_href = href
-                self._episode_a_text = ""
-
     def handle_data(self, data: str) -> None:
         if self._in_h1:
             self._h1_text += data
@@ -397,15 +350,6 @@ class _DetailPageParser(HTMLParser):
 
         if self._in_prose and not self._in_prose_a:
             self._prose_text += data
-
-        if self._in_spoiler_title:
-            self._spoiler_title_text += data
-
-        if self._in_spoiler_content:
-            self._spoiler_content_text += data
-
-        if self._in_episode_a:
-            self._episode_a_text += data
 
     def handle_endtag(self, tag: str) -> None:  # noqa: C901
         if tag == "h1" and self._in_h1:
@@ -467,99 +411,6 @@ class _DetailPageParser(HTMLParser):
         if tag == "div" and self._in_prose:
             self._in_prose = False
             self.description = self._prose_text.strip()
-
-        if tag == "div" and self._in_spoiler_title:
-            self._in_spoiler_title = False
-            title = self._spoiler_title_text.strip()
-            # Extract season name: "Staffel 1"
-            if title:
-                self._spoiler_season = title
-
-        if tag == "a" and self._in_episode_a:
-            self._in_episode_a = False
-            href = self._episode_a_href
-            hoster = self._episode_a_text.strip()
-            if href and hoster:
-                # Build full URL if relative
-                if href.startswith("/"):
-                    href = urljoin(self._base_url, href)
-                self.episode_links.append(
-                    {
-                        "hoster": hoster.split(".")[0].lower()
-                        if "." in hoster
-                        else hoster.lower(),
-                        "link": href,
-                        "season": self._spoiler_season,
-                    }
-                )
-
-        if tag == "div" and self._in_spoiler_content:
-            self._in_spoiler_content = False
-
-
-def _parse_meinecloud_script(script_text: str) -> list[dict[str, str]]:
-    """Parse meinecloud.click/ddl/{imdb_id} JS response.
-
-    The script uses ``document.write()`` to inject HTML like::
-
-        <a onclick="window.open('https://supervideo.cc/xxx')" class="streams">
-          <span class="streaming">Supervideo</span>
-          <mark>1080p</mark>
-          <span style="color:#999;">1.0GB</span>
-        </a>
-
-    Returns list of dicts with keys: hoster, link, quality, size.
-    """
-    links: list[dict[str, str]] = []
-
-    # Find all window.open('URL') patterns.
-    # In document.write() strings, quotes are escaped as \' or \"
-    for m in re.finditer(
-        r"window\.open\(\s*\\?['\"]([^'\"\\]+)\\?['\"]\s*\)", script_text
-    ):
-        url = m.group(1)
-        if not url.startswith("http"):
-            continue
-
-        # Extract hoster name, quality, size from following text.
-        # Structure: window.open('URL')\" class=\"streams\">
-        #   <span class=\"streaming\">HosterName</span>
-        #   <mark>1080p</mark>
-        #   <span style=\"color:#999;\">1.0GB</span></a>
-        following = script_text[m.end() : m.end() + 500]
-
-        hoster = ""
-        hoster_m = re.search(r'class=\\"streaming\\"[^>]*>([^<]+)<', following)
-        if hoster_m:
-            hoster = hoster_m.group(1).strip()
-        else:
-            # Fallback: extract from URL domain
-            domain_m = re.search(r"https?://([^/]+)", url)
-            if domain_m:
-                hoster = domain_m.group(1).split(".")[0]
-        quality = ""
-        quality_m = re.search(r"<mark[^>]*>([^<]+)<", following)
-        if quality_m:
-            quality = quality_m.group(1).strip()
-
-        # Extract size from <span> with color:#999
-        size = ""
-        size_m = re.search(r"color:#999[^>]*>([^<]+)<", following)
-        if size_m:
-            size = size_m.group(1).strip()
-
-        links.append(
-            {
-                "hoster": hoster.split(".")[0].lower()
-                if "." in hoster
-                else hoster.lower(),
-                "link": url,
-                "quality": quality,
-                "size": size,
-            }
-        )
-
-    return links
 
 
 class HdfilmePlugin(HttpxPluginBase):
@@ -670,37 +521,47 @@ class HdfilmePlugin(HttpxPluginBase):
         season: int | None = None,
         episode: int | None = None,
     ) -> list[SearchResult]:
-        """Scrape a film/series detail page for stream links.
+        """Scrape a film/series detail page and load its devideosrc links.
 
-        For films: fetches meinecloud.click/ddl/{imdb_id} for stream URLs.
-        For series: extracts episode links from su-spoiler-content divs,
-        optionally filtered to the requested *season* / *episode*.
+        Series links are filtered to the requested *season* / *episode*.
         """
-        client = await self._ensure_client()
         detail_url = result["url"]
-
-        try:
-            resp = await client.get(detail_url)
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning(
-                "hdfilme_detail_failed",
-                url=detail_url,
-                error=str(exc),
-            )
+        html = await self._fetch_text(detail_url, context="detail")
+        if html is None:
             return []
 
         parser = _DetailPageParser(self.base_url)
-        parser.feed(resp.text)
+        parser.feed(html)
+
+        player = devideosrc.find_player(html)
+        if player is None:
+            self._log.debug("hdfilme_no_player", url=detail_url)
+            return []
+
+        client = await self._ensure_client()
+        found = await devideosrc.fetch_links(
+            client, player, **self._request_kwargs(client)
+        )
+        links = found.links
+        is_series = found.kind == "tv" or parser.is_series
+
+        if season is not None:
+            if not is_series:
+                return []  # films are skipped when season/episode are requested
+            links = devideosrc.filter_episodes(links, season, episode)
+
+        if not links:
+            self._log.debug("hdfilme_no_streams", url=detail_url)
+            return []
 
         title = parser.title or result.get("title", "")
         year = parser.year or result.get("year", "")
         genres = ", ".join(parser.genres) if parser.genres else ""
 
         # Determine category
-        category = 5000 if parser.is_series else 2000
+        category = 5000 if is_series else 2000
         # Genre-based override for films
-        if not parser.is_series:
+        if not is_series:
             for genre in parser.genres:
                 key = genre.lower().strip()
                 if key in _GENRE_CATEGORY_MAP:
@@ -712,106 +573,11 @@ class HdfilmePlugin(HttpxPluginBase):
             "genres": genres,
             "quality": parser.quality or result.get("quality", ""),
             "duration": parser.duration or result.get("duration", ""),
-            "imdb_id": parser.imdb_id,
+            "imdb_id": parser.imdb_id or player.imdb_id,
             "imdb_url": parser.imdb_url,
             "tmdb_url": parser.tmdb_url,
         }
-
-        if parser.is_series:
-            return self._build_series_results(
-                title,
-                parser,
-                detail_url,
-                category,
-                metadata,
-                season=season,
-                episode=episode,
-            )
-
-        # Skip films when season/episode are requested
-        if season is not None:
-            return []
-
-        return await self._build_film_results(
-            title, parser, detail_url, category, metadata
-        )
-
-    async def _build_film_results(
-        self,
-        title: str,
-        parser: _DetailPageParser,
-        detail_url: str,
-        category: int,
-        metadata: dict[str, str],
-    ) -> list[SearchResult]:
-        """Build SearchResult list for a film using meinecloud.click."""
-        download_links: list[dict[str, str]] = []
-
-        if parser.imdb_id:
-            download_links = await self._fetch_meinecloud_links(parser.imdb_id)
-
-        if not download_links:
-            # No stream links found
-            self._log.debug("hdfilme_no_streams", url=detail_url)
-            return []
-
-        description = (
-            f"{metadata.get('genres', '')} ({metadata.get('year', '')})"
-            if metadata.get("genres") and metadata.get("year")
-            else metadata.get("genres") or metadata.get("year", "")
-        )
-
-        return [
-            SearchResult(
-                title=title,
-                download_link=download_links[0]["link"],
-                download_links=download_links,
-                source_url=detail_url,
-                category=category,
-                description=description,
-                metadata=metadata,
-            )
-        ]
-
-    def _build_series_results(
-        self,
-        title: str,
-        parser: _DetailPageParser,
-        detail_url: str,
-        category: int,
-        metadata: dict[str, str],
-        season: int | None = None,
-        episode: int | None = None,
-    ) -> list[SearchResult]:
-        """Build SearchResult list for a series from episode links."""
-        if not parser.episode_links:
-            self._log.debug("hdfilme_no_episode_links", url=detail_url)
-            return []
-
-        links = parser.episode_links
-
-        # Filter to the requested season (e.g. "Staffel 1")
-        if season is not None:
-            season_label = f"Staffel {season}"
-            links = [lnk for lnk in links if lnk.get("season", "") == season_label]
-
-        if not links:
-            return []
-
-        # Filter to a specific episode index within the season
-        if episode is not None and episode >= 1:
-            # Episode links are ordered; pick the Nth one
-            idx = episode - 1
-            if idx < len(links):
-                links = [links[idx]]
-            else:
-                return []
-
-        description = (
-            f"{metadata.get('genres', '')} ({metadata.get('year', '')})"
-            if metadata.get("genres") and metadata.get("year")
-            else metadata.get("genres") or metadata.get("year", "")
-        )
+        description = f"{genres} ({year})" if genres and year else genres or year
 
         return [
             SearchResult(
@@ -824,27 +590,6 @@ class HdfilmePlugin(HttpxPluginBase):
                 metadata=metadata,
             )
         ]
-
-    async def _fetch_meinecloud_links(
-        self,
-        imdb_id: str,
-    ) -> list[dict[str, str]]:
-        """Fetch stream links from meinecloud.click/ddl/{imdb_id}."""
-        client = await self._ensure_client()
-        url = f"{_MEINECLOUD_BASE}/ddl/{imdb_id}"
-
-        try:
-            resp = await client.get(url)
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning(
-                "hdfilme_meinecloud_failed",
-                imdb_id=imdb_id,
-                error=str(exc),
-            )
-            return []
-
-        return _parse_meinecloud_script(resp.text)
 
     async def _scrape_all_details(
         self,

@@ -2,7 +2,7 @@
 
 # Plan: Repair Broken Plugins
 
-**Status:** Done (2026-09-28): every triaged plugin returns results again except hdfilme (the site's own search answers with a PHP fatal error) and streamworld (site gone). Both are listed under KNOWN_ISSUES in `CHANGELOG.md`
+**Status:** Done (2026-09-28): every triaged plugin returns results again streamworld was removed (site gone); hdfilme's keyword search stays broken upstream (PHP fatal error on the site), category browsing works — listed under KNOWN_ISSUES in `CHANGELOG.md`
 **Priority:** High (11 of 42 plugins return 0 results)
 **Related:** `plugins/`, `tests/live/test_plugin_smoke.py`, `CHANGELOG.md` → `KNOWN_ISSUES`
 
@@ -31,7 +31,7 @@ Triage method (2026-09-28, from inside the devcontainer, no proxy):
 | byte (Playwright) | Parser, not Cloudflare | Anti-bot benchmark 2026-09-28: `https://byte.to/?q=Iron+Man&t=1` → 200 with hits in every browser variant, yet the plugin returns 0 | Re-check result selectors / iframe link extraction — **Fixed 2026-09-28:** moved to httpx; links from /widgets/button.php, go.php resolved |
 | streamworld (Playwright) | Unknown, 0 results | Live smoke 2026-09-28 fails with playwright + stealth and with Patchright alike (not Cloudflare-related) | Triage search/detail selectors — **Status 2026-09-28:** site gone: .ws empty default web server, .co now a legal watchlist/subscription app (no hoster links); nothing to scrape; plugin removed |
 | boerse (Playwright) | Network error in plugin | Live smoke 2026-09-28 skips boerse (and byte, fixed above) with "Network error reaching …" on both browser stacks | Check the plugin's navigation/domain handling — **Fixed 2026-09-28:** session cookies handed to the search context after login; result anchors only; rel=next pagination |
-| hdfilme | Domain moved | `hdfilme.legal` → 301 `hdfilme.press` → `hdfilme.cafe`; DLE search there returns only 749 bytes | Update `_DOMAINS`, re-check search URL on the new domain — **Status 2026-09-28:** domain updated to hdfilme.cafe; blocked upstream: search returns a PHP fatal error (also in a real browser), film links moved to the devideosrc.co player (no captcha; supported by the shared `devideosrc` helper, only the separate download embed is Turnstile-gated): wire it in once the search works |
+| hdfilme | Domain moved | `hdfilme.legal` → 301 `hdfilme.press` → `hdfilme.cafe`; DLE search there returns only 749 bytes | Update `_DOMAINS`, re-check search URL on the new domain — **Status 2026-09-28:** domain updated to hdfilme.cafe; blocked upstream: search returns a PHP fatal error (also in a real browser), links now come from the devideosrc.co player (shared helper), so category browsing works again; keyword search waits for the site's fix |
 | streamcloud | Detail page structure changed | Search works (domain now `streamcloud.download`, `.plus` → 301 `.uno`), every detail page logs `streamcloud_no_streams` | Update detail/stream selectors; update `_DOMAINS` — **Fixed 2026-09-28:** links from the embedded devideosrc.co player (shared helper), domain streamcloud.download |
 | streamkiste | Stream source changed | Search works (`streamkiste.taxi` → 301 `.bid`), detail pages `no_streams`, `https://meinecloud.click/ddl/tt…` → 404 | Update stream extraction (MeineCloud endpoint gone); update `_DOMAINS` — **Fixed 2026-09-28:** links from the embedded devideosrc.co player (series player used for movies too), domain streamkiste.bid |
 
