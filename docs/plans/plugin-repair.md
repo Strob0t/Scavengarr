@@ -26,7 +26,7 @@ Triage method (2026-09-28, from inside the devcontainer, no proxy):
 | fireani | API endpoint removed | `GET https://fireani.me/api/anime/search` → 404; homepage 200 | Find the new search endpoint (inspect site XHR) |
 | nox | API endpoint removed | `GET https://nox.to/api/frontend/search/Iron%20Man` → 404; `nox.tv` → 301 `nox.to` | Find the new search endpoint |
 | dataload | Search form changed | Login OK (`dataload_login_success`), `POST https://www.data-load.me/search/search` → 400 | Inspect the vBulletin/XenForo search form (new token/field names) |
-| scnlog | Selectors broken | `https://scnlog.me/?s=Iron+Man` → 200, HTML contains "iron man" 119×, parser finds 0 | Update search result selectors |
+| scnlog | Selectors broken | `https://scnlog.me/?s=Iron+Man` → 200, HTML contains "iron man" 119×, parser finds 0 | Update search result selectors — **Fixed 2026-09-28:** new layout (li.row search results, h1.single-title, plain links in div.download) |
 | kinoking | Search yields nothing | `https://kinoking.cc/?s=Iron+Man` → 200 (250 KB), query term absent, plugin logs `count=0` | Check whether search moved (JS/API) or needs another URL |
 | byte (Playwright) | Parser, not Cloudflare | Anti-bot benchmark 2026-09-28: `https://byte.to/?q=Iron+Man&t=1` → 200 with hits in every browser variant, yet the plugin returns 0 | Re-check result selectors / iframe link extraction |
 | streamworld (Playwright) | Unknown, 0 results | Live smoke 2026-09-28 fails with playwright + stealth and with Patchright alike (not Cloudflare-related) | Triage search/detail selectors |

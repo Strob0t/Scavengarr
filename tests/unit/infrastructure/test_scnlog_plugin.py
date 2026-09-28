@@ -45,59 +45,71 @@ def _mock_response(html: str, url: str = "https://scnlog.me/test") -> MagicMock:
 # HTML fixtures
 # ---------------------------------------------------------------------------
 _SEARCH_HTML = """
-<html><body>
-<div class="hentry">
-  <div class="title">
-    <h1><a href="/batman-begins-2005/">Batman Begins (2005)</a></h1>
+<html><body><ul class="rows">
+<li class="row has-cat" data-id="1">
+  <div class="row-body">
+    <div class="title">
+      <a href="/batman-begins-2005/">
+        <span class="title-start">Batman Begins (2005)</span></a>
+    </div>
+    <div class="meta"><span class="m">June 17th, 2026</span></div>
   </div>
-</div>
-<div class="hentry">
-  <div class="title">
-    <h1><a href="/the-dark-knight-2008/">The Dark Knight (2008)</a></h1>
+</li>
+<li class="row has-cat" data-id="2">
+  <div class="row-body">
+    <div class="title">
+      <a href="/the-dark-knight-2008/">
+        <span class="title-start">The Dark Knight (2008)</span></a>
+    </div>
   </div>
-</div>
-</body></html>
+</li>
+</ul></body></html>
 """
 
 _SEARCH_WITH_PAGINATION_HTML = """
-<html><body>
-<div class="hentry">
-  <div class="title">
-    <h1><a href="/result-one/">Result One</a></h1>
+<html><body><ul class="rows">
+<li class="row has-cat">
+  <div class="row-body">
+    <div class="title"><a href="/result-one/"><span>Result One</span></a></div>
   </div>
-</div>
-<div class="nav">
-  <a href="/movies/?s=batman&paged=2">Next</a>
-</div>
+</li>
+</ul>
+<div class="pagerwrap"><div class="pagination">
+  <a class="pg" href="/movies/page/2/?s=batman">2</a>
+  <a class="next pg" href="/movies/page/2/?s=batman">Next &raquo;</a>
+</div></div>
 </body></html>
 """
 
 _PAGE2_HTML = """
-<html><body>
-<div class="hentry">
-  <div class="title">
-    <h1><a href="/result-two/">Result Two</a></h1>
+<html><body><ul class="rows">
+<li class="row has-cat">
+  <div class="row-body">
+    <div class="title"><a href="/result-two/"><span>Result Two</span></a></div>
   </div>
-</div>
-</body></html>
+</li>
+</ul></body></html>
 """
 
 _EMPTY_SEARCH_HTML = "<html><body><p>Nothing found</p></body></html>"
 
+# Real-world markup: the download div opens inside a <p> and closes in one
 _DETAIL_HTML = """
 <html><body>
-<div class="title"><h1>Batman Begins (2005) German DL 1080p</h1></div>
-<div class="download">
-  <p><a class="external" href="https://rapidgator.net/file/abc">Rapidgator</a></p>
-  <p><a class="external" href="https://katfile.com/xyz">Katfile</a></p>
-  <p><a class="external" href="https://ddownload.com/123">DDownload</a></p>
-</div>
+<h1 class="single-title">Batman Begins (2005) German DL 1080p</h1>
+<h2>Download</h2>
+<p></center><div class="download"></p>
+<p><a href="https://rapidgator.net/file/abc" rel="nofollow">https://rapidgator.net/file/abc</a></p>
+<p><a href="https://katfile.com/xyz" rel="nofollow">https://katfile.com/xyz</a></p>
+<p><a href="https://ddownload.com/123" rel="nofollow">https://ddownload.com/123</a></p>
+<p></div></p>
+<nav class="post-nav"><div class="pn next"><a href="https://scnlog.me/next/">Next</a></div></nav>
 </body></html>
 """
 
 _DETAIL_NO_LINKS_HTML = """
 <html><body>
-<div class="title"><h1>Empty Release</h1></div>
+<h1 class="single-title">Empty Release</h1>
 <div class="download">
   <p>No links available</p>
 </div>
@@ -127,7 +139,7 @@ class TestSearchResultParser:
         parser = _SearchResultParser()
         parser.feed(_SEARCH_WITH_PAGINATION_HTML)
 
-        assert parser.next_page_url == "/movies/?s=batman&paged=2"
+        assert parser.next_page_url == "/movies/page/2/?s=batman"
 
     def test_no_pagination(self) -> None:
         parser = _SearchResultParser()
@@ -149,10 +161,10 @@ class TestDetailPageParser:
         parser.feed(_DETAIL_HTML)
 
         assert len(parser.links) == 3
-        assert parser.links[0]["hoster"] == "Rapidgator"
+        assert parser.links[0]["hoster"] == "rapidgator"
         assert parser.links[0]["link"] == "https://rapidgator.net/file/abc"
-        assert parser.links[1]["hoster"] == "Katfile"
-        assert parser.links[2]["hoster"] == "DDownload"
+        assert parser.links[1]["hoster"] == "katfile"
+        assert parser.links[2]["hoster"] == "ddownload"
 
     def test_no_links(self) -> None:
         parser = _DetailPageParser()

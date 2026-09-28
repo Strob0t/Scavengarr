@@ -6,7 +6,7 @@ Scrapes scnlog.me (scene release log) with:
 - Search via GET /{category_path}?s={query}
 - Category mapping: movies, tv-shows, games, music, ebooks, xxx
 - Pagination up to 34 pages via "Next" link detection
-- Detail page: extract download links from div.download a.external
+- Detail page: title from h1.single-title, download links from div.download
 - Bounded concurrency for detail page scraping
 
 No authentication required.
@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 from html.parser import HTMLParser
-from urllib.parse import quote_plus, urljoin
+from urllib.parse import quote_plus, urljoin, urlparse
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
@@ -42,18 +42,20 @@ _CATEGORY_MAP: dict[int, str] = {
 # HTML parsers
 # ---------------------------------------------------------------------------
 class _SearchResultParser(HTMLParser):
-    """Parse scnlog.me search results page.
+    """Parse scnlog.me search results page (2026 layout).
 
     Each result has structure::
 
-        <div class="hentry">
-          <div class="title">
-            <h1><a href="/detail-url/">Title</a></h1>
+        <li class="row has-cat">
+          <div class="row-body">
+            <div class="title">
+              <a href="/detail-url/"><span class="title-start">Release</span></a>
+            </div>
+            ...
           </div>
-          ...
-        </div>
+        </li>
 
-    Pagination is detected via ``<div class="nav"><a>Next</a></div>``.
+    Pagination: ``<a class="next pg" href="/page/2/?s=...">Next</a>``.
     """
 
     def __init__(self) -> None:
@@ -61,118 +63,9 @@ class _SearchResultParser(HTMLParser):
         self.results: list[dict[str, str]] = []
         self.next_page_url: str = ""
 
-        # State tracking
-        self._in_hentry = False
-        self._hentry_depth = 0
-        self._in_title_div = False
-        self._in_h1 = False
+        self._title_div_depth = 0  # >0 while inside div.title
         self._in_a = False
-        self._in_nav = False
-        self._in_nav_a = False
-        self._nav_a_href = ""
-        self._nav_a_text = ""
-
-        # Current result
         self._current_title = ""
-        self._current_href = ""
-
-    def handle_starttag(  # noqa: C901
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
-        attr_dict = dict(attrs)
-        classes = (attr_dict.get("class", "") or "").split()
-
-        # Result container: <div class="hentry">
-        if tag == "div" and "hentry" in classes:
-            self._in_hentry = True
-            self._hentry_depth = 0
-            self._current_title = ""
-            self._current_href = ""
-        elif tag == "div" and self._in_hentry:
-            self._hentry_depth += 1
-            if "title" in classes:
-                self._in_title_div = True
-
-        # Navigation: <div class="nav">
-        if tag == "div" and "nav" in classes:
-            self._in_nav = True
-
-        if tag == "a" and self._in_nav:
-            self._in_nav_a = True
-            self._nav_a_href = attr_dict.get("href", "") or ""
-            self._nav_a_text = ""
-
-        if tag == "h1" and self._in_title_div:
-            self._in_h1 = True
-
-        if tag == "a" and self._in_h1:
-            self._in_a = True
-            self._current_href = attr_dict.get("href", "") or ""
-            self._current_title = ""
-
-    def handle_data(self, data: str) -> None:
-        if self._in_a and self._in_h1:
-            self._current_title += data
-        if self._in_nav_a:
-            self._nav_a_text += data
-
-    def _handle_a_end(self) -> None:
-        if self._in_a:
-            self._in_a = False
-        if self._in_nav_a:
-            self._in_nav_a = False
-            if "next" in self._nav_a_text.strip().lower():
-                self.next_page_url = self._nav_a_href
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "a":
-            self._handle_a_end()
-        elif tag == "h1" and self._in_h1:
-            self._in_h1 = False
-        elif tag == "div":
-            if self._in_nav:
-                self._in_nav = False
-            if self._in_hentry:
-                if self._hentry_depth > 0:
-                    self._hentry_depth -= 1
-                    if self._in_title_div:
-                        self._in_title_div = False
-                else:
-                    # End of hentry
-                    self._in_hentry = False
-                    self._in_title_div = False
-                    title = self._current_title.strip()
-                    href = self._current_href.strip()
-                    if title and href:
-                        self.results.append({"title": title, "detail_url": href})
-
-
-class _DetailPageParser(HTMLParser):
-    """Parse scnlog.me detail page for download links.
-
-    Structure::
-
-        <div class="title"><h1>Title</h1></div>
-        <div class="download">
-          <p><a class="external" href="https://host.com/file">Hoster</a></p>
-          ...
-        </div>
-
-    Extracts title and download links (href + text as hoster name).
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.title: str = ""
-        self.links: list[dict[str, str]] = []
-
-        # State tracking
-        self._in_title_div = False
-        self._in_h1 = False
-        self._in_download_div = False
-        self._download_depth = 0
-        self._in_external_a = False
-        self._current_hoster = ""
         self._current_href = ""
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
@@ -180,44 +73,92 @@ class _DetailPageParser(HTMLParser):
         classes = (attr_dict.get("class", "") or "").split()
 
         if tag == "div":
-            if "title" in classes and not self._in_download_div:
-                self._in_title_div = True
-            elif "download" in classes:
-                self._in_download_div = True
-                self._download_depth = 0
-            elif self._in_download_div:
-                self._download_depth += 1
+            if self._title_div_depth:
+                self._title_div_depth += 1
+            elif "title" in classes:
+                self._title_div_depth = 1
+                self._current_title = ""
+                self._current_href = ""
+        elif tag == "a":
+            href = attr_dict.get("href", "") or ""
+            if "next" in classes and href:
+                self.next_page_url = href
+            elif self._title_div_depth and href:
+                self._in_a = True
+                self._current_href = href
 
-        if tag == "h1" and self._in_title_div:
+    def handle_data(self, data: str) -> None:
+        if self._in_a:
+            self._current_title += data
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "a":
+            self._in_a = False
+        elif tag == "div" and self._title_div_depth:
+            self._title_div_depth -= 1
+            if not self._title_div_depth:
+                title = self._current_title.strip()
+                href = self._current_href.strip()
+                if title and href:
+                    self.results.append({"title": title, "detail_url": href})
+
+
+class _DetailPageParser(HTMLParser):
+    """Parse scnlog.me detail page for download links (2026 layout).
+
+    Structure::
+
+        <h1 class="single-title">Release.Name</h1>
+        <div class="download">
+          <p><a href="https://nitroflare.com/view/...">https://nitroflare...</a></p>
+          ...
+        </div>
+
+    Link texts are the URLs themselves, so the hoster name is taken from
+    the link's domain.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.title: str = ""
+        self.links: list[dict[str, str]] = []
+
+        self._in_h1 = False
+        self._download_depth = 0  # >0 while inside div.download
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attr_dict = dict(attrs)
+        classes = (attr_dict.get("class", "") or "").split()
+
+        if tag == "h1" and "single-title" in classes and not self.title:
             self._in_h1 = True
-            self.title = ""
-
-        if tag == "a" and self._in_download_div and "external" in classes:
-            self._in_external_a = True
-            self._current_href = attr_dict.get("href", "") or ""
-            self._current_hoster = ""
+        elif tag == "div":
+            if self._download_depth:
+                self._download_depth += 1
+            elif "download" in classes:
+                self._download_depth = 1
+        elif tag == "a" and self._download_depth:
+            href = (attr_dict.get("href", "") or "").strip()
+            if href.startswith("http"):
+                self.links.append({"hoster": _hoster_name(href), "link": href})
 
     def handle_data(self, data: str) -> None:
         if self._in_h1:
             self.title += data
-        if self._in_external_a:
-            self._current_hoster += data
 
     def handle_endtag(self, tag: str) -> None:
         if tag == "h1" and self._in_h1:
             self._in_h1 = False
-            self._in_title_div = False
-        elif tag == "a" and self._in_external_a:
-            self._in_external_a = False
-            href = self._current_href.strip()
-            hoster = self._current_hoster.strip()
-            if href:
-                self.links.append({"hoster": hoster or "unknown", "link": href})
-        elif tag == "div" and self._in_download_div:
-            if self._download_depth > 0:
-                self._download_depth -= 1
-            else:
-                self._in_download_div = False
+            self.title = self.title.strip()
+        elif tag == "div" and self._download_depth:
+            self._download_depth -= 1
+
+
+def _hoster_name(url: str) -> str:
+    """Second-level domain of *url* (``https://www.nitroflare.com/x`` -> nitroflare)."""
+    host = (urlparse(url).hostname or "").removeprefix("www.")
+    parts = host.split(".")
+    return parts[-2] if len(parts) >= 2 else host or "unknown"
 
 
 # ---------------------------------------------------------------------------

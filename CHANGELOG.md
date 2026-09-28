@@ -38,6 +38,9 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 - **No forced User-Agent in browser contexts**: contexts keep Patchright's real UA (a fixed Chrome 131 UA disagreed with the Chromium client hints). New `_browser_user_agent` (default `None`) and `_context_options()`, also used by the boerse/mygully login contexts; `_user_agent` stays for httpx side requests.
 - **`PlaywrightPluginBase._stealth` renamed to `_block_resources`**: it now only controls aborting image/font/CSS requests; singleton and per-request contexts share `_configure_context()`. `StealthPool` no longer applies playwright-stealth.
 
+### Fix: scnlog
+- **Back to results** (live: 992 of the 1000-item cap for "Iron Man", was 0): the site moved to a new layout. Search results are `li.row` › `div.title` › `a`, the next page is `a.next`; detail pages have the title in `h1.single-title` and plain links (no `external` class, URL as link text) inside `div.download`, so the hoster name comes from the link's domain.
+
 ### Resolver: veev.to Works Again
 - **New dedicated `VeevResolver`** (`hoster_resolvers/veev.py`, port of JDownloader `VeevTo`): the player API path needs no captcha — LZW-decode the `window._vvto` token, call `/dl?op=player_api&cmd=gi`, decode `file.dv[0].s` into a direct MP4 URL. Live: 2 of 4 veev links from movie2k/moflix/megakino resolve to playable MP4 (206 `video/mp4`); the other two are offline and correctly return `None`. veev left the XFS configs (`needs_captcha`): 18 individual + 12 generic DDL + 26 XFS = 56 resolvers.
 - **vinovo and wolfstream stay disabled** after a headful retest: vinovo needs an embedded Turnstile token posted to its API, wolfstream redirects to an ad domain via anti-bot JS.
@@ -745,5 +748,5 @@ Foundation of the project: FastAPI server, Scrapy scraping engine, plugin loader
 
 Current known issues:
 
-- **Plugins still returning 0 results** (live smoke, 2026-09-28): fireani, nox (search API 404), dataload (search form 400), scnlog, kinoking (selectors/search), hdfilme (domain moved), streamcloud, streamkiste (stream source changed), streamworld (0 results), boerse and byte (plugin reports a network error). Triage and fix plan: `docs/plans/plugin-repair.md`.
+- **Plugins still returning 0 results** (live smoke, 2026-09-28): fireani, nox (search API 404), dataload (search form 400), kinoking (selectors/search), hdfilme (domain moved), streamcloud, streamkiste (stream source changed), streamworld (0 results), boerse and byte (plugin reports a network error). Triage and fix plan: `docs/plans/plugin-repair.md`.
 - **Cloudflare-protected sites need a headful browser**: ddlspot, ddlvalley, scnsrc, filmfans, kinoger and serienfans only pass the interactive Turnstile with Patchright headful (Xvfb, `playwright.headless: false`) and `playwright.browser_fallback: true`. filmfans and serienfans rate-limit bursts (429): an uncached search takes ~2–2.5 min and can exceed Prowlarr's request timeout. See `docs/plans/antibot-patchright.md`.
