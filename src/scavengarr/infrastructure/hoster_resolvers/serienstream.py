@@ -76,6 +76,11 @@ class SerienstreamResolver:
     def name(self) -> str:
         return "serienstream"
 
+    @property
+    def supported_domains(self) -> frozenset[str]:
+        """Mirror domains dispatched to this resolver by the registry."""
+        return frozenset(_DOMAINS)
+
     async def resolve(self, url: str) -> ResolvedStream | None:
         """Validate a serienstream link by fetching the page."""
         file_id = _extract_file_id(url)

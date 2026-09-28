@@ -537,3 +537,86 @@ class TestHosterResolverRegistry:
         assert result.video_url == "https://direct.filelions/v.mp4"
         name_resolver.resolve.assert_awaited_once()
         alias_resolver.resolve.assert_not_awaited()
+
+
+def _mirror_cases() -> list[tuple[str, str]]:
+    """(resolver name, mirror URL) pairs seen on the plugins' sites."""
+    return [
+        ("doodstream", "https://d0000d.com/e/38g63393lou4"),
+        ("doodstream", "https://dood.to/e/w71gg51eat6x"),
+        ("doodstream", "https://myvidplay.com/d/p5y6rtn9ib30"),
+        ("doodstream", "https://playmogo.com/e/0dqejb4q9dt5"),
+        ("streamtape", "https://streamta.pe/v/jjJpOzJkZdhmBm/x.mp4"),
+        ("streamtape", "https://strtape.site/e/mkZxemvao2hb18G/x"),
+        ("streamtape", "https://shavetape.cash/e/ZaoGYpO2o6tP8B/x"),
+        ("streamtape", "https://tapeblocker.com/v/kWWLMpJLDzSOVb8/x"),
+        ("streamtape", "https://streamtapeadblockuser.xyz/v/LQwLWXdWWkHR2Ly/x"),
+        ("vidguard", "https://vgembed.com/e/k3gG5qoLzDE1N2b"),
+        ("vidguard", "https://vembed.net/e/l4vexv027oO8B9k"),
+        ("strmup", "https://vidara.so/e/VGkJYYFohaboI"),
+        ("ddownload", "https://ddl.to/abcdefghijkl"),
+        ("serienstream", "https://serien.sx/redirect/123"),
+    ]
+
+
+class TestMirrorDomainDispatch:
+    """Mirror domains reach their resolver without a plugin hint."""
+
+    @pytest.fixture
+    def registry(self) -> HosterResolverRegistry:
+        from scavengarr.infrastructure.hoster_resolvers.ddownload import (
+            DDownloadResolver,
+        )
+        from scavengarr.infrastructure.hoster_resolvers.doodstream import (
+            DoodStreamResolver,
+        )
+        from scavengarr.infrastructure.hoster_resolvers.serienstream import (
+            SerienstreamResolver,
+        )
+        from scavengarr.infrastructure.hoster_resolvers.streamtape import (
+            StreamtapeResolver,
+        )
+        from scavengarr.infrastructure.hoster_resolvers.strmup import StrmupResolver
+        from scavengarr.infrastructure.hoster_resolvers.vidguard import (
+            VidguardResolver,
+        )
+
+        client = MagicMock(spec=httpx.AsyncClient)
+        resolvers = [
+            cls(http_client=client)
+            for cls in (
+                DDownloadResolver,
+                DoodStreamResolver,
+                SerienstreamResolver,
+                StreamtapeResolver,
+                StrmupResolver,
+                VidguardResolver,
+            )
+        ]
+        for resolver in resolvers:
+            resolver.resolve = AsyncMock(  # type: ignore[method-assign]
+                return_value=ResolvedStream(video_url=f"https://{resolver.name}/v")
+            )
+        return HosterResolverRegistry(resolvers=resolvers)
+
+    @pytest.mark.parametrize(("name", "url"), _mirror_cases())
+    async def test_mirror_dispatches_to_resolver(
+        self, registry: HosterResolverRegistry, name: str, url: str
+    ) -> None:
+        assert extract_domain(url) in registry.supported_domains
+
+        result = await registry.resolve(url)
+
+        assert result is not None
+        assert result.video_url == f"https://{name}/v"
+
+    async def test_url_whitespace_is_stripped(
+        self, registry: HosterResolverRegistry
+    ) -> None:
+        """Scraped links sometimes carry a trailing newline."""
+        await registry.resolve("https://streamtape.com/v/8vwOLp7aApUodrP\n")
+
+        resolver = registry._resolvers["streamtape"]
+        resolver.resolve.assert_awaited_once_with(  # type: ignore[attr-defined]
+            "https://streamtape.com/v/8vwOLp7aApUodrP"
+        )

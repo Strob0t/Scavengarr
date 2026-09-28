@@ -18,6 +18,25 @@ from scavengarr.infrastructure.hoster_resolvers._verify import verify_video_url
 
 log = structlog.get_logger(__name__)
 
+# Mirror domains (JD2 StreamtapeCom.java + mirrors seen on plugin sites)
+_DOMAINS = frozenset(
+    {
+        "streamtape",
+        "streamta",  # streamta.pe / streamta.site
+        "strtape",
+        "strtpe",
+        "strcloud",
+        "shavetape",
+        "streamadblocker",
+        "streamtapeadblock",
+        "streamtapeadblockuser",
+        "tapeadvertisement",
+        "tapeblocker",
+        "gettapeads",
+        "watchadsontape",
+    }
+)
+
 
 class StreamtapeResolver:
     """Resolves Streamtape embed pages to direct video URLs."""
@@ -28,6 +47,11 @@ class StreamtapeResolver:
     @property
     def name(self) -> str:
         return "streamtape"
+
+    @property
+    def supported_domains(self) -> frozenset[str]:
+        """Mirror domains dispatched to this resolver by the registry."""
+        return frozenset(_DOMAINS)
 
     async def resolve(self, url: str) -> ResolvedStream | None:
         """Fetch Streamtape page and extract video download URL."""

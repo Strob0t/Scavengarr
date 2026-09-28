@@ -89,6 +89,11 @@ class DDownloadResolver:
     def name(self) -> str:
         return "ddownload"
 
+    @property
+    def supported_domains(self) -> frozenset[str]:
+        """Mirror domains dispatched to this resolver by the registry."""
+        return frozenset(_DOMAINS)
+
     async def resolve(self, url: str) -> ResolvedStream | None:
         """Validate a ddownload link by fetching the file page.
 

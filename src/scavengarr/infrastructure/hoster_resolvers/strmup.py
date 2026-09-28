@@ -50,6 +50,11 @@ class StrmupResolver:
     def name(self) -> str:
         return "strmup"
 
+    @property
+    def supported_domains(self) -> frozenset[str]:
+        """Mirror domains dispatched to this resolver by the registry."""
+        return frozenset(_DOMAINS)
+
     async def resolve(self, url: str) -> ResolvedStream | None:
         """Fetch StreamUp page and extract HLS master URL."""
         file_id = _extract_file_id(url)

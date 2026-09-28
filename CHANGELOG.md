@@ -6,7 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
-Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 56 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4263 tests (4226 excluding the opt-in live tests).
+Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 56 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4290 tests (4253 excluding the opt-in live tests).
+
+### Fix: Hoster Mirror Domains Reach Their Resolver
+- **Mirror dispatch**: DoodStream, VidGuard, Strmup, DDownload and Serienstream kept their mirror lists private (`_DOMAINS` checked inside `resolve()`), so the registry never routed `d0000d.com`, `dood.to`, `myvidplay.com`, `vgembed.com`, `vidara.so`, … to them; without a plugin hint such links fell through to content-type probing. They now expose `supported_domains`. Streamtape gets a mirror list (JD2 `StreamtapeCom` + mirrors seen on plugin sites: `streamta.pe`, `strtape`, `shavetape`, `tapeblocker`, `streamtapeadblockuser`, `gettapeads`, …), DoodStream adds `playmogo`/`pooop` (every dood mirror currently redirects to `playmogo.com`).
+- **Whitespace in links**: the registry strips the URL before dispatch; a scraped streamtape link ending in `\n` raised inside the resolver.
 
 ### Captcha: nox Download Links via ALTCHA, Resolved at Grab Time
 - **ALTCHA solver** (`infrastructure/captcha/altcha.py`): solves ALTCHA v2 proof-of-work challenges (PBKDF2/SHA-256/384/512) in-process, no browser and no external service. ALTCHA is a cost-based captcha, not a human test; nox's challenge (cost 5000, prefix `00`) takes well under a second (run via `asyncio.to_thread`).

@@ -126,6 +126,9 @@ class HosterResolverRegistry:
         5. Fall back to content-type probing (HEAD request).
         6. Cache the result (alive or dead) and return.
         """
+        # Scraped links sometimes carry surrounding whitespace (trailing "\n")
+        url = url.strip()
+
         # Periodic eviction of expired cache entries
         self._resolve_count += 1
         if self._resolve_count % _EVICT_INTERVAL == 0:

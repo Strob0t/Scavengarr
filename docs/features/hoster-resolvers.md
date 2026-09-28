@@ -38,9 +38,9 @@ class HosterResolverPort(Protocol):
 
 ### Domain dispatch
 
-The registry matches `extract_domain(url)` (second-level domain, e.g. `"https://www.voe.sx/e/abc"` → `"voe"`) against resolver names. Resolvers that expose a `supported_domains` property — all XFS and generic DDL resolvers — are also registered under every alias domain (e.g. `filelions` → `vidhide`). The individual resolvers have no `supported_domains`, so the registry reaches them only when the URL's second-level domain equals the resolver `name`, via a redirect to such a domain, or via the plugin-provided hoster hint; their own domain lists (below) are checked inside `resolve()`.
+The registry matches `extract_domain(url)` (second-level domain, e.g. `"https://www.voe.sx/e/abc"` → `"voe"`) against resolver names. Resolvers that expose a `supported_domains` property are also registered under every alias domain (e.g. `filelions` → `vidhide`, `d0000d` → `doodstream`, `streamta` → `streamtape`): all XFS and generic DDL resolvers plus the individual resolvers with mirror lists (DoodStream, Streamtape, VidGuard, Strmup, DDownload, Serienstream). Other individual resolvers are reached when the URL's second-level domain equals the resolver `name`, via a redirect to such a domain, or via the plugin-provided hoster hint. The registry strips surrounding whitespace from the URL first (scraped links sometimes end in a newline).
 
-> **Known issue:** `moflix-stream` is listed in VidGuard's `_DOMAINS` and in Vidhide's `extra_domains`. Because VidGuard exposes no `supported_domains`, the registry maps `moflix-stream` URLs to the Vidhide resolver.
+> **Known issue:** `moflix-stream` is listed in VidGuard's `_DOMAINS` and in Vidhide's `extra_domains`. The XFS resolvers register after VidGuard, so the registry maps `moflix-stream` URLs to the Vidhide resolver.
 
 ### Playback headers
 
@@ -72,9 +72,9 @@ Extract a direct video URL (`.mp4`/`.m3u8`) from an embed page.
 | Resolver | `name` | Domains accepted | Technique |
 |---|---|---|---|
 | VOE | `voe` | `voe.*`; rotating mirrors via redirect or hoster hint | Multi-method: `application/json` deobfuscation chain, direct regex, base64 variables |
-| Streamtape | `streamtape` | `streamtape.*` | Token extraction from page source |
+| Streamtape | `streamtape` | `streamtape`, `streamta`, `strtape`, `shavetape`, `tapeblocker`, `streamtapeadblock(user)`, `gettapeads`, … (13 names) | Token extraction from page source |
 | SuperVideo | `supervideo` | `supervideo.*` | XFS-style JWPlayer extraction; `StealthPool` (Playwright) fallback on a Cloudflare 403 |
-| DoodStream | `doodstream` | `dood`, `doods`, `doodstream`, `ds2play`, `d0o0d`, `vidply`, `myvidplay`, … (21 names) | `pass_md5` endpoint extraction |
+| DoodStream | `doodstream` | `dood`, `doods`, `doodstream`, `ds2play`, `d0o0d`, `vidply`, `myvidplay`, `playmogo`, … (23 names; all mirrors currently redirect to `playmogo.com`) | `pass_md5` endpoint extraction |
 | Filemoon | `filemoon` | `filemoon.*` | Packed JS unpacker + Byse challenge/attest/playback API flow |
 | StreamUp | `strmup` | `strmup`, `streamup`, `vidara` | `streaming_url` from page, AJAX `/ajax/stream` fallback; HLS |
 | Vidsonic | `vidsonic` | `vidsonic` | Hex-obfuscated, pipe-delimited HLS URL decoding |
@@ -199,7 +199,7 @@ Adding a new XFS hoster requires only an `XFSConfig` constant appended to `ALL_X
 
 | Feature | Description |
 |---|---|
-| Domain matching | Resolver `name` first, then `supported_domains` aliases (XFS and generic DDL resolvers) |
+| Domain matching | Resolver `name` first, then `supported_domains` aliases (XFS, generic DDL and individual resolvers with mirror lists) |
 | Redirect following | Unknown domains are followed via GET; the final domain is dispatched again |
 | Hoster hint | Plugin-provided hoster name as a fallback for rotating mirror domains |
 | Content-type probe | HEAD request; `video/*` or `application/vnd.apple.mpegurl` responses become a `ResolvedStream` |

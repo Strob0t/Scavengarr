@@ -43,6 +43,8 @@ _DOMAINS = {
     "d-s",
     "dsvplay",
     "myvidplay",
+    "playmogo",
+    "pooop",
 }
 
 
@@ -59,6 +61,11 @@ class DoodStreamResolver:
     @property
     def name(self) -> str:
         return "doodstream"
+
+    @property
+    def supported_domains(self) -> frozenset[str]:
+        """Mirror domains dispatched to this resolver by the registry."""
+        return frozenset(_DOMAINS)
 
     async def resolve(self, url: str) -> ResolvedStream | None:
         """Fetch DoodStream embed page and extract video URL."""

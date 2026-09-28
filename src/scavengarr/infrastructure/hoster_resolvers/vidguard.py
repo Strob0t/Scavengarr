@@ -83,6 +83,11 @@ class VidguardResolver:
     def name(self) -> str:
         return "vidguard"
 
+    @property
+    def supported_domains(self) -> frozenset[str]:
+        """Mirror domains dispatched to this resolver by the registry."""
+        return frozenset(_DOMAINS)
+
     async def resolve(self, url: str) -> ResolvedStream | None:
         """Validate a vidguard link by fetching the page."""
         file_id = _extract_file_id(url)
