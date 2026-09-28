@@ -15,7 +15,7 @@ Link validation is an I/O-dominant operation that runs after scraping and before
 result delivery. It checks whether each download URL is reachable by making HTTP
 requests, filtering out dead links and promoting alternative links when available.
 
-```
+```text
 Scraped Results
      │
      ▼
@@ -264,7 +264,7 @@ When a result's primary `download_link` is dead but alternative links from
 `download_links` are valid, the first valid alternative is **promoted** to become the
 new `download_link`. This ensures the Torznab XML always contains a working primary link.
 
-```
+```text
 Before validation:
   download_link: https://hoster1.com/file/abc  (DEAD)
   download_links: [

@@ -38,7 +38,7 @@ violations that unit tests cannot detect.
 #### 1. Router-to-UseCase Integration
 Tests that the FastAPI router correctly invokes use cases and returns valid responses.
 
-```
+```text
 HTTP Request → Router → Use Case → Mock Adapters → XML Response
 ```
 
@@ -58,7 +58,7 @@ async def test_search_returns_valid_torznab_xml(client: httpx.AsyncClient):
 #### 2. Plugin Pipeline Integration
 Tests that execute a full multi-stage plugin pipeline against fixture HTML.
 
-```
+```text
 Plugin Config → SearchEngine → Stage 1 (fixture HTML) → Stage 2 (fixture HTML) → SearchResult[]
 ```
 
@@ -70,7 +70,7 @@ Plugin Config → SearchEngine → Stage 1 (fixture HTML) → Stage 2 (fixture H
 #### 3. CrawlJob Lifecycle Integration
 Tests the full lifecycle: search results create a CrawlJob, which is retrievable via HTTP.
 
-```
+```text
 SearchResult[] → CrawlJobFactory → Cache → HTTP GET /crawljob/{id} → .crawljob file
 ```
 
@@ -81,7 +81,7 @@ SearchResult[] → CrawlJobFactory → Cache → HTTP GET /crawljob/{id} → .cr
 #### 4. Link Validation Integration
 Tests the link validator with mocked HTTP responses (not real sites).
 
-```
+```text
 SearchResult[].download_links → HttpLinkValidator → filtered SearchResult[]
 ```
 
@@ -92,7 +92,7 @@ SearchResult[].download_links → HttpLinkValidator → filtered SearchResult[]
 #### 5. Configuration Integration
 Tests that configuration loads correctly from multiple sources with proper precedence.
 
-```
+```text
 YAML file + ENV vars + CLI args → AppConfig (merged)
 ```
 
@@ -104,7 +104,7 @@ YAML file + ENV vars + CLI args → AppConfig (merged)
 
 Fixtures are static HTML files stored in `tests/fixtures/`:
 
-```
+```text
 tests/
   fixtures/
     filmpalast/

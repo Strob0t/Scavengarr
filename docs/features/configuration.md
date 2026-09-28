@@ -10,7 +10,7 @@ through to the next layer.
 
 ## Precedence (highest to lowest)
 
-```
+```text
 CLI arguments         (--plugin-dir, --log-level, ...)
         ↓
 Environment variables (SCAVENGARR_*, CACHE_*, HOST, PORT)
@@ -429,7 +429,7 @@ environment variables are never logged.
 
 **Console format example:**
 
-```
+```text
 2025-01-01 12:00:00 [info] search_request  plugin=filmpalast query=iron+man
 2025-01-01 12:00:02 [info] search_complete plugin=filmpalast results=5 duration_ms=1823
 ```

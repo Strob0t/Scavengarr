@@ -5,7 +5,7 @@
 Scavengarr follows **Clean Architecture** (Robert C. Martin) to enforce strict separation of concerns.
 Every module lives in one of four concentric layers. Dependencies always point **inward** -- outer layers depend on inner layers, never the reverse.
 
-```
+```text
 ┌────────────────────────────────────────────────┐
 │  Interfaces (Controllers, CLI, HTTP Router)    │  ← Frameworks & Drivers
 ├────────────────────────────────────────────────┤
@@ -120,7 +120,7 @@ Key design choice: `PluginRegistryPort` is **synchronous** (plugin files are loa
 
 ### Exception Hierarchy
 
-```
+```text
 TorznabError (base)
 ├── TorznabBadRequest         → HTTP 400
 ├── TorznabUnsupportedAction  → HTTP 422
@@ -281,7 +281,7 @@ The composition root is the **only place** where concrete implementations are wi
 
 ### Initialization Order
 
-```
+```text
 1. Cache (DiskcacheAdapter or RedisAdapter via create_cache())
      ↓
 2. HTTP Client (httpx.AsyncClient with configured timeouts)
@@ -297,7 +297,7 @@ The composition root is the **only place** where concrete implementations are wi
 
 ### Cleanup Order (reverse)
 
-```
+```text
 1. HTTP Client → aclose()
 2. Cache → aclose()
 ```
@@ -310,7 +310,7 @@ All resources are stored on `AppState` and accessible from any request handler v
 
 ### Torznab Search (end-to-end)
 
-```
+```text
 HTTP GET /api/v1/torznab/filmpalast?t=search&q=iron+man
 │
 ├─ Router (torznab/router.py)
@@ -336,7 +336,7 @@ HTTP GET /api/v1/torznab/filmpalast?t=search&q=iron+man
 
 ### CrawlJob Download
 
-```
+```text
 HTTP GET /api/v1/download/{job_id}
 │
 ├─ Router (download/router.py)
@@ -450,7 +450,7 @@ async def test_search_returns_items(mock_plugins, mock_engine, ...):
 
 ## Directory Structure Summary
 
-```
+```text
 src/scavengarr/
 ├── domain/                         # Layer 1: Enterprise Business Rules
 │   ├── entities/

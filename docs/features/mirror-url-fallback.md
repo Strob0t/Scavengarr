@@ -16,7 +16,7 @@ Many indexer and forum sites operate multiple mirror domains for redundancy. A s
 might be available at `example.sx`, `example.am`, `example.im`, and others. Scavengarr
 handles domain failures transparently:
 
-```
+```text
 Primary Domain Request
      |
      v

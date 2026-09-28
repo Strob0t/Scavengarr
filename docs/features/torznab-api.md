@@ -28,7 +28,7 @@ return XML conforming to the RSS 2.0 + Torznab namespace specification.
 
 ### List Indexers
 
-```
+```http
 GET /api/v1/torznab/indexers
 ```
 
@@ -65,7 +65,7 @@ Torznab URLs for Prowlarr configuration.
 
 ### Capabilities (caps)
 
-```
+```http
 GET /api/v1/torznab/{plugin_name}?t=caps
 ```
 
@@ -118,7 +118,7 @@ endpoint during indexer setup to determine supported search types and categories
 
 ### Search
 
-```
+```http
 GET /api/v1/torznab/{plugin_name}?t=search&q={query}
 ```
 
@@ -210,7 +210,7 @@ case builds the full result list from the plugin, then applies server-side
 slicing: `items[offset : offset + limit]`. This works well with search result
 caching -- subsequent page requests hit the cache and only slice differently.
 
-```
+```http
 # First page (default):
 GET /api/v1/torznab/filmpalast?t=search&q=iron+man
 
@@ -224,7 +224,7 @@ GET /api/v1/torznab/filmpalast?t=search&q=iron+man&offset=100&limit=100
 
 When Prowlarr tests an indexer, it sends a special request:
 
-```
+```http
 GET /api/v1/torznab/{plugin_name}?t=search&extended=1
 ```
 
@@ -257,7 +257,7 @@ feed with HTTP 200. In non-production environments, the description will contain
 
 ### Plugin Health Check
 
-```
+```http
 GET /api/v1/torznab/{plugin_name}/health
 ```
 
@@ -321,7 +321,7 @@ Mirror probes only run when the primary is down.
 
 ### Download CrawlJob File
 
-```
+```http
 GET /api/v1/download/{job_id}
 ```
 
@@ -386,7 +386,7 @@ details on job lifecycle and multi-link packaging.
 
 ### CrawlJob Info
 
-```
+```http
 GET /api/v1/download/{job_id}/info
 ```
 
@@ -432,7 +432,7 @@ jobs without downloading the actual file.
 
 ## Application Health Check
 
-```
+```http
 GET /healthz
 ```
 
@@ -497,7 +497,7 @@ debugging easier.
 
 Scavengarr generates RSS 2.0 XML with the Torznab namespace extension:
 
-```
+```text
 xmlns:torznab="http://torznab.com/schemas/2015/feed"
 ```
 

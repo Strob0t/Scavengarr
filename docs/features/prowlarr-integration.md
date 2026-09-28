@@ -16,7 +16,7 @@ download links (via `.crawljob` files) instead of torrent files.
 
 **Integration flow:**
 
-```
+```text
 Prowlarr                Scavengarr              Target Site
    |                        |                        |
    |-- search request ----->|                        |
@@ -232,7 +232,7 @@ When you click "Test" in Prowlarr, it sends two requests:
 If Scavengarr has multiple plugins loaded, add each one as a separate indexer
 in Prowlarr. Each plugin has its own URL:
 
-```
+```text
 http://scavengarr:7979/api/v1/torznab/filmpalast
 http://scavengarr:7979/api/v1/torznab/example-site
 http://scavengarr:7979/api/v1/torznab/another-plugin
@@ -273,7 +273,7 @@ Understanding the complete download flow helps with troubleshooting:
 
 Sonarr/Radarr sends a search query through Prowlarr to Scavengarr:
 
-```
+```http
 GET /api/v1/torznab/filmpalast?t=search&q=iron+man
 ```
 
@@ -298,7 +298,7 @@ Scavengarr returns Torznab RSS XML where each `<item>` contains:
 When a user grabs a result (or automatic download triggers), Sonarr/Radarr
 requests the download:
 
-```
+```http
 GET /api/v1/download/{job_id}
 ```
 
@@ -494,7 +494,7 @@ location /scavengarr/ {
 
 When using a path prefix, update the Prowlarr indexer URL accordingly:
 
-```
+```text
 http://proxy-host/scavengarr/api/v1/torznab/{plugin_name}
 ```
 

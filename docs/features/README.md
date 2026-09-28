@@ -89,7 +89,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** for Pro
 
 ## Project Layout
 
-```
+```text
 src/scavengarr/
   domain/                  # Enterprise business rules
     entities.py            # TorznabQuery, TorznabItem, TorznabCaps

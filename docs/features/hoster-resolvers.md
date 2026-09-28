@@ -16,7 +16,7 @@ Resolvers are registered in the `HosterResolverRegistry`, which matches incoming
 
 ## Architecture
 
-```
+```text
 URL → HosterResolverRegistry
       ├── Domain match → specific resolver → ResolvedStream | None
       └── No match → ContentTypeProbe → ResolvedStream | None

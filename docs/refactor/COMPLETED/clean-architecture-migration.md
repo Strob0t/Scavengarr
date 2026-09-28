@@ -88,7 +88,7 @@ definitions were consolidated into a single canonical location in the Domain lay
 Adapter implementations were moved from scattered locations into the
 `src/scavengarr/infrastructure/` namespace, organized by concern:
 
-```
+```text
 infrastructure/
   cache/               # DiskcacheAdapter, RedisAdapter, factory
   config/              # YAML/ENV/CLI configuration loading
@@ -127,7 +127,7 @@ After the three main phases, several commits completed the migration:
 
 ## Final Architecture
 
-```
+```text
 src/scavengarr/
   domain/              # Entities, value objects, protocols (ports)
     entities/          # CrawlJob, TorznabQuery, TorznabItem, etc.

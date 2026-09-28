@@ -267,7 +267,7 @@ Configuration follows a strict precedence hierarchy with typed validation.
 
 Scavengarr follows **Clean Architecture** with four layers:
 
-```
+```text
 Interfaces  -->  Application  -->  Domain
      |                |
      v                v

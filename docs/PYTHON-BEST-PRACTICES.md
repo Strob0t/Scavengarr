@@ -1,27 +1,27 @@
 # Python Performance Best Practices
 
 **Version 1.0.0**
-Target: High‑throughput Python backends and scrapers (FastAPI, httpx, diskcache, structlog, Playwright/scraping engines)
+Target: High-throughput Python backends and scrapers (FastAPI, httpx, diskcache, structlog, Playwright/scraping engines)
 February 2026
 
 > **Note**
 > This document is mainly for agents and LLMs to follow when maintaining,
 > generating, or refactoring Python codebases with async I/O (FastAPI, httpx,
 > scraping pipelines). Humans may also find it useful, but guidance here is
-> optimized for automation and consistency by AI‑assisted workflows.
+> optimized for automation and consistency by AI-assisted workflows.
 
-***
+---
 
 ## Abstract
 
-This guide collects performance best practices for Python services that are primarily **I/O‑bound**: HTTP APIs, web scrapers, and multi‑stage crawling pipelines. The rules are grouped by **impact** (CRITICAL → HIGH → MEDIUM → LOW) and focus on:
+This guide collects performance best practices for Python services that are primarily **I/O-bound**: HTTP APIs, web scrapers, and multi-stage crawling pipelines. The rules are grouped by **impact** (CRITICAL → HIGH → MEDIUM → LOW) and focus on:
 
-- Keeping the **async event loop non‑blocking**
+- Keeping the **async event loop non-blocking**
 - Sharing and reusing **HTTP clients and connection pools** (`httpx.AsyncClient`)
 - Designing FastAPI apps with efficient **lifespan and dependency wiring**
-- Using **diskcache** and in‑memory caching to avoid redundant network calls
-- Structuring scraping engines for **bounded concurrency**, **backoff**, and **short‑circuiting**
-- Applying Python‑level micro‑optimizations only where they matter
+- Using **diskcache** and in-memory caching to avoid redundant network calls
+- Structuring scraping engines for **bounded concurrency**, **backoff**, and **short-circuiting**
+- Applying Python-level micro-optimizations only where they matter
 
 Each rule includes:
 
@@ -29,28 +29,28 @@ Each rule includes:
 - One or more **Incorrect** vs **Correct** examples
 - Concrete hints for stacks similar to **Scavengarr** (FastAPI + httpx + diskcache + structlog)
 
-Use this as a checklist when creating or modifying code. For non‑trivial changes, prefer measuring with a profiler before and after the refactor to confirm impact. [blog.poespas](https://blog.poespas.me/posts/2024/04/27-optimizing-python-asyncio-for-high-performance/)
+Use this as a checklist when creating or modifying code. For non-trivial changes, prefer measuring with a profiler before and after the refactor to confirm impact. [blog.poespas](https://blog.poespas.me/posts/2024/04/27-optimizing-python-asyncio-for-high-performance/)
 
-***
+---
 
 ## Table of Contents
 
 1. [Eliminating I/O Bottlenecks (Async & HTTP)](#1-eliminating-io-bottlenecks-async--http) — **CRITICAL**
-   - 1.1 [Keep the Event Loop Non‑Blocking](#11-keep-the-event-loop-non-blocking)
+   - 1.1 [Keep the Event Loop Non-Blocking](#11-keep-the-event-loop-non-blocking)
    - 1.2 [Use Shared Async HTTP Clients](#12-use-shared-async-http-clients)
-   - 1.3 [Use asyncio.gather With Concurrency Limits](#13-use-asyncio-gather-with-concurrency-limits)
-   - 1.4 [Avoid Per‑Call DNS/Connection Overheads](#14-avoid-per-call-dnsconnection-overheads)
+   - 1.3 [Use asyncio.gather With Concurrency Limits](#13-use-asynciogather-with-concurrency-limits)
+   - 1.4 [Avoid Per-Call DNS/Connection Overheads](#14-avoid-per-call-dnsconnection-overheads)
 2. [FastAPI Application Performance](#2-fastapi-application-performance) — **CRITICAL**
    - 2.1 [Initialize Heavy Resources in Lifespan, Not Per Request](#21-initialize-heavy-resources-in-lifespan-not-per-request)
    - 2.2 [Keep Endpoints Thin and Delegate to Use Cases](#22-keep-endpoints-thin-and-delegate-to-use-cases)
    - 2.3 [Return Lightweight Responses](#23-return-lightweight-responses)
-3. [Scraping & Multi‑Stage Pipelines](#3-scraping--multi-stage-pipelines) — **HIGH**
-   - 3.1 [Deduplicate URLs and Short‑Circuit Early](#31-deduplicate-urls-and-short-circuit-early)
+3. [Scraping & Multi-Stage Pipelines](#3-scraping--multi-stage-pipelines) — **HIGH**
+   - 3.1 [Deduplicate URLs and Short-Circuit Early](#31-deduplicate-urls-and-short-circuit-early)
    - 3.2 [Use Bounded Parallelism per Target Site](#32-use-bounded-parallelism-per-target-site)
    - 3.3 [Prefer Streaming and Incremental Parsing](#33-prefer-streaming-and-incremental-parsing)
-4. [Caching Strategies (diskcache & In‑Memory)](#4-caching-strategies-diskcache--in-memory) — **HIGH**
+4. [Caching Strategies (diskcache & In-Memory)](#4-caching-strategies-diskcache--in-memory) — **HIGH**
    - 4.1 [Cache Expensive but Stable Responses](#41-cache-expensive-but-stable-responses)
-   - 4.2 [Use diskcache for Cross‑Process and Long‑Lived Caches](#42-use-diskcache-for-cross-process-and-long-lived-caches)
+   - 4.2 [Use diskcache for Cross-Process and Long-Lived Caches](#42-use-diskcache-for-cross-process-and-long-lived-caches)
    - 4.3 [Use LRU Caching for Pure Functions](#43-use-lru-caching-for-pure-functions)
 5. [Async Design Patterns & Error Handling](#5-async-design-patterns--error-handling) — **MEDIUM**
    - 5.1 [Design Coroutines to be Truly Asynchronous](#51-design-coroutines-to-be-truly-asynchronous)
@@ -60,19 +60,19 @@ Use this as a checklist when creating or modifying code. For non‑trivial chang
    - 6.1 [Use Structured Logging With Sampling](#61-use-structured-logging-with-sampling)
    - 6.2 [Log at the Edges, Not in Tight Loops](#62-log-at-the-edges-not-in-tight-loops)
 7. [Profiling and Code Quality](#7-profiling-and-code-quality) — **MEDIUM**
-   - 7.1 [Profile Before Micro‑Optimizing](#71-profile-before-micro-optimizing)
+   - 7.1 [Profile Before Micro-Optimizing](#71-profile-before-micro-optimizing)
    - 7.2 [Automate Style and Type Checks](#72-automate-style-and-type-checks)
-8. [Python Micro‑Optimizations](#8-python-micro-optimizations) — **LOW**
+8. [Python Micro-Optimizations](#8-python-micro-optimizations) — **LOW**
    - 8.1 [Use Appropriate Data Structures](#81-use-appropriate-data-structures)
-   - 8.2 [Prefer Comprehensions and Built‑ins](#82-prefer-comprehensions-and-built-ins)
+   - 8.2 [Prefer Comprehensions and Built-ins](#82-prefer-comprehensions-and-built-ins)
 
-***
+---
 
 ## 1. Eliminating I/O Bottlenecks (Async & HTTP)
 
-### 1.1 Keep the Event Loop Non‑Blocking
+### 1.1 Keep the Event Loop Non-Blocking
 
-**Impact: CRITICAL (enables true concurrency for I/O‑bound workloads)**
+**Impact: CRITICAL (enables true concurrency for I/O-bound workloads)**
 
 Any **blocking** operation inside an `async def` will block the entire event loop, reducing throughput and increasing tail latency. [discuss.python](https://discuss.python.org/t/asyncio-best-practices/12576)
 
@@ -105,7 +105,7 @@ async def list_items():
     return {"items": [1, 2, 3]}
 ```
 
-For **CPU‑bound** work, offload to a thread/process pool:
+For **CPU-bound** work, offload to a thread/process pool:
 
 ```python
 import asyncio
@@ -124,11 +124,11 @@ async def compute_endpoint(x: int):
 ```
 
 > **Scavengarr hint**
-> Any HTML parsing or RSS serialization that is CPU‑heavy should either be:
+> Any HTML parsing or RSS serialization that is CPU-heavy should either be:
 > - fast enough to stay in the event loop, **or**
 > - moved into `run_in_executor` if profiling shows it dominates request time.
 
-***
+---
 
 ### 1.2 Use Shared Async HTTP Clients
 
@@ -193,7 +193,7 @@ async def fetch_page(request: Request, url: str) -> str:
 > **Scavengarr hint**
 > Ensure all scraping engines and reachability checks use the **injected** `httpx.AsyncClient` from your `AppState`, never create a new client inside scraping functions.
 
-***
+---
 
 ### 1.3 Use `asyncio.gather` With Concurrency Limits
 
@@ -235,15 +235,15 @@ async def fetch_many(urls: list[str], client: httpx.AsyncClient, max_concurrency
 ```
 
 > **Scavengarr hint**
-> Apply **per‑site** concurrency limits (e.g. 5–10 parallel requests per tracker) and per‑process global limits (e.g. `max_connections=100` in httpx). This is especially important in multi‑stage scraping engines.
+> Apply **per-site** concurrency limits (e.g. 5–10 parallel requests per tracker) and per-process global limits (e.g. `max_connections=100` in httpx). This is especially important in multi-stage scraping engines.
 
-***
+---
 
-### 1.4 Avoid Per‑Call DNS/Connection Overheads
+### 1.4 Avoid Per-Call DNS/Connection Overheads
 
 **Impact: HIGH**
 
-Even with a shared client, patterns that **prevent connection reuse** are costly: changing hosts per request unnecessarily, not enabling keep‑alive, or disabling connection pooling. [blog.poespas](https://blog.poespas.me/posts/2024/04/27-optimizing-python-asyncio-for-high-performance/)
+Even with a shared client, patterns that **prevent connection reuse** are costly: changing hosts per request unnecessarily, not enabling keep-alive, or disabling connection pooling. [blog.poespas](https://blog.poespas.me/posts/2024/04/27-optimizing-python-asyncio-for-high-performance/)
 
 **Recommendations**
 
@@ -252,7 +252,7 @@ Even with a shared client, patterns that **prevent connection reuse** are costly
 - Set `httpx.Limits(max_connections=..., max_keepalive_connections=...)` according to expected concurrency.
 - Avoid using query parameters that **defeat HTTP caching/CDN** if you rely on upstream caching.
 
-***
+---
 
 ## 2. FastAPI Application Performance
 
@@ -265,9 +265,9 @@ All heavyweight resources should be initialized **once per process**, not in end
 - `httpx.AsyncClient`
 - `diskcache.Cache`
 - plugin registries, scraping engines
-- DB connections, pools, or browser instances (if not per‑request by design) [blog.stackademic](https://blog.stackademic.com/optimizing-performance-with-fastapi-c86206cb9e64)
+- DB connections, pools, or browser instances (if not per-request by design) [blog.stackademic](https://blog.stackademic.com/optimizing-performance-with-fastapi-c86206cb9e64)
 
-**Incorrect: per‑request initialization**
+**Incorrect: per-request initialization**
 
 ```python
 from fastapi import FastAPI
@@ -319,17 +319,17 @@ async def healthz():
 > - plugin registry + scraping engine
 > and attach them to `AppState` once. Endpoints should only read `request.app.state`.
 
-***
+---
 
 ### 2.2 Keep Endpoints Thin and Delegate to Use Cases
 
 **Impact: HIGH**
 
-FastAPI endpoints should **validate input** and delegate to **use‑case functions** (application layer). This:
+FastAPI endpoints should **validate input** and delegate to **use-case functions** (application layer). This:
 
 - Keeps endpoints cheap to execute
 - Improves testability
-- Makes performance issues visible at the use‑case level rather than tangled in routing logic
+- Makes performance issues visible at the use-case level rather than tangled in routing logic
 
 **Incorrect: heavy logic in endpoint**
 
@@ -344,7 +344,7 @@ async def search(q: str):
     ...
 ```
 
-**Correct: delegate to a dedicated use‑case**
+**Correct: delegate to a dedicated use-case**
 
 ```python
 from fastapi import APIRouter, Request
@@ -366,7 +366,7 @@ async def search(request: Request, q: str):
 
 This separation makes it much easier for an LLM or human to optimize the inner logic (e.g. parallelization, caching) without touching the HTTP surface.
 
-***
+---
 
 ### 2.3 Return Lightweight Responses
 
@@ -374,7 +374,7 @@ This separation makes it much easier for an LLM or human to optimize the inner l
 
 Avoid unnecessary overhead in response serialization:
 
-- Use **Pydantic models** where schema validation matters, but avoid over‑nesting.
+- Use **Pydantic models** where schema validation matters, but avoid over-nesting.
 - Prefer returning dicts/lists directly when DTOs are simple and validation is already upstream.
 - For XML (e.g., Torznab), build the XML once and return it as `Response(content=..., media_type="application/xml")` instead of multiple transformations.
 
@@ -401,15 +401,15 @@ async def rss():
     return Response(content=xml, media_type="application/xml")
 ```
 
-***
+---
 
-## 3. Scraping & Multi‑Stage Pipelines
+## 3. Scraping & Multi-Stage Pipelines
 
-### 3.1 Deduplicate URLs and Short‑Circuit Early
+### 3.1 Deduplicate URLs and Short-Circuit Early
 
 **Impact: HIGH**
 
-When scraping, repeatedly visiting the same URL wastes network, CPU, and target‑site goodwill. Deduplicate URLs and **short‑circuit** if a URL or result has already been processed. [fyld](https://www.fyld.pt/blog/python-performance-guide-writing-code-25/)
+When scraping, repeatedly visiting the same URL wastes network, CPU, and target-site goodwill. Deduplicate URLs and **short-circuit** if a URL or result has already been processed. [fyld](https://www.fyld.pt/blog/python-performance-guide-writing-code-25/)
 
 **Pattern**
 
@@ -445,18 +445,18 @@ class Scraper:
 ```
 
 > **Scavengarr hint**
-> Apply this pattern both in **list pages** and **detail pages** within your multi‑stage scraping engine to avoid revisiting the same torrents/releases across queries.
+> Apply this pattern both in **list pages** and **detail pages** within your multi-stage scraping engine to avoid revisiting the same torrents/releases across queries.
 
-***
+---
 
 ### 3.2 Use Bounded Parallelism per Target Site
 
 **Impact: HIGH**
 
-Multi‑stage scraping (list → detail → mirrors) can explode into many requests. Use **stage‑specific** and **global** limits:
+Multi-stage scraping (list → detail → mirrors) can explode into many requests. Use **stage-specific** and **global** limits:
 
-- e.g. per‑stage max links: process first 10–20 links, log if truncated.
-- global concurrency via semaphores as in [1.3](#13-use-asyncio-gather-with-concurrency-limits). [pythonprograming](https://pythonprograming.com/blog/using-pythons-asyncio-for-concurrency-best-practices-and-real-world-applications)
+- e.g. per-stage max links: process first 10–20 links, log if truncated.
+- global concurrency via semaphores as in [1.3](#13-use-asynciogather-with-concurrency-limits). [pythonprograming](https://pythonprograming.com/blog/using-pythons-asyncio-for-concurrency-best-practices-and-real-world-applications)
 
 **Incorrect: unbounded recursion**
 
@@ -481,11 +481,11 @@ async def crawl_stage(urls: list[str], client: httpx.AsyncClient, sem: asyncio.S
     return await asyncio.gather(*tasks)
 ```
 
-***
+---
 
 ### 3.3 Prefer Streaming and Incremental Parsing
 
-**Impact: MEDIUM‑HIGH**
+**Impact: MEDIUM-HIGH**
 
 For large HTML pages or RSS feeds, prefer **incremental** parsing where feasible:
 
@@ -496,11 +496,11 @@ For large HTML pages or RSS feeds, prefer **incremental** parsing where feasible
 
 - Limit CSS/XPath selectors to only necessary nodes.
 - Normalize text as early as possible (strip, convert to int) to avoid repeated work downstream.
-- Avoid re‑parsing the same HTML string multiple times; reuse the parsed object.
+- Avoid re-parsing the same HTML string multiple times; reuse the parsed object.
 
-***
+---
 
-## 4. Caching Strategies (diskcache & In‑Memory)
+## 4. Caching Strategies (diskcache & In-Memory)
 
 ### 4.1 Cache Expensive but Stable Responses
 
@@ -508,8 +508,8 @@ For large HTML pages or RSS feeds, prefer **incremental** parsing where feasible
 
 Cache responses that are:
 
-- **Expensive** to compute (multi‑stage scraping, complex queries)
-- **Relatively stable** over time (e.g., tracker capabilities, category lists, health‑check results) [fyld](https://www.fyld.pt/blog/python-performance-guide-writing-code-25/)
+- **Expensive** to compute (multi-stage scraping, complex queries)
+- **Relatively stable** over time (e.g., tracker capabilities, category lists, health-check results) [fyld](https://www.fyld.pt/blog/python-performance-guide-writing-code-25/)
 
 **Example: cache tracker capabilities**
 
@@ -525,13 +525,13 @@ def get_tracker_caps(tracker_id: str) -> dict:
 **Scavengarr hint**
 
 - Cache:
-  - Per‑plugin **caps** responses (Torznab `t=caps`)
-  - Health‑check reachability results for a short TTL (e.g. 30–60 seconds)
-- Do **not** over‑cache search queries that must reflect current tracker state.
+  - Per-plugin **caps** responses (Torznab `t=caps`)
+  - Health-check reachability results for a short TTL (e.g. 30–60 seconds)
+- Do **not** over-cache search queries that must reflect current tracker state.
 
-***
+---
 
-### 4.2 Use `diskcache` for Cross‑Process and Long‑Lived Caches
+### 4.2 Use `diskcache` for Cross-Process and Long-Lived Caches
 
 **Impact: HIGH**
 
@@ -539,7 +539,7 @@ def get_tracker_caps(tracker_id: str) -> dict:
 
 - Shared caches across worker processes
 - Large numbers of visited URLs
-- Longer‑lived caches that would exceed RAM if kept in memory only [fyld](https://www.fyld.pt/blog/python-performance-guide-writing-code-25/)
+- Longer-lived caches that would exceed RAM if kept in memory only [fyld](https://www.fyld.pt/blog/python-performance-guide-writing-code-25/)
 
 **Pattern**
 
@@ -555,13 +555,13 @@ cache = Cache(".cache/my-service", size_limit=1e9)  # ~1GB
 cache.set("visited:https://example.org/page/1", True, expire=3600)
 ```
 
-***
+---
 
 ### 4.3 Use LRU Caching for Pure Functions
 
 **Impact: MEDIUM**
 
-For CPU‑only, deterministic functions (e.g., small template rendering, config lookups), Python’s `functools.lru_cache` can avoid repeated computations. [realpython](https://realpython.com/python-code-quality/)
+For CPU-only, deterministic functions (e.g., small template rendering, config lookups), Python’s `functools.lru_cache` can avoid repeated computations. [realpython](https://realpython.com/python-code-quality/)
 
 ```python
 from functools import lru_cache
@@ -575,13 +575,13 @@ def build_search_url(base_url: str, path_template: str, query: str) -> str:
 
 > Do **not** use `lru_cache` for functions that depend on time, random input, or external I/O side effects.
 
-***
+---
 
 ## 5. Async Design Patterns & Error Handling
 
 ### 5.1 Design Coroutines to be Truly Asynchronous
 
-**Impact: MEDIUM‑HIGH**
+**Impact: MEDIUM-HIGH**
 
 Async functions should **await** real I/O, not wrap synchronous code just for the sake of using `async`. [discuss.python](https://discuss.python.org/t/asyncio-best-practices/12576)
 
@@ -608,7 +608,7 @@ async def parse_and_enrich(data: str) -> dict:
 
 Use this only if profiling shows that CPU cost justifies the overhead of the executor.
 
-***
+---
 
 ### 5.2 Apply Timeouts and Retries With Backoff
 
@@ -616,7 +616,7 @@ Use this only if profiling shows that CPU cost justifies the overhead of the exe
 
 Network calls will fail. Robust pipelines:
 
-- Apply **per‑request timeouts** at the HTTP client level
+- Apply **per-request timeouts** at the HTTP client level
 - Use **retries with exponential backoff** for **transient** errors (5xx, network errors)
 - **Do not** retry on 4xx client errors (e.g. 404, 401) [blog.poespas](https://blog.poespas.me/posts/2024/04/27-optimizing-python-asyncio-for-high-performance/)
 
@@ -662,7 +662,7 @@ async def fetch_with_retry(
             return None
 ```
 
-***
+---
 
 ### 5.3 Fail Fast on Irrecoverable Errors
 
@@ -676,7 +676,7 @@ For errors that indicate **configuration issues** (e.g. invalid plugin definitio
 
 This prevents wasting CPU/network on patterns that cannot succeed.
 
-***
+---
 
 ## 6. Logging, Metrics, and Observability
 
@@ -690,7 +690,7 @@ Structured logging (e.g. `structlog` + stdlib logging) is essential for diagnosi
 
 - Configure a **single logging pipeline** at startup.
 - Log **one structured event per request** (method, path, latency, status).
-- Sample logs for high‑volume endpoints if necessary (e.g. log 1% of successful search requests but all 4xx/5xx).
+- Sample logs for high-volume endpoints if necessary (e.g. log 1% of successful search requests but all 4xx/5xx).
 
 **Example: request logging middleware**
 
@@ -723,7 +723,7 @@ async def log_requests(request: Request, call_next):
         )
 ```
 
-***
+---
 
 ### 6.2 Log at the Edges, Not in Tight Loops
 
@@ -747,11 +747,11 @@ for row in rows:
 log.info("parsed_rows", count=len(rows), source_url=url)
 ```
 
-***
+---
 
 ## 7. Profiling and Code Quality
 
-### 7.1 Profile Before Micro‑Optimizing
+### 7.1 Profile Before Micro-Optimizing
 
 **Impact: MEDIUM**
 
@@ -763,13 +763,13 @@ Do not guess performance problems. Use profiling tools:
 
 **Pattern**
 
-- Add micro‑timers around:
+- Add micro-timers around:
   - HTTP fetch stages
   - HTML parsing
   - result normalization
 - Record metrics such as `duration_ms`, counts, and error rates in logs.
 
-***
+---
 
 ### 7.2 Automate Style and Type Checks
 
@@ -785,13 +785,13 @@ Recommended tools:
 
 These make it safer for LLMs and humans to apply aggressive optimizations.
 
-***
+---
 
-## 8. Python Micro‑Optimizations
+## 8. Python Micro-Optimizations
 
 ### 8.1 Use Appropriate Data Structures
 
-**Impact: LOW‑MEDIUM**
+**Impact: LOW-MEDIUM**
 
 Use data structures that match the operation:
 
@@ -819,13 +819,13 @@ def mark_visited(url: str):
     visited_urls.add(url)
 ```
 
-***
+---
 
-### 8.2 Prefer Comprehensions and Built‑ins
+### 8.2 Prefer Comprehensions and Built-ins
 
 **Impact: LOW**
 
-Python’s built‑ins and comprehensions are implemented in C and are generally faster than manual loops. [geeksforgeeks](https://www.geeksforgeeks.org/python/tips-to-maximize-your-python-code-performance/)
+Python’s built-ins and comprehensions are implemented in C and are generally faster than manual loops. [geeksforgeeks](https://www.geeksforgeeks.org/python/tips-to-maximize-your-python-code-performance/)
 
 **Incorrect: manual loop accumulation**
 
@@ -842,16 +842,16 @@ for item in items:
 result = [transform(item) for item in items if item.is_valid()]
 ```
 
-Use built‑ins like `sum`, `min`, `max`, `any`, and `all` instead of handwritten loops where clarity is preserved.
+Use built-ins like `sum`, `min`, `max`, `any`, and `all` instead of handwritten loops where clarity is preserved.
 
-***
+---
 
 ## How to Use This Guide
 
 For any performance work on a FastAPI + httpx + diskcache + structlog service:
 
 1. **Start with Section 1 and 2 (CRITICAL)**
-   - Ensure event loop is non‑blocking.
+   - Ensure event loop is non-blocking.
    - Share HTTP clients and caches.
    - Move heavy initialization to lifespan or composition root.
 
@@ -859,15 +859,15 @@ For any performance work on a FastAPI + httpx + diskcache + structlog service:
    - Deduplicate URLs, bound concurrency, and implement retries/backoff.
    - Use diskcache and targeted caching for expensive but stable operations.
 
-3. **Instrument and profile** before micro‑optimizing:
+3. **Instrument and profile** before micro-optimizing:
    - Add structured logs with timings.
    - Use profilers to confirm hotspots.
 
-4. **Only then** consider micro‑optimizations in Section 8.
+4. **Only then** consider micro-optimizations in Section 8.
 
 When an LLM refactors code, it should:
 
-- Prioritize **high‑impact rules** first.
+- Prioritize **high-impact rules** first.
 - Avoid introducing blocking calls in async contexts.
-- Prefer **shared, injected resources** over ad‑hoc instantiation.
+- Prefer **shared, injected resources** over ad-hoc instantiation.
 - Keep changes minimal and focused, verifying behavior through tests and (where available) benchmarks.

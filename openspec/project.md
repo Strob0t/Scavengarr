@@ -145,13 +145,13 @@ These are fixed across all OpenSpec changes and AI implementations:
 | **Config Precedence** | CLI > ENV > YAML > `.env` > defaults | `add-config-system` |
 | **Python Version** | 3.12 only (enforced) | `pyproject.toml` |
 
-***
+---
 
 **Last Updated**: 2026-01-25
 **Author**: Scavengarr Team
 **OpenSpec Version**: `add-config-system`, `add-plugin-loader`, `add-scrapy-engine` integrated
 
-***
+---
 
 ## Warum diese Änderungen kritisch sind
 

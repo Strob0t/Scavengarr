@@ -16,7 +16,7 @@ The addon supports both IMDb (`tt*`) and TMDB (`tmdb:*`) identifiers and ranks s
 
 ## Architecture
 
-```
+```text
 Stremio App
   ├── GET /manifest.json                     → addon metadata + catalogs
   ├── GET /catalog/{type}/{id}.json          → TMDB trending / search
@@ -27,7 +27,7 @@ Stremio App
 
 ### Request Flow (Stream Resolution)
 
-```
+```text
 IMDb ID → TMDB title lookup → parallel plugin search → title matching
   → quality/language parsing → ranking → dead link probing → proxy caching
   → sorted StremioStream list
@@ -51,7 +51,7 @@ All endpoints are prefixed with `/api/v1/stremio/`.
 
 ### Manifest
 
-```
+```http
 GET /api/v1/stremio/manifest.json
 ```
 
@@ -64,7 +64,7 @@ Returns the Stremio addon manifest with:
 
 ### Catalog
 
-```
+```http
 GET /api/v1/stremio/catalog/{content_type}/{catalog_id}.json
 GET /api/v1/stremio/catalog/{content_type}/{catalog_id}/search={query}.json
 ```
@@ -75,7 +75,7 @@ GET /api/v1/stremio/catalog/{content_type}/{catalog_id}/search={query}.json
 
 ### Stream Resolution
 
-```
+```http
 GET /api/v1/stremio/stream/{content_type}/{stream_id}.json
 ```
 
@@ -125,7 +125,7 @@ Streams that fail pre-resolution fall back to the `/play/` proxy endpoint.
 
 ### HLS Proxy
 
-```
+```http
 GET /api/v1/stremio/proxy/{stream_id}/{path:path}
 ```
 
@@ -147,7 +147,7 @@ Stremio's `proxyHeaders` only applies headers to the initial manifest fetch. Int
 
 ### Play (Proxy Fallback)
 
-```
+```http
 GET /api/v1/stremio/play/{stream_id}
 ```
 
@@ -159,7 +159,7 @@ Fallback endpoint for streams that could not be pre-resolved at `/stream` time:
 
 ### Health
 
-```
+```http
 GET /api/v1/stremio/health
 ```
 
@@ -188,7 +188,7 @@ Title matching prevents false positives when plugin results include sequels, spi
 
 Streams are ranked using a weighted scoring formula:
 
-```
+```text
 rank_score = language_score + (quality.value * quality_multiplier) + hoster_bonus
 ```
 

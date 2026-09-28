@@ -15,7 +15,7 @@ Most indexer sites separate search results from download details. A search retur
 list of titles with links to detail pages, and each detail page contains the actual
 download links. Scavengarr models this with a **stage-based pipeline**:
 
-```
+```text
 Search Query
      │
      ▼

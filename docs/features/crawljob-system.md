@@ -14,7 +14,7 @@ without manual intervention.
 
 The CrawlJob system operates as a download indirection layer:
 
-```
+```text
 ┌──────────────────┐     ┌─────────────────┐     ┌──────────────────┐
 │  Torznab Search  │     │  CrawlJob Cache  │     │  Arr Application │
 │                  │     │                  │     │  (Sonarr/Radarr) │
@@ -52,7 +52,7 @@ file that JDownloader processes via its FolderWatch extension.
 6. **Arr Download** -- Sonarr/Radarr request the download URL when the user grabs a result
 7. **File Delivery** -- The download endpoint serves the serialized `.crawljob` file
 
-```
+```text
 Prowlarr/Radarr                    Scavengarr
      │                                  │
      │  GET /api/v1/download/{job_id}   │
@@ -197,7 +197,7 @@ A key feature of CrawlJobs is **multi-link packaging**. When a search result has
 multiple validated download links (e.g., from different hosters), all links are
 bundled into a single `.crawljob` file:
 
-```
+```text
 text=https://hoster1.com/file/abc123
 https://hoster2.com/file/def456
 https://hoster3.com/file/ghi789

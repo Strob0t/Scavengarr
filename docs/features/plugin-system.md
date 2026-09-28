@@ -23,7 +23,7 @@ Key characteristics:
 
 ### Discovery Flow
 
-```
+```text
 Server startup
   |
   v

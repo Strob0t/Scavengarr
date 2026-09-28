@@ -154,7 +154,7 @@ poetry run pre-commit run --all-files
 
 ### Project Structure
 
-```
+```text
 src/scavengarr/
   domain/           # Entities, value objects, protocols (ports)
   application/      # Use cases, factories

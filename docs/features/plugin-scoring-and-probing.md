@@ -16,7 +16,7 @@ The **Plugin Scoring & Probing** system solves this by ranking plugins based on 
 
 ## Architecture
 
-```
+```text
 Background Probes                    Live Stremio Path
   ├── HealthProber (daily)             GET /stream/{type}/{id}.json
   │     HEAD/GET origin → ok/fail        │
@@ -103,7 +103,7 @@ Composite score for a plugin within a (category, bucket) context.
 
 The smoothing factor `alpha` is derived from the probe interval and desired half-life:
 
-```
+```text
 alpha = 1 - 0.5 ^ (dt / half_life)
 ```
 
@@ -124,7 +124,7 @@ new_value = alpha * observation + (1 - alpha) * previous_value
 
 Confidence measures how trustworthy a score is, based on sample count and recency:
 
-```
+```text
 sample_conf  = 1 - exp(-n_samples / k)          # k = 10
 recency_conf = exp(-age_seconds / tau_conf)      # tau_conf = 4 weeks
 confidence   = clamp(sample_conf * recency_conf, 0, 1)
@@ -134,7 +134,7 @@ confidence   = clamp(sample_conf * recency_conf, 0, 1)
 
 All sub-scores are normalized to 0.0–1.0:
 
-```
+```text
 raw = wH * health_score + wS * search_score
 final_score = raw * (0.5 + 0.5 * confidence)
 ```
@@ -312,7 +312,7 @@ Applied after `plugins.discover()` in the composition root. Unknown plugin names
 
 ## Debug Endpoint
 
-```
+```http
 GET /api/v1/stats/plugin-scores?plugin=sto&category=5000&bucket=current
 ```
 

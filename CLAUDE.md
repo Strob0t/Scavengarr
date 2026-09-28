@@ -2,7 +2,7 @@
 
 Instructions for developers and AI assistants working on Scavengarr. Details live in `docs/`; this file holds the rules that apply to every change.
 
-***
+---
 
 ## 1. Workflow (IMPORTANT!)
 
@@ -22,6 +22,7 @@ poetry run pytest
 Rules:
 - Fix all errors before committing (warnings can be acceptable depending on the check).
 - Small, atomic commits; commit after each isolated subtask, never batch unrelated changes.
+- Commit messages follow Conventional Commits: `<type>(<scope>): <subject>` (`feat`, `fix`, `docs`, `refactor`, `test`, `chore`, ...), lower-case subject, no trailing period.
 - **Docs ship with the code**: if behavior, features, architecture or configuration change, update `CHANGELOG.md`, `docs/features/`, `docs/architecture/`, `docs/plans/`, `CLAUDE.md`, `README.md` or `openspec/changes/...` in the same commit.
 - Push after each successful change: `git push origin staging`.
 - Larger refactors: write a brief Markdown plan (problem, design, affected files, tests) first.
@@ -33,7 +34,7 @@ Rules:
 4. `gh pr create --base main --head staging --title "..." --body "..."` then `gh pr merge --merge`.
 5. Sync back: `git fetch origin && git merge origin/main && git push origin staging`.
 
-***
+---
 
 ## 2. Project overview
 
@@ -43,7 +44,7 @@ Request flow: request (HTTP/CLI) → use case loads plugin from registry (lazy) 
 
 Feature docs: `docs/features/README.md` (index). Architecture: `docs/architecture/clean-architecture.md`.
 
-***
+---
 
 ## 3. Clean Architecture (dependency rule)
 
@@ -65,14 +66,14 @@ Invariants:
 - Config precedence (high → low): CLI args → `SCAVENGARR_*` env → YAML → `.env` → defaults. See `docs/features/configuration.md`.
 - Logging: `structlog`, structured, with context fields (`plugin`, `stage`, `duration_ms`, `results_count`); never log secrets.
 
-***
+---
 
 ## 4. Dependencies
 
 - Source of truth: `pyproject.toml`. For package APIs, read the installed source in `.venv` or the official docs.
 - Prefer stdlib, then established libraries, then custom code. No internal mini-frameworks. New dependencies need explicit justification.
 
-***
+---
 
 ## 5. Python rules (MUST READ!)
 
@@ -87,7 +88,7 @@ Invariants:
 
 Performance guide: `docs/PYTHON-BEST-PRACTICES.md`.
 
-***
+---
 
 ## 6. Testing (TDD mandatory)
 
@@ -100,7 +101,7 @@ Mock patterns:
 - `SearchEnginePort`, `CrawlJobRepository`, `CachePort`, `PluginScoreStorePort` are **async** → `AsyncMock`.
 - Hoster resolver tests use `respx` (httpx-native HTTP mocking), not `AsyncMock`/`MagicMock`.
 
-***
+---
 
 ## 7. Plugins & hoster resolvers
 
@@ -113,7 +114,7 @@ Step-by-step guides:
 - New plugin: `docs/features/python-plugins.md` → "Adding a New Plugin".
 - New resolver: `docs/features/hoster-resolvers.md` → "Adding a New Resolver".
 
-***
+---
 
 ## 8. Subagents
 
@@ -121,7 +122,7 @@ Step-by-step guides:
 - 1 file = 1 agent; tight scope (what to do and what not); include conventions (`structlog`, typing rules, naming) in the prompt.
 - Review every agent output; run the full test suite + pre-commit afterwards.
 
-***
+---
 
 ## 9. Dev container
 
@@ -131,7 +132,7 @@ Step-by-step guides:
 - **Broken `.venv` shebangs** (`Command not found: pytest`) after a workspace path change: `poetry env remove --all && poetry install --with dev`.
 - **Line endings**: `.md` files are LF (enforced via `.gitattributes`). `.py` files are still mixed (most CRLF, some LF): preserve each file's EOL when editing with scripts.
 
-***
+---
 
 ## 10. Navigation
 

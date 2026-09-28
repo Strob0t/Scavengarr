@@ -331,7 +331,7 @@ The `boerse.py` plugin is the reference Python plugin. It demonstrates advanced 
 
 ### Architecture
 
-```
+```text
 BoersePlugin
   |
   +-- _ensure_browser()        Launch Chromium if needed
