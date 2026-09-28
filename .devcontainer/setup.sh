@@ -112,6 +112,24 @@ echo "[devcontainer] Activating virtualenv..."
 # shellcheck disable=SC1091
 . .venv/bin/activate
 
+# Git identity from .env.devcontainer (fresh containers have none).
+if [ -n "${GIT_AUTHOR_NAME:-}" ] && [ -n "${GIT_AUTHOR_EMAIL:-}" ]; then
+  echo "[devcontainer] Configuring git identity..."
+  git config --global user.name "$GIT_AUTHOR_NAME"
+  git config --global user.email "$GIT_AUTHOR_EMAIL"
+fi
+
+# The docker-in-docker feature pins iptables-legacy. Hosts with
+# nftables-only kernels (e.g. CachyOS/Arch) have no legacy nat table, so
+# dockerd fails with "can't initialize iptables table `nat'". Switch to
+# iptables-nft and restart dockerd via the feature's init script.
+if ! docker info >/dev/null 2>&1 && ! sudo iptables-legacy -t nat -L -n >/dev/null 2>&1; then
+  echo "[devcontainer] Legacy iptables unavailable, switching to iptables-nft..."
+  sudo update-alternatives --set iptables /usr/sbin/iptables-nft
+  sudo update-alternatives --set ip6tables /usr/sbin/ip6tables-nft
+  /usr/local/share/docker-init.sh true || echo "WARN: docker restart failed"
+fi
+
 echo "[devcontainer] Waiting for Docker daemon..."
 for _ in $(seq 1 30); do
   docker info >/dev/null 2>&1 && break
