@@ -12,6 +12,10 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 breaker, global concurrency pool, graceful shutdown, multi-language search, and
 growth of the test suite from 160 to 4043 tests.
 
+### Chore: LF Line Endings and Versioned Claude Code Hooks
+- **All text files normalized to LF**: `.gitattributes` widened from `*.md` to `* text=auto eol=lf` and the index renormalized (227 files, mostly `.py`; EOL-only, `git diff --ignore-cr-at-eol` is empty). New `mixed-line-ending --fix=lf` pre-commit hook catches CRLF before commit.
+- **Claude Code hooks fixed and versioned**: `.claude/hooks/` and `.claude/commands/` are no longer gitignored. Both hooks had CRLF shebangs, failed with exit 127 and therefore never ran (Claude Code treats non-2 exits as non-blocking). `block-dangerous.sh` rewritten: one `jq` call, no `grep` subprocesses, per-command matching (no false hits across `&&`/`;`/`|`), and new blocks for `git push -f`/`+refspec`, pushes to `…:main`, commits/pushes while `main` is checked out, `rm -fr`/`--recursive` on `/`, `~`, `$HOME`, and `git clean -f`; `--force-with-lease` is allowed.
+
 ### Docs: Audit and Style Unification
 - **Markdown syntax cleanup**: every code fence now declares a language (`text`, `python`, `http`, `bash`, ...), `***` separators replaced by `---`, non-breaking hyphens in `docs/PYTHON-BEST-PRACTICES.md` replaced so its table-of-contents anchors resolve.
 - **Root `AGENTS.md` reduced** to the `openspec update`-managed block (restored missing `<!-- OPENSPEC:START -->` marker) plus a pointer to `CLAUDE.md`. The removed agent guide was outdated (Docker commands, `commitlint`/`mypy` pre-commit hooks and a `redact_config_for_logging()` helper that do not exist). The Conventional Commits rule moved into `CLAUDE.md`.

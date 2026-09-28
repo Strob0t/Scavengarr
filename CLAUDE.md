@@ -130,7 +130,8 @@ Step-by-step guides:
 - **No Docker**: `playwright-mcp` runs over stdio from `.mcp.json` (`npx @playwright/mcp@<pinned>`). `setup.sh` installs the matching Chromium (`playwright install --with-deps chromium`); keep `PLAYWRIGHT_MCP_VERSION` in `setup.sh` in sync with `.mcp.json`.
 - **Node 22** comes from the devcontainer `node` feature (nvm, `/usr/local/share/nvm/current/bin`), not apt (Debian's Node 18 breaks `npx skills`). `setup.sh` installs npm globals without `sudo` (openspec, `@caveman-ai/cli`) and the caveman skills on every attach.
 - **Broken `.venv` shebangs** (`Command not found: pytest`) after a workspace path change: `poetry env remove --all && poetry install --with dev`.
-- **Line endings**: `.md` files are LF (enforced via `.gitattributes`). `.py` files are still mixed (most CRLF, some LF): preserve each file's EOL when editing with scripts.
+- **Line endings**: all text files are LF, enforced editor-independently by `.gitattributes` (`* text=auto eol=lf`) and the `mixed-line-ending --fix=lf` pre-commit hook. Shell scripts with CRLF fail at the shebang (exit 127): a CRLF Claude Code hook silently allows everything.
+- **Claude Code hooks**: `.claude/hooks/` (`block-dangerous.sh` PreToolUse guard, `format-and-lint.sh` ruff on edit) and `.claude/commands/` are versioned; the rest of `.claude/` (e.g. `settings.local.json`, which wires the hooks, and `worktrees/`) stays gitignored. After changing a hook, run `bash -n` on it: a syntax error exits 2 and blocks every Bash command.
 
 ---
 

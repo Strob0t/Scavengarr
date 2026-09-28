@@ -61,7 +61,9 @@ coverage.xml
 *.log
 
 # ── AI Tools ───────────────────────────────────────
-.claude/
+.claude/*
+!.claude/hooks/
+!.claude/commands/
 .llm-context
 .continue
 .cursorignore
