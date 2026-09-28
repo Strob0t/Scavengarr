@@ -46,7 +46,6 @@ _TLD_MAP: dict[str, str] = {
     "vinovo": "to",
     "vidhide": "com",
     "streamruby": "com",
-    "veev": "to",
     "lulustream": "com",
     "upstream": "to",
     "wolfstream": "tv",
@@ -158,7 +157,7 @@ class TestXFSConfigInvariants:
             assert len(cfg.offline_markers) > 0, f"{cfg.name} has no markers"
 
     def test_config_count(self) -> None:
-        assert len(ALL_XFS_CONFIGS) == 27
+        assert len(ALL_XFS_CONFIGS) == 26
 
     def test_configs_are_frozen(self) -> None:
         for cfg in ALL_XFS_CONFIGS:
@@ -167,11 +166,11 @@ class TestXFSConfigInvariants:
 
     def test_video_hoster_count(self) -> None:
         video_count = sum(1 for c in ALL_XFS_CONFIGS if c.is_video_hoster)
-        assert video_count == 21
+        assert video_count == 20
 
     def test_captcha_count(self) -> None:
         captcha_count = sum(1 for c in ALL_XFS_CONFIGS if c.needs_captcha)
-        assert captcha_count == 3
+        assert captcha_count == 2
 
     def test_ddl_count(self) -> None:
         ddl_count = sum(1 for c in ALL_XFS_CONFIGS if not c.is_video_hoster)
@@ -442,54 +441,6 @@ class TestXFSResolverCaptcha:
             resolver = XFSResolver(config=config, http_client=client)
             result = await resolver.resolve(url)
         assert result is None
-
-
-# ---------------------------------------------------------------------------
-# Veev long file ID (43-char alphanumeric)
-# ---------------------------------------------------------------------------
-
-
-class TestVeevLongId:
-    """Veev.to now uses 43-char IDs like /e/2EwYsJS8frxAbWIzEhmWIJlqeGylzY9utsaUISu."""
-
-    def test_extract_long_id(self) -> None:
-        from scavengarr.infrastructure.hoster_resolvers.xfs import VEEV
-
-        long_id = "2EwYsJS8frxAbWIzEhmWIJlqeGylzY9utsaUISuAB"
-        url = f"https://veev.to/e/{long_id}"
-        result = extract_xfs_file_id(url, VEEV)
-        assert result == long_id
-
-    def test_extract_long_id_without_prefix(self) -> None:
-        from scavengarr.infrastructure.hoster_resolvers.xfs import VEEV
-
-        long_id = "2EwYsJS8frxAbWIzEhmWIJlqeGylzY9utsaUISuAB"
-        url = f"https://veev.to/{long_id}"
-        result = extract_xfs_file_id(url, VEEV)
-        assert result == long_id
-
-    @pytest.mark.asyncio()
-    async def test_veev_returns_none_needs_captcha(self) -> None:
-        """Veev requires Cloudflare Turnstile — always returns None."""
-        from scavengarr.infrastructure.hoster_resolvers.xfs import VEEV
-
-        url = "https://veev.to/e/aBc123DeF456"
-        async with httpx.AsyncClient() as client:
-            resolver = XFSResolver(config=VEEV, http_client=client)
-            result = await resolver.resolve(url)
-        assert result is None
-
-    def test_short_12_char_id_still_works(self) -> None:
-        from scavengarr.infrastructure.hoster_resolvers.xfs import VEEV
-
-        url = "https://veev.to/e/aBc123DeF456"
-        result = extract_xfs_file_id(url, VEEV)
-        assert result == "aBc123DeF456"
-
-
-# ---------------------------------------------------------------------------
-# Video extraction — specific patterns
-# ---------------------------------------------------------------------------
 
 
 class TestVideoExtraction:

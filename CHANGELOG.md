@@ -38,6 +38,10 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 - **No forced User-Agent in browser contexts**: contexts keep Patchright's real UA (a fixed Chrome 131 UA disagreed with the Chromium client hints). New `_browser_user_agent` (default `None`) and `_context_options()`, also used by the boerse/mygully login contexts; `_user_agent` stays for httpx side requests.
 - **`PlaywrightPluginBase._stealth` renamed to `_block_resources`**: it now only controls aborting image/font/CSS requests; singleton and per-request contexts share `_configure_context()`. `StealthPool` no longer applies playwright-stealth.
 
+### Resolver: veev.to Works Again
+- **New dedicated `VeevResolver`** (`hoster_resolvers/veev.py`, port of JDownloader `VeevTo`): the player API path needs no captcha — LZW-decode the `window._vvto` token, call `/dl?op=player_api&cmd=gi`, decode `file.dv[0].s` into a direct MP4 URL. Live: 2 of 4 veev links from movie2k/moflix/megakino resolve to playable MP4 (206 `video/mp4`); the other two are offline and correctly return `None`. veev left the XFS configs (`needs_captcha`): 18 individual + 12 generic DDL + 26 XFS = 56 resolvers.
+- **vinovo and wolfstream stay disabled** after a headful retest: vinovo needs an embedded Turnstile token posted to its API, wolfstream redirects to an ad domain via anti-bot JS.
+
 ### Fix: serienfans
 - **Back to results** (live: 35 releases for "Breaking Bad", was 0): search API, series pages, season API and index pages go through `_fetch_text()` (Cloudflare → browser fallback); `/external/2/<hash>` links of the returned results are resolved to their filecrypt containers. Same 429 rate limit as filmfans (~2.5 min uncached).
 

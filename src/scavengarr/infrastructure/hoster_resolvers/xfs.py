@@ -562,15 +562,6 @@ STREAMRUBY = XFSConfig(
     is_video_hoster=True,
 )
 
-VEEV = XFSConfig(
-    name="veev",
-    domains=frozenset({"veev"}),
-    file_id_re=re.compile(r"^/(?:e/|d/)?([a-zA-Z0-9]{12,})(?:/|$|\.html)"),
-    offline_markers=_STANDARD_MARKERS,
-    is_video_hoster=True,
-    needs_captcha=True,
-)
-
 LULUSTREAM = XFSConfig(
     name="lulustream",
     domains=frozenset({"lulustream", "luluvdo", "luluvid", "lulu", "luluvdoo", "cdn1"}),
@@ -669,7 +660,6 @@ ALL_XFS_CONFIGS: tuple[XFSConfig, ...] = (
     VINOVO,
     VIDHIDE,
     STREAMRUBY,
-    VEEV,
     LULUSTREAM,
     UPSTREAM,
     WOLFSTREAM,

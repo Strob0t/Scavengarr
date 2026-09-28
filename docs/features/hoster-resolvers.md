@@ -8,7 +8,7 @@
 
 ## Overview
 
-Scavengarr ships **56 hoster resolvers**: 17 individual resolvers, 12 generic DDL hosters consolidated in `GenericDDLResolver`, and 27 XFileSharingPro (XFS) hosters consolidated in `XFSResolver`. Every resolver checks whether a file is still available; video-extracting resolvers additionally return a direct `.mp4`/`.m3u8` URL plus the HTTP headers the CDN needs.
+Scavengarr ships **56 hoster resolvers**: 18 individual resolvers, 12 generic DDL hosters consolidated in `GenericDDLResolver`, and 26 XFileSharingPro (XFS) hosters consolidated in `XFSResolver`. Every resolver checks whether a file is still available; video-extracting resolvers additionally return a direct `.mp4`/`.m3u8` URL plus the HTTP headers the CDN needs.
 
 Resolvers are registered in `HosterResolverRegistry`, which dispatches each URL to a resolver by its second-level domain, follows redirects and plugin hoster hints for unknown domains, falls back to a HEAD content-type probe, and caches the outcome in memory.
 
@@ -90,6 +90,7 @@ Check availability and return the original URL without headers. The Stremio addo
 | Stmix | `stmix` | `stmix.io` | Page validation |
 | SerienStream | `serienstream` | `s.to`, `www.s.to`, `serienstream.*`, `serien.*` | Page validation (`/serie/` or `/serien/` slug) |
 | SendVid | `sendvid` | `sendvid.com` | Status API (`/api/v1/videos/{id}/status.json`, 404 = offline) + page 200 check |
+| Veev | `veev` | `veev.to` (`/e/`, `/d/` or bare ID, 12+ chars) | Player API without captcha: LZW-decode the `window._vvto` token, `/dl?op=player_api&cmd=gi`, decode `file.dv[0].s` → direct MP4 (port of JDownloader `VeevTo`); offline on `Watch video - Veev.to` title or "File not found" |
 
 ### DDL resolvers (individual)
 
@@ -124,7 +125,7 @@ Validate file availability without extracting a video URL and return the canonic
 
 Adding a new generic DDL hoster requires only a `GenericDDLConfig` constant appended to `ALL_DDL_CONFIGS`. Tests are parameterised automatically.
 
-### XFS resolvers (27 hosters)
+### XFS resolvers (26 hosters)
 
 `XFSResolver` in `xfs.py` handles 27 XFileSharingPro-based hosters, each described by an `XFSConfig`:
 
@@ -176,9 +177,10 @@ The resolver fetches `/e/{file_id}`, checks offline markers and error redirects,
 
 | Hoster | Domains | Notes |
 |---|---|---|
-| Veev | `veev` | Cloudflare Turnstile required |
-| Vinovo | `vinovo` | Cloudflare Turnstile required |
-| Wolfstream | `wolfstream` | Anti-bot JS redirect on embed pages |
+| Vinovo | `vinovo` | Embedded Turnstile widget; the token is posted to `/api/file/urldown/{id}` (JDownloader `VinovoTo`). Retested headful 2026-09-28: still not resolvable without a browser-side widget flow |
+| Wolfstream | `wolfstream` | Anti-bot JS redirect to an ad domain (retested 2026-09-28) |
+
+Veev left this list: it has its own resolver now (see below).
 
 Adding a new XFS hoster requires only an `XFSConfig` constant appended to `ALL_XFS_CONFIGS`. Tests are parameterised automatically.
 

@@ -42,6 +42,7 @@ from scavengarr.infrastructure.hoster_resolvers.stmix import StmixResolver
 from scavengarr.infrastructure.hoster_resolvers.streamtape import StreamtapeResolver
 from scavengarr.infrastructure.hoster_resolvers.strmup import StrmupResolver
 from scavengarr.infrastructure.hoster_resolvers.supervideo import SuperVideoResolver
+from scavengarr.infrastructure.hoster_resolvers.veev import VeevResolver
 from scavengarr.infrastructure.hoster_resolvers.vidguard import VidguardResolver
 from scavengarr.infrastructure.hoster_resolvers.vidking import VidkingResolver
 from scavengarr.infrastructure.hoster_resolvers.vidsonic import VidsonicResolver
@@ -375,6 +376,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             VidkingResolver(http_client=state.http_client),
             VidsonicResolver(http_client=state.http_client),
             SendVidResolver(http_client=state.http_client),
+            VeevResolver(http_client=state.http_client),
             # DDL resolvers (custom — non-XFS)
             MediafireResolver(http_client=state.http_client),
             GoFileResolver(http_client=state.http_client),
