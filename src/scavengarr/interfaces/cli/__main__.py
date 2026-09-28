@@ -82,9 +82,6 @@ def start(argv: Iterable[str] | None = None) -> None:
 
     args = _parse_args(argv)
 
-    host = args.host or os.getenv("HOST", "0.0.0.0")
-    port = int(args.port or os.getenv("PORT", "7979"))
-
     log = structlog.get_logger(__name__)
     config_env = os.getenv("SCAVENGARR_CONFIG")
     if args.config:
@@ -116,6 +113,10 @@ def start(argv: Iterable[str] | None = None) -> None:
     )
 
     configure_logging(config)
+
+    # Resolved after load_config() so HOST/PORT from --dotenv take effect.
+    host = args.host or os.getenv("HOST", "0.0.0.0")
+    port = int(args.port or os.getenv("PORT", "7979"))
 
     uvicorn.run(
         create_app(config),

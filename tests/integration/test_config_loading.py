@@ -12,6 +12,7 @@ import pytest
 import yaml
 
 from scavengarr.infrastructure.config.load import load_config
+from scavengarr.infrastructure.config.schema import AppConfig
 
 pytestmark = pytest.mark.integration
 
@@ -46,6 +47,18 @@ class TestDefaultsOnly:
         assert config.log_level == "INFO"
         assert config.log_format == "console"  # dev → console
         assert config.cache_ttl_seconds == 3600
+
+    def test_schema_defaults_match_effective_defaults(self) -> None:
+        """AppConfig() and load_config() must agree (single source of defaults)."""
+        schema = AppConfig()
+        loaded = load_config()
+        assert schema.http_user_agent == loaded.http_user_agent
+        assert schema.scoring.enabled == loaded.scoring.enabled
+        assert (
+            schema.stremio.max_concurrent_plugins
+            == loaded.stremio.max_concurrent_plugins
+        )
+        assert schema.cache.directory == loaded.cache.directory
 
     def test_defaults_derive_log_format_from_environment(self) -> None:
         config = load_config(cli_overrides={"environment": "prod"})

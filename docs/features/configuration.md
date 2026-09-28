@@ -141,7 +141,7 @@ Server bind address and port. These do not use the `SCAVENGARR_` prefix and are 
 | `HOST` | string | `0.0.0.0` | Server bind address |
 | `PORT` | int | `7979` | Server bind port |
 
-> **Known issue:** `HOST` and `PORT` set in a `--dotenv` file have no effect, because the CLI reads them before the `.env` file is loaded. Set them in the real environment or use `--host`/`--port`.
+`HOST`/`PORT` may come from the real environment or a `--dotenv` file (the real environment wins); `--host`/`--port` take precedence over both.
 
 ---
 
@@ -236,7 +236,7 @@ Other flat keys are dropped.
 
 ## Configuration Sections
 
-Defaults below are the **effective** defaults: values from `defaults.py` take precedence over the Pydantic field defaults in `schema.py`.
+Defaults are defined in `defaults.py` and mirrored by the Pydantic field defaults in `schema.py`; a test keeps both in sync.
 
 ### General
 
@@ -538,7 +538,7 @@ SCAVENGARR_CACHE_TTL_SECONDS=3600
 SCAVENGARR_TMDB_API_KEY=your-tmdb-key
 ```
 
-`HOST`/`PORT` in a `.env` file have no effect (see [Server Variables](#server-variables)).
+`HOST`/`PORT` in the `.env` file are honored too (see [Server Variables](#server-variables)).
 
 ---
 

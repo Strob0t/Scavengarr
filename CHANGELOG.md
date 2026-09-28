@@ -14,6 +14,8 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 - **Torznab caps: `limits default` is 100**: caps advertised `default="50"` while search defaults to `limit=100`; `TorznabCaps.limits_default` now matches.
 - **Config: rate-limit/retry env vars work**: `SCAVENGARR_RATE_LIMIT_ADAPTIVE`, `_MIN_RPS`, `_MAX_RPS` and `SCAVENGARR_HTTP_RETRY_MAX_ATTEMPTS`, `_BACKOFF_BASE`, `_MAX_BACKOFF` were read by `EnvOverrides` but dropped by the loader (missing from its flat-key map); they now apply.
 - **Config: cache backend via env**: new `SCAVENGARR_CACHE_BACKEND`, `SCAVENGARR_CACHE_REDIS_URL` and `SCAVENGARR_CACHE_MAX_CONCURRENT`. The unprefixed `CACHE_*` variables suggested by a comment were never read (the section is validated from the merged dict); the comment now says so.
+- **CLI: `HOST`/`PORT` from `--dotenv` apply**: the CLI read them before `load_config()` loaded the `.env` file; they are now resolved afterwards (`--host`/`--port` still win). First CLI unit tests (`tests/unit/interfaces/test_cli.py`).
+- **Config: one set of defaults**: Pydantic field defaults in `schema.py` disagreed with `defaults.py` (`scoring.enabled`, `stremio.max_concurrent_plugins`, `http.user_agent`, `cache.dir`). The schema now mirrors the effective values (no runtime change); a test keeps them in sync.
 - **Stremio `/health` lists supported hosters**: the endpoint called a non-existent `list_hosters()` and swallowed the error, so `supported_hosters` was always empty. It now reads `HosterResolverRegistry.supported_hosters`; the E2E test mock is spec'd against the real class.
 
 ### Chore: LF Line Endings and Versioned Claude Code Hooks

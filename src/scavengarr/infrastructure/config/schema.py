@@ -24,7 +24,7 @@ class ScoringConfig(BaseModel):
     """Background plugin scoring and probing configuration."""
 
     enabled: bool = Field(
-        default=False,
+        default=True,
         description="Enable background plugin scoring and probing.",
     )
     health_halflife_days: float = Field(
@@ -134,7 +134,7 @@ class CacheConfig(BaseSettings):
 
     # Diskcache settings
     directory: Path = Field(
-        default=Path("./cache/scavengarr"),
+        default=Path("./.cache/scavengarr"),
         alias="dir",
         description="Diskcache SQLite DB path",
     )
@@ -209,7 +209,7 @@ class StremioConfig(BaseModel):
     )
 
     max_concurrent_plugins: int = Field(
-        default=10,
+        default=5,
         description="Max parallel plugin searches for stream resolution.",
     )
 
@@ -406,7 +406,7 @@ class AppConfig(BaseModel):
         description="Whether HTTP client follows redirects.",
     )
     http_user_agent: str = Field(
-        default="Scavengarr/0.1.0 (+https://github.com/Strob0t/Scavengarr)",
+        default="Scavengarr/0.1.0",
         validation_alias=AliasChoices(
             "http_user_agent",
             AliasPath("http", "user_agent"),
