@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -11,6 +12,18 @@ import pytest
 from scavengarr.application.factories import CrawlJobFactory
 from scavengarr.domain.entities.crawljob import CrawlJob
 from scavengarr.domain.plugins import SearchResult
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_configure(config: pytest.Config) -> None:
+    """Plain output under Claude Code.
+
+    Claude Code's shell sets ``FORCE_COLOR``, which wraps every progress dot in
+    ANSI escapes: pure token overhead for the agent. Humans keep colors.
+    """
+    if os.environ.get("CLAUDECODE") == "1":
+        config.option.color = "no"
+
 
 # ---------------------------------------------------------------------------
 # Domain entity fixtures

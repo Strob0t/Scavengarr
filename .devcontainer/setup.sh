@@ -43,11 +43,15 @@ if ! command -v openspec >/dev/null 2>&1; then
 fi
 
 # Caveman: CLI (`caveman claude`) + Claude Code skills from JuliusBrussee/caveman.
-# Optional tooling, so failures only warn.
+# Optional tooling, so failures only warn. Only the locally useful skills: every
+# installed skill description costs context tokens in every session. Left out:
+# the Caveman Cloud skills (discover, evidence-review, learn, manage, optimize,
+# setup) and caveman-commit, which collides with the project `commit` skill.
+CAVEMAN_SKILLS=(caveman cavecrew caveman-explore caveman-review caveman-compress caveman-help caveman-stats)
 echo "[devcontainer] Installing caveman CLI + skills..."
 npm install -g @caveman-ai/cli \
   || echo "WARN: caveman CLI install failed (optional)"
-npx -y skills add JuliusBrussee/caveman -g -a claude-code -s '*' -y </dev/null \
+npx -y skills add JuliusBrussee/caveman -g -a claude-code -s "${CAVEMAN_SKILLS[@]}" -y </dev/null \
   || echo "WARN: caveman skills install failed (optional)"
 
 # Claude: native install bevorzugt

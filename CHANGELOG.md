@@ -8,6 +8,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 56 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4151 tests (4113 excluding the opt-in live tests).
 
+### Chore: Leaner Claude Code Context
+- **Slash commands → skills**: `.claude/commands/` replaced by `.claude/skills/` (`commit`, `test`, `new-plugin`, `new-resolver`). Skills load only their description up front and can be picked by the model itself. `new-plugin` no longer describes the removed YAML/Scrapy plugins; `new-resolver` is new and checks XFS/generic-DDL reuse and JDownloader sources first.
+- **`format-and-lint.sh` reports what ruff cannot fix**: remaining lint/syntax errors go back to Claude (exit 2) instead of being swallowed until pre-commit. Uses the project `.venv` ruff directly (falls back to the main checkout's venv inside git worktrees, skips when none), no ANSI colors.
+- **Compact pytest output**: `addopts` gains `-q --tb=short`; under Claude Code (`CLAUDECODE=1`) `tests/conftest.py` also disables colors, because the agent shell's `FORCE_COLOR` wrapped every progress dot in ANSI escapes.
+- **Fewer caveman skills**: `setup.sh` installs only `caveman`, `cavecrew`, `caveman-explore`, `caveman-review`, `caveman-compress`, `caveman-help`, `caveman-stats` instead of all 14 (Cloud-only skills and the `/commit`-colliding `caveman-commit` dropped).
+
 ### Fix: Bugs Found by the Docs Audit
 - **Torznab: unknown plugin returns 404 everywhere**: `/torznab/{plugin}/health` and the `extended=1` test probe caught only `TorznabPluginNotFound`, but the registry raises `PluginNotFoundError`, so unknown plugins produced 500 (dev) / 200 (prod). Both exceptions are now mapped to 404. E2E tests now mock the real registry exception (the old mocks hid the bug).
 - **Torznab: non-numeric `cat` returns 400**: `cat=abc` raised an unhandled `ValueError` (500). It now raises `TorznabBadRequest` → empty feed with HTTP 400.
