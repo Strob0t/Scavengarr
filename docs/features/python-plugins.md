@@ -209,7 +209,7 @@ Always obtain pages via `_new_page()` / `_ensure_page()` (or the context from `_
 
 **Provided by `PlaywrightPluginBase`:**
 - `_headless` (default `True`), `_cf_timeout_ms` (default `15_000`), `_networkidle_timeout_ms` (default `10_000`)
-- `_stealth` (default `True`) — applies `playwright-stealth` to each new context and aborts image, font and CSS requests
+- `_block_resources` (default `True`) — aborts image, font and CSS requests in each new context. Anti-bot evasion comes from Patchright itself (imports use `patchright.async_api`); its Console domain is disabled, so `page.on("console")` never fires
 - `set_shared_pool(pool)` — the composition root injects the `SharedBrowserPool`; `_ensure_browser()` then reuses the shared Chromium instead of launching its own
 - `_ensure_browser()` — shared browser, or a standalone Chromium launch with one retry; reconnects if the browser disconnected
 - `_ensure_context()` — returns the per-request context from `isolated_search()` if set, otherwise a persistent context (1280x720 viewport, `_user_agent`, stealth)

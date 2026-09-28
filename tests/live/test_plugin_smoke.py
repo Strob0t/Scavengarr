@@ -84,7 +84,7 @@ _NETWORK_ERRORS: tuple[type[BaseException], ...] = (
 )
 
 try:
-    from playwright.async_api import Error as PlaywrightError
+    from patchright.async_api import Error as PlaywrightError
 
     _NETWORK_ERRORS = (*_NETWORK_ERRORS, PlaywrightError)
 except ImportError:

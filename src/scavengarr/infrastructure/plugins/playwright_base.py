@@ -11,7 +11,7 @@ import asyncio
 from contextvars import Token
 
 import structlog
-from playwright.async_api import (
+from patchright.async_api import (
     Browser,
     BrowserContext,
     Page,
@@ -63,8 +63,11 @@ class PlaywrightPluginBase:
     _headless: bool = True
     cache_ttl: int | None = None
 
-    # --- Stealth mode (on by default) ---
-    _stealth: bool = True
+    # --- Abort image/font/CSS requests (on by default) ---
+    # Patchright (not playwright-stealth) handles anti-bot evasion at the
+    # driver level; its Console domain is disabled, so page.on("console")
+    # never fires.
+    _block_resources: bool = True
 
     # --- Cloudflare / navigation timeouts ---
     _cf_timeout_ms: int = 15_000
@@ -209,9 +212,8 @@ class PlaywrightPluginBase:
         that context is returned instead of the singleton — unless
         ``_serialize_search`` is True (persistent-page plugins).
 
-        When ``_stealth`` is True, applies playwright-stealth evasions
-        and blocks heavy resources (images, fonts, CSS) to reduce
-        fingerprinting and speed up navigation.
+        When ``_block_resources`` is True, aborts heavy resources
+        (images, fonts, CSS) to speed up navigation.
         """
         # Per-request isolation: if a ContextVar context was set by
         # isolated_search(), prefer it over the singleton.
@@ -228,16 +230,16 @@ class PlaywrightPluginBase:
                 user_agent=self._user_agent,
                 viewport={"width": 1280, "height": 720},
             )
-            if self._stealth:
-                from playwright_stealth import Stealth
-
-                await Stealth().apply_stealth_async(self._context)
-                await self._context.route(
-                    "**/*.{png,jpg,jpeg,gif,svg,woff,woff2,ttf,css}",
-                    lambda route: route.abort(),
-                )
-                self._log.info(f"{self.name}_stealth_enabled")
+            await self._configure_context(self._context)
         return self._context
+
+    async def _configure_context(self, ctx: BrowserContext) -> None:
+        """Apply per-context settings shared by singleton and isolated contexts."""
+        if self._block_resources:
+            await ctx.route(
+                "**/*.{png,jpg,jpeg,gif,svg,woff,woff2,ttf,css}",
+                lambda route: route.abort(),
+            )
 
     async def _ensure_page(self) -> Page:
         """Get or create a persistent page."""
@@ -477,14 +479,7 @@ class PlaywrightPluginBase:
         )
         token: Token[BrowserContext | None] | None = None
         try:
-            if self._stealth:
-                from playwright_stealth import Stealth
-
-                await Stealth().apply_stealth_async(ctx)
-                await ctx.route(
-                    "**/*.{png,jpg,jpeg,gif,svg,woff,woff2,ttf,css}",
-                    lambda route: route.abort(),
-                )
+            await self._configure_context(ctx)
             await self._prepare_context(ctx)
             token = request_browser_context.set(ctx)
             return await self.search(query, category, season=season, episode=episode)

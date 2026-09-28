@@ -205,7 +205,6 @@ class DDLValleyPlugin(PlaywrightPluginBase):
     mode = "playwright"
     provides = "download"
     default_language = "en"
-    _stealth = True
 
     _domains = _DOMAINS
 

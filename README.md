@@ -108,7 +108,7 @@ See [docs/features/stremio-addon.md](docs/features/stremio-addon.md) for details
 | HTTP Framework | FastAPI + Uvicorn |
 | Static Scraping | httpx |
 | HTML Parsing | stdlib `html.parser` |
-| JS Scraping | Playwright (Chromium), playwright-stealth |
+| JS Scraping | Patchright (Playwright fork, Chromium) |
 | Title Matching | rapidfuzz |
 | Release Parsing | guessit |
 | Configuration | pydantic-settings, PyYAML, python-dotenv |

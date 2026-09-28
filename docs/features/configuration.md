@@ -346,8 +346,8 @@ Controls the Stremio addon behavior: stream ranking, plugin concurrency, title m
 | `stremio.max_probe_count` | int | `50` | Max streams to probe/resolve (top-ranked first) |
 | `stremio.resolve_target_count` | int | `15` | Stop resolving after this many successes (0 = disabled) |
 | `stremio.probe_stealth_enabled` | bool | `true` | Currently unused (no effect); the stealth pool is always configured |
-| `stremio.probe_stealth_concurrency` | int | `5` | Max parallel Playwright Stealth probes |
-| `stremio.probe_stealth_timeout_seconds` | float | `15.0` | Per-URL Playwright Stealth timeout |
+| `stremio.probe_stealth_concurrency` | int | `5` | Max parallel stealth-browser (Patchright) probes |
+| `stremio.probe_stealth_timeout_seconds` | float | `15.0` | Per-URL stealth-browser (Patchright) timeout |
 
 **Scored plugin selection** (requires `scoring.enabled: true`):
 

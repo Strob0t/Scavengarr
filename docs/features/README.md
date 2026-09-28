@@ -65,7 +65,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** and **S
 | [Integration Tests](../plans/integration-tests.md) | Implemented: integration, E2E, and live smoke tests |
 | [Search Caching](../plans/search-caching.md) | Implemented: search result cache with `X-Cache` header |
 | [Plugin Repair](../plans/plugin-repair.md) | Triaged: repair plugins that currently return no results |
-| [Anti-Bot Hardening](../plans/antibot-patchright.md) | Planned: Patchright instead of playwright-stealth, browser fallback port for httpx plugins |
+| [Anti-Bot Hardening](../plans/antibot-patchright.md) | In progress: Patchright instead of playwright-stealth, browser fallback port for httpx plugins |
 
 ### Refactoring History
 
@@ -90,7 +90,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** and **S
 | Web framework | FastAPI + Uvicorn | HTTP API (Torznab, Stremio, stats, download) |
 | Static scraping | httpx | HTTP client for httpx plugins and hoster resolvers |
 | HTML parsing | stdlib `html.parser` | HTML extraction in plugins (`HTMLParser` subclasses) |
-| Dynamic scraping | Playwright (Chromium), playwright-stealth | JS-heavy sites, Cloudflare bypass |
+| Dynamic scraping | Patchright (Playwright fork, Chromium) | JS-heavy sites, Cloudflare bypass |
 | Title matching | rapidfuzz | Fuzzy title scoring for Stremio |
 | Release parsing | guessit | Release name parsing for title matching |
 | Configuration | pydantic-settings, PyYAML, python-dotenv | Typed config with env/YAML/CLI support |

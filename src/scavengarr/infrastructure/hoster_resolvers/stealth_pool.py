@@ -1,6 +1,8 @@
-"""Playwright Stealth browser pool for Cloudflare bypass probing.
+"""Patchright browser pool for Cloudflare bypass probing.
 
-Manages a single Chromium instance with stealth evasions applied.
+Manages a single Chromium instance driven by Patchright, which removes the
+automation leaks (``Runtime.enable``, automation launch flags) that
+Cloudflare detects.
 Pages are created per-probe and closed immediately after.
 Resource blocking (images, fonts, CSS, media) keeps navigation fast.
 """
@@ -10,7 +12,7 @@ from __future__ import annotations
 import asyncio
 
 import structlog
-from playwright.async_api import (
+from patchright.async_api import (
     Browser,
     BrowserContext,
     Page,
@@ -18,7 +20,6 @@ from playwright.async_api import (
     Route,
     async_playwright,
 )
-from playwright_stealth import Stealth
 
 from scavengarr.infrastructure.hoster_resolvers.cloudflare import _CF_MARKERS
 
@@ -53,7 +54,7 @@ async def _block_resources(route: Route) -> None:
 
 
 class StealthPool:
-    """Lazy-init Playwright Stealth pool for Cloudflare bypass probing.
+    """Lazy-init Patchright browser pool for Cloudflare bypass probing.
 
     Usage::
 
@@ -80,7 +81,7 @@ class StealthPool:
     # ------------------------------------------------------------------
 
     async def _ensure_context(self) -> BrowserContext:
-        """Launch browser + stealth context (double-check lock)."""
+        """Launch browser + context (double-check lock)."""
         if self._context is not None:
             return self._context
         async with self._lock:
@@ -92,10 +93,6 @@ class StealthPool:
                 headless=self._headless,
             )
             self._context = await self._browser.new_context()
-
-            # Apply stealth evasions to the context (all future pages inherit)
-            stealth = Stealth()
-            await stealth.apply_stealth_async(self._context)
 
             # Block heavy resources on all pages in this context
             await self._context.route("**/*", _block_resources)

@@ -23,7 +23,7 @@ from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
 if TYPE_CHECKING:
-    from playwright.async_api import Page
+    from patchright.async_api import Page
 
 # ---------------------------------------------------------------------------
 # Configurable settings

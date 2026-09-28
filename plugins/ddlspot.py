@@ -242,7 +242,6 @@ class DDLSpotPlugin(PlaywrightPluginBase):
     mode = "playwright"
     provides = "download"
     default_language = "de"
-    _stealth = True
 
     _domains = _DOMAINS
 

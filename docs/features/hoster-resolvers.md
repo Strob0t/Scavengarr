@@ -206,7 +206,7 @@ Adding a new XFS hoster requires only an `XFSConfig` constant appended to `ALL_X
 | Cache limits | Each cache holds at most 10,000 entries; expired entries are evicted every 1,000 `resolve()` calls |
 | Cleanup | `cleanup()` calls `cleanup()` on every resolver that has one (app shutdown) |
 
-The dead-link liveness probe in `probe.py` (`probe_urls_stealth()`: httpx phase, then Playwright Stealth for Cloudflare-blocked URLs) is separate from the registry and used by the Stremio stream use case; see [Stremio Addon](./stremio-addon.md).
+The dead-link liveness probe in `probe.py` (`probe_urls_stealth()`: httpx phase, then the Patchright stealth browser for Cloudflare-blocked URLs) is separate from the registry and used by the Stremio stream use case; see [Stremio Addon](./stremio-addon.md).
 
 ---
 

@@ -31,7 +31,7 @@ Current plugin, resolver, and test counts are listed in the [repository README](
 | Global Concurrency Pool | [x] Implemented | Fair-share httpx/Playwright slot budgets across requests |
 | Container-Aware Auto-Tune | [x] Implemented | Concurrency limits derived from cgroup v2/v1 CPU/memory at startup |
 | Shared Browser Pool | [x] Implemented | One Chromium process shared by all Playwright plugins |
-| Stealth Pool | [x] Implemented | Separate Playwright Stealth browser for Cloudflare-protected hosters and probes |
+| Stealth Pool | [x] Implemented | Separate Patchright browser for Cloudflare-protected hosters and probes |
 | Multi-Language Search | [x] Implemented | Per-language TMDB title resolution, plugins declare `languages` |
 | Stream Deduplication | [x] Implemented | Per-hoster dedup keeps best-ranked stream only |
 | Graceful Shutdown | [x] Implemented | Drain in-flight requests before stopping |

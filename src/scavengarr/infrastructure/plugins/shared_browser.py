@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 
 import structlog
-from playwright.async_api import Browser, Playwright, async_playwright
+from patchright.async_api import Browser, Playwright, async_playwright
 
 log = structlog.get_logger(__name__)
 

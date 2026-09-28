@@ -296,6 +296,33 @@ class TestEnsureContext:
         ctx = await plugin._ensure_context()
         assert ctx is mock_context
 
+    @pytest.mark.asyncio
+    async def test_blocks_heavy_resources_by_default(self) -> None:
+        plugin = _TestPlugin()
+        mock_context = AsyncMock()
+        mock_browser = _make_mock_browser()
+        mock_browser.new_context = AsyncMock(return_value=mock_context)
+        plugin._browser = mock_browser
+
+        await plugin._ensure_context()
+
+        mock_context.route.assert_awaited_once()
+        pattern = mock_context.route.await_args.args[0]
+        assert "png" in pattern and "css" in pattern
+
+    @pytest.mark.asyncio
+    async def test_resource_blocking_can_be_disabled(self) -> None:
+        plugin = _TestPlugin()
+        plugin._block_resources = False
+        mock_context = AsyncMock()
+        mock_browser = _make_mock_browser()
+        mock_browser.new_context = AsyncMock(return_value=mock_context)
+        plugin._browser = mock_browser
+
+        await plugin._ensure_context()
+
+        mock_context.route.assert_not_awaited()
+
 
 # ---------------------------------------------------------------------------
 # Page lifecycle
@@ -1048,6 +1075,20 @@ class TestIsolatedSearch:
         mock_ctx.close.assert_awaited_once()
         # Page was closed too
         mock_page.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_isolated_context_blocks_heavy_resources(self) -> None:
+        """Per-request contexts get the same resource blocking as the singleton."""
+        plugin = _ConcretePlugin()
+        mock_ctx = AsyncMock()
+        mock_ctx.pages = []
+        mock_browser = _make_mock_browser()
+        mock_browser.new_context = AsyncMock(return_value=mock_ctx)
+        plugin._browser = mock_browser
+
+        await plugin.isolated_search("test")
+
+        mock_ctx.route.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_cleans_context_on_error(self) -> None:

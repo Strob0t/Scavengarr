@@ -1,4 +1,4 @@
-"""Tests for StealthPool — Playwright Stealth browser pool."""
+"""Tests for StealthPool — Patchright browser pool."""
 
 from __future__ import annotations
 
@@ -86,19 +86,12 @@ class TestBlockResources:
 
 
 class TestStealthPoolLifecycle:
-    """Browser init, stealth application, cleanup."""
+    """Browser init, resource blocking, cleanup."""
 
     @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright")
-    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.Stealth")
-    async def test_ensure_context_launches_browser(
-        self, mock_stealth_cls: MagicMock, mock_ap: MagicMock
-    ) -> None:
+    async def test_ensure_context_launches_browser(self, mock_ap: MagicMock) -> None:
         pw, browser, context = _mock_playwright_stack()
         mock_ap.return_value.start = AsyncMock(return_value=pw)
-
-        stealth_instance = MagicMock()
-        stealth_instance.apply_stealth_async = AsyncMock()
-        mock_stealth_cls.return_value = stealth_instance
 
         pool = StealthPool(headless=True, timeout_ms=10_000)
         ctx = await pool._ensure_context()
@@ -106,17 +99,12 @@ class TestStealthPoolLifecycle:
         assert ctx is context
         pw.chromium.launch.assert_awaited_once_with(headless=True)
         browser.new_context.assert_awaited_once()
-        stealth_instance.apply_stealth_async.assert_awaited_once_with(context)
         context.route.assert_awaited_once()
 
     @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright")
-    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.Stealth")
-    async def test_ensure_context_reuses_existing(
-        self, mock_stealth_cls: MagicMock, mock_ap: MagicMock
-    ) -> None:
+    async def test_ensure_context_reuses_existing(self, mock_ap: MagicMock) -> None:
         pw, browser, context = _mock_playwright_stack()
         mock_ap.return_value.start = AsyncMock(return_value=pw)
-        mock_stealth_cls.return_value.apply_stealth_async = AsyncMock()
 
         pool = StealthPool()
         ctx1 = await pool._ensure_context()
@@ -127,13 +115,9 @@ class TestStealthPoolLifecycle:
         pw.chromium.launch.assert_awaited_once()
 
     @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright")
-    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.Stealth")
-    async def test_cleanup_closes_all_resources(
-        self, mock_stealth_cls: MagicMock, mock_ap: MagicMock
-    ) -> None:
+    async def test_cleanup_closes_all_resources(self, mock_ap: MagicMock) -> None:
         pw, browser, context = _mock_playwright_stack()
         mock_ap.return_value.start = AsyncMock(return_value=pw)
-        mock_stealth_cls.return_value.apply_stealth_async = AsyncMock()
 
         pool = StealthPool()
         await pool._ensure_context()
@@ -160,13 +144,9 @@ class TestStealthPoolProbe:
     """probe_url navigation and classification."""
 
     @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright")
-    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.Stealth")
-    async def test_alive_page(
-        self, mock_stealth_cls: MagicMock, mock_ap: MagicMock
-    ) -> None:
+    async def test_alive_page(self, mock_ap: MagicMock) -> None:
         pw, browser, context = _mock_playwright_stack()
         mock_ap.return_value.start = AsyncMock(return_value=pw)
-        mock_stealth_cls.return_value.apply_stealth_async = AsyncMock()
 
         page = _mock_page(html="<html><body>Video Player</body></html>")
         context.new_page = AsyncMock(return_value=page)
@@ -179,17 +159,14 @@ class TestStealthPoolProbe:
         page.close.assert_awaited_once()
 
     @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright")
-    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.Stealth")
     @pytest.mark.parametrize("marker", _OFFLINE_MARKERS)
     async def test_dead_page_offline_marker(
         self,
-        mock_stealth_cls: MagicMock,
         mock_ap: MagicMock,
         marker: str,
     ) -> None:
         pw, browser, context = _mock_playwright_stack()
         mock_ap.return_value.start = AsyncMock(return_value=pw)
-        mock_stealth_cls.return_value.apply_stealth_async = AsyncMock()
 
         page = _mock_page(html=f"<html><body>{marker}</body></html>")
         context.new_page = AsyncMock(return_value=page)
@@ -200,13 +177,9 @@ class TestStealthPoolProbe:
         assert result is False
 
     @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright")
-    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.Stealth")
-    async def test_navigation_error_returns_false(
-        self, mock_stealth_cls: MagicMock, mock_ap: MagicMock
-    ) -> None:
+    async def test_navigation_error_returns_false(self, mock_ap: MagicMock) -> None:
         pw, browser, context = _mock_playwright_stack()
         mock_ap.return_value.start = AsyncMock(return_value=pw)
-        mock_stealth_cls.return_value.apply_stealth_async = AsyncMock()
 
         page = _mock_page()
         page.goto = AsyncMock(side_effect=Exception("net::ERR_CONNECTION_REFUSED"))
@@ -219,13 +192,9 @@ class TestStealthPoolProbe:
         page.close.assert_awaited_once()
 
     @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright")
-    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.Stealth")
-    async def test_page_closed_even_on_error(
-        self, mock_stealth_cls: MagicMock, mock_ap: MagicMock
-    ) -> None:
+    async def test_page_closed_even_on_error(self, mock_ap: MagicMock) -> None:
         pw, browser, context = _mock_playwright_stack()
         mock_ap.return_value.start = AsyncMock(return_value=pw)
-        mock_stealth_cls.return_value.apply_stealth_async = AsyncMock()
 
         page = _mock_page()
         page.content = AsyncMock(side_effect=RuntimeError("closed"))
@@ -238,14 +207,12 @@ class TestStealthPoolProbe:
         page.close.assert_awaited_once()
 
     @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright")
-    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.Stealth")
     async def test_cf_wait_timeout_still_checks_content(
-        self, mock_stealth_cls: MagicMock, mock_ap: MagicMock
+        self, mock_ap: MagicMock
     ) -> None:
         """Even if CF wait times out, content is still checked."""
         pw, browser, context = _mock_playwright_stack()
         mock_ap.return_value.start = AsyncMock(return_value=pw)
-        mock_stealth_cls.return_value.apply_stealth_async = AsyncMock()
 
         page = _mock_page(
             html="<html><body>Video Player active</body></html>",

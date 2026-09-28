@@ -11,7 +11,7 @@ from contextvars import ContextVar
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from playwright.async_api import BrowserContext
+    from patchright.async_api import BrowserContext
 
 request_browser_context: ContextVar[BrowserContext | None] = ContextVar(
     "request_browser_context",

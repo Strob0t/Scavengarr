@@ -302,7 +302,7 @@ Stremio settings live in `StremioConfig` (YAML section `stremio:`). See [Configu
 | `stream_link_ttl_seconds` | 7200 | TTL of cached stream links (`streamlink:{stream_id}`) |
 | `probe_at_stream_time` | `true` | Dead-link probe before caching (see known issue) |
 | `probe_timeout_seconds` | 10 | Per-URL httpx probe timeout |
-| `probe_stealth_concurrency` | 5 | Parallel Playwright Stealth probes |
+| `probe_stealth_concurrency` | 5 | Parallel stealth-browser (Patchright) probes |
 | `probe_stealth_timeout_seconds` | 15 | Stealth probe timeout; also the `StealthPool` timeout used by SuperVideo |
 | `probe_stealth_enabled` | `true` | Currently unused (no effect) — the stealth phase always receives the `StealthPool` |
 

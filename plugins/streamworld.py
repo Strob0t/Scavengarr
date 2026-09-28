@@ -21,7 +21,7 @@ import re
 from html.parser import HTMLParser
 from urllib.parse import urljoin
 
-from playwright.async_api import Page
+from patchright.async_api import Page
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase

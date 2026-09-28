@@ -25,7 +25,7 @@ from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
 if TYPE_CHECKING:
-    from playwright.async_api import BrowserContext
+    from patchright.async_api import BrowserContext
 
 # ---------------------------------------------------------------------------
 # Configurable settings

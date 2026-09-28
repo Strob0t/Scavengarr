@@ -10,7 +10,7 @@ Scavengarr is a **self-hosted, container-ready indexer** that emulates the Torzn
 - **Framework**: FastAPI + Uvicorn (ASGI) for the web server
 - **Scraping**:
   - **httpx plugins**: `HttpxPluginBase` (`src/scavengarr/infrastructure/plugins/httpx_base.py`) — `httpx` (async HTTP) + stdlib `html.parser`
-  - **Playwright plugins**: `PlaywrightPluginBase` (`src/scavengarr/infrastructure/plugins/playwright_base.py`) — Playwright + `playwright-stealth`, one shared Chromium via `SharedBrowserPool`
+  - **Playwright plugins**: `PlaywrightPluginBase` (`src/scavengarr/infrastructure/plugins/playwright_base.py`) — Patchright (Playwright fork), one shared Chromium via `SharedBrowserPool`
 - **Hoster resolvers**: 56 resolvers in `src/scavengarr/infrastructure/hoster_resolvers/` (streaming and DDL hosters)
 - **Configuration**: Pydantic Settings with precedence CLI → ENV (incl. `--dotenv` file) → YAML → defaults
 - **Plugins**: Python plugins only (`plugins/*.py`); the YAML plugin system was removed in `42fced9`
@@ -113,7 +113,7 @@ From `[tool.poetry.group.dev.dependencies]`:
 - **ruff**: Linting and formatting
 - **pre-commit**: Git hooks for quality enforcement
 
-Runtime libraries relevant for development: `structlog`, `httpx`, `playwright`, `playwright-stealth`, `pydantic-settings`, `diskcache`, `redis`, `guessit`, `rapidfuzz`, `unidecode`.
+Runtime libraries relevant for development: `structlog`, `httpx`, `patchright`, `pydantic-settings`, `diskcache`, `redis`, `guessit`, `rapidfuzz`, `unidecode`.
 
 ## OpenSpec Integration
 

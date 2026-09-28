@@ -761,6 +761,28 @@ files = [
 ]
 
 [[package]]
+name = "patchright"
+version = "1.57.2"
+description = "Undetected Python version of the Playwright testing and automation library."
+optional = false
+python-versions = ">=3.9"
+groups = ["main"]
+files = [
+    {file = "patchright-1.57.2-py3-none-macosx_10_13_x86_64.whl", hash = "sha256:eecd88992104156da183bf0e0144a43c278227a0eb9e538ae62c3f01448b86b8"},
+    {file = "patchright-1.57.2-py3-none-macosx_11_0_arm64.whl", hash = "sha256:b16d07fc454fbd7392c29663784abf9a577b2482df3479ae487ecd8bc3948b68"},
+    {file = "patchright-1.57.2-py3-none-macosx_11_0_universal2.whl", hash = "sha256:af8e74a16af04dda592a8f8e89e4dd041e1ffcfd90566d17577176958fe80393"},
+    {file = "patchright-1.57.2-py3-none-manylinux1_x86_64.whl", hash = "sha256:5119daf606c0d21185ef4d2a6f4008db915173ed11601ebedd67abadcab0d594"},
+    {file = "patchright-1.57.2-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:b58d6b2122c47dc72204847eff0ec0ea67afcb1f6573fa3f357b149b389af4ff"},
+    {file = "patchright-1.57.2-py3-none-win32.whl", hash = "sha256:54f5f090ed5c9bb331c79c5546b9a43854ee87eb31072c308f45c76561e409b5"},
+    {file = "patchright-1.57.2-py3-none-win_amd64.whl", hash = "sha256:8865dca554dbe98b585e277f3d151e0b5fccdf3765408ec0c8631093f7828eda"},
+    {file = "patchright-1.57.2-py3-none-win_arm64.whl", hash = "sha256:830173d31c0a9eed6c03192e191dc007f30f05bc580764860cbd0001431f6f01"},
+]
+
+[package.dependencies]
+greenlet = ">=3.1.1,<4.0.0"
+pyee = ">=13,<14"
+
+[[package]]
 name = "platformdirs"
 version = "4.5.1"
 description = "A small Python package for determining appropriate platform-specific dirs, e.g. a `user data dir`."
@@ -776,46 +798,6 @@ files = [
 docs = ["furo (>=2025.9.25)", "proselint (>=0.14)", "sphinx (>=8.2.3)", "sphinx-autodoc-typehints (>=3.2)"]
 test = ["appdirs (==1.4.4)", "covdefaults (>=2.3)", "pytest (>=8.4.2)", "pytest-cov (>=7)", "pytest-mock (>=3.15.1)"]
 type = ["mypy (>=1.18.2)"]
-
-[[package]]
-name = "playwright"
-version = "1.57.0"
-description = "A high-level API to automate web browsers"
-optional = false
-python-versions = ">=3.9"
-groups = ["main"]
-files = [
-    {file = "playwright-1.57.0-py3-none-macosx_10_13_x86_64.whl", hash = "sha256:9351c1ac3dfd9b3820fe7fc4340d96c0d3736bb68097b9b7a69bd45d25e9370c"},
-    {file = "playwright-1.57.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:a4a9d65027bce48eeba842408bcc1421502dfd7e41e28d207e94260fa93ca67e"},
-    {file = "playwright-1.57.0-py3-none-macosx_11_0_universal2.whl", hash = "sha256:99104771abc4eafee48f47dac2369e0015516dc1ce8c409807d2dd440828b9a4"},
-    {file = "playwright-1.57.0-py3-none-manylinux1_x86_64.whl", hash = "sha256:284ed5a706b7c389a06caa431b2f0ba9ac4130113c3a779767dda758c2497bb1"},
-    {file = "playwright-1.57.0-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:38a1bae6c0a07839cdeaddbc0756b3b2b85e476c07945f64ece08f1f956a86f1"},
-    {file = "playwright-1.57.0-py3-none-win32.whl", hash = "sha256:1dd93b265688da46e91ecb0606d36f777f8eadcf7fbef12f6426b20bf0c9137c"},
-    {file = "playwright-1.57.0-py3-none-win_amd64.whl", hash = "sha256:6caefb08ed2c6f29d33b8088d05d09376946e49a73be19271c8cd5384b82b14c"},
-    {file = "playwright-1.57.0-py3-none-win_arm64.whl", hash = "sha256:5f065f5a133dbc15e6e7c71e7bc04f258195755b1c32a432b792e28338c8335e"},
-]
-
-[package.dependencies]
-greenlet = ">=3.1.1,<4.0.0"
-pyee = ">=13,<14"
-
-[[package]]
-name = "playwright-stealth"
-version = "2.0.1"
-description = "Make your playwright instance stealthy"
-optional = false
-python-versions = ">=3.9"
-groups = ["main"]
-files = [
-    {file = "playwright_stealth-2.0.1-py3-none-any.whl", hash = "sha256:3905776f45f175057dd9d7d1639280b8d639822580f15a01a2f9e7c35bff40af"},
-    {file = "playwright_stealth-2.0.1.tar.gz", hash = "sha256:a36f735d61469c12bda179b58d5fc4228bbee61c9cf5b1343b1497a5fd51ec1a"},
-]
-
-[package.dependencies]
-playwright = ">=1.40.0"
-
-[package.extras]
-black = ["black (>=25.9.0)"]
 
 [[package]]
 name = "pluggy"
@@ -1589,4 +1571,4 @@ test = ["covdefaults (>=2.3)", "coverage (>=7.2.7)", "coverage-enable-subprocess
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12,<3.14"
-content-hash = "d6b0685b959198888e56feb19c8a721f1458fc32354bfe010dc7e91627cc7de9"
+content-hash = "f5400b237fce936fc7b8be24f809aea90484650c57823b4c86b378d0a0bef9cf"

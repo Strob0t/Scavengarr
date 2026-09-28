@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from playwright.async_api import Page
+from patchright.async_api import Page
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
