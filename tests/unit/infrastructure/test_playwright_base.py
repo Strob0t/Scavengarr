@@ -894,7 +894,7 @@ class TestSearchAbstract:
 class TestSharedBrowserPool:
     @pytest.mark.asyncio
     async def test_warmup_launches_browser(self) -> None:
-        from scavengarr.infrastructure.plugins.shared_browser import SharedBrowserPool
+        from scavengarr.infrastructure.browser.shared_browser import SharedBrowserPool
 
         pool = SharedBrowserPool(headless=True)
         mock_browser = _make_mock_browser()
@@ -902,7 +902,7 @@ class TestSharedBrowserPool:
         mock_pw.chromium.launch = AsyncMock(return_value=mock_browser)
 
         with patch(
-            "scavengarr.infrastructure.plugins.shared_browser.async_playwright"
+            "scavengarr.infrastructure.browser.shared_browser.async_playwright"
         ) as mock_apw:
             mock_apw.return_value.start = AsyncMock(return_value=mock_pw)
             browser, pw = await pool.warmup()
@@ -921,7 +921,7 @@ class TestSharedBrowserPool:
         display: str | None,
         expected_headless: bool,
     ) -> None:
-        from scavengarr.infrastructure.plugins.shared_browser import SharedBrowserPool
+        from scavengarr.infrastructure.browser.shared_browser import SharedBrowserPool
 
         if display is None:
             monkeypatch.delenv("DISPLAY", raising=False)
@@ -932,7 +932,7 @@ class TestSharedBrowserPool:
         mock_pw.chromium.launch = AsyncMock(return_value=_make_mock_browser())
 
         with patch(
-            "scavengarr.infrastructure.plugins.shared_browser.async_playwright"
+            "scavengarr.infrastructure.browser.shared_browser.async_playwright"
         ) as mock_apw:
             mock_apw.return_value.start = AsyncMock(return_value=mock_pw)
             await pool.warmup()
@@ -942,7 +942,7 @@ class TestSharedBrowserPool:
     @pytest.mark.asyncio
     async def test_warmup_is_idempotent(self) -> None:
         """Calling warmup twice returns the same browser."""
-        from scavengarr.infrastructure.plugins.shared_browser import SharedBrowserPool
+        from scavengarr.infrastructure.browser.shared_browser import SharedBrowserPool
 
         pool = SharedBrowserPool(headless=True)
         mock_browser = _make_mock_browser()
@@ -950,7 +950,7 @@ class TestSharedBrowserPool:
         mock_pw.chromium.launch = AsyncMock(return_value=mock_browser)
 
         with patch(
-            "scavengarr.infrastructure.plugins.shared_browser.async_playwright"
+            "scavengarr.infrastructure.browser.shared_browser.async_playwright"
         ) as mock_apw:
             mock_apw.return_value.start = AsyncMock(return_value=mock_pw)
             b1, _ = await pool.warmup()
@@ -963,7 +963,7 @@ class TestSharedBrowserPool:
     @pytest.mark.asyncio
     async def test_concurrent_warmup_launches_once(self) -> None:
         """Concurrent warmup calls share the same launch."""
-        from scavengarr.infrastructure.plugins.shared_browser import SharedBrowserPool
+        from scavengarr.infrastructure.browser.shared_browser import SharedBrowserPool
 
         pool = SharedBrowserPool(headless=True)
         mock_browser = _make_mock_browser()
@@ -971,7 +971,7 @@ class TestSharedBrowserPool:
         mock_pw.chromium.launch = AsyncMock(return_value=mock_browser)
 
         with patch(
-            "scavengarr.infrastructure.plugins.shared_browser.async_playwright"
+            "scavengarr.infrastructure.browser.shared_browser.async_playwright"
         ) as mock_apw:
             mock_apw.return_value.start = AsyncMock(return_value=mock_pw)
             results = await asyncio.gather(pool.warmup(), pool.warmup(), pool.warmup())
@@ -981,7 +981,7 @@ class TestSharedBrowserPool:
 
     @pytest.mark.asyncio
     async def test_cleanup_closes_browser_and_pw(self) -> None:
-        from scavengarr.infrastructure.plugins.shared_browser import SharedBrowserPool
+        from scavengarr.infrastructure.browser.shared_browser import SharedBrowserPool
 
         pool = SharedBrowserPool(headless=True)
         mock_browser = _make_mock_browser()
@@ -999,7 +999,7 @@ class TestSharedBrowserPool:
 
     @pytest.mark.asyncio
     async def test_cleanup_noop_when_not_started(self) -> None:
-        from scavengarr.infrastructure.plugins.shared_browser import SharedBrowserPool
+        from scavengarr.infrastructure.browser.shared_browser import SharedBrowserPool
 
         pool = SharedBrowserPool(headless=True)
         await pool.cleanup()  # Should not raise
@@ -1007,7 +1007,7 @@ class TestSharedBrowserPool:
     @pytest.mark.asyncio
     async def test_cleanup_resilient_to_browser_close_error(self) -> None:
         """Cleanup completes even when browser.close() raises."""
-        from scavengarr.infrastructure.plugins.shared_browser import SharedBrowserPool
+        from scavengarr.infrastructure.browser.shared_browser import SharedBrowserPool
 
         pool = SharedBrowserPool(headless=True)
         mock_browser = _make_mock_browser()
@@ -1025,7 +1025,7 @@ class TestSharedBrowserPool:
     @pytest.mark.asyncio
     async def test_cleanup_resilient_to_pw_stop_error(self) -> None:
         """Cleanup completes even when pw.stop() raises."""
-        from scavengarr.infrastructure.plugins.shared_browser import SharedBrowserPool
+        from scavengarr.infrastructure.browser.shared_browser import SharedBrowserPool
 
         pool = SharedBrowserPool(headless=True)
         mock_browser = _make_mock_browser()
@@ -1042,7 +1042,7 @@ class TestSharedBrowserPool:
     @pytest.mark.asyncio
     async def test_relaunches_after_disconnect(self) -> None:
         """If the browser disconnects, warmup relaunches it."""
-        from scavengarr.infrastructure.plugins.shared_browser import SharedBrowserPool
+        from scavengarr.infrastructure.browser.shared_browser import SharedBrowserPool
 
         pool = SharedBrowserPool(headless=True)
 
@@ -1057,7 +1057,7 @@ class TestSharedBrowserPool:
         new_pw.chromium.launch = AsyncMock(return_value=new_browser)
 
         with patch(
-            "scavengarr.infrastructure.plugins.shared_browser.async_playwright"
+            "scavengarr.infrastructure.browser.shared_browser.async_playwright"
         ) as mock_apw:
             mock_apw.return_value.start = AsyncMock(return_value=new_pw)
             browser, pw = await pool.warmup()

@@ -16,13 +16,13 @@ import httpx
 import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
-from scavengarr.infrastructure.hoster_resolvers._verify import verify_video_url
-from scavengarr.infrastructure.hoster_resolvers.cloudflare import (
+from scavengarr.infrastructure.browser.cloudflare import (
     is_cloudflare_challenge,
 )
+from scavengarr.infrastructure.hoster_resolvers._verify import verify_video_url
 
 if TYPE_CHECKING:
-    from scavengarr.infrastructure.hoster_resolvers.stealth_pool import StealthPool
+    from scavengarr.infrastructure.browser.stealth_pool import StealthPool
 
 log = structlog.get_logger(__name__)
 

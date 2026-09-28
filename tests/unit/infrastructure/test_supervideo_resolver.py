@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 
-from scavengarr.infrastructure.hoster_resolvers.cloudflare import (
+from scavengarr.infrastructure.browser.cloudflare import (
     is_cloudflare_challenge,
 )
 from scavengarr.infrastructure.hoster_resolvers.supervideo import (

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from scavengarr.infrastructure.hoster_resolvers.stealth_pool import (
+from scavengarr.infrastructure.browser.stealth_pool import (
     _BLOCKED_RESOURCE_TYPES,
     _OFFLINE_MARKERS,
     StealthPool,
@@ -18,8 +18,8 @@ from scavengarr.infrastructure.hoster_resolvers.stealth_pool import (
 # ------------------------------------------------------------------
 
 
-def _mock_playwright_stack() -> tuple[AsyncMock, AsyncMock, AsyncMock]:
-    """Return (playwright, browser, context) mocks wired together."""
+def _mock_pool_stack() -> tuple[MagicMock, AsyncMock, AsyncMock]:
+    """Return (shared browser pool, browser, context) mocks wired together."""
     context = AsyncMock()
     context.new_page = AsyncMock()
     context.route = AsyncMock()
@@ -27,14 +27,12 @@ def _mock_playwright_stack() -> tuple[AsyncMock, AsyncMock, AsyncMock]:
 
     browser = AsyncMock()
     browser.new_context = AsyncMock(return_value=context)
-    browser.close = AsyncMock()
+    browser.is_connected = MagicMock(return_value=True)
 
-    playwright = AsyncMock()
-    playwright.chromium = MagicMock()
-    playwright.chromium.launch = AsyncMock(return_value=browser)
-    playwright.stop = AsyncMock()
+    shared_pool = MagicMock()
+    shared_pool.warmup = AsyncMock(return_value=(browser, MagicMock()))
 
-    return playwright, browser, context
+    return shared_pool, browser, context
 
 
 def _mock_page(
@@ -86,74 +84,57 @@ class TestBlockResources:
 
 
 class TestStealthPoolLifecycle:
-    """Browser init, resource blocking, cleanup."""
+    """Context on the shared browser, resource blocking, cleanup."""
 
-    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright")
-    async def test_ensure_context_launches_browser(self, mock_ap: MagicMock) -> None:
-        pw, browser, context = _mock_playwright_stack()
-        mock_ap.return_value.start = AsyncMock(return_value=pw)
+    async def test_ensure_context_uses_shared_browser(self) -> None:
+        shared_pool, browser, context = _mock_pool_stack()
 
-        pool = StealthPool(headless=True, timeout_ms=10_000)
+        pool = StealthPool(browser_pool=shared_pool, timeout_ms=10_000)
         ctx = await pool._ensure_context()
 
         assert ctx is context
-        pw.chromium.launch.assert_awaited_once_with(headless=True)
+        shared_pool.warmup.assert_awaited_once()
         browser.new_context.assert_awaited_once()
         context.route.assert_awaited_once()
 
-    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright")
-    @pytest.mark.parametrize(
-        ("display", "expected_headless"), [(":99", False), (None, True)]
-    )
-    async def test_headful_only_with_display(
-        self,
-        mock_ap: MagicMock,
-        monkeypatch: pytest.MonkeyPatch,
-        display: str | None,
-        expected_headless: bool,
-    ) -> None:
-        if display is None:
-            monkeypatch.delenv("DISPLAY", raising=False)
-        else:
-            monkeypatch.setenv("DISPLAY", display)
-        pw, browser, context = _mock_playwright_stack()
-        mock_ap.return_value.start = AsyncMock(return_value=pw)
+    async def test_ensure_context_reuses_existing(self) -> None:
+        shared_pool, browser, context = _mock_pool_stack()
 
-        await StealthPool(headless=False)._ensure_context()
-
-        pw.chromium.launch.assert_awaited_once_with(headless=expected_headless)
-
-    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright")
-    async def test_ensure_context_reuses_existing(self, mock_ap: MagicMock) -> None:
-        pw, browser, context = _mock_playwright_stack()
-        mock_ap.return_value.start = AsyncMock(return_value=pw)
-
-        pool = StealthPool()
+        pool = StealthPool(browser_pool=shared_pool)
         ctx1 = await pool._ensure_context()
         ctx2 = await pool._ensure_context()
 
         assert ctx1 is ctx2
-        # launch only called once
-        pw.chromium.launch.assert_awaited_once()
+        shared_pool.warmup.assert_awaited_once()
 
-    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright")
-    async def test_cleanup_closes_all_resources(self, mock_ap: MagicMock) -> None:
-        pw, browser, context = _mock_playwright_stack()
-        mock_ap.return_value.start = AsyncMock(return_value=pw)
+    async def test_recreates_context_after_browser_relaunch(self) -> None:
+        shared_pool, browser, context = _mock_pool_stack()
+        pool = StealthPool(browser_pool=shared_pool)
+        await pool._ensure_context()
 
-        pool = StealthPool()
+        browser.is_connected = MagicMock(return_value=False)
+        new_context = AsyncMock()
+        new_browser = AsyncMock()
+        new_browser.new_context = AsyncMock(return_value=new_context)
+        new_browser.is_connected = MagicMock(return_value=True)
+        shared_pool.warmup = AsyncMock(return_value=(new_browser, MagicMock()))
+
+        assert await pool._ensure_context() is new_context
+
+    async def test_cleanup_closes_only_context(self) -> None:
+        shared_pool, browser, context = _mock_pool_stack()
+
+        pool = StealthPool(browser_pool=shared_pool)
         await pool._ensure_context()
         await pool.cleanup()
 
         context.close.assert_awaited_once()
-        browser.close.assert_awaited_once()
-        pw.stop.assert_awaited_once()
+        browser.close.assert_not_awaited()
         assert pool._context is None
-        assert pool._browser is None
-        assert pool._playwright is None
 
     async def test_cleanup_noop_when_not_started(self) -> None:
-        pool = StealthPool()
+        shared_pool, _, _ = _mock_pool_stack()
+        pool = StealthPool(browser_pool=shared_pool)
         await pool.cleanup()  # no error
 
 
@@ -165,76 +146,63 @@ class TestStealthPoolLifecycle:
 class TestStealthPoolProbe:
     """probe_url navigation and classification."""
 
-    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright")
-    async def test_alive_page(self, mock_ap: MagicMock) -> None:
-        pw, browser, context = _mock_playwright_stack()
-        mock_ap.return_value.start = AsyncMock(return_value=pw)
+    async def test_alive_page(self) -> None:
+        shared_pool, browser, context = _mock_pool_stack()
 
         page = _mock_page(html="<html><body>Video Player</body></html>")
         context.new_page = AsyncMock(return_value=page)
 
-        pool = StealthPool(timeout_ms=5_000)
+        pool = StealthPool(browser_pool=shared_pool, timeout_ms=5_000)
         result = await pool.probe_url("https://example.com/e/abc123")
 
         assert result is True
         page.goto.assert_awaited_once()
         page.close.assert_awaited_once()
 
-    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright")
     @pytest.mark.parametrize("marker", _OFFLINE_MARKERS)
     async def test_dead_page_offline_marker(
         self,
-        mock_ap: MagicMock,
         marker: str,
     ) -> None:
-        pw, browser, context = _mock_playwright_stack()
-        mock_ap.return_value.start = AsyncMock(return_value=pw)
+        shared_pool, browser, context = _mock_pool_stack()
 
         page = _mock_page(html=f"<html><body>{marker}</body></html>")
         context.new_page = AsyncMock(return_value=page)
 
-        pool = StealthPool()
+        pool = StealthPool(browser_pool=shared_pool)
         result = await pool.probe_url("https://example.com/e/abc123")
 
         assert result is False
 
-    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright")
-    async def test_navigation_error_returns_false(self, mock_ap: MagicMock) -> None:
-        pw, browser, context = _mock_playwright_stack()
-        mock_ap.return_value.start = AsyncMock(return_value=pw)
+    async def test_navigation_error_returns_false(self) -> None:
+        shared_pool, browser, context = _mock_pool_stack()
 
         page = _mock_page()
         page.goto = AsyncMock(side_effect=Exception("net::ERR_CONNECTION_REFUSED"))
         context.new_page = AsyncMock(return_value=page)
 
-        pool = StealthPool()
+        pool = StealthPool(browser_pool=shared_pool)
         result = await pool.probe_url("https://example.com/e/abc123")
 
         assert result is False
         page.close.assert_awaited_once()
 
-    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright")
-    async def test_page_closed_even_on_error(self, mock_ap: MagicMock) -> None:
-        pw, browser, context = _mock_playwright_stack()
-        mock_ap.return_value.start = AsyncMock(return_value=pw)
+    async def test_page_closed_even_on_error(self) -> None:
+        shared_pool, browser, context = _mock_pool_stack()
 
         page = _mock_page()
         page.content = AsyncMock(side_effect=RuntimeError("closed"))
         context.new_page = AsyncMock(return_value=page)
 
-        pool = StealthPool()
+        pool = StealthPool(browser_pool=shared_pool)
         result = await pool.probe_url("https://example.com/e/abc")
 
         assert result is False
         page.close.assert_awaited_once()
 
-    @patch("scavengarr.infrastructure.hoster_resolvers.stealth_pool.async_playwright")
-    async def test_cf_wait_timeout_still_checks_content(
-        self, mock_ap: MagicMock
-    ) -> None:
+    async def test_cf_wait_timeout_still_checks_content(self) -> None:
         """Even if CF wait times out, content is still checked."""
-        pw, browser, context = _mock_playwright_stack()
-        mock_ap.return_value.start = AsyncMock(return_value=pw)
+        shared_pool, browser, context = _mock_pool_stack()
 
         page = _mock_page(
             html="<html><body>Video Player active</body></html>",
@@ -243,7 +211,7 @@ class TestStealthPoolProbe:
         page.wait_for_function = AsyncMock(side_effect=TimeoutError("CF wait"))
         context.new_page = AsyncMock(return_value=page)
 
-        pool = StealthPool()
+        pool = StealthPool(browser_pool=shared_pool)
         result = await pool.probe_url("https://example.com/e/abc")
 
         # CF wait timed out but page content is alive

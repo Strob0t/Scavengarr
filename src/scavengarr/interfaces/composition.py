@@ -16,6 +16,8 @@ from scavengarr.application.factories import CrawlJobFactory
 from scavengarr.application.use_cases.stremio_catalog import StremioCatalogUseCase
 from scavengarr.application.use_cases.stremio_stream import StremioStreamUseCase
 from scavengarr.domain.entities.crawljob import Priority
+from scavengarr.infrastructure.browser.shared_browser import SharedBrowserPool
+from scavengarr.infrastructure.browser.stealth_pool import StealthPool
 from scavengarr.infrastructure.cache.cache_factory import create_cache
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.common.rate_limiter import DomainRateLimiter
@@ -36,7 +38,6 @@ from scavengarr.infrastructure.hoster_resolvers.probe import probe_urls_stealth
 from scavengarr.infrastructure.hoster_resolvers.rapidgator import RapidgatorResolver
 from scavengarr.infrastructure.hoster_resolvers.sendvid import SendVidResolver
 from scavengarr.infrastructure.hoster_resolvers.serienstream import SerienstreamResolver
-from scavengarr.infrastructure.hoster_resolvers.stealth_pool import StealthPool
 from scavengarr.infrastructure.hoster_resolvers.stmix import StmixResolver
 from scavengarr.infrastructure.hoster_resolvers.streamtape import StreamtapeResolver
 from scavengarr.infrastructure.hoster_resolvers.strmup import StrmupResolver
@@ -62,7 +63,6 @@ from scavengarr.infrastructure.plugins.constants import (
     search_max_results,
 )
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
-from scavengarr.infrastructure.plugins.shared_browser import SharedBrowserPool
 from scavengarr.infrastructure.resource_detector import detect_resources
 from scavengarr.infrastructure.scoring.health_prober import HealthProber
 from scavengarr.infrastructure.scoring.query_pool import QueryPoolBuilder
@@ -332,10 +332,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             reason="no API key, using IMDB suggest API",
         )
 
-    # 8) Stealth pool (Playwright stealth browser for CF bypass — used by
-    #    SuperVideoResolver and optionally by stealth probes)
-    state.stealth_pool = StealthPool(
+    # 8) One Chromium process for everything: the shared browser pool serves
+    #    the Playwright plugins (own contexts) and the stealth pool (CF bypass
+    #    context used by SuperVideoResolver and stealth probes).
+    state.shared_browser_pool = SharedBrowserPool(
         headless=config.playwright_headless,
+    )
+    state.stealth_pool = StealthPool(
+        browser_pool=state.shared_browser_pool,
         timeout_ms=int(config.stremio.probe_stealth_timeout_seconds * 1000),
     )
     log.info("stealth_pool_configured")
@@ -397,11 +401,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if config.scoring.enabled:
         _wire_scoring(state, config)
 
-    # 12) Shared browser pool for Playwright plugins (single Chromium process)
-    #     (must come after stealth pool — both use Playwright, but independently)
-    state.shared_browser_pool = SharedBrowserPool(
-        headless=config.playwright_headless,
-    )
+    # 12) Playwright plugins share the browser created in step 8
     _inject_shared_browser_pool(state.plugins, state.shared_browser_pool)
     log.info("shared_browser_pool_configured")
 
@@ -471,13 +471,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 await state._scoring_task
             log.info("scoring_scheduler_stopped")
 
-        if state.shared_browser_pool is not None:
-            await state.shared_browser_pool.cleanup()
-            log.info("shared_browser_pool_cleaned_up")
-
+        # Stealth context first: it lives on the shared browser.
         if state.stealth_pool is not None:
             await state.stealth_pool.cleanup()
             log.info("stealth_pool_cleaned_up")
+
+        if state.shared_browser_pool is not None:
+            await state.shared_browser_pool.cleanup()
+            log.info("shared_browser_pool_cleaned_up")
 
         await state.hoster_resolver_registry.cleanup()
         log.info("hoster_resolvers_cleaned_up")

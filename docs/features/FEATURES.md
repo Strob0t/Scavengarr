@@ -31,7 +31,7 @@ Current plugin, resolver, and test counts are listed in the [repository README](
 | Global Concurrency Pool | [x] Implemented | Fair-share httpx/Playwright slot budgets across requests |
 | Container-Aware Auto-Tune | [x] Implemented | Concurrency limits derived from cgroup v2/v1 CPU/memory at startup |
 | Shared Browser Pool | [x] Implemented | One Chromium process shared by all Playwright plugins |
-| Stealth Pool | [x] Implemented | Separate Patchright browser for Cloudflare-protected hosters and probes |
+| Stealth Pool | [x] Implemented | Own Patchright context on the shared Chromium for Cloudflare-protected hosters and probes |
 | Multi-Language Search | [x] Implemented | Per-language TMDB title resolution, plugins declare `languages` |
 | Stream Deduplication | [x] Implemented | Per-hoster dedup keeps best-ranked stream only |
 | Graceful Shutdown | [x] Implemented | Drain in-flight requests before stopping |
@@ -310,14 +310,14 @@ Infrastructure (implements Domain ports)
 | Plugin loader | `src/scavengarr/infrastructure/plugins/loader.py` |
 | HttpxPluginBase | `src/scavengarr/infrastructure/plugins/httpx_base.py` |
 | PlaywrightPluginBase | `src/scavengarr/infrastructure/plugins/playwright_base.py` |
-| Shared browser pool | `src/scavengarr/infrastructure/plugins/shared_browser.py` |
+| Shared browser pool | `src/scavengarr/infrastructure/browser/shared_browser.py` |
 | Search engine | `src/scavengarr/infrastructure/torznab/search_engine.py` |
 | Torznab presenter | `src/scavengarr/infrastructure/torznab/presenter.py` |
 | Link validator | `src/scavengarr/infrastructure/validation/http_link_validator.py` |
 | Stremio infrastructure | `src/scavengarr/infrastructure/stremio/` |
 | TMDB client + IMDB fallback | `src/scavengarr/infrastructure/tmdb/` |
 | Hoster resolvers | `src/scavengarr/infrastructure/hoster_resolvers/` |
-| Stealth pool | `src/scavengarr/infrastructure/hoster_resolvers/stealth_pool.py` |
+| Stealth pool | `src/scavengarr/infrastructure/browser/stealth_pool.py` |
 | Circuit breaker | `src/scavengarr/infrastructure/circuit_breaker.py` |
 | Concurrency pool | `src/scavengarr/infrastructure/concurrency.py` |
 | Resource detector | `src/scavengarr/infrastructure/resource_detector.py` |

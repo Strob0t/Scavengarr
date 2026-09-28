@@ -274,8 +274,8 @@ The XFS resolver tests are parameterised over all `ALL_XFS_CONFIGS` entries and 
 | Generic DDL module | `src/scavengarr/infrastructure/hoster_resolvers/generic_ddl.py` |
 | Video extraction utilities | `src/scavengarr/infrastructure/hoster_resolvers/_video_extract.py` |
 | CDN verification | `src/scavengarr/infrastructure/hoster_resolvers/_verify.py` |
-| Cloudflare detection | `src/scavengarr/infrastructure/hoster_resolvers/cloudflare.py` |
+| Cloudflare detection | `src/scavengarr/infrastructure/browser/cloudflare.py` |
 | Liveness probe | `src/scavengarr/infrastructure/hoster_resolvers/probe.py` |
-| Stealth pool (Playwright) | `src/scavengarr/infrastructure/hoster_resolvers/stealth_pool.py` |
+| Stealth pool (Playwright) | `src/scavengarr/infrastructure/browser/stealth_pool.py` |
 | Individual resolvers | `src/scavengarr/infrastructure/hoster_resolvers/<name>.py` |
 | Composition wiring | `src/scavengarr/interfaces/composition.py` |

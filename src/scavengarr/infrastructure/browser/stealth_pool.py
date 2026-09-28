@@ -1,8 +1,8 @@
-"""Patchright browser pool for Cloudflare bypass probing.
+"""Patchright stealth context for Cloudflare bypass probing and fetching.
 
-Manages a single Chromium instance driven by Patchright, which removes the
-automation leaks (``Runtime.enable``, automation launch flags) that
-Cloudflare detects.
+Runs in its own context on the shared Chromium of ``SharedBrowserPool``
+(one browser process). Patchright removes the automation leaks
+(``Runtime.enable``, automation launch flags) that Cloudflare detects.
 Pages are created per-probe and closed immediately after.
 Resource blocking (images, fonts, CSS, media) keeps navigation fast.
 """
@@ -10,19 +10,15 @@ Resource blocking (images, fonts, CSS, media) keeps navigation fast.
 from __future__ import annotations
 
 import asyncio
+from typing import TYPE_CHECKING
 
 import structlog
-from patchright.async_api import (
-    Browser,
-    BrowserContext,
-    Page,
-    Playwright,
-    Route,
-    async_playwright,
-)
+from patchright.async_api import Browser, BrowserContext, Page, Route
 
-from scavengarr.infrastructure.browser.display import resolve_headless
-from scavengarr.infrastructure.hoster_resolvers.cloudflare import _CF_MARKERS
+from scavengarr.infrastructure.browser.cloudflare import _CF_MARKERS
+
+if TYPE_CHECKING:
+    from scavengarr.infrastructure.browser.shared_browser import SharedBrowserPool
 
 log = structlog.get_logger(__name__)
 
@@ -57,9 +53,13 @@ async def _block_resources(route: Route) -> None:
 class StealthPool:
     """Lazy-init Patchright browser pool for Cloudflare bypass probing.
 
+    Runs on the Chromium of :class:`SharedBrowserPool` (one browser process
+    for plugins and probes) in its own persistent context, so Cloudflare
+    clearance cookies survive between probes.
+
     Usage::
 
-        pool = StealthPool(headless=False, timeout_ms=15_000)
+        pool = StealthPool(browser_pool=shared_pool, timeout_ms=15_000)
         alive = await pool.probe_url("https://example.com/embed/abc")
         await pool.cleanup()
     """
@@ -67,12 +67,11 @@ class StealthPool:
     def __init__(
         self,
         *,
-        headless: bool = False,
+        browser_pool: SharedBrowserPool,
         timeout_ms: int = 15_000,
     ) -> None:
-        self._headless = headless
+        self._browser_pool = browser_pool
         self._timeout_ms = timeout_ms
-        self._playwright: Playwright | None = None
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
         self._lock = asyncio.Lock()
@@ -81,38 +80,47 @@ class StealthPool:
     # Lifecycle
     # ------------------------------------------------------------------
 
+    def _context_is_usable(self) -> bool:
+        return (
+            self._context is not None
+            and self._browser is not None
+            and self._browser.is_connected()
+        )
+
     async def _ensure_context(self) -> BrowserContext:
-        """Launch browser + context (double-check lock)."""
-        if self._context is not None:
+        """Create the context on the shared browser (double-check lock).
+
+        Recreated when the shared browser was relaunched after a crash.
+        """
+        if self._context_is_usable():
+            assert self._context is not None
             return self._context
         async with self._lock:
-            if self._context is not None:
+            if self._context_is_usable():
+                assert self._context is not None
                 return self._context
 
-            self._playwright = await async_playwright().start()
-            headless = resolve_headless(self._headless)
-            self._browser = await self._playwright.chromium.launch(
-                headless=headless,
-            )
+            self._browser, _ = await self._browser_pool.warmup()
             self._context = await self._browser.new_context()
 
             # Block heavy resources on all pages in this context
             await self._context.route("**/*", _block_resources)
 
-            log.info("stealth_pool_started", headless=headless)
+            log.info("stealth_pool_started")
             return self._context
 
     async def cleanup(self) -> None:
-        """Close context, browser, and Playwright — idempotent."""
+        """Close the stealth context — idempotent.
+
+        The browser belongs to :class:`SharedBrowserPool` and is closed there.
+        """
         if self._context is not None:
-            await self._context.close()
+            try:
+                await self._context.close()
+            except Exception:  # noqa: BLE001
+                log.debug("stealth_context_close_error", exc_info=True)
             self._context = None
-        if self._browser is not None:
-            await self._browser.close()
-            self._browser = None
-        if self._playwright is not None:
-            await self._playwright.stop()
-            self._playwright = None
+        self._browser = None
 
     # ------------------------------------------------------------------
     # Public API

@@ -10,7 +10,7 @@ import httpx
 import structlog
 
 from scavengarr.domain.entities.scoring import ProbeResult
-from scavengarr.infrastructure.hoster_resolvers.cloudflare import (
+from scavengarr.infrastructure.browser.cloudflare import (
     is_cloudflare_challenge,
 )
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from scavengarr.infrastructure.hoster_resolvers.cloudflare import (
+from scavengarr.infrastructure.browser.cloudflare import (
     _CF_MARKERS,
     is_cloudflare_challenge,
 )

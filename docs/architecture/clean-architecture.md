@@ -270,7 +270,7 @@ Infrastructure implements the ports defined by Domain and provides concrete adap
 - **Configuration** (`config/`): layered config loading (defaults < YAML < ENV < CLI) with Pydantic validation.
 - **Logging** (`logging/`): structured logging via structlog with an async `QueueHandler` for non-blocking emission.
 - **Common** (`common/`): `to_int`, `parse_size_to_bytes`, `DomainRateLimiter`/`TokenBucket` (optionally adaptive), `RetryTransport` (429/503 retry + rate limiting).
-- **Hoster resolvers** (`hoster_resolvers/`): `HosterResolverRegistry`, XFS/generic-DDL/dedicated resolvers, liveness probes (`probe.py`), `StealthPool` for Cloudflare-protected pages. See [Hoster Resolvers](../features/hoster-resolvers.md).
+- **Hoster resolvers** (`hoster_resolvers/`): `HosterResolverRegistry`, XFS/generic-DDL/dedicated resolvers, liveness probes (`probe.py`); `StealthPool` (in `infrastructure/browser/`) for Cloudflare-protected pages. See [Hoster Resolvers](../features/hoster-resolvers.md).
 - **Stremio** (`stremio/`): stream converter, sorter, title matcher, release parser, episode filter, HLS proxy.
 - **TMDB** (`tmdb/`): `HttpxTmdbClient` and the key-less `ImdbFallbackClient`.
 - **Scoring** (`scoring/`): EWMA plugin scoring, health/search probers, query pool, background `ScoringScheduler`.
@@ -329,11 +329,11 @@ The composition root is where concrete implementations are wired together. It ru
 5.  CacheCrawlJobRepository
 6.  CrawlJobFactory
 7.  TMDB client (HttpxTmdbClient with API key, else ImdbFallbackClient)
-8.  StealthPool
+8.  SharedBrowserPool (one Chromium) + StealthPool (own context on that browser)
 9.  HosterResolverRegistry (dedicated + generic DDL + XFS resolvers)
 10. CacheStreamLinkRepository
 11. Plugin scoring (CachePluginScoreStore + ScoringScheduler task, only if scoring.enabled)
-12. SharedBrowserPool (injected into Playwright plugins)
+12. SharedBrowserPool injected into Playwright plugins
 13. ConcurrencyPool
 14. PluginCircuitBreaker
 15. StremioStreamUseCase + StremioCatalogUseCase
@@ -345,8 +345,8 @@ The composition root is where concrete implementations are wired together. It ru
 ```text
 1. Drain in-flight requests (GracefulShutdown, 10 s timeout)
 2. Cancel scoring task
-3. SharedBrowserPool.cleanup()
-4. StealthPool.cleanup()
+3. StealthPool.cleanup() (its context lives on the shared browser)
+4. SharedBrowserPool.cleanup()
 5. HosterResolverRegistry.cleanup()
 6. http_client.aclose()
 7. cache.aclose()

@@ -620,7 +620,7 @@ For Playwright plugins, patch `scavengarr.infrastructure.plugins.playwright_base
 | PlaywrightPluginBase | `src/scavengarr/infrastructure/plugins/playwright_base.py` |
 | Plugin constants (defaults, `search_max_results`) | `src/scavengarr/infrastructure/plugins/constants.py` |
 | Per-request browser context (`request_browser_context`) | `src/scavengarr/infrastructure/plugins/context_vars.py` |
-| SharedBrowserPool | `src/scavengarr/infrastructure/plugins/shared_browser.py` |
+| SharedBrowserPool | `src/scavengarr/infrastructure/browser/shared_browser.py` |
 | Shared client and pool wiring | `src/scavengarr/interfaces/composition.py` |
 | Reference Playwright plugin | `plugins/boerse.py` |
 | Reference httpx plugins | `plugins/einschalten.py`, `plugins/filmpalast_to.py` |

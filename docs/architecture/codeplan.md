@@ -56,7 +56,8 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 | `infrastructure/cache/` | `CachePort` backends | `create_cache()`, `DiskcacheAdapter`, `RedisAdapter` |
 | `infrastructure/common/` | Converters, parsers, outbound rate limiting and retry | `to_int`, `parse_size_to_bytes`, `TokenBucket`, `DomainRateLimiter`, `RetryTransport` |
 | `infrastructure/config/` | Layered configuration | `DEFAULT_CONFIG`, `AppConfig`, `CacheConfig`, `StremioConfig`, `ScoringConfig`, `PluginsConfig`, `PluginOverride`, `EnvOverrides`, `load_config()` |
-| `infrastructure/hoster_resolvers/` | Hoster URL resolution and liveness probing | `HosterResolverRegistry`, `extract_domain`, `XFSResolver`/`XFSConfig`, `GenericDDLResolver`/`GenericDDLConfig`, dedicated `*Resolver` classes, `probe_url`, `probe_urls_stealth`, `StealthPool`, `is_cloudflare_challenge`, `verify_video_url` |
+| `infrastructure/hoster_resolvers/` | Hoster URL resolution and liveness probing | `HosterResolverRegistry`, `extract_domain`, `XFSResolver`/`XFSConfig`, `GenericDDLResolver`/`GenericDDLConfig`, dedicated `*Resolver` classes, `probe_url`, `probe_urls_stealth`, `verify_video_url` |
+| `infrastructure/browser/` | Browser process and Cloudflare handling | `SharedBrowserPool` (one Chromium), `StealthPool` (CF-bypass context on it), `resolve_headless`, `is_cloudflare_challenge` |
 | `infrastructure/logging/` | structlog + stdlib setup with async emission | `configure_logging()` |
 | `infrastructure/persistence/` | `CachePort`-backed repositories (JSON) | `CacheCrawlJobRepository`, `CacheStreamLinkRepository`, `CachePluginScoreStore` |
 | `infrastructure/plugins/` | Plugin discovery, loading and base classes | `PluginRegistry`, `load_python_plugin()`, `HttpxPluginBase`, `PlaywrightPluginBase`, `SharedBrowserPool`, `request_browser_context`, `search_max_results`, `DEFAULT_*` constants |

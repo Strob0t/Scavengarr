@@ -26,11 +26,11 @@ if TYPE_CHECKING:
         StreamLinkRepository,
     )
     from scavengarr.domain.ports.tmdb import TmdbClientPort
+    from scavengarr.infrastructure.browser.shared_browser import SharedBrowserPool
+    from scavengarr.infrastructure.browser.stealth_pool import StealthPool
     from scavengarr.infrastructure.concurrency import ConcurrencyPool
     from scavengarr.infrastructure.hoster_resolvers import HosterResolverRegistry
-    from scavengarr.infrastructure.hoster_resolvers.stealth_pool import StealthPool
     from scavengarr.infrastructure.metrics import MetricsCollector
-    from scavengarr.infrastructure.plugins.shared_browser import SharedBrowserPool
     from scavengarr.infrastructure.scoring.scheduler import ScoringScheduler
 
 
