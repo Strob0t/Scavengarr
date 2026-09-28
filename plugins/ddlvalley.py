@@ -254,30 +254,12 @@ class DDLValleyPlugin(PlaywrightPluginBase):
             if not page.is_closed():
                 await page.close()
 
-    async def _fetch_detail_html(self, url: str) -> str | None:
-        """Load a post page, retrying rate-limit errors with backoff."""
-        ctx = await self._ensure_context()
-        page = await ctx.new_page()
-        try:
-            for attempt, backoff in enumerate((*_RETRY_BACKOFF_S, None)):
-                if await self._navigate_and_wait(page, url, wait_for_idle=False):
-                    return await page.content()
-                if backoff is None:
-                    return None
-                self._log.debug("ddlvalley_detail_retry", url=url, attempt=attempt + 1)
-                await asyncio.sleep(backoff)
-            return None
-        except Exception:  # noqa: BLE001
-            self._log.warning("ddlvalley_detail_fetch_failed", url=url)
-            return None
-        finally:
-            if not page.is_closed():
-                await page.close()
-
     async def _scrape_detail(self, post: dict[str, str]) -> SearchResult | None:
         """Scrape a detail page for download links."""
-        html = await self._fetch_detail_html(post["url"])
-        if html is None:
+        html = await self._fetch_page_html(
+            post["url"], wait_for_idle=False, retry_backoff_s=_RETRY_BACKOFF_S
+        )
+        if not html:
             return None
 
         # Extract title from <title> tag (more reliable than search page)

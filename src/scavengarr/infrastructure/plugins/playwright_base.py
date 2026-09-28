@@ -36,6 +36,9 @@ from .constants import (
     search_max_results,
 )
 
+# Statuses worth retrying in _fetch_page_html (rate limits, overloaded origin)
+_RETRY_STATUSES = frozenset({429, 502, 503, 504})
+
 
 class PlaywrightPluginBase:
     """Shared base for Playwright-based Python plugins.
@@ -389,29 +392,40 @@ class PlaywrightPluginBase:
         *,
         wait_until: str = "domcontentloaded",
         timeout: int = 30_000,
+        wait_for_idle: bool = True,
+        retry_backoff_s: tuple[float, ...] = (),
     ) -> str:
-        """Navigate to *url* and return the page HTML.
+        """Navigate to *url* and return the page HTML ("" on failure).
 
-        Waits for a potential Cloudflare challenge and ``networkidle``
-        before reading the DOM.  Returns an empty string on failure.
+        Solves a Cloudflare challenge if one is shown, optionally waits for
+        ``networkidle``.  A transient failure (429/502/503/504 or no
+        response) is retried once per entry in *retry_backoff_s*, sleeping
+        that long first; other errors (e.g. 404) fail at once.
         """
         page = await self._new_page()
         try:
-            resp = await page.goto(url, wait_until=wait_until, timeout=timeout)
-            if not await self._passes_cloudflare(page, resp):
+            for backoff in (*retry_backoff_s, None):
+                resp = await page.goto(url, wait_until=wait_until, timeout=timeout)
+                if await self._passes_cloudflare(page, resp):
+                    break
                 self._log.warning(
                     f"{self.name}_page_error",
                     url=url,
                     status=resp.status if resp else None,
+                    retry_in_s=backoff,
                 )
-                return ""
-            try:
-                await page.wait_for_load_state(
-                    "networkidle",
-                    timeout=self._networkidle_timeout_ms,
-                )
-            except Exception:  # noqa: BLE001
-                self._log.debug("networkidle_timeout", url=url)
+                transient = resp is None or resp.status in _RETRY_STATUSES
+                if backoff is None or not transient:
+                    return ""
+                await asyncio.sleep(backoff)
+            if wait_for_idle:
+                try:
+                    await page.wait_for_load_state(
+                        "networkidle",
+                        timeout=self._networkidle_timeout_ms,
+                    )
+                except Exception:  # noqa: BLE001
+                    self._log.debug("networkidle_timeout", url=url)
             return await page.content()
         except Exception as exc:  # noqa: BLE001
             self._log.warning(

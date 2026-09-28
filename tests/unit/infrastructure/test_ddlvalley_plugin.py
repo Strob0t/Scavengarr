@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 from types import ModuleType
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "ddlvalley.py"
 
@@ -443,40 +443,21 @@ class TestPluginSearch:
         assert results == []
 
 
-class TestFetchDetailHtml:
-    """Rate-limited post pages (nginx 503) are retried with backoff."""
+class TestScrapeDetailRetry:
+    """Post pages are rate-limited (nginx 503): fetched with retry backoff."""
 
-    @staticmethod
-    def _page_with_statuses(statuses: list[int]) -> AsyncMock:
-        page = _make_mock_page("<html>post</html>")
-        page.goto = AsyncMock(side_effect=[MagicMock(status=s) for s in statuses])
-        page.title = AsyncMock(return_value="503 Service Temporarily Unavailable")
-        return page
-
-    async def test_retries_after_rate_limit(self) -> None:
+    async def test_passes_retry_backoff(self) -> None:
         plugin = _make_plugin()
-        page = self._page_with_statuses([503, 200])
-        plugin._context = _make_mock_context(pages=[page])
-        plugin._wait_for_cloudflare = AsyncMock(return_value=True)
+        plugin._fetch_page_html = AsyncMock(return_value="")
 
-        with patch.object(_mod.asyncio, "sleep", AsyncMock()) as mock_sleep:
-            html = await plugin._fetch_detail_html("https://www.ddlvalley.me/p/")
+        result = await plugin._scrape_detail({"url": "https://www.ddlvalley.me/p/"})
 
-        assert html == "<html>post</html>"
-        mock_sleep.assert_awaited_once_with(2.0)
-
-    async def test_gives_up_after_retries(self) -> None:
-        plugin = _make_plugin()
-        page = self._page_with_statuses([503, 503, 503])
-        plugin._context = _make_mock_context(pages=[page])
-
-        with patch.object(_mod.asyncio, "sleep", AsyncMock()) as mock_sleep:
-            html = await plugin._fetch_detail_html("https://www.ddlvalley.me/p/")
-
-        assert html is None
-        assert page.goto.await_count == 3
-        assert [c.args[0] for c in mock_sleep.await_args_list] == [2.0, 4.0]
-        page.close.assert_awaited_once()
+        assert result is None
+        plugin._fetch_page_html.assert_awaited_once_with(
+            "https://www.ddlvalley.me/p/",
+            wait_for_idle=False,
+            retry_backoff_s=(2.0, 4.0),
+        )
 
 
 class TestCloudflareWait:

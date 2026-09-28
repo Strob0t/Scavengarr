@@ -33,6 +33,8 @@ def _page(titles: list[str], frames: list[MagicMock] | None = None) -> MagicMock
     page.title = AsyncMock(side_effect=_title)
     page.frames = frames or []
     page.wait_for_timeout = AsyncMock()
+    page.wait_for_url = AsyncMock()
+    page.wait_for_load_state = AsyncMock()
     return page
 
 
@@ -103,3 +105,31 @@ class TestSolveCloudflare:
 
         assert await solve_cloudflare(page, timeout_ms=10_000) is False
         challenge.locator.return_value.first.click.assert_awaited()
+
+
+class TestSettleAfterSolve:
+    """After the title changes, Cloudflare still redirects (drops __cf_chl_tk)."""
+
+    async def test_waits_for_redirect_and_dom(self) -> None:
+        page = _page(["Just a moment...", "FilmFans"])
+
+        assert await solve_cloudflare(page, timeout_ms=10_000) is True
+
+        page.wait_for_url.assert_awaited_once()
+        predicate = page.wait_for_url.await_args.args[0]
+        assert predicate("https://x.org/?s=a&__cf_chl_tk=abc") is False
+        assert predicate("https://x.org/?s=a") is True
+        page.wait_for_load_state.assert_awaited_once_with("domcontentloaded")
+
+    async def test_settle_timeout_still_counts_as_solved(self) -> None:
+        page = _page(["Just a moment...", "FilmFans"])
+        page.wait_for_url = AsyncMock(side_effect=TimeoutError("no redirect"))
+
+        assert await solve_cloudflare(page, timeout_ms=10_000) is True
+
+    async def test_no_settle_without_challenge(self) -> None:
+        page = _page(["FilmFans"])
+
+        await solve_cloudflare(page, timeout_ms=10_000)
+
+        page.wait_for_url.assert_not_awaited()

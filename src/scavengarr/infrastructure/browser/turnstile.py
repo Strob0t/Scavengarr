@@ -31,6 +31,7 @@ _CLICK_AFTER_S = 3.0  # give non-interactive challenges a chance first
 _RECLICK_EVERY_S = 8.0
 _POLL_MS = 500
 _CLICK_TIMEOUT_MS = 3_000
+_SETTLE_TIMEOUT_MS = 10_000
 
 
 def _now() -> float:
@@ -61,6 +62,23 @@ async def _click_checkbox(page: Page) -> bool:
     return False
 
 
+async def _settle(page: Page) -> None:
+    """Wait for the post-challenge redirect that drops ``__cf_chl_tk``.
+
+    The challenge title disappears before that navigation finishes; reading
+    the page too early fails with "page is navigating".
+    """
+    try:
+        await page.wait_for_url(
+            lambda url: "__cf_chl" not in url,
+            timeout=_SETTLE_TIMEOUT_MS,
+            wait_until="domcontentloaded",
+        )
+        await page.wait_for_load_state("domcontentloaded")
+    except Exception:  # noqa: BLE001  (no redirect: page is already final)
+        log.debug("cloudflare_settle_timeout", url=page.url)
+
+
 async def solve_cloudflare(page: Page, *, timeout_ms: int) -> bool:
     """Wait for a Cloudflare challenge to clear, clicking Turnstile if needed.
 
@@ -83,5 +101,6 @@ async def solve_cloudflare(page: Page, *, timeout_ms: int) -> bool:
             last_click = now
         await page.wait_for_timeout(_POLL_MS)
         if not await is_challenge_page(page):
+            await _settle(page)
             log.info("cloudflare_solved", url=page.url, clicked=last_click is not None)
             return True

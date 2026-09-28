@@ -616,6 +616,87 @@ class TestFetchPageHtml:
 # ---------------------------------------------------------------------------
 
 
+class TestFetchPageHtmlRetry:
+    """Rate-limited pages (e.g. nginx 503) are retried with backoff."""
+
+    @staticmethod
+    def _plugin_with_page(statuses: list[int]) -> tuple[_TestPlugin, AsyncMock]:
+        plugin = _TestPlugin()
+        page = AsyncMock()
+        page.is_closed = MagicMock(return_value=False)
+        page.goto = AsyncMock(side_effect=[MagicMock(status=s) for s in statuses])
+        page.title = AsyncMock(return_value="503 Service Temporarily Unavailable")
+        page.content = AsyncMock(return_value="<html>ok</html>")
+        context = AsyncMock()
+        context.new_page = AsyncMock(return_value=page)
+        plugin._context = context
+        plugin._wait_for_cloudflare = AsyncMock(return_value=True)
+        return plugin, page
+
+    @pytest.mark.asyncio
+    async def test_retries_error_status_then_succeeds(self) -> None:
+        plugin, page = self._plugin_with_page([503, 200])
+
+        with patch(
+            "scavengarr.infrastructure.plugins.playwright_base.asyncio.sleep",
+            AsyncMock(),
+        ) as mock_sleep:
+            html = await plugin._fetch_page_html(
+                "https://example.com/p", retry_backoff_s=(2.0, 4.0)
+            )
+
+        assert html == "<html>ok</html>"
+        mock_sleep.assert_awaited_once_with(2.0)
+        page.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_gives_up_after_all_retries(self) -> None:
+        plugin, page = self._plugin_with_page([503, 503, 503])
+
+        with patch(
+            "scavengarr.infrastructure.plugins.playwright_base.asyncio.sleep",
+            AsyncMock(),
+        ) as mock_sleep:
+            html = await plugin._fetch_page_html(
+                "https://example.com/p", retry_backoff_s=(2.0, 4.0)
+            )
+
+        assert html == ""
+        assert page.goto.await_count == 3
+        assert [c.args[0] for c in mock_sleep.await_args_list] == [2.0, 4.0]
+
+    @pytest.mark.asyncio
+    async def test_permanent_error_is_not_retried(self) -> None:
+        plugin, page = self._plugin_with_page([404])
+
+        with patch(
+            "scavengarr.infrastructure.plugins.playwright_base.asyncio.sleep",
+            AsyncMock(),
+        ) as mock_sleep:
+            html = await plugin._fetch_page_html(
+                "https://example.com/p", retry_backoff_s=(2.0, 4.0)
+            )
+
+        assert html == ""
+        assert page.goto.await_count == 1
+        mock_sleep.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_no_retry_by_default(self) -> None:
+        plugin, page = self._plugin_with_page([503])
+
+        assert await plugin._fetch_page_html("https://example.com/p") == ""
+        assert page.goto.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_skip_networkidle(self) -> None:
+        plugin, page = self._plugin_with_page([200])
+
+        await plugin._fetch_page_html("https://example.com/p", wait_for_idle=False)
+
+        page.wait_for_load_state.assert_not_awaited()
+
+
 class TestWaitForCloudflare:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("solved", [True, False])

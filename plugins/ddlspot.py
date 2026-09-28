@@ -260,18 +260,7 @@ class DDLSpotPlugin(PlaywrightPluginBase):
         Plain HTTP gets an empty 200 body here; the browser context carries
         the Cloudflare clearance from the search page.
         """
-        ctx = await self._ensure_context()
-        page = await ctx.new_page()
-        try:
-            if not await self._navigate_and_wait(page, url, wait_for_idle=False):
-                return ""
-            return await page.content()
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning("ddlspot_detail_fetch_failed", url=url, error=str(exc))
-            return ""
-        finally:
-            if not page.is_closed():
-                await page.close()
+        return await self._fetch_page_html(url, wait_for_idle=False)
 
     async def _fetch_detail_links(self, urls: list[str]) -> dict[str, list[str]]:
         """Fetch detail pages in parallel, return {detail_url: [download_urls]}."""
