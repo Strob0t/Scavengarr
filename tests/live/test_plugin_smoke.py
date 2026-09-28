@@ -30,6 +30,7 @@ pytestmark = pytest.mark.live
 HTTPX_PLUGINS: list[tuple[str, str]] = [
     ("aniworld", "Naruto"),
     ("burningseries", "Breaking Bad"),
+    ("byte", "Iron Man"),
     ("cine", "Iron Man"),
     ("dataload", "Iron Man"),
     ("einschalten", "Iron Man"),
@@ -60,7 +61,6 @@ HTTPX_PLUGINS: list[tuple[str, str]] = [
 PLAYWRIGHT_PLUGINS: list[tuple[str, str]] = [
     ("animeloads", "Naruto"),
     ("boerse", "Iron Man"),
-    ("byte", "Iron Man"),
     ("ddlspot", "Iron Man"),
     ("ddlvalley", "Iron Man"),
     ("moflix", "Iron Man"),

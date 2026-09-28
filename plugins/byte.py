@@ -1,11 +1,13 @@
 """byte.to Python plugin for Scavengarr.
 
 Scrapes byte.to (German DDL site) with:
-- Playwright for Cloudflare and iframe-based download links
+- httpx for all requests (server-rendered HTML; Cloudflare challenges go
+  through the shared browser fallback of HttpxPluginBase)
 - Advanced search via /?q=query&c=category_id&t=1
 - Category filtering via dropdown category ID parameter
 - Multi-page pagination (200 items per page, up to 5 pages)
-- Download link extraction from iframes on detail pages
+- Download links from the per-hoster link widgets (``/widgets/button.php``)
+  embedded on detail pages
 - Bounded concurrency for detail page scraping
 
 No authentication required.
@@ -16,20 +18,17 @@ from __future__ import annotations
 import asyncio
 import re
 from html.parser import HTMLParser
-from typing import TYPE_CHECKING
 from urllib.parse import urljoin
 
 from scavengarr.domain.plugins.base import SearchResult
-from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
-
-if TYPE_CHECKING:
-    from patchright.async_api import Page
+from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
 # Configurable settings
 # ---------------------------------------------------------------------------
 _DOMAINS = ["byte.to"]
 _MAX_PAGES = 5
+_WIDGET_PATH = "/widgets/button.php"
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -229,12 +228,14 @@ class _SearchResultParser(HTMLParser):
 
 
 class _DetailPageParser(HTMLParser):
-    """Extract metadata from byte.to detail page.
+    """Extract metadata and link widget URLs from a byte.to detail page.
 
     Finds:
     - Release name: first ``<td>`` text matching scene-release pattern
-    - Size: cell following a ``Größe`` label
-    - Category: cell following a ``Kategorie`` label
+    - Size / category: ``<td><B>Größe:</B> 3,98 GB</td>`` (label and value
+      share a cell)
+    - Link widgets: ``<iframe src=".../widgets/button.php?...">``, one per
+      hoster link
     """
 
     def __init__(self) -> None:
@@ -242,15 +243,19 @@ class _DetailPageParser(HTMLParser):
         self.release_name: str = ""
         self.size: str = ""
         self.category: str = ""
+        self.widget_urls: list[str] = []
 
         self._in_td = False
         self._td_text = ""
-        self._prev_td_text = ""
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == "td":
             self._in_td = True
             self._td_text = ""
+        elif tag == "iframe":
+            src = (dict(attrs).get("src", "") or "").strip()
+            if _WIDGET_PATH in src and src not in self.widget_urls:
+                self.widget_urls.append(src)
 
     def handle_data(self, data: str) -> None:
         if self._in_td:
@@ -261,91 +266,84 @@ class _DetailPageParser(HTMLParser):
             return
 
         self._in_td = False
-        text = self._td_text.strip()
-        prev = self._prev_td_text.lower()
+        text = " ".join(self._td_text.split())
+        label, sep, value = text.partition(":")
+        label = label.lower()
 
-        if text:
-            # Check if previous cell was a label
-            if "größe" in prev:
-                self.size = text
-            elif "kategorie" in prev:
-                self.category = text
+        if sep and value.strip():
+            if label == "größe" and not self.size:
+                self.size = value.strip()
+            elif label == "kategorie" and not self.category:
+                self.category = value.strip()
 
-            # Detect release name: scene pattern (dots, no spaces, 3+ dots)
-            if (
-                not self.release_name
-                and " " not in text
-                and text.count(".") >= 3
-                and len(text) > 15
-                and not text.startswith("http")
-            ):
-                self.release_name = text
-
-        self._prev_td_text = text
+        # Detect release name: scene pattern (dots, no spaces, 3+ dots)
+        if (
+            not self.release_name
+            and " " not in text
+            and text.count(".") >= 3
+            and len(text) > 15
+            and not text.startswith("http")
+        ):
+            self.release_name = text
 
 
-class _IframeLinkParser(HTMLParser):
-    """Extract download links from byte.to iframe content.
+class _WidgetLinkParser(HTMLParser):
+    """Extract the download link from a byte.to link widget.
 
-    Looks for ``<a>`` links preceded by ``<img alt="hoster.domain">``
-    or with link text matching ``Online hoster.domain``.
+    Structure::
+
+        <a href="https://hide.cx/container/..." class="loadbutton">
+          <span class="green-dot" title="Online"></span>
+          <img src="/widgets/favicons/rapidgator.net.ico" title="rapidgator.net">
+          rapidgator.net
+        </a>
+
+    Links flagged offline (``red-dot``) are skipped.
     """
 
     def __init__(self) -> None:
         super().__init__()
         self.links: list[dict[str, str]] = []
         self._in_a = False
-        self._current_href = ""
-        self._current_text = ""
-        self._current_img_alt = ""
-        self._seen_urls: set[str] = set()
+        self._href = ""
+        self._text = ""
+        self._img_host = ""
+        self._offline = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attr_dict = dict(attrs)
 
-        if tag == "img":
-            alt = (attr_dict.get("alt", "") or "").strip()
-            if alt and "." in alt:
-                self._current_img_alt = alt
-
         if tag == "a":
-            href = attr_dict.get("href", "") or ""
-            if href and href.startswith("http"):
+            href = (attr_dict.get("href", "") or "").strip()
+            if href.startswith("http"):
                 self._in_a = True
-                self._current_href = href
-                self._current_text = ""
+                self._href = href
+                self._text = ""
+                self._img_host = ""
+                self._offline = False
+        elif not self._in_a:
+            return
+        elif tag == "img":
+            host = attr_dict.get("title") or attr_dict.get("alt") or ""
+            if "." in host:
+                self._img_host = host.strip()
+        elif tag == "span":
+            classes = (attr_dict.get("class", "") or "").split()
+            self._offline = "red-dot" in classes
 
     def handle_data(self, data: str) -> None:
         if self._in_a:
-            self._current_text += data
+            self._text += data
 
     def handle_endtag(self, tag: str) -> None:
         if tag != "a" or not self._in_a:
             return
 
         self._in_a = False
-        href = self._current_href
-        text = self._current_text.strip().lower()
-
-        if href in self._seen_urls:
-            self._current_img_alt = ""
-            return
-
-        # Determine hoster name from img alt or link text
-        hoster = ""
-        if self._current_img_alt and "." in self._current_img_alt:
-            hoster = self._current_img_alt.split(".")[0].lower()
-        if not hoster:
-            m = re.search(r"online\s+(\S+)", text)
-            if m:
-                domain = m.group(1).strip()
-                hoster = domain.split(".")[0]
-
-        if hoster:
-            self._seen_urls.add(href)
-            self.links.append({"hoster": hoster, "link": href})
-
-        self._current_img_alt = ""
+        host = self._img_host or self._text.strip().lower().removeprefix("online")
+        hoster = host.strip().split(".")[0].lower()
+        if hoster and not self._offline:
+            self.links.append({"hoster": hoster, "link": self._href})
 
 
 def _site_category_to_torznab(category_name: str) -> int:
@@ -353,12 +351,11 @@ def _site_category_to_torznab(category_name: str) -> int:
     return _SITE_CATEGORY_MAP.get(category_name.lower().strip(), 2000)
 
 
-class BytePlugin(PlaywrightPluginBase):
-    """Python plugin for byte.to using Playwright."""
+class BytePlugin(HttpxPluginBase):
+    """Python plugin for byte.to using httpx."""
 
     name = "byte"
-    version = "1.0.0"
-    mode = "playwright"
+    version = "1.1.0"
     provides = "download"
     default_language = "de"
 
@@ -374,98 +371,78 @@ class BytePlugin(PlaywrightPluginBase):
 
         Returns ``(results, total_hits, max_page)``.
         """
-        assert self._context is not None  # noqa: S101
-
-        url = f"{self.base_url}/?q={query}&t=1"
+        params = {"q": query, "t": "1"}
         if site_category:
-            url += f"&c={site_category}"
+            params["c"] = site_category
         if page_num > 1:
-            url += f"&h=1&e=0&start={page_num}"
+            params.update({"h": "1", "e": "0", "start": str(page_num)})
 
-        page = await self._context.new_page()
-        try:
-            await self._navigate_and_wait(page, url)
+        html = await self._fetch_text(
+            f"{self.base_url}/", params=params, context="search_page"
+        )
+        if html is None:
+            return [], 0, 1
 
-            html = await page.content()
-            parser = _SearchResultParser(self.base_url)
-            parser.feed(html)
-            parser.flush_pending()
+        parser = _SearchResultParser(self.base_url)
+        parser.feed(html)
+        parser.flush_pending()
 
-            self._log.info(
-                "byte_search_page",
-                query=query,
-                page=page_num,
-                results=len(parser.results),
-                total_hits=parser.total_hits,
-                max_page=parser.max_page,
-            )
-            return parser.results, parser.total_hits, parser.max_page
-        finally:
-            if not page.is_closed():
-                await page.close()
+        self._log.info(
+            "byte_search_page",
+            query=query,
+            page=page_num,
+            results=len(parser.results),
+            total_hits=parser.total_hits,
+            max_page=parser.max_page,
+        )
+        return parser.results, parser.total_hits, parser.max_page
 
-    async def _extract_iframe_links(self, page: Page) -> list[dict[str, str]]:
-        """Extract download links from all iframes on the page."""
-        all_links: list[dict[str, str]] = []
-        seen_urls: set[str] = set()
-
-        for frame in page.frames:
-            if frame == page.main_frame:
-                continue
-            try:
-                await frame.wait_for_load_state("domcontentloaded", timeout=5_000)
-                content = await frame.content()
-
-                parser = _IframeLinkParser()
-                parser.feed(content)
-
-                for link in parser.links:
-                    if link["link"] not in seen_urls:
-                        seen_urls.add(link["link"])
-                        all_links.append(link)
-            except Exception:  # noqa: BLE001
-                continue
-
-        return all_links
+    async def _fetch_widget_links(self, widget_url: str) -> list[dict[str, str]]:
+        """Fetch one link widget and return its download link(s)."""
+        html = await self._fetch_text(widget_url, context="link_widget")
+        if html is None:
+            return []
+        parser = _WidgetLinkParser()
+        parser.feed(html)
+        return parser.links
 
     async def _scrape_detail(self, result: dict[str, str]) -> SearchResult | None:
         """Scrape a detail page for metadata and download links."""
-        assert self._context is not None  # noqa: S101
-
-        page = await self._context.new_page()
-        try:
-            await self._navigate_and_wait(page, result["url"])
-
-            # Parse metadata from main page
-            html = await page.content()
-            detail_parser = _DetailPageParser()
-            detail_parser.feed(html)
-
-            # Extract links from iframes
-            links = await self._extract_iframe_links(page)
-
-            if not links:
-                self._log.debug("byte_no_links", url=result["url"])
-                return None
-
-            title = detail_parser.release_name or result.get("title", "Unknown")
-            category_name = detail_parser.category or result.get("category", "")
-            torznab_cat = _site_category_to_torznab(category_name)
-
-            return SearchResult(
-                title=title,
-                download_link=links[0]["link"],
-                download_links=links,
-                source_url=result["url"],
-                size=detail_parser.size or None,
-                category=torznab_cat,
-            )
-        except Exception:  # noqa: BLE001
-            self._log.warning("byte_detail_fetch_failed", url=result["url"])
+        html = await self._fetch_text(result["url"], context="detail_page")
+        if html is None:
             return None
-        finally:
-            if not page.is_closed():
-                await page.close()
+
+        detail_parser = _DetailPageParser()
+        detail_parser.feed(html)
+
+        widget_urls = [urljoin(self.base_url, u) for u in detail_parser.widget_urls]
+        widget_links = await asyncio.gather(
+            *[self._fetch_widget_links(u) for u in widget_urls]
+        )
+        links: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for link in (link for group in widget_links for link in group):
+            if link["link"] not in seen:
+                seen.add(link["link"])
+                links.append(link)
+        # Some widgets link to byte's own ``go.php?hash=`` redirector
+        links = await self._resolve_own_links(links)
+
+        if not links:
+            self._log.debug("byte_no_links", url=result["url"])
+            return None
+
+        title = detail_parser.release_name or result.get("title", "Unknown")
+        category_name = detail_parser.category or result.get("category", "")
+
+        return SearchResult(
+            title=title,
+            download_link=links[0]["link"],
+            download_links=links,
+            source_url=result["url"],
+            size=detail_parser.size or None,
+            category=_site_category_to_torznab(category_name),
+        )
 
     async def search(
         self,
@@ -475,14 +452,13 @@ class BytePlugin(PlaywrightPluginBase):
         episode: int | None = None,
     ) -> list[SearchResult]:
         """Search byte.to and return results with download links."""
-        await self._ensure_context()
+        await self._ensure_client()
+        await self._verify_domain()
 
         site_category = _TORZNAB_TO_SITE_CATEGORY.get(category, "") if category else ""
 
         # Fetch first page
-        first_results, total_hits, max_page = await self._search_page(
-            query, site_category
-        )
+        first_results, _, max_page = await self._search_page(query, site_category)
 
         all_results = list(first_results)
         limit = self.effective_max_results
@@ -515,6 +491,9 @@ class BytePlugin(PlaywrightPluginBase):
             *[_bounded_scrape(r) for r in all_results],
             return_exceptions=True,
         )
+        for r in results:
+            if isinstance(r, Exception):
+                self._log.warning("byte_detail_error", error=str(r))
         return [r for r in results if isinstance(r, SearchResult)]
 
 

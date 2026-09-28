@@ -15,7 +15,7 @@ Scavengarr scrapes sources via two engines (httpx for static HTML, Playwright fo
 - **Torznab API** compatible with Prowlarr, Sonarr, Radarr, and other Arr applications
 - **Stremio addon** with catalog browsing, stream resolution, and hoster video URL extraction
 - **Dual scraping engine:** httpx (static HTML) and Playwright (JS-heavy / Cloudflare)
-- **42 Python plugins** (33 httpx + 9 Playwright) covering German and English streaming, DDL, and anime sites
+- **42 Python plugins** (34 httpx + 8 Playwright) covering German and English streaming, DDL, and anime sites
 - **56 hoster resolvers** for video URL extraction and file availability validation (18 individual + 12 generic DDL + 26 XFS consolidated)
 - **Multi-stage scraping:** plugins run search → detail → links internally with bounded concurrency
 - **Link validation:** parallel HEAD/GET validation with dead-link filtering
@@ -120,7 +120,7 @@ See [docs/features/stremio-addon.md](docs/features/stremio-addon.md) for details
 
 ## Plugins
 
-Scavengarr ships with 42 Python plugins (33 httpx + 9 Playwright). Examples:
+Scavengarr ships with 42 Python plugins (34 httpx + 8 Playwright). Examples:
 
 | Plugin | Type | Site |
 |---|---|---|
@@ -169,7 +169,7 @@ src/scavengarr/
   application/      # Use cases, factories, Stremio services
   infrastructure/   # Adapters (scraping, cache, plugins, resolvers, validation, scoring)
   interfaces/       # HTTP routers (FastAPI), CLI (argparse), composition root
-plugins/            # 42 Python plugins (33 httpx + 9 Playwright)
+plugins/            # 42 Python plugins (34 httpx + 8 Playwright)
 tests/              # 4151 tests (unit, E2E, integration, live) + benchmarks
 docs/               # Architecture, features, plans, refactor history
 ```

@@ -1,11 +1,13 @@
-"""Tests for the byte.to Python plugin (Playwright-based)."""
+"""Tests for the byte.to Python plugin (httpx-based)."""
 
 from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
 from types import ModuleType
-from unittest.mock import AsyncMock, MagicMock
+
+import httpx
+import respx
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "byte.py"
 
@@ -23,7 +25,7 @@ _mod = _load_module()
 _BytePlugin = _mod.BytePlugin
 _SearchResultParser = _mod._SearchResultParser
 _DetailPageParser = _mod._DetailPageParser
-_IframeLinkParser = _mod._IframeLinkParser
+_WidgetLinkParser = _mod._WidgetLinkParser
 _TORZNAB_TO_SITE_CATEGORY = _mod._TORZNAB_TO_SITE_CATEGORY
 _SITE_CATEGORY_MAP = _mod._SITE_CATEGORY_MAP
 _site_category_to_torznab = _mod._site_category_to_torznab
@@ -31,69 +33,6 @@ _site_category_to_torznab = _mod._site_category_to_torznab
 
 def _make_plugin() -> object:
     return _BytePlugin()
-
-
-def _make_mock_page(content: str = "<html></html>") -> AsyncMock:
-    page = AsyncMock()
-    mock_response = AsyncMock()
-    mock_response.status = 200
-    page.goto = AsyncMock(return_value=mock_response)
-    page.wait_for_function = AsyncMock()
-    page.wait_for_load_state = AsyncMock()
-    page.content = AsyncMock(return_value=content)
-    page.close = AsyncMock()
-    page.is_closed = MagicMock(return_value=False)
-    # Default: no iframes
-    main_frame = MagicMock()
-    page.main_frame = main_frame
-    page.frames = [main_frame]
-    return page
-
-
-def _make_mock_detail_page(
-    main_html: str = "<html></html>",
-    iframe_html: str = "",
-) -> AsyncMock:
-    """Create a mock page with optional iframe content."""
-    page = _make_mock_page(main_html)
-    if iframe_html:
-        iframe = MagicMock()
-        iframe.wait_for_load_state = AsyncMock()
-        iframe.content = AsyncMock(return_value=iframe_html)
-        page.frames = [page.main_frame, iframe]
-    return page
-
-
-def _make_mock_context(
-    pages: list[AsyncMock] | None = None,
-) -> AsyncMock:
-    context = AsyncMock()
-    if pages:
-        context.new_page = AsyncMock(side_effect=pages)
-    else:
-        context.new_page = AsyncMock(return_value=_make_mock_page())
-    context.close = AsyncMock()
-    return context
-
-
-def _make_mock_browser(
-    context: AsyncMock | None = None,
-) -> AsyncMock:
-    browser = AsyncMock()
-    browser.is_connected = MagicMock(return_value=True)
-    browser.new_context = AsyncMock(return_value=context or _make_mock_context())
-    browser.close = AsyncMock()
-    return browser
-
-
-def _make_mock_playwright(
-    browser: AsyncMock | None = None,
-) -> AsyncMock:
-    pw = AsyncMock()
-    pw.chromium = MagicMock()
-    pw.chromium.launch = AsyncMock(return_value=browser or _make_mock_browser())
-    pw.stop = AsyncMock()
-    return pw
 
 
 # ---------------------------------------------------------------------------
@@ -161,40 +100,46 @@ _SEARCH_SINGLE_HTML = """
 </table>
 """
 
-_DETAIL_HTML = """
+# Real-world markup: label and value share a cell; one widget iframe per link
+_WIDGET_1 = "https://byte.to/widgets/button.php?AAA111"
+_WIDGET_2 = "https://byte.to/widgets/button.php?BBB222"
+_WIDGET_3 = "https://byte.to/widgets/button.php?CCC333"
+
+_DETAIL_HTML = f"""
 <html><body>
 <table>
-  <tr><th colspan="2"><h1>Batman Forever</h1></th></tr>
-</table>
-<table>
-  <tr>
-    <td>Batman.Forever.1995.GERMAN.DL.HDR.2160P.WEB.H265-SunDry</td>
-  </tr>
-  <tr>
-    <td>Kategorie:</td>
-    <td>UHD - 2160p</td>
-  </tr>
-  <tr>
-    <td>Größe:</td>
-    <td>7.14 GB</td>
-  </tr>
+  <tr><td>Batman.Forever.1995.GERMAN.DL.HDR.2160P.WEB.H265-SunDry</td></tr>
+  <TR><TD ALIGN="LEFT" COLSPAN="2"><B>Kategorie:</B> UHD - 2160p</TD></TR>
+  <TR><TD ALIGN="LEFT"><B>Release Jahr:</B> 1995</TD></TR>
+  <TR><TD ALIGN="LEFT"><B>Gr&ouml;&szlig;e:</B> 7,14 GB</TD></TR>
 </table>
 <table>
   <tr><th>Mirror #1 von uploader | Passwort: keine Angabe</th></tr>
-  <tr><td><iframe src="https://byte.to/iframe/123"></iframe></td></tr>
+  <tr><td>
+    <iframe frameBorder="0" src="{_WIDGET_1}" align="left">loading ...</iframe>
+    <iframe frameBorder="0" src="{_WIDGET_2}" align="left">loading ...</iframe>
+    <iframe frameBorder="0" src="{_WIDGET_3}" align="left">loading ...</iframe>
+  </td></tr>
 </table>
 </body></html>
 """
 
-_IFRAME_HTML = """
-<html><body>
-  <img alt="rapidgator.net">
-  <a href="https://hide.cx/container/uuid-111">Online rapidgator.net</a>
-  <br>
-  <img alt="ddownload.com">
-  <a href="https://byte.to/go.php?hash=abc">Online ddownload.com</a>
-</body></html>
-"""
+
+def _widget_html(href: str, host: str, dot: str = "green-dot") -> str:
+    return (
+        "<html><head><style>.green-dot{}</style></head><body>"
+        f'<a href="{href}" target="_blank" class="loadbutton">'
+        f'<span class="{dot}" title="Online"></span>'
+        f"<img src='/widgets/favicons/{host}.ico' title='{host}' /> {host}</a>"
+        "</body></html>"
+    )
+
+
+_WIDGET_1_HTML = _widget_html("https://hide.cx/container/uuid-111", "rapidgator.net")
+_WIDGET_2_HTML = _widget_html("https://byte.to/go.php?hash=abc", "ddownload.com")
+_WIDGET_3_HTML = _widget_html(
+    "https://hide.cx/container/uuid-333", "nitroflare.com", dot="red-dot"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -303,13 +248,25 @@ class TestDetailPageParser:
         parser = _DetailPageParser()
         parser.feed(_DETAIL_HTML)
 
-        assert parser.size == "7.14 GB"
+        assert parser.size == "7,14 GB"
 
     def test_category_extracted(self) -> None:
         parser = _DetailPageParser()
         parser.feed(_DETAIL_HTML)
 
         assert parser.category == "UHD - 2160p"
+
+    def test_widget_urls_extracted(self) -> None:
+        parser = _DetailPageParser()
+        parser.feed(_DETAIL_HTML)
+
+        assert parser.widget_urls == [_WIDGET_1, _WIDGET_2, _WIDGET_3]
+
+    def test_other_iframes_ignored(self) -> None:
+        parser = _DetailPageParser()
+        parser.feed('<iframe src="//byte.to/topcover/top.php"></iframe>')
+
+        assert parser.widget_urls == []
 
     def test_no_release_name_in_short_text(self) -> None:
         html = "<table><tr><td>Short</td></tr></table>"
@@ -342,73 +299,38 @@ class TestDetailPageParser:
 
 
 # ---------------------------------------------------------------------------
-# IframeLinkParser tests
+# WidgetLinkParser tests
 # ---------------------------------------------------------------------------
 
 
-class TestIframeLinkParser:
-    def test_links_with_img_alt_extracted(self) -> None:
-        parser = _IframeLinkParser()
-        parser.feed(_IFRAME_HTML)
+class TestWidgetLinkParser:
+    def test_link_with_img_title_extracted(self) -> None:
+        parser = _WidgetLinkParser()
+        parser.feed(_WIDGET_1_HTML)
 
-        assert len(parser.links) == 2
-        assert parser.links[0]["hoster"] == "rapidgator"
-        assert parser.links[0]["link"] == ("https://hide.cx/container/uuid-111")
-        assert parser.links[1]["hoster"] == "ddownload"
-        assert parser.links[1]["link"] == ("https://byte.to/go.php?hash=abc")
+        assert parser.links == [
+            {"hoster": "rapidgator", "link": "https://hide.cx/container/uuid-111"}
+        ]
 
-    def test_links_without_img_use_text(self) -> None:
-        html = """
-        <a href="https://hide.cx/container/xyz">Online nitroflare.com</a>
-        """
-        parser = _IframeLinkParser()
-        parser.feed(html)
+    def test_link_without_img_uses_text(self) -> None:
+        parser = _WidgetLinkParser()
+        parser.feed('<a href="https://hide.cx/container/xyz">Online nitroflare.com</a>')
 
-        assert len(parser.links) == 1
-        assert parser.links[0]["hoster"] == "nitroflare"
+        assert parser.links == [
+            {"hoster": "nitroflare", "link": "https://hide.cx/container/xyz"}
+        ]
 
-    def test_duplicate_urls_deduplicated(self) -> None:
-        html = """
-        <img alt="rapidgator.net">
-        <a href="https://hide.cx/container/same">Online rapidgator.net</a>
-        <img alt="rapidgator.net">
-        <a href="https://hide.cx/container/same">Online rapidgator.net</a>
-        """
-        parser = _IframeLinkParser()
-        parser.feed(html)
+    def test_offline_link_skipped(self) -> None:
+        parser = _WidgetLinkParser()
+        parser.feed(_WIDGET_3_HTML)
 
-        assert len(parser.links) == 1
+        assert parser.links == []
 
-    def test_links_without_hoster_skipped(self) -> None:
-        html = """
-        <a href="https://example.com/something">Just a link</a>
-        """
-        parser = _IframeLinkParser()
-        parser.feed(html)
+    def test_non_http_link_ignored(self) -> None:
+        parser = _WidgetLinkParser()
+        parser.feed('<a href="javascript:void(0)"><img title="rapidgator.net"> x</a>')
 
-        assert len(parser.links) == 0
-
-    def test_non_http_links_ignored(self) -> None:
-        html = """
-        <img alt="rapidgator.net">
-        <a href="javascript:void(0)">Online rapidgator.net</a>
-        """
-        parser = _IframeLinkParser()
-        parser.feed(html)
-
-        assert len(parser.links) == 0
-
-    def test_img_alt_without_dot_ignored(self) -> None:
-        html = """
-        <img alt="decoration">
-        <a href="https://hide.cx/container/abc">Online rapidgator.net</a>
-        """
-        parser = _IframeLinkParser()
-        parser.feed(html)
-
-        # Should still extract via text pattern
-        assert len(parser.links) == 1
-        assert parser.links[0]["hoster"] == "rapidgator"
+        assert parser.links == []
 
 
 # ---------------------------------------------------------------------------
@@ -464,150 +386,114 @@ class TestPluginAttributes:
     def test_name(self) -> None:
         assert _make_plugin().name == "byte"
 
-    def test_version(self) -> None:
-        assert _make_plugin().version == "1.0.0"
-
     def test_mode(self) -> None:
-        assert _make_plugin().mode == "playwright"
+        assert _make_plugin().mode == "httpx"
 
 
 # ---------------------------------------------------------------------------
-# Plugin search integration (mocked)
+# Plugin search integration (respx)
 # ---------------------------------------------------------------------------
+
+_DETAIL_1 = "https://byte.to/Filme/UHD-2160p/Batman-Forever-12345.html"
+_DETAIL_2 = "https://byte.to/Tv/Serien/Batman-S01-67890.html"
+
+
+def _mock_site(search_html: str, detail_html: str = _DETAIL_HTML) -> respx.Route:
+    """Route byte.to: search page, detail pages, widgets, go.php redirector."""
+    respx.get(_WIDGET_1).respond(200, text=_WIDGET_1_HTML)
+    respx.get(_WIDGET_2).respond(200, text=_WIDGET_2_HTML)
+    respx.get(_WIDGET_3).respond(200, text=_WIDGET_3_HTML)
+    respx.get("https://byte.to/go.php?hash=abc").respond(
+        302, headers={"Location": "https://filecrypt.cc/Container/ABC.html"}
+    )
+    respx.get(_DETAIL_1).respond(200, text=detail_html)
+    respx.get(_DETAIL_2).respond(200, text=detail_html)
+    respx.get("https://byte.to/Filme/HD-1080p/Test-Movie-111.html").respond(
+        200, text=detail_html
+    )
+
+    def _search(request: httpx.Request) -> httpx.Response:
+        page = request.url.params.get("start", "1")
+        return httpx.Response(200, text=search_html if page == "1" else "")
+
+    return respx.get("https://byte.to/").mock(side_effect=_search)
 
 
 class TestPluginSearch:
+    @respx.mock
     async def test_search_returns_results(self) -> None:
         plugin = _make_plugin()
-
-        search_page = _make_mock_page(_SEARCH_HTML)
-        # Pagination: page 2 returns empty → stops fetching more pages
-        empty_page = _make_mock_page("<html><body></body></html>")
-        detail_page_1 = _make_mock_detail_page(_DETAIL_HTML, _IFRAME_HTML)
-        detail_page_2 = _make_mock_detail_page(_DETAIL_HTML, _IFRAME_HTML)
-
-        context = _make_mock_context(
-            pages=[search_page, empty_page, detail_page_1, detail_page_2]
-        )
-
-        plugin._browser = _make_mock_browser(context)
-        plugin._context = context
+        _mock_site(_SEARCH_HTML)
 
         results = await plugin.search("batman")
+        await plugin.cleanup()
 
         assert len(results) == 2
-        assert "Batman.Forever" in results[0].title
-        assert "hide.cx" in results[0].download_link
-        assert len(results[0].download_links) == 2
-        assert results[0].download_links[0]["hoster"] == "rapidgator"
-        assert results[0].download_links[1]["hoster"] == "ddownload"
-        assert results[0].size == "7.14 GB"
+        first = results[0]
+        assert first.title == "Batman.Forever.1995.GERMAN.DL.HDR.2160P.WEB.H265-SunDry"
+        assert first.size == "7,14 GB"
+        assert first.category == 2000
+        assert first.source_url == _DETAIL_1
+        # go.php resolved to its target, offline nitroflare link dropped
+        assert first.download_links == [
+            {"hoster": "rapidgator", "link": "https://hide.cx/container/uuid-111"},
+            {"hoster": "ddownload", "link": "https://filecrypt.cc/Container/ABC.html"},
+        ]
+        assert first.download_link == "https://hide.cx/container/uuid-111"
 
+    @respx.mock
+    async def test_search_paginates_until_empty_page(self) -> None:
+        plugin = _make_plugin()
+        search = _mock_site(_SEARCH_HTML)
+
+        await plugin.search("batman")
+        await plugin.cleanup()
+
+        # max_page=3 in the fixture; page 2 is empty -> page 3 never fetched
+        starts = [c.request.url.params.get("start") for c in search.calls]
+        assert starts == [None, "2"]
+
+    @respx.mock
     async def test_search_no_results(self) -> None:
         plugin = _make_plugin()
-
-        search_page = _make_mock_page("<html><body>No results</body></html>")
-        context = _make_mock_context(pages=[search_page])
-
-        plugin._browser = _make_mock_browser(context)
-        plugin._context = context
+        _mock_site("<html><body>No results</body></html>")
 
         results = await plugin.search("nonexistent")
+        await plugin.cleanup()
+
         assert results == []
 
+    @respx.mock
     async def test_search_with_category(self) -> None:
         plugin = _make_plugin()
-
-        search_page = _make_mock_page("<html><body></body></html>")
-        context = _make_mock_context(pages=[search_page])
-
-        plugin._browser = _make_mock_browser(context)
-        plugin._context = context
+        search = _mock_site("<html><body></body></html>")
 
         await plugin.search("test", category=5000)
+        await plugin.cleanup()
 
-        # Verify the URL includes category parameter
-        call_args = search_page.goto.call_args
-        url_called = call_args[0][0]
-        assert "c=2" in url_called  # TV = site category "2"
-        assert "q=test" in url_called
+        params = search.calls[0].request.url.params
+        assert params["q"] == "test"
+        assert params["t"] == "1"
+        assert params["c"] == "2"  # TV = site category "2"
 
-    async def test_search_detail_without_links_skipped(self) -> None:
+    @respx.mock
+    async def test_search_detail_without_widgets_skipped(self) -> None:
         plugin = _make_plugin()
-
-        search_page = _make_mock_page(_SEARCH_SINGLE_HTML)
-        # Detail page with no iframes
-        detail_page = _make_mock_page(_DETAIL_HTML)
-
-        context = _make_mock_context(pages=[search_page, detail_page])
-
-        plugin._browser = _make_mock_browser(context)
-        plugin._context = context
+        _mock_site(_SEARCH_SINGLE_HTML, detail_html="<html><body></body></html>")
 
         results = await plugin.search("test")
+        await plugin.cleanup()
+
         assert results == []
 
+    @respx.mock
     async def test_search_detail_error_skipped(self) -> None:
         plugin = _make_plugin()
-
-        search_page = _make_mock_page(_SEARCH_SINGLE_HTML)
-        error_page = _make_mock_page()
-        error_page.goto = AsyncMock(side_effect=Exception("timeout"))
-
-        context = _make_mock_context(pages=[search_page, error_page])
-
-        plugin._browser = _make_mock_browser(context)
-        plugin._context = context
+        _mock_site(_SEARCH_SINGLE_HTML)
+        # Same pattern as the detail route of _mock_site -> replaces it
+        respx.get("https://byte.to/Filme/HD-1080p/Test-Movie-111.html").respond(500)
 
         results = await plugin.search("test")
+        await plugin.cleanup()
+
         assert results == []
-
-
-# ---------------------------------------------------------------------------
-# Cloudflare wait tests
-# ---------------------------------------------------------------------------
-
-
-class TestCloudflareWait:
-    async def test_no_challenge_passes(self) -> None:
-        plugin = _make_plugin()
-        page = _make_mock_page()
-        assert await plugin._wait_for_cloudflare(page) is True
-
-    async def test_timeout_does_not_raise(self) -> None:
-        plugin = _make_plugin()
-        page = _make_mock_page()
-        page.wait_for_function = AsyncMock(side_effect=TimeoutError("timeout"))
-        await plugin._wait_for_cloudflare(page)
-
-
-# ---------------------------------------------------------------------------
-# Cleanup tests
-# ---------------------------------------------------------------------------
-
-
-class TestCleanup:
-    async def test_cleanup_closes_resources(self) -> None:
-        plugin = _make_plugin()
-
-        context = _make_mock_context()
-        browser = _make_mock_browser(context)
-        pw = _make_mock_playwright(browser)
-
-        plugin._pw = pw
-        plugin._browser = browser
-        plugin._context = context
-
-        await plugin.cleanup()
-
-        context.close.assert_awaited_once()
-        browser.close.assert_awaited_once()
-        pw.stop.assert_awaited_once()
-        assert plugin._context is None
-        assert plugin._browser is None
-        assert plugin._pw is None
-
-    async def test_cleanup_when_nothing_to_close(self) -> None:
-        plugin = _make_plugin()
-        await plugin.cleanup()
-        # Should not raise

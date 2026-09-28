@@ -38,6 +38,9 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 - **No forced User-Agent in browser contexts**: contexts keep Patchright's real UA (a fixed Chrome 131 UA disagreed with the Chromium client hints). New `_browser_user_agent` (default `None`) and `_context_options()`, also used by the boerse/mygully login contexts; `_user_agent` stays for httpx side requests.
 - **`PlaywrightPluginBase._stealth` renamed to `_block_resources`**: it now only controls aborting image/font/CSS requests; singleton and per-request contexts share `_configure_context()`. `StealthPool` no longer applies playwright-stealth.
 
+### Fix: byte
+- **Back to results, now an httpx plugin** (live: 266 results for "Iron Man" in ~30 s, was 0 or a timeout): byte.to serves search, detail pages and link widgets as plain HTML, so the plugin moved from `PlaywrightPluginBase` to `HttpxPluginBase` (Cloudflare challenges, should they return, go through the shared browser fallback). Links now come from the per-hoster widgets (`/widgets/button.php?…`, fetched directly instead of rendering iframes); the hoster is read from `<img title="rapidgator.net">`, links flagged offline (`red-dot`) are skipped, and byte's own `go.php?hash=` redirector is resolved to its target (e.g. filecrypt). Size and category are parsed from the new `<B>Größe:</B> 7,14 GB` cells (label and value share a cell). Plugin count: 34 httpx + 8 Playwright. byte.to slows its responses down after a burst of ~2000 requests (one full 1000-item search), so back-to-back full searches can take several minutes.
+
 ### Fix: scnlog
 - **Back to results** (live: 992 of the 1000-item cap for "Iron Man", was 0): the site moved to a new layout. Search results are `li.row` › `div.title` › `a`, the next page is `a.next`; detail pages have the title in `h1.single-title` and plain links (no `external` class, URL as link text) inside `div.download`, so the hoster name comes from the link's domain.
 
@@ -748,5 +751,5 @@ Foundation of the project: FastAPI server, Scrapy scraping engine, plugin loader
 
 Current known issues:
 
-- **Plugins still returning 0 results** (live smoke, 2026-09-28): fireani, nox (search API 404), dataload (search form 400), kinoking (selectors/search), hdfilme (domain moved), streamcloud, streamkiste (stream source changed), streamworld (0 results), boerse and byte (plugin reports a network error). Triage and fix plan: `docs/plans/plugin-repair.md`.
+- **Plugins still returning 0 results** (live smoke, 2026-09-28): fireani, nox (search API 404), dataload (search form 400), kinoking (selectors/search), hdfilme (domain moved), streamcloud, streamkiste (stream source changed), streamworld (0 results), boerse (plugin reports a network error). Triage and fix plan: `docs/plans/plugin-repair.md`.
 - **Cloudflare-protected sites need a headful browser**: ddlspot, ddlvalley, scnsrc, filmfans, kinoger and serienfans only pass the interactive Turnstile with Patchright headful (Xvfb, `playwright.headless: false`) and `playwright.browser_fallback: true`. filmfans and serienfans rate-limit bursts (429): an uncached search takes ~2–2.5 min and can exceed Prowlarr's request timeout. See `docs/plans/antibot-patchright.md`.

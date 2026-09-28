@@ -8,7 +8,7 @@
 
 ## Implementation Summary
 
-Scavengarr now has a `SharedBrowserPool` that manages a single Chromium process shared by all 9 Playwright plugins. Each plugin gets its own `BrowserContext` for isolation while sharing the underlying browser — eliminating per-plugin ~1-2s browser startup overhead.
+Scavengarr now has a `SharedBrowserPool` that manages a single Chromium process shared by all Playwright plugins. Each plugin gets its own `BrowserContext` for isolation while sharing the underlying browser — eliminating per-plugin ~1-2s browser startup overhead.
 
 ### Key components
 
