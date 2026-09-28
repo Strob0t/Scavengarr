@@ -9,8 +9,21 @@ from types import ModuleType
 from unittest.mock import AsyncMock
 
 import httpx
+import pytest
+
+from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "filmfans.py"
+
+
+@pytest.fixture(autouse=True)
+def _identity_link_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep /external/ links as-is (resolution has its own test below)."""
+
+    async def _same(self: object, url: str, *, context: str = "") -> str:
+        return url
+
+    monkeypatch.setattr(HttpxPluginBase, "_resolve_redirect", _same)
 
 
 def _load_filmfans_module() -> ModuleType:
@@ -323,6 +336,7 @@ class TestSearchApi:
         search_response.status_code = 200
         search_response.json.return_value = _SEARCH_API_RESPONSE
         search_response.raise_for_status = lambda: None
+        search_response.text = json.dumps(search_response.json.return_value)
 
         # Mock movie page response (with initMovie script)
         movie_page_response = AsyncMock(spec=httpx.Response)
@@ -335,6 +349,7 @@ class TestSearchApi:
         api_v1_response.status_code = 200
         api_v1_response.json.return_value = _API_V1_RESPONSE
         api_v1_response.raise_for_status = lambda: None
+        api_v1_response.text = json.dumps(api_v1_response.json.return_value)
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(
@@ -362,6 +377,7 @@ class TestSearchApi:
         search_response.status_code = 200
         search_response.json.return_value = _EMPTY_SEARCH_RESPONSE
         search_response.raise_for_status = lambda: None
+        search_response.text = json.dumps(search_response.json.return_value)
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(return_value=search_response)
@@ -381,6 +397,7 @@ class TestSearchApi:
         search_response.status_code = 200
         search_response.json.return_value = _EMPTY_SEARCH_RESPONSE
         search_response.raise_for_status = lambda: None
+        search_response.text = json.dumps(search_response.json.return_value)
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(return_value=search_response)
@@ -408,6 +425,7 @@ class TestSearchApi:
         search_response.status_code = 200
         search_response.json.side_effect = json.JSONDecodeError("err", "", 0)
         search_response.raise_for_status = lambda: None
+        search_response.text = "not json"
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(return_value=search_response)
@@ -436,6 +454,7 @@ class TestCategoryFiltering:
         search_response.status_code = 200
         search_response.json.return_value = _EMPTY_SEARCH_RESPONSE
         search_response.raise_for_status = lambda: None
+        search_response.text = json.dumps(search_response.json.return_value)
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(return_value=search_response)
@@ -474,6 +493,7 @@ class TestCategoryFiltering:
         search_response.status_code = 200
         search_response.json.return_value = _EMPTY_SEARCH_RESPONSE
         search_response.raise_for_status = lambda: None
+        search_response.text = json.dumps(search_response.json.return_value)
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(return_value=search_response)
@@ -498,6 +518,7 @@ class TestSearchResultConstruction:
             "resultCounterPart": [],
         }
         search_response.raise_for_status = lambda: None
+        search_response.text = json.dumps(search_response.json.return_value)
 
         movie_page_response = AsyncMock(spec=httpx.Response)
         movie_page_response.status_code = 200
@@ -508,6 +529,7 @@ class TestSearchResultConstruction:
         api_v1_response.status_code = 200
         api_v1_response.json.return_value = _API_V1_RESPONSE
         api_v1_response.raise_for_status = lambda: None
+        api_v1_response.text = json.dumps(api_v1_response.json.return_value)
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(
@@ -531,6 +553,7 @@ class TestSearchResultConstruction:
             "resultCounterPart": [],
         }
         search_response.raise_for_status = lambda: None
+        search_response.text = json.dumps(search_response.json.return_value)
 
         movie_page_response = AsyncMock(spec=httpx.Response)
         movie_page_response.status_code = 200
@@ -541,6 +564,7 @@ class TestSearchResultConstruction:
         api_v1_response.status_code = 200
         api_v1_response.json.return_value = _API_V1_RESPONSE
         api_v1_response.raise_for_status = lambda: None
+        api_v1_response.text = json.dumps(api_v1_response.json.return_value)
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(
@@ -565,6 +589,7 @@ class TestSearchResultConstruction:
             "resultCounterPart": [],
         }
         search_response.raise_for_status = lambda: None
+        search_response.text = json.dumps(search_response.json.return_value)
 
         movie_page_response = AsyncMock(spec=httpx.Response)
         movie_page_response.status_code = 200
@@ -575,6 +600,7 @@ class TestSearchResultConstruction:
         api_v1_response.status_code = 200
         api_v1_response.json.return_value = _API_V1_RESPONSE
         api_v1_response.raise_for_status = lambda: None
+        api_v1_response.text = json.dumps(api_v1_response.json.return_value)
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(
@@ -596,6 +622,7 @@ class TestSearchResultConstruction:
             "resultCounterPart": [],
         }
         search_response.raise_for_status = lambda: None
+        search_response.text = json.dumps(search_response.json.return_value)
 
         movie_page_response = AsyncMock(spec=httpx.Response)
         movie_page_response.status_code = 200
@@ -606,6 +633,7 @@ class TestSearchResultConstruction:
         api_v1_response.status_code = 200
         api_v1_response.json.return_value = _API_V1_RESPONSE
         api_v1_response.raise_for_status = lambda: None
+        api_v1_response.text = json.dumps(api_v1_response.json.return_value)
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(
@@ -628,6 +656,7 @@ class TestSearchResultConstruction:
             "resultCounterPart": [],
         }
         search_response.raise_for_status = lambda: None
+        search_response.text = json.dumps(search_response.json.return_value)
 
         movie_page_response = AsyncMock(spec=httpx.Response)
         movie_page_response.status_code = 200
@@ -638,6 +667,7 @@ class TestSearchResultConstruction:
         api_v1_response.status_code = 200
         api_v1_response.json.return_value = _API_V1_RESPONSE
         api_v1_response.raise_for_status = lambda: None
+        api_v1_response.text = json.dumps(api_v1_response.json.return_value)
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(
@@ -660,6 +690,7 @@ class TestSearchResultConstruction:
             "resultCounterPart": [],
         }
         search_response.raise_for_status = lambda: None
+        search_response.text = json.dumps(search_response.json.return_value)
 
         movie_page_response = AsyncMock(spec=httpx.Response)
         movie_page_response.status_code = 200
@@ -670,6 +701,7 @@ class TestSearchResultConstruction:
         api_v1_response.status_code = 200
         api_v1_response.json.return_value = _API_V1_RESPONSE
         api_v1_response.raise_for_status = lambda: None
+        api_v1_response.text = json.dumps(api_v1_response.json.return_value)
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(
@@ -680,6 +712,84 @@ class TestSearchResultConstruction:
         results = await plugin.search("test")
 
         assert results[0].published_date == "2005"
+
+
+class TestCloudflareBrowserFallback:
+    """filmfans answers httpx with a Cloudflare challenge on every URL."""
+
+    async def test_all_requests_go_through_browser(self) -> None:
+        from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
+
+        plugin = _make_plugin()
+
+        async def _challenge(url: str, **kwargs: object) -> httpx.Response:
+            request = httpx.Request("GET", url, params=kwargs.get("params"))
+            return httpx.Response(
+                403,
+                text="<title>Just a moment...</title><div id='challenge-platform'>",
+                request=request,
+            )
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.get = AsyncMock(side_effect=_challenge)
+        plugin._client = mock_client
+
+        search = {
+            "result": [
+                {"url_id": "batman-begins", "year": 2005, "title": "Batman Begins"}
+            ]
+        }
+
+        async def _browser(url: str, *, timeout: float) -> str:
+            if "/api/v2/search" in url:
+                return json.dumps(search)
+            if "/api/v1/" in url:
+                return json.dumps(_API_V1_RESPONSE)
+            return _MOVIE_PAGE_WITH_INIT
+
+        fetcher = AsyncMock()
+        fetcher.fetch_text = AsyncMock(side_effect=_browser)
+        HttpxPluginBase.set_browser_fetcher(fetcher)
+        try:
+            results = await plugin.search("batman")
+        finally:
+            HttpxPluginBase.set_browser_fetcher(None)
+
+        assert results[0].title == "Batman.Begins.2005.German.2160p.x265-PaTrol"
+        assert fetcher.fetch_text.await_count == 3  # search, page, api v1
+
+
+class TestExternalLinkResolution:
+    """/external/<hash> links are replaced by their off-site targets."""
+
+    async def test_links_resolved_and_dead_ones_dropped(self) -> None:
+        plugin = _make_plugin()
+        release = {
+            "release_name": "Batman.Begins.2005.German.2160p.x265-PaTrol",
+            "size": "20 GB",
+            "download_links": [
+                {"hoster": "ddownload", "link": "https://filmfans.org/external/a"},
+                {"hoster": "rapidgator", "link": "https://filmfans.org/external/dead"},
+            ],
+        }
+        plugin._search_api = AsyncMock(
+            return_value=[{"url_id": "batman-begins", "title": "Batman Begins"}]
+        )
+        plugin._fetch_movie_page = AsyncMock(return_value=[release])
+
+        async def _resolve(url: str, *, context: str = "") -> str | None:
+            if url.endswith("/a"):
+                return "https://filecrypt.cc/Container/a.html"
+            return None
+
+        plugin._resolve_redirect = _resolve
+
+        results = await plugin.search("batman")
+
+        assert results[0].download_link == "https://filecrypt.cc/Container/a.html"
+        assert results[0].download_links == [
+            {"hoster": "ddownload", "link": "https://filecrypt.cc/Container/a.html"}
+        ]
 
 
 class TestMoviePageErrors:
@@ -696,6 +806,7 @@ class TestMoviePageErrors:
             "resultCounterPart": [],
         }
         search_response.raise_for_status = lambda: None
+        search_response.text = json.dumps(search_response.json.return_value)
 
         # good-movie: movie page with initMovie script
         movie_page_response = AsyncMock(spec=httpx.Response)
@@ -708,6 +819,7 @@ class TestMoviePageErrors:
         api_v1_response.status_code = 200
         api_v1_response.json.return_value = _API_V1_RESPONSE
         api_v1_response.raise_for_status = lambda: None
+        api_v1_response.text = json.dumps(api_v1_response.json.return_value)
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(
@@ -737,6 +849,7 @@ class TestMoviePageErrors:
             "resultCounterPart": [],
         }
         search_response.raise_for_status = lambda: None
+        search_response.text = json.dumps(search_response.json.return_value)
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(return_value=search_response)

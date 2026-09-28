@@ -1,7 +1,9 @@
 """filmfans.org Python plugin for Scavengarr.
 
 Scrapes filmfans.org (German movie DDL site) with:
-- httpx for all requests (no Cloudflare challenge)
+- httpx requests via ``_fetch_text()``; the site sits behind a Cloudflare
+  Turnstile challenge, so pages and APIs load through the browser fallback
+  (``playwright.browser_fallback``)
 - JSON search API: GET /api/v2/search?q={query}&ql=DE
 - Server-rendered movie pages at /{url_id} with all releases
 - Download links via /external/{hash} redirect URLs
@@ -13,7 +15,6 @@ No authentication required.
 from __future__ import annotations
 
 import asyncio
-import json
 import re
 import time
 from html.parser import HTMLParser
@@ -195,22 +196,13 @@ class FilmfansPlugin(HttpxPluginBase):
 
     async def _search_api(self, query: str) -> list[dict[str, str | int]]:
         """Execute JSON search API and return movie entries."""
-        client = await self._ensure_client()
-
-        try:
-            resp = await client.get(
-                f"{self.base_url}/api/v2/search",
-                params={"q": query, "ql": "DE"},
-            )
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning("filmfans_search_failed", query=query, error=str(exc))
-            return []
-
-        try:
-            data = resp.json()
-        except (json.JSONDecodeError, ValueError):
-            self._log.warning("filmfans_invalid_json", query=query)
+        body = await self._fetch_text(
+            f"{self.base_url}/api/v2/search",
+            params={"q": query, "ql": "DE"},
+            context="search",
+        )
+        data = self._parse_json_text(body, "search")
+        if data is None:
             return []
 
         movies = data.get("result", [])
@@ -230,47 +222,24 @@ class FilmfansPlugin(HttpxPluginBase):
         ``/api/v1/{hash}`` endpoint which returns JSON with an ``html`` field
         containing the release entries that ``_ReleaseParser`` expects.
         """
-        client = await self._ensure_client()
-
-        url = f"{self.base_url}/{url_id}"
-        try:
-            resp = await client.get(url)
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning(
-                "filmfans_movie_page_failed",
-                url_id=url_id,
-                error=str(exc),
-            )
+        page = await self._fetch_text(f"{self.base_url}/{url_id}", context=url_id)
+        if page is None:
             return []
 
         # Extract initMovie hash from the page script
-        m = _INIT_MOVIE_RE.search(resp.text)
+        m = _INIT_MOVIE_RE.search(page)
         if not m:
             self._log.warning("filmfans_no_init_hash", url_id=url_id)
             return []
 
-        init_hash = m.group(1)
-
         # Fetch releases via API
-        try:
-            api_resp = await client.get(
-                f"{self.base_url}/api/v1/{init_hash}",
-                params={"_": _timestamp()},
-            )
-            api_resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning(
-                "filmfans_api_v1_failed",
-                url_id=url_id,
-                error=str(exc),
-            )
-            return []
-
-        try:
-            data = api_resp.json()
-        except (json.JSONDecodeError, ValueError):
-            self._log.warning("filmfans_api_v1_invalid_json", url_id=url_id)
+        body = await self._fetch_text(
+            f"{self.base_url}/api/v1/{m.group(1)}",
+            params={"_": _timestamp()},
+            context=url_id,
+        )
+        data = self._parse_json_text(body, url_id)
+        if data is None:
             return []
 
         html = data.get("html", "")
@@ -373,7 +342,9 @@ class FilmfansPlugin(HttpxPluginBase):
             if len(results) >= self.effective_max_results:
                 break
 
-        return results[: self.effective_max_results]
+        # /external/<hash> links sit behind Cloudflare: resolve them to the
+        # hoster / link container (only for the results returned)
+        return await self._resolve_result_links(results[: self.effective_max_results])
 
 
 # Used to add timestamp to external links for cache busting
