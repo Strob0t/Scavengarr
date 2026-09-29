@@ -306,10 +306,6 @@ class StremioConfig(BaseModel):
         description="TTL for cached stream links (seconds). Default 2h.",
     )
 
-    probe_at_stream_time: bool = Field(
-        default=True,
-        description="Probe hoster URLs at /stream time to filter dead links.",
-    )
     verify_streams: bool = Field(
         default=True,
         description=(
@@ -320,15 +316,18 @@ class StremioConfig(BaseModel):
     )
     probe_concurrency: int = Field(
         default=10,
-        description="Max parallel hoster probes at stream time.",
-    )
-    probe_timeout_seconds: float = Field(
-        default=10.0,
-        description="Per-URL probe timeout in seconds.",
+        description="Max parallel hoster resolutions at stream time.",
     )
     max_probe_count: int = Field(
         default=50,
-        description="Max streams to probe/resolve at stream time (top-ranked first).",
+        description="Max streams to resolve at stream time (top-ranked first).",
+    )
+    probe_stealth_timeout_seconds: float = Field(
+        default=15.0,
+        description=(
+            "Page timeout of the stealth browser (Patchright) used by "
+            "browser-based resolvers and the Cloudflare fallback, in seconds."
+        ),
     )
     resolve_target_count: int = Field(
         default=15,
@@ -338,19 +337,6 @@ class StremioConfig(BaseModel):
             "have been extracted, cancelling remaining resolve tasks. "
             "Set to 0 to disable early-stop (resolve all streams)."
         ),
-    )
-
-    probe_stealth_enabled: bool = Field(
-        default=True,
-        description="Use Playwright Stealth to bypass Cloudflare for probed URLs.",
-    )
-    probe_stealth_concurrency: int = Field(
-        default=5,
-        description="Max parallel Playwright Stealth probes.",
-    )
-    probe_stealth_timeout_seconds: float = Field(
-        default=15.0,
-        description="Per-URL Playwright Stealth timeout in seconds.",
     )
 
     # Scored plugin selection (requires scoring.enabled=True)

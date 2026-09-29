@@ -1,9 +1,9 @@
-"""Patchright stealth context for Cloudflare bypass probing and fetching.
+"""Patchright stealth context for Cloudflare bypass fetching and capture.
 
 Runs in its own context on the shared Chromium of ``SharedBrowserPool``
 (one browser process). Patchright removes the automation leaks
 (``Runtime.enable``, automation launch flags) that Cloudflare detects.
-Pages are created per-probe and closed immediately after.
+Pages are created per fetch and closed immediately after.
 Resource blocking (images, fonts, CSS, media) keeps navigation fast.
 """
 
@@ -34,22 +34,6 @@ log = structlog.get_logger(__name__)
 _BLOCKED_RESOURCE_TYPES = frozenset(
     {"image", "font", "stylesheet", "media", "texttrack"}
 )
-
-_OFFLINE_MARKERS: tuple[str, ...] = (
-    "File Not Found",
-    "file was removed",
-    "no longer available",
-    "has been removed",
-    "File is no longer",
-    "deleted by the owner",
-    "This file is no longer",
-    "Video not found or has been removed",
-    "video_deleted",
-    'class="removed"',
-    'class="deleted"',
-    'class="fake-signup"',
-)
-
 
 # fetch_text() retries: rate limits / overloaded origin, then give up
 _RETRY_STATUSES = frozenset({429, 502, 503, 504})
@@ -173,13 +157,13 @@ class StealthPool:
     """Lazy-init Patchright browser pool for Cloudflare bypass probing.
 
     Runs on the Chromium of :class:`SharedBrowserPool` (one browser process
-    for plugins and probes) in its own persistent context, so Cloudflare
-    clearance cookies survive between probes.
+    for plugins and resolvers) in its own persistent context, so Cloudflare
+    clearance cookies survive between fetches.
 
     Usage::
 
         pool = StealthPool(browser_pool=shared_pool, timeout_ms=15_000)
-        alive = await pool.probe_url("https://example.com/embed/abc")
+        html = await pool.fetch_text("https://example.com/embed/abc", timeout=15)
         await pool.cleanup()
     """
 
@@ -262,47 +246,6 @@ class StealthPool:
         """Create a new page in the stealth context."""
         ctx = await self._ensure_context()
         return await ctx.new_page()
-
-    async def probe_url(self, url: str, *, timeout: float = 10) -> bool:
-        """Navigate to *url* in a stealth page, wait for CF to clear.
-
-        Returns ``True`` when the page is alive (no offline markers),
-        ``False`` when it is dead or navigation fails.
-        """
-        page: Page | None = None
-        try:
-            page = await self.new_page()
-
-            await page.goto(
-                url,
-                wait_until="domcontentloaded",
-                timeout=int(timeout * 1000),
-            )
-
-            # Wait for Cloudflare challenge to resolve
-            await self.wait_for_cloudflare(page, timeout=timeout)
-
-            html = await page.content()
-
-            # Check offline markers
-            html_lower = html.lower()
-            for marker in _OFFLINE_MARKERS:
-                if marker.lower() in html_lower:
-                    log.debug(
-                        "stealth_probe_dead",
-                        url=url,
-                        marker=marker,
-                    )
-                    return False
-
-            log.debug("stealth_probe_alive", url=url)
-            return True
-        except Exception:
-            log.debug("stealth_probe_error", url=url, exc_info=True)
-            return False
-        finally:
-            if page is not None and not page.is_closed():
-                await page.close()
 
     async def _navigate(
         self,

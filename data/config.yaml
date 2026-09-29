@@ -128,19 +128,15 @@ stremio:
   # Stream link caching
   stream_link_ttl_seconds: 7200 # 2 hours
 
-  # Link probing at /stream time
-  probe_at_stream_time: true
-  probe_concurrency: 20 # was 10 — double probe parallelism
-  probe_timeout_seconds: 5.0 # was 10 — fast HEAD probes
-  max_probe_count: 80 # was 50 — probe more streams
+  # Hoster resolution at /stream time
+  probe_concurrency: 20 # parallel resolutions (auto-tuned when auto_tune_all)
+  max_probe_count: 80 # top-ranked streams to resolve (was 50)
 
   # Resolution early-stop (0 = disabled, resolve all streams)
   resolve_target_count: 0
 
-  # Stealth probing (Playwright, Cloudflare bypass)
-  probe_stealth_enabled: true
-  probe_stealth_concurrency: 5
-  probe_stealth_timeout_seconds: 10.0 # was 15 — tighter stealth timeout
+  # Stealth browser (Patchright): browser-based resolvers, Cloudflare fallback
+  probe_stealth_timeout_seconds: 10.0 # page timeout (default 15)
 
   # Scored plugin selection (requires scoring.enabled: true)
   scoring_enabled: false

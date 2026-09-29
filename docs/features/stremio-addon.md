@@ -299,19 +299,14 @@ Stremio settings live in `StremioConfig` (YAML section `stremio:`). See [Configu
 
 | Setting | Default | Description |
 |---|---|---|
-| `max_probe_count` | 50 | Top-ranked streams to probe/resolve; streams beyond are dropped |
-| `probe_concurrency` | 10 | Parallel probes and parallel resolutions |
+| `max_probe_count` | 50 | Top-ranked streams to resolve; streams beyond are dropped |
+| `probe_concurrency` | 10 | Parallel resolutions |
 | `resolve_target_count` | 15 | Stop resolving after this many genuine video URLs (`0` = resolve all) |
 | `verify_streams` | `true` | Playback check of every resolved URL: first bytes with the playback headers; error status, HTML or a non-playlist HLS answer drops the stream (result cached like a failed resolution) |
-| `verify_streams` | `true` | Playback check of every resolved URL: first bytes with the playback headers; error status, HTML or a non-playlist HLS answer drops the stream (result cached like a failed resolution) |
 | `stream_link_ttl_seconds` | 7200 | TTL of cached stream links (`streamlink:{stream_id}`) |
-| `probe_at_stream_time` | `true` | Dead-link probe before caching (see known issue) |
-| `probe_timeout_seconds` | 10 | Per-URL httpx probe timeout |
-| `probe_stealth_concurrency` | 5 | Parallel stealth-browser (Patchright) probes |
-| `probe_stealth_timeout_seconds` | 15 | Stealth probe timeout; also the `StealthPool` timeout used by SuperVideo |
-| `probe_stealth_enabled` | `true` | Currently unused (no effect) — the stealth phase always receives the `StealthPool` |
+| `probe_stealth_timeout_seconds` | 15 | Page timeout of the `StealthPool` (browser-based resolvers, Cloudflare fallback) |
 
-> **Known issue:** the dead-link probe (`probe_urls_stealth()`) only runs when no resolve callback is configured. The default composition always wires `HosterResolverRegistry.resolve`, so `probe_at_stream_time` currently has no effect; resolution acts as the liveness check.
+Resolution is the liveness check: a stream is only returned when its hoster link resolves (and passes the playback check).
 
 Scored plugin selection keys (`scoring_enabled`, `max_plugins_scored`, `exploration_probability`, …) are documented in [Plugin Scoring & Probing](./plugin-scoring-and-probing.md#configuration).
 

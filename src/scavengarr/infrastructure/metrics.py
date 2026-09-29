@@ -40,34 +40,6 @@ class PluginStats:
 
 
 @dataclass
-class ProbeStats:
-    """Accumulated statistics for stealth probe runs."""
-
-    runs: int = 0
-    total_urls: int = 0
-    alive: int = 0
-    dead: int = 0
-    cf_blocked: int = 0
-    total_duration_ns: int = 0
-
-    def snapshot(self) -> dict[str, object]:
-        """Return a JSON-serializable summary."""
-        avg_ms = (
-            round(self.total_duration_ns / self.runs / 1_000_000, 1)
-            if self.runs
-            else 0.0
-        )
-        return {
-            "runs": self.runs,
-            "total_urls": self.total_urls,
-            "alive": self.alive,
-            "dead": self.dead,
-            "cf_blocked": self.cf_blocked,
-            "avg_duration_ms": avg_ms,
-        }
-
-
-@dataclass
 class MetricsCollector:
     """Central in-memory metrics collector.
 
@@ -76,7 +48,6 @@ class MetricsCollector:
     """
 
     _plugins: dict[str, PluginStats] = field(default_factory=dict)
-    _probe: ProbeStats = field(default_factory=ProbeStats)
     _start_ns: int = field(default_factory=time.perf_counter_ns)
 
     # ------------------------------------------------------------------
@@ -106,22 +77,6 @@ class MetricsCollector:
         else:
             stats.failures += 1
 
-    def record_probe(
-        self,
-        total: int,
-        alive: int,
-        dead: int,
-        cf_blocked: int,
-        duration_ns: int,
-    ) -> None:
-        """Record one probe run."""
-        self._probe.runs += 1
-        self._probe.total_urls += total
-        self._probe.alive += alive
-        self._probe.dead += dead
-        self._probe.cf_blocked += cf_blocked
-        self._probe.total_duration_ns += duration_ns
-
     # ------------------------------------------------------------------
     # Snapshot
     # ------------------------------------------------------------------
@@ -136,5 +91,4 @@ class MetricsCollector:
             "plugins": {
                 name: stats.snapshot() for name, stats in sorted(self._plugins.items())
             },
-            "probe": self._probe.snapshot(),
         }

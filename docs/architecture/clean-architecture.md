@@ -272,7 +272,7 @@ Infrastructure implements the ports defined by Domain and provides concrete adap
 - **Configuration** (`config/`): layered config loading (defaults < YAML < ENV < CLI) with Pydantic validation.
 - **Logging** (`logging/`): structured logging via structlog with an async `QueueHandler` for non-blocking emission.
 - **Common** (`common/`): `to_int`, `parse_size_to_bytes`, `DomainRateLimiter`/`TokenBucket` (optionally adaptive), `RetryTransport` (429/503 retry + rate limiting), `PrivateAddressGuard` (the shared client refuses non-public targets, SSRF).
-- **Hoster resolvers** (`hoster_resolvers/`): `HosterResolverRegistry`, XFS/generic-DDL/dedicated resolvers, liveness probes (`probe.py`); `StealthPool` (in `infrastructure/browser/`) for Cloudflare-protected pages and for capturing the stream request of players that build it at runtime (`capture_media`: manifests/MP4 by URL, extension-less CDN URLs by the video element's request type). See [Hoster Resolvers](../features/hoster-resolvers.md).
+- **Hoster resolvers** (`hoster_resolvers/`): `HosterResolverRegistry`, XFS/generic-DDL/dedicated resolvers; `StealthPool` (in `infrastructure/browser/`) for Cloudflare-protected pages and for capturing the stream request of players that build it at runtime (`capture_media`: manifests/MP4 by URL, extension-less CDN URLs by the video element's request type). See [Hoster Resolvers](../features/hoster-resolvers.md).
 - **Browser fetchers and anti-bot** (`browser/`, `captcha/`): `BrowserFetcherPort` implementations `StealthPool` and `SolverFetcher` (Byparr/FlareSolverr sidecar), chained by `ChainedBrowserFetcher`; `ClearanceStore` keeps challenge cookies in `CachePort` across restarts; `detect_challenge` classifies challenges and captchas; `solve_altcha` solves ALTCHA proof of work. See [Captcha Solving](../plans/captcha-solving.md).
 - **Stremio** (`stremio/`): stream converter, sorter, title matcher, release parser, episode filter, HLS proxy.
 - **TMDB** (`tmdb/`): `HttpxTmdbClient` and the key-less `ImdbFallbackClient`.
@@ -485,7 +485,7 @@ async def test_search_returns_items(mock_plugins, mock_engine, ...):
 
 ### Why injected callables in StremioStreamUseCase
 
-- `StremioStreamUseCase` receives infrastructure behaviour as injected callables and protocols: `convert_fn`, `filter_fn`, `episode_filter_fn`, `probe_fn`, `resolve_fn`, `browser_warmup_fn`, `sorter`, plus local protocols (`_StremioConfig`, `_MetricsRecorder`, `CircuitBreaker`).
+- `StremioStreamUseCase` receives infrastructure behaviour as injected callables and protocols: `convert_fn`, `filter_fn`, `episode_filter_fn`, `resolve_fn`, `browser_warmup_fn`, `sorter`, plus local protocols (`_StremioConfig`, `_MetricsRecorder`, `CircuitBreaker`).
 - This keeps `application/` free of infrastructure imports while the composition root plugs in `convert_search_results`, `filter_by_title_match`, `filter_by_episode`, `probe_urls_stealth` and `HosterResolverRegistry.resolve`.
 
 ### Why CrawlJob instead of direct download URLs

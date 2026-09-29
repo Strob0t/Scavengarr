@@ -191,8 +191,6 @@ stremio:
   stream_deadline_seconds: 15.0 # answer budget per stream request (default: 15)
   title_match_threshold: 0.7
   resolve_target_count: 0       # 0 = resolve all streams (default: 15)
-  probe_at_stream_time: true
-  probe_timeout_seconds: 5.0    # default: 10
   max_probe_count: 80           # default: 50
 
 scoring:
@@ -353,14 +351,12 @@ Controls the Stremio addon behavior: stream ranking, plugin concurrency, title m
 | `stremio.title_year_tolerance_movie` | int | `1` | Allowed year difference for movies (±N) |
 | `stremio.title_year_tolerance_series` | int | `3` | Allowed year difference for series (±N) |
 | `stremio.stream_link_ttl_seconds` | int | `7200` | TTL for cached stream links (2h) |
-| `stremio.probe_at_stream_time` | bool | `true` | Probe hoster URLs at `/stream` time |
-| `stremio.probe_concurrency` | int | `10` | Max parallel hoster probes (auto-tuned at startup by default) |
-| `stremio.probe_timeout_seconds` | float | `10.0` | Per-URL probe timeout |
-| `stremio.max_probe_count` | int | `50` | Max streams to probe/resolve (top-ranked first) |
+| `stremio.probe_concurrency` | int | `10` | Max parallel hoster resolutions (auto-tuned at startup by default) |
+| `stremio.max_probe_count` | int | `50` | Max streams to resolve (top-ranked first) |
 | `stremio.resolve_target_count` | int | `15` | Stop resolving after this many successes (0 = disabled) |
-| `stremio.probe_stealth_enabled` | bool | `true` | Currently unused (no effect); the stealth pool is always configured |
-| `stremio.probe_stealth_concurrency` | int | `5` | Max parallel stealth-browser (Patchright) probes |
-| `stremio.probe_stealth_timeout_seconds` | float | `15.0` | Per-URL stealth-browser (Patchright) timeout |
+| `stremio.probe_stealth_timeout_seconds` | float | `15.0` | Page timeout of the stealth browser (Patchright): browser-based resolvers and the Cloudflare fallback |
+
+`stremio.probe_at_stream_time`, `probe_timeout_seconds`, `probe_stealth_enabled` and `probe_stealth_concurrency` were removed with the unused stream-time liveness probe; configs that still set them load (the keys are ignored).
 
 **Scored plugin selection** (requires `scoring.enabled: true`):
 

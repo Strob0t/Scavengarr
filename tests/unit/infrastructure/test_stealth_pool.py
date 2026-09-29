@@ -9,7 +9,6 @@ import pytest
 
 from scavengarr.infrastructure.browser.stealth_pool import (
     _BLOCKED_RESOURCE_TYPES,
-    _OFFLINE_MARKERS,
     StealthPool,
     _block_resources,
 )
@@ -137,86 +136,6 @@ class TestStealthPoolLifecycle:
         shared_pool, _, _ = _mock_pool_stack()
         pool = StealthPool(browser_pool=shared_pool)
         await pool.cleanup()  # no error
-
-
-# ------------------------------------------------------------------
-# StealthPool.probe_url
-# ------------------------------------------------------------------
-
-
-class TestStealthPoolProbe:
-    """probe_url navigation and classification."""
-
-    async def test_alive_page(self) -> None:
-        shared_pool, browser, context = _mock_pool_stack()
-
-        page = _mock_page(html="<html><body>Video Player</body></html>")
-        context.new_page = AsyncMock(return_value=page)
-
-        pool = StealthPool(browser_pool=shared_pool, timeout_ms=5_000)
-        result = await pool.probe_url("https://example.com/e/abc123")
-
-        assert result is True
-        page.goto.assert_awaited_once()
-        page.close.assert_awaited_once()
-
-    @pytest.mark.parametrize("marker", _OFFLINE_MARKERS)
-    async def test_dead_page_offline_marker(
-        self,
-        marker: str,
-    ) -> None:
-        shared_pool, browser, context = _mock_pool_stack()
-
-        page = _mock_page(html=f"<html><body>{marker}</body></html>")
-        context.new_page = AsyncMock(return_value=page)
-
-        pool = StealthPool(browser_pool=shared_pool)
-        result = await pool.probe_url("https://example.com/e/abc123")
-
-        assert result is False
-
-    async def test_navigation_error_returns_false(self) -> None:
-        shared_pool, browser, context = _mock_pool_stack()
-
-        page = _mock_page()
-        page.goto = AsyncMock(side_effect=Exception("net::ERR_CONNECTION_REFUSED"))
-        context.new_page = AsyncMock(return_value=page)
-
-        pool = StealthPool(browser_pool=shared_pool)
-        result = await pool.probe_url("https://example.com/e/abc123")
-
-        assert result is False
-        page.close.assert_awaited_once()
-
-    async def test_page_closed_even_on_error(self) -> None:
-        shared_pool, browser, context = _mock_pool_stack()
-
-        page = _mock_page()
-        page.content = AsyncMock(side_effect=RuntimeError("closed"))
-        context.new_page = AsyncMock(return_value=page)
-
-        pool = StealthPool(browser_pool=shared_pool)
-        result = await pool.probe_url("https://example.com/e/abc")
-
-        assert result is False
-        page.close.assert_awaited_once()
-
-    async def test_cf_wait_timeout_still_checks_content(self) -> None:
-        """Even if CF wait times out, content is still checked."""
-        shared_pool, browser, context = _mock_pool_stack()
-
-        page = _mock_page(
-            html="<html><body>Video Player active</body></html>",
-            title="Just a moment...",
-        )
-        page.wait_for_function = AsyncMock(side_effect=TimeoutError("CF wait"))
-        context.new_page = AsyncMock(return_value=page)
-
-        pool = StealthPool(browser_pool=shared_pool)
-        result = await pool.probe_url("https://example.com/e/abc")
-
-        # CF wait timed out but page content is alive
-        assert result is True
 
 
 # ------------------------------------------------------------------

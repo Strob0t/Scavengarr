@@ -73,7 +73,6 @@ class _StremioConfig(Protocol):
     title_year_tolerance_movie: int
     title_year_tolerance_series: int
     max_results_per_plugin: int
-    probe_at_stream_time: bool
     max_probe_count: int
     probe_concurrency: int
     resolve_target_count: int
@@ -89,7 +88,7 @@ class _StreamSorter(Protocol):
 
 
 class _MetricsRecorder(Protocol):
-    """Records search and probe metrics."""
+    """Records plugin search metrics."""
 
     def record_plugin_search(
         self,
@@ -98,15 +97,6 @@ class _MetricsRecorder(Protocol):
         result_count: int,
         *,
         success: bool,
-    ) -> None: ...
-
-    def record_probe(
-        self,
-        total: int,
-        alive: int,
-        dead: int,
-        cf_blocked: int,
-        duration_ns: int,
     ) -> None: ...
 
 
@@ -144,10 +134,6 @@ class _HosterQueues:
         return [q.popleft() for q in queues if q]
 
 
-# Callback type for probing hoster URLs at /stream time.
-# Accepts list of (index, url) tuples, returns set of alive indices.
-ProbeCallback = Callable[[list[tuple[int, str]]], Awaitable[set[int]]]
-
 # Callback type for resolving hoster embed URLs to playable video URLs.
 # Accepts (url, hoster_hint), returns ResolvedStream or None.
 ResolveCallback = Callable[[str, str], Awaitable[ResolvedStream | None]]
@@ -180,7 +166,6 @@ class StremioStreamUseCase:
         user_agent: str,
         max_results_var: ContextVar[int | None],
         stream_link_repo: StreamLinkRepository | None = None,
-        probe_fn: ProbeCallback | None = None,
         resolve_fn: ResolveCallback | None = None,
         metrics: _MetricsRecorder | None = None,
         score_store: PluginScoreStorePort | None = None,
@@ -212,9 +197,7 @@ class StremioStreamUseCase:
         self._title_year_tolerance_movie = config.title_year_tolerance_movie
         self._title_year_tolerance_series = config.title_year_tolerance_series
         self._stream_link_repo = stream_link_repo
-        self._probe_fn = probe_fn
         self._resolve_fn = resolve_fn
-        self._probe_at_stream_time = config.probe_at_stream_time
         self._max_probe_count = config.max_probe_count
         self._probe_concurrency = config.probe_concurrency
         self._resolve_target = config.resolve_target_count
@@ -458,23 +441,12 @@ class StremioStreamUseCase:
     ) -> list[StremioStream]:
         """Cache hoster URLs and replace stream URLs with proxy play links.
 
-        When a probe callback is configured and enabled, performs a
-        lightweight GET probe on each hoster embed URL to filter dead
-        links before caching. Only the top ``max_probe_count`` streams
-        are probed; the rest pass through unchecked.
-
         When a resolve callback is configured, resolves hoster embed URLs
         to direct video URLs and attaches ``behaviorHints.proxyHeaders``
         so Stremio sends the correct HTTP headers (Referer, User-Agent)
         when playing the stream.  Streams that fail to resolve fall back
         to the ``/play/`` proxy endpoint.
         """
-        # --- Probe step: filter dead links ---
-        # Skip probing when a resolve callback is configured because
-        # resolution implicitly checks liveness (failed → skipped).
-        if self._probe_fn and self._probe_at_stream_time and not self._resolve_fn:
-            streams, ranked = await self._probe_streams(streams, ranked)
-
         # --- Resolve step: extract direct video URLs + headers ---
         resolved_map: dict[int, ResolvedStream] = {}
         if self._resolve_fn:
@@ -548,42 +520,6 @@ class StremioStreamUseCase:
                 error=str(errors[0][1]),
             )
         return {sid for sid, _ in errors}
-
-    async def _probe_streams(
-        self,
-        streams: list[StremioStream],
-        ranked: list[RankedStream],
-    ) -> tuple[list[StremioStream], list[RankedStream]]:
-        """Drop dead hoster links among the top ``max_probe_count`` streams."""
-        assert self._probe_fn is not None
-        limit = min(len(ranked), self._max_probe_count)
-        probe_targets = [(i, ranked[i].url) for i in range(limit)]
-        t0_probe = time.perf_counter_ns()
-        alive_indices = await self._probe_fn(probe_targets)
-        probe_duration = time.perf_counter_ns() - t0_probe
-
-        dead = limit - len(alive_indices)
-        log.info(
-            "stremio_probe_complete",
-            total=limit,
-            alive=len(alive_indices),
-            filtered=dead,
-        )
-        if self._metrics is not None:
-            self._metrics.record_probe(
-                total=limit,
-                alive=len(alive_indices),
-                dead=dead,
-                cf_blocked=0,
-                duration_ns=probe_duration,
-            )
-
-        # Keep only alive streams (preserve order); unprobed streams pass through
-        keep = [i in alive_indices or i >= limit for i in range(len(ranked))]
-        return (
-            [s for s, k in zip(streams, keep) if k],
-            [r for r, k in zip(ranked, keep) if k],
-        )
 
     async def _resolve_top_streams(
         self,

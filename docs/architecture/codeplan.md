@@ -57,7 +57,7 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 | `infrastructure/cache/` | `CachePort` backends | `create_cache()`, `DiskcacheAdapter`, `RedisAdapter` |
 | `infrastructure/common/` | Converters, parsers, outbound rate limiting, retry and the SSRF guard | `to_int`, `parse_size_to_bytes`, `TokenBucket`, `DomainRateLimiter`, `RetryTransport`, `PrivateAddressGuard` |
 | `infrastructure/config/` | Layered configuration | `DEFAULT_CONFIG`, `AppConfig`, `CacheConfig`, `StremioConfig`, `ScoringConfig`, `PluginsConfig`, `PluginOverride`, `EnvOverrides`, `load_config()` |
-| `infrastructure/hoster_resolvers/` | Hoster URL resolution and liveness probing | `HosterResolverRegistry`, `extract_domain`, `XFSResolver`/`XFSConfig`, `GenericDDLResolver`/`GenericDDLConfig`, dedicated `*Resolver` classes, `probe_url`, `probe_urls_stealth`, `verify_video_url` |
+| `infrastructure/hoster_resolvers/` | Hoster URL resolution | `HosterResolverRegistry`, `extract_domain`, `XFSResolver`/`XFSConfig`, `GenericDDLResolver`/`GenericDDLConfig`, dedicated `*Resolver` classes, `verify_video_url`, `check_playable` |
 | `infrastructure/browser/` | Browser process and Cloudflare handling | `SharedBrowserPool` (one Chromium), `StealthPool` (CF-bypass context on it), `ClearanceStore` (challenge cookies across restarts), `SolverFetcher`/`ChainedBrowserFetcher` (optional Byparr/FlareSolverr sidecar), `resolve_headless`, `is_cloudflare_challenge` |
 | `infrastructure/captcha/` | In-process captcha handling | `detect_challenge` (challenge/captcha classification), `solve_altcha` (ALTCHA proof of work) |
 | `infrastructure/logging/` | structlog + stdlib setup with async emission | `configure_logging()` |
@@ -150,7 +150,7 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 
 ### Stremio
 
-- `StremioStreamUseCase` gets infrastructure behaviour as injected callables (`convert_fn`, `filter_fn`, `episode_filter_fn`, `probe_fn`, `resolve_fn`, `browser_warmup_fn`) and protocols, so `application/` has no infrastructure imports.
+- `StremioStreamUseCase` gets infrastructure behaviour as injected callables (`convert_fn`, `filter_fn`, `episode_filter_fn`, `resolve_fn`, `browser_warmup_fn`) and protocols, so `application/` has no infrastructure imports.
 - Each stream request acquires one `ConcurrencyPool.request()` budget; `PluginSearchRunner` takes httpx or Playwright slots per plugin (by `get_mode()`), ends the search `plugin_timeout_seconds` after the request start (a shared deadline: queued plugins are skipped, running ones cut; a timeout counts as breaker failure only when the plugin had at least half the budget) and skips plugins whose `PluginCircuitBreaker` is open (cooldown doubles per failed half-open trial, max 1 h).
 - Resolution (`_resolve_top_streams`) runs hosters in parallel and a hoster's streams in rank order (`_HosterQueues`: next stream only after the better one failed), stops at `stream_deadline_seconds` after the request start (at least 2 s after the search) and yields one working stream per hoster; `deduplicate_by_hoster` is only used when no resolver is configured.
 - Result conversion (`convert_fn`) runs in a thread executor to keep the event loop free.

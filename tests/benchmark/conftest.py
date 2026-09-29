@@ -190,7 +190,6 @@ class FakeStremioConfig:
     title_year_tolerance_movie: int = 1
     title_year_tolerance_series: int = 0
     max_results_per_plugin: int = 100
-    probe_at_stream_time: bool = False
     max_probe_count: int = 50
     resolve_target_count: int = 5
     probe_concurrency: int = 10

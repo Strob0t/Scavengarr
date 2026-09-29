@@ -99,6 +99,21 @@ class TestYamlOverrides:
 
         assert load_config(config_path=path).cache.crawljob_ttl_seconds == 7200
 
+    def test_removed_probe_keys_are_ignored(self, tmp_path: Path) -> None:
+        """Configs from before the stream-time probe was removed still load."""
+        path = tmp_path / "old.yaml"
+        old_keys = {
+            "probe_at_stream_time": True,
+            "probe_timeout_seconds": 5.0,
+            "probe_stealth_enabled": True,
+            "probe_stealth_concurrency": 5,
+        }
+        path.write_text(yaml.dump({"stremio": old_keys}))
+
+        config = load_config(config_path=path)
+
+        assert not hasattr(config.stremio, "probe_at_stream_time")
+
     def test_crawljob_ttl_must_be_positive(self, tmp_path: Path) -> None:
         path = tmp_path / "ttl.yaml"
         path.write_text(yaml.dump({"cache": {"crawljob_ttl_seconds": 0}}))

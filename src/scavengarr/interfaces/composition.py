@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import functools
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
@@ -48,7 +47,6 @@ from scavengarr.infrastructure.hoster_resolvers.generic_ddl import (
 from scavengarr.infrastructure.hoster_resolvers.gofile import GoFileResolver
 from scavengarr.infrastructure.hoster_resolvers.mediafire import MediafireResolver
 from scavengarr.infrastructure.hoster_resolvers.playmate import PlaymateResolver
-from scavengarr.infrastructure.hoster_resolvers.probe import probe_urls_stealth
 from scavengarr.infrastructure.hoster_resolvers.rapidgator import RapidgatorResolver
 from scavengarr.infrastructure.hoster_resolvers.sendvid import SendVidResolver
 from scavengarr.infrastructure.hoster_resolvers.serienstream import SerienstreamResolver
@@ -532,15 +530,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     log.info("circuit_breaker_initialized")
 
     # 15) Stremio use cases (always initialized — fallback handles missing key)
-    probe_fn = functools.partial(
-        probe_urls_stealth,
-        state.http_client,
-        stealth_pool=state.stealth_pool,
-        concurrency=config.stremio.probe_concurrency,
-        stealth_concurrency=config.stremio.probe_stealth_concurrency,
-        timeout=config.stremio.probe_timeout_seconds,
-        stealth_timeout=config.stremio.probe_stealth_timeout_seconds,
-    )
     state.stremio_stream_uc = StremioStreamUseCase(
         tmdb=state.tmdb_client,
         plugins=state.plugins,
@@ -553,7 +542,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         user_agent=DEFAULT_USER_AGENT,
         max_results_var=search_max_results,
         stream_link_repo=state.stream_link_repo,
-        probe_fn=probe_fn,
         resolve_fn=state.hoster_resolver_registry.resolve,
         metrics=state.metrics,
         score_store=state.plugin_score_store,

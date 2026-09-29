@@ -244,7 +244,6 @@ Adding a new XFS hoster requires only an `XFSConfig` constant appended to `ALL_X
 | Cache limits | Each cache holds at most 10,000 entries; expired entries are evicted every 1,000 `resolve()` calls |
 | Cleanup | `cleanup()` calls `cleanup()` on every resolver that has one (app shutdown) |
 
-The dead-link liveness probe in `probe.py` (`probe_urls_stealth()`: httpx phase, then the Patchright stealth browser for Cloudflare-blocked URLs) is separate from the registry and used by the Stremio stream use case; see [Stremio Addon](./stremio-addon.md).
 
 ---
 
@@ -296,7 +295,6 @@ The XFS resolver tests are parameterised over all `ALL_XFS_CONFIGS` entries and 
 | `tests/unit/infrastructure/test_video_extract.py` | Shared video URL extraction |
 | `tests/unit/infrastructure/test_verify_video_url.py` | `verify_video_url()` |
 | `tests/unit/infrastructure/test_check_playable.py` | `check_playable()` and the registry's playback check |
-| `tests/unit/infrastructure/test_hoster_probe.py` | Liveness probe (`probe.py`) |
 | `tests/unit/infrastructure/test_stealth_pool.py` | `StealthPool` |
 | `tests/unit/infrastructure/test_cloudflare.py` | Cloudflare challenge detection |
 | `tests/live/test_resolver_live.py` | Live contract tests against real hoster URLs (`-m live`) |
@@ -318,7 +316,6 @@ The XFS resolver tests are parameterised over all `ALL_XFS_CONFIGS` entries and 
 | VOE mirror domains | `src/scavengarr/infrastructure/hoster_resolvers/_voe_domains.py` |
 | Challenge / captcha detection (`detect_challenge`) | `src/scavengarr/infrastructure/captcha/detect.py` |
 | Cloudflare detection | `src/scavengarr/infrastructure/browser/cloudflare.py` |
-| Liveness probe | `src/scavengarr/infrastructure/hoster_resolvers/probe.py` |
 | Stealth pool (Playwright) | `src/scavengarr/infrastructure/browser/stealth_pool.py` |
 | Individual resolvers | `src/scavengarr/infrastructure/hoster_resolvers/<name>.py` |
 | Composition wiring | `src/scavengarr/interfaces/composition.py` |

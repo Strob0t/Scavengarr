@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from scavengarr.infrastructure.metrics import MetricsCollector, PluginStats, ProbeStats
+from scavengarr.infrastructure.metrics import MetricsCollector, PluginStats
 
 
 class TestPluginStats:
@@ -33,34 +33,6 @@ class TestPluginStats:
         assert snap["failures"] == 1
         assert snap["total_results"] == 120
         assert snap["avg_duration_ms"] == 500.0  # 2000ms / 4
-
-
-class TestProbeStats:
-    def test_default_values(self) -> None:
-        stats = ProbeStats()
-        assert stats.runs == 0
-        assert stats.total_urls == 0
-
-    def test_snapshot_no_runs(self) -> None:
-        snap = ProbeStats().snapshot()
-        assert snap["runs"] == 0
-        assert snap["avg_duration_ms"] == 0.0
-
-    def test_snapshot_with_data(self) -> None:
-        stats = ProbeStats(
-            runs=2,
-            total_urls=100,
-            alive=80,
-            dead=15,
-            cf_blocked=5,
-            total_duration_ns=4_000_000_000,
-        )
-        snap = stats.snapshot()
-        assert snap["runs"] == 2
-        assert snap["alive"] == 80
-        assert snap["dead"] == 15
-        assert snap["cf_blocked"] == 5
-        assert snap["avg_duration_ms"] == 2000.0
 
 
 class TestMetricsCollector:
@@ -95,24 +67,6 @@ class TestMetricsCollector:
         assert snap["plugins"]["alpha"]["total_results"] == 8
         assert snap["plugins"]["beta"]["searches"] == 1
 
-    def test_record_probe(self) -> None:
-        m = MetricsCollector()
-        m.record_probe(
-            total=50,
-            alive=40,
-            dead=8,
-            cf_blocked=2,
-            duration_ns=1_000_000_000,
-        )
-
-        snap = m.snapshot()
-        probe = snap["probe"]
-        assert probe["runs"] == 1
-        assert probe["total_urls"] == 50
-        assert probe["alive"] == 40
-        assert probe["dead"] == 8
-        assert probe["cf_blocked"] == 2
-
     def test_snapshot_includes_uptime(self) -> None:
         m = MetricsCollector()
         snap = m.snapshot()
@@ -124,7 +78,7 @@ class TestMetricsCollector:
         m = MetricsCollector()
         snap = m.snapshot()
         assert snap["plugins"] == {}
-        assert snap["probe"]["runs"] == 0
+        assert "probe" not in snap
 
     def test_plugins_sorted_alphabetically(self) -> None:
         m = MetricsCollector()
