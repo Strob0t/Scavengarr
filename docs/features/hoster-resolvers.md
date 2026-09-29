@@ -76,8 +76,8 @@ Some players create the stream URL only while they run. Filemoon's Byse player s
 
 | Resolver | When |
 |---|---|
-| Filemoon | Byse player pages, or a non-200 embed page |
-| XFS video hosters (savefiles, bigwarp, streamwish, …) | Cloudflare challenge on the embed page |
+| Filemoon | Byse player pages, or a non-200 embed page (skipped when the details API reports the video gone or embed-restricted) |
+| XFS video hosters (savefiles, bigwarp, streamwish, …) | Cloudflare challenge on the embed page, or no video in the page but a captcha widget in front of the player (Turnstile / reCAPTCHA play button, e.g. dr0pstream) |
 | DoodStream | Cloudflare challenge (every mirror redirects to `playmogo.com`, which is challenged) |
 | SuperVideo | Cloudflare challenge (replaces its own Playwright HTML fetch) |
 
@@ -99,7 +99,7 @@ Extract a direct video URL (`.mp4`/`.m3u8`) from an embed page.
 | Streamtape | `streamtape` | `streamtape`, `streamta`, `strtape`, `shavetape`, `tapeblocker`, `streamtapeadblock(user)`, `gettapeads`, … (13 names) | Token extraction from page source |
 | SuperVideo | `supervideo` | `supervideo.*` | XFS-style JWPlayer extraction; browser capture on a Cloudflare 403 |
 | DoodStream | `doodstream` | `dood`, `doods`, `doodstream`, `ds2play`, `d0o0d`, `vidply`, `myvidplay`, `playmogo`, … (23 names; all mirrors currently redirect to `playmogo.com`) | `pass_md5` endpoint extraction; browser capture on a Cloudflare challenge |
-| Filemoon | `filemoon` | `filemoon.*` | Packed JS unpacker (legacy pages); Byse player pages via browser capture (`StealthPool.capture_media`) |
+| Filemoon | `filemoon` | `filemoon`, `filemooon`, `byse`, rotating Byse domains (`bysezejataos`, `bysekoze`, …; 14 names from JD2 `FilemoonSxCrawler`) | Packed JS unpacker (legacy pages); Byse player pages via browser capture (`StealthPool.capture_media`), after the details API `/api/videos/<id>/embed/details` rules out a gone video (404) or a domain-restricted embed (403 `embedding … not allowed`) |
 | StreamUp | `strmup` | `strmup`, `streamup`, `vidara`, `vidaraa` | `streaming_url` from page, AJAX `/ajax/stream` fallback; HLS. Vidara hosts use the JSON API `POST /api/stream` (`{"device": "web", "filecode": id}` → `streaming_url`, 404 when gone; JD2 `VidaraTo`) |
 | Vidsonic | `vidsonic` | `vidsonic` | Hex-obfuscated, pipe-delimited HLS URL decoding |
 
@@ -180,9 +180,9 @@ The resolver fetches `/e/{file_id}`, checks offline markers and error redirects,
 |---|---|---|
 | Funxd | `funxd` | `/e/` or `/d/` prefix |
 | Bigwarp | `bigwarp` | Custom offline markers |
-| Dropload | `dropload` | Extended markers |
+| Dropload | `dropload`, `dr0pstream` | Extended markers; the dr0pstream player sits behind a Turnstile play button (browser capture) |
 | Goodstream | `goodstream` | `/video/embed/<short id>/<size>` links (goodstream.one, formerly .uno; the `/e/<id>` route serves the same page); `No such file` offline marker |
-| Savefiles | `savefiles` | Extended markers |
+| Savefiles | `savefiles`, `streamhls` | Extended markers |
 | Streamwish | 32 domains (`streamwish`, `dwish`, `hglink`, `obeywish`, `awish`, `embedwish`, …) | Extended markers + Streamwish-specific markers |
 | Vidmoly | `vidmoly` | `/w/` path prefix support. Known issue: the embed page is a "Loading..." script redirect (`?ch=1&js=<JWT>`) that sends non-browser clients, and on networks that block ad domains (Pi-hole) even the stealth browser, to `click-v4.plarclck.com`; no stream is reachable then |
 | Vidoza | `vidoza`, `videzz` | Custom markers |

@@ -6,7 +6,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
-Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 56 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4321 tests (4281 excluding the opt-in live tests).
+Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 56 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4333 tests (4293 excluding the opt-in live tests).
+
+### Fix: Hoster Mirrors (dr0pstream, streamhls, Byse Domains) and Captcha-Gated Players
+- **Mirror domains** from the plugin link scan: `dr0pstream.com` → dropload (JD2 `DroploadIo`; 13 of ~190 scanned links), `streamhls.to` → savefiles (same player, image proxy `img.savefiles.com`), and 14 Filemoon/Byse domains (`bysezejataos`, `byse`, `filemooon`, …; JD2 `FilemoonSxCrawler`) now reach their resolver. Filemoon exposes `supported_domains` for the first time.
+- **Captcha-gated XFS players**: a page without a video URL but with a Turnstile/reCAPTCHA widget in front of the player (dr0pstream's play button) goes to the stealth browser, whose click passes the widget. Live: dr0pstream → dropcdn HLS master in 0.7–5 s. The dropcdn servers were unreachable from the test network, so playback itself is unverified.
+- **Filemoon skips hopeless browser runs**: before starting the browser the resolver asks the Byse details API; a gone video (404) or an embed restricted to other domains (403 `embedding … not allowed`) fails in 0.2 s instead of 18 s of clicking. A Cloudflare 403 is not taken as a verdict.
 
 ### Fix: Vidara Streams via the JSON API
 - vidara.so and its mirror vidaraa.cc serve the StreamUp backend through a JSON API (`POST /api/stream`, JD2 `VidaraTo`), not the page/AJAX flow the Strmup resolver used, so every vidara link failed (`strmup_no_hls_url`) and vidaraa was not dispatched at all. Vidara hosts now use the API; file IDs may carry an `/e/` prefix and be 12+ characters. Live: both links → HLS master in 0.3 s.

@@ -554,6 +554,10 @@ def _mirror_cases() -> list[tuple[str, str]]:
         ("vidguard", "https://vgembed.com/e/k3gG5qoLzDE1N2b"),
         ("vidguard", "https://vembed.net/e/l4vexv027oO8B9k"),
         ("strmup", "https://vidara.so/e/VGkJYYFohaboI"),
+        ("strmup", "https://vidaraa.cc/e/7Ba8NtMpSl0Wv"),
+        ("filemoon", "https://bysezejataos.com/d/pz97syzbv14q"),
+        ("filemoon", "https://filemooon.link/e/abc123def456"),
+        ("filemoon", "https://byse.sx/e/abc123def456"),
         ("ddownload", "https://ddl.to/abcdefghijkl"),
         ("serienstream", "https://serien.sx/redirect/123"),
     ]
@@ -569,6 +573,9 @@ class TestMirrorDomainDispatch:
         )
         from scavengarr.infrastructure.hoster_resolvers.doodstream import (
             DoodStreamResolver,
+        )
+        from scavengarr.infrastructure.hoster_resolvers.filemoon import (
+            FilemoonResolver,
         )
         from scavengarr.infrastructure.hoster_resolvers.serienstream import (
             SerienstreamResolver,
@@ -587,6 +594,7 @@ class TestMirrorDomainDispatch:
             for cls in (
                 DDownloadResolver,
                 DoodStreamResolver,
+                FilemoonResolver,
                 SerienstreamResolver,
                 StreamtapeResolver,
                 StrmupResolver,

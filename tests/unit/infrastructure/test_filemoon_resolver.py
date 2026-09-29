@@ -449,3 +449,64 @@ class TestBrowserCapture:
         resolver = FilemoonResolver(http_client=client)
 
         assert await resolver.resolve("https://filemoon.sx/e/abc123def456") is None
+
+
+class TestByseDetailsGate:
+    """The Byse details API says up front when the browser cannot help."""
+
+    _SPA = TestBrowserCapture._SPA
+
+    @staticmethod
+    def _client(details: MagicMock) -> AsyncMock:
+        async def _get(url: str, **_: object) -> MagicMock:
+            if "/api/videos/" in url:
+                return details
+            return _make_html_response(TestByseDetailsGate._SPA)
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(side_effect=_get)
+        return client
+
+    @pytest.mark.parametrize(
+        ("status", "body"),
+        [
+            (404, '{"error":"video record missing: video not found"}'),
+            (
+                403,
+                '{"error":"embedding from this domain is not allowed for this video"}',
+            ),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_dead_or_embed_restricted_skips_browser(
+        self, status: int, body: str
+    ) -> None:
+        pool = AsyncMock()
+        details = _make_html_response(body, status=status)
+        resolver = FilemoonResolver(
+            http_client=self._client(details), stealth_pool=pool
+        )
+
+        result = await resolver.resolve("https://bysezejataos.com/d/pz97syzbv14q")
+
+        assert result is None
+        pool.capture_media.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_available_video_goes_to_browser(self) -> None:
+        pool = AsyncMock()
+        pool.capture_media = AsyncMock(
+            return_value=CapturedMedia(url="https://cdn.example/x.m3u8", referer=None)
+        )
+        details = _make_html_response('{"code":"fwzwu9ny19jk"}')
+        resolver = FilemoonResolver(
+            http_client=self._client(details), stealth_pool=pool
+        )
+
+        result = await resolver.resolve("https://filemoon.to/e/fwzwu9ny19jk")
+
+        assert result is not None
+        client_calls = [c.args[0] for c in resolver._http.get.await_args_list]
+        assert "https://filemoon.to/api/videos/fwzwu9ny19jk/embed/details" in (
+            client_calls
+        )

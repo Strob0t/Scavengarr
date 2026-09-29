@@ -34,6 +34,27 @@ log = structlog.get_logger(__name__)
 
 _BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
+# Mirror domains (JD2 FilemoonSxCrawler.java): filemoon.*, the rotating Byse
+# player domains and a few odd aliases
+_DOMAINS = frozenset(
+    {
+        "filemoon",
+        "filemooon",
+        "byse",
+        "bysejikuar",
+        "bysedikamoum",
+        "byseraguci",
+        "bysezejataos",
+        "bysekoze",
+        "bysesayeveum",
+        "bysesukior",
+        "morgan0928-6v7c14vs",
+        "bf0skv",
+        "ghajini-emtftw1o",
+        "f51rm",
+    }
+)
+
 
 def _unpack_p_a_c_k(packed: str) -> str | None:
     """Unpack Dean Edwards packed JavaScript (delegates to shared module)."""
@@ -65,6 +86,11 @@ class FilemoonResolver:
     @property
     def name(self) -> str:
         return "filemoon"
+
+    @property
+    def supported_domains(self) -> frozenset[str]:
+        """Mirror domains dispatched to this resolver by the registry."""
+        return _DOMAINS
 
     async def resolve(self, url: str) -> ResolvedStream | None:
         """Parse a legacy embed page, else capture the Byse player's stream."""
@@ -99,7 +125,41 @@ class FilemoonResolver:
             # Cloudflare / geo block: the browser may still get through
             log.info("filemoon_http_error", status=resp.status_code, url=embed_url)
 
+        if not await self._byse_video_available(embed_url):
+            return None
         return await capture_stream(self._stealth_pool, embed_url, "filemoon")
+
+    async def _byse_video_available(self, embed_url: str) -> bool:
+        """Ask the Byse details API before starting the browser.
+
+        404 (video gone) and 403 (embedding not allowed from this domain)
+        mean the player will not play; anything else is left to the browser.
+        """
+        match = re.match(r"(https?://[^/]+)/e/([A-Za-z0-9]+)", embed_url)
+        if not match:
+            return True
+        base, video_id = match.groups()
+        api_url = f"{base}/api/videos/{video_id}/embed/details"
+        try:
+            resp = await self._http.get(
+                api_url, timeout=10, headers={"User-Agent": _BROWSER_UA}
+            )
+        except httpx.HTTPError:
+            log.debug("filemoon_details_failed", url=api_url)
+            return True
+        # A Cloudflare 403 is no verdict on the video: only the API's own error
+        gone = resp.status_code == 404 or (
+            resp.status_code == 403 and "embedding" in resp.text
+        )
+        if gone:
+            log.info(
+                "filemoon_unavailable",
+                url=embed_url,
+                status=resp.status_code,
+                reason=resp.text[:120],
+            )
+            return False
+        return True
 
     def _try_packed_js(self, html: str) -> ResolvedStream | None:
         """Extract HLS URL from packed JavaScript blocks.

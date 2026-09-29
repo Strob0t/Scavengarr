@@ -941,3 +941,77 @@ class TestGoodStream:
 
         assert result is None
         assert route.called
+
+
+class TestXFSMirrors:
+    @pytest.mark.parametrize(
+        ("name", "url", "file_id"),
+        [
+            ("dropload", "https://dr0pstream.com/e/ee1b93mi2e1o", "ee1b93mi2e1o"),
+            ("savefiles", "https://streamhls.to/e/ni126sr4i9rq", "ni126sr4i9rq"),
+        ],
+    )
+    def test_mirror_file_id(self, name: str, url: str, file_id: str) -> None:
+        cfg = next(c for c in ALL_XFS_CONFIGS if c.name == name)
+        assert extract_xfs_file_id(url, cfg) == file_id
+
+
+# dr0pstream: the play button is a Turnstile widget that submits the XFS form
+_TURNSTILE_GATE = (
+    '<form action="" method="POST" id="F1">'
+    '<input type="hidden" name="op" value="embed">'
+    '<div id="vid_play"><script src="https://challenges.cloudflare.com/'
+    'turnstile/v0/api.js?compat=recaptcha" async defer></script>'
+    '<div class="g-recaptcha" data-sitekey="0x4AAAAAAEpU5huYpkxMDMFk" '
+    'data-callback="imNotARobot"></div></div></form>'
+)
+
+
+class TestXFSResolverCaptchaGate:
+    """A captcha in front of the player: the stealth browser clicks it."""
+
+    @staticmethod
+    def _dropload() -> XFSConfig:
+        return next(c for c in ALL_XFS_CONFIGS if c.name == "dropload")
+
+    @respx.mock
+    async def test_turnstile_gate_captures_player_stream(self) -> None:
+        url = "https://dr0pstream.com/e/ee1b93mi2e1o"
+        respx.get(url).respond(200, text=_TURNSTILE_GATE)
+        media = CapturedMedia(
+            url="https://ds3.dropcdn.io/hls2/03/x_n/master.m3u8?t=tok",
+            referer="https://dr0pstream.com/",
+        )
+        pool = AsyncMock()
+        pool.capture_media = AsyncMock(return_value=media)
+
+        resolver = XFSResolver(
+            config=self._dropload(), http_client=httpx.AsyncClient(), stealth_pool=pool
+        )
+        result = await resolver.resolve(url)
+
+        assert result is not None
+        assert result.video_url == media.url
+        assert pool.capture_media.await_args.args[0] == url
+
+    @respx.mock
+    async def test_gate_without_browser_returns_none(self) -> None:
+        url = "https://dr0pstream.com/e/ee1b93mi2e1o"
+        respx.get(url).respond(200, text=_TURNSTILE_GATE)
+
+        resolver = XFSResolver(config=self._dropload(), http_client=httpx.AsyncClient())
+
+        assert await resolver.resolve(url) is None
+
+    @respx.mock
+    async def test_page_without_gate_does_not_start_browser(self) -> None:
+        url = "https://dr0pstream.com/e/ee1b93mi2e1o"
+        respx.get(url).respond(200, text="<html><body>no player</body></html>")
+        pool = AsyncMock()
+
+        resolver = XFSResolver(
+            config=self._dropload(), http_client=httpx.AsyncClient(), stealth_pool=pool
+        )
+
+        assert await resolver.resolve(url) is None
+        pool.capture_media.assert_not_awaited()

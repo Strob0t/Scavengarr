@@ -39,6 +39,11 @@ _BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
 # Detects the XFS two-step form: GET returns a play-button splash with a
 # hidden form that must be POSTed to /dl to obtain the actual player page.
+# A captcha widget in front of the player (Turnstile / reCAPTCHA play button)
+_CAPTCHA_GATE_RE = re.compile(
+    r"challenges\.cloudflare\.com/turnstile|class=[\"']g-recaptcha[\"']"
+)
+
 _XFS_FORM_RE = re.compile(r'<form\s+id=["\']F1["\']\s+action=["\']\/dl["\']')
 
 
@@ -189,8 +194,7 @@ class XFSResolver:
 
         video_url = extract_video_url(html)
         if not video_url:
-            log.info(f"{hoster}_extraction_failed", file_id=file_id)
-            return None
+            return await self._no_video_in_page(html, embed_url, file_id, hoster)
 
         is_hls = ".m3u8" in video_url
         cdn_headers = {"Referer": str(resp.url)}
@@ -206,6 +210,17 @@ class XFSResolver:
             quality=StreamQuality.UNKNOWN,
             headers=cdn_headers,
         )
+
+    async def _no_video_in_page(
+        self, html: str, embed_url: str, file_id: str, hoster: str
+    ) -> ResolvedStream | None:
+        """No video URL in the page: a captcha-gated player (dr0pstream's
+        Turnstile play button) goes to the stealth browser, else give up."""
+        if _CAPTCHA_GATE_RE.search(html):
+            log.info(f"{hoster}_captcha_browser_fallback", url=embed_url)
+            return await capture_stream(self._stealth_pool, embed_url, hoster)
+        log.info(f"{hoster}_extraction_failed", file_id=file_id)
+        return None
 
     def _offline_marker(self, html: str) -> str | None:
         return next((m for m in self._config.offline_markers if m in html), None)
@@ -405,7 +420,7 @@ BIGWARP = XFSConfig(
 
 DROPLOAD = XFSConfig(
     name="dropload",
-    domains=frozenset({"dropload"}),
+    domains=frozenset({"dropload", "dr0pstream"}),  # JD2 DroploadIo
     file_id_re=_EMBED_RE,
     offline_markers=_EXTENDED_MARKERS,
     is_video_hoster=True,
@@ -413,7 +428,8 @@ DROPLOAD = XFSConfig(
 
 SAVEFILES = XFSConfig(
     name="savefiles",
-    domains=frozenset({"savefiles"}),
+    # streamhls.to: same player, image proxy img.savefiles.com
+    domains=frozenset({"savefiles", "streamhls"}),
     file_id_re=_EMBED_RE,
     offline_markers=_EXTENDED_MARKERS,
     is_video_hoster=True,
