@@ -410,7 +410,7 @@ class TestSearch:
         assert results[0].title == "Batman Begins (2005)"
 
     @pytest.mark.asyncio
-    async def test_category_passed_through(self) -> None:
+    async def test_films_are_movies(self) -> None:
         plugin = _make_plugin()
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(
@@ -422,8 +422,53 @@ class TestSearch:
         )
         plugin._client = mock_client
 
-        results = await plugin.search("batman", category=5000)
-        assert all(r.category == 5000 for r in results)
+        results = await plugin.search("batman", category=2000)
+
+        assert [r.category for r in results] == [2000, 2000]
+
+    @pytest.mark.asyncio
+    async def test_series_request_skips_the_films(self) -> None:
+        """The films used to come back labelled with the requested 5000."""
+        plugin = _make_plugin()
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.get = AsyncMock(return_value=_mock_response(_SEARCH_HTML))
+        plugin._client = mock_client
+
+        assert await plugin.search("batman", category=5000) == []
+        mock_client.get.assert_awaited_once()  # no detail pages
+
+    @pytest.mark.asyncio
+    async def test_episodes_are_series_filtered_before_scraping(self) -> None:
+        # Series are listed per episode (live: "The Walking Dead: Dead City S03E08")
+        search_html = "".join(
+            f'<article><h2><a href="/stream/{slug}">{title}</a></h2></article>'
+            for slug, title in [
+                ("twd-s03e07", "The Walking Dead S03E07"),
+                ("twd-s03e08", "The Walking Dead S03E08"),
+                ("twd-movie", "The Walking Dead Movie"),
+            ]
+        )
+        plugin = _make_plugin()
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.get = AsyncMock(
+            side_effect=[_mock_response(search_html), _mock_response(_DETAIL_HTML)]
+        )
+        plugin._client = mock_client
+
+        results = await plugin.search("walking dead", season=3, episode=8)
+
+        assert [r.source_url for r in results] == [
+            "https://filmpalast.to/stream/twd-s03e08"
+        ]
+        assert results[0].category == 5000
+
+    @pytest.mark.asyncio
+    async def test_category_the_site_does_not_serve(self) -> None:
+        plugin = _make_plugin()
+        plugin._client = AsyncMock(spec=httpx.AsyncClient)
+
+        assert await plugin.search("batman", category=3000) == []
+        plugin._client.get.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_network_error_returns_empty(self) -> None:

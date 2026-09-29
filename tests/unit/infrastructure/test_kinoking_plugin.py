@@ -334,6 +334,28 @@ class TestSearch:
 
     @respx.mock
     @pytest.mark.asyncio
+    async def test_anime_request_gets_the_series(self) -> None:
+        """kinoking does not tell anime apart; results keep the site's label."""
+        plug = _make_plugin()
+        _mock_site()
+
+        results = await plug.search("Iron Man", category=5070)
+        await plug.cleanup()
+
+        assert [r.category for r in results] == [5000, 5000]
+
+    @pytest.mark.asyncio
+    async def test_category_the_site_does_not_serve(self) -> None:
+        """Audio used to get the films, Books/Other the series."""
+        plug = _make_plugin()
+        plug._client = AsyncMock(spec=httpx.AsyncClient)
+
+        assert await plug.search("Iron Man", category=3000) == []
+        assert await plug.search("Iron Man", category=7000) == []
+        plug._client.get.assert_not_awaited()
+
+    @respx.mock
+    @pytest.mark.asyncio
     async def test_detail_errors_skipped(self) -> None:
         plug = _make_plugin()
         _mock_site()

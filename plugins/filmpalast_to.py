@@ -19,6 +19,10 @@ from html.parser import HTMLParser
 from urllib.parse import quote, urljoin
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.categories import (
+    category_matches,
+    served_category,
+)
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -35,6 +39,23 @@ _ACCOUNT_PAGE_RE = re.compile(r"^https?://[^/]+/(?:login|register|signup)/?(?:$|
 # encoded), "?" and "#" would end the path; its title search finds the
 # titles without them
 _PATH_BREAKERS_RE = re.compile(r"[/?#]")
+# Series are listed per episode: "The Walking Dead: Dead City S03E08"
+_EPISODE_RE = re.compile(r"\bS(\d{1,3})E(\d{1,4})\b", re.IGNORECASE)
+# The labels of this site's results
+_CATEGORIES = (2000, 5000)
+
+
+def _item_category(title: str) -> int:
+    """Films are 2000, episodes (``... S03E08``) 5000."""
+    return 5000 if _EPISODE_RE.search(title) else 2000
+
+
+def _is_episode(title: str, season: int, episode: int | None) -> bool:
+    """Whether *title* is an episode of *season* (and *episode*)."""
+    m = _EPISODE_RE.search(title)
+    if m is None or int(m.group(1)) != season:
+        return False
+    return episode is None or int(m.group(2)) == episode
 
 
 # ---------------------------------------------------------------------------
@@ -301,13 +322,26 @@ class FilmpalastPlugin(HttpxPluginBase):
     ) -> list[SearchResult]:
         """Search filmpalast.to and return streaming results.
 
-        Stage 1: Search pages for detail page URLs.
+        Stage 1: Search pages for detail page URLs; the titles tell films
+        from episodes, so category and season/episode filter here.
         Stage 2: Detail pages for streaming links (bounded concurrency).
         """
+        if category is None and season is not None:
+            category = 5000  # a season request is a series request
+        if category is not None:
+            category = served_category(category, _CATEGORIES)
+            if category is None:
+                return []  # the site has films and series only
+
         await self._ensure_client()
         await self._verify_domain()
 
-        search_results = await self._search_all(query)
+        search_results = [
+            item
+            for item in await self._search_all(query)
+            if category_matches(category, _item_category(item["title"]))
+            and (season is None or _is_episode(item["title"], season, episode))
+        ]
         if not search_results:
             return []
 
@@ -325,7 +359,7 @@ class FilmpalastPlugin(HttpxPluginBase):
                     download_links=links,
                     source_url=detail_url,
                     release_name=release_name or None,
-                    category=category if category else 2000,
+                    category=_item_category(item["title"]),
                 )
 
         raw = await asyncio.gather(

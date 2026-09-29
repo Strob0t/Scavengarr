@@ -109,6 +109,8 @@ _STREAM_PLUGINS = (
     "kinoger",
     "movie2k",
     "hdfilme",
+    "filmpalast_to",
+    "kinoking",
 )
 
 
@@ -122,7 +124,7 @@ def _load_plugin(name: str) -> Any:
 
 
 class TestStreamPlugins:
-    """The film and series sites label with ``stream_category()``."""
+    """The film and series sites serve 2000 and 5000 only."""
 
     @pytest.mark.parametrize("name", _STREAM_PLUGINS)
     @pytest.mark.parametrize("category", [3000, 4000, 7020, 8000])

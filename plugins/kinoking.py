@@ -28,6 +28,7 @@ from typing import Any
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.hoster_resolvers import extract_domain
+from scavengarr.infrastructure.plugins.categories import served_category
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -218,11 +219,7 @@ class KinokingPlugin(HttpxPluginBase):
         self._log.info("kinoking_search", query=query, count=len(cards))
         return cards[: self.effective_max_results]
 
-    async def _build_movie_result(
-        self,
-        card: dict[str, str],
-        category: int | None,
-    ) -> SearchResult | None:
+    async def _build_movie_result(self, card: dict[str, str]) -> SearchResult | None:
         """Load a movie page and build a SearchResult from its servers."""
         source_url = f"{self.base_url}/movie.php?id={card['id']}"
         html = await self._fetch_text(source_url, context="movie")
@@ -239,14 +236,13 @@ class KinokingPlugin(HttpxPluginBase):
             download_link=links[0]["link"],
             download_links=links,
             source_url=source_url,
-            category=category or 2000,
+            category=2000,
             metadata={"tmdb": card.get("tmdb", ""), "quality": card.get("quality", "")},
         )
 
     async def _build_series_results(
         self,
         card: dict[str, str],
-        category: int | None,
         season: int | None = None,
         episode: int | None = None,
     ) -> list[SearchResult]:
@@ -274,7 +270,7 @@ class KinokingPlugin(HttpxPluginBase):
                     download_link=links[0]["link"],
                     download_links=links,
                     source_url=source_url,
-                    category=category or 5000,
+                    category=5000,
                     metadata={
                         "series": series_title,
                         "episode_title": str(ep.get("name") or ""),
@@ -291,12 +287,11 @@ class KinokingPlugin(HttpxPluginBase):
         cards: list[dict[str, str]],
         category: int | None,
     ) -> list[dict[str, str]]:
-        """Filter search cards by Torznab category."""
+        """Filter search cards by Torznab category (2000, 5000 or None)."""
         if category is None:
             return cards
-        if category < 5000:
-            return [c for c in cards if c["type"] == "movie"]
-        return [c for c in cards if c["type"] == "series"]
+        kind = "movie" if category == 2000 else "series"
+        return [c for c in cards if c["type"] == kind]
 
     async def _process_cards(
         self,
@@ -307,19 +302,16 @@ class KinokingPlugin(HttpxPluginBase):
     ) -> list[SearchResult]:
         """Process search cards into SearchResults with bounded concurrency."""
         filtered = self._filter_cards(cards, category)
-        # Skip movies when season/episode are requested
-        if season is not None:
-            filtered = [c for c in filtered if c["type"] == "series"]
 
         sem = self._new_semaphore()
 
         async def _bounded(card: dict[str, str]) -> list[SearchResult]:
             async with sem:
                 if card["type"] == "movie":
-                    movie = await self._build_movie_result(card, category)
+                    movie = await self._build_movie_result(card)
                     return [movie] if movie else []
                 return await self._build_series_results(
-                    card, category, season=season, episode=episode
+                    card, season=season, episode=episode
                 )
 
         gathered = await asyncio.gather(
@@ -342,6 +334,13 @@ class KinokingPlugin(HttpxPluginBase):
         episode: int | None = None,
     ) -> list[SearchResult]:
         """Search kinoking.cc and return results with hoster links."""
+        if category is None and season is not None:
+            category = 5000  # a season request is a series request
+        if category is not None:
+            # Films 2000, series 5000: anime or HD requests get their parent
+            category = served_category(category, (2000, 5000))
+            if category is None:
+                return []  # the site has films and series only
         await self._ensure_client()
         await self._verify_domain()
 
