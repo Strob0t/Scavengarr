@@ -38,13 +38,14 @@ log = structlog.get_logger(__name__)
 
 _BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
-# Detects the XFS two-step form: GET returns a play-button splash with a
-# hidden form that must be POSTed to /dl to obtain the actual player page.
-# A captcha widget in front of the player (Turnstile / reCAPTCHA play button)
-# (the stealth browser's click passes these; ALTCHA needs its own solver)
+# Captcha widgets in front of a player (Turnstile / reCAPTCHA play button)
+# that the stealth browser's click passes; ALTCHA needs its own solver
 _CLICKABLE_CAPTCHAS: frozenset[ChallengeKind | None] = frozenset(
     {"turnstile", "recaptcha", "hcaptcha"}
 )
+
+# Detects the XFS two-step form: GET returns a play-button splash with a
+# hidden form that must be POSTed to /dl to obtain the actual player page.
 
 _XFS_FORM_RE = re.compile(r'<form\s+id=["\']F1["\']\s+action=["\']\/dl["\']')
 
