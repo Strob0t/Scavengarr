@@ -13,7 +13,7 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 - **`CONTRIBUTING.md`**: development setup, tests, code style, project structure, tech stack, plugin and resolver guides, branch/commit rules, AI-assisted contributions (moved out of the README).
 - **`docker-compose.yml`**: builds `Dockerfile.prod` locally, mounts `data/` and `plugins/`, keeps the cache in a named volume (the image runs as a non-root user), `shm_size: 1gb` for Chromium; optional profiles `solver` (Byparr) and `redis`.
 - **`docs/plugins.md`** is generated from the plugin metadata by `scripts/generate_plugin_list.py` (website, mirrors, content, engine, languages, disclaimer on top); `tests/unit/infrastructure/test_plugin_list_doc.py` fails when it is outdated. Regenerate after adding or changing a plugin.
-- `pyproject.toml` description updated; GitHub repository description and topics set.
+- `pyproject.toml` description updated.
 
 ### Feature: Stremio Answers Within a Deadline, Only Playable Streams
 Measured with a Stremio-style harness (18 titles, every returned stream played): answers took 17–38 s (median 19.8 s) and 24 % of the returned streams did not play. Plan and results: `docs/plans/stremio-latency.md`.
