@@ -8,6 +8,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 59 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4415 tests (4375 excluding the opt-in live tests).
 
+### Chore: Editor and Tool Output Hygiene
+- `.vscode/settings.json` sets `"files.eol": "\n"`: VS Code saves new files with LF, matching `.gitattributes` and the `mixed-line-ending` hook.
+- `.gitignore` ignores `.playwright-mcp/` (snapshots, console logs and screenshots written by the playwright-mcp browser tool).
+
 ### Fix: No Site Pages or Login Pages as Download Links
 - **kinox**: the mirror AJAX (`/aGET/Mirror/...`) now answers JSON with the iframe HTML escaped inside (`"Stream": "<iframe src=\"\/redirect\/<hash>\"...>"`); the plugin found no iframe and fell back to its own detail page as the "download" link, which link validation accepted (200) for Torznab. It now reads the JSON, makes relative iframe URLs absolute, resolves kinox's own `/redirect/<hash>` links to the hoster (`_resolve_own_links`) and drops results without a hoster link. Live the redirects currently loop on a JavaScript "Verifizierung" page, even in a real browser with the site's own mirror click, so kinox returns no results until the site fixes them (KNOWN_ISSUES).
 - **filmpalast** skips hoster account pages listed as streams (`https://vixeo.io/login` for "Vixeo HD").

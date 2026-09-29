@@ -79,7 +79,7 @@ Some players create the stream URL only while they run. Filemoon's Byse player s
 | Resolver | When |
 |---|---|
 | Filemoon | Byse player pages, or a non-200 embed page (skipped when the details API reports the video gone or embed-restricted) |
-| XFS video hosters (savefiles, bigwarp, streamwish, …) | Cloudflare challenge on the embed page, or no video in the page but a captcha widget in front of the player (Turnstile / reCAPTCHA play button, e.g. dr0pstream) |
+| XFS video hosters (savefiles, bigwarp, streamwish, …) | Cloudflare challenge on the embed page, or no video in the page but a captcha widget in front of the player (Turnstile, reCAPTCHA or hCaptcha play button, e.g. dr0pstream; classified by the shared `detect_challenge()`) |
 | DoodStream | Cloudflare challenge (every mirror redirects to `playmogo.com`, which is challenged) |
 | SuperVideo | Cloudflare challenge (replaces its own Playwright HTML fetch) |
 | Vixeo | always (no httpx path) |
@@ -255,6 +255,7 @@ The dead-link liveness probe in `probe.py` (`probe_urls_stealth()`: httpx phase,
    - Video-extracting resolvers return the direct video URL plus playback `headers` (verify it with `verify_video_url()` from `_verify.py`); DDL resolvers return the canonical file URL with `StreamQuality.UNKNOWN`.
    - Use `extract_domain(url)` from `scavengarr.infrastructure.hoster_resolvers` for domain matching (`"https://www.voe.sx/e/abc"` → `"voe"`).
    - The registry dispatches by `name`; if the hoster uses other second-level domains, expose a `supported_domains` property (`frozenset[str]`) so the registry maps them too.
+   - When the stream URL only exists in the running player (built by JavaScript, behind a Cloudflare challenge or a captcha play button), take an optional `stealth_pool: StealthPool | None = None` and return `await capture_stream(self._stealth_pool, embed_url, self.name)` from `_browser.py` (see [Browser capture](#browser-capture)); wire it with `stealth_pool=state.stealth_pool`. Prefer an httpx path when one exists: the capture costs seconds and a browser page.
 1. Add `tests/unit/infrastructure/test_<name>_resolver.py` with `respx` mocks (see [Testing](#testing)):
    - `TestExtractFileId`: valid domains, `www` prefix, http scheme, invalid/short IDs, non-matching domains.
    - `TestResolver`: `test_name`, valid file, one test per offline marker, HTTP errors, network errors, invalid URLs, error redirects.
@@ -306,6 +307,9 @@ The XFS resolver tests are parameterised over all `ALL_XFS_CONFIGS` entries and 
 | Generic DDL module | `src/scavengarr/infrastructure/hoster_resolvers/generic_ddl.py` |
 | Video extraction utilities | `src/scavengarr/infrastructure/hoster_resolvers/_video_extract.py` |
 | CDN verification | `src/scavengarr/infrastructure/hoster_resolvers/_verify.py` |
+| Browser capture helper (`capture_stream`) | `src/scavengarr/infrastructure/hoster_resolvers/_browser.py` |
+| VOE mirror domains | `src/scavengarr/infrastructure/hoster_resolvers/_voe_domains.py` |
+| Challenge / captcha detection (`detect_challenge`) | `src/scavengarr/infrastructure/captcha/detect.py` |
 | Cloudflare detection | `src/scavengarr/infrastructure/browser/cloudflare.py` |
 | Liveness probe | `src/scavengarr/infrastructure/hoster_resolvers/probe.py` |
 | Stealth pool (Playwright) | `src/scavengarr/infrastructure/browser/stealth_pool.py` |
