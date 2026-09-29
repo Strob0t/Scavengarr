@@ -15,6 +15,15 @@ log = structlog.get_logger(__name__)
 # How many dispatch cycles between full sweeps of stale client entries.
 _GC_INTERVAL = 256
 
+# Not counted: HLS manifests and segments of a playing stream (every few
+# seconds, dozens at playback start) and health probes
+_EXEMPT_PREFIXES = (
+    "/api/v1/stremio/proxy/",
+    "/api/v1/stremio/health",
+    "/api/v1/healthz",
+    "/api/v1/readyz",
+)
+
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Sliding-window rate limiter per client IP.
@@ -37,7 +46,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
-        if self._rpm <= 0:
+        if self._rpm <= 0 or request.url.path.startswith(_EXEMPT_PREFIXES):
             return await call_next(request)
 
         client_ip = request.client.host if request.client else "unknown"
@@ -72,16 +81,24 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         timestamps.append(now)
 
-        # Periodic GC: evict IPs whose deques are empty
+        # Periodic GC of clients without a request inside the window
         self._dispatch_count += 1
         if self._dispatch_count >= _GC_INTERVAL:
             self._dispatch_count = 0
-            stale = [ip for ip, dq in self._window.items() if not dq]
-            for ip in stale:
-                del self._window[ip]
+            self._evict_idle(cutoff)
 
         response = await call_next(request)
         remaining = max(0, self._rpm - len(timestamps))
         response.headers["X-RateLimit-Limit"] = str(self._rpm)
         response.headers["X-RateLimit-Remaining"] = str(remaining)
         return response
+
+    def _evict_idle(self, cutoff: float) -> None:
+        """Forget clients whose last request is older than *cutoff*.
+
+        A deque is only pruned on its client's next request, so a client
+        that never comes back keeps a non-empty deque.
+        """
+        idle = [ip for ip, dq in self._window.items() if not dq or dq[-1] <= cutoff]
+        for ip in idle:
+            del self._window[ip]

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import time
+from collections import deque
+
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -19,6 +22,41 @@ def _create_app(rpm: int = 5) -> Starlette:
     app = Starlette(routes=[Route("/", _hello)])
     app.add_middleware(RateLimitMiddleware, requests_per_minute=rpm)
     return app
+
+
+class TestRateLimitExemptions:
+    def test_hls_proxy_and_health_are_not_counted(self) -> None:
+        """A playing stream loads a segment every few seconds (dozens at
+        start); health probes come from the orchestrator."""
+        app = Starlette(
+            routes=[
+                Route("/", _hello),
+                Route("/api/v1/stremio/proxy/{sid}/{path:path}", _hello),
+                Route("/api/v1/healthz", _hello),
+            ]
+        )
+        app.add_middleware(RateLimitMiddleware, requests_per_minute=2)
+        client = TestClient(app)
+
+        for _ in range(10):
+            assert client.get("/api/v1/stremio/proxy/abc/seg1.ts").status_code == 200
+            assert client.get("/api/v1/healthz").status_code == 200
+
+        # The budget of the counted endpoints is untouched
+        assert client.get("/").status_code == 200
+        assert client.get("/").status_code == 200
+        assert client.get("/").status_code == 429
+
+    def test_idle_clients_are_forgotten(self) -> None:
+        # Only the same client's next request pruned its deque, so the
+        # entry of a client that never came back used to stay forever
+        mw = RateLimitMiddleware(Starlette(), requests_per_minute=5)
+        now = time.monotonic()
+        mw._window = {"idle": deque([now - 120]), "active": deque([now - 5])}
+
+        mw._evict_idle(now - 60)
+
+        assert list(mw._window) == ["active"]
 
 
 class TestRateLimitMiddleware:
