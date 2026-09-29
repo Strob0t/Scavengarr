@@ -24,7 +24,7 @@ def create_cache(
     redis_url: str = "redis://localhost:6379/0",
     # Shared config
     ttl_seconds: int = 3600,
-    max_concurrent: int = 10,  # for diskcache; Redis has higher limit (50)
+    max_concurrent: int = 10,
 ) -> CachePort:
     """Factory function: Creates cache adapter based on backend.
 
@@ -33,7 +33,7 @@ def create_cache(
         directory: Diskcache path.
         redis_url: Redis connection string.
         ttl_seconds: Default TTL for both backends.
-        max_concurrent: Semaphore limit (diskcache: 10, Redis: 50 in adapter).
+        max_concurrent: Semaphore limit for parallel cache operations.
 
     Returns:
         CachePort implementation (DiskcacheAdapter or RedisAdapter).
@@ -60,12 +60,12 @@ def create_cache(
             backend=backend,
             url=redis_url,
             ttl=ttl_seconds,
-            max_concurrent=50,  # Redis has its own limit
+            max_concurrent=max_concurrent,
         )
         return RedisAdapter(
             url=redis_url,
             ttl_seconds=ttl_seconds,
-            max_concurrent=50,  # Override for Redis
+            max_concurrent=max_concurrent,
         )
     else:
         raise ValueError(

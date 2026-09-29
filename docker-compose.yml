@@ -27,6 +27,7 @@ services:
       # Redis cache backend (profile "redis"):
       # SCAVENGARR_CACHE_BACKEND: redis
       # SCAVENGARR_CACHE_REDIS_URL: redis://redis:6379/0
+      # SCAVENGARR_CACHE_MAX_CONCURRENT: "50" # Redis takes more parallel ops
     shm_size: 1gb # Chromium (Playwright plugins, browser capture) needs shared memory
     init: true # reaps orphaned Chromium/driver processes (python would be PID 1)
     restart: unless-stopped

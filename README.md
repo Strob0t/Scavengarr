@@ -157,7 +157,7 @@ Scavengarr reads `data/config.yaml` (mounted into the container) and the plugins
 | Profile | Starts | Enable it in Scavengarr |
 |---|---|---|
 | `solver` | [Byparr](https://github.com/ThePhaseless/Byparr) captcha solver | uncomment `SCAVENGARR_PLAYWRIGHT_SOLVER_URL` |
-| `redis` | Redis as cache backend | uncomment `SCAVENGARR_CACHE_BACKEND` and `SCAVENGARR_CACHE_REDIS_URL` |
+| `redis` | Redis as cache backend | uncomment `SCAVENGARR_CACHE_BACKEND`, `SCAVENGARR_CACHE_REDIS_URL` and `SCAVENGARR_CACHE_MAX_CONCURRENT` |
 
 ```bash
 docker compose --profile solver --profile redis up -d --build
