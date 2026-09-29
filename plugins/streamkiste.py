@@ -27,6 +27,12 @@ from urllib.parse import urljoin
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins import devideosrc
+from scavengarr.infrastructure.plugins.categories import (
+    STREAM_CATEGORIES,
+    filter_by_category,
+    served_category,
+    stream_category,
+)
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -46,38 +52,14 @@ _MAX_PAGES = 48  # 21 results/page → 48 pages for ~1000
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-_TV_CATEGORIES = frozenset({5000, 5010, 5020, 5030, 5040, 5050, 5060, 5070, 5080})
-_MOVIE_CATEGORIES = frozenset({2000, 2010, 2020, 2030, 2040, 2045, 2050, 2060})
 
 _SERIES_KEYWORDS = frozenset({"serie", "serien"})
-
-
-def _filter_by_category(
-    results: list[SearchResult],
-    category: int,
-) -> list[SearchResult]:
-    """Filter results by Torznab category type."""
-    if category in _TV_CATEGORIES:
-        return [r for r in results if r.category >= 5000]
-    if category in _MOVIE_CATEGORIES:
-        return [r for r in results if r.category < 5000]
-    return results
 
 
 def _detect_series(genres: list[str]) -> bool:
     """Detect if an item is a series based on genres."""
     lower_genres = {g.lower() for g in genres}
     return bool(lower_genres & _SERIES_KEYWORDS)
-
-
-def _detect_category(genres: list[str], is_series: bool) -> int:
-    """Determine Torznab category from genres and series flag."""
-    lower_genres = {g.lower() for g in genres}
-    if "anime" in lower_genres or "animation" in lower_genres:
-        return 5070
-    if is_series:
-        return 5000
-    return 2000
 
 
 def _clean_title(title: str) -> str:
@@ -566,7 +548,7 @@ class StreamkistePlugin(HttpxPluginBase):
         title = parser.title or str(result.get("title", ""))
         genres = parser.genres or list(result.get("genres", []))
         year = parser.year or str(result.get("year", ""))
-        category = _detect_category(genres, is_series)
+        category = stream_category(genres, is_series=is_series)
 
         description_parts: list[str] = []
         if genres:
@@ -602,6 +584,12 @@ class StreamkistePlugin(HttpxPluginBase):
         episode: int | None = None,
     ) -> list[SearchResult]:
         """Search streamkiste.taxi and return results with stream links."""
+        if category is None and season is not None:
+            category = 5000  # a season request is a series request
+        if category is not None:
+            category = served_category(category, STREAM_CATEGORIES)
+            if category is None:
+                return []  # the site has films and series only
         await self._ensure_client()
         await self._verify_domain()
 
@@ -629,13 +617,8 @@ class StreamkistePlugin(HttpxPluginBase):
             r for r in gathered if isinstance(r, SearchResult)
         ]
 
-        # When season is requested, restrict to series results
-        effective_category = category
-        if season is not None and effective_category is None:
-            effective_category = 5000
-
-        if effective_category is not None:
-            results = _filter_by_category(results, effective_category)
+        if category is not None:
+            results = filter_by_category(results, category)
 
         return results
 

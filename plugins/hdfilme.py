@@ -27,6 +27,12 @@ from urllib.parse import urljoin
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins import devideosrc
+from scavengarr.infrastructure.plugins.categories import (
+    STREAM_CATEGORIES,
+    filter_by_category,
+    served_category,
+    stream_category,
+)
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -42,29 +48,6 @@ _CATEGORY_PATH_MAP: dict[int, str] = {
     2000: "filme1",
     5000: "serien",
 }
-
-# Site genre names → Torznab category override.
-_GENRE_CATEGORY_MAP: dict[str, int] = {
-    "serien": 5000,
-    "animation": 2040,
-    "dokumentation": 5080,
-    "horror": 2040,
-}
-
-_TV_CATEGORIES = frozenset({5000, 5010, 5020, 5030, 5040, 5050, 5060, 5070, 5080})
-_MOVIE_CATEGORIES = frozenset({2000, 2010, 2020, 2030, 2040, 2045, 2050, 2060})
-
-
-def _filter_by_category(
-    results: list[SearchResult],
-    category: int,
-) -> list[SearchResult]:
-    """Filter results by Torznab category type."""
-    if category in _TV_CATEGORIES:
-        return [r for r in results if r.category >= 5000]
-    if category in _MOVIE_CATEGORIES:
-        return [r for r in results if r.category < 5000]
-    return results
 
 
 class _SearchResultParser(HTMLParser):
@@ -558,15 +541,7 @@ class HdfilmePlugin(HttpxPluginBase):
         year = parser.year or result.get("year", "")
         genres = ", ".join(parser.genres) if parser.genres else ""
 
-        # Determine category
-        category = 5000 if is_series else 2000
-        # Genre-based override for films
-        if not is_series:
-            for genre in parser.genres:
-                key = genre.lower().strip()
-                if key in _GENRE_CATEGORY_MAP:
-                    category = _GENRE_CATEGORY_MAP[key]
-                    break
+        category = stream_category(parser.genres, is_series=is_series)
 
         metadata = {
             "year": year,
@@ -625,13 +600,19 @@ class HdfilmePlugin(HttpxPluginBase):
         episode: int | None = None,
     ) -> list[SearchResult]:
         """Search hdfilme.cafe and return results with stream links."""
+        if category is None and season is not None:
+            category = 5000  # a season request is a series request
+        if category is not None:
+            category = served_category(category, STREAM_CATEGORIES)
+            if category is None:
+                return []  # the site has films and series only
         await self._ensure_client()
 
         if query:
             all_items = await self._search_page(query)
-        elif category and category in _CATEGORY_PATH_MAP:
-            category_path = _CATEGORY_PATH_MAP[category]
-            all_items = await self._browse_category(category_path)
+        elif category is not None:
+            path = _CATEGORY_PATH_MAP[category - category % 1000]
+            all_items = await self._browse_category(path)
         else:
             return []
 
@@ -643,9 +624,8 @@ class HdfilmePlugin(HttpxPluginBase):
             all_items, season=season, episode=episode
         )
 
-        # Filter by category if specified
         if category is not None:
-            results = _filter_by_category(results, category)
+            results = filter_by_category(results, category)
 
         return results
 

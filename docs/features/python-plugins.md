@@ -95,7 +95,7 @@ Shared helpers in both classes:
 
 - `base_url` — instance attribute, initially `https://{_domains[0]}`, updated by `_verify_domain()`
 - `effective_max_results` — `min(search_max_results, _max_results)`; lower during Stremio searches, use it as the pagination limit
-- `_category_matches(requested, accepted)` — Torznab parent/child match: `None` matches everything, `5000` matches `5000-5999`, `5070` matches only `5070`
+- `_category_matches(requested, accepted)` — Torznab parent/child match: `None` matches everything, `5000` matches `5000-5999`, `5070` matches only `5070` (`category_matches()` of `categories.py`, see step 3)
 - `_new_semaphore()` — `asyncio.Semaphore(self._max_concurrent)`
 - `_verify_domain()` — domain fallback (see [Mirror URL Fallback](./mirror-url-fallback.md)); no-op with one domain; the verified domain stays until `cleanup()`
 - `isolated_search(query, category, *, season, episode)` — entry point used by Stremio (see [How Plugins Are Called](./plugin-system.md#how-plugins-are-called))
@@ -293,7 +293,7 @@ Names such as `_MAX_PAGES`, `_PER_PAGE`, `_CATEGORY_MAP` or `_LANG_LABELS` are c
 
 **Step 3: Mandatory search standards (all plugins).**
 
-1. **Category filtering**: map Torznab categories to the site's filter system (dropdown IDs, URL path segments, forum IDs) and pass them in the search request. Use `self._category_matches()` to skip searches the site cannot serve.
+1. **Category filtering**: map Torznab categories to the site's filter system (dropdown IDs, URL path segments, forum IDs) and pass them in the search request, and label each result with the category the site gives it (never with the requested one). `scavengarr.infrastructure.plugins.categories` answers the request: `served_category(requested, offered)` gives the category to match (*offered* = the labels the site can give; a child the site does not tell apart, such as 2040 where every film is 2000, becomes its parent; `None` when the site has nothing of the family, then return `[]` without a request), `filter_by_category(results, category)` keeps the matching results. Film and series sites label with `stream_category(genres, is_series=...)`: films 2000 whatever the genre (animated films and documentaries included, they used to drop out of movie searches as 5070/5080), series 5000, anime and animation series 5070 (`STREAM_CATEGORIES`).
 2. **Pagination up to 1000 items**: parse pagination links/hit counts from the first page, then fetch further pages until `self.effective_max_results` items or no more results. Set `_MAX_PAGES` from the site's page size (200/page → 5, 50/page → 20, 10/page → 100).
 3. **Bounded concurrency** for detail pages: `self._new_semaphore()` (default 5 parallel requests).
 

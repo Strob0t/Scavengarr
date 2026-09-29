@@ -25,6 +25,7 @@ from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort
 from scavengarr.infrastructure.browser.cloudflare import is_cloudflare_challenge
 from scavengarr.infrastructure.captcha.detect import detect_challenge
 
+from .categories import category_matches
 from .constants import (
     DEFAULT_CLIENT_TIMEOUT,
     DEFAULT_DOMAIN_CHECK_TIMEOUT,
@@ -135,25 +136,8 @@ class HttpxPluginBase:
             return min(ctx, self._max_results)
         return self._max_results
 
-    @staticmethod
-    def _category_matches(requested: int | None, accepted: int) -> bool:
-        """Check whether *requested* is compatible with *accepted*.
-
-        Torznab categories follow a ``X000`` parent / ``X0YY`` child
-        scheme.  When the caller asks for a parent (e.g. 5000 = any TV)
-        every child in that range (5000-5999) should match.  A specific
-        request like 5070 only matches 5070 exactly.
-
-        Returns ``True`` when the plugin should proceed with the search.
-        """
-        if requested is None:
-            return True
-        if requested == accepted:
-            return True
-        # Parent category: last three digits are 0 → matches all children.
-        if requested % 1000 == 0 and accepted // 1000 == requested // 1000:
-            return True
-        return False
+    # Whether a result labelled *accepted* answers a request for *requested*
+    _category_matches = staticmethod(category_matches)
 
     # ------------------------------------------------------------------
     # Client lifecycle

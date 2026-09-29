@@ -30,6 +30,7 @@ from scavengarr.infrastructure.browser.turnstile import (
     solve_cloudflare,
 )
 
+from .categories import category_matches
 from .constants import (
     DEFAULT_DOMAIN_CHECK_TIMEOUT,
     DEFAULT_MAX_CONCURRENT,
@@ -124,24 +125,8 @@ class PlaywrightPluginBase:
             return min(ctx, self._max_results)
         return self._max_results
 
-    @staticmethod
-    def _category_matches(requested: int | None, accepted: int) -> bool:
-        """Check whether *requested* is compatible with *accepted*.
-
-        Torznab categories follow a ``X000`` parent / ``X0YY`` child
-        scheme.  When the caller asks for a parent (e.g. 5000 = any TV)
-        every child in that range (5000-5999) should match.  A specific
-        request like 5070 only matches 5070 exactly.
-
-        Returns ``True`` when the plugin should proceed with the search.
-        """
-        if requested is None:
-            return True
-        if requested == accepted:
-            return True
-        if requested % 1000 == 0 and accepted // 1000 == requested // 1000:
-            return True
-        return False
+    # Whether a result labelled *accepted* answers a request for *requested*
+    _category_matches = staticmethod(category_matches)
 
     # ------------------------------------------------------------------
     # Shared browser pool injection

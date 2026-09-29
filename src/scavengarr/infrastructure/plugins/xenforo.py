@@ -30,6 +30,10 @@ from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.categories import (
+    category_matches,
+    served_category,
+)
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 _MAX_PAGES = 50  # 20-25 results per page → 1000 results
@@ -337,15 +341,14 @@ class XenForoPluginBase(HttpxPluginBase):
         does not tell apart (2040 where all films are 2000) is served by the
         forums of its parent.
         """
-        for wanted in (category, category - category % 1000):
-            nodes = [
-                node
-                for node, cat in self._node_categories.items()
-                if self._category_matches(wanted, cat)
-            ]
-            if nodes:
-                return nodes
-        return []
+        wanted = served_category(category, self._node_categories.values())
+        if wanted is None:
+            return []
+        return [
+            node
+            for node, cat in self._node_categories.items()
+            if category_matches(wanted, cat)
+        ]
 
     async def _login(self) -> None:
         """Log in (form POST with the page's ``_xfToken``) unless logged in."""

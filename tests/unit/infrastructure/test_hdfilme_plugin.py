@@ -592,6 +592,24 @@ class TestHdfilmePlugin:
         paths = [c.request.url.path for c in listing.calls]
         assert paths == ["/filme1/", "/filme1/page/2/"]
 
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_documentary_film_is_a_movie(self) -> None:
+        """Documentaries used to be 5080 (TV) and dropped out of movie searches."""
+        plug = _make_plugin()
+        documentary = _FILM_DETAIL_HTML.replace(
+            '<a href="https://hdfilme.cafe/fantasy/">Fantasy</a>',
+            '<a href="https://hdfilme.cafe/dokumentation/">Dokumentation</a>',
+        )
+        _mock_site(
+            _SEARCH_HTML, {_BATMAN_URL: documentary, _THE_BATMAN_URL: documentary}
+        )
+
+        results = await plug.search("Batman", category=2000)
+        await plug.cleanup()
+
+        assert [r.category for r in results] == [2000, 2000]
+
     @pytest.mark.asyncio
     async def test_no_query_no_category_returns_empty(self) -> None:
         plug = _make_plugin()

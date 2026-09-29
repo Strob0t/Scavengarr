@@ -28,7 +28,6 @@ _SearchResultParser = _mod._SearchResultParser
 _DetailPageParser = _mod._DetailPageParser
 _clean_title = _mod._clean_title
 _detect_series = _mod._detect_series
-_detect_category = _mod._detect_category
 _domain_from_url = _mod._domain_from_url
 _parse_genres = _mod._parse_genres
 _parse_year = _mod._parse_year
@@ -229,20 +228,6 @@ class TestDetectSeries:
 
     def test_empty_text(self) -> None:
         assert _detect_series("", "Batman") is False
-
-
-class TestDetectCategory:
-    def test_movie_default(self) -> None:
-        assert _detect_category(["Action", "Drama"], is_series=False) == 2000
-
-    def test_series(self) -> None:
-        assert _detect_category(["Crime", "Drama"], is_series=True) == 5000
-
-    def test_animation_movie(self) -> None:
-        assert _detect_category(["Animation", "Action"], is_series=False) == 5070
-
-    def test_animation_series(self) -> None:
-        assert _detect_category(["Animation", "Action"], is_series=True) == 5070
 
 
 class TestDomainFromUrl:
@@ -565,7 +550,7 @@ class TestMegakinoPluginSearch:
         assert len(results) == 1
         first = results[0]
         assert first.title == "The LEGO Movie 2"
-        assert first.category == 5070  # Animation genre → 5070
+        assert first.category == 2000  # an animated film is a film
         assert first.download_link.startswith("https://")
         assert first.download_links is not None
         assert len(first.download_links) == 2
@@ -812,7 +797,7 @@ class TestMegakinoCategoryFiltering:
         mock_client.get = AsyncMock(
             side_effect=[
                 _mock_response("", 204),  # yg_token
-                _mock_response(_FILM_DETAIL_HTML),  # Animation → 5070
+                _mock_response(_FILM_DETAIL_HTML),  # animated film → 2000
                 _mock_response(_SERIES_DETAIL_HTML),  # Series → 5000
             ]
         )
@@ -820,9 +805,8 @@ class TestMegakinoCategoryFiltering:
         plug._client = mock_client
         results = await plug.search("test", category=2000)
 
-        # Animation (5070) and Series (5000) both have category >= 5000
-        # Movie filter (2000) only keeps category < 5000
-        assert len(results) == 0
+        # The animated film used to be 5070 and dropped out of movie searches
+        assert [r.category for r in results] == [2000]
 
     @pytest.mark.asyncio
     async def test_filter_series_only(self) -> None:
@@ -838,7 +822,7 @@ class TestMegakinoCategoryFiltering:
         mock_client.get = AsyncMock(
             side_effect=[
                 _mock_response("", 204),  # yg_token
-                _mock_response(_FILM_DETAIL_HTML),  # Animation → 5070
+                _mock_response(_FILM_DETAIL_HTML),  # animated film → 2000
                 _mock_response(_SERIES_DETAIL_HTML),  # Series → 5000
             ]
         )
@@ -846,8 +830,7 @@ class TestMegakinoCategoryFiltering:
         plug._client = mock_client
         results = await plug.search("test", category=5000)
 
-        # Both Animation (5070) and Series (5000) have category >= 5000
-        assert len(results) == 2
+        assert [r.category for r in results] == [5000]
 
     @pytest.mark.asyncio
     async def test_no_category_returns_all(self) -> None:

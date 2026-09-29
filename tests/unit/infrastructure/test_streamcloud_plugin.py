@@ -32,8 +32,6 @@ _SearchResultParser = _mod._SearchResultParser
 _DetailPageParser = _mod._DetailPageParser
 _clean_title = _mod._clean_title
 _detect_series = _mod._detect_series
-_detect_category = _mod._detect_category
-_filter_by_category = _mod._filter_by_category
 
 
 _BASE = "https://streamcloud.download"
@@ -259,25 +257,6 @@ class TestDetectSeries:
 
     def test_empty_genres(self) -> None:
         assert _detect_series([]) is False
-
-
-class TestDetectCategory:
-    """Tests for _detect_category."""
-
-    def test_movie_default(self) -> None:
-        assert _detect_category(["Action", "Drama"], is_series=False) == 2000
-
-    def test_series(self) -> None:
-        assert _detect_category(["Drama", "Serien"], is_series=True) == 5000
-
-    def test_anime_series(self) -> None:
-        assert _detect_category(["Anime", "Action"], is_series=True) == 5070
-
-    def test_anime_movie(self) -> None:
-        assert _detect_category(["Animation", "Abenteuer"], is_series=False) == 5070
-
-    def test_animation_series(self) -> None:
-        assert _detect_category(["Animation", "Action"], is_series=True) == 5070
 
 
 class TestSearchResultParser:

@@ -27,9 +27,7 @@ _Movie2kPlugin = _mod.Movie2kPlugin
 _SearchResultParser = _mod._SearchResultParser
 _BrowseResultParser = _mod._BrowseResultParser
 _DetailPageParser = _mod._DetailPageParser
-_detect_category = _mod._detect_category
 _domain_from_url = _mod._domain_from_url
-_filter_by_category = _mod._filter_by_category
 
 
 def _make_plugin() -> object:
@@ -202,28 +200,6 @@ def _mock_response(text: str, status_code: int = 200) -> httpx.Response:
 # ---------------------------------------------------------------------------
 
 
-class TestDetectCategory:
-    """Tests for _detect_category."""
-
-    def test_movie_default(self) -> None:
-        assert _detect_category(["Action", "Drama"], is_tv=False) == 2000
-
-    def test_tv_series(self) -> None:
-        assert _detect_category(["Drama", "Krimi"], is_tv=True) == 5000
-
-    def test_anime_from_animation(self) -> None:
-        assert _detect_category(["Animation", "Action"], is_tv=False) == 5070
-
-    def test_anime_tv(self) -> None:
-        assert _detect_category(["Anime", "Action"], is_tv=True) == 5070
-
-    def test_empty_genres_movie(self) -> None:
-        assert _detect_category([], is_tv=False) == 2000
-
-    def test_empty_genres_tv(self) -> None:
-        assert _detect_category([], is_tv=True) == 5000
-
-
 class TestDomainFromUrl:
     """Tests for _domain_from_url."""
 
@@ -235,36 +211,6 @@ class TestDomainFromUrl:
 
     def test_invalid_url(self) -> None:
         assert _domain_from_url("not-a-url") == "unknown"
-
-
-class TestFilterByCategory:
-    """Tests for _filter_by_category."""
-
-    def _make_result(self, category: int) -> object:
-        from scavengarr.domain.plugins.base import SearchResult
-
-        return SearchResult(
-            title="Test",
-            download_link="https://example.com",
-            category=category,
-        )
-
-    def test_filter_movies(self) -> None:
-        results = [self._make_result(2000), self._make_result(5000)]
-        filtered = _filter_by_category(results, 2000)
-        assert len(filtered) == 1
-        assert filtered[0].category == 2000
-
-    def test_filter_tv(self) -> None:
-        results = [self._make_result(2000), self._make_result(5000)]
-        filtered = _filter_by_category(results, 5000)
-        assert len(filtered) == 1
-        assert filtered[0].category == 5000
-
-    def test_no_filter(self) -> None:
-        results = [self._make_result(2000), self._make_result(5000)]
-        filtered = _filter_by_category(results, 0)
-        assert len(filtered) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -690,7 +636,7 @@ class TestMovie2kPluginSearch:
         assert first.metadata["imdb_url"] == "https://www.imdb.com/title/tt0371746"
 
     @pytest.mark.asyncio
-    async def test_anime_detection(self) -> None:
+    async def test_anime_film_is_a_movie(self) -> None:
         plug = _make_plugin()
         mock_client = AsyncMock()
 
@@ -711,7 +657,8 @@ class TestMovie2kPluginSearch:
         results = await plug.search("Naruto")
 
         assert len(results) == 1
-        assert results[0].category == 5070  # Anime category
+        # Films are 2000 whatever the genre (used to be 5070, TV/Anime)
+        assert results[0].category == 2000
 
 
 # ---------------------------------------------------------------------------

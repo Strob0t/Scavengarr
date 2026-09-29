@@ -1,0 +1,71 @@
+"""Torznab category helpers shared by the plugins.
+
+Torznab categories follow a ``X000`` parent / ``X0YY`` child scheme
+(2000 Movies, 2040 Movies/HD, 5000 TV, 5070 TV/Anime, ...). A plugin labels
+each result with the category the site gives it and answers a request with
+the results whose label the requested category covers:
+
+- ``served_category()`` turns the request into the category to match. A child
+  the site does not tell apart (2040 where every film is 2000) becomes its
+  parent; a family the site does not serve at all gives ``None``, and the
+  plugin returns ``[]`` without a request.
+- ``category_matches()`` / ``filter_by_category()`` then keep the results.
+
+Streaming sites (films and series) label with ``stream_category()``.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+
+from scavengarr.domain.plugins.base import SearchResult
+
+# The labels ``stream_category()`` gives
+STREAM_CATEGORIES = (2000, 5000, 5070)
+
+_ANIME_GENRES = frozenset({"anime", "animation"})
+
+
+def category_matches(requested: int | None, accepted: int) -> bool:
+    """Whether a result labelled *accepted* answers a request for *requested*.
+
+    A parent request (5000 = any TV) covers its children (5000-5999); a
+    child request (5070) only matches itself; no request matches all.
+    """
+    if requested is None or requested == accepted:
+        return True
+    return requested % 1000 == 0 and accepted // 1000 == requested // 1000
+
+
+def served_category(requested: int, offered: Iterable[int]) -> int | None:
+    """The category to match results against when *requested* comes in.
+
+    *offered* are the labels the site can give. *requested* itself when it
+    covers one of them; else its parent (a child the site does not tell
+    apart); ``None`` when the site has nothing of the family.
+    """
+    labels = tuple(offered)
+    for wanted in (requested, requested - requested % 1000):
+        if any(category_matches(wanted, label) for label in labels):
+            return wanted
+    return None
+
+
+def filter_by_category(
+    results: list[SearchResult], category: int
+) -> list[SearchResult]:
+    """The results whose label *category* covers."""
+    return [r for r in results if category_matches(category, r.category)]
+
+
+def stream_category(genres: Iterable[str], *, is_series: bool) -> int:
+    """Category of a streaming-site title.
+
+    Films are 2000 whatever their genre (animated films and documentaries
+    included); series are 5000, anime and animation series 5070.
+    """
+    if not is_series:
+        return 2000
+    if _ANIME_GENRES & {g.strip().lower() for g in genres}:
+        return 5070
+    return 5000
