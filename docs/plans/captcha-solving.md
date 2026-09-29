@@ -59,6 +59,19 @@ Should:
 
 Sources: see the research report in the 2026-09-28 session (Patchright README, Cloudflare docs on Challenge Passage/Turnstile validation, altcha.org docs, GitHub repos of Byparr, FlareSolverr, hcaptcha-challenger, ddddocr, aniloads).
 
+## animeloads spike (2026-09-29)
+
+Live, Patchright headful under Xvfb:
+
+- DDoS-Guard JS challenge clears in ~6 s; the media page lists releases as `#downloads ul.nav-pills li a[href="#download_<n>"]` ("Release 2: 1080p").
+- Links per release and episode: `POST /ajax/captcha` with `enc=base64(["media",<slug>,"downloads",<release>,<episode index | "cnl">])` and `response=nocaptcha` → `{"code":"error","message":"noadblock"}`, i.e. captcha required.
+- Captcha: `POST /files/captcha {cID:0, rT:1}` → 5 image hashes (48×48 PNG, `GET /files/captcha?cid=0&hash=<h>`); the odd one out has ~4× the pixel difference of the others (7448 vs ~1888). Comparing the images on a canvas inside the page solves it without Python image libraries; `{cID:0, pC:<hash>, rT:2}` → `"1"`; then `POST /ajax/captcha {enc, response:"captcha", captcha-idhf:0, captcha-hf:<hash>}` → `{"code":"success", "content":{…{"hoster":"rapidgator","cnl":{"jk","crypted"}}}}`. Solved on the first try in 1.5 s.
+- The requests must run in the page's main world with the site's jQuery (`page.evaluate(..., isolated_context=False)`; Patchright isolates `evaluate` by default).
+- Links come as Click'n'Load: AES-128-CBC, key = IV = `unhexlify(jk)` (some clients swap hex chars 15/16), zero padding → `https://rapidgator.net/file/…/onepunchman.1080p.e01.rar.html`.
+- Error messages: `slowdown` (rate limit), `wrong_captcha`, `cnl_login`.
+
+Open before implementation: which release/episodes a grab of a series-level result resolves to, and how to decrypt Click'n'Load (new `cryptography` dependency vs. WebCrypto in the page).
+
 ## Steps
 
 | # | Step | Status |
@@ -66,7 +79,7 @@ Sources: see the research report in the 2026-09-28 session (Patchright README, C
 | 1 | ALTCHA solver, `GrabResolvingPlugin` + `CrawlJobResolveUseCase`, nox links on grab | done |
 | 2 | nox: log the gateway's block reason, live smoke for grab resolution | done |
 | 3 | Shared captcha detector (`infrastructure/captcha/detect.py`), logging + scoring | done |
-| 4 | animeloads: odd-one-out captcha in the browser, links on grab | open |
+| 4 | animeloads: odd-one-out captcha in the browser, links on grab | spike done, open questions |
 | 5 | Cloudflare: persistent profile, `channel="chrome"` check, warmup at startup | open |
 | 6 | Embedded Turnstile tokens (vinovo, devideosrc, doodstream) | open |
 | 7 | Byparr sidecar as second `BrowserFetcherPort` | open |
