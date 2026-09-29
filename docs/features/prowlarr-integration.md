@@ -90,6 +90,8 @@ Environment variables override values from `config.yaml` (precedence: CLI > ENV 
 
 ### Docker Compose
 
+The repository ships a ready [`docker-compose.yml`](../../docker-compose.yml) that builds the image locally and has optional `solver` (Byparr) and `redis` profiles; see the [README Quick Start](../../README.md#quick-start). A minimal hand-written service looks like this:
+
 ```yaml
 services:
   scavengarr:

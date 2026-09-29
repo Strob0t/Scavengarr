@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "scavengarr"
 version = "0.1.0"
-description = "Torznab OnClick Indexer"
+description = "Self-hosted Stremio addon and Torznab indexer for Prowlarr, Sonarr and Radarr"
 packages = [{include = "scavengarr", from = "src"}]
 
 [tool.poetry.scripts]

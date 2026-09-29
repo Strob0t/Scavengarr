@@ -1,0 +1,51 @@
+# Scavengarr with Docker Compose (image built locally from Dockerfile.prod).
+#
+#   docker compose up -d --build                    # Scavengarr only
+#   docker compose --profile solver up -d --build   # + Byparr captcha solver
+#   docker compose --profile redis up -d --build    # + Redis cache backend
+#
+# Profiles only start the extra service; enable its use in Scavengarr by
+# uncommenting the matching environment line below.
+
+services:
+  scavengarr:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    image: scavengarr:local
+    container_name: scavengarr
+    ports:
+      - "7979:7979"
+    volumes:
+      - ./data:/app/config # config.yaml (edit, then restart)
+      - ./plugins:/app/plugins # the image does not bundle plugins
+      - scavengarr-cache:/app/cache # search cache, clearance cookies, scores
+    environment:
+      SCAVENGARR_LOG_LEVEL: INFO
+      # Byparr/FlareSolverr sidecar (profile "solver"):
+      # SCAVENGARR_PLAYWRIGHT_SOLVER_URL: http://byparr:8191
+      # Redis cache backend (profile "redis"):
+      # SCAVENGARR_CACHE_BACKEND: redis
+      # SCAVENGARR_CACHE_REDIS_URL: redis://redis:6379/0
+    shm_size: 1gb # Chromium (Playwright plugins, browser capture) needs shared memory
+    restart: unless-stopped
+
+  byparr:
+    image: ghcr.io/thephaseless/byparr:latest
+    container_name: scavengarr-byparr
+    profiles: ["solver"]
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: scavengarr-redis
+    profiles: ["redis"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  scavengarr-cache:

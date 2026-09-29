@@ -8,6 +8,13 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 59 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4472 tests (4431 excluding the opt-in live tests).
 
+### Docs: README Overhaul, CONTRIBUTING, Docker Compose, Generated Plugin List
+- **README rewritten for self-hosters** (Stremio first, Arr indexer second): header with badges, "How it works" Mermaid diagram, features grouped by area, Docker Compose quick start, step-by-step Stremio/Prowlarr setup, table of the most important settings, FAQ/troubleshooting, disclaimer, acknowledgements, and an open "How Scavengarr is built" section (largely AI-written, under strict review, TDD, Clean Architecture, quality gates). It names no sites.
+- **`CONTRIBUTING.md`**: development setup, tests, code style, project structure, tech stack, plugin and resolver guides, branch/commit rules, AI-assisted contributions (moved out of the README).
+- **`docker-compose.yml`**: builds `Dockerfile.prod` locally, mounts `data/` and `plugins/`, keeps the cache in a named volume (the image runs as a non-root user), `shm_size: 1gb` for Chromium; optional profiles `solver` (Byparr) and `redis`.
+- **`docs/plugins.md`** is generated from the plugin metadata by `scripts/generate_plugin_list.py` (website, mirrors, content, engine, languages, disclaimer on top); `tests/unit/infrastructure/test_plugin_list_doc.py` fails when it is outdated. Regenerate after adding or changing a plugin.
+- `pyproject.toml` description updated; GitHub repository description and topics set.
+
 ### Feature: Stremio Answers Within a Deadline, Only Playable Streams
 Measured with a Stremio-style harness (18 titles, every returned stream played): answers took 17–38 s (median 19.8 s) and 24 % of the returned streams did not play. Plan and results: `docs/plans/stremio-latency.md`.
 - **`plugin_timeout_seconds` is a search budget from the request start** (new default 10 s, was 30 s per plugin). Plugins queue for concurrency slots (two query variants × all plugins), and each plugin's timeout used to start only when it got a slot, so the search alone took up to 35 s. Plugins still running at the deadline are cut, queued ones skipped. A timeout counts for the circuit breaker when the plugin had at least half the budget.
