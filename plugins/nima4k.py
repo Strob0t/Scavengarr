@@ -17,6 +17,11 @@ from html.parser import HTMLParser
 from urllib.parse import urljoin
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.categories import (
+    filter_by_category,
+    served_category,
+    stream_category,
+)
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -28,29 +33,22 @@ _MAX_PAGES = 100  # 10 results/page → 100 pages for 1000
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-# Torznab category → site URL path segment.
+# Torznab category → site section, for browsing without a query.
 _CATEGORY_PATH_MAP: dict[int, str] = {
     2000: "movies",
     5000: "serien",
-    5070: "dokumentationen",
     5060: "sports",
     3000: "music",
 }
+# The labels ``_category_of()`` gives
+_CATEGORIES = (2000, 3020, 5000, 5060, 5070)
 
-# Site category name (from genre pills / URL) → Torznab category ID.
-_CATEGORY_NAME_MAP: dict[str, int] = {
-    "movies": 2000,
-    "filme": 2000,
-    "serien": 5000,
-    "tv": 5000,
-    "dokumentationen": 5070,
-    "dokus": 5070,
-    "sports": 5060,
-    "sport": 5060,
-    "music": 3000,
-    "musik": 3000,
-    "regrades": 2000,
-}
+# Season packs and episodes: "Stranger.Things.S03.German..."
+_SEASON_RE = re.compile(r"\bS\d{1,2}(?:E\d{1,3})?\b", re.IGNORECASE)
+_CONCERT_PILLS = frozenset({"konzert", "music", "musik"})
+_SPORT_PILLS = frozenset({"sport", "sports"})
+# Section pills of older listings; live listings carry genre pills only
+_SERIES_PILLS = frozenset({"serien", "tv"})
 
 
 class _ListingParser(HTMLParser):
@@ -292,13 +290,25 @@ def _build_download_links(release_id: str, base_url: str) -> list[dict[str, str]
     ]
 
 
-def _category_to_torznab(categories: list[str]) -> int:
-    """Map site category names to Torznab category ID."""
-    for cat in categories:
-        key = cat.lower().strip()
-        if key in _CATEGORY_NAME_MAP:
-            return _CATEGORY_NAME_MAP[key]
-    return 2000  # default: Movies
+def _category_of(item: dict[str, str | list[str]]) -> int:
+    """Torznab category of a listing item, from its genre pills and release.
+
+    Concerts 3020, sport 5060; otherwise films 2000 (documentaries too) and
+    series (season packs such as ``Show.S03...``) 5000, animation series 5070.
+    """
+    raw = item.get("categories", [])
+    pills = {p.strip().lower() for p in raw} if isinstance(raw, list) else set()
+    if pills & _CONCERT_PILLS:
+        return 3020
+    if pills & _SPORT_PILLS:
+        return 5060
+    title = str(item.get("title", ""))
+    is_series = (
+        bool(pills & _SERIES_PILLS)
+        or _SEASON_RE.search(str(item.get("release_name", ""))) is not None
+        or "staffel" in title.lower()
+    )
+    return stream_category(pills, is_series=is_series)
 
 
 class Nima4kPlugin(HttpxPluginBase):
@@ -372,9 +382,7 @@ class Nima4kPlugin(HttpxPluginBase):
         return all_results[: self.effective_max_results]
 
     def _build_search_result(
-        self,
-        item: dict[str, str | list[str]],
-        forced_category: int | None = None,
+        self, item: dict[str, str | list[str]]
     ) -> SearchResult | None:
         """Convert a parsed listing item to a SearchResult."""
         url = str(item.get("url", ""))
@@ -383,12 +391,6 @@ class Nima4kPlugin(HttpxPluginBase):
             return None
 
         dl_links = _build_download_links(release_id, self.base_url)
-        categories = item.get("categories", [])
-        cat_list = categories if isinstance(categories, list) else []
-
-        torznab_cat = (
-            forced_category if forced_category else _category_to_torznab(cat_list)
-        )
 
         title = str(item.get("title", ""))
         release_name = str(item.get("release_name", "")) or None
@@ -403,7 +405,7 @@ class Nima4kPlugin(HttpxPluginBase):
             release_name=release_name,
             size=size,
             published_date=date,
-            category=torznab_cat,
+            category=_category_of(item),
         )
 
     async def search(
@@ -417,23 +419,27 @@ class Nima4kPlugin(HttpxPluginBase):
 
         If a query is provided, uses POST search.
         If only a category is provided, browses the category pages.
+        Results are labelled from their release and filtered by *category*.
         """
+        if category is not None:
+            category = served_category(category, _CATEGORIES)
+            if category is None:
+                return []  # no section of the site has this category
         await self._ensure_client()
 
         if query:
             items = await self._search_post(query)
-        elif category and category in _CATEGORY_PATH_MAP:
-            category_path = _CATEGORY_PATH_MAP[category]
-            items = await self._browse_category(category_path)
+        elif category is not None:
+            path = _CATEGORY_PATH_MAP.get(category) or _CATEGORY_PATH_MAP.get(
+                category - category % 1000
+            )
+            items = await self._browse_category(path) if path else []
         else:
             return []
 
-        results: list[SearchResult] = []
-        for item in items:
-            sr = self._build_search_result(item, forced_category=category)
-            if sr:
-                results.append(sr)
-
+        results = [sr for item in items if (sr := self._build_search_result(item))]
+        if category is not None:
+            results = filter_by_category(results, category)
         return results
 
 

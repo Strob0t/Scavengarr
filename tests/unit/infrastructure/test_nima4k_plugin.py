@@ -27,10 +27,9 @@ _Nima4kPlugin = _nima4k.Nima4kPlugin
 _ListingParser = _nima4k._ListingParser
 _extract_release_id = _nima4k._extract_release_id
 _build_download_links = _nima4k._build_download_links
-_category_to_torznab = _nima4k._category_to_torznab
+_category_of = _nima4k._category_of
 _looks_like_size = _nima4k._looks_like_size
 _CATEGORY_PATH_MAP = _nima4k._CATEGORY_PATH_MAP
-_CATEGORY_NAME_MAP = _nima4k._CATEGORY_NAME_MAP
 
 
 def _make_plugin() -> object:
@@ -267,36 +266,52 @@ class TestBuildDownloadLinks:
         }
 
 
+def _item(release: str, pills: list[str], title: str = "") -> dict[str, object]:
+    return {"title": title or release, "release_name": release, "categories": pills}
+
+
 class TestCategoryMapping:
-    def test_movies_mapped(self) -> None:
-        assert _category_to_torznab(["Movies"]) == 2000
+    """Labels come from the release: live listings carry genre pills only."""
 
-    def test_serien_mapped(self) -> None:
-        assert _category_to_torznab(["Serien"]) == 5000
+    def test_film(self) -> None:
+        assert (
+            _category_of(_item("Dune.Part.Two.2024.German.2160p", ["Action"])) == 2000
+        )
 
-    def test_dokumentationen_mapped(self) -> None:
-        assert _category_to_torznab(["Dokumentationen"]) == 5070
+    def test_season_pack(self) -> None:
+        item = _item(
+            "Stranger.Things.S03.German.EAC3D.DL.2160p.WEB.HDR.HEVC-NIMA4K",
+            ["Drama", "Mystery"],
+            "Stranger Things (Staffel 3)",
+        )
+        assert _category_of(item) == 5000
 
-    def test_sports_mapped(self) -> None:
-        assert _category_to_torznab(["Sports"]) == 5060
+    def test_animation_series(self) -> None:
+        assert _category_of(_item("Arcane.S02.German.DL.2160p", ["Animation"])) == 5070
 
-    def test_music_mapped(self) -> None:
-        assert _category_to_torznab(["Music"]) == 3000
+    def test_documentary_film_is_a_movie(self) -> None:
+        # Documentaries used to be 5070 (TV/Anime)
+        assert (
+            _category_of(_item("Oceans.2009.German.2160p", ["Dokumentation"])) == 2000
+        )
 
-    def test_default_fallback(self) -> None:
-        assert _category_to_torznab(["Unknown"]) == 2000
+    def test_concert(self) -> None:
+        assert _category_of(_item("Metallica.Live.2023.2160p", ["Konzert"])) == 3020
 
-    def test_empty_list_defaults(self) -> None:
-        assert _category_to_torznab([]) == 2000
+    def test_sport(self) -> None:
+        assert _category_of(_item("UFC.300.2160p", ["Sport"])) == 5060
 
-    def test_path_map_movies(self) -> None:
-        assert _CATEGORY_PATH_MAP[2000] == "movies"
+    def test_section_pills_of_older_listings(self) -> None:
+        assert _category_of(_item("Some.Release.2160p", ["Serien"])) == 5000
+        assert _category_of(_item("Some.Release.2160p", ["Movies"])) == 2000
 
-    def test_path_map_serien(self) -> None:
-        assert _CATEGORY_PATH_MAP[5000] == "serien"
-
-    def test_path_map_docs(self) -> None:
-        assert _CATEGORY_PATH_MAP[5070] == "dokumentationen"
+    def test_path_map(self) -> None:
+        assert _CATEGORY_PATH_MAP == {
+            2000: "movies",
+            5000: "serien",
+            5060: "sports",
+            3000: "music",
+        }
 
 
 class TestLooksLikeSize:
@@ -415,7 +430,8 @@ class TestCategoryBrowsing:
 
         results = await plugin.search("", category=2000)
 
-        assert len(results) == 2
+        # The series in the listing is no film
+        assert [r.category for r in results] == [2000]
         # Should use GET, not POST
         mock_client.get.assert_awaited_once()
         mock_client.post.assert_not_awaited()
@@ -455,8 +471,8 @@ class TestCategoryBrowsing:
 
         results = await plugin.search("", category=2000)
 
-        # page 1 has 1 article, page 2 has 2 articles
-        assert len(results) == 3
+        # page 1 has 1 film, page 2 a film and a series
+        assert len(results) == 2
         assert mock_client.get.await_count == 2
 
     async def test_browse_stops_on_empty_page(self) -> None:
@@ -552,7 +568,7 @@ class TestSearchResultConstruction:
         # Second result: Serien → 5000
         assert results[1].category == 5000
 
-    async def test_forced_category_overrides_genre(self) -> None:
+    async def test_request_keeps_the_matching_results(self) -> None:
         plugin = _make_plugin()
 
         mock_response = AsyncMock(spec=httpx.Response)
@@ -564,10 +580,17 @@ class TestSearchResultConstruction:
         mock_client.post = AsyncMock(return_value=mock_response)
         plugin._client = mock_client
 
-        results = await plugin.search("batman", category=5070)
+        results = await plugin.search("batman", category=5000)
 
-        # Should use forced category, not genre pill
-        assert results[0].category == 5070
+        # Results used to carry the requested category, films included
+        assert [(r.title, r.category) for r in results] == [("Breaking Bad S01", 5000)]
+
+    async def test_category_the_site_does_not_serve(self) -> None:
+        plugin = _make_plugin()
+        plugin._client = AsyncMock(spec=httpx.AsyncClient)
+
+        assert await plugin.search("batman", category=7000) == []
+        plugin._client.post.assert_not_awaited()
 
 
 class TestCleanup:
