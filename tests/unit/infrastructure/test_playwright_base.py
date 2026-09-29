@@ -718,6 +718,48 @@ class TestWaitForCloudflare:
         assert _TestPlugin()._cf_timeout_ms == 30_000
 
 
+class TestClearanceStore:
+    @pytest.fixture(autouse=True)
+    def _reset_store(self):  # type: ignore[no-untyped-def]
+        yield
+        PlaywrightPluginBase.set_clearance_store(None)
+
+    @pytest.mark.asyncio
+    async def test_contexts_get_stored_clearances(self) -> None:
+        store = AsyncMock()
+        PlaywrightPluginBase.set_clearance_store(store)
+        plugin = _TestPlugin()
+        ctx = AsyncMock()
+
+        await plugin._configure_context(ctx)
+
+        store.restore.assert_awaited_once_with(ctx)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("solved", [True, False])
+    async def test_solved_challenge_is_remembered(self, solved: bool) -> None:
+        store = AsyncMock()
+        PlaywrightPluginBase.set_clearance_store(store)
+        page = AsyncMock()
+
+        with patch(
+            "scavengarr.infrastructure.plugins.playwright_base.solve_cloudflare",
+            AsyncMock(return_value=solved),
+        ):
+            await _TestPlugin()._wait_for_cloudflare(page)
+
+        if solved:
+            store.remember.assert_awaited_once_with(page.context)
+        else:
+            store.remember.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_without_store_nothing_happens(self) -> None:
+        plugin = _TestPlugin()
+        await plugin._configure_context(AsyncMock())
+        await plugin._remember_clearance(AsyncMock())
+
+
 class TestPassesCloudflare:
     @pytest.mark.asyncio
     async def test_error_status_without_challenge_fails(self) -> None:

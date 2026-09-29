@@ -99,7 +99,7 @@ A generic "solve the widget, read `cf-turnstile-response`" helper stays unbuilt 
 | 2 | nox: log the gateway's block reason, live smoke for grab resolution | done |
 | 3 | Shared captcha detector (`infrastructure/captcha/detect.py`), logging + scoring | done |
 | 4 | animeloads: odd-one-out captcha in the browser, links on grab | spike done, open questions |
-| 5 | Keep clearance cookies across restarts (B3) | open |
+| 5 | Keep clearance cookies across restarts (B3) | done (live: 4.9 s with challenge → 0.9 s after restart) |
 | 6 | Embedded Turnstile tokens (vinovo, devideosrc, doodstream) | done: none needs a token flow (see below) |
 | 7 | Byparr sidecar as second `BrowserFetcherPort` | done (not verified live: no Docker in the dev container) |
 | 8 | Recognizer container (opt-in) | deferred (no target needs it) |

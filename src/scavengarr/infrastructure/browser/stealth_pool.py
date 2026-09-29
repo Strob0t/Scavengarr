@@ -26,6 +26,7 @@ from scavengarr.infrastructure.browser.turnstile import (
 )
 
 if TYPE_CHECKING:
+    from scavengarr.infrastructure.browser.clearance_store import ClearanceStore
     from scavengarr.infrastructure.browser.shared_browser import SharedBrowserPool
 
 log = structlog.get_logger(__name__)
@@ -188,8 +189,11 @@ class StealthPool:
         browser_pool: SharedBrowserPool,
         timeout_ms: int = 15_000,
         fetch_concurrency: int = 2,
+        clearance_store: ClearanceStore | None = None,
     ) -> None:
         self._browser_pool = browser_pool
+        # Solved challenges survive restarts (cf_clearance, __ddg* cookies)
+        self._clearance_store = clearance_store
         self._timeout_ms = timeout_ms
         # Bounds fetch_text() pages (RAM budget: headful pages are heavy)
         self._fetch_sem = asyncio.Semaphore(fetch_concurrency)
@@ -226,9 +230,16 @@ class StealthPool:
 
             # Block heavy resources on all pages in this context
             await self._context.route("**/*", _block_resources)
+            if self._clearance_store is not None:
+                await self._clearance_store.restore(self._context)
 
             log.info("stealth_pool_started")
             return self._context
+
+    async def _remember(self, page: Page) -> None:
+        """Keep the clearance cookies of a page that passed its challenge."""
+        if self._clearance_store is not None:
+            await self._clearance_store.remember(page.context)
 
     async def cleanup(self) -> None:
         """Close the stealth context — idempotent.
@@ -348,6 +359,7 @@ class StealthPool:
                     return None
                 if not await solve_cloudflare(page, timeout_ms=timeout_ms):
                     return None
+                await self._remember(page)
                 return await read_when_settled(page, lambda: _read_body(page, url))
             except Exception:  # noqa: BLE001
                 log.debug("stealth_fetch_error", url=url, exc_info=True)
@@ -404,6 +416,7 @@ class StealthPool:
                 if not found.done():
                     if not await solve_cloudflare(page, timeout_ms=timeout_ms):
                         return None
+                    await self._remember(page)
                     if await _shows_offline_notice(page):
                         log.info("stealth_capture_offline", url=url)
                         return None

@@ -242,6 +242,45 @@ def _fetch_page(
     return page
 
 
+class TestStealthPoolClearanceStore:
+    async def test_new_context_gets_stored_clearances(self) -> None:
+        shared_pool, _, context = _mock_pool_stack()
+        store = AsyncMock()
+        pool = StealthPool(browser_pool=shared_pool, clearance_store=store)
+
+        await pool.new_page()
+        await pool.new_page()
+
+        store.restore.assert_awaited_once_with(context)
+
+    async def test_passed_page_is_remembered(self) -> None:
+        shared_pool, _, context = _mock_pool_stack()
+        page = _fetch_page()
+        context.new_page = AsyncMock(return_value=page)
+        store = AsyncMock()
+
+        await StealthPool(browser_pool=shared_pool, clearance_store=store).fetch_text(
+            "https://filmfans.org/x", timeout=10
+        )
+
+        store.remember.assert_awaited_once_with(page.context)
+
+    async def test_unsolved_challenge_is_not_remembered(self) -> None:
+        shared_pool, _, context = _mock_pool_stack()
+        context.new_page = AsyncMock(return_value=_fetch_page())
+        store = AsyncMock()
+
+        with patch(
+            "scavengarr.infrastructure.browser.stealth_pool.solve_cloudflare",
+            AsyncMock(return_value=False),
+        ):
+            await StealthPool(
+                browser_pool=shared_pool, clearance_store=store
+            ).fetch_text("https://filmfans.org/x", timeout=10)
+
+        store.remember.assert_not_awaited()
+
+
 class TestStealthPoolFetchText:
     async def test_is_a_browser_fetcher(self) -> None:
         from scavengarr.domain.ports import BrowserFetcherPort

@@ -17,6 +17,7 @@ from scavengarr.application.use_cases.stremio_catalog import StremioCatalogUseCa
 from scavengarr.application.use_cases.stremio_stream import StremioStreamUseCase
 from scavengarr.domain.entities.crawljob import Priority
 from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort
+from scavengarr.infrastructure.browser.clearance_store import ClearanceStore
 from scavengarr.infrastructure.browser.shared_browser import SharedBrowserPool
 from scavengarr.infrastructure.browser.solver_fetcher import (
     ChainedBrowserFetcher,
@@ -73,6 +74,7 @@ from scavengarr.infrastructure.plugins.constants import (
     search_max_results,
 )
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
+from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 from scavengarr.infrastructure.resource_detector import detect_resources
 from scavengarr.infrastructure.scoring.health_prober import HealthProber
 from scavengarr.infrastructure.scoring.query_pool import QueryPoolBuilder
@@ -374,8 +376,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     state.shared_browser_pool = SharedBrowserPool(
         headless=config.playwright_headless,
     )
+    # Solved Cloudflare/DDoS-Guard challenges survive restarts
+    clearance_store = ClearanceStore(state.cache)
+    PlaywrightPluginBase.set_clearance_store(clearance_store)
     state.stealth_pool = StealthPool(
         browser_pool=state.shared_browser_pool,
+        clearance_store=clearance_store,
         timeout_ms=int(config.stremio.probe_stealth_timeout_seconds * 1000),
         # RAM budget: at most 2 browser-fetched pages at a time
         fetch_concurrency=min(config.stremio.max_concurrent_playwright, 2),

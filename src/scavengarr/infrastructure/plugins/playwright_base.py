@@ -22,6 +22,7 @@ from patchright.async_api import (
 )
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.browser.clearance_store import ClearanceStore
 from scavengarr.infrastructure.browser.display import resolve_headless
 from scavengarr.infrastructure.browser.turnstile import (
     is_challenge_page,
@@ -96,6 +97,9 @@ class PlaywrightPluginBase:
     # per-request BrowserContext isolation (for plugins that rely on
     # persistent page state, e.g. moflix).
     _serialize_search: bool = False
+
+    # --- Clearance cookies across restarts (shared by all plugins) ---
+    _clearance_store: ClearanceStore | None = None
 
     def __init__(self) -> None:
         self._pw: Playwright | None = None
@@ -259,6 +263,9 @@ class PlaywrightPluginBase:
 
     async def _configure_context(self, ctx: BrowserContext) -> None:
         """Apply per-context settings shared by singleton and isolated contexts."""
+        store = PlaywrightPluginBase._clearance_store
+        if store is not None:
+            await store.restore(ctx)
         if self._block_resources:
             await ctx.route(
                 "**/*.{png,jpg,jpeg,gif,svg,woff,woff2,ttf,css}",
@@ -281,13 +288,31 @@ class PlaywrightPluginBase:
     # Cloudflare handling
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def set_clearance_store(store: ClearanceStore | None) -> None:
+        """Keep solved-challenge cookies across restarts (wired in composition)."""
+        PlaywrightPluginBase._clearance_store = store
+
+    async def _remember_clearance(self, page: Page) -> None:
+        """Store the clearance cookies of a page that passed a challenge.
+
+        Called after Cloudflare; plugins with other gates (DDoS-Guard) call
+        it themselves once their page shows real content.
+        """
+        store = PlaywrightPluginBase._clearance_store
+        if store is not None:
+            await store.remember(page.context)
+
     async def _wait_for_cloudflare(self, page: Page) -> bool:
         """Solve a Cloudflare challenge on *page* (Turnstile click included).
 
         Returns ``True`` if the page is usable, ``False`` if the challenge
         is still shown after ``_cf_timeout_ms``.
         """
-        return await solve_cloudflare(page, timeout_ms=self._cf_timeout_ms)
+        solved = await solve_cloudflare(page, timeout_ms=self._cf_timeout_ms)
+        if solved:
+            await self._remember_clearance(page)
+        return solved
 
     async def _passes_cloudflare(self, page: Page, resp: Response | None) -> bool:
         """Accept a navigation, solving a Cloudflare challenge if one is shown.

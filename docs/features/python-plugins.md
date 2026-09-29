@@ -398,8 +398,13 @@ boerse uses the inherited `PlaywrightPluginBase._wait_for_cloudflare()`:
 ```python
 # src/scavengarr/infrastructure/plugins/playwright_base.py
 async def _wait_for_cloudflare(self, page: Page) -> bool:
-    return await solve_cloudflare(page, timeout_ms=self._cf_timeout_ms)
+    solved = await solve_cloudflare(page, timeout_ms=self._cf_timeout_ms)
+    if solved:
+        await self._remember_clearance(page)
+    return solved
 ```
+
+A solved challenge's clearance cookie (`cf_clearance`, DDoS-Guard `__ddg*`) goes into the `ClearanceStore` and is restored into every new browser context, so restarts do not repeat the challenge while the cookie is valid. Plugins behind another gate (animeloads: DDoS-Guard) call `self._remember_clearance(page)` once the real page shows.
 
 ### Bounded Concurrency
 
