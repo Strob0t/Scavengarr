@@ -21,7 +21,7 @@ Must:
 4. **Recognizer container, opt-in**: only active when `recognizer_url` is set. API `POST /v1/recognize {kind: audio|image_text|odd_one_out, data_b64 | images_b64}` → `{text | index, confidence}`. Stateless, no browser of its own: our browser drives the captcha, the container only transcribes/recognizes. Unreachable or slow → best effort + warning. Defaults: faster-whisper (audio), ddddocr (text); no vision LLM.
 5. **Sidecar, opt-in**: Byparr (FlareSolverr-compatible API, `solver_url`) as fallback when the own browser fails or no display is available.
 6. **Proof-of-work captchas** (ALTCHA, Anubis, mCaptcha) are solved in-process with `hashlib`, one fresh challenge per submit.
-7. **Keep clearances**: Patchright persistent profile (`user_data_dir` in the data directory, not world-readable), dropped and recreated when corrupt. One browser context for all pages; one process per profile directory.
+7. **Keep clearances**: clearance cookies (`cf_clearance`, DDoS-Guard `__ddg*`) per domain in `CachePort` with their own expiry, restored into new browser contexts (revised 2026-09-29, see Decisions).
 8. **Warmup**: at startup solve the hosts the profile holds a clearance for; afterwards refresh only on demand (no periodic background load). The first search after a long idle may be slow.
 9. **Limits**: Xvfb stays required (headless = degraded mode with warning); at most 2 browser pages, one Chromium, 1–4 GB RAM budget; fixed time budget per solve.
 10. **Config/security**: every solver can be disabled via config and `SCAVENGARR_*`; tokens and cookies are never logged.
@@ -44,6 +44,15 @@ Should:
 | Custom captchas | JDownloader sources → spike → descope if not text/audio (C1→C2→C3) |
 | Recognizer API | own mini API (D1) |
 | nox links | resolved at grab time, not search time |
+
+Revised 2026-09-29 (after the spikes):
+
+| Topic | Decision |
+|---|---|
+| Clearance storage | clearance cookies per domain in `CachePort` (B3) instead of a persistent profile (B2): a persistent profile has exactly one browser context, which would end per-plugin and per-request isolation and allow only one process per profile, for a gain limited to restarts within the cookie lifetime (~30 min for `cf_clearance`, ~20 min for DDoS-Guard) |
+| animeloads | one search result per release; grab resolves all episodes of that release |
+| Click'n'Load decryption | `cryptography` as a direct dependency |
+| Recognizer container | deferred: no current target needs it (animeloads is solved by pixel comparison, vinovo/DoodStream need no captcha, no reCAPTCHA/hCaptcha targets) |
 
 ## Research summary (2026-09-28)
 
@@ -90,9 +99,9 @@ A generic "solve the widget, read `cf-turnstile-response`" helper stays unbuilt 
 | 2 | nox: log the gateway's block reason, live smoke for grab resolution | done |
 | 3 | Shared captcha detector (`infrastructure/captcha/detect.py`), logging + scoring | done |
 | 4 | animeloads: odd-one-out captcha in the browser, links on grab | spike done, open questions |
-| 5 | Cloudflare: persistent profile, `channel="chrome"` check, warmup at startup | open |
+| 5 | Keep clearance cookies across restarts (B3) | open |
 | 6 | Embedded Turnstile tokens (vinovo, devideosrc, doodstream) | done: none needs a token flow (see below) |
 | 7 | Byparr sidecar as second `BrowserFetcherPort` | done (not verified live: no Docker in the dev container) |
-| 8 | Recognizer container (opt-in) | open |
+| 8 | Recognizer container (opt-in) | deferred (no target needs it) |
 
 Each step: TDD, own commits, docs in the same commit, results recorded here.
