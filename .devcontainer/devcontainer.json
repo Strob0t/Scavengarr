@@ -27,8 +27,7 @@
     "vscode": {
       "extensions": [
         "ms-python.python",
-        "ms-python.pytest",
-        "ms-python.black-formatter",
+        "detachhead.basedpyright",
         "redhat.vscode-yaml",
         "Continue.continue",
         "anthropic.claude-code",

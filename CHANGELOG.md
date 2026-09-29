@@ -8,6 +8,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 59 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4588 tests (4547 excluding the opt-in live tests).
 
+### Chore: Dev Container Extensions Work in VSCodium
+- `.devcontainer/devcontainer.json` drops `ms-python.pytest` (not on Open VSX; test discovery is part of `ms-python.python`) and `ms-python.black-formatter` (the project formats with ruff) and adds `detachhead.basedpyright`, the Open VSX replacement for Pylance, which VSCodium/Code - OSS may not use.
+- `.vscode/settings.json` sets `basedpyright.analysis.typeCheckingMode` to `standard` (Pylance-like); basedpyright's own default `recommended` flags the whole code base.
+
 ### Fix: Code Review of `staging` (plan: `docs/plans/code-review-fixes.md`)
 - **Security — HLS proxy was an open proxy (SSRF)**: `/api/v1/stremio/proxy/{id}/{path}` joined the client path with `urljoin`, so `…/proxy/<id>/http://192.168.x.x/…` fetched any internal address and returned the body. Paths that leave the stream's CDN (other scheme or host) now get `400`.
 - **HLS segment errors leaked connections**: a 4xx/5xx segment response was raised without closing the streamed response; about 100 CDN errors (expired segment tokens) exhausted the shared HTTP pool and blocked every plugin and resolver. The response is closed before the error propagates.
