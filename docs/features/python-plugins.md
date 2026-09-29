@@ -302,6 +302,7 @@ for page_num in range(1, _MAX_PAGES + 1):
 2. Implement `async def search(self, query, category, season, episode) -> list[SearchResult]` using `self._safe_fetch()` (httpx) or `self._new_page()` / `self._ensure_page()` (Playwright), and `self._log` for logging.
 3. Add unit tests in `tests/unit/infrastructure/test_<sitename>_plugin.py` (see [Testing Plugins](#testing-plugins)).
 4. Restart the server and query `http://localhost:7979/api/v1/torznab/<name>?t=search&q=test`.
+5. Regenerate the public plugin list [`docs/plugins.md`](../plugins.md) with `poetry run python scripts/generate_plugin_list.py` (also after renaming a plugin or changing `provides`, `_domains`, `languages` or the base class); `tests/unit/infrastructure/test_plugin_list_doc.py` fails while it is outdated.
 
 ---
 

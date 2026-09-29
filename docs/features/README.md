@@ -32,6 +32,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** and **S
 | Document | Description |
 |---|---|
 | [Plugin System](./plugin-system.md) | Python plugin authoring, base classes, protocol, discovery, per-plugin overrides |
+| [Plugin List](../plugins.md) | Generated list of all plugins: website, mirrors, content, engine, languages |
 | [Python Plugins](./python-plugins.md) | Detailed Python plugin development, base class reference, examples |
 | [Multi-Stage Scraping](./multi-stage-scraping.md) | Search → detail → links inside plugins, bounded parallel execution |
 | [CrawlJob System](./crawljob-system.md) | Multi-link packaging for JDownloader integration |

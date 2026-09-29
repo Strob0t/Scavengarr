@@ -12,4 +12,5 @@ Read `docs/features/python-plugins.md` → "Adding a New Plugin" and follow it. 
 2. **Base class**: `HttpxPluginBase` for static HTML/JSON, `PlaywrightPluginBase` only for JS-heavy sites. Never duplicate base-class boilerplate. State the choice and why.
 3. **Search standards**: category filtering mapped to the site's filters, pagination up to `self.effective_max_results`, detail pages bounded by `self._new_semaphore()`.
 4. **TDD**: write `tests/unit/infrastructure/test_<name>_plugin.py` first; use an existing plugin + test with the same base class as reference.
-5. Finish with the `commit` skill.
+5. Regenerate `docs/plugins.md`: `poetry run python scripts/generate_plugin_list.py`.
+6. Finish with the `commit` skill.

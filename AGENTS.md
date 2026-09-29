@@ -132,6 +132,7 @@ Mock patterns:
 - Every plugin MUST do category filtering, pagination up to 1000 items and bounded-concurrency detail scraping. Site analysis with `playwright-mcp` comes before any code.
 - Hoster resolvers live in `src/scavengarr/infrastructure/hoster_resolvers/`: individual streaming/DDL resolvers, 12 generic DDL hosters (`generic_ddl.py`, `GenericDDLConfig`), 25 XFS hosters (`xfs.py`, `XFSConfig`). New XFS/DDL hoster = new config constant, no new tests or wiring.
 - JDownloader plugin sources for resolver work: `.devdata/JDownloader2/` (synced on container start).
+- `docs/plugins.md` is generated from the plugin metadata: after adding, removing or renaming a plugin or changing its `provides`, `_domains`, `languages` or base class, run `poetry run python scripts/generate_plugin_list.py` (`test_plugin_list_doc.py` fails otherwise). The README names no sites; the list carries the disclaimer.
 
 Step-by-step guides:
 - New plugin: `docs/features/python-plugins.md` → "Adding a New Plugin".
@@ -166,7 +167,8 @@ Step-by-step guides:
 | Domain / use cases / adapters | `src/scavengarr/{domain,application,infrastructure}/` |
 | HTTP router, CLI, composition root | `src/scavengarr/interfaces/` (`composition.py`) |
 | Stremio addon | `src/scavengarr/interfaces/api/stremio/` |
-| Plugins | `plugins/` |
+| Plugins | `plugins/` (generated list: `docs/plugins.md`, `scripts/generate_plugin_list.py`) |
+| Contributor guide, Docker Compose | `CONTRIBUTING.md`, `docker-compose.yml` (profiles `solver`, `redis`) |
 | Feature docs / architecture / plans | `docs/features/`, `docs/architecture/`, `docs/plans/` |
 | Refactor history | `docs/refactor/COMPLETED/` |
 | OpenSpec change specs | `openspec/changes/` |
