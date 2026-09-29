@@ -535,6 +535,19 @@ class TestPluginSearch:
         assert results == []
 
     @pytest.mark.asyncio
+    async def test_query_is_url_encoded(self, plugin, mock_client):
+        """An '&' in a title must not split the query parameter."""
+        mock_client.get = AsyncMock(
+            return_value=_make_json_response(SEARCH_EMPTY_RESPONSE)
+        )
+
+        await plugin.search("Fast & Furious")
+
+        url = httpx.URL(mock_client.get.await_args_list[0].args[0])
+        assert url.params["query"] == "Fast & Furious"
+        assert url.params["page"] == "1"
+
+    @pytest.mark.asyncio
     async def test_search_http_error(self, plugin, mock_client):
         mock_client.get = AsyncMock(
             side_effect=httpx.ConnectError("Connection refused")

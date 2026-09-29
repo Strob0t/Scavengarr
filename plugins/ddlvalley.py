@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import re
 from html.parser import HTMLParser
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote_plus, urljoin, urlparse
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
@@ -227,10 +227,11 @@ class DDLValleyPlugin(PlaywrightPluginBase):
         else:
             base = self.base_url
 
+        q = quote_plus(query)
         if page_num > 1:
-            url = f"{base}/page/{page_num}/?s={query}"
+            url = f"{base}/page/{page_num}/?s={q}"
         else:
-            url = f"{base}/?s={query}"
+            url = f"{base}/?s={q}"
 
         ctx = await self._ensure_context()
         page = await ctx.new_page()

@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import re
 from html.parser import HTMLParser
-from urllib.parse import urljoin
+from urllib.parse import quote_plus, urljoin
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
@@ -419,10 +419,11 @@ class ScnSrcPlugin(PlaywrightPluginBase):
         else:
             base = self.base_url
 
+        q = quote_plus(query)
         if page_num > 1:
-            url = f"{base}/page/{page_num}/?s={query}"
+            url = f"{base}/page/{page_num}/?s={q}"
         else:
-            url = f"{base}/?s={query}"
+            url = f"{base}/?s={q}"
 
         html = await self._fetch_page(url)
 

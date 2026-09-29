@@ -19,6 +19,7 @@ cineby.today, cineby.bond, cineby.site, cineby.watch, cineby.digital.
 from __future__ import annotations
 
 import asyncio
+from urllib.parse import quote_plus
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
@@ -115,7 +116,7 @@ class CinebyPlugin(HttpxPluginBase):
 
         for page_num in range(1, _MAX_PAGES + 1):
             resp = await self._safe_fetch(
-                f"{endpoint}?query={query}&language=en&page={page_num}",
+                f"{endpoint}?query={quote_plus(query)}&language=en&page={page_num}",
                 context=f"cineby_search_page_{page_num}",
             )
             if resp is None:

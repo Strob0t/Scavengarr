@@ -33,7 +33,7 @@ import os
 import re
 from contextvars import ContextVar
 from typing import Any
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, quote_plus, unquote, urlsplit
 
 from patchright.async_api import Page
 
@@ -361,10 +361,11 @@ class AnimeLoadsPlugin(PlaywrightPluginBase):
 
         Returns (results, total_pages).
         """
+        q = quote_plus(query)
         if page_num == 1:
-            url = f"{self.base_url}/search?q={query}"
+            url = f"{self.base_url}/search?q={q}"
         else:
-            url = f"{self.base_url}/search/page/{page_num}?q={query}"
+            url = f"{self.base_url}/search/page/{page_num}?q={q}"
 
         try:
             await page.goto(url, wait_until="domcontentloaded")

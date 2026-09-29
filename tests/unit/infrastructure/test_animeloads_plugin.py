@@ -295,6 +295,20 @@ class TestSearch:
         assert page.goto.await_args.args[0] == f"{_BASE_URL}/search?q=naruto"
         page.close.assert_awaited_once()
 
+    async def test_query_is_url_encoded(
+        self, animeloads_mod: ModuleType, plugin: Any, page: AsyncMock
+    ) -> None:
+        pages = {1: [_entry("A1")], 2: [_entry("B1")]}
+        _wire_pages(animeloads_mod, page, pages, total_pages=2)
+
+        await plugin.search("Fast & Furious")
+
+        urls = [c.args[0] for c in page.goto.await_args_list]
+        assert urls == [
+            f"{_BASE_URL}/search?q=Fast+%26+Furious",
+            f"{_BASE_URL}/search/page/2?q=Fast+%26+Furious",
+        ]
+
     async def test_empty_query(self, plugin: Any) -> None:
         assert await plugin.search("") == []
         plugin._new_page.assert_not_awaited()

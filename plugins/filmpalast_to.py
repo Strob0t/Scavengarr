@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import re
 from html.parser import HTMLParser
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
@@ -30,6 +30,10 @@ _DOMAINS = ["filmpalast.to"]
 _ONCLICK_RE = re.compile(r"window\.open\(['\"]([^'\"]+)['\"]")
 # Hoster account pages (e.g. https://vixeo.io/login) listed as "streams"
 _ACCOUNT_PAGE_RE = re.compile(r"^https?://[^/]+/(?:login|register|signup)/?(?:$|\?)")
+# The search term is one path segment: the site answers 404 to "/" (even
+# encoded), "?" and "#" would end the path; its title search finds the
+# titles without them
+_PATH_BREAKERS_RE = re.compile(r"[/?#]")
 
 
 # ---------------------------------------------------------------------------
@@ -226,7 +230,8 @@ class FilmpalastPlugin(HttpxPluginBase):
 
     async def _search_page(self, query: str) -> list[dict[str, str]]:
         """Fetch search results page and return list of {title, detail_url}."""
-        url = f"{self.base_url}/search/title/{query}"
+        term = " ".join(_PATH_BREAKERS_RE.sub(" ", query).split())
+        url = f"{self.base_url}/search/title/{quote(term, safe='')}"
         resp = await self._safe_fetch(url, context="search_page")
         if resp is None:
             return []

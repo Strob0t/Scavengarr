@@ -544,6 +544,22 @@ class TestPluginSearch:
         for r in results:
             assert r.category == 2000
 
+    async def test_search_query_is_url_encoded(self) -> None:
+        plugin = _make_plugin()
+        plugin._domain_verified = True
+
+        search_page = _make_mock_page("<html></html>")
+        empty_page = _make_mock_page("<html></html>")
+        context = _make_mock_context(pages=[search_page, empty_page])
+
+        plugin._browser = _make_mock_browser(context)
+        plugin._context = context
+
+        await plugin.search("Fast & Furious")
+
+        url_called = search_page.goto.call_args[0][0]
+        assert url_called.endswith("/?s=Fast+%26+Furious")
+
     async def test_search_multiple_results(self) -> None:
         plugin = _make_plugin()
         plugin._domain_verified = True

@@ -239,6 +239,30 @@ class TestSearchUrl:
         call_url = mock_client.get.call_args_list[0][0][0]
         assert call_url == "https://filmpalast.to/search/title/Batman"
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("query", "segment"),
+        [
+            ("Fast & Furious", "Fast%20%26%20Furious"),
+            # "?" and "#" would end the path; the site finds the title without
+            ("Wer ist Hanna?", "Wer%20ist%20Hanna"),
+            # the site answers an encoded "/" with 404
+            ("AC/DC", "AC%20DC"),
+        ],
+    )
+    async def test_query_is_one_encoded_path_segment(
+        self, query: str, segment: str
+    ) -> None:
+        plugin = _make_plugin()
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.get = AsyncMock(return_value=_mock_response(_EMPTY_SEARCH_HTML))
+        plugin._client = mock_client
+
+        await plugin.search(query)
+
+        call_url = mock_client.get.call_args_list[0][0][0]
+        assert call_url == f"https://filmpalast.to/search/title/{segment}"
+
 
 # ---------------------------------------------------------------------------
 # Two-stage search

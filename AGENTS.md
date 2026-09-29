@@ -106,7 +106,7 @@ Invariants:
 - No mutable default arguments (use `None` + create inside). Never swallow exceptions (`except: pass`); log and re-raise or map cleanly.
 - Async: `asyncio.gather` over sequential `await` in loops; CPU-bound parsing goes to `run_in_executor`.
 - Prefer small functions/modules over deep class hierarchies; dependencies injected explicitly via constructors/factories.
-- Scraping: specific but robust selectors, `urljoin` for URLs, missing fields → partial result + warning instead of abort.
+- Scraping: specific but robust selectors, `urljoin` for URLs, search terms encoded (`quote_plus`, or `quote(term, safe="")` in a path segment), missing fields → partial result + warning instead of abort.
 - Playwright: no `sleep()` waits (use conditions/locators), close contexts/pages deterministically, limit browser parallelism with a semaphore.
 
 Performance guide: `docs/PYTHON-BEST-PRACTICES.md`.
