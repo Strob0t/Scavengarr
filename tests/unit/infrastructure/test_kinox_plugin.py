@@ -515,6 +515,8 @@ class TestPluginSearch:
         detail_resp = _make_response(DETAIL_MOVIE_HTML)
         error_resp = MagicMock(spec=httpx.Response)
         error_resp.status_code = 404
+        error_resp.text = ""
+        error_resp.headers = httpx.Headers()
 
         async def mock_get(url, **kwargs):
             url_str = str(url)
@@ -742,3 +744,50 @@ class TestJsonMirrorAnswer:
         plugin._client.get = AsyncMock(side_effect=mock_get)
 
         assert await plugin.search("batman") == []
+
+
+class TestCloudflareFallback:
+    """Pages go through the base helpers (plugin timeout, UA, browser)."""
+
+    @pytest.fixture()
+    def challenge(self):
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 403
+        resp.text = "<title>Just a moment...</title>"
+        resp.headers = httpx.Headers()
+        resp.url = httpx.URL("https://www22.kinox.to/Search.html?q=batman")
+        return resp
+
+    @pytest.fixture()
+    def plugin(self, kinox_mod, challenge, monkeypatch):
+        from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
+
+        fetcher = AsyncMock()
+        monkeypatch.setattr(HttpxPluginBase, "_browser_fetcher", fetcher)
+        monkeypatch.setattr(HttpxPluginBase, "_cf_blocked_until", {})
+        p = kinox_mod.KinoxPlugin()
+        p._client = AsyncMock(spec=httpx.AsyncClient)
+        p._client.get = AsyncMock(return_value=challenge)
+        p._domain_verified = True
+        p.base_url = "https://www22.kinox.to"
+        return p, fetcher
+
+    @pytest.mark.asyncio
+    async def test_challenged_search_is_loaded_through_the_browser(self, plugin):
+        p, fetcher = plugin
+        fetcher.fetch_text = AsyncMock(return_value=SEARCH_HTML)
+
+        results = await p._search_page("batman")
+
+        assert len(results) == 2
+        fetcher.fetch_text.assert_awaited_once()
+        assert "q=batman" in fetcher.fetch_text.await_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_challenged_mirror_answer_is_loaded_through_the_browser(self, plugin):
+        p, fetcher = plugin
+        fetcher.fetch_text = AsyncMock(return_value=_JSON_MIRROR_ABSOLUTE)
+
+        url = await p._fetch_mirror_url("Batman_Begins", "92")
+
+        assert url == "https://voe.sx/e/abc123"

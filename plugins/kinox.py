@@ -226,37 +226,26 @@ class KinoxPlugin(HttpxPluginBase):
 
     async def _search_page(self, query: str) -> list[dict[str, str]]:
         """Fetch search page and parse results."""
-        client = await self._ensure_client()
-
-        try:
-            resp = await client.get(
-                f"{self.base_url}/Search.html",
-                params={"q": query},
-            )
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning("kinox_search_failed", query=query, error=str(exc))
+        html = await self._fetch_text(
+            f"{self.base_url}/Search.html", params={"q": query}, context="search"
+        )
+        if html is None:
             return []
 
         parser = _SearchResultParser()
-        parser.feed(resp.text)
+        parser.feed(html)
 
         self._log.info("kinox_search", query=query, count=len(parser.results))
         return parser.results
 
     async def _fetch_detail_page(self, url_path: str) -> _DetailPageParser:
         """Fetch a movie/series detail page and parse it."""
-        client = await self._ensure_client()
-
-        try:
-            resp = await client.get(f"{self.base_url}{url_path}")
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning("kinox_detail_failed", url=url_path, error=str(exc))
+        html = await self._fetch_text(f"{self.base_url}{url_path}", context="detail")
+        if html is None:
             return _DetailPageParser()
 
         parser = _DetailPageParser()
-        parser.feed(resp.text)
+        parser.feed(html)
 
         self._log.info(
             "kinox_detail",
@@ -277,25 +266,20 @@ class KinoxPlugin(HttpxPluginBase):
         answers: the iframe HTML itself). The iframe points at the hoster or at
         kinox's own ``/redirect/<hash>`` (made absolute here, resolved later).
         """
-        client = await self._ensure_client()
-        try:
-            resp = await client.get(
-                f"{self.base_url}/aGET/Mirror/{slug}&Hoster={hoster_id}&Mirror=1",
-            )
-            if resp.status_code != 200:
-                return None
-            html = resp.text
-            try:
-                data = json.loads(html)
-            except ValueError:
-                data = None
-            if isinstance(data, dict) and isinstance(data.get("Stream"), str):
-                html = data["Stream"]
-            m = re.search(r'<iframe[^>]+src=["\']([^"\']+)', html)
-            return urljoin(f"{self.base_url}/", m.group(1).strip()) if m else None
-        except Exception:  # noqa: BLE001
-            self._log.warning("kinox_mirror_failed", slug=slug, hoster_id=hoster_id)
+        html = await self._fetch_text(
+            f"{self.base_url}/aGET/Mirror/{slug}&Hoster={hoster_id}&Mirror=1",
+            context="mirror",
+        )
+        if html is None:
             return None
+        try:
+            data = json.loads(html)
+        except ValueError:
+            data = None
+        if isinstance(data, dict) and isinstance(data.get("Stream"), str):
+            html = data["Stream"]
+        m = re.search(r'<iframe[^>]+src=["\']([^"\']+)', html)
+        return urljoin(f"{self.base_url}/", m.group(1).strip()) if m else None
 
     def _build_search_result(
         self,
