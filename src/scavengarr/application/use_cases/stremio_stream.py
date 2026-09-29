@@ -37,6 +37,7 @@ from scavengarr.application.stremio.stream_builder import (
     is_direct_video_url,
 )
 from scavengarr.domain.entities.stremio import (
+    CachedStreamLink,
     RankedStream,
     ResolvedStream,
     StremioStream,
@@ -482,11 +483,13 @@ class StremioStreamUseCase:
         # --- Cache step (parallel writes) ---
         stream_ids = [uuid4().hex for _ in streams]
         links = build_cache_links(stream_ids, ranked, resolved_map)
-        await asyncio.gather(*(self._stream_link_repo.save(lnk) for lnk in links))
+        unsaved = await self._save_links(links)
 
         proxied: list[StremioStream] = []
         skipped_echo = 0
         skipped_unresolved = 0
+        # Streams through our own /play/ or HLS proxy need their saved link
+        skipped_unsaved = 0
         has_resolver = bool(self._resolve_fn)
         for i, (stream, sid) in enumerate(zip(streams, stream_ids)):
             resolved = resolved_map.get(i)
@@ -495,14 +498,18 @@ class StremioStreamUseCase:
                 built = build_stream_from_resolved(
                     stream, resolved, original_url, sid, base_url, self._user_agent
                 )
-                if built is not None:
-                    proxied.append(built)
-                else:
+                if built is None:
                     skipped_echo += 1
+                elif sid in unsaved and built.url.startswith(base_url):
+                    skipped_unsaved += 1
+                else:
+                    proxied.append(built)
             elif has_resolver:
                 # Resolver is configured but returned None — skip this stream.
                 # The /play/ proxy would also fail (502).
                 skipped_unresolved += 1
+            elif sid in unsaved:
+                skipped_unsaved += 1
             else:
                 # No resolver configured — proxy through /play/ endpoint
                 proxy_url = f"{base_url}/api/v1/stremio/play/{sid}"
@@ -513,13 +520,34 @@ class StremioStreamUseCase:
                         url=proxy_url,
                     )
                 )
-        if skipped_echo or skipped_unresolved:
+        if skipped_echo or skipped_unresolved or skipped_unsaved:
             log.info(
                 "stremio_streams_skipped",
                 skipped_echo=skipped_echo,
                 skipped_unresolved=skipped_unresolved,
+                skipped_unsaved=skipped_unsaved,
             )
         return proxied
+
+    async def _save_links(self, links: list[CachedStreamLink]) -> set[str]:
+        """Save the links in parallel; return the stream ids not saved."""
+        assert self._stream_link_repo is not None
+        outcomes = await asyncio.gather(
+            *(self._stream_link_repo.save(lnk) for lnk in links),
+            return_exceptions=True,
+        )
+        errors = [
+            (lnk.stream_id, outcome)
+            for lnk, outcome in zip(links, outcomes, strict=True)
+            if isinstance(outcome, BaseException)
+        ]
+        if errors:
+            log.warning(
+                "stremio_stream_link_save_failed",
+                count=len(errors),
+                error=str(errors[0][1]),
+            )
+        return {sid for sid, _ in errors}
 
     async def _probe_streams(
         self,

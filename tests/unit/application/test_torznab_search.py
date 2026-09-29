@@ -258,6 +258,34 @@ class TestSearchExecution:
         await uc.execute(q)
         mock_crawljob_repo.save.assert_awaited_once()
 
+    async def test_item_without_saved_crawljob_is_dropped(
+        self,
+        mock_search_engine: AsyncMock,
+        mock_crawljob_repo: AsyncMock,
+    ) -> None:
+        """Its grab would answer 404; the other items stay."""
+        py_plugin = _FakePythonPlugin(name="filmpalast")
+        py_plugin._results = [
+            SearchResult(title="Good", download_link="https://example.com/good"),
+            SearchResult(title="Lost", download_link="https://example.com/lost"),
+        ]
+        registry = MagicMock()
+        registry.get.return_value = py_plugin
+        mock_search_engine.validate_results.side_effect = _identity
+
+        async def _save(job: Any) -> None:
+            if job.package_name == "Lost":
+                raise RuntimeError("cache down")
+
+        mock_crawljob_repo.save = AsyncMock(side_effect=_save)
+        uc = _make_uc(registry, mock_search_engine, mock_crawljob_repo)
+
+        response = await uc.execute(
+            TorznabQuery(action="search", plugin_name="filmpalast", query="x")
+        )
+
+        assert [i.title for i in response.items] == ["Good"]
+
     async def test_validation_error_raises_external_error(
         self,
         mock_crawljob_repo: AsyncMock,

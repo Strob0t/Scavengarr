@@ -18,6 +18,7 @@ from scavengarr.domain.entities import (
     TorznabPluginNotFound,
     TorznabQuery,
 )
+from scavengarr.domain.entities.crawljob import CrawlJob
 from scavengarr.domain.plugins import GrabResolvingPlugin
 from scavengarr.domain.ports import PluginRegistryPort
 from scavengarr.domain.ports.cache import CachePort
@@ -241,8 +242,7 @@ class TorznabSearchUseCase:
         resolve_plugin = (
             q.plugin_name if isinstance(plugin, GrabResolvingPlugin) else None
         )
-        items: list[TorznabItem] = []
-        save_coros: list[Any] = []
+        pending: list[tuple[TorznabItem, CrawlJob]] = []
         for raw_result in raw_results:
             try:
                 base_item = TorznabItem(
@@ -266,9 +266,8 @@ class TorznabSearchUseCase:
                 crawljob = self.crawljob_factory.create_from_search_result(
                     raw_result, resolve_plugin=resolve_plugin
                 )
-                save_coros.append(self.crawljob_repo.save(crawljob))
                 enriched_item = dataclass_replace(base_item, job_id=crawljob.job_id)
-                items.append(enriched_item)
+                pending.append((enriched_item, crawljob))
 
                 log.debug(
                     "crawljob_generated",
@@ -289,9 +288,23 @@ class TorznabSearchUseCase:
                 )
                 continue
 
-        # Batch-save all crawljobs in parallel
-        if save_coros:
-            await asyncio.gather(*save_coros, return_exceptions=True)
+        # Batch-save all crawljobs in parallel; an item whose job was not
+        # saved would answer the grab with 404, so it is dropped
+        saved = await asyncio.gather(
+            *(self.crawljob_repo.save(job) for _, job in pending),
+            return_exceptions=True,
+        )
+        items: list[TorznabItem] = []
+        for (item, job), outcome in zip(pending, saved, strict=True):
+            if isinstance(outcome, BaseException):
+                log.warning(
+                    "crawljob_save_failed",
+                    plugin=q.plugin_name,
+                    job_id=job.job_id,
+                    error=str(outcome),
+                )
+                continue
+            items.append(item)
 
         log.info(
             "torznab_search_completed",

@@ -34,7 +34,7 @@ Torznab's `<link>` element expects a URL that returns a downloadable file. Since
 1. **Search** — Torznab `?t=search&q=...` makes the plugin return `SearchResult` objects with download links.
 1. **Link validation** — `HttpxSearchEngine.validate_results()` drops dead links and results without any valid link (see [Link Validation](./link-validation.md)).
 1. **CrawlJob creation** — `CrawlJobFactory` converts each `SearchResult` into its own `CrawlJob`.
-1. **Cache storage** — `CacheCrawlJobRepository` stores each job under `crawljob:{job_id}` with a 3600-second TTL; all jobs of a search are saved in parallel.
+1. **Cache storage** — `CacheCrawlJobRepository` stores each job under `crawljob:{job_id}` with a 3600-second TTL; all jobs of a search are saved in parallel. An item whose job could not be saved is dropped from the answer (`crawljob_save_failed`): its grab would answer 404.
 1. **Torznab XML** — each `<item>` has `<link>` and `<enclosure>` pointing to `/api/v1/download/{job_id}`.
 1. **Grab** — Sonarr/Radarr request the download URL when a result is grabbed.
 1. **Delivery** — the download endpoint serves the serialized `.crawljob` file; the Arr download client drops it into JDownloader's FolderWatch directory.

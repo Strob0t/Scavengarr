@@ -11,6 +11,7 @@ from scavengarr.application.use_cases.stremio_stream import (
     StremioStreamUseCase,
 )
 from scavengarr.domain.entities.stremio import (
+    CachedStreamLink,
     ResolvedStream,
     StreamQuality,
     StremioStreamRequest,
@@ -1606,3 +1607,73 @@ class TestResolvePhase:
 
     def test_deadline_default(self) -> None:
         assert _make_config().stream_deadline_seconds == 15.0
+
+
+class TestStreamLinkSaveFailures:
+    """A failed stream-link save drops only the streams that need the link."""
+
+    @staticmethod
+    def _use_case(
+        repo: AsyncMock, resolve_fn: AsyncMock | None = None
+    ) -> StremioStreamUseCase:
+        tmdb = AsyncMock()
+        tmdb.get_title_and_year = AsyncMock(
+            return_value=TitleMatchInfo(title="Iron Man", year=2008)
+        )
+        sr = _make_search_result(
+            title="Iron Man",
+            download_links=[
+                {"url": "https://voe.sx/e/abc", "hoster": "VOE"},
+                {"url": "https://streamtape.com/v/xyz", "hoster": "Streamtape"},
+            ],
+        )
+        mock_plugin = AsyncMock()
+        mock_plugin.search = AsyncMock(return_value=[sr])
+        del mock_plugin.scraping
+        mock_plugin.isolated_search = mock_plugin.search
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(side_effect=lambda r: r)
+        plugins = MagicMock()
+        plugins.get_languages.return_value = ["de"]
+        plugins.get_by_provides.side_effect = lambda p: (
+            ["hdfilme"] if p == "stream" else []
+        )
+        plugins.get.return_value = mock_plugin
+        return _make_use_case(
+            tmdb=tmdb,
+            plugins=plugins,
+            search_engine=engine,
+            stream_link_repo=repo,
+            resolve_fn=resolve_fn,
+        )
+
+    async def test_play_stream_without_saved_link_is_dropped(self) -> None:
+        async def _save(link: CachedStreamLink) -> None:
+            if "voe" in link.hoster_url:
+                raise RuntimeError("cache down")
+
+        repo = AsyncMock()
+        repo.save = AsyncMock(side_effect=_save)
+
+        result = await self._use_case(repo).execute(
+            _make_request(), base_url="http://localhost:8080"
+        )
+
+        assert len(result) == 1
+        assert result[0].url.startswith("http://localhost:8080/api/v1/stremio/play/")
+
+    async def test_direct_streams_survive_failed_saves(self) -> None:
+        repo = AsyncMock()
+        repo.save = AsyncMock(side_effect=RuntimeError("cache down"))
+
+        async def _resolve(url: str, hoster: str = "") -> ResolvedStream:
+            return ResolvedStream(
+                video_url=f"{url}.mp4".replace("https://", "https://cdn.")
+            )
+
+        result = await self._use_case(repo, AsyncMock(side_effect=_resolve)).execute(
+            _make_request(), base_url="http://localhost:8080"
+        )
+
+        assert len(result) == 2
+        assert all(s.url.startswith("https://cdn.") for s in result)
