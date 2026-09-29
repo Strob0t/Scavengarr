@@ -226,19 +226,15 @@ class TestBuildSearchResult:
         p = cine_mod.CinePlugin()
         entry = SEARCH_RESPONSE["entries"][0]
 
-        sr = p._build_search_result(entry, None, None)
-
-        assert sr.title == "The Batman (2022)"
-        assert "cine.to/#tt1877830" in sr.download_link
-        assert sr.download_links is None
-        assert sr.description is None
+        # cine.to's own page is no stream or download link
+        assert p._build_search_result(entry, None, None) is None
 
     def test_detail_german_plot_preferred(self, cine_mod):
         p = cine_mod.CinePlugin()
         entry = SEARCH_RESPONSE["entries"][0]
         detail = DETAIL_RESPONSE["entry"]
 
-        sr = p._build_search_result(entry, detail, None)
+        sr = p._build_search_result(entry, detail, LINKS_RESPONSE["links"])
 
         assert "Gotham Citys Unterwelt" in sr.description
 
@@ -247,7 +243,7 @@ class TestBuildSearchResult:
         entry = {"imdb": "9999999", "year": 2023, "title": "Some Movie"}
         detail = DETAIL_RESPONSE_NO_PLOT_DE["entry"]
 
-        sr = p._build_search_result(entry, detail, None)
+        sr = p._build_search_result(entry, detail, LINKS_RESPONSE["links"])
 
         assert "English-only plot" in sr.description
 
@@ -255,7 +251,7 @@ class TestBuildSearchResult:
         p = cine_mod.CinePlugin()
         entry = {"imdb": "1234567", "title": "Unknown Movie"}
 
-        sr = p._build_search_result(entry, None, None)
+        sr = p._build_search_result(entry, None, LINKS_RESPONSE["links"])
 
         assert sr.title == "Unknown Movie"
         assert sr.published_date is None
@@ -265,7 +261,7 @@ class TestBuildSearchResult:
         entry = SEARCH_RESPONSE["entries"][0]
         detail = DETAIL_RESPONSE["entry"]
 
-        sr = p._build_search_result(entry, detail, None)
+        sr = p._build_search_result(entry, detail, LINKS_RESPONSE["links"])
 
         assert sr.metadata["genres"] == "Action, Crime, Mystery"
         assert sr.metadata["imdb_id"] == "1877830"
@@ -283,7 +279,7 @@ class TestBuildSearchResult:
                 "year": 2023,
                 "quality": code,
             }
-            sr = p._build_search_result(entry, None, None)
+            sr = p._build_search_result(entry, None, LINKS_RESPONSE["links"])
             assert sr.metadata["quality"] == label
 
     def test_long_description_truncated(self, cine_mod):
@@ -295,7 +291,7 @@ class TestBuildSearchResult:
             "genres": [],
         }
 
-        sr = p._build_search_result(entry, detail, None)
+        sr = p._build_search_result(entry, detail, LINKS_RESPONSE["links"])
 
         assert len(sr.description) == 300
         assert sr.description.endswith("...")
@@ -304,10 +300,7 @@ class TestBuildSearchResult:
         p = cine_mod.CinePlugin()
         entry = SEARCH_RESPONSE["entries"][0]
 
-        sr = p._build_search_result(entry, None, {})
-
-        assert sr.download_links is None
-        assert "cine.to/#tt" in sr.download_link
+        assert p._build_search_result(entry, None, {}) is None
 
     def test_malformed_link_data_skipped(self, cine_mod):
         """Link data with fewer than 2 elements should be skipped."""
@@ -315,9 +308,7 @@ class TestBuildSearchResult:
         entry = SEARCH_RESPONSE["entries"][0]
         links = {"bad_hoster": ["3"]}  # Only quality code, no link IDs
 
-        sr = p._build_search_result(entry, None, links)
-
-        assert sr.download_links is None
+        assert p._build_search_result(entry, None, links) is None
 
 
 # ---------------------------------------------------------------------------
@@ -338,6 +329,34 @@ class TestPluginSearch:
         p._client = mock_client
         p.base_url = "https://cine.to"
         return p
+
+    @pytest.mark.asyncio
+    async def test_non_json_answer_skips_only_that_title(self, plugin, mock_client):
+        """A DDoS-Guard HTML page (200) for one title must not abort the search."""
+        search = {**SEARCH_RESPONSE, "pages": 1}
+        html_page = MagicMock(spec=httpx.Response)
+        html_page.status_code = 200
+        html_page.text = "<html>checking your browser</html>"
+        html_page.json.side_effect = ValueError("not json")
+        html_page.raise_for_status = MagicMock()
+
+        async def mock_post(url, **kwargs):
+            url_str = str(url)
+            if "/request/search" in url_str:
+                return _make_json_response(search)
+            if "/request/entry" in url_str:
+                return _make_json_response(DETAIL_RESPONSE)
+            if "/request/links" in url_str:
+                if kwargs["data"]["ID"] == "2313197":
+                    return html_page
+                return _make_json_response(LINKS_RESPONSE)
+            return _make_json_response({})
+
+        mock_client.post = AsyncMock(side_effect=mock_post)
+
+        results = await plugin.search("batman")
+
+        assert [r.title for r in results] == ["The Batman (2022)"]
 
     @pytest.mark.asyncio
     async def test_search_returns_results(self, plugin, mock_client):
@@ -456,8 +475,8 @@ class TestPluginSearch:
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_detail_failure_still_returns_result(self, plugin, mock_client):
-        """When detail/links fail, result uses search entry data only."""
+    async def test_links_failure_gives_no_result(self, plugin, mock_client):
+        """Without links there is nothing to stream or download."""
         search_resp = _make_json_response(SEARCH_RESPONSE_SINGLE_PAGE)
         detail_fail = _make_json_response(DETAIL_RESPONSE_STATUS_FALSE)
         links_fail = _make_json_response(LINKS_RESPONSE_STATUS_FALSE)
@@ -476,13 +495,11 @@ class TestPluginSearch:
 
         results = await plugin.search("batman")
 
-        assert len(results) == 1
-        assert "cine.to/#tt" in results[0].download_link
-        assert results[0].download_links is None
+        assert results == []
 
     @pytest.mark.asyncio
-    async def test_detail_http_error_fallback(self, plugin, mock_client):
-        """HTTP errors on detail/links still produce results."""
+    async def test_detail_http_error_gives_no_result(self, plugin, mock_client):
+        """HTTP errors on detail/links: no links, no result, no crash."""
         search_resp = _make_json_response(SEARCH_RESPONSE_SINGLE_PAGE)
 
         async def mock_post(url, **kwargs):
@@ -495,8 +512,7 @@ class TestPluginSearch:
 
         results = await plugin.search("batman")
 
-        assert len(results) == 1
-        assert results[0].download_links is None
+        assert results == []
 
     @pytest.mark.asyncio
     async def test_entry_without_imdb_skipped(self, plugin, mock_client):

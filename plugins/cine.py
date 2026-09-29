@@ -48,38 +48,40 @@ class CinePlugin(HttpxPluginBase):
     provides = "stream"
     _domains = _DOMAINS
 
+    async def _post_api(self, path: str, data: dict, context: str) -> dict | None:
+        """POST to a ``/request/*`` endpoint; the JSON body if its ``status``
+        is true, else ``None`` (errors, non-JSON pages such as DDoS-Guard
+        checks and ``status: false`` are logged by the base helpers)."""
+        resp = await self._safe_fetch(
+            f"{self.base_url}{path}", method="POST", data=data, context=context
+        )
+        if resp is None:
+            return None
+        body = self._safe_parse_json(resp, context=context)
+        if not isinstance(body, dict) or not body.get("status"):
+            return None
+        return body
+
     async def _api_search(self, query: str) -> list[dict]:
         """Search the API across multiple pages and return raw entry dicts."""
-        client = await self._ensure_client()
         all_entries: list[dict] = []
 
         for page in range(1, _MAX_PAGES + 2):
-            try:
-                resp = await client.post(
-                    f"{self.base_url}/request/search",
-                    data={
-                        "term": query,
-                        "kind": "all",
-                        "genre": "0",
-                        "rating": "1",
-                        "year[]": [_YEAR_MIN, _YEAR_MAX],
-                        "language": "0",
-                        "page": str(page),
-                        "count": str(_PER_PAGE),
-                    },
-                )
-                resp.raise_for_status()
-            except Exception as exc:  # noqa: BLE001
-                self._log.warning(
-                    "cine_search_failed",
-                    query=query,
-                    page=page,
-                    error=str(exc),
-                )
-                break
-
-            data = resp.json()
-            if not data.get("status"):
+            data = await self._post_api(
+                "/request/search",
+                {
+                    "term": query,
+                    "kind": "all",
+                    "genre": "0",
+                    "rating": "1",
+                    "year[]": [_YEAR_MIN, _YEAR_MAX],
+                    "language": "0",
+                    "page": str(page),
+                    "count": str(_PER_PAGE),
+                },
+                context="search",
+            )
+            if data is None:
                 break
 
             entries = data.get("entries") or []
@@ -97,51 +99,25 @@ class CinePlugin(HttpxPluginBase):
 
     async def _fetch_entry_detail(self, imdb_id: str) -> dict | None:
         """Fetch title details (genres, rating, plot, duration)."""
-        client = await self._ensure_client()
-
-        try:
-            resp = await client.post(
-                f"{self.base_url}/request/entry",
-                data={"ID": imdb_id},
-            )
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning("cine_detail_failed", imdb_id=imdb_id, error=str(exc))
-            return None
-
-        data = resp.json()
-        if not data.get("status"):
-            return None
-
-        return data.get("entry")
+        data = await self._post_api("/request/entry", {"ID": imdb_id}, "detail")
+        return data.get("entry") if data else None
 
     async def _fetch_links(self, imdb_id: str) -> dict | None:
         """Fetch stream hoster links for a title."""
-        client = await self._ensure_client()
-
-        try:
-            resp = await client.post(
-                f"{self.base_url}/request/links",
-                data={"ID": imdb_id},
-            )
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning("cine_links_failed", imdb_id=imdb_id, error=str(exc))
-            return None
-
-        data = resp.json()
-        if not data.get("status"):
-            return None
-
-        return data.get("links")
+        data = await self._post_api("/request/links", {"ID": imdb_id}, "links")
+        return data.get("links") if data else None
 
     def _build_search_result(
         self,
         search_entry: dict,
         detail: dict | None,
         links: dict | None,
-    ) -> SearchResult:
-        """Build a SearchResult from search entry, detail, and links data."""
+    ) -> SearchResult | None:
+        """Build a SearchResult from search entry, detail, and links data.
+
+        Returns ``None`` without hoster links: cine.to's own page is neither
+        a stream nor a download link.
+        """
         title = search_entry.get("title", "")
         year = search_entry.get("year")
         imdb_id = search_entry.get("imdb", "")
@@ -157,7 +133,6 @@ class CinePlugin(HttpxPluginBase):
         source_url = f"{self.base_url}/#tt{imdb_id}" if imdb_id else self.base_url
 
         # Build download links from hoster data
-        download_link = source_url
         download_links: list[dict[str, str]] = []
         if links:
             for hoster_name, link_data in links.items():
@@ -172,8 +147,9 @@ class CinePlugin(HttpxPluginBase):
                         else hoster_name
                     )
                     download_links.append({"hoster": label, "link": link_url})
-                    if download_link == source_url:
-                        download_link = link_url
+        if not download_links:
+            self._log.debug("cine_no_links", imdb_id=imdb_id)
+            return None
 
         # Detail data
         description = ""
@@ -198,8 +174,8 @@ class CinePlugin(HttpxPluginBase):
 
         return SearchResult(
             title=display_title,
-            download_link=download_link,
-            download_links=download_links or None,
+            download_link=download_links[0]["link"],
+            download_links=download_links,
             source_url=source_url,
             published_date=str(year) if year else None,
             category=2000,  # Movies only
@@ -262,9 +238,14 @@ class CinePlugin(HttpxPluginBase):
         # Fetch detail + links with bounded concurrency
         sem = self._new_semaphore()
         tasks = [self._process_entry(e, sem) for e in search_results]
-        task_results = await asyncio.gather(*tasks)
+        task_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        results: list[SearchResult] = [sr for sr in task_results if sr is not None]
+        results: list[SearchResult] = []
+        for sr in task_results:
+            if isinstance(sr, BaseException):
+                self._log.warning("cine_entry_failed", error=repr(sr))
+            elif sr is not None:
+                results.append(sr)
 
         return results[: self.effective_max_results]
 
