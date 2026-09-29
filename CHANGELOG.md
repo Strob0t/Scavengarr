@@ -6,7 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
-Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 56 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4313 tests (4274 excluding the opt-in live tests).
+Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 56 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4321 tests (4281 excluding the opt-in live tests).
+
+### Fix: Vidara Streams via the JSON API
+- vidara.so and its mirror vidaraa.cc serve the StreamUp backend through a JSON API (`POST /api/stream`, JD2 `VidaraTo`), not the page/AJAX flow the Strmup resolver used, so every vidara link failed (`strmup_no_hls_url`) and vidaraa was not dispatched at all. Vidara hosts now use the API; file IDs may carry an `/e/` prefix and be 12+ characters. Live: both links → HLS master in 0.3 s.
 
 ### Test: Live Stremio End-to-End Use Case
 - `tests/live/test_stremio_e2e_live.py` (opt-in, `-m live`) starts the real app in-process (composition lifespan, `httpx.ASGITransport`), asks for the streams of Oppenheimer and Breaking Bad S01E01 and plays them like Stremio: `proxyHeaders`, HLS proxy or direct CDN, master → media playlist → first segment. Passes when one stream delivers media. Links are scraped fresh on each run. Live run after the resolver fixes: film 6 of 7 streams play (supervideo's CDN is the exception), episode 2 of 2; both tests pass in about 2 minutes.

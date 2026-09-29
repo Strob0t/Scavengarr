@@ -7,6 +7,10 @@ Resolution strategy (from JD2 StreamupWs.java):
 4. Return HLS master URL
 
 Offline detection: HTTP 404 or blank page (< 100 characters).
+
+Vidara (vidara.so/.to, vidaraa.cc) runs the same streaming backend behind a
+JSON API instead (JD2 VidaraTo.java): ``POST /api/stream`` with
+``{"device": "web", "filecode": id}`` → ``streaming_url``; 404 when gone.
 """
 
 from __future__ import annotations
@@ -22,9 +26,11 @@ from scavengarr.infrastructure.hoster_resolvers import extract_domain
 
 log = structlog.get_logger(__name__)
 
-_DOMAINS = frozenset({"strmup", "streamup", "vidara"})
+_DOMAINS = frozenset({"strmup", "streamup", "vidara", "vidaraa"})
+# Hosts served through the JSON API (JD2 VidaraTo)
+_API_DOMAINS = frozenset({"vidara", "vidaraa"})
 
-_FILE_ID_RE = re.compile(r"/(?:v/)?([A-Za-z0-9]{13})(?:/|$)")
+_FILE_ID_RE = re.compile(r"^/(?:e/|v/)?([A-Za-z0-9]{12,})(?:/|$)")
 
 
 def _extract_file_id(url: str) -> str | None:
@@ -71,6 +77,10 @@ class StrmupResolver:
             host = "strmup.to"
             scheme = "https"
 
+        if extract_domain(url) in _API_DOMAINS:
+            hls_master = await self._api_stream(scheme, host, file_id)
+            return self._stream(hls_master, scheme, host, file_id)
+
         page_url = f"{scheme}://{host}/{file_id}"
         referer = f"{scheme}://{host}/v/{file_id}"
 
@@ -107,6 +117,11 @@ class StrmupResolver:
         if not hls_master:
             hls_master = await self._ajax_fallback(host, scheme, file_id)
 
+        return self._stream(hls_master, scheme, host, file_id)
+
+    def _stream(
+        self, hls_master: str | None, scheme: str, host: str, file_id: str
+    ) -> ResolvedStream | None:
         if not hls_master:
             log.warning("strmup_no_hls_url", file_id=file_id)
             return None
@@ -121,6 +136,28 @@ class StrmupResolver:
                 "Referer": f"{scheme}://{host}/",
             },
         )
+
+    async def _api_stream(self, scheme: str, host: str, file_id: str) -> str | None:
+        """Vidara JSON API: ``streaming_url`` for *file_id*, None when gone."""
+        try:
+            resp = await self._http.post(
+                f"{scheme}://{host}/api/stream",
+                json={"device": "web", "filecode": file_id},
+                timeout=15,
+            )
+        except httpx.HTTPError:
+            log.warning("strmup_api_request_failed", host=host, file_id=file_id)
+            return None
+        if resp.status_code == 404:
+            log.info("strmup_file_not_found", file_id=file_id)
+            return None
+        try:
+            data = resp.json()
+        except ValueError:
+            log.warning("strmup_api_bad_json", status=resp.status_code)
+            return None
+        url = data.get("streaming_url") if isinstance(data, dict) else None
+        return url if isinstance(url, str) and url.startswith("http") else None
 
     def _extract_streaming_url(self, html: str) -> str | None:
         """Extract streaming_url from page HTML."""

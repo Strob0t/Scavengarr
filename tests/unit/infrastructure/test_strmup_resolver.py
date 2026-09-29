@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 import respx
@@ -224,5 +226,68 @@ class TestStrmupResolver:
         async with httpx.AsyncClient() as client:
             resolver = StrmupResolver(http_client=client)
             result = await resolver.resolve(url)
+
+        assert result is None
+
+
+class TestVidara:
+    """vidara.so / vidaraa.cc: JSON API ``POST /api/stream`` (JD2 VidaraTo)."""
+
+    _HLS = "https://s8-t25.97bf1.com/hls/W2OF/master.m3u8?token=t"
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://vidara.so/e/7Ba8NtMpSl0Wv",
+            "https://vidaraa.cc/e/7Ba8NtMpSl0Wv",
+            "https://vidara.to/v/7Ba8NtMpSl0Wv",
+        ],
+    )
+    def test_file_id(self, url: str) -> None:
+        assert _extract_file_id(url) == "7Ba8NtMpSl0Wv"
+
+    def test_vidaraa_is_dispatched(self) -> None:
+        resolver = StrmupResolver(http_client=httpx.AsyncClient())
+        assert "vidaraa" in resolver.supported_domains
+
+    @respx.mock
+    async def test_resolves_via_api(self) -> None:
+        api = respx.post("https://vidaraa.cc/api/stream").respond(
+            200, json={"filecode": "7Ba8NtMpSl0Wv", "streaming_url": self._HLS}
+        )
+
+        async with httpx.AsyncClient() as client:
+            result = await StrmupResolver(http_client=client).resolve(
+                "https://vidaraa.cc/e/7Ba8NtMpSl0Wv"
+            )
+
+        assert result is not None
+        assert result.video_url == self._HLS
+        assert result.is_hls is True
+        assert result.quality == StreamQuality.UNKNOWN
+        body = json.loads(api.calls.last.request.content)
+        assert body == {"device": "web", "filecode": "7Ba8NtMpSl0Wv"}
+
+    @respx.mock
+    async def test_video_not_found(self) -> None:
+        respx.post("https://vidara.so/api/stream").respond(
+            404, json={"error": "Video not found"}
+        )
+
+        async with httpx.AsyncClient() as client:
+            result = await StrmupResolver(http_client=client).resolve(
+                "https://vidara.so/e/7Ba8NtMpSl0Wv"
+            )
+
+        assert result is None
+
+    @respx.mock
+    async def test_api_without_streaming_url(self) -> None:
+        respx.post("https://vidara.so/api/stream").respond(200, json={"title": "x"})
+
+        async with httpx.AsyncClient() as client:
+            result = await StrmupResolver(http_client=client).resolve(
+                "https://vidara.so/e/7Ba8NtMpSl0Wv"
+            )
 
         assert result is None

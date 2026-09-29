@@ -100,7 +100,7 @@ Extract a direct video URL (`.mp4`/`.m3u8`) from an embed page.
 | SuperVideo | `supervideo` | `supervideo.*` | XFS-style JWPlayer extraction; browser capture on a Cloudflare 403 |
 | DoodStream | `doodstream` | `dood`, `doods`, `doodstream`, `ds2play`, `d0o0d`, `vidply`, `myvidplay`, `playmogo`, … (23 names; all mirrors currently redirect to `playmogo.com`) | `pass_md5` endpoint extraction; browser capture on a Cloudflare challenge |
 | Filemoon | `filemoon` | `filemoon.*` | Packed JS unpacker (legacy pages); Byse player pages via browser capture (`StealthPool.capture_media`) |
-| StreamUp | `strmup` | `strmup`, `streamup`, `vidara` | `streaming_url` from page, AJAX `/ajax/stream` fallback; HLS |
+| StreamUp | `strmup` | `strmup`, `streamup`, `vidara`, `vidaraa` | `streaming_url` from page, AJAX `/ajax/stream` fallback; HLS. Vidara hosts use the JSON API `POST /api/stream` (`{"device": "web", "filecode": id}` → `streaming_url`, 404 when gone; JD2 `VidaraTo`) |
 | Vidsonic | `vidsonic` | `vidsonic` | Hex-obfuscated, pipe-delimited HLS URL decoding |
 
 ### Validate-only resolvers (individual)
