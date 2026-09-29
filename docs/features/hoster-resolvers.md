@@ -137,7 +137,7 @@ Validate file availability without extracting a video URL and return the canonic
 | Rapidgator | `rapidgator` | `rapidgator.net`, `rapidgator.asia`, `rg.to` | Website scraping |
 | DDownload | `ddownload` | `ddownload`, `ddl` | XFS page check + canonical URL normalization |
 | Mediafire | `mediafire` | `mediafire` | Public file info API; offline on error `110`/`111` or a set `delete_date` |
-| GoFile | `gofile` | `gofile` | Guest token (cached 25 min) + content availability API |
+| GoFile | `gofile` | `gofile` | Guest token (cached 25 min; one guest account at a time, GoFile throttles their creation with 429) + content availability API. A token GoFile drops early (401 `error-wrongToken`) is renewed once. Known issue: GoFile currently refuses guest lookups (401 `error-notPremium`; its website adds an `X-Website-Token` from an obfuscated script), so GoFile links do not resolve (`gofile_guest_access_refused`) |
 
 ### Generic DDL resolvers (12 hosters)
 

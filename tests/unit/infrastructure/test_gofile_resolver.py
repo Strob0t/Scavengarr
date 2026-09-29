@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from unittest.mock import patch
 
@@ -191,6 +192,93 @@ class TestGoFileResolver:
                 await resolver.resolve(url)
 
         assert token_route.call_count == 2
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_renews_a_rejected_token_once(self) -> None:
+        # GoFile can drop a guest token before our TTL ends:
+        # 401 {"status": "error-wrongToken"} (JD2 GofileIo)
+        url = "https://gofile.io/d/abc123"
+        gofile._cached_token = "stale"
+        gofile._cached_token_ts = time.monotonic()
+        token_route = respx.post(_TOKEN_URL).respond(
+            200,
+            json={"status": "ok", "data": {"token": "fresh"}},
+        )
+        content_route = respx.get(_CONTENT_URL).mock(
+            side_effect=lambda request: (
+                httpx.Response(200, json={"status": "ok", "data": {}})
+                if request.headers["Authorization"] == "Bearer fresh"
+                else httpx.Response(
+                    401, json={"status": "error-wrongToken", "data": {}}
+                )
+            )
+        )
+
+        async with httpx.AsyncClient() as client:
+            result = await GoFileResolver(http_client=client).resolve(url)
+
+        assert result is not None
+        assert token_route.call_count == 1
+        assert content_route.call_count == 2
+        assert gofile._cached_token == "fresh"
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_gives_up_when_the_new_token_is_rejected_too(self) -> None:
+        url = "https://gofile.io/d/abc123"
+        token_route = respx.post(_TOKEN_URL).respond(
+            200, json={"status": "ok", "data": {"token": "t"}}
+        )
+        content_route = respx.get(_CONTENT_URL).respond(
+            401, json={"status": "error-wrongToken", "data": {}}
+        )
+
+        async with httpx.AsyncClient() as client:
+            assert await GoFileResolver(http_client=client).resolve(url) is None
+
+        assert token_route.call_count == 2
+        assert content_route.call_count == 2
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_guest_access_refused_is_not_retried(self) -> None:
+        # GoFile answers guest lookups with error-notPremium (2026-09); a
+        # retry would only create another guest account, which GoFile
+        # throttles with 429
+        url = "https://gofile.io/d/abc123"
+        token_route = respx.post(_TOKEN_URL).respond(
+            200, json={"status": "ok", "data": {"token": "t"}}
+        )
+        content_route = respx.get(_CONTENT_URL).respond(
+            401, json={"status": "error-notPremium", "data": {}}
+        )
+
+        async with httpx.AsyncClient() as client:
+            assert await GoFileResolver(http_client=client).resolve(url) is None
+
+        assert token_route.call_count == 1
+        assert content_route.call_count == 1
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_concurrent_resolves_share_one_guest_account(self) -> None:
+        # GoFile throttles guest account creation (429 after two accounts)
+        url = "https://gofile.io/d/abc123"
+
+        async def _slow_token(request: httpx.Request) -> httpx.Response:
+            await asyncio.sleep(0.01)  # let the other resolves run meanwhile
+            return httpx.Response(200, json={"status": "ok", "data": {"token": "t"}})
+
+        token_route = respx.post(_TOKEN_URL).mock(side_effect=_slow_token)
+        respx.get(_CONTENT_URL).respond(200, json={"status": "ok", "data": {}})
+
+        async with httpx.AsyncClient() as client:
+            resolver = GoFileResolver(http_client=client)
+            results = await asyncio.gather(*(resolver.resolve(url) for _ in range(5)))
+
+        assert all(r is not None for r in results)
+        assert token_route.call_count == 1
 
     @respx.mock
     @pytest.mark.asyncio()
