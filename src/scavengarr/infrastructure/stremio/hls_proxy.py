@@ -134,6 +134,9 @@ async def stream_hls_segment(
             stream=True,
             follow_redirects=True,
         )
+        if resp.is_error:
+            # Streamed responses hold their pooled connection until closed
+            await resp.aclose()
         resp.raise_for_status()
 
     ct = resp.headers.get("content-type", "application/octet-stream")
@@ -153,8 +156,16 @@ def build_cdn_url(cdn_base: str, path: str, query_string: str = "") -> str:
 
     Uses ``urljoin`` so that absolute paths (``/foo/bar``) and relative
     paths (``seg-1-v1-a1.ts``) both resolve correctly.
+
+    Raises ``ValueError`` when the result leaves the CDN (other scheme or
+    host): *path* comes from the client, and ``urljoin`` lets an absolute
+    or ``//host`` path replace the host, which would turn the proxy into
+    an open proxy into the server's network.
     """
     url = urljoin(cdn_base, path)
+    base, target = urlparse(cdn_base), urlparse(url)
+    if (target.scheme, target.netloc) != (base.scheme, base.netloc):
+        raise ValueError(f"path leaves the stream's CDN: {path[:80]}")
     if query_string:
         url = f"{url}?{query_string}"
     return url

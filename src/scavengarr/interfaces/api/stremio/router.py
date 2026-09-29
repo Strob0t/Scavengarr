@@ -441,7 +441,11 @@ async def proxy_hls(
 
     cdn_base = cdn_base_from_url(link.video_url)
     query_string = _resolve_query_string(request.url.query or "", link.video_url)
-    target_url = build_cdn_url(cdn_base, path, query_string)
+    try:
+        target_url = build_cdn_url(cdn_base, path, query_string)
+    except ValueError:
+        log.warning("hls_proxy_foreign_path", stream_id=stream_id, path=path[:80])
+        return _error_json(400, "path outside the stream's CDN")
 
     # Segments (.ts) — stream without buffering full body
     if not path.endswith(".m3u8"):

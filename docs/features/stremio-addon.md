@@ -145,8 +145,8 @@ Server-side proxy for HLS streams whose CDN requires headers (e.g. `Referer`) on
 **How it works:**
 
 1. Look up the `CachedStreamLink` (`video_url`, `video_headers`, `is_hls`); `404` if missing, `400` if it is not an HLS proxy stream.
-1. Build the CDN URL from the CDN base of `video_url` + `path`, using the request query string or, if empty, the original `video_url` query (auth tokens).
-1. Paths not ending in `.m3u8` are streamed from the CDN as segments (`StreamingResponse`).
+1. Build the CDN URL from the CDN base of `video_url` + `path`, using the request query string or, if empty, the original `video_url` query (auth tokens). A `path` that would leave the stream's CDN (absolute URL, `//host`, other scheme) is answered with `400`: the path comes from the client, and without this check the endpoint was an open proxy into the server's network (SSRF).
+1. Paths not ending in `.m3u8` are streamed from the CDN as segments (`StreamingResponse`); a failed segment request closes its connection before the error is returned, so CDN errors cannot drain the shared HTTP connection pool.
 1. `.m3u8` manifests are fetched with the stored headers (cached for 60 s), and URI lines starting with the CDN base are rewritten to proxy URLs; relative URIs are left as-is because they resolve against the proxy URL.
 1. CDN fetches share a global semaphore (50); CDN errors return `502`.
 

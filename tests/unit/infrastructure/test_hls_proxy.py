@@ -212,6 +212,39 @@ class TestBuildCdnUrl:
         result = build_cdn_url(base, "video/seg-1.ts", "t=abc")
         assert result == "https://cdn.example.com/hls/video/seg-1.ts?t=abc"
 
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "http://127.0.0.1:8080/admin",
+            "https://other.example.net/seg.ts",
+            "//169.254.169.254/latest/meta-data",
+            "http://cdn.example.com/hls/seg.ts",  # scheme downgrade
+        ],
+    )
+    def test_rejects_other_hosts(self, path: str) -> None:
+        """The client-supplied path must not leave the stream's CDN (SSRF)."""
+        with pytest.raises(ValueError, match="CDN"):
+            build_cdn_url("https://cdn.example.com/hls/", path)
+
+
+class TestStreamHlsSegment:
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_error_response_is_closed(self) -> None:
+        """A failed segment must not keep its pooled connection."""
+        url = "https://cdn.example.com/video/seg-1.ts"
+        respx.get(url).respond(403)
+        seen: list[httpx.Response] = []
+
+        async def _keep(resp: httpx.Response) -> None:
+            seen.append(resp)
+
+        async with httpx.AsyncClient(event_hooks={"response": [_keep]}) as client:
+            with pytest.raises(httpx.HTTPStatusError):
+                await hls_proxy.stream_hls_segment(client, url, {})
+
+        assert seen and seen[0].is_closed
+
 
 # ---------------------------------------------------------------------------
 # _resolve_query_string (router helper)

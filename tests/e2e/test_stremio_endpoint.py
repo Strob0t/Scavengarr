@@ -23,6 +23,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -1340,6 +1341,21 @@ class TestProxyHlsEndpoint:
         assert resp.status_code == 200
         assert resp.headers["content-type"] == "video/mp2t"
         assert resp.content == segment_data
+
+    @patch(f"{_PROXY_MODULE}.stream_hls_segment", new_callable=AsyncMock)
+    @pytest.mark.parametrize(
+        "path", ["http://127.0.0.1:8080/admin", "https://evil.example/x.ts"]
+    )
+    def test_path_outside_cdn_rejected(self, mock_stream: AsyncMock, path: str) -> None:
+        """No request to a host other than the stream's CDN (SSRF)."""
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=_make_hls_link())
+        client = TestClient(_make_app(stream_link_repo=repo))
+
+        resp = client.get(f"{_PREFIX}/stremio/proxy/hls-abc/{path}")
+
+        assert resp.status_code == 400
+        mock_stream.assert_not_awaited()
 
     def test_proxy_not_found(self) -> None:
         repo = AsyncMock()
