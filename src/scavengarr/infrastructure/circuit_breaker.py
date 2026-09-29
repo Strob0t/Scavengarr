@@ -32,9 +32,15 @@ class PluginCircuitBreaker:
         *,
         failure_threshold: int = 5,
         cooldown_seconds: float = 60.0,
+        max_cooldown_seconds: float = 3600.0,
     ) -> None:
         self._threshold = failure_threshold
         self._cooldown = cooldown_seconds
+        self._max_cooldown = max_cooldown_seconds
+        # Per-plugin cooldown: doubles with every failed half-open trial, so
+        # a plugin that stays down stops costing requests their full timeout
+        # (Stremio requests are minutes apart, a fixed 60 s is always over).
+        self._cooldowns: dict[str, float] = {}
         self._failures: dict[str, int] = {}
         self._states: dict[str, _State] = {}
         self._opened_at: dict[str, float] = {}
@@ -58,7 +64,7 @@ class PluginCircuitBreaker:
 
         if state == _State.OPEN:
             elapsed = time.monotonic() - self._opened_at.get(name, 0.0)
-            if elapsed >= self._cooldown:
+            if elapsed >= self._cooldowns.get(name, self._cooldown):
                 self._states[name] = _State.HALF_OPEN
                 return True
             return False
@@ -71,6 +77,7 @@ class PluginCircuitBreaker:
         self._failures.pop(name, None)
         self._states.pop(name, None)
         self._opened_at.pop(name, None)
+        self._cooldowns.pop(name, None)
 
     def record_failure(self, name: str) -> None:
         """Record a failed execution.
@@ -82,9 +89,12 @@ class PluginCircuitBreaker:
         state = self._states.get(name, _State.CLOSED)
 
         if state == _State.HALF_OPEN:
-            # Probe failed — reopen
+            # Probe failed — reopen with twice the cooldown (capped)
             self._states[name] = _State.OPEN
             self._opened_at[name] = time.monotonic()
+            self._cooldowns[name] = min(
+                self._cooldowns.get(name, self._cooldown) * 2, self._max_cooldown
+            )
             return
 
         count = self._failures.get(name, 0) + 1

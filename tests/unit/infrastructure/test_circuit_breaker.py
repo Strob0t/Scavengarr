@@ -129,3 +129,53 @@ class TestSnapshot:
         assert snap["alpha"]["failures"] == 1
         assert snap["beta"]["state"] == "open"
         assert snap["beta"]["failures"] == 3
+
+
+class TestCooldownBackoff:
+    """Every failed half-open trial doubles the cooldown (capped)."""
+
+    @staticmethod
+    def _open(cb: PluginCircuitBreaker, now: float) -> None:
+        with patch.object(time, "monotonic", return_value=now):
+            for _ in range(2):
+                cb.record_failure("foo")
+
+    @staticmethod
+    def _trial_fails(cb: PluginCircuitBreaker, at: float) -> None:
+        with patch.object(time, "monotonic", return_value=at):
+            assert cb.allow("foo") is True  # half-open trial
+            cb.record_failure("foo")
+
+    def test_cooldown_doubles_after_failed_trials(self) -> None:
+        cb = PluginCircuitBreaker(failure_threshold=2, cooldown_seconds=60)
+        self._open(cb, 1000.0)
+        self._trial_fails(cb, 1060.0)  # cooldown now 120 s
+
+        with patch.object(time, "monotonic", return_value=1060.0 + 119):
+            assert cb.allow("foo") is False
+        self._trial_fails(cb, 1060.0 + 120)  # cooldown now 240 s
+
+        with patch.object(time, "monotonic", return_value=1180.0 + 239):
+            assert cb.allow("foo") is False
+        with patch.object(time, "monotonic", return_value=1180.0 + 240):
+            assert cb.allow("foo") is True
+
+    def test_cooldown_is_capped(self) -> None:
+        cb = PluginCircuitBreaker(
+            failure_threshold=2, cooldown_seconds=60, max_cooldown_seconds=100
+        )
+        self._open(cb, 0.0)
+        self._trial_fails(cb, 60.0)  # 120 → capped at 100
+        with patch.object(time, "monotonic", return_value=60.0 + 100):
+            assert cb.allow("foo") is True
+
+    def test_success_resets_the_backoff(self) -> None:
+        cb = PluginCircuitBreaker(failure_threshold=2, cooldown_seconds=60)
+        self._open(cb, 0.0)
+        self._trial_fails(cb, 60.0)
+        with patch.object(time, "monotonic", return_value=180.0):
+            assert cb.allow("foo") is True
+            cb.record_success("foo")
+        self._open(cb, 200.0)
+        with patch.object(time, "monotonic", return_value=260.0):
+            assert cb.allow("foo") is True  # back to the base cooldown
