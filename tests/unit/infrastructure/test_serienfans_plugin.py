@@ -951,6 +951,37 @@ class TestSeasonFiltering:
         assert "/season/ALL" in season_call.args[0]
 
 
+class TestEpisodeTitles:
+    """Sonarr parses S01E05, not "Title - E5"."""
+
+    def _episodes(self) -> list[dict]:
+        link = [{"hoster": "ddownload", "link": "https://ddownload.com/abc"}]
+        return [
+            {
+                "episode_num": "5",
+                "episode_title": "Crawl Space",
+                "download_links": link,
+            },
+            {"episode_num": "6", "episode_title": "", "download_links": link},
+        ]
+
+    def test_episode_title_has_season_and_episode(self) -> None:
+        plugin = _make_plugin()
+        meta = {"title": "Breaking Bad", "year": "2008"}
+
+        results = plugin._filter_episodes(meta, self._episodes(), 5, "bb", season=2)
+
+        assert [r.title for r in results] == ["Breaking Bad S02E05 - Crawl Space"]
+
+    def test_episode_title_without_episode_title(self) -> None:
+        plugin = _make_plugin()
+        meta = {"title": "Breaking Bad", "year": "2008"}
+
+        results = plugin._filter_episodes(meta, self._episodes(), 6, "bb", season=2)
+
+        assert [r.title for r in results] == ["Breaking Bad S02E06"]
+
+
 # ---------------------------------------------------------------------------
 # Detail page error handling tests
 # ---------------------------------------------------------------------------

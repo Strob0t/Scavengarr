@@ -549,8 +549,13 @@ class SerienfansPlugin(HttpxPluginBase):
         series_meta: dict,
         episode: dict,
         url_id: str,
+        season: int | None = None,
     ) -> SearchResult:
-        """Convert a series + episode entry to a SearchResult."""
+        """Convert a series + episode entry to a SearchResult.
+
+        The title uses ``SxxEyy`` so Sonarr can parse it (``E5`` alone it
+        cannot); without a known season only ``Eyy`` is given.
+        """
         title = str(series_meta.get("title", ""))
         year = str(series_meta.get("year", ""))
         ep_num = str(episode.get("episode_num", ""))
@@ -558,9 +563,12 @@ class SerienfansPlugin(HttpxPluginBase):
         dl_links = episode.get("download_links", [])
         dl_links_list = dl_links if isinstance(dl_links, list) else []
 
-        display_title = f"{title} - E{ep_num}"
+        ep_code = f"E{int(ep_num):02d}" if ep_num.isdigit() else f"E{ep_num}"
+        if season is not None:
+            ep_code = f"S{season:02d}{ep_code}"
+        display_title = f"{title} {ep_code}"
         if ep_title:
-            display_title = f"{title} - E{ep_num} - {ep_title}"
+            display_title = f"{display_title} - {ep_title}"
 
         primary_link = dl_links_list[0]["link"] if dl_links_list else ""
         source_url = f"{self.base_url}/{url_id}"
@@ -616,7 +624,7 @@ class SerienfansPlugin(HttpxPluginBase):
 
         # Episode filter
         if episode is not None:
-            return self._filter_episodes(meta, episodes, episode, url_id)
+            return self._filter_episodes(meta, episodes, episode, url_id, season)
 
         # Season pack releases
         return [
@@ -632,13 +640,14 @@ class SerienfansPlugin(HttpxPluginBase):
         episodes: list[dict],
         episode: int,
         url_id: str,
+        season: int | None = None,
     ) -> list[SearchResult]:
         """Return only episodes matching the given episode number."""
         ep_str = str(episode)
         out: list[SearchResult] = []
         for ep in episodes:
             if str(ep.get("episode_num", "")).strip() == ep_str:
-                sr = self._build_episode_result(meta, ep, url_id)
+                sr = self._build_episode_result(meta, ep, url_id, season)
                 if sr.download_link:
                     out.append(sr)
         return out
