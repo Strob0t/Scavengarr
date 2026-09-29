@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import random
 import time
+from collections import deque
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from dataclasses import replace
@@ -117,6 +118,29 @@ log = structlog.get_logger(__name__)
 # Resolution always gets this long after the plugin search, even when the
 # search alone used up the stream deadline (otherwise nothing is returned).
 _MIN_RESOLVE_WINDOW_S = 2.0
+
+
+class _HosterQueues:
+    """Stream indices grouped by hoster, handed out in rank order.
+
+    A hoster gets its next stream only after the previous one failed.
+    Streams without a hoster name each form their own group.
+    """
+
+    def __init__(self, ranked: list[RankedStream]) -> None:
+        self._queues: dict[str, deque[int]] = {}
+        for i, stream in enumerate(ranked):
+            self._queues.setdefault(stream.hoster or f"#{i}", deque()).append(i)
+        self._key_of = {i: key for key, q in self._queues.items() for i in q}
+
+    def first(self) -> list[int]:
+        """The best stream of every hoster."""
+        return [q.popleft() for q in self._queues.values()]
+
+    def next_after(self, failed: list[int]) -> list[int]:
+        """The next stream of each hoster whose stream in *failed* failed."""
+        queues = (self._queues[self._key_of[i]] for i in failed)
+        return [q.popleft() for q in queues if q]
 
 
 # Callback type for probing hoster URLs at /stream time.
@@ -287,8 +311,8 @@ class StremioStreamUseCase:
         if self._resolve_fn is None:
             sorted_streams = deduplicate_by_hoster(sorted_streams)
         else:
-            # Deduplicated after resolution: a hoster keeps its best stream
-            # that actually resolves, not just its best-ranked one
+            # Deduplicated by the resolution (one resolved stream per
+            # hoster): a hoster keeps its best stream that actually resolves
             sorted_streams = sorted_streams[: self._max_probe_count]
 
         streams = [
@@ -463,24 +487,16 @@ class StremioStreamUseCase:
         proxied: list[StremioStream] = []
         skipped_echo = 0
         skipped_unresolved = 0
-        skipped_duplicate = 0
-        seen_hosters: set[str] = set()
         has_resolver = bool(self._resolve_fn)
         for i, (stream, sid) in enumerate(zip(streams, stream_ids)):
             resolved = resolved_map.get(i)
             if resolved is not None:
                 original_url = ranked[i].url if i < len(ranked) else ""
-                hoster = ranked[i].hoster if i < len(ranked) else ""
-                if hoster and hoster in seen_hosters:
-                    skipped_duplicate += 1
-                    continue
                 built = build_stream_from_resolved(
                     stream, resolved, original_url, sid, base_url, self._user_agent
                 )
                 if built is not None:
                     proxied.append(built)
-                    if hoster:
-                        seen_hosters.add(hoster)
                 else:
                     skipped_echo += 1
             elif has_resolver:
@@ -497,12 +513,11 @@ class StremioStreamUseCase:
                         url=proxy_url,
                     )
                 )
-        if skipped_echo or skipped_unresolved or skipped_duplicate:
+        if skipped_echo or skipped_unresolved:
             log.info(
                 "stremio_streams_skipped",
                 skipped_echo=skipped_echo,
                 skipped_unresolved=skipped_unresolved,
-                skipped_duplicate=skipped_duplicate,
             )
         return proxied
 
@@ -547,19 +562,27 @@ class StremioStreamUseCase:
         ranked: list[RankedStream],
         deadline: float,
     ) -> dict[int, ResolvedStream]:
-        """Resolve the top streams to direct video URLs in parallel.
+        """Resolve the top streams to direct video URLs, one per hoster.
+
+        Hosters are resolved in parallel, the streams of one hoster in rank
+        order: a hoster's next stream is only tried after its better one
+        failed, and none after one resolved.  This yields the best working
+        stream per hoster without opening connections for every candidate
+        at once (bursts to dozens of CDNs look like a port scan to home
+        routers, which then block the machine).  Streams without a hoster
+        name are each their own group.
 
         Uses early-stop: once ``resolve_target_count`` genuine video URLs
-        have been extracted, remaining tasks are cancelled.  This avoids
-        waiting for slow hosters when enough playable streams are ready.
-        At *deadline* (``time.monotonic()`` value) unfinished resolutions
-        are cancelled and what is resolved so far is returned.
+        have been extracted, remaining tasks are cancelled.  At *deadline*
+        (``time.monotonic()`` value) unfinished resolutions are cancelled
+        and what is resolved so far is returned.
 
         Returns a mapping of stream index -> ResolvedStream for
         successfully resolved streams.  Failed resolutions are omitted.
         """
         limit = min(len(ranked), self._max_probe_count)
         semaphore = asyncio.Semaphore(self._probe_concurrency)
+        hosters = _HosterQueues(ranked[:limit])
 
         async def _resolve_one(idx: int) -> tuple[int, ResolvedStream | None]:
             async with semaphore:
@@ -576,7 +599,7 @@ class StremioStreamUseCase:
                     )
                     return idx, None
 
-        pending = {asyncio.create_task(_resolve_one(i)) for i in range(limit)}
+        pending = {asyncio.create_task(_resolve_one(i)) for i in hosters.first()}
         resolved_map: dict[int, ResolvedStream] = {}
         video_count = 0
         target = self._resolve_target
@@ -596,6 +619,10 @@ class StremioStreamUseCase:
                 break
             attempted += len(done)
             video_count += self._collect_resolved(done, ranked, resolved_map)
+            failed = [idx for idx, res in (t.result() for t in done) if res is None]
+            pending |= {
+                asyncio.create_task(_resolve_one(i)) for i in hosters.next_after(failed)
+            }
 
             if target > 0 and video_count >= target:
                 break

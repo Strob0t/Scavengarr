@@ -32,7 +32,7 @@ Stremio App
 ```text
 IMDb/TMDB ID → title lookup per plugin language → plugin search → episode filter
   → link validation → title matching → quality/language parsing → ranking
-  → hoster resolution + playback check (deadline, early stop) → per-hoster dedup
+  → hoster resolution, one stream per hoster + playback check (deadline, early stop)
   → link cache → StremioStream list
 ```
 
@@ -44,8 +44,8 @@ IMDb/TMDB ID → title lookup per plugin language → plugin search → episode 
 1. **Title matching** — false positives (sequels, spin-offs) are filtered via fuzzy scoring.
 1. **Stream conversion** — `SearchResult` objects become `RankedStream` objects with parsed quality/language.
 1. **Ranking** — sort by language, quality, and hoster bonus.
-1. **Resolution** — the top `max_probe_count` streams are resolved in parallel (bounded by `probe_concurrency`) via `HosterResolverRegistry.resolve`; with `verify_streams` every resolved URL must also pass a playback check. Resolution stops early once `resolve_target_count` genuine video URLs exist, and at the latest at `stream_deadline_seconds` after the request started (but never less than 2 s after the search); unfinished resolutions are cancelled.
-1. **Dedup** — the best *resolved* stream per hoster is kept, so a hoster whose best-ranked link is dead still contributes its next working one.
+1. **Resolution** — of the top `max_probe_count` streams, hosters are resolved in parallel (bounded by `probe_concurrency`) via `HosterResolverRegistry.resolve`, the streams of one hoster in rank order: the next one only after the better one failed, none after one resolved; with `verify_streams` every resolved URL must also pass a playback check. Resolution stops early once `resolve_target_count` genuine video URLs exist, and at the latest at `stream_deadline_seconds` after the request started (but never less than 2 s after the search); unfinished resolutions are cancelled.
+1. **Dedup** — this yields the best *working* stream per hoster, so a hoster whose best-ranked link is dead still contributes its next one. Resolving every candidate at once instead opened dozens of connections to distinct CDNs within a second, which the home router blocked like a port scan (the whole machine lost network for ~30–60 s).
 1. **Caching + formatting** — every stream gets a `CachedStreamLink` in the stream link cache; resolved streams are returned with a direct URL or an HLS proxy URL. Streams that are not resolved (failed, only echoed the embed URL, beyond `max_probe_count`, or cancelled by the early stop) are dropped.
 
 ---
@@ -198,7 +198,7 @@ Streams are ranked with a weighted score:
 rank_score = language_score + (quality.value * quality_multiplier) + hoster_bonus
 ```
 
-Only one stream per hoster is returned (e.g. 5 VOE links from 5 plugins collapse to one); streams without a hoster name are always kept. With a resolver configured (the normal case) this happens after resolution: the best-ranked stream of a hoster *that resolved and passed the playback check* wins. Without a resolver, `deduplicate_by_hoster()` keeps the best-ranked stream per hoster before formatting.
+Only one stream per hoster is returned (e.g. 5 VOE links from 5 plugins collapse to one); streams without a hoster name are always kept. With a resolver configured (the normal case) the resolution does it: a hoster's streams are tried in rank order until one resolves and passes the playback check. Without a resolver, `deduplicate_by_hoster()` keeps the best-ranked stream per hoster before formatting.
 
 ### Default Weights
 

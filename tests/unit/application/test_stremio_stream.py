@@ -1557,6 +1557,24 @@ class TestResolvePhase:
 
         assert [s.url for s in result] == ["https://cdn.example/best.mp4"]
 
+    async def test_further_streams_of_a_resolved_hoster_are_not_resolved(
+        self,
+    ) -> None:
+        """Resolving every candidate at once opens dozens of connections to
+        distinct CDNs within a second, which home routers block as a port
+        scan; a hoster's next stream is only tried after its best failed."""
+        calls: list[str] = []
+
+        async def _resolve(url: str, hoster: str = "") -> ResolvedStream:
+            calls.append(url)
+            return _video(url)
+
+        uc = _resolving_use_case([dict(_BEST), dict(_SECOND)], _resolve)
+
+        await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        assert calls == [_BEST["url"]]
+
     async def test_deadline_returns_what_is_resolved(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
