@@ -447,43 +447,35 @@ class StreamkistePlugin(HttpxPluginBase):
             Page 1: GET /index.php?do=search&subaction=search&story={query}
             Page 2+: POST /index.php?do=search with form data
         """
-        client = await self._ensure_client()
-
-        try:
-            if page == 1:
-                params: dict[str, str] = {
-                    "do": "search",
-                    "subaction": "search",
-                    "story": query,
-                }
-                resp = await client.get(
-                    f"{self.base_url}/index.php",
-                    params=params,
-                )
-            else:
-                form_data: dict[str, str] = {
-                    "do": "search",
-                    "subaction": "search",
-                    "search_start": str(page),
-                    "result_from": str((page - 1) * _RESULTS_PER_PAGE + 1),
-                    "story": query,
-                }
-                resp = await client.post(
-                    f"{self.base_url}/index.php?do=search",
-                    data=form_data,
-                )
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning(
-                "streamkiste_search_failed",
-                query=query,
-                page=page,
-                error=str(exc),
+        if page == 1:
+            params: dict[str, str] = {
+                "do": "search",
+                "subaction": "search",
+                "story": query,
+            }
+            html = await self._fetch_text(
+                f"{self.base_url}/index.php", params=params, context="search"
             )
+        else:
+            form_data: dict[str, str] = {
+                "do": "search",
+                "subaction": "search",
+                "search_start": str(page),
+                "result_from": str((page - 1) * _RESULTS_PER_PAGE + 1),
+                "story": query,
+            }
+            resp = await self._safe_fetch(
+                f"{self.base_url}/index.php?do=search",
+                method="POST",
+                context="search",
+                data=form_data,
+            )
+            html = resp.text if resp is not None else None
+        if html is None:
             return []
 
         parser = _SearchResultParser(self.base_url)
-        parser.feed(resp.text)
+        parser.feed(html)
 
         self._log.info(
             "streamkiste_search_page",

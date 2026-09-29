@@ -621,12 +621,10 @@ class MegakinoPlugin(HttpxPluginBase):
         """
         if self._token_acquired:
             return
-        client = await self._ensure_client()
-        try:
-            await client.get(f"{self.base_url}/index.php?yg=token")
-            self._token_acquired = True
-        except Exception:  # noqa: BLE001
-            self._log.debug("megakino_token_failed")
+        resp = await self._safe_fetch(
+            f"{self.base_url}/index.php?yg=token", context="token"
+        )
+        self._token_acquired = resp is not None
 
     async def _search_page(
         self,
@@ -640,8 +638,6 @@ class MegakinoPlugin(HttpxPluginBase):
             Form data: do=search, subaction=search, story={query},
                         search_start={N}, result_from={offset}
         """
-        client = await self._ensure_client()
-
         form_data: dict[str, str] = {
             "do": "search",
             "subaction": "search",
@@ -651,19 +647,13 @@ class MegakinoPlugin(HttpxPluginBase):
             "result_from": str(max(1, (page - 1) * _RESULTS_PER_PAGE + 1)),
         }
 
-        try:
-            resp = await client.post(
-                f"{self.base_url}/index.php?do=search",
-                data=form_data,
-            )
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning(
-                "megakino_search_failed",
-                query=query,
-                page=page,
-                error=str(exc),
-            )
+        resp = await self._safe_fetch(
+            f"{self.base_url}/index.php?do=search",
+            method="POST",
+            context="search",
+            data=form_data,
+        )
+        if resp is None:
             return []
 
         parser = _SearchResultParser(self.base_url)
@@ -705,22 +695,13 @@ class MegakinoPlugin(HttpxPluginBase):
         episode: int | None = None,
     ) -> SearchResult | None:
         """Scrape a detail page for stream links and metadata."""
-        client = await self._ensure_client()
         detail_url = str(result["url"])
-
-        try:
-            resp = await client.get(detail_url)
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning(
-                "megakino_detail_failed",
-                url=detail_url,
-                error=str(exc),
-            )
+        html = await self._fetch_text(detail_url, context="detail")
+        if html is None:
             return None
 
         parser = _DetailPageParser(self.base_url)
-        parser.feed(resp.text)
+        parser.feed(html)
         parser.finalize()
 
         # Filter series links by episode (ep1, ep2, ... labels)

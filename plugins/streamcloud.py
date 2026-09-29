@@ -415,25 +415,15 @@ class StreamcloudPlugin(HttpxPluginBase):
             POST with form data: do=search, subaction=search,
             search_start={page}, result_from={(page-1)*12+1}, story={query}
         """
-        client = await self._ensure_client()
-
         if page == 1:
             params: dict[str, str] = {
                 "do": "search",
                 "subaction": "search",
                 "story": query,
             }
-            try:
-                resp = await client.get(self.base_url, params=params)
-                resp.raise_for_status()
-            except Exception as exc:  # noqa: BLE001
-                self._log.warning(
-                    "streamcloud_search_failed",
-                    query=query,
-                    page=page,
-                    error=str(exc),
-                )
-                return []
+            html = await self._fetch_text(
+                self.base_url, params=params, context="search"
+            )
         else:
             form_data = {
                 "do": "search",
@@ -443,23 +433,18 @@ class StreamcloudPlugin(HttpxPluginBase):
                 "result_from": str((page - 1) * _RESULTS_PER_PAGE + 1),
                 "story": query,
             }
-            try:
-                resp = await client.post(
-                    f"{self.base_url}/index.php?do=search",
-                    data=form_data,
-                )
-                resp.raise_for_status()
-            except Exception as exc:  # noqa: BLE001
-                self._log.warning(
-                    "streamcloud_search_failed",
-                    query=query,
-                    page=page,
-                    error=str(exc),
-                )
-                return []
+            resp = await self._safe_fetch(
+                f"{self.base_url}/index.php?do=search",
+                method="POST",
+                context="search",
+                data=form_data,
+            )
+            html = resp.text if resp is not None else None
+        if html is None:
+            return []
 
         parser = _SearchResultParser(self.base_url)
-        parser.feed(resp.text)
+        parser.feed(html)
 
         self._log.info(
             "streamcloud_search_page",

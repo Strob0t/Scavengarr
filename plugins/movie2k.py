@@ -502,24 +502,14 @@ class Movie2kPlugin(HttpxPluginBase):
         query: str,
     ) -> list[dict[str, str]]:
         """Fetch search results page (no pagination on search)."""
-        client = await self._ensure_client()
-
-        try:
-            resp = await client.get(
-                f"{self.base_url}/search",
-                params={"q": query},
-            )
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning(
-                "movie2k_search_failed",
-                query=query,
-                error=str(exc),
-            )
+        html = await self._fetch_text(
+            f"{self.base_url}/search", params={"q": query}, context="search"
+        )
+        if html is None:
             return []
 
         parser = _SearchResultParser(self.base_url)
-        parser.feed(resp.text)
+        parser.feed(html)
 
         self._log.info(
             "movie2k_search_page",
@@ -539,7 +529,6 @@ class Movie2kPlugin(HttpxPluginBase):
             path: URL path, e.g. "/movies" or "/tv/all".
             max_pages: Maximum pages to fetch.
         """
-        client = await self._ensure_client()
         all_results: list[dict[str, str | list[str]]] = []
         pages = max_pages or _MAX_PAGES
 
@@ -550,23 +539,14 @@ class Movie2kPlugin(HttpxPluginBase):
                 "order": "desc",
             }
 
-            try:
-                resp = await client.get(
-                    f"{self.base_url}{path}",
-                    params=params,
-                )
-                resp.raise_for_status()
-            except Exception as exc:  # noqa: BLE001
-                self._log.warning(
-                    "movie2k_browse_failed",
-                    path=path,
-                    page=page_num,
-                    error=str(exc),
-                )
+            html = await self._fetch_text(
+                f"{self.base_url}{path}", params=params, context="browse"
+            )
+            if html is None:
                 break
 
             parser = _BrowseResultParser(self.base_url)
-            parser.feed(resp.text)
+            parser.feed(html)
             parser.finalize()
 
             if not parser.results:
@@ -591,22 +571,13 @@ class Movie2kPlugin(HttpxPluginBase):
         result: dict[str, str | list[str]],
     ) -> SearchResult | None:
         """Scrape a detail page for hoster URLs and metadata."""
-        client = await self._ensure_client()
         detail_url = str(result["url"])
-
-        try:
-            resp = await client.get(detail_url)
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning(
-                "movie2k_detail_failed",
-                url=detail_url,
-                error=str(exc),
-            )
+        html = await self._fetch_text(detail_url, context="detail")
+        if html is None:
             return None
 
         parser = _DetailPageParser(self.base_url)
-        parser.feed(resp.text)
+        parser.feed(html)
         parser.finalize()
 
         if not parser.stream_links:

@@ -412,24 +412,16 @@ class HdfilmePlugin(HttpxPluginBase):
         Pagination is JS-based (only first page fetchable via httpx).
         Returns up to ~24 results per page.
         """
-        client = await self._ensure_client()
-
-        try:
-            resp = await client.get(
-                self.base_url,
-                params={
-                    "story": query,
-                    "do": "search",
-                    "subaction": "search",
-                },
-            )
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning("hdfilme_search_failed", query=query, error=str(exc))
+        html = await self._fetch_text(
+            self.base_url,
+            params={"story": query, "do": "search", "subaction": "search"},
+            context="search",
+        )
+        if html is None:
             return []
 
         parser = _SearchResultParser(self.base_url)
-        parser.feed(resp.text)
+        parser.feed(html)
 
         self._log.info(
             "hdfilme_search_results",
@@ -447,27 +439,17 @@ class HdfilmePlugin(HttpxPluginBase):
 
         Pages use ``/{path}/page/{n}/`` URL pattern.
         """
-        client = await self._ensure_client()
-
         if page_num > 1:
             url = f"{self.base_url}/{path}/page/{page_num}/"
         else:
             url = f"{self.base_url}/{path}/"
 
-        try:
-            resp = await client.get(url)
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning(
-                "hdfilme_browse_failed",
-                path=path,
-                page=page_num,
-                error=str(exc),
-            )
+        html = await self._fetch_text(url, context="browse")
+        if html is None:
             return []
 
         parser = _SearchResultParser(self.base_url)
-        parser.feed(resp.text)
+        parser.feed(html)
 
         self._log.info(
             "hdfilme_browse_page",
