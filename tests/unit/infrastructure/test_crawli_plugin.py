@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import importlib.util
 from pathlib import Path
 from types import ModuleType
@@ -314,7 +315,7 @@ class TestCrawliPlugin:
         assert "/film/" in call_url
 
     @pytest.mark.asyncio
-    async def test_search_uses_serie_category_path(self) -> None:
+    async def test_tv_request_searches_everything(self) -> None:
         p = _make_plugin()
         p._domain_verified = True
 
@@ -324,8 +325,9 @@ class TestCrawliPlugin:
 
         await p.search("Breaking Bad", category=5000)
 
+        # /serie/ only lists series pages; episodes are filed elsewhere
         call_url = mock_client.get.call_args_list[0][0][0]
-        assert "/serie/" in call_url
+        assert "/all/" in call_url
 
     @pytest.mark.asyncio
     async def test_search_uses_all_without_category(self) -> None:
@@ -437,7 +439,7 @@ class TestCrawliPlugin:
         mock_client.get = AsyncMock(return_value=_mock_response(_EMPTY_HTML))
         p._client = mock_client
 
-        await p.search("Cyberpunk", category=4000)
+        await p.search("Cyberpunk", category=4050)
 
         call_url = mock_client.get.call_args_list[0][0][0]
         assert "/spiel/" in call_url
@@ -457,7 +459,8 @@ class TestCrawliPlugin:
         assert "/music/" in call_url
 
     @pytest.mark.asyncio
-    async def test_search_uses_apps_path(self) -> None:
+    async def test_pc_request_searches_apps_and_games(self) -> None:
+        # Applications used to be requested as 5020 (TV/Foreign)
         p = _make_plugin()
         p._domain_verified = True
 
@@ -465,10 +468,92 @@ class TestCrawliPlugin:
         mock_client.get = AsyncMock(return_value=_mock_response(_EMPTY_HTML))
         p._client = mock_client
 
-        await p.search("Photoshop", category=5020)
+        await p.search("Photoshop", category=4000)
 
-        call_url = mock_client.get.call_args_list[0][0][0]
-        assert "/apps/" in call_url
+        urls = [c[0][0] for c in mock_client.get.call_args_list]
+        assert [u.split("/")[3] for u in urls] == ["apps", "spiel"]
+
+    @pytest.mark.asyncio
+    async def test_rows_are_labelled_by_their_section_class(self) -> None:
+        """The requested category used to be copied onto every result, and
+        only film rows (``sres3``) were parsed at all."""
+        p = _make_plugin()
+        p._domain_verified = True
+
+        async def _get(url: str, **_kw: object) -> httpx.Response:
+            kind = "sres1" if "/apps/" in url else "sres5"
+            return _mock_response(_SINGLE_RESULT_HTML.replace("sres3", kind))
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=_get)
+        p._client = mock_client
+
+        results = await p.search("Photoshop", category=4030)  # PC/Mac
+
+        # apps and spiel searched; application 4000, game 4050
+        assert [r.category for r in results] == [4000, 4050]
+
+    @pytest.mark.asyncio
+    async def test_episodes_are_tv_even_when_filed_as_films(self) -> None:
+        p = _make_plugin()
+        p._domain_verified = True
+        html = _SINGLE_RESULT_HTML.replace(
+            "Test.Result.2025.German.1080p", "Breaking.Bad.S01E01.German.1080p"
+        )
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(
+            side_effect=[
+                _mock_response(_SINGLE_RESULT_HTML),
+                _mock_response(html),
+                _mock_response(html),
+            ]
+        )
+        p._client = mock_client
+
+        films = await p.search("Test")
+        episodes = await p.search("Breaking Bad")
+        film_request = await p.search("Breaking Bad", category=2000)
+
+        assert [r.category for r in films] == [2000]
+        assert [r.category for r in episodes] == [5000]
+        assert film_request == []
+
+    def test_parser_keeps_rows_of_every_section(self) -> None:
+        parser = _SearchResultParser()
+        parser.feed(_SINGLE_RESULT_HTML.replace("sres3", "sres7"))
+
+        assert [r["kind"] for r in parser.results] == ["sres7"]
+
+    @pytest.mark.asyncio
+    async def test_category_the_site_does_not_serve(self) -> None:
+        p = _make_plugin()
+        p._client = AsyncMock()
+
+        assert await p.search("Batman", category=7000) == []
+        p._client.get.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_decodes_the_base64_page(self) -> None:
+        """Since 2026-09 crawli sends the page base64-encoded for a script."""
+        payload = base64.b64encode(_SEARCH_PAGE_HTML.encode()).decode()
+        wrapped = (
+            "<html><head><title>Crawli.net</title><script>"
+            f'var str = "{payload}"; document.open();'
+            "document.write(b64DecodeUnicode(str)); document.close();"
+            "</script></head></html>"
+        )
+        p = _make_plugin()
+        p._domain_verified = True
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(
+            side_effect=[_mock_response(wrapped), _mock_response(_EMPTY_HTML)]
+        )
+        p._client = mock_client
+
+        results = await p.search("Batman", category=2000)
+
+        assert len(results) == 3
+        assert results[0].title == "Batman und Harley Quinn (2017)"
 
     @pytest.mark.asyncio
     async def test_cleanup(self) -> None:

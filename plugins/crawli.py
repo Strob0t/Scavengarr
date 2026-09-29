@@ -2,8 +2,10 @@
 
 Scrapes crawli.net (German download search engine) with:
 - httpx for all requests (server-rendered HTML, no JS challenges)
-- Search via GET /{category}/{query}/ with spaces as +
-- Category filtering via URL path segment (film, serie, spiel, music, apps)
+- Search via GET /{section}/{query}/ with spaces as +
+- Category filtering via the section path (film, serie, spiel, music, apps);
+  results are labelled by the section that listed them
+- The page arrives base64-encoded for a script to write (since 2026-09)
 - Pagination up to 1000 items (10 results/page, max 100 pages)
 - Single-stage: title, source URL, date, description all on search page
 
@@ -13,11 +15,16 @@ No authentication required.
 
 from __future__ import annotations
 
+import base64
 import re
 from html.parser import HTMLParser
 from urllib.parse import quote_plus
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.categories import (
+    category_matches,
+    served_category,
+)
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -31,23 +38,60 @@ _RESULTS_PER_PAGE = 10
 # Constants
 # ---------------------------------------------------------------------------
 
-# Torznab category -> crawli URL path segment.
-_CATEGORY_PATH_MAP: dict[int, str] = {
-    2000: "film",
-    5000: "serie",
-    4000: "spiel",
-    3000: "music",
-    5020: "apps",
-}
-
-# Reverse mapping: crawli path segment -> Torznab category ID.
-_PATH_TO_TORZNAB: dict[str, int] = {
+# crawli section (URL path segment) -> Torznab category of its results
+_SECTION_CATEGORIES: dict[str, int] = {
     "film": 2000,
     "serie": 5000,
-    "spiel": 4000,
+    "spiel": 4050,
     "music": 3000,
-    "apps": 5020,
+    "apps": 4000,
 }
+# The sections to search for a category (PC: applications and games). TV
+# searches everything: /serie/ lists series pages, while the episode releases
+# are filed as films or unsorted (checked live)
+_CATEGORY_SECTIONS: dict[int, tuple[str, ...]] = {
+    2000: ("film",),
+    5000: ("all",),
+    4050: ("spiel",),
+    4000: ("apps", "spiel"),
+    3000: ("music",),
+}
+# The title link's class marks the row's section (live): sres1 apps,
+# sres2 music, sres3 film, sres5 spiel, sres7 serie; sres0/sres6 unsorted
+_KIND_RE = re.compile(r"sres\d+")
+_KIND_CATEGORIES: dict[str, int] = {
+    "sres1": 4000,
+    "sres2": 3000,
+    "sres3": 2000,
+    "sres5": 4050,
+    "sres7": 5000,
+}
+# Episodes and season packs are TV, even when filed as films or unsorted
+_SERIES_RE = re.compile(r"\bS\d{1,2}(?:E\d{1,3})?\b|\bStaffel\b", re.IGNORECASE)
+
+
+def _row_category(row: dict[str, str]) -> int:
+    """Torznab category of a result row, from its section class and title."""
+    category = _KIND_CATEGORIES.get(row.get("kind", ""), 8000)
+    if category in (2000, 8000) and _SERIES_RE.search(row["title"]):
+        return 5000
+    return category
+
+
+# The page is sent as ``var str = "<base64>"`` for a script to write
+_PAYLOAD_RE = re.compile(r'var str = "([A-Za-z0-9+/=]+)"')
+
+
+def _decode_page(html: str) -> str:
+    """The page HTML, decoded when it came base64-encoded."""
+    m = _PAYLOAD_RE.search(html)
+    if m is None:
+        return html
+    try:
+        return base64.b64decode(m.group(1)).decode("utf-8", errors="replace")
+    except ValueError:
+        return html
+
 
 # Date regex for parsing "29.01.2026 19:35" format.
 _DATE_RE = re.compile(r"\d{2}\.\d{2}\.\d{4}")
@@ -98,6 +142,7 @@ class _SearchResultParser(HTMLParser):
         self._current_description = ""
 
     def _reset_result(self) -> None:
+        self._current_kind = ""
         self._current_title = ""
         self._current_source_url = ""
         self._current_date = ""
@@ -112,6 +157,7 @@ class _SearchResultParser(HTMLParser):
                 source_url = f"https://{source_url}"
             self.results.append(
                 {
+                    "kind": self._current_kind,
                     "title": title,
                     "source_url": source_url,
                     "date": self._current_date.strip(),
@@ -134,9 +180,11 @@ class _SearchResultParser(HTMLParser):
         if tag == "strong" and "sres" in classes:
             self._in_sres = True
 
-        # Title link: <a class="sres3">
-        if tag == "a" and self._in_sres and "sres3" in classes:
+        # Title link: <a class="sres3">, the class marks the section
+        kind = next((c for c in classes if _KIND_RE.fullmatch(c)), "")
+        if tag == "a" and self._in_sres and kind:
             self._in_title_a = True
+            self._current_kind = kind
             self._current_title = ""
 
         # Content container: <div class="scont">
@@ -230,14 +278,6 @@ class CrawliPlugin(HttpxPluginBase):
     default_language = "de"
     _domains = _DOMAINS
 
-    categories: dict[int, str] = {
-        2000: "Movies",
-        5000: "TV",
-        4000: "Games",
-        3000: "Music",
-        5020: "Apps",
-    }
-
     async def _search_page(
         self,
         query: str,
@@ -259,7 +299,7 @@ class CrawliPlugin(HttpxPluginBase):
             return [], 1
 
         parser = _SearchResultParser()
-        parser.feed(resp.text)
+        parser.feed(_decode_page(resp.text))
 
         self._log.info(
             "crawli_search_page",
@@ -282,52 +322,52 @@ class CrawliPlugin(HttpxPluginBase):
 
         Paginates through search pages to collect up to 1000 results.
         """
+        sections: tuple[str, ...] = ("all",)
+        if category is not None:
+            category = served_category(category, _SECTION_CATEGORIES.values())
+            if category is None:
+                return []  # no section of the site has this category
+            sections = _CATEGORY_SECTIONS[category]
         await self._ensure_client()
         await self._verify_domain()
 
-        # Determine category path segment
-        category_path = "all"
-        if category is not None:
-            category_path = _CATEGORY_PATH_MAP.get(category, "all")
+        results: list[SearchResult] = []
+        for section in sections:
+            for item in await self._search_section(query, section):
+                row_category = _row_category(item)
+                if not category_matches(category, row_category):
+                    continue  # e.g. an episode filed as a film
+                source_url = item["source_url"]
+                results.append(
+                    SearchResult(
+                        title=item["title"],
+                        download_link=source_url,
+                        source_url=source_url,
+                        category=row_category,
+                        published_date=item.get("date", ""),
+                        description=item.get("description", ""),
+                    )
+                )
+        return results[: self.effective_max_results]
 
-        # Fetch first page to learn pagination extent
-        first_results, max_page = await self._search_page(query, category_path)
+    async def _search_section(self, query: str, section: str) -> list[dict[str, str]]:
+        """Search rows of one section over its result pages (10 per page)."""
+        first_results, max_page = await self._search_page(query, section)
         all_results = list(first_results)
-
         if not all_results:
             return []
 
-        # Fetch remaining pages sequentially (crawli returns 10/page)
         pages_to_fetch = min(max_page, _MAX_PAGES)
         page_num = 2
         while (
             len(all_results) < self.effective_max_results and page_num <= pages_to_fetch
         ):
-            page_results, _ = await self._search_page(query, category_path, page_num)
+            page_results, _ = await self._search_page(query, section, page_num)
             if not page_results:
                 break
             all_results.extend(page_results)
             page_num += 1
-
-        all_results = all_results[: self.effective_max_results]
-
-        # Convert to SearchResult
-        torznab_cat = category if category else 2000
-        results: list[SearchResult] = []
-        for item in all_results:
-            source_url = item["source_url"]
-            results.append(
-                SearchResult(
-                    title=item["title"],
-                    download_link=source_url,
-                    source_url=source_url,
-                    category=torznab_cat,
-                    published_date=item.get("date", ""),
-                    description=item.get("description", ""),
-                )
-            )
-
-        return results
+        return all_results[: self.effective_max_results]
 
 
 plugin = CrawliPlugin()
