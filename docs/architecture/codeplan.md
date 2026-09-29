@@ -55,7 +55,7 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 | Path | Responsibility | Key classes/functions |
 |---|---|---|
 | `infrastructure/cache/` | `CachePort` backends | `create_cache()`, `DiskcacheAdapter`, `RedisAdapter` |
-| `infrastructure/common/` | Converters, parsers, outbound rate limiting and retry | `to_int`, `parse_size_to_bytes`, `TokenBucket`, `DomainRateLimiter`, `RetryTransport` |
+| `infrastructure/common/` | Converters, parsers, outbound rate limiting, retry and the SSRF guard | `to_int`, `parse_size_to_bytes`, `TokenBucket`, `DomainRateLimiter`, `RetryTransport`, `PrivateAddressGuard` |
 | `infrastructure/config/` | Layered configuration | `DEFAULT_CONFIG`, `AppConfig`, `CacheConfig`, `StremioConfig`, `ScoringConfig`, `PluginsConfig`, `PluginOverride`, `EnvOverrides`, `load_config()` |
 | `infrastructure/hoster_resolvers/` | Hoster URL resolution and liveness probing | `HosterResolverRegistry`, `extract_domain`, `XFSResolver`/`XFSConfig`, `GenericDDLResolver`/`GenericDDLConfig`, dedicated `*Resolver` classes, `probe_url`, `probe_urls_stealth`, `verify_video_url` |
 | `infrastructure/browser/` | Browser process and Cloudflare handling | `SharedBrowserPool` (one Chromium), `StealthPool` (CF-bypass context on it), `ClearanceStore` (challenge cookies across restarts), `SolverFetcher`/`ChainedBrowserFetcher` (optional Byparr/FlareSolverr sidecar), `resolve_headless`, `is_cloudflare_challenge` |
@@ -188,7 +188,8 @@ Startup: parse arguments → resolve host/port → build CLI overrides → `load
 - Logging uses `structlog.get_logger(__name__)` with context fields such as `plugin`, `query`, `duration_ms`.
 - All I/O is async; parallel work uses `asyncio.gather()` bounded by semaphores; sync disk I/O uses `asyncio.to_thread()`.
 - Plugins implement multi-stage scraping internally; `HttpxPluginBase._new_semaphore()` bounds their parallelism (`_max_concurrent`, default `DEFAULT_MAX_CONCURRENT = 5`).
-- Outbound HTTP goes through `RetryTransport` + `DomainRateLimiter` on the shared client; inbound API calls are limited by `RateLimitMiddleware` when `api_rate_limit_rpm > 0`.
+- Outbound HTTP goes through `RetryTransport` + `DomainRateLimiter` on the shared client (`build_http_client()`); inbound API calls are limited by `RateLimitMiddleware` when `api_rate_limit_rpm > 0`.
+- The shared client refuses every request and redirect hop to a non-public address (`PrivateAddressGuard`, a `request` event hook): scraped pages decide most outbound URLs (download links, embeds, CDNs, their redirects), and a hostile page must not reach the LAN, cloud metadata or Scavengarr itself (blind SSRF). IP literals are checked directly, hostnames after a cached DNS lookup (5 min); only the solver sidecar (`playwright.solver_url`) is allowed. Browser (Playwright) navigation does not go through this client.
 
 ---
 

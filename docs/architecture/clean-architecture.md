@@ -271,7 +271,7 @@ Infrastructure implements the ports defined by Domain and provides concrete adap
 - **Persistence** (`persistence/`): `CachePort`-backed repositories (CrawlJobs, stream links, plugin scores) with JSON serialization.
 - **Configuration** (`config/`): layered config loading (defaults < YAML < ENV < CLI) with Pydantic validation.
 - **Logging** (`logging/`): structured logging via structlog with an async `QueueHandler` for non-blocking emission.
-- **Common** (`common/`): `to_int`, `parse_size_to_bytes`, `DomainRateLimiter`/`TokenBucket` (optionally adaptive), `RetryTransport` (429/503 retry + rate limiting).
+- **Common** (`common/`): `to_int`, `parse_size_to_bytes`, `DomainRateLimiter`/`TokenBucket` (optionally adaptive), `RetryTransport` (429/503 retry + rate limiting), `PrivateAddressGuard` (the shared client refuses non-public targets, SSRF).
 - **Hoster resolvers** (`hoster_resolvers/`): `HosterResolverRegistry`, XFS/generic-DDL/dedicated resolvers, liveness probes (`probe.py`); `StealthPool` (in `infrastructure/browser/`) for Cloudflare-protected pages and for capturing the stream request of players that build it at runtime (`capture_media`: manifests/MP4 by URL, extension-less CDN URLs by the video element's request type). See [Hoster Resolvers](../features/hoster-resolvers.md).
 - **Browser fetchers and anti-bot** (`browser/`, `captcha/`): `BrowserFetcherPort` implementations `StealthPool` and `SolverFetcher` (Byparr/FlareSolverr sidecar), chained by `ChainedBrowserFetcher`; `ClearanceStore` keeps challenge cookies in `CachePort` across restarts; `detect_challenge` classifies challenges and captchas; `solve_altcha` solves ALTCHA proof of work. See [Captcha Solving](../plans/captcha-solving.md).
 - **Stremio** (`stremio/`): stream converter, sorter, title matcher, release parser, episode filter, HLS proxy.
@@ -326,7 +326,7 @@ The composition root is where concrete implementations are wired together. It ru
 ```text
 0.  MetricsCollector, auto-tune concurrency (_auto_tune / _auto_tune_concurrency)
 1.  Cache via create_cache() (cleared on startup when environment == "dev")
-2.  httpx.AsyncClient with RetryTransport + DomainRateLimiter; shared with HttpxPluginBase
+2.  httpx.AsyncClient with RetryTransport + DomainRateLimiter + PrivateAddressGuard; shared with HttpxPluginBase
 3.  PluginRegistry + discover() + per-plugin config overrides
 4.  HttpxSearchEngine (HTTP client + cache)
 5.  CacheCrawlJobRepository

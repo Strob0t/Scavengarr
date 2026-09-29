@@ -8,6 +8,7 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from typing import cast
+from urllib.parse import urlparse
 
 import httpx
 import structlog
@@ -28,6 +29,9 @@ from scavengarr.infrastructure.browser.solver_fetcher import (
 from scavengarr.infrastructure.browser.stealth_pool import StealthPool
 from scavengarr.infrastructure.cache.cache_factory import create_cache
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
+from scavengarr.infrastructure.common.private_address_guard import (
+    PrivateAddressGuard,
+)
 from scavengarr.infrastructure.common.rate_limiter import DomainRateLimiter
 from scavengarr.infrastructure.common.retry_transport import RetryTransport
 from scavengarr.infrastructure.concurrency import ConcurrencyPool
@@ -207,6 +211,44 @@ def build_browser_fetcher(
     return ChainedBrowserFetcher(fetchers)
 
 
+def build_http_client(config: AppConfig) -> httpx.AsyncClient:
+    """Shared HTTP client: per-domain rate limit, 429/503 retry, SSRF guard.
+
+    Scraped pages decide most URLs this client requests, so every request
+    and redirect hop to a non-public address is refused, except for the
+    configured solver sidecar (``playwright.solver_url``).
+    """
+    rate_limiter = DomainRateLimiter(
+        default_rps=config.rate_limit_requests_per_second,
+        burst=10,
+        adaptive=config.rate_limit_adaptive,
+        min_rate=config.rate_limit_min_rps,
+        max_rate=config.rate_limit_max_rps,
+    )
+    transport = RetryTransport(
+        wrapped=httpx.AsyncHTTPTransport(),
+        rate_limiter=rate_limiter,
+        max_retries=config.http_retry_max_attempts,
+        backoff_base=config.http_retry_backoff_base,
+        max_backoff=config.http_retry_max_backoff,
+    )
+    solver_host = (
+        urlparse(config.playwright_solver_url).hostname
+        if config.playwright_solver_url
+        else None
+    )
+    guard = PrivateAddressGuard(
+        allowed_hosts=frozenset({solver_host}) if solver_host else frozenset()
+    )
+    return httpx.AsyncClient(
+        transport=transport,
+        timeout=httpx.Timeout(config.http_timeout_seconds),
+        headers={"User-Agent": config.http_user_agent},
+        follow_redirects=config.http_follow_redirects,
+        event_hooks={"request": [guard]},
+    )
+
+
 def build_crawljob_store(
     config: AppConfig, cache: CachePort
 ) -> tuple[CacheCrawlJobRepository, CrawlJobFactory]:
@@ -309,26 +351,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         log.debug("cache_cleared", environment="dev")
 
     # 2) HTTP client with per-domain rate limiting + 429/503 retry
-    rate_limiter = DomainRateLimiter(
-        default_rps=config.rate_limit_requests_per_second,
-        burst=10,
-        adaptive=config.rate_limit_adaptive,
-        min_rate=config.rate_limit_min_rps,
-        max_rate=config.rate_limit_max_rps,
-    )
-    transport = RetryTransport(
-        wrapped=httpx.AsyncHTTPTransport(),
-        rate_limiter=rate_limiter,
-        max_retries=config.http_retry_max_attempts,
-        backoff_base=config.http_retry_backoff_base,
-        max_backoff=config.http_retry_max_backoff,
-    )
-    state.http_client = httpx.AsyncClient(
-        transport=transport,
-        timeout=httpx.Timeout(config.http_timeout_seconds),
-        headers={"User-Agent": config.http_user_agent},
-        follow_redirects=config.http_follow_redirects,
-    )
+    state.http_client = build_http_client(config)
     log.info(
         "http_client_initialized",
         rate_limit_rps=config.rate_limit_requests_per_second,
