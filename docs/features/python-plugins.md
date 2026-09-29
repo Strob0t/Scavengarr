@@ -302,7 +302,7 @@ for page_num in range(1, _MAX_PAGES + 1):
 
 **Step 4: Implement and test.**
 
-1. Create `plugins/<sitename>.py`, set `name`, `provides` and `_domains`, optionally override `_max_results`, `_max_concurrent`, `languages`, `cache_ttl`.
+1. Create `plugins/<sitename>.py`, set `name`, `provides` and `_domains`, optionally override `_max_results`, `_max_concurrent`, `languages`, `cache_ttl`. `_domains` lists genuine domains only: popular sites have look-alike clones that swap the player for ad or scam redirects (`burning-series.io`, `aniworld.info`). Check the site's JDownloader plugin in `.devdata/JDownloader2/` (`getPluginDomains()`, `getDeadDomains()` and its fake/scam notes).
 2. Implement `async def search(self, query, category, season, episode) -> list[SearchResult]` using `self._safe_fetch()` (httpx) or `self._new_page()` / `self._ensure_page()` (Playwright), and `self._log` for logging.
 3. Add unit tests in `tests/unit/infrastructure/test_<sitename>_plugin.py` (see [Testing Plugins](#testing-plugins)).
 4. Restart the server and query `http://localhost:7979/api/v1/torznab/<name>?t=search&q=test`.

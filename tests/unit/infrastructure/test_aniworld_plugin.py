@@ -474,29 +474,10 @@ class TestDomainVerification:
         assert plugin._domain_verified is True
         assert "aniworld.to" in plugin.base_url
 
-    async def test_fallback_to_second_domain(self) -> None:
-        plugin = _make_plugin()
-        mock_client = AsyncMock(spec=httpx.AsyncClient)
-        call_count = 0
-
-        async def mock_head(url, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise httpx.ConnectError("Connection failed")
-            resp = MagicMock(spec=httpx.Response)
-            resp.status_code = 200
-            resp.url = httpx.URL("https://aniworld.info/")
-            return resp
-
-        mock_client.head = AsyncMock(side_effect=mock_head)
-        plugin._client = mock_client
-
-        await plugin._verify_domain()
-
-        assert plugin._domain_verified is True
-        assert "aniworld.info" in plugin.base_url
-        assert call_count == 2
+    def test_no_scam_copy(self) -> None:
+        # aniworld.info imitates the site with ad pages (JDownloader
+        # SerienStreamTo, 2026-09-09)
+        assert "aniworld.info" not in _AniworldPlugin._domains
 
     async def test_all_domains_fail(self) -> None:
         plugin = _make_plugin()

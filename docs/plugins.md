@@ -24,7 +24,7 @@ is unreachable.
 | Plugin | Website | Mirrors | Content | Engine | Languages |
 |---|---|---|---|---|---|
 | `animeloads` | www.anime-loads.org | 1 | Streams + downloads | Playwright | de |
-| `aniworld` | aniworld.to | 1 | Streams | httpx | de |
+| `aniworld` | aniworld.to | 0 | Streams | httpx | de |
 | `boerse` | boerse.am | 5 | Downloads | Playwright | de |
 | `burningseries` | burningseries.ac | 2 | Downloads | httpx | de |
 | `byte` | byte.to | 0 | Downloads | httpx | de |
