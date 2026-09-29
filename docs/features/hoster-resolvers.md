@@ -141,7 +141,7 @@ Validate file availability without extracting a video URL and return the canonic
 
 ### Generic DDL resolvers (12 hosters)
 
-`GenericDDLResolver` in `generic_ddl.py` handles 12 hosters, each described by a `GenericDDLConfig` (`name`, `domains`, `file_id_re`, `offline_markers`, `file_id_source` = `"path"` or `"query"`, `min_file_id_len`). The resolver GETs the URL, treats non-200 responses, offline markers, and redirects to `/404` or `error` URLs as offline, and otherwise returns the original URL.
+`GenericDDLResolver` in `generic_ddl.py` handles 12 hosters, each described by a `GenericDDLConfig` (`name`, `domains`, `file_id_re`, `offline_markers`, `file_id_source` = `"path"` or `"query"`, `min_file_id_len`). The resolver GETs the URL, treats non-200 responses, offline markers, and redirects to an error page as offline, and otherwise returns the original URL. Error pages are recognised by `is_error_redirect()` (`_verify.py`, shared by all resolvers with that check): a path segment or query key `404`/`error`/`errors`, never a substring — "The.Terror.S01E01.mkv" is a file, not an error page. File-ID regexes accept a file name or extra parameters after the ID (`/view/<id>/Movie.mkv`, `?<id>&af=…`), as JDownloader's patterns do. Offline markers must be notices (`"404 Not Found"`, `"<title>404"`), not strings a live page can contain (`"404"` matches a colour like `#404040`).
 
 | Hoster | Domains | Notes |
 |---|---|---|

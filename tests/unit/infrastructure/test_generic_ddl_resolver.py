@@ -263,6 +263,54 @@ class TestGenericDDLResolver:
         assert result is None
 
 
+class TestRealLinkForms:
+    """Links as sites post them: file names or extra parameters after the ID
+    (JDownloader's patterns are only anchored at the start as well)."""
+
+    @pytest.mark.parametrize(
+        ("name", "url", "file_id"),
+        [
+            (
+                "nitroflare",
+                "https://nitroflare.com/view/ABCDEF1234567/Movie.2025.mkv",
+                "ABCDEF1234567",
+            ),
+            ("uploaded", "https://uploaded.net/file/abc123de/Movie.rar", "abc123de"),
+            ("1fichier", "https://1fichier.com/?abc12345xyz&af=12345", "abc12345xyz"),
+            ("mixdrop", "https://mixdrop.ag/f/abc123def/Movie.mkv", "abc123def"),
+        ],
+    )
+    def test_file_id_with_suffix(self, name: str, url: str, file_id: str) -> None:
+        config = next(c for c in ALL_DDL_CONFIGS if c.name == name)
+        assert extract_ddl_file_id(url, config) == file_id
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    @pytest.mark.parametrize(
+        ("name", "url"),
+        [
+            ("alphaddl", "https://alphaddl.com/some-movie-2025"),
+            ("1fichier", "https://1fichier.com/?abc12345"),
+        ],
+    )
+    async def test_live_page_mentioning_404_or_not_found(
+        self, name: str, url: str
+    ) -> None:
+        """A colour #404040 or a "not found" string in page scripts is no
+        offline notice."""
+        config = next(c for c in ALL_DDL_CONFIGS if c.name == name)
+        html = (
+            "<html><head><style>a{color:#404040}</style>"
+            "<script>var e='item not found in cache';</script></head>"
+            "<body><h4>Movie.2025.1080p.mkv</h4></body></html>"
+        )
+        respx.get(url).respond(200, text=html)
+
+        async with httpx.AsyncClient() as client:
+            resolver = GenericDDLResolver(config=config, http_client=client)
+            assert await resolver.resolve(url) is not None
+
+
 # ---------------------------------------------------------------------------
 # Error redirect with real redirect chain
 # ---------------------------------------------------------------------------

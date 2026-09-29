@@ -7,7 +7,10 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 
-from scavengarr.infrastructure.hoster_resolvers._verify import verify_video_url
+from scavengarr.infrastructure.hoster_resolvers._verify import (
+    is_error_redirect,
+    verify_video_url,
+)
 
 
 class TestVerifyVideoUrl:
@@ -76,3 +79,32 @@ class TestVerifyVideoUrl:
         assert kwargs["headers"] == headers
         assert kwargs["follow_redirects"] is True
         assert kwargs["timeout"] == 8.0
+
+
+class TestIsErrorRedirect:
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://host.example/404",
+            "https://host.example/404.html",
+            "https://host.example/error",
+            "https://host.example/error?code=1",
+            "https://host.example/errors/not-found",
+            "https://host.example/?error=file_removed",
+        ],
+    )
+    def test_error_pages(self, url: str) -> None:
+        assert is_error_redirect(url)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            # "error" inside a title must not count ("The Terror")
+            "https://katfile.com/abcdefghijkl/The.Terror.S01E01.mkv.html",
+            "https://serienstream.to/serie/stream/the-terror",
+            "https://host.example/e/abc404def",
+            "https://host.example/v/Errors.and.Omissions.2019.mkv",
+        ],
+    )
+    def test_file_pages(self, url: str) -> None:
+        assert not is_error_redirect(url)

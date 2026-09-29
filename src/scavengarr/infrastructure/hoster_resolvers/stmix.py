@@ -21,6 +21,7 @@ import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
 from scavengarr.infrastructure.hoster_resolvers import extract_domain
+from scavengarr.infrastructure.hoster_resolvers._verify import is_error_redirect
 
 log = structlog.get_logger(__name__)
 
@@ -85,7 +86,7 @@ class StmixResolver:
                 return None
 
         final_url = str(resp.url)
-        if "/404" in final_url or "error" in final_url:
+        if is_error_redirect(final_url):
             log.info("stmix_error_redirect", file_id=file_id, url=final_url)
             return None
 

@@ -2,12 +2,31 @@
 
 from __future__ import annotations
 
+from urllib.parse import parse_qs, urlparse
+
 import httpx
 import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream
 
 log = structlog.get_logger(__name__)
+
+
+_ERROR_PAGE_NAMES = frozenset({"404", "error", "errors"})
+
+
+def is_error_redirect(url: str) -> bool:
+    """True when a hoster redirected to its error page (``/404``, ``/error``).
+
+    Looks at whole path segments (without extension) and query keys only:
+    a plain substring test flags files and titles such as
+    "The.Terror.S01E01.mkv" as dead.
+    """
+    parsed = urlparse(url)
+    segments = (s.rsplit(".", 1)[0].lower() for s in parsed.path.split("/") if s)
+    if any(s in _ERROR_PAGE_NAMES for s in segments):
+        return True
+    return any(k.lower() in _ERROR_PAGE_NAMES for k in parse_qs(parsed.query))
 
 
 async def verify_video_url(

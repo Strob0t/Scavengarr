@@ -28,7 +28,10 @@ from scavengarr.infrastructure.browser.cloudflare import is_cloudflare_challenge
 from scavengarr.infrastructure.captcha.detect import ChallengeKind, detect_challenge
 from scavengarr.infrastructure.hoster_resolvers import extract_domain
 from scavengarr.infrastructure.hoster_resolvers._browser import capture_stream
-from scavengarr.infrastructure.hoster_resolvers._verify import verify_video_url
+from scavengarr.infrastructure.hoster_resolvers._verify import (
+    is_error_redirect,
+    verify_video_url,
+)
 from scavengarr.infrastructure.hoster_resolvers._video_extract import extract_video_url
 
 if TYPE_CHECKING:
@@ -234,7 +237,7 @@ class XFSResolver:
             log.info(f"{hoster}_file_offline", file_id=file_id, marker=marker)
             return True
         final_url = str(resp.url)
-        if "/404" in final_url or "error" in final_url:
+        if is_error_redirect(final_url):
             log.info(f"{hoster}_error_redirect", file_id=file_id, url=final_url)
             return True
         return False

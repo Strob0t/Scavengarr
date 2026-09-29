@@ -23,6 +23,7 @@ import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
 from scavengarr.infrastructure.hoster_resolvers import extract_domain
+from scavengarr.infrastructure.hoster_resolvers._verify import is_error_redirect
 
 log = structlog.get_logger(__name__)
 
@@ -163,7 +164,7 @@ class GenericDDLResolver:
                 return None
 
         final_url = str(resp.url)
-        if "/404" in final_url or "error" in final_url:
+        if is_error_redirect(final_url):
             log.info(
                 "ddl_error_redirect",
                 hoster=hoster,
@@ -197,7 +198,8 @@ ALPHADDL = GenericDDLConfig(
     file_id_re=re.compile(r"^/([a-zA-Z0-9_-]+)"),
     offline_markers=(
         "Page not found",
-        "404",
+        "404 Not Found",
+        "<title>404",
         "not available",
     ),
     min_file_id_len=3,
@@ -261,7 +263,7 @@ GO4UP = GenericDDLConfig(
 MIXDROP = GenericDDLConfig(
     name="mixdrop",
     domains=frozenset({"mixdrop", "mxdrop", "m1xdrop", "mixdrop23"}),
-    file_id_re=re.compile(r"^/(?:f|e|emb)/([a-z0-9]+)$"),
+    file_id_re=re.compile(r"^/(?:f|e|emb)/([a-z0-9]+)(?:/|$)"),
     offline_markers=(
         "/imgs/illustration-notfound.png",
         "File not found",
@@ -271,7 +273,7 @@ MIXDROP = GenericDDLConfig(
 NITROFLARE = GenericDDLConfig(
     name="nitroflare",
     domains=frozenset({"nitroflare", "nitro"}),
-    file_id_re=re.compile(r"^/(?:view|watch)/([A-Z0-9]+)$"),
+    file_id_re=re.compile(r"^/(?:view|watch)/([A-Z0-9]+)(?:/|$)"),
     offline_markers=(
         "File Not Found",
         "This file has been removed",
@@ -296,9 +298,8 @@ ONEFICHIER = GenericDDLConfig(
             "dl4free",
         }
     ),
-    file_id_re=re.compile(r"^([a-z0-9]{5,20})$"),
+    file_id_re=re.compile(r"^([a-z0-9]{5,20})(?:&|$)"),
     offline_markers=(
-        "not found",
         "has been deleted",
         "File not found",
         "The requested file could not be found",
@@ -323,7 +324,7 @@ TURBOBIT = GenericDDLConfig(
 UPLOADED = GenericDDLConfig(
     name="uploaded",
     domains=frozenset({"uploaded", "ul"}),
-    file_id_re=re.compile(r"^/(?:file/)?([a-z0-9]+)$"),
+    file_id_re=re.compile(r"^/(?:file/)?([a-z0-9]+)(?:/|$)"),
     offline_markers=(
         "File Not Found",
         "File was deleted",
