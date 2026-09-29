@@ -172,6 +172,10 @@ plugin = MySitePlugin()
 
 **devideosrc.co player** (`scavengarr.infrastructure.plugins.devideosrc`): DLE streaming sites such as streamcloud embed a devideosrc player (`devideosrc.co/movie/<imdb>`, `devideosrc.co/serial/<imdb>`) instead of listing hoster links. `find_player(html)` detects it on a detail page, `fetch_links(client, player, **request_kwargs)` returns a `PlayerLinks(kind, links)`: the hoster embeds (movie: best rank first; series: every episode, labelled `<season>x<episode> <hoster>`) and the player kind that answered — sites like streamkiste embed the series player for movies too, so a series page without token falls back to the movie player. `filter_episodes(links, season, episode)` narrows series links to one season/episode. Used by streamcloud, streamkiste and hdfilme. The player page is always loaded past Cloudflare's cache (cached copies carry expired tokens and even cached 429s); a 429 there is retried with a fresh URL. Only the separate download embed (`/embed/download/<imdb>`) sits behind Turnstile.
 
+### DataApiPluginBase (shared site backends)
+
+When several sites run the same backend, the site logic lives once in `src/scavengarr/infrastructure/plugins/` and the plugins only set `name`, `provides` and `_domains`. `DataApiPluginBase` (`data_api.py`, subclass of `HttpxPluginBase`) serves the "/data" JSON API of `megakino_to` and `movie4k`: browse/search with pagination, `/data/watch` details, season (detail `s`) and episode (stream `e`) filtering, skipping `deleted` streams and tolerant TMDB parsing. The two plugins used to be copies; the movie4k copy had lost the episode filter, the deleted-stream check and the TMDB handling (and mapped Torznab quality subcategories to genres).
+
 ### PlaywrightPluginBase
 
 For sites requiring JavaScript execution or Cloudflare bypass:

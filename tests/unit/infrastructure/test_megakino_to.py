@@ -10,6 +10,8 @@ from pathlib import Path
 import httpx
 import pytest
 
+from scavengarr.infrastructure.plugins import data_api
+
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "megakino_to.py"
 
 
@@ -189,43 +191,43 @@ def _make_plugin(
 
 class TestDomainFromUrl:
     def test_extracts_domain(self, mod) -> None:
-        assert mod._domain_from_url("https://voe.sx/e/abc") == "voe"
+        assert data_api.domain_from_url("https://voe.sx/e/abc") == "voe"
 
     def test_strips_www(self, mod) -> None:
-        assert mod._domain_from_url("https://www.dood.to/d/xyz") == "dood"
+        assert data_api.domain_from_url("https://www.dood.to/d/xyz") == "dood"
 
     def test_invalid_url(self, mod) -> None:
         # urlparse("") → hostname=None → fallback host="" → parts=[""] → ""
-        result = mod._domain_from_url("")
+        result = data_api.domain_from_url("")
         assert isinstance(result, str)
 
 
 class TestTypeForCategory:
     def test_none_returns_empty(self, mod) -> None:
-        assert mod._type_for_category(None) == ""
+        assert data_api.type_for_category(None) == ""
 
     def test_movie_category(self, mod) -> None:
-        assert mod._type_for_category(2000) == "movies"
+        assert data_api.type_for_category(2000) == "movies"
 
     def test_tv_category(self, mod) -> None:
-        assert mod._type_for_category(5000) == "tvseries"
+        assert data_api.type_for_category(5000) == "tvseries"
 
     def test_unknown_category(self, mod) -> None:
-        assert mod._type_for_category(9999) == ""
+        assert data_api.type_for_category(9999) == ""
 
 
 class TestDetectCategory:
     def test_movie(self, mod) -> None:
-        assert mod._detect_category({"tv": 0}) == 2000
+        assert data_api.detect_category({"tv": 0}) == 2000
 
     def test_tv_series(self, mod) -> None:
-        assert mod._detect_category({"tv": 1, "genres": ["Drama"]}) == 5000
+        assert data_api.detect_category({"tv": 1, "genres": ["Drama"]}) == 5000
 
     def test_animation(self, mod) -> None:
-        assert mod._detect_category({"tv": 1, "genres": ["Animation"]}) == 5070
+        assert data_api.detect_category({"tv": 1, "genres": ["Animation"]}) == 5070
 
     def test_documentary(self, mod) -> None:
-        assert mod._detect_category({"tv": 1, "genres": ["Dokumentation"]}) == 5080
+        assert data_api.detect_category({"tv": 1, "genres": ["Dokumentation"]}) == 5080
 
 
 class TestCollectStreams:
@@ -234,7 +236,7 @@ class TestCollectStreams:
             {"stream": "https://voe.sx/e/a", "release": "R1", "source": "voe"},
             {"stream": "https://dood.to/d/b", "release": "R1", "source": "dood"},
         ]
-        first, links = mod._collect_streams(streams)
+        first, links = data_api.collect_streams(streams)
         assert first == "https://voe.sx/e/a"
         assert len(links) == 2
 
@@ -243,7 +245,7 @@ class TestCollectStreams:
             {"stream": "https://voe.sx/e/a", "release": "R1"},
             {"stream": "https://dood.to/d/b", "release": "R2", "deleted": 1},
         ]
-        first, links = mod._collect_streams(streams)
+        first, links = data_api.collect_streams(streams)
         assert len(links) == 1
         assert first == "https://voe.sx/e/a"
 
@@ -252,12 +254,12 @@ class TestCollectStreams:
             {"stream": "https://voe.sx/e/ep1", "release": "S01E01", "e": 1},
             {"stream": "https://voe.sx/e/ep2", "release": "S01E02", "e": 2},
         ]
-        first, links = mod._collect_streams(streams, episode=1)
+        first, links = data_api.collect_streams(streams, episode=1)
         assert len(links) == 1
         assert "ep1" in first
 
     def test_empty_streams(self, mod) -> None:
-        first, links = mod._collect_streams([])
+        first, links = data_api.collect_streams([])
         assert first == ""
         assert links == []
 
@@ -266,7 +268,7 @@ class TestCollectStreams:
             {"stream": "https://voe.sx/e/a", "release": "R1"},
             {"stream": "https://voe.sx/e/b", "release": "R1"},
         ]
-        _, links = mod._collect_streams(streams)
+        _, links = data_api.collect_streams(streams)
         assert len(links) == 1
 
     def test_skips_non_url_stream_values(self, mod) -> None:
@@ -276,7 +278,7 @@ class TestCollectStreams:
             {"stream": "javascript:void(0)", "release": "XSS"},
             {"stream": "https://voe.sx/e/good", "release": "Good"},
         ]
-        first, links = mod._collect_streams(streams)
+        first, links = data_api.collect_streams(streams)
         assert len(links) == 1
         assert first == "https://voe.sx/e/good"
 
@@ -293,7 +295,7 @@ class TestExtractMetadata:
                 {"movie": [{"movie_details": {"imdb_id": "tt1234567"}}]}
             ),
         }
-        meta = mod._extract_metadata(detail, {})
+        meta = data_api.extract_metadata(detail, {})
         assert meta["imdb_id"] == "tt1234567"
         assert meta["rating"] == "8.0"
         assert meta["description"] == "A story."
@@ -307,20 +309,20 @@ class TestExtractMetadata:
             "storyline": "A story.",
             "tmdb": {"movie": [{"movie_details": {"imdb_id": "tt1234567"}}]},
         }
-        meta = mod._extract_metadata(detail, {})
+        meta = data_api.extract_metadata(detail, {})
         assert meta["imdb_id"] == "tt1234567"
         assert meta["rating"] == "8.0"
         assert meta["description"] == "A story."
 
     def test_fallback_to_browse(self, mod) -> None:
-        meta = mod._extract_metadata(None, {"genres": ["Comedy"], "rating": 6.5})
+        meta = data_api.extract_metadata(None, {"genres": ["Comedy"], "rating": 6.5})
         assert meta["genres"] == "Comedy"
         assert meta["rating"] == "6.5"
         assert meta["imdb_id"] == ""
 
     def test_truncates_long_description(self, mod) -> None:
         detail = {"storyline": "x" * 400, "genres": [], "tmdb": {}}
-        meta = mod._extract_metadata(detail, {})
+        meta = data_api.extract_metadata(detail, {})
         assert len(meta["description"]) == 300
         assert meta["description"].endswith("...")
 
