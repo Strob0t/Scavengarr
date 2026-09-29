@@ -7,7 +7,7 @@ Scrapes ddlspot.com (DDL indexer) with:
 - Flat table parsing (alternating title/detail row pairs)
 - Download link extraction from detail page links-box
 
-Categories: Software (4000), Games (4000), Movies (2000), TV (5000), E-Books (7000).
+Categories: Software (4000), Games (4050), Movies (2000), TV (5000), E-Books (7000).
 """
 
 from __future__ import annotations
@@ -19,6 +19,10 @@ from urllib.parse import quote_plus, urljoin
 from patchright.async_api import Error as PlaywrightError
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.categories import (
+    category_matches,
+    served_category,
+)
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
 # ---------------------------------------------------------------------------
@@ -34,19 +38,16 @@ _MAX_PAGES = 50  # 20 results/page → 50 pages for 1000
 # DDLSpot type string → Torznab category ID
 _CATEGORY_MAP: dict[str, int] = {
     "software": 4000,
-    "games": 4000,
+    "games": 4050,
     "movies": 2000,
     "tv": 5000,
     "e-books": 7000,
 }
 
-# Torznab category ID → DDLSpot URL segment (for filtering)
-_REVERSE_CATEGORY_MAP: dict[int, str] = {
-    4000: "software",
-    2000: "movies",
-    5000: "tv",
-    7000: "e-books",
-}
+
+def _row_category(row: dict[str, str]) -> int:
+    """Torznab category of a result row, from its type column (8000 unknown)."""
+    return _CATEGORY_MAP.get(row.get("type_str", "").strip().lower(), 8000)
 
 
 class _SearchResultParser(HTMLParser):
@@ -302,9 +303,6 @@ class DDLSpotPlugin(PlaywrightPluginBase):
             if not download_urls:
                 continue
 
-            type_str = row.get("type_str", "").lower()
-            cat = _CATEGORY_MAP.get(type_str, 2000)
-
             dl_links = [
                 {"hoster": _hoster_from_url(url), "link": url} for url in download_urls
             ]
@@ -315,7 +313,7 @@ class DDLSpotPlugin(PlaywrightPluginBase):
                     download_links=dl_links,
                     source_url=detail_url,
                     size=row.get("size") or None,
-                    category=cat,
+                    category=_row_category(row),
                 )
             )
         return results
@@ -332,6 +330,10 @@ class DDLSpotPlugin(PlaywrightPluginBase):
         Paginates through search pages to collect up to 1000 results
         by following "Next Page" links.
         """
+        if category is not None:
+            category = served_category(category, _CATEGORY_MAP.values())
+            if category is None:
+                return []  # the site has no rows of this category
         await self._ensure_browser()
 
         encoded_query = quote_plus(query)
@@ -357,22 +359,18 @@ class DDLSpotPlugin(PlaywrightPluginBase):
 
             if not parser.results:
                 break
-            all_rows.extend(parser.results)
+            # Only rows of the requested category count (and get loaded)
+            all_rows.extend(
+                r
+                for r in parser.results
+                if category_matches(category, _row_category(r))
+            )
 
             if not parser.next_page_url:
                 break
             current_url = urljoin(self.base_url, parser.next_page_url)
 
         all_rows = all_rows[: self.effective_max_results]
-        if not all_rows:
-            return []
-
-        # Filter by category if specified
-        if category is not None:
-            cat_name = _REVERSE_CATEGORY_MAP.get(category, "")
-            if cat_name:
-                all_rows = [r for r in all_rows if r["type_str"].lower() == cat_name]
-
         if not all_rows:
             return []
 

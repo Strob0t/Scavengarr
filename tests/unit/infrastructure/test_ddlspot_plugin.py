@@ -28,7 +28,7 @@ _SearchResultParser = _ddlspot._SearchResultParser
 _DetailPageParser = _ddlspot._DetailPageParser
 _hoster_from_url = _ddlspot._hoster_from_url
 _CATEGORY_MAP = _ddlspot._CATEGORY_MAP
-_REVERSE_CATEGORY_MAP = _ddlspot._REVERSE_CATEGORY_MAP
+_row_category = _ddlspot._row_category
 
 
 # ---------------------------------------------------------------------------
@@ -405,17 +405,16 @@ class TestCategoryMapping:
     def test_software_maps_to_4000(self) -> None:
         assert _CATEGORY_MAP["software"] == 4000
 
-    def test_games_maps_to_4000(self) -> None:
-        assert _CATEGORY_MAP["games"] == 4000
+    def test_games_maps_to_4050(self) -> None:
+        assert _CATEGORY_MAP["games"] == 4050  # PC/Games
 
     def test_ebooks_maps_to_7000(self) -> None:
         assert _CATEGORY_MAP["e-books"] == 7000
 
-    def test_reverse_map_movies(self) -> None:
-        assert _REVERSE_CATEGORY_MAP[2000] == "movies"
-
-    def test_reverse_map_tv(self) -> None:
-        assert _REVERSE_CATEGORY_MAP[5000] == "tv"
+    def test_unknown_type_is_other(self) -> None:
+        # Used to be labelled a film
+        assert _row_category({"type_str": "Anime"}) == 8000
+        assert _row_category({"type_str": "Movies"}) == 2000
 
 
 # ---------------------------------------------------------------------------
@@ -599,6 +598,29 @@ class TestSearch:
         assert len(results) == 1
         assert results[0].title == "Iron Man 2008 1080p"
         assert results[0].category == 2000
+
+    async def test_pc_request_keeps_games(self) -> None:
+        """A PC (4000) request used to keep software rows only."""
+        plugin = _make_plugin()
+        _mock_details(plugin, {"/file/789/game-title/": _DETAIL_HTML_SINGLE})
+        search_page = _make_mock_page(_SEARCH_HTML_SINGLE)
+        empty_page = _make_mock_page(_SEARCH_HTML_NO_TABLE)
+        context = _make_mock_context(pages=[search_page, empty_page])
+        pw = _make_mock_playwright(_make_mock_browser(context))
+
+        with patch(_PW_PATCH) as mock_ap:
+            mock_ap.return_value.start = AsyncMock(return_value=pw)
+            results = await plugin.search("game", category=4000)
+
+        assert [r.category for r in results] == [4050]
+
+    async def test_category_the_site_does_not_serve(self) -> None:
+        """Unmapped categories used to return every row."""
+        plugin = _make_plugin()
+        plugin._ensure_browser = AsyncMock()
+
+        assert await plugin.search("iron man", category=3000) == []
+        plugin._ensure_browser.assert_not_awaited()
 
     async def test_search_detail_page_failure_skips_result(self) -> None:
         plugin = _make_plugin()

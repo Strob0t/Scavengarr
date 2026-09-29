@@ -20,6 +20,10 @@ from urllib.parse import quote_plus, urljoin, urlparse
 from patchright.async_api import Error as PlaywrightError
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.categories import (
+    is_series_title,
+    served_category,
+)
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
 # ---------------------------------------------------------------------------
@@ -33,14 +37,23 @@ _RETRY_BACKOFF_S: tuple[float, ...] = (2.0, 4.0)  # rate-limited post pages
 # Constants
 # ---------------------------------------------------------------------------
 
-# Torznab category -> URL path segment mapping.
-_CATEGORY_PATH_MAP: dict[int, str] = {
-    2000: "category/movies",
-    5000: "category/tv-shows",
-    4000: "category/games",
-    5020: "category/apps",
-    3000: "category/music",
-    7000: "category/reading",
+# WordPress category (URL prefix) -> Torznab category of its posts
+_SECTION_CATEGORIES: dict[str, int] = {
+    "category/movies": 2000,
+    "category/tv-shows": 5000,
+    "category/games": 4050,
+    "category/apps": 4000,
+    "category/music": 3000,
+    "category/reading": 7000,
+}
+# The categories to search for a Torznab category (PC: apps and games)
+_CATEGORY_SECTIONS: dict[int, tuple[str, ...]] = {
+    2000: ("category/movies",),
+    5000: ("category/tv-shows",),
+    4050: ("category/games",),
+    4000: ("category/apps", "category/games"),
+    3000: ("category/music",),
+    7000: ("category/reading",),
 }
 
 # Known file hoster domains for download link detection.
@@ -285,7 +298,10 @@ class DDLValleyPlugin(PlaywrightPluginBase):
             download_link=primary_link,
             download_links=link_parser.links,
             source_url=post["url"],
-            category=2000,
+            # Posts of a category search carry its category; site-wide rows
+            # only their title
+            category=_SECTION_CATEGORIES.get(post.get("section", ""))
+            or (5000 if is_series_title(title) else 8000),
         )
 
     async def search(
@@ -300,26 +316,33 @@ class DDLValleyPlugin(PlaywrightPluginBase):
         Paginates through WordPress search pages to collect up to
         1000 results before scraping detail pages.
         """
+        sections: tuple[str, ...] = ("",)
+        if category is not None:
+            served = served_category(category, _SECTION_CATEGORIES.values())
+            if served is None:
+                return []  # no category of the site holds it
+            sections = _CATEGORY_SECTIONS[served]
         await self._ensure_browser()
-
-        category_path = _CATEGORY_PATH_MAP.get(category, "") if category else ""
 
         # Paginate search results (WordPress: ~10 posts/page)
         all_posts: list[dict[str, str]] = []
-        page_num = 1
-        while len(all_posts) < self.effective_max_results and page_num <= _MAX_PAGES:
-            try:
-                posts = await self._search_posts(query, category_path, page_num)
-            except PlaywrightError as exc:
-                # Keep the pages already collected
-                self._log.warning(
-                    "ddlvalley_search_page_failed", page=page_num, error=str(exc)
-                )
-                break
-            if not posts:
-                break
-            all_posts.extend(posts)
-            page_num += 1
+        for section in sections:
+            page_num = 1
+            while (
+                len(all_posts) < self.effective_max_results and page_num <= _MAX_PAGES
+            ):
+                try:
+                    posts = await self._search_posts(query, section, page_num)
+                except PlaywrightError as exc:
+                    # Keep the pages already collected
+                    self._log.warning(
+                        "ddlvalley_search_page_failed", page=page_num, error=str(exc)
+                    )
+                    break
+                if not posts:
+                    break
+                all_posts.extend({**post, "section": section} for post in posts)
+                page_num += 1
 
         if not all_posts:
             return []

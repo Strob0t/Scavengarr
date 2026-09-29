@@ -26,7 +26,8 @@ _DDLValleyPlugin = _mod.DDLValleyPlugin
 _SearchResultParser = _mod._SearchResultParser
 _DetailPageParser = _mod._DetailPageParser
 _TitleParser = _mod._TitleParser
-_CATEGORY_PATH_MAP = _mod._CATEGORY_PATH_MAP
+_SECTION_CATEGORIES = _mod._SECTION_CATEGORIES
+_CATEGORY_SECTIONS = _mod._CATEGORY_SECTIONS
 _is_hoster_domain = _mod._is_hoster_domain
 _hoster_from_domain = _mod._hoster_from_domain
 
@@ -296,28 +297,33 @@ class TestHosterHelpers:
 
 
 class TestCategoryMapping:
-    def test_movies_maps_correctly(self) -> None:
-        assert _CATEGORY_PATH_MAP[2000] == "category/movies"
+    def test_sections(self) -> None:
+        # Applications used to be 5020 (TV/Foreign), games 4000
+        assert _SECTION_CATEGORIES == {
+            "category/movies": 2000,
+            "category/tv-shows": 5000,
+            "category/games": 4050,
+            "category/apps": 4000,
+            "category/music": 3000,
+            "category/reading": 7000,
+        }
 
-    def test_tv_maps_correctly(self) -> None:
-        assert _CATEGORY_PATH_MAP[5000] == "category/tv-shows"
-
-    def test_games_maps_correctly(self) -> None:
-        assert _CATEGORY_PATH_MAP[4000] == "category/games"
-
-    def test_music_maps_correctly(self) -> None:
-        assert _CATEGORY_PATH_MAP[3000] == "category/music"
-
-    def test_books_maps_correctly(self) -> None:
-        assert _CATEGORY_PATH_MAP[7000] == "category/reading"
-
-    def test_unknown_category_fallback(self) -> None:
-        assert _CATEGORY_PATH_MAP.get(9999, "") == ""
+    def test_pc_request_searches_apps_and_games(self) -> None:
+        assert _CATEGORY_SECTIONS[4000] == ("category/apps", "category/games")
+        assert _CATEGORY_SECTIONS[4050] == ("category/games",)
 
 
 # ---------------------------------------------------------------------------
 # Plugin integration tests (with mocks)
 # ---------------------------------------------------------------------------
+
+
+def _detail(title: str) -> str:
+    return (
+        f"<html><head><title>{title} | DDLValley</title></head><body>"
+        '<div class="cont cl"><strong>Rapidgator</strong>'
+        '<a href="https://rapidgator.net/file/abc">DL</a></div></body></html>'
+    )
 
 
 class TestPluginAttributes:
@@ -488,6 +494,59 @@ class TestPluginSearch:
         url_called = call_args[0][0]
         assert "category/tv-shows" in url_called
         assert "s=test" in url_called
+
+    async def test_results_carry_their_section(self) -> None:
+        """Every result used to be labelled 2000."""
+        plugin = _make_plugin()
+        search_page = _make_mock_page(
+            '<html><body><h2><a href="/show-s01/">Show.S01</a></h2></body></html>'
+        )
+        context = _make_mock_context(
+            pages=[
+                search_page,
+                _make_mock_page("<html></html>"),
+                _make_mock_page(_detail("Show.S01.German.1080p")),
+            ]
+        )
+        plugin._browser = _make_mock_browser(context)
+        plugin._context = context
+
+        results = await plugin.search("show", category=5000)
+
+        assert [r.category for r in results] == [5000]
+
+    async def test_site_wide_results_by_title(self) -> None:
+        plugin = _make_plugin()
+        search_page = _make_mock_page(
+            "<html><body>"
+            '<h2><a href="/movie-2025/">Movie.2025.1080p</a></h2>'
+            '<h2><a href="/show-s01e01/">Show.S01E01</a></h2>'
+            "</body></html>"
+        )
+        context = _make_mock_context(
+            pages=[
+                search_page,
+                _make_mock_page("<html></html>"),
+                _make_mock_page(_detail("Movie.2025.1080p")),
+                _make_mock_page(_detail("Show.S01E01.1080p")),
+            ]
+        )
+        plugin._browser = _make_mock_browser(context)
+        plugin._context = context
+
+        results = await plugin.search("test")
+
+        assert sorted((r.title, r.category) for r in results) == [
+            ("Movie.2025.1080p", 8000),
+            ("Show.S01E01.1080p", 5000),
+        ]
+
+    async def test_category_the_site_does_not_serve(self) -> None:
+        plugin = _make_plugin()
+        plugin._ensure_browser = AsyncMock()
+
+        assert await plugin.search("test", category=1000) == []
+        plugin._ensure_browser.assert_not_awaited()
 
     async def test_search_query_is_url_encoded(self) -> None:
         plugin = _make_plugin()
