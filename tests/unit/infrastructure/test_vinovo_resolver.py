@@ -5,11 +5,11 @@ from __future__ import annotations
 import httpx
 import pytest
 import respx
+
 from scavengarr.infrastructure.hoster_resolvers.vinovo import (
     VinovoResolver,
     _extract_file_id,
 )
-
 from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 
 _FID = "9qn0yg5dhje0ny"

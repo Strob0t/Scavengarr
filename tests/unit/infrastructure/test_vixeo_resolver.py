@@ -6,12 +6,12 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+
+from scavengarr.infrastructure.browser.stealth_pool import CapturedMedia
 from scavengarr.infrastructure.hoster_resolvers.vixeo import (
     VixeoResolver,
     _extract_file_id,
 )
-
-from scavengarr.infrastructure.browser.stealth_pool import CapturedMedia
 
 _URL = "https://vixeo.io/e/KD2Ztr3euxYK"
 _HLS = (
