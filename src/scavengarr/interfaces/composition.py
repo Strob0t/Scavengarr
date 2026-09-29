@@ -34,11 +34,13 @@ from scavengarr.infrastructure.hoster_resolvers.ddownload import DDownloadResolv
 from scavengarr.infrastructure.hoster_resolvers.doodstream import DoodStreamResolver
 from scavengarr.infrastructure.hoster_resolvers.filemoon import FilemoonResolver
 from scavengarr.infrastructure.hoster_resolvers.filernet import FilerNetResolver
+from scavengarr.infrastructure.hoster_resolvers.firestream import FirestreamResolver
 from scavengarr.infrastructure.hoster_resolvers.generic_ddl import (
     create_all_ddl_resolvers,
 )
 from scavengarr.infrastructure.hoster_resolvers.gofile import GoFileResolver
 from scavengarr.infrastructure.hoster_resolvers.mediafire import MediafireResolver
+from scavengarr.infrastructure.hoster_resolvers.playmate import PlaymateResolver
 from scavengarr.infrastructure.hoster_resolvers.probe import probe_urls_stealth
 from scavengarr.infrastructure.hoster_resolvers.rapidgator import RapidgatorResolver
 from scavengarr.infrastructure.hoster_resolvers.sendvid import SendVidResolver
@@ -419,6 +421,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             VidsonicResolver(http_client=state.http_client),
             SendVidResolver(http_client=state.http_client),
             VeevResolver(http_client=state.http_client),
+            FirestreamResolver(http_client=state.http_client),
+            PlaymateResolver(http_client=state.http_client),
             # DDL resolvers (custom — non-XFS)
             MediafireResolver(http_client=state.http_client),
             GoFileResolver(http_client=state.http_client),

@@ -6,7 +6,13 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
-Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 56 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4333 tests (4293 excluding the opt-in live tests).
+Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 58 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4379 tests (4339 excluding the opt-in live tests).
+
+### Feature: FireStream and Playmate Resolvers
+- Two hosters from the plugin link scan had no resolver. Both are ports of JDownloader plugins and need no browser:
+  - **FireStream** (`firestream.to` → `firestream.site`): the embed page carries a token that `/api/videos/<id>/resolve` trades for a signed HLS URL, on the host that served the page only. Live: 1.0–1.2 s (the browser capture took 14.7 s).
+  - **Playmate** (`playmate.to`): `/api/video-meta` checks the file, `/api/s` returns the HLS master; the API rejects non-browser user agents (403). Live: 0.5–0.6 s, dead file recognised in 0.2 s.
+- Not implemented, documented instead (see KNOWN_ISSUES): gxplayer bans this network (redirect loop to `banned.php`), embedrise serves only a placeholder `video.mp4` (404) for every video, frdl.to (DDL) sits behind the same ad-tracker JavaScript redirect as vidmoly.
 
 ### Fix: Hoster Mirrors (dr0pstream, streamhls, Byse Domains) and Captcha-Gated Players
 - **Mirror domains** from the plugin link scan: `dr0pstream.com` → dropload (JD2 `DroploadIo`; 13 of ~190 scanned links), `streamhls.to` → savefiles (same player, image proxy `img.savefiles.com`), and 14 Filemoon/Byse domains (`bysezejataos`, `byse`, `filemooon`, …; JD2 `FilemoonSxCrawler`) now reach their resolver. Filemoon exposes `supported_domains` for the first time.
@@ -843,6 +849,7 @@ Foundation of the project: FastAPI server, Scrapy scraping engine, plugin loader
 
 Current known issues:
 
+- **Hosters without a resolver** (2026-09-29): gxplayer.xyz bans this network (every page, even the ban page, redirects to `/usersc/scripts/banned.php`); embedrise.com plays only a placeholder `video.mp4` that answers 404; frdl.to (freedl.ink, DDL) uses the same ad-tracker redirect as vidmoly. JD2 has plugins for all three (`GxplayerXyz`, `EmbedriseCom`, `FreedlInk`) should they become reachable.
 - **Vidmoly unreachable behind ad blockers** (2026-09-28): the embed page's script redirect sends non-browser clients (and the stealth browser, when the network blocks ad domains, e.g. Pi-hole) to an ad click tracker; no stream is reachable then.
 - **SuperVideo streams need a browser-like player** (2026-09-28): the CDN (`*.serversicuro.cc`) answers non-browser clients with a JavaScript redirect and then ad-tracker redirects; resolution works, playback in players without JavaScript does not.
 - **hdfilme keyword search broken upstream** (2026-09-28): the site's own search answers with a PHP fatal error, so keyword searches return nothing; category browsing (empty query + category) works. Triage and fix plan: `docs/plans/plugin-repair.md`.

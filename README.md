@@ -16,7 +16,7 @@ Scavengarr scrapes sources via two engines (httpx for static HTML, Playwright fo
 - **Stremio addon** with catalog browsing, stream resolution, and hoster video URL extraction
 - **Dual scraping engine:** httpx (static HTML) and Playwright (JS-heavy / Cloudflare)
 - **41 Python plugins** (34 httpx + 7 Playwright) covering German and English streaming, DDL, and anime sites
-- **56 hoster resolvers** for video URL extraction and file availability validation (18 individual + 12 generic DDL + 26 XFS consolidated)
+- **58 hoster resolvers** for video URL extraction and file availability validation (20 individual + 12 generic DDL + 26 XFS consolidated)
 - **Multi-stage scraping:** plugins run search → detail → links internally with bounded concurrency
 - **Link validation:** parallel HEAD/GET validation with dead-link filtering
 - **CrawlJob packaging:** bundle multiple validated download links into `.crawljob` files

@@ -46,7 +46,6 @@ _CLICKABLE_CAPTCHAS: frozenset[ChallengeKind | None] = frozenset(
 
 # Detects the XFS two-step form: GET returns a play-button splash with a
 # hidden form that must be POSTed to /dl to obtain the actual player page.
-
 _XFS_FORM_RE = re.compile(r'<form\s+id=["\']F1["\']\s+action=["\']\/dl["\']')
 
 
