@@ -398,6 +398,7 @@ class TestLogin:
         mock_jar = MagicMock()
         mock_cookie = MagicMock()
         mock_cookie.name = "xf_user"
+        mock_cookie.domain = ".data-load.me"
         mock_jar.__iter__ = MagicMock(return_value=iter([mock_cookie]))
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
@@ -427,6 +428,7 @@ class TestLogin:
 
         mock_cookie = MagicMock()
         mock_cookie.name = "xf_user"
+        mock_cookie.domain = ".data-load.me"
         mock_jar = MagicMock()
         mock_jar.__iter__ = MagicMock(return_value=iter([mock_cookie]))
 
@@ -513,6 +515,91 @@ class TestLogin:
 
         await plugin._login()
         plugin._client.get.assert_not_awaited()
+
+
+def _cookie(name: str, domain: str) -> MagicMock:
+    cookie = MagicMock()
+    cookie.name = name
+    cookie.domain = domain
+    return cookie
+
+
+class TestSessionRenewal:
+    """The XenForo session and its CSRF token expire; the plugin used to
+    return nothing until restart."""
+
+    _SEARCH_HTML = """
+    <html data-logged-in="true"><body>
+    <h3 class="contentRow-title"><a href="/threads/batman-4k.123/">Batman 4K</a></h3>
+    <a href="/forums/uhd-4k.9/">UHD/4K</a>
+    </body></html>
+    """
+    _THREAD_HTML = """
+    <html><body><div class="bbWrapper">
+      <a href="https://hide.cx/container/abc">Online rapidgator.net</a>
+    </div></body></html>
+    """
+
+    async def test_logged_out_search_page_logs_in_again(self) -> None:
+        plugin = _make_plugin()
+        plugin._logged_in = True
+        plugin._csrf_token = "old,token"
+        searches = 0
+
+        def _resp(text: str) -> MagicMock:
+            r = MagicMock()
+            r.text = text
+            r.raise_for_status = MagicMock()
+            return r
+
+        async def _post(url: str, **kwargs: object) -> MagicMock:
+            nonlocal searches
+            if "/login/login" in str(url):
+                return _resp('<html data-csrf="new,token"></html>')
+            searches += 1
+            if searches == 1:  # expired session: XenForo serves a guest page
+                return _resp('<html data-logged-in="false"><body></body></html>')
+            return _resp(self._SEARCH_HTML)
+
+        async def _get(url: str, **kwargs: object) -> MagicMock:
+            if "/login/" in str(url):
+                return _resp('<input type="hidden" name="_xfToken" value="t1">')
+            return _resp(self._THREAD_HTML)
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.post = AsyncMock(side_effect=_post)
+        client.get = AsyncMock(side_effect=_get)
+        client.cookies = MagicMock()
+        client.cookies.jar = [_cookie("xf_user", ".data-load.me")]
+        plugin._client = client
+
+        with patch.dict(os.environ, _TEST_CREDENTIALS):
+            results = await plugin.search("batman")
+
+        assert [r.title for r in results] == ["Batman 4K"]
+        assert plugin._csrf_token == "new,token"
+
+    async def test_foreign_xf_user_cookie_is_no_session(self) -> None:
+        """The shared client may hold another XenForo forum's cookie."""
+        plugin = _make_plugin()
+        client = AsyncMock(spec=httpx.AsyncClient)
+        get_resp = MagicMock()
+        get_resp.text = '<input type="hidden" name="_xfToken" value="t1">'
+        get_resp.raise_for_status = MagicMock()
+        post_resp = MagicMock()
+        post_resp.text = '<html data-csrf="x"></html>'
+        post_resp.raise_for_status = MagicMock()
+        client.get = AsyncMock(return_value=get_resp)
+        client.post = AsyncMock(return_value=post_resp)
+        client.cookies = MagicMock()
+        client.cookies.jar = [_cookie("xf_user", "other-forum.example")]
+        plugin._client = client
+
+        with (
+            patch.dict(os.environ, _TEST_CREDENTIALS),
+            pytest.raises(RuntimeError, match="session cookie"),
+        ):
+            await plugin._login()
 
 
 class TestSearch:

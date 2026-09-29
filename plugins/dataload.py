@@ -33,6 +33,13 @@ _MAX_PAGES = 50  # ~20 results/page → 50 pages for 1000
 # Constants
 # ---------------------------------------------------------------------------
 _CSRF_RE = re.compile(r'data-csrf="([^"]+)"')
+# XenForo marks pages of guests (session expired or never logged in)
+_LOGGED_OUT_MARKER = 'data-logged-in="false"'
+
+
+class _SessionExpiredError(Exception):
+    """The search was answered as for a guest, or the POST was rejected."""
+
 
 # Torznab category → list of XenForo forum node IDs.
 _TORZNAB_TO_NODE_IDS: dict[int, list[int]] = {
@@ -458,8 +465,13 @@ class DataloadPlugin(HttpxPluginBase):
         )
         login_resp.raise_for_status()
 
-        # Verify login: check for xf_user cookie
-        has_session = any(c.name == "xf_user" for c in client.cookies.jar)
+        # Verify login: an xf_user cookie of *this* site (the shared client
+        # may hold another XenForo forum's cookie)
+        host = urlparse(self.base_url).hostname or ""
+        has_session = any(
+            c.name == "xf_user" and host.endswith(str(c.domain).lstrip("."))
+            for c in client.cookies.jar
+        )
         if not has_session:
             raise RuntimeError("Login failed: no session cookie received")
 
@@ -500,8 +512,10 @@ class DataloadPlugin(HttpxPluginBase):
                 context="search_page",
                 data=params,
             )
-            if resp is None:
-                return [], ""
+            # Expired CSRF token: XenForo rejects the POST (400/403);
+            # expired session: it answers as for a guest
+            if resp is None or _LOGGED_OUT_MARKER in resp.text:
+                raise _SessionExpiredError
         else:
             # Subsequent page — need to use the next_page_url passed in
             # This is handled by the caller; this branch shouldn't be hit
@@ -576,8 +590,19 @@ class DataloadPlugin(HttpxPluginBase):
         # Map Torznab category to forum node IDs
         node_ids = _TORZNAB_TO_NODE_IDS.get(category) if category else None
 
-        # Fetch first page
-        first_results, next_url = await self._search_page(query, node_ids)
+        # Fetch first page; an expired session is renewed once
+        try:
+            first_results, next_url = await self._search_page(query, node_ids)
+        except _SessionExpiredError:
+            self._log.info("dataload_session_expired")
+            self._logged_in = False
+            self._csrf_token = ""
+            await self._login()
+            try:
+                first_results, next_url = await self._search_page(query, node_ids)
+            except _SessionExpiredError:
+                self._log.warning("dataload_search_rejected", query=query)
+                return []
         all_results = list(first_results)
 
         # Paginate
