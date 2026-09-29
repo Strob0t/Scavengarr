@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 from pathlib import Path
 from types import ModuleType
@@ -535,6 +536,92 @@ class TestHosterResolution:
 # ---------------------------------------------------------------------------
 # search() integration
 # ---------------------------------------------------------------------------
+
+
+def _routed_client(active: dict[str, int] | None = None) -> AsyncMock:
+    """Mock client answering by URL (the plugin fetches in parallel)."""
+
+    async def _get(url: str, **kw: object) -> object:
+        url = str(url)
+        if "/suche" in url:
+            params = kw.get("params") or {}
+            first = int(params.get("page", 1)) == 1  # type: ignore[union-attr]
+            return _mock_response(text=_SEARCH_HTML if first else _EMPTY_SEARCH_HTML)
+        if "/episode-" in url:
+            return _mock_response(text=_EPISODE_HTML)
+        if url.rstrip("/").endswith("/serie/stranger-things") or "/staffel-" in url:
+            return _mock_response(text=_SERIES_DETAIL_HTML)
+        return _mock_response(text="<html><body></body></html>")
+
+    async def _head(url: str, **_kw: object) -> object:
+        if active is not None:
+            active["now"] += 1
+            active["peak"] = max(active["peak"], active["now"])
+            await asyncio.sleep(0.01)
+            active["now"] -= 1
+        resp = MagicMock()
+        resp.headers = {"location": "https://voe.sx/e/resolved"}
+        return resp
+
+    client = AsyncMock(spec=httpx.AsyncClient)
+    client.get = AsyncMock(side_effect=_get)
+    client.head = AsyncMock(side_effect=_head)
+    return client
+
+
+class TestSeasonsAndParallelism:
+    @pytest.mark.asyncio
+    async def test_no_season_covers_all_seasons(self) -> None:
+        """A full-series search must not stop after the first season."""
+        plugin = _make_plugin()
+        plugin._domain_verified = True
+        plugin.base_url = "https://s.to"
+        plugin._client = _routed_client()
+
+        results = await plugin.search("stranger things")
+
+        seasons = {r.metadata["season"] for r in results}
+        assert seasons == {"1", "2", "3", "4"}
+
+    @pytest.mark.asyncio
+    async def test_season_scrape_resolves_hosters_in_parallel(self) -> None:
+        """The hosters of one episode resolve together, not one by one."""
+        plugin = _make_plugin()
+        plugin.base_url = "https://s.to"
+        active = {"now": 0, "peak": 0}
+        plugin._client = _routed_client(active)
+        detail = _SeriesDetailParser("https://s.to")
+        detail.feed(_SERIES_DETAIL_HTML)
+        detail.episodes = detail.episodes[:1]
+
+        episodes = await plugin._scrape_season_episodes("stranger-things", 1, detail)
+
+        assert len(episodes[0]["links"]) > 1
+        assert active["peak"] > 1
+
+    @pytest.mark.asyncio
+    async def test_series_are_processed_in_parallel(self) -> None:
+        plugin = _make_plugin()
+        active = {"now": 0, "peak": 0}
+
+        async def _process(*_args: object, **_kw: object) -> list:
+            active["now"] += 1
+            active["peak"] = max(active["peak"], active["now"])
+            await asyncio.sleep(0.01)
+            active["now"] -= 1
+            return []
+
+        plugin._ensure_client = AsyncMock()
+        plugin._verify_domain = AsyncMock()
+        plugin._paginate_search = AsyncMock(return_value=[{"slug": "a"}] * 3)
+        plugin._fetch_all_details = AsyncMock(
+            return_value=[({"slug": s}, MagicMock()) for s in "abc"]
+        )
+        plugin._process_series = _process
+
+        await plugin.search("x", season=1, episode=1)
+
+        assert active["peak"] > 1
 
 
 class TestSearch:

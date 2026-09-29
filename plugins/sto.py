@@ -504,17 +504,18 @@ class StoPlugin(HttpxPluginBase):
                 if not hosters:
                     return None
 
-                # Resolve hoster URLs
-                links: list[dict[str, str]] = []
-                for h in hosters:
-                    resolved = await self._resolve_hoster_url(h["play_url"])
-                    links.append(
-                        {
-                            "hoster": h["provider"].lower(),
-                            "link": resolved,
-                            "language": h.get("language", ""),
-                        }
-                    )
+                # Resolve hoster URLs (one episode has a handful of hosters)
+                resolved_urls = await asyncio.gather(
+                    *(self._resolve_hoster_url(h["play_url"]) for h in hosters)
+                )
+                links: list[dict[str, str]] = [
+                    {
+                        "hoster": h["provider"].lower(),
+                        "link": resolved,
+                        "language": h.get("language", ""),
+                    }
+                    for h, resolved in zip(hosters, resolved_urls, strict=True)
+                ]
 
                 if not links:
                     return None
@@ -699,27 +700,36 @@ class StoPlugin(HttpxPluginBase):
         if not slug:
             return []
 
-        resolved = await self._resolve_season_detail(slug, detail, season)
-        if resolved is None:
-            return []
-        target_season, season_detail = resolved
-
         torznab_cat = _determine_category(detail.genres, category)
-
-        if episode is not None:
-            episodes = await self._scrape_single_episode(
-                slug, target_season, episode, season_detail
-            )
-        else:
-            episodes = await self._scrape_season_episodes(
-                slug, target_season, season_detail
-            )
+        # A full-series search (no season, no episode) covers every season
+        seasons: list[int | None] = (
+            list(detail.seasons) if season is None and episode is None else [season]
+        )
 
         results: list[SearchResult] = []
-        for ep in episodes:
-            result = self._build_episode_result(ep, detail, target_season, torznab_cat)
-            if result:
-                results.append(result)
+        for wanted in seasons:
+            resolved = await self._resolve_season_detail(slug, detail, wanted)
+            if resolved is None:
+                continue
+            target_season, season_detail = resolved
+
+            if episode is not None:
+                episodes = await self._scrape_single_episode(
+                    slug, target_season, episode, season_detail
+                )
+            else:
+                episodes = await self._scrape_season_episodes(
+                    slug, target_season, season_detail
+                )
+
+            for ep in episodes:
+                result = self._build_episode_result(
+                    ep, detail, target_season, torznab_cat
+                )
+                if result:
+                    results.append(result)
+            if len(results) >= self.effective_max_results:
+                break
         return results
 
     async def search(
@@ -752,14 +762,29 @@ class StoPlugin(HttpxPluginBase):
 
         detail_results = await self._fetch_all_details(all_series)
 
+        # Series in parallel (bounded): one after another, a query matching
+        # several series took several times as long
+        sem = self._new_semaphore()
+
+        async def _bounded(
+            series_info: dict[str, str], detail: _SeriesDetailParser
+        ) -> list[SearchResult]:
+            async with sem:
+                return await self._process_series(
+                    series_info, detail, category, season, episode
+                )
+
+        gathered = await asyncio.gather(
+            *(_bounded(info, detail) for info, detail in detail_results),
+            return_exceptions=True,
+        )
+
         search_results: list[SearchResult] = []
-        for series_info, detail in detail_results:
-            results = await self._process_series(
-                series_info, detail, category, season, episode
-            )
-            search_results.extend(results)
-            if len(search_results) >= self.effective_max_results:
-                break
+        for item in gathered:
+            if isinstance(item, BaseException):
+                self._log.warning("sto_series_failed", error=repr(item))
+                continue
+            search_results.extend(item)
 
         return search_results[: self.effective_max_results]
 
