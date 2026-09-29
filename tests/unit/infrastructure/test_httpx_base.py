@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 
+from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -420,3 +421,36 @@ class TestSearchAbstract:
         plugin = _TestPlugin()
         with pytest.raises(NotImplementedError, match="search.*not implemented"):
             await plugin.search("test")
+
+
+class TestOwnLinkResolutionBound:
+    @pytest.mark.asyncio
+    async def test_redirects_bounded_by_max_concurrent(self) -> None:
+        """Up to 1000 results must not open hundreds of redirect requests
+        to the plugin's own (usually Cloudflare-protected) host at once."""
+        plugin = _TestPlugin()
+        plugin._max_concurrent = 2
+        in_flight = 0
+        peak = 0
+
+        async def _redirect(url: str, context: str = "") -> str:
+            nonlocal in_flight, peak
+            in_flight += 1
+            peak = max(peak, in_flight)
+            await asyncio.sleep(0.01)
+            in_flight -= 1
+            return "https://hoster.example/" + url.rsplit("/", 1)[-1]
+
+        plugin._resolve_redirect = _redirect  # type: ignore[method-assign]
+        results = [
+            SearchResult(
+                title=f"r{i}", download_link=f"https://example.com/external/{i}"
+            )
+            for i in range(10)
+        ]
+
+        resolved = await plugin._resolve_result_links(results)
+
+        assert len(resolved) == 10
+        assert resolved[3].download_link == "https://hoster.example/3"
+        assert peak == 2

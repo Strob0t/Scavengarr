@@ -349,7 +349,9 @@ class HttpxPluginBase:
         return data if isinstance(data, dict) else None
 
     async def _resolve_own_links(
-        self, links: list[dict[str, str]]
+        self,
+        links: list[dict[str, str]],
+        sem: asyncio.Semaphore | None = None,
     ) -> list[dict[str, str]]:
         """Replace link-out URLs on the plugin's own host by their targets.
 
@@ -357,15 +359,18 @@ class HttpxPluginBase:
         redirect to the hoster or link container. Behind Cloudflare nobody
         downstream (link validation, JDownloader) can follow them, so they are
         resolved here; links that do not resolve are dropped. Links on other
-        hosts are kept as they are.
+        hosts are kept as they are. At most ``_max_concurrent`` redirects run
+        at once (*sem* shares that bound across calls).
         """
         own_host = urlparse(self.base_url).hostname
+        bound = sem or self._new_semaphore()
 
         async def _one(link: dict[str, str]) -> dict[str, str] | None:
             url = link.get("link", "")
             if urlparse(url).hostname != own_host:
                 return link
-            target = await self._resolve_redirect(url, context="link")
+            async with bound:
+                target = await self._resolve_redirect(url, context="link")
             return {**link, "link": target} if target else None
 
         resolved = await asyncio.gather(*(_one(link) for link in links))
@@ -379,12 +384,13 @@ class HttpxPluginBase:
         Results left without any usable link are dropped. Call this on the
         results actually returned so only their links cost a round trip.
         """
+        sem = self._new_semaphore()
 
         async def _one(result: SearchResult) -> SearchResult | None:
             links = result.download_links or [
                 {"hoster": "", "link": result.download_link}
             ]
-            resolved = await self._resolve_own_links(links)
+            resolved = await self._resolve_own_links(links, sem)
             if not resolved:
                 return None
             result.download_link = resolved[0]["link"]
