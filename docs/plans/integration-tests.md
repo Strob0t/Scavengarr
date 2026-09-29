@@ -4,7 +4,7 @@
 
 **Status:** Partially implemented (2026-09-28) — config, CrawlJob and link-validation integration tests plus Torznab/Stremio E2E tests exist; plugin-pipeline tests, CI, HTTP download-endpoint and TTL-expiry tests are open
 **Priority:** High
-**Related:** `tests/`, `CLAUDE.md` section 6 (Testing)
+**Related:** `tests/`, `AGENTS.md` section 6 (Testing)
 
 ## Implementation Summary
 

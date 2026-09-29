@@ -44,11 +44,11 @@ Scavengarr is a **self-hosted, container-ready indexer** that emulates the Torzn
 - **Test pyramid**: mostly unit tests (3919), plus 169 E2E, 25 integration and 38 opt-in live tests (`poetry run pytest -m live`)
 - **Framework**: pytest with FastAPI `TestClient` for API tests, `respx` for HTTP mocking, `pytest-asyncio` (`asyncio_mode = "auto"`)
 - **Coverage**: `pytest-cov` is available; no coverage threshold is enforced
-- **Mock patterns**: see `CLAUDE.md` section 6 (e.g. `PluginRegistryPort` is synchronous → `MagicMock`)
+- **Mock patterns**: see `AGENTS.md` section 6 (e.g. `PluginRegistryPort` is synchronous → `MagicMock`)
 
 ### Git Workflow
 
-- **Branches**: develop on `staging`; `main` is production and only updated via PR on explicit request (see `CLAUDE.md` section 1)
+- **Branches**: develop on `staging`; `main` is production and only updated via PR on explicit request (see `AGENTS.md` section 1)
 - **Commit messages**: Conventional Commits (`<type>(<scope>): <subject>`), not enforced by tooling
   - Types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`
 - **Pre-commit hooks** (`.pre-commit-config.yaml`): `end-of-file-fixer`, `trailing-whitespace`, `check-yaml`, `ruff-check` (import sorting), `ruff-check --fix`, `ruff-format` — **never skip** (`--no-verify`)
@@ -140,7 +140,7 @@ These are fixed across all OpenSpec changes and AI implementations:
 | **Config Prefix** | `SCAVENGARR_` (cache settings: `CACHE_`) | `add-config-system` |
 | **Plugin Directory** | Configurable via `SCAVENGARR_PLUGIN_DIR` (default: `./plugins`) | `add-plugin-loader` |
 | **Plugin Format** | `.py` (Python plugins inheriting `HttpxPluginBase`/`PlaywrightPluginBase`) | `add-plugin-loader` |
-| **Scraping Engines** | httpx and Playwright (equal-weight, chosen per plugin) | `CLAUDE.md` |
+| **Scraping Engines** | httpx and Playwright (equal-weight, chosen per plugin) | `AGENTS.md` |
 | **Cache Backend** | `diskcache` (default), Redis (optional) | `add-config-system` |
 | **Logging Framework** | `structlog` with JSON/console output | `add-config-system` |
 | **Config Precedence** | CLI > ENV (incl. `--dotenv`) > YAML > defaults | `add-config-system` |
@@ -162,4 +162,4 @@ If `project.md` contains outdated information, AI assistants act on it:
 - They name tools that are not installed (e.g. `mypy`, `commitlint`, `typer`)
 - They put features directly into core code instead of plugins or hoster resolvers
 
-Keep this file in sync with `pyproject.toml`, `CLAUDE.md` and `docs/`. This is essential for consistent AI implementations.
+Keep this file in sync with `pyproject.toml`, `AGENTS.md` and `docs/`. This is essential for consistent AI implementations.

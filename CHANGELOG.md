@@ -8,6 +8,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 59 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4472 tests (4431 excluding the opt-in live tests).
 
+### Chore: AGENTS.md Is the Single Agent Instruction File
+- **`CLAUDE.md` merged into `AGENTS.md` and removed**: one instruction file for every coding agent (AGENTS.md convention). The OpenSpec-managed block stays at the top of `AGENTS.md` (`openspec update` rewrites it); the former `CLAUDE.md` content follows unchanged apart from its title and self-references. Claude Code (v2.1.277+) reads `AGENTS.md` automatically when no `CLAUDE.md` exists; `.claude/` (hooks, skills, settings) is unaffected. References in the commit skill, `openspec/project.md` and the integration test plan now point to `AGENTS.md`; historical CHANGELOG and plan entries keep the old name.
+
 ### Chore: Editor and Tool Output Hygiene
 - `.vscode/settings.json` sets `"files.eol": "\n"`: VS Code saves new files with LF, matching `.gitattributes` and the `mixed-line-ending` hook.
 - `.gitignore` ignores `.playwright-mcp/` (snapshots, console logs and screenshots written by the playwright-mcp browser tool).
