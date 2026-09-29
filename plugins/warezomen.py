@@ -17,6 +17,10 @@ from html.parser import HTMLParser
 from urllib.parse import urljoin
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.categories import (
+    category_matches,
+    served_category,
+)
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -29,6 +33,22 @@ _MAX_PAGES = 50
 # Helpers
 # ---------------------------------------------------------------------------
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+# Type column of the results table (live: t1 Software, t2 Movie, t3 Game,
+# t4 TV, t5 Music, t6 Other) -> Torznab category
+_TYPE_CATEGORIES: dict[str, int] = {
+    "movie": 2000,
+    "tv": 5000,
+    "game": 4050,
+    "software": 4000,
+    "music": 3000,
+    "other": 8000,
+}
+
+
+def _row_category(row: dict[str, str]) -> int:
+    """Torznab category of a result row, from its Type column."""
+    return _TYPE_CATEGORIES.get(row.get("type", "").strip().lower(), 8000)
 
 
 def _slugify(text: str) -> str:
@@ -78,6 +98,7 @@ class _SearchResultParser(HTMLParser):
         # Current row data
         self._current_title = ""
         self._current_href = ""
+        self._current_type = ""
         self._current_date = ""
 
     def handle_starttag(  # noqa: C901
@@ -110,6 +131,7 @@ class _SearchResultParser(HTMLParser):
             self._is_separator = False
             self._current_title = ""
             self._current_href = ""
+            self._current_type = ""
             self._current_date = ""
 
         if tag == "td" and self._in_row:
@@ -137,8 +159,10 @@ class _SearchResultParser(HTMLParser):
         if not self._in_td or self._is_separator:
             return
 
-        # 4th td contains the date
-        if self._td_index == 4:
+        # 3rd td holds the type, the 4th the date
+        if self._td_index == 3:
+            self._current_type += data.strip()
+        elif self._td_index == 4:
             self._current_date += data.strip()
 
     def _handle_a_end(self) -> None:
@@ -157,6 +181,7 @@ class _SearchResultParser(HTMLParser):
                     {
                         "title": self._current_title,
                         "download_link": self._current_href,
+                        "type": self._current_type,
                         "published_date": self._current_date,
                     }
                 )
@@ -230,27 +255,27 @@ class WarezomenPlugin(HttpxPluginBase):
 
         Paginates through search pages to collect up to 1000 results.
         """
+        if category is not None:
+            category = served_category(category, _TYPE_CATEGORIES.values())
+            if category is None:
+                return []  # the site has no rows of this category
         await self._ensure_client()
         await self._verify_domain()
 
-        first_results, next_url = await self._search_page(query)
-        all_items = list(first_results)
-
-        if not all_items:
-            return []
-
-        # Fetch remaining pages sequentially
-        pages_fetched = 1
-        while (
-            next_url
-            and len(all_items) < self.effective_max_results
-            and pages_fetched < _MAX_PAGES
-        ):
+        # Pages one by one; only rows of the requested category count
+        all_items: list[dict[str, str]] = []
+        next_url: str | None = None
+        for _ in range(_MAX_PAGES):
             page_results, next_url = await self._search_page(query, next_url)
-            if not page_results:
+            all_items.extend(
+                r for r in page_results if category_matches(category, _row_category(r))
+            )
+            if (
+                not page_results
+                or not next_url
+                or len(all_items) >= self.effective_max_results
+            ):
                 break
-            all_items.extend(page_results)
-            pages_fetched += 1
 
         all_items = all_items[: self.effective_max_results]
 
@@ -263,7 +288,7 @@ class WarezomenPlugin(HttpxPluginBase):
                     download_link=item["download_link"],
                     source_url=item["download_link"],
                     published_date=item.get("published_date", ""),
-                    category=category if category else 2000,
+                    category=_row_category(item),
                 )
             )
 

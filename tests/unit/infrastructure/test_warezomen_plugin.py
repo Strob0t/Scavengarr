@@ -65,14 +65,14 @@ _RESULT_TABLE_HTML = """
     <td class="n"><a rel="nofollow" title="Breaking.Bad.S01.720p"
        href="https://alphaddl.com/dl/bb">Breaking.Bad.S0...</a></td>
     <td class="n">alphaddl</td>
-    <td class="t2">TV</td>
+    <td class="t4">TV</td>
     <td>15-Oct-2025</td>
   </tr>
   <tr>
     <td class="n"><a rel="nofollow" title="Photoshop.2024.Portable"
        href="https://freshwap.cc/dl/ps">Photoshop.2024....</a></td>
     <td class="n">freshwap</td>
-    <td class="t2">Software</td>
+    <td class="t1">Software</td>
     <td>10-Sep-2025</td>
   </tr>
 </tbody>
@@ -285,7 +285,8 @@ class TestSearch:
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_category_passed_through(self) -> None:
+    async def test_category_keeps_the_matching_rows(self) -> None:
+        """Every row used to come back labelled with the request."""
         plugin = _make_plugin()
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(return_value=_mock_response(_RESULT_TABLE_HTML))
@@ -293,10 +294,13 @@ class TestSearch:
 
         results = await plugin.search("avatar", category=5000)
 
-        assert all(r.category == 5000 for r in results)
+        assert [(r.title, r.category) for r in results] == [
+            ("Breaking.Bad.S01.720p", 5000)
+        ]
 
     @pytest.mark.asyncio
-    async def test_default_category(self) -> None:
+    async def test_rows_are_labelled_by_type(self) -> None:
+        """Every row used to be 2000."""
         plugin = _make_plugin()
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(return_value=_mock_response(_RESULT_TABLE_HTML))
@@ -304,7 +308,15 @@ class TestSearch:
 
         results = await plugin.search("avatar")
 
-        assert all(r.category == 2000 for r in results)
+        assert [r.category for r in results] == [2000, 5000, 4000]
+
+    @pytest.mark.asyncio
+    async def test_category_the_site_does_not_serve(self) -> None:
+        plugin = _make_plugin()
+        plugin._client = AsyncMock(spec=httpx.AsyncClient)
+
+        assert await plugin.search("avatar", category=7000) == []
+        plugin._client.get.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_network_error_returns_empty(self) -> None:
