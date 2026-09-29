@@ -8,6 +8,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import structlog.testing
+
 from scavengarr.infrastructure.browser.clearance_store import ClearanceStore
 
 _KEY = "browser:clearance_cookies"
