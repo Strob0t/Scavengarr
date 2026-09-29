@@ -181,6 +181,12 @@ class PlaywrightPluginBase:
         # Check if existing browser is still connected
         if self._browser is not None and not self._browser.is_connected():
             self._log.warning(f"{self.name}_browser_disconnected")
+            if self._owns_browser and self._pw is not None:
+                # Our own driver process outlives the crashed browser
+                try:
+                    await self._pw.stop()
+                except Exception:  # noqa: BLE001
+                    self._log.debug(f"{self.name}_pw_stop_failed", exc_info=True)
             self._browser = None
             self._pw = None
             self._context = None

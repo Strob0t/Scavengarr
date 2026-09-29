@@ -247,6 +247,40 @@ class TestEnsureBrowser:
         assert plugin._page is None
 
     @pytest.mark.asyncio
+    async def test_disconnected_own_browser_stops_its_driver(self) -> None:
+        """The old Playwright driver process must not be leaked."""
+        plugin = _TestPlugin()
+        plugin._browser = _make_mock_browser(connected=False)
+        plugin._owns_browser = True
+        old_pw = AsyncMock()
+        plugin._pw = old_pw
+
+        new_pw = AsyncMock()
+        new_pw.chromium.launch = AsyncMock(return_value=_make_mock_browser())
+        with patch(
+            "scavengarr.infrastructure.plugins.playwright_base.async_playwright"
+        ) as mock_apw:
+            mock_apw.return_value.start = AsyncMock(return_value=new_pw)
+            await plugin._ensure_browser()
+
+        old_pw.stop.assert_awaited_once()
+        assert plugin._pw is new_pw
+
+    @pytest.mark.asyncio
+    async def test_disconnected_shared_browser_leaves_driver_to_pool(self) -> None:
+        plugin = _TestPlugin()
+        pool_pw = AsyncMock()
+        pool = MagicMock()
+        pool.warmup = AsyncMock(return_value=(_make_mock_browser(), pool_pw))
+        plugin.set_shared_pool(pool)
+        plugin._browser = _make_mock_browser(connected=False)
+        plugin._pw = pool_pw
+
+        await plugin._ensure_browser()
+
+        pool_pw.stop.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_retries_on_launch_failure(self) -> None:
         """Standalone launch retries once after a transient failure."""
         plugin = _TestPlugin()

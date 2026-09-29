@@ -230,7 +230,7 @@ Always obtain pages via `_new_page()` / `_ensure_page()` (or the context from `_
 - `_headless` (default `False` = headful when `DISPLAY` exists, else headless fallback via `resolve_headless()`; standalone launches only, the shared pool follows `playwright.headless`), `_cf_timeout_ms` (default `30_000`, covers a Turnstile click; only spent while a challenge shows), `_networkidle_timeout_ms` (default `10_000`)
 - `_block_resources` (default `True`) — aborts image, font and CSS requests in each new context. Anti-bot evasion comes from Patchright itself (imports use `patchright.async_api`); its Console domain is disabled, so `page.on("console")` never fires
 - `set_shared_pool(pool)` — the composition root injects the `SharedBrowserPool`; `_ensure_browser()` then reuses the shared Chromium instead of launching its own
-- `_ensure_browser()` — shared browser, or a standalone Chromium launch with one retry; reconnects if the browser disconnected
+- `_ensure_browser()` — shared browser, or a standalone Chromium launch with one retry; reconnects if the browser disconnected (a standalone browser's Playwright driver is stopped first, the shared one belongs to the pool)
 - `_browser_user_agent` (default `None`) — browser contexts keep Patchright's real User-Agent; a forced UA disagrees with the client hints (`sec-ch-ua`) and gets flagged. Set it only when a site needs a specific UA
 - `_context_options()` — keyword arguments for `browser.new_context()` (1280x720 viewport, `_browser_user_agent` if set); use it for extra contexts such as login contexts
 - `_ensure_context()` — returns the per-request context from `isolated_search()` if set, otherwise a persistent context built from `_context_options()` plus resource blocking
