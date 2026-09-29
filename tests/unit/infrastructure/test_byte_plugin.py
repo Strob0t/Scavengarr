@@ -7,6 +7,7 @@ from pathlib import Path
 from types import ModuleType
 
 import httpx
+import pytest
 import respx
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "byte.py"
@@ -26,7 +27,7 @@ _BytePlugin = _mod.BytePlugin
 _SearchResultParser = _mod._SearchResultParser
 _DetailPageParser = _mod._DetailPageParser
 _WidgetLinkParser = _mod._WidgetLinkParser
-_TORZNAB_TO_SITE_CATEGORY = _mod._TORZNAB_TO_SITE_CATEGORY
+_SEARCH_CATEGORY = _mod._SEARCH_CATEGORY
 _SITE_CATEGORY_MAP = _mod._SITE_CATEGORY_MAP
 _site_category_to_torznab = _mod._site_category_to_torznab
 
@@ -339,42 +340,50 @@ class TestWidgetLinkParser:
 
 
 class TestCategoryMapping:
-    def test_torznab_to_site_movies(self) -> None:
-        assert _TORZNAB_TO_SITE_CATEGORY[2000] == "1"
+    """Categories of the live site menu (checked 2026-09-29)."""
 
-    def test_torznab_to_site_tv(self) -> None:
-        assert _TORZNAB_TO_SITE_CATEGORY[5000] == "2"
+    @pytest.mark.parametrize(
+        ("name", "category"),
+        [
+            ("UHD - 2160p", 2000),
+            ("HD - 1080p x265", 2000),
+            ("HD - 1080p Englisch", 2010),
+            ("Serien", 5000),
+            ("Einzelne Folgen", 5000),
+            ("Ganze Staffeln", 5000),
+            ("Dokumentation", 5080),
+            ("MicroHD Dokus", 5080),
+            ("Win", 4050),
+            ("Mac OS", 4050),
+            ("Konsolen", 1000),
+            ("PS4", 1180),
+            ("Nintendo Wii", 1030),
+            ("Windows", 4000),
+            ("Mac", 4030),
+            ("Android", 4070),
+            ("Alben", 3000),
+            ("Lossless", 3040),
+            ("Konzerte & Videos", 3020),
+            ("Hörbücher", 3030),
+            ("Ebooks", 7000),
+            ("Magazine", 7000),
+            ("Clips", 6000),
+        ],
+    )
+    def test_site_categories(self, name: str, category: int) -> None:
+        assert _site_category_to_torznab(name) == category
 
-    def test_torznab_to_site_games(self) -> None:
-        assert _TORZNAB_TO_SITE_CATEGORY[4000] == "15"
+    def test_unknown_is_other(self) -> None:
+        # Used to be a film, as were episodes and Windows software
+        assert _site_category_to_torznab("unknown") == 8000
 
-    def test_torznab_to_site_music(self) -> None:
-        assert _TORZNAB_TO_SITE_CATEGORY[3000] == "99"
-
-    def test_torznab_to_site_books(self) -> None:
-        assert _TORZNAB_TO_SITE_CATEGORY[7000] == "41"
-
-    def test_unknown_torznab_fallback(self) -> None:
-        assert _TORZNAB_TO_SITE_CATEGORY.get(9999, "") == ""
-
-    def test_site_to_torznab_uhd(self) -> None:
-        assert _site_category_to_torznab("UHD - 2160p") == 2000
-
-    def test_site_to_torznab_serien(self) -> None:
-        assert _site_category_to_torznab("Serien") == 5000
-
-    def test_site_to_torznab_ebooks(self) -> None:
-        assert _site_category_to_torznab("Ebooks") == 7000
-
-    def test_site_to_torznab_hoerbuecher(self) -> None:
-        assert _site_category_to_torznab("Hörbücher") == 7020
-
-    def test_site_to_torznab_unknown_defaults_movies(self) -> None:
-        assert _site_category_to_torznab("unknown") == 2000
-
-    def test_site_to_torznab_case_insensitive(self) -> None:
+    def test_case_insensitive(self) -> None:
         assert _site_category_to_torznab("SERIEN") == 5000
         assert _site_category_to_torznab("serien") == 5000
+
+    def test_search_categories(self) -> None:
+        # Only site groups holding a whole Torznab family are searched by ID
+        assert _SEARCH_CATEGORY == {2000: "1", 5000: "2", 7000: "41", 6000: "46"}
 
 
 # ---------------------------------------------------------------------------
@@ -475,6 +484,39 @@ class TestPluginSearch:
         assert params["q"] == "test"
         assert params["t"] == "1"
         assert params["c"] == "2"  # TV = site category "2"
+
+    @respx.mock
+    async def test_movie_request_keeps_the_films(self) -> None:
+        plugin = _make_plugin()
+        search = _mock_site(_SEARCH_HTML)
+
+        results = await plugin.search("batman", category=2000)
+        await plugin.cleanup()
+
+        assert search.calls[0].request.url.params["c"] == "1"
+        # the series row of the page is dropped before its page is loaded
+        assert [r.category for r in results] == [2000]
+
+    @respx.mock
+    async def test_pc_request_searches_every_group(self) -> None:
+        plugin = _make_plugin()
+        search = _mock_site(_SEARCH_HTML)
+
+        results = await plugin.search("batman", category=4000)
+        await plugin.cleanup()
+
+        # games (Spiele) and programs (Programme) are separate groups
+        assert "c" not in search.calls[0].request.url.params
+        assert results == []
+
+    @respx.mock
+    async def test_category_the_site_does_not_serve(self) -> None:
+        plugin = _make_plugin()
+        search = _mock_site(_SEARCH_HTML)
+
+        assert await plugin.search("batman", category=8000) == []
+        await plugin.cleanup()
+        assert not search.called
 
     @respx.mock
     async def test_search_detail_without_widgets_skipped(self) -> None:

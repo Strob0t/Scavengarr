@@ -21,6 +21,10 @@ from html.parser import HTMLParser
 from urllib.parse import urljoin
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.categories import (
+    category_matches,
+    served_category,
+)
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -34,52 +38,102 @@ _WIDGET_PATH = "/widgets/button.php"
 # Constants
 # ---------------------------------------------------------------------------
 
-# Torznab category → site category ID for search URL parameter ``c=``.
-_TORZNAB_TO_SITE_CATEGORY: dict[int, str] = {
+# Torznab category → site category ID (``c=``), for site groups that hold a
+# whole Torznab family; other requests search every group and keep their rows
+# (games and programs are separate groups, audiobooks sit under Bücher)
+_SEARCH_CATEGORY: dict[int, str] = {
     2000: "1",  # Filme
-    5000: "2",  # Tv
-    4000: "15",  # Spiele
-    5020: "29",  # Programme
-    3000: "99",  # Musik
+    5000: "2",  # Television
     7000: "41",  # Bücher
     6000: "46",  # XxX
 }
 
-# Site category name (lowercase) → Torznab category ID.
+# Site category name (lowercase) → Torznab category ID; the live menu,
+# checked 2026-09-29
 _SITE_CATEGORY_MAP: dict[str, int] = {
-    # Filme (2000)
-    "kinofilme": 2000,
-    "sd - xvid": 2000,
-    "sd - x264": 2000,
-    "dvd": 2000,
-    "microhd": 2000,
-    "hd - 720p": 2000,
-    "hd - 1080p": 2000,
-    "uhd - 2160p": 2000,
-    "filme": 2000,
-    # TV (5000)
-    "serien": 5000,
-    "dokumentation": 5000,
-    "tv": 5000,
-    # Spiele (4000)
-    "pc": 4000,
-    "win": 4000,
-    "konsolen": 4000,
-    "spiele": 4000,
-    # Programme (5020)
-    "programme": 5020,
-    # Musik (3000)
-    "alben": 3000,
-    "charts": 3000,
-    "musik": 3000,
-    # Bücher (7000)
-    "ebooks": 7000,
-    "comics": 7000,
-    "bücher": 7000,
-    # Hörbücher (7020)
-    "hörbücher": 7020,
-    # XxX (6000)
-    "xxx": 6000,
+    # Filme
+    **dict.fromkeys(
+        (
+            "filme",
+            "kinofilme",
+            "dvd",
+            "microhd",
+            "microhd - 4k",
+            "microhd - 3d",
+            "hd - 3d",
+            "sd - x264",
+            "sd - xvid",
+            "hd - 720p",
+            "hd - 1080p",
+            "hd - 1080p x265",
+            "uhd - 2160p",
+        ),
+        2000,
+    ),
+    **dict.fromkeys(("hd - 1080p englisch", "hd - 720p englisch"), 2010),
+    # Television
+    **dict.fromkeys(
+        ("television", "tv", "serien", "microhd serien", "ganze staffeln"), 5000
+    ),
+    "einzelne folgen": 5000,
+    **dict.fromkeys(("dokumentation", "microhd dokus"), 5080),
+    # Spiele
+    **dict.fromkeys(("spiele", "pc", "win", "mac os", "virtual reality"), 4050),
+    **dict.fromkeys(("konsolen", "ps5"), 1000),
+    "nintendo wii": 1030,
+    "ps4": 1180,
+    # Programme
+    **dict.fromkeys(("programme", "freeware", "windows", "linux"), 4000),
+    "mac": 4030,
+    "android": 4070,
+    # Musik
+    **dict.fromkeys(
+        (
+            "musik",
+            "alben",
+            "singles",
+            "sampler",
+            "charts",
+            "soundtracks",
+            "volksmusik",
+            "schlager",
+            "diskografie",
+            "austria",
+            "country",
+        ),
+        3000,
+    ),
+    "lossless": 3040,
+    "konzerte & videos": 3020,
+    "hörbücher": 3030,
+    # Bücher
+    **dict.fromkeys(
+        (
+            "bücher",
+            "ebooks",
+            "comics",
+            "magazine",
+            "englische magazine",
+            "magazine-zeitungen",
+            "tageszeitungen",
+        ),
+        7000,
+    ),
+    # XxX
+    **dict.fromkeys(
+        (
+            "xxx",
+            "clips",
+            "pics",
+            "siterip",
+            "ifeelmyself",
+            "mydirtyhobby",
+            "divx/xvid",
+            "dvd/dvd9",
+            "bluray/hdtv",
+        ),
+        6000,
+    ),
 }
 
 
@@ -347,8 +401,8 @@ class _WidgetLinkParser(HTMLParser):
 
 
 def _site_category_to_torznab(category_name: str) -> int:
-    """Map site category name to Torznab category ID."""
-    return _SITE_CATEGORY_MAP.get(category_name.lower().strip(), 2000)
+    """Map site category name to Torznab category ID (8000 if unknown)."""
+    return _SITE_CATEGORY_MAP.get(category_name.lower().strip(), 8000)
 
 
 class BytePlugin(HttpxPluginBase):
@@ -444,6 +498,35 @@ class BytePlugin(HttpxPluginBase):
             category=_site_category_to_torznab(category_name),
         )
 
+    async def _search_rows(
+        self, query: str, site_category: str, category: int | None
+    ) -> list[dict[str, str]]:
+        """Result rows of *category* over the search pages, before their pages
+        are loaded."""
+
+        def _wanted(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+            return [
+                r
+                for r in rows
+                if category_matches(
+                    category, _site_category_to_torznab(r.get("category", ""))
+                )
+            ]
+
+        first_results, _, max_page = await self._search_page(query, site_category)
+        rows = _wanted(first_results)
+        limit = self.effective_max_results
+
+        pages_needed = min(max_page, _MAX_PAGES)
+        for page_num in range(2, pages_needed + 1):
+            if len(rows) >= limit:
+                break
+            more_results, _, _ = await self._search_page(query, site_category, page_num)
+            rows.extend(_wanted(more_results))
+            if not more_results:
+                break
+        return rows[:limit]
+
     async def search(
         self,
         query: str,
@@ -452,29 +535,18 @@ class BytePlugin(HttpxPluginBase):
         episode: int | None = None,
     ) -> list[SearchResult]:
         """Search byte.to and return results with download links."""
+        site_category = ""
+        if category is not None:
+            category = served_category(category, _SITE_CATEGORY_MAP.values())
+            if category is None:
+                return []  # the site has no category for it
+            site_category = _SEARCH_CATEGORY.get(category) or _SEARCH_CATEGORY.get(
+                category - category % 1000, ""
+            )
         await self._ensure_client()
         await self._verify_domain()
 
-        site_category = _TORZNAB_TO_SITE_CATEGORY.get(category, "") if category else ""
-
-        # Fetch first page
-        first_results, _, max_page = await self._search_page(query, site_category)
-
-        all_results = list(first_results)
-        limit = self.effective_max_results
-
-        # Fetch additional pages if needed
-        pages_needed = min(max_page, _MAX_PAGES)
-        for page_num in range(2, pages_needed + 1):
-            if len(all_results) >= limit:
-                break
-            more_results, _, _ = await self._search_page(query, site_category, page_num)
-            all_results.extend(more_results)
-            if not more_results:
-                break
-
-        all_results = all_results[:limit]
-
+        all_results = await self._search_rows(query, site_category, category)
         if not all_results:
             return []
 
