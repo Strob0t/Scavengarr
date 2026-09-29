@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import httpx
 import pytest
 import respx
@@ -120,6 +122,52 @@ class TestRewriteManifest:
 # ---------------------------------------------------------------------------
 # fetch_hls_resource
 # ---------------------------------------------------------------------------
+
+
+class TestManifestCacheBound:
+    """Rotating manifest URLs (tokens in the query) must not pile up."""
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_expired_manifests_are_pruned_when_full(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(hls_proxy, "_MANIFEST_CACHE_MAX", 3)
+        past = time.monotonic() - 1
+        for i in range(3):
+            hls_proxy._manifest_cache[f"https://cdn/old{i}.m3u8"] = (b"", "x", past)
+        url = "https://cdn.example.com/new.m3u8"
+        respx.get(url).respond(200, content=b"#EXTM3U\n")
+
+        async with httpx.AsyncClient() as client:
+            await fetch_hls_resource(client, url, {})
+
+        assert list(hls_proxy._manifest_cache) == [url]
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_oldest_manifest_dropped_when_full_of_fresh_ones(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(hls_proxy, "_MANIFEST_CACHE_MAX", 3)
+        future = time.monotonic() + 60
+        for i in range(3):
+            hls_proxy._manifest_cache[f"https://cdn/fresh{i}.m3u8"] = (
+                b"",
+                "x",
+                future,
+            )
+        url = "https://cdn.example.com/new.m3u8"
+        respx.get(url).respond(200, content=b"#EXTM3U\n")
+
+        async with httpx.AsyncClient() as client:
+            await fetch_hls_resource(client, url, {})
+
+        assert list(hls_proxy._manifest_cache) == [
+            "https://cdn/fresh1.m3u8",
+            "https://cdn/fresh2.m3u8",
+            url,
+        ]
 
 
 class TestFetchHlsResource:

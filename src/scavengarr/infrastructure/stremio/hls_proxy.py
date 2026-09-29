@@ -24,6 +24,9 @@ log = structlog.get_logger(__name__)
 # Short-TTL manifest cache (60 seconds) — prevents re-fetching the
 # same master/variant playlist on rapid segment requests.
 _MANIFEST_CACHE_TTL = 60
+# Entries expire but are only removed when full: rotating manifest URLs
+# (tokens in the query) would otherwise pile up forever
+_MANIFEST_CACHE_MAX = 512
 _manifest_cache: dict[str, tuple[bytes, str, float]] = {}
 
 # Global semaphore for CDN proxy fetches (prevents stampede).
@@ -66,6 +69,18 @@ def rewrite_manifest(content: str, cdn_base: str, proxy_base: str) -> str:
     return "".join(lines)
 
 
+def _cache_manifest(url: str, body: bytes, content_type: str) -> None:
+    """Cache a manifest; when full, drop expired entries, then the oldest."""
+    now = time.monotonic()
+    if len(_manifest_cache) >= _MANIFEST_CACHE_MAX:
+        expired = [k for k, (_, _, exp) in _manifest_cache.items() if exp <= now]
+        for key in expired:
+            del _manifest_cache[key]
+        while len(_manifest_cache) >= _MANIFEST_CACHE_MAX:
+            del _manifest_cache[next(iter(_manifest_cache))]
+    _manifest_cache[url] = (body, content_type, now + _MANIFEST_CACHE_TTL)
+
+
 async def fetch_hls_resource(
     http_client: httpx.AsyncClient,
     url: str,
@@ -102,11 +117,7 @@ async def fetch_hls_resource(
 
     # Cache manifests (small text files, not segments)
     if ".m3u8" in url or "mpegurl" in ct.lower():
-        _manifest_cache[url] = (
-            body,
-            ct,
-            time.monotonic() + _MANIFEST_CACHE_TTL,
-        )
+        _cache_manifest(url, body, ct)
 
     return body, ct
 
