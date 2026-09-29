@@ -61,6 +61,33 @@ _SEARCH_HTML = """
 
 _EMPTY_SEARCH_HTML = "<html><body><p>Keine Ergebnisse</p></body></html>"
 
+# Pagination as served by the site: every page but the last links "vorwärts"
+_PAGE_1_HTML = """
+<html><body>
+<article>
+  <h2><a href="//filmpalast.to/stream/der-film-1">Der Film 1</a></h2>
+</article>
+<a class="pageing button-small rb active"  >1</a>
+<a  class="pageing button-small rb"
+    href='https://filmpalast.to/search/title/der/2'>2</a>
+<a class="pageing button-small rb"
+   href='https://filmpalast.to/search/title/der/2'> vorw&auml;rts&nbsp;+</a>
+</body></html>
+"""
+
+_PAGE_2_HTML = """
+<html><body>
+<article>
+  <h2><a href="//filmpalast.to/stream/der-film-2">Der Film 2</a></h2>
+</article>
+<a  class="pageing button-small rb"
+    href='https://filmpalast.to/search/title/der/1' >-&nbsp;zur&uuml;ck</a>
+<a class="pageing button-small rb"
+   href='https://filmpalast.to/search/title/der/1' >1</a>
+<a class="pageing button-small rb active"  >2</a>
+</body></html>
+"""
+
 _DETAIL_HTML = """
 <html><body>
 <h2 class="bgDark">Batman Begins (2005)</h2>
@@ -137,6 +164,19 @@ class TestSearchResultParser:
         parser = _SearchResultParser()
         parser.feed(_EMPTY_SEARCH_HTML)
         assert parser.results == []
+        assert parser.has_next_page is False
+
+    def test_next_page_link(self) -> None:
+        parser = _SearchResultParser()
+        parser.feed(_PAGE_1_HTML)
+        assert parser.has_next_page is True
+        # pagination links are no results
+        assert [r["title"] for r in parser.results] == ["Der Film 1"]
+
+    def test_last_page_has_no_next_page(self) -> None:
+        parser = _SearchResultParser()
+        parser.feed(_PAGE_2_HTML)
+        assert parser.has_next_page is False
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +302,57 @@ class TestSearchUrl:
 
         call_url = mock_client.get.call_args_list[0][0][0]
         assert call_url == f"https://filmpalast.to/search/title/{segment}"
+
+
+# ---------------------------------------------------------------------------
+# Pagination
+# ---------------------------------------------------------------------------
+_SEARCH_PAGES = {
+    "https://filmpalast.to/search/title/der": _PAGE_1_HTML,
+    "https://filmpalast.to/search/title/der/2": _PAGE_2_HTML,
+}
+
+
+def _paged_client() -> AsyncMock:
+    """Serve the two search pages; every other URL is a detail page."""
+
+    async def _get(url: str, **_: object) -> MagicMock:
+        return _mock_response(_SEARCH_PAGES.get(url, _DETAIL_HTML), url=url)
+
+    client = AsyncMock(spec=httpx.AsyncClient)
+    client.get = AsyncMock(side_effect=_get)
+    return client
+
+
+class TestPagination:
+    @pytest.mark.asyncio
+    async def test_follows_pages_until_the_last(self) -> None:
+        plugin = _make_plugin()
+        plugin._client = _paged_client()
+
+        results = await plugin.search("der")
+
+        urls = [c.args[0] for c in plugin._client.get.call_args_list]
+        assert urls[:2] == list(_SEARCH_PAGES)
+        assert sorted(r.source_url for r in results) == [
+            "https://filmpalast.to/stream/der-film-1",
+            "https://filmpalast.to/stream/der-film-2",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_stops_at_max_results(self) -> None:
+        plugin = _make_plugin()
+        plugin._max_results = 1
+        plugin._client = _paged_client()
+
+        results = await plugin.search("der")
+
+        urls = [c.args[0] for c in plugin._client.get.call_args_list]
+        assert urls == [
+            "https://filmpalast.to/search/title/der",
+            "https://filmpalast.to/stream/der-film-1",
+        ]
+        assert len(results) == 1
 
 
 # ---------------------------------------------------------------------------

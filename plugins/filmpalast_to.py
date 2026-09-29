@@ -25,6 +25,7 @@ from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 # Configurable settings
 # ---------------------------------------------------------------------------
 _DOMAINS = ["filmpalast.to"]
+_MAX_PAGES = 32  # 32 results/page -> 32 pages for ~1000
 
 # Regex to extract URL from onclick="window.open('url')" attributes
 _ONCLICK_RE = re.compile(r"window\.open\(['\"]([^'\"]+)['\"]")
@@ -49,12 +50,15 @@ class _SearchResultParser(HTMLParser):
           ...
         </article>
 
-    Extracts title and detail URL from each article.
+    Extracts title and detail URL from each article. Every page but the
+    last links the next one as ``<a class="pageing ...">vorwärts +</a>``.
     """
 
     def __init__(self) -> None:
         super().__init__()
         self.results: list[dict[str, str]] = []
+        self.has_next_page = False
+        self._in_pageing_a = False
 
         # State tracking
         self._in_article = False
@@ -78,11 +82,19 @@ class _SearchResultParser(HTMLParser):
             self._current_href = attr_dict.get("href", "") or ""
             self._current_title = ""
 
+        if tag == "a" and "pageing" in (dict(attrs).get("class") or ""):
+            self._in_pageing_a = True
+
     def handle_data(self, data: str) -> None:
         if self._in_a and self._in_h2:
             self._current_title += data
+        if self._in_pageing_a and data.strip().startswith("vorw"):
+            self.has_next_page = True
 
     def handle_endtag(self, tag: str) -> None:
+        if tag == "a":
+            self._in_pageing_a = False
+
         if tag == "a" and self._in_a:
             self._in_a = False
 
@@ -228,23 +240,41 @@ class FilmpalastPlugin(HttpxPluginBase):
     default_language = "de"
     _domains = _DOMAINS
 
-    async def _search_page(self, query: str) -> list[dict[str, str]]:
-        """Fetch search results page and return list of {title, detail_url}."""
-        term = " ".join(_PATH_BREAKERS_RE.sub(" ", query).split())
+    async def _search_page(
+        self, term: str, page_num: int
+    ) -> tuple[list[dict[str, str]], bool]:
+        """Fetch one search results page.
+
+        Returns ``({title, detail_url} list, has_next_page)``.
+        """
         url = f"{self.base_url}/search/title/{quote(term, safe='')}"
+        if page_num > 1:
+            url += f"/{page_num}"
         resp = await self._safe_fetch(url, context="search_page")
         if resp is None:
-            return []
+            return [], False
 
         parser = _SearchResultParser()
         parser.feed(resp.text)
 
         self._log.info(
             "filmpalast_search_page",
-            query=query,
+            query=term,
+            page=page_num,
             count=len(parser.results),
         )
-        return parser.results
+        return parser.results, parser.has_next_page
+
+    async def _search_all(self, query: str) -> list[dict[str, str]]:
+        """Follow the result pages up to the last one or ``_max_results``."""
+        term = " ".join(_PATH_BREAKERS_RE.sub(" ", query).split())
+        results: list[dict[str, str]] = []
+        for page_num in range(1, _MAX_PAGES + 1):
+            page_results, has_next_page = await self._search_page(term, page_num)
+            results.extend(page_results)
+            if not has_next_page or len(results) >= self.effective_max_results:
+                break
+        return results[: self.effective_max_results]
 
     async def _scrape_detail(
         self, detail_url: str
@@ -271,18 +301,15 @@ class FilmpalastPlugin(HttpxPluginBase):
     ) -> list[SearchResult]:
         """Search filmpalast.to and return streaming results.
 
-        Stage 1: Search page for detail page URLs.
+        Stage 1: Search pages for detail page URLs.
         Stage 2: Detail pages for streaming links (bounded concurrency).
         """
         await self._ensure_client()
         await self._verify_domain()
 
-        search_results = await self._search_page(query)
+        search_results = await self._search_all(query)
         if not search_results:
             return []
-
-        # Limit to effective max before detail scraping
-        search_results = search_results[: self.effective_max_results]
 
         sem = self._new_semaphore()
 
