@@ -200,3 +200,20 @@ class TestPlaywrightBrowserSettings:
     ) -> None:
         monkeypatch.setenv("SCAVENGARR_PLAYWRIGHT_BROWSER_FALLBACK", "false")
         assert load_config().playwright_browser_fallback is False
+
+    def test_solver_url_defaults_to_none(self) -> None:
+        assert load_config().playwright_solver_url is None
+
+    def test_yaml_sets_solver_url(self, tmp_path: Path) -> None:
+        path = tmp_path / "pw.yaml"
+        path.write_text(
+            yaml.dump({"playwright": {"solver_url": "http://byparr:8191"}}),
+            encoding="utf-8",
+        )
+        assert load_config(config_path=path).playwright_solver_url == (
+            "http://byparr:8191"
+        )
+
+    def test_env_sets_solver_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SCAVENGARR_PLAYWRIGHT_SOLVER_URL", "http://byparr:8191")
+        assert load_config().playwright_solver_url == "http://byparr:8191"

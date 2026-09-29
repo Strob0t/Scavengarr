@@ -453,6 +453,18 @@ class AppConfig(BaseModel):
             "without RAM headroom for the browser."
         ),
     )
+    playwright_solver_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "playwright_solver_url",
+            AliasPath("playwright", "solver_url"),
+        ),
+        description=(
+            "Base URL of an optional Byparr/FlareSolverr sidecar "
+            "(e.g. http://byparr:8191). Loads Cloudflare-challenged pages when "
+            "the own browser fails, or alone when browser_fallback is false."
+        ),
+    )
     playwright_timeout_ms: int = Field(
         default=30_000,
         validation_alias=AliasChoices(
@@ -662,6 +674,7 @@ class EnvOverrides(BaseSettings):
 
     playwright_headless: bool | None = None
     playwright_browser_fallback: bool | None = None
+    playwright_solver_url: str | None = None
     playwright_timeout_ms: int | None = None
 
     log_level: LogLevel | None = None

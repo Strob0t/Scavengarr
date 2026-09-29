@@ -16,7 +16,12 @@ from scavengarr.application.factories import CrawlJobFactory
 from scavengarr.application.use_cases.stremio_catalog import StremioCatalogUseCase
 from scavengarr.application.use_cases.stremio_stream import StremioStreamUseCase
 from scavengarr.domain.entities.crawljob import Priority
+from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort
 from scavengarr.infrastructure.browser.shared_browser import SharedBrowserPool
+from scavengarr.infrastructure.browser.solver_fetcher import (
+    ChainedBrowserFetcher,
+    SolverFetcher,
+)
 from scavengarr.infrastructure.browser.stealth_pool import StealthPool
 from scavengarr.infrastructure.cache.cache_factory import create_cache
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
@@ -166,6 +171,32 @@ def _apply_plugin_overrides(plugins: PluginRegistry, config: AppConfig) -> None:
             log.info("plugin_override_applied", plugin=name, override=override)
         except Exception:
             log.warning("plugin_override_unknown", plugin=name, exc_info=True)
+
+
+def build_browser_fetcher(
+    config: AppConfig,
+    stealth_pool: BrowserFetcherPort,
+    http_client: httpx.AsyncClient,
+) -> BrowserFetcherPort | None:
+    """Fetcher for Cloudflare-challenged pages of httpx plugins.
+
+    Own browser first (``playwright.browser_fallback``), then the optional
+    Byparr/FlareSolverr sidecar (``playwright.solver_url``); ``None`` = off.
+    """
+    fetchers: list[BrowserFetcherPort] = []
+    if config.playwright_browser_fallback:
+        fetchers.append(stealth_pool)
+    if config.playwright_solver_url:
+        fetchers.append(
+            SolverFetcher(
+                http_client=http_client, base_url=config.playwright_solver_url
+            )
+        )
+    if not fetchers:
+        return None
+    if len(fetchers) == 1:
+        return fetchers[0]
+    return ChainedBrowserFetcher(fetchers)
 
 
 def _inject_shared_browser_pool(
@@ -347,11 +378,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     log.info("stealth_pool_configured")
 
-    # 8b) httpx plugins fall back to the stealth browser on CF challenges
+    # 8b) httpx plugins fall back to the stealth browser (and/or an external
+    #     solver) on CF challenges
     HttpxPluginBase.set_browser_fetcher(
-        state.stealth_pool if config.playwright_browser_fallback else None
+        build_browser_fetcher(config, state.stealth_pool, state.http_client)
     )
-    log.info("browser_fallback_configured", enabled=config.playwright_browser_fallback)
+    log.info(
+        "browser_fallback_configured",
+        enabled=config.playwright_browser_fallback,
+        solver=bool(config.playwright_solver_url),
+    )
 
     # 9) Hoster resolver registry (for extracting video URLs from embed pages)
     state.hoster_resolver_registry = HosterResolverRegistry(

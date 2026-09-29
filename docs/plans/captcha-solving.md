@@ -82,7 +82,7 @@ Open before implementation: which release/episodes a grab of a series-level resu
 | 4 | animeloads: odd-one-out captcha in the browser, links on grab | spike done, open questions |
 | 5 | Cloudflare: persistent profile, `channel="chrome"` check, warmup at startup | open |
 | 6 | Embedded Turnstile tokens (vinovo, devideosrc, doodstream) | open |
-| 7 | Byparr sidecar as second `BrowserFetcherPort` | open |
+| 7 | Byparr sidecar as second `BrowserFetcherPort` | done (not verified live: no Docker in the dev container) |
 | 8 | Recognizer container (opt-in) | open |
 
 Each step: TDD, own commits, docs in the same commit, results recorded here.
