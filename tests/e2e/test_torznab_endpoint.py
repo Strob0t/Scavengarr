@@ -87,7 +87,7 @@ def _make_app(
     app.state.config = config
     app.state.plugins = plugins or MagicMock()
     app.state.search_engine = search_engine or AsyncMock()
-    app.state.crawljob_factory = CrawlJobFactory(default_ttl_hours=1)
+    app.state.crawljob_factory = CrawlJobFactory(ttl_seconds=3600)
     app.state.crawljob_repo = crawljob_repo or AsyncMock()
     app.state.http_client = http_client or AsyncMock()
 

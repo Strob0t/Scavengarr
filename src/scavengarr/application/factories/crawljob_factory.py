@@ -21,18 +21,18 @@ class CrawlJobFactory:
     def __init__(
         self,
         *,
-        default_ttl_hours: int = 1,
+        ttl_seconds: int = 3600,
         auto_start: bool = True,
         default_priority: Priority = Priority.DEFAULT,
     ) -> None:
         """Initialize factory with default settings.
 
         Args:
-            default_ttl_hours: Time-to-live for CrawlJobs (hours).
+            ttl_seconds: Time-to-live for CrawlJobs (``expires_at``).
             auto_start: Enable auto-start by default.
             default_priority: Default download priority.
         """
-        self.default_ttl_hours = default_ttl_hours
+        self.ttl_seconds = ttl_seconds
         self.auto_start = auto_start
         self.default_priority = default_priority
 
@@ -55,7 +55,7 @@ class CrawlJobFactory:
             CrawlJob entity with JDownloader-compatible fields.
         """
         now = datetime.now(timezone.utc)
-        expires_at = now + timedelta(hours=self.default_ttl_hours)
+        expires_at = now + timedelta(seconds=self.ttl_seconds)
 
         package_name = result.title or "Scavengarr Download"
         comment = self._build_comment(result)
@@ -89,7 +89,7 @@ class CrawlJobFactory:
             job_id=crawl_job.job_id,
             package_name=package_name,
             link_count=len(crawl_job.validated_urls),
-            ttl_hours=self.default_ttl_hours,
+            ttl_seconds=self.ttl_seconds,
         )
 
         return crawl_job

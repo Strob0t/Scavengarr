@@ -228,7 +228,7 @@ The factory encapsulates CrawlJob creation logic: TTL calculation, URL bundling,
 ```python
 # src/scavengarr/application/factories/crawljob_factory.py (simplified)
 class CrawlJobFactory:
-    def __init__(self, *, default_ttl_hours: int = 1, auto_start: bool = True, default_priority: Priority = Priority.DEFAULT):
+    def __init__(self, *, ttl_seconds: int = 3600, auto_start: bool = True, default_priority: Priority = Priority.DEFAULT):
         ...
 
     def create_from_search_result(self, result: SearchResult, *, job_id: str | None = None) -> CrawlJob:

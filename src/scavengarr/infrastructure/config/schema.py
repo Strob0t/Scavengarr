@@ -154,6 +154,14 @@ class CacheConfig(BaseSettings):
         default=900,
         description="TTL for cached search results (seconds). 0 = disabled.",
     )
+    crawljob_ttl_seconds: int = Field(
+        default=3600,
+        gt=0,
+        description=(
+            "How long a grabbed result's CrawlJob stays downloadable (seconds); "
+            "the grab answers 404 afterwards."
+        ),
+    )
     max_concurrent: int = Field(
         default=10,
         description="Max parallel cache ops (semaphore limit)",

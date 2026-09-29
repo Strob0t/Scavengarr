@@ -58,7 +58,8 @@ class CrawlJob:
         validated_urls: List of validated download links (from link validator).
         source_url: Original indexer page URL.
         created_at: Timestamp when job was created.
-        expires_at: Expiration timestamp (default: 1 hour after creation).
+        expires_at: Expiration timestamp (default: 1 hour after creation;
+            the factory uses ``cache.crawljob_ttl_seconds``).
         resolve_plugin: Plugin that resolves ``validated_urls`` at grab time
             (``GrabResolvingPlugin``); ``None`` once the links are final.
 

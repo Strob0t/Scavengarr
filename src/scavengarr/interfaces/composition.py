@@ -18,6 +18,7 @@ from scavengarr.application.use_cases.stremio_catalog import StremioCatalogUseCa
 from scavengarr.application.use_cases.stremio_stream import StremioStreamUseCase
 from scavengarr.domain.entities.crawljob import Priority
 from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort
+from scavengarr.domain.ports.cache import CachePort
 from scavengarr.infrastructure.browser.clearance_store import ClearanceStore
 from scavengarr.infrastructure.browser.shared_browser import SharedBrowserPool
 from scavengarr.infrastructure.browser.solver_fetcher import (
@@ -206,6 +207,23 @@ def build_browser_fetcher(
     return ChainedBrowserFetcher(fetchers)
 
 
+def build_crawljob_store(
+    config: AppConfig, cache: CachePort
+) -> tuple[CacheCrawlJobRepository, CrawlJobFactory]:
+    """CrawlJob repository and factory sharing ``cache.crawljob_ttl_seconds``.
+
+    The cache entry and the job's ``expires_at`` must expire together.
+    """
+    ttl = config.cache.crawljob_ttl_seconds
+    repo = CacheCrawlJobRepository(cache=cache, ttl_seconds=ttl)
+    factory = CrawlJobFactory(
+        ttl_seconds=ttl,
+        auto_start=True,
+        default_priority=Priority.DEFAULT,
+    )
+    return repo, factory
+
+
 def _inject_shared_browser_pool(
     plugins: PluginRegistry,
     pool: SharedBrowserPool,
@@ -338,20 +356,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     log.info("search_engine_initialized")
 
-    # 5) CrawlJob repository
-    state.crawljob_repo = CacheCrawlJobRepository(
-        cache=state.cache,
-        ttl_seconds=3600,
+    # 5) + 6) CrawlJob repository and factory
+    state.crawljob_repo, state.crawljob_factory = build_crawljob_store(
+        config, state.cache
     )
-    log.info("crawljob_repo_initialized")
-
-    # 6) CrawlJob factory
-    state.crawljob_factory = CrawlJobFactory(
-        default_ttl_hours=1,
-        auto_start=True,
-        default_priority=Priority.DEFAULT,
+    log.info(
+        "crawljob_store_initialized", ttl_seconds=config.cache.crawljob_ttl_seconds
     )
-    log.info("crawljob_factory_initialized")
 
     # 7) TMDB client (with IMDB fallback when no API key is configured)
     if config.tmdb_api_key:

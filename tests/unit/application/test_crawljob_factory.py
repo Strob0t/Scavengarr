@@ -75,7 +75,7 @@ class TestCrawlJobFactoryCreate:
         assert delta == timedelta(hours=1)
 
     def test_custom_ttl(self, search_result: SearchResult) -> None:
-        factory = CrawlJobFactory(default_ttl_hours=2)
+        factory = CrawlJobFactory(ttl_seconds=7200)
         job = factory.create_from_search_result(search_result)
         delta = job.expires_at - job.created_at
         assert delta == timedelta(hours=2)

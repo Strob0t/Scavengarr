@@ -209,6 +209,7 @@ cache:
   dir: "/app/cache"
   ttl_seconds: 3600
   search_ttl_seconds: 1800      # default: 900
+  crawljob_ttl_seconds: 3600    # how long a grab stays downloadable
   # redis_url: "redis://redis:6379/0"   # when backend: redis
 ```
 
@@ -458,6 +459,7 @@ Logs are structured via `structlog` with ISO UTC timestamps and include context 
 | `cache.redis_url` | string | `redis://localhost:6379/0` | Redis connection URL (redis only, `SCAVENGARR_CACHE_REDIS_URL`) |
 | `cache.ttl_seconds` | int | `3600` | Default time-to-live for cache entries (seconds) |
 | `cache.search_ttl_seconds` | int | `900` | TTL for cached search results (seconds). 0 = disabled (YAML-only) |
+| `cache.crawljob_ttl_seconds` | int | `3600` | How long a Torznab result's CrawlJob stays downloadable (seconds, > 0); the grab answers 404 afterwards (YAML-only) |
 | `cache.max_concurrent` | int | `10` | Semaphore limit for parallel cache operations (`SCAVENGARR_CACHE_MAX_CONCURRENT`) |
 
 The top-level key `cache_dir` also exists in the schema but is currently unused (no effect); only `cache.dir` is used.

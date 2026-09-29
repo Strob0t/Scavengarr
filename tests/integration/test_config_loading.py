@@ -92,6 +92,20 @@ class TestYamlOverrides:
         assert config.http_follow_redirects is True  # default preserved
         assert config.app_name == "scavengarr"  # default preserved
 
+    def test_crawljob_ttl_from_yaml(self, tmp_path: Path) -> None:
+        assert load_config().cache.crawljob_ttl_seconds == 3600
+        path = tmp_path / "ttl.yaml"
+        path.write_text(yaml.dump({"cache": {"crawljob_ttl_seconds": 7200}}))
+
+        assert load_config(config_path=path).cache.crawljob_ttl_seconds == 7200
+
+    def test_crawljob_ttl_must_be_positive(self, tmp_path: Path) -> None:
+        path = tmp_path / "ttl.yaml"
+        path.write_text(yaml.dump({"cache": {"crawljob_ttl_seconds": 0}}))
+
+        with pytest.raises(ValueError, match="crawljob_ttl_seconds"):
+            load_config(config_path=path)
+
 
 class TestEnvOverrides:
     """Environment variables override YAML and defaults."""

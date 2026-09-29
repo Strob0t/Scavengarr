@@ -15,7 +15,7 @@ Torznab's `<link>` element expects a URL that returns a downloadable file. Since
 │  Torznab Search  │     │  CrawlJob Cache  │     │  Arr Application │
 │                  │     │                  │     │  (Sonarr/Radarr) │
 │  SearchResult ───┼──→  │  CrawlJob stored │     │                  │
-│  with validated  │     │  (TTL: 1 hour)   │     │  Requests        │
+│  with validated  │     │  (TTL: 1 h, cfg) │     │  Requests        │
 │  download links  │     │                  │  ←──┤  /download/{id}  │
 └──────────────────┘     │  Serves .crawljob│──→  │                  │
                          └──────────────────┘     └────────┬─────────┘
@@ -34,7 +34,7 @@ Torznab's `<link>` element expects a URL that returns a downloadable file. Since
 1. **Search** — Torznab `?t=search&q=...` makes the plugin return `SearchResult` objects with download links.
 1. **Link validation** — `HttpxSearchEngine.validate_results()` drops dead links and results without any valid link (see [Link Validation](./link-validation.md)).
 1. **CrawlJob creation** — `CrawlJobFactory` converts each `SearchResult` into its own `CrawlJob`.
-1. **Cache storage** — `CacheCrawlJobRepository` stores each job under `crawljob:{job_id}` with a 3600-second TTL; all jobs of a search are saved in parallel. An item whose job could not be saved is dropped from the answer (`crawljob_save_failed`): its grab would answer 404.
+1. **Cache storage** — `CacheCrawlJobRepository` stores each job under `crawljob:{job_id}` with the `cache.crawljob_ttl_seconds` TTL (default 3600); all jobs of a search are saved in parallel. An item whose job could not be saved is dropped from the answer (`crawljob_save_failed`): its grab would answer 404.
 1. **Torznab XML** — each `<item>` has `<link>` and `<enclosure>` pointing to `/api/v1/download/{job_id}`.
 1. **Grab** — Sonarr/Radarr request the download URL when a result is grabbed.
 1. **Delivery** — the download endpoint serves the serialized `.crawljob` file; the Arr download client drops it into JDownloader's FolderWatch directory.
@@ -199,11 +199,11 @@ https://hoster3.example/file/ghi
 
 | Parameter | Default | Description |
 |---|---|---|
-| `default_ttl_hours` | `1` | Job lifetime in hours |
+| `ttl_seconds` | `3600` | Job lifetime (`expires_at`) |
 | `auto_start` | `True` | Sets `auto_start` to `TRUE` (or `FALSE`) |
 | `default_priority` | `Priority.DEFAULT` | Download priority |
 
-The composition root creates the factory with exactly these values; they are not exposed in the configuration.
+The composition root (`build_crawljob_store()`) creates factory and repository with `ttl_seconds = cache.crawljob_ttl_seconds`, so the cache entry and `expires_at` expire together; `auto_start` and `default_priority` are not exposed in the configuration.
 
 ### Field Mapping
 
@@ -223,7 +223,7 @@ The composition root creates the factory with exactly these values; they are not
 ```python
 # src/scavengarr/interfaces/composition.py
 factory = CrawlJobFactory(
-    default_ttl_hours=1,
+    ttl_seconds=config.cache.crawljob_ttl_seconds,
     auto_start=True,
     default_priority=Priority.DEFAULT,
 )
@@ -240,7 +240,7 @@ CrawlJobs are persisted via the `CrawlJobRepository` port, implemented by `Cache
 |---|---|
 | Key format | `crawljob:{job_id}` |
 | Serialization | JSON (enums by value, datetimes as ISO 8601) |
-| TTL | 3600 seconds (hardcoded in the composition root) |
+| TTL | `cache.crawljob_ttl_seconds` (default 3600 seconds) |
 | Backend | `cache.backend`: `diskcache` (default) or `redis` |
 
 In the `dev` environment the cache is cleared on every startup, so CrawlJobs do not survive a restart.
@@ -339,8 +339,8 @@ See the [Torznab API Reference](./torznab-api.md#download-endpoints) for the ful
 
 ## Expiration
 
-- CrawlJobs expire **1 hour after the search** that created them — not after the grab.
-- The lifetime is fixed (factory `default_ttl_hours=1`, repository `ttl_seconds=3600`) and cannot be changed via configuration.
+- CrawlJobs expire **`cache.crawljob_ttl_seconds` (default 1 hour) after the search** that created them — not after the grab.
+- Raise the TTL when download clients grab late (e.g. a queue that only fetches hours after the search); it must be greater than 0.
 - Expired jobs return HTTP 404 from the download endpoint; the cache TTL removes them from storage.
 - If a grab fails with 404, re-run the search to create fresh jobs.
 

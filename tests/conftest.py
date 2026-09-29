@@ -69,7 +69,7 @@ def crawljob() -> CrawlJob:
 @pytest.fixture()
 def crawljob_factory() -> CrawlJobFactory:
     """CrawlJobFactory with default settings."""
-    return CrawlJobFactory(default_ttl_hours=1)
+    return CrawlJobFactory(ttl_seconds=3600)
 
 
 # ---------------------------------------------------------------------------

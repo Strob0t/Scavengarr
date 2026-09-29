@@ -66,6 +66,7 @@ cache:
   dir: "./.cache/scavengarr" # env: SCAVENGARR_CACHE_DIR (Docker image: /app/cache)
   ttl_seconds: 3600 # env: SCAVENGARR_CACHE_TTL_SECONDS
   search_ttl_seconds: 1800 # was 900 — 30min cache, repeated searches are instant
+  crawljob_ttl_seconds: 3600 # how long a grab stays downloadable
   max_concurrent: 10 # env: SCAVENGARR_CACHE_MAX_CONCURRENT
   # redis_url: "redis://redis:6379/0"      # env: SCAVENGARR_CACHE_REDIS_URL (only for backend: redis)
 

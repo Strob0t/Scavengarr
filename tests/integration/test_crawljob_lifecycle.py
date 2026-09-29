@@ -19,7 +19,7 @@ pytestmark = pytest.mark.integration
 
 @pytest.fixture()
 def factory() -> CrawlJobFactory:
-    return CrawlJobFactory(default_ttl_hours=2, auto_start=True)
+    return CrawlJobFactory(ttl_seconds=7200, auto_start=True)
 
 
 @pytest.fixture()
