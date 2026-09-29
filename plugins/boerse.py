@@ -22,6 +22,11 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.categories import (
+    filter_by_category,
+    is_series_title,
+    served_category,
+)
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
 if TYPE_CHECKING:
@@ -50,9 +55,19 @@ _CATEGORY_FORUM_MAP: dict[int, str] = {
     5000: "30",  # TV      → Videoboerse
     3000: "25",  # Audio   → Audioboerse
     7000: "21",  # Books   → Dokumente
-    1000: "16",  # Console → Spiele Boerse
-    4000: "16",  # PC      → Spiele Boerse
+    4000: "16",  # PC      → Spiele Boerse (console games too, not told apart)
 }
+# Forum -> category of its threads (Video: series by their title)
+_FORUM_CATEGORIES: dict[str, int] = {"30": 2000, "25": 3000, "21": 7000, "16": 4050}
+
+
+def _thread_category(title: str, forum_id: str) -> int:
+    """Torznab category of a thread: its forum's, Video threads by title."""
+    category = _FORUM_CATEGORIES.get(forum_id, 8000)
+    if category == 2000 and is_series_title(title):
+        return 5000
+    return category
+
 
 # Hosts that are internal (not download links)
 _INTERNAL_HOSTS = {
@@ -481,7 +496,7 @@ class BoersePlugin(PlaywrightPluginBase):
 
         return all_urls[: self.effective_max_results]
 
-    async def _scrape_thread(self, url: str) -> SearchResult | None:
+    async def _scrape_thread(self, url: str, forum_id: str) -> SearchResult | None:
         """Scrape a single thread page for title and download links."""
         ctx = await self._ensure_context()
 
@@ -517,7 +532,7 @@ class BoersePlugin(PlaywrightPluginBase):
             download_link=primary_link,
             download_links=link_parser.links,
             source_url=url,
-            category=2000,
+            category=_thread_category(title, forum_id),
         )
 
     async def cleanup(self) -> None:
@@ -534,13 +549,22 @@ class BoersePlugin(PlaywrightPluginBase):
         episode: int | None = None,
     ) -> list[SearchResult]:
         """Search boerse.sx and return results with download links."""
+        forum_id = "30"
+        if category is not None:
+            category = served_category(category, (*_FORUM_CATEGORIES.values(), 5000))
+            if category is None:
+                return []  # no forum of the board has this category
+            forum_id = (
+                _CATEGORY_FORUM_MAP.get(category)
+                or _CATEGORY_FORUM_MAP[category - category % 1000]
+            )
+
         await self._ensure_session()
         # isolated_search() prepares its context before the login above, and
         # plain search() uses the singleton context: hand the session (login
         # + Cloudflare clearance) to the context this search really uses
         await self._prepare_context(await self._ensure_context())
 
-        forum_id = _CATEGORY_FORUM_MAP.get(category or 2000, "30")
         thread_urls = await self._search_threads(query, forum_id)
 
         if not thread_urls:
@@ -550,13 +574,16 @@ class BoersePlugin(PlaywrightPluginBase):
 
         async def _bounded_scrape(url: str) -> SearchResult | None:
             async with sem:
-                return await self._scrape_thread(url)
+                return await self._scrape_thread(url, forum_id)
 
-        results = await asyncio.gather(
+        gathered = await asyncio.gather(
             *[_bounded_scrape(url) for url in thread_urls],
             return_exceptions=True,
         )
-        return [r for r in results if isinstance(r, SearchResult)]
+        results = [r for r in gathered if isinstance(r, SearchResult)]
+        if category is not None:
+            results = filter_by_category(results, category)
+        return results
 
 
 def _is_container_host(host: str) -> bool:

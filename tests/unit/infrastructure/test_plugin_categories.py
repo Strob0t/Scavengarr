@@ -15,6 +15,7 @@ from scavengarr.infrastructure.plugins.categories import (
     STREAM_CATEGORIES,
     category_matches,
     filter_by_category,
+    is_series_title,
     served_category,
     stream_category,
 )
@@ -81,6 +82,33 @@ class TestStreamCategory:
 
     def test_stream_categories_are_the_possible_labels(self) -> None:
         assert set(STREAM_CATEGORIES) == {2000, 5000, 5070}
+
+
+class TestIsSeriesTitle:
+    @pytest.mark.parametrize(
+        "title",
+        [
+            "Breaking.Bad.S01E01.German.DL.1080p",
+            "Stranger.Things.S03.German.EAC3D.DL.2160p",
+            "Breaking Bad S05E01 Live Free or Die",
+            "Stranger Things (Staffel 3)",
+            "Dark - Staffel 2 - Folge 1",
+        ],
+    )
+    def test_series(self, title: str) -> None:
+        assert is_series_title(title)
+
+    @pytest.mark.parametrize(
+        "title",
+        [
+            "The.Batman.2022.German.DL.1080p",
+            "Season of the Witch 2011",
+            "S1mone 2002",
+            "Mission Impossible SuperS01",
+        ],
+    )
+    def test_films(self, title: str) -> None:
+        assert not is_series_title(title)
 
 
 class TestFilterByCategory:

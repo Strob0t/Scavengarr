@@ -32,6 +32,7 @@ _ThreadTitleParser = _boerse._ThreadTitleParser
 _hoster_from_url = _boerse._hoster_from_url
 _hoster_from_text = _boerse._hoster_from_text
 _CATEGORY_FORUM_MAP = _boerse._CATEGORY_FORUM_MAP
+_thread_category = _boerse._thread_category
 
 
 _TEST_CREDENTIALS = {
@@ -669,5 +670,71 @@ class TestCategoryForumMapping:
     def test_books_maps_to_dokumente(self) -> None:
         assert _CATEGORY_FORUM_MAP[7000] == "21"
 
-    def test_default_fallback(self) -> None:
-        assert _CATEGORY_FORUM_MAP.get(9999, "30") == "30"
+    def test_games_maps_to_spiele_boerse(self) -> None:
+        # The Spiele forum holds PC and console games alike
+        assert _CATEGORY_FORUM_MAP[4000] == "16"
+        assert 1000 not in _CATEGORY_FORUM_MAP
+
+
+class TestThreadCategories:
+    """Threads are labelled by their forum; Video threads by their title."""
+
+    def test_video_threads(self) -> None:
+        assert _thread_category("The.Batman.2022.German.DL", "30") == 2000
+        assert _thread_category("Dark S01E01 German", "30") == 5000
+        assert _thread_category("Dark - Staffel 2", "30") == 5000
+
+    def test_other_forums(self) -> None:
+        assert _thread_category("Metallica - 72 Seasons", "25") == 3000
+        assert _thread_category("Cyberpunk 2077 v2.1", "16") == 4050
+        assert _thread_category("Anything", "999") == 8000
+
+
+class TestCategoryRequests:
+    async def test_category_without_forum_returns_nothing(self) -> None:
+        """XXX/Other used to search the Video forum; consoles cannot be told
+        apart from PC games in the Games forum."""
+        plugin = _make_plugin()
+        plugin._ensure_session = AsyncMock()
+
+        assert await plugin.search("test", category=6000) == []
+        assert await plugin.search("test", category=1000) == []
+        plugin._ensure_session.assert_not_awaited()
+
+    async def test_movie_request_keeps_the_films(self) -> None:
+        """Every thread used to be labelled 2000, series included."""
+        plugin = _make_plugin()
+        search_html = """
+        <html><body>
+        <a href="https://boerse.am/showthread.php?t=1">Film</a>
+        <a href="https://boerse.am/showthread.php?t=2">Series</a>
+        </body></html>
+        """
+
+        def _thread(title: str) -> str:
+            return (
+                f"<html><head><title>{title} - Boerse.AM (Boerse.AI)</title></head>"
+                "<body>"
+                '<div id="post_message_1">'
+                '<a href="https://www.keeplinks.org/p53/abc">RapidGator</a>'
+                "</div></body></html>"
+            )
+
+        context = _make_mock_context(
+            pages=[
+                _make_mock_page(search_html),
+                _make_mock_page(_thread("The.Batman.2022.German.DL.1080p")),
+                _make_mock_page(_thread("Dark.S01E01.German.DL.1080p")),
+            ]
+        )
+        plugin._browser = _make_mock_browser(context)
+        plugin._context = context
+        plugin._logged_in = True
+        plugin._session_cookies = _SESSION_COOKIES
+        plugin.base_url = "https://boerse.am"
+
+        results = await plugin.search("test", category=2000)
+
+        assert [(r.title, r.category) for r in results] == [
+            ("The.Batman.2022.German.DL.1080p", 2000)
+        ]

@@ -23,6 +23,7 @@ from urllib.parse import quote_plus
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.categories import (
     category_matches,
+    is_series_title,
     served_category,
 )
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
@@ -66,14 +67,13 @@ _KIND_CATEGORIES: dict[str, int] = {
     "sres5": 4050,
     "sres7": 5000,
 }
-# Episodes and season packs are TV, even when filed as films or unsorted
-_SERIES_RE = re.compile(r"\bS\d{1,2}(?:E\d{1,3})?\b|\bStaffel\b", re.IGNORECASE)
 
 
 def _row_category(row: dict[str, str]) -> int:
     """Torznab category of a result row, from its section class and title."""
     category = _KIND_CATEGORIES.get(row.get("kind", ""), 8000)
-    if category in (2000, 8000) and _SERIES_RE.search(row["title"]):
+    # Episodes and season packs are TV, even when filed as films or unsorted
+    if category in (2000, 8000) and is_series_title(row["title"]):
         return 5000
     return category
 

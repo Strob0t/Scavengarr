@@ -15,13 +15,13 @@ No authentication required.
 from __future__ import annotations
 
 import asyncio
-import re
 from html.parser import HTMLParser
 from urllib.parse import quote_plus, urljoin, urlparse
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.categories import (
     category_matches,
+    is_series_title,
     served_category,
 )
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
@@ -60,7 +60,6 @@ _SEARCH_PATHS: dict[int, tuple[str, ...]] = {
     7000: ("ebooks/",),
     6000: ("xxx/",),
 }
-_EPISODE_RE = re.compile(r"\bS\d{1,2}E\d{1,3}\b", re.IGNORECASE)
 
 
 def _row_category(row: dict[str, str]) -> int:
@@ -68,7 +67,7 @@ def _row_category(row: dict[str, str]) -> int:
     section = urlparse(urljoin("https://scnlog.me", row["detail_url"])).path
     section = section.strip("/").split("/")[0]
     if section == "foreign":
-        return 5020 if _EPISODE_RE.search(row["title"]) else 2010
+        return 5020 if is_series_title(row["title"]) else 2010
     return _SECTION_CATEGORIES.get(section, 8000)
 
 

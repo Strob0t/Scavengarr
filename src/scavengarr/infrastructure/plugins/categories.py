@@ -16,6 +16,7 @@ Streaming sites (films and series) label with ``stream_category()``.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 
 from scavengarr.domain.plugins.base import SearchResult
@@ -24,6 +25,11 @@ from scavengarr.domain.plugins.base import SearchResult
 STREAM_CATEGORIES = (2000, 5000, 5070)
 
 _ANIME_GENRES = frozenset({"anime", "animation"})
+# "S01E02", "S03" (season pack) as a token; "Staffel 3"
+_SERIES_TITLE_RE = re.compile(
+    r"(?:^|[\s._\-(\[])S\d{1,2}(?:E\d{1,4})?(?=$|[\s._\-)\]])|\bStaffel\b",
+    re.IGNORECASE,
+)
 
 
 def category_matches(requested: int | None, accepted: int) -> bool:
@@ -56,6 +62,14 @@ def filter_by_category(
 ) -> list[SearchResult]:
     """The results whose label *category* covers."""
     return [r for r in results if category_matches(category, r.category)]
+
+
+def is_series_title(title: str) -> bool:
+    """Whether a release title names episodes or a season.
+
+    Scene naming (``S01E02``, season packs ``S03``) and German "Staffel".
+    """
+    return _SERIES_TITLE_RE.search(title) is not None
 
 
 def stream_category(genres: Iterable[str], *, is_series: bool) -> int:

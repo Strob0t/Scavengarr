@@ -19,6 +19,7 @@ from urllib.parse import urljoin
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.categories import (
     filter_by_category,
+    is_series_title,
     served_category,
     stream_category,
 )
@@ -43,8 +44,6 @@ _CATEGORY_PATH_MAP: dict[int, str] = {
 # The labels ``_category_of()`` gives
 _CATEGORIES = (2000, 3020, 5000, 5060, 5070)
 
-# Season packs and episodes: "Stranger.Things.S03.German..."
-_SEASON_RE = re.compile(r"\bS\d{1,2}(?:E\d{1,3})?\b", re.IGNORECASE)
 _CONCERT_PILLS = frozenset({"konzert", "music", "musik"})
 _SPORT_PILLS = frozenset({"sport", "sports"})
 # Section pills of older listings; live listings carry genre pills only
@@ -302,11 +301,11 @@ def _category_of(item: dict[str, str | list[str]]) -> int:
         return 3020
     if pills & _SPORT_PILLS:
         return 5060
-    title = str(item.get("title", ""))
+    # Season packs "Stranger.Things.S03...", titles "... (Staffel 3)"
     is_series = (
         bool(pills & _SERIES_PILLS)
-        or _SEASON_RE.search(str(item.get("release_name", ""))) is not None
-        or "staffel" in title.lower()
+        or is_series_title(str(item.get("release_name", "")))
+        or is_series_title(str(item.get("title", "")))
     )
     return stream_category(pills, is_series=is_series)
 
