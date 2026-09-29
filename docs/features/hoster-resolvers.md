@@ -40,7 +40,7 @@ class HosterResolverPort(Protocol):
 
 The registry matches `extract_domain(url)` (second-level domain, e.g. `"https://www.voe.sx/e/abc"` → `"voe"`) against resolver names. Resolvers that expose a `supported_domains` property are also registered under every alias domain (e.g. `filelions` → `vidhide`, `d0000d` → `doodstream`, `streamta` → `streamtape`): all XFS and generic DDL resolvers plus the individual resolvers with mirror lists (VOE, DoodStream, Streamtape, VidGuard, Strmup, Filemoon, FireStream, DDownload, Serienstream). Other individual resolvers are reached when the URL's second-level domain equals the resolver `name`, via a redirect to such a domain, or via the plugin-provided hoster hint. The registry strips surrounding whitespace from the URL first (scraped links sometimes end in a newline).
 
-> **Known issue:** `moflix-stream` is listed in VidGuard's `_DOMAINS` and in Vidhide's `extra_domains`. The XFS resolvers register after VidGuard, so the registry maps `moflix-stream` URLs to the Vidhide resolver.
+A domain claimed by two resolvers stays with the first one registered (the composition registers the specific resolvers before the generic XFS/DDL ones) and is logged as `hoster_domain_conflict`; the shipped resolvers claim no domain twice. `moflix-stream` belongs to Vidhide (moflix-stream.click; JDownloader lists VidGuard with the former moflix-stream.day as offline).
 
 ### Playback headers
 
@@ -116,7 +116,7 @@ Check availability and return the original URL without headers. The Stremio addo
 
 | Resolver | `name` | Domains accepted | Technique |
 |---|---|---|---|
-| VidGuard | `vidguard` | `vidguard`, `vid-guard`, `vgfplay`, `vgembed`, `v6embed`, `vembed`, `bembed`, `listeamed`, `moflix-stream` | Embed page validation (`/d/`, `/e/`, `/v/` paths) |
+| VidGuard | `vidguard` | `vidguard`, `vid-guard`, `vgfplay`, `vgembed`, `v6embed`, `vembed`, `bembed`, `listeamed` | Embed page validation (`/d/`, `/e/`, `/v/` paths). JDownloader lists the hoster as offline |
 | Vidking | `vidking` | `vidking.net` | Page validation (`/e/`, `/d/`, `/embed/movie/{id}`, `/embed/tv/{id}/{s}/{e}`) |
 | Stmix | `stmix` | `stmix.io` | Page validation |
 | SerienStream | `serienstream` | `s.to`, `www.s.to`, `serienstream.*`, `serien.*` | Page validation (`/serie/` or `/serien/` slug) |

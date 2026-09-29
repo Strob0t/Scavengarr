@@ -17,7 +17,10 @@ Domains (JD2 2025-12):
     vembed.net
     bembed.net
     listeamed.net
-    moflix-stream.day
+
+JDownloader lists VidGuard as offline (``Offline.java``, including the
+former moflix-stream.day); moflix-stream.* belongs to VidHide now
+(moflix-stream.click), which claims the second-level domain.
 
 Based on JD2 VidguardTo.java (custom PluginForHost).
 """
@@ -45,7 +48,6 @@ _DOMAINS = {
     "vembed",
     "bembed",
     "listeamed",
-    "moflix-stream",
 }
 
 # Variable-length alphanumeric IDs with /d/, /e/, or /v/ prefix

@@ -91,13 +91,23 @@ class HosterResolverRegistry:
         If the resolver exposes a ``supported_domains`` property, each
         domain is also mapped so that URL-based dispatch finds the
         resolver even when the URL domain differs from the resolver name
-        (e.g. ``filelions`` → vidhide resolver).
+        (e.g. ``filelions`` → vidhide resolver). A domain claimed twice
+        stays with the first resolver (the composition registers specific
+        resolvers before the generic XFS/DDL ones) and is logged.
         """
         self._resolvers[resolver.name] = resolver
         domains: frozenset[str] | None = getattr(resolver, "supported_domains", None)
-        if domains:
-            for domain in domains:
-                self._domain_map[domain] = resolver
+        for domain in domains or ():
+            existing = self._domain_map.get(domain)
+            if existing is not None and existing is not resolver:
+                log.warning(
+                    "hoster_domain_conflict",
+                    domain=domain,
+                    kept=existing.name,
+                    ignored=resolver.name,
+                )
+                continue
+            self._domain_map[domain] = resolver
         log.debug("hoster_resolver_registered", hoster=resolver.name)
 
     @property

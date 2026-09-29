@@ -41,9 +41,16 @@ class TestExtractFileId:
         url = "https://listeamed.net/e/abc123XYZ"
         assert _extract_file_id(url) == "abc123XYZ"
 
-    def test_moflix_stream_domain(self) -> None:
+    def test_moflix_stream_is_vidhide_now(self) -> None:
+        # JDownloader lists VidGuard (with moflix-stream.day) as offline;
+        # moflix-stream.click is VidHide, which resolves the second-level
+        # domain "moflix-stream"
         url = "https://moflix-stream.day/e/abc123XYZ"
-        assert _extract_file_id(url) == "abc123XYZ"
+        assert _extract_file_id(url) is None
+        assert (
+            "moflix-stream"
+            not in VidguardResolver(httpx.AsyncClient()).supported_domains
+        )
 
     def test_vid_guard_domain(self) -> None:
         url = "https://vid-guard.com/e/abc123XYZ"

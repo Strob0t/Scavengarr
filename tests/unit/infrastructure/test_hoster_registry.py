@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream
 from scavengarr.infrastructure.hoster_resolvers import extract_domain
@@ -41,6 +42,23 @@ class TestHosterResolverRegistry:
         registry = HosterResolverRegistry(resolvers=[resolver])
 
         assert "voe" in registry.supported_hosters
+
+    def test_domain_claimed_twice_keeps_the_first_and_warns(self) -> None:
+        # Specific resolvers are registered before the generic XFS/DDL ones
+        first = SimpleNamespace(name="vidhide", supported_domains=frozenset({"dup"}))
+        second = SimpleNamespace(name="vidguard", supported_domains=frozenset({"dup"}))
+
+        with structlog.testing.capture_logs() as logs:
+            registry = HosterResolverRegistry(resolvers=[first, second])
+
+        assert registry._domain_map["dup"] is first
+        assert any(
+            e["event"] == "hoster_domain_conflict"
+            and e["domain"] == "dup"
+            and e["kept"] == "vidhide"
+            and e["ignored"] == "vidguard"
+            for e in logs
+        )
 
     def test_supported_domains_include_aliases(self) -> None:
         vidhide = SimpleNamespace(
