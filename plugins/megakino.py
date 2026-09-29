@@ -98,6 +98,19 @@ def _clean_title(title: str) -> str:
 _EPISODE_NUM_RE = re.compile(r"(\d{1,2})\s*[xX]\s*(\d{1,4})")
 
 
+_STAFFEL_RE = re.compile(r"staffel\s*(\d{1,3})", re.IGNORECASE)
+
+
+def _other_season(title: str, season: int) -> bool:
+    """True when *title* names a season ("X - Staffel N") other than *season*.
+
+    megakino has one page per season; a title without season number is
+    kept (single-season shows).
+    """
+    m = _STAFFEL_RE.search(title)
+    return m is not None and int(m.group(1)) != season
+
+
 def _label_matches_episode(label: str, episode: int) -> bool:
     """Check if a link label matches the requested episode number."""
     m = _EPISODE_NUM_RE.search(label)
@@ -689,7 +702,8 @@ class MegakinoPlugin(HttpxPluginBase):
         """Fetch search results with pagination up to _max_results."""
         all_results: list[dict[str, str | list[str] | bool]] = []
 
-        for page_num in range(_MAX_PAGES):
+        # DLE: search_start 0 and 1 are the same first page
+        for page_num in range(1, _MAX_PAGES + 1):
             results = await self._search_page(query, page_num)
             if not results:
                 break
@@ -734,8 +748,9 @@ class MegakinoPlugin(HttpxPluginBase):
                 for lnk in parser.stream_links
                 if _label_matches_episode(lnk.get("label", ""), episode)
             ]
-            if filtered:
-                parser.stream_links = filtered
+            # No match: this page does not have the episode (no fallback to
+            # all episodes, that would present wrong episodes as matches)
+            parser.stream_links = filtered
 
         if not parser.stream_links:
             self._log.debug("megakino_no_streams", url=detail_url)
@@ -790,6 +805,12 @@ class MegakinoPlugin(HttpxPluginBase):
             return []
 
         all_items = await self._search_all_pages(query)
+        if season is not None:
+            all_items = [
+                r
+                for r in all_items
+                if not _other_season(str(r.get("title", "")), season)
+            ]
         if not all_items:
             return []
 

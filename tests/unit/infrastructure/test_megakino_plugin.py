@@ -616,6 +616,62 @@ class TestMegakinoPluginSearch:
         results = await plug.search("")
         assert results == []
 
+
+_PENGUIN_S1_SEARCH = """\
+<a class="poster grid-item" href="/crime/4692-penguin.html">
+  <div class="poster__desc">
+    <h3 class="poster__title">The Penguin - Staffel 1</h3>
+    <ul class="poster__subtitle"><li>USA, 2024</li><li>Crime / Serien</li></ul>
+  </div>
+</a>
+"""
+
+
+class TestSeasonEpisodeAndPages:
+    @pytest.mark.asyncio
+    async def test_pages_start_at_one(self) -> None:
+        """DLE treats search_start 0 and 1 as the same page (duplicates)."""
+        plug = _make_plugin()
+        full_page = [{"url": f"u{i}", "title": "t"} for i in range(20)]
+        plug._search_page = AsyncMock(side_effect=[full_page, full_page, []])
+
+        await plug._search_all_pages("x")
+
+        pages = [c.args[1] for c in plug._search_page.call_args_list]
+        assert pages == [1, 2, 3]
+
+    @pytest.mark.asyncio
+    async def test_other_season_is_not_scraped(self) -> None:
+        plug = _make_plugin()
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(
+            side_effect=[_mock_response(_PENGUIN_S1_SEARCH), _mock_response("")]
+        )
+        mock_client.get = AsyncMock(return_value=_mock_response(_SERIES_DETAIL_HTML))
+        plug._client = mock_client
+        plug._token_acquired = True
+
+        results = await plug.search("penguin", season=2, episode=1)
+
+        assert results == []
+        mock_client.get.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_missing_episode_gives_no_result(self) -> None:
+        """No fallback to all episodes when the requested one is not listed."""
+        plug = _make_plugin()
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(
+            side_effect=[_mock_response(_PENGUIN_S1_SEARCH), _mock_response("")]
+        )
+        mock_client.get = AsyncMock(return_value=_mock_response(_SERIES_DETAIL_HTML))
+        plug._client = mock_client
+        plug._token_acquired = True
+
+        results = await plug.search("penguin", season=1, episode=99)
+
+        assert results == []
+
     @pytest.mark.asyncio
     async def test_search_no_results(self) -> None:
         plug = _make_plugin()
