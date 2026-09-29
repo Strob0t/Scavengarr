@@ -20,6 +20,10 @@ import json
 from urllib.parse import urlparse
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.categories import (
+    filter_by_category,
+    served_category,
+)
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 PAGE_SIZE = 20
@@ -381,26 +385,32 @@ class DataApiPluginBase(HttpxPluginBase):
         if not query:
             return []
 
-        # Accept movies (2xxx) and TV (5xxx)
+        if category is None and season is not None:
+            category = 5000  # a season request is a series request
         if category is not None:
-            if not (2000 <= category < 3000 or 5000 <= category < 6000):
-                return []
-
-        # When season/episode are requested, restrict to series
-        effective_category = category
-        if season is not None and effective_category is None:
-            effective_category = 5000
+            category = served_category(category, (2000, 5000, 5070, 5080))
+            if category is None:
+                return []  # the sites have films and series only
 
         await self._ensure_client()
         await self._verify_domain()
 
-        browse_results = await self._browse_all(
-            query, type_for_category(effective_category)
-        )
+        browse_results = await self._browse_all(query, type_for_category(category))
         if not browse_results:
             return []
 
-        # Fetch detail pages with bounded concurrency
+        results = await self._process_all(browse_results, season, episode)
+        if category is not None:
+            results = filter_by_category(results, category)
+        return results[: self.effective_max_results]
+
+    async def _process_all(
+        self,
+        browse_results: list[dict],
+        season: int | None,
+        episode: int | None,
+    ) -> list[SearchResult]:
+        """Fetch the detail pages with bounded concurrency."""
         sem = self._new_semaphore()
         tasks = [
             self._process_entry(e, sem, season=season, episode=episode)
@@ -416,5 +426,4 @@ class DataApiPluginBase(HttpxPluginBase):
                 self._log.warning(f"{self.name}_entry_failed", error=repr(sr))
             if len(results) >= self.effective_max_results:
                 break
-
-        return results[: self.effective_max_results]
+        return results

@@ -421,6 +421,16 @@ class TestMegakinoToSearch:
         assert results[0].category == 5000
 
     @pytest.mark.asyncio
+    async def test_anime_request_skips_other_series(self, mod) -> None:
+        """An anime request used to return every series."""
+        p = _make_plugin(
+            mod,
+            browse_resp=_TV_BROWSE_RESPONSE,
+            detail_resp=_TV_DETAIL_RESPONSE,
+        )
+        assert await p.search("Breaking Bad", category=5070) == []
+
+    @pytest.mark.asyncio
     async def test_empty_browse_returns_empty(self, mod) -> None:
         p = _make_plugin(mod, browse_resp=_EMPTY_BROWSE)
         assert await p.search("nonexistent") == []
