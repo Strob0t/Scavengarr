@@ -6,7 +6,7 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
-Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 59 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4472 tests (4431 excluding the opt-in live tests).
+Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 59 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4588 tests (4547 excluding the opt-in live tests).
 
 ### Fix: Code Review of `staging` (plan: `docs/plans/code-review-fixes.md`)
 - **Security — HLS proxy was an open proxy (SSRF)**: `/api/v1/stremio/proxy/{id}/{path}` joined the client path with `urljoin`, so `…/proxy/<id>/http://192.168.x.x/…` fetched any internal address and returned the body. Paths that leave the stream's CDN (other scheme or host) now get `400`.

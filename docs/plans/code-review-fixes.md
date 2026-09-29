@@ -2,7 +2,7 @@
 
 # Plan: Fixes from the Full Code Review of `staging`
 
-**Status:** In progress (started 2026-09-29)
+**Status:** Done (2026-09-29): waves 1–4 fixed in 62 commits on `staging` (`23ed07d` … `2495d3a`); results, deviations and open points below.
 **Priority:** High (security and "does not start" findings in wave 1)
 **Source:** Full read-only review of the current `staging` code by six reviewers (domain/application/interfaces, hoster resolvers, infrastructure core, plugin base + plugins a–k, plugins l–z, deployment/tooling), 79 findings. The most severe ones were re-checked against the code before this plan.
 
@@ -103,3 +103,33 @@ Tests: `tests/unit/infrastructure/test_xenforo_base.py` (parsers, node selection
 ## Documentation
 
 `CHANGELOG.md`, the affected `docs/features/*.md`, `docs/architecture/*` where behaviour changes, `AGENTS.md` if rules change; results and deviations recorded here.
+
+## Results
+
+Every item of waves 1–4 is fixed test-first; each commit passed `pre-commit` and the full `pytest` run and carries its `CHANGELOG.md` entry and doc updates.
+
+- **Wave 1** (`23ed07d` … `1eeb995`): HLS proxy limited to the stream's CDN, failed segments release their connection, container and hook scripts executable and restart-safe, local config and dev container work from a fresh clone, Docker build hygiene, ruff versions aligned.
+- **Wave 2** (`04313a7` … `b8d11c2`): aniworld, kinox, megakino, moflix, serienfans, sto, cine, dataload, filmpalast, burningseries, gofile and the XFS/DDL resolvers return the right results again; megakino_to and movie4k share `DataApiPluginBase`.
+- **Wave 3** (`8b02a83` … `b6f39ea`): logging keeps stdlib exceptions and masks secrets, plugins load once, the concurrency pool reserves fair shares, resolutions are bounded and timeouts are not cached, altcha parameters are bounded, unsaved crawljobs are not cached, `cache.crawljob_ttl_seconds`, rate-limit exemptions, validator/HLS caches are bounded, one half-open breaker probe, score index TTL, Redis concurrency, own-link resolution bounded, Playwright driver cleanup, moflix Cloudflare solving, SSRF guard, `moflix-stream` owner, dead probe path removed.
+- **Wave 4** (`cc7f056` … `2495d3a`): paging failures keep collected pages; every plugin fetches through the base helpers (nox's gateway call keeps its own request on purpose: it needs the refusal body); the XenForo forums share `XenForoPluginBase`; `infrastructure/plugins/categories.py` (`category_matches`, `served_category`, `filter_by_category`, `stream_category`, `is_series_title`) answers category requests in all plugins listed under 4.1 plus sto and `DataApiPluginBase`: results carry the site's label, a child category the site does not tell apart gets its parent's results, and a category the site does not have returns `[]` without a request.
+
+## Deviations from the plan
+
+- **4.4 grew into the XenForo consolidation**: checking dataload/myboerse live showed myboerse's search failing on every query (missing CSRF token) and the node filter being a no-op on both (see the 4.4 follow-up above); a shared base was the root-cause fix (`AGENTS.md` already demands one base per site backend).
+- **4.1 found broken plugins, fixed with their categories**: crawli sends its pages base64-encoded since 2026-09 (0 results) and only film rows were parsed; scnlog missed the German releases under `foreign/`; myboerse's `/xtra/` "download" was an affiliate placeholder.
+- **Beyond the list**: sto and `DataApiPluginBase` had the same category problems (sto mapped genres to quality codes) and were fixed in the same pass; `is_tv_category()` / `is_movie_category()` lost their last users and were removed.
+- **4.3 is partial by design**: the category logic of the DLE plugins is shared; their HTML parsers and `_clean_title` stay per plugin (site-specific markup, no divergence bug found).
+- **Stream-time probe (4.7)**: `probe_stealth_timeout_seconds` stays, it is the StealthPool page timeout.
+
+## Open observations
+
+Found during the fixes, not changed (design questions or outside the review's scope):
+
+- **Torznab `cat=` keeps only the first id**: `cat=5070,5000` becomes a strict 5070 request. Plugins now fall back to the parent for children they do not tell apart, but a caller listing several categories still gets only the first; passing all ids to the plugins would need a port change.
+- **Not checked live**: mygully and boerse (credentials), scnsrc, ddlvalley and ddlspot (Cloudflare Turnstile), the XenForo thread links (hidden from guests). Their category changes rest on the tests and the site data seen in fixtures.
+- **Console requests** return `[]` on sites whose game sections mix PC and console games (mygully, boerse, scnlog, crawli).
+- **DDL links in Stremio**: validate-only DDL resolvers cannot pass the playback check, so DDL hosters never become Stremio streams (design question).
+- **fsst `/embed/` URLs** do not match the generic DDL URL pattern.
+- **GoFile** refuses guest lookups for many files (`error-notPremium`); logged as `gofile_guest_access_refused`.
+- **Crawljob `text` with CRLF** line endings was not verified against JDownloader.
+- **crawli's `erotik` section** lives on another host (connection refused here) and is not mapped.
