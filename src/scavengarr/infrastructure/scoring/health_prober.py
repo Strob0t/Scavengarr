@@ -10,11 +10,13 @@ import httpx
 import structlog
 
 from scavengarr.domain.entities.scoring import ProbeResult
-from scavengarr.infrastructure.browser.cloudflare import (
-    is_cloudflare_challenge,
-)
+from scavengarr.infrastructure.captcha.detect import ChallengeKind, detect_challenge
 
 log = structlog.get_logger(__name__)
+
+_BLOCKING_KINDS: frozenset[ChallengeKind | None] = frozenset(
+    {"cloudflare_page", "ddos_guard"}
+)
 
 
 class HealthProber:
@@ -46,8 +48,7 @@ class HealthProber:
                 follow_redirects=True,
             )
 
-            captcha = False
-
+            kind: ChallengeKind | None
             if resp.status_code in (405, 501):
                 resp = await self._http.get(
                     base_url,
@@ -55,11 +56,18 @@ class HealthProber:
                     follow_redirects=True,
                     headers={"Range": "bytes=0-0"},
                 )
-                # GET has a body — use full body-based CF detection
-                captcha = is_cloudflare_challenge(resp.status_code, resp.text)
-            else:
+                # GET has a body — use full body-based detection
+                kind = detect_challenge(resp.status_code, resp.text, resp.headers)
+            elif resp.status_code in (403, 503) and "cf-ray" in resp.headers:
                 # HEAD has no body — heuristic: cf-ray header + 403/503
-                captcha = resp.status_code in (403, 503) and "cf-ray" in resp.headers
+                kind = "cloudflare_page"
+            else:
+                kind = detect_challenge(resp.status_code, "", resp.headers)
+
+            # Only page blocks count; a login captcha on a homepage does not.
+            captcha = kind in _BLOCKING_KINDS
+            if captcha:
+                log.info("health_probe_challenge", url=base_url, challenge=kind)
 
             duration_ms = (time.monotonic() - t0) * 1000
             ok = resp.status_code < 400 and not captcha

@@ -47,7 +47,7 @@ Raw output from a single probe run.
 | `ok` | `bool` | Whether the probe succeeded |
 | `error_kind` | `str \| None` | `timeout`, `captcha`, `http_error` (health); `timeout`, `search_error`, `plugin_not_found` (search) |
 | `http_status` | `int \| None` | HTTP response status |
-| `captcha_detected` | `bool` | Cloudflare challenge detected |
+| `captcha_detected` | `bool` | Page block detected (Cloudflare challenge or DDoS-Guard) |
 | `items_found` | `int` | Raw search result count |
 | `items_used` | `int` | `min(items_found, max_items)` |
 | `hoster_checked` | `int` | Number of supported hoster URLs HEAD-checked |
@@ -159,7 +159,7 @@ Lightweight availability check for each plugin's `base_url`.
 | Success | Status `< 400` and no Cloudflare challenge |
 | Output | `ok`, `http_status`, `duration_ms`, `error_kind`, `captcha_detected` |
 
-When the prober encounters a Cloudflare challenge, `captcha_detected` is `True`, `ok` is `False`, and `error_kind` is `"captcha"`; `compute_health_observation()` then returns `0.0`.
+When the prober encounters a page block (Cloudflare challenge or DDoS-Guard, classified by `infrastructure/captcha/detect.py`; a login captcha widget on a working homepage does not count), `captcha_detected` is `True`, `ok` is `False`, and `error_kind` is `"captcha"`; `compute_health_observation()` then returns `0.0`.
 
 ### MiniSearchProber (2× per week)
 

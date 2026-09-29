@@ -65,7 +65,7 @@ Sources: see the research report in the 2026-09-28 session (Patchright README, C
 |---|---|---|
 | 1 | ALTCHA solver, `GrabResolvingPlugin` + `CrawlJobResolveUseCase`, nox links on grab | done |
 | 2 | nox: log the gateway's block reason, live smoke for grab resolution | done |
-| 3 | Shared captcha detector (`infrastructure/captcha/detect.py`), logging + scoring | open |
+| 3 | Shared captcha detector (`infrastructure/captcha/detect.py`), logging + scoring | done |
 | 4 | animeloads: odd-one-out captcha in the browser, links on grab | open |
 | 5 | Cloudflare: persistent profile, `channel="chrome"` check, warmup at startup | open |
 | 6 | Embedded Turnstile tokens (vinovo, devideosrc, doodstream) | open |

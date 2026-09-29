@@ -23,6 +23,7 @@ import structlog
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort
 from scavengarr.infrastructure.browser.cloudflare import is_cloudflare_challenge
+from scavengarr.infrastructure.captcha.detect import detect_challenge
 
 from .constants import (
     DEFAULT_CLIENT_TIMEOUT,
@@ -313,10 +314,14 @@ class HttpxPluginBase:
         if resp.status_code < 400:
             return resp.text
 
+        challenge = detect_challenge(resp.status_code, resp.text, resp.headers)
         fetcher = self._browser_fetcher
-        if fetcher is not None and is_cloudflare_challenge(resp.status_code, resp.text):
+        if fetcher is not None and challenge == "cloudflare_page":
             self._log.info(
-                f"{self.name}_browser_fallback", url=str(resp.url), context=context
+                f"{self.name}_browser_fallback",
+                url=str(resp.url),
+                context=context,
+                challenge=challenge,
             )
             self._mark_cf_blocked(url)
             return await fetcher.fetch_text(
@@ -328,6 +333,7 @@ class HttpxPluginBase:
             url=url,
             status=resp.status_code,
             context=context,
+            challenge=challenge,
         )
         return None
 

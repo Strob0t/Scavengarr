@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from scavengarr.infrastructure.browser.cloudflare import (
-    _CF_MARKERS,
-    is_cloudflare_challenge,
+from scavengarr.infrastructure.browser.cloudflare import is_cloudflare_challenge
+from scavengarr.infrastructure.captcha.detect import (
+    _CF_PAGE_MARKERS as _CF_MARKERS,
 )
 
 # ------------------------------------------------------------------

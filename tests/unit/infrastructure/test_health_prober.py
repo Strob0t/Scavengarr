@@ -169,6 +169,36 @@ class TestCaptchaDetection:
         assert result.captcha_detected is False
         assert result.ok is True
 
+    @respx.mock
+    async def test_head_403_from_ddos_guard_detects_captcha(self) -> None:
+        respx.head(_URL).respond(403, headers={"server": "ddos-guard"})
+        async with httpx.AsyncClient() as client:
+            result = await HealthProber(http_client=client).probe(_URL)
+
+        assert result.captcha_detected is True
+        assert result.error_kind == "captcha"
+
+    @respx.mock
+    async def test_get_fallback_with_ddos_guard_body_detects_captcha(self) -> None:
+        html = '<title>DDoS-Guard</title><script src="https://check.ddos-guard.net/check.js">'
+        respx.head(_URL).respond(405)
+        respx.get(_URL).respond(403, text=html)
+        async with httpx.AsyncClient() as client:
+            result = await HealthProber(http_client=client).probe(_URL)
+
+        assert result.captcha_detected is True
+
+    @respx.mock
+    async def test_login_widget_on_homepage_is_not_a_block(self) -> None:
+        html = "<div class='g-recaptcha' data-sitekey='x'></div>"
+        respx.head(_URL).respond(405)
+        respx.get(_URL).respond(200, text=html)
+        async with httpx.AsyncClient() as client:
+            result = await HealthProber(http_client=client).probe(_URL)
+
+        assert result.captcha_detected is False
+        assert result.ok is True
+
 
 class TestProbeAll:
     @respx.mock

@@ -1,18 +1,8 @@
-"""Shared Cloudflare challenge / block detection.
-
-Centralises the markers and heuristic so that probe, supervideo,
-and any future resolver can reuse the same logic.
-"""
+"""Cloudflare challenge / block detection (thin view on the shared detector)."""
 
 from __future__ import annotations
 
-_CF_MARKERS: tuple[str, ...] = (
-    "Just a moment",
-    "challenge-platform",
-    "cf-error-details",
-    "Attention Required",
-    "cf-turnstile",
-)
+from scavengarr.infrastructure.captcha.detect import detect_challenge
 
 
 def is_cloudflare_challenge(status_code: int, html: str) -> bool:
@@ -23,6 +13,4 @@ def is_cloudflare_challenge(status_code: int, html: str) -> bool:
     - WAF block:    403 + "Attention Required" / "cf-error-details"
     - Turnstile:    403/503 + "cf-turnstile"
     """
-    if status_code not in (403, 503):
-        return False
-    return any(marker in html for marker in _CF_MARKERS)
+    return detect_challenge(status_code, html) == "cloudflare_page"

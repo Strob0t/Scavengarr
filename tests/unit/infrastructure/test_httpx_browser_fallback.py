@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 import respx
+import structlog.testing
 
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
@@ -246,6 +247,20 @@ class TestFetchText:
         async with httpx.AsyncClient() as client:
             plugin = await _plugin_with_client(client)
             assert await plugin._fetch_text("https://cf.example/page") is None
+
+    @respx.mock
+    async def test_error_logs_the_challenge_kind(self) -> None:
+        respx.get("https://cf.example/page").respond(
+            403, text="<title>DDoS-Guard</title>", headers={"server": "ddos-guard"}
+        )
+
+        async with httpx.AsyncClient() as client:
+            plugin = await _plugin_with_client(client)
+            with structlog.testing.capture_logs() as logs:
+                assert await plugin._fetch_text("https://cf.example/page") is None
+
+        errors = [e for e in logs if e["event"] == "cf-test_http_error"]
+        assert errors[0]["challenge"] == "ddos_guard"
 
     @respx.mock
     async def test_plain_error_does_not_use_browser(self) -> None:
