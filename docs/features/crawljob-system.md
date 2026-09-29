@@ -102,7 +102,7 @@ The frozen `CrawlJob` dataclass models a JDownloader `.crawljob` file with the f
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `extract_passwords` | `list[str]` | `[]` | Archive passwords (serialized as a JSON array) |
+| `extract_passwords` | `list[str]` | `[]` | Archive passwords (serialized as a JSON array); filled from `SearchResult.metadata["archive_password"]` (e.g. animeloads: `www.anime-loads.org`) |
 | `download_password` | `str \| None` | `None` | Password for protected links |
 
 ### Advanced Options
@@ -214,6 +214,8 @@ The composition root creates the factory with exactly these values; they are not
 | `validated_links` | `text` | Same list joined with `\r\n` |
 | `source_url` | `source_url` | Original detail page URL |
 | `release_name` | `filename` | Only written when set |
+| `metadata["archive_password"]` | `extract_passwords` | One-element list when set, else `[]` |
+| (plugin is a `GrabResolvingPlugin`) | `resolve_plugin` | Set by `TorznabSearchUseCase`, not by the result; see [Grab-Time Resolution](#grab-time-resolution) |
 | `description`, `size`, `source_url` | `comment` | `"desc \| Size: X \| Source: URL"`; parts omitted when empty; fallback `"Downloaded via Scavengarr"` |
 
 ### Usage
@@ -300,6 +302,15 @@ async def resolve_download(self, url: str) -> list[str]: ...
 - At search time `TorznabSearchUseCase` stores the plugin name in `CrawlJob.resolve_plugin`; `validated_urls` still hold the page URLs the plugin returned.
 - When the job is grabbed, `CrawlJobResolveUseCase` (`application/use_cases/crawljob_resolve.py`) calls `resolve_download()` for each URL, drops duplicates, stores the job again with the resolved links and without `resolve_plugin`, and serves it. A repeated grab of the same job reuses the stored links (no second captcha).
 - No links, an unknown plugin or a plugin error → `CrawlJobResolveError` → HTTP `502`.
+
+Implementations:
+
+| Plugin | Page URL in the result | Resolution on grab |
+|---|---|---|
+| `nox` | `/media/<slug>?release=<id>` | Online links of the release (`/api/releases/<slug>`), one ALTCHA proof-of-work challenge solved in-process (`infrastructure/captcha/altcha.py`) → pass token that unlocks every link (`/go/<token>/url?cp=…`). Refusals are logged as `nox_unlock_refused` with `message`/`reason` (`hourly_limit`, `weekly_limit`, …) |
+| `animeloads` | `/media/<slug>?release=<n>` | Release tab of the media page (browser, DDoS-Guard) → "odd one out" image captcha solved in the page → Click'n'Load packages decrypted (`infrastructure/plugins/clicknload.py`). One captcha per episode anonymously (releases up to 13 episodes), one per release with `SCAVENGARR_ANIMELOADS_USERNAME`/`_PASSWORD`. Series-level URLs are returned unchanged |
+
+Live smoke (one grab per plugin, opt-in): `tests/live/test_grab_resolve_live.py`.
 - `/download/{job_id}/info` shows the stored (possibly unresolved) state and never triggers resolution.
 
 ### Job Info

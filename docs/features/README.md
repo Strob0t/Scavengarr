@@ -14,7 +14,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** and **S
 | Python | 3.12–3.13 |
 | Plugins | 41 (34 httpx + 7 Playwright) |
 | Hoster resolvers | 59 (22 individual + 12 generic DDL + 25 XFS) |
-| Tests | 4113 offline (3919 unit + 169 E2E + 25 integration) + 38 live |
+| Tests | 4431 offline (4226 unit + 171 E2E + 34 integration) + 41 live |
 | Architecture | Clean Architecture |
 
 ---
@@ -98,7 +98,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** and **S
 | Caching | diskcache (+ optional Redis via YAML) | Search results, CrawlJobs, stream links, plugin scores |
 | Logging | structlog | Structured JSON/console logging |
 | CLI | argparse (stdlib) | Server startup with config overrides |
-| Testing | pytest, respx | 4113 offline tests + 38 live smoke tests |
+| Testing | pytest, respx | 4431 offline tests + 41 live smoke tests |
 
 ---
 
@@ -153,7 +153,7 @@ tests/
     interfaces/              # Router tests
   e2e/                       # Torznab + Stremio endpoint tests
   integration/               # Config loading, CrawlJob lifecycle, link validation
-  live/                      # Live smoke tests (plugins + resolver contract tests)
+  live/                      # Live smoke tests (plugins, resolvers, grab-time links, Stremio)
   benchmark/                 # Concurrency tuning benchmarks (run manually)
 ```
 

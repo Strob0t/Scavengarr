@@ -6,7 +6,7 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
-Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 59 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4415 tests (4375 excluding the opt-in live tests).
+Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 59 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4472 tests (4431 excluding the opt-in live tests).
 
 ### Chore: Editor and Tool Output Hygiene
 - `.vscode/settings.json` sets `"files.eol": "\n"`: VS Code saves new files with LF, matching `.gitattributes` and the `mixed-line-ending` hook.

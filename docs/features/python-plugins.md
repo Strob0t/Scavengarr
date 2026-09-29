@@ -68,7 +68,9 @@ class SearchResult:
     upload_volume_factor: float = 0.0
 ```
 
-Only `title` and `download_link` are required. Link validation reads `download_link` plus the `link` key of each `download_links` entry. A plugin that sets `validated_links` itself (e.g. behind anti-bot protection) skips link validation, see [Link Validation](./link-validation.md).
+Only `title` and `download_link` are required. Link validation reads `download_link` plus the `link` key of each `download_links` entry. A plugin that sets `validated_links` itself (e.g. behind anti-bot protection) skips link validation, see [Link Validation](./link-validation.md). `metadata["archive_password"]` becomes the crawljob's `extractPasswords`.
+
+Links behind a captcha or a download quota are resolved when a result is grabbed, not while searching: implement `GrabResolvingPlugin.resolve_download(url) -> list[str]` and return page URLs from `search()`, see [Grab-Time Resolution](./crawljob-system.md#grab-time-resolution) (nox, animeloads).
 
 ---
 
@@ -163,6 +165,11 @@ plugin = MySitePlugin()
 - `isolated_search()` — plain passthrough to `search()`
 - `cleanup()` — closes a private client (never the shared one)
 
+**Captcha and link helpers:**
+- `scavengarr.infrastructure.captcha.altcha.solve_altcha(challenge) -> str` — solves an ALTCHA v2 proof-of-work challenge (PBKDF2/SHA-256/384/512) and returns the base64 payload the widget would post; CPU-bound, call it via `asyncio.to_thread` (nox)
+- `scavengarr.infrastructure.captcha.detect.detect_challenge(status, html, headers=None)` — classifies a response as `cloudflare_page`, `ddos_guard`, `turnstile`, `hcaptcha`, `recaptcha` or `altcha` (`None` otherwise); `is_cloudflare_challenge()` is `detect_challenge(...) == "cloudflare_page"`. `_fetch_text()` logs the kind on errors
+- `scavengarr.infrastructure.plugins.clicknload.decrypt_cnl(jk, crypted) -> list[str]` — decrypts a Click'n'Load (CNL2) package (AES-128-CBC, key = IV = `jk`, zero padding; also tries the hex-swapped key); `[]` when unreadable (animeloads)
+
 **devideosrc.co player** (`scavengarr.infrastructure.plugins.devideosrc`): DLE streaming sites such as streamcloud embed a devideosrc player (`devideosrc.co/movie/<imdb>`, `devideosrc.co/serial/<imdb>`) instead of listing hoster links. `find_player(html)` detects it on a detail page, `fetch_links(client, player, **request_kwargs)` returns a `PlayerLinks(kind, links)`: the hoster embeds (movie: best rank first; series: every episode, labelled `<season>x<episode> <hoster>`) and the player kind that answered — sites like streamkiste embed the series player for movies too, so a series page without token falls back to the movie player. `filter_episodes(links, season, episode)` narrows series links to one season/episode. Used by streamcloud, streamkiste and hdfilme. The player page is always loaded past Cloudflare's cache (cached copies carry expired tokens and even cached 429s); a 429 there is retried with a fresh URL. Only the separate download embed (`/embed/download/<imdb>`) sits behind Turnstile.
 
 ### PlaywrightPluginBase
@@ -224,7 +231,9 @@ Always obtain pages via `_new_page()` / `_ensure_page()` (or the context from `_
 - `_context_options()` — keyword arguments for `browser.new_context()` (1280x720 viewport, `_browser_user_agent` if set); use it for extra contexts such as login contexts
 - `_ensure_context()` — returns the per-request context from `isolated_search()` if set, otherwise a persistent context built from `_context_options()` plus resource blocking
 - `_ensure_page()` — persistent page in the current context; `_new_page()` — fresh page, caller closes it
-- `_wait_for_cloudflare(page) -> bool` — solves a Cloudflare challenge via `browser/turnstile.solve_cloudflare()`: returns at once without a challenge title, otherwise waits ~3 s for an auto-clear, then clicks the Turnstile checkbox in the `challenges.cloudflare.com` iframe (re-click every 8 s); `False` on timeout. Needs a headful browser to pass
+- `_wait_for_cloudflare(page) -> bool` — solves a Cloudflare challenge via `browser/turnstile.solve_cloudflare()`: returns at once without a challenge title, otherwise waits ~3 s for an auto-clear, then clicks the Turnstile checkbox in the `challenges.cloudflare.com` iframe (re-click every 8 s); `False` on timeout. Needs a headful browser to pass. A solved challenge's clearance cookie is stored via `_remember_clearance(page)`
+- `set_clearance_store(store)` (static, wired in composition) — the `ClearanceStore` that restores `cf_clearance`/`__ddg*` cookies into every new context (`_configure_context`) and keeps them across restarts; `_remember_clearance(page)` stores them, for gates other than Cloudflare call it yourself
+- `page.evaluate(js, arg, isolated_context=False)` — Patchright runs `evaluate` in an isolated world by default, where the site's own scripts (e.g. jQuery `$`) are invisible; pass `isolated_context=False` to use them (animeloads)
 - `_passes_cloudflare(page, resp) -> bool` — accepts a navigation: status `< 400`, or a 403/503 Cloudflare challenge page that gets solved
 - `_navigate_and_wait(page, url, *, wait_for_cf=True, wait_for_idle=True) -> bool` — `goto` (`domcontentloaded`), `_passes_cloudflare()`, `networkidle`; `False` on an error status that is not a solvable challenge
 - `_fetch_page_html(url, *, wait_until="domcontentloaded", timeout=30_000) -> str` — fresh page, navigate, wait, return HTML (`""` on failure)

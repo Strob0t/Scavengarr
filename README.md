@@ -19,7 +19,8 @@ Scavengarr scrapes sources via two engines (httpx for static HTML, Playwright fo
 - **59 hoster resolvers** for video URL extraction and file availability validation (22 individual + 12 generic DDL + 25 XFS consolidated)
 - **Multi-stage scraping:** plugins run search → detail → links internally with bounded concurrency
 - **Link validation:** parallel HEAD/GET validation with dead-link filtering
-- **CrawlJob packaging:** bundle multiple validated download links into `.crawljob` files
+- **CrawlJob packaging:** bundle multiple validated download links into `.crawljob` files; links behind a captcha or download quota are resolved only when a result is grabbed
+- **Anti-bot and captchas:** headful Patchright passes Cloudflare Turnstile, clearance cookies survive restarts, ALTCHA proof of work and an image captcha are solved in-process, optional Byparr/FlareSolverr sidecar
 - **Plugin scoring:** EWMA-based background probing ranks plugins by health and search quality
 - **Circuit breaker:** per-plugin failure tracking skips consistently failing plugins
 - **Global concurrency pool:** fair-share httpx and Playwright slot budgets across concurrent requests, auto-tuned from container CPU/memory limits
@@ -148,7 +149,7 @@ poetry run pre-commit install
 poetry run pytest
 ```
 
-The test suite has 4151 tests: 4113 offline (3919 unit + 169 E2E + 25 integration) plus 38 live smoke tests. Live tests are opt-in: `poetry run pytest -m live`. Concurrency benchmarks run separately: `poetry run pytest tests/benchmark/ -s -v`.
+The test suite has 4472 tests: 4431 offline (4226 unit + 171 E2E + 34 integration) plus 41 live smoke tests. Live tests are opt-in: `poetry run pytest -m live`. Concurrency benchmarks run separately: `poetry run pytest tests/benchmark/ -s -v`.
 
 ### Code Quality
 
@@ -170,7 +171,7 @@ src/scavengarr/
   infrastructure/   # Adapters (scraping, cache, plugins, resolvers, validation, scoring)
   interfaces/       # HTTP routers (FastAPI), CLI (argparse), composition root
 plugins/            # 41 Python plugins (34 httpx + 7 Playwright)
-tests/              # 4151 tests (unit, E2E, integration, live) + benchmarks
+tests/              # 4472 tests (unit, E2E, integration, live) + benchmarks
 docs/               # Architecture, features, plans, refactor history
 ```
 

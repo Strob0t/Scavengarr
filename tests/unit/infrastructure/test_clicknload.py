@@ -7,6 +7,7 @@ from binascii import unhexlify
 
 import pytest
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
 from scavengarr.infrastructure.plugins.clicknload import decrypt_cnl
 
 # Real vector from anime-loads.org (2026-09-29)

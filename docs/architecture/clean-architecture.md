@@ -94,7 +94,7 @@ Entities and value types are implemented as `@dataclass` classes.
 | `TorznabItem` | `entities/torznab.py` | Immutable result item: `title`, `download_url`, `job_id`, `seeders`, `peers`, `size`, `release_name`, `description`, `source_url`, `category`, `grabs`, volume factors |
 | `TorznabCaps` | `entities/torznab.py` | Server capabilities metadata (title, version, limits) |
 | `TorznabIndexInfo` | `entities/torznab.py` | Indexer info for listing (name, version, mode) |
-| `CrawlJob` | `entities/crawljob.py` | Immutable (`frozen=True`) JDownloader `.crawljob` representation with TTL (`is_expired()`) and serialization (`to_crawljob_format()`) |
+| `CrawlJob` | `entities/crawljob.py` | Immutable (`frozen=True`) JDownloader `.crawljob` representation with TTL (`is_expired()`) and serialization (`to_crawljob_format()`); `resolve_plugin` names the plugin that resolves its links at grab time |
 | `SearchResult` | `plugins/base.py` | Normalized (mutable) scraping result with download links and metadata |
 | `StremioStreamRequest`, `StremioStream`, `StremioMetaPreview`, `RankedStream`, `StreamLanguage`, `TitleMatchInfo`, `CachedStreamLink`, `ResolvedStream` | `entities/stremio.py` | Frozen Stremio types: parsed request, output stream, catalog preview, ranked candidate, language, title info, cached hoster link, resolved video URL |
 | `ProbeResult`, `EwmaState`, `PluginScoreSnapshot` | `entities/scoring.py` | Frozen plugin-scoring types (probe outcome, EWMA state, per-plugin score snapshot) |
@@ -272,7 +272,8 @@ Infrastructure implements the ports defined by Domain and provides concrete adap
 - **Configuration** (`config/`): layered config loading (defaults < YAML < ENV < CLI) with Pydantic validation.
 - **Logging** (`logging/`): structured logging via structlog with an async `QueueHandler` for non-blocking emission.
 - **Common** (`common/`): `to_int`, `parse_size_to_bytes`, `DomainRateLimiter`/`TokenBucket` (optionally adaptive), `RetryTransport` (429/503 retry + rate limiting).
-- **Hoster resolvers** (`hoster_resolvers/`): `HosterResolverRegistry`, XFS/generic-DDL/dedicated resolvers, liveness probes (`probe.py`); `StealthPool` (in `infrastructure/browser/`) for Cloudflare-protected pages and for capturing the stream request of players that build it at runtime (`capture_media`). See [Hoster Resolvers](../features/hoster-resolvers.md).
+- **Hoster resolvers** (`hoster_resolvers/`): `HosterResolverRegistry`, XFS/generic-DDL/dedicated resolvers, liveness probes (`probe.py`); `StealthPool` (in `infrastructure/browser/`) for Cloudflare-protected pages and for capturing the stream request of players that build it at runtime (`capture_media`: manifests/MP4 by URL, extension-less CDN URLs by the video element's request type). See [Hoster Resolvers](../features/hoster-resolvers.md).
+- **Browser fetchers and anti-bot** (`browser/`, `captcha/`): `BrowserFetcherPort` implementations `StealthPool` and `SolverFetcher` (Byparr/FlareSolverr sidecar), chained by `ChainedBrowserFetcher`; `ClearanceStore` keeps challenge cookies in `CachePort` across restarts; `detect_challenge` classifies challenges and captchas; `solve_altcha` solves ALTCHA proof of work. See [Captcha Solving](../plans/captcha-solving.md).
 - **Stremio** (`stremio/`): stream converter, sorter, title matcher, release parser, episode filter, HLS proxy.
 - **TMDB** (`tmdb/`): `HttpxTmdbClient` and the key-less `ImdbFallbackClient`.
 - **Scoring** (`scoring/`): EWMA plugin scoring, health/search probers, query pool, background `ScoringScheduler`.

@@ -27,10 +27,10 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 | Path | Responsibility | Key classes/functions |
 |---|---|---|
 | `domain/entities/torznab.py` | Torznab query/result types and error tree | `TorznabQuery`, `TorznabItem`, `TorznabCaps`, `TorznabIndexInfo`, `TorznabError` and subclasses |
-| `domain/entities/crawljob.py` | JDownloader `.crawljob` entity (frozen) | `CrawlJob` (`is_expired()`, `to_crawljob_format()`), `BooleanStatus`, `Priority` |
+| `domain/entities/crawljob.py` | JDownloader `.crawljob` entity (frozen) | `CrawlJob` (`is_expired()`, `to_crawljob_format()`), `BooleanStatus`, `Priority`, `CrawlJobResolveError` |
 | `domain/entities/stremio.py` | Stremio types and error tree | `StremioStreamRequest`, `StremioStream`, `StremioMetaPreview`, `RankedStream`, `StreamQuality`, `StreamLanguage`, `TitleMatchInfo`, `CachedStreamLink`, `ResolvedStream`, `StremioError` and subclasses |
 | `domain/entities/scoring.py` | Plugin-scoring types | `ProbeResult`, `EwmaState`, `PluginScoreSnapshot` |
-| `domain/plugins/base.py` | Plugin contract | `SearchResult`, `PluginProtocol`, `PluginProvides` |
+| `domain/plugins/base.py` | Plugin contract | `SearchResult`, `PluginProtocol`, `PluginProvides`, `GrabResolvingPlugin` (optional grab-time link resolution) |
 | `domain/plugins/plugin_schema.py` | Plugin value objects | `AuthConfig`, `HttpOverrides` |
 | `domain/plugins/exceptions.py` | Plugin errors | `PluginError`, `PluginLoadError`, `PluginNotFoundError`, `DuplicatePluginError` |
 | `domain/ports/` | `Protocol` ports | `CachePort`, `SearchEnginePort`, `PluginRegistryPort` (sync), `CrawlJobRepository`, `StreamLinkRepository`, `HosterResolverPort`, `PluginScoreStorePort`, `TmdbClientPort`, `ConcurrencyPoolPort`, `ConcurrencyBudgetPort` |
@@ -42,6 +42,7 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 | `application/use_cases/torznab_search.py` | Torznab search: cache → `plugin.search` → validate → CrawlJobs → paginate | `TorznabSearchUseCase`, `SearchResponse` |
 | `application/use_cases/torznab_caps.py` | Capabilities for one plugin | `TorznabCapsUseCase` |
 | `application/use_cases/torznab_indexers.py` | Indexer listing | `TorznabIndexersUseCase` |
+| `application/use_cases/crawljob_resolve.py` | Grab time: resolve a CrawlJob's page URLs through its `GrabResolvingPlugin` | `CrawlJobResolveUseCase` |
 | `application/use_cases/stremio_stream.py` | IMDb ID → title(s) → plugin fan-out → filter/rank → play/proxy links | `StremioStreamUseCase` |
 | `application/use_cases/stremio_catalog.py` | TMDB trending and search catalogs | `StremioCatalogUseCase` |
 | `application/stremio/plugin_search.py` | Plugin fan-out with fair-share budget, timeout, circuit breaker, fallback queries | `PluginSearchRunner` |
@@ -57,10 +58,11 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 | `infrastructure/common/` | Converters, parsers, outbound rate limiting and retry | `to_int`, `parse_size_to_bytes`, `TokenBucket`, `DomainRateLimiter`, `RetryTransport` |
 | `infrastructure/config/` | Layered configuration | `DEFAULT_CONFIG`, `AppConfig`, `CacheConfig`, `StremioConfig`, `ScoringConfig`, `PluginsConfig`, `PluginOverride`, `EnvOverrides`, `load_config()` |
 | `infrastructure/hoster_resolvers/` | Hoster URL resolution and liveness probing | `HosterResolverRegistry`, `extract_domain`, `XFSResolver`/`XFSConfig`, `GenericDDLResolver`/`GenericDDLConfig`, dedicated `*Resolver` classes, `probe_url`, `probe_urls_stealth`, `verify_video_url` |
-| `infrastructure/browser/` | Browser process and Cloudflare handling | `SharedBrowserPool` (one Chromium), `StealthPool` (CF-bypass context on it), `resolve_headless`, `is_cloudflare_challenge` |
+| `infrastructure/browser/` | Browser process and Cloudflare handling | `SharedBrowserPool` (one Chromium), `StealthPool` (CF-bypass context on it), `ClearanceStore` (challenge cookies across restarts), `SolverFetcher`/`ChainedBrowserFetcher` (optional Byparr/FlareSolverr sidecar), `resolve_headless`, `is_cloudflare_challenge` |
+| `infrastructure/captcha/` | In-process captcha handling | `detect_challenge` (challenge/captcha classification), `solve_altcha` (ALTCHA proof of work) |
 | `infrastructure/logging/` | structlog + stdlib setup with async emission | `configure_logging()` |
 | `infrastructure/persistence/` | `CachePort`-backed repositories (JSON) | `CacheCrawlJobRepository`, `CacheStreamLinkRepository`, `CachePluginScoreStore` |
-| `infrastructure/plugins/` | Plugin discovery, loading and base classes | `PluginRegistry`, `load_python_plugin()`, `HttpxPluginBase`, `PlaywrightPluginBase`, `SharedBrowserPool`, `request_browser_context`, `search_max_results`, `DEFAULT_*` constants |
+| `infrastructure/plugins/` | Plugin discovery, loading and base classes | `PluginRegistry`, `load_python_plugin()`, `HttpxPluginBase`, `PlaywrightPluginBase`, `SharedBrowserPool`, `decrypt_cnl` (Click'n'Load), devideosrc player helpers, `request_browser_context`, `search_max_results`, `DEFAULT_*` constants |
 | `infrastructure/scoring/` | Background plugin scoring | EWMA functions (`ewma.py`), `HealthProber`, `MiniSearchProber`, `QueryPoolBuilder`, `ScoringScheduler` |
 | `infrastructure/stremio/` | Stremio result processing | `convert_search_results`, `StreamSorter`, `score_title_match`, `filter_by_title_match`, `parse_quality`, `parse_language`, `filter_by_episode`, HLS proxy (`rewrite_manifest`, `fetch_hls_resource`, `stream_hls_segment`) |
 | `infrastructure/tmdb/` | Title/metadata lookup | `HttpxTmdbClient`, `ImdbFallbackClient` (IMDb Suggest API + Wikidata) |
@@ -80,7 +82,7 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 | `interfaces/app_state.py` | Typed DI container | `AppState` (extends Starlette `State`) |
 | `interfaces/composition.py` | Composition root | `lifespan()`, `_auto_tune()`, `_auto_tune_concurrency()` |
 | `interfaces/api/torznab/router.py` | Torznab endpoints | `/torznab/indexers`, `/torznab/{plugin_name}`, `/torznab/{plugin_name}/health` |
-| `interfaces/api/download/router.py` | CrawlJob download | `/download/{job_id}`, `/download/{job_id}/info` |
+| `interfaces/api/download/router.py` | CrawlJob download (resolves grab-time links first, `502` on failure) | `/download/{job_id}`, `/download/{job_id}/info` |
 | `interfaces/api/stremio/router.py` | Stremio addon | `/stremio/manifest.json`, catalog, catalog search, stream, `/stremio/play/{stream_id}`, `/stremio/proxy/{stream_id}/{path}`, `/stremio/health` |
 | `interfaces/api/stats/router.py` | Stats endpoints | `/stats/plugin-scores`, `/stats/metrics` |
 | `interfaces/api/middleware.py` | Inbound API rate limiting | `RateLimitMiddleware` |
