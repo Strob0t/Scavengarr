@@ -2,7 +2,7 @@
 
 # Plan: Captcha and Challenge Solving
 
-**Status:** In progress (started 2026-09-28). Step 1 (ALTCHA + grab-time resolution for nox) done.
+**Status:** Done (2026-09-29): steps 1–7 implemented; step 8 (recognizer container) deferred until a target needs it. Open limits: animeloads captcha quota per IP (KNOWN_ISSUES), Byparr adapter not verified against a running sidecar.
 **Priority:** High (captchas block links in nox, animeloads, vinovo, devideosrc, doodstream; Cloudflare costs minutes per uncached search)
 **Related:** `docs/plans/antibot-patchright.md` (Patchright, headful Turnstile click, browser fallback), `docs/features/crawljob-system.md` → Grab-Time Resolution, `src/scavengarr/infrastructure/{browser,captcha}/`
 
