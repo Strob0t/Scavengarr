@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import pytest
-from scavengarr.infrastructure.captcha.detect import detect_challenge
 
 from scavengarr.infrastructure.browser.cloudflare import is_cloudflare_challenge
+from scavengarr.infrastructure.captcha.detect import detect_challenge
 
 _CF_JS = (
     "<html><head><title>Just a moment...</title></head><body>"

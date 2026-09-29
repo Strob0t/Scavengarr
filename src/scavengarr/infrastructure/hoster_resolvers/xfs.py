@@ -25,6 +25,7 @@ import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
 from scavengarr.infrastructure.browser.cloudflare import is_cloudflare_challenge
+from scavengarr.infrastructure.captcha.detect import ChallengeKind, detect_challenge
 from scavengarr.infrastructure.hoster_resolvers import extract_domain
 from scavengarr.infrastructure.hoster_resolvers._browser import capture_stream
 from scavengarr.infrastructure.hoster_resolvers._verify import verify_video_url
@@ -40,8 +41,9 @@ _BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 # Detects the XFS two-step form: GET returns a play-button splash with a
 # hidden form that must be POSTed to /dl to obtain the actual player page.
 # A captcha widget in front of the player (Turnstile / reCAPTCHA play button)
-_CAPTCHA_GATE_RE = re.compile(
-    r"challenges\.cloudflare\.com/turnstile|class=[\"']g-recaptcha[\"']"
+# (the stealth browser's click passes these; ALTCHA needs its own solver)
+_CLICKABLE_CAPTCHAS: frozenset[ChallengeKind | None] = frozenset(
+    {"turnstile", "recaptcha", "hcaptcha"}
 )
 
 _XFS_FORM_RE = re.compile(r'<form\s+id=["\']F1["\']\s+action=["\']\/dl["\']')
@@ -216,7 +218,7 @@ class XFSResolver:
     ) -> ResolvedStream | None:
         """No video URL in the page: a captcha-gated player (dr0pstream's
         Turnstile play button) goes to the stealth browser, else give up."""
-        if _CAPTCHA_GATE_RE.search(html):
+        if detect_challenge(200, html) in _CLICKABLE_CAPTCHAS:
             log.info(f"{hoster}_captcha_browser_fallback", url=embed_url)
             return await capture_stream(self._stealth_pool, embed_url, hoster)
         log.info(f"{hoster}_extraction_failed", file_id=file_id)
