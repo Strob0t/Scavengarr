@@ -434,7 +434,7 @@ Controls the background plugin scoring and probing system. See [Plugin Scoring &
 - `dev` / `test` → `console` (human-readable, colored output)
 - `prod` → `json` (machine-parseable, suitable for log aggregation)
 
-Logs are structured via `structlog` with ISO UTC timestamps and include context fields such as `plugin`, `query`, and result counts. There is no automatic redaction; configuration values and credentials are not logged.
+Logs are structured via `structlog` with ISO UTC timestamps and include context fields such as `plugin`, `query`, and result counts. Secrets are masked in every string field, rendered tracebacks included (`_redact_secrets`): values of `api_key`/`apikey`, `access_token`, `token`, `password`/`passwd` and `secret` parameters (TMDB key in retry and error URLs, the Torznab `apikey` in request logs) and passwords in URLs (`redis://:***@redis:6379/0`).
 
 **Console format example (simplified):**
 

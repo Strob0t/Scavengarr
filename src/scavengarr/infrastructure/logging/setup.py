@@ -7,6 +7,7 @@ import copy
 import logging
 import logging.config
 import queue
+import re
 import sys
 from datetime import datetime, timezone
 from logging.handlers import QueueHandler, QueueListener
@@ -87,6 +88,7 @@ def _foreign_pre_chain() -> list[structlog.typing.Processor]:
         structlog.stdlib.add_log_level,
         # Traceback as text: the JSON renderer cannot serialize exc_info
         structlog.processors.format_exc_info,
+        _redact_secrets,
     ]
 
 
@@ -115,6 +117,37 @@ class _StructlogPreservingQueueHandler(QueueHandler):
 
     def prepare(self, record: logging.LogRecord) -> logging.LogRecord:
         return copy.copy(record)
+
+
+# Values that never reach the logs: secret query parameters (TMDB api_key,
+# Torznab apikey, tokens) and passwords in URLs (redis://:password@host)
+_SECRET_PARAM_RE = re.compile(
+    r"(?i)\b(api[_-]?key|access_token|token|passw(?:or)?d|secret)=[^&\s'\"]+"
+)
+_URL_PASSWORD_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://[^\s/:@]*:)[^\s/@]+@")
+
+
+def _redact_secrets(_: Any, __: Any, event_dict: dict[str, Any]) -> dict[str, Any]:
+    """Mask secrets in every string field, rendered exceptions included."""
+    for key, value in event_dict.items():
+        if isinstance(value, str) and ("=" in value or "@" in value):
+            value = _SECRET_PARAM_RE.sub(r"\1=***", value)
+            event_dict[key] = _URL_PASSWORD_RE.sub(r"\1***@", value)
+    return event_dict
+
+
+def _structlog_processors() -> list[structlog.typing.Processor]:
+    """Processors for structlog events, up to the stdlib handover."""
+    return [
+        _drop_color_message,
+        structlog.contextvars.merge_contextvars,
+        structlog.processors.TimeStamper(fmt="iso", utc=True),
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.processors.format_exc_info,
+        _redact_secrets,
+        structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+    ]
 
 
 _QUEUE_LISTENER: QueueListener | None = None
@@ -249,15 +282,7 @@ def configure_logging(config: AppConfig) -> None:
     ``log_config=None`` so it does not call dictConfig a second time.
     """
     structlog.configure(
-        processors=[
-            _drop_color_message,
-            structlog.contextvars.merge_contextvars,
-            structlog.processors.TimeStamper(fmt="iso", utc=True),
-            structlog.stdlib.add_logger_name,
-            structlog.stdlib.add_log_level,
-            structlog.processors.format_exc_info,
-            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
-        ],
+        processors=_structlog_processors(),
         logger_factory=structlog.stdlib.LoggerFactory(),
         cache_logger_on_first_use=True,
     )
