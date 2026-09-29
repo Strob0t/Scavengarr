@@ -217,7 +217,7 @@ class PluginScoreStorePort(Protocol):
 | Key pattern | Purpose |
 |---|---|
 | `score:{plugin}:{category}:{bucket}` | JSON-serialized `PluginScoreSnapshot` |
-| `score:_index` | JSON list of all (plugin, category, bucket) triples |
+| `score:_index` | JSON list of all (plugin, category, bucket) triples; rewritten (TTL refreshed) with every snapshot update, under a lock so concurrent updates do not drop each other's entries |
 | `lastrun:health:{plugin}` | Last health probe timestamp |
 | `lastrun:search:{plugin}:{category}:{bucket}` | Last search probe timestamp |
 | `querypool:{media}:{bucket}` | Cached IMDB query pool (24 h, written by `QueryPoolBuilder`) |

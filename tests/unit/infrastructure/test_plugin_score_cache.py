@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
@@ -133,8 +134,53 @@ class TestPutSnapshot:
 
         await store.put_snapshot(snap)
 
-        # Only 1 set call (snapshot itself) — no index update needed.
-        assert mock_cache.set.call_count == 1
+        index_key, index_value = mock_cache.set.call_args_list[1][0][:2]
+        assert index_key == "score:_index"
+        assert json.loads(index_value) == [["sto", 5000, "current"]]
+
+    async def test_index_ttl_refreshed_on_every_update(
+        self, mock_cache: AsyncMock
+    ) -> None:
+        """The index used to keep the TTL of its last new entry: 30 days
+        later every score vanished although the snapshots were fresh."""
+        mock_cache.get = AsyncMock(return_value=json.dumps([["sto", 5000, "current"]]))
+        store = CachePluginScoreStore(cache=mock_cache, ttl_days=30)
+
+        await store.put_snapshot(_make_snapshot())
+
+        index_calls = [
+            c for c in mock_cache.set.call_args_list if c[0][0] == "score:_index"
+        ]
+        assert len(index_calls) == 1
+        assert index_calls[0][1]["ttl"] == 30 * 86_400
+
+
+class _YieldingCache:
+    """In-memory CachePort whose calls yield, like a real backend."""
+
+    def __init__(self) -> None:
+        self.data: dict[str, str] = {}
+
+    async def get(self, key: str) -> str | None:
+        await asyncio.sleep(0)
+        return self.data.get(key)
+
+    async def set(self, key: str, value: str, ttl: int | None = None) -> None:
+        await asyncio.sleep(0)
+        self.data[key] = value
+
+
+class TestConcurrentPuts:
+    async def test_concurrent_puts_keep_every_index_entry(self) -> None:
+        cache = _YieldingCache()
+        store = CachePluginScoreStore(cache=cache)  # type: ignore[arg-type]
+
+        await asyncio.gather(
+            *(store.put_snapshot(_make_snapshot(plugin=f"p{i}")) for i in range(5))
+        )
+
+        index = json.loads(cache.data["score:_index"])
+        assert sorted(entry[0] for entry in index) == [f"p{i}" for i in range(5)]
 
 
 class TestListSnapshots:

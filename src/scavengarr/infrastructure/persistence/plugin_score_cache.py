@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime
 
@@ -97,6 +98,9 @@ class CachePluginScoreStore:
     def __init__(self, cache: CachePort, ttl_days: int = 30) -> None:
         self.cache = cache
         self.ttl = ttl_days * 86_400
+        # The index is read, extended and written back: concurrent updates
+        # must not interleave (the last write would drop the others' entries)
+        self._index_lock = asyncio.Lock()
 
     async def get_snapshot(
         self, plugin: str, category: int, bucket: str
@@ -115,11 +119,13 @@ class CachePluginScoreStore:
         key = _snapshot_key(snapshot.plugin, snapshot.category, snapshot.bucket)
         await self.cache.set(key, _serialize_snapshot(snapshot), ttl=self.ttl)
 
-        # Update the index.
+        # Update the index. Always written: that refreshes its TTL along
+        # with the snapshot's, or the index expires under fresh snapshots.
         triple = [snapshot.plugin, snapshot.category, snapshot.bucket]
-        index = await self._load_index()
-        if triple not in index:
-            index.append(triple)
+        async with self._index_lock:
+            index = await self._load_index()
+            if triple not in index:
+                index.append(triple)
             await self._save_index(index)
 
         log.debug(
