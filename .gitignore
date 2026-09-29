@@ -69,6 +69,8 @@ coverage.xml
 .cursorignore
 .cursorindexingignore
 .abstra/
+# playwright-mcp session output (snapshots, console logs, screenshots)
+.playwright-mcp/
 
 # ── IDE ────────────────────────────────────────────
 # .vscode/
