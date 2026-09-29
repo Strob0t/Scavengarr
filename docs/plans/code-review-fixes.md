@@ -87,6 +87,19 @@ Not changed (measured or not verifiable): `check_playable`'s 6 s timeout vs vino
 | 4.6 | `moflix-stream` claimed by Vidguard and Vidhide (winner by registration order). | Remove it from Vidguard (JDownloader lists VidguardTo as offline); registry warns on duplicate domains. |
 | 4.7 | `probe.py` unreachable in production (resolver always configured), marker list drifted. | Remove the dead path. |
 
+### 4.4 follow-up: the XenForo forums (dataload, myboerse)
+
+Checked live on 2026-09-29 (guest search with the page's CSRF token, `/login/` page, forum index):
+
+- **myboerse search always failed**: its POST lacked the session's `_xfToken`, which myboerse answers with HTTP 400 ("Sicherheitsfehler aufgetreten"). dataload had that fix; myboerse, a copy of the same code, had none of the dataload fixes (CSRF token, re-login after session expiry, `xf_user` cookie of the own host, `?page=N` pagination via `pageNav-jump--next`).
+- **Category filtering was a no-op on both**: XenForo applies `c[nodes][]` only to post searches (`search_type=post`). Without it a movie search also returned tutorials, music and audiobooks.
+- **Wrong or missing nodes**: software labelled 5020 (TV/Foreign), dataload's console forums under PC games, myboerse's Android/iOS games under consoles; subforums missing from the maps (dataload's foreign-film subforums 162–167; myboerse's foreign comics, English audiobooks, Cydia apps, XXX section). Unmapped forums were labelled by a forum-name guess (XXX films as 2000).
+- **myboerse `/xtra/` links are an affiliate placeholder**: `/xtra/?x=<anything>` redirects to the same Rapidgator file `www.MyBoerse.bz_Premium_Download.txt`, and the plugin returned it as a download link.
+
+Design: `XenForoPluginBase` (`infrastructure/plugins/xenforo.py`, subclass of `HttpxPluginBase`, same pattern as `DataApiPluginBase`) holds login (CSRF token, own-host session cookie), search (`search_type=post`, `_xfToken`, one re-login), pagination, thread scraping and the parsers. The plugins set `name`, `_domains` and `_node_categories` (forum node → Torznab category for every download forum of the live forum index). A category request searches the nodes whose category it covers (parent → children); a child category the forum does not tell apart (2040 where all films are 2000) uses its parent's nodes; a category without a section returns `[]` without a request. Results are labelled by their forum node (unknown node: 8000). Requests use `_safe_fetch()` without the browser fallback, because the session lives in the HTTP client's cookie jar. Only link-container hosts count as download links.
+
+Tests: `tests/unit/infrastructure/test_xenforo_base.py` (parsers, node selection, login, search flow) against a minimal subclass; the plugin tests keep attributes, domains and the node maps.
+
 ## Documentation
 
 `CHANGELOG.md`, the affected `docs/features/*.md`, `docs/architecture/*` where behaviour changes, `AGENTS.md` if rules change; results and deviations recorded here.

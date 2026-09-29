@@ -128,7 +128,7 @@ Mock patterns:
 
 ## 7. Plugins & hoster resolvers
 
-- 41 plugins in `plugins/`, all inheriting from `HttpxPluginBase` (`src/scavengarr/infrastructure/plugins/httpx_base.py`) or `PlaywrightPluginBase` (`playwright_base.py`). Never duplicate base-class boilerplate. Sites on the same backend share one base in `src/scavengarr/infrastructure/plugins/` instead of copied plugin code (e.g. `DataApiPluginBase` in `data_api.py` for megakino_to and movie4k).
+- 41 plugins in `plugins/`, all inheriting from `HttpxPluginBase` (`src/scavengarr/infrastructure/plugins/httpx_base.py`) or `PlaywrightPluginBase` (`playwright_base.py`). Never duplicate base-class boilerplate. Sites on the same backend share one base in `src/scavengarr/infrastructure/plugins/` instead of copied plugin code (`DataApiPluginBase` in `data_api.py` for megakino_to and movie4k, `XenForoPluginBase` in `xenforo.py` for the XenForo forums dataload and myboerse).
 - Every plugin MUST do category filtering, pagination up to 1000 items and bounded-concurrency detail scraping. Site analysis with `playwright-mcp` comes before any code. `_domains` holds genuine domains only (check the JDownloader plugin's dead and fake/scam domain notes).
 - Hoster resolvers live in `src/scavengarr/infrastructure/hoster_resolvers/`: individual streaming/DDL resolvers, 12 generic DDL hosters (`generic_ddl.py`, `GenericDDLConfig`), 25 XFS hosters (`xfs.py`, `XFSConfig`). New XFS/DDL hoster = new config constant, no new tests or wiring.
 - JDownloader plugin sources for resolver work: `.devdata/JDownloader2/` (synced on container start).

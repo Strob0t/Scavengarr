@@ -176,6 +176,18 @@ plugin = MySitePlugin()
 
 When several sites run the same backend, the site logic lives once in `src/scavengarr/infrastructure/plugins/` and the plugins only set `name`, `provides` and `_domains`. `DataApiPluginBase` (`data_api.py`, subclass of `HttpxPluginBase`) serves the "/data" JSON API of `megakino_to` and `movie4k`: browse/search with pagination, `/data/watch` details, season (detail `s`) and episode (stream `e`) filtering, skipping `deleted` streams and tolerant TMDB parsing. The two plugins used to be copies; the movie4k copy had lost the episode filter, the deleted-stream check and the TMDB handling (and mapped Torznab quality subcategories to genres).
 
+### XenForoPluginBase (XenForo download forums)
+
+`XenForoPluginBase` (`xenforo.py`, subclass of `HttpxPluginBase`) holds login, search and thread scraping of XenForo 2 download forums (`dataload`, `myboerse`). A plugin sets `name`, `_domains` and `_node_categories` (forum node ID → Torznab category for every download forum of the site's forum index); credentials come from `SCAVENGARR_<NAME>_USERNAME` / `_PASSWORD`.
+
+- **Login and session**: form POST with the login page's `_xfToken`. The login only counts with an `xf_user` cookie of the forum's own host (the shared HTTP client may hold another forum's cookie). The page after the login carries the session's CSRF token (`data-csrf`), which every XenForo POST needs (HTTP 400 without it). A search answered as for a guest (`data-logged-in="false"`) or rejected logs in again and retries once.
+- **Search**: `POST /search/search` with `search_type=post` (XenForo ignores the forum filter `c[nodes][]` otherwise), titles only, newest first. The `pageNav-jump--next` link (`?page=N`) leads to further pages, up to 1000 results.
+- **Categories**: a request searches the nodes whose category it covers (a parent covers its children). A child category the forum does not tell apart (2040 where all films are 2000) uses its parent's nodes; a category without a section returns `[]` without a request. Results carry the category of their forum node (8000 for a node missing in the map).
+- **Links**: only link-container hosts (hide.cx, filecrypt, keeplinks, tolink, share-links, ...) in post bodies count. myboerse's `/xtra/` links are an affiliate placeholder (always the same Rapidgator file).
+- Requests use `_safe_fetch()` without the Cloudflare browser fallback, because the session lives in the HTTP client's cookie jar.
+
+The two plugins used to be copies: the myboerse copy had none of the dataload fixes (every search failed with HTTP 400), and on both the category filter was a no-op.
+
 ### PlaywrightPluginBase
 
 For sites requiring JavaScript execution or Cloudflare bypass:
