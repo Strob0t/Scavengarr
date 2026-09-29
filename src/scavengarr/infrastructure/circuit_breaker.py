@@ -3,8 +3,10 @@
 When a plugin accumulates ``failure_threshold`` consecutive failures
 (exceptions or timeouts), the breaker opens and subsequent calls are
 short-circuited for ``cooldown_seconds``.  After the cooldown, a
-single probe request is allowed (half-open state).  If the probe
-succeeds the breaker resets; if it fails the cooldown restarts.
+single probe request is allowed (half-open state); concurrent calls
+stay blocked until it reports.  If the probe succeeds the breaker
+resets; if it fails the breaker reopens with twice the cooldown.  A
+probe that never reports is presumed lost after the cooldown.
 """
 
 from __future__ import annotations
@@ -44,6 +46,8 @@ class PluginCircuitBreaker:
         self._failures: dict[str, int] = {}
         self._states: dict[str, _State] = {}
         self._opened_at: dict[str, float] = {}
+        # Start of the half-open probe in flight
+        self._probe_started: dict[str, float] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -55,21 +59,24 @@ class PluginCircuitBreaker:
         - **CLOSED**: always allowed.
         - **OPEN**: blocked until cooldown expires, then transitions to
           HALF_OPEN and allows a single probe.
-        - **HALF_OPEN**: allowed (probe in progress).
+        - **HALF_OPEN**: blocked while the probe is in flight; a probe that
+          has not reported within the cooldown (cancelled, or a timeout
+          the caller did not count) is replaced by the next call.
         """
         state = self._states.get(name, _State.CLOSED)
 
         if state == _State.CLOSED:
             return True
 
+        now = time.monotonic()
+        cooldown = self._cooldowns.get(name, self._cooldown)
         if state == _State.OPEN:
-            elapsed = time.monotonic() - self._opened_at.get(name, 0.0)
-            if elapsed >= self._cooldowns.get(name, self._cooldown):
-                self._states[name] = _State.HALF_OPEN
-                return True
+            if now - self._opened_at.get(name, 0.0) < cooldown:
+                return False
+            self._states[name] = _State.HALF_OPEN
+        elif now - self._probe_started.get(name, 0.0) < cooldown:
             return False
-
-        # HALF_OPEN — allow the probe
+        self._probe_started[name] = now
         return True
 
     def record_success(self, name: str) -> None:
@@ -78,6 +85,7 @@ class PluginCircuitBreaker:
         self._states.pop(name, None)
         self._opened_at.pop(name, None)
         self._cooldowns.pop(name, None)
+        self._probe_started.pop(name, None)
 
     def record_failure(self, name: str) -> None:
         """Record a failed execution.
@@ -90,6 +98,7 @@ class PluginCircuitBreaker:
 
         if state == _State.HALF_OPEN:
             # Probe failed — reopen with twice the cooldown (capped)
+            self._probe_started.pop(name, None)
             self._states[name] = _State.OPEN
             self._opened_at[name] = time.monotonic()
             self._cooldowns[name] = min(

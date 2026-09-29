@@ -179,3 +179,45 @@ class TestCooldownBackoff:
         self._open(cb, 200.0)
         with patch.object(time, "monotonic", return_value=260.0):
             assert cb.allow("foo") is True  # back to the base cooldown
+
+
+class TestSingleProbe:
+    """Half-open lets one probe through, not every concurrent request."""
+
+    @staticmethod
+    def _open_at(cb: PluginCircuitBreaker, now: float) -> None:
+        with patch.object(time, "monotonic", return_value=now):
+            for _ in range(2):
+                cb.record_failure("foo")
+
+    def test_only_one_probe_while_half_open(self) -> None:
+        cb = PluginCircuitBreaker(failure_threshold=2, cooldown_seconds=60)
+        self._open_at(cb, 1000.0)
+
+        with patch.object(time, "monotonic", return_value=1060.0):
+            assert cb.allow("foo") is True  # the probe
+            # concurrent requests wait for its outcome
+            assert cb.allow("foo") is False
+            assert cb.allow("foo") is False
+        assert cb.state("foo") == "half_open"
+
+    def test_lost_probe_is_replaced_after_the_cooldown(self) -> None:
+        """A probe that never reports (cancelled, timeout not blamed)."""
+        cb = PluginCircuitBreaker(failure_threshold=2, cooldown_seconds=60)
+        self._open_at(cb, 1000.0)
+        with patch.object(time, "monotonic", return_value=1060.0):
+            assert cb.allow("foo") is True
+
+        with patch.object(time, "monotonic", return_value=1060.0 + 59):
+            assert cb.allow("foo") is False
+        with patch.object(time, "monotonic", return_value=1060.0 + 60):
+            assert cb.allow("foo") is True  # the new probe
+
+    def test_probe_success_lets_everyone_through(self) -> None:
+        cb = PluginCircuitBreaker(failure_threshold=2, cooldown_seconds=60)
+        self._open_at(cb, 1000.0)
+        with patch.object(time, "monotonic", return_value=1060.0):
+            assert cb.allow("foo") is True
+            cb.record_success("foo")
+            assert cb.allow("foo") is True
+            assert cb.allow("foo") is True
