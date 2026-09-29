@@ -1,10 +1,16 @@
 """bs.to (Burning Series) Python plugin for Scavengarr.
 
-Scrapes bs.to and mirror domains (German TV series streaming aggregator) with:
+Scrapes Burning Series (German TV series streaming aggregator) with:
 - httpx for all requests (server-rendered pages, no JS challenges)
 - Series listing from /andere-serien (all series grouped by genre)
-- Detail pages at /serie/{slug} with season/episode/hoster info
+- Series pages at /serie/{slug}, season pages at /serie/{slug}/{season}/de
+  (German episode list; the site's default language when there is none)
 - TV series only: Anime, Comedy, Drama, Documentary, etc.
+
+The hoster links sit behind reCAPTCHA v2 (``/ajax/embed.php``), so the
+results link Burning Series pages: series, season or episode page, which
+JDownloader's BsTo crawler resolves (captcha solved in JDownloader). Hence
+``provides = "download"``: no stream for Stremio.
 
 Multi-domain support with automatic fallback.
 No authentication required for browsing.
@@ -15,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import re
 from html.parser import HTMLParser
+from urllib.parse import urljoin
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
@@ -22,7 +29,10 @@ from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 # ---------------------------------------------------------------------------
 # Configurable settings
 # ---------------------------------------------------------------------------
-_DOMAINS = ["bs.to", "burning-series.io", "burning-series.net"]
+# Genuine domains as listed by JDownloader's BsTo (burningseries.domains).
+# bs.to and burningseries.co are gone; burning-series.io/.net/.fun and
+# bs-to.fun are clones that swap the player for their own redirect.
+_DOMAINS = ["burningseries.ac", "bs.cine.to", "burningseries.sx"]
 _MAX_SERIES_DETAIL = 50  # Max series to fetch detail pages for
 
 # ---------------------------------------------------------------------------
@@ -48,6 +58,9 @@ _GENRE_CATEGORY: dict[str, int] = {
     "dokusoap": 5080,
     "sport": 5060,
 }
+
+# Episode page in the episode table (hoster links add a /<Hoster> segment)
+_EPISODE_HREF_RE = re.compile(r"^serie/[^/]+/\d+/(\d+)-[^/]+/[a-z]+$")
 
 
 class _SeriesListParser(HTMLParser):
@@ -201,9 +214,12 @@ class _SeriesDetailParser(HTMLParser):
         self._in_seasons = False
         self._seasons_depth = 0
 
-        # Episodes tracking
+        # Episodes tracking: episode page per number; rows without
+        # hosters are marked "disabled"
+        self.episode_links: dict[int, str] = {}
         self._in_episodes_table = False
         self._in_episode_tr = False
+        self._episode_disabled = False
 
     def handle_starttag(  # noqa: C901
         self, tag: str, attrs: list[tuple[str, str | None]]
@@ -285,6 +301,12 @@ class _SeriesDetailParser(HTMLParser):
         if tag == "tr" and self._in_episodes_table:
             self._in_episode_tr = True
             self.episode_count += 1
+            self._episode_disabled = "disabled" in classes
+
+        if tag == "a" and self._in_episode_tr and not self._episode_disabled:
+            match = _EPISODE_HREF_RE.match(attr_dict.get("href") or "")
+            if match:
+                self.episode_links.setdefault(int(match.group(1)), match.group(0))
 
     def handle_data(self, data: str) -> None:
         if self._in_h2 and not self._in_h2_small:
@@ -378,7 +400,7 @@ class BurningSeriesPlugin(HttpxPluginBase):
     """Python plugin for bs.to / Burning Series using httpx."""
 
     name = "burningseries"
-    provides = "stream"
+    provides = "download"
     _domains = _DOMAINS
 
     def __init__(self) -> None:
@@ -422,12 +444,15 @@ class BurningSeriesPlugin(HttpxPluginBase):
         )
         return unique
 
-    async def _fetch_detail(self, slug: str) -> _SeriesDetailParser:
-        """Fetch and parse a series detail page."""
+    async def _fetch_detail(
+        self, slug: str, season: int | None = None
+    ) -> _SeriesDetailParser:
+        """Fetch and parse the series page, or the German season page."""
         client = await self._ensure_client()
+        path = f"/serie/{slug}" if season is None else f"/serie/{slug}/{season}/de"
 
         try:
-            resp = await client.get(f"{self.base_url}/serie/{slug}")
+            resp = await client.get(f"{self.base_url}{path}")
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001
             self._log.warning("burningseries_detail_failed", slug=slug, error=str(exc))
@@ -453,23 +478,31 @@ class BurningSeriesPlugin(HttpxPluginBase):
         *,
         season: int | None = None,
         episode: int | None = None,
-    ) -> SearchResult:
-        """Build a SearchResult from listing entry + detail page data."""
+    ) -> SearchResult | None:
+        """Build a SearchResult from listing entry + detail page data.
+
+        Links the series page, the German season page, or the episode page
+        from the season's episode table (None when the episode has no
+        hosters there).
+        """
         title = detail.title or listing_entry["title"]
         year = detail.year
         slug = listing_entry["slug"]
         genre = listing_entry.get("genre", "")
         source_url = f"{self.base_url}/serie/{slug}"
 
-        # Point to the specific season/episode page when available
-        download_url = source_url
-        if season is not None:
-            download_url = f"{source_url}/{season}"
-            if episode is not None:
-                download_url += f"/{episode}"
-
-        # Build display title with year
-        display_title = f"{title} ({year})" if year else title
+        if season is None:
+            download_url = source_url
+            display_title = f"{title} ({year})" if year else title
+        elif episode is None:
+            download_url = f"{source_url}/{season}/de"
+            display_title = f"{title} S{season:02d}"
+        else:
+            href = detail.episode_links.get(episode)
+            if href is None:
+                return None
+            download_url = urljoin(f"{self.base_url}/", href)
+            display_title = f"{title} S{season:02d}E{episode:02d}"
 
         # Category from genre
         category = _genre_to_category(genre)
@@ -481,7 +514,7 @@ class BurningSeriesPlugin(HttpxPluginBase):
         if detail.season_count:
             desc_parts.append(f"{detail.season_count} Staffeln")
         if detail.episode_count:
-            desc_parts.append(f"{detail.episode_count} Episoden (S1)")
+            desc_parts.append(f"{detail.episode_count} Episoden (S{season or 1})")
         description = " | ".join(desc_parts) if desc_parts else ""
 
         return SearchResult(
@@ -503,9 +536,11 @@ class BurningSeriesPlugin(HttpxPluginBase):
     ) -> SearchResult | None:
         """Fetch detail page for one series and build result."""
         async with sem:
-            detail = await self._fetch_detail(entry["slug"])
+            detail = await self._fetch_detail(entry["slug"], season)
 
         sr = self._build_search_result(entry, detail, season=season, episode=episode)
+        if sr is None:
+            return None
 
         # Post-filter by category range
         if category is not None:

@@ -145,6 +145,30 @@ with former student Jesse Pinkman to cook methamphetamine.</p>
 </section>
 """
 
+SEASON_HTML = """\
+<section class="serie">
+  <div id="sp_left">
+    <h2>Breaking Bad <small>Staffel 2</small></h2>
+    <p>Walter White.</p>
+  </div>
+  <table class="episodes">
+    <tr class=" disabled">
+      <td><a href="serie/Breaking-Bad/2/1-Vorsichtsmassnahmen/de">1</a></td>
+      <td><a href="serie/Breaking-Bad/2/1-Vorsichtsmassnahmen/de">
+        <strong>Seven Thirty-Seven</strong></a></td>
+      <td></td>
+    </tr>
+    <tr class="">
+      <td><a href="serie/Breaking-Bad/2/2-In-der-Falle/de">2</a></td>
+      <td><a href="serie/Breaking-Bad/2/2-In-der-Falle/de">
+        <strong>Grilled</strong></a></td>
+      <td><a href="serie/Breaking-Bad/2/2-In-der-Falle/de/VOE" title="VOE">
+        <i class="hoster VOE"></i></a></td>
+    </tr>
+  </table>
+</section>
+"""
+
 EMPTY_LISTING_HTML = """\
 <div class="genre">
   <span><strong>Abenteuer</strong></span>
@@ -281,6 +305,20 @@ class TestSeriesDetailParser:
 
         assert parser.episode_count == 3
 
+    def test_episode_links(self, bs_mod):
+        parser = bs_mod._SeriesDetailParser()
+        parser.feed(DETAIL_HTML)
+        assert parser.episode_links == {
+            1: "serie/Breaking-Bad/1/1-Pilot/en",
+            2: "serie/Breaking-Bad/1/2-Cats-in-the-Bag/en",
+            3: "serie/Breaking-Bad/1/3-Bag-in-the-River/en",
+        }
+
+    def test_episode_without_hosters_has_no_link(self, bs_mod):
+        parser = bs_mod._SeriesDetailParser()
+        parser.feed(SEASON_HTML)
+        assert parser.episode_links == {2: "serie/Breaking-Bad/2/2-In-der-Falle/de"}
+
     def test_minimal_detail(self, bs_mod):
         parser = bs_mod._SeriesDetailParser()
         parser.feed(MINIMAL_DETAIL_HTML)
@@ -377,6 +415,18 @@ class TestPluginAttributes:
     def test_mode(self, bs_mod):
         assert bs_mod.plugin.mode == "httpx"
 
+    def test_provides_download(self, bs_mod):
+        # Hoster links sit behind reCAPTCHA v2: the results are bs.to pages
+        # for JDownloader's BsTo crawler, no streams
+        assert bs_mod.plugin.provides == "download"
+
+    def test_genuine_domains_only(self, bs_mod):
+        domains = bs_mod.BurningSeriesPlugin._domains
+        assert domains[0] == "burningseries.ac"
+        # clones that swap the player for their own redirect
+        clones = {"burning-series.io", "burning-series.net", "burning-series.fun"}
+        assert not clones & set(domains)
+
 
 # ---------------------------------------------------------------------------
 # Plugin search tests (mocked HTTP)
@@ -395,7 +445,7 @@ class TestPluginSearch:
         p = bs_mod.BurningSeriesPlugin()
         p._client = mock_client
         p._domain_verified = True
-        p.base_url = "https://bs.to"
+        p.base_url = "https://burningseries.ac"
         return p
 
     @pytest.mark.asyncio
@@ -415,8 +465,57 @@ class TestPluginSearch:
         assert len(results) == 1  # Deduplicated
         assert "Breaking Bad" in results[0].title
         assert "2008" in results[0].title
-        assert results[0].download_link == "https://bs.to/serie/Breaking-Bad"
+        assert results[0].download_link == "https://burningseries.ac/serie/Breaking-Bad"
         assert results[0].category == 5000
+
+    @pytest.mark.asyncio
+    async def test_episode_search_links_the_episode_page(self, _plugin, mock_client):
+        async def mock_get(url, **kwargs):
+            if "andere-serien" in str(url):
+                return _make_response(LISTING_HTML)
+            return _make_response(SEASON_HTML)
+
+        mock_client.get = AsyncMock(side_effect=mock_get)
+
+        results = await _plugin.search("breaking bad", season=2, episode=2)
+
+        urls = [str(c.args[0]) for c in mock_client.get.call_args_list]
+        assert "https://burningseries.ac/serie/Breaking-Bad/2/de" in urls
+        assert len(results) == 1
+        assert results[0].title == "Breaking Bad S02E02"
+        assert results[0].download_link == (
+            "https://burningseries.ac/serie/Breaking-Bad/2/2-In-der-Falle/de"
+        )
+
+    @pytest.mark.asyncio
+    async def test_episode_without_hosters_gives_no_result(self, _plugin, mock_client):
+        async def mock_get(url, **kwargs):
+            if "andere-serien" in str(url):
+                return _make_response(LISTING_HTML)
+            return _make_response(SEASON_HTML)
+
+        mock_client.get = AsyncMock(side_effect=mock_get)
+
+        assert await _plugin.search("breaking bad", season=2, episode=1) == []
+
+    @pytest.mark.asyncio
+    async def test_season_search_links_the_german_season_page(
+        self, _plugin, mock_client
+    ):
+        async def mock_get(url, **kwargs):
+            if "andere-serien" in str(url):
+                return _make_response(LISTING_HTML)
+            return _make_response(SEASON_HTML)
+
+        mock_client.get = AsyncMock(side_effect=mock_get)
+
+        results = await _plugin.search("breaking bad", season=2)
+
+        assert len(results) == 1
+        assert results[0].title == "Breaking Bad S02"
+        assert results[0].download_link == (
+            "https://burningseries.ac/serie/Breaking-Bad/2/de"
+        )
 
     @pytest.mark.asyncio
     async def test_search_empty_query(self, _plugin):
@@ -544,14 +643,14 @@ class TestDomainVerification:
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         resp = MagicMock(spec=httpx.Response)
         resp.status_code = 200
-        resp.url = httpx.URL("https://bs.to/")
+        resp.url = httpx.URL("https://burningseries.ac/")
         mock_client.head = AsyncMock(return_value=resp)
         p._client = mock_client
 
         await p._verify_domain()
 
         assert p._domain_verified is True
-        assert "bs.to" in p.base_url
+        assert "burningseries.ac" in p.base_url
 
     @pytest.mark.asyncio
     async def test_fallback_on_connect_error(self, bs_mod):
@@ -566,7 +665,7 @@ class TestDomainVerification:
                 raise httpx.ConnectError("Connection failed")
             resp = MagicMock(spec=httpx.Response)
             resp.status_code = 200
-            resp.url = httpx.URL("https://burning-series.io/")
+            resp.url = httpx.URL("https://bs.cine.to/")
             return resp
 
         mock_client.head = AsyncMock(side_effect=mock_head)
@@ -576,7 +675,7 @@ class TestDomainVerification:
 
         assert p._domain_verified is True
         assert call_count == 2
-        assert "burning-series.io" in p.base_url
+        assert "bs.cine.to" in p.base_url
 
     @pytest.mark.asyncio
     async def test_all_domains_fail(self, bs_mod):
