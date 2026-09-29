@@ -22,7 +22,7 @@ _mod = _load_module()
 _ScnSrcPlugin = _mod.ScnSrcPlugin
 _PostParser = _mod._PostParser
 _DOMAINS = _ScnSrcPlugin._domains
-_CATEGORY_PATH_MAP = _mod._CATEGORY_PATH_MAP
+_SEARCH_PATHS = _mod._SEARCH_PATHS
 _CATEGORY_NAME_MAP = _mod._CATEGORY_NAME_MAP
 _category_to_torznab = _mod._category_to_torznab
 _clean_wayback_url = _mod._clean_wayback_url
@@ -317,7 +317,7 @@ class TestCategoryMapping:
         assert _category_to_torznab("Films") == 2000
 
     def test_games_maps_correctly(self) -> None:
-        assert _category_to_torznab("Games") == 4000
+        assert _category_to_torznab("Games") == 4050  # PC/Games
 
     def test_music_maps_correctly(self) -> None:
         assert _category_to_torznab("Music") == 3000
@@ -325,13 +325,16 @@ class TestCategoryMapping:
     def test_ebooks_maps_correctly(self) -> None:
         assert _category_to_torznab("ebooks") == 7000
 
-    def test_unknown_defaults_to_movies(self) -> None:
-        assert _category_to_torznab("unknown") == 2000
+    def test_unknown_is_other(self) -> None:
+        # Used to be labelled a film
+        assert _category_to_torznab("unknown") == 8000
 
-    def test_path_map_categories(self) -> None:
-        assert _CATEGORY_PATH_MAP[2000] == "category/films"
-        assert _CATEGORY_PATH_MAP[5000] == "category/tv"
-        assert _CATEGORY_PATH_MAP[4000] == "category/games"
+    def test_search_paths(self) -> None:
+        assert _SEARCH_PATHS[2000] == ("category/films",)
+        assert _SEARCH_PATHS[5000] == ("category/tv",)
+        assert _SEARCH_PATHS[1000] == ("category/games",)
+        # PC covers games and applications
+        assert _SEARCH_PATHS[4000] == ("category/applications", "category/games")
 
     def test_film_subcategories(self) -> None:
         for sub in (
@@ -357,36 +360,37 @@ class TestCategoryMapping:
             assert _CATEGORY_NAME_MAP[sub] == 5000, f"{sub} should map to 5000"
         assert _CATEGORY_NAME_MAP["sports-tv"] == 5060
 
-    def test_game_subcategories(self) -> None:
-        for sub in (
-            "iso",
-            "rip",
-            "clone",
-            "dox",
-            "nds",
-            "ps3",
-            "ps4",
-            "psp",
-            "wii",
-            "wiiu",
-            "xbox360",
-        ):
-            assert _CATEGORY_NAME_MAP[sub] == 4000, f"{sub} should map to 4000"
+    def test_pc_game_subcategories(self) -> None:
+        for sub in ("iso", "rip", "clone", "dox"):
+            assert _CATEGORY_NAME_MAP[sub] == 4050, f"{sub} should map to 4050"
+
+    def test_console_subcategories(self) -> None:
+        # Consoles used to be labelled PC games (4000)
+        assert {
+            sub: _CATEGORY_NAME_MAP[sub]
+            for sub in ("nds", "psp", "wii", "xbox360", "ps3", "wiiu", "ps4")
+        } == {
+            "nds": 1010,
+            "psp": 1020,
+            "wii": 1030,
+            "xbox360": 1050,
+            "ps3": 1080,
+            "wiiu": 1130,
+            "ps4": 1180,
+        }
 
     def test_app_subcategories(self) -> None:
-        for sub in (
-            "applications",
-            "windows-applications",
-            "macosx",
-            "linux",
-            "iphone",
-        ):
-            assert _CATEGORY_NAME_MAP[sub] == 5020, f"{sub} should map to 5020"
+        # Applications used to be 5020 (TV/Foreign)
+        for sub in ("applications", "windows-applications", "linux"):
+            assert _CATEGORY_NAME_MAP[sub] == 4000, f"{sub} should map to 4000"
+        assert _CATEGORY_NAME_MAP["macosx"] == 4030
+        assert _CATEGORY_NAME_MAP["iphone"] == 4060
 
     def test_music_subcategories(self) -> None:
         assert _CATEGORY_NAME_MAP["flac"] == 3040
-        for sub in ("new-music", "concert", "music-videos"):
-            assert _CATEGORY_NAME_MAP[sub] == 3000, f"{sub} should map to 3000"
+        assert _CATEGORY_NAME_MAP["new-music"] == 3000
+        for sub in ("concert", "music-videos"):
+            assert _CATEGORY_NAME_MAP[sub] == 3020, f"{sub} should map to 3020"
 
 
 # ---------------------------------------------------------------------------
@@ -540,9 +544,30 @@ class TestPluginSearch:
         assert "category/films" in url_called
         assert "s=movie" in url_called
 
-        # All results should have the requested category
-        for r in results:
-            assert r.category == 2000
+        # The game in the listing used to come back labelled 2000
+        assert [r.category for r in results] == [2000]
+
+    async def test_pc_request_searches_applications_and_games(self) -> None:
+        plugin = _make_plugin()
+        plugin._domain_verified = True
+
+        pages = [_make_mock_page("<html></html>") for _ in range(2)]
+        context = _make_mock_context(pages=pages)
+        plugin._browser = _make_mock_browser(context)
+        plugin._context = context
+
+        await plugin.search("tool", category=4000)
+
+        urls = [page.goto.call_args[0][0] for page in pages]
+        assert ["category/applications" in u for u in urls] == [True, False]
+        assert ["category/games" in u for u in urls] == [False, True]
+
+    async def test_category_the_site_does_not_serve(self) -> None:
+        plugin = _make_plugin()
+        plugin._ensure_browser = AsyncMock()
+
+        assert await plugin.search("movie", category=6000) == []
+        plugin._ensure_browser.assert_not_awaited()
 
     async def test_search_query_is_url_encoded(self) -> None:
         plugin = _make_plugin()

@@ -20,6 +20,10 @@ from html.parser import HTMLParser
 from urllib.parse import quote_plus, urljoin
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.categories import (
+    category_matches,
+    served_category,
+)
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
 # ---------------------------------------------------------------------------
@@ -35,18 +39,20 @@ _DOMAINS = [
 ]
 
 _RETRY_BACKOFF_S: tuple[float, ...] = (2.0, 4.0)  # rate-limited pages
+_MAX_PAGES = 100  # ~10 posts/page → 1000
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-# Torznab category -> URL path segment mapping.
-_CATEGORY_PATH_MAP: dict[int, str] = {
-    2000: "category/films",
-    5000: "category/tv",
-    4000: "category/games",
-    5020: "category/applications",
-    3000: "category/new-music",
-    7000: "category/ebooks",
+# Torznab category -> the site sections (URL prefixes) holding it
+_SEARCH_PATHS: dict[int, tuple[str, ...]] = {
+    2000: ("category/films",),
+    5000: ("category/tv",),
+    1000: ("category/games",),
+    4050: ("category/games",),
+    4000: ("category/applications", "category/games"),
+    3000: ("category/new-music",),
+    7000: ("category/ebooks",),
 }
 
 # Reverse mapping: site category name -> Torznab category ID.
@@ -76,31 +82,32 @@ _CATEGORY_NAME_MAP: dict[str, int] = {
     "sports-tv": 5060,
     "uhd-tv": 5000,
     "dvd": 5000,
-    # Games
-    "games": 4000,
-    "iso": 4000,
-    "rip": 4000,
-    "clone": 4000,
-    "dox": 4000,
-    "nds": 4000,
-    "ps3": 4000,
-    "ps4": 4000,
-    "psp": 4000,
-    "wii": 4000,
-    "wiiu": 4000,
-    "xbox360": 4000,
+    # Games: PC
+    "games": 4050,
+    "iso": 4050,
+    "rip": 4050,
+    "clone": 4050,
+    "dox": 4050,
+    # Games: consoles
+    "nds": 1010,
+    "psp": 1020,
+    "wii": 1030,
+    "xbox360": 1050,
+    "ps3": 1080,
+    "wiiu": 1130,
+    "ps4": 1180,
     # Applications
-    "applications": 5020,
-    "windows-applications": 5020,
-    "macosx": 5020,
-    "linux": 5020,
-    "iphone": 5020,
+    "applications": 4000,
+    "windows-applications": 4000,
+    "linux": 4000,
+    "macosx": 4030,
+    "iphone": 4060,
     # Music
     "new-music": 3000,
     "music": 3000,
-    "concert": 3000,
+    "concert": 3020,
     "flac": 3040,
-    "music-videos": 3000,
+    "music-videos": 3020,
     # Other
     "ebooks": 7000,
     "p2p": 2000,
@@ -297,9 +304,16 @@ def _clean_wayback_url(url: str) -> str:
 
 
 def _category_to_torznab(category_name: str) -> int:
-    """Map site category name to Torznab category ID."""
+    """Map site category name to Torznab category ID (8000 if unknown)."""
     key = category_name.lower().strip()
-    return _CATEGORY_NAME_MAP.get(key, 2000)
+    return _CATEGORY_NAME_MAP.get(key, 8000)
+
+
+def _search_paths(category: int) -> tuple[str, ...]:
+    """The sections to search for *category* (its parent's if not listed)."""
+    return _SEARCH_PATHS.get(category) or _SEARCH_PATHS.get(
+        category - category % 1000, ("",)
+    )
 
 
 class _PostPageParser(HTMLParser):
@@ -451,20 +465,30 @@ class ScnSrcPlugin(PlaywrightPluginBase):
         Paginates through WordPress search pages to collect up to
         1000 results.
         """
+        if category is not None:
+            category = served_category(category, _CATEGORY_NAME_MAP.values())
+            if category is None:
+                return []  # no section of the site has this category
         await self._ensure_browser()
         await self._verify_domain()
 
-        category_path = _CATEGORY_PATH_MAP.get(category, "") if category else ""
-
-        # Paginate search results (WordPress: ~10 posts/page)
+        # Paginate search results (WordPress: ~10 posts/page); keep the posts
+        # of the requested category before their pages are loaded
         all_posts: list[dict[str, str | list[dict[str, str]]]] = []
-        page_num = 1
-        while len(all_posts) < self.effective_max_results:
-            posts = await self._search_page(query, category_path, page_num)
-            if not posts:
-                break
-            all_posts.extend(posts)
-            page_num += 1
+        for category_path in _search_paths(category) if category else ("",):
+            for page_num in range(1, _MAX_PAGES + 1):
+                posts = await self._search_page(query, category_path, page_num)
+                if not posts:
+                    break
+                all_posts.extend(
+                    p
+                    for p in posts
+                    if category_matches(
+                        category, _category_to_torznab(str(p.get("category", "")))
+                    )
+                )
+                if len(all_posts) >= self.effective_max_results:
+                    break
 
         all_posts = all_posts[: self.effective_max_results]
 
@@ -485,8 +509,7 @@ class ScnSrcPlugin(PlaywrightPluginBase):
                 continue
 
             primary_link = links[0]["link"]
-            cat_name = post.get("category", "")
-            torznab_cat = category if category else _category_to_torznab(str(cat_name))
+            torznab_cat = _category_to_torznab(str(post.get("category", "")))
 
             # Scene release name (from the post page) parses best downstream
             title = str(post.get("release_name") or post["title"])
