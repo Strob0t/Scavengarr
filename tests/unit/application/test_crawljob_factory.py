@@ -16,6 +16,19 @@ class TestCrawlJobFactoryCreate:
         job = crawljob_factory.create_from_search_result(search_result)
         assert job.resolve_plugin is None
 
+    def test_archive_password_from_metadata(
+        self, crawljob_factory: CrawlJobFactory, search_result: SearchResult
+    ) -> None:
+        search_result.metadata["archive_password"] = "www.anime-loads.org"
+        job = crawljob_factory.create_from_search_result(search_result)
+        assert job.extract_passwords == ["www.anime-loads.org"]
+
+    def test_no_archive_password_by_default(
+        self, crawljob_factory: CrawlJobFactory, search_result: SearchResult
+    ) -> None:
+        job = crawljob_factory.create_from_search_result(search_result)
+        assert job.extract_passwords == []
+
     def test_passes_resolve_plugin(
         self, crawljob_factory: CrawlJobFactory, search_result: SearchResult
     ) -> None:

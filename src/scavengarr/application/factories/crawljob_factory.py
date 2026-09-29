@@ -64,6 +64,8 @@ class CrawlJobFactory:
             result.validated_links if result.validated_links else [result.download_link]
         )
         text = "\r\n".join(validated_urls)
+        # Plugins put a known archive password here (e.g. anime-loads)
+        password = result.metadata.get("archive_password")
 
         crawl_job = CrawlJob(
             text=text,
@@ -77,6 +79,9 @@ class CrawlJobFactory:
             priority=self.default_priority,
             filename=result.release_name,  # Override filename if present
             resolve_plugin=resolve_plugin,
+            extract_passwords=[password]
+            if isinstance(password, str) and password
+            else [],
         )
 
         log.debug(
