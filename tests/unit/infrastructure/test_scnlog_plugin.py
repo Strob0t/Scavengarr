@@ -49,7 +49,7 @@ _SEARCH_HTML = """
 <li class="row has-cat" data-id="1">
   <div class="row-body">
     <div class="title">
-      <a href="/batman-begins-2005/">
+      <a href="/movies/batman-begins-2005/">
         <span class="title-start">Batman Begins (2005)</span></a>
     </div>
     <div class="meta"><span class="m">June 17th, 2026</span></div>
@@ -58,7 +58,7 @@ _SEARCH_HTML = """
 <li class="row has-cat" data-id="2">
   <div class="row-body">
     <div class="title">
-      <a href="/the-dark-knight-2008/">
+      <a href="/movies/the-dark-knight-2008/">
         <span class="title-start">The Dark Knight (2008)</span></a>
     </div>
   </div>
@@ -70,7 +70,7 @@ _SEARCH_WITH_PAGINATION_HTML = """
 <html><body><ul class="rows">
 <li class="row has-cat">
   <div class="row-body">
-    <div class="title"><a href="/result-one/"><span>Result One</span></a></div>
+    <div class="title"><a href="/movies/result-one/"><span>Result One</span></a></div>
   </div>
 </li>
 </ul>
@@ -85,13 +85,39 @@ _PAGE2_HTML = """
 <html><body><ul class="rows">
 <li class="row has-cat">
   <div class="row-body">
-    <div class="title"><a href="/result-two/"><span>Result Two</span></a></div>
+    <div class="title"><a href="/movies/result-two/"><span>Result Two</span></a></div>
   </div>
 </li>
 </ul></body></html>
 """
 
 _EMPTY_SEARCH_HTML = "<html><body><p>Nothing found</p></body></html>"
+
+# One release per section, as the live search lists them
+_MIXED_ROWS = [
+    ("/movies/batman-2022/", "The.Batman.2022.1080p.BluRay.x264-GRP"),
+    ("/foreign/batman-german/", "The.Batman.2022.German.DL.1080p.BluRay-GRP"),
+    ("/foreign/caped-s02e01/", "Batman.Caped.Crusader.S02E01.German.1080p-GRP"),
+    ("/tv-shows/caped-s02e02/", "Batman.Caped.Crusader.S02E02.1080p.WEB-GRP"),
+    ("/ebooks/batman-comic/", "DC.Comics.Batman.2026.HYBRID.COMIC.eBook-GRP"),
+]
+
+
+async def _route_mixed_sections(url: str, **_kwargs: object) -> MagicMock:
+    """Search pages list the rows of the searched section (all without one)."""
+    url = str(url)
+    if "?s=" not in url:
+        return _mock_response(_DETAIL_HTML)
+    section = "/" + url.split("scnlog.me/", 1)[1].split("?", 1)[0]
+    return _mock_response(
+        "".join(
+            f'<li class="row has-cat"><div class="title"><a href="{href}">'
+            f"<span>{title}</span></a></div></li>"
+            for href, title in _MIXED_ROWS
+            if href.startswith(section)
+        )
+    )
+
 
 # Real-world markup: the download div opens inside a <p> and closes in one
 _DETAIL_HTML = """
@@ -127,7 +153,7 @@ class TestSearchResultParser:
 
         assert len(parser.results) == 2
         assert parser.results[0]["title"] == "Batman Begins (2005)"
-        assert parser.results[0]["detail_url"] == "/batman-begins-2005/"
+        assert parser.results[0]["detail_url"] == "/movies/batman-begins-2005/"
         assert parser.results[1]["title"] == "The Dark Knight (2008)"
 
     def test_empty_search(self) -> None:
@@ -192,12 +218,6 @@ class TestPluginAttributes:
         plugin = _make_plugin()
         assert plugin.base_url == "https://scnlog.me"
 
-    def test_categories(self) -> None:
-        plugin = _make_plugin()
-        assert 2000 in plugin.categories
-        assert 5000 in plugin.categories
-        assert 4000 in plugin.categories
-
 
 # ---------------------------------------------------------------------------
 # Search URL construction
@@ -215,41 +235,44 @@ class TestSearchUrl:
         call_url = mock_client.get.call_args_list[0][0][0]
         assert call_url == "https://scnlog.me/?s=batman"
 
+    @pytest.mark.parametrize(
+        ("category", "paths"),
+        [
+            (3000, {"music/"}),
+            (3040, {"music/"}),
+            (7000, {"ebooks/"}),
+            (2010, {"foreign/"}),
+            # Films and series also sit in foreign/ (German releases included)
+            (2000, {"movies/", "foreign/"}),
+            (2040, {"movies/", "foreign/"}),
+            (5000, {"tv-shows/", "foreign/"}),
+            (4000, {"apps/", "games/", "pda/"}),
+        ],
+    )
     @pytest.mark.asyncio
-    async def test_builds_search_url_with_category(self) -> None:
+    async def test_search_urls_of_a_category(
+        self, category: int, paths: set[str]
+    ) -> None:
         plugin = _make_plugin()
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(return_value=_mock_response(_EMPTY_SEARCH_HTML))
         plugin._client = mock_client
 
-        await plugin.search("batman", category=2000)
+        await plugin.search("batman", category=category)
 
-        call_url = mock_client.get.call_args_list[0][0][0]
-        assert call_url == "https://scnlog.me/movies/?s=batman"
-
-    @pytest.mark.asyncio
-    async def test_builds_search_url_with_tv_category(self) -> None:
-        plugin = _make_plugin()
-        mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.get = AsyncMock(return_value=_mock_response(_EMPTY_SEARCH_HTML))
-        plugin._client = mock_client
-
-        await plugin.search("breaking bad", category=5000)
-
-        call_url = mock_client.get.call_args_list[0][0][0]
-        assert call_url == "https://scnlog.me/tv-shows/?s=breaking+bad"
+        assert {c[0][0] for c in mock_client.get.call_args_list} == {
+            f"https://scnlog.me/{path}?s=batman" for path in paths
+        }
 
     @pytest.mark.asyncio
-    async def test_unknown_category_uses_no_path(self) -> None:
+    async def test_category_the_site_does_not_serve(self) -> None:
+        # scnlog does not tell console games apart; 9999 is no category
         plugin = _make_plugin()
-        mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.get = AsyncMock(return_value=_mock_response(_EMPTY_SEARCH_HTML))
-        plugin._client = mock_client
+        plugin._client = AsyncMock(spec=httpx.AsyncClient)
 
-        await plugin.search("test", category=9999)
-
-        call_url = mock_client.get.call_args_list[0][0][0]
-        assert call_url == "https://scnlog.me/?s=test"
+        assert await plugin.search("test", category=1000) == []
+        assert await plugin.search("test", category=9999) == []
+        plugin._client.get.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -303,20 +326,36 @@ class TestSearch:
         assert len(results) == 1
 
     @pytest.mark.asyncio
-    async def test_category_passed_through(self) -> None:
+    async def test_results_are_labelled_by_their_section(self) -> None:
+        """Results used to carry the requested category (or 2000)."""
         plugin = _make_plugin()
         mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.get = AsyncMock(
-            side_effect=[
-                _mock_response(_SEARCH_HTML),
-                _mock_response(_DETAIL_HTML),
-                _mock_response(_DETAIL_HTML),
-            ]
-        )
+        mock_client.get = AsyncMock(side_effect=_route_mixed_sections)
+        plugin._client = mock_client
+
+        results = await plugin.search("batman")
+
+        assert sorted((r.source_url.split("/")[3], r.category) for r in results) == [
+            ("ebooks", 7000),
+            ("foreign", 2010),  # a film
+            ("foreign", 5020),  # an episode
+            ("movies", 2000),
+            ("tv-shows", 5000),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_request_keeps_its_rows_before_loading_details(self) -> None:
+        plugin = _make_plugin()
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.get = AsyncMock(side_effect=_route_mixed_sections)
         plugin._client = mock_client
 
         results = await plugin.search("batman", category=5000)
-        assert all(r.category == 5000 for r in results)
+
+        assert sorted(r.category for r in results) == [5000, 5020]
+        # tv-shows/ and foreign/ searched, then only the two TV details
+        # (no film or eBook detail page)
+        assert mock_client.get.await_count == 4
 
     @pytest.mark.asyncio
     async def test_network_error_returns_empty(self) -> None:

@@ -15,10 +15,15 @@ No authentication required.
 from __future__ import annotations
 
 import asyncio
+import re
 from html.parser import HTMLParser
 from urllib.parse import quote_plus, urljoin, urlparse
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.categories import (
+    category_matches,
+    served_category,
+)
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -27,15 +32,44 @@ from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 _DOMAINS = ["scnlog.me"]
 _MAX_PAGES = 34
 
-# Torznab category -> scnlog URL path segment
-_CATEGORY_MAP: dict[int, str] = {
-    2000: "movies/",
-    5000: "tv-shows/",
-    4000: "games/",
-    3000: "music/",
-    7000: "ebooks/",
-    6000: "xxx/",
+# Section of a release (first path segment of its URL) -> Torznab category.
+# foreign/ holds films (2010) and episodes (5020) of every non-English
+# language, German releases included.
+_SECTION_CATEGORIES: dict[str, int] = {
+    "movies": 2000,
+    "tv-shows": 5000,
+    "games": 4050,
+    "apps": 4000,
+    "pda": 4040,
+    "music": 3000,
+    "ebooks": 7000,
+    "xxx": 6000,
 }
+# The labels ``_row_category()`` gives
+_CATEGORIES = (*_SECTION_CATEGORIES.values(), 2010, 5020)
+# The sections holding a category (for every result of ``served_category()``)
+_SEARCH_PATHS: dict[int, tuple[str, ...]] = {
+    2000: ("movies/", "foreign/"),
+    2010: ("foreign/",),
+    5000: ("tv-shows/", "foreign/"),
+    5020: ("foreign/",),
+    4000: ("apps/", "games/", "pda/"),
+    4040: ("pda/",),
+    4050: ("games/",),
+    3000: ("music/",),
+    7000: ("ebooks/",),
+    6000: ("xxx/",),
+}
+_EPISODE_RE = re.compile(r"\bS\d{1,2}E\d{1,3}\b", re.IGNORECASE)
+
+
+def _row_category(row: dict[str, str]) -> int:
+    """Torznab category of a search row, from its section and release name."""
+    section = urlparse(urljoin("https://scnlog.me", row["detail_url"])).path
+    section = section.strip("/").split("/")[0]
+    if section == "foreign":
+        return 5020 if _EPISODE_RE.search(row["title"]) else 2010
+    return _SECTION_CATEGORIES.get(section, 8000)
 
 
 # ---------------------------------------------------------------------------
@@ -171,15 +205,6 @@ class ScnlogPlugin(HttpxPluginBase):
     provides = "download"
     _domains = _DOMAINS
 
-    categories: dict[int, str] = {
-        2000: "Movies",
-        5000: "TV",
-        4000: "Games",
-        3000: "Music",
-        7000: "E-Books",
-        6000: "XXX",
-    }
-
     async def _search_page(
         self,
         query: str,
@@ -231,29 +256,21 @@ class ScnlogPlugin(HttpxPluginBase):
         self,
         query: str,
         category_path: str,
+        category: int | None,
     ) -> list[dict[str, str]]:
-        """Paginate through search result pages and collect detail items."""
-        first_results, next_url = await self._search_page(query, category_path)
-        all_items = list(first_results)
-
-        if not all_items and not next_url:
-            return []
-
-        pages_fetched = 1
-        while (
-            next_url
-            and len(all_items) < self.effective_max_results
-            and pages_fetched < _MAX_PAGES
-        ):
-            page_results, next_url = await self._search_page(
+        """Collect the search rows of *category* over the result pages."""
+        rows: list[dict[str, str]] = []
+        next_url: str | None = None
+        for _ in range(_MAX_PAGES):
+            page_rows, next_url = await self._search_page(
                 query, category_path, next_url
             )
-            if not page_results:
+            rows.extend(
+                r for r in page_rows if category_matches(category, _row_category(r))
+            )
+            if not page_rows or not next_url or len(rows) >= self.effective_max_results:
                 break
-            all_items.extend(page_results)
-            pages_fetched += 1
-
-        return all_items[: self.effective_max_results]
+        return rows[: self.effective_max_results]
 
     async def search(
         self,
@@ -267,11 +284,20 @@ class ScnlogPlugin(HttpxPluginBase):
         Stage 1: Search pages with pagination for detail page URLs.
         Stage 2: Detail pages for download links (bounded concurrency).
         """
+        if category is not None:
+            category = served_category(category, _CATEGORIES)
+            if category is None:
+                return []  # no section of the site has this category
         await self._ensure_client()
         await self._verify_domain()
 
-        category_path = _CATEGORY_MAP.get(category, "") if category else ""
-        all_items = await self._paginate_search(query, category_path)
+        paths = _SEARCH_PATHS[category] if category is not None else ("",)
+        found = await asyncio.gather(
+            *(self._paginate_search(query, path, category) for path in paths)
+        )
+        # One release per detail URL (sections do not overlap, but be safe)
+        unique = {row["detail_url"]: row for rows in found for row in rows}
+        all_items = list(unique.values())[: self.effective_max_results]
         if not all_items:
             return []
 
@@ -291,7 +317,7 @@ class ScnlogPlugin(HttpxPluginBase):
                     download_link=links[0]["link"],
                     download_links=links,
                     source_url=detail_url,
-                    category=category if category else 2000,
+                    category=_row_category(item),
                 )
 
         raw = await asyncio.gather(
