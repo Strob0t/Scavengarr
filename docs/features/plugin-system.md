@@ -33,23 +33,22 @@ PluginRegistry.discover()
   |
   v
 _apply_plugin_overrides()            (plugins.overrides from YAML)
+  |-- first registry call imports every plugin file once
   |-- enabled: false -> registry.remove(name)
   |-- otherwise get(name) and set _timeout / _max_concurrent / _max_results
   |
   v
 _inject_shared_browser_pool()
-  |-- list_names() + get_mode(name) for every plugin
-  |-- get_mode() builds the metadata cache -> imports every plugin
+  |-- list_names() + get_mode(name) for every plugin (cached)
   |-- Playwright plugins receive the SharedBrowserPool
 ```
 
 ### Key Behaviors
 
 1. **Discovery is file-only:** `discover()` reads no file contents and runs once.
-2. **Import on demand, effectively at startup:** `get()` imports a plugin via `load_python_plugin()` (`importlib`) and caches the instance. Because the startup wiring calls `get_mode()` for every plugin, all plugins are imported before the first request.
-3. **Validation on import:** the module must export `plugin`, which needs a non-empty `name: str` and a `search` method; otherwise `PluginLoadError`.
-4. **Name lookups re-import:** `list_names()` and `get()` cache misses read each plugin's `name` by importing the file again (`_peek_name()`); only instances returned by `get()` and the metadata cache are cached.
-5. **Duplicate names:** silently de-duplicated; the first file in alphabetical order wins.
+2. **One import per file, at startup:** the first call of any other method imports every discovered file once via `load_python_plugin()` (`importlib`) and caches the instances and their metadata (`provides`, `mode`, `languages`); the plugin name is only known after the import. The startup wiring makes that first call, so all plugins are imported before the first request, and `list_names()` (called by `/healthz` on every probe), `get()` and `get_by_provides()` only read the cache.
+3. **Validation on import:** the module must export `plugin`, which needs a non-empty `name: str` and a `search` method; otherwise `PluginLoadError`. A file that fails to import is logged (`plugin_load_failed`) and skipped; the other plugins keep working.
+4. **Duplicate names:** the first file in alphabetical order wins, later ones are logged (`plugin_name_duplicate`) and skipped.
 
 ### Registry API
 

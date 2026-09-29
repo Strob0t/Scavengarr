@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from scavengarr.domain.plugins import PluginNotFoundError
+from scavengarr.infrastructure.plugins import registry as registry_module
 from scavengarr.infrastructure.plugins.registry import PluginRegistry
 
 
@@ -125,26 +127,45 @@ class TestGetByProvides:
 class TestMetadataCache:
     """Tests for plugin metadata caching in get_by_provides()."""
 
-    def test_metadata_cached_after_first_call(
-        self, registry: PluginRegistry, tmp_path: Path
+    def test_plugin_files_execute_once(
+        self,
+        registry: PluginRegistry,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Metadata cache is populated after first get_by_provides() call."""
-        _write_plugin(
-            tmp_path,
-            "cache_test.py",
-            """\
-            class _Plugin:
-                name = "cache-test"
-                async def search(self, query, category=None):
-                    return []
-            plugin = _Plugin()
-            """,
-        )
+        """Names, lookups and metadata come from one load per file.
 
-        assert not registry._meta_cached
+        /healthz calls list_names() on every probe: it must not execute
+        every plugin module again.
+        """
+        for name in ("one", "two"):
+            _write_plugin(
+                tmp_path,
+                f"{name}.py",
+                f"""\
+                class _Plugin:
+                    name = "{name}"
+                    async def search(self, query, category=None):
+                        return []
+                plugin = _Plugin()
+                """,
+            )
+        loads: list[Path] = []
+        real_load = registry_module.load_python_plugin
+
+        def counting_load(path: Path) -> object:
+            loads.append(path)
+            return real_load(path)
+
+        monkeypatch.setattr(registry_module, "load_python_plugin", counting_load)
+
+        for _ in range(3):
+            assert registry.list_names() == ["one", "two"]
+        registry.get("two")
         registry.get_by_provides("download")
-        assert registry._meta_cached
-        assert "cache-test" in registry._meta_cache
+        registry.get_mode("one")
+
+        assert sorted(p.name for p in loads) == ["one.py", "two.py"]
 
     def test_second_call_uses_cache(
         self, registry: PluginRegistry, tmp_path: Path
@@ -165,6 +186,52 @@ class TestMetadataCache:
         result1 = registry.get_by_provides("download")
         result2 = registry.get_by_provides("download")
         assert result1 == result2
+
+
+class TestBrokenAndDuplicatePlugins:
+    def test_broken_plugin_is_skipped(
+        self, registry: PluginRegistry, tmp_path: Path
+    ) -> None:
+        """One broken plugin file must not break every other plugin."""
+        _write_plugin(
+            tmp_path,
+            "good.py",
+            """\
+            class _Plugin:
+                name = "good"
+                provides = "stream"
+                async def search(self, query, category=None):
+                    return []
+            plugin = _Plugin()
+            """,
+        )
+        _write_plugin(tmp_path, "broken.py", "def search(:\n")
+
+        assert registry.get_by_provides("stream") == ["good"]
+        assert registry.list_names() == ["good"]
+        with pytest.raises(PluginNotFoundError):
+            registry.get("broken")
+
+    def test_first_file_wins_on_duplicate_names(
+        self, registry: PluginRegistry, tmp_path: Path
+    ) -> None:
+        for filename, provides in (("a.py", "stream"), ("b.py", "download")):
+            _write_plugin(
+                tmp_path,
+                filename,
+                f"""\
+                class _Plugin:
+                    name = "same"
+                    provides = "{provides}"
+                    async def search(self, query, category=None):
+                        return []
+                plugin = _Plugin()
+                """,
+            )
+
+        assert registry.list_names() == ["same"]
+        assert registry.get("same").provides == "stream"
+        assert registry.get_by_provides("download") == []
 
 
 class TestGetLanguages:
