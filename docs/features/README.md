@@ -66,6 +66,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** and **S
 | [Search Caching](../plans/search-caching.md) | Implemented: search result cache with `X-Cache` header |
 | [Plugin Repair](../plans/plugin-repair.md) | Done: repaired plugins; hdfilme keyword search broken upstream (browsing works); streamworld removed (site gone) |
 | [Anti-Bot Hardening](../plans/antibot-patchright.md) | Done: Patchright instead of playwright-stealth, Turnstile solver, browser fallback port for httpx plugins |
+| [Captcha Solving](../plans/captcha-solving.md) | In progress: captcha/challenge requirements, ALTCHA + grab-time resolution done |
 
 ### Refactoring History
 
