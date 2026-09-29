@@ -77,6 +77,46 @@ def _add_record_created_timestamp_utc(
     return event_dict
 
 
+def _foreign_pre_chain() -> list[structlog.typing.Processor]:
+    """Processors for stdlib (non-structlog) records."""
+    return [
+        _drop_color_message,
+        structlog.contextvars.merge_contextvars,
+        _add_record_created_timestamp_utc,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        # Traceback as text: the JSON renderer cannot serialize exc_info
+        structlog.processors.format_exc_info,
+    ]
+
+
+def _make_processor_formatter(
+    config: AppConfig,
+) -> structlog.stdlib.ProcessorFormatter:
+    """Formatter rendering structlog and stdlib records alike."""
+    return structlog.stdlib.ProcessorFormatter(
+        foreign_pre_chain=_foreign_pre_chain(),
+        processors=[
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            _make_renderer(config),
+        ],
+    )
+
+
+class _StructlogPreservingQueueHandler(QueueHandler):
+    """QueueHandler that hands records over unformatted.
+
+    The stock ``prepare()`` renders the message to a string, which breaks
+    structlog's dict messages. A shallow copy is enough: the listener thread
+    only reads the record (``ProcessorFormatter.format`` copies it again).
+    A deep copy failed on tracebacks and on log fields that cannot be
+    copied, and the record was lost.
+    """
+
+    def prepare(self, record: logging.LogRecord) -> logging.LogRecord:
+        return copy.copy(record)
+
+
 _QUEUE_LISTENER: QueueListener | None = None
 
 
@@ -104,13 +144,7 @@ def build_logging_config(config: AppConfig) -> dict[str, Any]:
     cfg.setdefault("formatters", {})
     cfg["formatters"]["structlog"] = {
         "()": structlog.stdlib.ProcessorFormatter,
-        "foreign_pre_chain": [
-            _drop_color_message,
-            structlog.contextvars.merge_contextvars,
-            _add_record_created_timestamp_utc,
-            structlog.stdlib.add_logger_name,
-            structlog.stdlib.add_log_level,
-        ],
+        "foreign_pre_chain": _foreign_pre_chain(),
         "processors": [
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
             renderer,
@@ -156,21 +190,7 @@ def _enable_async_logging(config: AppConfig) -> None:
 
     _stop_async_listener()
 
-    renderer = _make_renderer(config)
-
-    processor_formatter = structlog.stdlib.ProcessorFormatter(
-        foreign_pre_chain=[
-            _drop_color_message,
-            structlog.contextvars.merge_contextvars,
-            _add_record_created_timestamp_utc,
-            structlog.stdlib.add_logger_name,
-            structlog.stdlib.add_log_level,
-        ],
-        processors=[
-            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-            renderer,
-        ],
-    )
+    processor_formatter = _make_processor_formatter(config)
 
     class _MaxLevelFilter(logging.Filter):
         def __init__(self, max_level: int) -> None:
@@ -199,17 +219,6 @@ def _enable_async_logging(config: AppConfig) -> None:
     stderr_handler.addFilter(_MinLevelFilter(logging.ERROR))  # ERROR/CRITICAL -> stderr
 
     q: queue.Queue[logging.LogRecord] = queue.Queue()
-
-    class _StructlogPreservingQueueHandler(QueueHandler):
-        """QueueHandler that preserves structlog event_dicts.
-
-        Keeps record.msg as dict without breaking them.
-        """
-
-        def prepare(self, record: logging.LogRecord) -> logging.LogRecord:
-            # Preserve dict-msg for structlog ProcessorFormatter
-            return copy.deepcopy(record)
-
     queue_handler = _StructlogPreservingQueueHandler(q)
 
     root = logging.getLogger()

@@ -166,7 +166,7 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 
 ### Async Logging
 
-- `configure_logging(config)` configures structlog processors, applies a uvicorn-compatible `dictConfig`, and routes all stdlib logging through a `QueueHandler` (`_StructlogPreservingQueueHandler`) to a background `QueueListener`.
+- `configure_logging(config)` configures structlog processors, applies a uvicorn-compatible `dictConfig`, and routes all stdlib logging through a `QueueHandler` (`_StructlogPreservingQueueHandler`, hands over a shallow copy so structlog's dict messages survive) to a background `QueueListener`. Stdlib records (uvicorn, asyncio, libraries) run through `_foreign_pre_chain()`, which renders tracebacks to text (`exception` field, also in JSON).
 - DEBUG/INFO/WARNING go to stdout, ERROR/CRITICAL to stderr; the listener is stopped via `atexit`.
 - JSON renderer in production, console renderer in dev/test (unless `log_format` is set).
 
