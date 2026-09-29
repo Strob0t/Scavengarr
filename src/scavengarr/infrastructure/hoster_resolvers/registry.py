@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from urllib.parse import urlparse
 
@@ -128,7 +129,8 @@ class HosterResolverRegistry:
         3. If URL domain has no resolver, follow HTTP redirects and retry.
         4. Try hoster hint if different from URL domain (handles redirect domains).
         5. Fall back to content-type probing (HEAD request).
-        6. Cache the result (alive or dead) and return.
+        6. Cache the result (alive or dead) and return; a timeout or network
+           error is not cached (it says nothing about the link).
         """
         # Scraped links sometimes carry surrounding whitespace (trailing "\n")
         url = url.strip()
@@ -150,9 +152,7 @@ class HosterResolverRegistry:
         # 1. Try specific resolver for URL domain (name match, then domain alias)
         resolver = self._resolvers.get(hoster_name) or self._domain_map.get(hoster_name)
         if resolver is not None:
-            result = await self._try_resolver(resolver, hoster_name, url)
-            self._cache_result(url, result)
-            return result
+            return await self._resolve_with(resolver, hoster_name, url, url)
 
         # 2. No resolver for this domain — try following redirects
         final_url = await self._follow_redirects(url)
@@ -168,11 +168,9 @@ class HosterResolverRegistry:
                     redirected=redirected_hoster,
                     url=final_url,
                 )
-                result = await self._try_resolver(
-                    resolver, redirected_hoster, final_url
+                return await self._resolve_with(
+                    resolver, redirected_hoster, final_url, url
                 )
-                self._cache_result(url, result)
-                return result
 
         # 3. Try hoster hint if different from URL domain
         #    Handles rotating redirect domains (e.g., lauradaydo.com for VOE)
@@ -185,9 +183,7 @@ class HosterResolverRegistry:
                     url_domain=hoster_name,
                     url=url,
                 )
-                result = await self._try_resolver(resolver, hoster, url)
-                self._cache_result(url, result)
-                return result
+                return await self._resolve_with(resolver, hoster, url, url)
 
         # 4. Fallback: content-type probing
         result = await self._probe_content_type(url, hoster_name)
@@ -227,15 +223,34 @@ class HosterResolverRegistry:
         for k in keys:
             del cache[k]
 
+    async def _resolve_with(
+        self,
+        resolver: HosterResolverPort,
+        hoster_name: str,
+        url: str,
+        cache_key: str,
+    ) -> ResolvedStream | None:
+        """Resolve *url* with *resolver*; cache the outcome under *cache_key*."""
+        result, cacheable = await self._try_resolver(resolver, hoster_name, url)
+        if cacheable:
+            self._cache_result(cache_key, result)
+        return result
+
     async def _try_resolver(
         self,
         resolver: HosterResolverPort,
         hoster_name: str,
         url: str,
-    ) -> ResolvedStream | None:
-        """Attempt resolution with a specific resolver, logging success/failure."""
+    ) -> tuple[ResolvedStream | None, bool]:
+        """Attempt resolution with a specific resolver, logging success/failure.
+
+        Returns the stream (None = failed) and whether the outcome may be
+        cached. The resolver gets ``resolve_timeout`` in total (the
+        resolvers' own request timeouts add up over several requests).
+        """
         try:
-            result = await resolver.resolve(url)
+            async with asyncio.timeout(self._resolve_timeout):
+                result = await resolver.resolve(url)
             if (
                 result is not None
                 and self._verify_playback
@@ -243,17 +258,26 @@ class HosterResolverRegistry:
                 and not await check_playable(self._http_client, result)
             ):
                 log.warning("hoster_resolve_unplayable", hoster=hoster_name, url=url)
-                return None
+                return None, True
             if result is not None:
                 log.info(
                     "hoster_resolve_success",
                     hoster=hoster_name,
                     is_hls=result.is_hls,
                 )
-                return result
+                return result, True
             log.warning("hoster_resolve_failed", hoster=hoster_name, url=url)
-        except httpx.TimeoutException:
+        except (TimeoutError, httpx.TimeoutException):
             log.warning("hoster_resolve_timeout", hoster=hoster_name, url=url)
+            return None, False
+        except httpx.TransportError as exc:
+            log.warning(
+                "hoster_resolve_network_error",
+                hoster=hoster_name,
+                url=url,
+                error=str(exc),
+            )
+            return None, False
         except httpx.HTTPError as exc:
             log.warning(
                 "hoster_resolve_http_error",
@@ -263,7 +287,7 @@ class HosterResolverRegistry:
             )
         except Exception:
             log.exception("hoster_resolve_error", hoster=hoster_name, url=url)
-        return None
+        return None, True
 
     async def _follow_redirects(self, url: str) -> str | None:
         """Follow HTTP redirects and return final URL if domain changed.

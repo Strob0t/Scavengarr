@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -406,6 +408,59 @@ class TestHosterResolverRegistry:
         assert result2 is None
         # Only one actual resolve call
         assert resolver.resolve.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_resolver_is_bounded_by_resolve_timeout(self) -> None:
+        """A hanging resolver is cut off (/play used to hang for a minute)."""
+
+        async def _hang(url: str) -> ResolvedStream | None:
+            await asyncio.sleep(10)
+            return None
+
+        resolver = MagicMock()
+        resolver.name = "voe"
+        resolver.resolve = AsyncMock(side_effect=_hang)
+        registry = HosterResolverRegistry(resolvers=[resolver], resolve_timeout=0.05)
+
+        started = time.monotonic()
+        assert await registry.resolve("https://voe.sx/e/slow") is None
+        assert time.monotonic() - started < 1
+
+    @pytest.mark.asyncio
+    async def test_resolve_timeout_is_not_cached_as_dead(self) -> None:
+        calls = 0
+
+        async def _slow_then_fast(url: str) -> ResolvedStream | None:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                await asyncio.sleep(10)
+            return ResolvedStream(video_url="https://cdn.example.com/v.mp4")
+
+        resolver = MagicMock()
+        resolver.name = "voe"
+        resolver.resolve = AsyncMock(side_effect=_slow_then_fast)
+        registry = HosterResolverRegistry(resolvers=[resolver], resolve_timeout=0.05)
+
+        assert await registry.resolve("https://voe.sx/e/abc") is None
+        assert await registry.resolve("https://voe.sx/e/abc") is not None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "error", [httpx.ReadTimeout("slow"), httpx.ConnectError("down")]
+    )
+    async def test_network_failures_are_not_cached_as_dead(
+        self, error: Exception
+    ) -> None:
+        resolver = MagicMock()
+        resolver.name = "voe"
+        resolver.resolve = AsyncMock(
+            side_effect=[error, ResolvedStream(video_url="https://cdn.example.com/v")]
+        )
+        registry = HosterResolverRegistry(resolvers=[resolver])
+
+        assert await registry.resolve("https://voe.sx/e/abc") is None
+        assert await registry.resolve("https://voe.sx/e/abc") is not None
 
     @pytest.mark.asyncio
     async def test_redirect_cache_prevents_repeated_head(self) -> None:

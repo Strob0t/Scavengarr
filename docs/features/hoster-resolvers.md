@@ -238,7 +238,8 @@ Adding a new XFS hoster requires only an `XFSConfig` constant appended to `ALL_X
 | Hoster hint | Plugin-provided hoster name as a fallback for rotating mirror domains |
 | Content-type probe | HEAD request; `video/*` or `application/vnd.apple.mpegurl` responses become a `ResolvedStream` |
 | Playback check | With `verify_playback=True`, resolver results must pass `check_playable()` (see [Playback check](#playback-check)); failures count as dead |
-| Result cache | In-memory, keyed by URL: alive results 1 h, dead results 15 min |
+| Time bound | `resolver.resolve()` gets `http.timeout_resolve_seconds` in total (its requests' own timeouts add up over several requests); the playback check runs after it |
+| Result cache | In-memory, keyed by URL: alive results 1 h, dead results 15 min. A timeout (the time bound or a request timeout) or network error (`httpx.TransportError`) is not cached: it says nothing about the link (`hoster_resolve_timeout`, `hoster_resolve_network_error`) |
 | Redirect cache | Redirect mappings cached 1 h |
 | Cache limits | Each cache holds at most 10,000 entries; expired entries are evicted every 1,000 `resolve()` calls |
 | Cleanup | `cleanup()` calls `cleanup()` on every resolver that has one (app shutdown) |
