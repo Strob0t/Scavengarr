@@ -330,6 +330,7 @@ AIOStreams can include Scavengarr as a `custom` addon (`manifestUrl` = `<base>/a
 - `httpx_slots` = `max_concurrent_plugins`
 - `pw_slots` = `max_concurrent_playwright`
 - Fair share per request: `max(1, total_slots // active_requests)`
+- A task reserves its share under the pool's condition before it waits for a global slot (a cancelled waiter gives the reservation back), so tasks queued behind a full pool cannot push their request above its share
 
 When `auto_tune_all` is enabled (default), slot counts are derived from container resources at startup. See [Configuration → Auto-Tune](./configuration.md#auto-tune-container-aware) for formulas and caps.
 

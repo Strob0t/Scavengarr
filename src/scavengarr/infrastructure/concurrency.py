@@ -15,12 +15,15 @@ larger fair-share allowance.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import Literal
 
 import structlog
 
 log = structlog.get_logger(__name__)
+
+_SlotKind = Literal["httpx", "pw"]
 
 
 class RequestBudget:
@@ -43,48 +46,59 @@ class RequestBudget:
         self._pw_sem = pw_sem
         self._pool = pool
         self._condition = condition
-        self._held_httpx = 0
-        self._held_pw = 0
+        # Slots this request holds or has reserved, per kind
+        self._held: dict[_SlotKind, int] = {"httpx": 0, "pw": 0}
+
+    def _fair_share(self, slots: int) -> int:
+        active = self._pool.active_requests
+        return max(1, slots // active) if active > 0 else 1
 
     def _httpx_fair_share(self) -> int:
-        active = self._pool.active_requests
-        return max(1, self._pool.httpx_slots // active) if active > 0 else 1
+        return self._fair_share(self._pool.httpx_slots)
 
     def _pw_fair_share(self) -> int:
-        active = self._pool.active_requests
-        return max(1, self._pool.pw_slots // active) if active > 0 else 1
+        return self._fair_share(self._pool.pw_slots)
 
     @asynccontextmanager
     async def acquire_httpx(self) -> AsyncIterator[None]:
         """Acquire one httpx slot, respecting fair-share budget."""
-        async with self._condition:
-            while self._held_httpx >= self._httpx_fair_share():
-                await self._condition.wait()
-        await self._httpx_sem.acquire()
-        self._held_httpx += 1
-        try:
+        async with self._slot("httpx"):
             yield
-        finally:
-            self._held_httpx -= 1
-            self._httpx_sem.release()
-            async with self._condition:
-                self._condition.notify_all()
 
     @asynccontextmanager
     async def acquire_pw(self) -> AsyncIterator[None]:
         """Acquire one Playwright slot, respecting fair-share budget."""
+        async with self._slot("pw"):
+            yield
+
+    @asynccontextmanager
+    async def _slot(self, kind: _SlotKind) -> AsyncIterator[None]:
+        if kind == "httpx":
+            sem, fair_share = self._httpx_sem, self._httpx_fair_share
+        else:
+            sem, fair_share = self._pw_sem, self._pw_fair_share
+        # Reserve under the condition, before waiting for a global slot:
+        # counting only after the semaphore let every waiting task of one
+        # request pass the fair-share check at once
         async with self._condition:
-            while self._held_pw >= self._pw_fair_share():
+            while self._held[kind] >= fair_share():
                 await self._condition.wait()
-        await self._pw_sem.acquire()
-        self._held_pw += 1
+            self._held[kind] += 1
+        try:
+            await sem.acquire()
+        except BaseException:
+            await self._unreserve(kind)
+            raise
         try:
             yield
         finally:
-            self._held_pw -= 1
-            self._pw_sem.release()
-            async with self._condition:
-                self._condition.notify_all()
+            sem.release()
+            await self._unreserve(kind)
+
+    async def _unreserve(self, kind: _SlotKind) -> None:
+        async with self._condition:
+            self._held[kind] -= 1
+            self._condition.notify_all()
 
 
 class ConcurrencyPool:

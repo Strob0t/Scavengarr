@@ -119,8 +119,8 @@ class TestAcquireHttpx:
         pool = ConcurrencyPool(httpx_slots=2, pw_slots=1)
         async with pool.request() as budget:
             async with budget.acquire_httpx():
-                assert budget._held_httpx == 1
-            assert budget._held_httpx == 0
+                assert budget._held["httpx"] == 1
+            assert budget._held["httpx"] == 0
 
     @pytest.mark.asyncio
     async def test_multiple_acquires(self) -> None:
@@ -128,7 +128,7 @@ class TestAcquireHttpx:
         async with pool.request() as budget:
             async with budget.acquire_httpx():
                 async with budget.acquire_httpx():
-                    assert budget._held_httpx == 2
+                    assert budget._held["httpx"] == 2
 
     @pytest.mark.asyncio
     async def test_release_on_error(self) -> None:
@@ -138,7 +138,7 @@ class TestAcquireHttpx:
             with pytest.raises(ValueError, match="boom"):
                 async with budget.acquire_httpx():
                     raise ValueError("boom")
-            assert budget._held_httpx == 0
+            assert budget._held["httpx"] == 0
 
 
 class TestAcquirePw:
@@ -147,8 +147,8 @@ class TestAcquirePw:
         pool = ConcurrencyPool(httpx_slots=2, pw_slots=2)
         async with pool.request() as budget:
             async with budget.acquire_pw():
-                assert budget._held_pw == 1
-            assert budget._held_pw == 0
+                assert budget._held["pw"] == 1
+            assert budget._held["pw"] == 0
 
     @pytest.mark.asyncio
     async def test_release_on_error(self) -> None:
@@ -157,7 +157,7 @@ class TestAcquirePw:
             with pytest.raises(RuntimeError, match="fail"):
                 async with budget.acquire_pw():
                     raise RuntimeError("fail")
-            assert budget._held_pw == 0
+            assert budget._held["pw"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +224,7 @@ class TestConcurrentRequests:
                 # Try to acquire multiple slots
                 async with budget.acquire_httpx():
                     async with budget.acquire_httpx():
-                        held_counts.append(budget._held_httpx)
+                        held_counts.append(budget._held["httpx"])
                         await asyncio.sleep(0.05)
 
         async def _second_request() -> None:
@@ -232,13 +232,81 @@ class TestConcurrentRequests:
             async with pool.request() as budget:
                 # Both requests active: fair_share = 2 each
                 async with budget.acquire_httpx():
-                    held_counts.append(budget._held_httpx)
+                    held_counts.append(budget._held["httpx"])
 
         await asyncio.gather(_greedy_request(), _second_request())
 
         # Greedy held 2, second held 1
         assert 2 in held_counts
         assert 1 in held_counts
+
+    @pytest.mark.asyncio
+    async def test_waiting_tasks_stay_within_the_fair_share(self) -> None:
+        """Tasks queued for a full pool must not all pass the share check.
+
+        The slot used to be counted only after the global semaphore: every
+        waiting task of one request passed the fair-share check at once.
+        """
+        pool = ConcurrencyPool(httpx_slots=2, pw_slots=1)
+        release_b = asyncio.Event()
+        b_holding = 0
+        a_inside = 0
+        a_max = 0
+
+        async def _b_slot(budget: RequestBudget) -> None:
+            nonlocal b_holding
+            async with budget.acquire_httpx():
+                b_holding += 1
+                await release_b.wait()
+
+        async def _a_slot(budget: RequestBudget) -> None:
+            nonlocal a_inside, a_max
+            async with budget.acquire_httpx():
+                a_inside += 1
+                a_max = max(a_max, a_inside)
+                await asyncio.sleep(0.01)
+                a_inside -= 1
+
+        async with pool.request() as budget_b:
+            # Alone, B may take both global slots
+            b_tasks = [asyncio.create_task(_b_slot(budget_b)) for _ in range(2)]
+            while b_holding < 2:
+                await asyncio.sleep(0)
+            async with pool.request() as budget_a:
+                # Two requests: fair share 1 each; A queues three tasks
+                a_tasks = [asyncio.create_task(_a_slot(budget_a)) for _ in range(3)]
+                await asyncio.sleep(0.01)
+                release_b.set()
+                await asyncio.gather(*b_tasks, *a_tasks)
+
+        assert a_max == 1
+
+    @pytest.mark.asyncio
+    async def test_cancelled_waiter_frees_its_reservation(self) -> None:
+        pool = ConcurrencyPool(httpx_slots=1, pw_slots=1)
+        release_b = asyncio.Event()
+
+        async def _hold(budget: RequestBudget) -> None:
+            async with budget.acquire_httpx():
+                await release_b.wait()
+
+        async def _take(budget: RequestBudget) -> None:
+            async with budget.acquire_httpx():
+                pass
+
+        async with pool.request() as budget_b:
+            b_task = asyncio.create_task(_hold(budget_b))
+            await asyncio.sleep(0)
+            async with pool.request() as budget_a:
+                waiter = asyncio.create_task(_take(budget_a))
+                await asyncio.sleep(0.01)
+                waiter.cancel()
+                await asyncio.gather(waiter, return_exceptions=True)
+
+                release_b.set()
+                await b_task
+                # The cancelled waiter must not keep A's only share
+                await asyncio.wait_for(_take(budget_a), timeout=1)
 
 
 # ---------------------------------------------------------------------------
