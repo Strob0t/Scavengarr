@@ -569,7 +569,7 @@ The production image (`Dockerfile.prod`) sets these defaults:
 | `SCAVENGARR_PLAYWRIGHT_HEADLESS` | `false` |
 | `HOST` / `PORT` | `0.0.0.0` / `7979` |
 
-The entrypoint is `docker/entrypoint.sh`: it starts Xvfb on `:99` (unless `DISPLAY` is already set) and then `exec`s `python -m scavengarr.interfaces.cli`, so the app stays the signal recipient (graceful shutdown) and CLI flags can still be appended to `docker run`. Plugins are not bundled in the image.
+The entrypoint is `docker/entrypoint.sh`: it starts Xvfb on `:99` (unless `DISPLAY` is already set; a stale `/tmp/.X99-lock` from before a container restart is removed first, and it waits up to 5 s for the display socket) and then `exec`s `python -m scavengarr.interfaces.cli`, so the app stays the signal recipient (graceful shutdown) and CLI flags can still be appended to `docker run`. Plugins are not bundled in the image.
 
 ### Minimal Production
 

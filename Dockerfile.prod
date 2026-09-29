@@ -62,6 +62,7 @@ COPY docker/entrypoint.sh /app/entrypoint.sh
 # /tmp/.X11-unix must exist up front: the non-root Xvfb cannot create it
 RUN mkdir -p /app/plugins /app/cache /tmp/.X11-unix && \
     chmod 1777 /tmp/.X11-unix && \
+    chmod 755 /app/entrypoint.sh && \
     chown -R scavengarr:scavengarr /app /home/scavengarr
 
 USER scavengarr
