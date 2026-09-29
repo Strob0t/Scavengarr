@@ -177,14 +177,14 @@ The Application layer contains use cases that orchestrate business logic. It kno
 | `CrawlJobResolveUseCase` | `use_cases/crawljob_resolve.py` | async | Grab time: resolve a job's page URLs via its `GrabResolvingPlugin`, store and return the resolved job; `CrawlJobResolveError` → HTTP 502 |
 | `TorznabCapsUseCase` | `use_cases/torznab_caps.py` | sync | Build `TorznabCaps` for a named plugin (XML is rendered by the presenter) |
 | `TorznabIndexersUseCase` | `use_cases/torznab_indexers.py` | sync | List all discovered plugins with version/mode (returns `list[dict]`) |
-| `StremioStreamUseCase` | `use_cases/stremio_stream.py` | async | IMDb ID → title(s) → plugin fan-out → title/episode filter → convert, sort, dedup → cached play/proxy links; returns `list[StremioStream]` |
+| `StremioStreamUseCase` | `use_cases/stremio_stream.py` | async | IMDb ID → title(s) → plugin fan-out (search deadline) → title/episode filter → convert, sort → resolve one working stream per hoster (answer deadline) → cached play/proxy links; returns `list[StremioStream]` |
 | `StremioCatalogUseCase` | `use_cases/stremio_catalog.py` | async | TMDB trending and search catalogs (`list[StremioMetaPreview]`) |
 
 Helpers for `StremioStreamUseCase` live in `application/stremio/`:
 
-- `plugin_search.py` — `PluginSearchRunner`: plugin fan-out with fair-share concurrency budget, per-plugin timeout, circuit breaker, metrics and fallback queries.
+- `plugin_search.py` — `PluginSearchRunner`: plugin fan-out with fair-share concurrency budget, a search deadline counted from the request start, circuit breaker, metrics and fallback queries.
 - `queries.py` — search query normalization (`build_search_query`, `build_search_queries`) and multi-language title references.
-- `stream_builder.py` — `format_stream`, `deduplicate_by_hoster`, `is_direct_video_url`, behavior hints and cache/proxy link building.
+- `stream_builder.py` — `format_stream`, `deduplicate_by_hoster` (only without resolver; with one, resolution picks one stream per hoster), `is_direct_video_url`, behavior hints and cache/proxy link building.
 
 #### TorznabSearchUseCase — the central orchestrator
 

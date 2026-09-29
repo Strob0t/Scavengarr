@@ -63,6 +63,10 @@ Video-extracting resolvers set `ResolvedStream.headers` with the headers require
 
 `_verify.py` provides `verify_video_url()`: a HEAD request (8 s timeout, redirects followed) with the playback headers. Only `200`/`206` counts as reachable. It is used by the XFS video path, VOE, Streamtape, and SuperVideo, and filters out IP-locked CDN tokens (e.g. LULUVID/LULUVDOO tokens bound to Cloudflare's edge IP).
 
+### Playback check
+
+`_verify.py` also provides `check_playable(http_client, stream)`, which the registry applies to every resolver result when it is built with `verify_playback=True` (composition root: `stremio.verify_streams`, default on). It sends a streamed GET with the stream's playback headers plus `Range: bytes=0-1023` (6 s timeout, redirects followed) and reads at most the first 1 KiB. The stream is unplayable when the status is `>= 400`, the answer is HTML (`Content-Type: text/html` or a body starting with `<`), or an HLS stream (`is_hls`) does not start with `#EXTM3U`; network errors count as unplayable too. The registry then logs `hoster_resolve_unplayable`, returns `None` and caches the URL as dead (15 min) like a failed resolution. Unlike `verify_video_url()` (HEAD, only in some resolvers) it covers every resolver and catches servers that answer HEAD with 200 but serve an error page (measured: mixdrop/supervideo HTML pages, CDN 404/502, expired TLS certificates). The content-type probe fallback is not checked again (it already looked at the response).
+
 ### Browser capture
 
 Some players create the stream URL only while they run. Filemoon's Byse player shows "Click play button in order to verify you're a human" and then runs a fingerprint attestation, a proof-of-work captcha (a custom memory-hard hash, not SHA-256, about 65k attempts at difficulty 16) and an AES-GCM encrypted playback call. Replaying that flow in Python is slow and breaks with every Byse update, so the resolver lets the player do it: `StealthPool.capture_media(url, timeout=...)` opens the embed page in the Patchright stealth context, solves a Cloudflare challenge if present, waits 3 s for autoplay, then clicks the page centre (the play button) up to 3 times, 5 s apart, and returns the first request for a `.m3u8`/`.mpd`/`.mp4`/`master.txt` URL as `CapturedMedia(url, referer)`.
@@ -233,6 +237,7 @@ Adding a new XFS hoster requires only an `XFSConfig` constant appended to `ALL_X
 | Redirect following | Unknown domains are followed via GET; the final domain is dispatched again |
 | Hoster hint | Plugin-provided hoster name as a fallback for rotating mirror domains |
 | Content-type probe | HEAD request; `video/*` or `application/vnd.apple.mpegurl` responses become a `ResolvedStream` |
+| Playback check | With `verify_playback=True`, resolver results must pass `check_playable()` (see [Playback check](#playback-check)); failures count as dead |
 | Result cache | In-memory, keyed by URL: alive results 1 h, dead results 15 min |
 | Redirect cache | Redirect mappings cached 1 h |
 | Cache limits | Each cache holds at most 10,000 entries; expired entries are evicted every 1,000 `resolve()` calls |
@@ -289,6 +294,7 @@ The XFS resolver tests are parameterised over all `ALL_XFS_CONFIGS` entries and 
 | `tests/unit/infrastructure/test_hoster_registry.py` | Registry dispatch, redirects, hints, caching |
 | `tests/unit/infrastructure/test_video_extract.py` | Shared video URL extraction |
 | `tests/unit/infrastructure/test_verify_video_url.py` | `verify_video_url()` |
+| `tests/unit/infrastructure/test_check_playable.py` | `check_playable()` and the registry's playback check |
 | `tests/unit/infrastructure/test_hoster_probe.py` | Liveness probe (`probe.py`) |
 | `tests/unit/infrastructure/test_stealth_pool.py` | `StealthPool` |
 | `tests/unit/infrastructure/test_cloudflare.py` | Cloudflare challenge detection |

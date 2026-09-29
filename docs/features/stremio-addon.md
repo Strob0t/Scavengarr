@@ -343,9 +343,10 @@ Plugins declare `languages: list[str]` (default `["de"]`). The use case groups p
 
 | Test file | Coverage |
 |---|---|
-| `tests/unit/application/test_stremio_stream.py` | Stream use case (search, filter, resolve, rank) |
+| `tests/unit/application/test_stremio_stream.py` | Stream use case (search, filter, resolve, rank; `TestResolvePhase`: per-hoster resolution, answer deadline) |
+| `tests/unit/infrastructure/test_check_playable.py` | Playback check of resolved URLs (`verify_streams`) |
 | `tests/unit/application/test_stremio_catalog.py` | Catalog use case |
-| `tests/unit/application/test_plugin_search_runner.py` | `PluginSearchRunner` (fan-out, timeout, circuit breaker) |
+| `tests/unit/application/test_plugin_search_runner.py` | `PluginSearchRunner` (fan-out, timeout, search deadline, circuit breaker) |
 | `tests/unit/application/test_stremio_queries.py` | Search queries and multi-language references |
 | `tests/unit/application/test_stremio_stream_builder.py` | Stream formatting, dedup, direct-video detection, proxy URLs |
 | `tests/unit/infrastructure/test_stream_converter.py` | `SearchResult` → `RankedStream` conversion |

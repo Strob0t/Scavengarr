@@ -45,7 +45,7 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 | `application/use_cases/crawljob_resolve.py` | Grab time: resolve a CrawlJob's page URLs through its `GrabResolvingPlugin` | `CrawlJobResolveUseCase` |
 | `application/use_cases/stremio_stream.py` | IMDb ID → title(s) → plugin fan-out → filter/rank → play/proxy links | `StremioStreamUseCase` |
 | `application/use_cases/stremio_catalog.py` | TMDB trending and search catalogs | `StremioCatalogUseCase` |
-| `application/stremio/plugin_search.py` | Plugin fan-out with fair-share budget, timeout, circuit breaker, fallback queries | `PluginSearchRunner` |
+| `application/stremio/plugin_search.py` | Plugin fan-out with fair-share budget, shared search deadline, circuit breaker, fallback queries | `PluginSearchRunner` |
 | `application/stremio/queries.py` | Search query normalization and multi-language references | `build_search_query`, `build_search_queries`, `build_multi_lang_reference`, `build_lang_group_queries` |
 | `application/stremio/stream_builder.py` | Stream formatting, hoster dedup, behavior hints, cache/proxy links | `format_stream`, `deduplicate_by_hoster`, `is_direct_video_url`, `build_stream_from_resolved` |
 | `application/factories/crawljob_factory.py` | `SearchResult` → `CrawlJob` | `CrawlJobFactory` |
@@ -152,7 +152,8 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 ### Stremio
 
 - `StremioStreamUseCase` gets infrastructure behaviour as injected callables (`convert_fn`, `filter_fn`, `episode_filter_fn`, `probe_fn`, `resolve_fn`, `browser_warmup_fn`) and protocols, so `application/` has no infrastructure imports.
-- Each stream request acquires one `ConcurrencyPool.request()` budget; `PluginSearchRunner` takes httpx or Playwright slots per plugin (by `get_mode()`), applies a per-plugin timeout and skips plugins whose `PluginCircuitBreaker` is open.
+- Each stream request acquires one `ConcurrencyPool.request()` budget; `PluginSearchRunner` takes httpx or Playwright slots per plugin (by `get_mode()`), ends the search `plugin_timeout_seconds` after the request start (a shared deadline: queued plugins are skipped, running ones cut; a timeout counts as breaker failure only when the plugin had at least half the budget) and skips plugins whose `PluginCircuitBreaker` is open (cooldown doubles per failed half-open trial, max 1 h).
+- Resolution (`_resolve_top_streams`) runs hosters in parallel and a hoster's streams in rank order (`_HosterQueues`: next stream only after the better one failed), stops at `stream_deadline_seconds` after the request start (at least 2 s after the search) and yields one working stream per hoster; `deduplicate_by_hoster` is only used when no resolver is configured.
 - Result conversion (`convert_fn`) runs in a thread executor to keep the event loop free.
 - `/stremio/play/{stream_id}` loads the `CachedStreamLink`, resolves it via `HosterResolverRegistry.resolve()` and returns a 302 redirect; it returns 502 instead of redirecting to an embed page.
 
