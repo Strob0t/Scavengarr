@@ -742,3 +742,34 @@ class TestCleanup:
         p = bs_mod.BurningSeriesPlugin()
 
         await p.cleanup()  # Should not raise
+
+
+class TestCloudflareFallback:
+    """Pages go through the base helpers (plugin timeout, UA, browser)."""
+
+    @pytest.mark.asyncio
+    async def test_challenged_listing_is_loaded_through_the_browser(
+        self, bs_mod, monkeypatch
+    ):
+        from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
+
+        challenge = MagicMock(spec=httpx.Response)
+        challenge.status_code = 403
+        challenge.text = "<title>Just a moment...</title>"
+        challenge.headers = httpx.Headers()
+        challenge.url = httpx.URL("https://burningseries.ac/andere-serien")
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(return_value=challenge)
+        fetcher = AsyncMock()
+        fetcher.fetch_text = AsyncMock(return_value=LISTING_HTML)
+        monkeypatch.setattr(HttpxPluginBase, "_browser_fetcher", fetcher)
+        monkeypatch.setattr(HttpxPluginBase, "_cf_blocked_until", {})
+        p = bs_mod.BurningSeriesPlugin()
+        p._client = client
+        p._domain_verified = True
+        p.base_url = "https://burningseries.ac"
+
+        series = await p._fetch_series_listing()
+
+        assert [s["slug"] for s in series][:2] == ["Breaking-Bad", "Better-Call-Saul"]
+        fetcher.fetch_text.assert_awaited_once()

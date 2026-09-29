@@ -402,6 +402,8 @@ class BurningSeriesPlugin(HttpxPluginBase):
     name = "burningseries"
     provides = "download"
     _domains = _DOMAINS
+    # The series listing (/andere-serien) is a large page
+    _timeout = 30.0
 
     def __init__(self) -> None:
         super().__init__()
@@ -412,20 +414,14 @@ class BurningSeriesPlugin(HttpxPluginBase):
         if self._series_cache is not None:
             return self._series_cache
 
-        client = await self._ensure_client()
-
-        try:
-            resp = await client.get(
-                f"{self.base_url}/andere-serien",
-                timeout=30.0,
-            )
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning("burningseries_listing_failed", error=str(exc))
+        html = await self._fetch_text(
+            f"{self.base_url}/andere-serien", context="listing"
+        )
+        if html is None:
             return []
 
         parser = _SeriesListParser()
-        parser.feed(resp.text)
+        parser.feed(html)
 
         # Deduplicate by slug (a series can appear in multiple genre sections)
         seen: set[str] = set()
@@ -448,18 +444,13 @@ class BurningSeriesPlugin(HttpxPluginBase):
         self, slug: str, season: int | None = None
     ) -> _SeriesDetailParser:
         """Fetch and parse the series page, or the German season page."""
-        client = await self._ensure_client()
         path = f"/serie/{slug}" if season is None else f"/serie/{slug}/{season}/de"
-
-        try:
-            resp = await client.get(f"{self.base_url}{path}")
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning("burningseries_detail_failed", slug=slug, error=str(exc))
+        html = await self._fetch_text(f"{self.base_url}{path}", context="detail")
+        if html is None:
             return _SeriesDetailParser()
 
         parser = _SeriesDetailParser()
-        parser.feed(resp.text)
+        parser.feed(html)
 
         self._log.info(
             "burningseries_detail",
