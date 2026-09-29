@@ -22,6 +22,8 @@ import re
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
+import httpx
+
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.captcha.altcha import AltchaError, solve_altcha
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
@@ -391,12 +393,35 @@ class NoxPlugin(HttpxPluginBase):
         return token if isinstance(token, str) and token else None
 
     async def _unlock(self, origin: str, token: str, pass_token: str) -> str | None:
-        """Return the hoster URL behind one gateway link (``None`` if refused)."""
-        data = await self._get_json(
-            f"{origin}/go/{token}/url",
-            context="unlock",
-            params={"cp": pass_token},
-        )
+        """Return the hoster URL behind one gateway link (``None`` if refused).
+
+        Refusals carry ``{"message": ..., "reason": ...}`` (e.g. ``blocked`` /
+        ``hourly_limit`` or ``weekly_limit``, ``captcha_required``, ``expired``);
+        they are logged so a failed grab shows why.
+        """
+        client = await self._ensure_client()
+        try:
+            resp = await client.get(
+                f"{origin}/go/{token}/url",
+                params={"cp": pass_token},
+                **self._request_kwargs(client),
+            )
+        except httpx.HTTPError as exc:
+            self._log.warning("nox_unlock_error", error=str(exc))
+            return None
+        try:
+            data = resp.json()
+        except ValueError:
+            data = None
+        if resp.status_code != 200:
+            detail = data if isinstance(data, dict) else {}
+            self._log.warning(
+                "nox_unlock_refused",
+                status=resp.status_code,
+                message=detail.get("message"),
+                reason=detail.get("reason"),
+            )
+            return None
         target = data.get("url") if isinstance(data, dict) else None
         if isinstance(target, str) and target.startswith(("http://", "https://")):
             return target

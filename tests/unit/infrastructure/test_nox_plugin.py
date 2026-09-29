@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 import respx
+import structlog.testing
 
 from scavengarr.domain.plugins import GrabResolvingPlugin
 
@@ -639,10 +640,17 @@ class TestNoxResolveDownload:
             403, json={"message": "blocked", "reason": "hourly_limit"}
         )
 
-        urls = await plugin.resolve_download(_RELEASE_PAGE)
+        with structlog.testing.capture_logs() as logs:
+            urls = await plugin.resolve_download(_RELEASE_PAGE)
         await plugin.cleanup()
 
         assert urls == ["https://filer.net/folder/a"]
+        refused = [e for e in logs if e["event"] == "nox_unlock_refused"]
+        assert len(refused) == 1
+        assert refused[0]["status"] == 403
+        assert refused[0]["message"] == "blocked"
+        assert refused[0]["reason"] == "hourly_limit"
+        assert "pass" not in str(refused[0])  # never log the pass token
 
     @respx.mock
     @pytest.mark.asyncio
