@@ -545,3 +545,49 @@ class TestCleanup:
         p = moflix_mod.MoflixPlugin()
 
         await p.cleanup()  # Should not raise
+
+
+class TestCloudflareWait:
+    """The challenge goes through the base solver (Turnstile click,
+    clearance memo); moflix then waits for its XSRF-TOKEN cookie."""
+
+    @pytest.fixture()
+    def base_wait(self, monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
+        from scavengarr.infrastructure.plugins.playwright_base import (
+            PlaywrightPluginBase,
+        )
+
+        wait = AsyncMock(return_value=True)
+        monkeypatch.setattr(PlaywrightPluginBase, "_wait_for_cloudflare", wait)
+        return wait
+
+    @pytest.mark.asyncio
+    async def test_solves_challenge_then_waits_for_cookie(
+        self, moflix_mod, base_wait: AsyncMock
+    ) -> None:
+        page = MagicMock()
+        page.wait_for_function = AsyncMock()
+
+        assert await moflix_mod.MoflixPlugin()._wait_for_cloudflare(page) is True
+        base_wait.assert_awaited_once()
+        page.wait_for_function.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_unsolved_challenge_skips_cookie_wait(
+        self, moflix_mod, base_wait: AsyncMock
+    ) -> None:
+        base_wait.return_value = False
+        page = MagicMock()
+        page.wait_for_function = AsyncMock()
+
+        assert await moflix_mod.MoflixPlugin()._wait_for_cloudflare(page) is False
+        page.wait_for_function.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_missing_cookie_fails(self, moflix_mod, base_wait: AsyncMock) -> None:
+        from patchright.async_api import TimeoutError as PlaywrightTimeoutError
+
+        page = MagicMock()
+        page.wait_for_function = AsyncMock(side_effect=PlaywrightTimeoutError("x"))
+
+        assert await moflix_mod.MoflixPlugin()._wait_for_cloudflare(page) is False

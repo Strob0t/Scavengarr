@@ -18,6 +18,7 @@ import asyncio
 from typing import Any
 
 from patchright.async_api import Page
+from patchright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
@@ -30,8 +31,9 @@ _DOMAINS = [
     "moflix-stream.click",
 ]
 _SEARCH_LIMIT = 20  # API hard cap
-_CF_TIMEOUT = 30_000  # ms to wait for Cloudflare challenge
-_NAV_TIMEOUT = 30_000
+# ms for the XSRF-TOKEN cookie after the challenge (the base class solves
+# the challenge itself within ``_cf_timeout_ms``)
+_XSRF_COOKIE_TIMEOUT_MS = 10_000
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -80,21 +82,23 @@ class MoflixPlugin(PlaywrightPluginBase):
     _serialize_search = True
 
     async def _wait_for_cloudflare(self, page: "Page") -> bool:
-        """Wait for the Cloudflare JS challenge to resolve."""
-        try:
-            # The real site has a progress bar or content that loads after
-            # the challenge.  Wait for the XSRF-TOKEN cookie to appear.
-            for _ in range(30):
-                cookies = await page.context.cookies()
-                for c in cookies:
-                    if c["name"] == "XSRF-TOKEN":
-                        return True
-                await page.wait_for_timeout(1000)
-        except Exception:  # noqa: BLE001
-            pass
+        """Solve the Cloudflare challenge, then wait for the XSRF-TOKEN cookie.
 
-        self._log.warning("moflix_cloudflare_timeout")
-        return False
+        The base implementation solves the challenge (Turnstile click
+        included) and remembers the clearance; the site's app then sets the
+        cookie its API calls need (``_API_FETCH_JS`` reads it).
+        """
+        if not await super()._wait_for_cloudflare(page):
+            return False
+        try:
+            await page.wait_for_function(
+                "() => document.cookie.includes('XSRF-TOKEN=')",
+                timeout=_XSRF_COOKIE_TIMEOUT_MS,
+            )
+        except PlaywrightTimeoutError:
+            self._log.warning("moflix_xsrf_cookie_timeout")
+            return False
+        return True
 
     async def _verify_domain(self) -> None:
         """Navigate to a working domain and solve the Cloudflare challenge."""
