@@ -248,8 +248,23 @@ class StremioConfig(BaseModel):
     )
 
     plugin_timeout_seconds: float = Field(
-        default=30.0,
-        description="Per-plugin timeout in seconds for stream search.",
+        default=10.0,
+        gt=0,
+        description=(
+            "Plugin search budget per Stremio request, counted from the "
+            "request start (plugins waiting for a concurrency slot use it up "
+            "too); plugins still running then are cut, queued ones skipped."
+        ),
+    )
+    stream_deadline_seconds: float = Field(
+        default=15.0,
+        gt=0,
+        description=(
+            "Overall budget for one Stremio stream request, from request start "
+            "to answer. Hoster resolution stops at the deadline (at least 2 s "
+            "after the plugin search) and returns what is resolved. Keep "
+            "plugin_timeout_seconds below it so resolution gets a window."
+        ),
     )
 
     title_match_threshold: float = Field(
@@ -286,6 +301,14 @@ class StremioConfig(BaseModel):
     probe_at_stream_time: bool = Field(
         default=True,
         description="Probe hoster URLs at /stream time to filter dead links.",
+    )
+    verify_streams: bool = Field(
+        default=True,
+        description=(
+            "Check every resolved video URL before returning it (first bytes "
+            "with the playback headers); error pages, HTML and broken HLS "
+            "playlists are dropped instead of shown in Stremio."
+        ),
     )
     probe_concurrency: int = Field(
         default=10,
@@ -329,7 +352,10 @@ class StremioConfig(BaseModel):
     )
     stremio_deadline_ms: int = Field(
         default=2000,
-        description="Overall deadline for stream search (ms).",
+        description=(
+            "Unused (kept so existing configs stay valid); the overall budget "
+            "is stream_deadline_seconds."
+        ),
     )
     max_plugins_scored: int = Field(
         default=5,

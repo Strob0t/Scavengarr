@@ -33,7 +33,7 @@ Current plugin, resolver, and test counts are listed in the [repository README](
 | Shared Browser Pool | [x] Implemented | One Chromium process shared by all Playwright plugins |
 | Stealth Pool | [x] Implemented | Own Patchright context on the shared Chromium for Cloudflare-protected hosters and probes |
 | Multi-Language Search | [x] Implemented | Per-language TMDB title resolution, plugins declare `languages` |
-| Stream Deduplication | [x] Implemented | Per-hoster dedup keeps best-ranked stream only |
+| Stream Deduplication | [x] Implemented | Per-hoster dedup keeps the best-ranked stream that resolved |
 | Graceful Shutdown | [x] Implemented | Drain in-flight requests before stopping |
 | Health & Metrics | [x] Implemented | `/api/v1/healthz`, `/api/v1/readyz`, `/api/v1/stats/metrics` |
 | HTTP Rate Limiting | [x] Implemented | Adaptive per-domain token bucket + 429/503 retry with backoff |
@@ -86,7 +86,9 @@ Scavengarr includes a full Stremio addon that provides catalog browsing, search,
 | Circuit breaker integration | [x] Implemented | Skip consistently failing plugins |
 | Concurrency pool integration | [x] Implemented | Fair-share httpx/PW slots across concurrent requests |
 | Multi-language search | [x] Implemented | Per-language TMDB titles, plugins declare `languages` |
-| Stream deduplication | [x] Implemented | Per-hoster dedup keeps best-ranked stream |
+| Stream deduplication | [x] Implemented | Per-hoster dedup keeps the best-ranked stream that resolved |
+| Stream deadline | [x] Implemented | `plugin_timeout_seconds` (search) and `stream_deadline_seconds` (answer) from request start |
+| Playback check | [x] Implemented | `verify_streams`: resolved URLs must return video/playlist bytes |
 | Scored plugin selection | [x] Implemented | Optional top-N plugin selection by score (`stremio.scoring_enabled`) |
 | Early-stop resolve | [x] Implemented | Stop resolving after `resolve_target_count` (default 15) successes |
 

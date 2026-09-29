@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from contextvars import ContextVar
 from unittest.mock import AsyncMock, MagicMock
 
@@ -192,6 +193,65 @@ class TestCircuitBreakerAndTimeout:
 
         assert await _search(runner, ["a"], ["q"]) == []
         breaker.record_failure.assert_called_once_with("a")
+
+    async def test_deadline_cuts_queued_plugins_without_failure(self) -> None:
+        async def _slow(*_args: object, **_kwargs: object) -> list[SearchResult]:
+            await asyncio.sleep(10)
+            return []
+
+        plugins = {name: _plugin([]) for name in ("a", "b", "c")}
+        for plugin in plugins.values():
+            plugin.search = AsyncMock(side_effect=_slow)
+        breaker = MagicMock()
+        breaker.allow.return_value = True
+        runner = _runner(_registry(plugins), circuit_breaker=breaker)
+
+        pool = ConcurrencyPool(httpx_slots=1, pw_slots=1)
+        started = time.monotonic()
+        async with pool.request() as budget:
+            results = await runner.search_with_fallback(
+                list(plugins), ["q"], 2000, budget=budget, deadline=started + 0.2
+            )
+
+        assert results == []
+        assert time.monotonic() - started < 1.0
+        breaker.record_failure.assert_not_called()
+
+    async def test_deadline_timeout_counts_when_plugin_had_half_its_time(
+        self,
+    ) -> None:
+        async def _slow(*_args: object, **_kwargs: object) -> list[SearchResult]:
+            await asyncio.sleep(10)
+            return []
+
+        plugin = _plugin([])
+        plugin.search = AsyncMock(side_effect=_slow)
+        breaker = MagicMock()
+        breaker.allow.return_value = True
+        runner = _runner(
+            _registry({"a": plugin}), circuit_breaker=breaker, plugin_timeout=0.3
+        )
+
+        pool = ConcurrencyPool(httpx_slots=1, pw_slots=1)
+        async with pool.request() as budget:
+            await runner.search_with_fallback(
+                ["a"], ["q"], 2000, budget=budget, deadline=time.monotonic() + 0.2
+            )
+
+        breaker.record_failure.assert_called_once_with("a")
+
+    async def test_plugin_is_skipped_after_deadline(self) -> None:
+        plugin = _plugin([_sr("https://a/1")])
+        runner = _runner(_registry({"a": plugin}))
+
+        pool = ConcurrencyPool(httpx_slots=1, pw_slots=1)
+        async with pool.request() as budget:
+            results = await runner.search_with_fallback(
+                ["a"], ["q"], 2000, budget=budget, deadline=time.monotonic() - 1
+            )
+
+        assert results == []
+        plugin.search.assert_not_awaited()
 
 
 class TestDispatch:

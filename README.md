@@ -25,7 +25,8 @@ Scavengarr scrapes sources via two engines (httpx for static HTML, Playwright fo
 - **Circuit breaker:** per-plugin failure tracking skips consistently failing plugins
 - **Global concurrency pool:** fair-share httpx and Playwright slot budgets across concurrent requests, auto-tuned from container CPU/memory limits
 - **Multi-language search:** plugins declare supported languages; TMDB titles resolved per language
-- **Stream deduplication:** per-hoster dedup keeps only the best-ranked stream per hoster
+- **Stream deduplication:** per-hoster dedup keeps the best-ranked stream per hoster that actually resolved and passed the playback check
+- **Answer deadline:** plugin search and hoster resolution run on budgets counted from the request start (defaults 10 s / 15 s), so Stremio gets an answer in time
 - **Shared Playwright browser pool:** one Chromium process shared across all Playwright plugins
 - **Graceful shutdown:** drains in-flight requests before stopping
 - **Mirror URL fallback:** automatic domain failover when primary mirrors are unreachable

@@ -182,6 +182,7 @@ class FakeStremioConfig:
     max_concurrent_plugins: int = 10
     max_concurrent_playwright: int = 3
     plugin_timeout_seconds: float = 30.0
+    stream_deadline_seconds: float = 45.0
     title_match_threshold: float = 0.5
     title_year_bonus: float = 0.1
     title_year_penalty: float = 0.15

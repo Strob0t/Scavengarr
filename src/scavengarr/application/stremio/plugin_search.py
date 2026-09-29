@@ -1,7 +1,8 @@
 """Run plugin searches for Stremio requests.
 
 Fans a set of queries out over a set of plugins within the global
-concurrency budget, with per-plugin timeout, circuit breaker, metrics,
+concurrency budget, with per-plugin timeout, an optional shared deadline,
+circuit breaker, metrics,
 episode filtering and result validation.
 """
 
@@ -88,6 +89,7 @@ class PluginSearchRunner:
         season: int | None = None,
         episode: int | None = None,
         budget: ConcurrencyBudgetPort,
+        deadline: float | None = None,
     ) -> list[SearchResult]:
         """Search plugins with all query variants, deduplicate results.
 
@@ -104,6 +106,10 @@ class PluginSearchRunner:
         (fallback) queries only add results whose ``download_link`` was
         not already seen, to avoid duplicates from the same plugin
         matching on both the full title and the shorter base title.
+
+        *deadline* (``time.monotonic()`` value) ends the whole search: a
+        plugin still waiting for a slot then is skipped, a running one is
+        cut at the deadline instead of after its own full timeout.
         """
         # --- Fire-and-forget pre-warm for shared Playwright browser ---
         if self._browser_warmup_fn is not None:
@@ -123,6 +129,7 @@ class PluginSearchRunner:
                 season=season,
                 episode=episode,
                 budget=budget,
+                deadline=deadline,
             )
             for q in queries
         ]
@@ -148,6 +155,7 @@ class PluginSearchRunner:
         season: int | None = None,
         episode: int | None = None,
         budget: ConcurrencyBudgetPort,
+        deadline: float | None = None,
     ) -> list[SearchResult]:
         """Search all plugins in parallel with bounded concurrency.
 
@@ -160,12 +168,22 @@ class PluginSearchRunner:
             if is_pw:
                 async with budget.acquire_pw():
                     return await self._run_plugin_with_timeout(
-                        name, query, category, season=season, episode=episode
+                        name,
+                        query,
+                        category,
+                        season=season,
+                        episode=episode,
+                        deadline=deadline,
                     )
             else:
                 async with budget.acquire_httpx():
                     return await self._run_plugin_with_timeout(
-                        name, query, category, season=season, episode=episode
+                        name,
+                        query,
+                        category,
+                        season=season,
+                        episode=episode,
+                        deadline=deadline,
                     )
 
         tasks = [_search_one(name) for name in plugin_names]
@@ -184,8 +202,16 @@ class PluginSearchRunner:
         *,
         season: int | None = None,
         episode: int | None = None,
+        deadline: float | None = None,
     ) -> list[SearchResult]:
         """Run a single plugin search with timeout, catching errors."""
+        timeout = self._plugin_timeout
+        if deadline is not None:
+            timeout = min(timeout, deadline - time.monotonic())
+            if timeout <= 0:
+                log.info("stremio_plugin_skipped_deadline", plugin=name)
+                return []
+
         # Circuit breaker: skip plugins that have been failing consistently
         if self._circuit_breaker is not None and not self._circuit_breaker.allow(name):
             log.debug("stremio_plugin_circuit_open", plugin=name)
@@ -196,15 +222,20 @@ class PluginSearchRunner:
                 self._search_single_plugin(
                     name, query, category, season=season, episode=episode
                 ),
-                timeout=self._plugin_timeout,
+                timeout=timeout,
             )
         except TimeoutError:
+            # A plugin that had at least half its timeout counts as failing
+            # (dead hosts always run into the deadline and must still trip
+            # the breaker); one that queued for most of the budget does not
+            counts = timeout >= self._plugin_timeout / 2
             log.warning(
                 "stremio_plugin_timeout",
                 plugin=name,
-                timeout=self._plugin_timeout,
+                timeout=round(timeout, 2),
+                cut_by_deadline=timeout < self._plugin_timeout,
             )
-            if self._circuit_breaker is not None:
+            if counts and self._circuit_breaker is not None:
                 self._circuit_breaker.record_failure(name)
             return []
 

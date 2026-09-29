@@ -8,6 +8,14 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 59 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4472 tests (4431 excluding the opt-in live tests).
 
+### Feature: Stremio Answers Within a Deadline, Only Playable Streams
+Measured with a Stremio-style harness (18 titles, every returned stream played): answers took 17–38 s (median 19.8 s) and 24 % of the returned streams did not play. Plan and results: `docs/plans/stremio-latency.md`.
+- **`plugin_timeout_seconds` is a search budget from the request start** (new default 10 s, was 30 s per plugin). Plugins queue for concurrency slots (two query variants × all plugins), and each plugin's timeout used to start only when it got a slot, so the search alone took up to 35 s. Plugins still running at the deadline are cut, queued ones skipped. A timeout counts for the circuit breaker when the plugin had at least half the budget.
+- **New `stremio.stream_deadline_seconds`** (default 15 s): overall budget per stream request. Hoster resolution stops there (at least 2 s after the search) and returns what is resolved; unfinished resolutions are cancelled. `stremio_deadline_ms` stays unused.
+- **Per-hoster dedup after resolution**: the best stream per hoster that actually resolved is kept; before, only the best-ranked link per hoster was resolved and the hoster disappeared when that one link was dead.
+- **Playback check (`stremio.verify_streams`, default on)**: `HosterResolverRegistry` fetches the first bytes of every resolved URL with its playback headers (`check_playable`); error status, HTML or an HLS answer without `#EXTM3U` drop the stream, and the result is cached like a failed resolution. Catches e.g. mixdrop/supervideo pages returned instead of video, CDN 404/502 and expired TLS certificates.
+- **Circuit breaker cooldown doubles** with every failed half-open trial (60 s → … → 1 h), reset on success.
+
 ### Fix: A Network Blip No Longer Hides Hosters for 15 Minutes
 - **Link validation backs off on unreachable hosts** instead of skipping them for a flat 15 minutes: the first connection failure skips a host (and the failed URL) for 60 s, every further one doubles that up to 15 min, and the first answer from the host resets it. Measured 2026-09-29: a 40 s outage of the local network marked voe.sx, vinovo, kinoger, fsst and the moflix hosts unreachable, and every Stremio request of the next 15 minutes came back without them (anime and series with zero streams).
 

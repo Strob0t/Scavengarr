@@ -41,7 +41,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "stremio": {
         "preferred_language": "de",
         "max_concurrent_plugins": 5,
-        "plugin_timeout_seconds": 30.0,
+        "plugin_timeout_seconds": 10.0,
+        "stream_deadline_seconds": 15.0,
         "title_match_threshold": 0.7,
     },
 }

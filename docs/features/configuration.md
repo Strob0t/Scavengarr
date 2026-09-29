@@ -187,7 +187,8 @@ playwright:
 stremio:
   auto_tune_all: true           # container-aware auto-tune of concurrency params
   max_results_per_plugin: 50    # default: 100
-  plugin_timeout_seconds: 15.0  # default: 30
+  plugin_timeout_seconds: 10.0  # search budget from request start (default: 10)
+  stream_deadline_seconds: 15.0 # answer budget per stream request (default: 15)
   title_match_threshold: 0.7
   resolve_target_count: 0       # 0 = resolve all streams (default: 15)
   probe_at_stream_time: true
@@ -341,7 +342,9 @@ Controls the Stremio addon behavior: stream ranking, plugin concurrency, title m
 | `stremio.auto_tune_all` | bool | `true` | Container-aware auto-tune of all concurrency params (cgroup v2/v1) |
 | `stremio.max_concurrent_plugins_auto` | bool | `true` | Legacy auto-tune of `max_concurrent_plugins` only; used only when `auto_tune_all` is `false` |
 | `stremio.max_results_per_plugin` | int | `100` | Max results per plugin in Stremio search |
-| `stremio.plugin_timeout_seconds` | float | `30.0` | Per-plugin timeout for stream search |
+| `stremio.plugin_timeout_seconds` | float | `10.0` | Plugin search budget per stream request, counted from the request start (slot queueing included); running plugins are cut, queued ones skipped |
+| `stremio.stream_deadline_seconds` | float | `15.0` | Overall budget per stream request; hoster resolution stops here (at least 2 s after the search). Keep it above `plugin_timeout_seconds` |
+| `stremio.verify_streams` | bool | `true` | Playback check of every resolved video URL (first bytes with playback headers); unplayable streams are dropped |
 | `stremio.title_match_threshold` | float | `0.7` | Minimum title similarity score |
 | `stremio.title_year_bonus` | float | `0.2` | Score bonus for matching year |
 | `stremio.title_year_penalty` | float | `0.3` | Score penalty for non-matching year |
@@ -365,7 +368,7 @@ Controls the Stremio addon behavior: stream ranking, plugin concurrency, title m
 | `stremio.scoring_enabled` | bool | `false` | Use scores to limit plugin selection (YAML-only) |
 | `stremio.max_plugins_scored` | int | `5` | Top-N plugins when scoring is active |
 | `stremio.exploration_probability` | float | `0.15` | Chance to include a random mid-score plugin |
-| `stremio.stremio_deadline_ms` | int | `2000` | Currently unused (no effect) |
+| `stremio.stremio_deadline_ms` | int | `2000` | Currently unused (no effect); the request budget is `stremio.stream_deadline_seconds` |
 | `stremio.max_items_total` | int | `50` | Currently unused (no effect) |
 | `stremio.max_items_per_plugin` | int | `20` | Currently unused (no effect) |
 

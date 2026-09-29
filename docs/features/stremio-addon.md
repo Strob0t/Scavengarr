@@ -32,18 +32,20 @@ Stremio App
 ```text
 IMDb/TMDB ID → title lookup per plugin language → plugin search → episode filter
   → link validation → title matching → quality/language parsing → ranking
-  → per-hoster dedup → hoster resolution (early stop) → link cache → StremioStream list
+  → hoster resolution + playback check (deadline, early stop) → per-hoster dedup
+  → link cache → StremioStream list
 ```
 
 1. **Plugin selection** — all plugins with `provides` = `stream` or `both`, or the scored top-N when scored selection is active (see [Plugin Scoring & Probing](./plugin-scoring-and-probing.md)).
 1. **Title resolution** — per plugin language, look up title + year via TMDB `/find` (or the IMDB Suggest/Wikidata fallback); `tmdb:` IDs are resolved via the TMDB ID.
-1. **Plugin search** — `PluginSearchRunner` searches each language group with the full title and, if the title contains `:`, the base title before the colon; bounded by the global `ConcurrencyPool`, with per-plugin timeout and circuit breaker. Results of fallback queries are deduplicated by `download_link`.
+1. **Plugin search** — `PluginSearchRunner` searches each language group with the full title and, if the title contains `:`, the base title before the colon; bounded by the global `ConcurrencyPool`, with circuit breaker. The search ends `plugin_timeout_seconds` after the request started: plugins waiting for a concurrency slot use up that budget too, running ones are cut at the deadline, queued ones are skipped. Results of fallback queries are deduplicated by `download_link`.
 1. **Episode filtering** — for series requests, results are filtered by season/episode (guessit on release names, falling back to episode labels such as `1x5` or `S01E05` in `download_links`).
 1. **Link validation** — Python plugin results are validated by the search engine.
 1. **Title matching** — false positives (sequels, spin-offs) are filtered via fuzzy scoring.
 1. **Stream conversion** — `SearchResult` objects become `RankedStream` objects with parsed quality/language.
-1. **Ranking + dedup** — sort by language, quality, and hoster bonus; keep the best stream per hoster.
-1. **Resolution** — the top `max_probe_count` streams are resolved in parallel (bounded by `probe_concurrency`) via `HosterResolverRegistry.resolve`; resolution stops early once `resolve_target_count` genuine video URLs exist.
+1. **Ranking** — sort by language, quality, and hoster bonus.
+1. **Resolution** — the top `max_probe_count` streams are resolved in parallel (bounded by `probe_concurrency`) via `HosterResolverRegistry.resolve`; with `verify_streams` every resolved URL must also pass a playback check. Resolution stops early once `resolve_target_count` genuine video URLs exist, and at the latest at `stream_deadline_seconds` after the request started (but never less than 2 s after the search); unfinished resolutions are cancelled.
+1. **Dedup** — the best *resolved* stream per hoster is kept, so a hoster whose best-ranked link is dead still contributes its next working one.
 1. **Caching + formatting** — every stream gets a `CachedStreamLink` in the stream link cache; resolved streams are returned with a direct URL or an HLS proxy URL. Streams that are not resolved (failed, only echoed the embed URL, beyond `max_probe_count`, or cancelled by the early stop) are dropped.
 
 ---
@@ -196,7 +198,7 @@ Streams are ranked with a weighted score:
 rank_score = language_score + (quality.value * quality_multiplier) + hoster_bonus
 ```
 
-After sorting, `deduplicate_by_hoster()` keeps only the best-ranked stream per hoster (e.g. 5 VOE links from 5 plugins collapse to one). Streams without a hoster name are always kept.
+Only one stream per hoster is returned (e.g. 5 VOE links from 5 plugins collapse to one); streams without a hoster name are always kept. With a resolver configured (the normal case) this happens after resolution: the best-ranked stream of a hoster *that resolved and passed the playback check* wins. Without a resolver, `deduplicate_by_hoster()` keeps the best-ranked stream per hoster before formatting.
 
 ### Default Weights
 
@@ -277,7 +279,8 @@ Stremio settings live in `StremioConfig` (YAML section `stremio:`). See [Configu
 | `max_concurrent_plugins` | 10 | httpx slots of the global concurrency pool |
 | `max_concurrent_playwright` | 5 | Playwright slots of the global concurrency pool |
 | `max_results_per_plugin` | 100 | Per-plugin result limit in Stremio searches |
-| `plugin_timeout_seconds` | 30 | Per-plugin timeout |
+| `plugin_timeout_seconds` | 10 | Plugin search budget, counted from the request start (queueing for a slot included) |
+| `stream_deadline_seconds` | 15 | Overall budget per stream request; resolution stops here (at least 2 s after the search) |
 | `max_concurrent_plugins_auto` | `true` | Auto-tune `max_concurrent_plugins` (superseded by `auto_tune_all`) |
 | `auto_tune_all` | `true` | Auto-tune all concurrency parameters from container resources |
 
@@ -299,6 +302,8 @@ Stremio settings live in `StremioConfig` (YAML section `stremio:`). See [Configu
 | `max_probe_count` | 50 | Top-ranked streams to probe/resolve; streams beyond are dropped |
 | `probe_concurrency` | 10 | Parallel probes and parallel resolutions |
 | `resolve_target_count` | 15 | Stop resolving after this many genuine video URLs (`0` = resolve all) |
+| `verify_streams` | `true` | Playback check of every resolved URL: first bytes with the playback headers; error status, HTML or a non-playlist HLS answer drops the stream (result cached like a failed resolution) |
+| `verify_streams` | `true` | Playback check of every resolved URL: first bytes with the playback headers; error status, HTML or a non-playlist HLS answer drops the stream (result cached like a failed resolution) |
 | `stream_link_ttl_seconds` | 7200 | TTL of cached stream links (`streamlink:{stream_id}`) |
 | `probe_at_stream_time` | `true` | Dead-link probe before caching (see known issue) |
 | `probe_timeout_seconds` | 10 | Per-URL httpx probe timeout |
@@ -312,7 +317,7 @@ Scored plugin selection keys (`scoring_enabled`, `max_plugins_scored`, `explorat
 
 ### Circuit Breaker
 
-`PluginCircuitBreaker` is created in the composition root with hardcoded values (`failure_threshold=5`, `cooldown_seconds=60.0`, `max_cooldown_seconds=3600.0`); they are not configurable. After 5 consecutive failures (exceptions or timeouts) a plugin is skipped for 60 s. After the cooldown a single probe request is allowed (half-open); success resets the breaker and its cooldown, failure reopens it with twice the previous cooldown (60 s → 2 min → 4 min … capped at 1 h). Stremio requests are usually minutes apart, so a fixed 60 s cooldown would let an unreachable plugin cost almost every request its full timeout.
+`PluginCircuitBreaker` is created in the composition root with hardcoded values (`failure_threshold=5`, `cooldown_seconds=60.0`, `max_cooldown_seconds=3600.0`); they are not configurable. After 5 consecutive failures (exceptions or timeouts) a plugin is skipped for 60 s. After the cooldown a single probe request is allowed (half-open); success resets the breaker and its cooldown, failure reopens it with twice the previous cooldown (60 s → 2 min → 4 min … capped at 1 h). Stremio requests are usually minutes apart, so a fixed 60 s cooldown would let an unreachable plugin cost almost every request its full timeout. A timeout counts as a failure when the plugin had at least half of `plugin_timeout_seconds`; a plugin cut by the search deadline after queueing for most of the budget is not blamed. A timeout counts as a failure when the plugin had at least half of `plugin_timeout_seconds`; a plugin cut by the search deadline after queueing for most of the budget is not blamed.
 
 ### Global Concurrency Pool
 

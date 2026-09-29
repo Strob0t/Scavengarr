@@ -242,7 +242,7 @@ StremioRouter → StremioStreamUseCase → TmdbClientPort (→ HttpxTmdbClient /
                                      → PluginSearchRunner → PluginCircuitBreaker
                                                           → plugin.search() → SearchEnginePort.validate_results()
                                      → filter_by_title_match / filter_by_episode
-                                     → convert_search_results → StreamSorter → deduplicate_by_hoster
+                                     → convert_search_results → StreamSorter → resolve (deadline) → per-hoster dedup
                                      → StreamLinkRepository (→ CacheStreamLinkRepository → CachePort)
 StremioRouter (/play) → StreamLinkRepository → HosterResolverRegistry.resolve() → 302
 ```

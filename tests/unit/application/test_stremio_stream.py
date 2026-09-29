@@ -1472,3 +1472,119 @@ class TestBrowserWarmup:
         # All 3 plugins searched — dynamic semaphore doesn't block
         assert plugins.get.call_count >= 3
         assert isinstance(result, list)
+
+
+# ---------------------------------------------------------------------------
+# Resolve phase: dedup after resolution, overall deadline
+# ---------------------------------------------------------------------------
+
+
+def _resolving_use_case(
+    links: list[dict[str, str]],
+    resolve: object,
+    config: StremioConfig | None = None,
+) -> StremioStreamUseCase:
+    tmdb = AsyncMock()
+    tmdb.get_title_and_year = AsyncMock(
+        return_value=TitleMatchInfo(title="Iron Man", year=2008)
+    )
+    srs = [
+        _make_search_result(
+            title="Iron Man", release_name=link.pop("release"), download_links=[link]
+        )
+        for link in links
+    ]
+    mock_plugin = AsyncMock()
+    mock_plugin.search = AsyncMock(return_value=srs)
+    del mock_plugin.scraping
+    mock_plugin.isolated_search = mock_plugin.search
+    engine = AsyncMock()
+    engine.validate_results = AsyncMock(side_effect=lambda r: r)
+    plugins = MagicMock()
+    plugins.get_languages.return_value = ["de"]
+    plugins.get_by_provides.side_effect = lambda p: ["hdfilme"] if p == "stream" else []
+    plugins.get.return_value = mock_plugin
+    return _make_use_case(
+        tmdb=tmdb,
+        plugins=plugins,
+        search_engine=engine,
+        config=config,
+        stream_link_repo=AsyncMock(),
+        resolve_fn=AsyncMock(side_effect=resolve),
+    )
+
+
+def _video(url: str) -> ResolvedStream:
+    return ResolvedStream(
+        video_url=f"https://cdn.example/{url.rsplit('/', 1)[-1]}.mp4",
+        headers={"Referer": "https://voe.sx/"},
+    )
+
+
+_BEST = {
+    "url": "https://voe.sx/e/best",
+    "hoster": "VOE",
+    "release": "Iron.Man.2008.German.1080p.BluRay",
+}
+_SECOND = {
+    "url": "https://voe.sx/e/second",
+    "hoster": "VOE",
+    "release": "Iron.Man.2008.German.720p.WEB",
+}
+
+
+class TestResolvePhase:
+    async def test_next_stream_of_a_hoster_replaces_a_failed_one(self) -> None:
+        """Dedup happens after resolution: a failing best VOE stream must not
+        take the working second VOE stream with it."""
+
+        async def _resolve(url: str, hoster: str = "") -> ResolvedStream | None:
+            return None if url.endswith("/best") else _video(url)
+
+        uc = _resolving_use_case([dict(_BEST), dict(_SECOND)], _resolve)
+
+        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        assert [s.url for s in result] == ["https://cdn.example/second.mp4"]
+
+    async def test_one_stream_per_hoster(self) -> None:
+        async def _resolve(url: str, hoster: str = "") -> ResolvedStream:
+            return _video(url)
+
+        uc = _resolving_use_case([dict(_BEST), dict(_SECOND)], _resolve)
+
+        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        assert [s.url for s in result] == ["https://cdn.example/best.mp4"]
+
+    async def test_deadline_returns_what_is_resolved(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scavengarr.application.use_cases import stremio_stream as mod
+
+        monkeypatch.setattr(mod, "_MIN_RESOLVE_WINDOW_S", 0.2)
+
+        async def _resolve(url: str, hoster: str = "") -> ResolvedStream | None:
+            if "slow" in url:
+                await asyncio.sleep(10)
+            return _video(url)
+
+        slow = {
+            "url": "https://streamtape.com/e/slow",
+            "hoster": "Streamtape",
+            "release": "Iron.Man.2008.German.1080p.BluRay",
+        }
+        fast = dict(_SECOND, url="https://voe.sx/e/fast")
+        uc = _resolving_use_case(
+            [slow, fast], _resolve, config=_make_config(stream_deadline_seconds=0.1)
+        )
+
+        loop = asyncio.get_running_loop()
+        start = loop.time()
+        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        assert loop.time() - start < 2
+        assert [s.url for s in result] == ["https://cdn.example/fast.mp4"]
+
+    def test_deadline_default(self) -> None:
+        assert _make_config().stream_deadline_seconds == 15.0

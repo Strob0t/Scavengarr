@@ -10,6 +10,7 @@ import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
 from scavengarr.domain.ports.hoster_resolver import HosterResolverPort
+from scavengarr.infrastructure.hoster_resolvers._verify import check_playable
 
 log = structlog.get_logger(__name__)
 
@@ -69,11 +70,14 @@ class HosterResolverRegistry:
         resolvers: list[HosterResolverPort] | None = None,
         http_client: httpx.AsyncClient | None = None,
         resolve_timeout: float = 15.0,
+        verify_playback: bool = False,
     ) -> None:
         self._resolvers: dict[str, HosterResolverPort] = {}
         self._domain_map: dict[str, HosterResolverPort] = {}
         self._http_client = http_client
         self._resolve_timeout = resolve_timeout
+        # Resolver results must also pass check_playable (needs http_client)
+        self._verify_playback = verify_playback and http_client is not None
         self._result_cache: dict[str, _CacheEntry] = {}
         self._redirect_cache: dict[str, _CacheEntry] = {}
         self._resolve_count = 0
@@ -232,6 +236,14 @@ class HosterResolverRegistry:
         """Attempt resolution with a specific resolver, logging success/failure."""
         try:
             result = await resolver.resolve(url)
+            if (
+                result is not None
+                and self._verify_playback
+                and self._http_client is not None
+                and not await check_playable(self._http_client, result)
+            ):
+                log.warning("hoster_resolve_unplayable", hoster=hoster_name, url=url)
+                return None
             if result is not None:
                 log.info(
                     "hoster_resolve_success",

@@ -1,9 +1,11 @@
-"""Shared HEAD-check verification for hoster-resolved video URLs."""
+"""Shared checks that hoster-resolved video URLs are reachable and playable."""
 
 from __future__ import annotations
 
 import httpx
 import structlog
+
+from scavengarr.domain.entities.stremio import ResolvedStream
 
 log = structlog.get_logger(__name__)
 
@@ -50,3 +52,53 @@ async def verify_video_url(
     except httpx.HTTPError:
         log.warning(f"{hoster}_video_verify_error", url=url[:120])
         return False
+
+
+# Bytes read from a resolved URL: enough for a playlist header or a
+# container signature, small enough to be cheap on servers ignoring Range.
+_SNIFF_BYTES = 1024
+_PLAYBACK_CHECK_TIMEOUT_S = 6.0
+
+
+async def check_playable(
+    http_client: httpx.AsyncClient,
+    stream: ResolvedStream,
+) -> bool:
+    """Check that a resolved stream answers like a player expects.
+
+    Fetches the first bytes with the stream's playback headers.  An error
+    status, an HTML page, or (for HLS) a body that is no playlist means the
+    player would fail, so the stream is not playable.
+    """
+    headers = {**stream.headers, "Range": f"bytes=0-{_SNIFF_BYTES - 1}"}
+    try:
+        async with http_client.stream(
+            "GET",
+            stream.video_url,
+            headers=headers,
+            follow_redirects=True,
+            timeout=_PLAYBACK_CHECK_TIMEOUT_S,
+        ) as resp:
+            head = b""
+            if resp.status_code < 400:
+                async for chunk in resp.aiter_bytes():
+                    head += chunk
+                    if len(head) >= _SNIFF_BYTES:
+                        break
+            content_type = resp.headers.get("content-type", "").lower()
+            status = resp.status_code
+    except httpx.HTTPError as exc:
+        log.info("playback_check_error", url=stream.video_url[:120], error=str(exc))
+        return False
+
+    head = head.lstrip()
+    if status >= 400:
+        reason = f"status {status}"
+    elif "text/html" in content_type or head[:1] == b"<":
+        reason = "html"
+    elif stream.is_hls and not head.startswith(b"#EXTM3U"):
+        reason = "no playlist"
+    else:
+        return True
+    log.info("playback_check_failed", url=stream.video_url[:120], reason=reason)
+    return False

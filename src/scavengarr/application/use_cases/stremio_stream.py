@@ -63,6 +63,7 @@ class _StremioConfig(Protocol):
     """Configuration values consumed by StremioStreamUseCase."""
 
     plugin_timeout_seconds: float
+    stream_deadline_seconds: float
     title_match_threshold: float
     title_year_bonus: float
     title_year_penalty: float
@@ -112,6 +113,10 @@ _ConvertFn = Callable[..., list[RankedStream]]
 _TitleFilterFn = Callable[..., list[SearchResult]]
 
 log = structlog.get_logger(__name__)
+
+# Resolution always gets this long after the plugin search, even when the
+# search alone used up the stream deadline (otherwise nothing is returned).
+_MIN_RESOLVE_WINDOW_S = 2.0
 
 
 # Callback type for probing hoster URLs at /stream time.
@@ -188,6 +193,8 @@ class StremioStreamUseCase:
         self._max_probe_count = config.max_probe_count
         self._probe_concurrency = config.probe_concurrency
         self._resolve_target = config.resolve_target_count
+        self._deadline_s = config.stream_deadline_seconds
+        self._plugin_timeout_s = config.plugin_timeout_seconds
         self._metrics = metrics
         self._score_store = score_store
         self._scoring_enabled = config.scoring_enabled
@@ -211,6 +218,7 @@ class StremioStreamUseCase:
             Sorted list of StremioStream objects, best first.
             Empty list if title not found or no plugins match.
         """
+        started = time.monotonic()
         category = 2000 if request.content_type == "movie" else 5000
 
         plugin_names = self._plugins.get_by_provides("stream")
@@ -245,6 +253,9 @@ class StremioStreamUseCase:
                 all_names_count=len(all_names),
                 selected_count=len(selected),
                 budget=budget,
+                # Plugins queue for slots; the search ends plugin_timeout
+                # after the request started, not after each plugin's start
+                deadline=started + self._plugin_timeout_s,
             )
 
         if not filtered:
@@ -273,7 +284,12 @@ class StremioStreamUseCase:
             lambda: self._convert_fn(filtered, plugin_languages=plugin_languages),
         )
         sorted_streams = self._sorter.sort(ranked)
-        sorted_streams = deduplicate_by_hoster(sorted_streams)
+        if self._resolve_fn is None:
+            sorted_streams = deduplicate_by_hoster(sorted_streams)
+        else:
+            # Deduplicated after resolution: a hoster keeps its best stream
+            # that actually resolves, not just its best-ranked one
+            sorted_streams = sorted_streams[: self._max_probe_count]
 
         streams = [
             format_stream(
@@ -287,7 +303,12 @@ class StremioStreamUseCase:
         ]
 
         if self._stream_link_repo and base_url:
-            streams = await self._cache_and_proxy(streams, sorted_streams, base_url)
+            deadline = max(
+                started + self._deadline_s, time.monotonic() + _MIN_RESOLVE_WINDOW_S
+            )
+            streams = await self._cache_and_proxy(
+                streams, sorted_streams, base_url, deadline=deadline
+            )
 
         log.info(
             "stremio_search_complete",
@@ -326,6 +347,7 @@ class StremioStreamUseCase:
         all_names_count: int,
         selected_count: int,
         budget: ConcurrencyBudgetPort,
+        deadline: float,
     ) -> tuple[list[SearchResult], list[SearchResult]]:
         """Search and filter each language group, returning aggregated results.
 
@@ -365,6 +387,7 @@ class StremioStreamUseCase:
                 season=request.season,
                 episode=request.episode,
                 budget=budget,
+                deadline=deadline,
             )
 
             if not group_results:
@@ -405,6 +428,8 @@ class StremioStreamUseCase:
         streams: list[StremioStream],
         ranked: list[RankedStream],
         base_url: str,
+        *,
+        deadline: float,
     ) -> list[StremioStream]:
         """Cache hoster URLs and replace stream URLs with proxy play links.
 
@@ -423,40 +448,12 @@ class StremioStreamUseCase:
         # Skip probing when a resolve callback is configured because
         # resolution implicitly checks liveness (failed → skipped).
         if self._probe_fn and self._probe_at_stream_time and not self._resolve_fn:
-            limit = min(len(ranked), self._max_probe_count)
-            probe_targets = [(i, ranked[i].url) for i in range(limit)]
-            t0_probe = time.perf_counter_ns()
-            alive_indices = await self._probe_fn(probe_targets)
-            probe_duration = time.perf_counter_ns() - t0_probe
-
-            dead = limit - len(alive_indices)
-            log.info(
-                "stremio_probe_complete",
-                total=limit,
-                alive=len(alive_indices),
-                filtered=dead,
-            )
-            if self._metrics is not None:
-                self._metrics.record_probe(
-                    total=limit,
-                    alive=len(alive_indices),
-                    dead=dead,
-                    cf_blocked=0,
-                    duration_ns=probe_duration,
-                )
-
-            # Keep only alive streams (preserve order); unprobed streams pass through
-            streams = [
-                s for i, s in enumerate(streams) if i in alive_indices or i >= limit
-            ]
-            ranked = [
-                r for i, r in enumerate(ranked) if i in alive_indices or i >= limit
-            ]
+            streams, ranked = await self._probe_streams(streams, ranked)
 
         # --- Resolve step: extract direct video URLs + headers ---
         resolved_map: dict[int, ResolvedStream] = {}
         if self._resolve_fn:
-            resolved_map = await self._resolve_top_streams(ranked)
+            resolved_map = await self._resolve_top_streams(ranked, deadline)
 
         # --- Cache step (parallel writes) ---
         stream_ids = [uuid4().hex for _ in streams]
@@ -466,16 +463,24 @@ class StremioStreamUseCase:
         proxied: list[StremioStream] = []
         skipped_echo = 0
         skipped_unresolved = 0
+        skipped_duplicate = 0
+        seen_hosters: set[str] = set()
         has_resolver = bool(self._resolve_fn)
         for i, (stream, sid) in enumerate(zip(streams, stream_ids)):
             resolved = resolved_map.get(i)
             if resolved is not None:
                 original_url = ranked[i].url if i < len(ranked) else ""
+                hoster = ranked[i].hoster if i < len(ranked) else ""
+                if hoster and hoster in seen_hosters:
+                    skipped_duplicate += 1
+                    continue
                 built = build_stream_from_resolved(
                     stream, resolved, original_url, sid, base_url, self._user_agent
                 )
                 if built is not None:
                     proxied.append(built)
+                    if hoster:
+                        seen_hosters.add(hoster)
                 else:
                     skipped_echo += 1
             elif has_resolver:
@@ -492,27 +497,66 @@ class StremioStreamUseCase:
                         url=proxy_url,
                     )
                 )
-        if skipped_echo or skipped_unresolved:
+        if skipped_echo or skipped_unresolved or skipped_duplicate:
             log.info(
                 "stremio_streams_skipped",
                 skipped_echo=skipped_echo,
                 skipped_unresolved=skipped_unresolved,
+                skipped_duplicate=skipped_duplicate,
             )
         return proxied
+
+    async def _probe_streams(
+        self,
+        streams: list[StremioStream],
+        ranked: list[RankedStream],
+    ) -> tuple[list[StremioStream], list[RankedStream]]:
+        """Drop dead hoster links among the top ``max_probe_count`` streams."""
+        assert self._probe_fn is not None
+        limit = min(len(ranked), self._max_probe_count)
+        probe_targets = [(i, ranked[i].url) for i in range(limit)]
+        t0_probe = time.perf_counter_ns()
+        alive_indices = await self._probe_fn(probe_targets)
+        probe_duration = time.perf_counter_ns() - t0_probe
+
+        dead = limit - len(alive_indices)
+        log.info(
+            "stremio_probe_complete",
+            total=limit,
+            alive=len(alive_indices),
+            filtered=dead,
+        )
+        if self._metrics is not None:
+            self._metrics.record_probe(
+                total=limit,
+                alive=len(alive_indices),
+                dead=dead,
+                cf_blocked=0,
+                duration_ns=probe_duration,
+            )
+
+        # Keep only alive streams (preserve order); unprobed streams pass through
+        keep = [i in alive_indices or i >= limit for i in range(len(ranked))]
+        return (
+            [s for s, k in zip(streams, keep) if k],
+            [r for r, k in zip(ranked, keep) if k],
+        )
 
     async def _resolve_top_streams(
         self,
         ranked: list[RankedStream],
+        deadline: float,
     ) -> dict[int, ResolvedStream]:
         """Resolve the top streams to direct video URLs in parallel.
 
         Uses early-stop: once ``resolve_target_count`` genuine video URLs
         have been extracted, remaining tasks are cancelled.  This avoids
         waiting for slow hosters when enough playable streams are ready.
+        At *deadline* (``time.monotonic()`` value) unfinished resolutions
+        are cancelled and what is resolved so far is returned.
 
         Returns a mapping of stream index -> ResolvedStream for
-        successfully resolved streams.  Failed resolutions are omitted
-        (those streams fall back to the /play/ proxy).
+        successfully resolved streams.  Failed resolutions are omitted.
         """
         limit = min(len(ranked), self._max_probe_count)
         semaphore = asyncio.Semaphore(self._probe_concurrency)
@@ -537,19 +581,21 @@ class StremioStreamUseCase:
         video_count = 0
         target = self._resolve_target
         attempted = 0
+        timed_out = False
 
         while pending:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                break
             done, pending = await asyncio.wait(
-                pending, return_when=asyncio.FIRST_COMPLETED
+                pending, timeout=remaining, return_when=asyncio.FIRST_COMPLETED
             )
-            for task in done:
-                attempted += 1
-                idx, resolved = task.result()
-                if resolved is not None:
-                    resolved_map[idx] = resolved
-                    original_url = ranked[idx].url if idx < len(ranked) else ""
-                    if is_direct_video_url(resolved, original_url):
-                        video_count += 1
+            if not done:
+                timed_out = True
+                break
+            attempted += len(done)
+            video_count += self._collect_resolved(done, ranked, resolved_map)
 
             if target > 0 and video_count >= target:
                 break
@@ -567,8 +613,28 @@ class StremioStreamUseCase:
             resolved=len(resolved_map),
             video_streams=video_count,
             early_stop=target > 0 and video_count >= target,
+            deadline_hit=timed_out,
+            unfinished=len(pending) if timed_out else 0,
         )
         return resolved_map
+
+    @staticmethod
+    def _collect_resolved(
+        done: set[asyncio.Task[tuple[int, ResolvedStream | None]]],
+        ranked: list[RankedStream],
+        resolved_map: dict[int, ResolvedStream],
+    ) -> int:
+        """Store finished resolutions; return how many are direct videos."""
+        videos = 0
+        for task in done:
+            idx, resolved = task.result()
+            if resolved is None:
+                continue
+            resolved_map[idx] = resolved
+            original_url = ranked[idx].url if idx < len(ranked) else ""
+            if is_direct_video_url(resolved, original_url):
+                videos += 1
+        return videos
 
     async def _resolve_title_info(
         self,
