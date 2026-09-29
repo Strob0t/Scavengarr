@@ -376,10 +376,15 @@ class StealthPool:
                 )
 
                 def _on_request(request: Request) -> None:
+                    # Manifests/MP4 by URL; extension-less CDN URLs (DoodStream
+                    # ``…~abc?token=``) by the video element's request type
                     if (
                         not found.done()
-                        and _MEDIA_URL_RE.search(request.url)
                         and not _NOT_MEDIA_RE.search(request.url)
+                        and (
+                            request.resource_type == "media"
+                            or _MEDIA_URL_RE.search(request.url)
+                        )
                     ):
                         found.set_result(
                             CapturedMedia(request.url, request.headers.get("referer"))

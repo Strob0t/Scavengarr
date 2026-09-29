@@ -8,7 +8,7 @@
 
 ## Overview
 
-Scavengarr ships **59 hoster resolvers**: 21 individual resolvers, 12 generic DDL hosters consolidated in `GenericDDLResolver`, and 26 XFileSharingPro (XFS) hosters consolidated in `XFSResolver`. Every resolver checks whether a file is still available; video-extracting resolvers additionally return a direct `.mp4`/`.m3u8` URL plus the HTTP headers the CDN needs.
+Scavengarr ships **59 hoster resolvers**: 22 individual resolvers, 12 generic DDL hosters consolidated in `GenericDDLResolver`, and 25 XFileSharingPro (XFS) hosters consolidated in `XFSResolver`. Every resolver checks whether a file is still available; video-extracting resolvers additionally return a direct `.mp4`/`.m3u8` URL plus the HTTP headers the CDN needs.
 
 Resolvers are registered in `HosterResolverRegistry`, which dispatches each URL to a resolver by its second-level domain, follows redirects and plugin hoster hints for unknown domains, falls back to a HEAD content-type probe, and caches the outcome in memory.
 
@@ -101,7 +101,7 @@ Extract a direct video URL (`.mp4`/`.m3u8`) from an embed page.
 | VOE | `voe` | `voe.*`; rotating mirrors via redirect or hoster hint | Multi-method: `application/json` deobfuscation chain, direct regex, base64 variables |
 | Streamtape | `streamtape` | `streamtape`, `streamta`, `strtape`, `shavetape`, `tapeblocker`, `streamtapeadblock(user)`, `gettapeads`, … (13 names) | Token extraction from page source |
 | SuperVideo | `supervideo` | `supervideo.*` | XFS-style JWPlayer extraction; browser capture on a Cloudflare 403 |
-| DoodStream | `doodstream` | `dood`, `doods`, `doodstream`, `ds2play`, `d0o0d`, `vidply`, `myvidplay`, `playmogo`, … (23 names; all mirrors currently redirect to `playmogo.com`) | `pass_md5` endpoint extraction; browser capture on a Cloudflare challenge |
+| DoodStream | `doodstream` | `dood`, `doods`, `doodstream`, `ds2play`, `d0o0d`, `vidply`, `myvidplay`, `playmogo`, … (23 names; all mirrors currently redirect to `playmogo.com`) | `pass_md5` endpoint extraction; browser capture on a Cloudflare challenge (the player passes an invisible Turnstile headful; its CDN URL `…cloudatacdn.com/…~id?token=…` has no file extension and is taken from the video element request) |
 | Filemoon | `filemoon` | `filemoon`, `filemooon`, `byse`, rotating Byse domains (`bysezejataos`, `bysekoze`, …; 14 names from JD2 `FilemoonSxCrawler`) | Packed JS unpacker (legacy pages); Byse player pages via browser capture (`StealthPool.capture_media`), after the details API `/api/videos/<id>/embed/details` rules out a gone video (404) or a domain-restricted embed (403 `embedding … not allowed`) |
 | StreamUp | `strmup` | `strmup`, `streamup`, `vidara`, `vidaraa` | `streaming_url` from page, AJAX `/ajax/stream` fallback; HLS. Vidara hosts use the JSON API `POST /api/stream` (`{"device": "web", "filecode": id}` → `streaming_url`, 404 when gone; JD2 `VidaraTo`) |
 | Vidsonic | `vidsonic` | `vidsonic` | Hex-obfuscated, pipe-delimited HLS URL decoding |
@@ -120,6 +120,7 @@ Check availability and return the original URL without headers. The Stremio addo
 | FireStream | `firestream` | `firestream.to` → `firestream.site` (`/e/<id>`) | Port of JD2 `FirestreamTo`: embed page → `<script id="video-data">` (`encodingStatus` must be `completed`) + `<script id="token-blob">` → `POST /api/videos/<id>/resolve` `{"blob"}` on the host that served the page (the token is host-bound) → `signedVideoUrl` (HLS); 404 embed page = gone |
 | Vixeo | `vixeo` | `vixeo.io` (`/e/<id>`; `/login` and other paths are not videos) | Vidsonic's current player: a JavaScript app that builds the signed `*.vidsonic.net/secure/.../index.m3u8` URL at runtime, so the stream is taken from the browser capture (~4 s) |
 | Playmate | `playmate` | `playmate.to` (`/watch/<id>`, `/e/<id>`) | Port of JD2 `PlaymateTo`: `GET /api/video-meta?filecode=` (404 / `success: false` = gone) → `POST /api/s` `{"c": id, "d": "web"}` with `Origin` + watch-page `Referer` → `sx` (HLS master, `master.txt`). The API answers 403 to non-browser user agents |
+| Vinovo | `vinovo` | `vinovo.to`, `vinovo.si` (`/e/` or `/d/`, 12+ chars) | Player API without captcha (Turnstile only guards the official download button): page token from `<meta name="token">` and CDN base from `data-base` on `/e/{id}`, `POST /api/file/url/{id}` (`recaptcha=&token=…`, XHR) → stream token → `{data-base}/stream/{token}` (port of JDownloader `VinovoTo`, stream path); offline on "Video not found". Token bound to the resolving User-Agent like veev; the CDN can take ~30 s to the first byte |
 | Veev | `veev` | `veev.to` (`/e/`, `/d/` or bare ID, 12+ chars) | Player API without captcha: LZW-decode the `window._vvto` token, `/dl?op=player_api&cmd=gi`, decode `file.dv[0].s` → direct MP4 (port of JDownloader `VeevTo`); offline on `Watch video - Veev.to` title or "File not found". Resolves with a browser User-Agent and returns it in the playback headers: veevcdn binds the stream token to that UA (another UA gets 403) |
 
 ### DDL resolvers (individual)
@@ -207,10 +208,9 @@ The resolver fetches `/e/{file_id}`, checks offline markers and error redirects,
 
 | Hoster | Domains | Notes |
 |---|---|---|
-| Vinovo | `vinovo` | Embedded Turnstile widget; the token is posted to `/api/file/urldown/{id}` (JDownloader `VinovoTo`). Retested headful 2026-09-28: still not resolvable without a browser-side widget flow |
 | Wolfstream | `wolfstream` | Anti-bot JS redirect to an ad domain (retested 2026-09-28) |
 
-Veev left this list: it has its own resolver now (see below).
+Veev and Vinovo left this list: they have their own resolvers now (see below).
 
 Adding a new XFS hoster requires only an `XFSConfig` constant appended to `ALL_XFS_CONFIGS`. Tests are parameterised automatically.
 

@@ -536,9 +536,11 @@ def _player_page(
     on_load: list[str] | None = None,
     on_click: list[list[str]] | None = None,
     status: int = 200,
+    media_requests: frozenset[str] = frozenset(),
 ) -> MagicMock:
     """Page whose player requests *on_load* URLs while loading and the
-    i-th list of *on_click* on the i-th mouse click."""
+    i-th list of *on_click* on the i-th mouse click; URLs in
+    *media_requests* come from the video element (resource type "media")."""
     page = _mock_page(title="Player")
     listeners: list[object] = []
 
@@ -550,6 +552,7 @@ def _player_page(
         for url in urls:
             request = _request(url, navigation=False)
             request.headers = {"referer": "https://player.example/"}
+            request.resource_type = "media" if url in media_requests else "script"
             for callback in listeners:
                 callback(request)  # type: ignore[operator]
 
@@ -614,6 +617,21 @@ class TestStealthPoolCaptureMedia:
         assert media.url == "https://cdn.example/v/x.mp4?t=1"
         assert page.mouse.click.await_count == 2
         page.mouse.click.assert_awaited_with(640, 360)
+
+    async def test_video_element_request_without_extension_is_captured(
+        self,
+    ) -> None:
+        """DoodStream's CDN URLs carry no file extension (``…~abc?token=``)."""
+        stream = "https://fd304l.cloudatacdn.com/u5kj/msvv~lsPG?token=y5i2&expiry=1"
+        page = _player_page(
+            on_click=[["https://cdn.example/app.js", stream]],
+            media_requests=frozenset({stream}),
+        )
+
+        media = await self._capture(page)
+
+        assert media is not None
+        assert media.url == stream
 
     async def test_no_media_after_all_clicks_returns_none(self) -> None:
         from scavengarr.infrastructure.browser import stealth_pool as mod

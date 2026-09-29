@@ -72,6 +72,16 @@ Live, Patchright headful under Xvfb:
 
 Open before implementation: which release/episodes a grab of a series-level result resolves to, and how to decrypt Click'n'Load (new `cryptography` dependency vs. WebCrypto in the page).
 
+## Embedded Turnstile (2026-09-29)
+
+None of the three targets needs a token pipeline:
+
+- **vinovo**: Turnstile only guards the official download button (`/api/file/urldown`); the player path (`/api/file/url/{id}`) needs no captcha → dedicated `VinovoResolver` over httpx.
+- **DoodStream**: the invisible Turnstile passes by itself in the headful stealth browser; the stream was missed only because its CDN URL has no file extension → `capture_media()` also takes video-element requests.
+- **devideosrc download embed**: one Turnstile click in the headful browser (6 s) reveals base64 hoster links; not integrated because hdfilme and streamcloud already get the same hosters captcha-free from the devideosrc player API.
+
+A generic "solve the widget, read `cf-turnstile-response`" helper stays unbuilt until a target needs the raw token.
+
 ## Steps
 
 | # | Step | Status |
@@ -81,7 +91,7 @@ Open before implementation: which release/episodes a grab of a series-level resu
 | 3 | Shared captcha detector (`infrastructure/captcha/detect.py`), logging + scoring | done |
 | 4 | animeloads: odd-one-out captcha in the browser, links on grab | spike done, open questions |
 | 5 | Cloudflare: persistent profile, `channel="chrome"` check, warmup at startup | open |
-| 6 | Embedded Turnstile tokens (vinovo, devideosrc, doodstream) | open |
+| 6 | Embedded Turnstile tokens (vinovo, devideosrc, doodstream) | done: none needs a token flow (see below) |
 | 7 | Byparr sidecar as second `BrowserFetcherPort` | done (not verified live: no Docker in the dev container) |
 | 8 | Recognizer container (opt-in) | open |
 
