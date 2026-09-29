@@ -21,9 +21,9 @@ from html.parser import HTMLParser
 from urllib.parse import quote_plus
 
 from scavengarr.domain.plugins.base import SearchResult
-from scavengarr.infrastructure.plugins.constants import (
-    is_movie_category,
-    is_tv_category,
+from scavengarr.infrastructure.plugins.categories import (
+    category_matches,
+    served_category,
 )
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
@@ -488,28 +488,6 @@ class MovieblogPlugin(HttpxPluginBase):
     # Category filtering
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _filter_by_category(
-        items: list[dict[str, str | int]],
-        category: int | None,
-        season: int | None,
-    ) -> list[dict[str, str | int]]:
-        """Filter items by Torznab category and season hint."""
-        if category is not None:
-            filtered: list[dict[str, str | int]] = []
-            for item in items:
-                cat = int(item.get("category", 2000))
-                if is_tv_category(category) and cat < 5000:
-                    continue
-                if is_movie_category(category) and cat >= 5000:
-                    continue
-                filtered.append(item)
-            items = filtered
-
-        if season is not None and category is None:
-            items = [item for item in items if int(item.get("category", 2000)) >= 5000]
-        return items
-
     # ------------------------------------------------------------------
     # Main search entry point
     # ------------------------------------------------------------------
@@ -522,6 +500,12 @@ class MovieblogPlugin(HttpxPluginBase):
         episode: int | None = None,
     ) -> list[SearchResult]:
         """Search movieblog.to and return results with download links."""
+        if category is None and season is not None:
+            category = 5000  # a season request is a series request
+        if category is not None:
+            category = served_category(category, (2000, 5000))
+            if category is None:
+                return []  # the site has films and series only
         await self._ensure_client()
         await self._verify_domain()
 
@@ -532,7 +516,11 @@ class MovieblogPlugin(HttpxPluginBase):
         if not all_items:
             return []
 
-        all_items = self._filter_by_category(all_items, category, season)
+        all_items = [
+            item
+            for item in all_items
+            if category_matches(category, int(item.get("category", 2000)))
+        ]
         if not all_items:
             return []
 

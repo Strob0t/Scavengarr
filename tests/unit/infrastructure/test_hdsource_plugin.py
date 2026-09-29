@@ -240,7 +240,7 @@ class TestSearchPageParser:
         parser.feed(_SPIELE_ARTICLE_HTML)
 
         assert len(parser.results) == 1
-        assert parser.results[0]["category"] == 4000
+        assert parser.results[0]["category"] == 4050  # PC/Games
 
     def test_series_article_hoster(self) -> None:
         parser = _SearchPageParser()
@@ -315,7 +315,7 @@ class TestDetectCategory:
         assert _detect_category("category-serien category-complete") == 5000
 
     def test_spiele(self) -> None:
-        assert _detect_category("category-spiele") == 4000
+        assert _detect_category("category-spiele") == 4050  # PC/Games
 
     def test_serien_priority_over_filme(self) -> None:
         assert _detect_category("category-filme category-serien") == 5000

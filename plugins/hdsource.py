@@ -18,9 +18,9 @@ from html.parser import HTMLParser
 from urllib.parse import quote_plus
 
 from scavengarr.domain.plugins.base import SearchResult
-from scavengarr.infrastructure.plugins.constants import (
-    is_movie_category,
-    is_tv_category,
+from scavengarr.infrastructure.plugins.categories import (
+    category_matches,
+    served_category,
 )
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
@@ -44,7 +44,7 @@ _CATEGORY_MAP: dict[str, int] = {
     "serien": 5000,
     "complete": 5000,
     "laufend": 5000,
-    "spiele": 4000,
+    "spiele": 4050,
 }
 
 # Hoster affiliate param → human-readable label.
@@ -86,7 +86,7 @@ def _detect_category(css_classes: str) -> int:
     if any(m in lower for m in _series_markers):
         return 5000
     if "category-spiele" in lower:
-        return 4000
+        return 4050
     return 2000
 
 
@@ -508,6 +508,12 @@ class HdSourcePlugin(HttpxPluginBase):
         episode: int | None = None,
     ) -> list[SearchResult]:
         """Search hd-source.to and return results with download links."""
+        if category is None and season is not None:
+            category = 5000  # a season request is a series request
+        if category is not None:
+            category = served_category(category, _CATEGORY_MAP.values())
+            if category is None:
+                return []  # the site has films, series and games only
         await self._ensure_client()
         await self._verify_domain()
 
@@ -520,21 +526,11 @@ class HdSourcePlugin(HttpxPluginBase):
 
         results: list[SearchResult] = []
         for item in all_items:
-            if category is not None:
-                cat = item.get("category", 2000)
-                if is_tv_category(category) and cat < 5000:
-                    continue
-                if is_movie_category(category) and cat >= 5000:
-                    continue
-
+            if not category_matches(category, int(item.get("category", 2000))):
+                continue
             sr = self._item_to_result(item)
             if sr is not None:
                 results.append(sr)
-
-        # When season is requested but no category, restrict to TV.
-        if season is not None and category is None:
-            results = [r for r in results if r.category >= 5000]
-
         return results
 
 

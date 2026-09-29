@@ -169,3 +169,28 @@ class TestStreamPlugins:
         client.get.assert_not_awaited()
         client.post.assert_not_awaited()
         client.head.assert_not_awaited()
+
+
+class TestDownloadPlugins:
+    """Sites with few categories answer the others without a request."""
+
+    @pytest.mark.parametrize(
+        ("name", "category"),
+        [
+            ("hdsource", 3000),  # films, series, games
+            ("jjs", 4000),  # films, series
+            ("movieblog", 7000),  # films, series
+            ("serienjunkies", 2000),  # series only
+        ],
+    )
+    async def test_a_category_the_site_does_not_serve(
+        self, name: str, category: int
+    ) -> None:
+        plugin = _load_plugin(name)
+        client = AsyncMock(spec=httpx.AsyncClient)
+        plugin._client = client
+
+        assert await plugin.search("batman", category=category) == []
+        client.get.assert_not_awaited()
+        client.post.assert_not_awaited()
+        client.head.assert_not_awaited()

@@ -20,6 +20,7 @@ import re
 from html.parser import HTMLParser
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.categories import served_category
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -204,17 +205,6 @@ class SerienjunkiesPlugin(HttpxPluginBase):
     _domains = _DOMAINS
     _max_results = 1000
 
-    categories: dict[int, str] = {  # noqa: RUF012
-        5000: "TV",
-        5010: "TV/WEB-DL",
-        5020: "TV/Foreign",
-        5030: "TV/SD",
-        5040: "TV/HD",
-        5045: "TV/UHD",
-        5070: "TV/Anime",
-        5080: "TV/Documentary",
-    }
-
     async def _search_series(self, query: str) -> list[dict[str, str]]:
         """Search for series matching query.
 
@@ -383,6 +373,8 @@ class SerienjunkiesPlugin(HttpxPluginBase):
         episode: int | None = None,
     ) -> list[SearchResult]:
         """Search serienjunkies.org and return results with release info."""
+        if category is not None and served_category(category, (5000,)) is None:
+            return []  # the site has series only
         await self._ensure_client()
         await self._verify_domain()
 
