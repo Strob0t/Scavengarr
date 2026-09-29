@@ -287,8 +287,9 @@ A corrupt cache entry is therefore treated like a missing job (HTTP 404).
 `GET /api/v1/download/{job_id}` serves the `.crawljob` file:
 
 - Content type `application/x-crawljob`
-- `Content-Disposition: attachment; filename="{package_name}_{job_id[:8]}.crawljob"` — characters other than letters, digits, space, `-` and `_` in the package name are replaced with `_`
-- Custom headers `X-CrawlJob-ID`, `X-CrawlJob-Package`, `X-CrawlJob-Links`
+- `Content-Disposition: attachment; filename="{package_name}_{job_id[:8]}.crawljob"; filename*=UTF-8''{percent-encoded name}` — in `filename` everything but ASCII letters, digits, space, `-` and `_` becomes `_` (header values are Latin-1; an en dash or CJK title used to cause a 500), `filename*` carries the real name (RFC 6266)
+- Custom headers `X-CrawlJob-ID`, `X-CrawlJob-Package` (percent-encoded package name), `X-CrawlJob-Links`
+- Values in the `.crawljob` (`packageName`, `filename`, `downloadFolder`, `comment`, `downloadPassword`) are written on one line: line breaks from scraped titles or descriptions are collapsed to spaces, so a site cannot add its own keys (e.g. `downloadFolder=`). `text` (the links) is written as stored.
 - `404` — job not found or expired; `500` — repository or serialization failure; `502` — grab-time resolution failed (the Arr app treats the grab as failed and can try another release)
 
 ### Grab-Time Resolution

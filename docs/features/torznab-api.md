@@ -230,9 +230,9 @@ Serves the `.crawljob` file referenced by a search result's `<link>`. See [Crawl
 
 | Header | Description |
 |---|---|
-| `Content-Disposition` | `attachment; filename="{package_name}_{job_id[:8]}.crawljob"` (characters other than letters, digits, space, `-`, `_` in the package name become `_`) |
+| `Content-Disposition` | `attachment; filename="{package_name}_{job_id[:8]}.crawljob"; filename*=UTF-8''…` (in `filename` everything but ASCII letters, digits, space, `-`, `_` becomes `_`; `filename*` has the real name, RFC 6266) |
 | `X-CrawlJob-ID` | The CrawlJob UUID |
-| `X-CrawlJob-Package` | Package name (display name in JDownloader) |
+| `X-CrawlJob-Package` | Package name (display name in JDownloader), percent-encoded |
 | `X-CrawlJob-Links` | Number of links in the job |
 
 | Status | Condition |

@@ -31,6 +31,12 @@ class CrawlJobResolveError(Exception):
     """Grab-time link resolution failed (plugin error or no links left)."""
 
 
+def _one_line(value: str) -> str:
+    """Collapse line breaks: a .crawljob is one ``key=value`` per line, so a
+    line break in a scraped value would add keys of the site's choosing."""
+    return " ".join(value.splitlines())
+
+
 @dataclass(frozen=True)
 class CrawlJob:
     """Represents a .crawljob file for JDownloader.
@@ -133,18 +139,18 @@ class CrawlJob:
             "",
             # === Core Fields ===
             f"text={self.text}",
-            f"packageName={self.package_name}",
+            f"packageName={_one_line(self.package_name)}",
         ]
 
         # === Optional Fields ===
         if self.filename:
-            lines.append(f"filename={self.filename}")
+            lines.append(f"filename={_one_line(self.filename)}")
 
         if self.download_folder:
-            lines.append(f"downloadFolder={self.download_folder}")
+            lines.append(f"downloadFolder={_one_line(self.download_folder)}")
 
         if self.comment:
-            lines.append(f"comment={self.comment}")
+            lines.append(f"comment={_one_line(self.comment)}")
 
         # === Behavior Flags ===
         lines.extend(
@@ -177,6 +183,6 @@ class CrawlJob:
             )
 
         if self.download_password:
-            lines.append(f"downloadPassword={self.download_password}")
+            lines.append(f"downloadPassword={_one_line(self.download_password)}")
 
         return "\n".join(lines)

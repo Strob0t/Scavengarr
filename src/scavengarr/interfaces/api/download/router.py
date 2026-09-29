@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import cast
+from urllib.parse import quote
 
 import structlog
 from fastapi import APIRouter, HTTPException, Request
@@ -93,11 +94,14 @@ async def download_crawljob(
             detail="Failed to generate .crawljob file",
         ) from e
 
-    safe_filename = "".join(
-        c if c.isalnum() or c in (" ", "-", "_") else "_"
+    # Header values are Latin-1: an ASCII fallback name plus the UTF-8 name
+    # (RFC 6266 filename*); scraped titles often contain dashes or non-Latin
+    ascii_name = "".join(
+        c if (c.isascii() and c.isalnum()) or c in (" ", "-", "_") else "_"
         for c in crawl_job.package_name
     )
-    filename = f"{safe_filename}_{job_id[:8]}.crawljob"
+    filename = f"{ascii_name}_{job_id[:8]}.crawljob"
+    utf8_name = quote(f"{crawl_job.package_name}_{job_id[:8]}.crawljob")
 
     log.info(
         "crawljob_downloaded",
@@ -112,10 +116,12 @@ async def download_crawljob(
         content=crawljob_content,
         media_type="application/x-crawljob",
         headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": (
+                f"attachment; filename=\"{filename}\"; filename*=UTF-8''{utf8_name}"
+            ),
             "Content-Type": "application/x-crawljob",
             "X-CrawlJob-ID": job_id,
-            "X-CrawlJob-Package": crawl_job.package_name,
+            "X-CrawlJob-Package": quote(crawl_job.package_name),
             "X-CrawlJob-Links": str(len(crawl_job.validated_urls)),
         },
     )

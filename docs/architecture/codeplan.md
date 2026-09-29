@@ -146,7 +146,7 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 
 - `CrawlJobFactory` joins links with `\r\n` into `text`, uses `result.title` as `package_name`, builds `comment` from description, size and source URL, and sets `expires_at = now + default_ttl_hours`.
 - `CacheCrawlJobRepository` stores JSON under `crawljob:{job_id}` with a TTL.
-- `/download/{job_id}` returns 404 for missing or expired jobs and serves `to_crawljob_format()` with `Content-Type: application/x-crawljob`, `Content-Disposition: attachment; filename="<safe_name>_<id8>.crawljob"`, and `X-CrawlJob-ID`, `X-CrawlJob-Package`, `X-CrawlJob-Links` headers.
+- `/download/{job_id}` returns 404 for missing or expired jobs and serves `to_crawljob_format()` with `Content-Type: application/x-crawljob`, `Content-Disposition: attachment; filename="<ascii_name>_<id8>.crawljob"; filename*=UTF-8''<name>`, and `X-CrawlJob-ID`, `X-CrawlJob-Package`, `X-CrawlJob-Links` headers.
 - `/download/{job_id}/info` returns `job_id`, `package_name`, `created_at`, `expires_at`, `is_expired`, `validated_urls`, `source_url`, `comment`, `auto_start`, `priority` as JSON.
 
 ### Stremio

@@ -11,6 +11,25 @@ from scavengarr.domain.entities.crawljob import (
 )
 
 
+class TestCrawlJobLineBreaks:
+    def test_scraped_values_cannot_add_keys(self) -> None:
+        """A line break in a scraped description must not inject a key."""
+        job = CrawlJob(
+            text="https://filer.net/get/abc",
+            package_name="Movie\r\nautoStart=FALSE",
+            comment="Plot line one\ndownloadFolder=/tmp/evil",
+            filename="a\nb.mkv",
+        )
+
+        content = job.to_crawljob_format()
+
+        keys = [line.split("=", 1)[0] for line in content.splitlines()]
+        assert "downloadFolder" not in keys
+        assert keys.count("autoStart") == 1
+        assert "comment=Plot line one downloadFolder=/tmp/evil" in content
+        assert "packageName=Movie autoStart=FALSE" in content
+
+
 class TestCrawlJobDefaults:
     def test_default_job_id_is_uuid(self) -> None:
         job = CrawlJob()
