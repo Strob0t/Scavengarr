@@ -2,13 +2,31 @@
 
 from __future__ import annotations
 
+import time
+from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
+import pytest
 
+from scavengarr.infrastructure.validation import http_link_validator
 from scavengarr.infrastructure.validation.http_link_validator import (
     HttpLinkValidator,
+    _ValidationCacheEntry,
 )
+
+
+def _get_stream(
+    status_code: int = 200, side_effect: Exception | None = None
+) -> MagicMock:
+    """``client.stream("GET", ...)`` stand-in: an async context manager."""
+    cm = MagicMock()
+    if side_effect is not None:
+        cm.__aenter__.side_effect = side_effect
+    else:
+        cm.__aenter__.return_value = MagicMock(status_code=status_code)
+    cm.__aexit__.return_value = False
+    return MagicMock(return_value=cm)
 
 
 def _mock_client(
@@ -32,19 +50,15 @@ def _mock_client(
         response.status_code = status_code
         client.head = AsyncMock(return_value=response)
 
-    # GET mock — mirrors HEAD by default, but explicit get_* overrides
+    # GET mock (streamed) — mirrors HEAD by default, explicit get_* overrides
     if get_side_effect is not None:
-        client.get = AsyncMock(side_effect=get_side_effect)
+        client.stream = _get_stream(side_effect=get_side_effect)
     elif get_status_code is not None:
-        get_response = MagicMock()
-        get_response.status_code = get_status_code
-        client.get = AsyncMock(return_value=get_response)
+        client.stream = _get_stream(get_status_code)
     elif side_effect:
-        client.get = AsyncMock(side_effect=side_effect)
+        client.stream = _get_stream(side_effect=side_effect)
     else:
-        get_response = MagicMock()
-        get_response.status_code = status_code
-        client.get = AsyncMock(return_value=get_response)
+        client.stream = _get_stream(status_code)
 
     return client
 
@@ -124,7 +138,7 @@ class TestValidate:
         client = _mock_client(status_code=200)
         validator = HttpLinkValidator(client)
         assert await validator.validate("https://example.com") is True
-        client.get.assert_not_called()
+        client.stream.assert_not_called()
 
     async def test_head_timeout_get_200_is_valid(self) -> None:
         """HEAD times out, GET works."""
@@ -166,7 +180,7 @@ class TestValidateCache:
 
         # Reset mock to prove cache is used
         client.head.reset_mock()
-        client.get.reset_mock()
+        client.stream.reset_mock()
 
         result2 = await validator.validate(url)
         assert result2 is True
@@ -182,7 +196,7 @@ class TestValidateCache:
         assert result1 is False
 
         client.head.reset_mock()
-        client.get.reset_mock()
+        client.stream.reset_mock()
 
         result2 = await validator.validate(url)
         assert result2 is False
@@ -211,8 +225,7 @@ class TestValidateBatch:
         head_responses = [MagicMock(status_code=200), MagicMock(status_code=404)]
         client.head = AsyncMock(side_effect=head_responses)
         # GET fallback for the 404 HEAD — also fails
-        get_response = MagicMock(status_code=404)
-        client.get = AsyncMock(return_value=get_response)
+        client.stream = _get_stream(404)
 
         validator = HttpLinkValidator(client)
         urls = ["https://valid.com", "https://dead.com"]
@@ -271,14 +284,14 @@ class TestUnreachableHosts:
         validator = HttpLinkValidator(client)
 
         assert await validator.validate("https://dead-host.example/a") is False
-        client.get.assert_not_called()
+        client.stream.assert_not_called()
 
     async def test_connect_timeout_skips_get_fallback(self) -> None:
         client = _mock_client(side_effect=httpx.ConnectTimeout("timeout"))
         validator = HttpLinkValidator(client)
 
         assert await validator.validate("https://dead-host.example/a") is False
-        client.get.assert_not_called()
+        client.stream.assert_not_called()
 
     async def test_unreachable_host_not_contacted_again(self) -> None:
         client = _mock_client(side_effect=httpx.ConnectError("refused"))
@@ -416,3 +429,50 @@ class TestUnreachableHosts:
         assert await validator.validate("https://host.example/b") is False
 
         assert client.head.await_count == 2
+
+
+class _TrackingStream(httpx.AsyncByteStream):
+    """Response body that records whether anyone read it."""
+
+    def __init__(self) -> None:
+        self.read = False
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        self.read = True
+        yield b"\0" * 1024
+
+    async def aclose(self) -> None:
+        pass
+
+
+class TestGetFallbackBody:
+    async def test_body_is_not_downloaded(self) -> None:
+        """Only the status matters; the body can be a multi-GB file."""
+        body = _TrackingStream()
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "HEAD":
+                return httpx.Response(405)
+            return httpx.Response(200, stream=body)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            validator = HttpLinkValidator(client)
+            assert await validator.validate("https://files.example/big.mkv") is True
+
+        assert body.read is False
+
+
+class TestCachePruning:
+    async def test_expired_entries_are_pruned(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(http_link_validator, "_PRUNE_INTERVAL", 1)
+        validator = HttpLinkValidator(_mock_client(status_code=200))
+        validator._cache["https://old.example/x"] = _ValidationCacheEntry(True, 0)
+        validator._unreachable_until["gone.example"] = time.monotonic() - 1
+
+        await validator.validate("https://new.example/y")
+
+        assert "https://old.example/x" not in validator._cache
+        assert "https://new.example/y" in validator._cache
+        assert "gone.example" not in validator._unreachable_until

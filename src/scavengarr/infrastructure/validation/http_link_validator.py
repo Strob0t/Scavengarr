@@ -29,6 +29,9 @@ _UNREACHABLE_HOST_MAX_TTL = 900
 # Parallel validations per host, so one dead hoster with hundreds of links
 # cannot open hundreds of connections before it is known to be unreachable
 _MAX_CONCURRENT_PER_HOST = 4
+# Expired results are only replaced when the same URL comes again: drop
+# them every N validations so the cache does not grow forever
+_PRUNE_INTERVAL = 1000
 
 
 class _Unreachable(Exception):  # noqa: N818
@@ -88,6 +91,7 @@ class HttpLinkValidator:
         self._host_semaphores: defaultdict[str, asyncio.Semaphore] = defaultdict(
             lambda: asyncio.Semaphore(_MAX_CONCURRENT_PER_HOST)
         )
+        self._validations = 0
 
     def _is_unreachable(self, host: str) -> bool:
         until = self._unreachable_until.get(host)
@@ -104,6 +108,10 @@ class HttpLinkValidator:
         Returns:
             True if reachable (2xx/3xx) via HEAD or GET, False otherwise.
         """
+        self._validations += 1
+        if self._validations % _PRUNE_INTERVAL == 0:
+            self._prune()
+
         # Check cache
         cached = self._cache.get(url)
         if cached is not None and not cached.is_expired:
@@ -138,6 +146,15 @@ class HttpLinkValidator:
             ttl = _CACHE_TTL_VALID if is_valid else _CACHE_TTL_INVALID
             self._cache[url] = _ValidationCacheEntry(is_valid, ttl)
             return is_valid
+
+    def _prune(self) -> None:
+        """Drop expired results and expired unreachable-host marks."""
+        now = time.monotonic()
+        for url in [u for u, entry in self._cache.items() if entry.expires_at <= now]:
+            del self._cache[url]
+        expired_hosts = [h for h, t in self._unreachable_until.items() if t <= now]
+        for host in expired_hosts:
+            del self._unreachable_until[host]
 
     async def _try_head(self, url: str) -> bool:
         """Try HEAD request. Returns True if 2xx/3xx.
@@ -174,14 +191,19 @@ class HttpLinkValidator:
             return False
 
     async def _try_get(self, url: str) -> bool:
-        """Try GET request as fallback. Returns True if 2xx/3xx."""
+        """Try GET request as fallback. Returns True if 2xx/3xx.
+
+        Streamed: only the status matters, the body (possibly the whole
+        file) is never downloaded.
+        """
         try:
-            response = await self.http_client.get(
+            async with self.http_client.stream(
+                "GET",
                 url,
                 timeout=self.timeout,
                 follow_redirects=True,
-            )
-            is_valid = response.status_code < 400
+            ) as response:
+                is_valid = response.status_code < 400
 
             log.debug(
                 "link_get_fallback_result",

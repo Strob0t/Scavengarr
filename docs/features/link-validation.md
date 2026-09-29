@@ -55,7 +55,7 @@ Streaming hosters behave inconsistently:
 | Dead/expired links | 404 | 404 | Both fail — link invalid |
 | Timeout (slow/offline) | timeout | timeout | Both fail — link invalid |
 
-HEAD is tried first because it does not download the response body. Any HEAD failure (status ≥ 400 or an exception) triggers the GET fallback. Validation only checks the HTTP status; it does not detect hoster-specific "file not found" pages served with 200.
+HEAD is tried first because it does not download the response body. Any HEAD failure (status ≥ 400 or an exception) triggers the GET fallback, which is streamed: only the status is read, the body (possibly the whole file) is never downloaded. Validation only checks the HTTP status; it does not detect hoster-specific "file not found" pages served with 200.
 
 ---
 
@@ -126,7 +126,7 @@ async def validate(self, url: str) -> bool:
 ```
 
 - The semaphore wraps HEAD and the optional GET, so at most `max_concurrent` URLs are checked at once; per host at most `_MAX_CONCURRENT_PER_HOST` (4).
-- `_try_head()` and `_try_get()` both send the request with `follow_redirects=True` and the validator's timeout; status `< 400` is valid.
+- `_try_head()` and `_try_get()` both send the request with `follow_redirects=True` and the validator's timeout; status `< 400` is valid. `_try_get()` uses `client.stream("GET", …)` and closes the response without reading the body.
 - **Unreachable hosts:** when HEAD cannot even connect (`ConnectError`, `ConnectTimeout`), the host (and the failed URL) is skipped for `_UNREACHABLE_HOST_MIN_TTL` (60 s), doubling with every further connection failure up to `_UNREACHABLE_HOST_MAX_TTL` (15 min); the first answer from the host resets it. No GET retry is sent. The short start matters: a flat 15 min skip turned a 40 s network blip into 15 minutes without VOE, vinovo, kinoger, ... (measured 2026-09-29). Search results carry hundreds of links on dead hosters (uploaded.net, ul.to, go4up, uptobox, ...); one connection attempt per link used to produce bursts that home routers treat as a port scan — they then block the machine ("No route to host") and every other request fails too.
 - Exceptions never propagate: every failure returns `False`.
 
@@ -139,7 +139,7 @@ Validation outcomes are cached in memory per process (not in the diskcache/Redis
 | Valid | 6 hours (`_CACHE_TTL_VALID = 21600`) |
 | Invalid | 15 minutes (`_CACHE_TTL_INVALID = 900`) |
 
-Cache hits skip the semaphore and the network entirely.
+Cache hits skip the semaphore and the network entirely. Every 1,000 validations (`_PRUNE_INTERVAL`) expired results and expired unreachable-host marks are dropped; an expired entry is otherwise only replaced when the same URL comes again.
 
 ---
 
