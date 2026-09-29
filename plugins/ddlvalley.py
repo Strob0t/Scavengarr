@@ -17,6 +17,8 @@ import re
 from html.parser import HTMLParser
 from urllib.parse import quote_plus, urljoin, urlparse
 
+from patchright.async_api import Error as PlaywrightError
+
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
@@ -305,8 +307,15 @@ class DDLValleyPlugin(PlaywrightPluginBase):
         # Paginate search results (WordPress: ~10 posts/page)
         all_posts: list[dict[str, str]] = []
         page_num = 1
-        while len(all_posts) < self.effective_max_results:
-            posts = await self._search_posts(query, category_path, page_num)
+        while len(all_posts) < self.effective_max_results and page_num <= _MAX_PAGES:
+            try:
+                posts = await self._search_posts(query, category_path, page_num)
+            except PlaywrightError as exc:
+                # Keep the pages already collected
+                self._log.warning(
+                    "ddlvalley_search_page_failed", page=page_num, error=str(exc)
+                )
+                break
             if not posts:
                 break
             all_posts.extend(posts)

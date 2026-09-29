@@ -16,6 +16,8 @@ import asyncio
 from html.parser import HTMLParser
 from urllib.parse import quote_plus, urljoin
 
+from patchright.async_api import Error as PlaywrightError
+
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
@@ -342,7 +344,14 @@ class DDLSpotPlugin(PlaywrightPluginBase):
             if len(all_rows) >= self.effective_max_results:
                 break
 
-            html = await self._fetch_search_page(current_url)
+            try:
+                html = await self._fetch_search_page(current_url)
+            except PlaywrightError as exc:
+                # Keep the pages already collected
+                self._log.warning(
+                    "ddlspot_search_page_failed", url=current_url, error=str(exc)
+                )
+                break
             parser = _SearchResultParser()
             parser.feed(html)
 

@@ -535,6 +535,34 @@ class TestSearch:
         assert r2.category == 4000
         assert len(r2.download_links) == 3
 
+    async def test_search_page_failure_keeps_collected_rows(self) -> None:
+        """A timeout on page 2 must not discard page 1."""
+        from patchright.async_api import TimeoutError as PlaywrightTimeoutError
+
+        plugin = _make_plugin()
+        _mock_details(
+            plugin,
+            {
+                "/file/123/iron-man-2008/": _DETAIL_HTML_SINGLE,
+                "/file/456/ubuntu-24/": _DETAIL_HTML_MULTI,
+            },
+        )
+        page_1 = _make_mock_page(
+            _SEARCH_HTML
+            + '<div class="box-content">[ 1 ] &nbsp; '
+            + '<a href="/search/2/?q=iron+man&m=1">Next Page &raquo;</a></div>'
+        )
+        page_2 = _make_mock_page()
+        page_2.goto = AsyncMock(side_effect=PlaywrightTimeoutError("Timeout"))
+        context = _make_mock_context(pages=[page_1, page_2])
+        pw = _make_mock_playwright(_make_mock_browser(context))
+
+        with patch(_PW_PATCH) as mock_ap:
+            mock_ap.return_value.start = AsyncMock(return_value=pw)
+            results = await plugin.search("iron man")
+
+        assert [r.title for r in results] == ["Iron Man 2008 1080p", "Ubuntu 24.04 LTS"]
+
     async def test_search_no_results(self) -> None:
         plugin = _make_plugin()
 

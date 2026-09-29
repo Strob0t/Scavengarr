@@ -506,6 +506,8 @@ class BurningSeriesPlugin(HttpxPluginBase):
 
         # Category from genre
         category = _genre_to_category(genre)
+        # "2008 - 2013", "seit 2019", or no year at all
+        year_match = re.search(r"\d{4}", year)
 
         # Build description
         desc_parts: list[str] = []
@@ -521,7 +523,7 @@ class BurningSeriesPlugin(HttpxPluginBase):
             title=display_title,
             download_link=download_url,
             source_url=source_url,
-            published_date=re.search(r"\d{4}", year).group(0) if year else None,
+            published_date=year_match.group(0) if year_match else None,
             category=category,
             description=description or detail.description[:200] or None,
         )

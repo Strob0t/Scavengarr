@@ -7,6 +7,8 @@ from pathlib import Path
 from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "ddlvalley.py"
 
 
@@ -31,6 +33,14 @@ _hoster_from_domain = _mod._hoster_from_domain
 
 def _make_plugin() -> object:
     return _DDLValleyPlugin()
+
+
+_PAGING_DETAIL_HTML = """
+<html><head><title>Post | DDLValley</title></head><body>
+<div class="cont cl"><strong>Rapidgator</strong>
+<a href="https://rapidgator.net/file/abc">DL</a></div>
+</body></html>
+"""
 
 
 def _make_mock_page(content: str = "<html></html>") -> AsyncMock:
@@ -368,6 +378,61 @@ class TestPluginSearch:
         assert len(results[0].download_links) == 2
         assert results[0].download_links[0]["hoster"] == "rapidgator"
         assert results[0].download_links[1]["hoster"] == "nitroflare"
+
+    async def test_search_page_failure_keeps_collected_posts(self) -> None:
+        """A timeout on page 2 must not discard page 1."""
+        from patchright.async_api import TimeoutError as PlaywrightTimeoutError
+
+        plugin = _make_plugin()
+        search_page = _make_mock_page(
+            '<html><body><h2><a href="/movie-2025/">Movie.2025</a></h2></body></html>'
+        )
+        failing_page = _make_mock_page()
+        failing_page.goto = AsyncMock(side_effect=PlaywrightTimeoutError("Timeout"))
+        detail_page = _make_mock_page(_PAGING_DETAIL_HTML)
+        context = _make_mock_context(pages=[search_page, failing_page, detail_page])
+        plugin._browser = _make_mock_browser(context)
+        plugin._context = context
+
+        results = await plugin.search("movie")
+
+        assert [r.download_link for r in results] == ["https://rapidgator.net/file/abc"]
+
+    async def test_search_stops_at_max_pages(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A site that never runs out of pages must not be paged forever."""
+        monkeypatch.setattr(_mod, "_MAX_PAGES", 2)
+        plugin = _make_plugin()
+        plugin._max_results = 5
+
+        def _new_page() -> AsyncMock:
+            page = _make_mock_page()
+            state = {"url": ""}
+
+            async def _goto(url: str, **_: object) -> AsyncMock:
+                state["url"] = url
+                return AsyncMock(status=200)
+
+            async def _content() -> str:
+                url = state["url"]
+                if "?s=" not in url:
+                    return _PAGING_DETAIL_HTML
+                n = url.split("/page/")[1].split("/")[0] if "/page/" in url else "1"
+                return f'<h2><a href="/post-{n}/">Post.{n}</a></h2>'
+
+            page.goto = AsyncMock(side_effect=_goto)
+            page.content = AsyncMock(side_effect=_content)
+            return page
+
+        context = _make_mock_context()
+        context.new_page = AsyncMock(side_effect=lambda: _new_page())
+        plugin._browser = _make_mock_browser(context)
+        plugin._context = context
+
+        results = await plugin.search("post")
+
+        assert len(results) == 2
 
     async def test_search_no_results(self) -> None:
         plugin = _make_plugin()

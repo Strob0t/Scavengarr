@@ -305,6 +305,19 @@ class TestSeriesDetailParser:
 
         assert parser.episode_count == 3
 
+    def test_year_without_digits_does_not_crash(self, bs_mod):
+        plugin = bs_mod.BurningSeriesPlugin()
+        plugin.base_url = "https://burningseries.ac"
+        detail = bs_mod._SeriesDetailParser()
+        detail.year = "unbekannt"
+
+        sr = plugin._build_search_result(
+            {"title": "Show", "slug": "Show", "genre": "Drama"}, detail
+        )
+
+        assert sr.published_date is None
+        assert sr.title == "Show (unbekannt)"
+
     def test_episode_links(self, bs_mod):
         parser = bs_mod._SeriesDetailParser()
         parser.feed(DETAIL_HTML)
