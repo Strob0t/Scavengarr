@@ -2,7 +2,7 @@
 
 # Plan: Stremio Response Time and Playable Streams
 
-**Status:** Done for Scavengarr (2026-09-29); AIOStreams end-to-end measurement open (see [AIOStreams](#aiostreams))
+**Status:** Done (2026-09-29). AIOStreams deferred by decision: Scavengarr is added to Stremio directly; the [AIOStreams](#aiostreams) notes stay for later.
 **Priority:** High (Stremio is the main use case; cold answers take 17–38 s)
 **Related:** `src/scavengarr/application/use_cases/stremio_stream.py`, `application/stremio/plugin_search.py`, `infrastructure/circuit_breaker.py`, `infrastructure/hoster_resolvers/`, `data/config.yaml`
 
@@ -67,4 +67,4 @@ Goal was an AIOStreams test user on `aiostreams.lan` with Scavengarr as addon, m
 - `preferredLanguages: ["German", "Multi", "Dual Audio", "English", "Unknown"]`, `sortCriteria.global`: language, resolution, quality (all `desc`).
 - Scavengarr already returns one working stream per hoster, so AIOStreams dedup and result limits need no special handling for it. Whether AIOStreams parses language and resolution from Scavengarr's stream names reliably is unverified; if not, `formatPassthrough: true` keeps Scavengarr's own labels.
 
-Open: create the test user once `scavengarr.lan` runs this branch, then measure AIOStreams latency end to end.
+Deferred (2026-09-29): without other sources AIOStreams adds nothing Scavengarr does not already do (per-hoster dedup, German-first ranking, playback check) but costs latency and risks metadata misparsing, so Scavengarr is used directly in Stremio. If AIOStreams comes back (e.g. with debrid sources): create the test user, measure end to end, and check whether language/resolution of Scavengarr streams are parsed (else `resultPassthrough: true`).
