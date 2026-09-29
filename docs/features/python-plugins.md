@@ -166,7 +166,7 @@ plugin = MySitePlugin()
 - `cleanup()` — closes a private client (never the shared one)
 
 **Captcha and link helpers:**
-- `scavengarr.infrastructure.captcha.altcha.solve_altcha(challenge) -> str` — solves an ALTCHA v2 proof-of-work challenge (PBKDF2/SHA-256/384/512) and returns the base64 payload the widget would post; CPU-bound, call it via `asyncio.to_thread` (nox)
+- `scavengarr.infrastructure.captcha.altcha.solve_altcha(challenge) -> str` — solves an ALTCHA v2 proof-of-work challenge (PBKDF2/SHA-256/384/512) and returns the base64 payload the widget would post; CPU-bound, call it via `asyncio.to_thread` (nox). Site-supplied parameters are bounded (`cost` ≤ 500,000, `keyLength` 1–64, hex `keyPrefix` that fits the key) and the search gives up after 20 s (`AltchaError`): the thread cannot be cancelled
 - `scavengarr.infrastructure.captcha.detect.detect_challenge(status, html, headers=None)` — classifies a response as `cloudflare_page`, `ddos_guard`, `turnstile`, `hcaptcha`, `recaptcha` or `altcha` (`None` otherwise); `is_cloudflare_challenge()` is `detect_challenge(...) == "cloudflare_page"`. `_fetch_text()` logs the kind on errors
 - `scavengarr.infrastructure.plugins.clicknload.decrypt_cnl(jk, crypted) -> list[str]` — decrypts a Click'n'Load (CNL2) package (AES-128-CBC, key = IV = `jk`, zero padding; also tries the hex-swapped key); `[]` when unreadable (animeloads)
 

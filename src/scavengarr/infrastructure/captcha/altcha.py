@@ -24,6 +24,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 import struct
 import time
 from typing import Any
@@ -37,6 +38,15 @@ _DIGESTS: dict[str, str] = {
 # A two-hex-digit prefix needs ~256 attempts on average; the cap only stops a
 # runaway loop on a malformed or hostile challenge.
 _MAX_COUNTER = 1_000_000
+
+# Bounds for the site-supplied parameters: a hostile or broken challenge must
+# not pin a worker thread (``asyncio.to_thread`` cannot be cancelled). The
+# widget's default cost is 5000; one attempt at the cap takes well under a
+# second, a real challenge is solved in about one.
+_MAX_COST = 500_000
+_MAX_KEY_LENGTH = 64
+_MAX_SECONDS = 20.0
+_HEX_RE = re.compile(r"[0-9a-f]*")
 
 
 class AltchaError(Exception):
@@ -59,9 +69,17 @@ def solve_altcha(challenge: dict[str, Any]) -> str:
     digest = _DIGESTS.get(algorithm)
     if digest is None:
         raise AltchaError(f"unsupported algorithm: {algorithm}")
+    if not 1 <= cost <= _MAX_COST:
+        raise AltchaError(f"cost out of range: {cost}")
+    if not 1 <= key_length <= _MAX_KEY_LENGTH:
+        raise AltchaError(f"keyLength out of range: {key_length}")
+    if not _HEX_RE.fullmatch(key_prefix) or len(key_prefix) > 2 * key_length:
+        raise AltchaError(f"unsatisfiable keyPrefix: {key_prefix[:20]!r}")
 
     started = time.monotonic()
     for counter in range(_MAX_COUNTER):
+        if time.monotonic() - started > _MAX_SECONDS:
+            raise AltchaError(f"gave up after {_MAX_SECONDS:.0f} s, counter {counter}")
         password = nonce + struct.pack(">I", counter)
         derived = hashlib.pbkdf2_hmac(digest, password, salt, cost, key_length).hex()
         if derived.startswith(key_prefix):

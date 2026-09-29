@@ -89,3 +89,32 @@ class TestSolveAltcha:
 
         with pytest.raises(AltchaError, match="no solution"):
             solve_altcha(_challenge(key_prefix="00000000"))
+
+
+class TestHostileChallenges:
+    """Site-supplied parameters must not pin a worker thread for hours."""
+
+    def test_rejects_excessive_cost(self) -> None:
+        with pytest.raises(AltchaError, match="cost"):
+            solve_altcha(_challenge(cost=50_000_000))
+
+    @pytest.mark.parametrize("key_length", [0, 100_000_000])
+    def test_rejects_key_length_out_of_range(self, key_length: int) -> None:
+        challenge = _challenge()
+        challenge["parameters"]["keyLength"] = key_length
+
+        with pytest.raises(AltchaError, match="keyLength"):
+            solve_altcha(challenge)
+
+    @pytest.mark.parametrize("key_prefix", ["zz", "0" * 65])
+    def test_rejects_unsatisfiable_key_prefix(self, key_prefix: str) -> None:
+        with pytest.raises(AltchaError, match="keyPrefix"):
+            solve_altcha(_challenge(key_prefix=key_prefix))
+
+    def test_gives_up_after_the_time_budget(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(altcha, "_MAX_SECONDS", 0.0)
+
+        with pytest.raises(AltchaError, match="gave up"):
+            solve_altcha(_challenge(key_prefix="00000000"))
