@@ -46,7 +46,6 @@ _TLD_MAP: dict[str, str] = {
     "streamwish": "com",
     "vidmoly": "me",
     "vidoza": "net",
-    "vinovo": "to",
     "vidhide": "com",
     "streamruby": "com",
     "lulustream": "com",
@@ -85,9 +84,6 @@ def _make_url(config: XFSConfig) -> str:
     tld = _TLD_MAP.get(config.name, "com")
     file_id = _file_id_for(config)
 
-    # Vinovo's regex requires /e/ or /d/ prefix (the group is NOT optional).
-    if config.name == "vinovo":
-        return f"https://{domain}.{tld}/e/{file_id}"
     return f"https://{domain}.{tld}/{file_id}"
 
 
@@ -160,7 +156,7 @@ class TestXFSConfigInvariants:
             assert len(cfg.offline_markers) > 0, f"{cfg.name} has no markers"
 
     def test_config_count(self) -> None:
-        assert len(ALL_XFS_CONFIGS) == 26
+        assert len(ALL_XFS_CONFIGS) == 25
 
     def test_configs_are_frozen(self) -> None:
         for cfg in ALL_XFS_CONFIGS:
@@ -169,11 +165,11 @@ class TestXFSConfigInvariants:
 
     def test_video_hoster_count(self) -> None:
         video_count = sum(1 for c in ALL_XFS_CONFIGS if c.is_video_hoster)
-        assert video_count == 20
+        assert video_count == 19
 
     def test_captcha_count(self) -> None:
         captcha_count = sum(1 for c in ALL_XFS_CONFIGS if c.needs_captcha)
-        assert captcha_count == 2
+        assert captcha_count == 1  # wolfstream (vinovo has its own resolver)
 
     def test_ddl_count(self) -> None:
         ddl_count = sum(1 for c in ALL_XFS_CONFIGS if not c.is_video_hoster)

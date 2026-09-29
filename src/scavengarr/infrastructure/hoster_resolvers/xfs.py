@@ -506,18 +506,6 @@ VIDOZA = XFSConfig(
     is_video_hoster=True,
 )
 
-VINOVO = XFSConfig(
-    name="vinovo",
-    domains=frozenset({"vinovo"}),
-    file_id_re=re.compile(r"^/(?:e/|d/)([a-zA-Z0-9]{12,})(?:/|$)"),
-    offline_markers=(
-        *_EXTENDED_MARKERS,
-        "Video not found",
-    ),
-    is_video_hoster=True,
-    needs_captcha=True,
-)
-
 VIDHIDE = XFSConfig(
     name="vidhide",
     domains=frozenset(
@@ -690,7 +678,6 @@ ALL_XFS_CONFIGS: tuple[XFSConfig, ...] = (
     STREAMWISH,
     VIDMOLY,
     VIDOZA,
-    VINOVO,
     VIDHIDE,
     STREAMRUBY,
     LULUSTREAM,
