@@ -21,8 +21,11 @@ _CACHE_TTL_VALID = 21600  # 6 hours for valid links
 _CACHE_TTL_INVALID = 900  # 15 minutes for invalid links
 
 # A host that refused or dropped the connection is not contacted again for
-# this long: its other links count as invalid without a request
-_UNREACHABLE_HOST_TTL = 900
+# a while: its other links count as invalid without a request. The skip
+# starts short (a local network blip must not hide a hoster for long) and
+# doubles with every further failure up to the maximum.
+_UNREACHABLE_HOST_MIN_TTL = 60
+_UNREACHABLE_HOST_MAX_TTL = 900
 # Parallel validations per host, so one dead hoster with hundreds of links
 # cannot open hundreds of connections before it is known to be unreachable
 _MAX_CONCURRENT_PER_HOST = 4
@@ -57,8 +60,9 @@ class HttpLinkValidator:
         - URL deduplication: each unique URL is validated once per batch.
         - Result caching: validation outcomes are cached in-memory with TTL.
         - Unreachable hosts: after a connection-level failure (refused,
-          connect timeout) a host is skipped for ``_UNREACHABLE_HOST_TTL``
-          and no GET retry is sent. Dead hosters with hundreds of links
+          connect timeout) a host is skipped for 60 s, doubling with each
+          further failure up to 15 min (reset once it answers), and no GET
+          retry is sent. Dead hosters with hundreds of links
           otherwise cause connection bursts that home routers treat as a
           port scan (they block the machine: "No route to host").
         - At most ``_MAX_CONCURRENT_PER_HOST`` validations per host at once.
@@ -80,6 +84,7 @@ class HttpLinkValidator:
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._cache: dict[str, _ValidationCacheEntry] = {}
         self._unreachable_until: dict[str, float] = {}
+        self._unreachable_ttl: dict[str, int] = {}
         self._host_semaphores: defaultdict[str, asyncio.Semaphore] = defaultdict(
             lambda: asyncio.Semaphore(_MAX_CONCURRENT_PER_HOST)
         )
@@ -111,14 +116,24 @@ class HttpLinkValidator:
                 log.debug("link_host_unreachable_skipped", url=url, host=host)
                 return False
             try:
-                if await self._try_head(url):
-                    self._cache[url] = _ValidationCacheEntry(True, _CACHE_TTL_VALID)
-                    return True
+                head_ok = await self._try_head(url)
             except _Unreachable:
-                self._unreachable_until[host] = time.monotonic() + _UNREACHABLE_HOST_TTL
-                log.info("link_host_unreachable", host=host, url=url)
-                self._cache[url] = _ValidationCacheEntry(False, _CACHE_TTL_INVALID)
+                prev = self._unreachable_ttl.get(host)
+                ttl = (
+                    min(prev * 2, _UNREACHABLE_HOST_MAX_TTL)
+                    if prev
+                    else _UNREACHABLE_HOST_MIN_TTL
+                )
+                self._unreachable_ttl[host] = ttl
+                self._unreachable_until[host] = time.monotonic() + ttl
+                log.info("link_host_unreachable", host=host, url=url, skip_s=ttl)
+                self._cache[url] = _ValidationCacheEntry(False, ttl)
                 return False
+            # The host answered: a later connection failure starts short again
+            self._unreachable_ttl.pop(host, None)
+            if head_ok:
+                self._cache[url] = _ValidationCacheEntry(True, _CACHE_TTL_VALID)
+                return True
             is_valid = await self._try_get(url)
             ttl = _CACHE_TTL_VALID if is_valid else _CACHE_TTL_INVALID
             self._cache[url] = _ValidationCacheEntry(is_valid, ttl)

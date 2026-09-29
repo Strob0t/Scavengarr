@@ -111,20 +111,23 @@ async def validate(self, url: str) -> bool:
         if self._is_unreachable(host):          # host failed to connect lately
             return False
         try:
-            if await self._try_head(url):
-                self._cache[url] = _ValidationCacheEntry(True, _CACHE_TTL_VALID)
-                return True
+            head_ok = await self._try_head(url)
         except _Unreachable:                    # ConnectError / ConnectTimeout
-            self._unreachable_until[host] = time.monotonic() + _UNREACHABLE_HOST_TTL
-            self._cache[url] = _ValidationCacheEntry(False, _CACHE_TTL_INVALID)
+            ttl = 60 s on the first failure, doubled on each further one (max 900 s)
+            self._unreachable_until[host] = time.monotonic() + ttl
+            self._cache[url] = _ValidationCacheEntry(False, ttl)
             return False                        # no GET retry
+        self._unreachable_ttl.pop(host, None)   # host answered: reset backoff
+        if head_ok:
+            self._cache[url] = _ValidationCacheEntry(True, _CACHE_TTL_VALID)
+            return True
         is_valid = await self._try_get(url)
         ...
 ```
 
 - The semaphore wraps HEAD and the optional GET, so at most `max_concurrent` URLs are checked at once; per host at most `_MAX_CONCURRENT_PER_HOST` (4).
 - `_try_head()` and `_try_get()` both send the request with `follow_redirects=True` and the validator's timeout; status `< 400` is valid.
-- **Unreachable hosts:** when HEAD cannot even connect (`ConnectError`, `ConnectTimeout`), the host is skipped for `_UNREACHABLE_HOST_TTL` (15 min) and no GET retry is sent. Search results carry hundreds of links on dead hosters (uploaded.net, ul.to, go4up, uptobox, ...); one connection attempt per link used to produce bursts that home routers treat as a port scan — they then block the machine ("No route to host") and every other request fails too.
+- **Unreachable hosts:** when HEAD cannot even connect (`ConnectError`, `ConnectTimeout`), the host (and the failed URL) is skipped for `_UNREACHABLE_HOST_MIN_TTL` (60 s), doubling with every further connection failure up to `_UNREACHABLE_HOST_MAX_TTL` (15 min); the first answer from the host resets it. No GET retry is sent. The short start matters: a flat 15 min skip turned a 40 s network blip into 15 minutes without VOE, vinovo, kinoger, ... (measured 2026-09-29). Search results carry hundreds of links on dead hosters (uploaded.net, ul.to, go4up, uptobox, ...); one connection attempt per link used to produce bursts that home routers treat as a port scan — they then block the machine ("No route to host") and every other request fails too.
 - Exceptions never propagate: every failure returns `False`.
 
 ### Result Cache

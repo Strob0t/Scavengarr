@@ -315,9 +315,84 @@ class TestUnreachableHosts:
         validator = HttpLinkValidator(client)
 
         await validator.validate("https://dead-host.example/a")
-        now[0] += mod._UNREACHABLE_HOST_TTL + 1
+        now[0] += mod._UNREACHABLE_HOST_MIN_TTL + 1
         await validator.validate("https://dead-host.example/b")
 
+        assert client.head.await_count == 2
+
+    async def test_short_outage_does_not_block_same_url_long(self, monkeypatch) -> None:
+        """A network blip must not mark a link invalid for 15 minutes."""
+        from scavengarr.infrastructure.validation import http_link_validator as mod
+
+        now = [1000.0]
+        monkeypatch.setattr(mod.time, "monotonic", lambda: now[0])
+        client = _mock_client(side_effect=httpx.ConnectError("network down"))
+        validator = HttpLinkValidator(client)
+        assert await validator.validate("https://voe.example/e/1") is False
+
+        ok = MagicMock(status_code=200)
+        client.head = AsyncMock(return_value=ok)
+        now[0] += mod._UNREACHABLE_HOST_MIN_TTL + 1
+
+        assert await validator.validate("https://voe.example/e/1") is True
+
+    async def test_repeated_unreachable_backs_off(self, monkeypatch) -> None:
+        from scavengarr.infrastructure.validation import http_link_validator as mod
+
+        now = [1000.0]
+        monkeypatch.setattr(mod.time, "monotonic", lambda: now[0])
+        client = _mock_client(side_effect=httpx.ConnectError("refused"))
+        validator = HttpLinkValidator(client)
+        step = mod._UNREACHABLE_HOST_MIN_TTL + 1
+
+        await validator.validate("https://dead-host.example/a")
+        now[0] += step
+        await validator.validate("https://dead-host.example/b")  # 2nd failure
+        now[0] += step
+        await validator.validate("https://dead-host.example/c")  # still skipped
+        assert client.head.await_count == 2
+
+        now[0] += step
+        await validator.validate("https://dead-host.example/d")
+        assert client.head.await_count == 3
+
+    async def test_backoff_capped(self, monkeypatch) -> None:
+        from scavengarr.infrastructure.validation import http_link_validator as mod
+
+        now = [1000.0]
+        monkeypatch.setattr(mod.time, "monotonic", lambda: now[0])
+        client = _mock_client(side_effect=httpx.ConnectError("refused"))
+        validator = HttpLinkValidator(client)
+
+        for i in range(12):
+            await validator.validate(f"https://dead-host.example/{i}")
+            now[0] += mod._UNREACHABLE_HOST_MAX_TTL + 1
+
+        assert client.head.await_count == 12
+
+    async def test_reachable_again_resets_backoff(self, monkeypatch) -> None:
+        from scavengarr.infrastructure.validation import http_link_validator as mod
+
+        now = [1000.0]
+        monkeypatch.setattr(mod.time, "monotonic", lambda: now[0])
+        dead = httpx.ConnectError("refused")
+        ok = MagicMock(status_code=200)
+        client = _mock_client(side_effect=dead)
+        validator = HttpLinkValidator(client)
+        step = mod._UNREACHABLE_HOST_MIN_TTL + 1
+
+        await validator.validate("https://host.example/a")
+        now[0] += step
+        await validator.validate("https://host.example/b")  # backoff doubles
+        now[0] += 2 * step
+        client.head = AsyncMock(return_value=ok)
+        assert await validator.validate("https://host.example/c") is True
+
+        client.head = AsyncMock(side_effect=dead)
+        await validator.validate("https://host.example/d")
+        now[0] += step
+        await validator.validate("https://host.example/e")
+        # back to the short skip: /e was contacted again
         assert client.head.await_count == 2
 
     async def test_batch_contacts_dead_host_at_most_per_host_limit(self) -> None:
