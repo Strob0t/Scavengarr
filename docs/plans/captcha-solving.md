@@ -79,7 +79,7 @@ Live, Patchright headful under Xvfb:
 - Links come as Click'n'Load: AES-128-CBC, key = IV = `unhexlify(jk)` (some clients swap hex chars 15/16), zero padding → `https://rapidgator.net/file/…/onepunchman.1080p.e01.rar.html`.
 - Error messages: `slowdown` (rate limit), `wrong_captcha`, `cnl_login`.
 
-Open before implementation: which release/episodes a grab of a series-level result resolves to, and how to decrypt Click'n'Load (new `cryptography` dependency vs. WebCrypto in the page).
+Follow-up findings: the whole-release request (`"cnl"`) needs a login (`cnl_login`); anonymously every episode needs its own captcha. Rapid captcha bursts get `wrong_captcha` or rejected answers, so grabs pace ~6 s per episode.
 
 ## Embedded Turnstile (2026-09-29)
 
@@ -98,7 +98,7 @@ A generic "solve the widget, read `cf-turnstile-response`" helper stays unbuilt 
 | 1 | ALTCHA solver, `GrabResolvingPlugin` + `CrawlJobResolveUseCase`, nox links on grab | done |
 | 2 | nox: log the gateway's block reason, live smoke for grab resolution | done |
 | 3 | Shared captcha detector (`infrastructure/captcha/detect.py`), logging + scoring | done |
-| 4 | animeloads: odd-one-out captcha in the browser, links on grab | spike done, open questions |
+| 4 | animeloads: odd-one-out captcha in the browser, links on grab | done (anonymous: releases ≤ 13 episodes; login path untested live) |
 | 5 | Keep clearance cookies across restarts (B3) | done (live: 4.9 s with challenge → 0.9 s after restart) |
 | 6 | Embedded Turnstile tokens (vinovo, devideosrc, doodstream) | done: none needs a token flow (see below) |
 | 7 | Byparr sidecar as second `BrowserFetcherPort` | done (not verified live: no Docker in the dev container) |

@@ -4,7 +4,20 @@ Scrapes anime-loads.org (German anime/manga streaming & download site) via Playw
 - GET /search?q={query} for search (server-rendered HTML behind DDoS-Guard)
 - Pagination via /search/page/{n}?q={query}, 20 results per page
 - Anime series, movies, OVAs, live action with rich metadata
-- Download/stream links behind per-episode captcha — provides media page URLs
+- Torznab: one result per release of the first series (media page tab
+  ``#download_<n>``: group, resolution, languages, archive password);
+  Stremio: one result per series with its preview stream
+
+Download links are resolved when a release is grabbed
+(``resolve_download``, docs/plans/captcha-solving.md):
+``POST /ajax/captcha`` with ``enc=base64(["media", slug, "downloads",
+release, episode | "cnl"])`` answers ``noadblock`` → the site's "odd one out"
+image captcha (5 × 48 px images; the odd one differs in ~4× as many pixels,
+compared on a canvas in the page) → Click'n'Load-encrypted links per hoster.
+Anonymous users need one captcha per episode ("cnl" = whole release needs a
+login), so without ``SCAVENGARR_ANIMELOADS_USERNAME`` / ``_PASSWORD`` only
+releases up to ``_MAX_ANON_EPISODES`` episodes are resolved. The requests run
+in the page's main world with the site's jQuery (``isolated_context=False``).
 
 DDoS-Guard protection requires browser-based access (Playwright mode).
 Domain fallback: www.anime-loads.org, anime-loads.org
@@ -13,9 +26,19 @@ No authentication required for search.
 
 from __future__ import annotations
 
+import asyncio
+import base64
+import json
+import os
+import re
+from contextvars import ContextVar
+from typing import Any
+from urllib.parse import parse_qs, unquote, urlsplit
+
 from patchright.async_api import Page
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.clicknload import decrypt_cnl
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
 # ---------------------------------------------------------------------------
@@ -29,6 +52,29 @@ _PAGE_SIZE = 20
 _MAX_PAGES = 50  # 20/page * 50 = 1000
 _DDOS_TIMEOUT = 30_000  # ms to wait for DDoS-Guard resolution
 _NAV_TIMEOUT = 30_000
+
+# Release expansion: media pages opened per search (browser pages are heavy)
+_MAX_EXPANDED_SERIES = 10
+_EXPAND_CONCURRENCY = 2
+
+# Grab: captcha attempts per request, episodes an anonymous grab may solve,
+# pacing between captcha steps / episodes (the site answers "wrong_captcha"
+# to rapid bursts even for correct answers)
+_CAPTCHA_ATTEMPTS = 5
+# A rejected answer is often a rate limit (the site answers "" for both)
+_REJECT_PAUSE_S = 4.0
+_MAX_ANON_EPISODES = 13
+_STEP_PAUSE_S = 1.0
+_EPISODE_PAUSE_S = 2.0
+
+_USERNAME_ENV = "SCAVENGARR_ANIMELOADS_USERNAME"
+_PASSWORD_ENV = "SCAVENGARR_ANIMELOADS_PASSWORD"  # noqa: S105  (env var name)
+
+# False while Stremio searches (isolated_search): it needs the series'
+# preview stream, not releases
+_EXPAND_RELEASES: ContextVar[bool] = ContextVar(
+    "animeloads_expand_releases", default=True
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -158,11 +204,124 @@ def _matches_category(content_type: str, category: int | None) -> bool:
     return True
 
 
+# Releases of a media page: nav pill "Release 2: 1080p |" + tab #download_2
+# with a th/td table and one a[data-loop] per episode (+ "cnl" for all).
+_EXTRACT_RELEASES_JS = """
+() => [...document.querySelectorAll('#downloads ul.nav-pills a[href^="#download_"]')]
+  .map(a => {
+    const id = parseInt(a.getAttribute('href').slice('#download_'.length), 10);
+    const pane = document.getElementById('download_' + id);
+    const cell = name => {
+      for (const tr of pane ? pane.querySelectorAll('tr') : []) {
+        const th = tr.querySelector('th'), td = tr.querySelector('td');
+        if (th && td && th.textContent.trim() === name) return td;
+      }
+      return null;
+    };
+    const text = name => ((cell(name) || {}).textContent || '').trim();
+    const flags = name => [...((cell(name) || document.createElement('i'))
+      .querySelectorAll('[title]'))].map(f => f.getAttribute('title'));
+    const episodes = document.querySelectorAll(
+      '#downloads_episodes_' + id + ' a[data-loop]:not([data-loop="cnl"])').length;
+    return {id, label: a.innerText.trim(), group: text('Release Group'),
+            resolution: text('Resolution'), format: text('Typ'),
+            size: text('Filesize'), languages: flags('Language'),
+            subtitles: flags('Subtitles'), password: text('Password'),
+            notes: text('Release Notes'), episodes};
+  })
+  .filter(r => Number.isInteger(r.id))
+"""
+
+# jQuery POST in the page's main world (the site rejects raw XHR here)
+_AJAX_JS = """
+([url, data]) => new Promise(resolve => $.ajax({url, type: 'post', data,
+  complete: xhr => resolve(xhr.responseText || '')}))
+"""
+
+# Load a new "odd one out" captcha and return the hash of the odd image:
+# the one whose pixels differ most from all others.
+_CAPTCHA_PICK_JS = """
+async () => {
+  const hashes = JSON.parse(await new Promise(resolve => $.ajax({
+    url: '/files/captcha', type: 'post', data: {cID: 0, rT: 1},
+    complete: xhr => resolve(xhr.responseText || '[]')})));
+  if (!Array.isArray(hashes) || hashes.length < 3) return null;
+  const images = await Promise.all(hashes.map(h => new Promise((ok, fail) => {
+    const img = new Image(); img.onload = () => ok(img); img.onerror = fail;
+    img.src = '/files/captcha?cid=0&hash=' + h; })));
+  const pixels = images.map(img => {
+    const c = document.createElement('canvas');
+    c.width = img.naturalWidth; c.height = img.naturalHeight;
+    const g = c.getContext('2d'); g.drawImage(img, 0, 0);
+    return g.getImageData(0, 0, c.width, c.height).data; });
+  const diff = (a, b) => {
+    if (a.length !== b.length) return a.length + b.length;
+    let n = 0;
+    for (let i = 0; i < a.length; i += 4)
+      if (a[i] !== b[i] || a[i + 1] !== b[i + 1] || a[i + 2] !== b[i + 2]) n++;
+    return n; };
+  const scores = pixels.map((a, i) =>
+    pixels.reduce((s, b, j) => i === j ? s : s + diff(a, b), 0));
+  return hashes[scores.indexOf(Math.max(...scores))];
+}
+"""
+
+_RELEASE_LABEL_RE = re.compile(r":\s*([^|]+)")
+_PACKAGE_SIZE_RE = re.compile(r"Package:\s*~?\s*([\d.,]+\s*[KMGT]i?B)", re.IGNORECASE)
+_SIZE_RE = re.compile(r"([\d.,]+\s*[KMGT]i?B)", re.IGNORECASE)
+_MEDIA_PATH_RE = re.compile(r"^/media/([^/]+)/?$")
+_QUALITY_BY_WIDTH: tuple[tuple[int, str], ...] = (
+    (3800, "2160p"),
+    (1900, "1080p"),
+    (1260, "720p"),
+    (0, "480p"),
+)
+
+
+def _quality(release: dict[str, Any]) -> str:
+    """ "1080p WebRip" from resolution (or the pill label) and release notes.
+
+    The width decides (crops like 1920x800 are still 1080p), mapped to the
+    standard names Arr apps recognise.
+    """
+    match = re.match(r"(\d{3,4})x\d{3,4}$", str(release.get("resolution", "")).strip())
+    if match:
+        width = int(match.group(1))
+        res = next(name for w, name in _QUALITY_BY_WIDTH if width >= w)
+    else:
+        label = _RELEASE_LABEL_RE.search(str(release.get("label", "")))
+        res = label.group(1).strip() if label else ""
+    return " ".join(p for p in (res, str(release.get("notes", "")).strip()) if p)
+
+
+def _release_size(text: str) -> str | None:
+    """Package size of the whole release ("Ø 742 MB (Package: ~8.70 GB)")."""
+    match = _PACKAGE_SIZE_RE.search(text) or _SIZE_RE.search(text)
+    return match.group(1) if match else None
+
+
+def _enc(slug: str, release_id: int, episode: int | str) -> str:
+    """Request token of the links endpoint (episode index or "cnl" = all)."""
+    payload = json.dumps(["media", slug, "downloads", release_id, episode])
+    return base64.b64encode(payload.replace(" ", "").encode()).decode()
+
+
+def _links_from_content(content: object) -> list[str]:
+    """Decrypt the Click'n'Load package of every hoster in a success answer."""
+    items = list(content.values()) if isinstance(content, dict) else content
+    links: list[str] = []
+    for item in items if isinstance(items, list) else []:
+        cnl = item.get("cnl") if isinstance(item, dict) else None
+        if isinstance(cnl, dict) and cnl.get("jk") and cnl.get("crypted"):
+            links.extend(decrypt_cnl(str(cnl["jk"]), str(cnl["crypted"])))
+    return links
+
+
 class AnimeLoadsPlugin(PlaywrightPluginBase):
     """Python plugin for anime-loads.org using Playwright (DDoS-Guard bypass)."""
 
     name = "animeloads"
-    version = "1.0.0"
+    version = "1.1.0"
     mode = "playwright"
     provides = "both"
     default_language = "de"
@@ -181,6 +340,7 @@ class AnimeLoadsPlugin(PlaywrightPluginBase):
                 "nav, .panel-default",
                 timeout=_DDOS_TIMEOUT,
             )
+            await self._remember_clearance(page)  # __ddg* cookies
             return True
         except Exception:  # noqa: BLE001
             # Check if we're still on the DDoS-Guard page
@@ -342,9 +502,12 @@ class AnimeLoadsPlugin(PlaywrightPluginBase):
         page = await self._new_page()
         try:
             await self._verify_domain()
-            return await self._search_all_pages(page, query, effective_category)
+            results = await self._search_all_pages(page, query, effective_category)
         finally:
             await page.close()
+        if results and _EXPAND_RELEASES.get():
+            results = await self._expand_releases(results)
+        return results[: self.effective_max_results]
 
     async def _search_all_pages(
         self,
@@ -387,6 +550,237 @@ class AnimeLoadsPlugin(PlaywrightPluginBase):
             sr = self._build_search_result(entry)
             results.append(sr)
         return results
+
+    # ------------------------------------------------------------------
+    # Releases (Torznab: one result per release)
+    # ------------------------------------------------------------------
+
+    async def isolated_search(
+        self,
+        query: str,
+        category: int | None = None,
+        *,
+        season: int | None = None,
+        episode: int | None = None,
+    ) -> list[SearchResult]:
+        """Stremio search: series results with their preview stream."""
+        token = _EXPAND_RELEASES.set(False)
+        try:
+            return await super().isolated_search(
+                query, category, season=season, episode=episode
+            )
+        finally:
+            _EXPAND_RELEASES.reset(token)
+
+    async def _media_releases(self, media_url: str) -> list[dict[str, Any]]:
+        """Load a media page and read its releases (``[]`` on failure)."""
+        page = await self._new_page()
+        try:
+            await page.goto(media_url, wait_until="domcontentloaded")
+            if not await self._wait_for_ddos_guard(page):
+                return []
+            releases = await page.evaluate(_EXTRACT_RELEASES_JS)
+        except Exception as exc:  # noqa: BLE001
+            self._log.warning(
+                "animeloads_releases_failed", url=media_url, error=str(exc)
+            )
+            return []
+        finally:
+            await page.close()
+        return [r for r in releases or [] if isinstance(r, dict)]
+
+    async def _expand_releases(self, results: list[SearchResult]) -> list[SearchResult]:
+        """Replace the first series results by one result per release.
+
+        A series whose media page fails or lists no release stays as is.
+        """
+        head = results[:_MAX_EXPANDED_SERIES]
+        sem = asyncio.Semaphore(_EXPAND_CONCURRENCY)
+
+        async def _one(series: SearchResult) -> list[SearchResult]:
+            if not series.source_url:
+                return [series]
+            async with sem:
+                releases = await self._media_releases(series.source_url)
+            return [self._release_result(series, r) for r in releases] or [series]
+
+        expanded = await asyncio.gather(*(_one(s) for s in head))
+        out = [r for group in expanded for r in group]
+        self._log.info("animeloads_releases", series=len(head), results_count=len(out))
+        return out + results[_MAX_EXPANDED_SERIES:]
+
+    def _release_result(
+        self, series: SearchResult, release: dict[str, Any]
+    ) -> SearchResult:
+        """One Torznab result for a release of *series*."""
+        link = f"{series.source_url}?release={release['id']}"
+        langs = ", ".join(release.get("languages") or [])
+        subs = ", ".join(release.get("subtitles") or [])
+        audio = " | ".join(p for p in (langs, f"Sub: {subs}" if subs else "") if p)
+        parts = [_quality(release), audio, str(release.get("group", "")).strip()]
+        title = series.title + "".join(f" [{p}]" for p in parts if p)
+
+        metadata = {
+            **series.metadata,
+            "release_group": str(release.get("group", "")).strip(),
+            "release_episodes": str(release.get("episodes", "")),
+        }
+        password = str(release.get("password", "")).strip()
+        if password:
+            metadata["archive_password"] = password
+
+        return SearchResult(
+            title=title,
+            download_link=link,
+            validated_links=[link],  # Pre-validated: DDoS-Guard blocks httpx
+            source_url=series.source_url,
+            size=_release_size(str(release.get("size", ""))),
+            published_date=series.published_date,
+            category=series.category,
+            description=series.description,
+            metadata=metadata,
+        )
+
+    # ------------------------------------------------------------------
+    # Grab-time links (GrabResolvingPlugin)
+    # ------------------------------------------------------------------
+
+    async def resolve_download(self, url: str) -> list[str]:
+        """Resolve a release URL (``/media/<slug>?release=<n>``) to hoster links.
+
+        Series-level URLs (Stremio preview, results that could not be
+        expanded) are returned unchanged. All episodes or nothing: a partial
+        season would break the grab.
+        """
+        parts = urlsplit(url)
+        match = _MEDIA_PATH_RE.match(parts.path)
+        release_param = parse_qs(parts.query).get("release", [""])[0]
+        if match is None or not release_param.isdigit():
+            return [url]
+        slug, release_id = match.group(1), int(release_param)
+        media_url = f"{parts.scheme}://{parts.netloc}{parts.path}"
+
+        page = await self._new_page()
+        try:
+            await page.goto(media_url, wait_until="domcontentloaded")
+            if not await self._wait_for_ddos_guard(page):
+                return []
+            await self._remember_clearance(page)
+            releases = await page.evaluate(_EXTRACT_RELEASES_JS)
+            release = next(
+                (r for r in releases or [] if r.get("id") == release_id), None
+            )
+            if release is None:
+                self._log.warning("animeloads_release_missing", url=url)
+                return []
+            return await self._release_links(page, slug, release_id, release)
+        except Exception as exc:  # noqa: BLE001
+            self._log.warning("animeloads_resolve_failed", url=url, error=str(exc))
+            return []
+        finally:
+            await page.close()
+
+    async def _release_links(
+        self, page: Page, slug: str, release_id: int, release: dict[str, Any]
+    ) -> list[str]:
+        if await self._login(page):
+            links = await self._request_links(page, _enc(slug, release_id, "cnl"))
+            if links is not None:
+                return links
+
+        episodes = int(release.get("episodes") or 0)
+        if not 0 < episodes <= _MAX_ANON_EPISODES:
+            self._log.warning(
+                "animeloads_release_too_long",
+                episodes=episodes,
+                limit=_MAX_ANON_EPISODES,
+                hint=f"set {_USERNAME_ENV}/{_PASSWORD_ENV} for whole releases",
+            )
+            return []
+        links: list[str] = []
+        for episode in range(episodes):
+            if episode:
+                await asyncio.sleep(_EPISODE_PAUSE_S)
+            found = await self._request_links(page, _enc(slug, release_id, episode))
+            if not found:
+                return []
+            links.extend(found)
+        return links
+
+    async def _ajax(self, page: Page, url: str, data: dict[str, Any]) -> str:
+        return await page.evaluate(_AJAX_JS, [url, data], isolated_context=False)
+
+    async def _login(self, page: Page) -> bool:
+        """Sign in with the configured account (``False`` without one)."""
+        username = os.environ.get(_USERNAME_ENV, "")
+        password = os.environ.get(_PASSWORD_ENV, "")
+        if not username or not password:
+            return False
+        if not await self._logged_in(page):
+            await self._ajax(
+                page,
+                "/auth/signin",
+                {"identity": username, "password": password, "remember": 1},
+            )
+        if await self._logged_in(page):
+            return True
+        self._log.warning("animeloads_login_failed", username=username)
+        return False
+
+    @staticmethod
+    async def _logged_in(page: Page) -> bool:
+        cookies = await page.context.cookies()
+        return any("username" in unquote(str(c.get("value", ""))) for c in cookies)
+
+    async def _request_links(self, page: Page, enc: str) -> list[str] | None:
+        """Links for one request token; solves the captcha when asked to.
+
+        ``None`` when the site refuses (rate limit, login needed, captcha
+        not solved).
+        """
+        answer = await self._ajax(
+            page, "/ajax/captcha", {"enc": enc, "response": "nocaptcha"}
+        )
+        for _ in range(_CAPTCHA_ATTEMPTS):
+            data = json.loads(answer) if answer else {}
+            if data.get("code") == "success":
+                return _links_from_content(data.get("content"))
+            if data.get("message") != "noadblock":
+                self._log.warning(
+                    "animeloads_links_refused", message=data.get("message")
+                )
+                return None
+            answer = await self._solve_captcha(page, enc)
+        self._log.warning("animeloads_captcha_unsolved", attempts=_CAPTCHA_ATTEMPTS)
+        return None
+
+    async def _solve_captcha(self, page: Page, enc: str) -> str:
+        """One captcha round: pick the odd image, verify, request the links.
+
+        Returns the links endpoint's answer, or the ``noadblock`` answer
+        when the pick was rejected (the caller retries).
+        """
+        picked = await page.evaluate(_CAPTCHA_PICK_JS, isolated_context=False)
+        await asyncio.sleep(_STEP_PAUSE_S)
+        if picked:
+            verified = await self._ajax(
+                page, "/files/captcha", {"cID": 0, "pC": picked, "rT": 2}
+            )
+            if verified == "1":
+                await asyncio.sleep(_STEP_PAUSE_S)
+                return await self._ajax(
+                    page,
+                    "/ajax/captcha",
+                    {
+                        "enc": enc,
+                        "response": "captcha",
+                        "captcha-idhf": 0,
+                        "captcha-hf": picked,
+                    },
+                )
+        self._log.info("animeloads_captcha_rejected")
+        await asyncio.sleep(_REJECT_PAUSE_S)
+        return json.dumps({"code": "error", "message": "noadblock"})
 
 
 plugin = AnimeLoadsPlugin()

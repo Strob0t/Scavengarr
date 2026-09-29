@@ -133,6 +133,7 @@ Plugins that require a login read their credentials directly from the environmen
 | `SCAVENGARR_MYBOERSE_USERNAME`, `SCAVENGARR_MYBOERSE_PASSWORD` | `myboerse` |
 | `SCAVENGARR_MYGULLY_USERNAME`, `SCAVENGARR_MYGULLY_PASSWORD` | `mygully` |
 | `SCAVENGARR_DATALOAD_USERNAME`, `SCAVENGARR_DATALOAD_PASSWORD` | `dataload` |
+| `SCAVENGARR_ANIMELOADS_USERNAME`, `SCAVENGARR_ANIMELOADS_PASSWORD` | `animeloads` (optional: whole releases with one captcha per grab; without them only releases up to 13 episodes, one captcha per episode) |
 
 ### Server Variables
 

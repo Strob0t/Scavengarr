@@ -111,6 +111,8 @@ def plugin(animeloads_mod: ModuleType, page: AsyncMock) -> Any:
     p._domain_verified = True
     p.base_url = _BASE_URL
     p._new_page = AsyncMock(return_value=page)
+    # Release expansion has its own tests (TestReleaseExpansion)
+    p._expand_releases = AsyncMock(side_effect=lambda results: results)
     return p
 
 
