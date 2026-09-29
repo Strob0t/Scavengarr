@@ -9,5 +9,6 @@
             "source.organizeImports": "always"
         }
     },
-    "ruff.configurationPreference": "filesystemFirst"
+    "ruff.configurationPreference": "filesystemFirst",
+    "files.eol": "\n"
 }
