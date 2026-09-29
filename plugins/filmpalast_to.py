@@ -28,6 +28,8 @@ _DOMAINS = ["filmpalast.to"]
 
 # Regex to extract URL from onclick="window.open('url')" attributes
 _ONCLICK_RE = re.compile(r"window\.open\(['\"]([^'\"]+)['\"]")
+# Hoster account pages (e.g. https://vixeo.io/login) listed as "streams"
+_ACCOUNT_PAGE_RE = re.compile(r"^https?://[^/]+/(?:login|register|signup)/?(?:$|\?)")
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +191,8 @@ class _DetailPageParser(HTMLParser):
         self._in_li = False
         hoster = self._current_hoster.strip()
         link = self._current_link.strip()
-        if link:
+        # the site links some hosters to their login page instead of a video
+        if link and not _ACCOUNT_PAGE_RE.search(link):
             self.links.append({"hoster": hoster or "unknown", "link": link})
 
     def handle_endtag(self, tag: str) -> None:

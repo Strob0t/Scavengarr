@@ -6,7 +6,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
-Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 59 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4410 tests (4370 excluding the opt-in live tests).
+Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 59 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4415 tests (4375 excluding the opt-in live tests).
+
+### Fix: No Site Pages or Login Pages as Download Links
+- **kinox**: the mirror AJAX (`/aGET/Mirror/...`) now answers JSON with the iframe HTML escaped inside (`"Stream": "<iframe src=\"\/redirect\/<hash>\"...>"`); the plugin found no iframe and fell back to its own detail page as the "download" link, which link validation accepted (200) for Torznab. It now reads the JSON, makes relative iframe URLs absolute, resolves kinox's own `/redirect/<hash>` links to the hoster (`_resolve_own_links`) and drops results without a hoster link. Live the redirects currently loop on a JavaScript "Verifizierung" page, even in a real browser with the site's own mirror click, so kinox returns no results until the site fixes them (KNOWN_ISSUES).
+- **filmpalast** skips hoster account pages listed as streams (`https://vixeo.io/login` for "Vixeo HD").
+- Kept on purpose: movie4k's `cuty.io` / `clk.asia` shortener links and `streampalace.org` pages. JDownloader decrypts both shorteners (`CutyIo`, `ClicksflyCom`), so they are useful in Torznab crawljobs; the Stremio path already drops streams no resolver can play.
 
 ### Feature: VOE Mirror Domains, Vixeo Resolver, Thumbnail-Safe Capture
 - **VOE mirror domains**: VOE rotates its domains; the resolver now exposes 134 of them (`hoster_resolvers/_voe_domains.py`, from JD2 `VoeSxCrawler` plus `goofy-banana` and `jeremyparticipantanything` seen on plugin sites). Live: a goofy-banana link resolves in 0.7 s; before, no resolver was found. JD2 also lists three domains that Scavengarr maps to Vidhide; they stay there so each domain has one owner.
@@ -859,6 +864,7 @@ Foundation of the project: FastAPI server, Scrapy scraping engine, plugin loader
 
 Current known issues:
 
+- **kinox hoster links unreachable** (2026-09-29): every mirror's `/redirect/<hash>` loops on a JavaScript "Verifizierung" page, also in a real browser; kinox returns no results until the site fixes it.
 - **Hosters without a resolver** (2026-09-29): gxplayer.xyz bans this network (every page, even the ban page, redirects to `/usersc/scripts/banned.php`); embedrise.com plays only a placeholder `video.mp4` that answers 404; frdl.to (freedl.ink, DDL) uses the same ad-tracker redirect as vidmoly. JD2 has plugins for all three (`GxplayerXyz`, `EmbedriseCom`, `FreedlInk`) should they become reachable.
 - **Vidmoly unreachable behind ad blockers** (2026-09-28): the embed page's script redirect sends non-browser clients (and the stealth browser, when the network blocks ad domains, e.g. Pi-hole) to an ad click tracker; no stream is reachable then.
 - **SuperVideo streams need a browser-like player** (2026-09-28): the CDN (`*.serversicuro.cc`) answers non-browser clients with a JavaScript redirect and then ad-tracker redirects; resolution works, playback in players without JavaScript does not.

@@ -403,8 +403,11 @@ class TestPluginSearch:
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_detail_page_failure_falls_back(self, plugin, mock_client):
-        """When a detail page fails, use search entry title instead."""
+    async def test_detail_page_failure_gives_no_result(self, plugin, mock_client):
+        """A failed detail page has no hosters: no link, so no result.
+
+        The kinox page itself used to stand in as the "download" link.
+        """
         search_resp = _make_response(SEARCH_HTML)
         empty_detail = _make_response("")
 
@@ -415,12 +418,7 @@ class TestPluginSearch:
 
         mock_client.get = AsyncMock(side_effect=mock_get)
 
-        results = await plugin.search("batman")
-
-        assert len(results) == 2
-        # Fallback to search entry title (no year from detail)
-        assert results[0].title == "Batman Begins"
-        assert results[0].published_date is None
+        assert await plugin.search("batman") == []
 
     @pytest.mark.asyncio
     async def test_search_fetches_mirror_urls(self, plugin, mock_client):
@@ -456,7 +454,7 @@ class TestPluginSearch:
 
     @pytest.mark.asyncio
     async def test_mirror_url_failure_graceful(self, plugin, mock_client):
-        """When all AJAX mirror calls fail, result still has source_url."""
+        """When all AJAX mirror calls fail, there is no result."""
         search_resp = _make_response(SEARCH_HTML)
         detail_resp = _make_response(DETAIL_MOVIE_HTML)
         error_resp = MagicMock(spec=httpx.Response)
@@ -472,13 +470,8 @@ class TestPluginSearch:
 
         mock_client.get = AsyncMock(side_effect=mock_get)
 
-        results = await plugin.search("batman")
-
-        assert len(results) == 2
-        # No download_links since all mirrors failed
-        assert results[0].download_links is None
-        # Fallback to source_url
-        assert "kinox.to" in results[0].download_link
+        # no hoster link left: the result is dropped, not pointed at kinox
+        assert await plugin.search("batman") == []
 
     @pytest.mark.asyncio
     async def test_mirror_iframe_parsing(self, plugin, mock_client, kinox_mod):
@@ -602,3 +595,94 @@ class TestCleanup:
         p = kinox_mod.KinoxPlugin()
 
         await p.cleanup()  # Should not raise
+
+
+# kinox answers the mirror AJAX with JSON; the iframe HTML inside is escaped
+_JSON_MIRROR_ABSOLUTE = (
+    '{"Stream":"<iframe src=\\"https:\\/\\/voe.sx\\/e\\/abc123\\"'
+    ' width=\\"100%\\"><\\/iframe>","HosterName":"Voe.SX"}'
+)
+_JSON_MIRROR_REDIRECT = (
+    '{"Stream":"<iframe src=\\"\\/redirect\\/3490d139?t=1790665650\\"\\"'
+    ' referrerpolicy=\\"no-referrer\\"><\\/iframe>","HosterName":"Dood.to"}'
+)
+
+
+class TestJsonMirrorAnswer:
+    @pytest.fixture()
+    def plugin(self, kinox_mod):
+        p = kinox_mod.KinoxPlugin()
+        p._client = AsyncMock(spec=httpx.AsyncClient)
+        p._domain_verified = True
+        p.base_url = "https://www22.kinox.to"
+        return p
+
+    @pytest.mark.asyncio
+    async def test_json_answer_absolute_iframe(self, plugin):
+        plugin._client.get = AsyncMock(
+            return_value=_make_response(_JSON_MIRROR_ABSOLUTE)
+        )
+
+        url = await plugin._fetch_mirror_url("Batman_Begins", "92")
+
+        assert url == "https://voe.sx/e/abc123"
+
+    @pytest.mark.asyncio
+    async def test_json_answer_relative_redirect_is_absolutised(self, plugin):
+        plugin._client.get = AsyncMock(
+            return_value=_make_response(_JSON_MIRROR_REDIRECT)
+        )
+
+        url = await plugin._fetch_mirror_url("Oppenheimer", "95")
+
+        assert url == "https://www22.kinox.to/redirect/3490d139?t=1790665650"
+
+    @pytest.mark.asyncio
+    async def test_redirect_link_resolved_to_hoster(self, plugin):
+        detail = _make_response(DETAIL_MOVIE_HTML)
+        mirror = _make_response(_JSON_MIRROR_REDIRECT)
+        hop = MagicMock(spec=httpx.Response)
+        hop.status_code = 302
+        hop.is_redirect = True
+        hop.headers = {"location": "https://dood.to/e/w71gg51eat6x"}
+
+        async def mock_get(url, **kwargs):
+            url_str = str(url)
+            if "Search.html" in url_str:
+                return _make_response(SEARCH_HTML)
+            if "/aGET/Mirror/" in url_str:
+                return mirror
+            if "/redirect/" in url_str:
+                return hop
+            return detail
+
+        plugin._client.get = AsyncMock(side_effect=mock_get)
+
+        results = await plugin.search("batman")
+
+        assert results
+        assert results[0].download_link == "https://dood.to/e/w71gg51eat6x"
+        assert all("kinox.to" not in dl["link"] for dl in results[0].download_links)
+
+    @pytest.mark.asyncio
+    async def test_unresolvable_redirect_is_dropped(self, plugin):
+        """kinox's /redirect/ currently loops on a JS "Verifizierung" page."""
+        detail = _make_response(DETAIL_MOVIE_HTML)
+        mirror = _make_response(_JSON_MIRROR_REDIRECT)
+        verification = _make_response("<title>Verifizierung</title>")
+        verification.is_redirect = False
+        verification.headers = {}
+
+        async def mock_get(url, **kwargs):
+            url_str = str(url)
+            if "Search.html" in url_str:
+                return _make_response(SEARCH_HTML)
+            if "/aGET/Mirror/" in url_str:
+                return mirror
+            if "/redirect/" in url_str:
+                return verification
+            return detail
+
+        plugin._client.get = AsyncMock(side_effect=mock_get)
+
+        assert await plugin.search("batman") == []

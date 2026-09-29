@@ -185,6 +185,26 @@ class TestDetailPageParser:
 # ---------------------------------------------------------------------------
 # Plugin attributes
 # ---------------------------------------------------------------------------
+class TestAccountLinks:
+    def test_hoster_login_page_is_not_a_link(self) -> None:
+        """filmpalast lists "Vixeo HD" with href vixeo.io/login (live, 2026-09)."""
+        html = (
+            '<div id="grap-stream-list"><ul>'
+            '<li class="hostBg rb"><p class="hostName">Vixeo HD</p>'
+            '<a class="button rb iconPlay" href="https://vixeo.io/login">Play</a>'
+            "</li>"
+            '<li class="hostBg rb"><p class="hostName">VOE HD</p>'
+            '<a class="button rb iconPlay" href="https://voe.sx/xhoyeqr1jx6s">Play</a>'
+            "</li></ul></div>"
+        )
+        parser = _DetailPageParser()
+        parser.feed(html)
+
+        assert [link["link"] for link in parser.links] == [
+            "https://voe.sx/xhoyeqr1jx6s"
+        ]
+
+
 class TestPluginAttributes:
     def test_name(self) -> None:
         plugin = _make_plugin()

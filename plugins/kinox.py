@@ -13,8 +13,10 @@ No authentication required.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from html.parser import HTMLParser
+from urllib.parse import urljoin
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
@@ -271,7 +273,9 @@ class KinoxPlugin(HttpxPluginBase):
 
         kinox.to serves embed URLs via:
         GET /aGET/Mirror/{slug}&Hoster={id}&Mirror=1
-        which returns HTML containing an <iframe src="https://voe.sx/e/abc">.
+        which returns JSON ``{"Stream": "<iframe src=...>", ...}`` (older
+        answers: the iframe HTML itself). The iframe points at the hoster or at
+        kinox's own ``/redirect/<hash>`` (made absolute here, resolved later).
         """
         client = await self._ensure_client()
         try:
@@ -280,8 +284,15 @@ class KinoxPlugin(HttpxPluginBase):
             )
             if resp.status_code != 200:
                 return None
-            m = re.search(r'<iframe[^>]+src=["\']([^"\']+)', resp.text)
-            return m.group(1).strip() if m else None
+            html = resp.text
+            try:
+                data = json.loads(html)
+            except ValueError:
+                data = None
+            if isinstance(data, dict) and isinstance(data.get("Stream"), str):
+                html = data["Stream"]
+            m = re.search(r'<iframe[^>]+src=["\']([^"\']+)', html)
+            return urljoin(f"{self.base_url}/", m.group(1).strip()) if m else None
         except Exception:  # noqa: BLE001
             self._log.warning("kinox_mirror_failed", slug=slug, hoster_id=hoster_id)
             return None
@@ -341,8 +352,14 @@ class KinoxPlugin(HttpxPluginBase):
 
             results = await asyncio.gather(*[_fetch(h) for h in detail.hosters])
             links = [r for r in results if isinstance(r, dict)]
+            # kinox's own /redirect/<hash> links → hoster URL (or dropped)
+            links = await self._resolve_own_links(links)
 
-        sr = self._build_search_result(entry, detail, download_links=links or None)
+        if not links:
+            # the kinox page itself is no download link
+            self._log.info("kinox_no_hoster_links", url=url_path)
+            return None
+        sr = self._build_search_result(entry, detail, download_links=links)
 
         # Post-filter by category range
         if category is not None:
