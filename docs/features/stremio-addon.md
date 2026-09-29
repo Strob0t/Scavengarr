@@ -319,6 +319,10 @@ Scored plugin selection keys (`scoring_enabled`, `max_plugins_scored`, `explorat
 
 `PluginCircuitBreaker` is created in the composition root with hardcoded values (`failure_threshold=5`, `cooldown_seconds=60.0`, `max_cooldown_seconds=3600.0`); they are not configurable. After 5 consecutive failures (exceptions or timeouts) a plugin is skipped for 60 s. After the cooldown a single probe request is allowed (half-open); success resets the breaker and its cooldown, failure reopens it with twice the previous cooldown (60 s → 2 min → 4 min … capped at 1 h). Stremio requests are usually minutes apart, so a fixed 60 s cooldown would let an unreachable plugin cost almost every request its full timeout. A timeout counts as a failure when the plugin had at least half of `plugin_timeout_seconds`; a plugin cut by the search deadline after queueing for most of the budget is not blamed. A timeout counts as a failure when the plugin had at least half of `plugin_timeout_seconds`; a plugin cut by the search deadline after queueing for most of the budget is not blamed.
 
+### Behind AIOStreams
+
+AIOStreams can include Scavengarr as a `custom` addon (`manifestUrl` = `<base>/api/v1/stremio/manifest.json`). Its per-addon `timeout` (ms, default 7000) must exceed `stream_deadline_seconds`, otherwise every Scavengarr answer is cut: use `stream_deadline_seconds` + 2 s (17000 with the defaults). AIOStreams checks the manifest when a user config is saved, so Scavengarr must be reachable from the AIOStreams host at that moment. Recommended user settings and measurements: [`docs/plans/stremio-latency.md`](../plans/stremio-latency.md#aiostreams).
+
 ### Global Concurrency Pool
 
 `ConcurrencyPool` holds separate httpx and Playwright slot pools with fair-share distribution across concurrent requests:

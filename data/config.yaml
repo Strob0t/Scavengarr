@@ -109,7 +109,12 @@ stremio:
   auto_tune_all: true # container-aware auto-tune ALL concurrency params (cgroup v2/v1)
   max_concurrent_playwright: 7 # was 5 — more parallel PW plugins
   max_results_per_plugin: 50 # was 100 — fewer results per plugin, faster turnaround
-  plugin_timeout_seconds: 15.0 # was 30 — cut slow plugins at 15s
+  # Answer budget, both counted from the request start (measured 2026-09-29,
+  # docs/plans/stremio-latency.md): 10/15 s gave the same playable streams
+  # as 12/17 s; 15 s per plugin (old) meant answers after 20–38 s
+  plugin_timeout_seconds: 10.0 # plugin search ends 10 s after the request
+  stream_deadline_seconds: 15.0 # hoster resolution ends, answer goes out
+  verify_streams: true # drop resolved URLs that do not return video bytes
 
   # Title matching
   title_match_threshold: 0.7
