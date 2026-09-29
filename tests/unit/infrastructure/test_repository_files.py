@@ -13,6 +13,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 _ROOT = Path(__file__).resolve().parents[3]
 
@@ -23,6 +24,18 @@ _EXECUTED_DIRECTLY = [
     ".devcontainer/setup.sh",
     ".devcontainer/sync-jdownloader.sh",
 ]
+
+
+def test_shipped_config_has_no_container_only_paths() -> None:
+    """`poetry run start --config data/config.yaml` must work outside Docker.
+
+    The image sets its own paths via env (SCAVENGARR_CACHE_DIR, ...); an
+    absolute path in the YAML (e.g. /data/cache) is not writable locally.
+    """
+    config = yaml.safe_load((_ROOT / "data" / "config.yaml").read_text())
+    for section, key in (("cache", "dir"), ("plugins", "plugin_dir")):
+        value = str(config[section][key])
+        assert not value.startswith("/"), f"{section}.{key} = {value}"
 
 
 @pytest.mark.skipif(

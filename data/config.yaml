@@ -63,7 +63,7 @@ logging:
 # -- Cache ------------------------------------------------------------
 cache:
   backend: "diskcache" # diskcache | redis; env: SCAVENGARR_CACHE_BACKEND
-  dir: "/data/cache" # env: SCAVENGARR_CACHE_DIR
+  dir: "./.cache/scavengarr" # env: SCAVENGARR_CACHE_DIR (Docker image: /app/cache)
   ttl_seconds: 3600 # env: SCAVENGARR_CACHE_TTL_SECONDS
   search_ttl_seconds: 1800 # was 900 — 30min cache, repeated searches are instant
   max_concurrent: 10 # env: SCAVENGARR_CACHE_MAX_CONCURRENT

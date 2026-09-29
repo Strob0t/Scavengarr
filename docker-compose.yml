@@ -28,6 +28,7 @@ services:
       # SCAVENGARR_CACHE_BACKEND: redis
       # SCAVENGARR_CACHE_REDIS_URL: redis://redis:6379/0
     shm_size: 1gb # Chromium (Playwright plugins, browser capture) needs shared memory
+    init: true # reaps orphaned Chromium/driver processes (python would be PID 1)
     restart: unless-stopped
 
   byparr:
