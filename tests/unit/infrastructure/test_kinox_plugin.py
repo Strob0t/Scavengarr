@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import sys
 from pathlib import Path
@@ -382,6 +383,61 @@ class TestPluginSearch:
 
         assert len(results) == 2
         assert all(r.category == 5000 for r in results)
+
+    @pytest.mark.asyncio
+    async def test_episode_request_skips_series(self, plugin, mock_client):
+        """kinox's mirror API serves the page's default episode; returning it
+        for S03E05 would present the wrong episode as a match."""
+        search_resp = _make_response(SEARCH_HTML)
+        detail_resp = _make_response(DETAIL_SERIES_HTML)
+        mirror_resp = _make_response(MIRROR_AJAX_HTML_VOE)
+
+        async def mock_get(url, **kwargs):
+            url_str = str(url)
+            if "Search.html" in url_str:
+                return search_resp
+            if "/aGET/Mirror/" in url_str:
+                return mirror_resp
+            return detail_resp
+
+        mock_client.get = AsyncMock(side_effect=mock_get)
+
+        results = await plugin.search("breaking bad", season=3, episode=5)
+
+        assert results == []
+        mirror_calls = [
+            c for c in mock_client.get.call_args_list if "/aGET/Mirror/" in str(c)
+        ]
+        assert mirror_calls == []
+
+    @pytest.mark.asyncio
+    async def test_mirror_requests_share_one_limit(self, plugin, mock_client):
+        """Mirror AJAX calls of all entries share the plugin's concurrency."""
+        search_resp = _make_response(SEARCH_HTML)
+        detail_resp = _make_response(DETAIL_MOVIE_HTML)
+        mirror_resp = _make_response(MIRROR_AJAX_HTML_VOE)
+        active = 0
+        peak = 0
+
+        async def mock_get(url, **kwargs):
+            nonlocal active, peak
+            url_str = str(url)
+            if "Search.html" in url_str:
+                return search_resp
+            if "/aGET/Mirror/" in url_str:
+                active += 1
+                peak = max(peak, active)
+                await asyncio.sleep(0.01)
+                active -= 1
+                return mirror_resp
+            return detail_resp
+
+        mock_client.get = AsyncMock(side_effect=mock_get)
+        plugin._max_concurrent = 1
+
+        await plugin.search("batman")
+
+        assert peak == 1
 
     @pytest.mark.asyncio
     async def test_search_no_results(self, plugin, mock_client):

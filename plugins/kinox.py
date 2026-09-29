@@ -325,9 +325,15 @@ class KinoxPlugin(HttpxPluginBase):
         self,
         entry: dict[str, str],
         sem: asyncio.Semaphore,
+        mirror_sem: asyncio.Semaphore,
         category: int | None,
+        season: int | None = None,
     ) -> SearchResult | None:
-        """Fetch detail page for one search entry, then fetch mirror URLs."""
+        """Fetch detail page for one search entry, then fetch mirror URLs.
+
+        *mirror_sem* is shared by all entries of a search, so the mirror
+        AJAX calls stay within the plugin's concurrency limit.
+        """
         url_path = entry.get("url", "")
         if not url_path:
             return None
@@ -335,13 +341,18 @@ class KinoxPlugin(HttpxPluginBase):
         async with sem:
             detail = await self._fetch_detail_page(url_path)
 
+        if season is not None and detail.is_series:
+            # The mirror API serves the page's default episode; it cannot be
+            # asked for a season/episode, so that would be the wrong episode
+            self._log.info("kinox_series_episode_unsupported", url=url_path)
+            return None
+
         # Extract slug: "/Stream/Batman_Begins.html" → "Batman_Begins"
         slug = url_path.replace("/Stream/", "").replace(".html", "")
 
         # Fetch embed URLs for each hoster (bounded concurrency)
         links: list[dict[str, str]] = []
         if detail.hosters:
-            mirror_sem = self._new_semaphore()
 
             async def _fetch(h: dict[str, str]) -> dict[str, str] | None:
                 async with mirror_sem:
@@ -380,7 +391,8 @@ class KinoxPlugin(HttpxPluginBase):
 
         Uses the search page to find movies/series, then fetches detail
         pages to extract year, hosters, and content type.
-        When *season* is provided, only series results are returned.
+        When *season* is provided nothing is returned for series: kinox's
+        mirror API only serves a page's default episode.
         """
         if not query:
             return []
@@ -403,8 +415,10 @@ class KinoxPlugin(HttpxPluginBase):
             return []
 
         sem = self._new_semaphore()
+        mirror_sem = self._new_semaphore()
         tasks = [
-            self._process_entry(e, sem, effective_category) for e in search_entries
+            self._process_entry(e, sem, mirror_sem, effective_category, season)
+            for e in search_entries
         ]
         task_results = await asyncio.gather(*tasks)
 
