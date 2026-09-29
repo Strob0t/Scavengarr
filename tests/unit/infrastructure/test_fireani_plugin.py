@@ -692,6 +692,26 @@ class TestScrapeAnime:
         assert result is None
 
     @pytest.mark.asyncio
+    async def test_season_without_episode_uses_that_season(self) -> None:
+        """A season-pack request must not fall back to season 1's episode."""
+        plug = _make_plugin()
+        plug.base_url = "https://fireani.me"
+        bodies: list[dict[str, object]] = []
+
+        async def _side_effect(url: str, **kwargs: object) -> httpx.Response:
+            if "GetEpisode" in str(url):
+                bodies.append(kwargs["json"])  # type: ignore[arg-type]
+                return _mock_response(_EPISODE_RESPONSE)
+            return _mock_response({}, status_code=404)
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=_side_effect)
+        plug._client = mock_client
+
+        await plug._scrape_anime({"slug": "naruto", "title": "Naruto"}, season=3)
+
+        assert bodies == [{"slug": "naruto", "season": "3", "episode": "1"}]
+
     async def test_detail_fallback_to_s1e1(self) -> None:
         """When detail API fails, falls back to season 1 episode 1."""
         plug = _make_plugin()

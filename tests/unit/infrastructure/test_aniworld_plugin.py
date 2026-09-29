@@ -8,6 +8,7 @@ from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
+import pytest
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "aniworld.py"
 
@@ -319,6 +320,38 @@ class TestSearch:
         assert results[0].download_links[0]["hoster"] == "voe"
         expected_desc = "Naruto is a young ninja who seeks recognition."
         assert results[0].description == expected_desc
+
+    @pytest.mark.parametrize(
+        ("season", "episode", "expected"),
+        [
+            (2, 3, "https://aniworld.to/anime/stream/naruto/staffel-2/episode-3"),
+            # a season without episode starts at that season's first episode
+            (2, None, "https://aniworld.to/anime/stream/naruto/staffel-2/episode-1"),
+        ],
+    )
+    async def test_episode_url_keeps_stream_path(
+        self, season: int, episode: int | None, expected: str
+    ) -> None:
+        """Episode pages live under /anime/stream/<slug>/ like the detail page."""
+        plugin = _make_plugin()
+        plugin._domain_verified = True
+        detail_resp = _make_mock_response(text=_DETAIL_HTML)
+        episode_resp = _make_mock_response(text=_EPISODE_HTML)
+
+        def _route_get(url, **_kw):
+            return episode_resp if "/episode-" in str(url) else detail_resp
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.post = AsyncMock(
+            return_value=_make_mock_response(json_data=_AJAX_SEARCH_RESPONSE)
+        )
+        mock_client.get = AsyncMock(side_effect=_route_get)
+        plugin._client = mock_client
+
+        await plugin.search("naruto", season=season, episode=episode)
+
+        requested = [str(c.args[0]) for c in mock_client.get.call_args_list]
+        assert expected in requested
 
     async def test_search_empty_query_returns_empty(self) -> None:
         plugin = _make_plugin()

@@ -304,9 +304,9 @@ class AniworldPlugin(HttpxPluginBase):
     ) -> SearchResult | None:
         """Scrape anime detail page and episode for hoster links.
 
-        When *season* and *episode* are given the plugin navigates directly
-        to ``/anime/{slug}/staffel-{season}/episode-{episode}`` instead of
-        scraping the first episode on the detail page.
+        When *season* is given the plugin navigates directly to
+        ``/anime/stream/{slug}/staffel-{season}/episode-{episode or 1}``
+        instead of scraping the first episode on the detail page.
         """
         detail_url = item["link"]
         if not detail_url.startswith("http"):
@@ -322,10 +322,11 @@ class AniworldPlugin(HttpxPluginBase):
 
         # Determine which episode page to scrape
         hoster_links: list[dict[str, str]] = []
-        if season is not None and episode is not None:
-            # Build a direct episode URL from the detail page slug
-            slug = detail_url.rstrip("/").rsplit("/", 1)[-1]
-            ep_url = f"{self.base_url}/anime/{slug}/staffel-{season}/episode-{episode}"
+        if season is not None:
+            # Episode pages live below the detail page
+            # (/anime/stream/<slug>/staffel-N/episode-M); a season without
+            # episode starts at that season's first episode
+            ep_url = f"{detail_url.rstrip('/')}/staffel-{season}/episode-{episode or 1}"
             hoster_links = await self._scrape_episode(ep_url)
         elif detail_parser.first_episode_url:
             hoster_links = await self._scrape_episode(detail_parser.first_episode_url)

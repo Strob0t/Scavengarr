@@ -357,9 +357,10 @@ class FireaniPlugin(HttpxPluginBase):
             return None
 
         info = anime
-        if season is not None and episode is not None:
+        if season is not None:
+            # A season without episode starts at that season's first episode
             hoster_links = await self._get_episode_links(
-                slug, str(season), str(episode)
+                slug, str(season), str(episode or 1)
             )
         else:
             detail = await self._get_anime_detail(slug)
