@@ -39,7 +39,7 @@ IMDb/TMDB ID → title lookup per plugin language → plugin search → episode 
 1. **Plugin selection** — all plugins with `provides` = `stream` or `both`, or the scored top-N when scored selection is active (see [Plugin Scoring & Probing](./plugin-scoring-and-probing.md)).
 1. **Title resolution** — per plugin language, look up title + year via TMDB `/find` (or the IMDB Suggest/Wikidata fallback); `tmdb:` IDs are resolved via the TMDB ID.
 1. **Plugin search** — `PluginSearchRunner` searches each language group with the full title and, if the title contains `:`, the base title before the colon; bounded by the global `ConcurrencyPool`, with circuit breaker. The search ends `plugin_timeout_seconds` after the request started: plugins waiting for a concurrency slot use up that budget too, running ones are cut at the deadline, queued ones are skipped. Results of fallback queries are deduplicated by `download_link`.
-1. **Episode filtering** — for series requests, results are filtered by season/episode (guessit on release names, falling back to episode labels such as `1x5` or `S01E05` in `download_links`).
+1. **Episode filtering** — for series requests, results are filtered by season/episode (guessit on release names, falling back to episode labels such as `1x5` or `S01E05` in `download_links`). Multi-episode and multi-season releases (`S01E01-E03`, `S01-S03`) are kept when they contain the requested episode/season.
 1. **Link validation** — Python plugin results are validated by the search engine.
 1. **Title matching** — false positives (sequels, spin-offs) are filtered via fuzzy scoring.
 1. **Stream conversion** — `SearchResult` objects become `RankedStream` objects with parsed quality/language.

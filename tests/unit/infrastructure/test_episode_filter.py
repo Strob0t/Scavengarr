@@ -329,3 +329,19 @@ class TestFilterLinksByEpisode:
         assert result is not None
         assert len(result) == 1
         assert result[0]["label"] == "1x5 Ep 5"
+
+
+class TestMultiEpisodeReleases:
+    """guessit returns lists for multi-episode / multi-season releases."""
+
+    def test_multi_episode_release_containing_episode_is_kept(self) -> None:
+        r = _make_search_result(title="Show.S01E01-E03.German.1080p.WEB")
+        assert filter_by_episode([r], 1, 2) == [r]
+
+    def test_multi_episode_release_without_episode_is_dropped(self) -> None:
+        r = _make_search_result(title="Show.S01E01-E03.German.1080p.WEB")
+        assert filter_by_episode([r], 1, 5) == []
+
+    def test_multi_season_release_containing_season_is_kept(self) -> None:
+        r = _make_search_result(title="Show.S01-S03.German.1080p.WEB")
+        assert filter_by_episode([r], 2, None) == [r]

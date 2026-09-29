@@ -6,6 +6,8 @@ All weights are configurable via StremioConfig.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from scavengarr.domain.entities.stremio import RankedStream
 from scavengarr.infrastructure.config.schema import StremioConfig
 
@@ -44,17 +46,6 @@ class StreamSorter:
         scored = []
         for s in streams:
             score = self.rank(s)
-            scored.append(
-                RankedStream(
-                    url=s.url,
-                    hoster=s.hoster,
-                    quality=s.quality,
-                    language=s.language,
-                    size=s.size,
-                    release_name=s.release_name,
-                    source_plugin=s.source_plugin,
-                    rank_score=score,
-                )
-            )
+            scored.append(replace(s, rank_score=score))
         scored.sort(key=lambda s: s.rank_score, reverse=True)
         return scored

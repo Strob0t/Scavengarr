@@ -199,3 +199,21 @@ class TestCustomConfig:
         stream = _stream(hoster="myhost", quality=StreamQuality.UNKNOWN, language=None)
         # 100 (default lang) + 0 (quality) + 100 (hoster) = 200
         assert sorter.rank(stream) == 200
+
+
+def test_sort_keeps_every_field() -> None:
+    """sort() only sets rank_score; the title (stream name fallback) stays."""
+    stream = RankedStream(
+        url="https://voe.sx/e/1",
+        hoster="voe",
+        quality=StreamQuality.HD_1080P,
+        title="Iron Man",
+        release_name="Iron.Man.2008.German.1080p",
+        source_plugin="filmpalast",
+    )
+
+    (sorted_stream,) = StreamSorter(StremioConfig()).sort([stream])
+
+    assert sorted_stream.title == "Iron Man"
+    assert sorted_stream.release_name == stream.release_name
+    assert sorted_stream.rank_score > 0

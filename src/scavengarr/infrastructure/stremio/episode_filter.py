@@ -85,6 +85,12 @@ def filter_links_by_episode(
     return matched
 
 
+def _ints(value: object) -> set[int]:
+    """guessit gives an int, or a list for multi-season/-episode releases."""
+    items = value if isinstance(value, list) else [value]
+    return {v for v in items if isinstance(v, int)}
+
+
 def filter_by_episode(
     results: list[SearchResult],
     season: int | None,
@@ -135,12 +141,19 @@ def filter_by_episode(
             filtered.append(r)
             continue
 
-        # Season mismatch -> skip
-        if season is not None and r_season is not None and r_season != season:
+        # Season/episode mismatch -> skip (multi-season/-episode releases
+        # such as S01E01-E03 give lists and match any of their numbers)
+        if (
+            season is not None
+            and r_season is not None
+            and season not in _ints(r_season)
+        ):
             continue
-
-        # Episode mismatch -> skip
-        if episode is not None and r_episode is not None and r_episode != episode:
+        if (
+            episode is not None
+            and r_episode is not None
+            and episode not in _ints(r_episode)
+        ):
             continue
 
         filtered.append(r)
