@@ -51,6 +51,7 @@ def _mock_response(
     resp.status_code = status_code
     resp.text = text
     resp.headers = headers or {}
+    resp.is_redirect = status_code in (301, 302, 303, 307, 308)
     resp.raise_for_status = MagicMock()
     if status_code >= 400:
         resp.raise_for_status.side_effect = httpx.HTTPStatusError(
@@ -491,24 +492,26 @@ class TestHosterResolution:
     async def test_resolves_redirect(self) -> None:
         plugin = _make_plugin()
 
-        redirect_resp = MagicMock()
-        redirect_resp.headers = {"location": "https://voe.sx/e/abc123"}
-
         mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.head = AsyncMock(return_value=redirect_resp)
+        mock_client.get = AsyncMock(
+            return_value=_mock_response(
+                status_code=302, headers={"location": "https://voe.sx/e/abc123"}
+            )
+        )
         plugin._client = mock_client
         plugin.base_url = "https://s.to"
 
         result = await plugin._resolve_hoster_url("/r?t=token123")
 
         assert result == "https://voe.sx/e/abc123"
+        assert mock_client.get.await_args.kwargs["follow_redirects"] is False
 
     @pytest.mark.asyncio
     async def test_returns_original_on_failure(self) -> None:
         plugin = _make_plugin()
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.head = AsyncMock(side_effect=httpx.ConnectError("fail"))
+        mock_client.get = AsyncMock(side_effect=httpx.ConnectError("fail"))
         plugin._client = mock_client
         plugin.base_url = "https://s.to"
 
@@ -520,11 +523,8 @@ class TestHosterResolution:
     async def test_returns_original_when_no_location(self) -> None:
         plugin = _make_plugin()
 
-        no_redirect_resp = MagicMock()
-        no_redirect_resp.headers = {}
-
         mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.head = AsyncMock(return_value=no_redirect_resp)
+        mock_client.get = AsyncMock(return_value=_mock_response(text="<html></html>"))
         plugin._client = mock_client
         plugin.base_url = "https://s.to"
 
@@ -543,6 +543,15 @@ def _routed_client(active: dict[str, int] | None = None) -> AsyncMock:
 
     async def _get(url: str, **kw: object) -> object:
         url = str(url)
+        if "/r?t=" in url:
+            if active is not None:
+                active["now"] += 1
+                active["peak"] = max(active["peak"], active["now"])
+                await asyncio.sleep(0.01)
+                active["now"] -= 1
+            return _mock_response(
+                status_code=302, headers={"location": "https://voe.sx/e/resolved"}
+            )
         if "/suche" in url:
             params = kw.get("params") or {}
             first = int(params.get("page", 1)) == 1  # type: ignore[union-attr]
@@ -553,19 +562,8 @@ def _routed_client(active: dict[str, int] | None = None) -> AsyncMock:
             return _mock_response(text=_SERIES_DETAIL_HTML)
         return _mock_response(text="<html><body></body></html>")
 
-    async def _head(url: str, **_kw: object) -> object:
-        if active is not None:
-            active["now"] += 1
-            active["peak"] = max(active["peak"], active["now"])
-            await asyncio.sleep(0.01)
-            active["now"] -= 1
-        resp = MagicMock()
-        resp.headers = {"location": "https://voe.sx/e/resolved"}
-        return resp
-
     client = AsyncMock(spec=httpx.AsyncClient)
     client.get = AsyncMock(side_effect=_get)
-    client.head = AsyncMock(side_effect=_head)
     return client
 
 
@@ -633,28 +631,7 @@ class TestSearch:
 
         # Search returns 3 links (2 series + 1 episode link with /serie/ prefix)
         # Each triggers a detail fetch; only "stranger-things" has season data.
-        search_resp = _mock_response(text=_SEARCH_HTML)
-        detail_resp = _mock_response(text=_SERIES_DETAIL_HTML)
-        empty_detail = _mock_response(text="<html><body></body></html>")
-        episode_resp = _mock_response(text=_EPISODE_HTML)
-        redirect_resp = MagicMock()
-        redirect_resp.headers = {"location": "https://voe.sx/e/resolved"}
-
-        mock_client = AsyncMock(spec=httpx.AsyncClient)
-
-        # search (1) → detail×3 → episode×2 (for stranger-things season 1)
-        mock_client.get = AsyncMock(
-            side_effect=[
-                search_resp,  # search page
-                detail_resp,  # stranger-things detail
-                empty_detail,  # dark detail (no seasons → skipped)
-                empty_detail,  # episode link detail (no seasons → skipped)
-                episode_resp,  # stranger-things S01E01
-                episode_resp,  # stranger-things S01E02
-            ]
-        )
-        mock_client.head = AsyncMock(return_value=redirect_resp)
-        plugin._client = mock_client
+        plugin._client = _routed_client()
 
         results = await plugin.search("stranger things")
 
@@ -687,26 +664,7 @@ class TestSearch:
         plugin._domain_verified = True
         plugin.base_url = "https://s.to"
 
-        search_resp = _mock_response(text=_SEARCH_HTML)
-        detail_resp = _mock_response(text=_SERIES_DETAIL_HTML)
-        empty_detail = _mock_response(text="<html><body></body></html>")
-        episode_resp = _mock_response(text=_EPISODE_HTML)
-        redirect_resp = MagicMock()
-        redirect_resp.headers = {"location": "https://voe.sx/e/resolved"}
-
-        mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.get = AsyncMock(
-            side_effect=[
-                search_resp,
-                detail_resp,
-                empty_detail,
-                empty_detail,
-                episode_resp,
-                episode_resp,
-            ]
-        )
-        mock_client.head = AsyncMock(return_value=redirect_resp)
-        plugin._client = mock_client
+        plugin._client = _routed_client()
 
         results = await plugin.search("stranger things", category=5070)
 
@@ -769,3 +727,36 @@ class TestCleanup:
         assert plugin._client is None
 
         await plugin.cleanup()  # Should not raise
+
+
+# ---------------------------------------------------------------------------
+# Cloudflare fallback
+# ---------------------------------------------------------------------------
+
+
+class TestCloudflareFallback:
+    """Pages go through the base helpers (plugin timeout, UA, browser)."""
+
+    @pytest.mark.asyncio
+    async def test_challenged_search_is_loaded_through_the_browser(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
+
+        challenge = _mock_response(
+            text="<title>Just a moment...</title>", status_code=403
+        )
+        challenge.url = httpx.URL("https://s.to/suche?term=stranger")
+        fetcher = AsyncMock()
+        fetcher.fetch_text = AsyncMock(return_value=_SEARCH_HTML)
+        monkeypatch.setattr(HttpxPluginBase, "_browser_fetcher", fetcher)
+        monkeypatch.setattr(HttpxPluginBase, "_cf_blocked_until", {})
+        plugin = _make_plugin()
+        plugin.base_url = "https://s.to"
+        plugin._client = AsyncMock(spec=httpx.AsyncClient)
+        plugin._client.get = AsyncMock(return_value=challenge)
+
+        results = await plugin._search_series("stranger")
+
+        assert results
+        fetcher.fetch_text.assert_awaited_once()

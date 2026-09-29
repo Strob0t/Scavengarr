@@ -373,29 +373,18 @@ class StoPlugin(HttpxPluginBase):
         page_num: int = 1,
     ) -> list[dict[str, str]]:
         """Fetch one search page and return parsed series entries."""
-        client = await self._ensure_client()
-
-        params: dict[str, str | int] = {"term": query}
+        params = {"term": query}
         if page_num > 1:
-            params["page"] = page_num
+            params["page"] = str(page_num)
 
-        try:
-            resp = await client.get(
-                f"{self.base_url}/suche",
-                params=params,
-            )
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning(
-                "sto_search_failed",
-                query=query,
-                page=page_num,
-                error=str(exc),
-            )
+        html = await self._fetch_text(
+            f"{self.base_url}/suche", params=params, context="search"
+        )
+        if html is None:
             return []
 
         parser = _SearchSeriesParser(self.base_url)
-        parser.feed(resp.text)
+        parser.feed(html)
 
         self._log.info(
             "sto_search_page",
@@ -410,21 +399,12 @@ class StoPlugin(HttpxPluginBase):
         series: dict[str, str],
     ) -> _SeriesDetailParser:
         """Fetch series detail page and return parsed data."""
-        client = await self._ensure_client()
-
-        try:
-            resp = await client.get(series["url"])
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning(
-                "sto_series_detail_failed",
-                url=series.get("url", ""),
-                error=str(exc),
-            )
+        html = await self._fetch_text(series["url"], context="detail")
+        if html is None:
             return _SeriesDetailParser(self.base_url)
 
         parser = _SeriesDetailParser(self.base_url)
-        parser.feed(resp.text)
+        parser.feed(html)
         return parser
 
     async def _scrape_episode_hosters(
@@ -432,45 +412,23 @@ class StoPlugin(HttpxPluginBase):
         episode_url: str,
     ) -> list[dict[str, str]]:
         """Fetch episode page and return hoster button data."""
-        client = await self._ensure_client()
-
-        try:
-            resp = await client.get(episode_url)
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning(
-                "sto_episode_failed",
-                url=episode_url,
-                error=str(exc),
-            )
+        html = await self._fetch_text(episode_url, context="episode")
+        if html is None:
             return []
 
         parser = _EpisodeHosterParser()
-        parser.feed(resp.text)
+        parser.feed(html)
         return parser.hosters
 
     async def _resolve_hoster_url(self, play_url: str) -> str:
-        """Resolve /r?t={token} redirect to actual hoster URL.
+        """Resolve a /r?t={token} link-out to the hoster URL.
 
-        Uses HEAD with follow_redirects=False to capture the 302 Location.
-        Falls back to returning the original URL on failure.
+        Falls back to the link-out itself when it does not resolve
+        (JDownloader can still follow it).
         """
-        client = await self._ensure_client()
-
         full_url = urljoin(self.base_url, play_url)
-        try:
-            resp = await client.head(
-                full_url,
-                follow_redirects=False,
-                timeout=10.0,
-            )
-            location = resp.headers.get("location", "")
-            if location and location.startswith("http"):
-                return location
-        except Exception:  # noqa: BLE001
-            self._log.debug("sto_resolve_failed", url=full_url)
-
-        return full_url
+        target = await self._resolve_redirect(full_url, context="hoster")
+        return target or full_url
 
     async def _scrape_season_episodes(
         self,
