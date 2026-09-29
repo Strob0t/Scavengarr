@@ -21,6 +21,10 @@ from html.parser import HTMLParser
 from urllib.parse import urljoin
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.categories import (
+    filter_by_category,
+    served_category,
+)
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -33,25 +37,19 @@ _RESULTS_PER_PAGE = 24
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-# Site genre name (lowercase) → Torznab TV sub-category.
+# Site genre name (lowercase) → Torznab TV sub-category. Only anime and
+# documentaries have one; the other TV children are qualities (5030 SD,
+# 5040 HD, ...), which genres do not tell.
 _GENRE_CATEGORY_MAP: dict[str, int] = {
     "anime": 5070,
     "animation": 5070,
     "zeichentrick": 5070,
-    "comedy": 5030,
-    "drama": 5030,
-    "horror": 5040,
-    "thriller": 5040,
-    "mystery": 5040,
-    "action": 5030,
-    "science-fiction": 5030,
-    "science fiction": 5030,
-    "fantasy": 5050,
     "dokumentation": 5080,
     "documentary": 5080,
     "doku-soap": 5080,
-    "kinderserie": 5040,
 }
+# The labels of this site's results
+_CATEGORIES = (5000, 5070, 5080)
 
 
 def _genre_to_torznab(genre: str) -> int:
@@ -60,19 +58,8 @@ def _genre_to_torznab(genre: str) -> int:
     return _GENRE_CATEGORY_MAP.get(key, 5000)
 
 
-def _is_tv_category(cat: int) -> bool:
-    """Check if a Torznab category is in the TV range (5000-5999)."""
-    return 5000 <= cat <= 5999
-
-
-def _determine_category(genres: list[str], category: int | None) -> int:
-    """Determine Torznab category from genres, with caller override.
-
-    Only honours *category* when it falls within the TV range (5000-5999).
-    s.to is a TV-only site, so non-TV categories are ignored.
-    """
-    if category is not None and _is_tv_category(category):
-        return category
+def _determine_category(genres: list[str]) -> int:
+    """Torznab category of a series from its genres (5000 by default)."""
     for genre in genres:
         mapped = _genre_to_torznab(genre)
         if mapped != 5000:
@@ -658,7 +645,7 @@ class StoPlugin(HttpxPluginBase):
         if not slug:
             return []
 
-        torznab_cat = _determine_category(detail.genres, category)
+        torznab_cat = _determine_category(detail.genres)
         # A full-series search (no season, no episode) covers every season
         seasons: list[int | None] = (
             list(detail.seasons) if season is None and episode is None else [season]
@@ -706,13 +693,13 @@ class StoPlugin(HttpxPluginBase):
         requests), only that specific episode is fetched per series — avoiding
         the expensive scrape of every episode in the season.
         """
+        # s.to is TV-only — reject non-TV category requests early.
+        if category is not None:
+            category = served_category(category, _CATEGORIES)
+            if category is None:
+                return []
         await self._ensure_client()
         await self._verify_domain()
-
-        # s.to is TV-only — reject non-TV category requests early.
-        if category is not None and not _is_tv_category(category):
-            self._log.info("sto_non_tv_category_rejected", category=category)
-            return []
 
         all_series = await self._paginate_search(query)
         if not all_series:
@@ -744,6 +731,8 @@ class StoPlugin(HttpxPluginBase):
                 continue
             search_results.extend(item)
 
+        if category is not None:
+            search_results = filter_by_category(search_results, category)
         return search_results[: self.effective_max_results]
 
 

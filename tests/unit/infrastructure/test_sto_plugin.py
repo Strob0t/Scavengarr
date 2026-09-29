@@ -32,7 +32,6 @@ _EpisodeHosterParser = _mod._EpisodeHosterParser
 _DOMAINS = _StoPlugin._domains
 _GENRE_CATEGORY_MAP = _mod._GENRE_CATEGORY_MAP
 _genre_to_torznab = _mod._genre_to_torznab
-_is_tv_category = _mod._is_tv_category
 _determine_category = _mod._determine_category
 
 
@@ -405,33 +404,19 @@ class TestEpisodeHosterParser:
 
 
 class TestCategoryMapping:
+    """Genres only tell anime and documentaries apart; they used to be mapped
+    to quality subcategories (drama 5030 TV/SD, horror 5040 TV/HD)."""
+
     def test_anime_mapping(self) -> None:
         assert _genre_to_torznab("Anime") == 5070
         assert _genre_to_torznab("anime") == 5070
 
-    def test_drama_mapping(self) -> None:
-        assert _genre_to_torznab("Drama") == 5030
-
-    def test_horror_mapping(self) -> None:
-        assert _genre_to_torznab("Horror") == 5040
-
-    def test_science_fiction_mapping(self) -> None:
-        assert _genre_to_torznab("Science Fiction") == 5030
-        assert _genre_to_torznab("science-fiction") == 5030
-
     def test_documentary_mapping(self) -> None:
         assert _genre_to_torznab("Dokumentation") == 5080
 
-    def test_fantasy_mapping(self) -> None:
-        assert _genre_to_torznab("Fantasy") == 5050
-
-    def test_unknown_genre_defaults_to_5000(self) -> None:
-        assert _genre_to_torznab("Krimi") == 5000
-        assert _genre_to_torznab("Western") == 5000
-        assert _genre_to_torznab("Romantik") == 5000
-
-    def test_zeichentrick_mapping(self) -> None:
-        assert _genre_to_torznab("Zeichentrick") == 5070
+    def test_other_genres_are_tv(self) -> None:
+        for genre in ("Drama", "Horror", "Science Fiction", "Fantasy", "Krimi"):
+            assert _genre_to_torznab(genre) == 5000, genre
 
 
 # ---------------------------------------------------------------------------
@@ -439,47 +424,12 @@ class TestCategoryMapping:
 # ---------------------------------------------------------------------------
 
 
-class TestIsTvCategory:
-    def test_tv_base_category(self) -> None:
-        assert _is_tv_category(5000) is True
-
-    def test_tv_sub_categories(self) -> None:
-        assert _is_tv_category(5030) is True
-        assert _is_tv_category(5040) is True
-        assert _is_tv_category(5070) is True
-        assert _is_tv_category(5080) is True
-        assert _is_tv_category(5999) is True
-
-    def test_movie_category_rejected(self) -> None:
-        assert _is_tv_category(2000) is False
-        assert _is_tv_category(2030) is False
-        assert _is_tv_category(2040) is False
-
-    def test_other_categories_rejected(self) -> None:
-        assert _is_tv_category(3000) is False  # Music
-        assert _is_tv_category(1000) is False  # Console
-        assert _is_tv_category(7000) is False  # Books
-
-
 class TestDetermineCategory:
-    def test_tv_category_passed_through(self) -> None:
-        assert _determine_category(["Drama"], category=5070) == 5070
-
-    def test_movie_category_ignored(self) -> None:
-        """Non-TV caller category is ignored; genre mapping used instead."""
-        result = _determine_category(["Drama"], category=2000)
-        assert result == 5030  # Drama → 5030
-
-    def test_movie_category_no_genre_defaults_5000(self) -> None:
-        """Non-TV category with unknown genres defaults to 5000."""
-        result = _determine_category(["Krimi"], category=2000)
-        assert result == 5000
-
-    def test_no_category_uses_genres(self) -> None:
-        assert _determine_category(["Horror", "Drama"], category=None) == 5040
-
-    def test_no_category_no_mapped_genre_defaults(self) -> None:
-        assert _determine_category(["Romantik"], category=None) == 5000
+    def test_from_genres(self) -> None:
+        assert _determine_category(["Drama", "Anime"]) == 5070
+        assert _determine_category(["Dokumentation"]) == 5080
+        assert _determine_category(["Horror", "Drama"]) == 5000
+        assert _determine_category([]) == 5000
 
 
 # ---------------------------------------------------------------------------
@@ -666,11 +616,13 @@ class TestSearch:
 
         plugin._client = _routed_client()
 
-        results = await plugin.search("stranger things", category=5070)
+        # Stranger Things is no anime (it used to come back labelled 5070)
+        assert await plugin.search("stranger things", category=5070) == []
 
-        assert len(results) > 0
-        for r in results:
-            assert r.category == 5070
+        # TV/HD is not told apart: all series, labelled by their genres
+        results = await plugin.search("stranger things", category=5040)
+        assert results
+        assert {r.category for r in results} == {5000}
 
     @pytest.mark.asyncio
     async def test_search_rejects_movie_category(self) -> None:
