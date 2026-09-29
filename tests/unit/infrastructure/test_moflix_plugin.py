@@ -112,13 +112,32 @@ DETAIL_SERIES_RESPONSE = {
         "name": "Batman: Caped Crusader",
         "is_series": True,
         "year": 2024,
-        "videos": [],
+        "videos": [
+            {
+                "name": "VOE",
+                "src": "https://voe.sx/e/s1e1",
+                "quality": "1080p",
+                "season_num": 1,
+                "episode_num": 1,
+            }
+        ],
         "genres": [
             {"id": 10, "name": "animation"},
             {"id": 11, "name": "action"},
         ],
     },
 }
+
+
+def _episode_video(season: int, episode: int) -> dict:
+    return {
+        "name": "VOE",
+        "src": f"https://voe.sx/e/s{season}e{episode}",
+        "quality": "1080p",
+        "season_num": season,
+        "episode_num": episode,
+    }
+
 
 EMPTY_SEARCH_RESPONSE: dict = {
     "results": [],
@@ -215,12 +234,37 @@ class TestBuildSearchResult:
         p.base_url = "https://moflix-stream.xyz"
 
         entry = SEARCH_RESPONSE["results"][1]
-        detail = DETAIL_SERIES_RESPONSE["title"]
+        detail = {**DETAIL_SERIES_RESPONSE["title"], "videos": [_episode_video(1, 1)]}
 
         sr = p._build_search_result(entry, detail)
 
         assert sr.category == 5000
         assert "2024" in sr.title
+
+    def test_episode_request_keeps_only_that_episode(self, moflix_mod):
+        p = moflix_mod.MoflixPlugin()
+        p.base_url = "https://moflix-stream.xyz"
+        entry = SEARCH_RESPONSE["results"][1]
+        detail = {
+            **DETAIL_SERIES_RESPONSE["title"],
+            "videos": [
+                _episode_video(1, 1),
+                _episode_video(2, 5),
+                _episode_video(2, 6),
+            ],
+        }
+
+        sr = p._build_search_result(entry, detail, season=2, episode=5)
+
+        assert [lnk["link"] for lnk in sr.download_links] == ["https://voe.sx/e/s2e5"]
+
+    def test_episode_request_without_that_episode_gives_nothing(self, moflix_mod):
+        p = moflix_mod.MoflixPlugin()
+        p.base_url = "https://moflix-stream.xyz"
+        entry = SEARCH_RESPONSE["results"][1]
+        detail = {**DETAIL_SERIES_RESPONSE["title"], "videos": [_episode_video(1, 1)]}
+
+        assert p._build_search_result(entry, detail, season=3, episode=1) is None
 
     def test_no_detail_fallback(self, moflix_mod):
         p = moflix_mod.MoflixPlugin()
@@ -228,12 +272,8 @@ class TestBuildSearchResult:
 
         entry = SEARCH_RESPONSE["results"][0]
 
-        sr = p._build_search_result(entry, None)
-
-        assert sr.title == "The Batman (2022)"
-        # Download link falls back to source URL
-        assert "moflix-stream.xyz/titles/2809" in sr.download_link
-        assert sr.download_links is None
+        # The site's own title page is no download link or stream
+        assert p._build_search_result(entry, None) is None
 
     def test_no_videos_fallback(self, moflix_mod):
         p = moflix_mod.MoflixPlugin()
@@ -247,10 +287,7 @@ class TestBuildSearchResult:
         }
         detail = DETAIL_NO_VIDEOS_RESPONSE["title"]
 
-        sr = p._build_search_result(entry, detail)
-
-        assert "moflix-stream.xyz/titles/9999" in sr.download_link
-        assert sr.download_links is None
+        assert p._build_search_result(entry, detail) is None
 
     def test_no_year(self, moflix_mod):
         p = moflix_mod.MoflixPlugin()
@@ -258,7 +295,7 @@ class TestBuildSearchResult:
 
         entry = {"id": 1, "name": "Unknown Movie", "is_series": False}
 
-        sr = p._build_search_result(entry, None)
+        sr = p._build_search_result(entry, DETAIL_MOVIE_RESPONSE["title"])
 
         assert sr.title == "Unknown Movie"
         assert sr.published_date is None
@@ -290,7 +327,7 @@ class TestBuildSearchResult:
             "description": "A" * 500,
         }
 
-        sr = p._build_search_result(entry, None)
+        sr = p._build_search_result(entry, DETAIL_MOVIE_RESPONSE["title"])
 
         assert len(sr.description) == 300
         assert sr.description.endswith("...")
@@ -398,8 +435,8 @@ class TestPluginSearch:
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_detail_failure_uses_fallback(self, plugin):
-        """When a detail page fails, result uses search entry data only."""
+    async def test_detail_failure_gives_no_result(self, plugin):
+        """Without the detail (videos) there is no link, only the title page."""
         call_count = 0
 
         async def mock_evaluate(js, arg=None):
@@ -415,10 +452,7 @@ class TestPluginSearch:
 
         results = await plugin.search("batman")
 
-        assert len(results) == 2
-        # Fallback: no videos, download_link is source URL
-        assert "moflix-stream.xyz/titles/" in results[0].download_link
-        assert results[0].download_links is None
+        assert results == []
 
     @pytest.mark.asyncio
     async def test_search_with_videos_in_download_link(self, plugin):

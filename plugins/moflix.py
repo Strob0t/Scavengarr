@@ -177,8 +177,15 @@ class MoflixPlugin(PlaywrightPluginBase):
         self,
         search_entry: dict,
         detail: dict | None,
-    ) -> SearchResult:
-        """Build a SearchResult from search entry and optional detail data."""
+        season: int | None = None,
+        episode: int | None = None,
+    ) -> SearchResult | None:
+        """Build a SearchResult from search entry and detail data.
+
+        Returns ``None`` without playable videos: the site's own title page
+        is neither a download link nor a stream. For a season/episode request
+        only videos of that season/episode count.
+        """
         name = search_entry.get("name", "")
         year = search_entry.get("year")
         is_series = search_entry.get("is_series", False)
@@ -190,6 +197,13 @@ class MoflixPlugin(PlaywrightPluginBase):
         if detail:
             videos = detail.get("videos") or []
             genres = [g.get("name", "") for g in (detail.get("genres") or [])]
+        if season is not None:
+            videos = [
+                v
+                for v in videos
+                if v.get("season_num") == season
+                and (episode is None or v.get("episode_num") == episode)
+            ]
 
         # Build display title
         display_title = f"{name} ({year})" if year else name
@@ -201,8 +215,6 @@ class MoflixPlugin(PlaywrightPluginBase):
         slug = name.lower().replace(" ", "-")
         source_url = f"{self.base_url}/titles/{title_id}/{slug}"
 
-        # Download link: first video embed src, fallback to source URL
-        download_link = source_url
         download_links: list[dict[str, str]] = []
         for video in videos:
             src = video.get("src", "")
@@ -211,8 +223,9 @@ class MoflixPlugin(PlaywrightPluginBase):
                 quality = video.get("quality", "")
                 label = f"{hoster} ({quality})" if quality else hoster
                 download_links.append({"hoster": label, "link": src})
-                if download_link == source_url:
-                    download_link = src
+        if not download_links:
+            self._log.debug("moflix_no_videos", title_id=title_id)
+            return None
 
         # Description
         desc = search_entry.get("description", "") or ""
@@ -225,8 +238,8 @@ class MoflixPlugin(PlaywrightPluginBase):
 
         return SearchResult(
             title=display_title,
-            download_link=download_link,
-            download_links=download_links or None,
+            download_link=download_links[0]["link"],
+            download_links=download_links,
             source_url=source_url,
             published_date=str(year) if year else None,
             category=category,
@@ -246,6 +259,8 @@ class MoflixPlugin(PlaywrightPluginBase):
         entry: dict,
         sem: asyncio.Semaphore,
         category: int | None,
+        season: int | None = None,
+        episode: int | None = None,
     ) -> SearchResult | None:
         """Fetch detail for one search entry and build result."""
         title_id = entry.get("id")
@@ -255,7 +270,9 @@ class MoflixPlugin(PlaywrightPluginBase):
         async with sem:
             detail = await self._fetch_title_detail(title_id)
 
-        sr = self._build_search_result(entry, detail)
+        sr = self._build_search_result(entry, detail, season, episode)
+        if sr is None:
+            return None
 
         # Post-filter by category range
         if category is not None:
@@ -304,7 +321,8 @@ class MoflixPlugin(PlaywrightPluginBase):
         # Fetch detail pages with bounded concurrency
         sem = self._new_semaphore()
         tasks = [
-            self._process_entry(e, sem, effective_category) for e in search_results
+            self._process_entry(e, sem, effective_category, season, episode)
+            for e in search_results
         ]
         task_results = await asyncio.gather(*tasks)
 
