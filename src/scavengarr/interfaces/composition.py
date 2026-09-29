@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 import functools
 import os
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
-from typing import AsyncIterator, cast
+from typing import cast
 
 import httpx
 import structlog
