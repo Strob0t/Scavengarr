@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from unittest.mock import patch
 
 import httpx
@@ -183,7 +184,10 @@ class TestGoFileResolver:
             await resolver.resolve(url)
 
             # Expire the token
-            with patch.object(gofile, "_cached_token_ts", 0.0):
+            # Relative to the monotonic clock: 0.0 is "fresh" on a host that
+            # booted less than _TOKEN_TTL ago.
+            expired_ts = time.monotonic() - gofile._TOKEN_TTL - 1
+            with patch.object(gofile, "_cached_token_ts", expired_ts):
                 await resolver.resolve(url)
 
         assert token_route.call_count == 2
