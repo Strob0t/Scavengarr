@@ -608,6 +608,34 @@ class TestXFSFormPost:
 
     @respx.mock
     @pytest.mark.asyncio()
+    async def test_form_post_goes_to_the_host_that_served_the_page(self) -> None:
+        """Rotating mirrors redirect the embed page to another host; the form
+        belongs to that host (a POST to the old host gets redirected and
+        re-sent as GET without the form body)."""
+        from scavengarr.infrastructure.hoster_resolvers.xfs import BIGWARP
+
+        url = "https://bigwarp.io/aBc123DeF456"
+        embed_url = "https://bigwarp.io/e/aBc123DeF456"
+        mirror_embed = "https://bgwp.cc/e/aBc123DeF456"
+
+        respx.get(embed_url).respond(301, headers={"Location": mirror_embed})
+        respx.get(mirror_embed).respond(200, text=_XFS_FORM_HTML)
+        post = respx.post("https://bgwp.cc/dl").respond(
+            200, text=_video_html_jwplayer()
+        )
+        head = respx.head(_VIDEO_HLS_URL).respond(200)
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=BIGWARP, http_client=client)
+            result = await resolver.resolve(url)
+
+        assert result is not None
+        assert post.called
+        assert result.headers["Referer"] == "https://bgwp.cc/dl"
+        assert head.calls.last.request.headers["Referer"] == "https://bgwp.cc/dl"
+
+    @respx.mock
+    @pytest.mark.asyncio()
     async def test_form_post_network_error(self) -> None:
         """POST failure returns None."""
         from scavengarr.infrastructure.hoster_resolvers.xfs import SAVEFILES

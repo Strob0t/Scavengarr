@@ -189,20 +189,24 @@ class XFSResolver:
         if self._is_dead(resp, file_id, hoster):
             return None
         html = resp.text
+        # The page may come from another (mirror) host after redirects; its
+        # form and the CDN Referer belong to that host
+        page_url = str(resp.url)
 
         # Many XFS hosters return a form-based splash on GET; POST to /dl
         # to get the actual player page.
         if _XFS_FORM_RE.search(html):
-            html = await self._post_xfs_form(url, file_id, hoster, headers)
-            if html is None:
+            posted = await self._post_xfs_form(page_url, file_id, hoster, headers)
+            if posted is None:
                 return None
+            html, page_url = posted
 
         video_url = extract_video_url(html)
         if not video_url:
             return await self._no_video_in_page(html, embed_url, file_id, hoster)
 
         is_hls = ".m3u8" in video_url
-        cdn_headers = {"Referer": str(resp.url)}
+        cdn_headers = {"Referer": page_url}
 
         # Verify CDN URL is actually reachable (filters IP-locked tokens).
         if not await self._verify_video_url(video_url, cdn_headers, hoster):
@@ -254,8 +258,12 @@ class XFSResolver:
         file_id: str,
         hoster: str,
         headers: dict[str, str],
-    ) -> str | None:
-        """Submit the XFS ``/dl`` form to obtain the real player page."""
+    ) -> tuple[str, str] | None:
+        """Submit the XFS ``/dl`` form to obtain the real player page.
+
+        *url* is the page that carried the form. Returns the player page's
+        HTML and URL.
+        """
         parsed = urlparse(url)
         dl_url = f"{parsed.scheme}://{parsed.netloc}/dl"
         data = {
@@ -288,7 +296,7 @@ class XFSResolver:
         if marker:
             log.info(f"{hoster}_file_offline", file_id=file_id, marker=marker)
             return None
-        return resp.text
+        return resp.text, str(resp.url)
 
     async def _resolve_ddl(
         self, url: str, file_id: str, hoster: str

@@ -10,6 +10,21 @@ from __future__ import annotations
 
 import re
 
+# Digits of Dean Edwards' packer: base <= 36 is lowercase-only, base 62
+# ("Normal", the default) adds uppercase
+_PACKER_DIGITS = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+
+def _decode_word(word: str, base: int) -> int | None:
+    """Decode a packed word in *base*; ``None`` if it is not a number there."""
+    value = 0
+    for char in word:
+        digit = _PACKER_DIGITS.find(char)
+        if digit < 0 or digit >= base:
+            return None
+        value = value * base + digit
+    return value
+
 
 def unpack_p_a_c_k(packed: str) -> str | None:
     """Unpack Dean Edwards packed JavaScript.
@@ -35,20 +50,14 @@ def unpack_p_a_c_k(packed: str) -> str | None:
     if len(keywords) < count:
         keywords.extend([""] * (count - len(keywords)))
 
-    def _base_n(num: int, radix: int) -> str:
-        """Convert integer to base-N string (supports up to base 36)."""
-        if num < 0:
-            return ""
-        chars = "0123456789abcdefghijklmnopqrstuvwxyz"
-        if num < radix:
-            return chars[num]
-        return _base_n(num // radix, radix) + chars[num % radix]
+    if base > len(_PACKER_DIGITS):
+        # base 95 ("High ASCII") words are not \w and cannot be decoded here
+        return None
 
     def _replace_word(m: re.Match[str]) -> str:
         word = m.group(0)
-        try:
-            index = int(word, base)
-        except ValueError:
+        index = _decode_word(word, base)
+        if index is None:
             return word
         if index < len(keywords) and keywords[index]:
             return keywords[index]

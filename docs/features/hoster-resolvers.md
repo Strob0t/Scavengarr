@@ -185,7 +185,7 @@ Adding a new generic DDL hoster requires only a `GenericDDLConfig` constant appe
 
 #### Video hosters (extract video URL)
 
-The resolver fetches `/e/{file_id}`, checks offline markers and error redirects, extracts the video URL (see [Shared video extraction](#shared-video-extraction)), and verifies it with `verify_video_url()`. When the embed page is an XFS splash form (`<form id="F1" action="/dl">`), it automatically POSTs `op=embed&file_code=<id>&auto=1` to `/dl` and extracts from the returned player page. This applies to every XFS video hoster, not to a fixed list.
+The resolver fetches `/e/{file_id}`, checks offline markers and error redirects, extracts the video URL (see [Shared video extraction](#shared-video-extraction)), and verifies it with `verify_video_url()`. When the embed page is an XFS splash form (`<form id="F1" action="/dl">`), it automatically POSTs `op=embed&file_code=<id>&auto=1` to `/dl` of the host that served the page (rotating mirrors redirect the embed URL to another host; a POST to the original host would be redirected and re-sent as GET without the form) and extracts from the returned player page; the CDN `Referer` is the URL of the page the player came from. This applies to every XFS video hoster, not to a fixed list.
 
 | Hoster | Domains | Notes |
 |---|---|---|
@@ -223,7 +223,7 @@ Adding a new XFS hoster requires only an `XFSConfig` constant appended to `ALL_X
 `_video_extract.py` (`extract_video_url()`) is used by the XFS resolver and the Filemoon resolver. Strategies, in order:
 
 1. Streamwish `"hls2":"https://…"` JSON key.
-1. Dean Edwards packed JS (`eval(function(p,a,c,k,e,d)…)`) — unpacked, then searched for JWPlayer `sources`/`file` HLS or MP4 URLs.
+1. Dean Edwards packed JS (`eval(function(p,a,c,k,e,d)…)`) — unpacked (bases up to 62, the packer's default "Normal" encoding with `0-9a-zA-Z`; base 95 is not supported), then searched for JWPlayer `sources`/`file` HLS or MP4 URLs.
 1. JWPlayer `sources: [{file: "…"}]` directly in the page (thumbnail/track URLs skipped).
 1. Any quoted `.m3u8`/`.mp4` URL in the page.
 

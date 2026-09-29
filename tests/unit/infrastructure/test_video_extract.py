@@ -36,6 +36,20 @@ class TestUnpackPACK:
         assert "sources" in result
         assert "master.m3u8" in result
 
+    def test_base62_words(self) -> None:
+        """The packer's default "Normal" encoding is base 62 (0-9a-zA-Z)."""
+        keywords = ["" for _ in range(40)]
+        keywords[0], keywords[1], keywords[36], keywords[37] = (
+            "var",
+            "x",
+            "file",
+            "sources",
+        )
+        packed = "}('0 1 A B z'," + "62,40,'" + "|".join(keywords) + "'.split('|')"
+
+        # z = 35 has no keyword and stays as it is
+        assert unpack_p_a_c_k(packed) == "var x file sources z"
+
     def test_returns_none_for_non_packed(self) -> None:
         assert unpack_p_a_c_k("var x = 1;") is None
 
