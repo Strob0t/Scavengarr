@@ -8,7 +8,7 @@
 
 ## Overview
 
-Scavengarr ships **58 hoster resolvers**: 20 individual resolvers, 12 generic DDL hosters consolidated in `GenericDDLResolver`, and 26 XFileSharingPro (XFS) hosters consolidated in `XFSResolver`. Every resolver checks whether a file is still available; video-extracting resolvers additionally return a direct `.mp4`/`.m3u8` URL plus the HTTP headers the CDN needs.
+Scavengarr ships **59 hoster resolvers**: 21 individual resolvers, 12 generic DDL hosters consolidated in `GenericDDLResolver`, and 26 XFileSharingPro (XFS) hosters consolidated in `XFSResolver`. Every resolver checks whether a file is still available; video-extracting resolvers additionally return a direct `.mp4`/`.m3u8` URL plus the HTTP headers the CDN needs.
 
 Resolvers are registered in `HosterResolverRegistry`, which dispatches each URL to a resolver by its second-level domain, follows redirects and plugin hoster hints for unknown domains, falls back to a HEAD content-type probe, and caches the outcome in memory.
 
@@ -38,7 +38,7 @@ class HosterResolverPort(Protocol):
 
 ### Domain dispatch
 
-The registry matches `extract_domain(url)` (second-level domain, e.g. `"https://www.voe.sx/e/abc"` → `"voe"`) against resolver names. Resolvers that expose a `supported_domains` property are also registered under every alias domain (e.g. `filelions` → `vidhide`, `d0000d` → `doodstream`, `streamta` → `streamtape`): all XFS and generic DDL resolvers plus the individual resolvers with mirror lists (DoodStream, Streamtape, VidGuard, Strmup, Filemoon, FireStream, DDownload, Serienstream). Other individual resolvers are reached when the URL's second-level domain equals the resolver `name`, via a redirect to such a domain, or via the plugin-provided hoster hint. The registry strips surrounding whitespace from the URL first (scraped links sometimes end in a newline).
+The registry matches `extract_domain(url)` (second-level domain, e.g. `"https://www.voe.sx/e/abc"` → `"voe"`) against resolver names. Resolvers that expose a `supported_domains` property are also registered under every alias domain (e.g. `filelions` → `vidhide`, `d0000d` → `doodstream`, `streamta` → `streamtape`): all XFS and generic DDL resolvers plus the individual resolvers with mirror lists (VOE, DoodStream, Streamtape, VidGuard, Strmup, Filemoon, FireStream, DDownload, Serienstream). Other individual resolvers are reached when the URL's second-level domain equals the resolver `name`, via a redirect to such a domain, or via the plugin-provided hoster hint. The registry strips surrounding whitespace from the URL first (scraped links sometimes end in a newline).
 
 > **Known issue:** `moflix-stream` is listed in VidGuard's `_DOMAINS` and in Vidhide's `extra_domains`. The XFS resolvers register after VidGuard, so the registry maps `moflix-stream` URLs to the Vidhide resolver.
 
@@ -55,7 +55,7 @@ Video-extracting resolvers set `ResolvedStream.headers` with the headers require
 | DoodStream | `Referer: <base_url>` |
 | XFS video hosters | `Referer: <embed URL after redirects>` |
 | Veev | `Referer: <origin>/`, `User-Agent: <UA used to resolve>` (token is UA-bound) |
-| FireStream, Playmate | none (signed / public HLS URLs) |
+| FireStream, Playmate, Vixeo | none (signed / public HLS URLs) |
 | StreamUp (strmup) | `Origin: <scheme>://<host>`, `Referer: <scheme>://<host>/` |
 | Vidsonic | `Origin: <scheme>://<host>`, `Referer: <scheme>://<host>/` |
 
@@ -69,6 +69,7 @@ Some players create the stream URL only while they run. Filemoon's Byse player s
 
 - The page loads with stylesheets and fonts (a page route overrides the context's resource block): without CSS the play button is not where the click lands. Only `media` downloads are aborted; their URL is already known when requested.
 - Popups opened by ad scripts (often on the first click) are closed.
+- Seek-preview playlists are not the stream: URLs containing `thumbnail`, `sprite` or `preview` are ignored (vixeo requests `thumbnails.m3u8`, a playlist of JPEGs, before the video).
 - Shares the `fetch_text()` concurrency limit (`fetch_concurrency`, at most 2 pages).
 - Resolvers call it only at play time (`/stremio/play/{id}` resolves one link), so a few seconds per resolve are acceptable (Filemoon live: 2–5 s).
 - Dead files end the capture early: the page title and visible text (not the HTML, player scripts carry such strings as error templates) are checked for notices like "Video not found", "File is no longer available", "No such file", "has been removed" after the Cloudflare step and after every click (savefiles says so only after the play click). Live: dead dood link 0.7 s, dead savefiles link 8.5 s instead of 18 s.
@@ -81,6 +82,7 @@ Some players create the stream URL only while they run. Filemoon's Byse player s
 | XFS video hosters (savefiles, bigwarp, streamwish, …) | Cloudflare challenge on the embed page, or no video in the page but a captcha widget in front of the player (Turnstile / reCAPTCHA play button, e.g. dr0pstream) |
 | DoodStream | Cloudflare challenge (every mirror redirects to `playmogo.com`, which is challenged) |
 | SuperVideo | Cloudflare challenge (replaces its own Playwright HTML fetch) |
+| Vixeo | always (no httpx path) |
 
 Without a `StealthPool` (tests, `stealth_pool=None`) these paths return `None`. Captured URLs are not HEAD-verified: the browser just requested them.
 
@@ -116,6 +118,7 @@ Check availability and return the original URL without headers. The Stremio addo
 | SerienStream | `serienstream` | `s.to`, `www.s.to`, `serienstream.*`, `serien.*` | Page validation (`/serie/` or `/serien/` slug) |
 | SendVid | `sendvid` | `sendvid.com` | Status API (`/api/v1/videos/{id}/status.json`, 404 = offline) + page 200 check |
 | FireStream | `firestream` | `firestream.to` → `firestream.site` (`/e/<id>`) | Port of JD2 `FirestreamTo`: embed page → `<script id="video-data">` (`encodingStatus` must be `completed`) + `<script id="token-blob">` → `POST /api/videos/<id>/resolve` `{"blob"}` on the host that served the page (the token is host-bound) → `signedVideoUrl` (HLS); 404 embed page = gone |
+| Vixeo | `vixeo` | `vixeo.io` (`/e/<id>`; `/login` and other paths are not videos) | Vidsonic's current player: a JavaScript app that builds the signed `*.vidsonic.net/secure/.../index.m3u8` URL at runtime, so the stream is taken from the browser capture (~4 s) |
 | Playmate | `playmate` | `playmate.to` (`/watch/<id>`, `/e/<id>`) | Port of JD2 `PlaymateTo`: `GET /api/video-meta?filecode=` (404 / `success: false` = gone) → `POST /api/s` `{"c": id, "d": "web"}` with `Origin` + watch-page `Referer` → `sx` (HLS master, `master.txt`). The API answers 403 to non-browser user agents |
 | Veev | `veev` | `veev.to` (`/e/`, `/d/` or bare ID, 12+ chars) | Player API without captcha: LZW-decode the `window._vvto` token, `/dl?op=player_api&cmd=gi`, decode `file.dv[0].s` → direct MP4 (port of JDownloader `VeevTo`); offline on `Watch video - Veev.to` title or "File not found". Resolves with a browser User-Agent and returns it in the playback headers: veevcdn binds the stream token to that UA (another UA gets 403) |
 

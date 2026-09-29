@@ -66,6 +66,8 @@ _FETCH_RAW_JS = """async (url) => {
 _MEDIA_URL_RE = re.compile(
     r"\.(?:m3u8|mpd|mp4)(?:$|\?)|/master\.txt(?:$|\?)", re.IGNORECASE
 )
+# ...but not seek-preview playlists (e.g. vixeo's thumbnails.m3u8 of JPEGs)
+_NOT_MEDIA_RE = re.compile(r"thumbnail|sprite|preview", re.IGNORECASE)
 # capture_media(): wait this long for autoplay, then click the player up to
 # _MEDIA_PLAY_CLICKS times (on ad-funded hosters the first click often only
 # opens a popup), waiting _MEDIA_CLICK_WAIT_S after each click
@@ -374,7 +376,11 @@ class StealthPool:
                 )
 
                 def _on_request(request: Request) -> None:
-                    if not found.done() and _MEDIA_URL_RE.search(request.url):
+                    if (
+                        not found.done()
+                        and _MEDIA_URL_RE.search(request.url)
+                        and not _NOT_MEDIA_RE.search(request.url)
+                    ):
                         found.set_result(
                             CapturedMedia(request.url, request.headers.get("referer"))
                         )

@@ -110,6 +110,7 @@ Validates file availability and extracts direct video URLs from streaming hoster
 | StreamUp (strmup) | [x] Implemented | HLS extraction with page + AJAX fallback |
 | Vidsonic | [x] Implemented | HLS extraction with hex-obfuscated URL decoding |
 | FireStream | [x] Implemented | Page token → `/api/videos/<id>/resolve` → signed HLS (JD2 `FirestreamTo`) |
+| Vixeo | [x] Implemented | Browser capture of Vidsonic's player app |
 | Playmate | [x] Implemented | `/api/video-meta` + `/api/s` → HLS master (JD2 `PlaymateTo`) |
 
 ### Validate-only streaming hosters (no video extraction)

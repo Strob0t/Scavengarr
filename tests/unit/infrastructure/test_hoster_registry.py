@@ -558,6 +558,9 @@ def _mirror_cases() -> list[tuple[str, str]]:
         ("filemoon", "https://bysezejataos.com/d/pz97syzbv14q"),
         ("filemoon", "https://filemooon.link/e/abc123def456"),
         ("filemoon", "https://byse.sx/e/abc123def456"),
+        ("voe", "https://goofy-banana.com/e/ewoeevihnzun"),
+        ("voe", "https://jeremyparticipantanything.com/e/ewoeevihnzun"),
+        ("voe", "https://housecardsummerbutton.com/e/abc123def456"),
         ("ddownload", "https://ddl.to/abcdefghijkl"),
         ("serienstream", "https://serien.sx/redirect/123"),
     ]
@@ -587,6 +590,7 @@ class TestMirrorDomainDispatch:
         from scavengarr.infrastructure.hoster_resolvers.vidguard import (
             VidguardResolver,
         )
+        from scavengarr.infrastructure.hoster_resolvers.voe import VoeResolver
 
         client = MagicMock(spec=httpx.AsyncClient)
         resolvers = [
@@ -599,6 +603,7 @@ class TestMirrorDomainDispatch:
                 StreamtapeResolver,
                 StrmupResolver,
                 VidguardResolver,
+                VoeResolver,
             )
         ]
         for resolver in resolvers:

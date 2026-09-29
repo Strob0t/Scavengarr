@@ -53,6 +53,7 @@ from scavengarr.infrastructure.hoster_resolvers.veev import VeevResolver
 from scavengarr.infrastructure.hoster_resolvers.vidguard import VidguardResolver
 from scavengarr.infrastructure.hoster_resolvers.vidking import VidkingResolver
 from scavengarr.infrastructure.hoster_resolvers.vidsonic import VidsonicResolver
+from scavengarr.infrastructure.hoster_resolvers.vixeo import VixeoResolver
 from scavengarr.infrastructure.hoster_resolvers.voe import VoeResolver
 from scavengarr.infrastructure.hoster_resolvers.xfs import create_all_xfs_resolvers
 from scavengarr.infrastructure.metrics import MetricsCollector
@@ -423,6 +424,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             VeevResolver(http_client=state.http_client),
             FirestreamResolver(http_client=state.http_client),
             PlaymateResolver(http_client=state.http_client),
+            VixeoResolver(
+                http_client=state.http_client,
+                stealth_pool=state.stealth_pool,
+            ),
             # DDL resolvers (custom — non-XFS)
             MediafireResolver(http_client=state.http_client),
             GoFileResolver(http_client=state.http_client),

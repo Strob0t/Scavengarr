@@ -7,12 +7,12 @@ import json
 import httpx
 import pytest
 import respx
+
+from scavengarr.domain.entities.stremio import StreamQuality
 from scavengarr.infrastructure.hoster_resolvers.playmate import (
     PlaymateResolver,
     _extract_file_id,
 )
-
-from scavengarr.domain.entities.stremio import StreamQuality
 
 _FID = "w2nGaorDAKY4S"
 _META = f"https://playmate.to/api/video-meta?filecode={_FID}"

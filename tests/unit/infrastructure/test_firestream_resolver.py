@@ -7,6 +7,7 @@ import json
 import httpx
 import pytest
 import respx
+
 from scavengarr.infrastructure.hoster_resolvers.firestream import (
     FirestreamResolver,
     _extract_file_id,

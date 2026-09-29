@@ -20,6 +20,7 @@ import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
 from scavengarr.infrastructure.hoster_resolvers._verify import verify_video_url
+from scavengarr.infrastructure.hoster_resolvers._voe_domains import VOE_DOMAINS
 
 log = structlog.get_logger(__name__)
 
@@ -143,6 +144,11 @@ class VoeResolver:
     @property
     def name(self) -> str:
         return "voe"
+
+    @property
+    def supported_domains(self) -> frozenset[str]:
+        """Rotating mirror domains dispatched to this resolver by the registry."""
+        return VOE_DOMAINS
 
     async def resolve(self, url: str) -> ResolvedStream | None:
         """Fetch VOE embed page and extract video URL."""

@@ -6,7 +6,13 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
-Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 58 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4379 tests (4339 excluding the opt-in live tests).
+Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 59 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4410 tests (4370 excluding the opt-in live tests).
+
+### Feature: VOE Mirror Domains, Vixeo Resolver, Thumbnail-Safe Capture
+- **VOE mirror domains**: VOE rotates its domains; the resolver now exposes 134 of them (`hoster_resolvers/_voe_domains.py`, from JD2 `VoeSxCrawler` plus `goofy-banana` and `jeremyparticipantanything` seen on plugin sites). Live: a goofy-banana link resolves in 0.7 s; before, no resolver was found. JD2 also lists three domains that Scavengarr maps to Vidhide; they stay there so each domain has one owner.
+- **Vixeo resolver** (`vixeo.io`, Vidsonic's new player): the page builds the signed HLS URL in JavaScript, so the stream comes from the browser capture. Live: 4.3 s, playable without headers; dead IDs fail in 0.2 s.
+- **Capture ignores seek-preview playlists**: `capture_media` took vixeo's `thumbnails.m3u8` (a playlist of JPEGs) for the stream. URLs containing `thumbnail`, `sprite` or `preview` no longer count.
+- Checked and dropped from the uncovered list: `streamdav.com`, `upload.do` and `voe-stream.space` are parked domains (all redirect to `router.parklogic.com`), `odysseusa.cc` answers 404 for its video.
 
 ### Feature: FireStream and Playmate Resolvers
 - Two hosters from the plugin link scan had no resolver. Both are ports of JDownloader plugins and need no browser:

@@ -8,12 +8,12 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 import respx
+
+from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort
 from scavengarr.infrastructure.browser.solver_fetcher import (
     ChainedBrowserFetcher,
     SolverFetcher,
 )
-
-from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort
 
 _SOLVER = "http://byparr:8191"
 

@@ -732,3 +732,25 @@ class TestStealthPoolCaptureMediaOffline:
         )
 
         assert media is not None
+
+
+@pytest.mark.usefixtures("_fast_capture")
+class TestStealthPoolCaptureMediaThumbnails:
+    async def test_thumbnail_playlist_is_not_the_stream(self) -> None:
+        """vixeo loads a seek-preview playlist (thumbnails.m3u8) before the
+        video; taking it would hand players a playlist of JPEGs."""
+        shared_pool, _, context = _mock_pool_stack()
+        page = _player_page(
+            on_load=[
+                "https://vixeo.io/thumbnails/KD2Ztr3euxYK/thumbnails.m3u8",
+                "https://sfy-01-fr.vidsonic.net/secure/98/x/video.mp4/index.m3u8?e=1",
+            ]
+        )
+        context.new_page = AsyncMock(return_value=page)
+
+        media = await StealthPool(browser_pool=shared_pool).capture_media(
+            "https://vixeo.io/e/KD2Ztr3euxYK", timeout=10
+        )
+
+        assert media is not None
+        assert media.url.startswith("https://sfy-01-fr.vidsonic.net/")
