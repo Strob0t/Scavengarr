@@ -38,7 +38,7 @@ poetry run start --host 0.0.0.0 --port 7979 --config data/config.yaml
 xvfb-run -a poetry run start --host 0.0.0.0 --port 7979 --config data/config.yaml
 ```
 
-The repository also contains a dev container (`.devcontainer/`) with Python, Node 22, Chromium and Xvfb preinstalled. On its first start it creates `.env.devcontainer` from `.env.devcontainer.example`; add your `GH_TOKEN` and git identity there and rebuild. Details: [AGENTS.md → Dev container](AGENTS.md#9-dev-container).
+The repository also contains a dev container (`.devcontainer/`) with Python, Node 22, Chromium and Xvfb preinstalled. On its first start it creates `.env.devcontainer` from `.env.devcontainer.example`; add your `GH_TOKEN` and git identity there and rebuild. Port 7979 is published on all interfaces of the host, so a server started in the container is reachable from the LAN (for example from Stremio). Details: [AGENTS.md → Dev container](AGENTS.md#9-dev-container).
 
 ---
 

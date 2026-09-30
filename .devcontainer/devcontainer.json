@@ -9,7 +9,9 @@
   "initializeCommand": "test -f .env.devcontainer || cp .env.devcontainer.example .env.devcontainer",
   "runArgs": [
     "--env-file",
-    "${localWorkspaceFolder}/.env.devcontainer"
+    "${localWorkspaceFolder}/.env.devcontainer",
+    "-p",
+    "0.0.0.0:7979:7979"
   ],
   "features": {
     "ghcr.io/devcontainers/features/github-cli:1": {},
@@ -17,9 +19,6 @@
       "version": "22"
     }
   },
-  "forwardPorts": [
-    7979
-  ],
   "postCreateCommand": "mkdir -p ~/continue && if [ -f .continue/config.yaml ]; then cp .continue/config.yaml ~/continue/config.yaml; fi",
   "postStartCommand": "bash .devcontainer/sync-jdownloader.sh || true",
   "postAttachCommand": "bash .devcontainer/setup.sh",

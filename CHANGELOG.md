@@ -8,6 +8,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 59 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4588 tests (4547 excluding the opt-in live tests).
 
+### Chore: Dev Container Port Reachable from the LAN
+- `.devcontainer/devcontainer.json` publishes port 7979 on all host interfaces (`runArgs`: `-p 0.0.0.0:7979:7979`) instead of `forwardPorts`, which only tunnels the port to the editor's machine. Stremio and other LAN clients can now reach a server started in the container with `--host 0.0.0.0 --port 7979`, for live tests against the local media stack.
+
 ### Chore: Dev Container Extensions Work in VSCodium
 - `.devcontainer/devcontainer.json` drops `ms-python.pytest` (not on Open VSX; test discovery is part of `ms-python.python`) and `ms-python.black-formatter` (the project formats with ruff) and adds `detachhead.basedpyright`, the Open VSX replacement for Pylance, which VSCodium/Code - OSS may not use.
 - `.vscode/settings.json` sets `basedpyright.analysis.typeCheckingMode` to `standard` (Pylance-like); basedpyright's own default `recommended` flags the whole code base.
