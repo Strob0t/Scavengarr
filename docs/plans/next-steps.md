@@ -2,7 +2,7 @@
 
 # Plan: Project Status and Next Steps
 
-**Status:** Proposed (2026-09-30), nothing started. Items 1 and 6 wait for the maintainer; items 2–5 can start without further input.
+**Status:** In progress. Proposed 2026-09-30; the CI part of item 2 is done (2026-09-30). Items 1 and 6 wait for the maintainer; items 2–5 can start without further input.
 **Priority:** High for 1–3 (the work since February does not reach the Stremio setup, nothing guards `staging`, a quarter of the tested plugins return nothing), medium for 4–5.
 **Source:** Assessment after the [code review fixes](code-review-fixes.md) on 2026-09-29: repository and GitHub state, dependency check, the full live smoke run (`pytest -m live`), a coverage run and a probe of the production instance.
 
@@ -28,7 +28,7 @@ The code is in good shape; delivery and operation are not. The tests are extensi
 | Live | Stremio end-to-end passes (Oppenheimer and Breaking Bad S01E01 each play a stream); 20 of 35 plugin smoke tests return results ([details](#live-smoke-run-2026-09-29)) |
 | Release | `main` is at `a08ed04` "test claude" (2026-02-09), `staging` is 536 commits ahead; version `0.1.0`; ~860 CHANGELOG lines under "Unreleased", v0.1.0 still dated `2025-XX-XX` |
 | Production | `https://scavengarr.lan` answers 502 on every path (Caddy up, backend down; also earlier that day) |
-| Automation | No CI (no `.github/workflows/`); pre-commit runs ruff and hygiene hooks only; basedpyright runs in the editor only (`.vscode/settings.json`, `standard`) |
+| Automation | No CI (no `.github/workflows/`; added 2026-09-30, see item 2); pre-commit runs ruff and hygiene hooks only; basedpyright runs in the editor only (`.vscode/settings.json`, `standard`) |
 | Dependencies | 17 top-level packages outdated; major steps: guessit 3.8 → 4.4, redis 7 → 8, cryptography 46 → 50; also fastapi 0.128 → 0.142, uvicorn 0.40 → 0.54 |
 | Process | OpenSpec unused since January: `add-config-system` (75 of 87 tasks) and `add-plugin-loader` (67 of 186) never archived, no `openspec/specs/`; plans live in `docs/plans/` |
 | Repository | public, 0 stars, 0 forks; `docs/plugins.md` names every site |
@@ -55,7 +55,7 @@ From the dev container, `poetry run pytest -m live`: 24 passed, 10 failed, 7 ski
 
 ## 2. Safety net
 
-- **CI** (agent): `.github/workflows/ci.yml` runs `poetry install --with dev`, `pre-commit run --all-files` and `pytest` without live tests (about 1 min locally) on every push to `staging` and on pull requests to `main`. Free for public repositories. Check first whether any non-live test needs a real browser.
+- **CI** (agent) — **Done 2026-09-30:** `.github/workflows/ci.yml` runs `poetry install --with dev`, `pre-commit run --all-files` and `pytest` without live tests on every push to `staging`, on pull requests to `staging` (where CONTRIBUTING.md sends contributors) and `main`, and on demand. Free for public repositories. No non-live test needs a real browser: in a clean clone with an empty `PLAYWRIGHT_BROWSERS_PATH`, a fresh `HOME` and no `SCAVENGARR_*` variables, install took 25 s, pre-commit 40 s and the 4547 tests 62 s, all green.
 - **Monitoring** (maintainer's host): the app already has `/api/v1/healthz`, `/api/v1/readyz`, `/api/v1/torznab/{plugin}/health` and `/api/v1/stats/plugin-scores`. A monitor on the host (for example Uptime Kuma) would have reported the 502 right away.
 - **Scheduled live run** (maintainer's host): `pytest -m live` once a week from the home network (about 13 min), with the result as a notification. Not on GitHub-hosted runners: they use datacenter IPs, which Cloudflare-protected sites challenge harder, so the results would not show what the home network sees. No self-hosted runner either, since pull requests from forks of a public repository could run code on it.
 
