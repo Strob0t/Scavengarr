@@ -412,11 +412,16 @@ class _DetailPageParser(HTMLParser):
             self._in_genres_div = True
             self._genres_text = ""
 
-        # Description: <div class="... full-text ...">
+        # Description: <div class="... full-text ...">; user comments below
+        # the plot are "full-text" divs too
         if tag == "div":
             if self._in_desc:
                 self._desc_div_depth += 1
-            elif "full-text" in classes:
+            elif (
+                "full-text" in classes
+                and "comment-item__main" not in classes
+                and not self.description
+            ):
                 self._in_desc = True
                 self._desc_div_depth = 0
                 self._desc_text = ""

@@ -208,6 +208,8 @@ class TestMegakino:
         detail = _detail("megakino", self._BASE, "detail-oppenheimer")
         assert detail.title == "Oppenheimer"
         assert detail.year == "2023"
+        # The plot, not the last user comment (also a "full-text" div)
+        assert detail.description.startswith("In einer Anhörung über seinen")
         assert not detail.is_series
         assert [lk["link"] for lk in detail.stream_links] == [
             "https://voe.sx/e/qld0n0mjfq3y",
