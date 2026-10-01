@@ -37,11 +37,14 @@ from scavengarr.infrastructure.plugins.relevance import (
 # ---------------------------------------------------------------------------
 # Configurable settings
 # ---------------------------------------------------------------------------
-_DOMAINS = ["s.to", "serienstream.to", "186.2.175.5"]
+# s.to is gone (NXDOMAIN; dead in JDownloader's SerienStreamTo too)
+_DOMAINS = ["serienstream.to", "186.2.175.5"]
 _MAX_PAGES = 42  # 24 results/page → 42 pages for ~1000
 _RESULTS_PER_PAGE = 24
 # Hoster buttons of an episode page; each opens a /r?t= link-out
 _LINK_BOX = "button.link-box[data-play-url]"
+# Provider name of the button that links to the series' streaming service
+_OFFICIAL_PROVIDER = "Provider"
 # The browser's time to pass the link-out gate (Turnstile takes ~6 s)
 _GATE_TIMEOUT_S = 30.0
 # After a failed pass, link-outs go without the browser for this long
@@ -344,7 +347,9 @@ class _EpisodeHosterParser(HTMLParser):
         provider = attr_dict.get("data-provider-name", "") or ""
         language = attr_dict.get("data-language-label", "") or ""
 
-        if play_url and provider:
+        # "Anbieter" (Provider) links to the streaming service that owns the
+        # series, no hoster to play
+        if play_url and provider and provider != _OFFICIAL_PROVIDER:
             self.hosters.append(
                 {
                     "play_url": play_url,

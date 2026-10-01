@@ -60,7 +60,7 @@ is unreachable.
 | `scnsrc` | www.scnsrc.me | 5 | Downloads | Playwright | de |
 | `serienfans` | serienfans.org | 0 | Downloads | httpx | de |
 | `serienjunkies` | serienjunkies.org | 0 | Downloads | httpx | de |
-| `sto` | s.to | 2 | Streams | httpx | de |
+| `sto` | serienstream.to | 1 | Streams | httpx | de |
 | `streamcloud` | streamcloud.download | 1 | Streams | httpx | de |
 | `streamkiste` | streamkiste.bid | 5 | Streams | httpx | de |
 | `warezomen` | warezomen.com | 0 | Downloads | httpx | de |

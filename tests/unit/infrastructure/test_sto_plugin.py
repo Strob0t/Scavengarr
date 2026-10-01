@@ -218,10 +218,8 @@ class TestPluginAttributes:
         assert plugin.mode == "httpx"
 
     def test_domains_list(self) -> None:
-        assert "s.to" in _DOMAINS
-        assert "serienstream.to" in _DOMAINS
-        assert "186.2.175.5" in _DOMAINS
-        assert _DOMAINS[0] == "s.to"
+        # s.to is gone (NXDOMAIN, dead in JDownloader's SerienStreamTo)
+        assert _DOMAINS == ["serienstream.to", "186.2.175.5"]
 
 
 # ---------------------------------------------------------------------------
@@ -236,7 +234,7 @@ class TestDomainVerification:
 
         head_resp = MagicMock()
         head_resp.status_code = 200
-        head_resp.url = httpx.URL("https://s.to/")
+        head_resp.url = httpx.URL("https://serienstream.to/")
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.head = AsyncMock(return_value=head_resp)
@@ -245,7 +243,7 @@ class TestDomainVerification:
         await plugin._verify_domain()
 
         assert plugin._domain_verified is True
-        assert "s.to" in plugin.base_url
+        assert "serienstream.to" in plugin.base_url
 
     @pytest.mark.asyncio
     async def test_fallback_to_second_domain(self) -> None:
@@ -256,7 +254,7 @@ class TestDomainVerification:
 
         ok_resp = MagicMock()
         ok_resp.status_code = 200
-        ok_resp.url = httpx.URL("https://serienstream.to/")
+        ok_resp.url = httpx.URL("https://186.2.175.5/")
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.head = AsyncMock(side_effect=[fail_resp, ok_resp])
@@ -265,7 +263,7 @@ class TestDomainVerification:
         await plugin._verify_domain()
 
         assert plugin._domain_verified is True
-        assert "serienstream.to" in plugin.base_url
+        assert "186.2.175.5" in plugin.base_url
 
     @pytest.mark.asyncio
     async def test_all_domains_fail(self) -> None:
@@ -278,7 +276,7 @@ class TestDomainVerification:
         await plugin._verify_domain()
 
         assert plugin._domain_verified is True
-        assert "s.to" in plugin.base_url  # Fallback to primary
+        assert "serienstream.to" in plugin.base_url  # Fallback to primary
 
     @pytest.mark.asyncio
     async def test_skips_if_already_verified(self) -> None:
@@ -427,6 +425,24 @@ class TestEpisodeHosterParser:
         assert voe_en["play_url"] == "/r?t=ghi789"
         assert voe_en["provider"] == "VOE"
         assert voe_en["language"] == "Englisch"
+
+    def test_skips_the_link_to_the_official_provider(self) -> None:
+        # "Anbieter" links to the streaming service that owns the series
+        # (no embed; its link-out answered 410 for Breaking Bad), no hoster
+        html = """\
+<button class="link-box" data-link-id="1" data-play-url="/r?t=voe"
+        data-auto-embed="1" data-provider-name="VOE"
+        data-language-label="Englisch" data-language-id="2">VOE</button>
+<button class="link-box" data-link-id="2" data-play-url="/r?t=official"
+        data-auto-embed="0" data-provider-name="Provider"
+        data-language-label="Englisch" data-language-id="2">
+  <span class="text-white ms-1">Anbieter</span>
+</button>
+"""
+        parser = _EpisodeHosterParser()
+        parser.feed(html)
+
+        assert [h["provider"] for h in parser.hosters] == ["VOE"]
 
     def test_empty_html(self) -> None:
         parser = _EpisodeHosterParser()
