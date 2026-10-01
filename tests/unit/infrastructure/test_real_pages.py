@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import gzip
 import importlib.util
+import inspect
 import sys
 from functools import cache
 from pathlib import Path
@@ -31,9 +32,13 @@ def _page(site: str, name: str) -> str:
     return gzip.decompress((_PAGES / site / f"{name}.html.gz").read_bytes()).decode()
 
 
+# Plugin files named other than the plugin (fixtures go by plugin name)
+_PLUGIN_FILES = {"filmpalast": "filmpalast_to"}
+
+
 @cache
 def _plugin_module(site: str) -> ModuleType:
-    path = _ROOT / "plugins" / f"{site}.py"
+    path = _ROOT / "plugins" / f"{_PLUGIN_FILES.get(site, site)}.py"
     spec = importlib.util.spec_from_file_location(f"{site}_real_pages", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -49,7 +54,9 @@ def _search_hits(site: str, base_url: str, name: str) -> list[dict[str, Any]]:
 
 
 def _detail(site: str, base_url: str, name: str) -> Any:
-    parser = _plugin_module(site)._DetailPageParser(base_url)
+    parser_cls = _plugin_module(site)._DetailPageParser
+    takes_url = bool(inspect.signature(parser_cls).parameters)
+    parser = parser_cls(base_url) if takes_url else parser_cls()
     parser.feed(_page(site, name))
     finalize = getattr(parser, "finalize", None)
     if finalize is not None:
@@ -232,6 +239,78 @@ def _mock_client(*pages: str) -> AsyncMock:
         side_effect=[httpx.Response(200, text=p, request=request) for p in pages]
     )
     return client
+
+
+class TestFilmpalast:
+    _FILM = "//filmpalast.to/stream/oppenheimer"
+
+    def _hits(self, name: str) -> list[dict[str, Any]]:
+        parser = _plugin_module("filmpalast")._SearchResultParser()
+        parser.feed(_page("filmpalast", name))
+        return parser.results
+
+    def test_search_lists_the_film(self) -> None:
+        assert _hit(self._hits("search-oppenheimer"), "Oppenheimer") == {
+            "title": "Oppenheimer",
+            "detail_url": self._FILM,
+        }
+
+    async def test_film_request_scrapes_the_relevant_hit_only(self) -> None:
+        """The site search also lists "Fireball: Visitors from Darker Worlds"
+        and "Into the Inferno"; each detail page is 220 KB."""
+        plugin = _plugin_module("filmpalast").FilmpalastPlugin()
+        plugin._domain_verified = True
+        plugin._client = AsyncMock()
+        plugin._search_all = AsyncMock(return_value=self._hits("search-oppenheimer"))
+        plugin._scrape_detail = AsyncMock(return_value=("", "", []))
+
+        await plugin.search("Oppenheimer", 2000)
+
+        scraped = [c.args[0] for c in plugin._scrape_detail.await_args_list]
+        assert scraped == ["https://filmpalast.to/stream/oppenheimer"]
+
+    async def test_episode_request_skips_other_series(self) -> None:
+        """Episodes are listed as "<series> S01E01": "Dark" also finds
+        "Dark Matter S01E01" and "His Dark Materials S01E01"."""
+        plugin = _plugin_module("filmpalast").FilmpalastPlugin()
+        plugin._domain_verified = True
+        plugin._client = AsyncMock()
+        plugin._search_all = AsyncMock(
+            return_value=[
+                {"title": f"{name} S01E01", "detail_url": f"/stream/{slug}-s01e01"}
+                for name, slug in (
+                    ("Dark Matter", "dark-matter"),
+                    ("Dark", "dark"),
+                    ("His Dark Materials", "his-dark-materials"),
+                )
+            ]
+        )
+        plugin._scrape_detail = AsyncMock(return_value=("", "", []))
+
+        await plugin.search("Dark", 5000, season=1, episode=1)
+
+        scraped = [c.args[0] for c in plugin._scrape_detail.await_args_list]
+        assert scraped == ["https://filmpalast.to/stream/dark-s01e01"]
+
+    def test_film_detail(self) -> None:
+        detail = _detail("filmpalast", "https://filmpalast.to", "detail-oppenheimer")
+        assert detail.title.strip() == "Oppenheimer"
+        assert detail.release_name.strip() == (
+            "Oppenheimer.2023.German.DL.1080p.BluRay.x264.RERiP-DETAiLS"
+        )
+        assert [lk["link"] for lk in detail.links] == ["https://voe.sx/xhoyeqr1jx6s"]
+
+    def test_episode_detail(self) -> None:
+        detail = _detail(
+            "filmpalast", "https://filmpalast.to", "detail-the-last-of-us-s01e01"
+        )
+        assert detail.title.strip() == "The Last of Us S01E01"
+        assert [lk["link"] for lk in detail.links] == [
+            "https://firestream.to/e/OXIURmQ-",
+            "https://vidaraa.cc/e/ezpjajrJ48BF2",
+            "https://voe.sx/laxed19ikr7i",
+            "https://vidsonic.net/e/r00nm90ihj96",
+        ]
 
 
 class TestMovie2k:

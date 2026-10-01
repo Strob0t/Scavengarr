@@ -24,6 +24,11 @@ from scavengarr.infrastructure.plugins.categories import (
     served_category,
 )
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
+from scavengarr.infrastructure.plugins.relevance import (
+    SINGLE_TITLE_HITS,
+    hit_title,
+    relevant_hits,
+)
 
 # ---------------------------------------------------------------------------
 # Configurable settings
@@ -48,6 +53,11 @@ _CATEGORIES = (2000, 5000)
 def _item_category(title: str) -> int:
     """Films are 2000, episodes (``... S03E08``) 5000."""
     return 5000 if _EPISODE_RE.search(title) else 2000
+
+
+def _series_title(item: dict[str, str]) -> str:
+    """A hit's title without its episode tag ("Dark S01E01" -> "Dark")."""
+    return _EPISODE_RE.sub("", hit_title(item)).strip()
 
 
 def _is_episode(title: str, season: int, episode: int | None) -> bool:
@@ -335,12 +345,20 @@ class FilmpalastPlugin(HttpxPluginBase):
         await self._ensure_client()
         await self._verify_domain()
 
-        search_results = [
+        hits = [
             item
             for item in await self._search_all(query)
             if category_matches(category, _item_category(item["title"]))
             and (season is None or _is_episode(item["title"], season, episode))
         ]
+        # Each hit costs a 220 KB detail page: real matches only, compared
+        # without the episode tag ("Dark Matter S01E01" is no "Dark")
+        search_results = relevant_hits(
+            hits,
+            query,
+            _series_title,
+            limit=SINGLE_TITLE_HITS if season is not None else None,
+        )
         if not search_results:
             return []
 

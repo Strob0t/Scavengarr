@@ -53,7 +53,7 @@ _SEARCH_HTML = """
   <p>Some description</p>
 </article>
 <article>
-  <h2><a href="/stream/the-dark-knight-2008">The Dark Knight (2008)</a></h2>
+  <h2><a href="/stream/batman-returns-1992">Batman Returns (1992)</a></h2>
   <p>Another movie</p>
 </article>
 </body></html>
@@ -158,7 +158,7 @@ class TestSearchResultParser:
         assert len(parser.results) == 2
         assert parser.results[0]["title"] == "Batman Begins (2005)"
         assert parser.results[0]["detail_url"] == "/stream/batman-begins-2005"
-        assert parser.results[1]["title"] == "The Dark Knight (2008)"
+        assert parser.results[1]["title"] == "Batman Returns (1992)"
 
     def test_empty_search(self) -> None:
         parser = _SearchResultParser()

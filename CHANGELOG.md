@@ -14,6 +14,9 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 ### Fix: German Titles Without a TMDB Key Needed the Example Config
 - Without a TMDB key, the German title of a Stremio request comes from Wikidata ("Haus des Geldes" for "Money Heist"). Wikidata answers 403 to a User-Agent without contact information, and the code default `Scavengarr/0.1.0` had none (only `data/config.yaml` set the contact URL): without that file, German-titled films and series were searched under their English title only. The default is `Scavengarr/0.1.0 (+https://github.com/Strob0t/Scavengarr)` now.
 
+### Perf: filmpalast Scrapes Real Matches Only
+- filmpalast loaded the 220–320 KB detail page of every search hit of the requested kind: "Oppenheimer" also "Fireball: Visitors from Darker Worlds" and "Into the Inferno", "Dark" S01E01 also "Dark Matter S01E01" and "His Dark Materials S01E01". It goes through `relevant_hits()` now, comparing the series name without its episode tag, so an episode request scrapes the exact series alone. It was the largest stream source of the measurement (18 of 82 streams).
+
 ### Fix: movie2k Had No Series Streams
 - movie2k lists a series' episodes as `<table data-episode-id="…">` (base64 of `tt3581920-s1e1-1`) whose mirrors are `<a href="#" onclick="return loadMirror('<url>')">`. The parser only took `http` hrefs (what film pages have), so every series came back without links, and series were labelled as films (it looked for `type=tv`, the URLs say `type=series`). Episode mirrors are links labelled `1x1 vidoza.net` now, narrowed to the requested episode; a page with episodes is a series.
 - movie2k scraped the detail page of every search hit ("Oppenheimer" also loaded "Fireball" and "Die Schattenmacher"); it uses `relevant_hits()` now, like the other plugins. Its description was the page's inline script (the longest text block); script text is skipped.
