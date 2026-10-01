@@ -5,8 +5,8 @@ Scrapes anime-loads.org (German anime/manga streaming & download site) via Playw
 - Pagination via /search/page/{n}?q={query}, 20 results per page
 - Anime series, movies, OVAs, live action with rich metadata
 - Torznab: one result per release of the first series (media page tab
-  ``#download_<n>``: group, resolution, languages, archive password);
-  Stremio: one result per series with its preview stream
+  ``#download_<n>``: group, resolution, languages, archive password).
+  Downloads only (no Stremio): a series' preview embed is no episode stream
 
 Download links are resolved when a release is grabbed
 (``resolve_download``, docs/plans/captcha-solving.md):
@@ -31,7 +31,6 @@ import base64
 import json
 import os
 import re
-from contextvars import ContextVar
 from typing import Any
 from urllib.parse import parse_qs, quote_plus, unquote, urlsplit
 
@@ -69,12 +68,6 @@ _EPISODE_PAUSE_S = 2.0
 
 _USERNAME_ENV = "SCAVENGARR_ANIMELOADS_USERNAME"
 _PASSWORD_ENV = "SCAVENGARR_ANIMELOADS_PASSWORD"  # noqa: S105  (env var name)
-
-# False while Stremio searches (isolated_search): it needs the series'
-# preview stream, not releases
-_EXPAND_RELEASES: ContextVar[bool] = ContextVar(
-    "animeloads_expand_releases", default=True
-)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -323,7 +316,9 @@ class AnimeLoadsPlugin(PlaywrightPluginBase):
     name = "animeloads"
     version = "1.1.0"
     mode = "playwright"
-    provides = "both"
+    # Not for Stremio: a series' preview embed is no episode stream, and no
+    # resolver plays the site's embeds
+    provides = "download"
     default_language = "de"
 
     _domains = _DOMAINS
@@ -506,7 +501,7 @@ class AnimeLoadsPlugin(PlaywrightPluginBase):
             results = await self._search_all_pages(page, query, effective_category)
         finally:
             await page.close()
-        if results and _EXPAND_RELEASES.get():
+        if results:
             results = await self._expand_releases(results)
         return results[: self.effective_max_results]
 
@@ -555,23 +550,6 @@ class AnimeLoadsPlugin(PlaywrightPluginBase):
     # ------------------------------------------------------------------
     # Releases (Torznab: one result per release)
     # ------------------------------------------------------------------
-
-    async def isolated_search(
-        self,
-        query: str,
-        category: int | None = None,
-        *,
-        season: int | None = None,
-        episode: int | None = None,
-    ) -> list[SearchResult]:
-        """Stremio search: series results with their preview stream."""
-        token = _EXPAND_RELEASES.set(False)
-        try:
-            return await super().isolated_search(
-                query, category, season=season, episode=episode
-            )
-        finally:
-            _EXPAND_RELEASES.reset(token)
 
     async def _media_releases(self, media_url: str) -> list[dict[str, Any]]:
         """Load a media page and read its releases (``[]`` on failure)."""
@@ -649,8 +627,8 @@ class AnimeLoadsPlugin(PlaywrightPluginBase):
     async def resolve_download(self, url: str) -> list[str]:
         """Resolve a release URL (``/media/<slug>?release=<n>``) to hoster links.
 
-        Series-level URLs (Stremio preview, results that could not be
-        expanded) are returned unchanged. All episodes or nothing: a partial
+        Series-level URLs (results that could not be expanded) are returned
+        unchanged. All episodes or nothing: a partial
         season would break the grab.
         """
         parts = urlsplit(url)

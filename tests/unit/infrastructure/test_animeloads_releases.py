@@ -209,28 +209,6 @@ class TestReleaseExpansion:
         assert await plugin.search("one punch man") == ["release"]
         plugin._expand_releases.assert_awaited_once_with([series])
 
-    async def test_stremio_search_keeps_series_results(
-        self, mod: ModuleType, plugin: Any
-    ) -> None:
-        """isolated_search() (Stremio) needs the series' preview stream only."""
-        seen: list[bool] = []
-
-        async def _search(*_: Any, **__: Any) -> list[Any]:
-            seen.append(mod._EXPAND_RELEASES.get())
-            return []
-
-        plugin.search = _search
-        ctx = AsyncMock()
-        ctx.pages = []
-        browser = AsyncMock()
-        browser.new_context = AsyncMock(return_value=ctx)
-        plugin._ensure_browser = AsyncMock(return_value=browser)
-
-        await plugin.isolated_search("naruto")
-
-        assert seen == [False]
-        assert mod._EXPAND_RELEASES.get() is True
-
 
 # ---------------------------------------------------------------------------
 # Grab-time links

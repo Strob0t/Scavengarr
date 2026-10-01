@@ -129,7 +129,10 @@ class TestPluginAttributes:
         assert animeloads_mod.plugin.mode == "playwright"
 
     def test_provides(self, animeloads_mod: ModuleType) -> None:
-        assert animeloads_mod.plugin.provides == "both"
+        # Downloads only: its series preview embeds are no episode streams
+        # and no resolver plays them (Stremio got nothing in 11-15 s)
+        assert animeloads_mod.plugin.provides == "download"
+        assert not hasattr(type(animeloads_mod.plugin), "_media_preview")
 
     def test_domains(self, animeloads_mod: ModuleType) -> None:
         assert animeloads_mod.plugin._domains == [

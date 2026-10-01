@@ -23,6 +23,10 @@ _WORD_RE = re.compile(r"[a-z0-9]+")
 # language ("Money Heist" is "Haus des Geldes" on German sites)
 _FALLBACK_HITS = 3
 
+# Hits scraped for a request of one title (a season or an episode): "Dark"
+# also finds "Dark Matter", "Dark Winds", … and each costs pages and link-outs
+SINGLE_TITLE_HITS = 3
+
 
 def hit_title(hit: Mapping[str, object]) -> str:
     """The ``title`` of a parsed search hit (plugins parse hits into dicts)."""
@@ -40,14 +44,23 @@ def relevant_hits(
     title: Callable[[T], str],
     *,
     fallback: int = _FALLBACK_HITS,
+    limit: int | None = None,
 ) -> list[T]:
-    """The hits whose title contains every word of *query*, in the site's order.
+    """The hits whose title contains every word of *query*, closest first.
 
-    Falls back to the site's first *fallback* hits when none does, and keeps
-    every hit for an empty query.
+    Closest: the fewest words besides the query's (an exact title first);
+    ties keep the site's order. Falls back to the site's first *fallback*
+    hits when none matches, keeps every hit for an empty query, and returns
+    at most *limit* hits (e.g. ``SINGLE_TITLE_HITS`` for a season request).
     """
     wanted = query_words(query)
     if not wanted:
-        return hits
-    matching = [hit for hit in hits if wanted <= query_words(title(hit))]
-    return matching or hits[:fallback]
+        return hits[:limit]
+    scored: list[tuple[int, T]] = []
+    for hit in hits:
+        words = query_words(title(hit))
+        if wanted <= words:
+            scored.append((len(words - wanted), hit))
+    scored.sort(key=lambda pair: pair[0])
+    matching = [hit for _, hit in scored]
+    return (matching or hits[:fallback])[:limit]

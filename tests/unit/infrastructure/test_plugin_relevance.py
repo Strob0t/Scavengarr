@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from scavengarr.infrastructure.plugins.relevance import (
+    SINGLE_TITLE_HITS,
     hit_title,
     query_words,
     relevant_hits,
@@ -43,6 +44,25 @@ class TestRelevantHits:
     def test_empty_query_keeps_everything(self) -> None:
         hits = [{"title": "A"}, {"title": "B"}]
         assert relevant_hits(hits, "", lambda h: h["title"]) == hits
+
+    def test_closest_titles_first(self) -> None:
+        # "Dark" also finds "Dark Matter" and "The Dark Crystal"
+        hits = [
+            {"title": "The Dark Crystal: Age of Resistance"},
+            {"title": "Dark Matter"},
+            {"title": "Dark"},
+        ]
+        result = relevant_hits(hits, "Dark", hit_title)
+        assert _titles(result) == [
+            "Dark",
+            "Dark Matter",
+            "The Dark Crystal: Age of Resistance",
+        ]
+
+    def test_limit_for_requests_of_one_title(self) -> None:
+        hits = [{"title": f"Dark {i}"} for i in range(6)] + [{"title": "Dark"}]
+        result = relevant_hits(hits, "Dark", hit_title, limit=SINGLE_TITLE_HITS)
+        assert _titles(result) == ["Dark", "Dark 0", "Dark 1"]
 
     def test_hit_title_of_parsed_hits(self) -> None:
         hits = [{"title": "Iron Man", "url": "u1"}, {"url": "u2"}]

@@ -34,7 +34,11 @@ from scavengarr.infrastructure.plugins.categories import (
     stream_category,
 )
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
-from scavengarr.infrastructure.plugins.relevance import hit_title, relevant_hits
+from scavengarr.infrastructure.plugins.relevance import (
+    SINGLE_TITLE_HITS,
+    hit_title,
+    relevant_hits,
+)
 
 # ---------------------------------------------------------------------------
 # Configurable settings
@@ -590,7 +594,12 @@ class StreamkistePlugin(HttpxPluginBase):
             return []
 
         # Each hit costs a detail page and its player: scrape real matches only
-        all_items = relevant_hits(await self._search_all_pages(query), query, hit_title)
+        all_items = relevant_hits(
+            await self._search_all_pages(query),
+            query,
+            hit_title,
+            limit=SINGLE_TITLE_HITS if season is not None else None,
+        )
         if not all_items:
             return []
 

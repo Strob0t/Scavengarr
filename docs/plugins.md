@@ -19,11 +19,11 @@ JDownloader `.crawljob`) and are only served via Torznab. *Engine* is
 browser. *Mirrors* counts the extra domains tried when the primary one
 is unreachable.
 
-41 plugins: 20 with streams (used by the Stremio addon), 22 with direct downloads.
+41 plugins: 19 with streams (used by the Stremio addon), 22 with direct downloads.
 
 | Plugin | Website | Mirrors | Content | Engine | Languages |
 |---|---|---|---|---|---|
-| `animeloads` | www.anime-loads.org | 1 | Streams + downloads | Playwright | de |
+| `animeloads` | www.anime-loads.org | 1 | Downloads | Playwright | de |
 | `aniworld` | aniworld.to | 0 | Streams | httpx | de |
 | `boerse` | boerse.am | 5 | Downloads | Playwright | de |
 | `burningseries` | burningseries.ac | 2 | Downloads | httpx | de |

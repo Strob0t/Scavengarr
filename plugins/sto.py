@@ -28,7 +28,11 @@ from scavengarr.infrastructure.plugins.categories import (
     served_category,
 )
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
-from scavengarr.infrastructure.plugins.relevance import hit_title, relevant_hits
+from scavengarr.infrastructure.plugins.relevance import (
+    SINGLE_TITLE_HITS,
+    hit_title,
+    relevant_hits,
+)
 
 # ---------------------------------------------------------------------------
 # Configurable settings
@@ -76,8 +80,10 @@ def _determine_category(genres: list[str]) -> int:
     return 5000
 
 
-def _relevant_series(series: list[dict[str, str]], query: str) -> list[dict[str, str]]:
-    """The series worth scraping for *query*, each once, in the site's order.
+def _relevant_series(
+    series: list[dict[str, str]], query: str, *, limit: int | None = None
+) -> list[dict[str, str]]:
+    """The series worth scraping for *query*, each once, closest first.
 
     The site's search also lists unrelated series ("Breaking Bad" finds
     "Better Call Saul"); scraping each one costs a detail page, an episode
@@ -89,7 +95,7 @@ def _relevant_series(series: list[dict[str, str]], query: str) -> list[dict[str,
     for entry in series:
         key = entry.get("slug") or entry.get("url") or entry.get("title", "")
         by_key.setdefault(key, entry)
-    return relevant_hits(list(by_key.values()), query, hit_title)
+    return relevant_hits(list(by_key.values()), query, hit_title, limit=limit)
 
 
 class _SearchSeriesParser(HTMLParser):
@@ -768,7 +774,11 @@ class StoPlugin(HttpxPluginBase):
         await self._ensure_client()
         await self._verify_domain()
 
-        all_series = _relevant_series(await self._paginate_search(query), query)
+        all_series = _relevant_series(
+            await self._paginate_search(query),
+            query,
+            limit=SINGLE_TITLE_HITS if season is not None else None,
+        )
         if not all_series:
             return []
 
