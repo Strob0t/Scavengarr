@@ -14,6 +14,9 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 ### Fix: German Titles Without a TMDB Key Needed the Example Config
 - Without a TMDB key, the German title of a Stremio request comes from Wikidata ("Haus des Geldes" for "Money Heist"). Wikidata answers 403 to a User-Agent without contact information, and the code default `Scavengarr/0.1.0` had none (only `data/config.yaml` set the contact URL): without that file, German-titled films and series were searched under their English title only. The default is `Scavengarr/0.1.0 (+https://github.com/Strob0t/Scavengarr)` now.
 
+### Fix: kinoger Served the First Episode for Every Episode
+- A kinoger series page holds every season in each player tab: the player script starts at the first episode, and the episodes are listed as `<span onclick="pw.player('<url>', this);" data-id="1-5">`. The plugin took the script's first URL, so "The Last of Us" S01E05 (and with autoplay every next episode) played S01E01. Each tab now yields one link per episode, labelled `1x5 <tab>`, and a season/episode request keeps the links of that episode (4 hosters for S01E05). Found by the parser tests on real pages; the series page also counts as a series now.
+
 ### Fix: Season Pages Served Every Episode's Links
 - The episode filter narrowed a result's links by their episode labels (`1x5`, `S01E05`) only when the title had neither season nor episode. A title with a season but no episode (a season pack `Show.S01...`, and with guessit 4 also a season page "Show - Staffel 1") kept the links of every episode, so S01E02 could play episode 1. Such titles drop the result on a season mismatch and otherwise narrow their links like a show page.
 

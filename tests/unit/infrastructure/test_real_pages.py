@@ -16,7 +16,9 @@ from functools import cache
 from pathlib import Path
 from types import ModuleType
 from typing import Any
+from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 
 from scavengarr.infrastructure.plugins import devideosrc
@@ -127,6 +129,51 @@ class TestKinoger:
             ("veev", "https://veev.pro/e/i3qros8xwd0d"),
             ("kinoger", "https://kinoger.pw/e/5wCjBALU9QDHF"),
         ]
+
+    def test_series_tabs_list_every_episode(self) -> None:
+        """Each player tab lists both seasons (9 + 7 episodes) as
+        ``<span onclick="pw.player('<url>', this);" data-id="1-1">``."""
+        detail = _detail("kinoger", self._BASE, "detail-the-last-of-us")
+        assert detail.is_series
+        assert len(detail.stream_links) == 4 * (9 + 7)
+        assert detail.stream_links[0] == {
+            "hoster": "fsst",
+            "link": "https://fsst.online/embed/1028225/",
+            "label": "1x1 Stream HD+",
+        }
+        fsst = [lk for lk in detail.stream_links if lk["hoster"] == "fsst"]
+        assert [lk["label"] for lk in fsst[8:10]] == [
+            "1x9 Stream HD+",
+            "2x1 Stream HD+",
+        ]
+        assert fsst[9]["link"] == "https://fsst.online/embed/1028233/"
+
+    async def test_episode_request_gets_that_episode(self) -> None:
+        plugin = _plugin_module("kinoger").KinogerPlugin()
+        plugin._domain_verified = True
+        pages = [
+            _page("kinoger", "search-the-last-of-us"),
+            "",  # search page 2: no more hits
+            _page("kinoger", "detail-the-last-of-us"),
+        ]
+        request = httpx.Request("GET", "https://kinoger.com/")
+        client = AsyncMock()
+        client.get = AsyncMock(
+            side_effect=[httpx.Response(200, text=p, request=request) for p in pages]
+        )
+        plugin._client = client
+
+        results = await plugin.search("The Last of Us", 5000, season=1, episode=5)
+
+        assert len(results) == 1
+        assert results[0].category == 5000
+        assert [lk["link"] for lk in results[0].download_links or []] == [
+            "https://fsst.online/embed/1028220/",
+            "https://kinoger.pw/e/a2hA9FVKnoyGU",
+            "https://firestream.site/e/D9ExMIOv",
+            "https://kinoger.ru/e/v30jzqij3g8w",
+        ]
+        assert results[0].download_link == "https://fsst.online/embed/1028220/"
 
 
 class TestMegakino:

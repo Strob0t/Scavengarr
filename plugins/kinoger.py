@@ -29,6 +29,7 @@ from scavengarr.infrastructure.plugins.categories import (
     served_category,
     stream_category,
 )
+from scavengarr.infrastructure.plugins.episodes import episode_label, filter_episodes
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.relevance import (
     SINGLE_TITLE_HITS,
@@ -48,6 +49,10 @@ _MAX_PAGES = 84  # 12 results/page → 84 pages for ~1000
 
 # Series badge pattern: S01, S01-04, S01E01-02, etc.
 _SERIES_BADGE_RE = re.compile(r"S\d+", re.IGNORECASE)
+# Episode list of a series tab:
+#   <span onclick="pw.player('https://…', this);" data-id="1-5">
+_EPISODE_PLAYER_RE = re.compile(r"""\.player\(\s*['"]\s*(https?://[^'"\s]+)""")
+_EPISODE_ID_RE = re.compile(r"^(\d+)-(\d+)$")
 
 
 def _detect_series(badge: str, genres: list[str]) -> bool:
@@ -334,6 +339,8 @@ class _DetailPageParser(HTMLParser):
         self._in_section = False
         self._section_id = ""
         self._section_iframe_src = ""
+        self._section_episodes: list[tuple[int, int, str]] = []
+        self.episodes_listed = False
 
         # Script-in-section tracking (JS player init with embedded URLs)
         self._in_section_script = False
@@ -395,12 +402,22 @@ class _DetailPageParser(HTMLParser):
                 self._in_section = True
                 self._section_id = section_id
                 self._section_iframe_src = ""
+                self._section_episodes = []
 
         # Iframe inside section
         if tag == "iframe" and self._in_section:
             src = attr_dict.get("src", "") or ""
             if src:
                 self._section_iframe_src = src
+
+        # Episode of a series tab (season-episode in data-id)
+        if tag == "span" and self._in_section:
+            url = _EPISODE_PLAYER_RE.search(attr_dict.get("onclick") or "")
+            number = _EPISODE_ID_RE.match(attr_dict.get("data-id") or "")
+            if url and number:
+                self._section_episodes.append(
+                    (int(number.group(1)), int(number.group(2)), url.group(1))
+                )
 
         # Script inside section (JS player init with embedded URLs)
         if tag == "script" and self._in_section:
@@ -488,16 +505,7 @@ class _DetailPageParser(HTMLParser):
         if tag == "section" and self._in_section:
             self._in_section = False
             self._in_section_script = False
-            if self._section_iframe_src:
-                label = self._tab_labels.get(self._section_id, "")
-                domain = _domain_from_url(self._section_iframe_src)
-                self.stream_links.append(
-                    {
-                        "hoster": domain,
-                        "link": self._section_iframe_src,
-                        "label": label,
-                    }
-                )
+            self._end_section()
 
         if tag == "h1" and self._in_h1:
             self._in_h1 = False
@@ -547,8 +555,36 @@ class _DetailPageParser(HTMLParser):
             if m:
                 self.imdb_rating = m.group(1)
 
+    def _end_section(self) -> None:
+        """Links of a player tab: every episode of a series, else its stream.
+
+        A series tab's player script starts at the first episode, so its
+        URL alone would serve episode 1 for every request.
+        """
+        label = self._tab_labels.get(self._section_id, "")
+        if self._section_episodes:
+            self.episodes_listed = True
+            for season, episode, url in self._section_episodes:
+                self.stream_links.append(
+                    {
+                        "hoster": _domain_from_url(url),
+                        "link": url,
+                        "label": episode_label(season, episode, label),
+                    }
+                )
+        elif self._section_iframe_src:
+            self.stream_links.append(
+                {
+                    "hoster": _domain_from_url(self._section_iframe_src),
+                    "link": self._section_iframe_src,
+                    "label": label,
+                }
+            )
+
     def finalize(self) -> None:
         """Post-processing: detect series from genres, extract year/runtime."""
+        if self.episodes_listed:
+            self.is_series = True
         lower_genres = [g.lower() for g in self.genres]
         if "serie" in lower_genres or "serien" in lower_genres:
             self.is_series = True
@@ -626,8 +662,14 @@ class KinogerPlugin(HttpxPluginBase):
     async def _scrape_detail(
         self,
         result: dict[str, str | list[str] | bool],
+        season: int | None = None,
+        episode: int | None = None,
     ) -> SearchResult | None:
-        """Scrape a detail page for stream tabs and metadata."""
+        """Scrape a detail page for stream tabs and metadata.
+
+        A series page lists every episode: a season/episode request keeps
+        the links of that episode.
+        """
         detail_url = str(result["url"])
 
         html = await self._fetch_text(detail_url, context="detail")
@@ -638,7 +680,10 @@ class KinogerPlugin(HttpxPluginBase):
         parser.feed(html)
         parser.finalize()
 
-        if not parser.stream_links:
+        links = parser.stream_links
+        if season is not None and parser.episodes_listed:
+            links = filter_episodes(links, season, episode)
+        if not links:
             self._log.debug("kinoger_no_streams", url=detail_url)
             return None
 
@@ -668,8 +713,8 @@ class KinogerPlugin(HttpxPluginBase):
 
         return SearchResult(
             title=title,
-            download_link=parser.stream_links[0]["link"],
-            download_links=parser.stream_links,
+            download_link=links[0]["link"],
+            download_links=links,
             source_url=detail_url,
             category=category,
             description=description,
@@ -713,7 +758,7 @@ class KinogerPlugin(HttpxPluginBase):
             r: dict[str, str | list[str] | bool],
         ) -> SearchResult | None:
             async with sem:
-                return await self._scrape_detail(r)
+                return await self._scrape_detail(r, season, episode)
 
         gathered = await asyncio.gather(
             *[_bounded(r) for r in all_items],
