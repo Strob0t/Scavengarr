@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager
 from typing import Protocol, runtime_checkable
 
 
@@ -14,11 +14,11 @@ class ConcurrencyBudgetPort(Protocol):
     enforcing fair-share limits relative to other active requests.
     """
 
-    def acquire_httpx(self) -> AsyncIterator[None]:
+    def acquire_httpx(self) -> AbstractAsyncContextManager[None]:
         """Acquire one httpx concurrency slot (async context manager)."""
         ...
 
-    def acquire_pw(self) -> AsyncIterator[None]:
+    def acquire_pw(self) -> AbstractAsyncContextManager[None]:
         """Acquire one Playwright concurrency slot (async context manager)."""
         ...
 
@@ -31,7 +31,7 @@ class ConcurrencyPoolPort(Protocol):
     that enforces fair-share concurrency across all active requests.
     """
 
-    def request(self) -> AsyncIterator[ConcurrencyBudgetPort]:
+    def request(self) -> AbstractAsyncContextManager[ConcurrencyBudgetPort]:
         """Enter a request scope, returning a budget handle.
 
         Async context manager: increments active request count on

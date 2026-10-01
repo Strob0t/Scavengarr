@@ -10,13 +10,13 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from contextvars import ContextVar
 from typing import Any, Protocol
 
 import structlog
 
-from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.domain.plugins.base import PluginProtocol, SearchResult
 from scavengarr.domain.ports.concurrency import ConcurrencyBudgetPort
 from scavengarr.domain.ports.plugin_registry import PluginRegistryPort
 from scavengarr.domain.ports.search_engine import SearchEnginePort
@@ -61,7 +61,7 @@ EpisodeFilterFn = Callable[
 
 # Callback type for warming up a shared Playwright browser.
 # Returns (browser, playwright) tuple — opaque at this layer.
-BrowserWarmupFn = Callable[[], Awaitable[tuple[Any, Any]]]
+BrowserWarmupFn = Callable[[], Coroutine[Any, Any, tuple[Any, Any]]]
 
 
 class PluginSearchRunner:
@@ -254,7 +254,7 @@ class PluginSearchRunner:
 
     @staticmethod
     async def _dispatch_search(
-        plugin: object,
+        plugin: PluginProtocol,
         query: str,
         category: int | None = None,
         *,
@@ -262,8 +262,11 @@ class PluginSearchRunner:
         episode: int | None = None,
     ) -> list[SearchResult]:
         """Dispatch to isolated_search() when available, else search()."""
-        if hasattr(plugin, "isolated_search") and callable(plugin.isolated_search):
-            return await plugin.isolated_search(
+        isolated_search: Callable[..., Awaitable[list[SearchResult]]] | None = getattr(
+            plugin, "isolated_search", None
+        )
+        if isolated_search is not None:
+            return await isolated_search(
                 query, category, season=season, episode=episode
             )
         return await plugin.search(
@@ -295,9 +298,9 @@ class PluginSearchRunner:
     ) -> list[SearchResult]:
         """Search a single plugin, catching and logging errors.
 
-        Python plugins (with search() but no scraping stages) are called
-        directly, then their results are validated via SearchEngine.
-        YAML plugins (with scraping stages) are delegated to the SearchEngine.
+        The plugin is called directly (with the max_results context so it
+        limits pagination), then its results are episode-filtered and
+        validated via the SearchEngine.
         """
         try:
             plugin = self._plugins.get(name)
@@ -310,30 +313,18 @@ class PluginSearchRunner:
         cancelled = False
         results: list[SearchResult] = []
         try:
-            if (
-                hasattr(plugin, "search")
-                and callable(plugin.search)
-                and not hasattr(plugin, "scraping")
-            ):
-                # Python plugin: call directly, validate results
-                # Set max_results context so plugins limit pagination
-                token = self._max_results_var.set(self._max_results_per_plugin)
-                try:
-                    raw = await self._dispatch_search(
-                        plugin, query, category, season=season, episode=episode
-                    )
-                finally:
-                    self._max_results_var.reset(token)
-                loop = asyncio.get_running_loop()
-                raw = await loop.run_in_executor(
-                    None, self._episode_filter_fn, raw, season, episode
+            token = self._max_results_var.set(self._max_results_per_plugin)
+            try:
+                raw = await self._dispatch_search(
+                    plugin, query, category, season=season, episode=episode
                 )
-                results = await self._search_engine.validate_results(raw)
-            else:
-                # YAML plugin: delegate to search engine
-                results = await self._search_engine.search(
-                    plugin, query, category=category
-                )
+            finally:
+                self._max_results_var.reset(token)
+            loop = asyncio.get_running_loop()
+            raw = await loop.run_in_executor(
+                None, self._episode_filter_fn, raw, season, episode
+            )
+            results = await self._search_engine.validate_results(raw)
             success = True
         except Exception:
             log.warning("stremio_plugin_search_error", plugin=name, exc_info=True)

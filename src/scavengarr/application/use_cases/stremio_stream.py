@@ -454,8 +454,10 @@ class StremioStreamUseCase:
         """
         # --- Resolve step: extract direct video URLs + headers ---
         resolved_map: dict[int, ResolvedStream] = {}
-        if self._resolve_fn:
-            resolved_map = await self._resolve_top_streams(ranked, deadline)
+        if self._resolve_fn is not None:
+            resolved_map = await self._resolve_top_streams(
+                ranked, deadline, self._resolve_fn
+            )
 
         answer: list[tuple[StremioStream, CachedStreamLink | None]] = []
         skipped_echo = 0
@@ -522,6 +524,7 @@ class StremioStreamUseCase:
         self,
         ranked: list[RankedStream],
         deadline: float,
+        resolve_fn: ResolveCallback,
     ) -> dict[int, ResolvedStream]:
         """Resolve the top streams to direct video URLs, one per hoster.
 
@@ -552,7 +555,7 @@ class StremioStreamUseCase:
             async with semaphore:
                 r = ranked[idx]
                 try:
-                    return idx, await self._resolve_fn(r.url, r.hoster)
+                    return idx, await resolve_fn(r.url, r.hoster)
                 except Exception:
                     log.debug(
                         "stremio_resolve_failed",
