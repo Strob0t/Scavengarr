@@ -675,3 +675,67 @@ class TestDuneFranchise:
         titles = [r.title for r in kept]
         assert "Dune: Part Two (2024)" in titles
         assert "Completely Unrelated Film" not in titles
+
+
+# ---------------------------------------------------------------------------
+# score_title_match — results that add words to the reference title
+# ---------------------------------------------------------------------------
+
+
+class TestExtraWords:
+    """token_set_ratio scores "Dark Matter" 100 against "Dark": a result that
+    adds words must not count as a perfect match (other series, spin-offs)."""
+
+    _DARK = TitleMatchInfo(title="Dark", year=2017, content_type="series")
+
+    @pytest.mark.parametrize(
+        ("reference", "title"),
+        [
+            ("Dark", "Dark Gathering"),
+            ("Dark", "Bastard!! Heavy Metal, Dark Fantasy"),
+            ("Naruto", "Naruto Shippuden"),
+        ],
+    )
+    def test_other_series_without_year_rejected(
+        self, reference: str, title: str
+    ) -> None:
+        ref = TitleMatchInfo(title=reference, content_type="series")
+        # 1.0 - 0.35 extra words
+        assert score_title_match(_sr(title), ref) == pytest.approx(0.65)
+
+    def test_other_series_with_wrong_year_rejected(self) -> None:
+        sr = _sr("Dark.Matter.2024.S01E01.German.DL.Atmos.1080p.ATVP.WEB.H265-ZeroTwo")
+        assert score_title_match(sr, self._DARK) < 0.7
+
+    def test_release_name_tags_are_not_extra_words(self) -> None:
+        """guessit's clean title keeps a release name of the right series."""
+        sr = _sr("Dark.S01E01.German.DL.1080p.WEB.x264-GROUP")
+        assert score_title_match(sr, self._DARK) >= 1.0
+
+    def test_extra_words_with_matching_year_kept(self) -> None:
+        ref = TitleMatchInfo(title="Breaking Bad", year=2008, content_type="series")
+        sr = _sr("Breaking Bad – Die komplette Serie (2008)")
+        # 1.0 - 0.35 extra words + 0.2 year bonus
+        assert score_title_match(sr, ref) == pytest.approx(0.85)
+
+    def test_shortened_result_is_not_penalised(self) -> None:
+        """Dropping words is fine: sites shorten "Dune: Part One" to "Dune"."""
+        ref = TitleMatchInfo(title="Dune: Part One", year=2021)
+        assert score_title_match(_sr("Dune"), ref) == pytest.approx(1.0)
+
+    def test_custom_extra_words_penalty(self) -> None:
+        score = score_title_match(
+            _sr("Dark Gathering"), self._DARK, extra_words_penalty=0.0
+        )
+        assert score == pytest.approx(1.0)
+
+    def test_filter_keeps_only_the_series(self) -> None:
+        results = [
+            _sr("Dark", release_name="Dark.S01E01.German.DL.1080p.WEB.x264-GROUP"),
+            _sr("Dark Gathering"),
+            _sr("Dark Matter", release_name="Dark.Matter.2024.S01E01.German.DL"),
+        ]
+        kept = filter_by_title_match(
+            results, self._DARK, threshold=0.7, extra_words_penalty=0.35
+        )
+        assert [r.title for r in kept] == ["Dark"]

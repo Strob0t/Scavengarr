@@ -292,6 +292,13 @@ class StremioConfig(BaseModel):
         default=0.35,
         description="Score penalty when result has sequel number that reference lacks.",
     )
+    title_extra_words_penalty: float = Field(
+        default=0.35,
+        description=(
+            "Score penalty when the result adds words to the reference title "
+            '("Dark Matter" for "Dark"); a matching year makes up part of it.'
+        ),
+    )
     title_year_tolerance_movie: int = Field(
         default=1,
         description="Allowed year difference for movies (±N years).",

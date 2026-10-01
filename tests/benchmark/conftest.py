@@ -187,6 +187,7 @@ class FakeStremioConfig:
     title_year_bonus: float = 0.1
     title_year_penalty: float = 0.15
     title_sequel_penalty: float = 0.2
+    title_extra_words_penalty: float = 0.2
     title_year_tolerance_movie: int = 1
     title_year_tolerance_series: int = 0
     max_results_per_plugin: int = 100

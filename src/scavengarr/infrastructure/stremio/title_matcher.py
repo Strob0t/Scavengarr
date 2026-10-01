@@ -71,12 +71,17 @@ def _score_single_title(
     year_bonus: float = 0.2,
     year_penalty: float = 0.3,
     sequel_penalty: float = 0.35,
+    extra_words_penalty: float = 0.35,
 ) -> float:
     """Score one normalised reference title against a normalised result.
 
     Uses ``rapidfuzz.fuzz.token_sort_ratio`` (handles reordering) and
     ``rapidfuzz.fuzz.token_set_ratio`` (handles subsets like "Dune" vs
     "Dune Part One") — whichever is higher becomes the base score.
+    The subset score loses *extra_words_penalty* when the result adds
+    words to the reference: token_set_ratio rates "Dark Matter" 100
+    against "Dark", while a result that only drops words ("Dune" for
+    "Dune: Part One") keeps it.
     """
     if not norm_ref or not norm_res:
         return 0.0
@@ -99,6 +104,8 @@ def _score_single_title(
         )
         / 100.0
     )
+    if set(norm_res.split()) - set(norm_ref.split()):
+        set_score -= extra_words_penalty
     score = max(sort_score, set_score)
 
     # --- year handling ---
@@ -181,6 +188,7 @@ def score_title_match(
     year_bonus: float = 0.2,
     year_penalty: float = 0.3,
     sequel_penalty: float = 0.35,
+    extra_words_penalty: float = 0.35,
     year_tolerance_movie: int = 1,
     year_tolerance_series: int = 3,
 ) -> float:
@@ -193,7 +201,8 @@ def score_title_match(
 
     Components per title variant:
 
-    - Base: ``max(token_sort_ratio, token_set_ratio)`` via rapidfuzz
+    - Base: ``max(token_sort_ratio, token_set_ratio)`` via rapidfuzz,
+      the set ratio minus *extra_words_penalty* if the result adds words
     - Year bonus: +*year_bonus* if year matches (tolerance by type)
     - Year penalty: −*year_penalty* if year present but wrong
     - Sequel penalty: −*sequel_penalty* if sequel numbers differ
@@ -224,6 +233,7 @@ def score_title_match(
                 year_bonus=year_bonus,
                 year_penalty=year_penalty,
                 sequel_penalty=sequel_penalty,
+                extra_words_penalty=extra_words_penalty,
             )
             if s > best:
                 best = s
@@ -239,6 +249,7 @@ def filter_by_title_match(
     year_bonus: float = 0.2,
     year_penalty: float = 0.3,
     sequel_penalty: float = 0.35,
+    extra_words_penalty: float = 0.35,
     year_tolerance_movie: int = 1,
     year_tolerance_series: int = 3,
 ) -> list[SearchResult]:
@@ -260,6 +271,7 @@ def filter_by_title_match(
             year_bonus=year_bonus,
             year_penalty=year_penalty,
             sequel_penalty=sequel_penalty,
+            extra_words_penalty=extra_words_penalty,
             year_tolerance_movie=year_tolerance_movie,
             year_tolerance_series=year_tolerance_series,
         )

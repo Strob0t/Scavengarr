@@ -71,6 +71,7 @@ class _StremioConfig(Protocol):
     title_year_bonus: float
     title_year_penalty: float
     title_sequel_penalty: float
+    title_extra_words_penalty: float
     title_year_tolerance_movie: int
     title_year_tolerance_series: int
     max_results_per_plugin: int
@@ -196,6 +197,7 @@ class StremioStreamUseCase:
         self._title_year_bonus = config.title_year_bonus
         self._title_year_penalty = config.title_year_penalty
         self._title_sequel_penalty = config.title_sequel_penalty
+        self._title_extra_words_penalty = config.title_extra_words_penalty
         self._title_year_tolerance_movie = config.title_year_tolerance_movie
         self._title_year_tolerance_series = config.title_year_tolerance_series
         self._stream_link_repo = stream_link_repo
@@ -414,6 +416,7 @@ class StremioStreamUseCase:
                     year_bonus=self._title_year_bonus,
                     year_penalty=self._title_year_penalty,
                     sequel_penalty=self._title_sequel_penalty,
+                    extra_words_penalty=self._title_extra_words_penalty,
                     year_tolerance_movie=self._title_year_tolerance_movie,
                     year_tolerance_series=self._title_year_tolerance_series,
                 ),

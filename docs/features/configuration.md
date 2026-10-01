@@ -349,6 +349,7 @@ Controls the Stremio addon behavior: stream ranking, plugin concurrency, title m
 | `stremio.title_year_bonus` | float | `0.2` | Score bonus for matching year |
 | `stremio.title_year_penalty` | float | `0.3` | Score penalty for non-matching year |
 | `stremio.title_sequel_penalty` | float | `0.35` | Score penalty for sequel number mismatch |
+| `stremio.title_extra_words_penalty` | float | `0.35` | Score penalty when the result adds words to the reference title ("Dark Matter" for "Dark"); such a result needs a matching year to pass |
 | `stremio.title_year_tolerance_movie` | int | `1` | Allowed year difference for movies (±N) |
 | `stremio.title_year_tolerance_series` | int | `3` | Allowed year difference for series (±N) |
 | `stremio.stream_link_ttl_seconds` | int | `7200` | TTL for cached stream links (2h) |

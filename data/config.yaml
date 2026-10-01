@@ -122,6 +122,7 @@ stremio:
   title_year_bonus: 0.2
   title_year_penalty: 0.3
   title_sequel_penalty: 0.35
+  title_extra_words_penalty: 0.35 # result adds words: "Dark Matter" for "Dark"
   title_year_tolerance_movie: 1
   title_year_tolerance_series: 3
 
