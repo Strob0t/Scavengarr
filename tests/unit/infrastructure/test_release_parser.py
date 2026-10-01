@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from scavengarr.domain.entities.stremio import StreamLanguage, StreamQuality
 from scavengarr.infrastructure.stremio.release_parser import (
     parse_language,
@@ -106,3 +108,20 @@ class TestParseLanguage:
         assert result is not None
         assert result.code == "de-sub"
         assert result.is_dubbed is False
+
+    @pytest.mark.parametrize(
+        ("label", "code"),
+        [
+            # s.to's labels; "Englisch" fell back to the plugin's German,
+            # so English audio was listed (and autoplayed) as German Dub
+            ("Englisch", "en"),
+            ("Ger-Sub", "de-sub"),
+            ("Englisch mit deutschen Untertiteln", "de-sub"),
+            ("Japanisch mit deutschen Untertiteln", "de-sub"),
+            ("Englisch mit englischen Untertiteln", "en-sub"),
+        ],
+    )
+    def test_german_language_labels(self, label: str, code: str) -> None:
+        result = parse_language(link_language=label, plugin_default_language="de")
+        assert result is not None
+        assert result.code == code

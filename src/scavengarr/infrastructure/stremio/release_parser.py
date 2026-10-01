@@ -47,9 +47,10 @@ _BADGE_TO_QUALITY: dict[str, StreamQuality] = {
 
 # --- Language helpers ---
 
-_GERMAN_PATTERNS = re.compile(r"(?i)\b(ger(?:man)?|deu(?:tsch)?)\b")
-_ENGLISH_PATTERNS = re.compile(r"(?i)\b(eng(?:lish)?)\b")
-_SUBTITLE_PATTERNS = re.compile(r"(?i)\b(sub|untertitel)\b")
+# German labels too (s.to: "Englisch", "Japanisch mit deutschen Untertiteln")
+_GERMAN_PATTERNS = re.compile(r"(?i)\b(ger(?:man)?|deu(?:tsch(?:en)?)?)\b")
+_ENGLISH_PATTERNS = re.compile(r"(?i)\b(eng(?:lish|lisch(?:en)?)?)\b")
+_SUBTITLE_PATTERNS = re.compile(r"(?i)\b(sub|untertiteln?)\b")
 
 
 def _quality_from_badge(badge: str) -> StreamQuality:

@@ -16,6 +16,9 @@ Found in the Stremio live test (2026-10-01).
 ### Fix: moflix's Own HLS Streams Were Never Played
 - moflix hands out its own HLS playlists (`https://<name>.moflix-stream.day/movies/<release>/master.m3u8?md5=…`, 1080p, German and original audio) besides hoster embeds. The registry gave them to the resolver of their domain (`moflix-stream` → VidHide), which expects an embed page: 60 of 60 failed in the live test. Streaming playlist URLs (`.m3u8`, `.mpd`) now go straight to the content-type probe.
 
+### Fix: English Streams Listed as German Dub
+- The language parser knew English words only ("English", "Sub", "Untertitel"), so s.to's label "Englisch" fell back to the plugin's default language: English audio was listed as German Dub, ranked as German and continued by autoplay in the German binge group, and its VOE link collided with the German one in the per-hoster dedup. "Englisch(en)", "deutschen" and "Untertiteln" are recognized now ("Japanisch mit deutschen Untertiteln" → German Sub).
+
 ### Perf: Stremio Saves Only the Stream Links It Serves
 - The stream use case saved a `CachedStreamLink` for every ranked stream, although only the HLS proxy and `/play/` look links up: "Dune" (73 ranked streams) spent 6 s saving links and was answered after 21.5 s. Links are now saved only for the streams served through those endpoints (`build_cache_link()`); direct video URLs need none.
 

@@ -209,6 +209,8 @@ rank_score = language_score + (quality.value * quality_multiplier) + hoster_bonu
 
 Only one stream per hoster and language is returned (e.g. 5 German-dub VOE links from 5 plugins collapse to one; a German-sub VOE link stays); streams without a hoster name are always kept. Hoster names are resolver names (`HosterResolverRegistry.canonical_hoster`, wired into the stream converter): a plugin label that names a known hoster wins (redirect links such as `s.to/r?t=…` name the hoster only in the label), then the URL's domain if a resolver handles it, so mirror domains and aliases share one name (`dood.re`, `d0000d.com` → `doodstream`) for the dedup, the hoster bonus and the label. Otherwise the plugin label is used, with a domain label reduced to its second-level part (`voe.sx` → `voe`), then the URL's second-level domain; placeholder labels such as `unknown` fall through to the URL. With a resolver configured (the normal case) the resolution does it: a hoster's streams of one language are tried in rank order until one resolves and passes the playback check. Without a resolver, `deduplicate_by_hoster()` keeps the best-ranked stream per hoster and language before formatting.
 
+A stream's language comes from its release name (guessit), else from the plugin's language label for the link (`parse_language`; English and German words: "German Sub", "Ger-Sub", "Englisch", "Japanisch mit deutschen Untertiteln" → `de-sub`), else from the plugin's default language. An unrecognized label falls back to the default, so a label missing from the patterns lists English audio as German Dub (s.to's "Englisch" did until 2026-10-01).
+
 ### Default Weights
 
 | Language | Score |
