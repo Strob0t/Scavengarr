@@ -112,6 +112,9 @@ Fixtures are static HTML files stored in `tests/fixtures/`. Actual layout:
 tests/
   fixtures/
     html/
+      hdfilme/, kinoger/, megakino/, streamcloud/, streamkiste/
+        search-oppenheimer.html.gz, detail-oppenheimer.html.gz, ...
+                                # real pages, parsed in tests/unit/infrastructure/test_real_pages.py
       testsite/
         search_results.html     # Stage 1 response (unused so far)
         movie_detail.html       # Stage 2 response (unused so far)
@@ -128,6 +131,8 @@ tests/
 ```
 
 Fixtures should be captured from real sites once and committed as static files. Never make real HTTP requests to external sites in CI.
+
+**Real pages (2026-10-01):** search and detail pages of the five DataLife Engine sites, captured from a live run of the plugins (Oppenheimer, The Last of Us), the per-visitor `dle_login_hash` scrubbed, gzipped (230 KB for 13 pages). `test_real_pages.py` runs the plugins' parsers on them with values read off the pages. They found what the hand-written fixtures could not: kinoger's series pages hand out the first episode for every request, streamkiste reads the wrong year, kinoger's detail metadata is empty. Recapture when a site changes its theme.
 
 ### Test Infrastructure
 
