@@ -141,6 +141,24 @@ class TestParsePayload:
         assert devideosrc.tv_links({"tv": None}) == []
         assert devideosrc.tv_links({"tv": {"seasons": [None, {"episodes": 1}]}}) == []
 
+    def test_numbers_sent_as_text_or_missing(self) -> None:
+        source = {"name": "voe", "url": "https://voe.sx/e/a"}
+        payload = {
+            "tv": {
+                "seasons": [
+                    {
+                        "season_number": "2",
+                        "episodes": [
+                            {"episode_number": "4", "sources": [source]},
+                            {"sources": [source]},  # no number: unplayable label
+                        ],
+                    },
+                    {"episodes": [{"episode_number": 1, "sources": [source]}]},
+                ]
+            }
+        }
+        assert [link["label"] for link in devideosrc.tv_links(payload)] == ["2x4 voe"]
+
 
 class TestFetchLinks:
     @respx.mock
@@ -339,28 +357,3 @@ class TestSeriesPlayerForMovies:
 
         assert found.links == []
         assert not serial.called
-
-
-class TestFilterEpisodes:
-    _LINKS = [  # noqa: RUF012
-        {"hoster": "a", "link": "https://a/1", "label": "1x1 a"},
-        {"hoster": "a", "link": "https://a/2", "label": "1x2 a"},
-        {"hoster": "b", "link": "https://b/2", "label": "1x2 b"},
-        {"hoster": "a", "link": "https://a/3", "label": "2x1 a"},
-        {"hoster": "a", "link": "https://a/x", "label": "a"},
-    ]
-
-    def test_season_and_episode(self) -> None:
-        links = devideosrc.filter_episodes(self._LINKS, 1, 2)
-        assert [link["link"] for link in links] == ["https://a/2", "https://b/2"]
-
-    def test_whole_season(self) -> None:
-        assert len(devideosrc.filter_episodes(self._LINKS, 1, None)) == 3
-
-    def test_unlabelled_and_other_seasons_dropped(self) -> None:
-        assert devideosrc.filter_episodes(self._LINKS, 3, None) == []
-
-    def test_multi_digit_numbers(self) -> None:
-        links = [{"hoster": "a", "link": "https://a", "label": "12x105 a"}]
-        assert devideosrc.filter_episodes(links, 12, 105) == links
-        assert devideosrc.filter_episodes(links, 1, 2) == []

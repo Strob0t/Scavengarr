@@ -32,6 +32,7 @@ from scavengarr.infrastructure.plugins.categories import (
     served_category,
     stream_category,
 )
+from scavengarr.infrastructure.plugins.episodes import filter_episodes
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.relevance import (
     SINGLE_TITLE_HITS,
@@ -504,7 +505,7 @@ class StreamcloudPlugin(HttpxPluginBase):
 
         # Filter series links to requested season/episode
         if is_series and season is not None and links:
-            links = devideosrc.filter_episodes(links, season, episode)
+            links = filter_episodes(links, season, episode)
             if not links:
                 self._log.debug(
                     "streamcloud_no_episode_match",

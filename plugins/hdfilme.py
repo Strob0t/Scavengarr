@@ -33,6 +33,7 @@ from scavengarr.infrastructure.plugins.categories import (
     served_category,
     stream_category,
 )
+from scavengarr.infrastructure.plugins.episodes import filter_episodes
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.relevance import (
     SINGLE_TITLE_HITS,
@@ -518,7 +519,7 @@ class HdfilmePlugin(HttpxPluginBase):
         if season is not None:
             if not is_series:
                 return []  # films are skipped when season/episode are requested
-            links = devideosrc.filter_episodes(links, season, episode)
+            links = filter_episodes(links, season, episode)
 
         if not links:
             self._log.debug("hdfilme_no_streams", url=detail_url)

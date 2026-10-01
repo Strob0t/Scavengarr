@@ -31,6 +31,8 @@ from typing import Any, Literal
 import httpx
 import structlog
 
+from scavengarr.infrastructure.plugins.episodes import episode_label
+
 log = structlog.get_logger(__name__)
 
 BASE_URL = "https://devideosrc.co"
@@ -44,7 +46,6 @@ _MOVIE_PLAYER_RE = re.compile(r"devideosrc\.co/movie/(tt\d+)")
 _SERIAL_PLAYER_RE = re.compile(r"devideosrc\.co/serial/")
 _IMDB_RE = re.compile(r"devideosrc\.co/(?:embed/download|serial)/(tt\d+)")
 _IMDB_VAR_RE = re.compile(r"""var\s+imdb\s*=\s*['"](tt\d+)['"]""")
-_EPISODE_LABEL_RE = re.compile(r"(\d+)x(\d+) ")
 _TOKEN_RE = re.compile(r"""token:\s*["']([A-Za-z0-9_.=-]+)["']""")
 
 
@@ -129,34 +130,26 @@ def tv_links(payload: dict[str, Any]) -> list[dict[str, str]]:
     for season in seasons:
         if not isinstance(season, dict):
             continue
-        s_num = season.get("season_number")
+        s_num = _number(season.get("season_number"))
         episodes = season.get("episodes")
-        if not isinstance(episodes, list):
+        if s_num is None or not isinstance(episodes, list):
             continue
         for ep in episodes:
-            if not isinstance(ep, dict):
+            e_num = _number(ep.get("episode_number")) if isinstance(ep, dict) else None
+            if e_num is None:
                 continue
-            prefix = f"{s_num}x{ep.get('episode_number')} "
+            prefix = episode_label(s_num, e_num, "")
             links.extend(_source_links(ep.get("sources"), prefix))
     return links
 
 
-def filter_episodes(
-    links: list[dict[str, str]], season: int, episode: int | None
-) -> list[dict[str, str]]:
-    """Series links of *season* (and *episode*, when given).
-
-    Uses the ``<season>x<episode>`` label prefix set by :func:`tv_links`.
-    """
-    matched: list[dict[str, str]] = []
-    for link in links:
-        m = _EPISODE_LABEL_RE.match(link.get("label", ""))
-        if not m or int(m.group(1)) != season:
-            continue
-        if episode is not None and int(m.group(2)) != episode:
-            continue
-        matched.append(link)
-    return matched
+def _number(value: object) -> int | None:
+    """A season/episode number of the API (an int, possibly sent as text)."""
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
 
 
 def _uncached(url: str) -> str:
