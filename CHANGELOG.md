@@ -14,6 +14,9 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 ### Fix: German Titles Without a TMDB Key Needed the Example Config
 - Without a TMDB key, the German title of a Stremio request comes from Wikidata ("Haus des Geldes" for "Money Heist"). Wikidata answers 403 to a User-Agent without contact information, and the code default `Scavengarr/0.1.0` had none (only `data/config.yaml` set the contact URL): without that file, German-titled films and series were searched under their English title only. The default is `Scavengarr/0.1.0 (+https://github.com/Strob0t/Scavengarr)` now.
 
+### Perf: One devideosrc Fetch per Title Instead of Three
+- hdfilme, streamcloud and streamkiste are three themes of one DataLife Engine database: same news ids (Oppenheimer is 23684 on all three), same devideosrc player, same hoster links. A Stremio request ran all three, so each title's player page and `embed-links` POST went out three times at once (devideosrc answers bursts with 429, retried after 2–4 s). Concurrent `fetch_links` calls for one player now share one fetch; a caller cut by its deadline leaves it running for the others.
+
 ### Fix: Wrong Years, Genres and Descriptions on streamkiste, kinoger and megakino
 - streamkiste read the year of the last related film listed under a title (Oppenheimer: 2020 instead of 2023), and kinoger's detail parser found neither year nor genres in the live theme. The title matcher scores a wrong year −0.3 and needs a year to accept a title with extra words. streamkiste keeps the first `.release` (the film's own), kinoger reads the year from the page title ("Oppenheimer (2023)") and the genres from the post's category list (`<li class="category">`), which also marks series by their "Serie" category. megakino's description was the last user comment (comments are "full-text" divs like the plot); it is the plot now. Found by the parser tests on real pages.
 

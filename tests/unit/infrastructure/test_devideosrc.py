@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import httpx
@@ -161,6 +162,50 @@ class TestParsePayload:
 
 
 class TestFetchLinks:
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_concurrent_calls_share_one_fetch(self) -> None:
+        """hdfilme, streamcloud and streamkiste ask for the same player at once."""
+        page = respx.get(url__startswith="https://devideosrc.co/movie/tt0371746")
+        page.respond(200, text=_PLAYER_HTML)
+        route = respx.post(_EMBED_LINKS).respond(200, json=_MOVIE_PAYLOAD)
+
+        async with httpx.AsyncClient() as client:
+            found = await asyncio.gather(
+                *(devideosrc.fetch_links(client, _MOVIE) for _ in range(3))
+            )
+
+        assert page.call_count == 1
+        assert route.call_count == 1
+        assert found[0] == found[1] == found[2]
+        assert found[0].links
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_cancelled_caller_leaves_the_fetch_running(self) -> None:
+        """A plugin cut by the deadline must not cancel the others' fetch."""
+        gate = asyncio.Event()
+
+        async def slow_page(request: httpx.Request) -> httpx.Response:
+            await gate.wait()
+            return httpx.Response(200, text=_PLAYER_HTML)
+
+        respx.get(url__startswith="https://devideosrc.co/movie/tt0371746").mock(
+            side_effect=slow_page
+        )
+        respx.post(_EMBED_LINKS).respond(200, json=_MOVIE_PAYLOAD)
+
+        async with httpx.AsyncClient() as client:
+            first = asyncio.ensure_future(devideosrc.fetch_links(client, _MOVIE))
+            second = asyncio.ensure_future(devideosrc.fetch_links(client, _MOVIE))
+            await asyncio.sleep(0)  # both callers wait on the shared fetch
+            first.cancel()
+            gate.set()
+            found = await second
+
+        assert first.cancelled()
+        assert found.links
+
     @respx.mock
     @pytest.mark.asyncio
     async def test_movie_flow(self) -> None:

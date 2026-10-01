@@ -203,6 +203,11 @@ async def _embed_links(
     return payload if isinstance(payload, dict) else None
 
 
+# Fetches in flight per player: hdfilme, streamcloud and streamkiste front one
+# database and ask for the same player within the same request
+_inflight: dict[DevideosrcPlayer, asyncio.Task[PlayerLinks]] = {}
+
+
 async def fetch_links(
     client: httpx.AsyncClient,
     player: DevideosrcPlayer,
@@ -213,7 +218,23 @@ async def fetch_links(
     Some sites (streamkiste) embed the series player for movies too; when the
     series page has no token, the movie player is tried instead.
     *request_kwargs* (timeout, headers) are passed to every request.
+    Concurrent calls for one player share one fetch (the first caller's
+    client and *request_kwargs*).
     """
+    task = _inflight.get(player)
+    if task is None:
+        task = asyncio.ensure_future(_fetch_links(client, player, **request_kwargs))
+        _inflight[player] = task
+        task.add_done_callback(lambda _: _inflight.pop(player, None))
+    # A caller cut by its deadline must not cancel the fetch the others await
+    return await asyncio.shield(task)
+
+
+async def _fetch_links(
+    client: httpx.AsyncClient,
+    player: DevideosrcPlayer,
+    **request_kwargs: Any,
+) -> PlayerLinks:
     try:
         payload = await _embed_links(client, player, **request_kwargs)
         if payload is None and player.kind == "tv":
