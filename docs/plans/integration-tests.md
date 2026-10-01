@@ -132,7 +132,7 @@ tests/
 
 Fixtures should be captured from real sites once and committed as static files. Never make real HTTP requests to external sites in CI.
 
-**Real pages (2026-10-01):** search and detail pages of the five DataLife Engine sites, captured from a live run of the plugins (Oppenheimer, The Last of Us), the per-visitor `dle_login_hash` scrubbed, gzipped (230 KB for 13 pages). `test_real_pages.py` runs the plugins' parsers on them with values read off the pages. They found what the hand-written fixtures could not: kinoger's series pages hand out the first episode for every request, streamkiste reads the wrong year, kinoger's detail metadata is empty. Recapture when a site changes its theme.
+**Real pages (2026-10-01):** search and detail pages of the five DataLife Engine sites, captured from a live run of the plugins (Oppenheimer, The Last of Us), the per-visitor `dle_login_hash` scrubbed, gzipped (230 KB for 13 pages). `test_real_pages.py` runs the plugins' parsers on them with values read off the pages. They found what the hand-written fixtures could not: kinoger's series pages hand out the first episode for every request, streamkiste reads the wrong year, kinoger's detail metadata is empty. Recapture when a site changes its theme: `scripts/capture_pages.py <plugin> "<query>"` records a live search's pages, `--fixture <page> <name>` stores one (scrubbed, gzipped).
 
 ### Test Infrastructure
 
