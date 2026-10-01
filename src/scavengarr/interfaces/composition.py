@@ -285,6 +285,16 @@ def _inject_shared_browser_pool(
                 plugin.set_shared_pool(pool)
 
 
+def _mirror_groups(plugins: PluginRegistry) -> dict[str, str]:
+    """Plugin name -> ``mirror_group`` of the plugins that declare one."""
+    groups: dict[str, str] = {}
+    for name in plugins.list_names():
+        group = getattr(plugins.get(name), "mirror_group", None)
+        if isinstance(group, str) and group:
+            groups[name] = group
+    return groups
+
+
 def _wire_scoring(state: AppState, config: AppConfig) -> asyncio.Task[None]:
     """Wire scoring components; return the scheduler's background task."""
     state.plugin_score_store = CachePluginScoreStore(
@@ -561,6 +571,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         browser_warmup_fn=state.shared_browser_pool.warmup,
         pool=state.concurrency_pool,
         circuit_breaker=state.circuit_breaker,
+        # hdfilme, streamcloud, streamkiste: one database, one asked per request
+        mirror_groups=_mirror_groups(state.plugins),
     )
     # The IMDB fallback (no TMDB key) has no trending lists, only search
     state.stremio_catalog_uc = StremioCatalogUseCase(

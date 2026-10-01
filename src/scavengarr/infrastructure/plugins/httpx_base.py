@@ -78,6 +78,9 @@ class HttpxPluginBase:
     version: str = "1.0.0"
     mode: str = "httpx"
     languages: list[str] = ["de"]  # noqa: RUF012  # subclass overrides
+    # Sites that front one database share a group name: a Stremio request
+    # asks one of them (the next when its circuit breaker opens)
+    mirror_group: str | None = None
 
     @property
     def default_language(self) -> str:

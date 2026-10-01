@@ -113,6 +113,11 @@ class PluginCircuitBreaker:
             self._states[name] = _State.OPEN
             self._opened_at[name] = time.monotonic()
 
+    def is_closed(self, name: str) -> bool:
+        """Whether *name* runs normally (no failure streak); unlike
+        :meth:`allow` it never starts a half-open probe."""
+        return self._states.get(name, _State.CLOSED) == _State.CLOSED
+
     def state(self, name: str) -> str:
         """Return the current state as a string (for diagnostics)."""
         return self._states.get(name, _State.CLOSED).value

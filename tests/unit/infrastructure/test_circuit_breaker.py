@@ -18,6 +18,20 @@ class TestInitialState:
         assert cb.state("foo") == "closed"
 
 
+class TestIsClosed:
+    def test_open_breaker_is_not_closed_and_starts_no_probe(self) -> None:
+        cb = PluginCircuitBreaker(failure_threshold=1, cooldown_seconds=0)
+        cb.record_failure("foo")
+
+        assert cb.is_closed("foo") is False
+        assert cb.state("foo") == "open"  # allow() would turn it half-open
+
+    def test_closed_until_the_threshold(self) -> None:
+        cb = PluginCircuitBreaker(failure_threshold=2)
+        cb.record_failure("foo")
+        assert cb.is_closed("foo") is True
+
+
 class TestClosedState:
     def test_failures_below_threshold_stay_closed(self) -> None:
         cb = PluginCircuitBreaker(failure_threshold=3)

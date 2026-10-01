@@ -10,7 +10,7 @@ import asyncio
 import random
 import time
 from collections import deque
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from contextvars import ContextVar
 from dataclasses import replace
 from typing import Protocol
@@ -175,6 +175,7 @@ class StremioStreamUseCase:
         browser_warmup_fn: BrowserWarmupFn | None = None,
         pool: ConcurrencyPoolPort,
         circuit_breaker: CircuitBreaker | None = None,
+        mirror_groups: Mapping[str, str] | None = None,
     ) -> None:
         self._tmdb = tmdb
         self._plugins = plugins
@@ -192,6 +193,7 @@ class StremioStreamUseCase:
             metrics=metrics,
             circuit_breaker=circuit_breaker,
             browser_warmup_fn=browser_warmup_fn,
+            mirror_groups=mirror_groups,
         )
         self._title_match_threshold = config.title_match_threshold
         self._title_year_bonus = config.title_year_bonus

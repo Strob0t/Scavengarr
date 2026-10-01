@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from contextvars import ContextVar
 from typing import Any, Protocol
 
@@ -28,6 +28,7 @@ class CircuitBreaker(Protocol):
     """Circuit breaker per key (skip after N consecutive failures)."""
 
     def allow(self, name: str) -> bool: ...
+    def is_closed(self, name: str) -> bool: ...
     def record_success(self, name: str) -> None: ...
     def record_failure(self, name: str) -> None: ...
 
@@ -79,6 +80,7 @@ class PluginSearchRunner:
         metrics: PluginSearchMetrics | None = None,
         circuit_breaker: CircuitBreaker | None = None,
         browser_warmup_fn: BrowserWarmupFn | None = None,
+        mirror_groups: Mapping[str, str] | None = None,
     ) -> None:
         self._plugins = plugins
         self._search_engine = search_engine
@@ -89,6 +91,8 @@ class PluginSearchRunner:
         self._metrics = metrics
         self._circuit_breaker = circuit_breaker
         self._browser_warmup_fn = browser_warmup_fn
+        # Plugin name -> mirror group: sites serving one database
+        self._mirror_groups = mirror_groups or {}
 
     async def search_with_fallback(
         self,
@@ -121,6 +125,8 @@ class PluginSearchRunner:
         plugin still waiting for a slot then is skipped, a running one is
         cut at the deadline instead of after its own full timeout.
         """
+        plugin_names = self._one_per_mirror_group(plugin_names, category)
+
         # --- Fire-and-forget pre-warm for shared Playwright browser ---
         if self._browser_warmup_fn is not None:
             task = asyncio.create_task(
@@ -155,6 +161,36 @@ class PluginSearchRunner:
                         seen.add(r.download_link)
                         all_results.append(r)
         return all_results
+
+    def _one_per_mirror_group(
+        self, plugin_names: list[str], category: int | None
+    ) -> list[str]:
+        """Keep one plugin per mirror group: the first with a closed breaker.
+
+        Mirrors front one database (hdfilme, streamcloud, streamkiste):
+        asking all of them triples the work for the same streams. When no
+        member's breaker is closed, all stay in and their breakers decide,
+        so a half-open probe can bring one back.
+        """
+        if not self._mirror_groups:
+            return plugin_names
+        chosen: dict[str, str] = {}
+        for name in plugin_names:
+            group = self._mirror_groups.get(name)
+            if group is None or group in chosen:
+                continue
+            breaker = self._circuit_breaker
+            if breaker is None or breaker.is_closed(_breaker_key(name, category)):
+                chosen[group] = name
+
+        def keep(name: str) -> bool:
+            group = self._mirror_groups.get(name)
+            return group not in chosen or chosen[group] == name
+
+        skipped = [name for name in plugin_names if not keep(name)]
+        if skipped:
+            log.info("stremio_mirrors_skipped", chosen=chosen, skipped=skipped)
+        return [name for name in plugin_names if keep(name)]
 
     async def search_plugins(
         self,

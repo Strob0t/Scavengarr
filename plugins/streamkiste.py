@@ -442,6 +442,8 @@ class StreamkistePlugin(HttpxPluginBase):
     name = "streamkiste"
     provides = "stream"
     _domains = _DOMAINS
+    # One database behind hdfilme, streamcloud and streamkiste (same news ids)
+    mirror_group = "hdfilme"
 
     async def _search_page(
         self,

@@ -323,3 +323,56 @@ class TestDispatch:
         results = await _search(_runner(registry), ["a"], ["q"])
 
         assert len(results) == 1
+
+
+class TestMirrorGroups:
+    """hdfilme, streamcloud and streamkiste serve one database: a Stremio
+    request asks one of them, the next one when its breaker opens."""
+
+    _GROUPS = {"hdfilme": "hdfilme", "streamcloud": "hdfilme"}  # noqa: RUF012
+
+    def _plugins(self) -> dict[str, MagicMock]:
+        return {
+            "hdfilme": _plugin([_sr("https://dood/1")]),
+            "streamcloud": _plugin([_sr("https://dood/1")]),
+            "other": _plugin([_sr("https://voe/1")]),
+        }
+
+    async def test_first_member_alone(self) -> None:
+        plugins = self._plugins()
+        runner = _runner(_registry(plugins), mirror_groups=self._GROUPS)
+
+        await _search(runner, ["hdfilme", "streamcloud", "other"], ["q"])
+
+        assert plugins["hdfilme"].search.await_count == 1
+        assert plugins["streamcloud"].search.await_count == 0
+        assert plugins["other"].search.await_count == 1
+
+    async def test_next_member_when_the_breaker_is_open(self) -> None:
+        plugins = self._plugins()
+        breaker = PluginCircuitBreaker(failure_threshold=1, cooldown_seconds=60)
+        breaker.record_failure("hdfilme:2000")
+        runner = _runner(
+            _registry(plugins), mirror_groups=self._GROUPS, circuit_breaker=breaker
+        )
+
+        await _search(runner, ["hdfilme", "streamcloud", "other"], ["q"])
+
+        assert plugins["hdfilme"].search.await_count == 0
+        assert plugins["streamcloud"].search.await_count == 1
+
+    async def test_all_members_open_stay_in_for_the_probes(self) -> None:
+        """Without a closed member every one goes to its breaker, whose
+        half-open probe can bring it back."""
+        plugins = self._plugins()
+        breaker = PluginCircuitBreaker(failure_threshold=1, cooldown_seconds=0)
+        breaker.record_failure("hdfilme:2000")
+        breaker.record_failure("streamcloud:2000")
+        runner = _runner(
+            _registry(plugins), mirror_groups=self._GROUPS, circuit_breaker=breaker
+        )
+
+        await _search(runner, ["hdfilme", "streamcloud"], ["q"])
+
+        assert plugins["hdfilme"].search.await_count == 1
+        assert plugins["streamcloud"].search.await_count == 1
