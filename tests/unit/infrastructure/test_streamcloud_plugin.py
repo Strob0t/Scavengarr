@@ -676,7 +676,7 @@ class TestLooseMatches:
         scraped = [c.args[0]["url"] for c in plugin._scrape_detail.await_args_list]
         assert scraped == ["https://site.example/1"]
 
-    async def test_season_request_scrapes_the_closest_hits_only(self) -> None:
+    async def test_season_request_scrapes_the_exact_hit_only(self) -> None:
         plugin = _make_plugin()
         plugin._ensure_client = AsyncMock()
         plugin._verify_domain = AsyncMock()
@@ -693,4 +693,4 @@ class TestLooseMatches:
 
         scraped = [c.args[0]["url"] for c in plugin._scrape_detail.await_args_list]
         assert scraped[0] == "https://site.example/dark"
-        assert len(scraped) == 3
+        assert len(scraped) == 1  # "Dark 0" … are other titles

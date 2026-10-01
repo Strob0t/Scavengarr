@@ -817,11 +817,16 @@ class TestRelevantSeries:
         series = [{"title": f"Serie {i}"} for i in range(6)]
         assert _relevant_series(series, "Money Heist") == series[:3]
 
-    def test_episode_requests_take_the_closest_series(self) -> None:
+    def test_episode_requests_take_the_exact_series(self) -> None:
         series = [{"title": f"Dark {i}", "slug": f"d{i}"} for i in range(5)]
         series.append({"title": "Dark", "slug": "dark"})
         result = _relevant_series(series, "Dark", limit=3)
-        assert [s["slug"] for s in result] == ["dark", "d0", "d1"]
+        assert [s["slug"] for s in result] == ["dark"]
+
+    def test_episode_requests_without_exact_series(self) -> None:
+        series = [{"title": f"Dark {i}", "slug": f"d{i}"} for i in range(5)]
+        result = _relevant_series(series, "Dark", limit=3)
+        assert [s["slug"] for s in result] == ["d0", "d1", "d2"]
 
     @pytest.mark.asyncio
     async def test_search_skips_unrelated_series(self) -> None:

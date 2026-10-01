@@ -14,6 +14,9 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 ### Fix: German Titles Without a TMDB Key Needed the Example Config
 - Without a TMDB key, the German title of a Stremio request comes from Wikidata ("Haus des Geldes" for "Money Heist"). Wikidata answers 403 to a User-Agent without contact information, and the code default `Scavengarr/0.1.0` had none (only `data/config.yaml` set the contact URL): without that file, German-titled films and series were searched under their English title only. The default is `Scavengarr/0.1.0 (+https://github.com/Strob0t/Scavengarr)` now.
 
+### Perf: Episode Requests Scrape the Exact Series Only
+- A season or episode request scraped the 3 closest search hits, so "Dark" S01E01 also loaded "Dark Matter" and "Dark Winds" (series, season and episode pages plus link-outs on s.to), which the title matcher drops anyway. In the measurement s.to started 3 s late (all plugin slots busy) and was cut by the search deadline: Dark S01E01 had no stream. With a limit, `relevant_hits()` now keeps an exact hit alone; without an exact hit the 3 closest stay. kinoking filters its cards by kind before the cut, so the film "Iron Man" takes no slot of a request for the series "Iron Man - die Zukunft beginnt".
+
 ### Perf: One devideosrc Fetch per Title Instead of Three
 - hdfilme, streamcloud and streamkiste are three themes of one DataLife Engine database: same news ids (Oppenheimer is 23684 on all three), same devideosrc player, same hoster links. A Stremio request ran all three, so each title's player page and `embed-links` POST went out three times at once (devideosrc answers bursts with 429, retried after 2–4 s). Concurrent `fetch_links` calls for one player now share one fetch; a caller cut by its deadline leaves it running for the others.
 

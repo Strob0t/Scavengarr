@@ -52,6 +52,8 @@ def relevant_hits(
     ties keep the site's order. Falls back to the site's first *fallback*
     hits when none matches, keeps every hit for an empty query, and returns
     at most *limit* hits (e.g. ``SINGLE_TITLE_HITS`` for a season request).
+    With a *limit* (a request for one title), an exact hit drops the longer
+    ones: "Dark Matter" is another series than "Dark".
     """
     wanted = query_words(query)
     if not wanted:
@@ -62,5 +64,9 @@ def relevant_hits(
         if wanted <= words:
             scored.append((len(words - wanted), hit))
     scored.sort(key=lambda pair: pair[0])
+    if limit is not None and scored and scored[0][0] == 0:
+        # A request for one title: next to an exact hit, longer titles are
+        # other titles ("Dark" vs "Dark Matter") the title matcher drops later
+        scored = [pair for pair in scored if pair[0] == 0]
     matching = [hit for _, hit in scored]
     return (matching or hits[:fallback])[:limit]

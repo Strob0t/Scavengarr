@@ -60,9 +60,24 @@ class TestRelevantHits:
         ]
 
     def test_limit_for_requests_of_one_title(self) -> None:
-        hits = [{"title": f"Dark {i}"} for i in range(6)] + [{"title": "Dark"}]
+        hits = [{"title": f"Dark {i}"} for i in range(6)]
         result = relevant_hits(hits, "Dark", hit_title, limit=SINGLE_TITLE_HITS)
-        assert _titles(result) == ["Dark", "Dark 0", "Dark 1"]
+        assert _titles(result) == ["Dark 0", "Dark 1", "Dark 2"]
+
+    def test_exact_hit_alone_for_requests_of_one_title(self) -> None:
+        """ "Dark" S01E01: "Dark Matter" and "Dark Winds" are other series, and
+        each costs a series, a season and an episode page plus link-outs."""
+        hits = [{"title": "Dark Matter"}, {"title": "dark"}, {"title": "Dark Winds"}]
+        result = relevant_hits(hits, "Dark", hit_title, limit=SINGLE_TITLE_HITS)
+        assert _titles(result) == ["dark"]
+
+    def test_exact_hit_keeps_the_others_without_limit(self) -> None:
+        # Films and Torznab searches: the caller filters the titles itself
+        hits = [{"title": "Dark Matter"}, {"title": "Dark"}]
+        assert _titles(relevant_hits(hits, "Dark", hit_title)) == [
+            "Dark",
+            "Dark Matter",
+        ]
 
     def test_hit_title_of_parsed_hits(self) -> None:
         hits = [{"title": "Iron Man", "url": "u1"}, {"url": "u2"}]

@@ -301,13 +301,10 @@ class KinokingPlugin(HttpxPluginBase):
     async def _process_cards(
         self,
         cards: list[dict[str, str]],
-        category: int | None,
         season: int | None = None,
         episode: int | None = None,
     ) -> list[SearchResult]:
         """Process search cards into SearchResults with bounded concurrency."""
-        filtered = self._filter_cards(cards, category)
-
         sem = self._new_semaphore()
 
         async def _bounded(card: dict[str, str]) -> list[SearchResult]:
@@ -320,7 +317,7 @@ class KinokingPlugin(HttpxPluginBase):
                 )
 
         gathered = await asyncio.gather(
-            *[_bounded(c) for c in filtered],
+            *[_bounded(c) for c in cards],
             return_exceptions=True,
         )
         results: list[SearchResult] = []
@@ -352,9 +349,10 @@ class KinokingPlugin(HttpxPluginBase):
         if not query:
             return []
 
-        # A cold movie page takes up to 15 s: load only real matches
+        # A cold movie page takes up to 15 s: load only real matches, of
+        # the requested kind (a film named like a series takes no slot)
         cards = relevant_hits(
-            await self._search_cards(query),
+            self._filter_cards(await self._search_cards(query), category),
             query,
             hit_title,
             limit=SINGLE_TITLE_HITS if season is not None else None,
@@ -362,9 +360,7 @@ class KinokingPlugin(HttpxPluginBase):
         if not cards:
             return []
 
-        return await self._process_cards(
-            cards, category, season=season, episode=episode
-        )
+        return await self._process_cards(cards, season=season, episode=episode)
 
 
 plugin = KinokingPlugin()
