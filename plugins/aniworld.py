@@ -257,7 +257,6 @@ class AniworldPlugin(HttpxPluginBase):
     version = "1.0.0"
     mode = "httpx"
     provides = "stream"
-    default_language = "de"
 
     _domains = _DOMAINS
 

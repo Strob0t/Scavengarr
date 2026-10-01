@@ -76,7 +76,6 @@ class MoflixPlugin(PlaywrightPluginBase):
     version = "1.1.0"
     mode = "playwright"
     provides = "stream"
-    default_language = "de"
 
     _domains = _DOMAINS
     _serialize_search = True

@@ -201,7 +201,6 @@ class SerienjunkiesPlugin(HttpxPluginBase):
 
     name = "serienjunkies"
     provides = "download"
-    default_language = "de"
     _domains = _DOMAINS
     _max_results = 1000
 

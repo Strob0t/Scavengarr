@@ -99,7 +99,6 @@ class NoxPlugin(HttpxPluginBase):
     name = "nox"
     version = "1.2.0"
     provides = "download"
-    default_language = "de"
     _domains = _DOMAINS
 
     # ------------------------------------------------------------------

@@ -128,7 +128,6 @@ class HdWorldPlugin(HttpxPluginBase):
 
     name = "hdworld"
     provides = "download"
-    default_language = "de"
     _domains = _DOMAINS
 
     # ------------------------------------------------------------------

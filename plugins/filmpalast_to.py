@@ -258,7 +258,6 @@ class FilmpalastPlugin(HttpxPluginBase):
 
     name = "filmpalast"
     provides = "stream"
-    default_language = "de"
     _domains = _DOMAINS
 
     async def _search_page(

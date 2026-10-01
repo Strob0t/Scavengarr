@@ -319,7 +319,6 @@ class AnimeLoadsPlugin(PlaywrightPluginBase):
     # Not for Stremio: a series' preview embed is no episode stream, and no
     # resolver plays the site's embeds
     provides = "download"
-    default_language = "de"
 
     _domains = _DOMAINS
 

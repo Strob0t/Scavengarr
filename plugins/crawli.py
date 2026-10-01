@@ -275,7 +275,6 @@ class CrawliPlugin(HttpxPluginBase):
 
     name = "crawli"
     provides = "download"
-    default_language = "de"
     _domains = _DOMAINS
 
     async def _search_page(

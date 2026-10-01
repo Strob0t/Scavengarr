@@ -408,6 +408,11 @@ class TestPluginAttributes:
     def test_mode(self) -> None:
         assert _make_plugin().mode == "playwright"
 
+    def test_language_is_english(self) -> None:
+        # The registry reads ``languages``; a shadowing
+        # ``default_language = "en"`` left the site registered as German
+        assert _make_plugin().languages == ["en"]
+
     def test_domain_not_verified_initially(self) -> None:
         assert _make_plugin()._domain_verified is False
 

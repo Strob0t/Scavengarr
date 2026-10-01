@@ -33,7 +33,7 @@ is unreachable.
 | `crawli` | crawli.net | 1 | Downloads | httpx | de |
 | `dataload` | www.data-load.me | 0 | Downloads | httpx | de |
 | `ddlspot` | www.ddlspot.com | 0 | Downloads | Playwright | de |
-| `ddlvalley` | www.ddlvalley.me | 0 | Downloads | Playwright | de |
+| `ddlvalley` | www.ddlvalley.me | 0 | Downloads | Playwright | en |
 | `einschalten` | einschalten.in | 0 | Streams | httpx | de |
 | `filmfans` | filmfans.org | 0 | Downloads | httpx | de |
 | `filmpalast` | filmpalast.to | 0 | Streams | httpx | de |
@@ -57,7 +57,7 @@ is unreachable.
 | `nima4k` | nima4k.org | 0 | Downloads | httpx | de |
 | `nox` | nox.to | 1 | Downloads | httpx | de |
 | `scnlog` | scnlog.me | 0 | Downloads | httpx | de |
-| `scnsrc` | www.scnsrc.me | 5 | Downloads | Playwright | de |
+| `scnsrc` | www.scnsrc.me | 5 | Downloads | Playwright | en |
 | `serienfans` | serienfans.org | 0 | Downloads | httpx | de |
 | `serienjunkies` | serienjunkies.org | 0 | Downloads | httpx | de |
 | `sto` | serienstream.to | 1 | Streams | httpx | de |

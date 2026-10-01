@@ -252,7 +252,6 @@ class MyGullyPlugin(PlaywrightPluginBase):
     version = "1.0.0"
     mode = "playwright"
     provides = "download"
-    default_language = "de"
 
     _domains = _DOMAINS
 

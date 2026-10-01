@@ -339,6 +339,13 @@ class TestPluginAttributes:
         p = _make_plugin()
         assert p.mode == "playwright"
 
+    def test_language_is_english(self) -> None:
+        # The registry reads ``languages``; a shadowing
+        # ``default_language = "en"`` left the site registered as German
+        p = _make_plugin()
+        assert p.languages == ["en"]
+        assert p.default_language == "en"
+
 
 class TestPluginSearch:
     async def test_search_returns_results(self) -> None:

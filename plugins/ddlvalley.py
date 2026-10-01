@@ -220,7 +220,7 @@ class DDLValleyPlugin(PlaywrightPluginBase):
     version = "1.0.0"
     mode = "playwright"
     provides = "download"
-    default_language = "en"
+    languages = ["en"]
 
     _domains = _DOMAINS
     # nginx rate-limits post pages (503 "Service Temporarily Unavailable"):

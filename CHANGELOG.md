@@ -51,6 +51,9 @@ Found in a live test with Stremio Web (2026-10-01).
 - **One stream per hoster and language** (was: per hoster): a German-sub VOE stream was dropped whenever a German-dub VOE stream resolved, so anime fans had no sub option. Series titles that already contain the episode (`… s01e01`) no longer get it twice.
 - **Hoster names**: plugins label hosters inconsistently (`VOE`, `voe.sx`, `unknown`), so two VOE streams were returned as different hosters, the hoster bonus missed, and the list showed "UNKNOWN" or "VOE.SX". Hoster names are now resolver names (`HosterResolverRegistry.canonical_hoster`): a label naming a known hoster wins, then a known URL domain (mirror domains such as `d0000d.com` become `doodstream`); otherwise domain labels are reduced to their second-level part and placeholders fall back to the URL.
 
+### Fix: ddlvalley and scnsrc Were Registered as German
+- Both English sites set `default_language = "en"`, a class attribute that shadowed the base's `default_language` property while the registry reads `languages` (left at the base default `["de"]`); 15 more plugins repeated `default_language = "de"` to no effect. The two sites declare `languages = ["en"]` now (`docs/plugins.md` regenerated) and the dead overrides are gone; `default_language` stays the property returning `languages[0]`.
+
 ### Fix: Found by the Type Checker
 - **Torznab reachability probe**: when a site answers `HEAD` with 405/501, the probe falls back to a ranged `GET`, but passed `timeout=` to `AsyncClient.send()`, which has no such parameter: every fallback raised `TypeError` (the test mocked `send`). The timeout now goes on the request.
 - **Plugin `timeout` override on Playwright plugins**: `plugins.overrides.<name>.timeout` set an attribute Playwright plugins never read; it is reported as unsupported (`plugin_timeout_override_unsupported`) instead of silently ignored. `max_concurrent`/`max_results` apply to both bases as before.

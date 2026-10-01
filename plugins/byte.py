@@ -411,7 +411,6 @@ class BytePlugin(HttpxPluginBase):
     name = "byte"
     version = "1.1.0"
     provides = "download"
-    default_language = "de"
 
     _domains = _DOMAINS
 

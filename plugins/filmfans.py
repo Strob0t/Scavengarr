@@ -190,7 +190,6 @@ class FilmfansPlugin(HttpxPluginBase):
     version = "1.0.0"
     mode = "httpx"
     provides = "download"
-    default_language = "de"
 
     _domains = _DOMAINS
 

@@ -494,7 +494,6 @@ class Movie2kPlugin(HttpxPluginBase):
 
     name = "movie2k"
     provides = "stream"
-    default_language = "de"
     _domains = _DOMAINS
 
     async def _search_page(
