@@ -63,6 +63,10 @@ Found in a live test with Stremio Web (2026-10-01).
 - `[tool.basedpyright]` (`typeCheckingMode = "standard"`, `src` and `plugins`) replaces the editor-only setting in `.vscode/settings.json`, and `basedpyright` is a dev dependency, so `poetry run basedpyright` checks with the editor's rules (first step of next-steps item 4).
 - The 120 findings are fixed (`src/` and `plugins/` have 0 errors in standard mode) and basedpyright runs as a local pre-commit hook with the project venv, so CI checks types too. Among the fixes: concurrency ports return async context managers, plugin request kwargs are typed for httpx, the shared browser pool and the cookie hand-over of the login plugins (`PlaywrightPluginBase._cookie_params`) are typed, and the dead YAML-plugin branch of the Stremio plugin search is gone.
 
+### Chore: Dependency Updates
+- fastapi 0.128 → 0.142, uvicorn 0.40 → 0.54 and respx 0.22 → 0.23 (constraints in `pyproject.toml`), plus the in-range updates of the lock file, among them starlette 0.46 → 1.7, pydantic 2.11 → 2.13, rebulk 3.2 → 6.0 (guessit's parser), pytest 9.1, pytest-asyncio 1.4 and pre-commit 4.6. The two movieblog URL tests ran the coroutine with `asyncio.get_event_loop()`, which pytest-asyncio 1.4 no longer provides outside a test loop; they are async tests now. Starlette's test client warns that it will move off httpx (`StarletteDeprecationWarning`), nothing to change yet.
+- Still separate (next-steps item 5): guessit 4, redis 8, cryptography 50, structlog 26 and ruff 0.16 (together with the `ruff-pre-commit` rev).
+
 ### Chore: `xvfb-run` Works in the Dev Container
 - `.devcontainer/setup.sh` installs `xauth` with `xvfb`: `--no-install-recommends` left it out, and `xvfb-run -a <cmd>` (headful browser tests, AGENTS.md §9) failed with "xauth command not found". The step also runs when Xvfb is present but xauth is missing.
 

@@ -454,7 +454,8 @@ class TestMovieblogPlugin:
         assert plugin.provides == "download"
         assert "movieblog.to" in plugin._domains
 
-    def test_search_builds_correct_url(self) -> None:
+    @pytest.mark.asyncio()
+    async def test_search_builds_correct_url(self) -> None:
         plugin = _make_plugin()
         search_html = _search_page_html()
 
@@ -467,13 +468,12 @@ class TestMovieblogPlugin:
 
         plugin._safe_fetch = AsyncMock(side_effect=mock_fetch)
 
-        import asyncio
-
-        asyncio.get_event_loop().run_until_complete(plugin._search_page("iron man", 1))
+        await plugin._search_page("iron man", 1)
         called_url = plugin._safe_fetch.call_args[0][0]
         assert "?s=iron+man" in called_url
 
-    def test_search_page_2_url(self) -> None:
+    @pytest.mark.asyncio()
+    async def test_search_page_2_url(self) -> None:
         plugin = _make_plugin()
 
         async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
@@ -485,9 +485,7 @@ class TestMovieblogPlugin:
 
         plugin._safe_fetch = AsyncMock(side_effect=mock_fetch)
 
-        import asyncio
-
-        asyncio.get_event_loop().run_until_complete(plugin._search_page("test", 2))
+        await plugin._search_page("test", 2)
         called_url = plugin._safe_fetch.call_args[0][0]
         assert "/page/2/?s=test" in called_url
 

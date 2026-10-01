@@ -86,7 +86,7 @@ AGENTS.md requires fully typed code, but only the editor checks it.
 
 - **DataLife Engine base**: hdfilme, kinoger, megakino, streamcloud and streamkiste all use the DLE search (`do=search`, `subaction=search`). One `DlePluginBase` in `infrastructure/plugins/`, like `DataApiPluginBase` and `XenForoPluginBase`, so a fix lands once.
 - **Parser tests on real pages**: the code review found crawli (base64-encoded pages), myboerse (missing CSRF token) and the XenForo node filter broken live while every unit test passed, because the fixtures reflect what the parser expects. Store the pages of a live run as fixtures and test the parsers against them (see the open fixture items in [integration-tests.md](integration-tests.md)).
-- **Dependencies**: patch and minor updates in one batch; guessit 4 on its own (release-name parsing feeds titles, seasons and categories), redis 8 and cryptography 50 on their own. Each with the full suite and the live Stremio end-to-end test.
+- **Dependencies**: patch and minor updates in one batch; guessit 4 on its own (release-name parsing feeds titles, seasons and categories), redis 8 and cryptography 50 on their own. Each with the full suite and the live Stremio end-to-end test. **2026-10-01:** the batch is in (fastapi 0.142, uvicorn 0.54, respx 0.23, starlette 1.7, rebulk 6, pytest-asyncio 1.4; suite and live Stremio probe green). Open: guessit 4, redis 8, cryptography 50, structlog 26, ruff 0.16.
 - Open items that stay in their plans: [search-caching.md](search-caching.md) (invalidation endpoint, metrics, TTL test), [integration-tests.md](integration-tests.md) (pipeline, CrawlJob HTTP and TTL tests).
 
 ## 6. Decisions for the maintainer
