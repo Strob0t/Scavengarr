@@ -63,6 +63,8 @@ From the dev container, `poetry run pytest -m live`: 24 passed, 10 failed, 7 ski
 
 In order of value for the Stremio use case (German films and series, new releases, anime; answer budget in [stremio-latency.md](stremio-latency.md)). Each fix follows [plugin-repair.md](plugin-repair.md): site analysis with `playwright-mcp` first, then test-first.
 
+**2026-10-01, CUII block list:** every film/series site on the list has a plugin except kinogo (Russian only, skipped). Four player hosters of covered sites lack a resolver (gxplayer, kinoger.pw, p2pplay, fsst streams). Details in [cuii-coverage.md](cuii-coverage.md).
+
 1. **cine**: find out why the link lookup is empty for every title (site change or a new request format). **2026-10-01:** the links API now needs the language (`lang=1` German, `2` English); fixed. Every `/out/` link opens a reCAPTCHA gateway, so cine serves downloads only.
 2. **Turnstile group** (kinoger, serienfans, ddlspot, ddlvalley, scnsrc, filmfans): run their smoke tests headful (`xvfb-run -a`, `playwright.headless: false`, `playwright.browser_fallback: true`) and fix what still fails.
 3. **megakino_to, movie4k**: check from another network whether the sites are down, blocked here or moved (new `_domains`). **2026-10-01:** down, not blocked: a real browser gets Cloudflare 522 (origin unreachable) on megakino.to and movie4k.sx; the circuit breaker keeps them out of most requests.
