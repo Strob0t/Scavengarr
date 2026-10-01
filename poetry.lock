@@ -781,24 +781,23 @@ test = ["objgraph", "psutil", "setuptools"]
 
 [[package]]
 name = "guessit"
-version = "3.8.0"
+version = "4.4.0"
 description = "GuessIt - a library for guessing information from video filenames."
 optional = false
-python-versions = "*"
+python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "guessit-3.8.0-py3-none-any.whl", hash = "sha256:eb5747b1d0fbca926562c1e5894dbc3f6507c35e8c0bd9e38148401cd9579d83"},
-    {file = "guessit-3.8.0.tar.gz", hash = "sha256:6619fcbbf9a0510ec8c2c33744c4251cad0507b1d573d05c875de17edc5edbed"},
+    {file = "guessit-4.4.0-py3-none-any.whl", hash = "sha256:565bf82dd6dc8801f357b2eec6a1dd447007f398dbebd06b7b440e303e2df3bc"},
+    {file = "guessit-4.4.0.tar.gz", hash = "sha256:cca2c19ecd872c75ee7ebcbdc11075f5ae884882ec0ad67f742c3d25f2d47beb"},
 ]
 
 [package.dependencies]
-babelfish = ">=0.6.0"
-python-dateutil = "*"
-rebulk = ">=3.2.0"
+babelfish = ">=0.6.1"
+python-dateutil = ">=2.8.0"
+rebulk = ">=6.0.1,<7"
 
 [package.extras]
-dev = ["mkdocs", "mkdocs-material", "pyinstaller", "python-semantic-release", "tox", "twine", "wheel"]
-test = ["PyYAML", "pylint", "pytest", "pytest-benchmark", "pytest-cov", "pytest-mock"]
+regex = ["regex"]
 
 [[package]]
 name = "h11"
@@ -1821,4 +1820,4 @@ python-discovery = ">=1.6"
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12,<3.14"
-content-hash = "ad708bd9994c5606713e3e5fab60a9a8ea0ee66af358636d1f9bd435d8f519c0"
+content-hash = "c24e858484df6dcdde0f1b518a0829fb14d401d0a7706574b35db77857f2bba6"
