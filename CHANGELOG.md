@@ -51,6 +51,9 @@ Found in a live test with Stremio Web (2026-10-01).
 - **One stream per hoster and language** (was: per hoster): a German-sub VOE stream was dropped whenever a German-dub VOE stream resolved, so anime fans had no sub option. Series titles that already contain the episode (`… s01e01`) no longer get it twice.
 - **Hoster names**: plugins label hosters inconsistently (`VOE`, `voe.sx`, `unknown`), so two VOE streams were returned as different hosters, the hoster bonus missed, and the list showed "UNKNOWN" or "VOE.SX". Hoster names are now resolver names (`HosterResolverRegistry.canonical_hoster`): a label naming a known hoster wins, then a known URL domain (mirror domains such as `d0000d.com` become `doodstream`); otherwise domain labels are reduced to their second-level part and placeholders fall back to the URL.
 
+### Chore: basedpyright Settings in pyproject.toml
+- `[tool.basedpyright]` (`typeCheckingMode = "standard"`, `src` and `plugins`) replaces the editor-only setting in `.vscode/settings.json`, and `basedpyright` is a dev dependency, so `poetry run basedpyright` checks with the editor's rules (first step of next-steps item 4; 120 findings to fix before it joins the gate).
+
 ### Chore: `xvfb-run` Works in the Dev Container
 - `.devcontainer/setup.sh` installs `xauth` with `xvfb`: `--no-install-recommends` left it out, and `xvfb-run -a <cmd>` (headful browser tests, AGENTS.md §9) failed with "xauth command not found". The step also runs when Xvfb is present but xauth is missing.
 

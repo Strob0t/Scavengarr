@@ -10,6 +10,5 @@
         }
     },
     "ruff.configurationPreference": "filesystemFirst",
-    "basedpyright.analysis.typeCheckingMode": "standard",
     "files.eol": "\n"
 }

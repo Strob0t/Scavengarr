@@ -80,6 +80,8 @@ AGENTS.md requires fully typed code, but only the editor checks it.
 2. Count the findings in `standard` mode; fix `src/` first, then `plugins/`.
 3. Add basedpyright to pre-commit and CI once it is clean.
 
+**2026-10-01:** step 1 done (`basedpyright` dev dependency, `[tool.basedpyright]` with `typeCheckingMode = "standard"` for `src` and `plugins`). First count: 120 errors, 57 in `src/` (infrastructure 37, application 13, interfaces 7) and 63 in `plugins/`; most are `reportArgumentType` (44), `reportAssignmentType` (18) and `reportIncompatibleMethodOverride` (17).
+
 ## 5. Structure and maintenance
 
 - **DataLife Engine base**: hdfilme, kinoger, megakino, streamcloud and streamkiste all use the DLE search (`do=search`, `subaction=search`). One `DlePluginBase` in `infrastructure/plugins/`, like `DataApiPluginBase` and `XenForoPluginBase`, so a fix lands once.
