@@ -82,13 +82,19 @@ def _hoster_name(source: dict[str, Any]) -> str:
     return parts[-2] if len(parts) >= 2 else name
 
 
+def _source_rank(source: dict[str, Any]) -> int:
+    """The site's rank of a source; unranked ones last."""
+    rank = source.get("rank")
+    return rank if isinstance(rank, int) else 99
+
+
 def _source_links(sources: object, label_prefix: str = "") -> list[dict[str, str]]:
     links: list[dict[str, str]] = []
     if not isinstance(sources, list):
         return links
     ranked = sorted(
         (s for s in sources if isinstance(s, dict)),
-        key=lambda s: s.get("rank") if isinstance(s.get("rank"), int) else 99,
+        key=_source_rank,
     )
     for source in ranked:
         url = str(source.get("url") or "")
@@ -162,12 +168,13 @@ async def _get_page(
     client: httpx.AsyncClient, page_url: str, **request_kwargs: Any
 ) -> httpx.Response:
     """GET the player page past the cache, retrying 429 with a fresh URL."""
-    for attempt in range(1, _PAGE_ATTEMPTS + 1):
-        resp = await client.get(_uncached(page_url), **request_kwargs)
-        if resp.status_code != 429 or attempt == _PAGE_ATTEMPTS:
+    resp = await client.get(_uncached(page_url), **request_kwargs)
+    for attempt in range(1, _PAGE_ATTEMPTS):
+        if resp.status_code != 429:
             break
         log.debug("devideosrc_page_429", url=page_url, attempt=attempt)
         await asyncio.sleep(_PAGE_RETRY_DELAY_S * attempt)
+        resp = await client.get(_uncached(page_url), **request_kwargs)
     resp.raise_for_status()
     return resp
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -215,7 +216,7 @@ class HttpxPluginBase:
         *,
         method: str = "GET",
         context: str = "",
-        **kwargs: object,
+        **kwargs: Any,
     ) -> httpx.Response | None:
         """Fetch *url* with structured error logging.
 
@@ -384,7 +385,7 @@ class HttpxPluginBase:
         updated = await asyncio.gather(*(_one(r) for r in results))
         return [r for r in updated if r is not None]
 
-    def _request_kwargs(self, client: httpx.AsyncClient) -> dict[str, object]:
+    def _request_kwargs(self, client: httpx.AsyncClient) -> dict[str, Any]:
         """Per-plugin timeout and User-Agent when using the shared client."""
         if client is not self._shared_http_client:
             return {}

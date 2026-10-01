@@ -53,12 +53,12 @@ def extract_domain(url: str) -> str:
         return ""
 
 
-class _CacheEntry:
-    """Time-bounded cache entry for resolver results."""
+class _CacheEntry[T]:
+    """Time-bounded cache entry (resolver results, redirect targets)."""
 
     __slots__ = ("value", "expires_at")
 
-    def __init__(self, value: ResolvedStream | None, ttl: int) -> None:
+    def __init__(self, value: T, ttl: int) -> None:
         self.value = value
         self.expires_at = time.monotonic() + ttl
 
@@ -87,8 +87,8 @@ class HosterResolverRegistry:
         self._resolve_timeout = resolve_timeout
         # Resolver results must also pass check_playable (needs http_client)
         self._verify_playback = verify_playback and http_client is not None
-        self._result_cache: dict[str, _CacheEntry] = {}
-        self._redirect_cache: dict[str, _CacheEntry] = {}
+        self._result_cache: dict[str, _CacheEntry[ResolvedStream | None]] = {}
+        self._redirect_cache: dict[str, _CacheEntry[str]] = {}
         self._resolve_count = 0
         for resolver in resolvers or []:
             self.register(resolver)
@@ -250,7 +250,7 @@ class HosterResolverRegistry:
         )
 
     @staticmethod
-    def _enforce_max_size(cache: dict[str, _CacheEntry]) -> None:
+    def _enforce_max_size[T](cache: dict[str, _CacheEntry[T]]) -> None:
         """Evict oldest entries when cache exceeds ``_MAX_CACHE_SIZE``."""
         if len(cache) <= _MAX_CACHE_SIZE:
             return
@@ -350,10 +350,7 @@ class HosterResolverRegistry:
                     original=url,
                     final=final_url,
                 )
-                self._redirect_cache[url] = _CacheEntry(
-                    final_url,
-                    _CACHE_TTL_REDIRECT,  # type: ignore[arg-type]
-                )
+                self._redirect_cache[url] = _CacheEntry(final_url, _CACHE_TTL_REDIRECT)
                 self._enforce_max_size(self._redirect_cache)
                 return final_url
         except httpx.TimeoutException:

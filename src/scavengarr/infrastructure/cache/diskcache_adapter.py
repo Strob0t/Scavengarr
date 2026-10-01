@@ -116,12 +116,13 @@ class DiskcacheAdapter:
 
     async def exists(self, key: str) -> bool:
         """Check if key exists."""
-        if self._cache is None:
+        cache = self._cache
+        if cache is None:
             return False
 
         async with self._semaphore:
             # diskcache.Cache.__contains__ checks existence + expiry
-            exists = await asyncio.to_thread(lambda: key in self._cache)
+            exists = await asyncio.to_thread(lambda: key in cache)
             return exists
 
     async def clear(self) -> None:

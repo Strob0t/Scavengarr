@@ -155,7 +155,7 @@ class ScoringScheduler:
         stream_plugins = self._plugins.get_by_provides("stream")
 
         # 1. Collect due (name, cat, bucket, query) tuples
-        due: list[tuple[str, int, str, str]] = []
+        due: list[tuple[str, int, AgeBucket, str]] = []
         for name in stream_plugins:
             for cat in _PROBE_CATEGORIES:
                 for bucket in _AGE_BUCKETS:
@@ -173,7 +173,7 @@ class ScoringScheduler:
         sem = asyncio.Semaphore(self._config.search_concurrency)
 
         async def _probe_and_update(
-            name: str, cat: int, bucket: str, query: str
+            name: str, cat: int, bucket: AgeBucket, query: str
         ) -> None:
             async with sem:
                 probe = await self._search.probe(

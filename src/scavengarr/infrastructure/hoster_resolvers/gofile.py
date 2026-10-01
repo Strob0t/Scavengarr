@@ -141,6 +141,7 @@ class GoFileResolver:
     async def _fetch_content(self, content_id: str) -> httpx.Response | None:
         """GET the content API; a token GoFile rejects is renewed once."""
         rejected: str | None = None
+        resp: httpx.Response | None = None
         for _attempt in range(2):
             token = await self._get_guest_token(rejected)
             if not token:

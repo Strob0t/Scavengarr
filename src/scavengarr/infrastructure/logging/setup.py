@@ -14,6 +14,7 @@ from logging.handlers import QueueHandler, QueueListener
 from typing import Any
 
 import structlog
+from structlog.typing import EventDict
 
 from scavengarr.infrastructure.config.schema import AppConfig
 
@@ -56,14 +57,14 @@ BASE_LOGGING_CONFIG: dict[str, Any] = {
 }
 
 
-def _drop_color_message(_: Any, __: Any, event_dict: dict[str, Any]) -> dict[str, Any]:
+def _drop_color_message(_: Any, __: Any, event_dict: EventDict) -> EventDict:
     event_dict.pop("color_message", None)
     return event_dict
 
 
 def _add_record_created_timestamp_utc(
-    _: Any, __: Any, event_dict: dict[str, Any]
-) -> dict[str, Any]:
+    _: Any, __: Any, event_dict: EventDict
+) -> EventDict:
     """
     Ensure timestamps for non-structlog (foreign) LogRecords
     match the time when the record was created, not the time
@@ -127,7 +128,7 @@ _SECRET_PARAM_RE = re.compile(
 _URL_PASSWORD_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://[^\s/:@]*:)[^\s/@]+@")
 
 
-def _redact_secrets(_: Any, __: Any, event_dict: dict[str, Any]) -> dict[str, Any]:
+def _redact_secrets(_: Any, __: Any, event_dict: EventDict) -> EventDict:
     """Mask secrets in every string field, rendered exceptions included."""
     for key, value in event_dict.items():
         if isinstance(value, str) and ("=" in value or "@" in value):

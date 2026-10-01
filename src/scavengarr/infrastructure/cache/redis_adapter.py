@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import pickle
 from typing import Any
 
@@ -55,7 +56,11 @@ class RedisAdapter:
             )
             # Health-Check: PING
             try:
-                await self._client.ping()
+                # redis-py types commands for both clients (bool or
+                # awaitable); the asyncio client returns awaitables
+                pong = self._client.ping()
+                if inspect.isawaitable(pong):
+                    await pong
                 log.info("redis_connected", url=self.url)
             except RedisError as e:
                 log.error("redis_connection_failed", url=self.url, error=str(e))

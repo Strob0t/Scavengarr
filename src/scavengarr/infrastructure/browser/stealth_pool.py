@@ -479,7 +479,12 @@ class StealthPool:
                 await self._remember(page)
                 cookies = await page.context.cookies(page_url)
                 return ClickThrough(
-                    url=targets[0], cookies={c["name"]: c["value"] for c in cookies}
+                    url=targets[0],
+                    cookies={
+                        name: c.get("value", "")
+                        for c in cookies
+                        if (name := c.get("name"))
+                    },
                 )
             except Exception:  # noqa: BLE001
                 log.debug("stealth_click_through_error", url=page_url, exc_info=True)

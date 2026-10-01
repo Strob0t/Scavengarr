@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from contextvars import Token
-from typing import Any
+from typing import Any, Literal
 
 import structlog
 from patchright.async_api import (
@@ -24,6 +24,7 @@ from patchright.async_api import (
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.browser.clearance_store import ClearanceStore
 from scavengarr.infrastructure.browser.display import resolve_headless
+from scavengarr.infrastructure.browser.shared_browser import SharedBrowserPool
 from scavengarr.infrastructure.browser.turnstile import (
     is_challenge_page,
     read_when_settled,
@@ -112,7 +113,7 @@ class PlaywrightPluginBase:
         self._log = structlog.get_logger(self.name or __name__)
         # Shared browser support: when set, _ensure_browser() calls
         # pool.warmup() instead of launching a new Chromium process.
-        self._shared_pool: object | None = None
+        self._shared_pool: SharedBrowserPool | None = None
         self._owns_browser: bool = True
         # Lock for serialized search (used when _serialize_search=True)
         self._search_lock = asyncio.Lock()
@@ -132,17 +133,13 @@ class PlaywrightPluginBase:
     # Shared browser pool injection
     # ------------------------------------------------------------------
 
-    def set_shared_pool(self, pool: object) -> None:
+    def set_shared_pool(self, pool: SharedBrowserPool) -> None:
         """Inject a :class:`SharedBrowserPool` reference.
 
         When set, ``_ensure_browser()`` calls ``pool.warmup()`` to
         obtain the shared Chromium browser instead of launching its
         own process.  ``cleanup()`` will only close the context and
         page — the browser is managed by the pool.
-
-        Typed as ``object`` to avoid importing infrastructure types
-        into the base class.  The pool must have an async
-        ``warmup() -> tuple[Browser, Playwright]`` method.
         """
         self._shared_pool = pool
         self._owns_browser = False
@@ -194,6 +191,7 @@ class PlaywrightPluginBase:
         """Launch a standalone Chromium, retrying once on failure."""
         last_exc: Exception | None = None
         for attempt in range(1 + retries):
+            pw: Playwright | None = None
             try:
                 pw = await async_playwright().start()
                 browser = await pw.chromium.launch(
@@ -204,8 +202,8 @@ class PlaywrightPluginBase:
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
                 # Clean up partial state from failed attempt
-                if self._pw is None:
-                    # pw might have been assigned before launch failed
+                if pw is not None and self._pw is None:
+                    # pw was started before the launch failed
                     try:
                         await pw.stop()
                     except Exception:  # noqa: BLE001
@@ -407,7 +405,9 @@ class PlaywrightPluginBase:
         self,
         url: str,
         *,
-        wait_until: str = "domcontentloaded",
+        wait_until: Literal[
+            "commit", "domcontentloaded", "load", "networkidle"
+        ] = "domcontentloaded",
         timeout: int = 30_000,
         wait_for_idle: bool = True,
         retry_backoff_s: tuple[float, ...] = (),
