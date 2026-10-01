@@ -13,6 +13,9 @@ Found in the Stremio live test (2026-10-01).
 - **Items had `tmdb:` ids**: TMDB's trending and search lists carry no IMDb ids, so every catalog item got a `tmdb:<id>` id, and Stremio opens an item only through a meta addon for its id prefix; Cinemeta knows IMDb ids only, so Stremio showed "No addons were requested for this meta!" and no stream list (series had no episode list either). Catalog items now carry IMDb ids from `/{movie|tv}/{id}/external_ids` (cached 30 days); titles without one are left out. Trending and search lists cached before the update keep `tmdb:` ids until they expire (6 h, 1 h); `tmdb:` stream ids stay accepted.
 - **Empty board rows without a TMDB key**: the IMDB fallback has no trending lists, but the manifest declared both catalogs as rows, so Stremio's board showed two empty "Scavengarr Trending" rows. Without a TMDB key the catalogs are now search-only (`"isRequired": true`, named "Scavengarr Movies"/"Scavengarr Series"); the search through IMDB Suggest works as before.
 
+### Fix: moflix's Own HLS Streams Were Never Played
+- moflix hands out its own HLS playlists (`https://<name>.moflix-stream.day/movies/<release>/master.m3u8?md5=…`, 1080p, German and original audio) besides hoster embeds. The registry gave them to the resolver of their domain (`moflix-stream` → VidHide), which expects an embed page: 60 of 60 failed in the live test. Streaming playlist URLs (`.m3u8`, `.mpd`) now go straight to the content-type probe.
+
 ### Perf: Stremio Saves Only the Stream Links It Serves
 - The stream use case saved a `CachedStreamLink` for every ranked stream, although only the HLS proxy and `/play/` look links up: "Dune" (73 ranked streams) spent 6 s saving links and was answered after 21.5 s. Links are now saved only for the streams served through those endpoints (`build_cache_link()`); direct video URLs need none.
 

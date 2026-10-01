@@ -26,6 +26,14 @@ _EVICT_INTERVAL = 1000
 # Maximum number of entries in each cache (result + redirect)
 _MAX_CACHE_SIZE = 10_000
 
+# Streaming playlists, which plugins sometimes hand out directly. Not file
+# suffixes: hoster pages end in the file name (streamtape /v/<id>/x.mp4)
+_PLAYLIST_SUFFIXES = (".m3u8", ".mpd")
+
+
+def _is_playlist_url(url: str) -> bool:
+    return urlparse(url).path.lower().endswith(_PLAYLIST_SUFFIXES)
+
 
 def extract_domain(url: str) -> str:
     """Extract the second-level domain from a URL.
@@ -144,7 +152,8 @@ class HosterResolverRegistry:
     async def resolve(self, url: str, hoster: str = "") -> ResolvedStream | None:
         """Resolve a hoster embed URL to a playable video URL.
 
-        1. Check result cache for previously resolved URL.
+        1. Check result cache for previously resolved URL; probe a streaming
+           playlist URL (``.m3u8``, ``.mpd``) directly.
         2. Try the specific hoster resolver (URL domain takes priority over hint).
         3. If URL domain has no resolver, follow HTTP redirects and retry.
         4. Try hoster hint if different from URL domain (handles redirect domains).
@@ -168,6 +177,14 @@ class HosterResolverRegistry:
 
         # URL domain is authoritative; fall back to plugin-provided hint
         hoster_name = extract_domain(url) or hoster
+
+        # A streaming playlist needs no hoster resolver: moflix hands out its
+        # own HLS playlists on moflix-stream.day, and that domain's resolver
+        # (VidHide) expects an embed page and failed on every one
+        if _is_playlist_url(url):
+            result = await self._probe_content_type(url, hoster_name)
+            self._cache_result(url, result)
+            return result
 
         # 1. Try specific resolver for URL domain (name match, then domain alias)
         resolver = self._resolvers.get(hoster_name) or self._domain_map.get(hoster_name)

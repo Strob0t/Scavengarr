@@ -19,6 +19,7 @@ Resolvers are registered in `HosterResolverRegistry`, which dispatches each URL 
 ```text
 URL → HosterResolverRegistry.resolve(url, hoster=<plugin hint>)
       ├── Result cache hit → cached ResolvedStream | None
+      ├── Streaming playlist URL (path ends in .m3u8/.mpd) → HEAD content-type probe
       ├── Resolver for URL domain (resolver name, then supported_domains alias) → resolver.resolve()
       ├── No resolver → follow HTTP redirects → resolver for final domain
       ├── Still none → resolver for plugin hoster hint (rotating mirror domains)
@@ -237,7 +238,7 @@ Adding a new XFS hoster requires only an `XFSConfig` constant appended to `ALL_X
 | Redirect following | Unknown domains are followed via GET; the final domain is dispatched again |
 | Hoster hint | Plugin-provided hoster name as a fallback for rotating mirror domains |
 | Canonical names | `canonical_hoster(name)` returns the resolver name for a hoster label or second-level domain (`filelions` → `vidhide`), `None` when no resolver handles it; the Stremio stream converter uses it so mirror domains share one hoster name |
-| Content-type probe | HEAD request; `video/*` or `application/vnd.apple.mpegurl` responses become a `ResolvedStream` |
+| Content-type probe | HEAD request; `video/*` or `application/vnd.apple.mpegurl` responses become a `ResolvedStream`. Streaming playlists (`.m3u8`, `.mpd`) go there first: moflix hands out its own HLS playlists on `moflix-stream.day`, and that domain's resolver (VidHide) expects an embed page (failed on 60 of 60 in the 2026-10-01 live test). File suffixes do not count: hoster pages end in the file name (streamtape `/v/<id>/x.mp4`) |
 | Playback check | With `verify_playback=True`, resolver results must pass `check_playable()` (see [Playback check](#playback-check)); failures count as dead |
 | Time bound | `resolver.resolve()` gets `http.timeout_resolve_seconds` in total (its requests' own timeouts add up over several requests); the playback check runs after it |
 | Result cache | In-memory, keyed by URL: alive results 1 h, dead results 15 min. A timeout (the time bound or a request timeout) or network error (`httpx.TransportError`) is not cached: it says nothing about the link (`hoster_resolve_timeout`, `hoster_resolve_network_error`) |

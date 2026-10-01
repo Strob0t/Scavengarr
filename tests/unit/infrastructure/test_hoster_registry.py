@@ -178,6 +178,32 @@ class TestHosterResolverRegistry:
         assert result.is_hls is True
 
     @pytest.mark.asyncio
+    async def test_media_url_is_probed_not_given_to_the_domain_resolver(
+        self,
+    ) -> None:
+        # moflix hands out its own HLS playlists on moflix-stream.day; the
+        # domain's resolver (VidHide) expects an embed page and failed on
+        # every one of them (60 of 60 in the live test)
+        vidhide = MagicMock()
+        vidhide.name = "vidhide"
+        vidhide.supported_domains = frozenset({"vidhide", "moflix-stream"})
+        vidhide.resolve = AsyncMock(return_value=None)
+        head = MagicMock()
+        head.headers = {"content-type": "application/vnd.apple.mpegurl"}
+        url = "https://gandalf.moflix-stream.day/movies/Dune.2021/master.m3u8?md5=x"
+        head.url = url
+        http_client = AsyncMock(spec=httpx.AsyncClient)
+        http_client.head = AsyncMock(return_value=head)
+        registry = HosterResolverRegistry(resolvers=[vidhide], http_client=http_client)
+
+        result = await registry.resolve(url, "moflix-stream")
+
+        assert result is not None
+        assert result.video_url == url
+        assert result.is_hls is True
+        vidhide.resolve.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_probe_returns_none_for_html(self) -> None:
         mock_response = MagicMock()
         mock_response.headers = {"content-type": "text/html; charset=utf-8"}
