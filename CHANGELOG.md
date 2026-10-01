@@ -14,6 +14,9 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 ### Fix: German Titles Without a TMDB Key Needed the Example Config
 - Without a TMDB key, the German title of a Stremio request comes from Wikidata ("Haus des Geldes" for "Money Heist"). Wikidata answers 403 to a User-Agent without contact information, and the code default `Scavengarr/0.1.0` had none (only `data/config.yaml` set the contact URL): without that file, German-titled films and series were searched under their English title only. The default is `Scavengarr/0.1.0 (+https://github.com/Strob0t/Scavengarr)` now.
 
+### Fix: Season Pages Served Every Episode's Links
+- The episode filter narrowed a result's links by their episode labels (`1x5`, `S01E05`) only when the title had neither season nor episode. A title with a season but no episode (a season pack `Show.S01...`, and with guessit 4 also a season page "Show - Staffel 1") kept the links of every episode, so S01E02 could play episode 1. Such titles drop the result on a season mismatch and otherwise narrow their links like a show page.
+
 ### Fix: Stremio Catalog Items Opened Nothing
 Found in the Stremio live test (2026-10-01).
 - **Items had `tmdb:` ids**: TMDB's trending and search lists carry no IMDb ids, so every catalog item got a `tmdb:<id>` id, and Stremio opens an item only through a meta addon for its id prefix; Cinemeta knows IMDb ids only, so Stremio showed "No addons were requested for this meta!" and no stream list (series had no episode list either). Catalog items now carry IMDb ids from `/{movie|tv}/{id}/external_ids` (cached 30 days); titles without one are left out. Trending and search lists cached before the update keep `tmdb:` ids until they expire (6 h, 1 h); `tmdb:` stream ids stay accepted.

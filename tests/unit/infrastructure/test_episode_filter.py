@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.stremio.episode_filter import (
     filter_by_episode,
@@ -345,3 +347,32 @@ class TestMultiEpisodeReleases:
     def test_multi_season_release_containing_season_is_kept(self) -> None:
         r = _make_search_result(title="Show.S01-S03.German.1080p.WEB")
         assert filter_by_episode([r], 2, None) == [r]
+
+
+class TestSeasonTitles:
+    """A title with a season but no episode (a season page, a season pack)
+    still narrows its links by their episode labels."""
+
+    _LINKS = [
+        {"hoster": "VOE", "link": "https://voe.sx/e/a", "label": "1x1 Voe"},
+        {"hoster": "VOE", "link": "https://voe.sx/e/b", "label": "1x2 Voe"},
+    ]
+
+    @pytest.mark.parametrize(
+        "title", ["Show - Staffel 1", "Show.S01.German.DL.1080p.WEB.x264-GRP"]
+    )
+    def test_links_narrowed_to_the_episode(self, title: str) -> None:
+        r = _make_search_result(title=title, download_links=self._LINKS)
+        filtered = filter_by_episode([r], season=1, episode=2)
+        assert len(filtered) == 1
+        assert filtered[0].download_links == [self._LINKS[1]]
+        assert filtered[0].download_link == "https://voe.sx/e/b"
+
+    def test_other_season_dropped(self) -> None:
+        r = _make_search_result(title="Show S02", download_links=self._LINKS)
+        assert filter_by_episode([r], season=1, episode=1) == []
+
+    def test_links_without_labels_kept(self) -> None:
+        links = [{"hoster": "VOE", "link": "https://voe.sx/e/a", "label": ""}]
+        r = _make_search_result(title="Show - Staffel 1", download_links=links)
+        assert filter_by_episode([r], season=1, episode=2) == [r]

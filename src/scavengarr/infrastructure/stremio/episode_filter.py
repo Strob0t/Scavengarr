@@ -91,6 +91,22 @@ def _ints(value: object) -> set[int]:
     return {v for v in items if isinstance(v, int)}
 
 
+def _narrow_links(
+    r: SearchResult, season: int | None, episode: int | None
+) -> SearchResult | None:
+    """Keep the links whose episode labels match; ``r`` unchanged when no
+    link has an episode label, ``None`` when every labelled link is wrong."""
+    if not r.download_links:
+        return r
+    kept = filter_links_by_episode(r.download_links, season, episode)
+    if kept is None:
+        return r
+    if not kept:
+        return None
+    first_url = kept[0].get("link", "") or kept[0].get("url", "") or r.download_link
+    return replace(r, download_link=first_url, download_links=kept)
+
+
 def filter_by_episode(
     results: list[SearchResult],
     season: int | None,
@@ -98,13 +114,13 @@ def filter_by_episode(
 ) -> list[SearchResult]:
     """Filter results to match the requested season/episode.
 
-    Uses guessit to parse release names. When the title has no parseable
-    season/episode info, falls back to filtering individual download_links
-    by their labels (e.g. ``1x5`` format from episode tabs).
+    Uses guessit to parse the titles. A title of another season or
+    episode drops the result. A title without an episode (a show or
+    season page, a season pack) falls back to filtering its
+    download_links by their labels (e.g. ``1x5`` from episode tabs).
 
-    Results that cannot be parsed at all (no season/episode info in the
-    title OR in download_links) are kept -- they might be different hosters
-    for a single content page.
+    Results whose title and links carry no episode info are kept -- they
+    might be different hosters for a single content page.
     """
     if season is None and episode is None:
         return results
@@ -114,32 +130,6 @@ def filter_by_episode(
         info = guessit(r.title)
         r_season = info.get("season")
         r_episode = info.get("episode")
-
-        # No parseable season/episode in title -> try download_links
-        if r_season is None and r_episode is None:
-            if r.download_links:
-                kept = filter_links_by_episode(r.download_links, season, episode)
-                if kept is not None:
-                    # Links had episode labels; only keep matching ones
-                    if kept:
-                        first_url = (
-                            kept[0].get("link", "")
-                            or kept[0].get("url", "")
-                            or r.download_link
-                        )
-                        filtered.append(
-                            replace(
-                                r,
-                                download_link=first_url,
-                                download_links=kept,
-                            )
-                        )
-                    # else: all links wrong episode -> drop entirely
-                    continue
-
-            # No download_links or no episode info in links -> keep
-            filtered.append(r)
-            continue
 
         # Season/episode mismatch -> skip (multi-season/-episode releases
         # such as S01E01-E03 give lists and match any of their numbers)
@@ -154,6 +144,12 @@ def filter_by_episode(
             and r_episode is not None
             and episode not in _ints(r_episode)
         ):
+            continue
+
+        if r_episode is None:
+            narrowed = _narrow_links(r, season, episode)
+            if narrowed is not None:
+                filtered.append(narrowed)
             continue
 
         filtered.append(r)
