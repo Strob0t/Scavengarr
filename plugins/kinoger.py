@@ -53,6 +53,8 @@ _SERIES_BADGE_RE = re.compile(r"S\d+", re.IGNORECASE)
 #   <span onclick="pw.player('https://…', this);" data-id="1-5">
 _EPISODE_PLAYER_RE = re.compile(r"""\.player\(\s*['"]\s*(https?://[^'"\s]+)""")
 _EPISODE_ID_RE = re.compile(r"^(\d+)-(\d+)$")
+# Year in the page title: "Oppenheimer (2023)"
+_TITLE_YEAR_RE = re.compile(r"\(((?:19|20)\d{2})\)")
 
 
 def _detect_series(badge: str, genres: list[str]) -> bool:
@@ -366,6 +368,9 @@ class _DetailPageParser(HTMLParser):
         self._in_breadcrumb_li = False
         self._breadcrumb_text = ""
         self._genres: list[str] = []
+        # Category list of the post info (the live theme's genres)
+        self._in_category_li = False
+        self._in_category_a = False
 
         # Badge tracking
         self._in_badge_span = False
@@ -437,6 +442,13 @@ class _DetailPageParser(HTMLParser):
             self._in_breadcrumb_li = True
             self._breadcrumb_text = ""
 
+        # <li class="category"><a>Stream</a> / <a>Drama</a></li>
+        if tag == "li" and "category" in classes:
+            self._in_category_li = True
+        if tag == "a" and self._in_category_li:
+            self._in_category_a = True
+            self._breadcrumb_text = ""
+
         # Badge span
         if tag == "span" and "badge" in classes:
             self._in_badge_span = True
@@ -466,7 +478,7 @@ class _DetailPageParser(HTMLParser):
         if self._in_h1:
             self._h1_text += data
 
-        if self._in_breadcrumb_li:
+        if self._in_breadcrumb_li or self._in_category_a:
             self._breadcrumb_text += data
 
         if self._in_badge_span:
@@ -510,12 +522,25 @@ class _DetailPageParser(HTMLParser):
         if tag == "h1" and self._in_h1:
             self._in_h1 = False
             self.title = _clean_title(self._h1_text)
+            year = _TITLE_YEAR_RE.search(self._h1_text)
+            if year and not self.year:
+                self.year = year.group(1)
 
         if tag == "li" and self._in_breadcrumb_li:
             self._in_breadcrumb_li = False
             text = self._breadcrumb_text.strip()
             if text:
                 self._genres.append(text)
+
+        if tag == "a" and self._in_category_a:
+            self._in_category_a = False
+            text = self._breadcrumb_text.strip()
+            if text:
+                self._genres.append(text)
+
+        if tag == "li" and self._in_category_li:
+            self._in_category_li = False
+            self.genres = [g for g in self._genres if g.lower() != "stream"]
 
         if tag == "ul" and self._in_breadcrumbs:
             self._in_breadcrumbs = False

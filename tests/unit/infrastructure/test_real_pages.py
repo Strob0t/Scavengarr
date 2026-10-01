@@ -103,6 +103,10 @@ class TestDevideosrcSites:
         assert detail.genres[:4] == ["Drama", "Historie", "Krieg", "Biographie"]
         assert not detail.is_series
 
+    def test_detail_year(self, site: str, base_url: str, film_url: str) -> None:
+        """The film's year, not one of the related films listed below it."""
+        assert _detail(site, base_url, "detail-oppenheimer").year == "2023"
+
 
 class TestKinoger:
     _BASE = "https://kinoger.com"
@@ -129,6 +133,19 @@ class TestKinoger:
             ("veev", "https://veev.pro/e/i3qros8xwd0d"),
             ("kinoger", "https://kinoger.pw/e/5wCjBALU9QDHF"),
         ]
+
+    def test_film_detail_metadata(self) -> None:
+        """Year from the title ``Oppenheimer (2023)``, genres from the
+        category list (``<li class="category">``)."""
+        detail = _detail("kinoger", self._BASE, "detail-oppenheimer")
+        assert detail.year == "2023"
+        assert detail.genres == ["Biography", "Drama", "History", "Thriller"]
+
+    def test_series_detail_metadata(self) -> None:
+        detail = _detail("kinoger", self._BASE, "detail-the-last-of-us")
+        assert detail.title == "The Last of Us"
+        assert detail.year == "2023"
+        assert detail.genres == ["Abenteuer", "Drama", "Horror", "Serie", "Thriller"]
 
     def test_series_tabs_list_every_episode(self) -> None:
         """Each player tab lists both seasons (9 + 7 episodes) as

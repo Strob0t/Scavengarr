@@ -412,7 +412,8 @@ class _DetailPageParser(HTMLParser):
             self._in_release = False
             text = self._release_text.strip()
             m = re.search(r"\(?\b((?:19|20)\d{2})\b\)?", text)
-            if m:
+            # The film's .release comes first; related films below have their own
+            if m and not self.year:
                 self.year = m.group(1)
 
         if tag == "a" and self._in_category_a:
