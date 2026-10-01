@@ -19,6 +19,8 @@ from urllib.parse import urljoin, urlparse
 import httpx
 import structlog
 
+from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
+
 log = structlog.get_logger(__name__)
 
 # Short-TTL manifest cache (60 seconds) — prevents re-fetching the
@@ -81,6 +83,15 @@ def _cache_manifest(url: str, body: bytes, content_type: str) -> None:
     _manifest_cache[url] = (body, content_type, now + _MANIFEST_CACHE_TTL)
 
 
+def _player_headers(headers: dict[str, str]) -> dict[str, str]:
+    """The stream's headers with the player's (browser) User-Agent.
+
+    The proxy fetches on the player's behalf; CDNs such as mixdrop's answer
+    other agents (the app's own) with 403.
+    """
+    return {"User-Agent": DEFAULT_USER_AGENT, **headers}
+
+
 async def fetch_hls_resource(
     http_client: httpx.AsyncClient,
     url: str,
@@ -106,7 +117,7 @@ async def fetch_hls_resource(
     async with _CDN_SEMAPHORE:
         resp = await http_client.get(
             url,
-            headers=headers,
+            headers=_player_headers(headers),
             follow_redirects=True,
             timeout=15.0,
         )
@@ -140,7 +151,7 @@ async def stream_hls_segment(
             http_client.build_request(
                 "GET",
                 url,
-                headers=headers,
+                headers=_player_headers(headers),
             ),
             stream=True,
             follow_redirects=True,

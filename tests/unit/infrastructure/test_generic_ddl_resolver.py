@@ -37,7 +37,6 @@ _VALID_URLS: dict[str, str] = {
     "filefactory": "https://filefactory.com/file/abc123",
     "fsst": "https://fsst.online/abc123def",
     "go4up": "https://go4up.com/dl/abc123def",
-    "mixdrop": "https://mixdrop.ag/f/abc123def",
     "nitroflare": "https://nitroflare.com/view/ABCDEF123",
     "1fichier": "https://1fichier.com/?abc12345",
     "turbobit": "https://turbobit.net/abc123def456.html",
@@ -73,7 +72,7 @@ class TestGenericDDLConfigInvariants:
             assert len(cfg.offline_markers) > 0, f"{cfg.name} has no markers"
 
     def test_config_count(self) -> None:
-        assert len(ALL_DDL_CONFIGS) == 12
+        assert len(ALL_DDL_CONFIGS) == 11
 
     def test_configs_are_frozen(self) -> None:
         for cfg in ALL_DDL_CONFIGS:
@@ -277,7 +276,6 @@ class TestRealLinkForms:
             ),
             ("uploaded", "https://uploaded.net/file/abc123de/Movie.rar", "abc123de"),
             ("1fichier", "https://1fichier.com/?abc12345xyz&af=12345", "abc12345xyz"),
-            ("mixdrop", "https://mixdrop.ag/f/abc123def/Movie.mkv", "abc123def"),
         ],
     )
     def test_file_id_with_suffix(self, name: str, url: str, file_id: str) -> None:

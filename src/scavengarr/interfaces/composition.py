@@ -47,6 +47,7 @@ from scavengarr.infrastructure.hoster_resolvers.generic_ddl import (
 )
 from scavengarr.infrastructure.hoster_resolvers.gofile import GoFileResolver
 from scavengarr.infrastructure.hoster_resolvers.mediafire import MediafireResolver
+from scavengarr.infrastructure.hoster_resolvers.mixdrop import MixdropResolver
 from scavengarr.infrastructure.hoster_resolvers.playmate import PlaymateResolver
 from scavengarr.infrastructure.hoster_resolvers.rapidgator import RapidgatorResolver
 from scavengarr.infrastructure.hoster_resolvers.sendvid import SendVidResolver
@@ -465,6 +466,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             VeevResolver(http_client=state.http_client),
             FirestreamResolver(http_client=state.http_client),
             PlaymateResolver(http_client=state.http_client),
+            MixdropResolver(http_client=state.http_client),
             VixeoResolver(
                 http_client=state.http_client,
                 stealth_pool=state.stealth_pool,

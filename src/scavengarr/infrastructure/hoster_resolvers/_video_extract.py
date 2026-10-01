@@ -9,6 +9,7 @@ Used by both the generic XFS resolver and the Filemoon resolver.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 
 # Digits of Dean Edwards' packer: base <= 36 is lowercase-only, base 62
 # ("Normal", the default) adds uppercase
@@ -67,6 +68,19 @@ def unpack_p_a_c_k(packed: str) -> str | None:
     return result
 
 
+_PACKED_START_RE = re.compile(
+    r"eval\s*\(\s*function\s*\(\s*p\s*,\s*a\s*,\s*c\s*,\s*k\s*,\s*e\s*,\s*d\s*\)"
+)
+
+
+def unpacked_scripts(html: str) -> Iterator[str]:
+    """The unpacked source of each Dean Edwards packed block in *html*."""
+    for match in _PACKED_START_RE.finditer(html):
+        unpacked = unpack_p_a_c_k(html[match.start() : match.start() + 65536])
+        if unpacked:
+            yield unpacked
+
+
 def extract_hls_from_unpacked(js: str) -> str | None:
     """Extract HLS/MP4 URL from unpacked JWPlayer config.
 
@@ -119,14 +133,7 @@ def extract_video_url(html: str) -> str | None:
         return m.group(1)
 
     # Strategy 2: Packed JS blocks (Dean Edwards packer)
-    for pm in re.finditer(
-        r"eval\s*\(\s*function\s*\(\s*p\s*,\s*a\s*,\s*c\s*,\s*k\s*,\s*e\s*,\s*d\s*\)",
-        html,
-    ):
-        chunk = html[pm.start() : pm.start() + 65536]
-        unpacked = unpack_p_a_c_k(chunk)
-        if not unpacked:
-            continue
+    for unpacked in unpacked_scripts(html):
         url = extract_hls_from_unpacked(unpacked)
         if url:
             return url

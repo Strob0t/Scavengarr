@@ -8,12 +8,14 @@ import httpx
 import pytest
 import respx
 
+from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 from scavengarr.infrastructure.stremio import hls_proxy
 from scavengarr.infrastructure.stremio.hls_proxy import (
     build_cdn_url,
     cdn_base_from_url,
     fetch_hls_resource,
     rewrite_manifest,
+    stream_hls_segment,
 )
 from scavengarr.interfaces.api.stremio.router import _resolve_query_string
 
@@ -193,6 +195,21 @@ class TestFetchHlsResource:
         # Verify Referer was sent
         sent_headers = route.calls[0].request.headers
         assert sent_headers["referer"] == "https://dropload.io/"
+        # The proxy fetches on the player's behalf: with the player's agent
+        assert sent_headers["user-agent"] == DEFAULT_USER_AGENT
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_segment_is_streamed_with_the_players_user_agent(self) -> None:
+        url = "https://cdn.example.com/video/seg-2.ts"
+        route = respx.get(url).respond(200, content=b"\x47\x40")
+
+        async with httpx.AsyncClient() as client:
+            chunks, _ = await stream_hls_segment(client, url, {})
+            async for _chunk in chunks:
+                pass
+
+        assert route.calls[0].request.headers["user-agent"] == DEFAULT_USER_AGENT
 
     @respx.mock
     @pytest.mark.asyncio()

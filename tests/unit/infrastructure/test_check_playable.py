@@ -11,6 +11,7 @@ from scavengarr.infrastructure.hoster_resolvers._verify import check_playable
 from scavengarr.infrastructure.hoster_resolvers.registry import (
     HosterResolverRegistry,
 )
+from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 
 _MP4 = "https://cdn.example.com/v.mp4"
 _M3U8 = "https://cdn.example.com/master.m3u8"
@@ -29,6 +30,21 @@ class TestCheckPlayable:
         sent = route.calls.last.request
         assert sent.headers["Referer"] == "https://h/"
         assert sent.headers["Range"].startswith("bytes=0-")
+
+    @respx.mock
+    async def test_sends_the_players_user_agent(self) -> None:
+        # Stremio plays with the browser User-Agent of the proxyHeaders;
+        # mixdrop's CDN answers other agents with 403, so the check dropped
+        # streams the player could play
+        route = respx.get(_MP4).respond(206, content=b"\x00\x00\x00\x18ftypmp42")
+        assert await _check(ResolvedStream(_MP4))
+        assert route.calls.last.request.headers["User-Agent"] == DEFAULT_USER_AGENT
+
+    @respx.mock
+    async def test_stream_user_agent_wins(self) -> None:
+        route = respx.get(_MP4).respond(206, content=b"\x00\x00\x00\x18ftypmp42")
+        assert await _check(ResolvedStream(_MP4, headers={"User-Agent": "Own/1"}))
+        assert route.calls.last.request.headers["User-Agent"] == "Own/1"
 
     @respx.mock
     @pytest.mark.parametrize("status", [403, 404, 502])

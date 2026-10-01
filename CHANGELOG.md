@@ -19,6 +19,10 @@ Found in the Stremio live test (2026-10-01).
 ### Fix: English Streams Listed as German Dub
 - The language parser knew English words only ("English", "Sub", "Untertitel"), so s.to's label "Englisch" fell back to the plugin's default language: English audio was listed as German Dub, ranked as German and continued by autoplay in the German binge group, and its VOE link collided with the German one in the per-hoster dedup. "Englisch(en)", "deutschen" and "Untertiteln" are recognized now ("Japanisch mit deutschen Untertiteln" → German Sub).
 
+### Feature: Mixdrop Streams Play in Stremio
+- **New `MixdropResolver`** (`hoster_resolvers/mixdrop.py`): mixdrop was a validate-only generic DDL config, so every mixdrop link (36 in the live test) came back as its embed page and was dropped. The resolver reads `MDCore.wurl` from the embed player's packed setup: the MP4 on the delivery CDN, no captcha (JDownloader's download form needs one). Domains from JD2 `MixdropCo` without its dead ones; mixdrop left the generic DDL configs (23 individual + 11 generic DDL + 25 XFS = 59 resolvers). The packed-block loop of `extract_video_url()` became the shared helper `unpacked_scripts()`.
+- **The player's User-Agent for checks and the HLS proxy**: the playback check and the HLS proxy fetched with the app's own agent (`Scavengarr/0.1.0`), but Stremio plays with the browser agent of the `proxyHeaders`; mixdrop's CDN answers other agents with 403, so the check dropped streams the player could play. Both send `DEFAULT_USER_AGENT` now (a stream's own `User-Agent` header wins).
+
 ### Perf: Stremio Saves Only the Stream Links It Serves
 - The stream use case saved a `CachedStreamLink` for every ranked stream, although only the HLS proxy and `/play/` look links up: "Dune" (73 ranked streams) spent 6 s saving links and was answered after 21.5 s. Links are now saved only for the streams served through those endpoints (`build_cache_link()`); direct video URLs need none.
 

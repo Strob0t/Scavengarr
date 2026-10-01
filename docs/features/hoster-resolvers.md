@@ -8,7 +8,7 @@
 
 ## Overview
 
-Scavengarr ships **59 hoster resolvers**: 22 individual resolvers, 12 generic DDL hosters consolidated in `GenericDDLResolver`, and 25 XFileSharingPro (XFS) hosters consolidated in `XFSResolver`. Every resolver checks whether a file is still available; video-extracting resolvers additionally return a direct `.mp4`/`.m3u8` URL plus the HTTP headers the CDN needs.
+Scavengarr ships **59 hoster resolvers**: 23 individual resolvers, 11 generic DDL hosters consolidated in `GenericDDLResolver`, and 25 XFileSharingPro (XFS) hosters consolidated in `XFSResolver`. Every resolver checks whether a file is still available; video-extracting resolvers additionally return a direct `.mp4`/`.m3u8` URL plus the HTTP headers the CDN needs.
 
 Resolvers are registered in `HosterResolverRegistry`, which dispatches each URL to a resolver by its second-level domain, follows redirects and plugin hoster hints for unknown domains, falls back to a HEAD content-type probe, and caches the outcome in memory.
 
@@ -66,7 +66,7 @@ Video-extracting resolvers set `ResolvedStream.headers` with the headers require
 
 ### Playback check
 
-`_verify.py` also provides `check_playable(http_client, stream)`, which the registry applies to every resolver result when it is built with `verify_playback=True` (composition root: `stremio.verify_streams`, default on). It sends a streamed GET with the stream's playback headers plus `Range: bytes=0-1023` (6 s timeout, redirects followed) and reads at most the first 1 KiB. The stream is unplayable when the status is `>= 400`, the answer is HTML (`Content-Type: text/html` or a body starting with `<`), or an HLS stream (`is_hls`) does not start with `#EXTM3U`; network errors count as unplayable too. The registry then logs `hoster_resolve_unplayable`, returns `None` and caches the URL as dead (15 min) like a failed resolution. Unlike `verify_video_url()` (HEAD, only in some resolvers) it covers every resolver and catches servers that answer HEAD with 200 but serve an error page (measured: mixdrop/supervideo HTML pages, CDN 404/502, expired TLS certificates). The content-type probe fallback is not checked again (it already looked at the response).
+`_verify.py` also provides `check_playable(http_client, stream)`, which the registry applies to every resolver result when it is built with `verify_playback=True` (composition root: `stremio.verify_streams`, default on). It sends a streamed GET with the stream's playback headers, the player's browser User-Agent (`DEFAULT_USER_AGENT`, as in the `proxyHeaders`; CDNs such as mixdrop's answer the app's own agent with 403) plus `Range: bytes=0-1023` (6 s timeout, redirects followed) and reads at most the first 1 KiB. The stream is unplayable when the status is `>= 400`, the answer is HTML (`Content-Type: text/html` or a body starting with `<`), or an HLS stream (`is_hls`) does not start with `#EXTM3U`; network errors count as unplayable too. The registry then logs `hoster_resolve_unplayable`, returns `None` and caches the URL as dead (15 min) like a failed resolution. Unlike `verify_video_url()` (HEAD, only in some resolvers) it covers every resolver and catches servers that answer HEAD with 200 but serve an error page (measured: mixdrop/supervideo HTML pages, CDN 404/502, expired TLS certificates). The content-type probe fallback is not checked again (it already looked at the response).
 
 ### Browser capture
 
@@ -110,6 +110,7 @@ Extract a direct video URL (`.mp4`/`.m3u8`) from an embed page.
 | Filemoon | `filemoon` | `filemoon`, `filemooon`, `byse`, rotating Byse domains (`bysezejataos`, `bysekoze`, …; 14 names from JD2 `FilemoonSxCrawler`) | Packed JS unpacker (legacy pages); Byse player pages via browser capture (`StealthPool.capture_media`), after the details API `/api/videos/<id>/embed/details` rules out a gone video (404) or a domain-restricted embed (403 `embedding … not allowed`) |
 | StreamUp | `strmup` | `strmup`, `streamup`, `vidara`, `vidaraa` | `streaming_url` from page, AJAX `/ajax/stream` fallback; HLS. Vidara hosts use the JSON API `POST /api/stream` (`{"device": "web", "filecode": id}` → `streaming_url`, 404 when gone; JD2 `VidaraTo`) |
 | Vidsonic | `vidsonic` | `vidsonic` | Hex-obfuscated, pipe-delimited HLS URL decoding |
+| Mixdrop | `mixdrop` | `mixdrop`, `mxdrop`, `m1xdrop`, `mixdrop23`, `mixdrp`, `miixdrop`, … (12 names from JD2 `MixdropCo`, without its dead ones) | Embed player (`/e/{id}`; `/f/` and `/emb/` read through it): `MDCore.wurl` from the packed setup (`unpacked_scripts()` in `_video_extract.py`) is the MP4 on the delivery CDN; a deleted file's player sets none. The CDN answers non-browser agents with 403 (was a validate-only DDL config until 2026-10-01: 36 of 36 mixdrop links were dropped as echo) |
 
 ### Validate-only resolvers (individual)
 
@@ -140,9 +141,9 @@ Validate file availability without extracting a video URL and return the canonic
 | Mediafire | `mediafire` | `mediafire` | Public file info API; offline on error `110`/`111` or a set `delete_date` |
 | GoFile | `gofile` | `gofile` | Guest token (cached 25 min; one guest account at a time, GoFile throttles their creation with 429) + content availability API. A token GoFile drops early (401 `error-wrongToken`) is renewed once. Known issue: GoFile currently refuses guest lookups (401 `error-notPremium`; its website adds an `X-Website-Token` from an obfuscated script), so GoFile links do not resolve (`gofile_guest_access_refused`) |
 
-### Generic DDL resolvers (12 hosters)
+### Generic DDL resolvers (11 hosters)
 
-`GenericDDLResolver` in `generic_ddl.py` handles 12 hosters, each described by a `GenericDDLConfig` (`name`, `domains`, `file_id_re`, `offline_markers`, `file_id_source` = `"path"` or `"query"`, `min_file_id_len`). The resolver GETs the URL, treats non-200 responses, offline markers, and redirects to an error page as offline, and otherwise returns the original URL. Error pages are recognised by `is_error_redirect()` (`_verify.py`, shared by all resolvers with that check): a path segment or query key `404`/`error`/`errors`, never a substring — "The.Terror.S01E01.mkv" is a file, not an error page. File-ID regexes accept a file name or extra parameters after the ID (`/view/<id>/Movie.mkv`, `?<id>&af=…`), as JDownloader's patterns do. Offline markers must be notices (`"404 Not Found"`, `"<title>404"`), not strings a live page can contain (`"404"` matches a colour like `#404040`).
+`GenericDDLResolver` in `generic_ddl.py` handles 11 hosters, each described by a `GenericDDLConfig` (`name`, `domains`, `file_id_re`, `offline_markers`, `file_id_source` = `"path"` or `"query"`, `min_file_id_len`). The resolver GETs the URL, treats non-200 responses, offline markers, and redirects to an error page as offline, and otherwise returns the original URL. Error pages are recognised by `is_error_redirect()` (`_verify.py`, shared by all resolvers with that check): a path segment or query key `404`/`error`/`errors`, never a substring — "The.Terror.S01E01.mkv" is a file, not an error page. File-ID regexes accept a file name or extra parameters after the ID (`/view/<id>/Movie.mkv`, `?<id>&af=…`), as JDownloader's patterns do. Offline markers must be notices (`"404 Not Found"`, `"<title>404"`), not strings a live page can contain (`"404"` matches a colour like `#404040`).
 
 | Hoster | Domains | Notes |
 |---|---|---|
@@ -153,7 +154,6 @@ Validate file availability without extracting a video URL and return the canonic
 | FileFactory | `filefactory` | `/file/{id}` |
 | FSST | `fsst` | Optional `/e/` or `/d/` prefix |
 | Go4up | `go4up` | `/dl/` and `/link/` paths |
-| Mixdrop | `mixdrop`, `mxdrop`, `m1xdrop`, `mixdrop23` | `/f/`, `/e/`, `/emb/` paths |
 | Nitroflare | `nitroflare`, `nitro` | `/view/` and `/watch/` paths |
 | 1fichier | `1fichier`, `alterupload`, `cjoint`, `desfichiers`, `dfichiers`, `megadl`, `mesfichiers`, `piecejointe`, `pjointe`, `tenvoi`, `dl4free` | File ID taken from the query string |
 | Turbobit | `turbobit`, `turb`, `turbo` | Minimum file ID length 6 |

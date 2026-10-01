@@ -8,6 +8,7 @@ import httpx
 import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream
+from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 
 log = structlog.get_logger(__name__)
 
@@ -85,11 +86,17 @@ async def check_playable(
 ) -> bool:
     """Check that a resolved stream answers like a player expects.
 
-    Fetches the first bytes with the stream's playback headers.  An error
-    status, an HTML page, or (for HLS) a body that is no playlist means the
-    player would fail, so the stream is not playable.
+    Fetches the first bytes with the stream's playback headers and, like
+    the player (Stremio's ``proxyHeaders``), a browser User-Agent: CDNs
+    such as mixdrop's answer other agents with 403.  An error status, an
+    HTML page, or (for HLS) a body that is no playlist means the player
+    would fail, so the stream is not playable.
     """
-    headers = {**stream.headers, "Range": f"bytes=0-{_SNIFF_BYTES - 1}"}
+    headers = {
+        "User-Agent": DEFAULT_USER_AGENT,
+        **stream.headers,
+        "Range": f"bytes=0-{_SNIFF_BYTES - 1}",
+    }
     try:
         async with http_client.stream(
             "GET",
