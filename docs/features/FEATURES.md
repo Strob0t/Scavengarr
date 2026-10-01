@@ -27,7 +27,7 @@ Current plugin, resolver, and test counts are listed in the [repository README](
 | Per-Plugin Overrides | [x] Implemented | YAML `plugins.overrides`: timeout, max concurrency, max results, enable/disable |
 | Search Result Caching | [x] Implemented | `cache.search_ttl_seconds` (default 900s) with `X-Cache: HIT/MISS` header |
 | Plugin Scoring & Probing | [x] Implemented | EWMA-based background scoring with health + search probes |
-| Circuit Breaker | [x] Implemented | Per-plugin failure tracking, auto-skip after 5 consecutive failures |
+| Circuit Breaker | [x] Implemented | Failure tracking per plugin and category, auto-skip after 5 consecutive failures |
 | Global Concurrency Pool | [x] Implemented | Fair-share httpx/Playwright slot budgets across requests |
 | Container-Aware Auto-Tune | [x] Implemented | Concurrency limits derived from cgroup v2/v1 CPU/memory at startup |
 | Shared Browser Pool | [x] Implemented | One Chromium process shared by all Playwright plugins |

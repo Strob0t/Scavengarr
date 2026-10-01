@@ -11,6 +11,7 @@ import pytest
 
 from scavengarr.application.stremio.plugin_search import PluginSearchRunner
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.concurrency import ConcurrencyPool
 
 _max_results_var: ContextVar[int | None] = ContextVar(
@@ -147,7 +148,7 @@ class TestSinglePlugin:
         runner = _runner(registry, circuit_breaker=breaker, metrics=metrics)
 
         assert await _search(runner, ["a"], ["q"]) == []
-        breaker.record_failure.assert_called_once_with("a")
+        breaker.record_failure.assert_called_once_with("a:2000")
         breaker.record_success.assert_not_called()
         assert metrics.record_plugin_search.call_args.kwargs == {"success": False}
 
@@ -158,7 +159,7 @@ class TestSinglePlugin:
 
         await _search(_runner(registry, circuit_breaker=breaker), ["a"], ["q"])
 
-        breaker.record_success.assert_called_once_with("a")
+        breaker.record_success.assert_called_once_with("a:2000")
 
     async def test_unknown_plugin_returns_empty(self) -> None:
         registry = MagicMock()
@@ -169,6 +170,34 @@ class TestSinglePlugin:
 
 
 class TestCircuitBreakerAndTimeout:
+    async def test_breaker_tracks_plugin_per_category(self) -> None:
+        # A site that is too slow for movies (kinoking: 12-17 s movie pages)
+        # must not cost every movie request the search budget, while its
+        # series keep coming
+        async def _search_by_category(
+            _query: str, category: int | None = None, **_kwargs: object
+        ) -> list[SearchResult]:
+            if category == 2000:
+                await asyncio.sleep(10)
+            return [_sr(f"https://a/{category}")]
+
+        plugin = _plugin([])
+        plugin.search = AsyncMock(side_effect=_search_by_category)
+        breaker = PluginCircuitBreaker(failure_threshold=1)
+        runner = _runner(
+            _registry({"a": plugin}), circuit_breaker=breaker, plugin_timeout=0.05
+        )
+        pool = ConcurrencyPool(httpx_slots=10, pw_slots=10)
+
+        async with pool.request() as budget:
+            movies = await runner.search_plugins(["a"], "q", 2000, budget=budget)
+            series = await runner.search_plugins(["a"], "q", 5000, budget=budget)
+            movies_again = await runner.search_plugins(["a"], "q", 2000, budget=budget)
+
+        assert movies == [] and movies_again == []
+        assert [r.download_link for r in series] == ["https://a/5000"]
+        assert plugin.search.await_count == 2
+
     async def test_open_circuit_skips_plugin(self) -> None:
         plugin = _plugin([_sr("https://a/1")])
         breaker = MagicMock()
@@ -192,7 +221,7 @@ class TestCircuitBreakerAndTimeout:
         )
 
         assert await _search(runner, ["a"], ["q"]) == []
-        breaker.record_failure.assert_called_once_with("a")
+        breaker.record_failure.assert_called_once_with("a:2000")
 
     async def test_deadline_cuts_queued_plugins_without_failure(self) -> None:
         async def _slow(*_args: object, **_kwargs: object) -> list[SearchResult]:
@@ -238,7 +267,7 @@ class TestCircuitBreakerAndTimeout:
                 ["a"], ["q"], 2000, budget=budget, deadline=time.monotonic() + 0.2
             )
 
-        breaker.record_failure.assert_called_once_with("a")
+        breaker.record_failure.assert_called_once_with("a:2000")
 
     async def test_plugin_is_skipped_after_deadline(self) -> None:
         plugin = _plugin([_sr("https://a/1")])

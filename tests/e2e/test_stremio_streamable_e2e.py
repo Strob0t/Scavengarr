@@ -807,7 +807,7 @@ class TestCircuitBreakerE2E:
         """Pre-opened circuit -> plugin not called, other plugin produces streams."""
         cb = PluginCircuitBreaker(failure_threshold=1, cooldown_seconds=3600)
         # Open the circuit for "bad_plugin"
-        cb.record_failure("bad_plugin")
+        cb.record_failure("bad_plugin:2000")
 
         bad = _FakeStreamPlugin(
             "bad_plugin",
@@ -848,7 +848,7 @@ class TestCircuitBreakerE2E:
     def test_circuit_does_not_affect_good_plugins(self) -> None:
         """Open circuit on one, two others still searched."""
         cb = PluginCircuitBreaker(failure_threshold=1, cooldown_seconds=3600)
-        cb.record_failure("broken")
+        cb.record_failure("broken:2000")
 
         broken = _FakeStreamPlugin("broken", results=[])
         good_a = _FakeStreamPlugin(
@@ -892,8 +892,8 @@ class TestCircuitBreakerE2E:
     def test_all_circuits_open_returns_empty(self) -> None:
         """All plugins open -> empty (not error)."""
         cb = PluginCircuitBreaker(failure_threshold=1, cooldown_seconds=3600)
-        cb.record_failure("plugin_a")
-        cb.record_failure("plugin_b")
+        cb.record_failure("plugin_a:2000")
+        cb.record_failure("plugin_b:2000")
 
         plugins = {
             "plugin_a": _FakeStreamPlugin(

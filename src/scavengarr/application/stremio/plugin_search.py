@@ -25,11 +25,21 @@ log = structlog.get_logger(__name__)
 
 
 class CircuitBreaker(Protocol):
-    """Per-plugin circuit breaker (skip after N consecutive failures)."""
+    """Circuit breaker per key (skip after N consecutive failures)."""
 
     def allow(self, name: str) -> bool: ...
     def record_success(self, name: str) -> None: ...
     def record_failure(self, name: str) -> None: ...
+
+
+def _breaker_key(name: str, category: int | None) -> str:
+    """Circuit breaker entry of a plugin: one per requested category.
+
+    A site can be too slow for one content type only (kinoking's movie
+    pages take 12-17 s, its series pages 1 s): its movies must not cost
+    every movie request the search budget while its series keep coming.
+    """
+    return name if category is None else f"{name}:{category}"
 
 
 class PluginSearchMetrics(Protocol):
@@ -213,8 +223,11 @@ class PluginSearchRunner:
                 return []
 
         # Circuit breaker: skip plugins that have been failing consistently
-        if self._circuit_breaker is not None and not self._circuit_breaker.allow(name):
-            log.debug("stremio_plugin_circuit_open", plugin=name)
+        breaker_key = _breaker_key(name, category)
+        if self._circuit_breaker is not None and not self._circuit_breaker.allow(
+            breaker_key
+        ):
+            log.info("stremio_plugin_circuit_open", plugin=name, category=category)
             return []
 
         try:
@@ -236,7 +249,7 @@ class PluginSearchRunner:
                 cut_by_deadline=timeout < self._plugin_timeout,
             )
             if counts and self._circuit_breaker is not None:
-                self._circuit_breaker.record_failure(name)
+                self._circuit_breaker.record_failure(breaker_key)
             return []
 
     @staticmethod
@@ -329,9 +342,9 @@ class PluginSearchRunner:
             # _run_plugin_with_timeout records that case instead.
             if self._circuit_breaker is not None and not cancelled:
                 if success:
-                    self._circuit_breaker.record_success(name)
+                    self._circuit_breaker.record_success(_breaker_key(name, category))
                 else:
-                    self._circuit_breaker.record_failure(name)
+                    self._circuit_breaker.record_failure(_breaker_key(name, category))
 
         # Tag results with source plugin for downstream use
         for r in results:
