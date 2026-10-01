@@ -222,3 +222,85 @@ class TestMegakino:
         assert [lk["label"] for lk in detail.stream_links] == [
             f"1x{n} Voe" for n in range(1, 10)
         ]
+
+
+def _mock_client(*pages: str) -> AsyncMock:
+    """httpx client answering GETs with *pages* in order."""
+    request = httpx.Request("GET", "https://site.example/")
+    client = AsyncMock()
+    client.get = AsyncMock(
+        side_effect=[httpx.Response(200, text=p, request=request) for p in pages]
+    )
+    return client
+
+
+class TestMovie2k:
+    _BASE = "https://movie2k.cx"
+    _FILM = "https://movie2k.cx/stream/oppenheimer--cmja7rspz0001kvuydpbyul22"
+
+    def test_search_lists_the_film(self) -> None:
+        hits = _search_hits("movie2k", self._BASE, "search-oppenheimer")
+        assert _hit(hits, "Oppenheimer")["url"] == self._FILM
+
+    async def test_film_request_scrapes_the_relevant_hit_only(self) -> None:
+        """The site search also lists "Fireball" and "Die Schattenmacher"."""
+        plugin = _plugin_module("movie2k").Movie2kPlugin()
+        plugin._domain_verified = True
+        plugin._client = AsyncMock()
+        plugin._search_page = AsyncMock(
+            return_value=_search_hits("movie2k", self._BASE, "search-oppenheimer")
+        )
+        plugin._scrape_detail = AsyncMock(return_value=None)
+
+        await plugin.search("Oppenheimer", 2000)
+
+        scraped = [c.args[0]["url"] for c in plugin._scrape_detail.await_args_list]
+        assert scraped == [self._FILM]
+
+    def test_film_detail(self) -> None:
+        detail = _detail("movie2k", self._BASE, "detail-oppenheimer")
+        assert detail.title == "Oppenheimer"
+        assert detail.year == "2023"
+        assert [lk["link"] for lk in detail.stream_links] == [
+            "https://voe.sx/e/j14flkqjrl14",
+            "https://vinovo.to/e/jged78v1upyvn5",
+        ]
+        # The plot, not the page's inline script (the longest text block)
+        assert detail.description.startswith("Als dem Physiker Julius Robert")
+
+    def test_series_page_lists_every_episode(self) -> None:
+        """Episodes are ``<table data-episode-id="base64(tt…-s1e1-…)">`` with
+        ``<a href="#" onclick="return loadMirror('<url>')">`` mirrors."""
+        detail = _detail("movie2k", self._BASE, "detail-the-last-of-us")
+        assert detail.episodes_listed
+        assert detail.stream_links[:2] == [
+            {
+                "hoster": "vidoza.net",
+                "link": "https://vidoza.net/n1318q60i9gh.html",
+                "quality": "HD",
+                "label": "1x1 vidoza.net",
+            },
+            {
+                "hoster": "vinovo.to",
+                "link": "https://vinovo.to/d/kgv90ek1s821qg",
+                "quality": "HD",
+                "label": "1x1 vinovo.to",
+            },
+        ]
+        seasons = {lk["label"].split("x")[0] for lk in detail.stream_links}
+        assert seasons == {"1"}
+
+    async def test_episode_request_gets_that_episode(self) -> None:
+        plugin = _plugin_module("movie2k").Movie2kPlugin()
+        plugin._domain_verified = True
+        plugin._client = _mock_client(
+            _page("movie2k", "search-the-last-of-us"),
+            _page("movie2k", "detail-the-last-of-us"),
+        )
+
+        results = await plugin.search("The Last of Us", 5000, season=1, episode=1)
+
+        assert len(results) == 1
+        assert results[0].category == 5000
+        labels = [lk["label"] for lk in results[0].download_links or []]
+        assert labels and all(label.startswith("1x1 ") for label in labels)

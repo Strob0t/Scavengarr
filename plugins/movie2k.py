@@ -16,6 +16,7 @@ No authentication required.
 from __future__ import annotations
 
 import asyncio
+import base64
 import re
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
@@ -27,7 +28,13 @@ from scavengarr.infrastructure.plugins.categories import (
     served_category,
     stream_category,
 )
+from scavengarr.infrastructure.plugins.episodes import episode_label, filter_episodes
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
+from scavengarr.infrastructure.plugins.relevance import (
+    SINGLE_TITLE_HITS,
+    hit_title,
+    relevant_hits,
+)
 
 # ---------------------------------------------------------------------------
 # Configurable settings
@@ -46,6 +53,21 @@ _RUNTIME_RE = re.compile(r"(\d+)\s*Min")
 _COUNTRY_YEAR_RE = re.compile(r"Land/Jahr:\s*([^/]+)/(\d{4})")
 _RATING_RE = re.compile(r"Bewertung:\s*([\d.]+)")
 _IMDB_RE = re.compile(r"imdb\.com/title/(tt\d+)")
+# Mirror link of a stream entry: onclick="return loadMirror('<url>')"
+# (series pages set href="#", films repeat the URL in href)
+_LOAD_MIRROR_RE = re.compile(r"loadMirror\(\s*'([^']+)'")
+# Decoded data-episode-id of a series page: "tt3581920-s1e1-1"
+_EPISODE_ID_RE = re.compile(r"-s(\d+)e(\d+)(?:-|$)")
+
+
+def _episode_from_id(value: str) -> tuple[int, int] | None:
+    """(season, episode) of a series page's base64 ``data-episode-id``."""
+    try:
+        decoded = base64.b64decode(value + "=" * (-len(value) % 4)).decode()
+    except (ValueError, UnicodeDecodeError):
+        return None
+    m = _EPISODE_ID_RE.search(decoded)
+    return (int(m.group(1)), int(m.group(2))) if m else None
 
 
 def _domain_from_url(url: str) -> str:
@@ -307,8 +329,13 @@ class _DetailPageParser(HTMLParser):
         super().__init__()
         self._base_url = base_url
 
-        # Stream links
+        # Stream links; a series page lists every episode in its own
+        # <table data-episode-id="…">
         self.stream_links: list[dict[str, str]] = []
+        self.episodes_listed = False
+        self._episode: tuple[int, int] | None = None
+        self._episode_table_depth = 0
+        self._in_script = False
         self._in_stream_div = False
         self._stream_div_depth = 0
         self._in_stream_a = False
@@ -359,11 +386,27 @@ class _DetailPageParser(HTMLParser):
         elif tag == "div" and self._in_stream_div:
             self._stream_div_depth += 1
 
-        # Stream link: <a href="https://voe.sx/..."> inside stream div
+        if tag in ("script", "style"):
+            self._in_script = True
+
+        # Episode of a series page: <table data-episode-id="…">
+        if tag == "table":
+            if self._episode is not None:
+                self._episode_table_depth += 1
+            else:
+                self._episode = _episode_from_id(attr_dict.get("data-episode-id") or "")
+                self._episode_table_depth = 0
+
+        # Stream link inside stream div: <a href="https://voe.sx/..."> (films)
+        # or <a href="#" onclick="return loadMirror('https://...')"> (series)
         if tag == "a" and self._in_stream_div:
-            if href.startswith("http") and "movie2k" not in href:
+            mirror = _LOAD_MIRROR_RE.search(attr_dict.get("onclick") or "")
+            url = (
+                href if href.startswith("http") else (mirror.group(1) if mirror else "")
+            )
+            if url.startswith("http") and "movie2k" not in url:
                 self._in_stream_a = True
-                self._stream_a_href = href
+                self._stream_a_href = url
                 self._stream_quality = ""
 
         # Quality image inside stream link: <img alt="HD-1080p">
@@ -392,6 +435,8 @@ class _DetailPageParser(HTMLParser):
             self.imdb_url = href
 
     def handle_data(self, data: str) -> None:
+        if self._in_script:
+            return  # inline scripts are no page text (the description)
         if self._in_h1:
             self._h1_text += data
         if self._in_genre_a:
@@ -410,13 +455,15 @@ class _DetailPageParser(HTMLParser):
             self._in_stream_a = False
             if self._stream_a_href:
                 domain = _domain_from_url(self._stream_a_href)
-                self.stream_links.append(
-                    {
-                        "hoster": domain,
-                        "link": self._stream_a_href,
-                        "quality": self._stream_quality or "HD",
-                    }
-                )
+                link = {
+                    "hoster": domain,
+                    "link": self._stream_a_href,
+                    "quality": self._stream_quality or "HD",
+                }
+                if self._episode is not None:
+                    self.episodes_listed = True
+                    link["label"] = episode_label(*self._episode, domain)
+                self.stream_links.append(link)
             self._stream_a_href = ""
             self._stream_quality = ""
 
@@ -434,6 +481,13 @@ class _DetailPageParser(HTMLParser):
                 self.imdb_rating = m.group(1)
 
     def handle_endtag(self, tag: str) -> None:
+        if tag in ("script", "style"):
+            self._in_script = False
+        if tag == "table" and self._episode is not None:
+            if self._episode_table_depth:
+                self._episode_table_depth -= 1
+            else:
+                self._episode = None
         if tag == "a":
             self._end_a_tag()
 
@@ -568,8 +622,14 @@ class Movie2kPlugin(HttpxPluginBase):
     async def _scrape_detail(
         self,
         result: dict[str, str | list[str]],
+        season: int | None = None,
+        episode: int | None = None,
     ) -> SearchResult | None:
-        """Scrape a detail page for hoster URLs and metadata."""
+        """Scrape a detail page for hoster URLs and metadata.
+
+        A series page lists every episode: a season/episode request keeps
+        the links of that episode.
+        """
         detail_url = str(result["url"])
         html = await self._fetch_text(detail_url, context="detail")
         if html is None:
@@ -579,13 +639,16 @@ class Movie2kPlugin(HttpxPluginBase):
         parser.feed(html)
         parser.finalize()
 
-        if not parser.stream_links:
+        links = parser.stream_links
+        if season is not None and parser.episodes_listed:
+            links = filter_episodes(links, season, episode)
+        if not links:
             self._log.debug("movie2k_no_streams", url=detail_url)
             return None
 
         title = parser.title or str(result.get("title", ""))
         genres = parser.genres or list(result.get("genres", []))
-        is_tv = "type=tv" in detail_url
+        is_tv = parser.episodes_listed or "type=series" in detail_url
         year = parser.year or str(result.get("year", ""))
         category = stream_category(genres, is_series=is_tv)
 
@@ -601,7 +664,7 @@ class Movie2kPlugin(HttpxPluginBase):
         metadata: dict[str, str] = {
             "year": year,
             "genres": ", ".join(genres),
-            "quality": parser.stream_links[0].get("quality", ""),
+            "quality": links[0].get("quality", ""),
             "imdb_rating": parser.imdb_rating,
             "imdb_url": parser.imdb_url,
             "runtime": parser.runtime,
@@ -610,8 +673,8 @@ class Movie2kPlugin(HttpxPluginBase):
 
         return SearchResult(
             title=title,
-            download_link=parser.stream_links[0]["link"],
-            download_links=parser.stream_links,
+            download_link=links[0]["link"],
+            download_links=links,
             source_url=detail_url,
             category=category,
             description=description,
@@ -641,7 +704,13 @@ class Movie2kPlugin(HttpxPluginBase):
         # Get initial results
         items: list[dict[str, str | list[str]]]
         if query:
-            items = [dict(r) for r in await self._search_page(query)]
+            # Each hit costs a detail page: scrape real matches only
+            items = relevant_hits(
+                [dict(r) for r in await self._search_page(query)],
+                query,
+                hit_title,
+                limit=SINGLE_TITLE_HITS if season is not None else None,
+            )
         elif is_tv_request:
             items = await self._browse_pages("/tv/all")
         else:
@@ -657,7 +726,7 @@ class Movie2kPlugin(HttpxPluginBase):
             r: dict[str, str | list[str]],
         ) -> SearchResult | None:
             async with sem:
-                return await self._scrape_detail(r)
+                return await self._scrape_detail(r, season, episode)
 
         gathered = await asyncio.gather(
             *[_bounded(r) for r in items],

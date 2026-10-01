@@ -14,6 +14,11 @@ Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon inte
 ### Fix: German Titles Without a TMDB Key Needed the Example Config
 - Without a TMDB key, the German title of a Stremio request comes from Wikidata ("Haus des Geldes" for "Money Heist"). Wikidata answers 403 to a User-Agent without contact information, and the code default `Scavengarr/0.1.0` had none (only `data/config.yaml` set the contact URL): without that file, German-titled films and series were searched under their English title only. The default is `Scavengarr/0.1.0 (+https://github.com/Strob0t/Scavengarr)` now.
 
+### Fix: movie2k Had No Series Streams
+- movie2k lists a series' episodes as `<table data-episode-id="…">` (base64 of `tt3581920-s1e1-1`) whose mirrors are `<a href="#" onclick="return loadMirror('<url>')">`. The parser only took `http` hrefs (what film pages have), so every series came back without links, and series were labelled as films (it looked for `type=tv`, the URLs say `type=series`). Episode mirrors are links labelled `1x1 vidoza.net` now, narrowed to the requested episode; a page with episodes is a series.
+- movie2k scraped the detail page of every search hit ("Oppenheimer" also loaded "Fireball" and "Die Schattenmacher"); it uses `relevant_hits()` now, like the other plugins. Its description was the page's inline script (the longest text block); script text is skipped.
+- Found by the parser tests on real pages (`tests/fixtures/html/movie2k/`).
+
 ### Perf: One Site per Mirror Group in Stremio
 - hdfilme, streamcloud and streamkiste are one database in three themes: same news ids, titles, order, texts and links (checked on 6 searches and their detail pages). A Stremio request ran all three and the stream dedup threw two thirds away. Plugins now declare a `mirror_group` (the three: `"hdfilme"`), and a Stremio request asks the first member whose circuit breaker is closed; the next takes over when it opens, and with no closed member all go to their breakers' probes (`stremio_mirrors_skipped`, `PluginCircuitBreaker.is_closed`). Torznab keeps the three indexers. A member with a broken parser answers empty and stays chosen; the real-page tests watch for that.
 
