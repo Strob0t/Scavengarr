@@ -20,6 +20,11 @@ from urllib.parse import urljoin
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
+from scavengarr.infrastructure.plugins.relevance import (
+    SINGLE_TITLE_HITS,
+    hit_title,
+    relevant_hits,
+)
 
 # ---------------------------------------------------------------------------
 # Configurable settings
@@ -394,7 +399,12 @@ class KinoxPlugin(HttpxPluginBase):
         await self._ensure_client()
         await self._verify_domain()
 
-        search_entries = await self._search_page(query)
+        search_entries = relevant_hits(
+            await self._search_page(query),
+            query,
+            hit_title,
+            limit=SINGLE_TITLE_HITS if season is not None else None,
+        )
         if not search_entries:
             return []
 

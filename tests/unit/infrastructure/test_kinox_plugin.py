@@ -312,6 +312,28 @@ class TestPluginSearch:
         assert all(r.category == 2000 for r in results)
 
     @pytest.mark.asyncio
+    async def test_scrapes_only_hits_matching_the_query(self, plugin, mock_client):
+        # The site also lists loose matches ("Dark" finds 77 titles), each
+        # costing a detail page and mirror requests: kinox ran into the
+        # Stremio search budget on most requests
+        detail_urls: list[str] = []
+
+        async def mock_get(url, **kwargs):
+            url_str = str(url)
+            if "Search.html" in url_str:
+                return _make_response(SEARCH_HTML)
+            if "/aGET/Mirror/" in url_str:
+                return _make_response(MIRROR_AJAX_HTML_VOE)
+            detail_urls.append(url_str)
+            return _make_response(DETAIL_MOVIE_HTML)
+
+        mock_client.get = AsyncMock(side_effect=mock_get)
+
+        await plugin.search("Batman Begins")
+
+        assert detail_urls == ["https://www22.kinox.to/Stream/Batman_Begins.html"]
+
+    @pytest.mark.asyncio
     async def test_search_empty_query(self, plugin):
         results = await plugin.search("")
         assert results == []
