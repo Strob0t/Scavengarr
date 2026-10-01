@@ -60,7 +60,7 @@ Final run (G: code of this plan, `plugin_timeout_seconds: 10`, `stream_deadline_
 
 ## Follow-up 2026-10-01 (live test with Stremio)
 
-Same harness and title set (17 titles: German films, popular films, series, anime), `plugin_timeout_seconds: 10`, `stream_deadline_seconds: 15`, cold, dev container, groups 150 s apart. Each run after the commits named; runs differ by site state (s.to's link-out gate, kinoger's Cloudflare, moflix and kinoking timeouts), so single titles move by several seconds between runs.
+Same harness and title set (17 titles: German films, popular films, series, anime; `scripts/stremio_measure.py --pause 150` against a running server), `plugin_timeout_seconds: 10`, `stream_deadline_seconds: 15`, cold, dev container, groups 150 s apart. Each run after the commits named; runs differ by site state (s.to's link-out gate, kinoger's Cloudflare, moflix and kinoking timeouts), so single titles move by several seconds between runs.
 
 | Run | Change | Median / max | Streams | Titles without stream |
 |---|---|---|---|---|
