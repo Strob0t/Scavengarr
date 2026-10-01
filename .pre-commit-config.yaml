@@ -9,7 +9,7 @@ repos:
         args: ["--fix=lf"]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.0
+    rev: v0.16.9
     hooks:
       # 1) Sort imports only (I001 / I)
       - id: ruff-check
