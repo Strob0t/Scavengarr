@@ -4,11 +4,11 @@ Usage:
     poetry run python scripts/capture_pages.py kinoger "The Last of Us" \\
         --category 5000 --season 1 --episode 1
     poetry run python scripts/capture_pages.py kinoger --fixture \\
-        .cache/pages/kinoger/03-detail.html detail-the-last-of-us
+        .cache/pages/kinoger/the-last-of-us-s1e1/02-detail.html detail-the-last-of-us
 
 The first form runs the plugin's ``search()`` against the live site and
 writes every page it fetched (``_fetch_text`` / ``_safe_fetch``) to
-``.cache/pages/<plugin>/NN-<context>.html`` plus ``index.json`` (URL,
+``.cache/pages/<plugin>/<query>/NN-<context>.html`` plus ``index.json`` (URL,
 method, form data). Cloudflare-challenged pages go through the stealth
 browser, like in the server. The second form stores one of those pages as
 ``tests/fixtures/html/<plugin>/<name>.html.gz`` (gzipped, per-visitor values
@@ -97,7 +97,10 @@ async def capture(plugin_name: str, query: str, args: argparse.Namespace) -> Pat
         if cleanup is not None:
             await cleanup()
         await pool.cleanup()
-    out = _CAPTURE_DIR / plugin_name
+    run = query if args.season is None else f"{query} s{args.season}e{args.episode}"
+    out = (
+        _CAPTURE_DIR / plugin_name / re.sub(r"[^a-z0-9]+", "-", run.lower()).strip("-")
+    )
     out.mkdir(parents=True, exist_ok=True)
     index = []
     for number, page in enumerate(pages):
