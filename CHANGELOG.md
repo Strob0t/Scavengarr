@@ -8,6 +8,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 59 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4588 tests (4547 excluding the opt-in live tests).
 
+### Perf: Plugins Scrape Only Real Matches
+Site searches also list loose matches ("Batman" finds "Justice League", "Oppenheimer" found "Fireball" and "Norman" on the DataLife Engine sites), and plugins loaded every hit's detail pages: kinoking needed 34–45 s per search (a cold movie page takes up to 15 s there), streamcloud and streamkiste 8–12 s, so in Stremio they were always cut at the search deadline. The new helper `relevant_hits()` (`infrastructure/plugins/relevance.py`) keeps the hits whose title contains every query word (case, accents, punctuation folded), else the site's first 3 (titles in another language); sto, kinoking, hdfilme, kinoger, megakino, streamcloud and streamkiste scrape only those. Torznab searches no longer return the loose matches either (Prowlarr and the Arr apps rejected them by title anyway).
+
 ### Fix: s.to Delivered No Playable Episode
 Found in the Stremio live test (2026-10-01): every s.to stream was dropped, so German series had one stream or none.
 - **Link-outs stayed unresolved**: s.to answers `/r?t=<token>` with a redirect only when it is opened from its episode page (or with that page's session); without `Referer` it returns a page that works only inside its player iframe, and the plugin fell back to the unresolvable link-out. The plugin now sends the episode page as `Referer` (`HttpxPluginBase._resolve_redirect(..., referer=...)`).

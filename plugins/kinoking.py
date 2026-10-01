@@ -30,6 +30,7 @@ from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.hoster_resolvers import extract_domain
 from scavengarr.infrastructure.plugins.categories import served_category
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
+from scavengarr.infrastructure.plugins.relevance import hit_title, relevant_hits
 
 # ---------------------------------------------------------------------------
 # Configurable settings
@@ -347,7 +348,8 @@ class KinokingPlugin(HttpxPluginBase):
         if not query:
             return []
 
-        cards = await self._search_cards(query)
+        # A cold movie page takes up to 15 s: load only real matches
+        cards = relevant_hits(await self._search_cards(query), query, hit_title)
         if not cards:
             return []
 

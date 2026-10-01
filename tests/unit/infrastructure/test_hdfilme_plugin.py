@@ -627,3 +627,24 @@ class TestHdfilmePlugin:
 
         mock_client.aclose.assert_called_once()
         assert plug._client is None
+
+
+class TestLooseMatches:
+    """Site searches also list loose matches; each one cost a detail page."""
+
+    async def test_loose_matches_are_not_scraped(self) -> None:
+        plugin = _make_plugin()
+        plugin._ensure_client = AsyncMock()
+        plugin._verify_domain = AsyncMock()
+        plugin._search_page = AsyncMock(
+            return_value=[
+                {"title": "Iron Man", "url": "https://site.example/1"},
+                {"title": "The Iron Giant", "url": "https://site.example/2"},
+            ]
+        )
+        plugin._scrape_detail = AsyncMock(return_value=[])
+
+        await plugin.search("Iron Man")
+
+        scraped = [c.args[0]["url"] for c in plugin._scrape_detail.await_args_list]
+        assert scraped == ["https://site.example/1"]

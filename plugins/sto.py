@@ -21,8 +21,6 @@ import time
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
 
-from unidecode import unidecode
-
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort
 from scavengarr.infrastructure.plugins.categories import (
@@ -30,6 +28,7 @@ from scavengarr.infrastructure.plugins.categories import (
     served_category,
 )
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
+from scavengarr.infrastructure.plugins.relevance import hit_title, relevant_hits
 
 # ---------------------------------------------------------------------------
 # Configurable settings
@@ -37,9 +36,6 @@ from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 _DOMAINS = ["s.to", "serienstream.to", "186.2.175.5"]
 _MAX_PAGES = 42  # 24 results/page → 42 pages for ~1000
 _RESULTS_PER_PAGE = 24
-# Series scraped when none contains every word of the query (other-language
-# titles: "Money Heist" is "Haus des Geldes" on the site)
-_FALLBACK_SERIES = 3
 # Hoster buttons of an episode page; each opens a /r?t= link-out
 _LINK_BOX = "button.link-box[data-play-url]"
 # The browser's time to pass the link-out gate (Turnstile takes ~6 s)
@@ -80,29 +76,20 @@ def _determine_category(genres: list[str]) -> int:
     return 5000
 
 
-def _words(text: str) -> set[str]:
-    """Lower-case ASCII words of *text* ("Pokémon: Die" → {"pokemon", "die"})."""
-    return set(re.findall(r"[a-z0-9]+", unidecode(text).lower()))
-
-
 def _relevant_series(series: list[dict[str, str]], query: str) -> list[dict[str, str]]:
-    """The series worth scraping for *query*, in the site's order.
+    """The series worth scraping for *query*, each once, in the site's order.
 
     The site's search also lists unrelated series ("Breaking Bad" finds
     "Better Call Saul"); scraping each one costs a detail page, an episode
     page and its link-outs, and bursts of link-outs make the site gate them
-    behind Turnstile. Keeps series whose title contains every query word,
-    else the site's top hits; each series once (the page links a series
-    from its card and from its episode hits).
+    behind Turnstile (``relevant_hits``). The result page links a series
+    from its card and from its episode hits.
     """
     by_key: dict[str, dict[str, str]] = {}
     for entry in series:
         key = entry.get("slug") or entry.get("url") or entry.get("title", "")
         by_key.setdefault(key, entry)
-    unique = list(by_key.values())
-    wanted = _words(query)
-    matching = [s for s in unique if wanted <= _words(s.get("title", ""))]
-    return matching or unique[:_FALLBACK_SERIES]
+    return relevant_hits(list(by_key.values()), query, hit_title)
 
 
 class _SearchSeriesParser(HTMLParser):

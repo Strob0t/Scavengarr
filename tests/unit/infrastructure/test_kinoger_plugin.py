@@ -472,7 +472,7 @@ class TestKinogerCloudflareFallback:
         finally:
             HttpxPluginBase.set_browser_fetcher(None)
 
-        assert {r.title for r in results} == {"Batman Begins", "Stranger Things"}
+        assert {r.title for r in results} == {"Batman Begins"}
         # Only the first request tried httpx; the host memo sent the rest
         # straight to the browser.
         assert mock_client.get.await_count == 1
@@ -498,10 +498,8 @@ class TestKinogerPluginSearch:
         plug._client = mock_client
         results = await plug.search("Batman")
 
-        assert len(results) == 2
-        titles = {r.title for r in results}
-        assert "Batman Begins" in titles
-        assert "Stranger Things" in titles
+        # "Stranger Things" is a loose match of the site's search, not scraped
+        assert {r.title for r in results} == {"Batman Begins"}
 
     @pytest.mark.asyncio
     async def test_search_movie_result(self) -> None:
@@ -797,3 +795,24 @@ class TestKinogerCleanup:
         # Should not raise
         await plug.cleanup()
         assert plug._client is None
+
+
+class TestLooseMatches:
+    """Site searches also list loose matches; each one cost a detail page."""
+
+    async def test_loose_matches_are_not_scraped(self) -> None:
+        plugin = _make_plugin()
+        plugin._ensure_client = AsyncMock()
+        plugin._verify_domain = AsyncMock()
+        plugin._search_all_pages = AsyncMock(
+            return_value=[
+                {"title": "Iron Man", "url": "https://site.example/1"},
+                {"title": "The Iron Giant", "url": "https://site.example/2"},
+            ]
+        )
+        plugin._scrape_detail = AsyncMock(return_value=None)
+
+        await plugin.search("Iron Man")
+
+        scraped = [c.args[0]["url"] for c in plugin._scrape_detail.await_args_list]
+        assert scraped == ["https://site.example/1"]

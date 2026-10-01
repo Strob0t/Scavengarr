@@ -445,7 +445,8 @@ class TestStreamkistePluginSearch:
         results = await plug.search("Batman")
         await plug.cleanup()
 
-        assert {r.title for r in results} == {"Batman Begins", "Stranger Things"}
+        # "Stranger Things" is a loose match of the site's search, not scraped
+        assert {r.title for r in results} == {"Batman Begins"}
 
     @respx.mock
     @pytest.mark.asyncio
@@ -695,3 +696,24 @@ class TestStreamkisteCleanup:
 
         await plug.cleanup()
         assert plug._client is None
+
+
+class TestLooseMatches:
+    """Site searches also list loose matches; each one cost a detail page."""
+
+    async def test_loose_matches_are_not_scraped(self) -> None:
+        plugin = _make_plugin()
+        plugin._ensure_client = AsyncMock()
+        plugin._verify_domain = AsyncMock()
+        plugin._search_all_pages = AsyncMock(
+            return_value=[
+                {"title": "Iron Man", "url": "https://site.example/1"},
+                {"title": "The Iron Giant", "url": "https://site.example/2"},
+            ]
+        )
+        plugin._scrape_detail = AsyncMock(return_value=None)
+
+        await plugin.search("Iron Man")
+
+        scraped = [c.args[0]["url"] for c in plugin._scrape_detail.await_args_list]
+        assert scraped == ["https://site.example/1"]

@@ -287,6 +287,30 @@ class TestSearch:
 
     @respx.mock
     @pytest.mark.asyncio
+    async def test_loose_matches_are_not_scraped(self) -> None:
+        # A cold movie page takes up to 15 s on this site: only hits whose
+        # title contains every query word get their page loaded
+        plug = _make_plugin()
+        _mock_site(
+            "<html><body>"
+            + _card("12712", "movie", "Iron Man")
+            + _card("999", "movie", "The Iron Giant")
+            + "</body></html>"
+        )
+
+        results = await plug.search("Iron Man", 2000)
+        await plug.cleanup()
+
+        assert [r.title for r in results] == ["Iron Man"]
+        movie_ids = [
+            c.request.url.params["id"]
+            for c in respx.calls
+            if c.request.url.path == "/movie.php"
+        ]
+        assert movie_ids == ["12712"]
+
+    @respx.mock
+    @pytest.mark.asyncio
     async def test_paginates_until_empty_page(self) -> None:
         plug = _make_plugin()
         search = _mock_site()
