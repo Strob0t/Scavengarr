@@ -15,11 +15,17 @@ No authentication required.
 from __future__ import annotations
 
 import asyncio
+import re
 from html.parser import HTMLParser
 from urllib.parse import urljoin
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
+from scavengarr.infrastructure.plugins.relevance import (
+    SINGLE_TITLE_HITS,
+    hit_title,
+    relevant_hits,
+)
 
 # ---------------------------------------------------------------------------
 # Configurable settings
@@ -30,6 +36,9 @@ _DOMAINS = ["aniworld.to"]
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
+
+# A series' page; the ajax search also links FAQ pages and episodes
+_SERIES_LINK_RE = re.compile(r"^/anime/stream/[^/]+/?$")
 
 # Language key mapping from aniworld.to data-lang-key attributes.
 _LANG_MAP: dict[str, str] = {
@@ -264,7 +273,8 @@ class AniworldPlugin(HttpxPluginBase):
             data={"keyword": query},
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
-        if resp is None:
+        if resp is None or not resp.text.strip():
+            # A search without hits is answered with an empty body
             return []
 
         data = self._safe_parse_json(resp, context="ajax_search")
@@ -278,7 +288,8 @@ class AniworldPlugin(HttpxPluginBase):
             title = item.get("title", "")
             link = item.get("link", "")
             description = item.get("description", "")
-            if title and link:
+            # The search also lists FAQ pages and episodes
+            if title and _SERIES_LINK_RE.match(link):
                 results.append(
                     {
                         "title": _strip_html_tags(title),
@@ -405,7 +416,12 @@ class AniworldPlugin(HttpxPluginBase):
         await self._ensure_client()
         await self._verify_domain()
 
-        all_items = await self._ajax_search(query)
+        all_items = relevant_hits(
+            await self._ajax_search(query),
+            query,
+            hit_title,
+            limit=SINGLE_TITLE_HITS if season is not None else None,
+        )
         if not all_items:
             return []
 

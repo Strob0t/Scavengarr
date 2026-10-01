@@ -5,10 +5,12 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+from structlog.testing import capture_logs
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "aniworld.py"
 
@@ -441,6 +443,70 @@ class TestSearch:
 
         results = await plugin.search("naruto")
         assert results == []
+
+    @staticmethod
+    def _plugin_answering(
+        answer: list[dict[str, str]],
+    ) -> tuple[Any, AsyncMock]:
+        """Plugin whose ajax search returns *answer*, and its mock client."""
+        plugin: Any = _make_plugin()
+        plugin._domain_verified = True
+        detail_resp = _make_mock_response(text=_DETAIL_HTML)
+        episode_resp = _make_mock_response(text=_EPISODE_HTML)
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.post = AsyncMock(return_value=_make_mock_response(json_data=answer))
+        mock_client.get = AsyncMock(
+            side_effect=lambda url, **_kw: (
+                episode_resp if "/episode-" in str(url) else detail_resp
+            )
+        )
+        plugin._client = mock_client
+        return plugin, mock_client
+
+    async def test_skips_hits_that_are_no_series(self) -> None:
+        # The ajax search also lists FAQ pages; each cost a detail page and a
+        # made-up episode page
+        answer = [
+            *_AJAX_SEARCH_RESPONSE,
+            {
+                "title": "wieso ist <em>naruto</em> nicht auf ger sub",
+                "description": "Wir helfen dir bei Problemen",
+                "link": "/support/frage/wieso-ist-naruto-nicht-auf-ger-sub",
+            },
+        ]
+        plugin, client = self._plugin_answering(answer)
+
+        await plugin.search("naruto", season=1, episode=1)
+
+        requested = [str(c.args[0]) for c in client.get.call_args_list]
+        assert requested
+        assert not [url for url in requested if "/support/" in url]
+
+    async def test_scrapes_only_matching_series(self) -> None:
+        # Loose matches cost pages and link-outs; the sister site s.to gates
+        # its link-outs after such bursts
+        plugin, client = self._plugin_answering(_AJAX_SEARCH_RESPONSE)
+
+        await plugin.search("Naruto Shippuuden", season=1, episode=1)
+
+        requested = [str(c.args[0]) for c in client.get.call_args_list]
+        assert requested
+        assert all("naruto-shippuuden" in url for url in requested)
+
+    async def test_empty_answer_means_no_hits_not_invalid_json(self) -> None:
+        # The site answers a search without hits with an empty body
+        # ("Breaking Bad"), which was logged as invalid JSON on every request
+        plugin = _make_plugin()
+        plugin._domain_verified = True
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.post = AsyncMock(return_value=_make_mock_response(text=""))
+        plugin._client = mock_client
+
+        with capture_logs() as logs:
+            results = await plugin.search("Breaking Bad")
+
+        assert results == []
+        assert not [e for e in logs if e["event"] == "aniworld_invalid_json"]
 
     async def test_search_ajax_error_returns_empty(self) -> None:
         plugin = _make_plugin()
