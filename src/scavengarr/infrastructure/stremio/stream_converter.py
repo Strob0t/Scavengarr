@@ -6,6 +6,7 @@ Pure transformation logic — no I/O, no framework dependencies.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from urllib.parse import urlparse
 
 from scavengarr.domain.entities.stremio import RankedStream
@@ -14,6 +15,14 @@ from scavengarr.infrastructure.stremio.release_parser import (
     parse_language,
     parse_quality,
 )
+
+# Hoster label or second-level domain -> resolver name (None if unknown)
+CanonicalHosterFn = Callable[[str], str | None]
+
+# Labels sites use when they do not name the hoster
+_PLACEHOLDER_HOSTERS = frozenset({"unknown", "n/a", "-"})
+
+_DOMAIN_LABEL = re.compile(r"[a-z0-9-]+(?:\.[a-z0-9-]+)+")
 
 
 def _extract_hoster(url: str) -> str:
@@ -56,12 +65,40 @@ def _normalize_hoster_name(raw: str) -> str:
     name = re.sub(r"\s*\([^)]*\)\s*$", "", raw).strip()
     # Strip colon-separated suffix: "Filemoon: HD" -> "Filemoon"
     name = re.sub(r"\s*:.*$", "", name).strip().lower()
+    # A domain as label ("voe.sx", "www.vinovo.to") names the hoster by its
+    # second-level part, like a URL does
+    if _DOMAIN_LABEL.fullmatch(name):
+        name = name.split(".")[-2]
     return name or raw.lower()
+
+
+def _hoster_name(url: str, label: str, canonical: CanonicalHosterFn | None) -> str:
+    """Name of the hoster behind *url*.
+
+    A label naming a known hoster wins (redirect links such as
+    ``s.to/redirect/…`` carry the hoster only in the label), then a known
+    URL domain, then the label, then the URL domain. Known names are
+    resolver names, so mirror domains and aliases share one hoster name
+    (one stream per hoster, one ranking bonus).
+    """
+    name = _normalize_hoster_name(label) if label else ""
+    if name in _PLACEHOLDER_HOSTERS:
+        name = ""
+    domain = _extract_hoster(url)
+    if domain == "unknown":
+        domain = ""
+    if canonical is not None:
+        for candidate in (name, domain):
+            known = canonical(candidate) if candidate else None
+            if known:
+                return known
+    return name or domain or "unknown"
 
 
 def _convert_single_result(
     result: SearchResult,
     plugin_default_language: str | None = None,
+    canonical_hoster: CanonicalHosterFn | None = None,
 ) -> list[RankedStream]:
     """Convert a single SearchResult into one or more RankedStreams."""
     streams: list[RankedStream] = []
@@ -84,12 +121,7 @@ def _convert_single_result(
                 link_language=link.get("language"),
                 plugin_default_language=plugin_default_language,
             )
-            raw_hoster = link.get("hoster", "")
-            hoster = (
-                _normalize_hoster_name(raw_hoster)
-                if raw_hoster
-                else _extract_hoster(url)
-            )
+            hoster = _hoster_name(url, link.get("hoster") or "", canonical_hoster)
             size = link.get("size") or result.size
 
             streams.append(
@@ -115,7 +147,7 @@ def _convert_single_result(
             link_language=None,
             plugin_default_language=plugin_default_language,
         )
-        hoster = _extract_hoster(result.download_link)
+        hoster = _hoster_name(result.download_link, "", canonical_hoster)
 
         streams.append(
             RankedStream(
@@ -136,6 +168,8 @@ def _convert_single_result(
 def convert_search_results(
     results: list[SearchResult],
     plugin_languages: dict[str, str] | None = None,
+    *,
+    canonical_hoster: CanonicalHosterFn | None = None,
 ) -> list[RankedStream]:
     """Convert plugin SearchResults into RankedStreams for sorting.
 
@@ -144,6 +178,8 @@ def convert_search_results(
         plugin_languages: Mapping of plugin name to default language code.
             Used as fallback when language can't be determined from the
             release name or link metadata.
+        canonical_hoster: Maps a hoster label or domain to its resolver
+            name (``HosterResolverRegistry.canonical_hoster``).
 
     For each SearchResult:
     - If download_links exists and is non-empty, create one RankedStream per link.
@@ -156,6 +192,10 @@ def convert_search_results(
     for result in results:
         source = str(result.metadata.get("source_plugin", ""))
         streams.extend(
-            _convert_single_result(result, plugin_default_language=langs.get(source))
+            _convert_single_result(
+                result,
+                plugin_default_language=langs.get(source),
+                canonical_hoster=canonical_hoster,
+            )
         )
     return streams

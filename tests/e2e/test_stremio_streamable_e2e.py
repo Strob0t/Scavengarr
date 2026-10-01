@@ -669,7 +669,7 @@ class TestSeriesStreamableResolution:
 
         streams = resp.json()["streams"]
         assert len(streams) == 1
-        assert "S01E05" in streams[0]["name"]
+        assert "S01E05" in streams[0]["description"]
         _assert_streamable(streams[0])
 
     def test_series_multi_plugin_resolved(self) -> None:
@@ -714,7 +714,7 @@ class TestSeriesStreamableResolution:
         streams = resp.json()["streams"]
         assert len(streams) == 2
         for s in streams:
-            assert "S05E03" in s["name"]
+            assert "S05E03" in s["description"]
             _assert_streamable(s)
 
     def test_series_resolve_filters_dead_hosters(self) -> None:
@@ -789,7 +789,7 @@ class TestSeriesStreamableResolution:
 
         streams = resp.json()["streams"]
         assert len(streams) == 1
-        assert "S21E1042" in streams[0]["name"]
+        assert "S21E1042" in streams[0]["description"]
         _assert_streamable(streams[0])
 
 
@@ -1177,7 +1177,7 @@ class TestFullPipelineStreamable:
         assert len(streams) == 3
         for s in streams:
             _assert_streamable(s)
-            assert "Interstellar" in s["name"]
+            assert "Interstellar" in s["description"]
 
     def test_series_full_pipeline(self) -> None:
         """Complete series flow with episode filtering."""
@@ -1206,7 +1206,7 @@ class TestFullPipelineStreamable:
         assert resp.status_code == 200
         streams = resp.json()["streams"]
         assert len(streams) == 1
-        assert "S01E03" in streams[0]["name"]
+        assert "S01E03" in streams[0]["description"]
         _assert_streamable(streams[0])
 
     def test_multi_hoster_all_resolved(self) -> None:

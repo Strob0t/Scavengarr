@@ -25,143 +25,140 @@ from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 
 
 class TestFormatStream:
-    def test_reference_title_used_as_name(self) -> None:
-        """Reference title (from TMDB) is preferred over ranked.title."""
+    """Stremio shows ``name`` in a narrow column and ``description`` beside it."""
+
+    _DE = StreamLanguage(code="de", label="German Dub", is_dubbed=True)
+
+    def test_name_is_addon_and_quality(self) -> None:
         ranked = RankedStream(
-            url="https://voe.sx/e/abc",
-            hoster="voe",
-            quality=StreamQuality.HD_1080P,
-            title="Iron Man",
-            source_plugin="hdfilme",
-            rank_score=1500,
+            url="https://voe.sx/e/abc", hoster="voe", quality=StreamQuality.HD_1080P
         )
         result = format_stream(ranked, reference_title="Iron Man", year=2008)
-        assert result.name == "Iron Man (2008) HD 1080P"
+        assert result.name == "Scavengarr\n1080p"
 
-    def test_series_format_with_season_episode(self) -> None:
-        ranked = RankedStream(
-            url="https://voe.sx/e/abc",
-            hoster="voe",
-            quality=StreamQuality.HD_720P,
-            source_plugin="aniworld",
-        )
-        result = format_stream(
-            ranked, reference_title="Breaking Bad", season=1, episode=5
-        )
-        assert result.name == "Breaking Bad S01E05 HD 720P"
+    @pytest.mark.parametrize(
+        ("quality", "label"),
+        [
+            (StreamQuality.UHD_4K, "4K"),
+            (StreamQuality.HD_1080P, "1080p"),
+            (StreamQuality.HD_720P, "720p"),
+            (StreamQuality.SD, "SD"),
+            (StreamQuality.TS, "TS"),
+            (StreamQuality.CAM, "CAM"),
+        ],
+    )
+    def test_quality_labels(self, quality: StreamQuality, label: str) -> None:
+        ranked = RankedStream(url="https://voe.sx/e/abc", hoster="voe", quality=quality)
+        assert format_stream(ranked).name == f"Scavengarr\n{label}"
 
-    def test_release_name_fallback_without_reference(self) -> None:
-        """Without reference_title, release_name is used as fallback."""
-        lang = StreamLanguage(code="de", label="German Dub", is_dubbed=True)
+    def test_unknown_quality_name_is_addon_only(self) -> None:
+        ranked = RankedStream(url="https://voe.sx/e/abc", hoster="voe")
+        assert format_stream(ranked).name == "Scavengarr"
+
+    def test_description_lines(self) -> None:
         ranked = RankedStream(
             url="https://voe.sx/e/abc",
             hoster="voe",
             quality=StreamQuality.HD_1080P,
-            language=lang,
+            language=self._DE,
             size="1.5 GB",
             release_name="Iron.Man.2008.1080p.WEB-DL",
-            source_plugin="hdfilme",
-            rank_score=1500,
-        )
-        result = format_stream(ranked)
-        assert result.url == "https://voe.sx/e/abc"
-        assert result.name == "Iron.Man.2008.1080p.WEB-DL"
-        assert "German Dub" in result.description
-        assert "VOE" in result.description
-        assert "1.5 GB" in result.description
-
-    def test_title_fallback_without_reference(self) -> None:
-        """Without reference_title or release_name, ranked.title is used."""
-        ranked = RankedStream(
-            url="https://voe.sx/e/abc",
-            hoster="voe",
-            quality=StreamQuality.HD_1080P,
-            title="Iron Man",
-            source_plugin="hdfilme",
-        )
-        result = format_stream(ranked)
-        assert result.name == "Iron Man HD 1080P"
-
-    def test_fallback_to_plugin_quality(self) -> None:
-        ranked = RankedStream(
-            url="https://voe.sx/e/abc",
-            hoster="voe",
-            quality=StreamQuality.HD_720P,
-            source_plugin="hdfilme",
-        )
-        result = format_stream(ranked)
-        assert result.name == "hdfilme HD 720P"
-
-    def test_fallback_no_source_plugin(self) -> None:
-        ranked = RankedStream(
-            url="https://voe.sx/e/abc",
-            hoster="voe",
-            quality=StreamQuality.HD_720P,
-        )
-        result = format_stream(ranked)
-        assert result.name == "HD 720P"
-
-    def test_unknown_quality_not_appended(self) -> None:
-        """UNKNOWN quality is not appended to the name."""
-        ranked = RankedStream(
-            url="https://voe.sx/e/abc",
-            hoster="voe",
-            quality=StreamQuality.UNKNOWN,
             title="Iron Man",
             source_plugin="hdfilme",
         )
         result = format_stream(ranked, reference_title="Iron Man", year=2008)
-        assert result.name == "Iron Man (2008)"
-        assert "UNKNOWN" not in result.name
+        assert result.description == (
+            "Iron.Man.2008.1080p.WEB-DL\nGerman Dub · 1.5 GB\nVOE · hdfilme"
+        )
 
-    def test_source_plugin_in_description(self) -> None:
-        """source_plugin is always the first element of the description."""
-        lang = StreamLanguage(code="de", label="German Dub", is_dubbed=True)
+    def test_source_title_without_release_name(self) -> None:
+        # The site's own title shows a wrong match; the reference title hides it
         ranked = RankedStream(
             url="https://voe.sx/e/abc",
             hoster="voe",
-            quality=StreamQuality.HD_1080P,
-            language=lang,
-            source_plugin="hdfilme",
+            language=self._DE,
+            title="Iron Man 2",
+            source_plugin="kinoger",
         )
-        result = format_stream(ranked, reference_title="Iron Man")
-        assert result.description.startswith("hdfilme")
-        assert "German Dub" in result.description
-        assert "VOE" in result.description
+        result = format_stream(ranked, reference_title="Iron Man", year=2008)
+        assert result.description == "Iron Man 2\nGerman Dub\nVOE · kinoger"
 
-    def test_description_without_source_plugin(self) -> None:
+    def test_reference_title_fallback_for_movie(self) -> None:
+        ranked = RankedStream(url="https://voe.sx/e/abc", hoster="voe")
+        result = format_stream(ranked, reference_title="Iron Man", year=2008)
+        assert result.description == "Iron Man (2008)\nVOE"
+
+    def test_reference_title_fallback_for_episode(self) -> None:
+        ranked = RankedStream(url="https://voe.sx/e/abc", hoster="voe")
+        result = format_stream(
+            ranked, reference_title="Breaking Bad", year=2008, season=1, episode=5
+        )
+        assert result.description == "Breaking Bad S01E05\nVOE"
+
+    def test_source_title_gets_episode(self) -> None:
+        ranked = RankedStream(
+            url="https://voe.sx/e/abc", hoster="voe", title="Breaking Bad"
+        )
+        result = format_stream(
+            ranked, reference_title="Breaking Bad", season=2, episode=3
+        )
+        assert result.description == "Breaking Bad S02E03\nVOE"
+
+    def test_release_name_keeps_its_own_episode(self) -> None:
         ranked = RankedStream(
             url="https://voe.sx/e/abc",
             hoster="voe",
-            quality=StreamQuality.UNKNOWN,
+            release_name="Breaking.Bad.S02E03.German.720p.WEB.x264",
         )
-        result = format_stream(ranked)
-        # No source_plugin → description should still work
-        assert "VOE" in result.description
+        result = format_stream(ranked, season=2, episode=3)
+        assert result.description == "Breaking.Bad.S02E03.German.720p.WEB.x264\nVOE"
 
-    def test_empty_hoster(self) -> None:
+    def test_size_without_language(self) -> None:
         ranked = RankedStream(
-            url="https://example.com",
-            hoster="",
-            quality=StreamQuality.SD,
+            url="https://voe.sx/e/abc", hoster="voe", size="700 MB", title="Iron Man"
         )
-        result = format_stream(ranked)
-        assert (
-            result.description == ""
-            or "|" not in result.description
-            or result.description.strip()
-        )
+        assert format_stream(ranked).description == "Iron Man\n700 MB\nVOE"
 
-    def test_reference_title_without_year(self) -> None:
-        """Reference title without year omits the year parenthetical."""
+    def test_without_hoster(self) -> None:
+        ranked = RankedStream(
+            url="https://example.com/v", hoster="", title="Iron Man", source_plugin="x"
+        )
+        assert format_stream(ranked).description == "Iron Man\nx"
+
+    def test_binge_group_is_language(self) -> None:
+        # Stremio autoplays the next episode's first stream with the same group
         ranked = RankedStream(
             url="https://voe.sx/e/abc",
             hoster="voe",
-            quality=StreamQuality.HD_1080P,
-            source_plugin="hdfilme",
+            quality=StreamQuality.HD_720P,
+            language=self._DE,
+            source_plugin="aniworld",
         )
-        result = format_stream(ranked, reference_title="Iron Man")
-        assert result.name == "Iron Man HD 1080P"
+        hints = format_stream(ranked).behavior_hints
+        assert hints is not None
+        assert hints["bingeGroup"] == "scavengarr|de"
+
+    def test_binge_group_without_language(self) -> None:
+        ranked = RankedStream(url="https://voe.sx/e/abc", hoster="voe")
+        hints = format_stream(ranked).behavior_hints
+        assert hints is not None
+        assert hints["bingeGroup"] == "scavengarr|unknown"
+
+    def test_filename_from_release_name(self) -> None:
+        ranked = RankedStream(
+            url="https://voe.sx/e/abc",
+            hoster="voe",
+            release_name="Iron.Man.2008.German.DL.1080p.BluRay.x264",
+        )
+        hints = format_stream(ranked).behavior_hints
+        assert hints is not None
+        assert hints["filename"] == "Iron.Man.2008.German.DL.1080p.BluRay.x264"
+
+    def test_no_filename_without_release_name(self) -> None:
+        ranked = RankedStream(url="https://voe.sx/e/abc", hoster="voe", title="X")
+        hints = format_stream(ranked).behavior_hints
+        assert hints is not None
+        assert "filename" not in hints
 
 
 # ---------------------------------------------------------------------------
@@ -357,9 +354,10 @@ class TestBuildStreamFromResolved:
     """Unit tests for proxy URL construction in build_stream_from_resolved."""
 
     _STREAM = StremioStream(
-        name="Iron Man (2008) 1080p",
-        description="hdfilme | VOE",
+        name="Scavengarr\n1080p",
+        description="Iron Man\nVOE · hdfilme",
         url="placeholder",
+        behavior_hints={"bingeGroup": "scavengarr|de"},
     )
     _BASE_URL = "http://localhost:7979"
     _SID = "abc123"
@@ -384,7 +382,10 @@ class TestBuildStreamFromResolved:
             f"{self._BASE_URL}/api/v1/stremio/proxy/{self._SID}"
             "/master.m3u8?t=abc&expires=123"
         )
-        assert result.behavior_hints == {"notWebReady": True}
+        assert result.behavior_hints == {
+            "bingeGroup": "scavengarr|de",
+            "notWebReady": True,
+        }
 
     def test_hls_with_headers_preserves_custom_filename(self) -> None:
         resolved = ResolvedStream(
@@ -457,6 +458,8 @@ class TestBuildStreamFromResolved:
             result.behavior_hints["proxyHeaders"]["request"]["Referer"]
             == "https://voe.sx/"
         )
+        assert result.behavior_hints["bingeGroup"] == "scavengarr|de"
+        assert result.behavior_hints["notWebReady"] is True
 
     def test_echo_url_returns_none(self) -> None:
         """When resolver echoes back the embed page URL, skip it."""

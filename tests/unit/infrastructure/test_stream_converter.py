@@ -346,6 +346,73 @@ class TestNormalizeHosterName:
     def test_empty_string(self) -> None:
         assert _normalize_hoster_name("") == ""
 
+    @pytest.mark.parametrize(
+        ("label", "expected"),
+        [
+            ("voe.sx", "voe"),
+            ("www.Vinovo.to", "vinovo"),
+            ("Streamtape.com", "streamtape"),
+        ],
+    )
+    def test_domain_label_becomes_second_level_name(
+        self, label: str, expected: str
+    ) -> None:
+        assert _normalize_hoster_name(label) == expected
+
+
+class TestHosterNaming:
+    """The hoster name is the dedup key, the ranking key and the label."""
+
+    def test_placeholder_label_falls_back_to_url_domain(self) -> None:
+        result = _make_result(
+            download_links=[{"hoster": "unknown", "link": "https://voe.sx/e/abc"}],
+        )
+        assert convert_search_results([result])[0].hoster == "voe"
+
+    def test_canonical_name_for_label_alias(self) -> None:
+        result = _make_result(
+            download_links=[{"hoster": "Dood", "link": "https://d0000d.com/e/abc"}],
+        )
+        streams = convert_search_results(
+            [result], canonical_hoster={"dood": "doodstream"}.get
+        )
+        assert streams[0].hoster == "doodstream"
+
+    def test_canonical_name_for_url_domain(self) -> None:
+        result = _make_result(
+            download_links=[{"hoster": "Mirror 2", "link": "https://d0000d.com/e/a"}],
+        )
+        streams = convert_search_results(
+            [result], canonical_hoster={"d0000d": "doodstream"}.get
+        )
+        assert streams[0].hoster == "doodstream"
+
+    def test_known_label_wins_over_redirector_domain(self) -> None:
+        # s.to links are redirects: the label names the hoster behind them
+        result = _make_result(
+            download_links=[{"hoster": "VOE", "link": "https://s.to/redirect/123"}],
+        )
+        streams = convert_search_results(
+            [result], canonical_hoster={"voe": "voe", "s": "serienstream"}.get
+        )
+        assert streams[0].hoster == "voe"
+
+    def test_label_kept_when_nothing_is_known(self) -> None:
+        result = _make_result(
+            download_links=[
+                {"hoster": "Vidoza (HD)", "link": "https://mirror.example/e/abc"}
+            ],
+        )
+        streams = convert_search_results([result], canonical_hoster={}.get)
+        assert streams[0].hoster == "vidoza"
+
+    def test_single_download_link_uses_canonical_domain(self) -> None:
+        result = _make_result(download_link="https://d0000d.com/e/abc")
+        streams = convert_search_results(
+            [result], canonical_hoster={"d0000d": "doodstream"}.get
+        )
+        assert streams[0].hoster == "doodstream"
+
 
 class TestLinkKeyCompatibility:
     """Test that download_links with 'link' key (plugin convention) are read."""

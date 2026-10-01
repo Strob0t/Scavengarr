@@ -484,13 +484,8 @@ class StremioStreamUseCase:
                 skipped_unsaved += 1
             else:
                 # No resolver configured — proxy through /play/ endpoint
-                proxy_url = f"{base_url}/api/v1/stremio/play/{sid}"
                 proxied.append(
-                    StremioStream(
-                        name=stream.name,
-                        description=stream.description,
-                        url=proxy_url,
-                    )
+                    replace(stream, url=f"{base_url}/api/v1/stremio/play/{sid}")
                 )
         if skipped_echo or skipped_unresolved or skipped_unsaved:
             log.info(

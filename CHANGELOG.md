@@ -8,6 +8,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 59 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4588 tests (4547 excluding the opt-in live tests).
 
+### Feature: Stremio Autoplay of the Next Episode, Readable Stream List
+Found in a live test with Stremio Web (2026-10-01).
+- **Autoplay never picked a Scavengarr stream**: Stremio's binge watching plays the next episode's first stream whose `behaviorHints.bingeGroup` equals the current one, and Scavengarr set none. Every stream now carries `bingeGroup: scavengarr|<language>` (a German dub continues in German, at the best quality and hoster the next episode has) and, when the site has one, the release name as `filename` for subtitle addons.
+- **Stream list**: `name` was the whole title plus quality ("Oppenheimer (2023) HD 1080P", three lines in Stremio's narrow name column) and the description one long line that Stremio cut off before hoster and size. `name` is now `Scavengarr` plus the quality (`1080p`, `720p`, `4K`, …), the description one short line each for the site's own title (release name if any, which also shows a wrong match), `language · size` and `HOSTER · plugin`.
+- **Hoster names**: plugins label hosters inconsistently (`VOE`, `voe.sx`, `unknown`), so two VOE streams were returned as different hosters, the hoster bonus missed, and the list showed "UNKNOWN" or "VOE.SX". Hoster names are now resolver names (`HosterResolverRegistry.canonical_hoster`): a label naming a known hoster wins, then a known URL domain (mirror domains such as `d0000d.com` become `doodstream`); otherwise domain labels are reduced to their second-level part and placeholders fall back to the URL.
+
 ### Chore: CI on GitHub Actions
 - `.github/workflows/ci.yml` runs `pre-commit run --all-files` and the offline suite (`pytest`, live tests excluded) on every push to `staging`, on pull requests to `staging` and `main`, and on demand: Python 3.12, Poetry, cached virtualenv and pre-commit environments, read-only token. Checked in a clean clone without browsers, credentials or dev container environment: install 25 s, pre-commit 40 s, 4547 tests in 62 s; no offline test needs a real browser.
 - Live smoke tests stay out of CI: GitHub's datacenter IPs get harder Cloudflare challenges than the home network the addon runs in.

@@ -6,6 +6,7 @@ import asyncio
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
+from functools import partial
 from typing import cast
 from urllib.parse import urlparse
 
@@ -536,7 +537,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         search_engine=state.search_engine,
         config=config.stremio,
         sorter=StreamSorter(config.stremio),
-        convert_fn=convert_search_results,
+        # Hoster names are resolver names: mirror domains share one name
+        convert_fn=partial(
+            convert_search_results,
+            canonical_hoster=state.hoster_resolver_registry.canonical_hoster,
+        ),
         filter_fn=filter_by_title_match,
         episode_filter_fn=filter_by_episode,
         user_agent=DEFAULT_USER_AGENT,

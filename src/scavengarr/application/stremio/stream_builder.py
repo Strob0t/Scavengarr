@@ -7,6 +7,7 @@ behaviorHints, cache link construction and proxy URL building.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import Any
 from urllib.parse import urlparse
 
@@ -17,6 +18,17 @@ from scavengarr.domain.entities.stremio import (
     StreamQuality,
     StremioStream,
 )
+
+_ADDON_NAME = "Scavengarr"
+
+_QUALITY_LABELS: dict[StreamQuality, str] = {
+    StreamQuality.UHD_4K: "4K",
+    StreamQuality.HD_1080P: "1080p",
+    StreamQuality.HD_720P: "720p",
+    StreamQuality.SD: "SD",
+    StreamQuality.TS: "TS",
+    StreamQuality.CAM: "CAM",
+}
 
 
 def format_stream(
@@ -29,51 +41,46 @@ def format_stream(
 ) -> StremioStream:
     """Convert a scored RankedStream into Stremio protocol format.
 
-    When *reference_title* (from TMDB) is available it is always used as
-    the stream name, enriched with year (movies) or season/episode (series).
-    Falls back to release_name → ranked.title → source_plugin + quality.
+    Stremio lists streams with ``name`` in a narrow column (addon and
+    quality, like other addons) and ``description`` beside it, one short
+    line per fact, since long lines are cut off: the site's own title
+    (release name, else title, else the reference title with the year;
+    titles get the episode for series), then language and size, then
+    hoster and source site. The site's title shows a wrong match that the
+    reference title would hide.
 
-    The description always starts with the source plugin name so that
-    users can see which site the stream came from.
+    ``behaviorHints.bingeGroup`` lets Stremio autoplay the next episode: it
+    picks the first stream of the next episode with the same group, so the
+    group is the language (a German dub continues in German, at the best
+    quality and hoster the next episode has). ``filename`` gives subtitle
+    addons the release name to match.
     """
-    quality_label = ranked.quality.name.replace("_", " ")
-    show_quality = ranked.quality != StreamQuality.UNKNOWN
+    quality_label = _QUALITY_LABELS.get(ranked.quality)
+    name = f"{_ADDON_NAME}\n{quality_label}" if quality_label else _ADDON_NAME
 
-    # --- Build name (reference title has priority) ---
-    title = reference_title or ranked.title
-    if title:
+    title = ranked.release_name or ranked.title or reference_title
+    if title and not ranked.release_name:
         if season is not None and episode is not None:
-            name = f"{title} S{season:02d}E{episode:02d}"
-        elif year:
-            name = f"{title} ({year})"
-        else:
-            name = title
-        if show_quality:
-            name = f"{name} {quality_label}"
-    elif ranked.release_name:
-        name = ranked.release_name
-    else:
-        name = (
-            f"{ranked.source_plugin} {quality_label}"
-            if ranked.source_plugin
-            else quality_label
-        )
-
-    # --- Build description (source plugin always first) ---
-    desc_parts: list[str] = []
-    if ranked.source_plugin:
-        desc_parts.append(ranked.source_plugin)
-    if ranked.language:
-        desc_parts.append(ranked.language.label)
-    if ranked.hoster:
-        desc_parts.append(ranked.hoster.upper())
+            # Sites title the series; the stream was filtered to this episode
+            title = f"{title} S{season:02d}E{episode:02d}"
+        elif year and not ranked.title:
+            title = f"{title} ({year})"
+    details = [ranked.language.label] if ranked.language else []
     if ranked.size:
-        desc_parts.append(ranked.size)
+        details.append(ranked.size)
+    source = [part for part in (ranked.hoster.upper(), ranked.source_plugin) if part]
+    lines = [title, " · ".join(details), " · ".join(source)]
+
+    language = ranked.language.code if ranked.language else "unknown"
+    hints: dict[str, Any] = {"bingeGroup": f"scavengarr|{language}"}
+    if ranked.release_name:
+        hints["filename"] = ranked.release_name
 
     return StremioStream(
         name=name,
-        description=" | ".join(desc_parts) if desc_parts else "",
+        description="\n".join(line for line in lines if line),
         url=ranked.url,
+        behavior_hints=hints,
     )
 
 
@@ -210,7 +217,8 @@ def build_stream_from_resolved(
     """Build a StremioStream for a resolved result, or ``None`` to skip.
 
     Returns ``None`` when the resolver only echoed back the original URL
-    (embed/download page — Stremio cannot play HTML pages).
+    (embed/download page — Stremio cannot play HTML pages). The playback
+    hints are added to the stream's own hints (``bingeGroup``, ``filename``).
     """
     if not is_direct_video_url(resolved, original_url):
         return None
@@ -223,18 +231,12 @@ def build_stream_from_resolved(
         manifest_name = parsed_video.path.rsplit("/", 1)[-1] or "master.m3u8"
         qs = f"?{parsed_video.query}" if parsed_video.query else ""
         proxy_url = f"{base_url}/api/v1/stremio/proxy/{sid}/{manifest_name}{qs}"
-        return StremioStream(
-            name=stream.name,
-            description=stream.description,
-            url=proxy_url,
-            behavior_hints={"notWebReady": True},
-        )
-
-    # Direct video URL (MP4 or HLS without special headers)
-    hints = build_behavior_hints(resolved, user_agent=user_agent)
-    return StremioStream(
-        name=stream.name,
-        description=stream.description,
-        url=resolved.video_url,
-        behavior_hints=hints,
+        playback: dict[str, Any] = {"notWebReady": True}
+        url = proxy_url
+    else:
+        # Direct video URL (MP4 or HLS without special headers)
+        playback = build_behavior_hints(resolved, user_agent=user_agent)
+        url = resolved.video_url
+    return replace(
+        stream, url=url, behavior_hints={**(stream.behavior_hints or {}), **playback}
     )

@@ -236,6 +236,7 @@ Adding a new XFS hoster requires only an `XFSConfig` constant appended to `ALL_X
 | Domain matching | Resolver `name` first, then `supported_domains` aliases (XFS, generic DDL and individual resolvers with mirror lists) |
 | Redirect following | Unknown domains are followed via GET; the final domain is dispatched again |
 | Hoster hint | Plugin-provided hoster name as a fallback for rotating mirror domains |
+| Canonical names | `canonical_hoster(name)` returns the resolver name for a hoster label or second-level domain (`filelions` → `vidhide`), `None` when no resolver handles it; the Stremio stream converter uses it so mirror domains share one hoster name |
 | Content-type probe | HEAD request; `video/*` or `application/vnd.apple.mpegurl` responses become a `ResolvedStream` |
 | Playback check | With `verify_playback=True`, resolver results must pass `check_playable()` (see [Playback check](#playback-check)); failures count as dead |
 | Time bound | `resolver.resolve()` gets `http.timeout_resolve_seconds` in total (its requests' own timeouts add up over several requests); the playback check runs after it |

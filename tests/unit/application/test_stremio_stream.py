@@ -175,8 +175,8 @@ class TestExecute:
         assert len(result) >= 1
         assert result[0].url == "https://voe.sx/e/abc"
         # Name should include reference title from TMDB
-        assert "Iron Man" in result[0].name
-        assert "(2008)" in result[0].name
+        assert result[0].description.startswith("Iron Man")
+        assert result[0].name == "Scavengarr\n1080p"
         tmdb.get_title_and_year.assert_awaited_once_with("tt1234567", language="de")
         mock_plugin.isolated_search.assert_awaited_once_with(
             "Iron Man", 2000, season=None, episode=None
@@ -714,6 +714,9 @@ class TestStreamLinkProxy:
         assert len(result) >= 1
         assert result[0].url.startswith("http://localhost:8080/api/v1/stremio/play/")
         assert "voe.sx" not in result[0].url
+        # The play link keeps the stream's hints (autoplay of the next episode)
+        assert result[0].behavior_hints is not None
+        assert result[0].behavior_hints["bingeGroup"].startswith("scavengarr|")
         repo.save.assert_awaited()
 
     async def test_no_proxy_without_base_url(self) -> None:

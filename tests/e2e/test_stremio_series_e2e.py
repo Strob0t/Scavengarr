@@ -251,7 +251,7 @@ class TestNarutoShippudenE2E:
 
         # All stream names should contain S01E05
         for s in streams:
-            assert "S01E05" in s["name"]
+            assert "S01E05" in s["description"]
 
     def test_episode_filter_drops_wrong_episodes(self) -> None:
         """Plugin returns 10 episodes, only the requested one survives."""
@@ -276,7 +276,7 @@ class TestNarutoShippudenE2E:
         # Only S01E05 hosters should survive (2 hosters)
         assert len(streams) == 2
         for s in streams:
-            assert "S01E05" in s["name"]
+            assert "S01E05" in s["description"]
 
     def test_episode_filter_drops_wrong_season(self) -> None:
         """Plugin returns episodes from multiple seasons; only S02 passes."""
@@ -295,7 +295,7 @@ class TestNarutoShippudenE2E:
         streams = resp.json()["streams"]
         assert len(streams) == 2
         for s in streams:
-            assert "S02E03" in s["name"]
+            assert "S02E03" in s["description"]
 
     def test_multi_plugin_aggregation(self) -> None:
         """3 plugins each return the correct episode with different hosters."""
@@ -337,7 +337,7 @@ class TestNarutoShippudenE2E:
         # 2 + 2 + 1 = 5 streams total
         assert len(streams) == 5
         for s in streams:
-            assert "S01E05" in s["name"]
+            assert "S01E05" in s["description"]
 
         # Verify all source plugins appear in descriptions
         all_descs = " ".join(s["description"] for s in streams)
@@ -367,7 +367,7 @@ class TestNarutoShippudenE2E:
         # Only episode 10's 3 hosters should survive
         assert len(streams) == 3
         for s in streams:
-            assert "S01E10" in s["name"]
+            assert "S01E10" in s["description"]
 
     def test_plugins_receive_correct_season_episode(self) -> None:
         """Verify plugins are called with the correct season/episode params."""
@@ -449,7 +449,7 @@ class TestNarutoShippudenE2E:
         streams = resp.json()["streams"]
         # Dragon Ball Z should be filtered by title matcher
         assert len(streams) == 1
-        assert "Naruto" in streams[0]["name"]
+        assert "Naruto" in streams[0]["description"]
 
     def test_plugin_error_does_not_crash_others(self) -> None:
         """One plugin failing does not prevent others from returning streams."""
@@ -476,7 +476,7 @@ class TestNarutoShippudenE2E:
 
         streams = resp.json()["streams"]
         assert len(streams) == 1
-        assert "S01E05" in streams[0]["name"]
+        assert "S01E05" in streams[0]["description"]
 
     def test_empty_results_return_empty_streams(self) -> None:
         """When no plugin returns results, response is an empty streams list."""
@@ -618,7 +618,7 @@ class TestBreakingBadE2E:
         # Only S05E03's 2 hosters survive
         assert len(streams) == 2
         for s in streams:
-            assert "S05E03" in s["name"]
+            assert "S05E03" in s["description"]
 
     def test_multi_site_realistic_scenario(self) -> None:
         """Realistic scenario: 3 sites each return their own hosters for S05E03.
@@ -718,7 +718,7 @@ class TestBreakingBadE2E:
         # Only S03E07 x 3 hosters = 3 streams
         assert len(streams) == 3
         for s in streams:
-            assert "S03E07" in s["name"]
+            assert "S03E07" in s["description"]
 
 
 # ---------------------------------------------------------------------------
@@ -874,4 +874,4 @@ class TestSeriesEdgeCases:
 
         streams = resp.json()["streams"]
         assert len(streams) == 1
-        assert "S21E1042" in streams[0]["name"]
+        assert "S21E1042" in streams[0]["description"]

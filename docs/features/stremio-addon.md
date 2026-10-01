@@ -91,10 +91,16 @@ GET /api/v1/stremio/stream/{content_type}/{stream_id}.json
 
 Each stream contains:
 
-- `name` — reference title + ` (year)` for movies or ` SxxEyy` for series, followed by the quality label (e.g. `HD 1080P`); falls back to the release name.
-- `description` — `plugin | language | HOSTER | size`
+- `name` — `Scavengarr` and the quality on a second line (`4K`, `1080p`, `720p`, `SD`, `TS`, `CAM`; no line for unknown quality). Stremio shows `name` in a narrow column, like other addons' `Torrentio\n1080p`.
+- `description` — one short line per fact, since Stremio cuts long lines: the site's own title (release name, else the site's title, else the reference title with the year; series titles get ` SxxEyy` unless they are release names), then `language · size`, then `HOSTER · plugin`. The site's title shows a wrong match that the reference title would hide.
 - `url` — direct video URL, or `/api/v1/stremio/proxy/{stream_id}/{manifest}` for HLS streams that need headers
-- `behaviorHints` — Stremio playback hints (see below)
+- `behaviorHints` — `bingeGroup` and `filename` on every stream, plus the playback hints (see below)
+
+### Autoplay of the next episode (bingeGroup)
+
+Stremio's binge watching (Settings → Player → auto-play next episode) requests the next episode's streams when an episode starts and later plays the **first** of them whose `behaviorHints.bingeGroup` equals the current stream's (exact string match; no group, no autoplay). Scavengarr sets `bingeGroup` to `scavengarr|<language code>` (`scavengarr|de`, `scavengarr|de-sub`, `scavengarr|unknown`): a German dub continues in German, with the best-ranked stream the next episode has, whatever its hoster or quality. Groups with hoster or quality would often find no match in the next episode, and autoplay would stop.
+
+`behaviorHints.filename` carries the release name when the site has one; Stremio passes it to subtitle addons (OpenSubtitles matches releases by name).
 
 > **Known issue:** `/play/{stream_id}` URLs are only emitted when no hoster resolver is wired into the use case. The default composition always wires `HosterResolverRegistry.resolve`, so unresolved streams are omitted from the response instead of falling back to `/play/`.
 
@@ -104,10 +110,12 @@ Direct (non-proxied) resolved streams include `behaviorHints` with a browser `Us
 
 ```json
 {
-  "name": "Movie Title (2021) HD 1080P",
-  "description": "kinoger | German Dub | VOE | 1.4 GB",
+  "name": "Scavengarr\n1080p",
+  "description": "Movie.Title.2021.German.DL.1080p.WEB.x264\nGerman Dub · 1.4 GB\nVOE · kinoger",
   "url": "https://cdn.hoster.com/video.mp4",
   "behaviorHints": {
+    "bingeGroup": "scavengarr|de",
+    "filename": "Movie.Title.2021.German.DL.1080p.WEB.x264",
     "notWebReady": true,
     "proxyHeaders": {
       "request": {
@@ -198,7 +206,7 @@ Streams are ranked with a weighted score:
 rank_score = language_score + (quality.value * quality_multiplier) + hoster_bonus
 ```
 
-Only one stream per hoster is returned (e.g. 5 VOE links from 5 plugins collapse to one); streams without a hoster name are always kept. With a resolver configured (the normal case) the resolution does it: a hoster's streams are tried in rank order until one resolves and passes the playback check. Without a resolver, `deduplicate_by_hoster()` keeps the best-ranked stream per hoster before formatting.
+Only one stream per hoster is returned (e.g. 5 VOE links from 5 plugins collapse to one); streams without a hoster name are always kept. Hoster names are resolver names (`HosterResolverRegistry.canonical_hoster`, wired into the stream converter): a plugin label that names a known hoster wins (redirect links such as `s.to/r?t=…` name the hoster only in the label), then the URL's domain if a resolver handles it, so mirror domains and aliases share one name (`dood.re`, `d0000d.com` → `doodstream`) for the dedup, the hoster bonus and the label. Otherwise the plugin label is used, with a domain label reduced to its second-level part (`voe.sx` → `voe`), then the URL's second-level domain; placeholder labels such as `unknown` fall through to the URL. With a resolver configured (the normal case) the resolution does it: a hoster's streams are tried in rank order until one resolves and passes the playback check. Without a resolver, `deduplicate_by_hoster()` keeps the best-ranked stream per hoster before formatting.
 
 ### Default Weights
 

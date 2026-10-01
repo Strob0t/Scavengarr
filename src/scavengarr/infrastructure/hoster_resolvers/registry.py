@@ -124,6 +124,16 @@ class HosterResolverRegistry:
         """
         return frozenset(self._resolvers) | frozenset(self._domain_map)
 
+    def canonical_hoster(self, name: str) -> str | None:
+        """Resolver name for a hoster label or second-level domain.
+
+        Mirror domains and aliases map to their resolver (``filelions`` →
+        ``vidhide``), so streams of one hoster share one name for
+        deduplication and ranking. ``None`` when no resolver handles *name*.
+        """
+        resolver = self._resolvers.get(name) or self._domain_map.get(name)
+        return resolver.name if resolver is not None else None
+
     async def cleanup(self) -> None:
         """Close resources held by resolvers that have a cleanup method."""
         for resolver in self._resolvers.values():

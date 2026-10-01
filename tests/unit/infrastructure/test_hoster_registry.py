@@ -69,6 +69,25 @@ class TestHosterResolverRegistry:
 
         assert registry.supported_domains == frozenset({"vidhide", "filelions", "voe"})
 
+    @pytest.mark.parametrize(
+        ("name", "expected"),
+        [
+            ("vidhide", "vidhide"),
+            ("filelions", "vidhide"),
+            ("voe", "voe"),
+            ("unknown-hoster", None),
+            ("", None),
+        ],
+    )
+    def test_canonical_hoster(self, name: str, expected: str | None) -> None:
+        vidhide = SimpleNamespace(
+            name="vidhide", supported_domains=frozenset({"vidhide", "filelions"})
+        )
+        voe = SimpleNamespace(name="voe")
+        registry = HosterResolverRegistry(resolvers=[vidhide, voe])
+
+        assert registry.canonical_hoster(name) == expected
+
     @pytest.mark.asyncio
     async def test_dispatches_to_registered_resolver(self) -> None:
         expected = ResolvedStream(video_url="https://cdn.example.com/video.mp4")
