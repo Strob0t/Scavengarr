@@ -34,6 +34,7 @@ def mod() -> Iterator[ModuleType]:
     spec.loader.exec_module(module)
     module._STEP_PAUSE_S = 0
     module._EPISODE_PAUSE_S = 0
+    module._REJECT_PAUSE_S = 0
     yield module
     sys.modules.pop("animeloads", None)
 
