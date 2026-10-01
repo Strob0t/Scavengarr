@@ -314,7 +314,7 @@ Stremio settings live in `StremioConfig` (YAML section `stremio:`). See [Configu
 | `max_probe_count` | 50 | Top-ranked streams to resolve; streams beyond are dropped |
 | `probe_concurrency` | 10 | Parallel resolutions |
 | `resolve_target_count` | 15 | Stop resolving after this many genuine video URLs (`0` = resolve all) |
-| `resolve_grace_seconds` | 3.0 | Once the first genuine video URL is there, unfinished resolutions get at most this long (`0` = wait until `stream_deadline_seconds`) |
+| `resolve_grace_seconds` | 4.0 | Once the first genuine video URL is there, unfinished resolutions get at most this long (`0` = wait until `stream_deadline_seconds`) |
 | `verify_streams` | `true` | Playback check of every resolved URL: first bytes with the playback headers; error status, HTML or a non-playlist HLS answer drops the stream (result cached like a failed resolution) |
 | `stream_link_ttl_seconds` | 7200 | TTL of cached stream links (`streamlink:{stream_id}`) |
 | `probe_stealth_timeout_seconds` | 15 | Page timeout of the `StealthPool` (browser-based resolvers, Cloudflare fallback) |

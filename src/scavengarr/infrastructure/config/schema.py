@@ -339,7 +339,7 @@ class StremioConfig(BaseModel):
         ),
     )
     resolve_grace_seconds: float = Field(
-        default=3.0,
+        default=4.0,
         ge=0.0,
         description=(
             "Once the first stream is resolved, the answer waits at most "
