@@ -174,8 +174,15 @@ def _apply_plugin_overrides(plugins: PluginRegistry, config: AppConfig) -> None:
                 log.info("plugin_disabled_by_config", plugin=name)
                 continue
             plugin = plugins.get(name)
+            if not isinstance(plugin, HttpxPluginBase | PlaywrightPluginBase):
+                log.warning("plugin_override_unsupported", plugin=name)
+                continue
             if override.timeout is not None:
-                plugin._timeout = override.timeout  # noqa: SLF001
+                if isinstance(plugin, HttpxPluginBase):
+                    plugin._timeout = override.timeout  # noqa: SLF001
+                else:
+                    # Playwright plugins have page timeouts, no client timeout
+                    log.warning("plugin_timeout_override_unsupported", plugin=name)
             if override.max_concurrent is not None:
                 plugin._max_concurrent = override.max_concurrent  # noqa: SLF001
             if override.max_results is not None:
@@ -274,12 +281,12 @@ def _inject_shared_browser_pool(
     for name in plugins.list_names():
         if plugins.get_mode(name) == "playwright":
             plugin = plugins.get(name)
-            if hasattr(plugin, "set_shared_pool"):
+            if isinstance(plugin, PlaywrightPluginBase):
                 plugin.set_shared_pool(pool)
 
 
-def _wire_scoring(state: AppState, config: AppConfig) -> None:
-    """Wire scoring components when scoring is enabled."""
+def _wire_scoring(state: AppState, config: AppConfig) -> asyncio.Task[None]:
+    """Wire scoring components; return the scheduler's background task."""
     state.plugin_score_store = CachePluginScoreStore(
         cache=state.cache,
         ttl_days=config.scoring.score_ttl_days,
@@ -305,8 +312,8 @@ def _wire_scoring(state: AppState, config: AppConfig) -> None:
         plugins=state.plugins,
         config=config.scoring,
     )
-    state._scoring_task = asyncio.create_task(state.scoring_scheduler.run_forever())
     log.info("scoring_scheduler_started")
+    return asyncio.create_task(state.scoring_scheduler.run_forever())
 
 
 @asynccontextmanager
@@ -505,10 +512,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 11) Plugin scoring (optional — background health + search probes)
     state.plugin_score_store = None
     state.scoring_scheduler = None
-    state._scoring_task = None
-
-    if config.scoring.enabled:
-        _wire_scoring(state, config)
+    state._scoring_task = (
+        _wire_scoring(state, config) if config.scoring.enabled else None
+    )
 
     # 12) Playwright plugins share the browser created in step 8
     _inject_shared_browser_pool(state.plugins, state.shared_browser_pool)

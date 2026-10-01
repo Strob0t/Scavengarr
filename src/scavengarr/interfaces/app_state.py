@@ -85,4 +85,4 @@ class AppState(State):
     # Plugin scoring (optional — requires scoring.enabled=True)
     plugin_score_store: PluginScoreStorePort | None
     scoring_scheduler: ScoringScheduler | None
-    _scoring_task: asyncio.Task | None
+    _scoring_task: asyncio.Task[None] | None

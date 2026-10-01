@@ -82,10 +82,9 @@ async def _lightweight_http_probe(
                 "GET",
                 checked_url,
                 headers={"Range": "bytes=0-0"},
+                timeout=timeout_seconds,
             )
-            r = await client.send(
-                req, stream=True, timeout=timeout_seconds, follow_redirects=True
-            )
+            r = await client.send(req, stream=True, follow_redirects=True)
             status_code = r.status_code
             await r.aclose()
             return True, status_code, None, checked_url
