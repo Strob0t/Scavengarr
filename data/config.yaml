@@ -134,6 +134,9 @@ stremio:
 
   # Resolution early-stop (0 = disabled, resolve all streams)
   resolve_target_count: 0
+  # Once a stream is resolved, wait at most this long for the other hosters
+  # (browser-resolved ones take 3-7 s); measured 2026-10-01
+  resolve_grace_seconds: 3.0
 
   # Stealth browser (Patchright): browser-based resolvers, Cloudflare fallback
   probe_stealth_timeout_seconds: 10.0 # page timeout (default 15)

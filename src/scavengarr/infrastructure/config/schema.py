@@ -338,6 +338,15 @@ class StremioConfig(BaseModel):
             "Set to 0 to disable early-stop (resolve all streams)."
         ),
     )
+    resolve_grace_seconds: float = Field(
+        default=3.0,
+        ge=0.0,
+        description=(
+            "Once the first stream is resolved, the answer waits at most "
+            "this long for the other hosters (browser-resolved ones take "
+            "3-7 s) instead of until stream_deadline_seconds. 0 disables it."
+        ),
+    )
 
     # Scored plugin selection (requires scoring.enabled=True)
     scoring_enabled: bool = Field(

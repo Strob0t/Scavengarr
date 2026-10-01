@@ -1479,6 +1479,48 @@ class TestResolvePhase:
     def test_deadline_default(self) -> None:
         assert _make_config().stream_deadline_seconds == 15.0
 
+    async def test_stragglers_get_a_grace_after_the_first_stream(self) -> None:
+        """Browser-resolved hosters take 3-7 s; once a stream is resolved the
+        answer waits at most resolve_grace_seconds for the others, not until
+        the deadline (measured: answers at 10.8 s that had 5 streams at 4.9 s)."""
+
+        async def _resolve(url: str, hoster: str = "") -> ResolvedStream:
+            if "slow" in url:
+                await asyncio.sleep(10)
+            return _video(url)
+
+        slow = {
+            "url": "https://streamtape.com/e/slow",
+            "hoster": "Streamtape",
+            "release": "Iron.Man.2008.German.1080p.BluRay",
+        }
+        fast = dict(_SECOND, url="https://voe.sx/e/fast")
+        uc = _resolving_use_case(
+            [slow, fast], _resolve, config=_make_config(resolve_grace_seconds=0.1)
+        )
+
+        loop = asyncio.get_running_loop()
+        start = loop.time()
+        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        assert loop.time() - start < 2
+        assert [s.url for s in result] == ["https://cdn.example/fast.mp4"]
+
+    async def test_grace_starts_with_the_first_stream(self) -> None:
+        """A title whose only working hoster is slow keeps it."""
+
+        async def _resolve(url: str, hoster: str = "") -> ResolvedStream:
+            await asyncio.sleep(0.3)
+            return _video(url)
+
+        uc = _resolving_use_case(
+            [dict(_BEST)], _resolve, config=_make_config(resolve_grace_seconds=0.1)
+        )
+
+        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        assert [s.url for s in result] == ["https://cdn.example/best.mp4"]
+
 
 class TestStreamLinkSaveFailures:
     """A failed stream-link save drops only the streams that need the link."""

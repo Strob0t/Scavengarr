@@ -77,6 +77,7 @@ class _StremioConfig(Protocol):
     max_probe_count: int
     probe_concurrency: int
     resolve_target_count: int
+    resolve_grace_seconds: float
     scoring_enabled: bool
     max_plugins_scored: int
     exploration_probability: float
@@ -202,6 +203,7 @@ class StremioStreamUseCase:
         self._max_probe_count = config.max_probe_count
         self._probe_concurrency = config.probe_concurrency
         self._resolve_target = config.resolve_target_count
+        self._resolve_grace_s = config.resolve_grace_seconds
         self._deadline_s = config.stream_deadline_seconds
         self._plugin_timeout_s = config.plugin_timeout_seconds
         self._metrics = metrics
@@ -534,7 +536,10 @@ class StremioStreamUseCase:
         Uses early-stop: once ``resolve_target_count`` genuine video URLs
         have been extracted, remaining tasks are cancelled.  At *deadline*
         (``time.monotonic()`` value) unfinished resolutions are cancelled
-        and what is resolved so far is returned.
+        and what is resolved so far is returned; once the first video URL
+        is there, that happens ``resolve_grace_seconds`` later at the
+        latest (browser-resolved hosters take 3-7 s and held answers that
+        were complete but for them until the deadline).
 
         Returns a mapping of stream index -> ResolvedStream for
         successfully resolved streams.  Failed resolutions are omitted.
@@ -564,9 +569,10 @@ class StremioStreamUseCase:
         target = self._resolve_target
         attempted = 0
         timed_out = False
+        end = deadline
 
         while pending:
-            remaining = deadline - time.monotonic()
+            remaining = end - time.monotonic()
             if remaining <= 0:
                 timed_out = True
                 break
@@ -577,7 +583,10 @@ class StremioStreamUseCase:
                 timed_out = True
                 break
             attempted += len(done)
+            first_video = video_count == 0
             video_count += self._collect_resolved(done, ranked, resolved_map)
+            if first_video and video_count and self._resolve_grace_s > 0:
+                end = min(end, time.monotonic() + self._resolve_grace_s)
             failed = [idx for idx, res in (t.result() for t in done) if res is None]
             pending |= {
                 asyncio.create_task(_resolve_one(i)) for i in hosters.next_after(failed)
@@ -599,7 +608,8 @@ class StremioStreamUseCase:
             resolved=len(resolved_map),
             video_streams=video_count,
             early_stop=target > 0 and video_count >= target,
-            deadline_hit=timed_out,
+            deadline_hit=timed_out and end == deadline,
+            grace_hit=timed_out and end < deadline,
             unfinished=len(pending) if timed_out else 0,
         )
         return resolved_map
