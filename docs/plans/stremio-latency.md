@@ -71,10 +71,12 @@ Same harness and title set (17 titles: German films, popular films, series, anim
 | 6 | mixdrop resolver, player User-Agent for checks and proxy | 15.0 / 15.1 s | 100 | 0 / 17 |
 | 7 | `resolve_grace_seconds: 3` | 13.8 / 15.0 s | 81 | 0 / 17 |
 | 8 | `resolve_grace_seconds: 4` | 14.8 / 15.0 s | 78 | 0 / 17 |
+| 9 | title filter extra-words penalty, kinoger episodes, guessit 4, one devideosrc fetch per title; the right id for *Der Schuh des Manitu* | 14.6 / 15.6 s | 82 | 1 / 17 |
 
 - The search phase decides the answer time: it ends 10 s after the request whenever one plugin still runs, which happened on most requests (kinoking's 12–17 s movie pages until its breaker opened, dead hosts in half-open probes, kinoger's Cloudflare solve, moflix). With the search done early (kinoking's movie breaker open), Inception and Interstellar were answered after 7–8 s instead of 15 s.
 - The resolve grace cuts the browser-resolved stragglers (DoodStream mirrors, Byse/Filemoon, Dropload's captcha) once a stream is there; it costs streams mostly on anime (aniworld 36 → 22–24 in runs 7/8), where those hosters carry sub variants. 4 s keeps the DoodStream mirrors of the measured requests; set 0 to wait until the deadline.
 - The set's id for *Der Schuh des Manitu* was wrong (tt0248667 is *Ali*, 2001), so runs 1–8 measured *Ali*; tt0248408 gets 4 streams (filmpalast, hdfilme, movie2k). A title-filter audit on the plugins' answers for the 17 titles found 22 results of other titles that passed the filter ("Dark Matter" for "Dark"); fixed with the extra-words penalty (`title_extra_words_penalty`), so later runs serve fewer, right streams.
+- Run 9 serves fewer wrong titles (the extra-words penalty dropped e.g. "Dark Matter" for "Dark"), so its stream count is not comparable one to one. Its title without a stream was Dark S01E01: s.to started 3 s late (every plugin slot busy), scraped "Dark", "Dark Matter" and "Dark Winds", and was cut by the search deadline. Episode requests now scrape an exact hit alone; afterwards Dark S01E01 was answered with s.to's stream in 10.8 s, and kinoger served S01E05 and S04E01 instead of S01E01.
 - Open: an earlier search end (a soft deadline once most plugins answered, or resolving while plugins still search) is the next lever; both trade completeness for time and need a decision.
 
 ## AIOStreams
