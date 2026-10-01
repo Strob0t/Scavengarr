@@ -12,8 +12,9 @@ Scrapes streamcloud.download (German streaming site, DLE-based CMS) with:
 - Category filtering (Movies/TV/Anime)
 - Bounded concurrency for detail page scraping
 
-Multi-domain support: streamcloud.download (primary; streamcloud.plus and
-streamcloud.uno redirect there), streamcloud.my (fallback).
+Multi-domain support: streamcloud.download (primary), streamcloud.plus
+(fallback; it, .press, .uno and .forum redirect to the primary, so a new
+primary is followed). streamcloud.my is a gambling site since 2026.
 No authentication required.
 """
 
@@ -43,7 +44,7 @@ from scavengarr.infrastructure.plugins.relevance import (
 # ---------------------------------------------------------------------------
 # Configurable settings
 # ---------------------------------------------------------------------------
-_DOMAINS = ["streamcloud.download", "streamcloud.my"]
+_DOMAINS = ["streamcloud.download", "streamcloud.plus"]
 _RESULTS_PER_PAGE = 12
 _MAX_PAGES = 84  # 12 results/page → 84 pages for ~1000
 

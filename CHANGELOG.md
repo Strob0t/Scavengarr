@@ -98,6 +98,9 @@ Found in a live test with Stremio Web (2026-10-01).
 - `[tool.basedpyright]` (`typeCheckingMode = "standard"`, `src` and `plugins`) replaces the editor-only setting in `.vscode/settings.json`, and `basedpyright` is a dev dependency, so `poetry run basedpyright` checks with the editor's rules (first step of next-steps item 4).
 - The 120 findings are fixed (`src/` and `plugins/` have 0 errors in standard mode) and basedpyright runs as a local pre-commit hook with the project venv, so CI checks types too. Among the fixes: concurrency ports return async context managers, plugin request kwargs are typed for httpx, the shared browser pool and the cookie hand-over of the login plugins (`PlaywrightPluginBase._cookie_params`) are typed, and the dead YAML-plugin branch of the Stremio plugin search is gone.
 
+### Fix: streamcloud's Fallback Domain Was a Gambling Site
+- `streamcloud.my`, streamcloud's fallback domain, now serves an Indonesian online-slot site: had `streamcloud.download` failed, the plugin would have scraped it. The fallback is `streamcloud.plus` (it, `.press`, `.uno` and `.forum` redirect to the primary, so a new primary domain is followed). Found by probing every plugin domain while comparing the CUII block list (`docs/plans/cuii-coverage.md`); no other plugin domain is parked or hijacked.
+
 ### Chore: Stremio Measurement Harness in the Repository
 - `scripts/stremio_measure.py` requests the 17 titles of the latency runs like Stremio does and prints latency, streams and sources per title plus a summary (`docs/plans/stremio-latency.md`). It lived outside the repository; a test pins its title set, whose id for *Der Schuh des Manitu* was wrong for 8 runs.
 

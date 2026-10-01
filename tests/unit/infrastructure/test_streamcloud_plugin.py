@@ -591,7 +591,7 @@ class TestStreamcloudDomainFallback:
         # First domain fails, second succeeds
         ok_resp = MagicMock()
         ok_resp.status_code = 200
-        ok_resp.url = httpx.URL("https://streamcloud.my/")
+        ok_resp.url = httpx.URL("https://streamcloud.plus/")
         mock_client.head = AsyncMock(
             side_effect=[
                 httpx.ConnectError("streamcloud.download down"),
@@ -602,8 +602,11 @@ class TestStreamcloudDomainFallback:
         plug._client = mock_client
         await plug._verify_domain()
 
-        assert plug.base_url == "https://streamcloud.my"
+        assert plug.base_url == "https://streamcloud.plus"
         assert plug._domain_verified is True
+        # streamcloud.my is a gambling site now (2026-10-01): never a fallback
+        tried = [str(c.args[0]) for c in mock_client.head.await_args_list]
+        assert "streamcloud.plus" in tried[1]
 
     @pytest.mark.asyncio
     async def test_falls_back_to_first_domain(self) -> None:
@@ -623,14 +626,14 @@ class TestStreamcloudDomainFallback:
     async def test_skips_verification_if_done(self) -> None:
         plug = _StreamcloudPlugin()
         plug._domain_verified = True
-        plug.base_url = "https://streamcloud.my"
+        plug.base_url = "https://streamcloud.plus"
 
         mock_client = AsyncMock()
         plug._client = mock_client
         await plug._verify_domain()
 
         mock_client.head.assert_not_called()
-        assert plug.base_url == "https://streamcloud.my"
+        assert plug.base_url == "https://streamcloud.plus"
 
 
 class TestStreamcloudCleanup:
