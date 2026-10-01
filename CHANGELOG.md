@@ -71,6 +71,7 @@ Found in a live test with Stremio Web (2026-10-01).
 
 ### Chore: Dependency Updates
 - fastapi 0.128 → 0.142, uvicorn 0.40 → 0.54 and respx 0.22 → 0.23 (constraints in `pyproject.toml`), plus the in-range updates of the lock file, among them starlette 0.46 → 1.7, pydantic 2.11 → 2.13, rebulk 3.2 → 6.0 (guessit's parser), pytest 9.1, pytest-asyncio 1.4 and pre-commit 4.6. The two movieblog URL tests ran the coroutine with `asyncio.get_event_loop()`, which pytest-asyncio 1.4 no longer provides outside a test loop; they are async tests now. Starlette's test client warns that it will move off httpx (`StarletteDeprecationWarning`), nothing to change yet.
+- pydantic-settings 2.10 → 2.15 and python-dotenv 1.1 → 1.2: both were pinned to their first minor release (`>=2.10.1,<2.11.0`, `>=1.1.1,<1.2.0`) since the config loader was added, without a recorded reason; they use caret constraints like the other dependencies now.
 - Still separate (next-steps item 5): guessit 4, redis 8, cryptography 50, structlog 26 and ruff 0.16 (together with the `ruff-pre-commit` rev).
 
 ### Chore: `xvfb-run` Works in the Dev Container
