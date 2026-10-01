@@ -72,7 +72,8 @@ Scavengarr is developed **test-first**: write a failing test, make it pass with 
 ```bash
 poetry run ruff check .          # lint
 poetry run ruff format .         # format
-poetry run pre-commit run --all-files
+poetry run basedpyright          # type check (standard mode)
+poetry run pre-commit run --all-files   # all of the above
 ```
 
 The most important Python rules (full list: [AGENTS.md → Python rules](AGENTS.md#5-python-rules-must-read)):

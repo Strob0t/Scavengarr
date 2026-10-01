@@ -80,7 +80,7 @@ AGENTS.md requires fully typed code, but only the editor checks it.
 2. Count the findings in `standard` mode; fix `src/` first, then `plugins/`.
 3. Add basedpyright to pre-commit and CI once it is clean.
 
-**2026-10-01:** step 1 done (`basedpyright` dev dependency, `[tool.basedpyright]` with `typeCheckingMode = "standard"` for `src` and `plugins`). First count: 120 errors, 57 in `src/` (infrastructure 37, application 13, interfaces 7) and 63 in `plugins/`; most are `reportArgumentType` (44), `reportAssignmentType` (18) and `reportIncompatibleMethodOverride` (17).
+**Done 2026-10-01:** basedpyright runs in pre-commit (and so in CI); `src/` and `plugins/` have 0 errors. Step 1: `basedpyright` dev dependency, `[tool.basedpyright]` with `typeCheckingMode = "standard"` for `src` and `plugins`). First count: 120 errors, 57 in `src/` (infrastructure 37, application 13, interfaces 7) and 63 in `plugins/`; most are `reportArgumentType` (44), `reportAssignmentType` (18) and `reportIncompatibleMethodOverride` (17). Four of them were bugs: the Torznab probe's GET fallback raised `TypeError`, a Playwright plugin's timeout override had no effect, ddlvalley and scnsrc were registered as German, and a failed standalone Playwright start referenced an unbound variable.
 
 ## 5. Structure and maintenance
 

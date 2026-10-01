@@ -543,7 +543,8 @@ class StreamkistePlugin(HttpxPluginBase):
             return None
 
         title = parser.title or str(result.get("title", ""))
-        genres = parser.genres or list(result.get("genres", []))
+        listed = result.get("genres")
+        genres = parser.genres or (list(listed) if isinstance(listed, list) else [])
         year = parser.year or str(result.get("year", ""))
         category = stream_category(genres, is_series=is_series)
 

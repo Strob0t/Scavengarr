@@ -234,7 +234,7 @@ class FilmfansPlugin(HttpxPluginBase):
         # Fetch releases via API
         body = await self._fetch_text(
             f"{self.base_url}/api/v1/{m.group(1)}",
-            params={"_": _timestamp()},
+            params={"_": str(_timestamp())},
             context=url_id,
         )
         data = self._parse_json_text(body, url_id)

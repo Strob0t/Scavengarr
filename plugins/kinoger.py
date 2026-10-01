@@ -643,7 +643,8 @@ class KinogerPlugin(HttpxPluginBase):
             return None
 
         title = parser.title or str(result.get("title", ""))
-        genres = parser.genres or list(result.get("genres", []))
+        listed = result.get("genres")
+        genres = parser.genres or (list(listed) if isinstance(listed, list) else [])
         is_series = parser.is_series or bool(result.get("is_series", False))
         quality = parser.quality or str(result.get("quality", ""))
         category = stream_category(genres, is_series=is_series)

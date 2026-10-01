@@ -127,7 +127,7 @@ class CinePlugin(HttpxPluginBase):
         display_title = f"{title} ({year})" if year else title
 
         # Quality label from search entry
-        quality = _QUALITY_MAP.get(quality_code, "")
+        quality = _QUALITY_MAP.get(quality_code, "") if quality_code is not None else ""
 
         # Source URL
         source_url = f"{self.base_url}/#tt{imdb_id}" if imdb_id else self.base_url

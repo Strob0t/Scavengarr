@@ -662,9 +662,9 @@ class AnimeLoadsPlugin(PlaywrightPluginBase):
         self, page: Page, slug: str, release_id: int, release: dict[str, Any]
     ) -> list[str]:
         if await self._login(page):
-            links = await self._request_links(page, _enc(slug, release_id, "cnl"))
-            if links is not None:
-                return links
+            cnl_links = await self._request_links(page, _enc(slug, release_id, "cnl"))
+            if cnl_links is not None:
+                return cnl_links
 
         episodes = int(release.get("episodes") or 0)
         if not 0 < episodes <= _MAX_ANON_EPISODES:

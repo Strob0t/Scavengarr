@@ -69,6 +69,40 @@ class _SerializedPlugin(PlaywrightPluginBase):
 # ---------------------------------------------------------------------------
 
 
+class TestCookieParams:
+    def test_context_cookies_become_add_cookies_params(self) -> None:
+        # Login plugins (boerse, mygully) export a login context's cookies
+        # and add them to every later context
+        cookies = [
+            {
+                "name": "bbsessionhash",
+                "value": "abc",
+                "domain": ".boerse.am",
+                "path": "/",
+                "expires": -1,
+                "httpOnly": True,
+                "secure": True,
+                "sameSite": "Lax",
+            },
+            {"value": "nameless", "domain": "x", "path": "/"},
+        ]
+
+        params = PlaywrightPluginBase._cookie_params(cookies)  # type: ignore[arg-type]
+
+        assert params == [
+            {
+                "name": "bbsessionhash",
+                "value": "abc",
+                "domain": ".boerse.am",
+                "path": "/",
+                "expires": -1,
+                "httpOnly": True,
+                "secure": True,
+                "sameSite": "Lax",
+            }
+        ]
+
+
 class TestInit:
     def test_base_url_set_from_first_domain(self) -> None:
         plugin = _TestPlugin()

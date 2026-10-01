@@ -504,8 +504,8 @@ class ScnSrcPlugin(PlaywrightPluginBase):
 
         results: list[SearchResult] = []
         for post in all_posts:
-            links = post.get("links", [])
-            if not links:
+            links = post.get("links")
+            if not isinstance(links, list) or not links:
                 continue
 
             primary_link = links[0]["link"]

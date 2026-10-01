@@ -9,17 +9,21 @@ from __future__ import annotations
 
 import asyncio
 from contextvars import Token
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import structlog
 from patchright.async_api import (
     Browser,
     BrowserContext,
+    Cookie,
     Page,
     Playwright,
     Response,
     async_playwright,
 )
+
+if TYPE_CHECKING:
+    from patchright._impl._api_structures import SetCookieParam
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.browser.clearance_store import ClearanceStore
@@ -132,6 +136,34 @@ class PlaywrightPluginBase:
     # ------------------------------------------------------------------
     # Shared browser pool injection
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _cookie_params(cookies: list[Cookie]) -> list[SetCookieParam]:
+        """A context's cookies as ``add_cookies()`` parameters.
+
+        For plugins that log in once in a context of their own and add the
+        session to every later context. Cookies without a name are dropped.
+        """
+        params: list[SetCookieParam] = []
+        for cookie in cookies:
+            name = cookie.get("name")
+            if not name:
+                continue
+            param: SetCookieParam = {"name": name, "value": cookie.get("value", "")}
+            if "domain" in cookie:
+                param["domain"] = cookie["domain"]
+            if "path" in cookie:
+                param["path"] = cookie["path"]
+            if "expires" in cookie:
+                param["expires"] = cookie["expires"]
+            if "httpOnly" in cookie:
+                param["httpOnly"] = cookie["httpOnly"]
+            if "secure" in cookie:
+                param["secure"] = cookie["secure"]
+            if "sameSite" in cookie:
+                param["sameSite"] = cookie["sameSite"]
+            params.append(param)
+        return params
 
     def set_shared_pool(self, pool: SharedBrowserPool) -> None:
         """Inject a :class:`SharedBrowserPool` reference.

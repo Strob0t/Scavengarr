@@ -123,7 +123,7 @@ class CinebyPlugin(HttpxPluginBase):
                 break
 
             data = self._safe_parse_json(resp, context="cineby_search")
-            if data is None:
+            if not isinstance(data, dict):
                 break
 
             results = data.get("results") or []
@@ -156,7 +156,8 @@ class CinebyPlugin(HttpxPluginBase):
         )
         if resp is None:
             return None
-        return self._safe_parse_json(resp, context="cineby_detail")
+        data = self._safe_parse_json(resp, context="cineby_detail")
+        return data if isinstance(data, dict) else None
 
     def _build_search_result(
         self,

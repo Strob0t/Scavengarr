@@ -30,6 +30,7 @@ from scavengarr.infrastructure.plugins.categories import (
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
 if TYPE_CHECKING:
+    from patchright._impl._api_structures import SetCookieParam
     from patchright.async_api import BrowserContext
 
 # ---------------------------------------------------------------------------
@@ -117,7 +118,7 @@ class _PostLinkParser(HTMLParser):
             if self._in_post:
                 self._div_depth += 1
             else:
-                div_id = attr_dict.get("id", "")
+                div_id = attr_dict.get("id") or ""
                 if div_id.startswith("post_message"):
                     self._in_post = True
                     self._div_depth = 0
@@ -274,7 +275,7 @@ class BoersePlugin(PlaywrightPluginBase):
     def __init__(self) -> None:
         super().__init__()
         self._logged_in: bool = False
-        self._session_cookies: list[dict] | None = None
+        self._session_cookies: list[SetCookieParam] | None = None
         self._login_lock = asyncio.Lock()
 
     async def _prepare_context(self, ctx: BrowserContext) -> None:  # type: ignore[override]
@@ -361,10 +362,12 @@ class BoersePlugin(PlaywrightPluginBase):
 
                         # Verify login: check for session cookie
                         cookies = await login_ctx.cookies()
-                        has_session = any(c["name"] == "bbsessionhash" for c in cookies)
+                        has_session = any(
+                            c.get("name") == "bbsessionhash" for c in cookies
+                        )
                         if has_session:
                             self.base_url = domain_url
-                            self._session_cookies = cookies
+                            self._session_cookies = self._cookie_params(cookies)
                             self._logged_in = True
                             self._log.info("boerse_login_success", domain=domain)
                             return

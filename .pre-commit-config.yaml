@@ -22,3 +22,14 @@ repos:
 
       # 3) Formatter zuletzt
       - id: ruff-format
+
+  # Type check (standard mode, [tool.basedpyright] in pyproject.toml) with the
+  # project venv, so it sees the installed dependencies
+  - repo: local
+    hooks:
+      - id: basedpyright
+        name: basedpyright
+        entry: poetry run basedpyright
+        language: system
+        types: [python]
+        pass_filenames: false

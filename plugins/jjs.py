@@ -524,13 +524,14 @@ class JjsPlugin(HttpxPluginBase):
         title = str(item.get("title", ""))
         if not title:
             return None
+        category = item.get("category")
 
         return SearchResult(
             title=title,
             download_link=links[0]["link"],
             download_links=links,
             source_url=str(item.get("url", "")),
-            category=int(item.get("category", 2000)),
+            category=category if isinstance(category, int) else 2000,
             size=str(item.get("size", "")) or None,
             release_name=title,
         )

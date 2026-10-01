@@ -639,8 +639,9 @@ class Movie2kPlugin(HttpxPluginBase):
         is_tv_request = category is not None and category >= 5000
 
         # Get initial results
+        items: list[dict[str, str | list[str]]]
         if query:
-            items = await self._search_page(query)
+            items = [dict(r) for r in await self._search_page(query)]
         elif is_tv_request:
             items = await self._browse_pages("/tv/all")
         else:

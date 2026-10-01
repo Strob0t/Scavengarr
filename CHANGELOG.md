@@ -58,8 +58,9 @@ Found in a live test with Stremio Web (2026-10-01).
 - **Torznab reachability probe**: when a site answers `HEAD` with 405/501, the probe falls back to a ranged `GET`, but passed `timeout=` to `AsyncClient.send()`, which has no such parameter: every fallback raised `TypeError` (the test mocked `send`). The timeout now goes on the request.
 - **Plugin `timeout` override on Playwright plugins**: `plugins.overrides.<name>.timeout` set an attribute Playwright plugins never read; it is reported as unsupported (`plugin_timeout_override_unsupported`) instead of silently ignored. `max_concurrent`/`max_results` apply to both bases as before.
 
-### Chore: basedpyright Settings in pyproject.toml
-- `[tool.basedpyright]` (`typeCheckingMode = "standard"`, `src` and `plugins`) replaces the editor-only setting in `.vscode/settings.json`, and `basedpyright` is a dev dependency, so `poetry run basedpyright` checks with the editor's rules (first step of next-steps item 4; 120 findings to fix before it joins the gate).
+### Chore: Type Checking in the Gate
+- `[tool.basedpyright]` (`typeCheckingMode = "standard"`, `src` and `plugins`) replaces the editor-only setting in `.vscode/settings.json`, and `basedpyright` is a dev dependency, so `poetry run basedpyright` checks with the editor's rules (first step of next-steps item 4).
+- The 120 findings are fixed (`src/` and `plugins/` have 0 errors in standard mode) and basedpyright runs as a local pre-commit hook with the project venv, so CI checks types too. Among the fixes: concurrency ports return async context managers, plugin request kwargs are typed for httpx, the shared browser pool and the cookie hand-over of the login plugins (`PlaywrightPluginBase._cookie_params`) are typed, and the dead YAML-plugin branch of the Stremio plugin search is gone.
 
 ### Chore: `xvfb-run` Works in the Dev Container
 - `.devcontainer/setup.sh` installs `xauth` with `xvfb`: `--no-install-recommends` left it out, and `xvfb-run -a <cmd>` (headful browser tests, AGENTS.md §9) failed with "xauth command not found". The step also runs when Xvfb is present but xauth is missing.
