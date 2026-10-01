@@ -192,30 +192,28 @@ def build_behavior_hints(
     }
 
 
-def build_cache_links(
-    stream_ids: list[str],
-    ranked: list[RankedStream],
-    resolved_map: dict[int, ResolvedStream],
-) -> list[CachedStreamLink]:
-    """Build ``CachedStreamLink`` objects, enriching HLS streams with proxy metadata."""
-    links: list[CachedStreamLink] = []
-    for i, (sid, ranked_s) in enumerate(zip(stream_ids, ranked)):
-        resolved = resolved_map.get(i)
-        extra_kwargs: dict[str, str | bool] = {}
-        if resolved is not None and resolved.is_hls and resolved.headers:
-            extra_kwargs["video_url"] = resolved.video_url
-            extra_kwargs["video_headers"] = json.dumps(resolved.headers)
-            extra_kwargs["is_hls"] = True
-        links.append(
-            CachedStreamLink(
-                stream_id=sid,
-                hoster_url=ranked_s.url,
-                title=ranked_s.title,
-                hoster=ranked_s.hoster,
-                **extra_kwargs,
-            )
+def build_cache_link(
+    stream_id: str,
+    ranked: RankedStream,
+    resolved: ResolvedStream | None,
+) -> CachedStreamLink:
+    """The link ``/play/`` and ``/proxy/`` look up, with HLS proxy metadata."""
+    if resolved is not None and resolved.is_hls and resolved.headers:
+        return CachedStreamLink(
+            stream_id=stream_id,
+            hoster_url=ranked.url,
+            title=ranked.title,
+            hoster=ranked.hoster,
+            video_url=resolved.video_url,
+            video_headers=json.dumps(resolved.headers),
+            is_hls=True,
         )
-    return links
+    return CachedStreamLink(
+        stream_id=stream_id,
+        hoster_url=ranked.url,
+        title=ranked.title,
+        hoster=ranked.hoster,
+    )
 
 
 def build_stream_from_resolved(

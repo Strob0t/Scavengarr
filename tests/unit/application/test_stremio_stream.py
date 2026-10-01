@@ -1533,6 +1533,28 @@ class TestStreamLinkSaveFailures:
         assert len(result) == 1
         assert result[0].url.startswith("http://localhost:8080/api/v1/stremio/play/")
 
+    async def test_only_links_the_answer_serves_are_saved(self) -> None:
+        """Saving a link per ranked stream (73 for one film) delayed the
+        answer by 6 s; only proxied streams need theirs (/proxy/, /play/)."""
+        repo = AsyncMock()
+
+        async def _resolve(url: str, hoster: str = "") -> ResolvedStream | None:
+            if "voe" in url:  # HLS needing a Referer: served through the proxy
+                return ResolvedStream(
+                    video_url="https://cdn.voe.example/hls/master.m3u8",
+                    headers={"Referer": "https://voe.sx/"},
+                    is_hls=True,
+                )
+            return ResolvedStream(video_url="https://cdn.example/video.mp4")
+
+        result = await self._use_case(repo, AsyncMock(side_effect=_resolve)).execute(
+            _make_request(), base_url="http://localhost:8080"
+        )
+
+        assert len(result) == 2
+        saved = [c.args[0].hoster_url for c in repo.save.await_args_list]
+        assert saved == ["https://voe.sx/e/abc"]
+
     async def test_direct_streams_survive_failed_saves(self) -> None:
         repo = AsyncMock()
         repo.save = AsyncMock(side_effect=RuntimeError("cache down"))

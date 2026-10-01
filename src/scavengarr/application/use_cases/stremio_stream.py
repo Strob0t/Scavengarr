@@ -30,7 +30,7 @@ from scavengarr.application.stremio.queries import (
     first_available_title,
 )
 from scavengarr.application.stremio.stream_builder import (
-    build_cache_links,
+    build_cache_link,
     build_stream_from_resolved,
     deduplicate_by_hoster,
     format_stream,
@@ -440,54 +440,53 @@ class StremioStreamUseCase:
         *,
         deadline: float,
     ) -> list[StremioStream]:
-        """Cache hoster URLs and replace stream URLs with proxy play links.
+        """Resolve the streams and point them at their playable URLs.
 
         When a resolve callback is configured, resolves hoster embed URLs
         to direct video URLs and attaches ``behaviorHints.proxyHeaders``
         so Stremio sends the correct HTTP headers (Referer, User-Agent)
-        when playing the stream.  Streams that fail to resolve fall back
-        to the ``/play/`` proxy endpoint.
+        when playing the stream. Without one, streams go through the
+        ``/play/`` endpoint. Only streams served through our own endpoints
+        (``/play/``, the HLS proxy) get their link saved; one save per
+        ranked stream (dozens) delayed the answer by seconds.
         """
         # --- Resolve step: extract direct video URLs + headers ---
         resolved_map: dict[int, ResolvedStream] = {}
         if self._resolve_fn:
             resolved_map = await self._resolve_top_streams(ranked, deadline)
 
-        # --- Cache step (parallel writes) ---
-        stream_ids = [uuid4().hex for _ in streams]
-        links = build_cache_links(stream_ids, ranked, resolved_map)
-        unsaved = await self._save_links(links)
-
-        proxied: list[StremioStream] = []
+        answer: list[tuple[StremioStream, CachedStreamLink | None]] = []
         skipped_echo = 0
         skipped_unresolved = 0
-        # Streams through our own /play/ or HLS proxy need their saved link
-        skipped_unsaved = 0
         has_resolver = bool(self._resolve_fn)
-        for i, (stream, sid) in enumerate(zip(streams, stream_ids)):
+        for i, stream in enumerate(streams):
+            sid = uuid4().hex
             resolved = resolved_map.get(i)
             if resolved is not None:
-                original_url = ranked[i].url if i < len(ranked) else ""
                 built = build_stream_from_resolved(
-                    stream, resolved, original_url, sid, base_url, self._user_agent
+                    stream, resolved, ranked[i].url, sid, base_url, self._user_agent
                 )
                 if built is None:
                     skipped_echo += 1
-                elif sid in unsaved and built.url.startswith(base_url):
-                    skipped_unsaved += 1
-                else:
-                    proxied.append(built)
+                    continue
             elif has_resolver:
                 # Resolver is configured but returned None — skip this stream.
                 # The /play/ proxy would also fail (502).
                 skipped_unresolved += 1
-            elif sid in unsaved:
-                skipped_unsaved += 1
+                continue
             else:
                 # No resolver configured — proxy through /play/ endpoint
-                proxied.append(
-                    replace(stream, url=f"{base_url}/api/v1/stremio/play/{sid}")
-                )
+                built = replace(stream, url=f"{base_url}/api/v1/stremio/play/{sid}")
+            served_here = built.url.startswith(base_url)
+            link = build_cache_link(sid, ranked[i], resolved) if served_here else None
+            answer.append((built, link))
+
+        # --- Cache step (parallel writes) for streams served by us ---
+        unsaved = await self._save_links([lnk for _, lnk in answer if lnk is not None])
+        proxied = [
+            s for s, lnk in answer if lnk is None or lnk.stream_id not in unsaved
+        ]
+        skipped_unsaved = len(answer) - len(proxied)
         if skipped_echo or skipped_unresolved or skipped_unsaved:
             log.info(
                 "stremio_streams_skipped",
