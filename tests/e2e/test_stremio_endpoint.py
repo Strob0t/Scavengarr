@@ -196,7 +196,7 @@ class TestManifestEndpoint:
         plugins = MagicMock()
         plugins.get_by_provides.return_value = []
 
-        app = _make_app(plugins=plugins)
+        app = _make_app(plugins=plugins, stremio_catalog_uc=AsyncMock())
         client = TestClient(app)
 
         resp = client.get(f"{_PREFIX}/stremio/manifest.json")
@@ -211,7 +211,7 @@ class TestManifestEndpoint:
         plugins = MagicMock()
         plugins.get_by_provides.return_value = []
 
-        app = _make_app(plugins=plugins)
+        app = _make_app(plugins=plugins, stremio_catalog_uc=AsyncMock())
         client = TestClient(app)
 
         resp = client.get(f"{_PREFIX}/stremio/manifest.json")

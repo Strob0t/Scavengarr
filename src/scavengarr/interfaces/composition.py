@@ -554,7 +554,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         pool=state.concurrency_pool,
         circuit_breaker=state.circuit_breaker,
     )
-    state.stremio_catalog_uc = StremioCatalogUseCase(tmdb=state.tmdb_client)
+    # The IMDB fallback (no TMDB key) has no trending lists, only search
+    state.stremio_catalog_uc = StremioCatalogUseCase(
+        tmdb=state.tmdb_client, has_trending=bool(config.tmdb_api_key)
+    )
 
     # Mark the application as ready for traffic
     state.graceful_shutdown.mark_ready()

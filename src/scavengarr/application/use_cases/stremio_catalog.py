@@ -15,10 +15,13 @@ class StremioCatalogUseCase:
 
     Delegates all API/cache logic to the injected TmdbClientPort.
     The use case is responsible for content-type dispatching and error handling.
+    *has_trending* is false for a title source without trending lists (the
+    IMDB fallback client without a TMDB key searches only).
     """
 
-    def __init__(self, tmdb: TmdbClientPort) -> None:
+    def __init__(self, tmdb: TmdbClientPort, *, has_trending: bool = True) -> None:
         self._tmdb = tmdb
+        self.has_trending = has_trending
 
     async def trending(
         self,

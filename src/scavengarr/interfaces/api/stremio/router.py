@@ -40,7 +40,32 @@ _CORS_HEADERS = {
 }
 
 
-def _build_manifest(plugin_names: list[str]) -> dict[str, Any]:
+def _catalogs(*, trending: bool) -> list[dict[str, Any]]:
+    """The addon's catalogs: trending rows, searchable.
+
+    Without trending (no TMDB key, only the search works) they are
+    search-only, so Stremio lists them in its search results instead of
+    showing empty rows on its board.
+    """
+    search = [{"name": "search", "isRequired": not trending}]
+    label = "Trending " if trending else ""
+    return [
+        {
+            "type": "movie",
+            "id": "scavengarr-trending-movies",
+            "name": f"Scavengarr {label}Movies",
+            "extra": search,
+        },
+        {
+            "type": "series",
+            "id": "scavengarr-trending-series",
+            "name": f"Scavengarr {label}Series",
+            "extra": search,
+        },
+    ]
+
+
+def _build_manifest(catalogs: list[dict[str, Any]]) -> dict[str, Any]:
     """Build the Stremio addon manifest."""
     return {
         "id": _ADDON_ID,
@@ -48,21 +73,8 @@ def _build_manifest(plugin_names: list[str]) -> dict[str, Any]:
         "name": "Scavengarr",
         "description": "German streaming links from multiple sources",
         "types": ["movie", "series"],
-        "catalogs": [
-            {
-                "type": "movie",
-                "id": "scavengarr-trending-movies",
-                "name": "Scavengarr Trending Movies",
-                "extra": [{"name": "search", "isRequired": False}],
-            },
-            {
-                "type": "series",
-                "id": "scavengarr-trending-series",
-                "name": "Scavengarr Trending Series",
-                "extra": [{"name": "search", "isRequired": False}],
-            },
-        ],
-        "resources": ["catalog", "stream"],
+        "catalogs": catalogs,
+        "resources": ["catalog", "stream"] if catalogs else ["stream"],
         "idPrefixes": ["tt", "tmdb:"],
         "behaviorHints": {
             "adult": False,
@@ -173,8 +185,9 @@ def _format_meta_preview(m: StremioMetaPreview) -> dict[str, Any]:
 async def stremio_manifest(request: Request) -> JSONResponse:
     """Serve the Stremio addon manifest."""
     state = cast(AppState, request.app.state)
-    plugin_names = state.plugins.get_by_provides("stream")
-    manifest = _build_manifest(plugin_names)
+    catalog_uc = getattr(state, "stremio_catalog_uc", None)
+    catalogs = [] if catalog_uc is None else _catalogs(trending=catalog_uc.has_trending)
+    manifest = _build_manifest(catalogs)
 
     return JSONResponse(content=manifest, headers=_CORS_HEADERS)
 

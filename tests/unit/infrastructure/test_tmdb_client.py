@@ -142,6 +142,30 @@ _SEARCH_TV_RESPONSE = {
 }
 
 
+# TMDB lists carry no IMDb ids; each title's comes from its external_ids
+_IMDB_IDS = {
+    ("movie", 550): "tt0137523",
+    ("movie", 680): "tt0110912",
+    ("movie", 603): "tt0133093",
+    ("tv", 94997): "tt6468322",
+    ("tv", 1396): "tt0903747",
+}
+
+
+def _mock_imdb_ids() -> None:
+    for (endpoint, tmdb_id), imdb_id in _IMDB_IDS.items():
+        respx.get(f"{_BASE}/{endpoint}/{tmdb_id}/external_ids").respond(
+            json={"id": tmdb_id, "imdb_id": imdb_id}
+        )
+
+
+def _cache_writes(cache: AsyncMock) -> dict[str, tuple[object, object]]:
+    """Cache key -> (value, ttl) of every write."""
+    return {
+        c.args[0]: (c.args[1], c.kwargs.get("ttl")) for c in cache.set.call_args_list
+    }
+
+
 # ---------------------------------------------------------------------------
 # find_by_imdb_id
 # ---------------------------------------------------------------------------
@@ -253,11 +277,12 @@ class TestTrendingMovies:
         respx.get(f"{_BASE}/trending/movie/week").respond(
             json=_TRENDING_MOVIES_RESPONSE
         )
+        _mock_imdb_ids()
 
         previews = await client.trending_movies()
 
         assert len(previews) == 2
-        assert previews[0].id == "tmdb:550"
+        assert previews[0].id == "tt0137523"
         assert previews[0].name == "Fight Club"
         assert previews[0].type == "movie"
         assert (
@@ -266,7 +291,7 @@ class TestTrendingMovies:
         )
         assert previews[0].release_info == "1999"
         assert previews[0].imdb_rating == "8.4"
-        assert previews[1].id == "tmdb:680"
+        assert previews[1].id == "tt0110912"
         assert previews[1].name == "Pulp Fiction"
 
     @respx.mock
@@ -275,6 +300,7 @@ class TestTrendingMovies:
         route = respx.get(f"{_BASE}/trending/movie/week").respond(
             json=_TRENDING_MOVIES_RESPONSE
         )
+        _mock_imdb_ids()
 
         await client.trending_movies(page=2)
 
@@ -288,12 +314,12 @@ class TestTrendingMovies:
         respx.get(f"{_BASE}/trending/movie/week").respond(
             json=_TRENDING_MOVIES_RESPONSE
         )
+        _mock_imdb_ids()
 
         await client.trending_movies()
 
-        cache.set.assert_awaited_once()
-        assert cache.set.call_args[0][0] == "tmdb:trending:movie:1"
-        assert cache.set.call_args[1]["ttl"] == 21_600
+        _, ttl = _cache_writes(cache)["tmdb:trending:movie:1"]
+        assert ttl == 21_600
 
     @respx.mock
     @pytest.mark.asyncio()
@@ -329,11 +355,12 @@ class TestTrendingTv:
         self, client: HttpxTmdbClient, cache: AsyncMock
     ) -> None:
         respx.get(f"{_BASE}/trending/tv/week").respond(json=_TRENDING_TV_RESPONSE)
+        _mock_imdb_ids()
 
         previews = await client.trending_tv()
 
         assert len(previews) == 1
-        assert previews[0].id == "tmdb:94997"
+        assert previews[0].id == "tt6468322"
         assert previews[0].name == "Haus des Geldes"
         assert previews[0].type == "series"
         assert previews[0].release_info == "2017"
@@ -342,11 +369,11 @@ class TestTrendingTv:
     @pytest.mark.asyncio()
     async def test_cache_write(self, client: HttpxTmdbClient, cache: AsyncMock) -> None:
         respx.get(f"{_BASE}/trending/tv/week").respond(json=_TRENDING_TV_RESPONSE)
+        _mock_imdb_ids()
 
         await client.trending_tv()
 
-        cache.set.assert_awaited_once()
-        assert cache.set.call_args[0][0] == "tmdb:trending:tv:1"
+        assert "tmdb:trending:tv:1" in _cache_writes(cache)
 
 
 # ---------------------------------------------------------------------------
@@ -361,11 +388,12 @@ class TestSearchMovies:
         self, client: HttpxTmdbClient, cache: AsyncMock
     ) -> None:
         respx.get(f"{_BASE}/search/movie").respond(json=_SEARCH_MOVIES_RESPONSE)
+        _mock_imdb_ids()
 
         results = await client.search_movies("Matrix")
 
         assert len(results) == 1
-        assert results[0].id == "tmdb:603"
+        assert results[0].id == "tt0133093"
         assert results[0].name == "Matrix"
         assert results[0].type == "movie"
 
@@ -373,6 +401,7 @@ class TestSearchMovies:
     @pytest.mark.asyncio()
     async def test_query_param(self, client: HttpxTmdbClient, cache: AsyncMock) -> None:
         route = respx.get(f"{_BASE}/search/movie").respond(json=_SEARCH_MOVIES_RESPONSE)
+        _mock_imdb_ids()
 
         await client.search_movies("Iron Man", page=2)
 
@@ -387,12 +416,12 @@ class TestSearchMovies:
         self, client: HttpxTmdbClient, cache: AsyncMock
     ) -> None:
         respx.get(f"{_BASE}/search/movie").respond(json=_SEARCH_MOVIES_RESPONSE)
+        _mock_imdb_ids()
 
         await client.search_movies("Matrix", page=1)
 
-        cache.set.assert_awaited_once()
-        assert cache.set.call_args[0][0] == "tmdb:search:movie:Matrix:1"
-        assert cache.set.call_args[1]["ttl"] == 3_600
+        _, ttl = _cache_writes(cache)["tmdb:search:movie:Matrix:1"]
+        assert ttl == 3_600
 
     @respx.mock
     @pytest.mark.asyncio()
@@ -415,11 +444,12 @@ class TestSearchTv:
         self, client: HttpxTmdbClient, cache: AsyncMock
     ) -> None:
         respx.get(f"{_BASE}/search/tv").respond(json=_SEARCH_TV_RESPONSE)
+        _mock_imdb_ids()
 
         results = await client.search_tv("Breaking Bad")
 
         assert len(results) == 1
-        assert results[0].id == "tmdb:1396"
+        assert results[0].id == "tt0903747"
         assert results[0].name == "Breaking Bad"
         assert results[0].type == "series"
 
@@ -427,11 +457,78 @@ class TestSearchTv:
     @pytest.mark.asyncio()
     async def test_cache_key(self, client: HttpxTmdbClient, cache: AsyncMock) -> None:
         respx.get(f"{_BASE}/search/tv").respond(json=_SEARCH_TV_RESPONSE)
+        _mock_imdb_ids()
 
         await client.search_tv("Breaking Bad", page=3)
 
-        cache.set.assert_awaited_once()
-        assert cache.set.call_args[0][0] == "tmdb:search:tv:Breaking Bad:3"
+        assert "tmdb:search:tv:Breaking Bad:3" in _cache_writes(cache)
+
+
+class TestCatalogImdbIds:
+    """Catalog items carry IMDb ids: Stremio opens an item only through a
+    meta addon for its id prefix, and Cinemeta knows ``tt`` ids only."""
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_titles_without_imdb_id_are_left_out(
+        self, client: HttpxTmdbClient, cache: AsyncMock
+    ) -> None:
+        respx.get(f"{_BASE}/trending/movie/week").respond(
+            json=_TRENDING_MOVIES_RESPONSE
+        )
+        respx.get(f"{_BASE}/movie/550/external_ids").respond(
+            json={"id": 550, "imdb_id": "tt0137523"}
+        )
+        respx.get(f"{_BASE}/movie/680/external_ids").respond(
+            json={"id": 680, "imdb_id": None}
+        )
+
+        previews = await client.trending_movies()
+
+        assert [p.id for p in previews] == ["tt0137523"]
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_imdb_ids_are_cached(
+        self, client: HttpxTmdbClient, cache: AsyncMock
+    ) -> None:
+        respx.get(f"{_BASE}/search/tv").respond(json=_SEARCH_TV_RESPONSE)
+        _mock_imdb_ids()
+
+        await client.search_tv("Breaking Bad")
+
+        value, ttl = _cache_writes(cache)["tmdb:imdb:tv:1396"]
+        assert value == "tt0903747"
+        assert ttl == 30 * 86_400
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_cached_imdb_id_skips_the_lookup(
+        self, client: HttpxTmdbClient, cache: AsyncMock
+    ) -> None:
+        cache.get.side_effect = lambda key: (
+            "tt0903747" if key == "tmdb:imdb:tv:1396" else None
+        )
+        respx.get(f"{_BASE}/search/tv").respond(json=_SEARCH_TV_RESPONSE)
+        lookup = respx.get(f"{_BASE}/tv/1396/external_ids")
+
+        results = await client.search_tv("Breaking Bad")
+
+        assert [r.id for r in results] == ["tt0903747"]
+        assert not lookup.called
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_failed_lookup_is_not_cached(
+        self, client: HttpxTmdbClient, cache: AsyncMock
+    ) -> None:
+        respx.get(f"{_BASE}/search/tv").respond(json=_SEARCH_TV_RESPONSE)
+        respx.get(f"{_BASE}/tv/1396/external_ids").respond(status_code=500)
+
+        results = await client.search_tv("Breaking Bad")
+
+        assert results == []
+        assert "tmdb:imdb:tv:1396" not in _cache_writes(cache)
 
 
 # ---------------------------------------------------------------------------
@@ -681,11 +778,14 @@ class TestEdgeCases:
             ],
         }
         respx.get(f"{_BASE}/trending/movie/week").respond(json=response)
+        respx.get(f"{_BASE}/movie/999/external_ids").respond(
+            json={"id": 999, "imdb_id": "tt0000999"}
+        )
 
         previews = await client.trending_movies()
 
         assert len(previews) == 1
-        assert previews[0].id == "tmdb:999"
+        assert previews[0].id == "tt0000999"
         assert previews[0].poster == ""
 
     @respx.mock
@@ -707,6 +807,9 @@ class TestEdgeCases:
             ],
         }
         respx.get(f"{_BASE}/trending/movie/week").respond(json=response)
+        respx.get(f"{_BASE}/movie/999/external_ids").respond(
+            json={"id": 999, "imdb_id": "tt0000999"}
+        )
 
         previews = await client.trending_movies()
 

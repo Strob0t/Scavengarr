@@ -64,9 +64,9 @@ Returns the Stremio addon manifest with:
 
 - Addon ID: `community.scavengarr`
 - Supported types: `movie`, `series`
-- Catalogs: `scavengarr-trending-movies`, `scavengarr-trending-series` (both with optional `search` extra)
+- Catalogs: `scavengarr-trending-movies`, `scavengarr-trending-series` (trending rows with optional `search` extra; without a TMDB key they are search-only, `"isRequired": true`, named "Scavengarr Movies"/"Scavengarr Series", since the IMDB fallback has no trending lists and Stremio showed empty rows on its board)
 - ID prefixes: `tt` (IMDb), `tmdb:` (TMDB)
-- Resources: `catalog`, `stream`
+- Resources: `catalog`, `stream` (only `stream` without a catalog use case)
 
 ### Catalog
 
@@ -78,6 +78,7 @@ GET /api/v1/stremio/catalog/{content_type}/{catalog_id}/search={query}.json
 - Trending: TMDB trending movies or series for `content_type` (`catalog_id` is not evaluated).
 - Search: TMDB search (German locale), or IMDB Suggest without a TMDB key.
 - Response: `{"metas": [StremioMetaPreview, ...]}`; errors and unknown types return an empty list.
+- Items carry IMDb ids (`tt…`): Stremio opens a catalog item through a meta addon for its id prefix, Cinemeta knows IMDb ids, and with a `tmdb:` id Stremio showed "No addons were requested for this meta!". TMDB lists carry no IMDb ids, so each title's comes from `/{movie|tv}/{id}/external_ids` (cached 30 days); titles without one are left out.
 
 ### Stream Resolution
 
@@ -245,13 +246,14 @@ The addon uses TMDB for title resolution and catalog browsing.
 | Feature | Details |
 |---|---|
 | Title resolution | `find_by_imdb_id()` / `get_title_and_year()` via `/find/{imdb_id}` |
-| TMDB IDs | `get_title_by_tmdb_id()` for `tmdb:` IDs from the own catalog |
+| TMDB IDs | `get_title_by_tmdb_id()` for `tmdb:` IDs (catalog items of versions before 2026-10, e.g. in a Stremio library) |
 | Locale | `de-DE` by default; `/find` lookups use each plugin language (`{lang}-{LANG}`) |
 | Alt titles | Original title (`original_title`/`original_name`) when it differs from the localised title |
 | Trending | `/trending/movie/week` and `/trending/tv/week` |
+| IMDb ids of catalog items | `/movie/{id}/external_ids`, `/tv/{id}/external_ids` |
 | Search | `/search/movie` and `/search/tv` |
 | Posters | `https://image.tmdb.org/t/p/w500{poster_path}` |
-| Caching | Find: 24 h, trending: 6 h, search: 1 h |
+| Caching | Find: 24 h, trending: 6 h, search: 1 h, IMDb ids: 30 days |
 
 ### IMDB Fallback (No API Key)
 
@@ -262,7 +264,7 @@ Without a TMDB API key, `ImdbFallbackClient` is used:
 | IMDB Suggest API | Title resolution and catalog search |
 | Wikidata API | Localised title lookup via the IMDb property (`P345`) |
 
-Limitations: no trending catalogs and no resolution of `tmdb:` IDs.
+Limitations: no trending catalogs (the manifest declares the catalogs search-only) and no resolution of `tmdb:` IDs.
 
 ---
 

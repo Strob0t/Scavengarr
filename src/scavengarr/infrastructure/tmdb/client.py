@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -19,6 +21,7 @@ _POSTER_BASE = "https://image.tmdb.org/t/p/w500"
 _TTL_FIND = 86_400  # 24 hours
 _TTL_TRENDING = 21_600  # 6 hours
 _TTL_SEARCH = 3_600  # 1 hour
+_TTL_IMDB_ID = 30 * 86_400  # a title's IMDb id does not change
 
 
 class HttpxTmdbClient:
@@ -74,20 +77,49 @@ class HttpxTmdbClient:
             return ""
         return f"{_POSTER_BASE}{poster_path}"
 
-    @staticmethod
-    def _extract_imdb_id(item: dict[str, Any]) -> str:
-        """Extract IMDb ID from a TMDB item, falling back to tmdb-prefixed ID."""
-        imdb_id = item.get("imdb_id") or item.get("external_ids", {}).get("imdb_id")
-        if imdb_id:
-            return imdb_id
-        # Fallback: construct an ID from TMDB's own ID
-        tmdb_id = item.get("id", "")
-        return f"tmdb:{tmdb_id}" if tmdb_id else ""
+    async def _imdb_id(self, endpoint: str, tmdb_id: int) -> str:
+        """IMDb id of a TMDB title (``""`` when TMDB knows none)."""
+        cache_key = f"tmdb:imdb:{endpoint}:{tmdb_id}"
+        cached = await self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+        data = await self._get(f"/{endpoint}/{tmdb_id}/external_ids")
+        if data is None:
+            return ""  # no answer: asked again next time
+        imdb_id = data.get("imdb_id") or ""
+        await self._cache.set(cache_key, imdb_id, ttl=_TTL_IMDB_ID)
+        return imdb_id
 
-    def _movie_to_preview(self, movie: dict[str, Any]) -> StremioMetaPreview:
+    async def _previews(
+        self,
+        items: list[dict[str, Any]],
+        endpoint: str,
+        to_preview: Callable[[dict[str, Any], str], StremioMetaPreview],
+    ) -> list[StremioMetaPreview]:
+        """Catalog previews of the titles Stremio can open.
+
+        Stremio opens a catalog item through a meta addon for its id prefix:
+        Cinemeta knows IMDb ids, none of the default addons a ``tmdb:`` id
+        ("No addons were requested for this meta!"). TMDB lists carry no
+        IMDb ids, so each title's is looked up; titles without one are left
+        out.
+        """
+        titles = [item for item in items if isinstance(item.get("id"), int)]
+        imdb_ids = await asyncio.gather(
+            *(self._imdb_id(endpoint, item["id"]) for item in titles)
+        )
+        return [
+            to_preview(item, imdb_id)
+            for item, imdb_id in zip(titles, imdb_ids, strict=True)
+            if imdb_id
+        ]
+
+    def _movie_to_preview(
+        self, movie: dict[str, Any], imdb_id: str
+    ) -> StremioMetaPreview:
         release_date = movie.get("release_date", "")
         return StremioMetaPreview(
-            id=self._extract_imdb_id(movie),
+            id=imdb_id,
             type="movie",
             name=movie.get("title", movie.get("original_title", "")),
             poster=self._poster_url(movie.get("poster_path")),
@@ -98,10 +130,10 @@ class HttpxTmdbClient:
             else "",
         )
 
-    def _tv_to_preview(self, show: dict[str, Any]) -> StremioMetaPreview:
+    def _tv_to_preview(self, show: dict[str, Any], imdb_id: str) -> StremioMetaPreview:
         first_air = show.get("first_air_date", "")
         return StremioMetaPreview(
-            id=self._extract_imdb_id(show),
+            id=imdb_id,
             type="series",
             name=show.get("name", show.get("original_name", "")),
             poster=self._poster_url(show.get("poster_path")),
@@ -207,7 +239,9 @@ class HttpxTmdbClient:
         if data is None:
             return []
 
-        previews = [self._movie_to_preview(m) for m in data.get("results", [])]
+        previews = await self._previews(
+            data.get("results", []), "movie", self._movie_to_preview
+        )
         await self._cache.set(cache_key, previews, ttl=_TTL_TRENDING)
         return previews
 
@@ -222,7 +256,9 @@ class HttpxTmdbClient:
         if data is None:
             return []
 
-        previews = [self._tv_to_preview(s) for s in data.get("results", [])]
+        previews = await self._previews(
+            data.get("results", []), "tv", self._tv_to_preview
+        )
         await self._cache.set(cache_key, previews, ttl=_TTL_TRENDING)
         return previews
 
@@ -239,7 +275,9 @@ class HttpxTmdbClient:
         if data is None:
             return []
 
-        previews = [self._movie_to_preview(m) for m in data.get("results", [])]
+        previews = await self._previews(
+            data.get("results", []), "movie", self._movie_to_preview
+        )
         await self._cache.set(cache_key, previews, ttl=_TTL_SEARCH)
         return previews
 
@@ -254,6 +292,8 @@ class HttpxTmdbClient:
         if data is None:
             return []
 
-        previews = [self._tv_to_preview(s) for s in data.get("results", [])]
+        previews = await self._previews(
+            data.get("results", []), "tv", self._tv_to_preview
+        )
         await self._cache.set(cache_key, previews, ttl=_TTL_SEARCH)
         return previews

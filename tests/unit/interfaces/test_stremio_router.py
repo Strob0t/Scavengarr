@@ -114,8 +114,39 @@ class TestParseStreamId:
 
 
 class TestManifestEndpoint:
+    def test_lists_no_catalogs_without_catalog_use_case(self) -> None:
+        app = _make_app(plugin_names=["hdfilme"], stremio_catalog_uc=None)
+        client = TestClient(app)
+
+        data = client.get("/api/v1/stremio/manifest.json").json()
+
+        assert data["catalogs"] == []
+        assert data["resources"] == ["stream"]
+
+    def test_catalogs_are_search_only_without_trending(self) -> None:
+        # Without a TMDB key only the search works (IMDB Suggest): trending
+        # catalogs showed as empty rows on Stremio's board
+        catalog_uc = AsyncMock()
+        catalog_uc.has_trending = False
+        app = _make_app(plugin_names=["hdfilme"], stremio_catalog_uc=catalog_uc)
+        client = TestClient(app)
+
+        data = client.get("/api/v1/stremio/manifest.json").json()
+
+        assert [c["name"] for c in data["catalogs"]] == [
+            "Scavengarr Movies",
+            "Scavengarr Series",
+        ]
+        assert all(
+            c["extra"] == [{"name": "search", "isRequired": True}]
+            for c in data["catalogs"]
+        )
+        assert "catalog" in data["resources"]
+
     def test_returns_valid_manifest(self) -> None:
-        app = _make_app(plugin_names=["hdfilme", "kinox"])
+        app = _make_app(
+            plugin_names=["hdfilme", "kinox"], stremio_catalog_uc=AsyncMock()
+        )
         client = TestClient(app)
 
         resp = client.get("/api/v1/stremio/manifest.json")

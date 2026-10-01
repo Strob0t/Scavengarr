@@ -8,6 +8,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 59 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4588 tests (4547 excluding the opt-in live tests).
 
+### Fix: Stremio Catalog Items Opened Nothing
+Found in the Stremio live test (2026-10-01).
+- **Items had `tmdb:` ids**: TMDB's trending and search lists carry no IMDb ids, so every catalog item got a `tmdb:<id>` id, and Stremio opens an item only through a meta addon for its id prefix; Cinemeta knows IMDb ids only, so Stremio showed "No addons were requested for this meta!" and no stream list (series had no episode list either). Catalog items now carry IMDb ids from `/{movie|tv}/{id}/external_ids` (cached 30 days); titles without one are left out. Trending and search lists cached before the update keep `tmdb:` ids until they expire (6 h, 1 h); `tmdb:` stream ids stay accepted.
+- **Empty board rows without a TMDB key**: the IMDB fallback has no trending lists, but the manifest declared both catalogs as rows, so Stremio's board showed two empty "Scavengarr Trending" rows. Without a TMDB key the catalogs are now search-only (`"isRequired": true`, named "Scavengarr Movies"/"Scavengarr Series"); the search through IMDB Suggest works as before.
+
 ### Perf: Stremio Saves Only the Stream Links It Serves
 - The stream use case saved a `CachedStreamLink` for every ranked stream, although only the HLS proxy and `/play/` look links up: "Dune" (73 ranked streams) spent 6 s saving links and was answered after 21.5 s. Links are now saved only for the streams served through those endpoints (`build_cache_link()`); direct video URLs need none.
 
