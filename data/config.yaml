@@ -16,7 +16,11 @@ tmdb_api_key: "" # env: SCAVENGARR_TMDB_API_KEY
 # -- Plugins ----------------------------------------------------------
 plugins:
   plugin_dir: "./plugins" # env: SCAVENGARR_PLUGIN_DIR
-  overrides: {}
+  overrides:
+    # Dead since 2026-10: its API host db.videasy.net no longer resolves.
+    # Remove the entry (or set enabled: true) when the site is back.
+    cineby:
+      enabled: false
   # Per-plugin overrides example:
   # overrides:
   #   kinoger:

@@ -67,7 +67,7 @@ In order of value for the Stremio use case (German films and series, new release
 2. **Turnstile group** (kinoger, serienfans, ddlspot, ddlvalley, scnsrc, filmfans): run their smoke tests headful (`xvfb-run -a`, `playwright.headless: false`, `playwright.browser_fallback: true`) and fix what still fails.
 3. **megakino_to, movie4k**: check from another network whether the sites are down, blocked here or moved (new `_domains`). **2026-10-01:** down, not blocked: a real browser gets Cloudflare 522 (origin unreachable) on megakino.to and movie4k.sx; the circuit breaker keeps them out of most requests.
 4. **kinoking**: find out whether the site is slow or the plugin timeout too short. **2026-10-01:** the site: movie pages take 12–17 s to the first byte (series pages 1 s), so its movies never fit the 10 s search budget; the circuit breaker now tracks plugins per category, which keeps kinoking's movies out of movie requests while its series stay.
-5. **Test gaps**: smoke entries for cineby, crawli, hdsource, jjs, movieblog and serienjunkies; give the XFS live tests real URLs or remove them.
+5. **Test gaps**: smoke entries for cineby, crawli, hdsource, jjs, movieblog and serienjunkies; give the XFS live tests real URLs or remove them. **2026-10-01:** cineby is dead (`db.videasy.net` NXDOMAIN); by decision it stays in the code and is disabled in `data/config.yaml` (`plugins.overrides.cineby.enabled: false`).
 6. **With credentials** (`SCAVENGARR_<PLUGIN>_USERNAME` / `_PASSWORD`): myboerse, mygully and boerse, including the XenForo thread links that guests do not see.
 
 The plugins are independent, so the round can run in parallel, one agent per plugin.

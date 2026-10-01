@@ -70,6 +70,17 @@ class TestDefaultsOnly:
         assert config.log_format == "json"
 
 
+class TestShippedConfig:
+    """data/config.yaml, the config of the Docker image."""
+
+    _PATH = Path(__file__).resolve().parents[2] / "data" / "config.yaml"
+
+    def test_dead_cineby_is_disabled(self) -> None:
+        """Its API host (db.videasy.net) is gone; enabled: true brings it back."""
+        overrides = load_config(config_path=self._PATH).plugins.overrides
+        assert overrides["cineby"].enabled is False
+
+
 class TestYamlOverrides:
     """YAML values override defaults."""
 
