@@ -68,31 +68,57 @@ def _mock_response(
 # Sample HTML fixtures
 # ---------------------------------------------------------------------------
 
-_SEARCH_HTML = """\
-<html><body>
-<h2>Serien</h2>
-<div class="row g-3">
-  <a href="/serie/stranger-things">
-    <div class="card">
-      <img src="/poster.jpg" alt="poster">
-      <h6>Stranger Things</h6>
-    </div>
-  </a>
-  <a href="/serie/dark">
-    <div class="card">
-      <img src="/poster2.jpg" alt="poster">
-      <h6>Dark</h6>
+_SERIES_CARD_2026 = """\
+<div class="col-6 col-md-4 col-lg-2">
+  <a href="/serie/{slug}" class="text-decoration-none">
+    <div class="card cover-card h-100 border-0 shadow-sm">
+      <a href="/serie/{slug}" class="d-block show-cover">
+        <picture><img src="/media/images/channel/desktop/{slug}.jpg"
+             alt="{title}" class="img-fluid w-100"></picture>
+      </a>
+      <div class="card-body py-2 p-1">
+        <h6 class="show-title mb-0 small" title="{title}">{title}</h6>
+      </div>
     </div>
   </a>
 </div>
-<h2>Episoden</h2>
-<div class="row g-3">
-  <a href="/serie/stranger-things/staffel-1/episode-1">
-    <h6>Episode Result</h6>
-  </a>
-</div>
-</body></html>
 """
+
+_EPISODE_HITS_2026 = """\
+<h2 class="search-section__title fw-bold">Episoden</h2>
+<div class="search-section search-section--episodes">
+<ul class="p-0 list-unstyled">
+<li class="mb-4">
+  <a href="/serie/it-s-always-sunny-in-philadelphia">
+    <h6 class="small">
+      It&#039;s Always Sunny in Philadelphia
+      <span class="text-primary float-end">S18 · E9</span>
+    </h6>
+    <p class="title underline-styled mb-1">A Dark Day for Baseball</p>
+  </a>
+</li>
+</ul>
+</div>
+"""
+
+
+def _search_page(*cards: tuple[str, str]) -> str:
+    """Search page in the live layout: series cards, then episode hits,
+    the whole results block rendered twice (two layouts)."""
+    results = (
+        '<div class="results-group" data-group="all">\n'
+        '<h2 class="h4 text-white mb-3 fw-bold">Serien</h2>\n'
+        '<div class="row g-3">\n'
+        + "".join(_SERIES_CARD_2026.format(slug=s, title=t) for s, t in cards)
+        + "</div>\n"
+        + _EPISODE_HITS_2026
+        + "</div>\n"
+    )
+    return f"<html><body>{results}{results}</body></html>"
+
+
+_SEARCH_HTML = _search_page(("stranger-things", "Stranger Things"), ("dark", "Dark"))
+_SEARCH_HTML_2026 = _search_page(("dark-greece", "Dark Greece"), ("dark", "Dark"))
 
 _SERIES_DETAIL_HTML = """\
 <html><body>
@@ -275,12 +301,25 @@ class TestDomainVerification:
 
 
 class TestSearchSeriesParser:
+    def test_parses_the_current_series_cards(self) -> None:
+        # Live markup (2026-10-01): a card nests one /serie/ anchor in
+        # another, the title follows the inner one; the page renders its
+        # results twice (two layouts). The parser found no card at all and
+        # took the episode hits below ("Dark" -> It's Always Sunny ...)
+        parser = _SearchSeriesParser("https://serienstream.to")
+        parser.feed(_SEARCH_HTML_2026)
+
+        assert [(r["title"], r["slug"]) for r in parser.results] == [
+            ("Dark Greece", "dark-greece"),
+            ("Dark", "dark"),
+        ]
+        assert parser.results[1]["url"] == "https://serienstream.to/serie/dark"
+
     def test_parses_series_results(self) -> None:
         parser = _SearchSeriesParser("https://s.to")
         parser.feed(_SEARCH_HTML)
 
-        # Should find 2 series + 1 episode link (episode also has /serie/ in href)
-        series = [r for r in parser.results if "staffel" not in r["url"]]
+        series = parser.results
         assert len(series) == 2
 
         assert series[0]["title"] == "Stranger Things"

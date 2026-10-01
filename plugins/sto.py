@@ -99,72 +99,61 @@ def _relevant_series(
 
 
 class _SearchSeriesParser(HTMLParser):
-    """Parse s.to search results page for series entries.
+    """Parse the series cards of an s.to search results page.
 
-    Search results are under an ``<h2>Serien</h2>`` heading, followed by
-    a container with series cards. Each card has::
+    A card nests one ``/serie/{slug}`` anchor in another and names the
+    series in the ``h6.show-title`` after the inner one::
 
-        <a href="/serie/{slug}">
-          ...
-          <h6>Series Title</h6>
-          ...
-        </a>
+        <a href="/serie/{slug}"><div class="card">
+          <a href="/serie/{slug}" class="show-cover">...</a>
+          <h6 class="show-title" title="Series Title">Series Title</h6>
+        </div></a>
+
+    The episode hits further down (``h6.small`` in the "Episoden"
+    section) belong to other series whose episode titles contain the term
+    and are skipped. The page renders its results twice (two layouts), so
+    each series is kept once.
     """
 
     def __init__(self, base_url: str) -> None:
         super().__init__()
         self.results: list[dict[str, str]] = []
         self._base_url = base_url
-
-        # State tracking
-        self._found_serien_heading = False
-        self._in_series_a = False
-        self._in_h6 = False
-        self._current_href = ""
-        self._current_title = ""
+        self._href = ""
+        self._in_title = False
+        self._title = ""
+        self._seen: set[str] = set()
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attr_dict = dict(attrs)
-        href = attr_dict.get("href", "") or ""
-
-        if tag == "a" and "/serie/" in href:
-            self._in_series_a = True
-            self._current_href = href
-            self._current_title = ""
-
-        if tag == "h6" and self._in_series_a:
-            self._in_h6 = True
-            self._current_title = ""
+        if tag == "a":
+            href = attr_dict.get("href") or ""
+            if "/serie/" in href:
+                self._href = href
+        elif tag == "h6" and "show-title" in (attr_dict.get("class") or "").split():
+            self._in_title = True
+            self._title = ""
 
     def handle_data(self, data: str) -> None:
-        text = data.strip()
-
-        # Detect the "Serien" heading
-        if text.lower() == "serien":
-            self._found_serien_heading = True
-
-        if self._in_h6:
-            self._current_title += data
+        if self._in_title:
+            self._title += data
 
     def handle_endtag(self, tag: str) -> None:
-        if tag == "h6" and self._in_h6:
-            self._in_h6 = False
-
-        if tag == "a" and self._in_series_a:
-            self._in_series_a = False
-            title = self._current_title.strip()
-            href = self._current_href
-
-            if title and href:
-                # Extract slug from href: /serie/{slug}
-                slug = href.rstrip("/").split("/")[-1] if "/serie/" in href else ""
-                self.results.append(
-                    {
-                        "title": title,
-                        "url": urljoin(self._base_url, href),
-                        "slug": slug,
-                    }
-                )
+        if tag != "h6" or not self._in_title:
+            return
+        self._in_title = False
+        title = self._title.strip()
+        url = urljoin(self._base_url, self._href)
+        if not title or not self._href or url in self._seen:
+            return
+        self._seen.add(url)
+        self.results.append(
+            {
+                "title": title,
+                "url": url,
+                "slug": self._href.rstrip("/").split("/")[-1],
+            }
+        )
 
 
 class _SeriesDetailParser(HTMLParser):
