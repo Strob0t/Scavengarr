@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import pickle
 from typing import Any
 
@@ -56,11 +55,7 @@ class RedisAdapter:
             )
             # Health-Check: PING
             try:
-                # redis-py types commands for both clients (bool or
-                # awaitable); the asyncio client returns awaitables
-                pong = self._client.ping()
-                if inspect.isawaitable(pong):
-                    await pong
+                await self._client.ping()
                 log.info("redis_connected", url=self.url)
             except RedisError as e:
                 log.error("redis_connection_failed", url=self.url, error=str(e))
@@ -88,6 +83,10 @@ class RedisAdapter:
                 raw = await self._client.get(key)
                 if raw is None:
                     log.debug("cache_miss", key=key)
+                    return None
+                if not isinstance(raw, bytes):
+                    # decode_responses=False: values this adapter stored are bytes
+                    log.warning("redis_get_not_bytes", key=key)
                     return None
                 value = pickle.loads(raw)
                 log.debug("cache_hit", key=key)

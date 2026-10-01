@@ -21,7 +21,7 @@ diskcache = "^5.6.3"
 pydantic-settings = "^2.15.0"
 python-dotenv = "^1.2.4"
 httpx = "^0.28.1"
-redis = {version = "^7.1.0", extras = ["redis"]}
+redis = {version = "^8.1.0", extras = ["redis"]}
 guessit = "^3.8.0"
 pyyaml = "^6.0"
 rapidfuzz = "^3.14.3"

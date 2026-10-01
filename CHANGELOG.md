@@ -74,7 +74,8 @@ Found in a live test with Stremio Web (2026-10-01).
 - pydantic-settings 2.10 → 2.15 and python-dotenv 1.1 → 1.2: both were pinned to their first minor release (`>=2.10.1,<2.11.0`, `>=1.1.1,<1.2.0`) since the config loader was added, without a recorded reason; they use caret constraints like the other dependencies now.
 - structlog 25 → 26: the suite passes and both log formats (JSON lines, console) render as before, exceptions included.
 - cryptography 46 → 50 (AES decryption of Click'n'Load link containers in `infrastructure/plugins/clicknload.py`): the suite passes.
-- Still separate (next-steps item 5): guessit 4, redis 8 and ruff 0.16 (together with the `ruff-pre-commit` rev).
+- redis 7 → 8 (optional cache backend): redis-py 8 speaks RESP3 by default (Redis 6 or newer; the compose profile runs `redis:7-alpine`) and sets 5 s socket timeouts. Its typed async client returns `bytes | str` for `GET`: a text reply counts as a cache miss now (`redis_get_not_bytes`) instead of failing in `pickle.loads`, and the health-check PING is awaited directly. The adapter had no tests; it has unit tests with a mocked client now (no Redis server in the dev container, so no live check).
+- Still separate (next-steps item 5): guessit 4 and ruff 0.16 (together with the `ruff-pre-commit` rev).
 
 ### Chore: `xvfb-run` Works in the Dev Container
 - `.devcontainer/setup.sh` installs `xauth` with `xvfb`: `--no-install-recommends` left it out, and `xvfb-run -a <cmd>` (headful browser tests, AGENTS.md §9) failed with "xauth command not found". The step also runs when Xvfb is present but xauth is missing.
