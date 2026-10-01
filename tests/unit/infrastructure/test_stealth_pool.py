@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from scavengarr.domain.ports.browser_fetcher import ClickThrough
 from scavengarr.infrastructure.browser.stealth_pool import (
     _BLOCKED_RESOURCE_TYPES,
     StealthPool,
@@ -353,10 +354,13 @@ class TestStealthPoolFetchText:
 # ------------------------------------------------------------------
 
 
-def _request(url: str, *, navigation: bool = True) -> MagicMock:
+def _request(
+    url: str, *, navigation: bool = True, redirected_from: MagicMock | None = None
+) -> MagicMock:
     request = MagicMock()
     request.url = url
     request.is_navigation_request = MagicMock(return_value=navigation)
+    request.redirected_from = redirected_from
     return request
 
 
@@ -482,6 +486,148 @@ class TestStealthPoolResolveRedirect:
             )
             is None
         )
+
+
+# ------------------------------------------------------------------
+# click_through
+# ------------------------------------------------------------------
+
+_EPISODE = "https://s.to/serie/x/staffel-1/episode-2"
+_PASS_WIDGET = "scavengarr.infrastructure.browser.stealth_pool.pass_turnstile_widget"
+
+
+def _click_page(
+    *,
+    on_click: list[list[str]],
+    on_load: list[list[str]] | None = None,
+) -> tuple[MagicMock, object]:
+    """Page whose link box click requests each redirect chain in *on_click*.
+
+    A chain is a list of URLs, each hop ``redirected_from`` the one before
+    (e.g. the player iframe loading the link-out, then its 302 target).
+    Returns the page and a function that emits more chains.
+    """
+    page = _mock_page(title="Breaking Bad S01E02")
+    listeners: list[object] = []
+
+    def _on(event: str, callback: object) -> None:
+        if event == "request":
+            listeners.append(callback)
+
+    def _emit(chains: list[list[str]]) -> None:
+        for chain in chains:
+            previous: MagicMock | None = None
+            for url in chain:
+                previous = _request(url, redirected_from=previous)
+                for callback in listeners:
+                    callback(previous)  # type: ignore[operator]
+
+    async def _goto(url: str, **_: object) -> MagicMock:
+        _emit(on_load or [])
+        return MagicMock(status=200)
+
+    async def _click(**_: object) -> None:
+        _emit(on_click)
+
+    box = MagicMock()
+    box.click = AsyncMock(side_effect=_click)
+    page.on = MagicMock(side_effect=_on)
+    page.goto = AsyncMock(side_effect=_goto)
+    page.route = AsyncMock()
+    page.locator = MagicMock(return_value=MagicMock(first=box))
+    page.wait_for_timeout = AsyncMock()
+    page.context = MagicMock()
+    page.context.cookies = AsyncMock(
+        return_value=[{"name": "laravel_session", "value": "s1"}]
+    )
+    return page, _emit
+
+
+class TestStealthPoolClickThrough:
+    """s.to opens hosters in a player iframe via /r?t= link-outs, sometimes
+    behind a Turnstile gate; its session skips the gate afterwards."""
+
+    async def test_returns_link_out_target_and_site_cookies(self) -> None:
+        shared_pool, _, context = _mock_pool_stack()
+        page, _ = _click_page(on_click=[["https://s.to/r?t=1", "https://voe.sx/e/a"]])
+        context.new_page = AsyncMock(return_value=page)
+
+        with patch(_PASS_WIDGET, AsyncMock(return_value=False)):
+            result = await StealthPool(browser_pool=shared_pool).click_through(
+                _EPISODE, "button.link-box", timeout=5
+            )
+
+        assert result == ClickThrough(
+            url="https://voe.sx/e/a", cookies={"laravel_session": "s1"}
+        )
+        page.locator.assert_called_with("button.link-box")
+        page.context.cookies.assert_awaited_once_with(_EPISODE)
+        page.close.assert_awaited_once()
+
+    async def test_ignores_offsite_pages_not_redirected_by_the_site(self) -> None:
+        # Ad frames load other hosts directly or through their own redirects
+        shared_pool, _, context = _mock_pool_stack()
+        page, _ = _click_page(
+            on_load=[
+                ["https://ads.example/frame"],
+                ["https://ads.example/go", "https://tracker.example/x"],
+            ],
+            on_click=[["https://s.to/r?t=1", "https://voe.sx/e/a"]],
+        )
+        context.new_page = AsyncMock(return_value=page)
+
+        with patch(_PASS_WIDGET, AsyncMock(return_value=False)):
+            result = await StealthPool(browser_pool=shared_pool).click_through(
+                _EPISODE, "button.link-box", timeout=5
+            )
+
+        assert result is not None
+        assert result.url == "https://voe.sx/e/a"
+
+    async def test_passes_the_turnstile_gate(self) -> None:
+        # The link-out shows the gate; its form POST redirects to the hoster
+        shared_pool, _, context = _mock_pool_stack()
+        page, emit = _click_page(on_click=[["https://s.to/r?t=1"]])
+        context.new_page = AsyncMock(return_value=page)
+
+        async def _pass(_page: object, *, timeout_ms: int) -> bool:
+            emit([["https://s.to/r", "https://voe.sx/e/a"]])  # type: ignore[operator]
+            return True
+
+        with patch(_PASS_WIDGET, AsyncMock(side_effect=_pass)) as passed:
+            result = await StealthPool(browser_pool=shared_pool).click_through(
+                _EPISODE, "button.link-box", timeout=5
+            )
+
+        assert result is not None
+        assert result.url == "https://voe.sx/e/a"
+        passed.assert_awaited_once()
+
+    async def test_nothing_leaves_the_site_returns_none(self) -> None:
+        shared_pool, _, context = _mock_pool_stack()
+        page, _ = _click_page(on_click=[["https://s.to/r?t=1"]])
+        context.new_page = AsyncMock(return_value=page)
+
+        with patch(_PASS_WIDGET, AsyncMock(return_value=False)):
+            result = await StealthPool(browser_pool=shared_pool).click_through(
+                _EPISODE, "button.link-box", timeout=0.05
+            )
+
+        assert result is None
+        page.close.assert_awaited_once()
+
+    async def test_navigation_error_returns_none(self) -> None:
+        shared_pool, _, context = _mock_pool_stack()
+        page, _ = _click_page(on_click=[])
+        page.goto = AsyncMock(side_effect=RuntimeError("net::ERR_TIMED_OUT"))
+        context.new_page = AsyncMock(return_value=page)
+
+        result = await StealthPool(browser_pool=shared_pool).click_through(
+            _EPISODE, "button.link-box", timeout=5
+        )
+
+        assert result is None
+        page.close.assert_awaited_once()
 
 
 # ------------------------------------------------------------------

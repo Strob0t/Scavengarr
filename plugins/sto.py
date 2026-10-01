@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from html.parser import HTMLParser
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 from unidecode import unidecode
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort
 from scavengarr.infrastructure.plugins.categories import (
     filter_by_category,
     served_category,
@@ -38,6 +40,12 @@ _RESULTS_PER_PAGE = 24
 # Series scraped when none contains every word of the query (other-language
 # titles: "Money Heist" is "Haus des Geldes" on the site)
 _FALLBACK_SERIES = 3
+# Hoster buttons of an episode page; each opens a /r?t= link-out
+_LINK_BOX = "button.link-box[data-play-url]"
+# The browser's time to pass the link-out gate (Turnstile takes ~6 s)
+_GATE_TIMEOUT_S = 30.0
+# After a failed pass, link-outs go without the browser for this long
+_GATE_RETRY_S = 300.0
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -384,6 +392,11 @@ class StoPlugin(HttpxPluginBase):
     provides = "stream"
     _domains = _DOMAINS
 
+    def __init__(self) -> None:
+        super().__init__()
+        self._gate_task: asyncio.Task[bool] | None = None
+        self._gate_failed_at = -_GATE_RETRY_S
+
     async def _search_series(
         self,
         query: str,
@@ -452,6 +465,76 @@ class StoPlugin(HttpxPluginBase):
         )
         return target or full_url
 
+    async def _read_episode_links(self, episode_url: str) -> list[dict[str, str]]:
+        """Hoster links of an episode page, link-outs resolved in parallel."""
+        hosters = await self._scrape_episode_hosters(episode_url)
+        resolved = await asyncio.gather(
+            *(
+                self._resolve_hoster_url(h["play_url"], referer=episode_url)
+                for h in hosters
+            )
+        )
+        return [
+            {
+                "hoster": h["provider"].lower(),
+                "link": url,
+                "language": h.get("language", ""),
+            }
+            for h, url in zip(hosters, resolved, strict=True)
+        ]
+
+    async def _episode_links(self, episode_url: str) -> list[dict[str, str]]:
+        """Hoster links of an episode page.
+
+        When no link-out of the page resolves, the site gates them: the
+        browser passes the gate once and the page is read again, its
+        link-outs now minted for the adopted session.
+        """
+        links = await self._read_episode_links(episode_url)
+        site = urlparse(self.base_url).hostname
+        gated = bool(links) and all(
+            urlparse(link["link"]).hostname == site for link in links
+        )
+        if gated and await self._pass_link_gate(episode_url):
+            links = await self._read_episode_links(episode_url)
+        return links
+
+    async def _pass_link_gate(self, episode_url: str) -> bool:
+        """Let the browser pass the link-out gate and adopt its session.
+
+        After bursts of link-outs from one IP the site answers them for every
+        new session with a Turnstile widget in its player iframe; a session
+        that passed the widget once gets redirects again, also through httpx
+        with its cookies. The pass runs as a task of its own: a search cut by
+        the Stremio deadline does not cancel it (the next request profits),
+        and concurrent episodes wait for the same pass. A failed pass is not
+        retried for ``_GATE_RETRY_S``.
+        """
+        fetcher = self._browser_fetcher
+        if fetcher is None:
+            return False
+        if self._gate_task is None or self._gate_task.done():
+            if time.monotonic() - self._gate_failed_at < _GATE_RETRY_S:
+                return False
+            self._gate_task = asyncio.create_task(
+                self._run_gate_pass(fetcher, episode_url)
+            )
+        return await asyncio.shield(self._gate_task)
+
+    async def _run_gate_pass(
+        self, fetcher: BrowserFetcherPort, episode_url: str
+    ) -> bool:
+        passed = await fetcher.click_through(
+            episode_url, _LINK_BOX, timeout=_GATE_TIMEOUT_S
+        )
+        if passed is None:
+            self._gate_failed_at = time.monotonic()
+            self._log.warning("sto_link_gate_unsolved", url=episode_url)
+            return False
+        await self._use_browser_session(episode_url, passed.cookies)
+        self._log.info("sto_link_gate_passed", url=episode_url)
+        return True
+
     async def _scrape_season_episodes(
         self,
         slug: str,
@@ -480,26 +563,7 @@ class StoPlugin(HttpxPluginBase):
             ep_title: str,
         ) -> dict[str, str | list[dict[str, str]]] | None:
             async with sem:
-                hosters = await self._scrape_episode_hosters(ep_url)
-                if not hosters:
-                    return None
-
-                # Resolve hoster URLs (one episode has a handful of hosters)
-                resolved_urls = await asyncio.gather(
-                    *(
-                        self._resolve_hoster_url(h["play_url"], referer=ep_url)
-                        for h in hosters
-                    )
-                )
-                links: list[dict[str, str]] = [
-                    {
-                        "hoster": h["provider"].lower(),
-                        "link": resolved,
-                        "language": h.get("language", ""),
-                    }
-                    for h, resolved in zip(hosters, resolved_urls, strict=True)
-                ]
-
+                links = await self._episode_links(ep_url)
                 if not links:
                     return None
 
@@ -639,29 +703,7 @@ class StoPlugin(HttpxPluginBase):
                 ep_title = ep["de_title"] or ep["en_title"]
                 break
 
-        hosters = await self._scrape_episode_hosters(ep_url)
-        if not hosters:
-            return []
-
-        # Resolve hoster URLs
-        sem = self._new_semaphore()
-        links: list[dict[str, str]] = []
-
-        async def _resolve(h: dict[str, str]) -> dict[str, str] | None:
-            async with sem:
-                resolved = await self._resolve_hoster_url(h["play_url"], referer=ep_url)
-                return {
-                    "hoster": h["provider"].lower(),
-                    "link": resolved,
-                    "language": h.get("language", ""),
-                }
-
-        gathered = await asyncio.gather(
-            *[_resolve(h) for h in hosters],
-            return_exceptions=True,
-        )
-        links = [r for r in gathered if isinstance(r, dict)]
-
+        links = await self._episode_links(ep_url)
         if not links:
             return []
 

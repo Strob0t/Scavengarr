@@ -292,3 +292,23 @@ class TestFetchText:
         async with httpx.AsyncClient() as client:
             plugin = await _plugin_with_client(client)
             assert await plugin._fetch_text("https://cf.example/page") is None
+
+
+class TestUseBrowserSession:
+    """A browser session that passed a site's gate is reused by httpx."""
+
+    async def test_replaces_the_sites_cookies(self) -> None:
+        async with httpx.AsyncClient() as client:
+            client.cookies.set("laravel_session", "httpx", domain="cf.example")
+            client.cookies.set("__ddg1_", "old", domain=".cf.example")
+            client.cookies.set("other", "keep", domain="other.example")
+            plugin = await _plugin_with_client(client)
+
+            await plugin._use_browser_session(
+                "https://cf.example/serie/x", {"laravel_session": "browser"}
+            )
+
+            sent = client.build_request("GET", "https://cf.example/r?t=1")
+            assert sent.headers["cookie"] == "laravel_session=browser"
+            other = client.build_request("GET", "https://other.example/")
+            assert other.headers["cookie"] == "other=keep"

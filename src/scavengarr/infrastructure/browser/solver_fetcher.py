@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 import httpx
 import structlog
 
-from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort
+from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort, ClickThrough
 
 log = structlog.get_logger(__name__)
 
@@ -93,6 +93,12 @@ class SolverFetcher:
             return None
         return target
 
+    async def click_through(
+        self, page_url: str, selector: str, *, timeout: float
+    ) -> ClickThrough | None:
+        """Not supported: the FlareSolverr API only loads URLs."""
+        return None
+
 
 class ChainedBrowserFetcher:
     """Try several fetchers in order; the first non-``None`` answer wins."""
@@ -112,4 +118,13 @@ class ChainedBrowserFetcher:
             target = await fetcher.resolve_redirect(url, timeout=timeout)
             if target is not None:
                 return target
+        return None
+
+    async def click_through(
+        self, page_url: str, selector: str, *, timeout: float
+    ) -> ClickThrough | None:
+        for fetcher in self._fetchers:
+            result = await fetcher.click_through(page_url, selector, timeout=timeout)
+            if result is not None:
+                return result
         return None

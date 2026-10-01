@@ -9,6 +9,7 @@ import pytest
 from scavengarr.infrastructure.browser import turnstile
 from scavengarr.infrastructure.browser.turnstile import (
     is_challenge_page,
+    pass_turnstile_widget,
     read_when_settled,
     solve_cloudflare,
 )
@@ -172,3 +173,64 @@ class TestSettleAfterSolve:
         await solve_cloudflare(page, timeout_ms=10_000)
 
         page.wait_for_url.assert_not_awaited()
+
+
+def _widget_page(
+    tokens: list[str], frames: list[MagicMock] | None = None, *, shown: bool = True
+) -> tuple[MagicMock, MagicMock]:
+    """Page with a Turnstile widget in a form; token values come in order.
+
+    Returns the page and the widget's form (to check the submit).
+    """
+    page = _page(["S01E02"], frames)
+    seq = list(tokens)
+
+    async def _token() -> str:
+        return seq.pop(0) if len(seq) > 1 else seq[0]
+
+    token_input = MagicMock()
+    token_input.input_value = AsyncMock(side_effect=_token)
+    form = MagicMock()
+    form.evaluate = AsyncMock()
+
+    def _locator(selector: str) -> MagicMock:
+        if selector.startswith("form"):
+            return MagicMock(first=form)
+        found = MagicMock(first=token_input)
+        found.count = AsyncMock(return_value=1 if shown else 0)
+        return found
+
+    page.locator = MagicMock(side_effect=_locator)
+    return page, form
+
+
+class TestPassTurnstileWidget:
+    """Link-out gates (s.to) show Turnstile in a modal form instead of a page."""
+
+    async def test_no_widget_returns_false_at_once(self) -> None:
+        page, form = _widget_page([""], shown=False)
+
+        assert await pass_turnstile_widget(page, timeout_ms=10_000) is False
+        page.wait_for_timeout.assert_not_awaited()
+        form.evaluate.assert_not_awaited()
+
+    async def test_cleared_widget_submits_its_form(self) -> None:
+        page, form = _widget_page(["", "token"])
+
+        assert await pass_turnstile_widget(page, timeout_ms=10_000) is True
+        form.evaluate.assert_awaited_once()
+        assert "requestSubmit" in form.evaluate.await_args.args[0]
+
+    async def test_ticks_checkbox_when_not_cleared(self) -> None:
+        challenge = _frame("https://challenges.cloudflare.com/cdn-cgi/x")
+        page, form = _widget_page([""] * 8 + ["token"], [challenge])
+
+        assert await pass_turnstile_widget(page, timeout_ms=30_000) is True
+        challenge.locator.return_value.first.click.assert_awaited()
+        form.evaluate.assert_awaited_once()
+
+    async def test_times_out_without_token(self) -> None:
+        page, form = _widget_page([""])
+
+        assert await pass_turnstile_widget(page, timeout_ms=10_000) is False
+        form.evaluate.assert_not_awaited()

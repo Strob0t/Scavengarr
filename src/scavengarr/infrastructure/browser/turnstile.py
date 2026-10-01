@@ -106,6 +106,39 @@ async def _settle(page: Page) -> None:
         log.debug("cloudflare_settle_timeout", url=page.url)
 
 
+_WIDGET_TOKEN = "[name='cf-turnstile-response']"
+_SUBMIT_JS = "form => form.requestSubmit()"
+
+
+async def pass_turnstile_widget(page: Page, *, timeout_ms: int) -> bool:
+    """Pass a Turnstile widget embedded in a form, then submit the form.
+
+    Sites that gate link-outs (s.to) show the widget in a modal instead of a
+    challenge page. Like a page challenge it may clear by itself; otherwise
+    the checkbox is ticked (again every ``_RECLICK_EVERY_S``). The widget's
+    token lands in a hidden ``cf-turnstile-response`` input of the form.
+    Returns False at once when no widget is shown, and when no token
+    arrived within *timeout_ms*.
+    """
+    if not await page.locator(_WIDGET_TOKEN).count():
+        return False
+    token = page.locator(_WIDGET_TOKEN).first
+    start = _now()
+    deadline = start + timeout_ms / 1000
+    last_click: float | None = None
+    while (now := _now()) < deadline:
+        if await token.input_value():
+            await page.locator(f"form:has({_WIDGET_TOKEN})").first.evaluate(_SUBMIT_JS)
+            log.info("turnstile_widget_passed", url=page.url, clicked=bool(last_click))
+            return True
+        due = last_click is None or now - last_click >= _RECLICK_EVERY_S
+        if now - start >= _CLICK_AFTER_S and due and await _click_checkbox(page):
+            last_click = now
+        await page.wait_for_timeout(_POLL_MS)
+    log.info("turnstile_widget_unsolved", url=page.url, timeout_ms=timeout_ms)
+    return False
+
+
 async def solve_cloudflare(page: Page, *, timeout_ms: int) -> bool:
     """Wait for a Cloudflare challenge to clear, clicking Turnstile if needed.
 

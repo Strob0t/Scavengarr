@@ -9,7 +9,7 @@ import httpx
 import pytest
 import respx
 
-from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort
+from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort, ClickThrough
 from scavengarr.infrastructure.browser.solver_fetcher import (
     ChainedBrowserFetcher,
     SolverFetcher,
@@ -142,3 +142,23 @@ class TestChainedBrowserFetcher:
         only = AsyncMock()
         only.fetch_text.return_value = None
         assert await ChainedBrowserFetcher([only]).fetch_text("u", timeout=1) is None
+
+    async def test_click_through_falls_through_on_none(self) -> None:
+        first, second = AsyncMock(), AsyncMock()
+        first.click_through.return_value = None
+        second.click_through.return_value = ClickThrough(url="https://voe.sx/e/a")
+        chain = ChainedBrowserFetcher([first, second])
+
+        result = await chain.click_through("https://s.to/ep", "button", timeout=5)
+
+        assert result == ClickThrough(url="https://voe.sx/e/a")
+        second.click_through.assert_awaited_once_with(
+            "https://s.to/ep", "button", timeout=5
+        )
+
+
+async def test_solver_cannot_click() -> None:
+    """FlareSolverr only loads URLs; clicking is left to the own browser."""
+    solver = SolverFetcher(http_client=AsyncMock(), base_url=_SOLVER)
+
+    assert await solver.click_through("https://s.to/ep", "button", timeout=5) is None

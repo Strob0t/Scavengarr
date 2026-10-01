@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+import respx
+
+from scavengarr.domain.ports.browser_fetcher import ClickThrough
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "sto.py"
 
@@ -601,6 +605,130 @@ class TestSeasonsAndParallelism:
         await plugin.search("x", season=1, episode=1)
 
         assert active["peak"] > 1
+
+
+_EPISODE_URL = "https://s.to/serie/stranger-things/staffel-1/episode-1"
+_LINK_BOX = "button.link-box[data-play-url]"
+_GATE_PAGE = "<script>window.parent.postMessage({type: 'frameBridge'})</script>"
+
+
+def _gated_site(router: respx.MockRouter, *, trusted: str | None) -> None:
+    """Episode page whose link-outs redirect only for a trusted session.
+
+    *trusted* is the cookie that marks a session past the gate; None makes
+    every link-out redirect (no gate).
+    """
+
+    def _link_out(request: httpx.Request) -> httpx.Response:
+        if trusted is None or trusted in request.headers.get("cookie", ""):
+            target = "https://voe.sx/e/" + request.url.params["t"]
+            return httpx.Response(302, headers={"location": target})
+        return httpx.Response(200, text=_GATE_PAGE)
+
+    router.get(_EPISODE_URL).respond(200, text=_EPISODE_HTML)
+    router.get(url__startswith="https://s.to/r").mock(side_effect=_link_out)
+
+
+def _gate_fetcher(result: ClickThrough | None) -> AsyncMock:
+    fetcher = AsyncMock()
+    fetcher.click_through = AsyncMock(return_value=result)
+    return fetcher
+
+
+_PASSED = ClickThrough(
+    url="https://voe.sx/e/abc123", cookies={"laravel_session": "passed"}
+)
+
+
+class TestLinkOutGate:
+    """After bursts of link-outs s.to asks every new session for Turnstile;
+    a session that passed it once in the browser gets redirects again."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_fetcher(self) -> Iterator[None]:
+        yield
+        _StoPlugin.set_browser_fetcher(None)
+
+    async def _plugin(self, client: httpx.AsyncClient) -> object:
+        plugin = _make_plugin()
+        plugin._client = client
+        plugin.base_url = "https://s.to"
+        return plugin
+
+    @respx.mock
+    async def test_passes_gate_once_and_reads_the_page_again(self) -> None:
+        _gated_site(respx.mock, trusted="laravel_session=passed")
+        fetcher = _gate_fetcher(_PASSED)
+        _StoPlugin.set_browser_fetcher(fetcher)
+
+        async with httpx.AsyncClient() as client:
+            plugin = await self._plugin(client)
+            links = await plugin._episode_links(_EPISODE_URL)
+
+        assert [link["link"] for link in links] == [
+            "https://voe.sx/e/abc123",
+            "https://voe.sx/e/def456",
+            "https://voe.sx/e/ghi789",
+        ]
+        fetcher.click_through.assert_awaited_once()
+        assert fetcher.click_through.await_args.args == (_EPISODE_URL, _LINK_BOX)
+
+    @respx.mock
+    async def test_no_browser_when_link_outs_redirect(self) -> None:
+        _gated_site(respx.mock, trusted=None)
+        fetcher = _gate_fetcher(_PASSED)
+        _StoPlugin.set_browser_fetcher(fetcher)
+
+        async with httpx.AsyncClient() as client:
+            plugin = await self._plugin(client)
+            links = await plugin._episode_links(_EPISODE_URL)
+
+        assert links[0]["link"] == "https://voe.sx/e/abc123"
+        fetcher.click_through.assert_not_awaited()
+
+    @respx.mock
+    async def test_failed_pass_is_not_retried_at_once(self) -> None:
+        _gated_site(respx.mock, trusted="laravel_session=passed")
+        fetcher = _gate_fetcher(None)
+        _StoPlugin.set_browser_fetcher(fetcher)
+
+        async with httpx.AsyncClient() as client:
+            plugin = await self._plugin(client)
+            first = await plugin._episode_links(_EPISODE_URL)
+            await plugin._episode_links(_EPISODE_URL)
+
+        # Unresolved link-outs stay (JDownloader can still follow them)
+        assert first[0]["link"].startswith("https://s.to/r?t=")
+        fetcher.click_through.assert_awaited_once()
+
+    @respx.mock
+    async def test_pass_outlives_a_cancelled_search(self) -> None:
+        # Stremio cuts the search at its deadline; the next request profits
+        _gated_site(respx.mock, trusted="laravel_session=passed")
+        release = asyncio.Event()
+        started = asyncio.Event()
+
+        async def _slow_pass(*_args: object, **_kw: object) -> ClickThrough:
+            started.set()
+            await release.wait()
+            return _PASSED
+
+        fetcher = AsyncMock()
+        fetcher.click_through = AsyncMock(side_effect=_slow_pass)
+        _StoPlugin.set_browser_fetcher(fetcher)
+
+        async with httpx.AsyncClient() as client:
+            plugin = await self._plugin(client)
+            search = asyncio.create_task(plugin._episode_links(_EPISODE_URL))
+            await started.wait()
+            search.cancel()
+            release.set()
+            assert await plugin._gate_task is True
+
+            links = await plugin._episode_links(_EPISODE_URL)
+
+        assert links[0]["link"] == "https://voe.sx/e/abc123"
+        fetcher.click_through.assert_awaited_once()
 
 
 class TestRelevantSeries:

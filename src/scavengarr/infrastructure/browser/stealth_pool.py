@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
@@ -19,8 +20,10 @@ from urllib.parse import urlparse
 import structlog
 from patchright.async_api import Browser, BrowserContext, Page, Request, Route
 
+from scavengarr.domain.ports.browser_fetcher import ClickThrough
 from scavengarr.infrastructure.browser.turnstile import (
     is_challenge_page,
+    pass_turnstile_widget,
     read_when_settled,
     solve_cloudflare,
 )
@@ -56,6 +59,10 @@ _NOT_MEDIA_RE = re.compile(r"thumbnail|sprite|preview", re.IGNORECASE)
 # capture_media(): wait this long for autoplay, then click the player up to
 # _MEDIA_PLAY_CLICKS times (on ad-funded hosters the first click often only
 # opens a popup), waiting _MEDIA_CLICK_WAIT_S after each click
+# click_through(): bound for the click itself, poll interval for the target
+_CLICK_TIMEOUT_MS = 5_000
+_CLICK_POLL_MS = 300
+
 _MEDIA_AUTOPLAY_WAIT_S = 3.0
 _MEDIA_CLICK_WAIT_S = 5.0
 _MEDIA_PLAY_CLICKS = 3
@@ -416,6 +423,70 @@ class StealthPool:
                 if page is not None and not page.is_closed():
                     await page.close()
         return targets[0] if targets else None
+
+    async def click_through(
+        self, page_url: str, selector: str, *, timeout: float
+    ) -> ClickThrough | None:
+        """Click a link-out on *page_url*; return its target and the site's cookies.
+
+        Implements ``BrowserFetcherPort``. The target is the first navigation
+        that a request to the page's own host redirected off-site: the
+        link-out's redirect, also after a gate's form POST. Ad frames that
+        load other hosts by themselves do not count. A Turnstile widget the
+        click brings up is passed and its form submitted.
+        """
+        site = urlparse(page_url).hostname
+        targets: list[str] = []
+
+        def _on_request(request: Request) -> None:
+            source = request.redirected_from
+            if (
+                not targets
+                and request.is_navigation_request()
+                and source is not None
+                and urlparse(source.url).hostname == site
+                and urlparse(request.url).hostname not in (None, site)
+            ):
+                targets.append(request.url)
+
+        deadline = time.monotonic() + timeout
+        timeout_ms = int(timeout * 1000)
+        async with self._fetch_sem:
+            page: Page | None = None
+            try:
+                page = await self.new_page()
+                page.on("request", _on_request)
+                page.on("popup", _close_popup)
+                # Full layout: the click must hit the element like a user's
+                await page.route("**/*", _allow_player_resources)
+                if not await self._navigate(
+                    page, page_url, wait_until="domcontentloaded", timeout_ms=timeout_ms
+                ):
+                    return None
+                if not await solve_cloudflare(page, timeout_ms=timeout_ms):
+                    return None
+                await page.locator(selector).first.click(timeout=_CLICK_TIMEOUT_MS)
+                passed = False
+                while not targets and (left := deadline - time.monotonic()) > 0:
+                    if not passed:
+                        passed = await pass_turnstile_widget(
+                            page, timeout_ms=int(left * 1000)
+                        )
+                    await page.wait_for_timeout(_CLICK_POLL_MS)
+                if not targets:
+                    log.info("stealth_click_through_no_target", url=page_url)
+                    return None
+                await self._remember(page)
+                cookies = await page.context.cookies(page_url)
+                return ClickThrough(
+                    url=targets[0], cookies={c["name"]: c["value"] for c in cookies}
+                )
+            except Exception:  # noqa: BLE001
+                log.debug("stealth_click_through_error", url=page_url, exc_info=True)
+                return None
+            finally:
+                if page is not None and not page.is_closed():
+                    await page.close()
 
     # ------------------------------------------------------------------
     # Internal

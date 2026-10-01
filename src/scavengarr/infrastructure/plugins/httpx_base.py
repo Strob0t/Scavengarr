@@ -393,6 +393,22 @@ class HttpxPluginBase:
             "headers": {"User-Agent": self._user_agent},
         }
 
+    async def _use_browser_session(self, url: str, cookies: dict[str, str]) -> None:
+        """Send *cookies* (a browser's session) with later requests to *url*'s site.
+
+        For sites that trust a session once it passed a gate in the browser
+        (e.g. a Turnstile widget before link-outs). The site's own cookies in
+        the client are dropped first, so no stale session is sent alongside.
+        """
+        client = await self._ensure_client()
+        host = urlparse(url).hostname or ""
+        jar = client.cookies.jar
+        for cookie in list(jar):
+            if cookie.domain.lstrip(".") == host:
+                jar.clear(cookie.domain, cookie.path, cookie.name)
+        for name, value in cookies.items():
+            client.cookies.set(name, value, domain=host)
+
     async def _resolve_redirect(
         self, url: str, *, context: str = "", referer: str = ""
     ) -> str | None:
