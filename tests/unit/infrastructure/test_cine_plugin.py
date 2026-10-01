@@ -184,6 +184,11 @@ class TestPluginAttributes:
     def test_mode(self, cine_mod):
         assert cine_mod.plugin.mode == "httpx"
 
+    def test_serves_downloads_only(self, cine_mod):
+        # Every /out/ link opens a reCAPTCHA gateway (2026-10-01): no
+        # resolver plays it, so Stremio requests spent time on it for nothing
+        assert cine_mod.plugin.provides == "download"
+
 
 # ---------------------------------------------------------------------------
 # Build search result tests
@@ -359,6 +364,69 @@ class TestPluginSearch:
         assert [r.title for r in results] == ["The Batman (2022)"]
 
     @pytest.mark.asyncio
+    async def test_scrapes_only_entries_matching_the_query(self, plugin, mock_client):
+        # The site's search lists unrelated titles ("Oppenheimer" also
+        # returned "Toy Story 4"), each costing an entry and links requests
+        search = {**SEARCH_RESPONSE, "pages": 1}
+        detail_ids: list[str] = []
+
+        async def mock_post(url, **kwargs):
+            url_str = str(url)
+            if "/request/search" in url_str:
+                return _make_json_response(search)
+            if "/request/entry" in url_str:
+                detail_ids.append(kwargs["data"]["ID"])
+                return _make_json_response(DETAIL_RESPONSE)
+            if "/request/links" in url_str:
+                return _make_json_response(LINKS_RESPONSE)
+            return _make_json_response({})
+
+        mock_client.post = AsyncMock(side_effect=mock_post)
+
+        await plugin.search("Batman Begins")
+
+        assert detail_ids == ["2313197"]
+
+    @pytest.mark.asyncio
+    async def test_links_are_requested_per_language(self, plugin, mock_client):
+        # Without lang the site answers {"status": false} (seen 2026-10-01),
+        # so no title had a link; the live search lists ids as "1,2"
+        entry = {
+            "imdb": "1877830",
+            "year": "2022",
+            "language": "1,2",
+            "quality": "3",
+            "title": "The Batman",
+        }
+        search = {"status": True, "pages": 1, "entries": [entry]}
+        langs: list[str | None] = []
+
+        async def mock_post(url, **kwargs):
+            url_str = str(url)
+            if "/request/search" in url_str:
+                return _make_json_response(search)
+            if "/request/entry" in url_str:
+                return _make_json_response(DETAIL_RESPONSE)
+            if "/request/links" in url_str:
+                lang = kwargs["data"].get("lang")
+                langs.append(lang)
+                if lang is None:
+                    return _make_json_response({"status": False})
+                links = {"voe": ["3", 100 + int(lang)]}
+                return _make_json_response({"status": True, "links": links})
+            return _make_json_response({})
+
+        mock_client.post = AsyncMock(side_effect=mock_post)
+
+        results = await plugin.search("The Batman")
+
+        assert sorted(lang or "" for lang in langs) == ["1", "2"]
+        assert [(lk["link"], lk["language"]) for lk in results[0].download_links] == [
+            ("https://cine.to/out/101", "German"),
+            ("https://cine.to/out/102", "English"),
+        ]
+
+    @pytest.mark.asyncio
     async def test_search_returns_results(self, plugin, mock_client):
         search_resp = _make_json_response(SEARCH_RESPONSE_SINGLE_PAGE)
         detail_resp = _make_json_response(DETAIL_RESPONSE)
@@ -407,7 +475,11 @@ class TestPluginSearch:
         results = await plugin.search("batman")
 
         assert page_count == 2
-        assert len(results) == 3
+        # Page 2's "The Dark Knight" lacks the query word: not scraped
+        assert [r.title for r in results] == [
+            "The Batman (2022)",
+            "Batman Begins (2005)",
+        ]
 
     @pytest.mark.asyncio
     async def test_search_empty_query(self, plugin):

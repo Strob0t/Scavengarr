@@ -19,7 +19,7 @@ JDownloader `.crawljob`) and are only served via Torznab. *Engine* is
 browser. *Mirrors* counts the extra domains tried when the primary one
 is unreachable.
 
-41 plugins: 19 with streams (used by the Stremio addon), 22 with direct downloads.
+41 plugins: 18 with streams (used by the Stremio addon), 23 with direct downloads.
 
 | Plugin | Website | Mirrors | Content | Engine | Languages |
 |---|---|---|---|---|---|
@@ -28,7 +28,7 @@ is unreachable.
 | `boerse` | boerse.am | 5 | Downloads | Playwright | de |
 | `burningseries` | burningseries.ac | 2 | Downloads | httpx | de |
 | `byte` | byte.to | 0 | Downloads | httpx | de |
-| `cine` | cine.to | 0 | Streams | httpx | de |
+| `cine` | cine.to | 0 | Downloads | httpx | de |
 | `cineby` | cineby.gd | 7 | Streams | httpx | en |
 | `crawli` | crawli.net | 1 | Downloads | httpx | de |
 | `dataload` | www.data-load.me | 0 | Downloads | httpx | de |

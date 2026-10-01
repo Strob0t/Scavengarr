@@ -3,7 +3,8 @@
 Scrapes cine.to (German movie streaming aggregator) via its POST-based REST API:
 - POST /request/search for search (form-urlencoded, paginated, 24 results/page)
 - POST /request/entry for title details (genres, rating, plot, duration)
-- POST /request/links for stream hoster links (redirect via /out/{link_id})
+- POST /request/links (per language) for hoster links (redirect via /out/{link_id},
+  behind a reCAPTCHA gateway: downloads only, no resolver plays them)
 
 Movies only (no TV series). Results include IMDB IDs and multiple hoster links.
 No authentication required. DDoS-Guard cookies not needed for API access.
@@ -16,6 +17,7 @@ from datetime import datetime
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
+from scavengarr.infrastructure.plugins.relevance import hit_title, relevant_hits
 
 # ---------------------------------------------------------------------------
 # Configurable settings
@@ -41,11 +43,21 @@ _QUALITY_MAP: dict[int | str, str] = {
 }
 
 
+# Language ids of the site's links API
+_LANGUAGES = {"1": "German", "2": "English"}
+
+
+def _entry_languages(entry: dict) -> list[str]:
+    """Language ids a search entry has links in (``1``, ``"1,2"``), German first."""
+    ids = {part.strip() for part in str(entry.get("language", "")).split(",")}
+    return [lang for lang in _LANGUAGES if lang in ids] or ["1"]
+
+
 class CinePlugin(HttpxPluginBase):
     """Python plugin for cine.to using httpx (REST API, movies only)."""
 
     name = "cine"
-    provides = "stream"
+    provides = "download"
     _domains = _DOMAINS
 
     async def _post_api(self, path: str, data: dict, context: str) -> dict | None:
@@ -102,16 +114,40 @@ class CinePlugin(HttpxPluginBase):
         data = await self._post_api("/request/entry", {"ID": imdb_id}, "detail")
         return data.get("entry") if data else None
 
-    async def _fetch_links(self, imdb_id: str) -> dict | None:
-        """Fetch stream hoster links for a title."""
-        data = await self._post_api("/request/links", {"ID": imdb_id}, "links")
+    async def _fetch_links(self, imdb_id: str, lang: str) -> dict | None:
+        """Fetch the stream hoster links of a title in one language.
+
+        The site answers ``{"status": false}`` without ``lang`` (its own
+        page asks per language: 1 German, 2 English).
+        """
+        data = await self._post_api(
+            "/request/links", {"ID": imdb_id, "lang": lang}, "links"
+        )
         return data.get("links") if data else None
+
+    def _hoster_links(self, links: dict | None, language: str) -> list[dict[str, str]]:
+        """Download links from the links API's ``{hoster: [quality, id, ...]}``."""
+        download_links: list[dict[str, str]] = []
+        for hoster_name, link_data in (links or {}).items():
+            if not isinstance(link_data, list) or len(link_data) < 2:
+                continue
+            hoster_quality = _QUALITY_MAP.get(link_data[0], "")
+            label = (
+                f"{hoster_name} ({hoster_quality})" if hoster_quality else hoster_name
+            )
+            for link_id in link_data[1:]:
+                link = {"hoster": label, "link": f"{self.base_url}/out/{link_id}"}
+                if language:
+                    link["language"] = language
+                download_links.append(link)
+        return download_links
 
     def _build_search_result(
         self,
         search_entry: dict,
         detail: dict | None,
         links: dict | None,
+        language: str = "",
     ) -> SearchResult | None:
         """Build a SearchResult from search entry, detail, and links data.
 
@@ -132,21 +168,7 @@ class CinePlugin(HttpxPluginBase):
         # Source URL
         source_url = f"{self.base_url}/#tt{imdb_id}" if imdb_id else self.base_url
 
-        # Build download links from hoster data
-        download_links: list[dict[str, str]] = []
-        if links:
-            for hoster_name, link_data in links.items():
-                if not isinstance(link_data, list) or len(link_data) < 2:
-                    continue
-                hoster_quality = _QUALITY_MAP.get(link_data[0], "")
-                for link_id in link_data[1:]:
-                    link_url = f"{self.base_url}/out/{link_id}"
-                    label = (
-                        f"{hoster_name} ({hoster_quality})"
-                        if hoster_quality
-                        else hoster_name
-                    )
-                    download_links.append({"hoster": label, "link": link_url})
+        download_links = self._hoster_links(links, language)
         if not download_links:
             self._log.debug("cine_no_links", imdb_id=imdb_id)
             return None
@@ -201,14 +223,26 @@ class CinePlugin(HttpxPluginBase):
             return None
 
         imdb_str = str(imdb_id)
+        langs = _entry_languages(entry)
 
         async with sem:
-            detail, links = await asyncio.gather(
+            detail, *per_lang = await asyncio.gather(
                 self._fetch_entry_detail(imdb_str),
-                self._fetch_links(imdb_str),
+                *(self._fetch_links(imdb_str, lang) for lang in langs),
             )
 
-        return self._build_search_result(entry, detail, links)
+        results = [
+            self._build_search_result(entry, detail, links, _LANGUAGES[lang])
+            for lang, links in zip(langs, per_lang, strict=True)
+        ]
+        found = [r for r in results if r is not None]
+        if not found:
+            return None
+        merged = [lk for r in found for lk in (r.download_links or [])]
+        first = found[0]
+        first.download_links = merged
+        first.download_link = merged[0]["link"]
+        return first
 
     async def search(
         self,
@@ -231,7 +265,7 @@ class CinePlugin(HttpxPluginBase):
 
         await self._ensure_client()
 
-        search_results = await self._api_search(query)
+        search_results = relevant_hits(await self._api_search(query), query, hit_title)
         if not search_results:
             return []
 
