@@ -29,6 +29,9 @@ Found in a live test with Stremio Web (2026-10-01).
 - **One stream per hoster and language** (was: per hoster): a German-sub VOE stream was dropped whenever a German-dub VOE stream resolved, so anime fans had no sub option. Series titles that already contain the episode (`… s01e01`) no longer get it twice.
 - **Hoster names**: plugins label hosters inconsistently (`VOE`, `voe.sx`, `unknown`), so two VOE streams were returned as different hosters, the hoster bonus missed, and the list showed "UNKNOWN" or "VOE.SX". Hoster names are now resolver names (`HosterResolverRegistry.canonical_hoster`): a label naming a known hoster wins, then a known URL domain (mirror domains such as `d0000d.com` become `doodstream`); otherwise domain labels are reduced to their second-level part and placeholders fall back to the URL.
 
+### Chore: `xvfb-run` Works in the Dev Container
+- `.devcontainer/setup.sh` installs `xauth` with `xvfb`: `--no-install-recommends` left it out, and `xvfb-run -a <cmd>` (headful browser tests, AGENTS.md §9) failed with "xauth command not found". The step also runs when Xvfb is present but xauth is missing.
+
 ### Chore: CI on GitHub Actions
 - `.github/workflows/ci.yml` runs `pre-commit run --all-files` and the offline suite (`pytest`, live tests excluded) on every push to `staging`, on pull requests to `staging` and `main`, and on demand: Python 3.12, Poetry, cached virtualenv and pre-commit environments, read-only token. Checked in a clean clone without browsers, credentials or dev container environment: install 25 s, pre-commit 40 s, 4547 tests in 62 s; no offline test needs a real browser.
 - Live smoke tests stay out of CI: GitHub's datacenter IPs get harder Cloudflare challenges than the home network the addon runs in.

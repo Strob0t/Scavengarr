@@ -94,11 +94,12 @@ npx -y -p "@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}" playwright install --with-
 
 # Virtual display for headful browsers: interactive Cloudflare Turnstile
 # rejects every headless browser, headful Patchright under Xvfb passes
-# (see docs/plans/antibot-patchright.md). Run via `xvfb-run -a <cmd>`.
-if ! command -v Xvfb >/dev/null 2>&1; then
+# (see docs/plans/antibot-patchright.md). Run via `xvfb-run -a <cmd>`, which
+# needs xauth (only a recommendation of the xvfb package).
+if ! command -v Xvfb >/dev/null 2>&1 || ! command -v xauth >/dev/null 2>&1; then
   echo "[devcontainer] Installing Xvfb..."
   sudo apt-get update -qq \
-    && sudo apt-get install -y -qq --no-install-recommends xvfb \
+    && sudo apt-get install -y -qq --no-install-recommends xvfb xauth \
     || echo "WARN: Xvfb install failed (needed for headful browser tests)"
 fi
 
