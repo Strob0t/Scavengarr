@@ -393,7 +393,9 @@ class HttpxPluginBase:
             "headers": {"User-Agent": self._user_agent},
         }
 
-    async def _resolve_redirect(self, url: str, *, context: str = "") -> str | None:
+    async def _resolve_redirect(
+        self, url: str, *, context: str = "", referer: str = ""
+    ) -> str | None:
         """Return the off-site target of a link-out URL (``/external/<hash>``).
 
         Follows same-host redirects (up to ``_MAX_REDIRECT_HOPS``) and returns
@@ -401,6 +403,8 @@ class HttpxPluginBase:
         site answers with a Cloudflare challenge, the injected browser fetcher
         resolves it instead (directly, if the host showed a challenge within
         ``_CF_BLOCK_MEMO_S``).  ``None`` when *url* does not leave its host.
+        *referer* is sent as ``Referer``: some sites redirect a link-out only
+        when it is opened from the page that lists it.
         """
         memo_fetcher = self._cf_fetcher_for(url)
         if memo_fetcher is not None:
@@ -410,6 +414,10 @@ class HttpxPluginBase:
 
         client = await self._ensure_client()
         kwargs = self._request_kwargs(client)
+        if referer:
+            base_headers = kwargs.get("headers")
+            headers = dict(base_headers) if isinstance(base_headers, dict) else {}
+            kwargs["headers"] = {**headers, "Referer": referer}
         current = url
         for _ in range(_MAX_REDIRECT_HOPS):
             try:

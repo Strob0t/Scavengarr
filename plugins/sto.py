@@ -20,6 +20,8 @@ import re
 from html.parser import HTMLParser
 from urllib.parse import urljoin
 
+from unidecode import unidecode
+
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.categories import (
     filter_by_category,
@@ -33,6 +35,9 @@ from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 _DOMAINS = ["s.to", "serienstream.to", "186.2.175.5"]
 _MAX_PAGES = 42  # 24 results/page → 42 pages for ~1000
 _RESULTS_PER_PAGE = 24
+# Series scraped when none contains every word of the query (other-language
+# titles: "Money Heist" is "Haus des Geldes" on the site)
+_FALLBACK_SERIES = 3
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -65,6 +70,31 @@ def _determine_category(genres: list[str]) -> int:
         if mapped != 5000:
             return mapped
     return 5000
+
+
+def _words(text: str) -> set[str]:
+    """Lower-case ASCII words of *text* ("Pokémon: Die" → {"pokemon", "die"})."""
+    return set(re.findall(r"[a-z0-9]+", unidecode(text).lower()))
+
+
+def _relevant_series(series: list[dict[str, str]], query: str) -> list[dict[str, str]]:
+    """The series worth scraping for *query*, in the site's order.
+
+    The site's search also lists unrelated series ("Breaking Bad" finds
+    "Better Call Saul"); scraping each one costs a detail page, an episode
+    page and its link-outs, and bursts of link-outs make the site gate them
+    behind Turnstile. Keeps series whose title contains every query word,
+    else the site's top hits; each series once (the page links a series
+    from its card and from its episode hits).
+    """
+    by_key: dict[str, dict[str, str]] = {}
+    for entry in series:
+        key = entry.get("slug") or entry.get("url") or entry.get("title", "")
+        by_key.setdefault(key, entry)
+    unique = list(by_key.values())
+    wanted = _words(query)
+    matching = [s for s in unique if wanted <= _words(s.get("title", ""))]
+    return matching or unique[:_FALLBACK_SERIES]
 
 
 class _SearchSeriesParser(HTMLParser):
@@ -407,14 +437,19 @@ class StoPlugin(HttpxPluginBase):
         parser.feed(html)
         return parser.hosters
 
-    async def _resolve_hoster_url(self, play_url: str) -> str:
+    async def _resolve_hoster_url(self, play_url: str, *, referer: str) -> str:
         """Resolve a /r?t={token} link-out to the hoster URL.
 
-        Falls back to the link-out itself when it does not resolve
-        (JDownloader can still follow it).
+        The site redirects a link-out only when it is opened from its episode
+        page (*referer*) or with that page's session; otherwise it answers
+        with a page that works only inside its player iframe. Falls back to
+        the link-out itself when it does not resolve (JDownloader can still
+        follow it).
         """
         full_url = urljoin(self.base_url, play_url)
-        target = await self._resolve_redirect(full_url, context="hoster")
+        target = await self._resolve_redirect(
+            full_url, context="hoster", referer=referer
+        )
         return target or full_url
 
     async def _scrape_season_episodes(
@@ -451,7 +486,10 @@ class StoPlugin(HttpxPluginBase):
 
                 # Resolve hoster URLs (one episode has a handful of hosters)
                 resolved_urls = await asyncio.gather(
-                    *(self._resolve_hoster_url(h["play_url"]) for h in hosters)
+                    *(
+                        self._resolve_hoster_url(h["play_url"], referer=ep_url)
+                        for h in hosters
+                    )
                 )
                 links: list[dict[str, str]] = [
                     {
@@ -611,7 +649,7 @@ class StoPlugin(HttpxPluginBase):
 
         async def _resolve(h: dict[str, str]) -> dict[str, str] | None:
             async with sem:
-                resolved = await self._resolve_hoster_url(h["play_url"])
+                resolved = await self._resolve_hoster_url(h["play_url"], referer=ep_url)
                 return {
                     "hoster": h["provider"].lower(),
                     "link": resolved,
@@ -701,7 +739,7 @@ class StoPlugin(HttpxPluginBase):
         await self._ensure_client()
         await self._verify_domain()
 
-        all_series = await self._paginate_search(query)
+        all_series = _relevant_series(await self._paginate_search(query), query)
         if not all_series:
             return []
 

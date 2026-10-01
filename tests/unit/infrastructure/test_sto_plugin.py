@@ -33,6 +33,7 @@ _DOMAINS = _StoPlugin._domains
 _GENRE_CATEGORY_MAP = _mod._GENRE_CATEGORY_MAP
 _genre_to_torznab = _mod._genre_to_torznab
 _determine_category = _mod._determine_category
+_relevant_series = _mod._relevant_series
 
 
 def _make_plugin() -> object:
@@ -451,10 +452,36 @@ class TestHosterResolution:
         plugin._client = mock_client
         plugin.base_url = "https://s.to"
 
-        result = await plugin._resolve_hoster_url("/r?t=token123")
+        result = await plugin._resolve_hoster_url(
+            "/r?t=token123", referer="https://s.to/serie/x/staffel-1/episode-2"
+        )
 
         assert result == "https://voe.sx/e/abc123"
         assert mock_client.get.await_args.kwargs["follow_redirects"] is False
+
+    @pytest.mark.asyncio
+    async def test_sends_episode_page_as_referer(self) -> None:
+        # Without Referer (or session cookie) s.to answers /r?t= with a page
+        # that only works inside its player iframe, not with the redirect
+        plugin = _make_plugin()
+        episode = "https://s.to/serie/x/staffel-1/episode-2"
+
+        async def _get(url: str, **kw: object) -> object:
+            headers = kw.get("headers") or {}
+            if headers.get("Referer") == episode:  # type: ignore[union-attr]
+                return _mock_response(
+                    status_code=302, headers={"location": "https://voe.sx/e/abc"}
+                )
+            return _mock_response(text="<script>window.parent.postMessage</script>")
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.get = AsyncMock(side_effect=_get)
+        plugin._client = mock_client
+        plugin.base_url = "https://s.to"
+
+        result = await plugin._resolve_hoster_url("/r?t=token123", referer=episode)
+
+        assert result == "https://voe.sx/e/abc"
 
     @pytest.mark.asyncio
     async def test_returns_original_on_failure(self) -> None:
@@ -465,7 +492,7 @@ class TestHosterResolution:
         plugin._client = mock_client
         plugin.base_url = "https://s.to"
 
-        result = await plugin._resolve_hoster_url("/r?t=token123")
+        result = await plugin._resolve_hoster_url("/r?t=token123", referer="")
 
         assert result == "https://s.to/r?t=token123"
 
@@ -478,7 +505,7 @@ class TestHosterResolution:
         plugin._client = mock_client
         plugin.base_url = "https://s.to"
 
-        result = await plugin._resolve_hoster_url("/r?t=token123")
+        result = await plugin._resolve_hoster_url("/r?t=token123", referer="")
 
         assert result == "https://s.to/r?t=token123"
 
@@ -494,6 +521,10 @@ def _routed_client(active: dict[str, int] | None = None) -> AsyncMock:
     async def _get(url: str, **kw: object) -> object:
         url = str(url)
         if "/r?t=" in url:
+            referer = (kw.get("headers") or {}).get("Referer", "")  # type: ignore[union-attr]
+            if "/episode-" not in referer:
+                # s.to only redirects link-outs opened from their episode page
+                return _mock_response(text="<script>window.parent</script>")
             if active is not None:
                 active["now"] += 1
                 active["peak"] = max(active["peak"], active["now"])
@@ -570,6 +601,51 @@ class TestSeasonsAndParallelism:
         await plugin.search("x", season=1, episode=1)
 
         assert active["peak"] > 1
+
+
+class TestRelevantSeries:
+    """The site's search also lists unrelated series ("Breaking Bad" finds
+    "Better Call Saul"); scraping all of them cost seconds and dozens of
+    link-out requests, which made the site gate every link-out."""
+
+    def test_keeps_series_containing_every_query_word(self) -> None:
+        series = [
+            {"title": "Better Call Saul"},
+            {"title": "Breaking Bad"},
+            {"title": "El Camino: Ein Breaking Bad Film"},
+        ]
+        titles = [s["title"] for s in _relevant_series(series, "Breaking Bad")]
+        assert titles == ["Breaking Bad", "El Camino: Ein Breaking Bad Film"]
+
+    def test_each_series_once(self) -> None:
+        # The search page links a series from its card and its episode hits
+        series = [
+            {"title": "Breaking Bad", "slug": "breaking-bad"},
+            {"title": "Breaking Bad", "slug": "breaking-bad"},
+        ]
+        assert _relevant_series(series, "Breaking Bad") == series[:1]
+
+    def test_folds_case_accents_and_punctuation(self) -> None:
+        series = [{"title": "Pokémon: Die Serie"}]
+        assert _relevant_series(series, "pokemon die serie") == series
+
+    def test_falls_back_to_the_sites_top_hits(self) -> None:
+        # Other-language titles: "Money Heist" is "Haus des Geldes" there
+        series = [{"title": f"Serie {i}"} for i in range(6)]
+        assert _relevant_series(series, "Money Heist") == series[:3]
+
+    @pytest.mark.asyncio
+    async def test_search_skips_unrelated_series(self) -> None:
+        plugin = _make_plugin()
+        plugin._domain_verified = True
+        plugin.base_url = "https://s.to"
+        plugin._client = _routed_client()
+
+        await plugin.search("stranger things", season=1, episode=1)
+
+        fetched = [str(c.args[0]) for c in plugin._client.get.await_args_list]
+        assert any("/serie/stranger-things" in url for url in fetched)
+        assert not any("/serie/dark" in url for url in fetched)
 
 
 class TestSearch:

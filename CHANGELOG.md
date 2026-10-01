@@ -8,6 +8,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 59 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4588 tests (4547 excluding the opt-in live tests).
 
+### Fix: s.to Delivered No Playable Episode
+Found in the Stremio live test (2026-10-01): every s.to stream was dropped, so German series had one stream or none.
+- **Link-outs stayed unresolved**: s.to answers `/r?t=<token>` with a redirect only when it is opened from its episode page (or with that page's session); without `Referer` it returns a page that works only inside its player iframe, and the plugin fell back to the unresolvable link-out. The plugin now sends the episode page as `Referer` (`HttpxPluginBase._resolve_redirect(..., referer=...)`).
+- **Unrelated series were scraped**: the site's search also lists other series ("Breaking Bad" finds 18, among them "Better Call Saul"), and the plugin fetched each one's detail page, episode page and link-outs: 7 s and about 40 link-outs per request, a burst after which the site gates link-outs behind Turnstile for a while. Only series whose title contains every query word are scraped now (else the site's top 3, for titles in another language), each once (the result page links a series twice).
+
 ### Feature: Stremio Autoplay of the Next Episode, Readable Stream List
 Found in a live test with Stremio Web (2026-10-01).
 - **Autoplay never picked a Scavengarr stream**: Stremio's binge watching plays the next episode's first stream whose `behaviorHints.bingeGroup` equals the current one, and Scavengarr set none. Every stream now carries `bingeGroup: scavengarr|<language>` (a German dub continues in German, at the best quality and hoster the next episode has) and, when the site has one, the release name as `filename` for subtitle addons.
