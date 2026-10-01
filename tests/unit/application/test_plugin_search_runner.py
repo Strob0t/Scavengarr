@@ -198,6 +198,28 @@ class TestCircuitBreakerAndTimeout:
         assert [r.download_link for r in series] == ["https://a/5000"]
         assert plugin.search.await_count == 2
 
+    async def test_empty_answer_does_not_reset_the_breaker(self) -> None:
+        # kinoking answers a search without hits at once but needs 12-17 s
+        # for a movie page: its empty answers kept closing the breaker
+        async def _search(query: str, **_kwargs: object) -> list[SearchResult]:
+            if query == "hit":
+                await asyncio.sleep(10)
+            return []
+
+        plugin = _plugin([])
+        plugin.search = AsyncMock(side_effect=_search)
+        breaker = PluginCircuitBreaker(failure_threshold=2)
+        runner = _runner(
+            _registry({"a": plugin}), circuit_breaker=breaker, plugin_timeout=0.05
+        )
+        pool = ConcurrencyPool(httpx_slots=10, pw_slots=10)
+
+        async with pool.request() as budget:
+            for query in ("hit", "no hit", "hit", "hit"):
+                await runner.search_plugins(["a"], query, 2000, budget=budget)
+
+        assert plugin.search.await_count == 3
+
     async def test_open_circuit_skips_plugin(self) -> None:
         plugin = _plugin([_sr("https://a/1")])
         breaker = MagicMock()

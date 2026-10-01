@@ -270,6 +270,20 @@ class PluginSearchRunner:
             query, category=category, season=season, episode=episode
         )
 
+    def _record_outcome(self, key: str, *, success: bool, found: bool) -> None:
+        """Report a finished search to the circuit breaker.
+
+        An empty answer proves nothing: kinoking answers a search without
+        hits at once but needs 12-17 s per movie page, and its empty answers
+        kept resetting the breaker.
+        """
+        if self._circuit_breaker is None:
+            return
+        if not success:
+            self._circuit_breaker.record_failure(key)
+        elif found:
+            self._circuit_breaker.record_success(key)
+
     async def _search_single_plugin(
         self,
         name: str,
@@ -340,11 +354,10 @@ class PluginSearchRunner:
             # Record circuit breaker outcome — but NOT on cancellation
             # (BaseException), since the timeout handler in
             # _run_plugin_with_timeout records that case instead.
-            if self._circuit_breaker is not None and not cancelled:
-                if success:
-                    self._circuit_breaker.record_success(_breaker_key(name, category))
-                else:
-                    self._circuit_breaker.record_failure(_breaker_key(name, category))
+            if not cancelled:
+                self._record_outcome(
+                    _breaker_key(name, category), success=success, found=bool(results)
+                )
 
         # Tag results with source plugin for downstream use
         for r in results:
