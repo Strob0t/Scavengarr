@@ -34,6 +34,7 @@ from scavengarr.application.stremio.stream_builder import (
     build_stream_from_resolved,
     deduplicate_by_hoster,
     format_stream,
+    hoster_key,
     is_direct_video_url,
 )
 from scavengarr.domain.entities.stremio import (
@@ -112,16 +113,16 @@ _MIN_RESOLVE_WINDOW_S = 2.0
 
 
 class _HosterQueues:
-    """Stream indices grouped by hoster, handed out in rank order.
+    """Stream indices grouped by hoster and language, handed out in rank order.
 
-    A hoster gets its next stream only after the previous one failed.
+    A group gets its next stream only after the previous one failed.
     Streams without a hoster name each form their own group.
     """
 
     def __init__(self, ranked: list[RankedStream]) -> None:
-        self._queues: dict[str, deque[int]] = {}
+        self._queues: dict[tuple[str, str] | int, deque[int]] = {}
         for i, stream in enumerate(ranked):
-            self._queues.setdefault(stream.hoster or f"#{i}", deque()).append(i)
+            self._queues.setdefault(hoster_key(stream) or i, deque()).append(i)
         self._key_of = {i: key for key, q in self._queues.items() for i in q}
 
     def first(self) -> list[int]:

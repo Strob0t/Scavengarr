@@ -62,7 +62,9 @@ def format_stream(
     if title and not ranked.release_name:
         if season is not None and episode is not None:
             # Sites title the series; the stream was filtered to this episode
-            title = f"{title} S{season:02d}E{episode:02d}"
+            code = f"S{season:02d}E{episode:02d}"
+            if code.lower() not in title.lower():
+                title = f"{title} {code}"
         elif year and not ranked.title:
             title = f"{title} ({year})"
     details = [ranked.language.label] if ranked.language else []
@@ -84,21 +86,31 @@ def format_stream(
     )
 
 
-def deduplicate_by_hoster(streams: list[RankedStream]) -> list[RankedStream]:
-    """Keep only the first (best-ranked) stream per hoster.
+def hoster_key(stream: RankedStream) -> tuple[str, str] | None:
+    """Dedup key: one stream per hoster and language.
 
-    The input must already be sorted by rank (best first).  For each
-    hoster name, only the first occurrence is kept.  Streams with an
-    empty hoster string are always kept (no dedup key).
+    Dub and sub on the same hoster are different content (anime sites offer
+    both). ``None`` for streams without hoster name (no dedup).
     """
-    seen: set[str] = set()
+    if not stream.hoster:
+        return None
+    return stream.hoster, stream.language.code if stream.language else ""
+
+
+def deduplicate_by_hoster(streams: list[RankedStream]) -> list[RankedStream]:
+    """Keep only the first (best-ranked) stream per hoster and language.
+
+    The input must already be sorted by rank (best first). Streams without
+    hoster name are always kept (no dedup key).
+    """
+    seen: set[tuple[str, str]] = set()
     result: list[RankedStream] = []
     for s in streams:
-        if not s.hoster:
+        key = hoster_key(s)
+        if key is None:
             result.append(s)
-            continue
-        if s.hoster not in seen:
-            seen.add(s.hoster)
+        elif key not in seen:
+            seen.add(key)
             result.append(s)
     return result
 

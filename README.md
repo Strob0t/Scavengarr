@@ -74,7 +74,7 @@ flowchart LR
 1. **Title lookup.** A Stremio request carries an IMDb or TMDB id. Scavengarr looks up the title and year in every language its plugins search in (TMDB, or IMDb/Wikidata without a TMDB key).
 2. **Plugin search.** All matching plugins search in parallel within a shared time budget. Each plugin runs its own multi-stage scrape (search page → detail pages → links); slow or broken sites are cut off at the deadline and skipped for a while by a circuit breaker.
 3. **Filtering and validation.** Results are matched against the title (sequels and spin-offs are filtered out), narrowed to the requested episode, and their links are checked in parallel.
-4. **Stremio: resolution.** Hoster embed links are turned into direct video URLs by 59 hoster resolvers. Every resolved URL gets a playback check (does it actually return video?). One working stream per hoster is returned, ranked by language, quality and hoster.
+4. **Stremio: resolution.** Hoster embed links are turned into direct video URLs by 59 hoster resolvers. Every resolved URL gets a playback check (does it actually return video?). One working stream per hoster and language is returned, ranked by language, quality and hoster.
 5. **Torznab: packaging.** For the Arr apps, results become Torznab XML with validated links; links behind a captcha or download quota are resolved only when you grab the release.
 
 ---
@@ -87,7 +87,8 @@ flowchart LR
 - Hoster links resolved to direct video URLs (MP4 and HLS), with the playback headers Stremio needs
 - Playback check: resolved URLs that return an error page or no video are dropped before you see them
 - Ranking by language (German audio first by default), quality and hoster reliability
-- One working stream per hoster: if a hoster's best link is dead, its next link is tried
+- One working stream per hoster and language (dub and sub both stay): if a hoster's best link is dead, its next link is tried
+- Autoplay of the next episode (Stremio's binge watching keeps the language of the current stream)
 - Answer deadline: search and resolution run on a fixed budget (10 s / 15 s by default), so Stremio always gets an answer in time
 - Catalogs for trending titles and search (with a TMDB API key)
 

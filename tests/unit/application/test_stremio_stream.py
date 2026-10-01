@@ -1409,6 +1409,26 @@ class TestResolvePhase:
 
         assert [s.url for s in result] == ["https://cdn.example/best.mp4"]
 
+    async def test_one_stream_per_hoster_and_language(self) -> None:
+        """Dub and sub on the same hoster are different content (anime)."""
+
+        async def _resolve(url: str, hoster: str = "") -> ResolvedStream:
+            return _video(url)
+
+        sub = {
+            "url": "https://voe.sx/e/sub",
+            "hoster": "VOE",
+            "release": "Iron.Man.2008.GERMAN.SUBBED.720p.WEB",
+        }
+        uc = _resolving_use_case([dict(_BEST), dict(_SECOND), sub], _resolve)
+
+        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        assert [s.url for s in result] == [
+            "https://cdn.example/best.mp4",
+            "https://cdn.example/sub.mp4",
+        ]
+
     async def test_further_streams_of_a_resolved_hoster_are_not_resolved(
         self,
     ) -> None:

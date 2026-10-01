@@ -104,6 +104,13 @@ class TestFormatStream:
         )
         assert result.description == "Breaking Bad S02E03\nVOE"
 
+    def test_title_with_the_episode_gets_it_once(self) -> None:
+        ranked = RankedStream(
+            url="https://voe.sx/e/abc", hoster="voe", title="Peaky Blinders s01e01"
+        )
+        result = format_stream(ranked, season=1, episode=1)
+        assert result.description == "Peaky Blinders s01e01\nVOE"
+
     def test_release_name_keeps_its_own_episode(self) -> None:
         ranked = RankedStream(
             url="https://voe.sx/e/abc",
@@ -232,6 +239,18 @@ class TestDeduplicateByHoster:
         result = deduplicate_by_hoster(streams)
         assert len(result) == 3
         assert [s.hoster for s in result] == ["voe", "streamtape", "doodstream"]
+
+    def test_languages_of_one_hoster_are_kept(self) -> None:
+        # Anime sites offer dub and sub on the same hoster: both are wanted
+        dub = StreamLanguage(code="de", label="German Dub", is_dubbed=True)
+        sub = StreamLanguage(code="de-sub", label="German Sub", is_dubbed=False)
+        streams = [
+            RankedStream(url="https://voe.sx/e/a", hoster="voe", language=dub),
+            RankedStream(url="https://voe.sx/e/b", hoster="voe", language=sub),
+            RankedStream(url="https://voe.sx/e/c", hoster="voe", language=dub),
+        ]
+        result = deduplicate_by_hoster(streams)
+        assert [s.url for s in result] == ["https://voe.sx/e/a", "https://voe.sx/e/b"]
 
     def test_many_duplicates(self) -> None:
         streams = [

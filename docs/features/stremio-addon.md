@@ -32,7 +32,7 @@ Stremio App
 ```text
 IMDb/TMDB ID → title lookup per plugin language → plugin search → episode filter
   → link validation → title matching → quality/language parsing → ranking
-  → hoster resolution, one stream per hoster + playback check (deadline, early stop)
+  → hoster resolution, one stream per hoster and language + playback check (deadline, early stop)
   → link cache → StremioStream list
 ```
 
@@ -44,8 +44,8 @@ IMDb/TMDB ID → title lookup per plugin language → plugin search → episode 
 1. **Title matching** — false positives (sequels, spin-offs) are filtered via fuzzy scoring.
 1. **Stream conversion** — `SearchResult` objects become `RankedStream` objects with parsed quality/language.
 1. **Ranking** — sort by language, quality, and hoster bonus.
-1. **Resolution** — of the top `max_probe_count` streams, hosters are resolved in parallel (bounded by `probe_concurrency`) via `HosterResolverRegistry.resolve`, the streams of one hoster in rank order: the next one only after the better one failed, none after one resolved; with `verify_streams` every resolved URL must also pass a playback check. Resolution stops early once `resolve_target_count` genuine video URLs exist, and at the latest at `stream_deadline_seconds` after the request started (but never less than 2 s after the search); unfinished resolutions are cancelled.
-1. **Dedup** — this yields the best *working* stream per hoster, so a hoster whose best-ranked link is dead still contributes its next one. Resolving every candidate at once instead opened dozens of connections to distinct CDNs within a second, which the home router blocked like a port scan (the whole machine lost network for ~30–60 s).
+1. **Resolution** — of the top `max_probe_count` streams, hosters are resolved in parallel (bounded by `probe_concurrency`) via `HosterResolverRegistry.resolve`, the streams of one hoster and language in rank order: the next one only after the better one failed, none after one resolved; with `verify_streams` every resolved URL must also pass a playback check. Resolution stops early once `resolve_target_count` genuine video URLs exist, and at the latest at `stream_deadline_seconds` after the request started (but never less than 2 s after the search); unfinished resolutions are cancelled.
+1. **Dedup** — this yields the best *working* stream per hoster and language (`hoster_key()`: dub and sub on one hoster are different content, e.g. anime), so a hoster whose best-ranked link is dead still contributes its next one. Resolving every candidate at once instead opened dozens of connections to distinct CDNs within a second, which the home router blocked like a port scan (the whole machine lost network for ~30–60 s).
 1. **Caching + formatting** — every stream gets a `CachedStreamLink` in the stream link cache (saved in parallel; a failed save is logged as `stremio_stream_link_save_failed` and drops only the streams served through the HLS proxy or `/play/`, which need the link; direct video URLs stay); resolved streams are returned with a direct URL or an HLS proxy URL. Streams that are not resolved (failed, only echoed the embed URL, beyond `max_probe_count`, or cancelled by the early stop) are dropped.
 
 ---
@@ -206,7 +206,7 @@ Streams are ranked with a weighted score:
 rank_score = language_score + (quality.value * quality_multiplier) + hoster_bonus
 ```
 
-Only one stream per hoster is returned (e.g. 5 VOE links from 5 plugins collapse to one); streams without a hoster name are always kept. Hoster names are resolver names (`HosterResolverRegistry.canonical_hoster`, wired into the stream converter): a plugin label that names a known hoster wins (redirect links such as `s.to/r?t=…` name the hoster only in the label), then the URL's domain if a resolver handles it, so mirror domains and aliases share one name (`dood.re`, `d0000d.com` → `doodstream`) for the dedup, the hoster bonus and the label. Otherwise the plugin label is used, with a domain label reduced to its second-level part (`voe.sx` → `voe`), then the URL's second-level domain; placeholder labels such as `unknown` fall through to the URL. With a resolver configured (the normal case) the resolution does it: a hoster's streams are tried in rank order until one resolves and passes the playback check. Without a resolver, `deduplicate_by_hoster()` keeps the best-ranked stream per hoster before formatting.
+Only one stream per hoster and language is returned (e.g. 5 German-dub VOE links from 5 plugins collapse to one; a German-sub VOE link stays); streams without a hoster name are always kept. Hoster names are resolver names (`HosterResolverRegistry.canonical_hoster`, wired into the stream converter): a plugin label that names a known hoster wins (redirect links such as `s.to/r?t=…` name the hoster only in the label), then the URL's domain if a resolver handles it, so mirror domains and aliases share one name (`dood.re`, `d0000d.com` → `doodstream`) for the dedup, the hoster bonus and the label. Otherwise the plugin label is used, with a domain label reduced to its second-level part (`voe.sx` → `voe`), then the URL's second-level domain; placeholder labels such as `unknown` fall through to the URL. With a resolver configured (the normal case) the resolution does it: a hoster's streams of one language are tried in rank order until one resolves and passes the playback check. Without a resolver, `deduplicate_by_hoster()` keeps the best-ranked stream per hoster and language before formatting.
 
 ### Default Weights
 
