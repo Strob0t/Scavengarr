@@ -28,6 +28,16 @@ def test_scrub_removes_the_session_hash() -> None:
     assert _mod.scrub(html) == "var dle_login_hash = '0';"
 
 
+def test_scrub_removes_redirect_tokens() -> None:
+    html = '<a href="/r?t=eyJpdiI6IkhJMVhOTEozcUN1NlFLVWNObzFXMHc9PSIs">VOE</a>'
+    assert _mod.scrub(html) == '<a href="/r?t=scrubbed">VOE</a>'
+
+
+def test_scrub_removes_the_csrf_token() -> None:
+    html = '<meta name="csrf-token" content="Xy7rT0kq9WpLmZ3v">'
+    assert _mod.scrub(html) == '<meta name="csrf-token" content="0">'
+
+
 def test_store_fixture_writes_scrubbed_gzip(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -36,7 +36,12 @@ _FIXTURE_DIR = _ROOT / "tests" / "fixtures" / "html"
 
 # Per-visitor values that must not land in the repository
 _SCRUB = [
+    # DataLife Engine session hash
     (re.compile(r"(dle_login_hash\s*=\s*')[0-9a-f]+(')"), r"\g<1>0\g<2>"),
+    # Laravel session CSRF token (s.to)
+    (re.compile(r'(<meta name="csrf-token" content=")[^"]+(")'), r"\g<1>0\g<2>"),
+    # s.to's encrypted redirect tokens (/r?t=<laravel payload>)
+    (re.compile(r"(/r\?t=)[A-Za-z0-9%=+/_-]{20,}"), r"\g<1>scrubbed"),
 ]
 
 

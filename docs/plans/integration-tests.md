@@ -112,7 +112,8 @@ Fixtures are static HTML files stored in `tests/fixtures/`. Actual layout:
 tests/
   fixtures/
     html/
-      hdfilme/, kinoger/, megakino/, streamcloud/, streamkiste/
+      hdfilme/, kinoger/, megakino/, streamcloud/, streamkiste/,
+      filmpalast/, movie2k/, aniworld/, sto/, kinoking/
         search-oppenheimer.html.gz, detail-oppenheimer.html.gz, ...
                                 # real pages, parsed in tests/unit/infrastructure/test_real_pages.py
       testsite/

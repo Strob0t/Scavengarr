@@ -241,6 +241,102 @@ def _mock_client(*pages: str) -> AsyncMock:
     return client
 
 
+class TestAniworld:
+    _BASE = "https://aniworld.to"
+
+    def test_series_page_points_to_the_first_episode(self) -> None:
+        detail = _detail("aniworld", self._BASE, "detail-attack-on-titan")
+        assert detail.first_episode_url == (
+            "https://aniworld.to/anime/stream/attack-on-titan/staffel-1/episode-1"
+        )
+        assert detail.genres[:4] == ["Actiondrama", "Abenteuer", "Action", "Drama"]
+
+    def test_episode_hosters_per_language(self) -> None:
+        parser = _plugin_module("aniworld")._EpisodePageParser(self._BASE)
+        parser.feed(_page("aniworld", "episode-attack-on-titan-s01e01"))
+        links = [(h["hoster"], h["language"]) for h in parser.hoster_links]
+        assert links[:5] == [
+            ("voe", "German Dub"),
+            ("doodstream", "German Dub"),
+            ("filemoon", "German Dub"),
+            ("vidmoly", "German Dub"),
+            ("voe", "English Sub"),
+        ]
+        assert parser.hoster_links[0]["link"] == "https://aniworld.to/redirect/3540458"
+
+
+class TestSto:
+    _BASE = "https://serienstream.to"
+
+    def test_search_finds_the_series(self) -> None:
+        parser = _plugin_module("sto")._SearchSeriesParser(self._BASE)
+        parser.feed(_page("sto", "search-the-last-of-us"))
+        assert parser.results == [
+            {
+                "title": "The Last of Us",
+                "url": "https://serienstream.to/serie/the-last-of-us",
+                "slug": "the-last-of-us",
+            }
+        ]
+
+    def test_series_page_lists_seasons_and_episodes(self) -> None:
+        parser = _plugin_module("sto")._SeriesDetailParser(self._BASE)
+        parser.feed(_page("sto", "detail-the-last-of-us"))
+        assert parser.title == "The Last of Us"
+        assert parser.seasons == [1, 2]
+        assert len(parser.episodes) == 9
+        assert (
+            parser.episodes[0]["de_title"] == "Wenn Du in der Dunkelheit verloren bist"
+        )
+
+    def test_episode_hosters_per_language(self) -> None:
+        """The redirect tokens are scrubbed in the fixture (``/r?t=scrubbed``)."""
+        parser = _plugin_module("sto")._EpisodeHosterParser()
+        parser.feed(_page("sto", "episode-the-last-of-us-s01e01"))
+        assert [(h["provider"], h["language"]) for h in parser.hosters] == [
+            ("VOE", "Deutsch"),
+            ("VOE", "Englisch"),
+        ]
+        assert parser.hosters[0]["play_url"] == "/r?t=scrubbed"
+
+
+class TestKinoking:
+    def test_search_card(self) -> None:
+        parser = _plugin_module("kinoking")._SearchCardParser()
+        parser.feed(_page("kinoking", "search-oppenheimer"))
+        assert parser.results == [
+            {
+                "id": "13723",
+                "type": "movie",
+                "title": "Oppenheimer",
+                "tmdb": "872585",
+                "quality": "HD",
+            }
+        ]
+
+    def test_movie_servers(self) -> None:
+        links = _plugin_module("kinoking")._movie_links(
+            _page("kinoking", "movie-oppenheimer")
+        )
+        assert len(links) == 19
+        assert links[0] == {
+            "hoster": "filemoon",
+            "link": "https://filemoon.to/e/fwzwu9ny19jk",
+        }
+
+    def test_series_episodes(self) -> None:
+        mod = _plugin_module("kinoking")
+        episodes = mod._load_json_array(
+            mod._EPISODES_RE, _page("kinoking", "series-the-last-of-us")
+        )
+        assert len(episodes) == 9 + 7
+        picked = mod._pick_episodes(episodes, 1, 5)
+        assert [(e["season_number"], e["episode_number"]) for e in picked] == [(1, 5)]
+        assert mod._episode_links(episodes[0]) == [
+            {"hoster": "voe", "link": "https://voe.sx/e/jwf9glrkk7sd"}
+        ]
+
+
 class TestFilmpalast:
     _FILM = "//filmpalast.to/stream/oppenheimer"
 
