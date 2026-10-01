@@ -48,6 +48,11 @@ class TestDefaultsOnly:
         assert config.log_format == "console"  # dev → console
         assert config.cache_ttl_seconds == 3600
 
+    def test_default_user_agent_names_a_contact(self) -> None:
+        """Wikidata (German titles without a TMDB key) answers 403 to a
+        User-Agent without contact information (Wikimedia robot policy)."""
+        assert "(+https://" in load_config().http_user_agent
+
     def test_schema_defaults_match_effective_defaults(self) -> None:
         """AppConfig() and load_config() must agree (single source of defaults)."""
         schema = AppConfig()

@@ -442,7 +442,7 @@ class AppConfig(BaseModel):
         description="Whether HTTP client follows redirects.",
     )
     http_user_agent: str = Field(
-        default="Scavengarr/0.1.0",
+        default="Scavengarr/0.1.0 (+https://github.com/Strob0t/Scavengarr)",
         validation_alias=AliasChoices(
             "http_user_agent",
             AliasPath("http", "user_agent"),

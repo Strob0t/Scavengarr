@@ -96,7 +96,7 @@ These variables are read by the `EnvOverrides` Pydantic Settings model (case-ins
 | `SCAVENGARR_HTTP_TIMEOUT_SECONDS` | float | `30.0` | `http.timeout_seconds` |
 | `SCAVENGARR_HTTP_TIMEOUT_RESOLVE_SECONDS` | float | `15.0` | `http.timeout_resolve_seconds` |
 | `SCAVENGARR_HTTP_FOLLOW_REDIRECTS` | bool | `true` | `http.follow_redirects` |
-| `SCAVENGARR_HTTP_USER_AGENT` | string | `Scavengarr/0.1.0` | `http.user_agent` |
+| `SCAVENGARR_HTTP_USER_AGENT` | string | `Scavengarr/0.1.0 (+https://github.com/Strob0t/Scavengarr)` | `http.user_agent` (keep a contact URL: Wikidata refuses agents without one) |
 | `SCAVENGARR_RATE_LIMIT_REQUESTS_PER_SECOND` | float | `5.0` | `http.rate_limit_rps` |
 | `SCAVENGARR_RATE_LIMIT_ADAPTIVE` | bool | `true` | `http.rate_limit_adaptive` |
 | `SCAVENGARR_RATE_LIMIT_MIN_RPS` | float | `0.5` | `http.rate_limit_min_rps` |
