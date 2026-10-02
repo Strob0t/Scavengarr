@@ -74,7 +74,7 @@ flowchart LR
 1. **Title lookup.** A Stremio request carries an IMDb or TMDB id. Scavengarr looks up the title and year in every language its plugins search in (TMDB, or IMDb/Wikidata without a TMDB key).
 2. **Plugin search.** All matching plugins search in parallel within a shared time budget. Each plugin runs its own multi-stage scrape (search page → detail pages → links); slow or broken sites are cut off at the deadline and skipped for a while by a circuit breaker.
 3. **Filtering and validation.** Results are matched against the title (sequels and spin-offs are filtered out), narrowed to the requested episode, and their links are checked in parallel.
-4. **Stremio: resolution.** Hoster embed links are turned into direct video URLs by 59 hoster resolvers. Every resolved URL gets a playback check (does it actually return video?). One working stream per hoster and language is returned, ranked by language, quality and hoster.
+4. **Stremio: resolution.** Hoster embed links are turned into direct video URLs by 60 hoster resolvers. Every resolved URL gets a playback check (does it actually return video?). One working stream per hoster and language is returned, ranked by language, quality and hoster.
 5. **Torznab: packaging.** For the Arr apps, results become Torznab XML with validated links; links behind a captcha or download quota are resolved only when you grab the release.
 
 ---
@@ -103,7 +103,7 @@ flowchart LR
 ### Sources and hosters
 
 - 41 plugins for streaming, direct-download and anime sites, mostly German-language — see the [plugin list](docs/plugins.md)
-- 59 hoster resolvers (streaming hosters, direct-download hosters, XFS-based hosters)
+- 60 hoster resolvers (streaming hosters, direct-download hosters, XFS-based hosters)
 - Two engines: `httpx` for static pages and APIs, a real browser (Patchright/Playwright) for sites that need JavaScript
 - Mirror fallback: plugins try alternative domains when the primary one is down
 - Multi-language search: titles are looked up in each plugin's language

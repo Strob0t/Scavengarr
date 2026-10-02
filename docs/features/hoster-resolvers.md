@@ -8,7 +8,7 @@
 
 ## Overview
 
-Scavengarr ships **59 hoster resolvers**: 23 individual resolvers, 11 generic DDL hosters consolidated in `GenericDDLResolver`, and 25 XFileSharingPro (XFS) hosters consolidated in `XFSResolver`. Every resolver checks whether a file is still available; video-extracting resolvers additionally return a direct `.mp4`/`.m3u8` URL plus the HTTP headers the CDN needs.
+Scavengarr ships **60 hoster resolvers**: 24 individual resolvers, 11 generic DDL hosters consolidated in `GenericDDLResolver`, and 25 XFileSharingPro (XFS) hosters consolidated in `XFSResolver`. Every resolver checks whether a file is still available; video-extracting resolvers additionally return a direct `.mp4`/`.m3u8` URL plus the HTTP headers the CDN needs.
 
 Resolvers are registered in `HosterResolverRegistry`, which dispatches each URL to a resolver by its second-level domain, follows redirects and plugin hoster hints for unknown domains, falls back to a HEAD content-type probe, and caches the outcome in memory.
 
@@ -56,7 +56,7 @@ Video-extracting resolvers set `ResolvedStream.headers` with the headers require
 | DoodStream | `Referer: <base_url>` |
 | XFS video hosters | `Referer: <embed URL after redirects>` |
 | Veev | `Referer: <origin>/`, `User-Agent: <UA used to resolve>` (token is UA-bound) |
-| FireStream, Playmate, Vixeo | none (signed / public HLS URLs) |
+| FireStream, Playmate, Vixeo, gxplayer | none (signed / public HLS URLs) |
 | StreamUp (strmup) | `Origin: <scheme>://<host>`, `Referer: <scheme>://<host>/` |
 | Vidsonic | `Origin: <scheme>://<host>`, `Referer: <scheme>://<host>/` |
 
@@ -111,6 +111,7 @@ Extract a direct video URL (`.mp4`/`.m3u8`) from an embed page.
 | StreamUp | `strmup` | `strmup`, `streamup`, `vidara`, `vidaraa` | `streaming_url` from page, AJAX `/ajax/stream` fallback; HLS. Vidara hosts use the JSON API `POST /api/stream` (`{"device": "web", "filecode": id}` → `streaming_url`, 404 when gone; JD2 `VidaraTo`) |
 | Vidsonic | `vidsonic` | `vidsonic` | Hex-obfuscated, pipe-delimited HLS URL decoding |
 | Mixdrop | `mixdrop` | `mixdrop`, `mxdrop`, `m1xdrop`, `mixdrop23`, `mixdrp`, `miixdrop`, … (12 names from JD2 `MixdropCo`, without its dead ones) | Embed player (`/e/{id}`; `/f/` and `/emb/` read through it): `MDCore.wurl` from the packed setup (`unpacked_scripts()` in `_video_extract.py`) is the MP4 on the delivery CDN; a deleted file's player sets none. The CDN answers non-browser agents with 403 (was a validate-only DDL config until 2026-10-01: 36 of 36 mixdrop links were dropped as echo) |
+| gxplayer | `gxplayer` | `gxplayer.xyz` (`/watch?v=<8 chars>`; megakino's "Stream in HD" tab) | Port of JD2 `GxplayerXyz`: the watch page's video object (`"id"`, `"uid"`, `"md5"`) gives the HLS master `/m3u8/{uid}/{md5}/master.txt?s=1&id={id}&cache=1` on the page's host; "Video is not found" (a 200 page) or 404 means gone. Its segments are MPEG-TS served as `font/woff` under `.html` names |
 
 ### Validate-only resolvers (individual)
 

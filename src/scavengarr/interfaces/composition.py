@@ -46,6 +46,7 @@ from scavengarr.infrastructure.hoster_resolvers.generic_ddl import (
     create_all_ddl_resolvers,
 )
 from scavengarr.infrastructure.hoster_resolvers.gofile import GoFileResolver
+from scavengarr.infrastructure.hoster_resolvers.gxplayer import GxplayerResolver
 from scavengarr.infrastructure.hoster_resolvers.mediafire import MediafireResolver
 from scavengarr.infrastructure.hoster_resolvers.mixdrop import MixdropResolver
 from scavengarr.infrastructure.hoster_resolvers.playmate import PlaymateResolver
@@ -489,6 +490,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 stealth_pool=state.stealth_pool,
             ),
             VinovoResolver(http_client=state.http_client),
+            GxplayerResolver(http_client=state.http_client),
             # DDL resolvers (custom — non-XFS)
             MediafireResolver(http_client=state.http_client),
             GoFileResolver(http_client=state.http_client),

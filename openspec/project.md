@@ -11,7 +11,7 @@ Scavengarr is a **self-hosted, container-ready indexer** that emulates the Torzn
 - **Scraping**:
   - **httpx plugins**: `HttpxPluginBase` (`src/scavengarr/infrastructure/plugins/httpx_base.py`) — `httpx` (async HTTP) + stdlib `html.parser`
   - **Playwright plugins**: `PlaywrightPluginBase` (`src/scavengarr/infrastructure/plugins/playwright_base.py`) — Patchright (Playwright fork), one shared Chromium via `SharedBrowserPool`
-- **Hoster resolvers**: 56 resolvers in `src/scavengarr/infrastructure/hoster_resolvers/` (streaming and DDL hosters)
+- **Hoster resolvers**: 60 resolvers in `src/scavengarr/infrastructure/hoster_resolvers/` (streaming and DDL hosters)
 - **Configuration**: Pydantic Settings with precedence CLI → ENV (incl. `--dotenv` file) → YAML → defaults
 - **Plugins**: Python plugins only (`plugins/*.py`); the YAML plugin system was removed in `42fced9`
 - **Cache**: `diskcache` (default) or Redis (`cache.backend: redis`)

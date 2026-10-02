@@ -8,6 +8,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 59 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4588 tests (4547 excluding the opt-in live tests).
 
+### Feature: gxplayer Resolver (megakino's "Stream in HD")
+- megakino links every film to VOE and to `watch.gxplayer.xyz/watch?v=<id>` ("Stream in HD"), which no resolver handled. `GxplayerResolver` (`gxplayer.py`, a port of JDownloader's `GxplayerXyz`) reads the watch page's video object (`id`, `uid`, `md5`) and returns the HLS master `/m3u8/{uid}/{md5}/master.txt?s=1&id={id}&cache=1`; no playback headers are needed. Checked live: master, 720p variant and MPEG-TS segments load without Referer.
+- 60 hoster resolvers now (24 individual).
+
 ### Fix: kinoger Returned No Films and Nothing From Single-Player Pages
 - kinoger's player widget lists a film's stream as episode 1-1 too, in a hidden list (`<ul id="kinog-serial" style="display: none;">`, entry "1 Часть"). Since the episode parser (2026-10-01) every film counted as a series with the label "1x1", so film requests (category 2000, Stremio movies) got no kinoger results. A hidden episode list now marks a film's player.
 - A page with one player has no tabs: its player container (`<div id="container-video">`) is not inside a `<section id="contentN">`, and the parser only read sections. Such pages returned no links at all ("Wednesday", "John Wick: Kapitel 4", "El Camino"); a lone player container is now read like a tab without a label.
