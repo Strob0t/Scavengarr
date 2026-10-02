@@ -4,9 +4,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ---
 
-## Unreleased (staging)
+## v0.2.0 - 2026-10-02
 
-Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 59 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4588 tests (4547 excluding the opt-in live tests).
+Massive expansion of the plugin ecosystem (2 → 41 plugins), Stremio addon integration, 60 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4808 tests (4767 excluding the opt-in live tests).
 
 ### Chore: One Version Source
 - The version stood in eight places as `0.1.0`: `pyproject.toml`, the FastAPI app, the Stremio manifest (Stremio compares it to notice addon updates), Torznab caps, the default User-Agent in `defaults.py` and `schema.py`, and `data/config.yaml`. `infrastructure/version.py` now reads the installed package's version (`importlib.metadata`) once; the others use `APP_VERSION` / `APP_USER_AGENT`, and the shipped config leaves `http.user_agent` at its default. A release bumps `pyproject.toml` only.
@@ -1014,7 +1014,7 @@ Test suite expanded from 160 to 3963 tests (3742 unit + 158 E2E + 25 integration
 
 ---
 
-## v0.1.0 - 2025-XX-XX (Initial Release)
+## v0.1.0 - 2026-02-09 (Initial Release)
 
 First release of Scavengarr as a self-hosted Torznab/Newznab indexer. Includes the core scraping pipeline, plugin system (YAML + Python), Torznab API, CrawlJob packaging, link validation, and a comprehensive unit test suite.
 
@@ -1119,8 +1119,9 @@ Current known issues:
 
 - **animeloads captcha quota** (2026-09-29): anime-loads rate-limits captchas per IP (after ~30 captchas within ~40 min every answer was rejected for at least 10 min). An anonymous grab uses one captcha per episode, so only a few grabs per hour succeed; the rest end in HTTP 502. A login (`SCAVENGARR_ANIMELOADS_USERNAME`/`_PASSWORD`) needs one captcha per release.
 - **kinox hoster links unreachable** (2026-09-29): every mirror's `/redirect/<hash>` opens a "Verifizierung" page that asks for an image captcha ("Captcha eingeben", 2026-10-01), also in a real browser; kinox returns no results until the site drops it.
-- **Hosters without a resolver** (2026-09-29): gxplayer.xyz bans this network (every page, even the ban page, redirects to `/usersc/scripts/banned.php`); embedrise.com plays only a placeholder `video.mp4` that answers 404; frdl.to (freedl.ink, DDL) uses the same ad-tracker redirect as vidmoly. JD2 has plugins for all three (`GxplayerXyz`, `EmbedriseCom`, `FreedlInk`) should they become reachable.
+- **Hosters without a resolver** (2026-10-02): rubyvidhub.com (kinoger's "go" tab) answered Cloudflare 522 (origin down, streamruby.com too) on every check; embedrise.com plays only a placeholder `video.mp4` that answers 404; frdl.to (freedl.ink, DDL) uses the same ad-tracker redirect as vidmoly. JD2 has plugins for the last two (`EmbedriseCom`, `FreedlInk`) should they become reachable.
+- **GoFile links do not resolve** (2026-09-29): GoFile refuses guest lookups (401 `error-notPremium`; its website adds an `X-Website-Token` from an obfuscated script).
 - **Vidmoly unreachable behind ad blockers** (2026-09-28): the embed page's script redirect sends non-browser clients (and the stealth browser, when the network blocks ad domains, e.g. Pi-hole) to an ad click tracker; no stream is reachable then.
 - **SuperVideo streams need a browser-like player** (2026-09-28): the CDN (`*.serversicuro.cc`) answers non-browser clients with a JavaScript redirect and then ad-tracker redirects; resolution works, playback in players without JavaScript does not.
-- **hdfilme keyword search broken upstream** (2026-09-28): the site's own search answers with a PHP fatal error, so keyword searches return nothing; category browsing (empty query + category) works. Triage and fix plan: `docs/plans/plugin-repair.md`.
+- **Dead sites** (2026-10-01): megakino.to and movie4k.sx answer Cloudflare 522 (origin unreachable), so megakino_to and movie4k return nothing and the circuit breaker keeps them out of most requests; cineby's API host no longer resolves, and the shipped config disables it.
 - **Cloudflare-protected sites need a headful browser**: ddlspot, ddlvalley, scnsrc, filmfans, kinoger and serienfans only pass the interactive Turnstile with Patchright headful (Xvfb, `playwright.headless: false`) and `playwright.browser_fallback: true`. filmfans and serienfans rate-limit bursts (429): an uncached search takes ~2–2.5 min and can exceed Prowlarr's request timeout. See `docs/plans/antibot-patchright.md`.

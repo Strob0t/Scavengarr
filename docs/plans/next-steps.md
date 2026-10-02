@@ -51,7 +51,7 @@ From the dev container, `poetry run pytest -m live`: 24 passed, 10 failed, 7 ski
 ## 1. Bring `staging` to production (maintainer)
 
 - **Start production again** with the current code: `docker compose up -d --build` in the checkout on the host (192.168.88.2). Check that `/api/v1/healthz` answers 200 and that a Stremio stream request returns streams.
-- **Release v0.2.0** (merge only on explicit request, AGENTS.md §1): version `0.1.0` → `0.2.0` (minor: new features since February), "Unreleased (staging)" becomes "v0.2.0 - <date>", the `2025-XX-XX` placeholder of v0.1.0 gets filled in, PR `staging` → `main`, merge, sync back. The public `main` then no longer shows the February state.
+- **Release v0.2.0** (**2026-10-02:** released on request: version 0.2.0, CHANGELOG, `staging` merged into `main` by pull request; the production restart on the host is open) (merge only on explicit request, AGENTS.md §1): version `0.1.0` → `0.2.0` (minor: new features since February), "Unreleased (staging)" becomes "v0.2.0 - <date>", the `2025-XX-XX` placeholder of v0.1.0 gets filled in, PR `staging` → `main`, merge, sync back. The public `main` then no longer shows the February state.
 
 ## 2. Safety net
 
