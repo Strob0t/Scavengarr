@@ -8,6 +8,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 59 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4588 tests (4547 excluding the opt-in live tests).
 
+### Fix: kinoger.ru Links Went to the Vidara Resolver
+- The kinoger.pw support (below) claimed the second-level name `kinoger` for the `strmup` resolver, so kinoger.ru links (kinoger's VOE tab, a redirect to a VOE mirror such as `jeremyparticipantanything.com`) were sent to the Vidara API and failed instead of following the redirect. Found by the live check: 2 of 2 kinoger.ru links were dead.
+- Resolvers can now claim full host names (`supported_hosts`); the registry checks them before the second-level name. `strmup` claims the host `kinoger.pw` only, `canonical_hoster()` maps claimed hosts, and the Stremio stream converter asks for the URL host before its second-level name.
+
 ### Feature: fsst Streams Play (kinoger's First Player Tab)
 - fsst was a validate-only generic DDL config whose ID pattern (`/<id>`) did not match the `fsst.online/embed/<id>/` links kinoger serves, so every fsst link resolved to nothing. On kinoger's single-player pages ("Wednesday", "John Wick: Kapitel 4") fsst is the only hoster.
 - `FsstResolver` (`fsst.py`) replaces the config: the embed page redirects to its Kernel Video Sharing player host (incvideo1.online), whose Playerjs setup lists every quality (`file:"[360p]<url>,[720p]<url>,[1080p]<url>"`). The best quality's `get_file` link is returned; it redirects to the MP4 on the CDN and needs no headers. A 404 page (its player plays `video_error.mp4`) means gone.

@@ -27,19 +27,24 @@ from scavengarr.infrastructure.hoster_resolvers import extract_domain
 
 log = structlog.get_logger(__name__)
 
-_DOMAINS = frozenset({"strmup", "streamup", "vidara", "vidaraa", "kinoger"})
-# Hosts served through the JSON API (JD2 VidaraTo); kinoger.pw is
-# kinoger's own Vidara player ("Vidara" in its credits, same API)
-_API_DOMAINS = frozenset({"vidara", "vidaraa", "kinoger"})
+_DOMAINS = frozenset({"strmup", "streamup", "vidara", "vidaraa"})
+# Hosts served through the JSON API (JD2 VidaraTo)
+_API_DOMAINS = frozenset({"vidara", "vidaraa"})
+# kinoger's own Vidara player ("Vidara" in its credits, same API). Claimed
+# by host: kinoger.ru links redirect to VOE mirrors
+_API_HOSTS = frozenset({"kinoger.pw"})
 
 _FILE_ID_RE = re.compile(r"^/(?:e/|v/)?([A-Za-z0-9]{12,})(?:/|$)")
+
+
+def _host(url: str) -> str:
+    return (urlparse(url).hostname or "").removeprefix("www.")
 
 
 def _extract_file_id(url: str) -> str | None:
     """Extract 13-char file ID from a StreamUp URL."""
     try:
-        domain = extract_domain(url)
-        if domain not in _DOMAINS:
+        if extract_domain(url) not in _DOMAINS and _host(url) not in _API_HOSTS:
             return None
         parsed = urlparse(url)
         match = _FILE_ID_RE.search(parsed.path)
@@ -63,6 +68,11 @@ class StrmupResolver:
         """Mirror domains dispatched to this resolver by the registry."""
         return frozenset(_DOMAINS)
 
+    @property
+    def supported_hosts(self) -> frozenset[str]:
+        """Hosts dispatched here whose second-level name other hosts share."""
+        return _API_HOSTS
+
     async def resolve(self, url: str) -> ResolvedStream | None:
         """Fetch StreamUp page and extract HLS master URL."""
         file_id = _extract_file_id(url)
@@ -79,7 +89,7 @@ class StrmupResolver:
             host = "strmup.to"
             scheme = "https"
 
-        if extract_domain(url) in _API_DOMAINS:
+        if extract_domain(url) in _API_DOMAINS or _host(url) in _API_HOSTS:
             hls_master = await self._api_stream(scheme, host, file_id)
             return self._stream(hls_master, scheme, host, file_id)
 

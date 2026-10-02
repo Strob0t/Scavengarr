@@ -283,12 +283,15 @@ class TestVidara:
 
     def test_kinoger_player_is_a_vidara_host(self) -> None:
         """kinoger.pw (kinoger's player tab) runs Vidara under its own name:
-        the page credits "Vidara" and calls ``POST /api/stream``."""
+        the page credits "Vidara" and calls ``POST /api/stream``. kinoger.ru
+        links redirect to VOE mirrors, so only the host is claimed."""
         resolver = StrmupResolver(http_client=httpx.AsyncClient())
-        assert "kinoger" in resolver.supported_domains
+        assert resolver.supported_hosts == frozenset({"kinoger.pw"})
+        assert "kinoger" not in resolver.supported_domains
         assert _extract_file_id("https://kinoger.pw/e/5wCjBALU9QDHF") == (
             "5wCjBALU9QDHF"
         )
+        assert _extract_file_id("https://kinoger.ru/e/bs3h8ltwwh2b") is None
 
     @respx.mock
     async def test_kinoger_player_resolves_via_api(self) -> None:

@@ -83,6 +83,7 @@ class HosterResolverRegistry:
     ) -> None:
         self._resolvers: dict[str, HosterResolverPort] = {}
         self._domain_map: dict[str, HosterResolverPort] = {}
+        self._host_map: dict[str, HosterResolverPort] = {}
         self._http_client = http_client
         self._resolve_timeout = resolve_timeout
         # Resolver results must also pass check_playable (needs http_client)
@@ -99,24 +100,38 @@ class HosterResolverRegistry:
         If the resolver exposes a ``supported_domains`` property, each
         domain is also mapped so that URL-based dispatch finds the
         resolver even when the URL domain differs from the resolver name
-        (e.g. ``filelions`` → vidhide resolver). A domain claimed twice
-        stays with the first resolver (the composition registers specific
-        resolvers before the generic XFS/DDL ones) and is logged.
+        (e.g. ``filelions`` → vidhide resolver). A ``supported_hosts``
+        property claims full host names instead, for hosts whose
+        second-level name other hosts share (``kinoger.pw`` is a Vidara
+        player, ``kinoger.ru`` a redirect to VOE). A domain or host claimed
+        twice stays with the first resolver (the composition registers
+        specific resolvers before the generic XFS/DDL ones) and is logged.
         """
         self._resolvers[resolver.name] = resolver
         domains: frozenset[str] | None = getattr(resolver, "supported_domains", None)
-        for domain in domains or ():
-            existing = self._domain_map.get(domain)
-            if existing is not None and existing is not resolver:
-                log.warning(
-                    "hoster_domain_conflict",
-                    domain=domain,
-                    kept=existing.name,
-                    ignored=resolver.name,
-                )
-                continue
-            self._domain_map[domain] = resolver
+        hosts: frozenset[str] | None = getattr(resolver, "supported_hosts", None)
+        for claims, mapping in ((domains, self._domain_map), (hosts, self._host_map)):
+            for domain in claims or ():
+                existing = mapping.get(domain)
+                if existing is not None and existing is not resolver:
+                    log.warning(
+                        "hoster_domain_conflict",
+                        domain=domain,
+                        kept=existing.name,
+                        ignored=resolver.name,
+                    )
+                    continue
+                mapping[domain] = resolver
         log.debug("hoster_resolver_registered", hoster=resolver.name)
+
+    def _resolver_for(self, url: str, name: str) -> HosterResolverPort | None:
+        """Resolver for *url*: its host's claim, then its second-level *name*."""
+        host = (urlparse(url).hostname or "").removeprefix("www.")
+        return (
+            self._host_map.get(host)
+            or self._resolvers.get(name)
+            or self._domain_map.get(name)
+        )
 
     @property
     def supported_hosters(self) -> list[str]:
@@ -133,13 +148,18 @@ class HosterResolverRegistry:
         return frozenset(self._resolvers) | frozenset(self._domain_map)
 
     def canonical_hoster(self, name: str) -> str | None:
-        """Resolver name for a hoster label or second-level domain.
+        """Resolver name for a hoster label, second-level domain or host.
 
         Mirror domains and aliases map to their resolver (``filelions`` →
         ``vidhide``), so streams of one hoster share one name for
-        deduplication and ranking. ``None`` when no resolver handles *name*.
+        deduplication and ranking; claimed hosts too (``kinoger.pw`` →
+        ``strmup``). ``None`` when no resolver handles *name*.
         """
-        resolver = self._resolvers.get(name) or self._domain_map.get(name)
+        resolver = (
+            self._resolvers.get(name)
+            or self._domain_map.get(name)
+            or self._host_map.get(name)
+        )
         return resolver.name if resolver is not None else None
 
     async def cleanup(self) -> None:
@@ -186,8 +206,9 @@ class HosterResolverRegistry:
             self._cache_result(url, result)
             return result
 
-        # 1. Try specific resolver for URL domain (name match, then domain alias)
-        resolver = self._resolvers.get(hoster_name) or self._domain_map.get(hoster_name)
+        # 1. Try specific resolver for URL host or domain (claimed host, name
+        #    match, then domain alias)
+        resolver = self._resolver_for(url, hoster_name)
         if resolver is not None:
             return await self._resolve_with(resolver, hoster_name, url, url)
 
@@ -195,9 +216,7 @@ class HosterResolverRegistry:
         final_url = await self._follow_redirects(url)
         if final_url:
             redirected_hoster = extract_domain(final_url)
-            resolver = self._resolvers.get(redirected_hoster) or self._domain_map.get(
-                redirected_hoster
-            )
+            resolver = self._resolver_for(final_url, redirected_hoster)
             if resolver is not None:
                 log.info(
                     "hoster_resolve_after_redirect",

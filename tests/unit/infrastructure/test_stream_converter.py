@@ -387,6 +387,18 @@ class TestHosterNaming:
         )
         assert streams[0].hoster == "doodstream"
 
+    def test_canonical_name_for_url_host(self) -> None:
+        """kinoger.pw is a Vidara player; kinoger.ru shares its name only."""
+        result = _make_result(
+            download_links=[
+                {"hoster": "kinoger", "link": "https://kinoger.pw/e/5wCjBALU9QDHF"}
+            ],
+        )
+        streams = convert_search_results(
+            [result], canonical_hoster={"kinoger.pw": "strmup"}.get
+        )
+        assert streams[0].hoster == "strmup"
+
     def test_known_label_wins_over_redirector_domain(self) -> None:
         # s.to links are redirects: the label names the hoster behind them
         result = _make_result(

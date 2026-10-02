@@ -20,7 +20,7 @@ Resolvers are registered in `HosterResolverRegistry`, which dispatches each URL 
 URL → HosterResolverRegistry.resolve(url, hoster=<plugin hint>)
       ├── Result cache hit → cached ResolvedStream | None
       ├── Streaming playlist URL (path ends in .m3u8/.mpd) → HEAD content-type probe
-      ├── Resolver for URL domain (resolver name, then supported_domains alias) → resolver.resolve()
+      ├── Resolver for URL host or domain (supported_hosts claim, resolver name, then supported_domains alias) → resolver.resolve()
       ├── No resolver → follow HTTP redirects → resolver for final domain
       ├── Still none → resolver for plugin hoster hint (rotating mirror domains)
       └── Still none → HEAD content-type probe (video/* or HLS) → ResolvedStream | None
@@ -40,6 +40,8 @@ class HosterResolverPort(Protocol):
 ### Domain dispatch
 
 The registry matches `extract_domain(url)` (second-level domain, e.g. `"https://www.voe.sx/e/abc"` → `"voe"`) against resolver names. Resolvers that expose a `supported_domains` property are also registered under every alias domain (e.g. `filelions` → `vidhide`, `d0000d` → `doodstream`, `streamta` → `streamtape`): all XFS and generic DDL resolvers plus the individual resolvers with mirror lists (VOE, DoodStream, Streamtape, VidGuard, Strmup, Filemoon, FireStream, DDownload, Serienstream). Other individual resolvers are reached when the URL's second-level domain equals the resolver `name`, via a redirect to such a domain, or via the plugin-provided hoster hint. The registry strips surrounding whitespace from the URL first (scraped links sometimes end in a newline).
+
+A resolver can also claim full host names through a `supported_hosts` property, checked before the second-level name, when unrelated hosts share that name: `strmup` claims `kinoger.pw` (kinoger's Vidara player), while `kinoger.ru` links redirect to VOE mirrors and must reach the redirect step. `canonical_hoster()` knows claimed hosts too, and the Stremio stream converter asks for the URL host before its second-level name, so kinoger.pw streams are named `strmup`.
 
 A domain claimed by two resolvers stays with the first one registered (the composition registers the specific resolvers before the generic XFS/DDL ones) and is logged as `hoster_domain_conflict`; the shipped resolvers claim no domain twice. `moflix-stream` belongs to Vidhide (moflix-stream.click; JDownloader lists VidGuard with the former moflix-stream.day as offline).
 
@@ -109,7 +111,7 @@ Extract a direct video URL (`.mp4`/`.m3u8`) from an embed page.
 | SuperVideo | `supervideo` | `supervideo.*` | XFS-style JWPlayer extraction; browser capture on a Cloudflare 403 |
 | DoodStream | `doodstream` | `dood`, `doods`, `doodstream`, `ds2play`, `d0o0d`, `vidply`, `myvidplay`, `playmogo`, … (23 names; all mirrors currently redirect to `playmogo.com`) | `pass_md5` endpoint extraction; browser capture on a Cloudflare challenge (the player passes an invisible Turnstile headful; its CDN URL `…cloudatacdn.com/…~id?token=…` has no file extension and is taken from the video element request) |
 | Filemoon | `filemoon` | `filemoon`, `filemooon`, `byse`, rotating Byse domains (`bysezejataos`, `bysekoze`, …; 14 names from JD2 `FilemoonSxCrawler`) | Packed JS unpacker (legacy pages); Byse player pages via browser capture (`StealthPool.capture_media`), after the details API `/api/videos/<id>/embed/details` rules out a gone video (404) or a domain-restricted embed (403 `embedding … not allowed`) |
-| StreamUp | `strmup` | `strmup`, `streamup`, `vidara`, `vidaraa`, `kinoger` (kinoger.pw) | `streaming_url` from page, AJAX `/ajax/stream` fallback; HLS. Vidara hosts use the JSON API `POST /api/stream` (`{"device": "web", "filecode": id}` → `streaming_url`, 404 when gone; JD2 `VidaraTo`). kinoger.pw, kinoger's player tab, is a white-label Vidara (its page credits "Vidara" and calls the same API) |
+| StreamUp | `strmup` | `strmup`, `streamup`, `vidara`, `vidaraa`; host `kinoger.pw` | `streaming_url` from page, AJAX `/ajax/stream` fallback; HLS. Vidara hosts use the JSON API `POST /api/stream` (`{"device": "web", "filecode": id}` → `streaming_url`, 404 when gone; JD2 `VidaraTo`). kinoger.pw, kinoger's player tab, is a white-label Vidara (its page credits "Vidara" and calls the same API) |
 | Vidsonic | `vidsonic` | `vidsonic` | Hex-obfuscated, pipe-delimited HLS URL decoding |
 | Mixdrop | `mixdrop` | `mixdrop`, `mxdrop`, `m1xdrop`, `mixdrop23`, `mixdrp`, `miixdrop`, … (12 names from JD2 `MixdropCo`, without its dead ones) | Embed player (`/e/{id}`; `/f/` and `/emb/` read through it): `MDCore.wurl` from the packed setup (`unpacked_scripts()` in `_video_extract.py`) is the MP4 on the delivery CDN; a deleted file's player sets none. The CDN answers non-browser agents with 403 (was a validate-only DDL config until 2026-10-01: 36 of 36 mixdrop links were dropped as echo) |
 | gxplayer | `gxplayer` | `gxplayer.xyz` (`/watch?v=<8 chars>`; megakino's "Stream in HD" tab) | Port of JD2 `GxplayerXyz`: the watch page's video object (`"id"`, `"uid"`, `"md5"`) gives the HLS master `/m3u8/{uid}/{md5}/master.txt?s=1&id={id}&cache=1` on the page's host; "Video is not found" (a 200 page) or 404 means gone. Its segments are MPEG-TS served as `font/woff` under `.html` names |
@@ -236,7 +238,7 @@ Adding a new XFS hoster requires only an `XFSConfig` constant appended to `ALL_X
 
 | Feature | Description |
 |---|---|
-| Domain matching | Resolver `name` first, then `supported_domains` aliases (XFS, generic DDL and individual resolvers with mirror lists) |
+| Domain matching | Claimed hosts (`supported_hosts`) first, then resolver `name`, then `supported_domains` aliases (XFS, generic DDL and individual resolvers with mirror lists) |
 | Redirect following | Unknown domains are followed via GET; the final domain is dispatched again |
 | Hoster hint | Plugin-provided hoster name as a fallback for rotating mirror domains |
 | Canonical names | `canonical_hoster(name)` returns the resolver name for a hoster label or second-level domain (`filelions` → `vidhide`), `None` when no resolver handles it; the Stremio stream converter uses it so mirror domains share one hoster name |
@@ -263,7 +265,7 @@ Adding a new XFS hoster requires only an `XFSConfig` constant appended to `ALL_X
    - Flow: extract file ID → build canonical URL → fetch page/API → check offline markers → return `ResolvedStream` or `None`.
    - Video-extracting resolvers return the direct video URL plus playback `headers` (verify it with `verify_video_url()` from `_verify.py`); DDL resolvers return the canonical file URL with `StreamQuality.UNKNOWN`.
    - Use `extract_domain(url)` from `scavengarr.infrastructure.hoster_resolvers` for domain matching (`"https://www.voe.sx/e/abc"` → `"voe"`).
-   - The registry dispatches by `name`; if the hoster uses other second-level domains, expose a `supported_domains` property (`frozenset[str]`) so the registry maps them too.
+   - The registry dispatches by `name`; if the hoster uses other second-level domains, expose a `supported_domains` property (`frozenset[str]`) so the registry maps them too. When other hosts share such a name (kinoger.pw vs kinoger.ru), claim the host instead with a `supported_hosts` property (full host names without `www.`).
    - When the stream URL only exists in the running player (built by JavaScript, behind a Cloudflare challenge or a captcha play button), take an optional `stealth_pool: StealthPool | None = None` and return `await capture_stream(self._stealth_pool, embed_url, self.name)` from `_browser.py` (see [Browser capture](#browser-capture)); wire it with `stealth_pool=state.stealth_pool`. Prefer an httpx path when one exists: the capture costs seconds and a browser page.
 1. Add `tests/unit/infrastructure/test_<name>_resolver.py` with `respx` mocks (see [Testing](#testing)):
    - `TestExtractFileId`: valid domains, `www` prefix, http scheme, invalid/short IDs, non-matching domains.

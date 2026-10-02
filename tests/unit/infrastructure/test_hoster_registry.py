@@ -265,6 +265,52 @@ class TestHosterResolverRegistry:
         voe_resolver.resolve.assert_awaited_once()
         custom_resolver.resolve.assert_not_awaited()
 
+    def test_canonical_hoster_of_a_claimed_host(self) -> None:
+        vidara = SimpleNamespace(
+            name="strmup",
+            supported_domains=frozenset({"strmup"}),
+            supported_hosts=frozenset({"kinoger.pw"}),
+        )
+        registry = HosterResolverRegistry(resolvers=[vidara])
+
+        assert registry.canonical_hoster("kinoger.pw") == "strmup"
+        assert registry.canonical_hoster("kinoger") is None
+
+    @pytest.mark.asyncio
+    async def test_host_claim_leaves_other_hosts_of_the_name_alone(self) -> None:
+        """kinoger.pw is a Vidara player; kinoger.ru links redirect to VOE
+        mirrors. Claiming the name ``kinoger`` would send both to Vidara."""
+        vidara = MagicMock()
+        vidara.name = "strmup"
+        vidara.supported_domains = frozenset({"strmup"})
+        vidara.supported_hosts = frozenset({"kinoger.pw"})
+        vidara.resolve = AsyncMock(
+            return_value=ResolvedStream(video_url="https://cdn.example/v.m3u8")
+        )
+        voe = MagicMock()
+        voe.name = "voe"
+        voe.supported_domains = frozenset({"voe", "jeremyparticipantanything"})
+        voe.supported_hosts = frozenset()
+        voe.resolve = AsyncMock(
+            return_value=ResolvedStream(video_url="https://cdn.voe.sx/v.m3u8")
+        )
+        redirect = MagicMock()
+        redirect.url = "https://jeremyparticipantanything.com/e/bs3h8ltwwh2b"
+        http_client = AsyncMock(spec=httpx.AsyncClient)
+        http_client.head = AsyncMock(return_value=redirect)
+        registry = HosterResolverRegistry(
+            resolvers=[vidara, voe], http_client=http_client
+        )
+
+        pw = await registry.resolve("https://kinoger.pw/e/5wCjBALU9QDHF", "kinoger")
+        ru = await registry.resolve("https://kinoger.ru/e/bs3h8ltwwh2b", "kinoger")
+
+        assert pw is not None and ru is not None
+        vidara.resolve.assert_awaited_once_with("https://kinoger.pw/e/5wCjBALU9QDHF")
+        voe.resolve.assert_awaited_once_with(
+            "https://jeremyparticipantanything.com/e/bs3h8ltwwh2b"
+        )
+
     @pytest.mark.asyncio
     async def test_follows_redirect_to_resolve(self) -> None:
         """When URL domain has no resolver, follow redirects and dispatch."""

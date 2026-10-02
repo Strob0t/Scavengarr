@@ -77,18 +77,20 @@ def _hoster_name(url: str, label: str, canonical: CanonicalHosterFn | None) -> s
 
     A label naming a known hoster wins (redirect links such as
     ``s.to/redirect/…`` carry the hoster only in the label), then a known
-    URL domain, then the label, then the URL domain. Known names are
+    URL host (``kinoger.pw``; ``kinoger.ru`` is another hoster), then a
+    known URL domain, then the label, then the URL domain. Known names are
     resolver names, so mirror domains and aliases share one hoster name
     (one stream per hoster, one ranking bonus).
     """
     name = _normalize_hoster_name(label) if label else ""
     if name in _PLACEHOLDER_HOSTERS:
         name = ""
+    host = (urlparse(url).hostname or "").removeprefix("www.")
     domain = _extract_hoster(url)
     if domain == "unknown":
         domain = ""
     if canonical is not None:
-        for candidate in (name, domain):
+        for candidate in (name, host, domain):
             known = canonical(candidate) if candidate else None
             if known:
                 return known
