@@ -141,6 +141,68 @@ class TestKinoger:
             ("kinoger", "https://kinoger.pw/e/5wCjBALU9QDHF"),
         ]
 
+    def test_film_player_is_not_an_episode_list(self) -> None:
+        """A film's player tab carries the episode widget too, hidden
+        (``<ul id="kinog-serial" style="display: none;">``, one ``1-1``
+        entry "1 Часть"): no episode labels, not a series."""
+        detail = _detail("kinoger", self._BASE, "detail-oppenheimer")
+        assert not detail.is_series
+        assert [lk["label"] for lk in detail.stream_links] == [
+            "Stream HD+",
+            "Stream HD+",
+            "Stream HD",
+        ]
+
+    def test_film_with_a_single_player(self) -> None:
+        """A page with one player has no tabs: the player
+        (``<div id="container-video">``) sits outside any ``<section>``."""
+        detail = _detail("kinoger", self._BASE, "detail-john-wick-kapitel-4")
+        assert not detail.is_series
+        assert detail.stream_links == [
+            {
+                "hoster": "fsst",
+                "link": "https://fsst.online/embed/992734/",
+                "label": "",
+            }
+        ]
+
+    def test_series_with_a_single_player(self) -> None:
+        detail = _detail("kinoger", self._BASE, "detail-wednesday")
+        assert detail.is_series
+        assert len(detail.stream_links) == 8 + 8
+        assert detail.stream_links[0] == {
+            "hoster": "fsst",
+            "link": "https://fsst.online/embed/991364/",
+            "label": "1x1 ",
+        }
+        assert detail.stream_links[8]["link"] == "https://fsst.online/embed/991372/"
+        assert detail.stream_links[8]["label"] == "2x1 "
+
+    async def test_film_request_gets_the_film(self) -> None:
+        """The search also lists a series ("J. Robert Oppenheimer -
+        Atomphysiker"); its detail page loads concurrently and is empty."""
+        plugin = _plugin_module("kinoger").KinogerPlugin()
+        plugin._domain_verified = True
+
+        async def get(url: str, **kwargs: Any) -> httpx.Response:
+            if url.endswith("/index.php"):
+                first = "search_start" not in kwargs.get("params", {})
+                text = _page("kinoger", "search-oppenheimer") if first else ""
+            elif "13171-oppenheimer" in url:
+                text = _page("kinoger", "detail-oppenheimer")
+            else:
+                text = ""
+            return httpx.Response(200, text=text, request=httpx.Request("GET", url))
+
+        client = AsyncMock()
+        client.get = AsyncMock(side_effect=get)
+        plugin._client = client
+
+        results = await plugin.search("Oppenheimer", 2000)
+
+        assert [(r.title, r.category) for r in results] == [("Oppenheimer", 2000)]
+        assert results[0].download_link == "https://fsst.online/embed/973704/"
+
     def test_film_detail_metadata(self) -> None:
         """Year from the title ``Oppenheimer (2023)``, genres from the
         category list (``<li class="category">``)."""

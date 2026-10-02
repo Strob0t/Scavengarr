@@ -342,7 +342,10 @@ class _DetailPageParser(HTMLParser):
         self._section_id = ""
         self._section_iframe_src = ""
         self._section_episodes: list[tuple[int, int, str]] = []
+        self._section_film = False
         self.episodes_listed = False
+        # Open <div>s of a tab-less player container (0 = none)
+        self._player_div_depth = 0
 
         # Script-in-section tracking (JS player init with embedded URLs)
         self._in_section_script = False
@@ -404,10 +407,29 @@ class _DetailPageParser(HTMLParser):
         if tag == "section":
             section_id = attr_dict.get("id", "") or ""
             if section_id.startswith("content"):
-                self._in_section = True
-                self._section_id = section_id
-                self._section_iframe_src = ""
-                self._section_episodes = []
+                self._start_section(section_id)
+
+        # A page with one player has no tabs: its player container stands
+        # alone and is read like a tab without a label
+        if tag == "div" and self._player_div_depth:
+            self._player_div_depth += 1
+        elif (
+            tag == "div"
+            and not self._in_section
+            and (attr_dict.get("id") or "").startswith("container-video")
+        ):
+            self._start_section("")
+            self._player_div_depth = 1
+
+        # The player's episode list (kinog-serial, kinoger-serial, ...):
+        # a film's player hides its single "1 Часть" entry
+        if (
+            tag == "ul"
+            and self._in_section
+            and (attr_dict.get("id") or "").endswith("-serial")
+        ):
+            style = (attr_dict.get("style") or "").replace(" ", "").lower()
+            self._section_film = "display:none" in style
 
         # Iframe inside section
         if tag == "iframe" and self._in_section:
@@ -514,10 +536,13 @@ class _DetailPageParser(HTMLParser):
                 if m:
                     self._section_iframe_src = m.group(1)
 
-        if tag == "section" and self._in_section:
-            self._in_section = False
-            self._in_section_script = False
-            self._end_section()
+        if tag == "section" and self._in_section and not self._player_div_depth:
+            self._close_section()
+
+        if tag == "div" and self._player_div_depth:
+            self._player_div_depth -= 1
+            if not self._player_div_depth:
+                self._close_section()
 
         if tag == "h1" and self._in_h1:
             self._in_h1 = False
@@ -580,14 +605,27 @@ class _DetailPageParser(HTMLParser):
             if m:
                 self.imdb_rating = m.group(1)
 
+    def _start_section(self, section_id: str) -> None:
+        self._in_section = True
+        self._section_id = section_id
+        self._section_iframe_src = ""
+        self._section_episodes = []
+        self._section_film = False
+
+    def _close_section(self) -> None:
+        self._in_section = False
+        self._in_section_script = False
+        self._end_section()
+
     def _end_section(self) -> None:
         """Links of a player tab: every episode of a series, else its stream.
 
         A series tab's player script starts at the first episode, so its
-        URL alone would serve episode 1 for every request.
+        URL alone would serve episode 1 for every request. A film's tab
+        lists its stream as a hidden episode 1-1.
         """
         label = self._tab_labels.get(self._section_id, "")
-        if self._section_episodes:
+        if self._section_episodes and not self._section_film:
             self.episodes_listed = True
             for season, episode, url in self._section_episodes:
                 self.stream_links.append(
@@ -597,13 +635,13 @@ class _DetailPageParser(HTMLParser):
                         "label": episode_label(season, episode, label),
                     }
                 )
-        elif self._section_iframe_src:
+            return
+        url = self._section_iframe_src or next(
+            (url for _, _, url in self._section_episodes), ""
+        )
+        if url:
             self.stream_links.append(
-                {
-                    "hoster": _domain_from_url(self._section_iframe_src),
-                    "link": self._section_iframe_src,
-                    "label": label,
-                }
+                {"hoster": _domain_from_url(url), "link": url, "label": label}
             )
 
     def finalize(self) -> None:

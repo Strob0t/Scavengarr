@@ -8,6 +8,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 59 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4588 tests (4547 excluding the opt-in live tests).
 
+### Fix: kinoger Returned No Films and Nothing From Single-Player Pages
+- kinoger's player widget lists a film's stream as episode 1-1 too, in a hidden list (`<ul id="kinog-serial" style="display: none;">`, entry "1 Часть"). Since the episode parser (2026-10-01) every film counted as a series with the label "1x1", so film requests (category 2000, Stremio movies) got no kinoger results. A hidden episode list now marks a film's player.
+- A page with one player has no tabs: its player container (`<div id="container-video">`) is not inside a `<section id="contentN">`, and the parser only read sections. Such pages returned no links at all ("Wednesday", "John Wick: Kapitel 4", "El Camino"); a lone player container is now read like a tab without a label.
+- Checked on 19 live pages (12 films, 7 series, 9 of them with a single player): all parse with their kind and links now. New real-page fixtures: `detail-john-wick-kapitel-4`, `detail-wednesday`.
+
 ### Chore: Dead cineby Disabled in the Shipped Config
 - cineby's API host `db.videasy.net` no longer resolves (NXDOMAIN since 2026-10-01), so each search failed and the circuit breaker kept probing it. `data/config.yaml` (the Docker image's config) disables it with `plugins.overrides.cineby.enabled: false`; the plugin stays in the code, and removing the entry brings it back when the site returns. Without `data/config.yaml` it stays enabled.
 
