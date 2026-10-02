@@ -5,12 +5,12 @@ from __future__ import annotations
 import httpx
 import pytest
 import respx
+
+from scavengarr.domain.entities.stremio import StreamQuality
 from scavengarr.infrastructure.hoster_resolvers.gxplayer import (
     GxplayerResolver,
     _extract_video_id,
 )
-
-from scavengarr.domain.entities.stremio import StreamQuality
 
 _VID = "4QGFS5I1"
 _URL = f"https://watch.gxplayer.xyz/watch?v={_VID}"
