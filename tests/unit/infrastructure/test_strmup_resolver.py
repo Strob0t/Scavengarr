@@ -281,6 +281,31 @@ class TestVidara:
 
         assert result is None
 
+    def test_kinoger_player_is_a_vidara_host(self) -> None:
+        """kinoger.pw (kinoger's player tab) runs Vidara under its own name:
+        the page credits "Vidara" and calls ``POST /api/stream``."""
+        resolver = StrmupResolver(http_client=httpx.AsyncClient())
+        assert "kinoger" in resolver.supported_domains
+        assert _extract_file_id("https://kinoger.pw/e/5wCjBALU9QDHF") == (
+            "5wCjBALU9QDHF"
+        )
+
+    @respx.mock
+    async def test_kinoger_player_resolves_via_api(self) -> None:
+        api = respx.post("https://kinoger.pw/api/stream").respond(
+            200, json={"filecode": "5wCjBALU9QDHF", "streaming_url": self._HLS}
+        )
+
+        async with httpx.AsyncClient() as client:
+            result = await StrmupResolver(http_client=client).resolve(
+                "https://kinoger.pw/e/5wCjBALU9QDHF"
+            )
+
+        assert result is not None
+        assert result.video_url == self._HLS
+        body = json.loads(api.calls.last.request.content)
+        assert body == {"device": "web", "filecode": "5wCjBALU9QDHF"}
+
     @respx.mock
     async def test_api_without_streaming_url(self) -> None:
         respx.post("https://vidara.so/api/stream").respond(200, json={"title": "x"})

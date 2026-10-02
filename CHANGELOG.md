@@ -8,6 +8,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 59 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4588 tests (4547 excluding the opt-in live tests).
 
+### Feature: kinoger's Own Player Resolves (kinoger.pw)
+- kinoger's "Stream HD" tab plays from `kinoger.pw/e/<id>`, which no resolver handled. The page is a white-label Vidara player: it credits "Vidara" and loads its stream with `POST /api/stream` (`{"device": "web", "filecode": id}`), like vidara.so. The `strmup` resolver's Vidara path now covers the `kinoger` domain. Checked live: 4 of 4 kinoger.pw links (films and episodes) resolve in 0.4–0.7 s, playlists and segments load; an unknown id answers 404.
+
 ### Feature: gxplayer Resolver (megakino's "Stream in HD")
 - megakino links every film to VOE and to `watch.gxplayer.xyz/watch?v=<id>` ("Stream in HD"), which no resolver handled. `GxplayerResolver` (`gxplayer.py`, a port of JDownloader's `GxplayerXyz`) reads the watch page's video object (`id`, `uid`, `md5`) and returns the HLS master `/m3u8/{uid}/{md5}/master.txt?s=1&id={id}&cache=1`; no playback headers are needed. Checked live: master, 720p variant and MPEG-TS segments load without Referer.
 - 60 hoster resolvers now (24 individual).

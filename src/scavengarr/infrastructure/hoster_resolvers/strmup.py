@@ -8,8 +8,9 @@ Resolution strategy (from JD2 StreamupWs.java):
 
 Offline detection: HTTP 404 or blank page (< 100 characters).
 
-Vidara (vidara.so/.to, vidaraa.cc) runs the same streaming backend behind a
-JSON API instead (JD2 VidaraTo.java): ``POST /api/stream`` with
+Vidara (vidara.so/.to, vidaraa.cc, and kinoger.pw, kinoger's white-label
+Vidara player) runs the same streaming backend behind a JSON API instead
+(JD2 VidaraTo.java): ``POST /api/stream`` with
 ``{"device": "web", "filecode": id}`` → ``streaming_url``; 404 when gone.
 """
 
@@ -26,9 +27,10 @@ from scavengarr.infrastructure.hoster_resolvers import extract_domain
 
 log = structlog.get_logger(__name__)
 
-_DOMAINS = frozenset({"strmup", "streamup", "vidara", "vidaraa"})
-# Hosts served through the JSON API (JD2 VidaraTo)
-_API_DOMAINS = frozenset({"vidara", "vidaraa"})
+_DOMAINS = frozenset({"strmup", "streamup", "vidara", "vidaraa", "kinoger"})
+# Hosts served through the JSON API (JD2 VidaraTo); kinoger.pw is
+# kinoger's own Vidara player ("Vidara" in its credits, same API)
+_API_DOMAINS = frozenset({"vidara", "vidaraa", "kinoger"})
 
 _FILE_ID_RE = re.compile(r"^/(?:e/|v/)?([A-Za-z0-9]{12,})(?:/|$)")
 
