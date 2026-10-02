@@ -81,21 +81,25 @@ Every other film or series site on the list has a plugin. The rest of the list i
 | Veev | megakino, kinoger | `veev` | plays |
 | Streamtape, Vidoza | cine | `streamtape`, `vidoza` | cine serves downloads only |
 | Rapidgator, DDownload, 1fichier, Katfile, Turbobit, Uploaded, Filer.net | serienjunkies, serienfans, filmfans (the latter two in filecrypt containers) | all registered (DDL validation) | Torznab only |
-| **gxplayer** (watch.gxplayer.xyz) | megakino ("Stream in HD", the second link of each film) | **none** | JWPlayer whose HLS source is built in script |
-| **kinoger.pw** | kinoger (second player tab) | **none** | JWPlayer page with the release name as title; the file comes from a script variable (`t.file_path`) |
-| **kinoger.p2pplay.pro** | kinoger | **none** | P2P player |
-| fsst (fsst.online) | kinoger (first player tab) | `fsst`, DDL validation only | no stream extraction; 360p |
+| gxplayer (watch.gxplayer.xyz) | megakino ("Stream in HD", the second link of each film) | `gxplayer` (since 2026-10-02) | HLS master from the watch page's video object (port of JDownloader's `GxplayerXyz`); 5 of 5 films play |
+| kinoger.pw | kinoger ("Stream HD" tab; the only one on some series such as "Dune: Prophecy") | `strmup` (since 2026-10-02) | a white-label Vidara player (`POST /api/stream`); claimed by host, since kinoger.ru links redirect to VOE; 4 of 4 play |
+| fsst (fsst.online) | kinoger (first player tab; the only one on its single-player pages) | `fsst` (stream extraction since 2026-10-02) | Kernel Video Sharing player, Playerjs quality list, best `get_file` MP4; 8 of 8 play. The former DDL config matched no kinoger link |
+| kinoger.p2pplay.pro | none (0 of 19 current kinoger pages) | none, not built | an obfuscated single-page app with AES-encrypted API answers and ad gating; the only known id (`#n6lc6`, from old plugin docs) starts no stream in a browser |
+| **rubyvidhub** (rubyvidhub.com) | kinoger ("go" player tab, 1 of 26 collected links) | **none** | origin down: Cloudflare 522 on two probes an hour apart (2026-10-02), streamruby.com as well; not analysable, not built |
 | **cinemar.cc** | kinogo | **none** | only relevant with a kinogo plugin |
 
-The hosters of the listed sites are covered with four gaps, ranked by value:
+Since 2026-10-02 the player hosters of the covered sites resolve, except three:
 
-1. **gxplayer** would give every megakino film a second playable hoster.
-2. **kinoger.pw** would give kinoger a third playable tab.
-3. **p2pplay** and **fsst** stream extraction are of low value.
+- **rubyvidhub**: its server was down while checked; recheck before building a resolver (it may be a StreamRuby mirror).
+- **p2pplay**: no current kinoger page links it.
+- **cinemar.cc**: only kinogo uses it, and kinogo has no plugin.
 
 ## Follow-ups
 
 - Done with this analysis: streamcloud's fallback domain `streamcloud.my` became an online-slot site and was replaced by `streamcloud.plus`. A probe of all 89 plugin domains found no other parked or hijacked domain.
+- Done 2026-10-02:
+  - resolvers for gxplayer (`gxplayer.py`), kinoger.pw (`strmup`, host claim) and fsst streams (`fsst.py`);
+  - two kinoger parser bugs found on the way: films were labelled as series (no film results), and pages with a single player returned no links (9 of 19 pages).
 - Open:
-  - a gxplayer resolver and a kinoger.pw resolver, both after a site analysis of their scripts;
+  - rubyvidhub, once its server answers again;
   - no kinogo plugin unless Russian sources are wanted.

@@ -307,16 +307,23 @@ class _DetailPageParser(HTMLParser):
     Stream tabs have structure::
 
         <div class="tabs">
-          <input id="tab1" type="radio" name="tab-control" checked>
           <label for="tab1" title="Stream HD+">Stream HD+</label>
           ...
           <section id="content1">
-            <iframe src="https://fsst.online/embed/..."></iframe>
+            <div id="container-video">
+              <script>pw.show(1,[['https://fsst.online/embed/973704/']],0.2)</script>
+              <ul id="kinog-serial" style="display: none;">
+                <span onclick="pw.player('https://fsst.online/embed/973704/',
+                      this);" data-id="1-1">1 Часть</span>
+              </ul>
+            </div>
           </section>
-          <section id="content2">
-            <iframe src="https://kinoger.p2pplay.pro/..."></iframe>
-          </section>
+          <section id="content2">…kinoger.pw/e/<id>…</section>
         </div>
+
+    A series lists its episodes visibly (``<ul id="kinog-serial">``,
+    ``data-id="<season>-<episode>"``); a page with one player has no tabs
+    and its ``container-video`` div stands alone.
 
     Metadata from the page body:
     - Year from text or meta
@@ -528,7 +535,7 @@ class _DetailPageParser(HTMLParser):
             if not self._section_iframe_src and self._section_script_data:
                 # Extract URLs from JS patterns like:
                 #   fsst.show(1,[['https://fsst.online/embed/905450/']],0.2)
-                #   ollhd.show(1,[['https://kinoger.p2pplay.pro/#n6lc6']],0.2)
+                #   ollhd.show(1,[['https://voe.sx/e/6qprs3ixu8el']],0.2)
                 m = re.search(
                     r"""\.show\(\d+,\s*\[\[['"]?(https?://[^'"\]]+)""",
                     self._section_script_data,
