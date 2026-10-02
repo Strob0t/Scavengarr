@@ -26,6 +26,7 @@ from scavengarr.domain.entities import (
 from scavengarr.domain.entities.torznab import TorznabItem
 from scavengarr.domain.plugins import PluginNotFoundError
 from scavengarr.infrastructure.torznab.presenter import render_caps_xml, render_rss_xml
+from scavengarr.infrastructure.version import APP_VERSION
 from scavengarr.interfaces.app_state import AppState
 
 log = structlog.get_logger(__name__)
@@ -113,7 +114,7 @@ def _handle_caps(
         plugins=state.plugins,
         app_name=state.config.app_name,
         plugin_name=plugin_name,
-        server_version="0.1.0",
+        server_version=APP_VERSION,
     )
     rendered = render_caps_xml(caps_uc.execute())
     return _xml(rendered.payload, status_code=200)

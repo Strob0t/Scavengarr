@@ -51,7 +51,7 @@ Rules:
 - Larger refactors: write a brief Markdown plan (problem, design, affected files, tests) first.
 
 ### Merge to main (only on explicit user request)
-1. Bump the version in `pyproject.toml` (PATCH +1 unless MINOR/MAJOR is warranted).
+1. Bump the version in `pyproject.toml` (PATCH +1 unless MINOR/MAJOR is warranted). It is the only place: the app, the Stremio manifest, Torznab caps and the default User-Agent read it through `infrastructure/version.py` (package metadata; `poetry install` refreshes it in the dev venv).
 2. Update `CHANGELOG.md` (newest entry on top with version, date, changes; current bugs under `KNOWN_ISSUES`).
 3. Commit & push to `staging`.
 4. `gh pr create --base main --head staging --title "..." --body "..."` then `gh pr merge --merge`.

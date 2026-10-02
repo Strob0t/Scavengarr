@@ -8,6 +8,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 59 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4588 tests (4547 excluding the opt-in live tests).
 
+### Chore: One Version Source
+- The version stood in eight places as `0.1.0`: `pyproject.toml`, the FastAPI app, the Stremio manifest (Stremio compares it to notice addon updates), Torznab caps, the default User-Agent in `defaults.py` and `schema.py`, and `data/config.yaml`. `infrastructure/version.py` now reads the installed package's version (`importlib.metadata`) once; the others use `APP_VERSION` / `APP_USER_AGENT`, and the shipped config leaves `http.user_agent` at its default. A release bumps `pyproject.toml` only.
+
 ### Fix: kinoger.ru Links Went to the Vidara Resolver
 - The kinoger.pw support (below) claimed the second-level name `kinoger` for the `strmup` resolver, so kinoger.ru links (kinoger's VOE tab, a redirect to a VOE mirror such as `jeremyparticipantanything.com`) were sent to the Vidara API and failed instead of following the redirect. Found by the live check: 2 of 2 kinoger.ru links were dead.
 - Resolvers can now claim full host names (`supported_hosts`); the registry checks them before the second-level name. `strmup` claims the host `kinoger.pw` only, `canonical_hoster()` maps claimed hosts, and the Stremio stream converter asks for the URL host before its second-level name.

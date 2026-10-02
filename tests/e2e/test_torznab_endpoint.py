@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 
 from scavengarr.application.factories import CrawlJobFactory
 from scavengarr.domain.plugins import PluginNotFoundError, SearchResult
+from scavengarr.infrastructure.version import APP_VERSION
 from scavengarr.interfaces.api.torznab.router import router
 
 _TORZNAB_NS = "http://torznab.com/schemas/2015/feed"
@@ -227,7 +228,7 @@ class TestCapsEndpoint:
         server = root.find("server")
         assert server is not None
         assert "Scavengarr" in (server.get("title") or "")
-        assert server.get("version") == "0.1.0"
+        assert server.get("version") == APP_VERSION
 
     def test_caps_has_limits(self) -> None:
         plugins = MagicMock()

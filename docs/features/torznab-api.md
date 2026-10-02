@@ -69,7 +69,7 @@ Returns Torznab capabilities XML for the plugin. Prowlarr queries this endpoint 
 ```xml
 <?xml version='1.0' encoding='utf-8'?>
 <caps>
-  <server title="scavengarr (filmpalast)" version="0.1.0"/>
+  <server title="scavengarr (filmpalast)" version="0.2.0"/>
   <limits max="100" default="50"/>
   <searching>
     <search available="yes" supportedParams="q"/>
@@ -84,7 +84,7 @@ Returns Torznab capabilities XML for the plugin. Prowlarr queries this endpoint 
 
 | Element | Description |
 |---|---|
-| `<server>` | `{app_name} ({plugin.name})`; version is hardcoded to `0.1.0` |
+| `<server>` | `{app_name} ({plugin.name})`; version is the package version (`pyproject.toml`, read through `infrastructure/version.py`) |
 | `<limits>` | `max=100`, `default=100` (from `TorznabCaps`, matches the search `limit` default) |
 | `<searching>` | Only free-text search (`supportedParams="q"`) |
 | `<categories>` | Always `2000`, `5000`, `8000` — identical for every plugin; plugin-specific (sub)categories are not advertised |

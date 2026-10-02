@@ -47,6 +47,7 @@ from scavengarr.infrastructure.stremio.episode_filter import filter_by_episode
 from scavengarr.infrastructure.stremio.stream_converter import convert_search_results
 from scavengarr.infrastructure.stremio.stream_sorter import StreamSorter
 from scavengarr.infrastructure.stremio.title_matcher import filter_by_title_match
+from scavengarr.infrastructure.version import APP_VERSION
 from scavengarr.interfaces.api.stremio.router import router
 
 _PREFIX = "/api/v1"
@@ -176,7 +177,7 @@ class TestManifestEndpoint:
         assert resp.status_code == 200
         data = resp.json()
         assert data["id"] == "community.scavengarr"
-        assert data["version"] == "0.1.0"
+        assert data["version"] == APP_VERSION
         assert data["name"] == "Scavengarr"
 
     def test_manifest_has_types(self) -> None:

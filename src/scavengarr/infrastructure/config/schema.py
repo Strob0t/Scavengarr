@@ -15,6 +15,8 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from scavengarr.infrastructure.version import APP_USER_AGENT
+
 Environment = Literal["dev", "test", "prod"]
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 LogFormat = Literal["json", "console"]
@@ -442,7 +444,7 @@ class AppConfig(BaseModel):
         description="Whether HTTP client follows redirects.",
     )
     http_user_agent: str = Field(
-        default="Scavengarr/0.1.0 (+https://github.com/Strob0t/Scavengarr)",
+        default=APP_USER_AGENT,
         validation_alias=AliasChoices(
             "http_user_agent",
             AliasPath("http", "user_agent"),

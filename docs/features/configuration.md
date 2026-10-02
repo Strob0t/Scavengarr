@@ -96,7 +96,7 @@ These variables are read by the `EnvOverrides` Pydantic Settings model (case-ins
 | `SCAVENGARR_HTTP_TIMEOUT_SECONDS` | float | `30.0` | `http.timeout_seconds` |
 | `SCAVENGARR_HTTP_TIMEOUT_RESOLVE_SECONDS` | float | `15.0` | `http.timeout_resolve_seconds` |
 | `SCAVENGARR_HTTP_FOLLOW_REDIRECTS` | bool | `true` | `http.follow_redirects` |
-| `SCAVENGARR_HTTP_USER_AGENT` | string | `Scavengarr/0.1.0 (+https://github.com/Strob0t/Scavengarr)` | `http.user_agent` (keep a contact URL: Wikidata refuses agents without one) |
+| `SCAVENGARR_HTTP_USER_AGENT` | string | `Scavengarr/<version> (+https://github.com/Strob0t/Scavengarr)` | `http.user_agent` (keep a contact URL: Wikidata refuses agents without one) |
 | `SCAVENGARR_RATE_LIMIT_REQUESTS_PER_SECOND` | float | `5.0` | `http.rate_limit_rps` |
 | `SCAVENGARR_RATE_LIMIT_ADAPTIVE` | bool | `true` | `http.rate_limit_adaptive` |
 | `SCAVENGARR_RATE_LIMIT_MIN_RPS` | float | `0.5` | `http.rate_limit_min_rps` |
@@ -165,7 +165,7 @@ http:
   timeout_seconds: 15.0         # scraping timeout (default: 30)
   timeout_resolve_seconds: 10.0 # hoster resolution timeout (default: 15)
   follow_redirects: true
-  user_agent: "Scavengarr/0.1.0 (+https://github.com/Strob0t/Scavengarr)"
+  # user_agent: default "Scavengarr/<version> (+https://github.com/Strob0t/Scavengarr)"
   rate_limit_rps: 10.0          # per-domain rate limit (default: 5)
   rate_limit_adaptive: true     # AIMD: rate grows on success, halves on 429/503
   rate_limit_min_rps: 0.5       # adaptive lower bound per domain
@@ -287,7 +287,7 @@ Controls the shared HTTP client used by httpx plugins, hoster resolvers, and API
 | `http.timeout_seconds` | float | `30.0` | Request timeout for scraping operations |
 | `http.timeout_resolve_seconds` | float | `15.0` | Time bound for one hoster resolution (the resolver's whole `resolve()`), and timeout of the registry's redirect and content-type requests |
 | `http.follow_redirects` | bool | `true` | Whether the HTTP client follows redirects |
-| `http.user_agent` | string | `Scavengarr/0.1.0` | User-Agent header sent with every request |
+| `http.user_agent` | string | `Scavengarr/<version> (+https://github.com/Strob0t/Scavengarr)` | User-Agent header sent with every request |
 | `http.rate_limit_rps` | float | `5.0` | Per-domain rate limit (requests/second). 0 = unlimited |
 | `http.rate_limit_adaptive` | bool | `true` | Enable AIMD adaptive rate limiting per domain (`SCAVENGARR_RATE_LIMIT_ADAPTIVE`) |
 | `http.rate_limit_min_rps` | float | `0.5` | Adaptive lower bound per domain (`SCAVENGARR_RATE_LIMIT_MIN_RPS`) |

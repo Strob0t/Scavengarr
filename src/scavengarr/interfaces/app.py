@@ -12,6 +12,7 @@ from starlette.responses import Response
 
 from scavengarr.infrastructure.config import AppConfig
 from scavengarr.infrastructure.graceful_shutdown import GracefulShutdown
+from scavengarr.infrastructure.version import APP_VERSION
 from scavengarr.interfaces.api.middleware import RateLimitMiddleware
 from scavengarr.interfaces.app_state import AppState
 from scavengarr.interfaces.composition import lifespan
@@ -27,7 +28,7 @@ def create_app(config: AppConfig) -> FastAPI:
     app = FastAPI(
         title="Scavengarr",
         description="Prowlarr-compatible Torznab/Newznab indexer",
-        version="0.1.0",
+        version=APP_VERSION,
         lifespan=lifespan,
     )
 

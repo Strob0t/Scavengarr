@@ -25,6 +25,7 @@ from scavengarr.infrastructure.stremio.hls_proxy import (
     rewrite_manifest,
     stream_hls_segment,
 )
+from scavengarr.infrastructure.version import APP_VERSION
 from scavengarr.interfaces.app_state import AppState
 
 log = structlog.get_logger(__name__)
@@ -32,7 +33,6 @@ log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/stremio", tags=["stremio"])
 
 _ADDON_ID = "community.scavengarr"
-_ADDON_VERSION = "0.1.0"
 
 _CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
@@ -69,7 +69,7 @@ def _build_manifest(catalogs: list[dict[str, Any]]) -> dict[str, Any]:
     """Build the Stremio addon manifest."""
     return {
         "id": _ADDON_ID,
-        "version": _ADDON_VERSION,
+        "version": APP_VERSION,
         "name": "Scavengarr",
         "description": "German streaming links from multiple sources",
         "types": ["movie", "series"],
