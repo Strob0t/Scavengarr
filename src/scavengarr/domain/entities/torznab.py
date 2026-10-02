@@ -1,9 +1,8 @@
+"""Torznab domain entities and exceptions."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Optional
-
-TorznabAction = Literal["caps", "search"]
 
 
 @dataclass(frozen=True)
@@ -13,14 +12,14 @@ class TorznabQuery:
     query: str  # Search query string
 
     # Optional filters
-    category: int | None = None  # ✅ ADD THIS: Torznab category (2000=Movies, 5000=TV)
+    category: int | None = None  # Torznab category (2000=Movies, 5000=TV)
 
     # Extended search parameters (Prowlarr)
     extended: int | None = None  # 1 = extended search mode
 
-    # Pagination (future)
-    offset: int | None = None
-    limit: int | None = None
+    # Pagination
+    offset: int = 0
+    limit: int = 100
 
 
 @dataclass(frozen=True)
@@ -32,9 +31,9 @@ class TorznabItem:
     peers: int | None = None
     size: str | None = None
     # Extended fields
-    release_name: Optional[str] = None
-    description: Optional[str] = None
-    source_url: Optional[str] = None  # Detail page URL
+    release_name: str | None = None
+    description: str | None = None
+    source_url: str | None = None  # Detail page URL
     # Torznab-specific
     category: int = 2000  # Default: Movies
     grabs: int = 0
@@ -47,7 +46,7 @@ class TorznabCaps:
     server_title: str
     server_version: str
     limits_max: int = 100
-    limits_default: int = 50
+    limits_default: int = 100
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,331 @@
+"""SuperVideo hoster resolver — XFS-based video extraction.
+
+SuperVideo uses XFileSharingPro framework which embeds video URLs
+via JWPlayer sources or HTML5 video tags.
+Based on JD2 SupervideoTv.java (XFileSharingProBasic).
+
+Strategy: httpx-first (fast, stateless); on a Cloudflare 403 the stream request
+of the player is captured from the stealth browser (``capture_stream``).
+"""
+
+from __future__ import annotations
+
+import re
+from typing import TYPE_CHECKING
+
+import httpx
+import structlog
+
+from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
+from scavengarr.infrastructure.browser.cloudflare import (
+    is_cloudflare_challenge,
+)
+from scavengarr.infrastructure.hoster_resolvers._browser import capture_stream
+from scavengarr.infrastructure.hoster_resolvers._verify import verify_video_url
+
+if TYPE_CHECKING:
+    from scavengarr.infrastructure.browser.stealth_pool import StealthPool
+
+log = structlog.get_logger(__name__)
+
+_BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/131.0.0.0 Safari/537.36"
+    ),
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;q=0.9,"
+        "image/avif,image/webp,*/*;q=0.8"
+    ),
+    "Accept-Language": "en-US,en;q=0.5",
+}
+
+
+def _extract_jwplayer_source(html: str) -> str | None:
+    """Extract video URL from JWPlayer sources config.
+
+    Matches patterns like:
+        sources: [{file:"https://cdn.example.com/video.mp4"}]
+        sources:[{file:"https://..."}]
+        {file: "https://...", label: "720p"}
+    """
+    # JWPlayer sources array
+    match = re.search(
+        r"""sources\s*:\s*\[\s*\{[^}]*file\s*:\s*["'](https?://[^"']+)""",
+        html,
+    )
+    if match:
+        return match.group(1)
+
+    # Alternative: source/file property (via : or =)
+    match = re.search(
+        r"""(?:source|file)\s*[:=]\s*["'](https?://[^"']+\.(?:mp4|m3u8)[^"']*)""",
+        html,
+    )
+    if match:
+        return match.group(1)
+
+    return None
+
+
+def _extract_html5_video(html: str) -> str | None:
+    """Extract video URL from HTML5 <video> or <source> tags."""
+    match = re.search(
+        r"""<source[^>]+src\s*=\s*["'](https?://[^"']+)""",
+        html,
+    )
+    if match:
+        return match.group(1)
+
+    match = re.search(
+        r"""<video[^>]+src\s*=\s*["'](https?://[^"']+)""",
+        html,
+    )
+    if match:
+        return match.group(1)
+
+    return None
+
+
+def _unpack_p_a_c_k(packed_js: str) -> str | None:
+    """Decode eval(function(p,a,c,k,e,d){...}) packed JavaScript.
+
+    XFS sites use Dean Edwards' packer. The encoded body uses base-N
+    number tokens that map to a word list via split('|').
+    """
+    # Extract body template, base, count, and tokens
+    match = re.search(
+        r"\(\s*'((?:[^'\\]|\\.)*)',\s*(\d+),\s*(\d+),\s*'((?:[^'\\]|\\.)*)'\.split",
+        packed_js,
+        re.DOTALL,
+    )
+    if not match:
+        return None
+
+    body = match.group(1)
+    base = int(match.group(2))
+    tokens = match.group(4).split("|")
+
+    if base < 2 or base > 36:
+        return None
+
+    import string
+
+    chars = (string.digits + string.ascii_lowercase)[:base]
+    pattern = r"\b[" + re.escape(chars) + r"]+\b"
+
+    def replacer(m: re.Match[str]) -> str:
+        word = m.group(0)
+        try:
+            idx = int(word, base)
+        except ValueError:
+            return word
+        return tokens[idx] if idx < len(tokens) and tokens[idx] else word
+
+    return re.sub(pattern, replacer, body)
+
+
+def _extract_packed_eval(html: str) -> str | None:
+    """Extract video URL from eval(function(p,a,c,k,e,d) packed JS.
+
+    Some XFS sites pack their JWPlayer config in eval() blocks.
+    We decode the packed JS and then search for video URLs.
+    """
+    # Find packed JS block
+    match = re.search(
+        r"eval\(function\(p,a,c,k,e,d\)\{.*?\.split\('\|'\)\)\)",
+        html,
+        re.DOTALL,
+    )
+    if not match:
+        return None
+
+    packed = match.group(0)
+
+    # Try direct URL match first (some packed blocks contain literal URLs)
+    url_match = re.search(
+        r"(https?://[^\s\"'\\]+\.(?:mp4|m3u8)[^\s\"'\\]*)",
+        packed,
+    )
+    if url_match:
+        return url_match.group(1)
+
+    # Decode the packed JS and search in the unpacked output
+    unpacked = _unpack_p_a_c_k(packed)
+    if not unpacked:
+        return None
+
+    # Look for file:"..." pattern (JWPlayer sources in unpacked JS)
+    file_match = re.search(
+        r"""file\s*:\s*["'](https?://[^"']+\.(?:mp4|m3u8)[^"']*)""",
+        unpacked,
+    )
+    if file_match:
+        return file_match.group(1)
+
+    # Fallback: any video URL in unpacked content
+    url_match = re.search(
+        r"(https?://[^\s\"'<>]+\.(?:mp4|m3u8)[^\s\"'<>]*)",
+        unpacked,
+    )
+    if url_match:
+        return url_match.group(1)
+
+    return None
+
+
+class SuperVideoResolver:
+    """Resolves SuperVideo embed pages to playable video URLs.
+
+    Supports supervideo.cc, supervideo.tv.
+    Uses httpx by default; falls back to StealthPool when Cloudflare
+    JS challenge is detected (403 + "Just a moment").
+    """
+
+    def __init__(
+        self,
+        http_client: httpx.AsyncClient,
+        *,
+        stealth_pool: StealthPool | None = None,
+    ) -> None:
+        self._http = http_client
+        self._stealth_pool = stealth_pool
+
+    @property
+    def name(self) -> str:
+        return "supervideo"
+
+    async def resolve(self, url: str) -> ResolvedStream | None:
+        """Fetch SuperVideo embed page and extract video URL.
+
+        Tries httpx first; on a Cloudflare block the browser captures the
+        player's stream request.
+        """
+        embed_url = self._normalize_embed_url(url)
+
+        html, cloudflare_blocked = await self._fetch_with_httpx(embed_url)
+
+        if html is None and cloudflare_blocked:
+            log.info("supervideo_browser_fallback", url=embed_url)
+            return await capture_stream(self._stealth_pool, embed_url, "supervideo")
+
+        if html is None:
+            return None
+
+        result = self._extract_video(html, url)
+        if result is not None:
+            # Add Referer header required for CDN playback
+            playback_headers = {"Referer": embed_url}
+            if not await self._verify_video_url(result.video_url, playback_headers):
+                log.warning("supervideo_video_unreachable", url=result.video_url[:120])
+                return None
+            return ResolvedStream(
+                video_url=result.video_url,
+                is_hls=result.is_hls,
+                quality=result.quality,
+                headers=playback_headers,
+            )
+        return None
+
+    # ------------------------------------------------------------------
+    # Fetch strategies
+    # ------------------------------------------------------------------
+
+    async def _fetch_with_httpx(self, embed_url: str) -> tuple[str | None, bool]:
+        """Fetch page via httpx. Returns (html, cloudflare_blocked).
+
+        429/503 retries are handled transparently by the RetryTransport
+        layer on the shared httpx client.
+        """
+        try:
+            headers = {**_BROWSER_HEADERS, "Referer": embed_url}
+            resp = await self._http.get(
+                embed_url,
+                follow_redirects=True,
+                timeout=15,
+                headers=headers,
+            )
+
+            if is_cloudflare_challenge(resp.status_code, resp.text):
+                log.info(
+                    "supervideo_cloudflare_detected",
+                    status=resp.status_code,
+                    url=embed_url,
+                )
+                return None, True
+
+            if resp.status_code != 200:
+                log.warning(
+                    "supervideo_http_error",
+                    status=resp.status_code,
+                    url=embed_url,
+                )
+                return None, False
+
+            return resp.text, False
+        except httpx.HTTPError:
+            log.warning("supervideo_request_failed", url=embed_url)
+            return None, False
+
+    async def _verify_video_url(self, url: str, headers: dict[str, str]) -> bool:
+        """HEAD-check the CDN URL to verify it is accessible."""
+        return await verify_video_url(self._http, url, headers, "supervideo")
+
+    # ------------------------------------------------------------------
+    # Extraction
+    # ------------------------------------------------------------------
+
+    def _extract_video(self, html: str, url: str) -> ResolvedStream | None:
+        """Run all extraction methods on HTML content."""
+        # Check offline markers
+        if 'class="fake-signup"' in html:
+            log.info("supervideo_offline", url=url)
+            return None
+
+        # Method 1: JWPlayer sources
+        video_url = _extract_jwplayer_source(html)
+        if video_url:
+            return self._build_result(video_url)
+
+        # Method 2: HTML5 video/source tags
+        video_url = _extract_html5_video(html)
+        if video_url:
+            return self._build_result(video_url)
+
+        # Method 3: Packed eval() JS
+        video_url = _extract_packed_eval(html)
+        if video_url:
+            return self._build_result(video_url)
+
+        log.warning("supervideo_extraction_failed", url=url)
+        return None
+
+    def _normalize_embed_url(self, url: str) -> str:
+        """Ensure URL uses the /e/ embed format."""
+        # Already an embed URL
+        if "/e/" in url:
+            return url
+
+        # Extract file ID and convert to embed URL
+        match = re.search(
+            r"(?:/(?:d|v|embed-)?)?([a-z0-9]{12})",
+            url.split("//", 1)[-1].split("/", 1)[-1],
+        )
+        if match:
+            fuid = match.group(1)
+            # Determine domain from URL
+            domain_match = re.search(r"https?://([^/]+)", url)
+            domain = domain_match.group(1) if domain_match else "supervideo.cc"
+            return f"https://{domain}/e/{fuid}"
+
+        return url
+
+    def _build_result(self, video_url: str) -> ResolvedStream:
+        """Build ResolvedStream from extracted URL."""
+        is_hls = ".m3u8" in video_url
+        return ResolvedStream(
+            video_url=video_url,
+            is_hls=is_hls,
+            quality=StreamQuality.UNKNOWN,
+        )

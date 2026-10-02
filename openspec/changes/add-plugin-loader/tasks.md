@@ -1,19 +1,23 @@
 ## 1. Base Protocol and Models
-- [ ] 1.1 Create `src/scavengarr/plugins/__init__.py` (empty, for package)
-- [ ] 1.2 Create `src/scavengarr/plugins/base.py`:
-  - [ ] Define `SearchResult(BaseModel)` with fields:
-    - [ ] `title: str`
-    - [ ] `download_link: str`
-    - [ ] `seeders: int | None = None`
-    - [ ] `leechers: int | None = None`
-    - [ ] `size: str | None = None`
-    - [ ] `published_date: str | None = None`
-  - [ ] Define `PluginProtocol(Protocol)` with method signature:
-    - [ ] `async def search(self, query: str, category: int | None = None) -> list[SearchResult]`
-  - [ ] Add comprehensive docstrings with examples
 
-## 2. YAML Plugin Schema
-- [ ] 2.1 Create `src/scavengarr/plugins/schema.py` with Pydantic models:
+- [x] 1.1 Create the package `src/scavengarr/domain/plugins/__init__.py` (planned: `src/scavengarr/plugins/__init__.py`)
+- [x] 1.2 Create `src/scavengarr/domain/plugins/base.py` (planned: `src/scavengarr/plugins/base.py`):
+  - [x] Define `SearchResult` with fields (implemented as a `@dataclass`, not `BaseModel`; more fields added since):
+    - [x] `title: str`
+    - [x] `download_link: str`
+    - [x] `seeders: int | None = None`
+    - [x] `leechers: int | None = None`
+    - [x] `size: str | None = None`
+    - [x] `published_date: str | None = None`
+  - [x] Define `PluginProtocol(Protocol)` with method signature:
+    - [x] `async def search(self, query: str, category: int | None = None, season: int | None = None, episode: int | None = None) -> list[SearchResult]` (plus `name` and `provides` attributes)
+  - [x] Add comprehensive docstrings with examples
+
+## 2. YAML Plugin Schema (superseded)
+
+YAML plugins were implemented and later removed in `42fced9`. `AuthConfig` and `HttpOverrides` survive as plain dataclasses in `src/scavengarr/domain/plugins/plugin_schema.py`.
+
+- [ ] 2.1 Create `src/scavengarr/plugins/schema.py` with Pydantic models (superseded):
   - [ ] `ScrapySelectors(BaseModel)`:
     - [ ] `row: str` (required)
     - [ ] `title: str` (required)
@@ -53,8 +57,7 @@
     - [ ] `scraping: ScrapingConfig`
     - [ ] `auth: AuthConfig = Field(default_factory=lambda: AuthConfig())`
     - [ ] `categories: dict[int, str] = {}` (Torznab ID to site category)
-
-- [ ] 2.2 Add field validators:
+- [ ] 2.2 Add field validators (superseded):
   - [ ] `@field_validator("selectors")` on `ScrapingConfig`:
     - [ ] Validate scrapy mode requires `selectors` field
     - [ ] Validate scrapy mode requires `search_path` field
@@ -67,93 +70,92 @@
     - [ ] Validate `type="form"` requires all form fields
 
 ## 3. Exception Classes
-- [ ] 3.1 Create `src/scavengarr/plugins/exceptions.py`:
-  - [ ] `PluginLoadError(Exception)` - Generic load failures
-  - [ ] `PluginValidationError(Exception)` - Schema/protocol validation failures
-  - [ ] `PluginNotFoundError(Exception)` - Plugin name doesn't exist in registry
-  - [ ] `DuplicatePluginError(Exception)` - Two plugins with same name
+
+- [x] 3.1 Create `src/scavengarr/domain/plugins/exceptions.py` (planned: `src/scavengarr/plugins/exceptions.py`; all derive from `PluginError`):
+  - [x] `PluginLoadError` - Generic load failures
+  - [ ] `PluginValidationError` - Schema/protocol validation failures (superseded: removed in `03454a8`)
+  - [x] `PluginNotFoundError` - Plugin name doesn't exist in registry
+  - [x] `DuplicatePluginError` - Two plugins with same name (defined, but never raised)
 
 ## 4. Plugin Loader
-- [ ] 4.1 Create `src/scavengarr/plugins/loader.py`:
-  - [ ] Import `yaml`, `importlib.util`, `Path`, `PluginDefinition`, base types
-  - [ ] Function `load_yaml_plugin(path: Path) -> PluginDefinition`:
+
+- [x] 4.1 Create `src/scavengarr/infrastructure/plugins/loader.py` (planned: `src/scavengarr/plugins/loader.py`):
+  - [x] Import `importlib.util`, `Path`, base types (`yaml` and `PluginDefinition` superseded)
+  - [ ] Function `load_yaml_plugin(path: Path) -> PluginDefinition` (superseded):
     - [ ] Read YAML file with `yaml.safe_load()`
     - [ ] Validate with `PluginDefinition(**data)`
     - [ ] Catch `yaml.YAMLError` and wrap in `PluginLoadError`
     - [ ] Catch `ValidationError` and wrap in `PluginValidationError`
-  - [ ] Function `load_python_plugin(path: Path) -> object`:
-    - [ ] Use `importlib.util.spec_from_file_location()` for dynamic import
-    - [ ] Execute module with `spec.loader.exec_module(module)`
-    - [ ] Validate module exports `plugin` variable
-    - [ ] Validate `plugin` has `search` method (use `hasattr` or `isinstance(PluginProtocol)`)
-    - [ ] Catch `ImportError`, `AttributeError`, `SyntaxError` and wrap in `PluginLoadError`
-  - [ ] Function `load_plugin(path: Path) -> PluginDefinition | object`:
+  - [x] Function `load_python_plugin(path: Path) -> PluginProtocol`:
+    - [x] Use `importlib.util.spec_from_file_location()` for dynamic import
+    - [x] Execute module with `spec.loader.exec_module(module)`
+    - [x] Validate module exports `plugin` variable
+    - [x] Validate `plugin` has `search` method (`hasattr`) and a non-empty `name`
+    - [x] Catch `SyntaxError` and other import errors and wrap in `PluginLoadError`
+  - [ ] Function `load_plugin(path: Path) -> PluginDefinition | object` (superseded: only Python plugins exist):
     - [ ] Detect format by `path.suffix`
     - [ ] Delegate to `load_yaml_plugin()` if `.yaml`
     - [ ] Delegate to `load_python_plugin()` if `.py`
     - [ ] Raise `PluginLoadError` for unsupported extensions
-  - [ ] Function `discover_plugins(directory: Path) -> list[Path]`:
-    - [ ] Use `Path.glob("*.yaml")` and `Path.glob("*.py")`
-    - [ ] Return sorted list of absolute paths
-    - [ ] Return empty list if directory doesn't exist (don't raise)
-
-- [ ] 4.2 Add logging with structlog:
-  - [ ] Log `plugin_discovered` (level=DEBUG) with `plugin_file` field
-  - [ ] Log `plugin_loaded` (level=INFO) with `plugin_name`, `plugin_type` ("yaml" or "python")
-  - [ ] Log `plugin_load_failed` (level=ERROR) with `plugin_file`, `error_type`, `error_message`
+  - [x] Discovery (implemented inside `PluginRegistry.discover()` instead of a `discover_plugins()` function):
+    - [x] Index `*.py` files (`.yaml` superseded)
+    - [x] Sorted by file name
+    - [x] No error if directory doesn't exist (logs `plugin_directory_not_found`)
+- [x] 4.2 Add logging with structlog:
+  - [ ] Log `plugin_discovered` (level=DEBUG) with `plugin_file` field (not implemented; `plugins_discovered` INFO with `count`, `directory` instead)
+  - [x] Log `plugin_loaded` (level=INFO) with `plugin_name`, `plugin_type` (always "python")
+  - [x] Log `plugin_load_failed` (level=ERROR) with `plugin_file`, `plugin_type`, `error_type`, `error_message`
 
 ## 5. Plugin Registry
-- [ ] 5.1 Create `src/scavengarr/plugins/registry.py`:
-  - [ ] Class `PluginRegistry`:
-    - [ ] `__init__(self, plugin_dir: Path)`
-    - [ ] `_plugins: dict[str, PluginDefinition | object] = {}` (in-memory cache)
-    - [ ] `_plugin_files: dict[str, Path] = {}` (name → file path mapping)
-    - [ ] Method `discover(self) -> None`:
-      - [ ] Call `discover_plugins(self.plugin_dir)`
-      - [ ] Build `_plugin_files` mapping (extract name from YAML or Python module)
-      - [ ] Don't load plugins yet (lazy-loading)
-    - [ ] Method `_load_plugin(self, name: str) -> PluginDefinition | object`:
-      - [ ] Check if already cached in `_plugins`
-      - [ ] If not, call `load_plugin(self._plugin_files[name])`
-      - [ ] Extract name from loaded plugin (YAML: `plugin.name`, Python: `plugin.__class__.__name__.lower()` or manual attribute)
-      - [ ] Validate name uniqueness (raise `DuplicatePluginError` if exists)
-      - [ ] Cache in `_plugins`
-      - [ ] Return plugin
-    - [ ] Method `get(self, name: str) -> PluginDefinition | object`:
-      - [ ] Call `_load_plugin(name)` if not cached
-      - [ ] Raise `PluginNotFoundError` if name not in `_plugin_files`
-      - [ ] Return cached plugin
-    - [ ] Method `list_names(self) -> list[str]`:
-      - [ ] Return `sorted(self._plugin_files.keys())`
-    - [ ] Method `get_by_mode(self, mode: str) -> list[PluginDefinition]`:
-      - [ ] Load all plugins (iterate `_plugin_files`)
-      - [ ] Filter YAML plugins where `plugin.scraping.mode == mode`
-      - [ ] Python plugins have no mode (skip or return empty for Python)
-      - [ ] Return filtered list
-    - [ ] Method `load_all(self) -> None`:
-      - [ ] Force-load all discovered plugins (for validation/testing)
-      - [ ] Iterate `_plugin_files` and call `_load_plugin(name)`
+
+- [x] 5.1 Create `src/scavengarr/infrastructure/plugins/registry.py` (planned: `src/scavengarr/plugins/registry.py`):
+  - [x] Class `PluginRegistry`:
+    - [x] `__init__(self, plugin_dir: Path)`
+    - [x] In-memory cache (implemented as `_python_cache: dict[str, PluginProtocol]`; planned `_plugins`)
+    - [x] File index (implemented as `_refs: list[_PluginRef]`; planned `_plugin_files` name → path mapping)
+    - [x] Method `discover(self) -> None`:
+      - [x] Index plugin files in `self.plugin_dir`
+      - [ ] Build name → file mapping at discovery time (names are resolved lazily via `_peek_name()`, which imports the module)
+      - [x] Don't load plugins yet (lazy-loading)
+    - [x] Loading helper (`_load_python()`; planned `_load_plugin()`):
+      - [x] Check if already cached
+      - [x] If not, call `load_python_plugin(path)`
+      - [x] Extract name from the loaded plugin's `name` attribute (planned fallback `plugin.__class__.__name__.lower()` not implemented)
+      - [ ] Validate name uniqueness (raise `DuplicatePluginError` if exists) — duplicates are skipped instead (first wins)
+      - [x] Cache the plugin
+      - [x] Return plugin
+    - [x] Method `get(self, name: str) -> PluginProtocol`:
+      - [x] Load the plugin if not cached
+      - [x] Raise `PluginNotFoundError` if the name is unknown
+      - [x] Return cached plugin
+    - [x] Method `list_names(self) -> list[str]` (returns sorted, de-duplicated names)
+    - [ ] Method `get_by_mode(self, mode: str) -> list[PluginDefinition]` (superseded: replaced by `get_mode(name) -> str` and `get_by_provides(provides) -> list[str]`)
+    - [ ] Method `load_all(self) -> None` (superseded: removed as dead code, see `CHANGELOG.md` → Dead Code Cleanup)
 
 ## 6. Package Exports
-- [ ] 6.1 Update `src/scavengarr/plugins/__init__.py`:
-  - [ ] Export `PluginRegistry`
-  - [ ] Export `PluginDefinition`, `SearchResult`, `PluginProtocol`
-  - [ ] Export all exceptions (`PluginLoadError`, `PluginNotFoundError`, etc.)
+
+- [x] 6.1 Package exports (planned: `src/scavengarr/plugins/__init__.py`):
+  - [x] Export `PluginRegistry` (and `load_python_plugin`) from `src/scavengarr/infrastructure/plugins/__init__.py`
+  - [x] Export `SearchResult`, `PluginProtocol`, `PluginProvides` from `src/scavengarr/domain/plugins/__init__.py` (`PluginDefinition` superseded)
+  - [x] Export exceptions (`PluginLoadError`, `PluginNotFoundError`, `DuplicatePluginError`)
 
 ## 7. Integration with Main App
-- [ ] 7.1 Update `src/scavengarr/main.py`:
-  - [ ] Import `PluginRegistry`
-  - [ ] Add module-level variable `plugin_registry: PluginRegistry | None = None`
-  - [ ] Create FastAPI lifespan context manager or `@app.on_event("startup")`:
-    - [ ] Read plugin directory from env var `SCAVENGARR_PLUGIN_DIR` (default: `./plugins`)
-    - [ ] Initialize `plugin_registry = PluginRegistry(Path(plugin_dir))`
-    - [ ] Call `plugin_registry.discover()`
-    - [ ] Log total count: `structlog.info("plugins_discovered", count=len(plugin_registry.list_names()))`
-  - [ ] Add getter function `def get_plugin_registry() -> PluginRegistry` for dependency injection
+
+- [x] 7.1 Wire the registry at startup (planned: `src/scavengarr/main.py`; implemented in the FastAPI lifespan in `src/scavengarr/interfaces/composition.py`):
+  - [x] Import `PluginRegistry`
+  - [x] Store the registry on the app state (`state.plugins`; planned: module-level `plugin_registry` variable)
+  - [x] Create FastAPI lifespan context manager (`lifespan` in `composition.py`):
+    - [x] Read plugin directory from config (`plugins.plugin_dir`, env `SCAVENGARR_PLUGIN_DIR`, default `./plugins`)
+    - [x] Initialize `PluginRegistry(plugin_dir=config.plugin_dir)`
+    - [x] Call `discover()`
+    - [x] Log total count: `log.info("plugins_discovered", count=state.plugins.discovered_count)`
+  - [ ] Add getter function `def get_plugin_registry() -> PluginRegistry` for dependency injection (not needed: routers read `request.app.state`)
 
 ## 8. Testing
-- [ ] 8.1 Create `tests/fixtures/plugins/` directory with example files:
-  - [ ] `valid-scrapy.yaml`:
+
+- [ ] 8.1 Create `tests/fixtures/plugins/` directory with example files (not created; registry tests write plugin files to `tmp_path`):
+  - [ ] `valid-scrapy.yaml` (superseded):
+
 ```yaml
 name: "test-scrapy"
 description: "Test Scrapy plugin"
@@ -171,7 +173,9 @@ scraping:
 auth:
   type: "none"
 ```
-  - [ ] `valid-playwright.yaml`:
+
+  - [ ] `valid-playwright.yaml` (superseded):
+
 ```yaml
 name: "test-playwright"
 description: "Test Playwright plugin"
@@ -189,30 +193,40 @@ scraping:
 auth:
   type: "none"
 ```
+
   - [ ] `valid-python.py`:
+
 ```python
 from scavengarr.domain.plugins.base import SearchResult
 
 class TestPythonPlugin:
-    async def search(self, query: str, category: int | None = None) -> list[SearchResult]:
+    name = "test-python"
+
+    async def search(
+        self,
+        query: str,
+        category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
+    ) -> list[SearchResult]:
         return [
             SearchResult(
                 title=f"Result for {query}",
                 download_link="https://example.com/download",
                 seeders=10,
-                leechers=5
+                leechers=5,
             )
         ]
 
 plugin = TestPythonPlugin()
-
 ```
-  - [ ] `invalid-missing-mode.yaml` - YAML without `scraping.mode`
-  - [ ] `invalid-scrapy-no-selectors.yaml` - Scrapy mode without `selectors`
-  - [ ] `invalid-bad-url.yaml` - `base_url: "not-a-url"`
+
+  - [ ] `invalid-missing-mode.yaml` - YAML without `scraping.mode` (superseded)
+  - [ ] `invalid-scrapy-no-selectors.yaml` - Scrapy mode without `selectors` (superseded)
+  - [ ] `invalid-bad-url.yaml` - `base_url: "not-a-url"` (superseded)
   - [ ] `invalid-python-no-export.py` - Python file without `plugin` variable
-  - [ ] `iinvalid-python-no-search.py` - Python plugin without `search` method
-- [ ] 8.2 Create `tests/unit/plugins/test_schema.py`:
+  - [ ] `invalid-python-no-search.py` - Python plugin without `search` method
+- [ ] 8.2 Create `tests/unit/plugins/test_schema.py` (superseded: YAML schema removed):
   - [ ] Test valid Scrapy YAML parses to `PluginDefinition`
   - [ ] Test valid Playwright YAML parses to `PluginDefinition`
   - [ ] Test missing `scraping.mode` raises `ValidationError`
@@ -222,43 +236,43 @@ plugin = TestPythonPlugin()
   - [ ] Test `auth.type="basic"` without `username` raises `ValidationError`
   - [ ] Test invalid plugin name (uppercase, spaces) raises `ValidationError`
   - [ ] Test invalid version (not semver) raises `ValidationError`
-- [ ] 8.3 Create `tests/unit/plugins/test_schema.py`:
-  - [ ] Test `load_yaml_plugin()` with valid YAML returns `PluginDefinition`
-  - [ ] Test `load_yaml_plugin()` with invalid YAML raises `PluginLoadError`
-  - [ ] Test `load_yaml_plugin()` with schema violation raises `PluginValidationError`
+- [ ] 8.3 Create `tests/unit/plugins/test_loader.py` (not created; no loader tests exist):
+  - [ ] Test `load_yaml_plugin()` with valid YAML returns `PluginDefinition` (superseded)
+  - [ ] Test `load_yaml_plugin()` with invalid YAML raises `PluginLoadError` (superseded)
+  - [ ] Test `load_yaml_plugin()` with schema violation raises `PluginValidationError` (superseded)
   - [ ] Test `load_python_plugin()` with valid `.py` returns plugin instance
   - [ ] Test `load_python_plugin()` with missing `plugin` variable raises `PluginLoadError`
   - [ ] Test `load_python_plugin()` with missing `search` method raises `PluginLoadError`
   - [ ] Test `load_python_plugin()` with syntax error raises `PluginLoadError`
-  - [ ] Test `load_plugin()` delegates to correct loader based on extension
-  - [ ] Test `load_plugin()` with `.txt` file raises `PluginLoadError`
-  - [ ] Test `discover_plugins()` finds both `.yaml` and `.py` files
-  - [ ] Test `discover_plugins()` ignores other file types
-  - [ ] Test `discover_plugins()` returns empty list for non-existent directory
-- [ ] 8.4 Create `tests/unit/plugins/test_registry.py`:
-  - [ ] Test `discover()` populates `_plugin_files` mapping
+  - [ ] Test `load_plugin()` delegates to correct loader based on extension (superseded)
+  - [ ] Test `load_plugin()` with `.txt` file raises `PluginLoadError` (superseded)
+  - [ ] Test `discover_plugins()` finds both `.yaml` and `.py` files (superseded)
+  - [ ] Test discovery ignores other file types
+  - [ ] Test discovery of a non-existent directory yields no plugins
+- [ ] 8.4 Registry tests (implemented as `tests/unit/infrastructure/test_plugin_registry.py`, planned `tests/unit/plugins/test_registry.py`; it covers `get_by_provides()`, metadata caching, `get_languages()` and `get_mode()`):
+  - [ ] Test `discover()` populates the file index
   - [ ] Test `get()` lazy-loads plugin on first access
   - [ ] Test `get()` returns cached plugin on subsequent calls
   - [ ] Test `get()` with unknown name raises `PluginNotFoundError`
   - [ ] Test `list_names()` returns alphabetically sorted list
-  - [ ] Test `get_by_mode("scrapy")` filters correctly (YAML plugins only)
-  - [ ] Test `get_by_mode("playwright")` filters correctly
+  - [ ] Test `get_by_mode("scrapy")` filters correctly (superseded; `get_mode()` is tested)
+  - [ ] Test `get_by_mode("playwright")` filters correctly (superseded; `get_mode()` is tested)
   - [ ] Test duplicate plugin names raise `DuplicatePluginError`
-  - [ ] Test `load_all()` forces loading of all plugins
-- [ ] 8.5 Create `tests/integration/test_plugin_loading.py`
+  - [ ] Test `load_all()` forces loading of all plugins (superseded)
+- [ ] 8.5 Create `tests/integration/test_plugin_loading.py` (not created)
   - [ ] Test loading all fixture plugins via registry
-  - [ ] Test mixing YAML and Python plugins in same directory
+  - [ ] Test mixing YAML and Python plugins in same directory (superseded)
   - [ ] Test plugin registry accessible from FastAPI app startup
 
 ## 9. Documentation
-- [ ] 9.1 Create `docs/plugin-schema.md`
-  - [ ] YAML schema reference (all fields, types, constraints)
-  - [ ] Python plugin protocol specification
-  - [ ] Example plugins for each mode
+
+- [x] 9.1 Plugin documentation (planned: `docs/plugin-schema.md`; implemented as `docs/features/python-plugins.md` and `docs/features/plugin-system.md`)
+  - [ ] YAML schema reference (all fields, types, constraints) (superseded)
+  - [x] Python plugin protocol specification
+  - [x] Example plugins (Python, httpx and Playwright)
   - [ ] Common validation errors and fixes
   - [ ] Migration guide from Cardigann format (if applicable)
-
-- [ ] 9.2 Update `README.md`
-  - [ ] Add "Creating Plugins" section
-  - [ ] Link to `docs/plugin-schema.md`
-  - [ ] Add example: "List all loaded plugins" CLI command
+- [x] 9.2 Update `README.md`
+  - [x] Add plugins section ("Plugins")
+  - [ ] Link to `docs/plugin-schema.md` (superseded: plugin docs live in `docs/features/`)
+  - [ ] Add example: "List all loaded plugins" CLI command (the CLI has no such command; `GET /api/v1/torznab/indexers` lists plugins)

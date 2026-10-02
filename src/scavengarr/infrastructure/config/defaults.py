@@ -1,32 +1,50 @@
+"""Hardcoded default configuration values."""
+
 from __future__ import annotations
 
 from typing import Any
 
+from scavengarr.infrastructure.version import APP_USER_AGENT
+
 DEFAULT_CONFIG: dict[str, Any] = {
-    # General
     "app_name": "scavengarr",
     "environment": "dev",
-    # Sections
     "plugins": {
         "plugin_dir": "./plugins",
     },
     "http": {
         "timeout_seconds": 30.0,
         "follow_redirects": True,
-        "user_agent": "Scavengarr/0.1.0 (+https://github.com/Strob0t/Scavengarr)",
+        "user_agent": APP_USER_AGENT,
     },
     "playwright": {
-        "headless": True,
+        "headless": False,
+        "browser_fallback": True,
         "timeout_ms": 30_000,
     },
     "logging": {
         "level": "INFO",
-        # log format default is derived from environment in schema.py if unset
-        "format": None,
+        "format": None,  # Derived from environment in schema.py
     },
     "cache": {
         "dir": "./.cache/scavengarr",
         "backend": "diskcache",
         "ttl_seconds": 3600,
+    },
+    "scoring": {
+        "enabled": True,
+        "health_halflife_days": 2.0,
+        "search_halflife_weeks": 2.0,
+        "health_interval_hours": 24.0,
+        "search_runs_per_week": 2,
+        "w_health": 0.4,
+        "w_search": 0.6,
+    },
+    "stremio": {
+        "preferred_language": "de",
+        "max_concurrent_plugins": 5,
+        "plugin_timeout_seconds": 10.0,
+        "stream_deadline_seconds": 15.0,
+        "title_match_threshold": 0.7,
     },
 }

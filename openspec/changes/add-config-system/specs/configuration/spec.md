@@ -2,10 +2,11 @@
 
 ### Requirement: Deterministic Config Precedence
 The system SHALL load configuration using this precedence (highest to lowest):
-1) CLI arguments
-2) Environment variables
-3) YAML config file
-4) Built-in defaults
+
+1. CLI arguments
+2. Environment variables (including values loaded from a `--dotenv` file; variables already set in the real environment win)
+3. YAML config file
+4. Built-in defaults
 
 #### Scenario: Defaults only
 - **WHEN** no CLI args, env vars, YAML config, or `.env` file are provided
@@ -39,12 +40,12 @@ The system SHALL support loading environment variables from a `.env` file.
 - **THEN** the system fails with a clear error message indicating the file does not exist
 
 ### Requirement: Safe YAML Loading
-The system SHALL parse YAML configuration using safe loading and SHALL reject invalid YAML.
+The system SHALL parse YAML configuration using safe loading and SHALL reject invalid YAML. Status: invalid YAML is rejected, but the error is not wrapped in a project-specific config error that names the file path.
 
 #### Scenario: Invalid YAML rejected
 - **WHEN** the YAML file contains invalid syntax
-- **THEN** config loading fails with a `PluginLoadError`-equivalent config error (project-specific)
-- **AND** the error message indicates the YAML parse problem and file path
+- **THEN** config loading fails with a `yaml.YAMLError` (e.g. `yaml.parser.ParserError`) raised by `yaml.safe_load`
+- **AND** the error message indicates the YAML parse problem and position
 
 ### Requirement: Strict Validation
 The system SHALL validate configuration values and reject invalid ones.
@@ -84,7 +85,7 @@ The system SHALL expose config options controlling logging format and level.
 - **THEN** `log_format` defaults to `json`
 
 ### Requirement: Redaction
-The system SHALL never log secrets in plaintext.
+The system SHALL never log secrets in plaintext. Status: not implemented — `redact_config_for_logging()` does not exist yet.
 
 #### Scenario: Redaction helper omits secrets
 - **WHEN** a config contains secret-like fields (e.g., future `password`, `cookie_value`)

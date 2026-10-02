@@ -1,0 +1,126 @@
+"""Streamtape hoster resolver — extracts video URLs from streamtape.com.
+
+Simple regex extraction: parse id/expires/ip/token parameters from the
+embed page, build get_video URL. No JavaScript deobfuscation needed.
+Based on JD2 StreamtapeCom.java.
+"""
+
+from __future__ import annotations
+
+import re
+from urllib.parse import urlparse
+
+import httpx
+import structlog
+
+from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
+from scavengarr.infrastructure.hoster_resolvers._verify import verify_video_url
+
+log = structlog.get_logger(__name__)
+
+# Mirror domains (JD2 StreamtapeCom.java + mirrors seen on plugin sites)
+_DOMAINS = frozenset(
+    {
+        "streamtape",
+        "streamta",  # streamta.pe / streamta.site
+        "strtape",
+        "strtpe",
+        "strcloud",
+        "shavetape",
+        "streamadblocker",
+        "streamtapeadblock",
+        "streamtapeadblockuser",
+        "tapeadvertisement",
+        "tapeblocker",
+        "gettapeads",
+        "watchadsontape",
+    }
+)
+
+
+class StreamtapeResolver:
+    """Resolves Streamtape embed pages to direct video URLs."""
+
+    def __init__(self, http_client: httpx.AsyncClient) -> None:
+        self._http = http_client
+
+    @property
+    def name(self) -> str:
+        return "streamtape"
+
+    @property
+    def supported_domains(self) -> frozenset[str]:
+        """Mirror domains dispatched to this resolver by the registry."""
+        return frozenset(_DOMAINS)
+
+    async def resolve(self, url: str) -> ResolvedStream | None:
+        """Fetch Streamtape page and extract video download URL."""
+        try:
+            resp = await self._http.get(
+                url,
+                follow_redirects=True,
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                log.warning(
+                    "streamtape_http_error",
+                    status=resp.status_code,
+                    url=url,
+                )
+                return None
+
+            html = resp.text
+        except httpx.HTTPError:
+            log.warning("streamtape_request_failed", url=url)
+            return None
+
+        # Check if video exists
+        if ">Video not found" in html or resp.status_code in (404, 500):
+            log.info("streamtape_video_not_found", url=url)
+            return None
+
+        # Extract parameters: id=...&expires=...&ip=...&token=...
+        match = re.search(
+            r"(id=[^\"'&]*&expires=\d+&ip=[^\"'&]*&token=[^\"'&]*?)([\"'<])",
+            html,
+        )
+        if not match:
+            log.warning("streamtape_no_params", url=url)
+            return None
+
+        params_str = match.group(1)
+
+        # Try to get corrected token from JavaScript
+        token_match = re.search(
+            r"document\.getElementById[^<]*&token=([A-Z0-9\-_]+)",
+            html,
+        )
+        if token_match:
+            corrected_token = token_match.group(1)
+            # Replace the token in params
+            params_str = re.sub(
+                r"token=[^&]*",
+                f"token={corrected_token}",
+                params_str,
+            )
+
+        # Determine base domain from the response URL
+        resp_host = urlparse(str(resp.url)).hostname or "streamtape.com"
+
+        video_url = f"https://{resp_host}/get_video?{params_str}&stream=1"
+        playback_headers = {"Referer": f"https://{resp_host}/"}
+
+        if not await self._verify_video_url(video_url, playback_headers):
+            log.warning("streamtape_video_unreachable", url=video_url[:120])
+            return None
+
+        log.debug("streamtape_resolved", video_url=video_url)
+        return ResolvedStream(
+            video_url=video_url,
+            quality=StreamQuality.UNKNOWN,
+            headers=playback_headers,
+        )
+
+    async def _verify_video_url(self, url: str, headers: dict[str, str]) -> bool:
+        """HEAD-check the video URL to verify it is accessible."""
+        return await verify_video_url(self._http, url, headers, "streamtape")

@@ -1,12 +1,10 @@
+"""Plugin system exceptions."""
+
 from __future__ import annotations
 
 
 class PluginError(Exception):
     """Base class for all plugin-related errors."""
-
-
-class PluginValidationError(PluginError):
-    """Raised when a YAML plugin fails schema validation."""
 
 
 class PluginLoadError(PluginError):

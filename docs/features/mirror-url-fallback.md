@@ -1,0 +1,187 @@
+[← Back to Index](./README.md)
+
+# Mirror URL Fallback
+
+> Plugins list their mirror domains in `_domains`; `_verify_domain()` picks the first reachable one as `base_url` and keeps it until `cleanup()`.
+
+---
+
+## Overview
+
+Many indexer and forum sites operate multiple mirror domains (`example.sx`, `example.am`, `example.im`, ...). Both plugin base classes (`HttpxPluginBase`, `PlaywrightPluginBase`) implement domain fallback in `_verify_domain()`, driven by the `_domains` class attribute:
+
+```text
+plugin.search()
+     |
+     v
+_verify_domain()  (no-op if already verified or only one domain)
+     |
+     v
++---------------------------+
+|  Probe _domains in order  |
++-------------+-------------+
+              |
+       +------+------+
+       v             v
+  First success   All failed
+       |             |
+       v             v
+  base_url =      base_url = _domains[0]
+  that domain     (log warning, search continues)
+```
+
+Fallback only happens when the plugin calls `await self._verify_domain()` (usually at the start of `search()`). Most plugins have a single domain, where the call is a no-op. Some plugins implement their own loop instead — e.g. `plugins/boerse.py` tries each domain during login.
+
+---
+
+## Plugin Domain Configuration
+
+```python
+# plugins/example_site.py
+class ExampleSitePlugin(HttpxPluginBase):
+    name = "example-site"
+    _domains = ["example.sx", "example.am", "example.im", "example.kz"]
+```
+
+- Domains are bare host names; the base classes build `https://{domain}`
+- Order is the fallback priority — list the most reliable mirror first
+- Before verification, `base_url` is `https://{_domains[0]}`
+- The verified domain is kept (`_domain_verified`) until `cleanup()`; the base classes do not re-probe after later request errors
+
+---
+
+## HttpxPluginBase Domain Fallback
+
+```python
+# src/scavengarr/infrastructure/plugins/httpx_base.py (simplified)
+async def _verify_domain(self) -> None:
+    if self._domain_verified or len(self._domains) <= 1:
+        self._domain_verified = True
+        return
+
+    client = await self._ensure_client()
+    for domain in self._domains:
+        try:
+            resp = await client.head(f"https://{domain}/", timeout=5.0)
+            if resp.status_code < 400:
+                self.base_url = str(resp.url).rstrip("/")  # final URL after redirects
+                self._domain_verified = True
+                return
+        except Exception:
+            continue
+
+    # All domains failed: keep the primary
+    self.base_url = f"https://{self._domains[0]}"
+    self._domain_verified = True
+    self._log.warning(f"{self.name}_no_domain_reachable", fallback=self._domains[0])
+```
+
+Key behaviors:
+- `HEAD` request per domain with a 5 s timeout (`DEFAULT_DOMAIN_CHECK_TIMEOUT`)
+- The first status `< 400` wins; errors and timeouts move on to the next domain
+- `base_url` uses the final URL after redirects, so `aniworld.info` → `www.aniworld.info` produces a correct base
+- If all domains fail, the first domain is used and `{name}_no_domain_reachable` is logged
+
+---
+
+## PlaywrightPluginBase Domain Fallback
+
+```python
+# src/scavengarr/infrastructure/plugins/playwright_base.py (simplified)
+async def _verify_domain(self) -> None:
+    if self._domain_verified or len(self._domains) <= 1:
+        self._domain_verified = True
+        return
+
+    page = await self._ensure_page()
+    for domain in self._domains:
+        try:
+            resp = await page.goto(
+                f"https://{domain}/", timeout=5_000, wait_until="domcontentloaded"
+            )
+            if resp and resp.status < 400 and await self._wait_for_cloudflare(page):
+                self.base_url = f"https://{domain}"
+                self._domain_verified = True
+                return
+        except Exception:
+            continue
+
+    self.base_url = f"https://{self._domains[0]}"
+    self._domain_verified = True
+    self._log.warning(f"{self.name}_no_domain_reachable", fallback=self._domains[0])
+```
+
+Differences from the httpx fallback:
+- **Browser-based:** navigates the plugin's persistent page instead of sending HTTP requests
+- **Cloudflare-aware:** a domain only counts as reachable if the Cloudflare challenge resolves within `_cf_timeout_ms`
+- **No redirect tracking:** `base_url` is set to `https://{domain}`, not the final URL
+
+Plugins can override `_verify_domain()` (e.g. `plugins/moflix.py` skips the status check and only waits for Cloudflare). An override of `_wait_for_cloudflare()` must call the base implementation (Turnstile solver, clearance memo) and add its own condition after it: moflix waits for its `XSRF-TOKEN` cookie with `page.wait_for_function()`.
+
+---
+
+## Example: boerse.py Login Fallback
+
+`plugins/boerse.py` does not call `_verify_domain()`. Its login loop is the fallback: each of its six domains is tried with a full login in a temporary browser context.
+
+```python
+# plugins/boerse.py (simplified)
+_DOMAINS = [
+    "boerse.am",
+    "boerse.tw",
+    "boerse.sx",
+    "boerse.im",
+    "boerse.ai",
+    "boerse.kz",
+]
+
+async def _ensure_session(self) -> None:
+    for domain in self._domains:
+        domain_url = f"https://{domain}"
+        login_ctx = await browser.new_context(...)
+        try:
+            # Navigate, wait for Cloudflare, submit vBulletin login form
+            cookies = await login_ctx.cookies()
+            if any(c["name"] == "bbsessionhash" for c in cookies):
+                self.base_url = domain_url
+                self._session_cookies = cookies
+                self._logged_in = True
+                return
+        except Exception:
+            continue
+        finally:
+            await login_ctx.close()
+
+    raise RuntimeError("All boerse domains failed during login")
+```
+
+Key aspects:
+- **Login-aware:** each domain attempt includes full authentication
+- **Cookie hand-off:** session cookies are injected into per-request contexts via `_prepare_context()`
+- **Fails loudly:** unlike the base classes, it raises when no domain works
+
+See [Python Plugins](./python-plugins.md#reference-implementation-boersepy) for the full walkthrough.
+
+---
+
+## Health Endpoint
+
+`GET /api/v1/torznab/{plugin_name}/health` probes the plugin's current `base_url` (`HEAD`, falling back to a ranged `GET` on 405/501, 5 s timeout) and reports `reachable`, `status_code` and `error`. Any HTTP response counts as reachable; only network errors report `false`.
+
+The endpoint also has mirror probing: if a plugin exposes a `mirror_urls` attribute and the primary is unreachable, each mirror is probed and listed under `mirrors`. No plugin currently sets `mirror_urls` (it is separate from `_domains`), so today the health endpoint probes only the primary URL.
+
+```bash
+curl http://localhost:7979/api/v1/torznab/example-site/health | jq
+```
+
+---
+
+## Source Code References
+
+| Component | Path |
+|---|---|
+| `HttpxPluginBase._verify_domain()` | `src/scavengarr/infrastructure/plugins/httpx_base.py` |
+| `PlaywrightPluginBase._verify_domain()` | `src/scavengarr/infrastructure/plugins/playwright_base.py` |
+| `DEFAULT_DOMAIN_CHECK_TIMEOUT` | `src/scavengarr/infrastructure/plugins/constants.py` |
+| Health endpoint | `src/scavengarr/interfaces/api/torznab/router.py` |
+| Login-based fallback example | `plugins/boerse.py` |

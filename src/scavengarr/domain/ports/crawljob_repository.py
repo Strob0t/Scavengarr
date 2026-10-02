@@ -1,18 +1,16 @@
+"""Port for CrawlJob persistence."""
+
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Protocol, runtime_checkable
 
 from scavengarr.domain.entities.crawljob import CrawlJob
 
 
-class CrawlJobRepository(ABC):
-    """Port for CrawlJob storage."""
+@runtime_checkable
+class CrawlJobRepository(Protocol):
+    """Async interface for storing and retrieving CrawlJob entities."""
 
-    @abstractmethod
-    async def save(self, job: CrawlJob) -> None:
-        pass
+    async def save(self, job: CrawlJob) -> None: ...
 
-    @abstractmethod
-    async def get(self, job_id: str) -> Optional[CrawlJob]:
-        pass
+    async def get(self, job_id: str) -> CrawlJob | None: ...

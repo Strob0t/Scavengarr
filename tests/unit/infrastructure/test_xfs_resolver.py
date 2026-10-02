@@ -1,0 +1,1041 @@
+"""Tests for the consolidated XFS resolver (XFSConfig + XFSResolver).
+
+Covers:
+- XFSConfig uniqueness invariants
+- extract_xfs_file_id for every config
+- XFSResolver.resolve for DDL hosters (validate-only)
+- XFSResolver.resolve for video hosters (extract video URL)
+- XFSResolver.resolve for captcha-required hosters (returns None)
+- Video URL extraction from packed JS, JWPlayer, and HLS patterns
+- Factory function create_all_xfs_resolvers
+"""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock
+
+import httpx
+import pytest
+import respx
+
+from scavengarr.domain.entities.stremio import StreamQuality
+from scavengarr.infrastructure.browser.stealth_pool import CapturedMedia
+from scavengarr.infrastructure.hoster_resolvers.xfs import (
+    ALL_XFS_CONFIGS,
+    XFSConfig,
+    XFSResolver,
+    create_all_xfs_resolvers,
+    extract_xfs_file_id,
+)
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+# TLD map for building plausible URLs per hoster
+_TLD_MAP: dict[str, str] = {
+    "katfile": "online",
+    "hexupload": "net",
+    "clicknupload": "click",
+    "filestore": "me",
+    "uptobox": "com",
+    "funxd": "site",
+    "bigwarp": "io",
+    "dropload": "io",
+    "savefiles": "com",
+    "streamwish": "com",
+    "vidmoly": "me",
+    "vidoza": "net",
+    "vidhide": "com",
+    "streamruby": "com",
+    "lulustream": "com",
+    "upstream": "to",
+    "wolfstream": "tv",
+    "vidnest": "io",
+}
+
+# Standard file ID (uppercase+lowercase+digits, 12 chars)
+_FILE_ID = "aBc123DeF456"
+
+# Lowercase-only file ID (for vidhide)
+_FILE_ID_LOWER = "abc123def456"
+
+# Categorised config lists
+_DDL_CONFIGS = [c for c in ALL_XFS_CONFIGS if not c.is_video_hoster]
+_VIDEO_CONFIGS = [
+    c for c in ALL_XFS_CONFIGS if c.is_video_hoster and not c.needs_captcha
+]
+_CAPTCHA_CONFIGS = [c for c in ALL_XFS_CONFIGS if c.needs_captcha]
+
+
+def _first_domain(config: XFSConfig) -> str:
+    """Return a deterministic domain from the config."""
+    return sorted(config.domains)[0]
+
+
+def _file_id_for(config: XFSConfig) -> str:
+    """Choose the right file ID based on regex case sensitivity."""
+    return _FILE_ID_LOWER if "[a-z0-9]" in config.file_id_re.pattern else _FILE_ID
+
+
+def _make_url(config: XFSConfig) -> str:
+    """Build a plausible URL for the given XFS config."""
+    domain = _first_domain(config)
+    tld = _TLD_MAP.get(config.name, "com")
+    file_id = _file_id_for(config)
+
+    return f"https://{domain}.{tld}/{file_id}"
+
+
+def _make_embed_url(config: XFSConfig) -> str:
+    """Build the embed URL that the video resolver will fetch."""
+    domain = _first_domain(config)
+    tld = _TLD_MAP.get(config.name, "com")
+    file_id = _file_id_for(config)
+    return f"https://{domain}.{tld}/e/{file_id}"
+
+
+def _valid_html() -> str:
+    return "<html><body><h4>Movie.2025.1080p.mkv</h4></body></html>"
+
+
+_VIDEO_HLS_URL = "https://cdn.example.com/video/master.m3u8"
+_VIDEO_MP4_URL = "https://cdn.example.com/video/movie.mp4"
+
+
+def _video_html_jwplayer() -> str:
+    """HTML with JWPlayer sources containing HLS URL."""
+    return (
+        '<html><body><script>var player = jwplayer("vplayer");'
+        "player.setup({sources:[{file:"
+        f'"{_VIDEO_HLS_URL}"'
+        "}]});</script></body></html>"
+    )
+
+
+def _video_html_hls2() -> str:
+    """HTML with Streamwish-style hls2 pattern."""
+    return f'<html><body><script>"hls2":"{_VIDEO_HLS_URL}"</script></body></html>'
+
+
+def _video_html_packed_js() -> str:
+    """HTML with Dean Edwards packed JS containing HLS URL."""
+    return (
+        "<html><body><script>eval(function(p,a,c,k,e,d)"
+        "{e=function(c){return c};if(!''.replace(/^/,String))"
+        "{while(c--)d[c]=k[c]||c;k=[function(e)"
+        "{return d[e]}];e=function(){return'\\\\w+'};c=1};"
+        "while(c--)if(k[c])p=p.replace(new RegExp('\\\\b'+e(c)+'\\\\b','g'),k[c]);"
+        "return p}("
+        f"'0=[{{1:\"{_VIDEO_HLS_URL}\"}}]',2,2,'sources|file'.split('|'),0,{{}}))"
+        "</script></body></html>"
+    )
+
+
+def _video_html_direct_hls() -> str:
+    """HTML with direct HLS URL in page source."""
+    return f'<html><body><video src="{_VIDEO_HLS_URL}"></video></body></html>'
+
+
+# ---------------------------------------------------------------------------
+# Config invariant tests
+# ---------------------------------------------------------------------------
+
+
+class TestXFSConfigInvariants:
+    def test_all_names_unique(self) -> None:
+        names = [cfg.name for cfg in ALL_XFS_CONFIGS]
+        assert len(names) == len(set(names))
+
+    def test_all_configs_have_domains(self) -> None:
+        for cfg in ALL_XFS_CONFIGS:
+            assert len(cfg.domains) > 0, f"{cfg.name} has no domains"
+
+    def test_all_configs_have_markers(self) -> None:
+        for cfg in ALL_XFS_CONFIGS:
+            assert len(cfg.offline_markers) > 0, f"{cfg.name} has no markers"
+
+    def test_config_count(self) -> None:
+        assert len(ALL_XFS_CONFIGS) == 25
+
+    def test_configs_are_frozen(self) -> None:
+        for cfg in ALL_XFS_CONFIGS:
+            with pytest.raises(AttributeError):
+                cfg.name = "changed"  # type: ignore[misc]
+
+    def test_video_hoster_count(self) -> None:
+        video_count = sum(1 for c in ALL_XFS_CONFIGS if c.is_video_hoster)
+        assert video_count == 19
+
+    def test_captcha_count(self) -> None:
+        captcha_count = sum(1 for c in ALL_XFS_CONFIGS if c.needs_captcha)
+        assert captcha_count == 1  # wolfstream (vinovo has its own resolver)
+
+    def test_ddl_count(self) -> None:
+        ddl_count = sum(1 for c in ALL_XFS_CONFIGS if not c.is_video_hoster)
+        assert ddl_count == 6
+
+
+# ---------------------------------------------------------------------------
+# extract_xfs_file_id — parameterised over all configs
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "config",
+    ALL_XFS_CONFIGS,
+    ids=[c.name for c in ALL_XFS_CONFIGS],
+)
+class TestExtractFileId:
+    def test_valid_url(self, config: XFSConfig) -> None:
+        url = _make_url(config)
+        result = extract_xfs_file_id(url, config)
+        assert result is not None
+        assert len(result) >= 12
+
+    def test_www_prefix(self, config: XFSConfig) -> None:
+        url = _make_url(config).replace("://", "://www.")
+        result = extract_xfs_file_id(url, config)
+        assert result is not None
+
+    def test_http_scheme(self, config: XFSConfig) -> None:
+        url = _make_url(config).replace("https://", "http://")
+        result = extract_xfs_file_id(url, config)
+        assert result is not None
+
+    def test_non_matching_domain(self, config: XFSConfig) -> None:
+        assert extract_xfs_file_id("https://example.com/abc123def456", config) is None
+
+    def test_short_id_rejected(self, config: XFSConfig) -> None:
+        domain = _first_domain(config)
+        tld = _TLD_MAP.get(config.name, "com")
+        assert extract_xfs_file_id(f"https://{domain}.{tld}/abc12", config) is None
+
+    def test_empty_url(self, config: XFSConfig) -> None:
+        assert extract_xfs_file_id("", config) is None
+
+    def test_invalid_url(self, config: XFSConfig) -> None:
+        assert extract_xfs_file_id("not-a-url", config) is None
+
+
+# ---------------------------------------------------------------------------
+# DDL hosters — validate file availability (echo URL back)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "config",
+    _DDL_CONFIGS,
+    ids=[c.name for c in _DDL_CONFIGS],
+)
+class TestXFSResolverDDL:
+    def test_name(self, config: XFSConfig) -> None:
+        resolver = XFSResolver(config=config, http_client=httpx.AsyncClient())
+        assert resolver.name == config.name
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_resolves_valid_file(self, config: XFSConfig) -> None:
+        url = _make_url(config)
+        respx.get(url).respond(200, text=_valid_html())
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=config, http_client=client)
+            result = await resolver.resolve(url)
+
+        assert result is not None
+        assert result.video_url == url
+        assert result.quality == StreamQuality.UNKNOWN
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_returns_none_for_each_offline_marker(
+        self, config: XFSConfig
+    ) -> None:
+        url = _make_url(config)
+        for marker in config.offline_markers:
+            respx.reset()
+            html = f"<html><body>{marker}</body></html>"
+            respx.get(url).respond(200, text=html)
+
+            async with httpx.AsyncClient() as client:
+                resolver = XFSResolver(config=config, http_client=client)
+                result = await resolver.resolve(url)
+            assert result is None, f"Marker not detected: {marker!r}"
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_returns_none_on_http_500(self, config: XFSConfig) -> None:
+        url = _make_url(config)
+        respx.get(url).respond(500)
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=config, http_client=client)
+            result = await resolver.resolve(url)
+        assert result is None
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_returns_none_on_network_error(self, config: XFSConfig) -> None:
+        url = _make_url(config)
+        respx.get(url).mock(side_effect=httpx.ConnectError("failed"))
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=config, http_client=client)
+            result = await resolver.resolve(url)
+        assert result is None
+
+    @pytest.mark.asyncio()
+    async def test_returns_none_for_invalid_url(self, config: XFSConfig) -> None:
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=config, http_client=client)
+            result = await resolver.resolve("https://example.com/abc123def456")
+        assert result is None
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_returns_none_on_error_redirect(self, config: XFSConfig) -> None:
+        domain = _first_domain(config)
+        tld = _TLD_MAP.get(config.name, "com")
+        file_id = _file_id_for(config)
+        error_url = f"https://{domain}.{tld}/404/{file_id}"
+        respx.get(error_url).respond(200, text=_valid_html())
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=config, http_client=client)
+            result = await resolver.resolve(error_url)
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Video hosters — extract actual video URL from embed page
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "config",
+    _VIDEO_CONFIGS,
+    ids=[c.name for c in _VIDEO_CONFIGS],
+)
+class TestXFSResolverVideo:
+    def test_name(self, config: XFSConfig) -> None:
+        resolver = XFSResolver(config=config, http_client=httpx.AsyncClient())
+        assert resolver.name == config.name
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_extracts_jwplayer_hls(self, config: XFSConfig) -> None:
+        """Video hoster with JWPlayer sources in embed page."""
+        url = _make_url(config)
+        embed_url = _make_embed_url(config)
+        respx.get(embed_url).respond(200, text=_video_html_jwplayer())
+        respx.head(_VIDEO_HLS_URL).respond(200)
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=config, http_client=client)
+            result = await resolver.resolve(url)
+
+        assert result is not None
+        assert result.video_url == _VIDEO_HLS_URL
+        assert result.is_hls is True
+        assert result.quality == StreamQuality.UNKNOWN
+        assert "Referer" in result.headers
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_extracts_hls2_pattern(self, config: XFSConfig) -> None:
+        """Video hoster with Streamwish-style hls2 pattern."""
+        url = _make_url(config)
+        embed_url = _make_embed_url(config)
+        respx.get(embed_url).respond(200, text=_video_html_hls2())
+        respx.head(_VIDEO_HLS_URL).respond(200)
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=config, http_client=client)
+            result = await resolver.resolve(url)
+
+        assert result is not None
+        assert result.video_url == _VIDEO_HLS_URL
+        assert result.is_hls is True
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_returns_none_when_no_video_found(self, config: XFSConfig) -> None:
+        """Video hoster with no extractable video URL returns None."""
+        url = _make_url(config)
+        embed_url = _make_embed_url(config)
+        respx.get(embed_url).respond(200, text=_valid_html())
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=config, http_client=client)
+            result = await resolver.resolve(url)
+
+        assert result is None
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_returns_none_for_each_offline_marker(
+        self, config: XFSConfig
+    ) -> None:
+        url = _make_url(config)
+        embed_url = _make_embed_url(config)
+        for marker in config.offline_markers:
+            respx.reset()
+            html = f"<html><body>{marker}</body></html>"
+            respx.get(embed_url).respond(200, text=html)
+
+            async with httpx.AsyncClient() as client:
+                resolver = XFSResolver(config=config, http_client=client)
+                result = await resolver.resolve(url)
+            assert result is None, f"Marker not detected: {marker!r}"
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_returns_none_on_http_500(self, config: XFSConfig) -> None:
+        url = _make_url(config)
+        embed_url = _make_embed_url(config)
+        respx.get(embed_url).respond(500)
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=config, http_client=client)
+            result = await resolver.resolve(url)
+        assert result is None
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_returns_none_on_network_error(self, config: XFSConfig) -> None:
+        url = _make_url(config)
+        embed_url = _make_embed_url(config)
+        respx.get(embed_url).mock(side_effect=httpx.ConnectError("failed"))
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=config, http_client=client)
+            result = await resolver.resolve(url)
+        assert result is None
+
+    @pytest.mark.asyncio()
+    async def test_returns_none_for_invalid_url(self, config: XFSConfig) -> None:
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=config, http_client=client)
+            result = await resolver.resolve("https://example.com/abc123def456")
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Captcha-required hosters — always return None
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "config",
+    _CAPTCHA_CONFIGS,
+    ids=[c.name for c in _CAPTCHA_CONFIGS],
+)
+class TestXFSResolverCaptcha:
+    @pytest.mark.asyncio()
+    async def test_returns_none_due_to_captcha(self, config: XFSConfig) -> None:
+        """Hosters requiring captcha return None without making HTTP requests."""
+        url = _make_url(config)
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=config, http_client=client)
+            result = await resolver.resolve(url)
+        assert result is None
+
+
+class TestVideoExtraction:
+    """Test video URL extraction from various embed page formats."""
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_jwplayer_sources_extraction(self) -> None:
+        """JWPlayer sources:[{file:"..."}] pattern."""
+        from scavengarr.infrastructure.hoster_resolvers.xfs import STREAMWISH
+
+        url = "https://streamwish.com/aBc123DeF456"
+        embed_url = "https://streamwish.com/e/aBc123DeF456"
+        respx.get(embed_url).respond(200, text=_video_html_jwplayer())
+        respx.head(_VIDEO_HLS_URL).respond(200)
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=STREAMWISH, http_client=client)
+            result = await resolver.resolve(url)
+
+        assert result is not None
+        assert result.video_url == _VIDEO_HLS_URL
+        assert result.is_hls is True
+        assert result.headers == {"Referer": embed_url}
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_hls2_extraction(self) -> None:
+        """Streamwish-specific "hls2":"http..." pattern."""
+        from scavengarr.infrastructure.hoster_resolvers.xfs import STREAMWISH
+
+        url = "https://streamwish.com/aBc123DeF456"
+        embed_url = "https://streamwish.com/e/aBc123DeF456"
+        respx.get(embed_url).respond(200, text=_video_html_hls2())
+        respx.head(_VIDEO_HLS_URL).respond(200)
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=STREAMWISH, http_client=client)
+            result = await resolver.resolve(url)
+
+        assert result is not None
+        assert result.video_url == _VIDEO_HLS_URL
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_packed_js_extraction(self) -> None:
+        """Dean Edwards packed JS with JWPlayer sources."""
+        from scavengarr.infrastructure.hoster_resolvers.xfs import VIDMOLY
+
+        url = "https://vidmoly.me/aBc123DeF456"
+        embed_url = "https://vidmoly.me/e/aBc123DeF456"
+        respx.get(embed_url).respond(200, text=_video_html_packed_js())
+        respx.head(_VIDEO_HLS_URL).respond(200)
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=VIDMOLY, http_client=client)
+            result = await resolver.resolve(url)
+
+        assert result is not None
+        assert result.video_url == _VIDEO_HLS_URL
+        assert result.is_hls is True
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_direct_hls_extraction(self) -> None:
+        """Direct HLS URL in page source."""
+        from scavengarr.infrastructure.hoster_resolvers.xfs import VIDOZA
+
+        url = "https://vidoza.net/aBc123DeF456"
+        embed_url = "https://vidoza.net/e/aBc123DeF456"
+        respx.get(embed_url).respond(200, text=_video_html_direct_hls())
+        respx.head(_VIDEO_HLS_URL).respond(200)
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=VIDOZA, http_client=client)
+            result = await resolver.resolve(url)
+
+        assert result is not None
+        assert result.video_url == _VIDEO_HLS_URL
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_mp4_url_extraction(self) -> None:
+        """Direct MP4 URL in JWPlayer sources."""
+        from scavengarr.infrastructure.hoster_resolvers.xfs import MP4UPLOAD
+
+        url = "https://mp4upload.com/aBc123DeF456"
+        embed_url = "https://mp4upload.com/e/aBc123DeF456"
+        html = (
+            "<html><body><script>"
+            f'sources:[{{file:"{_VIDEO_MP4_URL}"}}]'
+            "</script></body></html>"
+        )
+        respx.get(embed_url).respond(200, text=html)
+        respx.head(_VIDEO_MP4_URL).respond(200)
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=MP4UPLOAD, http_client=client)
+            result = await resolver.resolve(url)
+
+        assert result is not None
+        assert result.video_url == _VIDEO_MP4_URL
+        assert result.is_hls is False
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_embed_url_construction(self) -> None:
+        """Resolver builds /e/{file_id} URL from any input URL format."""
+        from scavengarr.infrastructure.hoster_resolvers.xfs import VIDHIDE
+
+        # Input URL uses /f/ path, resolver should convert to /e/
+        url = "https://vidhide.com/f/abc123def456"
+        embed_url = "https://vidhide.com/e/abc123def456"
+        respx.get(embed_url).respond(200, text=_video_html_hls2())
+        respx.head(_VIDEO_HLS_URL).respond(200)
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=VIDHIDE, http_client=client)
+            result = await resolver.resolve(url)
+
+        assert result is not None
+        assert result.video_url == _VIDEO_HLS_URL
+
+
+# ---------------------------------------------------------------------------
+# XFS form POST flow (two-step embed: GET splash → POST /dl → player page)
+# ---------------------------------------------------------------------------
+
+
+_XFS_FORM_HTML = (
+    '<html><body><form id="F1" action="/dl" method="POST">'
+    '<input type="hidden" name="op" value="embed">'
+    '<input type="hidden" name="file_code" value="">'
+    '<input type="hidden" name="auto" value="1">'
+    '<input type="hidden" name="referer" value="">'
+    "</form></body></html>"
+)
+
+
+class TestXFSFormPost:
+    """XFS hosters that serve a form splash on GET need a POST to /dl."""
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_form_page_triggers_post(self) -> None:
+        """When GET returns an XFS form, resolver POSTs to /dl for the player."""
+        from scavengarr.infrastructure.hoster_resolvers.xfs import BIGWARP
+
+        url = "https://bigwarp.io/aBc123DeF456"
+        embed_url = "https://bigwarp.io/e/aBc123DeF456"
+        dl_url = "https://bigwarp.io/dl"
+
+        # GET returns the form splash
+        respx.get(embed_url).respond(200, text=_XFS_FORM_HTML)
+        # POST returns the actual player page
+        respx.post(dl_url).respond(200, text=_video_html_jwplayer())
+        respx.head(_VIDEO_HLS_URL).respond(200)
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=BIGWARP, http_client=client)
+            result = await resolver.resolve(url)
+
+        assert result is not None
+        assert result.video_url == _VIDEO_HLS_URL
+        assert result.is_hls is True
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_form_post_goes_to_the_host_that_served_the_page(self) -> None:
+        """Rotating mirrors redirect the embed page to another host; the form
+        belongs to that host (a POST to the old host gets redirected and
+        re-sent as GET without the form body)."""
+        from scavengarr.infrastructure.hoster_resolvers.xfs import BIGWARP
+
+        url = "https://bigwarp.io/aBc123DeF456"
+        embed_url = "https://bigwarp.io/e/aBc123DeF456"
+        mirror_embed = "https://bgwp.cc/e/aBc123DeF456"
+
+        respx.get(embed_url).respond(301, headers={"Location": mirror_embed})
+        respx.get(mirror_embed).respond(200, text=_XFS_FORM_HTML)
+        post = respx.post("https://bgwp.cc/dl").respond(
+            200, text=_video_html_jwplayer()
+        )
+        head = respx.head(_VIDEO_HLS_URL).respond(200)
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=BIGWARP, http_client=client)
+            result = await resolver.resolve(url)
+
+        assert result is not None
+        assert post.called
+        assert result.headers["Referer"] == "https://bgwp.cc/dl"
+        assert head.calls.last.request.headers["Referer"] == "https://bgwp.cc/dl"
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_form_post_network_error(self) -> None:
+        """POST failure returns None."""
+        from scavengarr.infrastructure.hoster_resolvers.xfs import SAVEFILES
+
+        url = "https://savefiles.com/aBc123DeF456"
+        embed_url = "https://savefiles.com/e/aBc123DeF456"
+        dl_url = "https://savefiles.com/dl"
+
+        respx.get(embed_url).respond(200, text=_XFS_FORM_HTML)
+        respx.post(dl_url).mock(side_effect=httpx.ConnectError("failed"))
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=SAVEFILES, http_client=client)
+            result = await resolver.resolve(url)
+        assert result is None
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_form_post_offline_marker(self) -> None:
+        """POST page with offline marker returns None."""
+        from scavengarr.infrastructure.hoster_resolvers.xfs import BIGWARP
+
+        url = "https://bigwarp.io/aBc123DeF456"
+        embed_url = "https://bigwarp.io/e/aBc123DeF456"
+        dl_url = "https://bigwarp.io/dl"
+
+        respx.get(embed_url).respond(200, text=_XFS_FORM_HTML)
+        respx.post(dl_url).respond(200, text="<html>File is no longer available</html>")
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=BIGWARP, http_client=client)
+            result = await resolver.resolve(url)
+        assert result is None
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_direct_embed_page_skips_form_post(self) -> None:
+        """When GET returns actual player HTML (no form), no POST is made."""
+        from scavengarr.infrastructure.hoster_resolvers.xfs import STREAMWISH
+
+        url = "https://streamwish.com/aBc123DeF456"
+        embed_url = "https://streamwish.com/e/aBc123DeF456"
+        # GET returns player directly (no form)
+        respx.get(embed_url).respond(200, text=_video_html_hls2())
+        respx.head(_VIDEO_HLS_URL).respond(200)
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=STREAMWISH, http_client=client)
+            result = await resolver.resolve(url)
+
+        assert result is not None
+        assert result.video_url == _VIDEO_HLS_URL
+        # No POST route was defined — if it tried to POST, it would fail
+
+
+# ---------------------------------------------------------------------------
+# Extra domains (JDownloader aliases)
+# ---------------------------------------------------------------------------
+
+
+class TestExtraDomains:
+    def test_vidhide_extra_domain_accepted(self) -> None:
+        from scavengarr.infrastructure.hoster_resolvers.xfs import VIDHIDE
+
+        url = "https://nikaplayer.com/e/abc123def456"
+        result = extract_xfs_file_id(url, VIDHIDE)
+        assert result == "abc123def456"
+
+    def test_vidhide_main_domain_accepted(self) -> None:
+        from scavengarr.infrastructure.hoster_resolvers.xfs import VIDHIDE
+
+        url = "https://vidhide.com/abc123def456"
+        result = extract_xfs_file_id(url, VIDHIDE)
+        assert result == "abc123def456"
+
+
+# ---------------------------------------------------------------------------
+# Error redirect with real redirect chain
+# ---------------------------------------------------------------------------
+
+
+class TestErrorRedirectChain:
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_redirect_to_404_page(self) -> None:
+        """XFSResolver detects redirect to /404 URL via resp.url check."""
+        from scavengarr.infrastructure.hoster_resolvers.xfs import KATFILE
+
+        url = "https://katfile.online/aBc123DeF456"
+        redirect_target = "https://katfile.online/404"
+
+        respx.get(url).respond(
+            301,
+            headers={"Location": redirect_target},
+        )
+        respx.get(redirect_target).respond(
+            200,
+            text="<html><body>Not found</body></html>",
+        )
+
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            resolver = XFSResolver(config=KATFILE, http_client=client)
+            result = await resolver.resolve(url)
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Video URL verification (HEAD check filters IP-locked CDN tokens)
+# ---------------------------------------------------------------------------
+
+
+class TestVideoUrlVerification:
+    """CDN HEAD check filters unreachable video URLs (e.g. IP-locked tokens)."""
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_403_from_cdn_returns_none(self) -> None:
+        """IP-locked CDN token (LULUVID/LULUVDOO) → 403 → resolver returns None."""
+        from scavengarr.infrastructure.hoster_resolvers.xfs import LULUSTREAM
+
+        url = "https://luluvid.com/aBc123DeF456"
+        embed_url = "https://luluvid.com/e/aBc123DeF456"
+        video_url = "https://cdn-locked.luluvid.com/hls/master.m3u8?token=abc"
+
+        html = f'<html><body><script>"hls2":"{video_url}"</script></body></html>'
+        respx.get(embed_url).respond(200, text=html)
+        respx.head(video_url).respond(403)
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=LULUSTREAM, http_client=client)
+            result = await resolver.resolve(url)
+
+        assert result is None
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_200_from_cdn_returns_stream(self) -> None:
+        """Accessible CDN URL → HEAD 200 → resolver returns ResolvedStream."""
+        from scavengarr.infrastructure.hoster_resolvers.xfs import DROPLOAD
+
+        url = "https://dropload.io/aBc123DeF456"
+        embed_url = "https://dropload.io/e/aBc123DeF456"
+
+        respx.get(embed_url).respond(200, text=_video_html_hls2())
+        respx.head(_VIDEO_HLS_URL).respond(200)
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=DROPLOAD, http_client=client)
+            result = await resolver.resolve(url)
+
+        assert result is not None
+        assert result.video_url == _VIDEO_HLS_URL
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_206_from_cdn_returns_stream(self) -> None:
+        """CDN returning 206 (partial content) is also accepted."""
+        from scavengarr.infrastructure.hoster_resolvers.xfs import STREAMRUBY
+
+        url = "https://streamruby.com/aBc123DeF456"
+        embed_url = "https://streamruby.com/e/aBc123DeF456"
+
+        respx.get(embed_url).respond(200, text=_video_html_hls2())
+        respx.head(_VIDEO_HLS_URL).respond(206)
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=STREAMRUBY, http_client=client)
+            result = await resolver.resolve(url)
+
+        assert result is not None
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_network_error_on_verify_returns_none(self) -> None:
+        """Network error during HEAD check → resolver returns None."""
+        from scavengarr.infrastructure.hoster_resolvers.xfs import SAVEFILES
+
+        url = "https://savefiles.com/aBc123DeF456"
+        embed_url = "https://savefiles.com/e/aBc123DeF456"
+
+        respx.get(embed_url).respond(200, text=_video_html_hls2())
+        respx.head(_VIDEO_HLS_URL).mock(side_effect=httpx.ConnectError("timeout"))
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=SAVEFILES, http_client=client)
+            result = await resolver.resolve(url)
+
+        assert result is None
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_500_from_cdn_returns_none(self) -> None:
+        """Server error from CDN → resolver returns None."""
+        from scavengarr.infrastructure.hoster_resolvers.xfs import VIDNEST
+
+        url = "https://vidnest.io/aBc123DeF456"
+        embed_url = "https://vidnest.io/e/aBc123DeF456"
+
+        respx.get(embed_url).respond(200, text=_video_html_jwplayer())
+        respx.head(_VIDEO_HLS_URL).respond(500)
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=VIDNEST, http_client=client)
+            result = await resolver.resolve(url)
+
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Factory function
+# ---------------------------------------------------------------------------
+
+
+class TestCreateAllXfsResolvers:
+    def test_returns_correct_count(self) -> None:
+        resolvers = create_all_xfs_resolvers(httpx.AsyncClient())
+        assert len(resolvers) == len(ALL_XFS_CONFIGS)
+
+    def test_all_names_unique(self) -> None:
+        resolvers = create_all_xfs_resolvers(httpx.AsyncClient())
+        names = [r.name for r in resolvers]
+        assert len(names) == len(set(names))
+
+    def test_all_names_match_configs(self) -> None:
+        resolvers = create_all_xfs_resolvers(httpx.AsyncClient())
+        resolver_names = {r.name for r in resolvers}
+        config_names = {c.name for c in ALL_XFS_CONFIGS}
+        assert resolver_names == config_names
+
+
+# ---------------------------------------------------------------------------
+# Cloudflare in front of the embed page
+# ---------------------------------------------------------------------------
+
+_CF_PAGE = "<html><head><title>Just a moment...</title></head><body></body></html>"
+
+
+class TestXFSResolverCloudflare:
+    """savefiles, bigwarp, ...: a Cloudflare challenge on the embed page is
+    handed to the stealth browser, which captures the player's stream."""
+
+    @staticmethod
+    def _config(name: str) -> XFSConfig:
+        return next(c for c in ALL_XFS_CONFIGS if c.name == name)
+
+    @respx.mock
+    async def test_challenge_captures_player_stream(self) -> None:
+        cfg = self._config("savefiles")
+        respx.get(_make_embed_url(cfg)).respond(403, text=_CF_PAGE)
+        media = CapturedMedia(
+            url="https://s3.savefiles.com/hls2/x/master.m3u8?t=tok",
+            referer="https://savefiles.com/",
+        )
+        pool = AsyncMock()
+        pool.capture_media = AsyncMock(return_value=media)
+
+        resolver = XFSResolver(
+            config=cfg, http_client=httpx.AsyncClient(), stealth_pool=pool
+        )
+        result = await resolver.resolve(_make_url(cfg))
+
+        assert result is not None
+        assert result.video_url == media.url
+        assert result.is_hls is True
+        assert result.headers == {"Referer": "https://savefiles.com/"}
+        assert pool.capture_media.await_args.args[0] == _make_embed_url(cfg)
+
+    @respx.mock
+    async def test_challenge_without_browser_returns_none(self) -> None:
+        cfg = self._config("savefiles")
+        respx.get(_make_embed_url(cfg)).respond(403, text=_CF_PAGE)
+
+        resolver = XFSResolver(config=cfg, http_client=httpx.AsyncClient())
+
+        assert await resolver.resolve(_make_url(cfg)) is None
+
+    @respx.mock
+    async def test_plain_403_does_not_start_browser(self) -> None:
+        cfg = self._config("savefiles")
+        respx.get(_make_embed_url(cfg)).respond(403, text="Forbidden")
+        pool = AsyncMock()
+
+        resolver = XFSResolver(
+            config=cfg, http_client=httpx.AsyncClient(), stealth_pool=pool
+        )
+
+        assert await resolver.resolve(_make_url(cfg)) is None
+        pool.capture_media.assert_not_awaited()
+
+    def test_factory_passes_browser_to_video_hosters(self) -> None:
+        pool = AsyncMock()
+        resolvers = create_all_xfs_resolvers(
+            http_client=httpx.AsyncClient(), stealth_pool=pool
+        )
+
+        assert all(r._stealth_pool is pool for r in resolvers)
+
+
+class TestGoodStream:
+    """goodstream.one (formerly .uno) links: /video/embed/<short id>/<size>."""
+
+    @staticmethod
+    def _config() -> XFSConfig:
+        return next(c for c in ALL_XFS_CONFIGS if c.name == "goodstream")
+
+    @pytest.mark.parametrize(
+        ("url", "file_id"),
+        [
+            ("https://goodstream.uno/video/embed/4Ky4/680x420", "4Ky4"),
+            ("https://goodstream.one/video/embed/4Dmr", "4Dmr"),
+            ("https://goodstream.one/e/abcdefghijkl", "abcdefghijkl"),
+        ],
+    )
+    def test_file_id(self, url: str, file_id: str) -> None:
+        assert extract_xfs_file_id(url, self._config()) == file_id
+
+    @respx.mock
+    async def test_no_such_file_is_offline(self) -> None:
+        route = respx.get("https://goodstream.uno/e/4Ky4").respond(
+            200, text="<html><body>Login Register No such file</body></html>"
+        )
+        resolver = XFSResolver(config=self._config(), http_client=httpx.AsyncClient())
+
+        result = await resolver.resolve(
+            "https://goodstream.uno/video/embed/4Ky4/680x420"
+        )
+
+        assert result is None
+        assert route.called
+
+
+class TestXFSMirrors:
+    @pytest.mark.parametrize(
+        ("name", "url", "file_id"),
+        [
+            ("dropload", "https://dr0pstream.com/e/ee1b93mi2e1o", "ee1b93mi2e1o"),
+            ("savefiles", "https://streamhls.to/e/ni126sr4i9rq", "ni126sr4i9rq"),
+        ],
+    )
+    def test_mirror_file_id(self, name: str, url: str, file_id: str) -> None:
+        cfg = next(c for c in ALL_XFS_CONFIGS if c.name == name)
+        assert extract_xfs_file_id(url, cfg) == file_id
+
+
+# dr0pstream: the play button is a Turnstile widget that submits the XFS form
+_TURNSTILE_GATE = (
+    '<form action="" method="POST" id="F1">'
+    '<input type="hidden" name="op" value="embed">'
+    '<div id="vid_play"><script src="https://challenges.cloudflare.com/'
+    'turnstile/v0/api.js?compat=recaptcha" async defer></script>'
+    '<div class="g-recaptcha" data-sitekey="0x4AAAAAAEpU5huYpkxMDMFk" '
+    'data-callback="imNotARobot"></div></div></form>'
+)
+
+
+class TestXFSResolverCaptchaGate:
+    """A captcha in front of the player: the stealth browser clicks it."""
+
+    @staticmethod
+    def _dropload() -> XFSConfig:
+        return next(c for c in ALL_XFS_CONFIGS if c.name == "dropload")
+
+    @respx.mock
+    async def test_turnstile_gate_captures_player_stream(self) -> None:
+        url = "https://dr0pstream.com/e/ee1b93mi2e1o"
+        respx.get(url).respond(200, text=_TURNSTILE_GATE)
+        media = CapturedMedia(
+            url="https://ds3.dropcdn.io/hls2/03/x_n/master.m3u8?t=tok",
+            referer="https://dr0pstream.com/",
+        )
+        pool = AsyncMock()
+        pool.capture_media = AsyncMock(return_value=media)
+
+        resolver = XFSResolver(
+            config=self._dropload(), http_client=httpx.AsyncClient(), stealth_pool=pool
+        )
+        result = await resolver.resolve(url)
+
+        assert result is not None
+        assert result.video_url == media.url
+        assert pool.capture_media.await_args.args[0] == url
+
+    @respx.mock
+    async def test_gate_without_browser_returns_none(self) -> None:
+        url = "https://dr0pstream.com/e/ee1b93mi2e1o"
+        respx.get(url).respond(200, text=_TURNSTILE_GATE)
+
+        resolver = XFSResolver(config=self._dropload(), http_client=httpx.AsyncClient())
+
+        assert await resolver.resolve(url) is None
+
+    @respx.mock
+    async def test_page_without_gate_does_not_start_browser(self) -> None:
+        url = "https://dr0pstream.com/e/ee1b93mi2e1o"
+        respx.get(url).respond(200, text="<html><body>no player</body></html>")
+        pool = AsyncMock()
+
+        resolver = XFSResolver(
+            config=self._dropload(), http_client=httpx.AsyncClient(), stealth_pool=pool
+        )
+
+        assert await resolver.resolve(url) is None
+        pool.capture_media.assert_not_awaited()

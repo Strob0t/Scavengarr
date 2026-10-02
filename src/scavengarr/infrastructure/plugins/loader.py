@@ -1,3 +1,5 @@
+"""Plugin loading from Python files."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -7,55 +9,13 @@ from types import ModuleType
 from typing import Any
 
 import structlog
-import yaml
-from pydantic import ValidationError
 
 from scavengarr.domain.plugins import (
     PluginLoadError,
     PluginProtocol,
-    PluginValidationError,
-    YamlPluginDefinition,
 )
 
 log = structlog.get_logger(__name__)
-
-
-def load_yaml_plugin(path: Path) -> YamlPluginDefinition:
-    try:
-        raw = path.read_text(encoding="utf-8")
-        data = yaml.safe_load(raw)
-        if data is None:
-            raise PluginValidationError("YAML file is empty")
-        if not isinstance(data, dict):
-            raise PluginValidationError("YAML root must be a mapping/object")
-        return YamlPluginDefinition.model_validate(data)
-    except (OSError, UnicodeDecodeError) as e:
-        log.error(
-            "plugin_load_failed",
-            plugin_file=str(path),
-            plugin_type="yaml",
-            error_type=type(e).__name__,
-            error_message=str(e),
-        )
-        raise PluginLoadError(str(e)) from e
-    except ValidationError as e:
-        log.error(
-            "plugin_validation_failed",
-            plugin_file=str(path),
-            plugin_type="yaml",
-            error_type="ValidationError",
-            error_details=e.errors(),
-        )
-        raise PluginValidationError(str(e)) from e
-    except yaml.YAMLError as e:
-        log.error(
-            "plugin_validation_failed",
-            plugin_file=str(path),
-            plugin_type="yaml",
-            error_type=type(e).__name__,
-            error_message=str(e),
-        )
-        raise PluginValidationError(str(e)) from e
 
 
 def _import_module_from_path(path: Path) -> ModuleType:

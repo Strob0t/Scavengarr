@@ -1,0 +1,2 @@
+# Normalize all text files to LF in the repo and working tree, regardless of editor/OS.
+* text=auto eol=lf

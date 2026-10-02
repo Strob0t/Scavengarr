@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
+from dataclasses import dataclass
 from dataclasses import replace as dataclass_replace
-from typing import cast
+from typing import Any, cast
 
 import structlog
 
@@ -14,13 +17,30 @@ from scavengarr.domain.entities import (
     TorznabItem,
     TorznabPluginNotFound,
     TorznabQuery,
-    TorznabUnsupportedPlugin,
 )
+from scavengarr.domain.entities.crawljob import CrawlJob
+from scavengarr.domain.plugins import GrabResolvingPlugin
 from scavengarr.domain.ports import PluginRegistryPort
+from scavengarr.domain.ports.cache import CachePort
 from scavengarr.domain.ports.crawljob_repository import CrawlJobRepository
 from scavengarr.domain.ports.search_engine import SearchEnginePort
 
 log = structlog.get_logger(__name__)
+
+
+def _search_cache_key(plugin_name: str, query: str, category: int | None) -> str:
+    """Compute deterministic cache key for a search query."""
+    cat_str = str(category) if category is not None else "none"
+    raw = f"{plugin_name}:{query.lower().strip()}:{cat_str}"
+    return f"search:{hashlib.sha256(raw.encode()).hexdigest()[:16]}"
+
+
+@dataclass(frozen=True)
+class SearchResponse:
+    """Use case response carrying items + cache metadata."""
+
+    items: list[TorznabItem]
+    cache_hit: bool = False
 
 
 class TorznabSearchUseCase:
@@ -28,18 +48,21 @@ class TorznabSearchUseCase:
 
     Flow:
         1. Validate query and plugin
-        2. Execute search via SearchEngine (includes link validation)
-        3. Convert each SearchResult → CrawlJob (via Factory)
-        4. Store CrawlJobs in repository
-        5. Return enriched TorznabItems with job_id fields
+        2. Execute search via Python plugin
+        3. Validate download links via SearchEngine
+        4. Convert each SearchResult -> CrawlJob (via Factory)
+        5. Store CrawlJobs in repository
+        6. Return enriched TorznabItems with job_id fields
     """
 
     def __init__(
         self,
         plugins: PluginRegistryPort,
         engine: SearchEnginePort,
-        crawljob_factory: CrawlJobFactory,  # CHANGED: Factory instead of Service
+        crawljob_factory: CrawlJobFactory,
         crawljob_repo: CrawlJobRepository,
+        cache: CachePort | None = None,
+        search_ttl: int = 900,
     ):
         """Initialize use case with dependencies.
 
@@ -48,28 +71,31 @@ class TorznabSearchUseCase:
             engine: Search engine (with link validation).
             crawljob_factory: Factory for creating CrawlJobs from SearchResults.
             crawljob_repo: Repository for storing CrawlJobs.
+            cache: Optional cache port for search result caching.
+            search_ttl: TTL for cached search results (seconds). 0 = disabled.
         """
         self.plugins: PluginRegistryPort = plugins
         self.engine: SearchEnginePort = engine
-        self.crawljob_factory: CrawlJobFactory = crawljob_factory  # CHANGED
+        self.crawljob_factory: CrawlJobFactory = crawljob_factory
         self.crawljob_repo: CrawlJobRepository = crawljob_repo
+        self._cache = cache
+        self._search_ttl = search_ttl
 
-    async def execute(self, q: TorznabQuery) -> list[TorznabItem]:
+    async def execute(self, q: TorznabQuery) -> SearchResponse:
         """Execute Torznab search with link validation and CrawlJob generation.
 
         Args:
             q: TorznabQuery with action, plugin_name, query, category, etc.
 
         Returns:
-            List of TorznabItems with enriched job_id fields.
+            SearchResponse with TorznabItems and cache metadata.
 
         Raises:
             TorznabBadRequest: Invalid query parameters.
             TorznabPluginNotFound: Plugin does not exist.
-            TorznabUnsupportedPlugin: Plugin has unsupported scraping mode.
             TorznabExternalError: Search engine failure.
         """
-        # === 1) Validate Query ===
+        # Validate query
         if q.action != "search":
             raise TorznabBadRequest("TorznabSearchUseCase only supports action=search")
         if not q.query:
@@ -77,35 +103,23 @@ class TorznabSearchUseCase:
         if not q.plugin_name:
             raise TorznabBadRequest("Missing plugin name")
 
-        # === 2) Plugin Discovery and Validation ===
-        self.plugins.discover()
+        # Resolve plugin
         try:
             plugin = self.plugins.get(q.plugin_name)
         except Exception as e:
             raise TorznabPluginNotFound(q.plugin_name) from e
 
-        # Validate scraping mode (only 'scrapy' supported)
-        try:
-            mode = plugin.scraping.mode  # type: ignore[attr-defined]
-        except Exception as e:
-            raise TorznabUnsupportedPlugin(
-                "Plugin does not expose scraping.mode"
-            ) from e
-        if mode != "scrapy":
-            raise TorznabUnsupportedPlugin(f"Unsupported scraping.mode: {mode}")
+        # --- cache lookup ---
+        cache_key = _search_cache_key(q.plugin_name, q.query, q.category)
+        raw_results = await self._cache_read(cache_key, q)
+        cache_hit = raw_results is not None
 
-        # === 3) Execute Search (includes link validation) ===
-        try:
-            # NOTE: SearchEngine.search() now returns validated SearchResult objects
-            raw_results: list = await self.engine.search(
-                plugin,
-                q.query,
-                category=q.category,  # Pass category if available
-            )
-        except TorznabExternalError:
-            raise
-        except Exception as e:
-            raise TorznabExternalError(f"Search engine error: {str(e)}") from e
+        # --- cache miss: execute search ---
+        if raw_results is None:
+            raw_results = await self._execute_plugin(plugin, q)
+
+            if raw_results:
+                await self._cache_write(cache_key, raw_results, q, plugin)
 
         if not raw_results:
             log.info(
@@ -113,13 +127,124 @@ class TorznabSearchUseCase:
                 plugin=q.plugin_name,
                 query=q.query,
             )
-            return []
+            return SearchResponse(items=[], cache_hit=cache_hit)
 
-        # === 4) Transform Results → CrawlJobs → TorznabItems ===
-        items: list[TorznabItem] = []
+        page = await self._validated_page(raw_results, q)
+        items = await self._build_torznab_items(page, q, plugin)
+        return SearchResponse(items=items, cache_hit=cache_hit)
+
+    async def _validated_page(
+        self,
+        raw_results: list[Any],
+        q: TorznabQuery,
+    ) -> list[Any]:
+        """Validate results in order, only as far as the requested page needs.
+
+        Clients ask for one page (Prowlarr: ``limit=100``). Validating every
+        result of a 1000-item search first meant ~3000 link checks per
+        request: minutes of runtime and connection bursts that home routers
+        treat as a port scan. Results are validated in chunks until
+        ``offset + limit`` valid ones exist; earlier chunks of later pages
+        come from the link validator's cache.
+        """
+        needed = q.offset + q.limit
+        chunk = max(q.limit, 1)
+        valid: list[Any] = []
+        for start in range(0, len(raw_results), chunk):
+            try:
+                valid.extend(
+                    await self.engine.validate_results(
+                        raw_results[start : start + chunk]
+                    )
+                )
+            except Exception as e:
+                raise TorznabExternalError(f"Result validation error: {e!s}") from e
+            if len(valid) >= needed:
+                break
+        return valid[q.offset : needed]
+
+    async def _cache_read(self, cache_key: str, q: TorznabQuery) -> list[Any] | None:
+        """Try to read cached search results. Returns None on miss or error."""
+        if not self._cache or self._search_ttl <= 0:
+            return None
+        try:
+            cached = await self._cache.get(cache_key)
+            if cached is not None:
+                log.info(
+                    "search_cache_hit",
+                    plugin=q.plugin_name,
+                    query=q.query,
+                    cache_key=cache_key,
+                    result_count=len(cached),
+                )
+                return cached
+        except Exception:
+            log.warning(
+                "search_cache_read_error",
+                cache_key=cache_key,
+                exc_info=True,
+            )
+        return None
+
+    async def _cache_write(
+        self,
+        cache_key: str,
+        results: list[Any],
+        q: TorznabQuery,
+        plugin: Any = None,
+    ) -> None:
+        """Store search results in cache. Silently ignores errors.
+
+        Uses the plugin's ``cache_ttl`` attribute if set, otherwise
+        falls back to the global ``self._search_ttl``.
+        """
+        if not self._cache or self._search_ttl <= 0:
+            return
+        ttl = self._search_ttl
+        plugin_ttl = getattr(plugin, "cache_ttl", None)
+        if plugin_ttl is not None and plugin_ttl > 0:
+            ttl = plugin_ttl
+        try:
+            await self._cache.set(cache_key, results, ttl=ttl)
+            log.debug(
+                "search_cache_stored",
+                plugin=q.plugin_name,
+                cache_key=cache_key,
+                ttl=ttl,
+                result_count=len(results),
+            )
+        except Exception:
+            log.warning(
+                "search_cache_store_error",
+                cache_key=cache_key,
+                exc_info=True,
+            )
+
+    async def _execute_plugin(
+        self,
+        plugin: Any,
+        q: TorznabQuery,
+    ) -> list[Any]:
+        """Execute search via Python plugin (links are validated per page)."""
+        try:
+            return await plugin.search(q.query, category=q.category)
+        except Exception as e:
+            raise TorznabExternalError(f"Plugin search error: {e!s}") from e
+
+    async def _build_torznab_items(
+        self,
+        raw_results: list[Any],
+        q: TorznabQuery,
+        plugin: Any,
+    ) -> list[TorznabItem]:
+        """Transform SearchResults into TorznabItems with CrawlJob generation."""
+        # Links behind a captcha/quota are resolved when the job is grabbed.
+        resolve_plugin = (
+            q.plugin_name if isinstance(plugin, GrabResolvingPlugin) else None
+        )
+        pending: list[tuple[TorznabItem, CrawlJob]] = []
         for raw_result in raw_results:
             try:
-                # 4a) Build base TorznabItem from SearchResult
                 base_item = TorznabItem(
                     title=cast(str, getattr(raw_result, "title", "Unknown")),
                     download_url=cast(str, getattr(raw_result, "download_link", "")),
@@ -138,15 +263,11 @@ class TorznabSearchUseCase:
                     category=cast(int, getattr(raw_result, "category", 2000)),
                 )
 
-                # 4b) Generate CrawlJob from SearchResult (NEW: via Factory)
-                crawljob = self.crawljob_factory.create_from_search_result(raw_result)
-
-                # 4c) Store CrawlJob in repository
-                await self.crawljob_repo.save(crawljob)
-
-                # 4d) Enrich TorznabItem with job_id
+                crawljob = self.crawljob_factory.create_from_search_result(
+                    raw_result, resolve_plugin=resolve_plugin
+                )
                 enriched_item = dataclass_replace(base_item, job_id=crawljob.job_id)
-                items.append(enriched_item)
+                pending.append((enriched_item, crawljob))
 
                 log.debug(
                     "crawljob_generated",
@@ -154,11 +275,10 @@ class TorznabSearchUseCase:
                     query=q.query,
                     job_id=enriched_item.job_id,
                     title=enriched_item.title,
-                    validated_url_count=len(crawljob.validated_urls),  # NEW
+                    validated_url_count=len(crawljob.validated_urls),
                 )
 
             except Exception as e:
-                # Skip result if CrawlJob generation fails (e.g., invalid data)
                 log.warning(
                     "crawljob_generation_failed",
                     plugin=q.plugin_name,
@@ -167,6 +287,24 @@ class TorznabSearchUseCase:
                     error=str(e),
                 )
                 continue
+
+        # Batch-save all crawljobs in parallel; an item whose job was not
+        # saved would answer the grab with 404, so it is dropped
+        saved = await asyncio.gather(
+            *(self.crawljob_repo.save(job) for _, job in pending),
+            return_exceptions=True,
+        )
+        items: list[TorznabItem] = []
+        for (item, job), outcome in zip(pending, saved, strict=True):
+            if isinstance(outcome, BaseException):
+                log.warning(
+                    "crawljob_save_failed",
+                    plugin=q.plugin_name,
+                    job_id=job.job_id,
+                    error=str(outcome),
+                )
+                continue
+            items.append(item)
 
         log.info(
             "torznab_search_completed",

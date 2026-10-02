@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Optional
 from uuid import uuid4
 
 
@@ -27,7 +27,17 @@ class Priority(str, Enum):
     LOWER = "LOWER"
 
 
-@dataclass
+class CrawlJobResolveError(Exception):
+    """Grab-time link resolution failed (plugin error or no links left)."""
+
+
+def _one_line(value: str) -> str:
+    """Collapse line breaks: a .crawljob is one ``key=value`` per line, so a
+    line break in a scraped value would add keys of the site's choosing."""
+    return " ".join(value.splitlines())
+
+
+@dataclass(frozen=True)
 class CrawlJob:
     """Represents a .crawljob file for JDownloader.
 
@@ -48,7 +58,10 @@ class CrawlJob:
         validated_urls: List of validated download links (from link validator).
         source_url: Original indexer page URL.
         created_at: Timestamp when job was created.
-        expires_at: Expiration timestamp (default: 1 hour after creation).
+        expires_at: Expiration timestamp (default: 1 hour after creation;
+            the factory uses ``cache.crawljob_ttl_seconds``).
+        resolve_plugin: Plugin that resolves ``validated_urls`` at grab time
+            (``GrabResolvingPlugin``); ``None`` once the links are final.
 
     JDownloader behavior flags:
         auto_start: Auto-start download when added (TRUE/FALSE/UNSET).
@@ -68,19 +81,20 @@ class CrawlJob:
 
     # === Display Metadata ===
     package_name: str = "Scavengarr Download"
-    filename: Optional[str] = None
-    comment: Optional[str] = None
+    filename: str | None = None
+    comment: str | None = None
 
     # === Validation Metadata (Scavengarr-specific) ===
     validated_urls: list[str] = field(default_factory=list)
-    source_url: Optional[str] = None
+    source_url: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     expires_at: datetime = field(
         default_factory=lambda: datetime.now(timezone.utc) + timedelta(hours=1)
     )
+    resolve_plugin: str | None = None
 
     # === Download Configuration ===
-    download_folder: Optional[str] = None
+    download_folder: str | None = None
     chunks: int = 0  # 0 = use JDownloader default
     priority: Priority = Priority.DEFAULT
 
@@ -93,7 +107,7 @@ class CrawlJob:
 
     # === Archive/Security ===
     extract_passwords: list[str] = field(default_factory=list)
-    download_password: Optional[str] = None
+    download_password: str | None = None
 
     # === Advanced Options ===
     deep_analyse_enabled: bool = False
@@ -126,18 +140,18 @@ class CrawlJob:
             "",
             # === Core Fields ===
             f"text={self.text}",
-            f"packageName={self.package_name}",
+            f"packageName={_one_line(self.package_name)}",
         ]
 
         # === Optional Fields ===
         if self.filename:
-            lines.append(f"filename={self.filename}")
+            lines.append(f"filename={_one_line(self.filename)}")
 
         if self.download_folder:
-            lines.append(f"downloadFolder={self.download_folder}")
+            lines.append(f"downloadFolder={_one_line(self.download_folder)}")
 
         if self.comment:
-            lines.append(f"comment={self.comment}")
+            lines.append(f"comment={_one_line(self.comment)}")
 
         # === Behavior Flags ===
         lines.extend(
@@ -164,10 +178,12 @@ class CrawlJob:
 
         # === Passwords (JSON array format) ===
         if self.extract_passwords:
-            passwords_json = '["' + '","'.join(self.extract_passwords) + '"]'
-            lines.append(f"extractPasswords={passwords_json}")
+            lines.append(
+                f"extractPasswords="
+                f"{json.dumps(self.extract_passwords, separators=(',', ':'))}"
+            )
 
         if self.download_password:
-            lines.append(f"downloadPassword={self.download_password}")
+            lines.append(f"downloadPassword={_one_line(self.download_password)}")
 
         return "\n".join(lines)

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from typing import cast
+from urllib.parse import quote
 
 import structlog
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 
+from scavengarr.application.use_cases.crawljob_resolve import CrawlJobResolveUseCase
+from scavengarr.domain.entities.crawljob import CrawlJobResolveError
 from scavengarr.interfaces.app_state import AppState
 
 log = structlog.get_logger(__name__)
@@ -15,41 +18,26 @@ log = structlog.get_logger(__name__)
 router = APIRouter(tags=["download"])
 
 
-@router.get("/api/v1/download/{job_id}")
+@router.get("/download/{job_id}")
 async def download_crawljob(
     job_id: str,
     request: Request,
 ) -> Response:
     """Serve .crawljob file for JDownloader integration.
 
-    This endpoint is called by Sonarr/Radarr when they click the download link
-    from Torznab search results. The response is a .crawljob file containing
-    validated download links in JDownloader format.
-
-    Flow:
-        1. Sonarr/Radarr receives Torznab XML with <link>/api/v1/download/{job_id}</link>
-        2. They make GET request to this endpoint
-        3. We lookup CrawlJob from repository (cache)
-        4. Check if expired
-        5. Generate .crawljob file content
-        6. Return as downloadable file
-
-    Args:
-        job_id: Unique CrawlJob identifier (UUID4).
-        request: FastAPI request object (for accessing app state).
-
-    Returns:
-        Response with .crawljob file content and appropriate headers.
+    Called by Sonarr/Radarr when processing Torznab search results.
+    Looks up the CrawlJob from cache, checks expiry, and returns the
+    serialized .crawljob file as a download.
 
     Raises:
         HTTPException(404): CrawlJob not found or expired.
-        HTTPException(500): Internal error (e.g., repository failure).
+        HTTPException(500): Repository or serialization failure.
+        HTTPException(502): Grab-time link resolution failed.
     """
     state = cast(AppState, request.app.state)
 
     log.info("download_request", job_id=job_id)
 
-    # === 1) Lookup CrawlJob from Repository ===
     try:
         crawl_job = await state.crawljob_repo.get(job_id)
     except Exception as e:
@@ -63,7 +51,6 @@ async def download_crawljob(
             detail="Failed to retrieve CrawlJob from repository",
         ) from e
 
-    # === 2) Check if CrawlJob Exists ===
     if crawl_job is None:
         log.warning("crawljob_not_found", job_id=job_id)
         raise HTTPException(
@@ -71,7 +58,6 @@ async def download_crawljob(
             detail=f"CrawlJob not found: {job_id}",
         )
 
-    # === 3) Check if CrawlJob is Expired ===
     if crawl_job.is_expired():
         log.warning(
             "crawljob_expired",
@@ -83,7 +69,18 @@ async def download_crawljob(
             detail=f"CrawlJob expired: {job_id}",
         )
 
-    # === 4) Generate .crawljob File Content ===
+    resolve_uc = CrawlJobResolveUseCase(
+        plugins=state.plugins, crawljob_repo=state.crawljob_repo
+    )
+    try:
+        crawl_job = await resolve_uc.execute(crawl_job)
+    except CrawlJobResolveError as e:
+        log.warning("crawljob_resolve_failed", job_id=job_id, error=str(e))
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not resolve download links: {job_id}",
+        ) from e
+
     try:
         crawljob_content = crawl_job.to_crawljob_format()
     except Exception as e:
@@ -97,13 +94,14 @@ async def download_crawljob(
             detail="Failed to generate .crawljob file",
         ) from e
 
-    # === 5) Build Filename ===
-    # Sanitize package_name for filename (remove special chars)
-    safe_filename = "".join(
-        c if c.isalnum() or c in (" ", "-", "_") else "_"
+    # Header values are Latin-1: an ASCII fallback name plus the UTF-8 name
+    # (RFC 6266 filename*); scraped titles often contain dashes or non-Latin
+    ascii_name = "".join(
+        c if (c.isascii() and c.isalnum()) or c in (" ", "-", "_") else "_"
         for c in crawl_job.package_name
     )
-    filename = f"{safe_filename}_{job_id[:8]}.crawljob"
+    filename = f"{ascii_name}_{job_id[:8]}.crawljob"
+    utf8_name = quote(f"{crawl_job.package_name}_{job_id[:8]}.crawljob")
 
     log.info(
         "crawljob_downloaded",
@@ -114,39 +112,27 @@ async def download_crawljob(
         size_bytes=len(crawljob_content),
     )
 
-    # === 6) Return as Downloadable File ===
     return Response(
         content=crawljob_content,
         media_type="application/x-crawljob",
         headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": (
+                f"attachment; filename=\"{filename}\"; filename*=UTF-8''{utf8_name}"
+            ),
             "Content-Type": "application/x-crawljob",
             "X-CrawlJob-ID": job_id,
-            "X-CrawlJob-Package": crawl_job.package_name,
+            "X-CrawlJob-Package": quote(crawl_job.package_name),
             "X-CrawlJob-Links": str(len(crawl_job.validated_urls)),
         },
     )
 
 
-@router.get("/api/v1/download/{job_id}/info")
+@router.get("/download/{job_id}/info")
 async def get_crawljob_info(
     job_id: str,
     request: Request,
 ) -> dict:
-    """Get CrawlJob metadata without downloading the file.
-
-    Useful for debugging or checking expiry status.
-
-    Args:
-        job_id: CrawlJob identifier.
-        request: FastAPI request.
-
-    Returns:
-        JSON with CrawlJob metadata.
-
-    Raises:
-        HTTPException(404): CrawlJob not found.
-    """
+    """Return CrawlJob metadata as JSON (for debugging/inspection)."""
     state = cast(AppState, request.app.state)
 
     try:

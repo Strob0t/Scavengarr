@@ -1,10 +1,11 @@
-# src/scavengarr/plugins/base.py
+"""Domain models and protocols for the plugin system."""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Protocol
+from dataclasses import dataclass, field
+from typing import Any, Literal, Protocol, runtime_checkable
 
-from pydantic import BaseModel
+PluginProvides = Literal["stream", "download", "both"]
 
 
 @dataclass
@@ -14,43 +15,32 @@ class SearchResult:
     title: str
     download_link: str
 
-    # Torznab-Standard-Felder
-    seeders: Optional[int] = None
-    leechers: Optional[int] = None
-    size: Optional[str] = None
+    # Torznab standard fields
+    seeders: int | None = None
+    leechers: int | None = None
+    size: str | None = None
 
-    # Erweiterte Felder
-    release_name: Optional[str] = None
-    description: Optional[str] = None
-    published_date: Optional[str] = None
+    # Extended fields
+    release_name: str | None = None
+    description: str | None = None
+    published_date: str | None = None
 
     # Multi-stage specific
-    download_links: Optional[List[Dict[str, str]]] = None
-    source_url: Optional[str] = None
-    scraped_from_stage: Optional[str] = None
+    download_links: list[dict[str, str]] | None = None
+    source_url: str | None = None
+    scraped_from_stage: str | None = None
+
+    # Post-validation: all valid URLs (primary + alternatives)
+    validated_links: list[str] | None = None
 
     # Metadata
-    metadata: Dict[str, Any] = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    # Torznab-spezifisch
+    # Torznab-specific
     category: int = 2000  # Default: Movies
     grabs: int = 0
-    download_volume_factor: float = 0.0  # Direct Download = kein Upload nötig
+    download_volume_factor: float = 0.0  # Direct Download = no upload required
     upload_volume_factor: float = 0.0
-
-
-class StageResult(BaseModel):
-    """
-    Internal result from a single scraping stage.
-
-    Used during multi-stage processing before final normalization.
-    """
-
-    url: str
-    stage_name: str
-    depth: int
-    data: Dict[str, Any]
-    links: List[str] = []
 
 
 class PluginProtocol(Protocol):
@@ -59,33 +49,31 @@ class PluginProtocol(Protocol):
 
     A Python plugin must export a module-level variable named `plugin` that:
     - has a `name: str` attribute
-    - implements: async def search(self, query: str, category: int | None = None) -> list[SearchResult]
+    - implements: async def search(query, category, season,
+      episode) returning list[SearchResult]
     """
 
     name: str
+    provides: PluginProvides
 
     async def search(
-        self, query: str, category: int | None = None
-    ) -> list[SearchResult]: ...
-
-
-class MultiStagePluginProtocol(Protocol):
-    """
-    Extended protocol for multi-stage plugins.
-
-    Supports progressive data collection across multiple page levels.
-    """
-
-    name: str
-
-    async def search(
-        self, query: str, category: int | None = None
-    ) -> list[SearchResult]: ...
-
-    async def scrape_stage(
         self,
-        stage_name: str,
-        url: Optional[str] = None,
-        depth: int = 0,
-        **url_params: Any,
-    ) -> list[StageResult]: ...
+        query: str,
+        category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
+    ) -> list[SearchResult]: ...
+
+
+@runtime_checkable
+class GrabResolvingPlugin(Protocol):
+    """Optional plugin capability: resolve download links at grab time.
+
+    For sites whose real links cost a captcha or count against a download
+    quota: search results keep a page URL, and the download endpoint calls
+    ``resolve_download`` only when an Arr app actually grabs the result.
+    """
+
+    async def resolve_download(self, url: str) -> list[str]:
+        """Return the download links behind *url* (empty list if none)."""
+        ...

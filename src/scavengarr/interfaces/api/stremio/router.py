@@ -1,0 +1,551 @@
+"""Stremio addon API endpoints (manifest, catalog, stream, play, HLS proxy)."""
+
+from __future__ import annotations
+
+import json
+from typing import Any, cast
+from urllib.parse import urlparse
+
+import httpx
+import structlog
+from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse, RedirectResponse, Response
+from starlette.responses import StreamingResponse
+
+from scavengarr.domain.entities.stremio import (
+    StremioContentType,
+    StremioMetaPreview,
+    StremioStream,
+    StremioStreamRequest,
+)
+from scavengarr.infrastructure.stremio.hls_proxy import (
+    build_cdn_url,
+    cdn_base_from_url,
+    fetch_hls_resource,
+    rewrite_manifest,
+    stream_hls_segment,
+)
+from scavengarr.infrastructure.version import APP_VERSION
+from scavengarr.interfaces.app_state import AppState
+
+log = structlog.get_logger(__name__)
+
+router = APIRouter(prefix="/stremio", tags=["stremio"])
+
+_ADDON_ID = "community.scavengarr"
+
+_CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "*",
+}
+
+
+def _catalogs(*, trending: bool) -> list[dict[str, Any]]:
+    """The addon's catalogs: trending rows, searchable.
+
+    Without trending (no TMDB key, only the search works) they are
+    search-only, so Stremio lists them in its search results instead of
+    showing empty rows on its board.
+    """
+    search = [{"name": "search", "isRequired": not trending}]
+    label = "Trending " if trending else ""
+    return [
+        {
+            "type": "movie",
+            "id": "scavengarr-trending-movies",
+            "name": f"Scavengarr {label}Movies",
+            "extra": search,
+        },
+        {
+            "type": "series",
+            "id": "scavengarr-trending-series",
+            "name": f"Scavengarr {label}Series",
+            "extra": search,
+        },
+    ]
+
+
+def _build_manifest(catalogs: list[dict[str, Any]]) -> dict[str, Any]:
+    """Build the Stremio addon manifest."""
+    return {
+        "id": _ADDON_ID,
+        "version": APP_VERSION,
+        "name": "Scavengarr",
+        "description": "German streaming links from multiple sources",
+        "types": ["movie", "series"],
+        "catalogs": catalogs,
+        "resources": ["catalog", "stream"] if catalogs else ["stream"],
+        "idPrefixes": ["tt", "tmdb:"],
+        "behaviorHints": {
+            "adult": False,
+            "configurable": False,
+        },
+    }
+
+
+def _parse_stream_id(content_type: str, raw_id: str) -> StremioStreamRequest | None:
+    """Parse Stremio stream ID into a StremioStreamRequest.
+
+    Movies: "tt1234567" or "tmdb:12345"
+    Series: "tt1234567:1:5" or "tmdb:12345:1:5" (season 1, episode 5)
+    """
+    if content_type not in ("movie", "series"):
+        return None
+
+    ct: StremioContentType = cast(StremioContentType, content_type)
+
+    # Handle tmdb:{id} format (from our own catalog)
+    if raw_id.startswith("tmdb:"):
+        parts = raw_id.split(":")
+        tmdb_part = f"tmdb:{parts[1]}"  # "tmdb:12345"
+
+        if ct == "series" and len(parts) == 4:
+            try:
+                season = int(parts[2])
+                episode = int(parts[3])
+            except ValueError:
+                return None
+            return StremioStreamRequest(
+                imdb_id=tmdb_part,
+                content_type=ct,
+                season=season,
+                episode=episode,
+            )
+        return StremioStreamRequest(imdb_id=tmdb_part, content_type=ct)
+
+    # Handle tt* format (real IMDb IDs)
+    if not raw_id.startswith("tt"):
+        return None
+
+    parts = raw_id.split(":")
+    imdb_id = parts[0]
+
+    if ct == "series" and len(parts) == 3:
+        try:
+            season = int(parts[1])
+            episode = int(parts[2])
+        except ValueError:
+            return None
+        return StremioStreamRequest(
+            imdb_id=imdb_id,
+            content_type=ct,
+            season=season,
+            episode=episode,
+        )
+
+    return StremioStreamRequest(imdb_id=imdb_id, content_type=ct)
+
+
+def _format_stremio_stream(stream: StremioStream) -> dict[str, Any]:
+    """Convert a StremioStream dataclass to Stremio JSON format."""
+    data: dict[str, Any] = {
+        "name": stream.name,
+        "description": stream.description,
+        "url": stream.url,
+    }
+    if stream.behavior_hints:
+        data["behaviorHints"] = stream.behavior_hints
+    return data
+
+
+def _empty_metas() -> JSONResponse:
+    """Return an empty Stremio catalog response."""
+    return JSONResponse(content={"metas": []}, headers=_CORS_HEADERS)
+
+
+def _empty_streams() -> JSONResponse:
+    """Return an empty Stremio streams response."""
+    return JSONResponse(content={"streams": []}, headers=_CORS_HEADERS)
+
+
+def _error_json(status: int, message: str) -> JSONResponse:
+    """Return a JSON error response with CORS headers."""
+    return JSONResponse(
+        status_code=status,
+        content={"error": message},
+        headers=_CORS_HEADERS,
+    )
+
+
+def _format_meta_preview(m: StremioMetaPreview) -> dict[str, Any]:
+    """Convert a StremioMetaPreview to Stremio JSON format."""
+    return {
+        "id": m.id,
+        "type": m.type,
+        "name": m.name,
+        "poster": m.poster,
+        "description": m.description,
+        "releaseInfo": m.release_info,
+        "imdbRating": m.imdb_rating,
+        "genres": m.genres,
+    }
+
+
+@router.get("/manifest.json")
+async def stremio_manifest(request: Request) -> JSONResponse:
+    """Serve the Stremio addon manifest."""
+    state = cast(AppState, request.app.state)
+    catalog_uc = getattr(state, "stremio_catalog_uc", None)
+    catalogs = [] if catalog_uc is None else _catalogs(trending=catalog_uc.has_trending)
+    manifest = _build_manifest(catalogs)
+
+    return JSONResponse(content=manifest, headers=_CORS_HEADERS)
+
+
+@router.get("/catalog/{content_type}/{catalog_id}.json")
+async def stremio_catalog(
+    request: Request,
+    content_type: str,
+    catalog_id: str,
+) -> JSONResponse:
+    """Serve Stremio catalog (trending content via TMDB)."""
+    state = cast(AppState, request.app.state)
+
+    uc = getattr(state, "stremio_catalog_uc", None)
+    if uc is None:
+        return _empty_metas()
+
+    if content_type not in ("movie", "series"):
+        return _empty_metas()
+
+    ct = cast(StremioContentType, content_type)
+
+    try:
+        metas = await uc.trending(ct)
+    except Exception:
+        log.exception(
+            "stremio_catalog_error",
+            content_type=content_type,
+            catalog_id=catalog_id,
+        )
+        return _empty_metas()
+
+    meta_list = [_format_meta_preview(m) for m in metas]
+
+    return JSONResponse(content={"metas": meta_list}, headers=_CORS_HEADERS)
+
+
+@router.get("/catalog/{content_type}/{catalog_id}/search={query}.json")
+async def stremio_catalog_search(
+    request: Request,
+    content_type: str,
+    catalog_id: str,
+    query: str,
+) -> JSONResponse:
+    """Serve Stremio catalog search results via TMDB."""
+    state = cast(AppState, request.app.state)
+
+    uc = getattr(state, "stremio_catalog_uc", None)
+    if uc is None:
+        return _empty_metas()
+
+    if content_type not in ("movie", "series"):
+        return _empty_metas()
+
+    ct = cast(StremioContentType, content_type)
+
+    try:
+        metas = await uc.search(ct, query)
+    except Exception:
+        log.exception(
+            "stremio_catalog_search_error",
+            content_type=content_type,
+            catalog_id=catalog_id,
+            query=query,
+        )
+        return _empty_metas()
+
+    meta_list = [_format_meta_preview(m) for m in metas]
+
+    return JSONResponse(content={"metas": meta_list}, headers=_CORS_HEADERS)
+
+
+@router.get("/stream/{content_type}/{stream_id}.json")
+async def stremio_stream(
+    request: Request,
+    content_type: str,
+    stream_id: str,
+) -> JSONResponse:
+    """Resolve streams for a movie or episode.
+
+    1. Parse the Stremio stream ID (IMDb ID + optional season/episode).
+    2. Delegate to StremioStreamUseCase for title lookup, plugin search,
+       ranking, and formatting.
+    """
+    state = cast(AppState, request.app.state)
+
+    # 1) Parse stream ID
+    parsed = _parse_stream_id(content_type, stream_id)
+    if parsed is None:
+        return _empty_streams()
+
+    log.info(
+        "stremio_stream_request",
+        imdb_id=parsed.imdb_id,
+        content_type=parsed.content_type,
+        season=parsed.season,
+        episode=parsed.episode,
+    )
+
+    # 2) Delegate to use case
+    uc = getattr(state, "stremio_stream_uc", None)
+    if uc is None:
+        return _empty_streams()
+
+    try:
+        streams = await uc.execute(parsed, base_url=str(request.base_url).rstrip("/"))
+    except Exception:
+        log.exception(
+            "stremio_stream_error",
+            imdb_id=parsed.imdb_id,
+            content_type=parsed.content_type,
+            season=parsed.season,
+            episode=parsed.episode,
+        )
+        return _empty_streams()
+
+    stremio_streams = [_format_stremio_stream(s) for s in streams]
+
+    log.info(
+        "stremio_stream_response",
+        imdb_id=parsed.imdb_id,
+        streams_returned=len(stremio_streams),
+    )
+
+    return JSONResponse(content={"streams": stremio_streams}, headers=_CORS_HEADERS)
+
+
+@router.get("/play/{stream_id}", response_model=None)
+async def stremio_play(
+    request: Request,
+    stream_id: str,
+) -> JSONResponse | RedirectResponse:
+    """Resolve a cached stream link to a playable video URL.
+
+    Flow:
+        1. Look up the cached hoster URL by stream_id.
+        2. Use HosterResolverRegistry to extract the actual video URL.
+        3. Redirect to the resolved video URL (302).
+        4. Return 502 if resolution fails (never redirect to an embed page).
+    """
+    state = cast(AppState, request.app.state)
+
+    repo = getattr(state, "stream_link_repo", None)
+    if repo is None:
+        return _error_json(503, "stream link repository not configured")
+
+    link = await repo.get(stream_id)
+    if link is None:
+        log.warning("stremio_play_not_found", stream_id=stream_id)
+        return _error_json(404, "stream expired or not found")
+
+    # Resolve hoster embed URL to actual video URL
+    registry = getattr(state, "hoster_resolver_registry", None)
+    if registry is None:
+        log.warning("stremio_play_no_resolver", stream_id=stream_id)
+        return _error_json(503, "hoster resolver not configured")
+
+    resolved = await registry.resolve(link.hoster_url, hoster=link.hoster)
+    if resolved is None:
+        log.warning(
+            "stremio_play_resolution_failed",
+            stream_id=stream_id,
+            hoster=link.hoster,
+            url=link.hoster_url,
+        )
+        return _error_json(502, "could not extract video URL from hoster")
+
+    # Guard: reject resolved URLs that are just the embed page echoed back.
+    # Stremio cannot play HTML pages — only redirect to actual video URLs.
+    if (
+        resolved.video_url == link.hoster_url
+        and not resolved.is_hls
+        and not resolved.headers
+    ):
+        log.warning(
+            "stremio_play_not_a_video",
+            stream_id=stream_id,
+            hoster=link.hoster,
+            url=link.hoster_url,
+        )
+        return _error_json(502, "resolver returned embed page, not a video URL")
+
+    log.info(
+        "stremio_play_resolved",
+        stream_id=stream_id,
+        hoster=link.hoster,
+        video_url=resolved.video_url[:80],
+        is_hls=resolved.is_hls,
+    )
+    return RedirectResponse(
+        url=resolved.video_url,
+        status_code=302,
+        headers=_CORS_HEADERS,
+    )
+
+
+def _resolve_query_string(request_query: str, video_url: str) -> str:
+    """Return query string for CDN request, falling back to original URL."""
+    qs = request_query or ""
+    if not qs:
+        original_qs = urlparse(video_url).query
+        if original_qs:
+            return original_qs
+    return qs
+
+
+def _cdn_error_response(
+    stream_id: str, target_url: str, exc: httpx.HTTPError
+) -> JSONResponse:
+    """Map a CDN httpx error to a 502 JSON response."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        log.warning(
+            "hls_proxy_cdn_error",
+            stream_id=stream_id,
+            status=exc.response.status_code,
+            url=target_url[:120],
+        )
+        return _error_json(502, "CDN returned error")
+    log.warning(
+        "hls_proxy_network_error",
+        stream_id=stream_id,
+        url=target_url[:120],
+    )
+    return _error_json(502, "CDN request failed")
+
+
+@router.get("/proxy/{stream_id}/{path:path}", response_model=None)
+async def proxy_hls(
+    stream_id: str,
+    path: str,
+    request: Request,
+) -> Response | JSONResponse:
+    """Proxy HLS manifests and segments with correct CDN headers.
+
+    Some CDNs (e.g. Dropload's ``dropcdn.io``) require ``Referer`` on
+    **every** HLS sub-request.  Stremio's ``proxyHeaders`` only applies
+    headers to the initial manifest fetch, so variant playlists and
+    ``.ts`` segments get 403.  This endpoint fetches resources
+    server-side with the stored headers and rewrites manifest URLs so
+    the HLS player routes subsequent requests through the proxy too.
+    """
+    state = cast(AppState, request.app.state)
+
+    repo = getattr(state, "stream_link_repo", None)
+    if repo is None:
+        return _error_json(503, "stream link repository not configured")
+
+    link = await repo.get(stream_id)
+    if link is None:
+        log.warning("hls_proxy_not_found", stream_id=stream_id)
+        return _error_json(404, "stream expired or not found")
+
+    if not link.video_url or not link.is_hls:
+        log.warning("hls_proxy_not_hls", stream_id=stream_id)
+        return _error_json(400, "stream is not an HLS proxy stream")
+
+    # Reconstruct CDN headers
+    headers: dict[str, str] = {}
+    if link.video_headers:
+        try:
+            headers = json.loads(link.video_headers)
+        except (json.JSONDecodeError, ValueError):
+            log.warning("hls_proxy_bad_headers", stream_id=stream_id)
+
+    cdn_base = cdn_base_from_url(link.video_url)
+    query_string = _resolve_query_string(request.url.query or "", link.video_url)
+    try:
+        target_url = build_cdn_url(cdn_base, path, query_string)
+    except ValueError:
+        log.warning("hls_proxy_foreign_path", stream_id=stream_id, path=path[:80])
+        return _error_json(400, "path outside the stream's CDN")
+
+    # Segments (.ts) — stream without buffering full body
+    if not path.endswith(".m3u8"):
+        try:
+            chunk_iter, content_type = await stream_hls_segment(
+                state.http_client, target_url, headers
+            )
+        except httpx.HTTPError as exc:
+            return _cdn_error_response(stream_id, target_url, exc)
+        return StreamingResponse(
+            content=chunk_iter,
+            media_type=content_type,
+            headers=_CORS_HEADERS,
+        )
+
+    # Manifests (.m3u8) — fetch, rewrite URLs, return
+    try:
+        body, content_type = await fetch_hls_resource(
+            state.http_client, target_url, headers
+        )
+    except httpx.HTTPError as exc:
+        return _cdn_error_response(stream_id, target_url, exc)
+
+    proxy_base = (
+        f"{str(request.base_url).rstrip('/')}/api/v1/stremio/proxy/{stream_id}/"
+    )
+    rewritten = rewrite_manifest(
+        body.decode("utf-8", errors="replace"),
+        cdn_base,
+        proxy_base,
+    )
+    return Response(
+        content=rewritten,
+        media_type="application/vnd.apple.mpegurl",
+        headers=_CORS_HEADERS,
+    )
+
+
+@router.get("/health")
+async def stremio_health(request: Request) -> JSONResponse:
+    """Report Stremio addon health and component status."""
+    state = cast(AppState, request.app.state)
+
+    tmdb_configured = getattr(state, "tmdb_client", None) is not None
+    stream_uc = getattr(state, "stremio_stream_uc", None)
+    catalog_uc = getattr(state, "stremio_catalog_uc", None)
+    resolver_registry = getattr(state, "hoster_resolver_registry", None)
+    stream_link_repo = getattr(state, "stream_link_repo", None)
+
+    stream_plugin_names: list[str] = []
+    try:
+        stream_plugin_names = state.plugins.get_by_provides("stream")
+    except Exception:
+        log.warning("stremio_health_plugin_error", exc_info=True)
+
+    supported_hosters: list[str] = []
+    if resolver_registry is not None:
+        supported_hosters = list(resolver_registry.supported_hosters)
+
+    healthy = (
+        tmdb_configured
+        and stream_uc is not None
+        and catalog_uc is not None
+        and resolver_registry is not None
+        and stream_link_repo is not None
+        and len(stream_plugin_names) > 0
+    )
+
+    metrics_snapshot: dict[str, object] = {}
+    metrics = getattr(state, "metrics", None)
+    if metrics is not None:
+        metrics_snapshot = metrics.snapshot()
+
+    content: dict[str, object] = {
+        "healthy": healthy,
+        "tmdb_configured": tmdb_configured,
+        "stream_plugin_count": len(stream_plugin_names),
+        "stream_plugins": stream_plugin_names,
+        "stream_uc_initialized": stream_uc is not None,
+        "catalog_uc_initialized": catalog_uc is not None,
+        "hoster_resolver_configured": resolver_registry is not None,
+        "supported_hosters": supported_hosters,
+        "stream_link_repo_configured": stream_link_repo is not None,
+        "metrics": metrics_snapshot,
+    }
+
+    return JSONResponse(
+        status_code=200 if healthy else 503,
+        content=content,
+    )

@@ -5,11 +5,13 @@ repos:
       - id: end-of-file-fixer
       - id: trailing-whitespace
       - id: check-yaml
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.0
+    rev: v0.16.9
     hooks:
-      # 1) Nur Imports sortieren (I001 / I)
+      # 1) Sort imports only (I001 / I)
       - id: ruff-check
         name: ruff (sort imports)
         args: ["--select", "I", "--fix"]
@@ -20,3 +22,14 @@ repos:
 
       # 3) Formatter zuletzt
       - id: ruff-format
+
+  # Type check (standard mode, [tool.basedpyright] in pyproject.toml) with the
+  # project venv, so it sees the installed dependencies
+  - repo: local
+    hooks:
+      - id: basedpyright
+        name: basedpyright
+        entry: poetry run basedpyright
+        language: system
+        types: [python]
+        pass_filenames: false

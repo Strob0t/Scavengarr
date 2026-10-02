@@ -1,3 +1,4 @@
+<!-- OPENSPEC:START -->
 # OpenSpec Instructions
 
 These instructions are for AI assistants working in this project.
@@ -16,486 +17,161 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 
 <!-- OPENSPEC:END -->
 
-***
+---
 
-# Agent Instructions for Scavengarr
+# AGENTS.md
 
-## Repository Context
-- **Repository**: `Strob0t/Scavengarr`
-- **Core Stack**: Python 3.12, FastAPI, Scrapy, Playwright, `diskcache` (Redis optional/future), Docker, Poetry
-- **Python Version**: Always use **Python 3.12** for development and production. The `pyproject.toml` enforces this via `requires-python = ">=3.12"`.
-- **Tooling**: `ruff` (lint+format), `mypy`, `pytest`, `pre-commit`, `structlog`
-- **Critical Documentation**:
-  - 📖 **Read `README.md`** first for project overview, setup, and usage.
-  - 🏗️ **Read `ARCHITECTURE.md`** before making any design‑level changes (updated 2026-01-25).
-  - 📋 **Check `openspec/changes/<change-id>/`** when implementing features – OpenSpec changes are the single source of truth.
+Instructions for developers and AI assistants working on Scavengarr. Details live in `docs/`; this file holds the rules that apply to every change.
 
-***
+This is the single instruction file for every coding agent (the AGENTS.md convention); there is no `CLAUDE.md`. Claude Code reads `AGENTS.md` automatically when no `CLAUDE.md` exists (v2.1.277 or newer).
 
-## OpenSpec Workflow (CRITICAL)
+---
 
-### When to Read OpenSpec Changes
-**ALWAYS** read `openspec/changes/<change-id>/` **BEFORE** writing code when:
-1. User mentions a change name (e.g., "implement add-config-system")
-2. Request introduces new capabilities (plugin system, config loading, engines)
-3. Request modifies core architecture (new modules, new dependencies)
-4. Request is ambiguous and you need authoritative requirements
+## 1. Workflow (IMPORTANT!)
 
-### OpenSpec Change Structure
-Each change has 4 files:
-```
-openspec/changes/<change-id>/
-├── proposal.md         # Why, What, Impact (read first)
-├── tasks.md            # Implementation checklist (your TODO)
-├── design.md           # Architectural decisions, trade-offs
-└── specs/<capability>/spec.md  # BDD scenarios (acceptance criteria)
+### Branches
+- `staging`: development branch (commit here). `main`: production (merge via PR only).
+- Never commit to `main`. Never merge into `main` without an explicit user request.
+
+### Before every commit
+
+```bash
+poetry run pre-commit run --all-files
+poetry run pytest
 ```
 
-### Implementation Rules
-1. **Read `proposal.md` → `tasks.md` → `design.md` → `spec.md`** in that order
-2. **Tasks are your implementation contract** – check off tasks as you complete them
-3. **Every scenario in `spec.md` MUST have a corresponding test** (test filename should reference scenario)
-4. **Never invent assumptions** – if info is missing, ask user or check `design.md` for defaults
-5. **Validate before PR**: Run `openspec validate <change-id> --strict --no-interactive`
-
-### Known Contracts (Canonical Decisions)
-These decisions are **non-negotiable** across all changes:
-
-| Contract | Value | Source |
-|----------|-------|--------|
-| **Entry Point** | `poetry run scavengarr` (CLI via Typer at `src/scavengarr/application/cli.py:start`) | `pyproject.toml` `[tool.poetry.scripts]` |
-| **Config Prefix** | `SCAVENGARR_` (all env vars) | `add-config-system` change |
-| **Plugin Directory** | Configurable via `SCAVENGARR_PLUGIN_DIR` (default: `./plugins`) | `add-plugin-loader` change |
-| **Plugin Formats** | YAML (declarative) + Python (imperative) | `add-plugin-loader` change |
-| **Scraping Engines** | ScrapyEngine (httpx + parsel), PlaywrightEngine (future) | `add-scrapy-engine` change |
-| **Cache Backend** | `diskcache` (default), Redis optional (future) | `add-config-system` design decision |
-| **Logging** | `structlog` with JSON (prod) or console (dev) output | `add-config-system` change |
-| **Config Precedence** | CLI args > ENV vars > YAML file > `.env` > defaults | `add-config-system` spec |
-| **Python Version** | 3.12 only (no 3.11, no 3.13+) | `pyproject.toml` |
-
-***
-
-## Development Workflow
-
-### Key Commands
-| Task | Command | Description |
-|------|---------|-------------|
-| **Setup** | `poetry install` | Install dependencies in a virtual environment. |
-| **Run API** | `poetry run scavengarr` | Starts the FastAPI server (Unified mode). |
-| **Run with custom config** | `poetry run scavengarr --config custom.yaml --log-level DEBUG` | Load custom config and set log level. |
-| **Run Worker** | `SCAVENGARR_WORKER_URL=http://localhost:8000 poetry run scavengarr --worker` | Starts the scraper worker (Distributed mode, future). |
-| **Lint** | `poetry run ruff check .` | Static analysis and style enforcement. |
-| **Auto‑fix** | `poetry run ruff format .` | Automatic code formatting (PEP 8 compliant). |
-| **Type‑check** | `poetry run mypy src/` | Run static type checking (must pass before PR). |
-| **Test All** | `poetry run pytest` | Run the entire test suite (must pass before PR). |
-| **Test Single** | `poetry run pytest tests/unit/config/test_load.py` | Run a specific test file. |
-| **Test with Coverage** | `poetry run pytest --cov=src --cov-report=term-missing` | Run tests with coverage report. |
-| **Validate OpenSpec** | `openspec validate <change-id> --strict --no-interactive` | Validate change before implementation. |
-
-### Git Workflow
-- **Branch naming**: `<type>/<issue>-<short‑desc>` (e.g., `feat/add-config-system`, `fix/123-plugin-crash`)
-- **Pre‑commit hooks**: Managed by `pre‑commit` – runs `ruff check`, `ruff format`, `mypy`, and `pytest`
-  - **CRITICAL**: **Never** skip the hook (`--no-verify`) unless build is broken by external cause
-  - If pre-commit fails, **fix the issue** before committing
-- **Security**: Never commit secrets, `.env` files, `config.yaml` with real credentials, or API keys
-
-### Commit Messages
-Enforced by `commitlint` (configured in `pyproject.toml`).
-- **Format**: `<type>(<scope>): <subject>` (scope optional but recommended)
-- **Allowed types**: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`
-- **Subject rules**:
-  - Lower‑case only
-  - No trailing period
-  - ≤ 100 characters
-- **Examples**:
-  - `feat(config): add pydantic settings loader`
-  - `fix(plugins): handle missing plugin.py export gracefully`
-  - `test(engines): add scrapy engine CSS selector tests`
-
-***
-
-## Code Style & Conventions
-
-### Python
-- **Formatter**: `ruff format` (line length 88, Black-compatible)
-- **Linter**: `ruff check` – **no `# noqa`** unless absolutely necessary (document why if used)
-- **Import order**: `isort`-style – standard library → third‑party → local imports, one blank line between groups
-- **Naming**:
-  - Classes & Exceptions: `PascalCase` (e.g., `PluginRegistry`, `NetworkError`)
-  - Functions, methods, variables: `snake_case` (e.g., `load_config`, `plugin_dir`)
-  - Constants: `UPPER_SNAKE_CASE` (e.g., `DEFAULT_TIMEOUT`, `CACHE_TTL`)
-- **Type hints**:
-  - Use full type annotations **everywhere** (functions, methods, class attributes)
-  - Prefer PEP 585 (`list[str]`) over typing module (`List[str]`)
-  - Use `from __future__ import annotations` for forward references
-- **Docstrings**:
-  - Google style, mandatory for all **public** modules, classes, functions, and methods
-  - Include examples for complex functions (see `add-plugin-loader` tasks)
-- **Error handling**:
-  - Catch exceptions at API/CLI boundaries, log with `structlog.get_logger().error()`, re‑raise or return HTTP error
-  - Never silently swallow exceptions (`except: pass` is forbidden)
-
-### Example (Good Style)
-```python
-from __future__ import annotations
-
-import structlog
-from pathlib import Path
-from pydantic import BaseModel
-
-logger = structlog.get_logger()
-
-class PluginDefinition(BaseModel):
-    """YAML plugin schema definition.
-
-    Attributes:
-        name: Plugin identifier (lowercase, alphanumeric + hyphens).
-        base_url: Site base URL for scraping.
-    """
-    name: str
-    base_url: str
-
-def load_yaml_plugin(path: Path) -> PluginDefinition:
-    """Load and validate a YAML plugin file.
-
-    Args:
-        path: Absolute path to .yaml file.
-
-    Returns:
-        Validated PluginDefinition instance.
-
-    Raises:
-        PluginLoadError: If file is missing or malformed.
-        PluginValidationError: If schema validation fails.
-
-    Example:
-        >>> plugin = load_yaml_plugin(Path("./plugins/1337x.yaml"))
-        >>> plugin.name
-        '1337x'
-    """
-    logger.info("loading_plugin", file=str(path))
-    # Implementation...
-```
-
-***
-
-## Plugin System (Updated per `add-plugin-loader`)
-
-### Plugin Discovery
-- Plugins are discovered from the directory specified by `SCAVENGARR_PLUGIN_DIR` (default: `./plugins`)
-- **Supported formats**: `.yaml` (declarative) and `.py` (imperative)
-- Discovery happens at **application startup** via `PluginRegistry.discover()`
-- Plugins are **lazy-loaded** (parsed only on first access via `PluginRegistry.get(name)`)
-
-### YAML Plugins (Declarative)
-- **Location**: Any `.yaml` file in plugin directory (e.g., `plugins/1337x.yaml`)
-- **Schema**: Validated against `PluginDefinition` Pydantic model (see `src/scavengarr/plugins/schema.py`)
-- **Required fields**: `name`, `description`, `version`, `author`, `base_url`, `scraping` (with `mode`, `selectors`/`locators`)
-- **Modes**:
-  - `scrapy`: Static HTML scraping (CSS selectors)
-  - `playwright`: JavaScript-rendered sites (Playwright locators, future)
-
-### Python Plugins (Imperative)
-- **Location**: Any `.py` file in plugin directory (e.g., `plugins/my_gully.py`)
-- **Protocol**: Must export a `plugin` variable with an `async def search(query: str, category: int | None) -> list[SearchResult]` method
-- **Validation**: At load-time, checks for `plugin` export and `search` method (duck-typing via `hasattr`)
-- **Dependencies**: Any third-party libs must be declared in `pyproject.toml` `[tool.poetry.dependencies]` and installed via `poetry install`
-
-### Plugin Registry API
-```python
-from scavengarr.domain.plugins import PluginRegistry, PluginNotFoundError
-
-# Initialize (done once at app startup)
-registry = PluginRegistry(plugin_dir=Path("./plugins"))
-registry.discover()
-
-# Get plugin by name (lazy-loads if needed)
-plugin = registry.get("1337x")  # PluginDefinition | object
-
-# List all plugin names
-names = registry.list_names()  # ['1337x', 'rarbg', 'my-gully']
-
-# Filter by mode (YAML only)
-scrapy_plugins = registry.get_by_mode("scrapy")  # [PluginDefinition, ...]
-```
-
-***
-
-## Configuration System (Updated per `add-config-system`)
-
-### Config Loading (Single Entrypoint)
-**CRITICAL**: `load_config()` is called **exactly once** at application startup in `src/scavengarr/application/cli.py:start`.
-
-```python
-from scavengarr.config.load import load_config
-
-config = load_config(
-    config_path=Path("./config.yaml"),  # Optional YAML file
-    dotenv_path=Path("./.env"),         # Optional .env file
-    cli_overrides={"log_level": "DEBUG"}  # From CLI flags
-)
-```
-
-### Config Precedence (Highest → Lowest)
-1. **CLI arguments** (`--config`, `--plugin-dir`, `--log-level`, etc.)
-2. **Environment variables** (`SCAVENGARR_PLUGIN_DIR`, `SCAVENGARR_LOG_LEVEL`, etc.)
-3. **YAML config file** (`config.yaml`, path via `--config`)
-4. **`.env` file** (loaded via `python-dotenv`)
-5. **Built-in defaults** (`src/scavengarr/config/defaults.py`)
-
-### Environment Variable Naming
-All env vars use the `SCAVENGARR_` prefix:
-- `SCAVENGARR_PLUGIN_DIR` → `AppConfig.plugin_dir`
-- `SCAVENGARR_HTTP_TIMEOUT_SECONDS` → `AppConfig.http_timeout_seconds`
-- `SCAVENGARR_LOG_LEVEL` → `AppConfig.log_level`
-- `SCAVENGARR_CACHE_DIR` → `AppConfig.cache_dir`
-
-### Config Schema (MVP Fields)
-See `src/scavengarr/config/schema.py:AppConfig` for canonical fields:
-- `app_name: str`
-- `environment: Literal["dev", "test", "prod"]`
-- `plugin_dir: Path`
-- `http_timeout_seconds: float`
-- `http_user_agent: str`
-- `playwright_headless: bool` (future)
-- `log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"]`
-- `log_format: Literal["json", "console"]`
-- `cache_dir: Path`
-- `cache_ttl_seconds: int`
-
-### Config Best Practices
-- **No side effects**: `load_config()` never creates directories, writes files, or starts network activity
-- **Secrets redaction**: Use `redact_config_for_logging(config)` before logging config (never log secrets in plaintext)
-- **Validation**: All fields are validated via Pydantic (timeouts > 0, paths normalized, enums strict)
-
-***
-
-## Scraping Engines (Updated per `add-scrapy-engine`)
-
-### ScrapyEngine (Static HTML)
-- **Purpose**: Fast scraping for static HTML pages (no JavaScript execution)
-- **Dependencies**: `httpx` (async HTTP client), `parsel` (CSS selector extraction)
-- **Input**: YAML plugin with `scraping.mode: "scrapy"`
-- **Process**:
-  1. Build search URL from `base_url` + `search_path.format(query=...)`
-  2. HTTP GET with `httpx.AsyncClient()` (30s timeout, custom User-Agent)
-  3. Parse HTML with `parsel.Selector(text=response.text)`
-  4. Extract fields using CSS selectors (`selectors.title`, `selectors.download_link`, etc.)
-  5. Return `list[SearchResult]`
-
-### PlaywrightEngine (JavaScript-rendered, Future)
-- **Purpose**: Scraping for sites requiring JavaScript execution (e.g., infinite scroll, dynamic content)
-- **Status**: Future change (`add-playwright-engine`)
-
-***
-
-## Documentation Guidelines
-
-### File Targets
-- **`README.md`**: User‑facing (installation, configuration, usage examples)
-- **`ARCHITECTURE.md`**: Developer‑facing (system design, component interaction, OpenSpec integration)
-- **`AGENTS.md`** (this file): AI assistant instructions (contracts, workflows, quality gates)
-- **`docs/*.md`**: In‑depth technical write‑ups for subsystems (e.g., plugin validation, caching strategy)
-
-### Writing Principles
-- **Tone**: Declarative, present tense ("The system loads plugins..." not "The system will load...")
-- **Focus**: Explain **what** the component does and **why**, not what it doesn't do
-- **Diagrams**: Use Mermaid for workflows and state machines; keep titles plain (no extra markdown)
-- **Examples**: Include code examples for complex APIs (plugin loading, config precedence)
-
-### When to Update Docs
-- **README.md**: When user-facing behavior changes (new CLI flags, config options, setup steps)
-- **ARCHITECTURE.md**: When new modules/components are added, or core architecture changes
-- **AGENTS.md**: When canonical contracts change (new entry point, new env var prefix, new dependency)
-
-***
-
-## Logging Strategy (Updated per `add-config-system`)
-
-### Logging Framework
-- **Library**: `structlog` (structured logging with context fields)
-- **Output formats**:
-  - **Console** (dev): Human-readable with colors (`log_format: "console"`)
-  - **JSON** (prod): Machine-parseable for log aggregation (`log_format: "json"`)
-- **Log levels**: `DEBUG`, `INFO`, `WARNING`, `ERROR` (configured via `SCAVENGARR_LOG_LEVEL`)
-
-### What to Log
-- **User-visible output**: Use `typer.echo()` for CLI, FastAPI response messages for HTTP (not logs)
-- **Application events** (`INFO`): Plugin loaded, scraping started/completed, config loaded
-  - **Always include context**: `plugin_name`, `query`, `results_count`, `duration_ms`
-- **Debug** (`DEBUG`): Selector matching details, HTTP request/response bodies, plugin discovery paths
-- **Warnings** (`WARNING`): Selector no match, missing optional fields, slow requests (>5s)
-- **Errors** (`ERROR`): Plugin load failures, network errors, parsing errors, validation failures
-
-### Example (Structured Logging)
-```python
-import structlog
-
-logger = structlog.get_logger()
-
-# Good: Structured context
-logger.info("scraping_completed",
-    plugin_name="1337x",
-    query="ubuntu",
-    results_count=25,
-    duration_ms=342
-)
-
-# Bad: String interpolation
-logger.info(f"Scraping completed for 1337x with query ubuntu, got 25 results in 342ms")
-```
-
-### Secrets Redaction (CRITICAL)
-- **Never log secrets in plaintext**: passwords, API keys, cookies, tokens
-- Use `redact_config_for_logging(config)` before logging config objects
-- For plugin auth, log `auth_type` but never `username`, `password`, `cookie_value`
-
-***
-
-## Testing Approach (Updated TDD Requirements)
-
-### Test-Driven Development (TDD)
-When implementing an OpenSpec change:
-1. **Read scenarios in `spec.md`** (e.g., "Scenario: Defaults only")
-2. **Write failing test first** (RED) – test should reference the scenario in its name
-3. **Implement minimal code** (GREEN) to make test pass
-4. **Refactor** (REFACTOR) while keeping tests green
-
-### Test Layers
-1. **Unit Tests** (`tests/unit/`) – Test individual components in isolation
-   - Config loading, precedence, validation
-   - Plugin loading (YAML parsing, Python imports, protocol validation)
-   - Engine logic (URL building, selector extraction, error handling)
-   - **Coverage target**: 80%+ for core modules
-2. **Integration Tests** (`tests/integration/`) – Test component interactions
-   - Plugin → Engine → Results
-   - FastAPI routes → SearchService → TorznabRenderer
-   - **Coverage target**: 60%+
-3. **End-to-End Tests** (`tests/e2e/`, future) – Test full request flow with real plugins
-
-### Test File Naming
-- Mirror source structure: `src/scavengarr/config/load.py` → `tests/unit/config/test_load.py`
-- Test name should reference scenario: `test_defaults_only_loads_builtin_config()`
-
-### Test Fixtures
-- **Temporary files**: Use `pytest` `tmp_path` fixture for YAML configs, `.env` files
-- **Environment isolation**: Use `monkeypatch` to set/unset env vars
-- **Sample data**: Store in `tests/fixtures/` (HTML files, valid/invalid plugins)
-
-### Example (Good Test)
-```python
-import pytest
-from pathlib import Path
-from scavengarr.config.load import load_config
-
-def test_defaults_only_loads_builtin_config(tmp_path, monkeypatch):
-    """Scenario: Defaults only (add-config-system spec.md)
-
-    WHEN no CLI args, env vars, YAML, or .env are provided
-    THEN the system uses built-in defaults for all config fields
-    """
-    # Arrange: Clear all env vars
-    monkeypatch.delenv("SCAVENGARR_PLUGIN_DIR", raising=False)
-
-    # Act
-    config = load_config(config_path=None, dotenv_path=None, cli_overrides={})
-
-    # Assert
-    assert config.plugin_dir == Path("./plugins")
-    assert config.log_level == "INFO"
-    assert config.http_timeout_seconds == 30
-```
-
-### Quality Gates (Must Pass Before PR)
-1. ✅ `poetry run ruff check .` – No linting errors
-2. ✅ `poetry run ruff format --check .` – Code is formatted
-3. ✅ `poetry run mypy src/` – No type errors
-4. ✅ `poetry run pytest` – All tests pass
-5. ✅ `poetry run pytest --cov=src --cov-report=term-missing` – 80%+ coverage for changed modules
-6. ✅ `openspec validate <change-id> --strict --no-interactive` – Change is valid
-
-***
-
-## OpenSpec Change Lifecycle (Detailed)
-
-### Phase 1: Understanding (Before Coding)
-1. **Read `proposal.md`**: Understand **why** the change exists, **what** it changes, **impact** on other components
-2. **Read `tasks.md`**: Identify all tasks, note dependencies (blocked tasks), understand order
-3. **Read `design.md`**: Understand architectural decisions, trade-offs, open questions
-4. **Read `spec.md`**: Identify all scenarios (these become tests), note acceptance criteria
-
-### Phase 2: Implementation (TDD Cycle)
-For each task in `tasks.md`:
-1. **Find related scenarios** in `spec.md`
-2. **Write failing tests** for all scenarios (RED)
-3. **Implement minimal code** to pass tests (GREEN)
-4. **Refactor** code while keeping tests green (REFACTOR)
-5. **Check off task** in `tasks.md` (add `[x]`)
-6. **Update docs** if task modifies contracts (ARCHITECTURE.md, README.md, AGENTS.md)
-
-### Phase 3: Validation (Before PR)
-1. Run all quality gates (ruff, mypy, pytest, coverage)
-2. Run `openspec validate <change-id> --strict --no-interactive`
-3. Verify all tasks in `tasks.md` are checked off
-4. Verify every scenario in `spec.md` has a corresponding test
-
-### Phase 4: Documentation (After Implementation)
-1. Update `ARCHITECTURE.md` if new components were added
-2. Update `AGENTS.md` if canonical contracts changed
-3. Update `README.md` if user-facing behavior changed
-4. Add inline code comments for complex logic (not obvious logic)
-
-***
-
-## Common Pitfalls (AVOID THESE)
-
-### ❌ Inventing Information
-- **DON'T**: Assume file paths, module names, function signatures not in OpenSpec change
-- **DO**: Ask user or check `design.md` for defaults
-
-### ❌ Skipping Tests
-- **DON'T**: Write code without corresponding tests
-- **DO**: Write test first (TDD), ensure scenario coverage
-
-### ❌ Changing Canonical Contracts
-- **DON'T**: Change env var prefix, entry point, config precedence without OpenSpec change
-- **DO**: Propose a new change if contract needs to change
-
-### ❌ Side Effects in Pure Functions
-- **DON'T**: Create directories, write files, or start network activity in `load_config()`, `load_plugin()`
-- **DO**: Keep load functions pure (same input → same output, no I/O beyond reading)
-
-### ❌ Silent Failures
-- **DON'T**: `except: pass` or swallow exceptions
-- **DO**: Log with `logger.error()`, raise custom exception with context
-
-### ❌ Hardcoded Values
-- **DON'T**: Hardcode timeouts, paths, URLs in business logic
-- **DO**: Use config values (`config.http_timeout_seconds`, `config.plugin_dir`)
-
-***
-
-## AI Assistant Checklist (Before Submitting Code)
-
-Before providing code to the user, verify:
-
-- [ ] I read the OpenSpec change (`proposal.md`, `tasks.md`, `design.md`, `spec.md`)
-- [ ] My code matches the task checklist in `tasks.md`
-- [ ] Every scenario in `spec.md` has a corresponding test
-- [ ] My code uses canonical contracts (env prefix, entry point, precedence)
-- [ ] My code is type-annotated (full `mypy` compliance)
-- [ ] My code is formatted (`ruff format`)
-- [ ] My code has no side effects in pure functions (`load_config`, `load_plugin`)
-- [ ] My code logs structured events with `structlog` (no plaintext secrets)
-- [ ] My code handles errors gracefully (custom exceptions, logging)
-- [ ] I updated docs if contracts changed (ARCHITECTURE.md, AGENTS.md, README.md)
-
-***
-
-**Last Updated**: 2026-01-25
-**Author**: Scavengarr Team
-**OpenSpec Changes Integrated**: `add-config-system`, `add-plugin-loader`, `add-scrapy-engine`
-
-***
-
-*This document is the single source of truth for AI assistants implementing Scavengarr features. When in doubt, refer to OpenSpec changes and this document—never invent assumptions.*
+pre-commit runs ruff and basedpyright (`standard` mode, `[tool.basedpyright]` in `pyproject.toml`; `src/` and `plugins/` are clean, keep them so). `poetry run pytest` excludes live tests (`addopts = -m "not live"`) and benchmarks. Live smoke tests hit real websites and run with `poetry run pytest -m live`; their failures signal broken plugins/resolvers, not a commit blocker. CI (`.github/workflows/ci.yml`) runs the same two commands on every push to `staging` and on pull requests; a red run after a push is fixed before the next change.
+
+Rules:
+- Fix all errors before committing (warnings can be acceptable depending on the check).
+- Small, atomic commits; commit after each isolated subtask, never batch unrelated changes.
+- Commit messages follow Conventional Commits: `<type>(<scope>): <subject>` (`feat`, `fix`, `docs`, `refactor`, `test`, `chore`, ...), lower-case subject, no trailing period.
+- **Docs ship with the code**: if behavior, features, architecture or configuration change, update `CHANGELOG.md`, `docs/features/`, `docs/architecture/`, `docs/plans/`, `AGENTS.md`, `README.md` or `openspec/changes/...` in the same commit.
+- Push after each successful change: `git push origin staging`.
+- Larger refactors: write a brief Markdown plan (problem, design, affected files, tests) first.
+
+### Merge to main (only on explicit user request)
+1. Bump the version in `pyproject.toml` (PATCH +1 unless MINOR/MAJOR is warranted). It is the only place: the app, the Stremio manifest, Torznab caps and the default User-Agent read it through `infrastructure/version.py` (package metadata; `poetry install` refreshes it in the dev venv).
+2. Update `CHANGELOG.md` (newest entry on top with version, date, changes; current bugs under `KNOWN_ISSUES`).
+3. Commit & push to `staging`.
+4. `gh pr create --base main --head staging --title "..." --body "..."` then `gh pr merge --merge`.
+5. Sync back: `git fetch origin && git merge origin/main && git push origin staging`.
+
+---
+
+## 2. Project overview
+
+Scavengarr is a self-hosted Torznab/Newznab indexer for Prowlarr and other Arr apps, plus a Stremio addon. Plugins scrape sites with httpx (static HTML) or Playwright (JS-heavy sites); results are served via Torznab endpoints (`caps`, `search`) and Stremio streams.
+
+Request flow: request (HTTP/CLI) → use case loads plugin from registry (lazy) → plugin runs multi-stage search (search page → detail pages → links) → links validated in parallel → optional `.crawljob` bundle → presenter renders Torznab XML.
+
+Feature docs: `docs/features/README.md` (index). Architecture: `docs/architecture/clean-architecture.md`.
+
+---
+
+## 3. Clean Architecture (dependency rule)
+
+Layers under `src/scavengarr/`, outer depends on inner only:
+
+| Layer | Contains | Rule |
+|---|---|---|
+| `interfaces/` | FastAPI routers, CLI, composition root (DI wiring) | I/O only, no business rules |
+| `infrastructure/` | plugins, hoster resolvers, link validation, cache, Torznab presenter, config, logging | implements domain ports |
+| `application/` | use cases, factories, policies (limits, timeouts, retries) | knows ports, not adapters |
+| `domain/` | entities, value objects, `Protocol` ports | framework-free, I/O-free |
+
+Domain never imports FastAPI, httpx or diskcache.
+
+Invariants:
+- I/O dominates runtime: nothing may block the event loop. Independent URLs (detail pages, link validation) run in parallel with bounded concurrency.
+- Link validation: `HEAD` with redirects first, `GET` fallback only when needed; short timeouts, semaphore-limited.
+- CrawlJobs contain only validated links, in deterministic order; job IDs are stable, TTL configurable.
+- Config precedence (high → low): CLI args → `SCAVENGARR_*` env → YAML → `.env` → defaults. See `docs/features/configuration.md`.
+- Logging: `structlog`, structured, with context fields (`plugin`, `stage`, `duration_ms`, `results_count`); never log secrets.
+
+---
+
+## 4. Dependencies
+
+- Source of truth: `pyproject.toml`. For package APIs, read the installed source in `.venv` or the official docs.
+- Prefer stdlib, then established libraries, then custom code. No internal mini-frameworks. New dependencies need explicit justification.
+
+---
+
+## 5. Python rules (MUST READ!)
+
+- `from __future__ import annotations` in every file.
+- Modern typing only: `T | None`, `list[T]`, `dict[K, V]`, `collections.abc.Iterable`; never `Optional`/`List`/`Dict`/`typing.Iterable`. From `typing` import only `Any`, `Protocol`, `Literal`, `TypeVar`, `runtime_checkable`.
+- Fully typed signatures. Ports use `Protocol` (not `ABC`). Entities/value objects are `@dataclass` (`frozen=True` for immutables). `Literal` for fixed values; casts only with runtime checks.
+- No mutable default arguments (use `None` + create inside). Never swallow exceptions (`except: pass`); log and re-raise or map cleanly.
+- Async: `asyncio.gather` over sequential `await` in loops; CPU-bound parsing goes to `run_in_executor`.
+- Prefer small functions/modules over deep class hierarchies; dependencies injected explicitly via constructors/factories.
+- Scraping: specific but robust selectors, `urljoin` for URLs, search terms encoded (`quote_plus`, or `quote(term, safe="")` in a path segment), missing fields → partial result + warning instead of abort.
+- Playwright: no `sleep()` waits (use conditions/locators), close contexts/pages deterministically, limit browser parallelism with a semaphore.
+
+Performance guide: `docs/PYTHON-BEST-PRACTICES.md`.
+
+---
+
+## 6. Testing (TDD mandatory)
+
+Loop: write test → run (red) → implement minimally (green) → refactor (green) → checkpoint commit.
+
+Layout: `tests/unit/{domain,application,infrastructure,interfaces}`, `tests/integration`, `tests/e2e`, `tests/benchmark`, `tests/live` (opt-in). Plugin tests: `tests/unit/infrastructure/test_<name>_plugin.py`; resolver tests: `test_<name>_resolver.py`. E2E tests are deterministic (no external sites).
+
+Mock patterns:
+- `PluginRegistryPort` is **synchronous** → `MagicMock` (not `AsyncMock`).
+- `SearchEnginePort`, `CrawlJobRepository`, `CachePort`, `PluginScoreStorePort` are **async** → `AsyncMock`.
+- Hoster resolver tests use `respx` (httpx-native HTTP mocking), not `AsyncMock`/`MagicMock`.
+
+---
+
+## 7. Plugins & hoster resolvers
+
+- 41 plugins in `plugins/`, all inheriting from `HttpxPluginBase` (`src/scavengarr/infrastructure/plugins/httpx_base.py`) or `PlaywrightPluginBase` (`playwright_base.py`). Never duplicate base-class boilerplate. Sites on the same backend share one base in `src/scavengarr/infrastructure/plugins/` instead of copied plugin code (`DataApiPluginBase` in `data_api.py` for megakino_to and movie4k, `XenForoPluginBase` in `xenforo.py` for the XenForo forums dataload and myboerse). Sites that front one database (same ids and links in other themes) share a `mirror_group`, so a Stremio request asks only one of them (hdfilme, streamcloud, streamkiste).
+- Every plugin MUST do category filtering (label results from site data, never with the requested category; answer requests with `served_category()` / `filter_by_category()` of `infrastructure/plugins/categories.py`, `[]` without a request for categories the site lacks), pagination up to 1000 items and bounded-concurrency detail scraping, of relevant search hits only (`relevant_hits()` of `infrastructure/plugins/relevance.py`; site searches also list loose matches). Site analysis with `playwright-mcp` comes before any code; parsers are tested on the site's own pages too (`scripts/capture_pages.py`, `tests/unit/infrastructure/test_real_pages.py`). `_domains` holds genuine domains only (check the JDownloader plugin's dead and fake/scam domain notes).
+- Hoster resolvers live in `src/scavengarr/infrastructure/hoster_resolvers/`: individual streaming/DDL resolvers, 10 generic DDL hosters (`generic_ddl.py`, `GenericDDLConfig`), 25 XFS hosters (`xfs.py`, `XFSConfig`). New XFS/DDL hoster = new config constant, no new tests or wiring.
+- JDownloader plugin sources for resolver work: `.devdata/JDownloader2/` (synced on container start).
+- `docs/plugins.md` is generated from the plugin metadata: after adding, removing or renaming a plugin or changing its `provides`, `_domains`, `languages` or base class, run `poetry run python scripts/generate_plugin_list.py` (`test_plugin_list_doc.py` fails otherwise). The README names no sites; the list carries the disclaimer.
+
+Step-by-step guides:
+- New plugin: `docs/features/python-plugins.md` → "Adding a New Plugin".
+- New resolver: `docs/features/hoster-resolvers.md` → "Adding a New Resolver".
+
+---
+
+## 8. Subagents
+
+- Only for mechanical, fully specified tasks (same attribute in many files, renames, boilerplate from a precise spec). Anything needing architecture understanding (use cases, ports, DI wiring, cross-layer refactors, mock-pattern test updates) is done directly.
+- 1 file = 1 agent; tight scope (what to do and what not); include conventions (`structlog`, typing rules, naming) in the prompt.
+- Review every agent output; run the full test suite + pre-commit afterwards.
+
+---
+
+## 9. Dev container
+
+- **Git access**: `git push` and `gh` use `GH_TOKEN` from `.env.devcontainer` (not versioned); `.devcontainer/setup.sh` runs `gh auth setup-git` on attach. Git identity: `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL` in the same file. On the first start `initializeCommand` copies `.env.devcontainer.example` to `.env.devcontainer` if it is missing (fill it in, then rebuild). Changes need a container rebuild/restart.
+- **Port 7979** is published on all host interfaces (`runArgs`: `-p 0.0.0.0:7979:7979`; `forwardPorts` would only tunnel it to the editor's machine), so LAN clients such as Stremio reach a server started in the container with `--host 0.0.0.0 --port 7979` at `http://<workstation>:7979`, and so does everyone else on the LAN.
+- **No Docker**: `playwright-mcp` runs over stdio from `.mcp.json` (`npx @playwright/mcp@<pinned>`). `setup.sh` installs the matching Chromium (`playwright install --with-deps chromium`), the app's Patchright Chromium with its system libraries (`python -m patchright install --with-deps chromium`, independent of the optional MCP step) and `xvfb` with `xauth` (headful browser tests: `xvfb-run -a <cmd>`; without `xauth` it fails with "xauth command not found"); keep `PLAYWRIGHT_MCP_VERSION` in `setup.sh` in sync with `.mcp.json`.
+- **Node 22** comes from the devcontainer `node` feature (nvm, `/usr/local/share/nvm/current/bin`), not apt (Debian's Node 18 breaks `npx skills`). `setup.sh` installs npm globals without `sudo` (openspec, `@caveman-ai/cli`) and a fixed subset of the caveman skills (`CAVEMAN_SKILLS`) on every attach; every installed skill's description costs context in every session, so add skills deliberately.
+- **Broken `.venv` shebangs** (`Command not found: pytest`) after a workspace path change: `poetry env remove --all && poetry install --with dev`.
+- **Line endings**: all text files are LF, enforced editor-independently by `.gitattributes` (`* text=auto eol=lf`) and the `mixed-line-ending --fix=lf` pre-commit hook; VS Code also saves new files with LF (`files.eol` in `.vscode/settings.json`). Shell scripts with CRLF fail at the shebang (exit 127): a CRLF Claude Code hook silently allows everything. The same goes for a missing executable bit (exit 126): scripts that are run directly (`docker/entrypoint.sh`, `.claude/hooks/*.sh`, `.devcontainer/*.sh`) must be stored as 100755 (`git update-index --chmod=+x`; `core.fileMode=false` hides it locally), guarded by `tests/unit/infrastructure/test_repository_files.py`.
+- **Editor extensions**: `customizations.vscode.extensions` in `.devcontainer/devcontainer.json` lists only extensions available on Open VSX, so VS Code and VSCodium (DevPod) install the same set; type checking uses `detachhead.basedpyright` in `standard` mode (`[tool.basedpyright]` in `pyproject.toml`, so the editor and `poetry run basedpyright` apply the same rules), not Pylance, formatting uses ruff.
+- **ruff version**: `pyproject.toml` pins ruff to exactly the `rev` of `ruff-pre-commit` in `.pre-commit-config.yaml` (the edit hook uses the venv's ruff, pre-commit its own); bump both together, otherwise the two formatters can undo each other.
+- **Claude Code hooks and skills**: `.claude/hooks/` (`block-dangerous.sh` PreToolUse guard; `format-and-lint.sh` runs ruff on each edited `.py` file and reports unfixable errors back to Claude via exit 2) and `.claude/skills/` (`commit`, `test`, `new-plugin`, `new-resolver`; thin checklists pointing to `docs/`) are versioned; the rest of `.claude/` (e.g. `settings.local.json`, which wires the hooks, and `worktrees/`) stays gitignored. After changing a hook, run `bash -n` on it: a syntax error exits 2 and blocks every Bash command.
+
+---
+
+## 10. Navigation
+
+| Area | Path |
+|---|---|
+| Dependencies & tooling | `pyproject.toml`, `.pre-commit-config.yaml` |
+| Domain / use cases / adapters | `src/scavengarr/{domain,application,infrastructure}/` |
+| HTTP router, CLI, composition root | `src/scavengarr/interfaces/` (`composition.py`) |
+| Stremio addon | `src/scavengarr/interfaces/api/stremio/` |
+| Plugins | `plugins/` (generated list: `docs/plugins.md`, `scripts/generate_plugin_list.py`) |
+| Contributor guide, Docker Compose | `CONTRIBUTING.md`, `docker-compose.yml` (profiles `solver`, `redis`) |
+| Feature docs / architecture / plans | `docs/features/`, `docs/architecture/`, `docs/plans/` |
+| Refactor history | `docs/refactor/COMPLETED/` |
+| OpenSpec change specs | `openspec/changes/` |

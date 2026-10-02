@@ -1,0 +1,22 @@
+# Build context for Dockerfile.prod: it only copies pyproject.toml,
+# poetry.lock, src/, data/config.yaml and docker/entrypoint.sh.
+# Everything else stays out, above all secrets and large local data
+# (the legacy builder and podman upload the whole context).
+.git
+.env
+.env.*
+.venv
+.devdata
+.cache
+cache
+.claude
+.continue
+.playwright-mcp
+.pytest_cache
+.ruff_cache
+**/__pycache__
+**/*.pyc
+node_modules
+tests
+docs
+plugins

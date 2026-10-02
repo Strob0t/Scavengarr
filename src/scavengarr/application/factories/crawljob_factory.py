@@ -3,14 +3,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING
 
 import structlog
 
 from scavengarr.domain.entities.crawljob import BooleanStatus, CrawlJob, Priority
-
-if TYPE_CHECKING:
-    from scavengarr.infrastructure.torznab.httpx_scrapy_engine import SearchResult
+from scavengarr.domain.plugins import SearchResult
 
 log = structlog.get_logger(__name__)
 
@@ -24,18 +21,18 @@ class CrawlJobFactory:
     def __init__(
         self,
         *,
-        default_ttl_hours: int = 1,
+        ttl_seconds: int = 3600,
         auto_start: bool = True,
         default_priority: Priority = Priority.DEFAULT,
     ) -> None:
         """Initialize factory with default settings.
 
         Args:
-            default_ttl_hours: Time-to-live for CrawlJobs (hours).
+            ttl_seconds: Time-to-live for CrawlJobs (``expires_at``).
             auto_start: Enable auto-start by default.
             default_priority: Default download priority.
         """
-        self.default_ttl_hours = default_ttl_hours
+        self.ttl_seconds = ttl_seconds
         self.auto_start = auto_start
         self.default_priority = default_priority
 
@@ -44,38 +41,47 @@ class CrawlJobFactory:
         result: SearchResult,
         *,
         job_id: str | None = None,
+        resolve_plugin: str | None = None,
     ) -> CrawlJob:
         """Create CrawlJob from validated SearchResult.
 
         Args:
             result: Validated search result (with reachable download_link).
             job_id: Optional custom job ID (default: auto-generated UUID4).
+            resolve_plugin: Plugin that resolves the links at grab time
+                (``GrabResolvingPlugin``); ``None`` if the links are final.
 
         Returns:
             CrawlJob entity with JDownloader-compatible fields.
         """
         now = datetime.now(timezone.utc)
-        expires_at = now + timedelta(hours=self.default_ttl_hours)
+        expires_at = now + timedelta(seconds=self.ttl_seconds)
 
-        # Extract metadata from SearchResult
         package_name = result.title or "Scavengarr Download"
         comment = self._build_comment(result)
 
-        # Build text field (newline-separated links)
-        # For now, single link per job. Future: support multi-part archives.
-        text = result.download_link
+        validated_urls = (
+            result.validated_links if result.validated_links else [result.download_link]
+        )
+        text = "\r\n".join(validated_urls)
+        # Plugins put a known archive password here (e.g. anime-loads)
+        password = result.metadata.get("archive_password")
 
         crawl_job = CrawlJob(
             text=text,
             package_name=package_name,
             comment=comment,
-            validated_urls=[result.download_link],
+            validated_urls=validated_urls,
             source_url=result.source_url,
             created_at=now,
             expires_at=expires_at,
             auto_start=BooleanStatus.TRUE if self.auto_start else BooleanStatus.FALSE,
             priority=self.default_priority,
             filename=result.release_name,  # Override filename if present
+            resolve_plugin=resolve_plugin,
+            extract_passwords=[password]
+            if isinstance(password, str) and password
+            else [],
         )
 
         log.debug(
@@ -83,7 +89,7 @@ class CrawlJobFactory:
             job_id=crawl_job.job_id,
             package_name=package_name,
             link_count=len(crawl_job.validated_urls),
-            ttl_hours=self.default_ttl_hours,
+            ttl_seconds=self.ttl_seconds,
         )
 
         return crawl_job
@@ -101,12 +107,6 @@ class CrawlJobFactory:
 
         if result.description:
             parts.append(result.description)
-
-        # if result.seeders is not None:
-        #     parts.append(f"Seeders: {result.seeders}")
-
-        # if result.leechers is not None:
-        #     parts.append(f"Leechers: {result.leechers}")
 
         if result.size:
             parts.append(f"Size: {result.size}")

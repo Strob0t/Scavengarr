@@ -1,0 +1,529 @@
+"""scnsrc.me (SceneSource) Python plugin for Scavengarr.
+
+Scrapes scnsrc.me (WordPress scene info blog) with:
+- Playwright for Cloudflare Turnstile bypass
+- WordPress search via /?s=query
+- Category filtering via /category/xxx/?s=query URL prefix
+- Two-stage: search pages list posts (title, category); release name and
+  download links come from each post page (bounded parallel fetches)
+- Download links point to torrent search (limetorrents) and usenet (nzbindex)
+- Multi-domain support with automatic fallback (scnsrc.me, scenesource.me, scnsrc.net)
+
+No authentication required.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import re
+from html.parser import HTMLParser
+from urllib.parse import quote_plus, urljoin
+
+from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.categories import (
+    category_matches,
+    served_category,
+)
+from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
+
+# ---------------------------------------------------------------------------
+# Configurable settings
+# ---------------------------------------------------------------------------
+_DOMAINS = [
+    "www.scnsrc.me",
+    "scnsrc.me",
+    "www.scenesource.me",
+    "scenesource.me",
+    "www.scnsrc.net",
+    "scnsrc.net",
+]
+
+_RETRY_BACKOFF_S: tuple[float, ...] = (2.0, 4.0)  # rate-limited pages
+_MAX_PAGES = 100  # ~10 posts/page → 1000
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+# Torznab category -> the site sections (URL prefixes) holding it
+_SEARCH_PATHS: dict[int, tuple[str, ...]] = {
+    2000: ("category/films",),
+    5000: ("category/tv",),
+    1000: ("category/games",),
+    4050: ("category/games",),
+    4000: ("category/applications", "category/games"),
+    3000: ("category/new-music",),
+    7000: ("category/ebooks",),
+}
+
+# Reverse mapping: site category name -> Torznab category ID.
+_CATEGORY_NAME_MAP: dict[str, int] = {
+    # Films
+    "films": 2000,
+    "movies": 2000,
+    "hd": 2000,
+    "bluray": 2000,
+    "bdrip": 2000,
+    "bdscr": 2000,
+    "uhd": 2000,
+    "dvdrip": 2000,
+    "dvdscr": 2000,
+    "cam": 2000,
+    "r5": 2000,
+    "scr": 2000,
+    "telecine": 2000,
+    "telesync": 2000,
+    "workprint": 2000,
+    "3d": 2000,
+    # TV
+    "tv": 5000,
+    "miniseries": 5000,
+    "ppv": 5000,
+    "preair": 5000,
+    "sports-tv": 5060,
+    "uhd-tv": 5000,
+    "dvd": 5000,
+    # Games: PC
+    "games": 4050,
+    "iso": 4050,
+    "rip": 4050,
+    "clone": 4050,
+    "dox": 4050,
+    # Games: consoles
+    "nds": 1010,
+    "psp": 1020,
+    "wii": 1030,
+    "xbox360": 1050,
+    "ps3": 1080,
+    "wiiu": 1130,
+    "ps4": 1180,
+    # Applications
+    "applications": 4000,
+    "windows-applications": 4000,
+    "linux": 4000,
+    "macosx": 4030,
+    "iphone": 4060,
+    # Music
+    "new-music": 3000,
+    "music": 3000,
+    "concert": 3020,
+    "flac": 3040,
+    "music-videos": 3020,
+    # Other
+    "ebooks": 7000,
+    "p2p": 2000,
+}
+
+
+class _PostParser(HTMLParser):
+    """Extract posts from scnsrc.me listing/search pages.
+
+    Each post has:
+    - ``<div class="post" id="post-NNN">``
+    - ``<h2><a href="/slug/">Title</a></h2>``
+    - ``<div class="cat meta">`` with category link
+    - ``<div class="tvshow_info">`` with release name + download links
+    """
+
+    def __init__(self, base_url: str) -> None:
+        super().__init__()
+        self.results: list[dict[str, str | list[dict[str, str]]]] = []
+        self._base_url = base_url
+
+        # State tracking
+        self._in_post = False
+        self._post_div_depth = 0
+        self._in_h2 = False
+        self._in_h2_a = False
+        self._in_tvshow_info = False
+        self._tvshow_div_depth = 0
+        self._in_strong = False
+        self._in_cat_meta = False
+        self._in_cat_a = False
+
+        # Current post data
+        self._current_title = ""
+        self._current_url = ""
+        self._current_release = ""
+        self._current_links: list[dict[str, str]] = []
+        self._current_category = ""
+        self._strong_text = ""
+        self._after_download_label = False
+
+    def _reset_post(self) -> None:
+        self._current_title = ""
+        self._current_url = ""
+        self._current_release = ""
+        self._current_links = []
+        self._current_category = ""
+        self._after_download_label = False
+
+    def _emit_post(self) -> None:
+        title = self._current_release or self._current_title
+        if title and (self._current_links or self._current_url):
+            self.results.append(
+                {
+                    "title": title,
+                    "url": self._current_url,
+                    "release_name": self._current_release,
+                    "links": self._current_links.copy(),
+                    "category": self._current_category,
+                }
+            )
+
+    def _handle_div_start(self, attr_dict: dict[str, str | None]) -> None:
+        classes = (attr_dict.get("class", "") or "").split()
+
+        if self._in_post:
+            self._post_div_depth += 1
+        elif "post" in classes:
+            post_id = attr_dict.get("id", "")
+            if post_id and str(post_id).startswith("post-"):
+                self._in_post = True
+                self._post_div_depth = 0
+                self._reset_post()
+
+        if self._in_post and "tvshow_info" in (attr_dict.get("class", "") or ""):
+            self._in_tvshow_info = True
+            self._tvshow_div_depth = 0
+        elif self._in_tvshow_info:
+            self._tvshow_div_depth += 1
+
+        if self._in_post and "cat" in classes:
+            self._in_cat_meta = True
+
+    def _handle_a_start(self, attr_dict: dict[str, str | None]) -> None:
+        href = str(attr_dict.get("href", "") or "")
+
+        if self._in_h2 and href:
+            self._in_h2_a = True
+            self._current_url = _clean_wayback_url(urljoin(self._base_url, href))
+            self._current_title = ""
+
+        if self._in_cat_meta and "category" in (attr_dict.get("rel", "") or ""):
+            self._in_cat_a = True
+
+        if self._in_tvshow_info and href and self._after_download_label:
+            self._current_links.append(
+                {
+                    "hoster": "",
+                    "link": _clean_wayback_url(href),
+                }
+            )
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attr_dict = dict(attrs)
+
+        if tag == "div":
+            self._handle_div_start(attr_dict)
+        elif tag == "h2" and self._in_post:
+            self._in_h2 = True
+        elif tag == "a":
+            self._handle_a_start(attr_dict)
+        elif tag == "strong" and self._in_tvshow_info:
+            self._in_strong = True
+            self._strong_text = ""
+
+    def handle_data(self, data: str) -> None:
+        text = data.strip()
+
+        if self._in_h2_a:
+            self._current_title += data
+
+        if self._in_strong:
+            self._strong_text += data
+
+        if self._in_cat_a and text:
+            self._current_category = text
+
+        # Set hoster name on last link from anchor text
+        if (
+            self._in_tvshow_info
+            and self._current_links
+            and not self._in_strong
+            and text
+        ):
+            last = self._current_links[-1]
+            if not last["hoster"] and text.lower() in {
+                "torrent",
+                "usenet",
+                "nzb",
+                "ddl",
+            }:
+                last["hoster"] = text.lower()
+
+    def _handle_strong_end(self) -> None:
+        self._in_strong = False
+        text = self._strong_text.strip()
+        lower = text.lower()
+        if lower.startswith("download"):
+            self._after_download_label = True
+        elif lower.startswith("info"):
+            # Stop collecting links after "Info:" label
+            self._after_download_label = False
+        elif text and not self._current_release:
+            if "." in text and len(text) > 10:
+                self._current_release = text
+
+    def _handle_div_end(self) -> None:
+        if self._in_tvshow_info:
+            if self._tvshow_div_depth > 0:
+                self._tvshow_div_depth -= 1
+            else:
+                self._in_tvshow_info = False
+                self._after_download_label = False
+
+        if self._in_cat_meta and not self._in_tvshow_info:
+            self._in_cat_meta = False
+
+        if self._in_post and not self._in_tvshow_info:
+            if self._post_div_depth > 0:
+                self._post_div_depth -= 1
+            else:
+                self._in_post = False
+                self._emit_post()
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "a":
+            if self._in_h2_a:
+                self._in_h2_a = False
+                self._current_title = self._current_title.strip()
+            if self._in_cat_a:
+                self._in_cat_a = False
+        elif tag == "h2":
+            self._in_h2 = False
+        elif tag == "strong" and self._in_strong:
+            self._handle_strong_end()
+        elif tag == "div":
+            self._handle_div_end()
+
+
+def _clean_wayback_url(url: str) -> str:
+    """Strip Wayback Machine URL prefix if present."""
+    m = re.match(r"https?://web\.archive\.org/web/\d+/(https?://.+)", url)
+    return m.group(1) if m else url
+
+
+def _category_to_torznab(category_name: str) -> int:
+    """Map site category name to Torznab category ID (8000 if unknown)."""
+    key = category_name.lower().strip()
+    return _CATEGORY_NAME_MAP.get(key, 8000)
+
+
+def _search_paths(category: int) -> tuple[str, ...]:
+    """The sections to search for *category* (its parent's if not listed)."""
+    return _SEARCH_PATHS.get(category) or _SEARCH_PATHS.get(
+        category - category % 1000, ("",)
+    )
+
+
+class _PostPageParser(HTMLParser):
+    """Extract release name and download links from a single post page.
+
+    Covers both layouts: TV posts (``tvshow_info`` block) and film/P2P posts
+    (info table). In both, the release name is the first ``<strong>`` that
+    looks like a scene name, and the download links are anchors labelled
+    Torrent / Usenet / NZB inside ``div.storycontent``.
+    """
+
+    _LINK_LABELS = frozenset({"torrent", "usenet", "nzb"})
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.release_name = ""
+        self.links: list[dict[str, str]] = []
+        self._story_depth = 0  # >0 while inside div.storycontent
+        self._in_strong = False
+        self._strong_text = ""
+        self._href = ""
+        self._a_text = ""
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attr_dict = dict(attrs)
+        if tag == "div":
+            classes = (attr_dict.get("class") or "").split()
+            if self._story_depth:
+                self._story_depth += 1
+            elif "storycontent" in classes:
+                self._story_depth = 1
+        if not self._story_depth:
+            return
+        if tag == "strong":
+            self._in_strong = True
+            self._strong_text = ""
+        elif tag == "a":
+            self._href = attr_dict.get("href") or ""
+            self._a_text = ""
+
+    def handle_data(self, data: str) -> None:
+        if self._in_strong:
+            self._strong_text += data
+        if self._href:
+            self._a_text += data
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "div" and self._story_depth:
+            self._story_depth -= 1
+        elif tag == "strong" and self._in_strong:
+            self._in_strong = False
+            text = self._strong_text.strip()
+            if not self.release_name and "." in text and len(text) > 10:
+                self.release_name = text
+        elif tag == "a" and self._href:
+            label = self._a_text.strip().lower()
+            if label in self._LINK_LABELS and self._href.startswith("http"):
+                self.links.append(
+                    {"hoster": label, "link": _clean_wayback_url(self._href)}
+                )
+            self._href = ""
+
+
+class ScnSrcPlugin(PlaywrightPluginBase):
+    """Python plugin for scnsrc.me using Playwright.
+
+    Supports multiple domains with automatic fallback:
+    scnsrc.me, scenesource.me, scnsrc.net.
+    """
+
+    name = "scnsrc"
+    version = "1.1.0"
+    mode = "playwright"
+    provides = "download"
+    languages = ["en"]
+
+    _domains = _DOMAINS
+    # nginx rate-limits post pages (503) under parallel fetches
+    _max_concurrent = 2
+
+    async def _fetch_page(self, url: str) -> str:
+        """Navigate to a URL and return page content ("" on failure).
+
+        Server-rendered WordPress, so no ``networkidle`` wait. Rate-limit
+        503s are retried with backoff.
+        """
+        return await self._fetch_page_html(
+            url, wait_for_idle=False, retry_backoff_s=_RETRY_BACKOFF_S
+        )
+
+    async def _enrich_post(
+        self, post: dict[str, str | list[dict[str, str]]]
+    ) -> dict[str, str | list[dict[str, str]]]:
+        """Fill release name and links from the post page.
+
+        Search pages only list title and category; the ``tvshow_info`` block
+        with the download links lives on the post page.
+        """
+        if post.get("links") or not post.get("url"):
+            return post
+        parser = _PostPageParser()
+        parser.feed(await self._fetch_page(str(post["url"])))
+        return {**post, "release_name": parser.release_name, "links": parser.links}
+
+    async def _search_page(
+        self,
+        query: str,
+        category_path: str = "",
+        page_num: int = 1,
+    ) -> list[dict[str, str | list[dict[str, str]]]]:
+        """Fetch one search page and return parsed posts.
+
+        WordPress pagination: ``/page/N/?s=query`` for page >= 2.
+        """
+        if category_path:
+            base = f"{self.base_url}/{category_path}"
+        else:
+            base = self.base_url
+
+        q = quote_plus(query)
+        if page_num > 1:
+            url = f"{base}/page/{page_num}/?s={q}"
+        else:
+            url = f"{base}/?s={q}"
+
+        html = await self._fetch_page(url)
+
+        parser = _PostParser(self.base_url)
+        parser.feed(html)
+
+        self._log.info(
+            "scnsrc_search_page",
+            query=query,
+            category_path=category_path,
+            page=page_num,
+            count=len(parser.results),
+        )
+        return parser.results
+
+    async def search(
+        self,
+        query: str,
+        category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
+    ) -> list[SearchResult]:
+        """Search scnsrc.me (or fallback domain) and return results.
+
+        Paginates through WordPress search pages to collect up to
+        1000 results.
+        """
+        if category is not None:
+            category = served_category(category, _CATEGORY_NAME_MAP.values())
+            if category is None:
+                return []  # no section of the site has this category
+        await self._ensure_browser()
+        await self._verify_domain()
+
+        # Paginate search results (WordPress: ~10 posts/page); keep the posts
+        # of the requested category before their pages are loaded
+        all_posts: list[dict[str, str | list[dict[str, str]]]] = []
+        for category_path in _search_paths(category) if category else ("",):
+            for page_num in range(1, _MAX_PAGES + 1):
+                posts = await self._search_page(query, category_path, page_num)
+                if not posts:
+                    break
+                all_posts.extend(
+                    p
+                    for p in posts
+                    if category_matches(
+                        category, _category_to_torznab(str(p.get("category", "")))
+                    )
+                )
+                if len(all_posts) >= self.effective_max_results:
+                    break
+
+        all_posts = all_posts[: self.effective_max_results]
+
+        sem = self._new_semaphore()
+
+        async def _bounded_enrich(
+            post: dict[str, str | list[dict[str, str]]],
+        ) -> dict[str, str | list[dict[str, str]]]:
+            async with sem:
+                return await self._enrich_post(post)
+
+        all_posts = list(await asyncio.gather(*map(_bounded_enrich, all_posts)))
+
+        results: list[SearchResult] = []
+        for post in all_posts:
+            links = post.get("links")
+            if not isinstance(links, list) or not links:
+                continue
+
+            primary_link = links[0]["link"]
+            torznab_cat = _category_to_torznab(str(post.get("category", "")))
+
+            # Scene release name (from the post page) parses best downstream
+            title = str(post.get("release_name") or post["title"])
+            results.append(
+                SearchResult(
+                    title=title,
+                    download_link=primary_link,
+                    download_links=links,
+                    source_url=str(post.get("url", "")),
+                    category=torznab_cat,
+                )
+            )
+
+        return results
+
+
+plugin = ScnSrcPlugin()

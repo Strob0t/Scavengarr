@@ -1,0 +1,50 @@
+# Offline gate: the same checks as before every commit (AGENTS.md §1).
+# Live smoke tests stay out: GitHub's datacenter IPs get harder Cloudflare
+# challenges than the home network the addon runs in, so their results would
+# not show what production sees.
+name: CI
+
+on:
+  push:
+    branches: [staging]
+  pull_request:
+    branches: [staging, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: pre-commit and pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      # Poetry must be on PATH before setup-python so it can cache the venv.
+      - name: Install Poetry
+        run: pipx install poetry
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: poetry
+
+      - name: Install dependencies
+        run: poetry install --with dev --no-interaction
+
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: pre-commit
+        run: poetry run pre-commit run --all-files --show-diff-on-failure
+
+      - name: pytest
+        run: poetry run pytest

@@ -1,8 +1,11 @@
+"""Configuration loading with layered precedence (defaults < YAML < ENV < CLI)."""
+
 from __future__ import annotations
 
+from collections.abc import Mapping
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import yaml
 from dotenv import load_dotenv
@@ -10,7 +13,15 @@ from dotenv import load_dotenv
 from .defaults import DEFAULT_CONFIG
 from .schema import AppConfig, EnvOverrides
 
-_SECTION_KEYS: set[str] = {"plugins", "http", "playwright", "logging", "cache"}
+_SECTION_KEYS: set[str] = {
+    "plugins",
+    "http",
+    "playwright",
+    "logging",
+    "cache",
+    "stremio",
+    "scoring",
+}
 
 
 def _deep_merge(base: dict[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
@@ -37,35 +48,55 @@ def _normalize_layer(data: Mapping[str, Any]) -> dict[str, Any]:
     - app_name, environment
     - plugins.plugin_dir
     - http.timeout_seconds, http.follow_redirects, http.user_agent
-    - playwright.headless, playwright.timeout_ms
+    - playwright.headless, playwright.browser_fallback, playwright.solver_url,
+      playwright.timeout_ms
     - logging.level, logging.format
     - cache.dir, cache.ttl_seconds
     """
     out: dict[str, Any] = {}
 
-    # Pass through already sectioned blocks
     for section in _SECTION_KEYS:
         if section in data and isinstance(data[section], Mapping):
             out[section] = dict(data[section])
 
-    # General
-    if "app_name" in data:
-        out["app_name"] = data["app_name"]
-    if "environment" in data:
-        out["environment"] = data["environment"]
+    # Pass through known top-level scalar keys.
+    _TOP_LEVEL_KEYS = {
+        "app_name",
+        "environment",
+        "tmdb_api_key",
+        "validate_download_links",
+        "validation_timeout_seconds",
+        "validation_max_concurrent",
+    }
+    for key in _TOP_LEVEL_KEYS:
+        if key in data:
+            out[key] = data[key]
 
-    # Flat -> section mappings
     flat_map: dict[str, tuple[str, str]] = {
         "plugin_dir": ("plugins", "plugin_dir"),
         "http_timeout_seconds": ("http", "timeout_seconds"),
+        "http_timeout_resolve_seconds": ("http", "timeout_resolve_seconds"),
         "http_follow_redirects": ("http", "follow_redirects"),
         "http_user_agent": ("http", "user_agent"),
+        "rate_limit_requests_per_second": ("http", "rate_limit_rps"),
+        "rate_limit_adaptive": ("http", "rate_limit_adaptive"),
+        "rate_limit_min_rps": ("http", "rate_limit_min_rps"),
+        "rate_limit_max_rps": ("http", "rate_limit_max_rps"),
+        "http_retry_max_attempts": ("http", "retry_max_attempts"),
+        "http_retry_backoff_base": ("http", "retry_backoff_base"),
+        "http_retry_max_backoff": ("http", "retry_max_backoff"),
+        "api_rate_limit_rpm": ("http", "api_rate_limit_rpm"),
         "playwright_headless": ("playwright", "headless"),
+        "playwright_browser_fallback": ("playwright", "browser_fallback"),
+        "playwright_solver_url": ("playwright", "solver_url"),
         "playwright_timeout_ms": ("playwright", "timeout_ms"),
         "log_level": ("logging", "level"),
         "log_format": ("logging", "format"),
         "cache_dir": ("cache", "dir"),
         "cache_ttl_seconds": ("cache", "ttl_seconds"),
+        "cache_backend": ("cache", "backend"),
+        "cache_redis_url": ("cache", "redis_url"),
+        "cache_max_concurrent": ("cache", "max_concurrent"),
     }
 
     for flat_key, (section, section_key) in flat_map.items():
@@ -100,7 +131,6 @@ def load_config(
     """
     cli_overrides = cli_overrides or {}
 
-    # Load .env first so it participates as "env vars" layer.
     if dotenv_path is not None:
         if not dotenv_path.exists():
             raise FileNotFoundError(dotenv_path)
@@ -121,5 +151,4 @@ def load_config(
     cli_layer = _normalize_layer(cli_overrides)
     _deep_merge(base, cli_layer)
 
-    # Validate final merged config (single source of truth).
     return AppConfig.model_validate(base)

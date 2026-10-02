@@ -1,7 +1,9 @@
+"""Pydantic configuration models with validation."""
+
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import (
     AliasChoices,
@@ -13,9 +15,102 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from scavengarr.infrastructure.version import APP_USER_AGENT
+
 Environment = Literal["dev", "test", "prod"]
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 LogFormat = Literal["json", "console"]
+
+
+class ScoringConfig(BaseModel):
+    """Background plugin scoring and probing configuration."""
+
+    enabled: bool = Field(
+        default=True,
+        description="Enable background plugin scoring and probing.",
+    )
+    health_halflife_days: float = Field(
+        default=2.0,
+        description="EWMA half-life for health probes (days).",
+    )
+    search_halflife_weeks: float = Field(
+        default=2.0,
+        description="EWMA half-life for search probes (weeks).",
+    )
+    health_interval_hours: float = Field(
+        default=24.0,
+        description="Interval between health probe cycles (hours).",
+    )
+    search_runs_per_week: int = Field(
+        default=2,
+        description="Number of search probe runs per week per plugin.",
+    )
+    health_timeout_seconds: float = Field(
+        default=5.0,
+        description="Timeout for health probe requests (seconds).",
+    )
+    search_timeout_seconds: float = Field(
+        default=10.0,
+        description="Timeout for mini-search probe requests (seconds).",
+    )
+    search_max_items: int = Field(
+        default=20,
+        description="Max items per mini-search probe.",
+    )
+    health_concurrency: int = Field(
+        default=5,
+        description="Max parallel health probes.",
+    )
+    search_concurrency: int = Field(
+        default=3,
+        description="Max parallel search probes.",
+    )
+    score_ttl_days: int = Field(
+        default=30,
+        description="TTL for persisted score snapshots (days).",
+    )
+    w_health: float = Field(
+        default=0.4,
+        description="Weight of health score in composite.",
+    )
+    w_search: float = Field(
+        default=0.6,
+        description="Weight of search score in composite.",
+    )
+
+
+class PluginOverride(BaseModel):
+    """Per-plugin configuration overrides."""
+
+    timeout: float | None = Field(
+        default=None,
+        description="Override plugin timeout (seconds).",
+    )
+    max_concurrent: int | None = Field(
+        default=None,
+        description="Override plugin max concurrent requests.",
+    )
+    max_results: int | None = Field(
+        default=None,
+        description="Override plugin max results.",
+    )
+    enabled: bool = Field(
+        default=True,
+        description="Set False to disable this plugin entirely.",
+    )
+
+
+class PluginsConfig(BaseModel):
+    """Plugin system configuration."""
+
+    plugin_dir: Path = Field(
+        default=Path("./plugins"),
+        description="Directory containing Python plugins.",
+    )
+    overrides: dict[str, PluginOverride] = Field(
+        default_factory=dict,
+        description="Per-plugin setting overrides keyed by plugin name.",
+    )
 
 
 def _normalize_path(value: Any) -> Path:
@@ -32,39 +127,263 @@ def _normalize_path(value: Any) -> Path:
 
 
 class CacheConfig(BaseSettings):
-    """Cache-Konfiguration (Backend-agnostisch)."""
+    """Cache configuration (backend-agnostic)."""
 
     backend: Literal["diskcache", "redis"] = Field(
         default="diskcache",
-        description="Cache-Backend: 'diskcache' (SQLite) oder 'redis'",
+        description="Cache backend: 'diskcache' (SQLite) or 'redis'",
     )
 
-    # Diskcache-Settings
+    # Diskcache settings
     directory: Path = Field(
-        default=Path("./cache/scavengarr"),
+        default=Path("./.cache/scavengarr"),
         alias="dir",
-        description="Diskcache SQLite-DB-Pfad",
+        description="Diskcache SQLite DB path",
     )
 
-    # Redis-Settings
+    # Redis settings
     redis_url: str = Field(
         default="redis://localhost:6379/0",
-        description="Redis-Connection-URL (nur wenn backend=redis)",
+        description="Redis connection URL (only when backend=redis)",
     )
 
-    # Shared Settings
+    # Shared settings
     ttl_seconds: int = Field(
         default=3600,
-        description="Standard-TTL für Cache-Einträge (Sekunden)",
+        description="Default TTL for cache entries (seconds)",
+    )
+    search_ttl_seconds: int = Field(
+        default=900,
+        description="TTL for cached search results (seconds). 0 = disabled.",
+    )
+    crawljob_ttl_seconds: int = Field(
+        default=3600,
+        gt=0,
+        description=(
+            "How long a grabbed result's CrawlJob stays downloadable (seconds); "
+            "the grab answers 404 afterwards."
+        ),
     )
     max_concurrent: int = Field(
         default=10,
-        description="Max. parallele Cache-Ops (Semaphore-Limit)",
+        description="Max parallel cache ops (semaphore limit)",
     )
 
     model_config = SettingsConfigDict(
-        env_prefix="CACHE_",  # Env-Vars: CACHE_BACKEND, CACHE_REDIS_URL, ...
+        # Not read: this section is validated from the merged config dict.
+        # Env overrides are SCAVENGARR_CACHE_* (see EnvOverrides).
+        env_prefix="CACHE_",
         case_sensitive=False,
+    )
+
+
+class StremioConfig(BaseModel):
+    """Configuration for Stremio addon and stream sorting.
+
+    All values configurable via YAML (stremio section) or ENV vars.
+    """
+
+    preferred_language: str = Field(
+        default="de",
+        description="Preferred audio language code for stream ranking.",
+    )
+
+    language_scores: dict[str, int] = Field(
+        default={
+            "de": 1000,
+            "de-sub": 500,
+            "en-sub": 200,
+            "en": 150,
+        },
+        description="Language ranking scores (higher = preferred).",
+    )
+    default_language_score: int = Field(
+        default=100,
+        description="Score for unknown/undetected languages.",
+    )
+
+    quality_multiplier: int = Field(
+        default=10,
+        description="Multiplier for quality value in ranking score.",
+    )
+
+    hoster_scores: dict[str, int] = Field(
+        default={
+            "supervideo": 5,
+            "voe": 4,
+            "filemoon": 3,
+            "streamtape": 2,
+            "doodstream": 1,
+        },
+        description="Hoster reliability bonus (tie-breaker).",
+    )
+
+    max_concurrent_plugins: int = Field(
+        default=5,
+        description="Max parallel plugin searches for stream resolution.",
+    )
+
+    max_concurrent_playwright: int = Field(
+        default=5,
+        description=(
+            "Upper bound for parallel Playwright plugin searches on the "
+            "shared browser. The actual concurrency is dynamically capped "
+            "at min(pw_plugin_count, this value) per request."
+        ),
+    )
+
+    max_concurrent_plugins_auto: bool = Field(
+        default=True,
+        description=(
+            "Auto-tune max_concurrent_plugins based on host CPU and memory. "
+            "When enabled, overrides max_concurrent_plugins at startup."
+        ),
+    )
+
+    auto_tune_all: bool = Field(
+        default=True,
+        description=(
+            "Auto-tune ALL concurrency parameters (plugins, Playwright, probes, "
+            "validation) based on detected container/host resources via cgroups. "
+            "Supersedes max_concurrent_plugins_auto."
+        ),
+    )
+
+    max_results_per_plugin: int = Field(
+        default=100,
+        description=(
+            "Max results per plugin in Stremio search. Limits pagination "
+            "to reduce response time. Torznab uses the plugin default (1000)."
+        ),
+    )
+
+    plugin_timeout_seconds: float = Field(
+        default=10.0,
+        gt=0,
+        description=(
+            "Plugin search budget per Stremio request, counted from the "
+            "request start (plugins waiting for a concurrency slot use it up "
+            "too); plugins still running then are cut, queued ones skipped."
+        ),
+    )
+    stream_deadline_seconds: float = Field(
+        default=15.0,
+        gt=0,
+        description=(
+            "Overall budget for one Stremio stream request, from request start "
+            "to answer. Hoster resolution stops at the deadline (at least 2 s "
+            "after the plugin search) and returns what is resolved. Keep "
+            "plugin_timeout_seconds below it so resolution gets a window."
+        ),
+    )
+
+    title_match_threshold: float = Field(
+        default=0.7,
+        description="Minimum title similarity score to keep a stream result.",
+    )
+
+    title_year_bonus: float = Field(
+        default=0.2,
+        description="Score bonus when result year matches reference year.",
+    )
+    title_year_penalty: float = Field(
+        default=0.3,
+        description="Score penalty when result year does not match reference year.",
+    )
+    title_sequel_penalty: float = Field(
+        default=0.35,
+        description="Score penalty when result has sequel number that reference lacks.",
+    )
+    title_extra_words_penalty: float = Field(
+        default=0.35,
+        description=(
+            "Score penalty when the result adds words to the reference title "
+            '("Dark Matter" for "Dark"); a matching year makes up part of it.'
+        ),
+    )
+    title_year_tolerance_movie: int = Field(
+        default=1,
+        description="Allowed year difference for movies (±N years).",
+    )
+    title_year_tolerance_series: int = Field(
+        default=3,
+        description="Allowed year difference for series (±N years).",
+    )
+
+    stream_link_ttl_seconds: int = Field(
+        default=7200,
+        description="TTL for cached stream links (seconds). Default 2h.",
+    )
+
+    verify_streams: bool = Field(
+        default=True,
+        description=(
+            "Check every resolved video URL before returning it (first bytes "
+            "with the playback headers); error pages, HTML and broken HLS "
+            "playlists are dropped instead of shown in Stremio."
+        ),
+    )
+    probe_concurrency: int = Field(
+        default=10,
+        description="Max parallel hoster resolutions at stream time.",
+    )
+    max_probe_count: int = Field(
+        default=50,
+        description="Max streams to resolve at stream time (top-ranked first).",
+    )
+    probe_stealth_timeout_seconds: float = Field(
+        default=15.0,
+        description=(
+            "Page timeout of the stealth browser (Patchright) used by "
+            "browser-based resolvers and the Cloudflare fallback, in seconds."
+        ),
+    )
+    resolve_target_count: int = Field(
+        default=15,
+        description=(
+            "Target number of successfully resolved video streams. "
+            "Resolution stops early once this many genuine video URLs "
+            "have been extracted, cancelling remaining resolve tasks. "
+            "Set to 0 to disable early-stop (resolve all streams)."
+        ),
+    )
+    resolve_grace_seconds: float = Field(
+        default=4.0,
+        ge=0.0,
+        description=(
+            "Once the first stream is resolved, the answer waits at most "
+            "this long for the other hosters (browser-resolved ones take "
+            "3-7 s) instead of until stream_deadline_seconds. 0 disables it."
+        ),
+    )
+
+    # Scored plugin selection (requires scoring.enabled=True)
+    scoring_enabled: bool = Field(
+        default=False,
+        description="Use scoring to limit plugin selection per request.",
+    )
+    stremio_deadline_ms: int = Field(
+        default=2000,
+        description=(
+            "Unused (kept so existing configs stay valid); the overall budget "
+            "is stream_deadline_seconds."
+        ),
+    )
+    max_plugins_scored: int = Field(
+        default=5,
+        description="Top-N plugins when scoring is active.",
+    )
+    max_items_total: int = Field(
+        default=50,
+        description="Global result cap across all plugins.",
+    )
+    max_items_per_plugin: int = Field(
+        default=20,
+        description="Per-plugin result cap in scored mode.",
+    )
+    exploration_probability: float = Field(
+        default=0.15,
+        description="Chance to include a random mid-score plugin.",
     )
 
 
@@ -85,24 +404,36 @@ class AppConfig(BaseModel):
         description="Runtime environment (affects defaults like log format).",
     )
 
-    # Plugins (YAML section: plugins.plugin_dir)
+    # Plugins (YAML section: plugins)
+    plugins: PluginsConfig = Field(default_factory=PluginsConfig)
     plugin_dir: Path = Field(
         default=Path("./plugins"),
         validation_alias=AliasChoices(
             "plugin_dir",
             AliasPath("plugins", "plugin_dir"),
         ),
-        description="Directory containing YAML/Python plugins.",
+        description="Directory containing Python plugins.",
     )
 
-    # HTTP / Scrapy engine (YAML section: http.*)
+    # Scoring (YAML section: scoring)
+    scoring: ScoringConfig = Field(default_factory=ScoringConfig)
+
+    # HTTP engine (YAML section: http.*)
     http_timeout_seconds: float = Field(
         default=30.0,
         validation_alias=AliasChoices(
             "http_timeout_seconds",
             AliasPath("http", "timeout_seconds"),
         ),
-        description="HTTP timeout in seconds for static scraping.",
+        description="Default HTTP timeout in seconds (used by scraping engine).",
+    )
+    http_timeout_resolve_seconds: float = Field(
+        default=15.0,
+        validation_alias=AliasChoices(
+            "http_timeout_resolve_seconds",
+            AliasPath("http", "timeout_resolve_seconds"),
+        ),
+        description="HTTP timeout for hoster resolution requests.",
     )
     http_follow_redirects: bool = Field(
         default=True,
@@ -113,7 +444,7 @@ class AppConfig(BaseModel):
         description="Whether HTTP client follows redirects.",
     )
     http_user_agent: str = Field(
-        default="Scavengarr/0.1.0 (+https://github.com/Strob0t/Scavengarr)",
+        default=APP_USER_AGENT,
         validation_alias=AliasChoices(
             "http_user_agent",
             AliasPath("http", "user_agent"),
@@ -137,12 +468,40 @@ class AppConfig(BaseModel):
 
     # Playwright (YAML section: playwright.*)
     playwright_headless: bool = Field(
-        default=True,
+        default=False,
         validation_alias=AliasChoices(
             "playwright_headless",
             AliasPath("playwright", "headless"),
         ),
-        description="Run Playwright headless.",
+        description=(
+            "Run the browser headless. Default false: headful when a display "
+            "(DISPLAY, e.g. Xvfb) exists, needed to pass Cloudflare Turnstile; "
+            "falls back to headless with a warning when there is no display."
+        ),
+    )
+    playwright_browser_fallback: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "playwright_browser_fallback",
+            AliasPath("playwright", "browser_fallback"),
+        ),
+        description=(
+            "Let httpx plugins load Cloudflare-challenged pages through the "
+            "shared browser (at most 2 pages at a time). Disable on hosts "
+            "without RAM headroom for the browser."
+        ),
+    )
+    playwright_solver_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "playwright_solver_url",
+            AliasPath("playwright", "solver_url"),
+        ),
+        description=(
+            "Base URL of an optional Byparr/FlareSolverr sidecar "
+            "(e.g. http://byparr:8191). Loads Cloudflare-challenged pages when "
+            "the own browser fails, or alone when browser_fallback is false."
+        ),
     )
     playwright_timeout_ms: int = Field(
         default=30_000,
@@ -162,14 +521,25 @@ class AppConfig(BaseModel):
         ),
         description="Log level.",
     )
-    log_format: Optional[LogFormat] = Field(
+    log_format: LogFormat | None = Field(
         default=None,
         validation_alias=AliasChoices(
             "log_format",
             AliasPath("logging", "format"),
         ),
-        description="Log renderer format (console/json). If unset, derived from environment.",
+        description=(
+            "Log renderer format (console/json). If unset, derived from environment."
+        ),
     )
+
+    # TMDB API key (required for Stremio addon)
+    tmdb_api_key: str | None = Field(
+        default=None,
+        description="TMDB API key for Stremio catalog and title lookup.",
+    )
+
+    # Stremio addon configuration (YAML section: stremio.*)
+    stremio: StremioConfig = Field(default_factory=StremioConfig)
 
     # Cache (disk-only placeholder) (YAML section: cache.*)
     cache: CacheConfig = Field(default_factory=CacheConfig)
@@ -196,11 +566,84 @@ class AppConfig(BaseModel):
     def _validate_paths(cls, v: Any) -> Path:
         return _normalize_path(v)
 
-    @field_validator("http_timeout_seconds")
+    # Rate limiting (YAML section: http.*)
+    rate_limit_requests_per_second: float = Field(
+        default=5.0,
+        validation_alias=AliasChoices(
+            "rate_limit_requests_per_second",
+            AliasPath("http", "rate_limit_rps"),
+        ),
+        description="Default per-domain rate limit (requests/second). 0 = unlimited.",
+    )
+    api_rate_limit_rpm: int = Field(
+        default=120,
+        validation_alias=AliasChoices(
+            "api_rate_limit_rpm",
+            AliasPath("http", "api_rate_limit_rpm"),
+        ),
+        description="API rate limit per IP (requests/minute). 0 = unlimited.",
+    )
+
+    # Adaptive rate limiting (YAML section: http.*)
+    rate_limit_adaptive: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "rate_limit_adaptive",
+            AliasPath("http", "rate_limit_adaptive"),
+        ),
+        description=(
+            "Enable AIMD adaptive rate limiting per domain. "
+            "Rate increases on success, halves on 429/503, reduces on timeout."
+        ),
+    )
+    rate_limit_min_rps: float = Field(
+        default=0.5,
+        validation_alias=AliasChoices(
+            "rate_limit_min_rps",
+            AliasPath("http", "rate_limit_min_rps"),
+        ),
+        description="Minimum adaptive rate per domain (rps).",
+    )
+    rate_limit_max_rps: float = Field(
+        default=50.0,
+        validation_alias=AliasChoices(
+            "rate_limit_max_rps",
+            AliasPath("http", "rate_limit_max_rps"),
+        ),
+        description="Maximum adaptive rate per domain (rps).",
+    )
+
+    # Retry on 429/503 (YAML section: http.*)
+    http_retry_max_attempts: int = Field(
+        default=3,
+        validation_alias=AliasChoices(
+            "http_retry_max_attempts",
+            AliasPath("http", "retry_max_attempts"),
+        ),
+        description="Max retry attempts on 429/503 responses. 0 = no retries.",
+    )
+    http_retry_backoff_base: float = Field(
+        default=1.0,
+        validation_alias=AliasChoices(
+            "http_retry_backoff_base",
+            AliasPath("http", "retry_backoff_base"),
+        ),
+        description="Base delay in seconds for exponential backoff.",
+    )
+    http_retry_max_backoff: float = Field(
+        default=30.0,
+        validation_alias=AliasChoices(
+            "http_retry_max_backoff",
+            AliasPath("http", "retry_max_backoff"),
+        ),
+        description="Maximum backoff delay in seconds.",
+    )
+
+    @field_validator("http_timeout_seconds", "http_timeout_resolve_seconds")
     @classmethod
     def _validate_http_timeout(cls, v: float) -> float:
         if v <= 0:
-            raise ValueError("http_timeout_seconds must be > 0")
+            raise ValueError("HTTP timeout must be > 0")
         return v
 
     @field_validator("playwright_timeout_ms")
@@ -224,30 +667,6 @@ class AppConfig(BaseModel):
             self.log_format = "json" if self.environment == "prod" else "console"
         return self
 
-    def to_sectioned_dict(self) -> dict[str, Any]:
-        """
-        Dump configuration in the sectioned shape used by config.yaml/docs.
-        """
-        return {
-            "app_name": self.app_name,
-            "environment": self.environment,
-            "plugins": {"plugin_dir": str(self.plugin_dir)},
-            "http": {
-                "timeout_seconds": self.http_timeout_seconds,
-                "follow_redirects": self.http_follow_redirects,
-                "user_agent": self.http_user_agent,
-            },
-            "playwright": {
-                "headless": self.playwright_headless,
-                "timeout_ms": self.playwright_timeout_ms,
-            },
-            "logging": {"level": self.log_level, "format": self.log_format},
-            "cache": {
-                "dir": str(self.cache_dir),
-                "ttl_seconds": self.cache_ttl_seconds,
-            },
-        }
-
 
 class EnvOverrides(BaseSettings):
     """
@@ -255,7 +674,8 @@ class EnvOverrides(BaseSettings):
 
     Intended usage:
     - load.py creates EnvOverrides() to read SCAVENGARR_* variables,
-      converts to dict of set values, merges into YAML/defaults, then validates AppConfig.
+      converts to dict of set values, merges into YAML/defaults,
+      then validates AppConfig.
 
     Supported env var examples (flat, explicit):
     - SCAVENGARR_PLUGIN_DIR
@@ -270,23 +690,46 @@ class EnvOverrides(BaseSettings):
         case_sensitive=False,
     )
 
-    app_name: Optional[str] = None
-    environment: Optional[Environment] = None
+    app_name: str | None = None
+    environment: Environment | None = None
 
-    plugin_dir: Optional[Path] = None
+    plugin_dir: Path | None = None
 
-    http_timeout_seconds: Optional[float] = None
-    http_follow_redirects: Optional[bool] = None
-    http_user_agent: Optional[str] = None
+    http_timeout_seconds: float | None = None
+    http_timeout_resolve_seconds: float | None = None
+    http_follow_redirects: bool | None = None
+    http_user_agent: str | None = None
 
-    playwright_headless: Optional[bool] = None
-    playwright_timeout_ms: Optional[int] = None
+    rate_limit_requests_per_second: float | None = None
+    rate_limit_adaptive: bool | None = None
+    rate_limit_min_rps: float | None = None
+    rate_limit_max_rps: float | None = None
+    api_rate_limit_rpm: int | None = None
 
-    log_level: Optional[LogLevel] = None
-    log_format: Optional[LogFormat] = None
+    http_retry_max_attempts: int | None = None
+    http_retry_backoff_base: float | None = None
+    http_retry_max_backoff: float | None = None
 
-    cache_dir: Optional[Path] = None
-    cache_ttl_seconds: Optional[int] = None
+    playwright_headless: bool | None = None
+    playwright_browser_fallback: bool | None = None
+    playwright_solver_url: str | None = None
+    playwright_timeout_ms: int | None = None
+
+    log_level: LogLevel | None = None
+    log_format: LogFormat | None = None
+
+    cache_dir: Path | None = None
+    cache_ttl_seconds: int | None = None
+    cache_backend: Literal["diskcache", "redis"] | None = None
+    cache_redis_url: str | None = None
+    cache_max_concurrent: int | None = None
+
+    tmdb_api_key: str | None = None
+
+    # Scoring env overrides (flat)
+    scoring_enabled: bool | None = None
+    scoring_w_health: float | None = None
+    scoring_w_search: float | None = None
 
     @field_validator("plugin_dir", "cache_dir", mode="before")
     @classmethod
@@ -300,5 +743,13 @@ class EnvOverrides(BaseSettings):
         Return only values that were actually provided (non-None), for merging.
         """
         data = self.model_dump(exclude_none=True)
-        # Ensure Paths are Path objects in update dict (caller can stringify if needed)
+        # Map flat scoring env vars into the scoring section.
+        scoring: dict[str, Any] = {}
+        for key in ("scoring_enabled", "scoring_w_health", "scoring_w_search"):
+            if key in data:
+                section_key = key.removeprefix("scoring_")
+                scoring[section_key] = data.pop(key)
+        if scoring:
+            data.setdefault("scoring", {})
+            data["scoring"].update(scoring)
         return data

@@ -1,12 +1,16 @@
+"""Port for search result validation."""
+
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from scavengarr.domain.plugins.base import SearchResult
-from scavengarr.domain.ports.plugin_registry import PluginRegistryPort
 
 
+@runtime_checkable
 class SearchEnginePort(Protocol):
-    async def search(
-        self, plugin: PluginRegistryPort, query: str
+    """Async interface for validating search results."""
+
+    async def validate_results(
+        self, results: list[SearchResult]
     ) -> list[SearchResult]: ...

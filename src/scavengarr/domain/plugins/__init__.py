@@ -1,28 +1,27 @@
-from .base import PluginProtocol, SearchResult
+from .base import (
+    GrabResolvingPlugin,
+    PluginProtocol,
+    PluginProvides,
+    SearchResult,
+)
 from .exceptions import (
     DuplicatePluginError,
     PluginLoadError,
     PluginNotFoundError,
-    PluginValidationError,
 )
-from .schema import (
+from .plugin_schema import (
     AuthConfig,
-    NestedSelector,
-    ScrapingConfig,
-    ScrapingStage,
-    YamlPluginDefinition,
+    HttpOverrides,
 )
 
 __all__ = [
     "AuthConfig",
     "DuplicatePluginError",
+    "GrabResolvingPlugin",
+    "HttpOverrides",
     "PluginLoadError",
     "PluginNotFoundError",
     "PluginProtocol",
-    "PluginValidationError",
-    "ScrapingConfig",
+    "PluginProvides",
     "SearchResult",
-    "YamlPluginDefinition",
-    "NestedSelector",
-    "ScrapingStage",
 ]

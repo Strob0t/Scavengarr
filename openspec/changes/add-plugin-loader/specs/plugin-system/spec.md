@@ -1,25 +1,25 @@
 ## ADDED Requirements
 
 ### Requirement: Plugin Discovery
-The system SHALL automatically discover all YAML and Python files in the configured plugin directory.
+The system SHALL automatically discover all Python files in the configured plugin directory. Status: implemented for `.py` files (`PluginRegistry.discover()`); YAML discovery is superseded (removed in `42fced9`).
 
 #### Scenario: Mixed plugin types discovered
 - **WHEN** the plugin directory contains `plugin-a.yaml`, `plugin-b.py`, and `readme.txt`
-- **THEN** the system discovers exactly 2 plugins (YAML and Python files only)
-- **AND** the `.txt` file is ignored
+- **THEN** the system discovers exactly 1 plugin (`plugin-b.py`; originally 2 including YAML, superseded)
+- **AND** the `.yaml` and `.txt` files are ignored
 
 #### Scenario: Empty plugin directory
-- **WHEN** the plugin directory exists but contains no `.yaml` or `.py` files
-- **THEN** the system logs a warning "No plugins found in {directory}"
+- **WHEN** the plugin directory exists but contains no `.py` files
+- **THEN** the system logs a warning event `no_plugins_found` with field `directory`
 - **AND** the application starts successfully without errors
 
 #### Scenario: Plugin directory does not exist
 - **WHEN** the configured plugin directory path does not exist
-- **THEN** the system logs a warning "Plugin directory not found: {path}"
+- **THEN** the system logs a warning event `plugin_directory_not_found` with field `directory`
 - **AND** `PluginRegistry.list_names()` returns an empty list
 
-### Requirement: YAML Plugin Schema Validation
-The system SHALL validate YAML plugins against the Pydantic schema and reject invalid files.
+### Requirement: YAML Plugin Schema Validation (superseded)
+The system SHALL validate YAML plugins against the Pydantic schema and reject invalid files. Status: superseded — YAML plugins were removed in `42fced9`; `PluginValidationError` was removed in `03454a8`.
 
 #### Scenario: Valid Scrapy plugin loaded
 - **WHEN** a YAML file conforms to the schema with `scraping.mode: "scrapy"`
@@ -56,8 +56,8 @@ The system SHALL validate YAML plugins against the Pydantic schema and reject in
 - **THEN** a `PluginValidationError` is raised
 - **AND** the error message includes "String should match pattern '^\d+\.\d+\.\d+$'"
 
-### Requirement: Scrapy Mode Configuration
-YAML plugins with `scraping.mode: "scrapy"` SHALL define CSS selectors and search path.
+### Requirement: Scrapy Mode Configuration (superseded)
+YAML plugins with `scraping.mode: "scrapy"` SHALL define CSS selectors and search path. Status: superseded — Scrapy and YAML plugins were removed in `42fced9`.
 
 #### Scenario: Scrapy plugin with valid selectors
 - **WHEN** a plugin has mode "scrapy" and defines `search_path`, `selectors.row`, `selectors.title`, `selectors.download_link`
@@ -73,8 +73,8 @@ YAML plugins with `scraping.mode: "scrapy"` SHALL define CSS selectors and searc
 - **THEN** a `PluginValidationError` is raised
 - **AND** the error message includes "scrapy mode requires 'search_path' field"
 
-### Requirement: Playwright Mode Configuration
-YAML plugins with `scraping.mode: "playwright"` SHALL define locators and wait selector.
+### Requirement: Playwright Mode Configuration (superseded)
+YAML plugins with `scraping.mode: "playwright"` SHALL define locators and wait selector. Status: superseded — Playwright plugins are Python classes inheriting `PlaywrightPluginBase`.
 
 #### Scenario: Playwright plugin with valid locators
 - **WHEN** a plugin has mode "playwright" and defines `search_url_template`, `wait_for_selector`, `locators.row`, `locators.title`, `locators.download_link`
@@ -91,7 +91,7 @@ YAML plugins with `scraping.mode: "playwright"` SHALL define locators and wait s
 - **AND** the error message includes "playwright mode requires 'locators' field"
 
 ### Requirement: Python Plugin Protocol Validation
-The system SHALL validate Python plugins implement the required protocol.
+The system SHALL validate Python plugins implement the required protocol. Status: implemented in `load_python_plugin()` (`src/scavengarr/infrastructure/plugins/loader.py`), which also requires a non-empty `name` attribute ("Plugin must have non-empty 'name' attribute").
 
 #### Scenario: Valid Python plugin loaded
 - **WHEN** a `.py` file exports `plugin` variable with a `search` method
@@ -113,8 +113,8 @@ The system SHALL validate Python plugins implement the required protocol.
 - **THEN** a `PluginLoadError` is raised
 - **AND** the error message includes the syntax error traceback
 
-### Requirement: Authentication Configuration
-The system SHALL support authentication configuration for YAML plugins via the `auth` section.
+### Requirement: Authentication Configuration (superseded)
+The system SHALL support authentication configuration for YAML plugins via the `auth` section. Status: superseded — Python plugins implement authentication themselves (e.g. boerse, mygully, dataload); a plain `AuthConfig` dataclass remains in `src/scavengarr/domain/plugins/plugin_schema.py`.
 
 #### Scenario: No authentication
 - **WHEN** a plugin has `auth.type: "none"` or omits the `auth` field
@@ -139,9 +139,9 @@ The system SHALL support authentication configuration for YAML plugins via the `
 - **AND** the error message includes "form auth requires 'login_url' field"
 
 ### Requirement: Plugin Registry Access
-The system SHALL provide a registry to retrieve loaded plugins by name or filter by criteria.
+The system SHALL provide a registry to retrieve loaded plugins by name or filter by criteria. Status: implemented as `PluginRegistry.get()`, `list_names()`, `get_mode(name)`, `get_by_provides(provides)` and `get_languages(name)`; the YAML scenarios and `get_by_mode()` are superseded.
 
-#### Scenario: Get plugin by name (YAML)
+#### Scenario: Get plugin by name (YAML) (superseded)
 - **WHEN** a YAML plugin named "1337x" is loaded
 - **AND** `PluginRegistry.get("1337x")` is called
 - **THEN** a `PluginDefinition` object is returned
@@ -160,28 +160,28 @@ The system SHALL provide a registry to retrieve loaded plugins by name or filter
 - **AND** `PluginRegistry.list_names()` is called
 - **THEN** a list `["1337x", "my-gully", "rarbg"]` is returned (alphabetically sorted)
 
-#### Scenario: Filter plugins by mode (Scrapy)
+#### Scenario: Filter plugins by mode (Scrapy) (superseded)
 - **WHEN** YAML plugins "1337x" (scrapy) and "yggtorrent" (playwright) are loaded
 - **AND** `PluginRegistry.get_by_mode("scrapy")` is called
 - **THEN** only the "1337x" plugin is returned
 
-#### Scenario: Filter plugins by mode (Playwright)
+#### Scenario: Filter plugins by mode (Playwright) (superseded)
 - **WHEN** YAML plugins "1337x" (scrapy) and "yggtorrent" (playwright) are loaded
 - **AND** `PluginRegistry.get_by_mode("playwright")` is called
 - **THEN** only the "yggtorrent" plugin is returned
 
-#### Scenario: Filter plugins ignores Python plugins
+#### Scenario: Filter plugins ignores Python plugins (superseded)
 - **WHEN** mixed YAML and Python plugins are loaded
 - **AND** `PluginRegistry.get_by_mode("scrapy")` is called
 - **THEN** only YAML plugins with `scraping.mode: "scrapy"` are returned
 - **AND** Python plugins are excluded from results
 
 ### Requirement: Plugin Name Uniqueness
-The system SHALL enforce unique plugin names across all loaded plugins.
+The system SHALL enforce unique plugin names across all loaded plugins. Status: partially implemented — `DuplicatePluginError` exists in `src/scavengarr/domain/plugins/exceptions.py` but is never raised; `list_names()` skips duplicate names and the first-loaded plugin wins.
 
 #### Scenario: Duplicate plugin names rejected
 - **WHEN** two files `duplicate.yaml` and `duplicate.py` both define `name: "duplicate"`
-- **THEN** the second plugin raises a `DuplicatePluginError` with message "Plugin name 'duplicate' already exists"
+- **THEN** the second plugin raises a `DuplicatePluginError` with message "Plugin name 'duplicate' already exists" (not implemented: the duplicate is silently skipped)
 - **AND** only the first-loaded plugin is retained in the registry
 
 ### Requirement: Lazy Loading
@@ -190,11 +190,11 @@ The system SHALL defer parsing plugin files until first access to improve startu
 #### Scenario: Plugin not parsed during discovery
 - **WHEN** `PluginRegistry.discover()` is called
 - **THEN** plugin files are indexed but not parsed
-- **AND** no YAML/Python execution occurs
+- **AND** no Python execution occurs
 
 #### Scenario: Plugin parsed on first access
-- **WHEN** `PluginRegistry.get("1337x")` is called for the first time
-- **THEN** the `1337x.yaml` file is parsed and validated
+- **WHEN** `PluginRegistry.get("filmpalast")` is called for the first time
+- **THEN** the matching `.py` file is imported and validated
 - **AND** the plugin is cached in memory
 
 #### Scenario: Subsequent access uses cache
@@ -203,15 +203,15 @@ The system SHALL defer parsing plugin files until first access to improve startu
 - **THEN** no file I/O or parsing occurs
 - **AND** the cached plugin instance is returned
 
-#### Scenario: Force-load all plugins
-- **WHEN** `PluginRegistry.load_all()` is called
+#### Scenario: Force-load all plugins (superseded)
+- **WHEN** `PluginRegistry.load_all()` is called (method removed; `get_by_provides()` loads all plugins once to build its metadata cache)
 - **THEN** all discovered plugins are parsed and validated
 - **AND** all plugins are cached in memory
 
 ### Requirement: Error Logging
 The system SHALL log detailed errors for plugin load and validation failures.
 
-#### Scenario: YAML validation error logged
+#### Scenario: YAML validation error logged (superseded)
 - **WHEN** a YAML plugin fails Pydantic validation
 - **THEN** a log entry is created with level ERROR
 - **AND** the log includes fields: `event="plugin_validation_failed"`, `plugin_file="path/to/file.yaml"`, `error_type="ValidationError"`, `error_details=[...]`
@@ -219,7 +219,7 @@ The system SHALL log detailed errors for plugin load and validation failures.
 #### Scenario: Python import error logged
 - **WHEN** a Python plugin fails to import due to syntax error
 - **THEN** a log entry is created with level ERROR
-- **AND** the log includes fields: `event="plugin_load_failed"`, `plugin_file="path/to/file.py"`, `error_type="SyntaxError"`, `error_message="..."`
+- **AND** the log includes fields: `event="plugin_load_failed"`, `plugin_file="path/to/file.py"`, `plugin_type="python"`, `error_type="PluginLoadError"` (the `SyntaxError` is wrapped), `error_message="..."` (contains the traceback)
 
 #### Scenario: Plugin discovery logged
 - **WHEN** `PluginRegistry.discover()` is called
@@ -229,14 +229,14 @@ The system SHALL log detailed errors for plugin load and validation failures.
 #### Scenario: Plugin loaded logged
 - **WHEN** a plugin is successfully loaded
 - **THEN** a log entry is created with level INFO
-- **AND** the log includes fields: `event="plugin_loaded"`, `plugin_name="<name>"`, `plugin_type="yaml"|"python"`
+- **AND** the log includes fields: `event="plugin_loaded"`, `plugin_name="<name>"`, `plugin_type="python"`
 
 ### Requirement: Plugin Integration with Application
 The system SHALL initialize the plugin registry on application startup.
 
 #### Scenario: Registry initialized on FastAPI startup
 - **WHEN** the FastAPI application starts
-- **THEN** a `PluginRegistry` instance is created with the configured plugin directory
+- **THEN** a `PluginRegistry` instance is created with the configured plugin directory (in `src/scavengarr/interfaces/composition.py`)
 - **AND** `PluginRegistry.discover()` is called
 - **AND** the total count of discovered plugins is logged
 
@@ -247,11 +247,3 @@ The system SHALL initialize the plugin registry on application startup.
 #### Scenario: Default plugin directory used
 - **WHEN** `SCAVENGARR_PLUGIN_DIR` is not set
 - **THEN** the registry uses `./plugins` as the default directory
-
-- Manual validation: Error-prone, no type hints
-
-### Decision 3: Protocol-Based Python Plugin Validation
-**Rationale**:
-- Python `typing.Protocol` provides structural typing without inheritance
-- Plugins don't need to import/extend base classes (loose coupling)
-- Duck-typing validation: "If it has a `search` method with correct signature, it's valid"
