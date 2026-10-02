@@ -1,6 +1,6 @@
-"""Generic DDL hoster resolver — consolidates 11 identical DDL-based resolvers.
+"""Generic DDL hoster resolver — consolidates 10 identical DDL-based resolvers.
 
-Consolidates alfafile, alphaddl, fastpic, filecrypt, filefactory, fsst, go4up,
+Consolidates alfafile, alphaddl, fastpic, filecrypt, filefactory, go4up,
 nitroflare, onefichier, turbobit, and uploaded into a single
 parameterised implementation.  Each hoster is described by a
 ``GenericDDLConfig`` — name, domains, file-ID regex, offline markers, and
@@ -238,17 +238,6 @@ FILEFACTORY = GenericDDLConfig(
     ),
 )
 
-FSST = GenericDDLConfig(
-    name="fsst",
-    domains=frozenset({"fsst"}),
-    file_id_re=re.compile(r"^/(?:e/|d/)?([a-zA-Z0-9]+)$"),
-    offline_markers=(
-        "File Not Found",
-        "file was removed",
-        "Video not found",
-    ),
-)
-
 GO4UP = GenericDDLConfig(
     name="go4up",
     domains=frozenset({"go4up"}),
@@ -334,7 +323,6 @@ ALL_DDL_CONFIGS: tuple[GenericDDLConfig, ...] = (
     FASTPIC,
     FILECRYPT,
     FILEFACTORY,
-    FSST,
     GO4UP,
     NITROFLARE,
     ONEFICHIER,

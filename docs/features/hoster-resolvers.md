@@ -8,7 +8,7 @@
 
 ## Overview
 
-Scavengarr ships **60 hoster resolvers**: 24 individual resolvers, 11 generic DDL hosters consolidated in `GenericDDLResolver`, and 25 XFileSharingPro (XFS) hosters consolidated in `XFSResolver`. Every resolver checks whether a file is still available; video-extracting resolvers additionally return a direct `.mp4`/`.m3u8` URL plus the HTTP headers the CDN needs.
+Scavengarr ships **60 hoster resolvers**: 25 individual resolvers, 10 generic DDL hosters consolidated in `GenericDDLResolver`, and 25 XFileSharingPro (XFS) hosters consolidated in `XFSResolver`. Every resolver checks whether a file is still available; video-extracting resolvers additionally return a direct `.mp4`/`.m3u8` URL plus the HTTP headers the CDN needs.
 
 Resolvers are registered in `HosterResolverRegistry`, which dispatches each URL to a resolver by its second-level domain, follows redirects and plugin hoster hints for unknown domains, falls back to a HEAD content-type probe, and caches the outcome in memory.
 
@@ -57,6 +57,7 @@ Video-extracting resolvers set `ResolvedStream.headers` with the headers require
 | XFS video hosters | `Referer: <embed URL after redirects>` |
 | Veev | `Referer: <origin>/`, `User-Agent: <UA used to resolve>` (token is UA-bound) |
 | FireStream, Playmate, Vixeo, gxplayer | none (signed / public HLS URLs) |
+| fsst | none (KVS `get_file` links) |
 | StreamUp (strmup) | `Origin: <scheme>://<host>`, `Referer: <scheme>://<host>/` |
 | Vidsonic | `Origin: <scheme>://<host>`, `Referer: <scheme>://<host>/` |
 
@@ -112,6 +113,7 @@ Extract a direct video URL (`.mp4`/`.m3u8`) from an embed page.
 | Vidsonic | `vidsonic` | `vidsonic` | Hex-obfuscated, pipe-delimited HLS URL decoding |
 | Mixdrop | `mixdrop` | `mixdrop`, `mxdrop`, `m1xdrop`, `mixdrop23`, `mixdrp`, `miixdrop`, … (12 names from JD2 `MixdropCo`, without its dead ones) | Embed player (`/e/{id}`; `/f/` and `/emb/` read through it): `MDCore.wurl` from the packed setup (`unpacked_scripts()` in `_video_extract.py`) is the MP4 on the delivery CDN; a deleted file's player sets none. The CDN answers non-browser agents with 403 (was a validate-only DDL config until 2026-10-01: 36 of 36 mixdrop links were dropped as echo) |
 | gxplayer | `gxplayer` | `gxplayer.xyz` (`/watch?v=<8 chars>`; megakino's "Stream in HD" tab) | Port of JD2 `GxplayerXyz`: the watch page's video object (`"id"`, `"uid"`, `"md5"`) gives the HLS master `/m3u8/{uid}/{md5}/master.txt?s=1&id={id}&cache=1` on the page's host; "Video is not found" (a 200 page) or 404 means gone. Its segments are MPEG-TS served as `font/woff` under `.html` names |
+| fsst | `fsst` | `fsst.online` (`/embed/<id>/`, `/videos/<id>/…`; kinoger's first player tab) | The embed page redirects to its Kernel Video Sharing player host (incvideo1.online), whose Playerjs setup lists every quality (`file:"[360p]<url>,[720p]<url>,[1080p]<url>"`); the best one is taken. The `get_file` links redirect to the MP4 on the CDN. 404 (a player playing `video_error.mp4`) means gone. Was a validate-only DDL config whose ID pattern (`/<id>`) did not match the `/embed/<id>/` links kinoger serves, so every fsst link was dropped |
 
 ### Validate-only resolvers (individual)
 
@@ -142,9 +144,9 @@ Validate file availability without extracting a video URL and return the canonic
 | Mediafire | `mediafire` | `mediafire` | Public file info API; offline on error `110`/`111` or a set `delete_date` |
 | GoFile | `gofile` | `gofile` | Guest token (cached 25 min; one guest account at a time, GoFile throttles their creation with 429) + content availability API. A token GoFile drops early (401 `error-wrongToken`) is renewed once. Known issue: GoFile currently refuses guest lookups (401 `error-notPremium`; its website adds an `X-Website-Token` from an obfuscated script), so GoFile links do not resolve (`gofile_guest_access_refused`) |
 
-### Generic DDL resolvers (11 hosters)
+### Generic DDL resolvers (10 hosters)
 
-`GenericDDLResolver` in `generic_ddl.py` handles 11 hosters, each described by a `GenericDDLConfig` (`name`, `domains`, `file_id_re`, `offline_markers`, `file_id_source` = `"path"` or `"query"`, `min_file_id_len`). The resolver GETs the URL, treats non-200 responses, offline markers, and redirects to an error page as offline, and otherwise returns the original URL. Error pages are recognised by `is_error_redirect()` (`_verify.py`, shared by all resolvers with that check): a path segment or query key `404`/`error`/`errors`, never a substring — "The.Terror.S01E01.mkv" is a file, not an error page. File-ID regexes accept a file name or extra parameters after the ID (`/view/<id>/Movie.mkv`, `?<id>&af=…`), as JDownloader's patterns do. Offline markers must be notices (`"404 Not Found"`, `"<title>404"`), not strings a live page can contain (`"404"` matches a colour like `#404040`).
+`GenericDDLResolver` in `generic_ddl.py` handles 10 hosters, each described by a `GenericDDLConfig` (`name`, `domains`, `file_id_re`, `offline_markers`, `file_id_source` = `"path"` or `"query"`, `min_file_id_len`). The resolver GETs the URL, treats non-200 responses, offline markers, and redirects to an error page as offline, and otherwise returns the original URL. Error pages are recognised by `is_error_redirect()` (`_verify.py`, shared by all resolvers with that check): a path segment or query key `404`/`error`/`errors`, never a substring — "The.Terror.S01E01.mkv" is a file, not an error page. File-ID regexes accept a file name or extra parameters after the ID (`/view/<id>/Movie.mkv`, `?<id>&af=…`), as JDownloader's patterns do. Offline markers must be notices (`"404 Not Found"`, `"<title>404"`), not strings a live page can contain (`"404"` matches a colour like `#404040`).
 
 | Hoster | Domains | Notes |
 |---|---|---|
@@ -153,7 +155,6 @@ Validate file availability without extracting a video URL and return the canonic
 | Fastpic | `fastpic` | Image host, `/view/` and `/fullview/` paths |
 | Filecrypt | `filecrypt` | `/Container/{id}` validation |
 | FileFactory | `filefactory` | `/file/{id}` |
-| FSST | `fsst` | Optional `/e/` or `/d/` prefix |
 | Go4up | `go4up` | `/dl/` and `/link/` paths |
 | Nitroflare | `nitroflare`, `nitro` | `/view/` and `/watch/` paths |
 | 1fichier | `1fichier`, `alterupload`, `cjoint`, `desfichiers`, `dfichiers`, `megadl`, `mesfichiers`, `piecejointe`, `pjointe`, `tenvoi`, `dl4free` | File ID taken from the query string |
@@ -162,9 +163,9 @@ Validate file availability without extracting a video URL and return the canonic
 
 Adding a new generic DDL hoster requires only a `GenericDDLConfig` constant appended to `ALL_DDL_CONFIGS`. Tests are parameterised automatically.
 
-### XFS resolvers (26 hosters)
+### XFS resolvers (25 hosters)
 
-`XFSResolver` in `xfs.py` handles 27 XFileSharingPro-based hosters, each described by an `XFSConfig`:
+`XFSResolver` in `xfs.py` handles 25 XFileSharingPro-based hosters, each described by an `XFSConfig`:
 
 - `name` — resolver identifier
 - `domains` — `frozenset` of second-level domain names for URL matching

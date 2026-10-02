@@ -42,6 +42,7 @@ from scavengarr.infrastructure.hoster_resolvers.doodstream import DoodStreamReso
 from scavengarr.infrastructure.hoster_resolvers.filemoon import FilemoonResolver
 from scavengarr.infrastructure.hoster_resolvers.filernet import FilerNetResolver
 from scavengarr.infrastructure.hoster_resolvers.firestream import FirestreamResolver
+from scavengarr.infrastructure.hoster_resolvers.fsst import FsstResolver
 from scavengarr.infrastructure.hoster_resolvers.generic_ddl import (
     create_all_ddl_resolvers,
 )
@@ -491,10 +492,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             ),
             VinovoResolver(http_client=state.http_client),
             GxplayerResolver(http_client=state.http_client),
+            FsstResolver(http_client=state.http_client),
             # DDL resolvers (custom — non-XFS)
             MediafireResolver(http_client=state.http_client),
             GoFileResolver(http_client=state.http_client),
-            # DDL resolvers (consolidated — 12 hosters)
+            # DDL resolvers (consolidated — 10 hosters)
             *create_all_ddl_resolvers(http_client=state.http_client),
             # XFS resolvers (consolidated — 25 hosters)
             *create_all_xfs_resolvers(

@@ -35,7 +35,6 @@ _VALID_URLS: dict[str, str] = {
     "fastpic": "https://fastpic.org/view/123/abcdef01234567890123456789abcdef.jpg",
     "filecrypt": "https://filecrypt.cc/Container/ABC123def",
     "filefactory": "https://filefactory.com/file/abc123",
-    "fsst": "https://fsst.online/abc123def",
     "go4up": "https://go4up.com/dl/abc123def",
     "nitroflare": "https://nitroflare.com/view/ABCDEF123",
     "1fichier": "https://1fichier.com/?abc12345",
@@ -72,7 +71,7 @@ class TestGenericDDLConfigInvariants:
             assert len(cfg.offline_markers) > 0, f"{cfg.name} has no markers"
 
     def test_config_count(self) -> None:
-        assert len(ALL_DDL_CONFIGS) == 11
+        assert len(ALL_DDL_CONFIGS) == 10
 
     def test_configs_are_frozen(self) -> None:
         for cfg in ALL_DDL_CONFIGS:

@@ -8,6 +8,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 Massive expansion of the plugin ecosystem (2 → 42 plugins), Stremio addon integration, 59 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4588 tests (4547 excluding the opt-in live tests).
 
+### Feature: fsst Streams Play (kinoger's First Player Tab)
+- fsst was a validate-only generic DDL config whose ID pattern (`/<id>`) did not match the `fsst.online/embed/<id>/` links kinoger serves, so every fsst link resolved to nothing. On kinoger's single-player pages ("Wednesday", "John Wick: Kapitel 4") fsst is the only hoster.
+- `FsstResolver` (`fsst.py`) replaces the config: the embed page redirects to its Kernel Video Sharing player host (incvideo1.online), whose Playerjs setup lists every quality (`file:"[360p]<url>,[720p]<url>,[1080p]<url>"`). The best quality's `get_file` link is returned; it redirects to the MP4 on the CDN and needs no headers. A 404 page (its player plays `video_error.mp4`) means gone.
+- Checked live: 8 of 8 kinoger fsst links (films and episodes) resolve in 0.3–1.1 s to a 1080p MP4 that answers range requests; a `get_file` link still played after 25 minutes. Generic DDL hosters: 10 (was 11); 60 resolvers in total.
+
 ### Feature: kinoger's Own Player Resolves (kinoger.pw)
 - kinoger's "Stream HD" tab plays from `kinoger.pw/e/<id>`, which no resolver handled. The page is a white-label Vidara player: it credits "Vidara" and loads its stream with `POST /api/stream` (`{"device": "web", "filecode": id}`), like vidara.so. The `strmup` resolver's Vidara path now covers the `kinoger` domain. Checked live: 4 of 4 kinoger.pw links (films and episodes) resolve in 0.4–0.7 s, playlists and segments load; an unknown id answers 404.
 

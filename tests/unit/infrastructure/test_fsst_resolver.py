@@ -5,12 +5,12 @@ from __future__ import annotations
 import httpx
 import pytest
 import respx
+
+from scavengarr.domain.entities.stremio import StreamQuality
 from scavengarr.infrastructure.hoster_resolvers.fsst import (
     FsstResolver,
     _extract_file_id,
 )
-
-from scavengarr.domain.entities.stremio import StreamQuality
 
 _EMBED = "https://fsst.online/embed/992734/"
 _PLAYER = "https://incvideo1.online/embed/992734/"
