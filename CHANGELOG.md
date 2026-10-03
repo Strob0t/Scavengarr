@@ -4,7 +4,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ---
 
-## Unreleased (staging)
+## v0.2.2 - 2026-10-03
+
+Reverse-proxy fix: `docker-compose.yml` trusts the proxy's forwarded headers from private networks, so stream proxy and Torznab links use `https://`.
 
 ### Fix: http:// Links Behind a Reverse Proxy
 - Behind Caddy the production instance built its stream proxy URLs and Torznab links as `http://scavengarr.lan/…`: uvicorn honors `X-Forwarded-Proto` only from 127.0.0.1, and the proxy reaches the container from the Docker gateway. Every playlist and segment request through the HLS proxy then took a 308 redirect first, and a browser would block the links as mixed content.
