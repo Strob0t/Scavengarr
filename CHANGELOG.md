@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: kinoger Returned Nothing Behind Its New Verification Page
+- Since 2026-10-03 kinoger answers browsers with a "Verification..." page (HostAdmin WAF behind Cloudflare): a proof of work in a web worker, about a second, then a redirect titled "Loading <url>" and cookies `ha-waf-ticket`/`ha-waf-hash` (30 min). The stealth browser knew only Cloudflare's challenge titles and returned the verification page as the search result, so every kinoger search found 0 hits (25 of 25 in the end-to-end test).
+- Both titles count as challenge titles now (`is_challenge_page`), so the browser waits for the real page; the clearance store keeps the `ha-waf-*` cookies like `cf_clearance`. Checked live: in the stealth browser the verification page cleared by itself after about a second (twice, with fresh cookies), and searches return their hits again (Oppenheimer 3, Barbie 10, Dune 9 cards). In that last run the WAF did not challenge again, so the wait itself is covered by the unit tests.
+
 ### Fix: moflix Served Its Paid Player as a Stream
 - moflix lists a "Premium (No Ads)" video next to the hoster mirrors: HLS on `moflix-stream.day` (`/movies/<release>/master.m3u8?md5=…&expires=…`). It is moflix's paid player (5 EUR a month): the master playlist answers anyone, every variant playlist answers 403 without a paid session (also with the master's token, Referer or Origin). The playback check reads only the master, so these streams were offered as "VIDHIDE · moflix" and failed in the player. v0.2.0's entry "moflix's Own HLS Streams Were Never Played" fixed their dispatch but not this.
 - The plugin drops videos named "Premium". Found by the end-to-end test against Stremio: 2 of 2 checked variants answered 403; moflix's watch page shows the paywall.
