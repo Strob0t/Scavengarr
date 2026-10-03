@@ -1,10 +1,11 @@
 """Keep bot-challenge clearance cookies across restarts.
 
-Cloudflare (``cf_clearance``) and DDoS-Guard (``__ddg*``) grant a solved
-challenge as a cookie. Browser contexts live in memory, so a restart used to
-cost one challenge per protected host. The store keeps just these cookies in
-the cache (``CachePort``, diskcache or Redis) until they expire and puts them
-into every new browser context (docs/plans/captcha-solving.md, decision B3).
+Cloudflare (``cf_clearance``), DDoS-Guard (``__ddg*``) and the HostAdmin WAF
+(``ha-waf-*``) grant a solved challenge as a cookie. Browser contexts live in
+memory, so a restart used to cost one challenge per protected host. The store
+keeps just these cookies in the cache (``CachePort``, diskcache or Redis) until
+they expire and puts them into every new browser context
+(docs/plans/captcha-solving.md, decision B3).
 
 The cookies stay valid only for the same browser (User-Agent/TLS) and IP, and
 for ~20–45 min; a stale one merely costs a new challenge.
@@ -49,7 +50,8 @@ class _CookieJar(Protocol):
 
 def _is_clearance(cookie: dict[str, Any]) -> bool:
     name = str(cookie.get("name", ""))
-    return name == "cf_clearance" or name.startswith("__ddg")
+    # ha-waf-*: HostAdmin WAF ticket (kinoger), valid for 30 min
+    return name == "cf_clearance" or name.startswith(("__ddg", "ha-waf-"))
 
 
 def _alive(cookie: dict[str, Any], now: float) -> bool:

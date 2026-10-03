@@ -25,6 +25,10 @@ _CHALLENGE_TITLES: tuple[str, ...] = (
     "attention required",
     "nur einen moment",
     "einen moment",
+    # HostAdmin WAF (kinoger behind Cloudflare, 2026-10-03): a proof of work
+    # in a web worker (~1 s), then a redirect titled "Loading <url>"
+    "verification...",
+    "loading http",
 )
 _CHALLENGE_FRAME = "challenges.cloudflare.com"
 # The label wraps the checkbox and comes first in DOM order; clicking it was
@@ -43,7 +47,7 @@ def _now() -> float:
 
 
 async def is_challenge_page(page: Page) -> bool:
-    """Return True while *page* shows a Cloudflare challenge title."""
+    """Return True while *page* shows a challenge title (Cloudflare, WAF)."""
     try:
         title = await page.title()
     except Exception:  # noqa: BLE001  (navigation in progress)

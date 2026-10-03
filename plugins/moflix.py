@@ -40,6 +40,15 @@ _XSRF_COOKIE_TIMEOUT_MS = 10_000
 # ---------------------------------------------------------------------------
 
 
+def _is_premium(video: dict) -> bool:
+    """moflix's paid player ("Premium (No Ads)", HLS on moflix-stream.day).
+
+    Its master playlist answers anyone, every variant 403s without a paid
+    session, so no player can play it.
+    """
+    return "premium" in str(video.get("name") or "").lower()
+
+
 def _pre_filter_by_category(results: list[dict], category: int | None) -> list[dict]:
     """Filter search results by is_series based on Torznab category."""
     if category is None:
@@ -221,7 +230,7 @@ class MoflixPlugin(PlaywrightPluginBase):
         download_links: list[dict[str, str]] = []
         for video in videos:
             src = video.get("src", "")
-            if src:
+            if src and not _is_premium(video):
                 hoster = video.get("name", "Mirror")
                 quality = video.get("quality", "")
                 label = f"{hoster} ({quality})" if quality else hoster

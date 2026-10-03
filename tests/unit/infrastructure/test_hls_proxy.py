@@ -120,6 +120,95 @@ class TestRewriteManifest:
         result = rewrite_manifest(content, "https://cdn.example.com/", "http://proxy/")
         assert result == content
 
+    def test_root_relative_uri_goes_through_the_proxy(self) -> None:
+        """Vidsonic's master lists its variant from the CDN root
+        (``/secure/98/<id>/video.m3u8``): left as is, the player resolves
+        it against the proxy's host and gets a 404."""
+        cdn_base = "https://ve12.vidsonic.net/hls/r00nm90ihj96/"
+        proxy_base = "https://scavengarr.lan/api/v1/stremio/proxy/sid/"
+        content = (
+            "#EXTM3U\n"
+            '#EXT-X-STREAM-INF:BANDWIDTH=1646000,CODECS="avc1.64001f,mp4a.40.2"\n'
+            "/secure/98/r00nm90ihj96/video.m3u8?expires=1&md5=ab&server_id=3\n"
+        )
+
+        result = rewrite_manifest(content, cdn_base, proxy_base)
+
+        assert result.splitlines()[-1] == (
+            proxy_base
+            + "/secure/98/r00nm90ihj96/video.m3u8?expires=1&md5=ab&server_id=3"
+        )
+        # The proxy maps that path back to the CDN root
+        path = result.splitlines()[-1].removeprefix(proxy_base).split("?")[0]
+        assert build_cdn_url(cdn_base, path) == (
+            "https://ve12.vidsonic.net/secure/98/r00nm90ihj96/video.m3u8"
+        )
+
+    def test_same_host_url_outside_the_base_goes_through_the_proxy(self) -> None:
+        cdn_base = "https://cdn.example.com/hls/a/"
+        proxy_base = "http://proxy/p/sid/"
+        content = "#EXTM3U\n#EXTINF:10,\nhttps://cdn.example.com/seg/b/1.ts?t=x\n"
+
+        result = rewrite_manifest(content, cdn_base, proxy_base)
+
+        assert result.splitlines()[-1] == "http://proxy/p/sid//seg/b/1.ts?t=x"
+
+    def test_protocol_relative_uri_of_the_cdn(self) -> None:
+        cdn_base = "https://cdn.example.com/hls/a/"
+        proxy_base = "http://proxy/p/sid/"
+        content = "#EXTM3U\n#EXTINF:10,\n//cdn.example.com/seg/1.ts\n"
+
+        result = rewrite_manifest(content, cdn_base, proxy_base)
+
+        assert result.splitlines()[-1] == "http://proxy/p/sid//seg/1.ts"
+
+    @pytest.mark.parametrize(
+        "uri",
+        [
+            "https://other.example.net/aud/index.m3u8",
+            "//other.example.net/aud/index.m3u8",
+            "http://cdn.example.com/hls/a/seg.ts",  # other scheme: another origin
+        ],
+    )
+    def test_other_origins_stay_direct(self, uri: str) -> None:
+        """The proxy only fetches from the stream's own CDN."""
+        content = f"#EXTM3U\n#EXTINF:10,\n{uri}\n"
+
+        result = rewrite_manifest(
+            content, "https://cdn.example.com/hls/a/", "http://proxy/p/sid/"
+        )
+
+        assert result == content
+
+    def test_uri_attributes_of_tags(self) -> None:
+        """Audio renditions, keys and init segments sit in ``URI="…"``."""
+        cdn_base = "https://cdn.example.com/hls/a/"
+        proxy_base = "http://proxy/p/sid/"
+        content = (
+            "#EXTM3U\n"
+            '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="German",'
+            'URI="/aud/de/index.m3u8"\n'
+            '#EXT-X-KEY:METHOD=AES-128,URI="https://cdn.example.com/hls/a/key.bin"\n'
+            '#EXT-X-MAP:URI="init.mp4"\n'
+            '#EXT-X-MEDIA:TYPE=SUBTITLES,URI="https://subs.example.net/de.m3u8"\n'
+        )
+
+        lines = rewrite_manifest(content, cdn_base, proxy_base).splitlines()
+
+        assert lines[1].endswith('URI="http://proxy/p/sid//aud/de/index.m3u8"')
+        assert lines[2].endswith('URI="http://proxy/p/sid/key.bin"')
+        assert lines[3] == '#EXT-X-MAP:URI="init.mp4"'  # relative: resolves itself
+        assert lines[4].endswith('URI="https://subs.example.net/de.m3u8"')
+
+    def test_keeps_line_endings(self) -> None:
+        content = "#EXTM3U\r\n#EXTINF:10,\r\n/seg/1.ts\r\n"
+
+        result = rewrite_manifest(
+            content, "https://cdn.example.com/hls/", "http://proxy/p/sid/"
+        )
+
+        assert result == "#EXTM3U\r\n#EXTINF:10,\r\nhttp://proxy/p/sid//seg/1.ts\r\n"
+
 
 # ---------------------------------------------------------------------------
 # fetch_hls_resource

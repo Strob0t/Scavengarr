@@ -253,8 +253,8 @@ Always obtain pages via `_new_page()` / `_ensure_page()` (or the context from `_
 - `_context_options()` — keyword arguments for `browser.new_context()` (1280x720 viewport, `_browser_user_agent` if set); use it for extra contexts such as login contexts
 - `_ensure_context()` — returns the per-request context from `isolated_search()` if set, otherwise a persistent context built from `_context_options()` plus resource blocking
 - `_ensure_page()` — persistent page in the current context; `_new_page()` — fresh page, caller closes it
-- `_wait_for_cloudflare(page) -> bool` — solves a Cloudflare challenge via `browser/turnstile.solve_cloudflare()`: returns at once without a challenge title, otherwise waits ~3 s for an auto-clear, then clicks the Turnstile checkbox in the `challenges.cloudflare.com` iframe (re-click every 8 s); `False` on timeout. Needs a headful browser to pass. A solved challenge's clearance cookie is stored via `_remember_clearance(page)`
-- `set_clearance_store(store)` (static, wired in composition) — the `ClearanceStore` that restores `cf_clearance`/`__ddg*` cookies into every new context (`_configure_context`) and keeps them across restarts; `_remember_clearance(page)` stores them, for gates other than Cloudflare call it yourself
+- `_wait_for_cloudflare(page) -> bool` — solves a Cloudflare challenge via `browser/turnstile.solve_cloudflare()`: returns at once without a challenge title (Cloudflare's "Just a moment", and the HostAdmin WAF's "Verification..." and "Loading <url>" that kinoger shows since 2026-10-03), otherwise waits ~3 s for an auto-clear, then clicks the Turnstile checkbox in the `challenges.cloudflare.com` iframe (re-click every 8 s); `False` on timeout. Needs a headful browser to pass. A solved challenge's clearance cookie is stored via `_remember_clearance(page)`
+- `set_clearance_store(store)` (static, wired in composition) — the `ClearanceStore` that restores `cf_clearance`/`__ddg*`/`ha-waf-*` cookies into every new context (`_configure_context`) and keeps them across restarts; `_remember_clearance(page)` stores them, for gates other than Cloudflare call it yourself
 - `page.evaluate(js, arg, isolated_context=False)` — Patchright runs `evaluate` in an isolated world by default, where the site's own scripts (e.g. jQuery `$`) are invisible; pass `isolated_context=False` to use them (animeloads)
 - `_passes_cloudflare(page, resp) -> bool` — accepts a navigation: status `< 400`, or a 403/503 Cloudflare challenge page that gets solved
 - `_navigate_and_wait(page, url, *, wait_for_cf=True, wait_for_idle=True) -> bool` — `goto` (`domcontentloaded`), `_passes_cloudflare()`, `networkidle`; `False` on an error status that is not a solvable challenge
@@ -438,7 +438,7 @@ async def _wait_for_cloudflare(self, page: Page) -> bool:
     return solved
 ```
 
-A solved challenge's clearance cookie (`cf_clearance`, DDoS-Guard `__ddg*`) goes into the `ClearanceStore` and is restored into every new browser context, so restarts do not repeat the challenge while the cookie is valid. Plugins behind another gate (animeloads: DDoS-Guard) call `self._remember_clearance(page)` once the real page shows.
+A solved challenge's clearance cookie (`cf_clearance`, DDoS-Guard `__ddg*`, HostAdmin WAF `ha-waf-*`) goes into the `ClearanceStore` and is restored into every new browser context, so restarts do not repeat the challenge while the cookie is valid. Plugins behind another gate (animeloads: DDoS-Guard) call `self._remember_clearance(page)` once the real page shows.
 
 ### Bounded Concurrency
 

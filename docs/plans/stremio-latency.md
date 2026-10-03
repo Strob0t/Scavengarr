@@ -74,6 +74,7 @@ Same harness and title set (17 titles: German films, popular films, series, anim
 | 9 | title filter extra-words penalty, kinoger episodes, guessit 4, one devideosrc fetch per title; the right id for *Der Schuh des Manitu* | 14.6 / 15.6 s | 82 | 1 / 17 |
 | 10 | exact hit only for episode requests, mirror group (hdfilme for streamcloud/streamkiste), movie2k series and relevance, filmpalast relevance | 14.6 / 15.1 s | 83 | 0 / 17 |
 | 11 | kinoger films and single-player pages, resolvers for gxplayer, kinoger.pw (Vidara) and fsst streams | 14.4 / 15.0 s | 105 | 2 / 17 |
+| 12 | HLS proxy for CDN-root URIs (Vidsonic), moflix without its paid player, kinoger behind its new WAF page | 14.6 / 15.0 s | 90 | 1 / 17 |
 
 - The search phase decides the answer time: it ends 10 s after the request whenever one plugin still runs, which happened on most requests (kinoking's 12–17 s movie pages until its breaker opened, dead hosts in half-open probes, kinoger's Cloudflare solve, moflix). With the search done early (kinoking's movie breaker open), Inception and Interstellar were answered after 7–8 s instead of 15 s.
 - The resolve grace cuts the browser-resolved stragglers (DoodStream mirrors, Byse/Filemoon, Dropload's captcha) once a stream is there; it costs streams mostly on anime (aniworld 36 → 22–24 in runs 7/8), where those hosters carry sub variants. 4 s keeps the DoodStream mirrors of the measured requests; set 0 to wait until the deadline.
@@ -81,7 +82,30 @@ Same harness and title set (17 titles: German films, popular films, series, anim
 - Run 9 serves fewer wrong titles (the extra-words penalty dropped e.g. "Dark Matter" for "Dark"), so its stream count is not comparable one to one. Its title without a stream was Dark S01E01: s.to started 3 s late (every plugin slot busy), scraped "Dark", "Dark Matter" and "Dark Winds", and was cut by the search deadline. Episode requests now scrape an exact hit alone; afterwards Dark S01E01 was answered with s.to's stream in 10.8 s, and kinoger served S01E05 and S04E01 instead of S01E01.
 - Run 10: every title has streams again (Dark S01E01: s.to's stream after 10.7 s). movie2k serves series now (9 streams instead of 5, One Piece S01E01 among them) and s.to 5 instead of 3. hdfilme answers for its mirror group (9 streams); streamcloud and streamkiste are skipped. The median stays at 14.6 s: the search still ends 10 s after the request whenever one plugin keeps running.
 - Run 11: kinoger serves 18 streams instead of 1 (films again, fsst and kinoger.pw streams, single-player pages) and megakino 7 instead of 4 (gxplayer). The two titles without a stream are site state: *Good Bye, Lenin!* has only hdfilme's DoodStream link, whose browser resolve was unfinished at the deadline (0 streams in earlier runs too), and s.to needed more than the 10 s search budget for Dark S01E01 (as in run 9).
+- Run 12 (2026-10-03, after the end-to-end test below): kinoger had returned nothing that day (its new WAF page, read as the search result) and serves 14 streams again; moflix 5 instead of 10, the dropped five were its paid player that no player could play. Dark S01E01 again without a stream: s.to's link-outs were gated and the browser pass ran past the search budget.
 - An earlier search end (a soft deadline once most plugins answered, resolving while plugins still search, or a lower `plugin_timeout_seconds`) is the next lever for the median; each trades streams of slow sites for time. **Decision 2026-10-01: no**, the 10 s search budget stays for completeness.
+
+## End-to-end test with Stremio Web (2026-10-03)
+
+Production (`https://scavengarr.lan`, v0.2.0) as addon in the maintainer's Stremio Web (`https://stremio.lan`), driven with Playwright; then every stream followed to its media bytes with `scripts/stremio_playcheck.py`, the way a player fetches it.
+
+| Step | Result |
+|---|---|
+| Install the addon | OK (manifest v0.2.0) |
+| Search | OK: rows "Scavengarr Movies" and "Scavengarr Series" |
+| Stream list (film, episode) | OK: names, languages, sources, `bingeGroup` |
+| Playback in Stremio Web | **blocked**: stremio.lan's streaming server answers `/settings`, `/proxy/…` and the other server routes with nginx 400 "Request Header Or Cookie Too Large" even for a bare curl request, `/hlsv2/probe` with 502. Stremio Web plays `notWebReady` streams only through that server, so every stream ends in "Video is not supported" (code 83). A 400 for tiny requests points at a proxy loop: in tsaridas/stremio-docker nginx proxies these routes to `127.0.0.1:11470` (`server.js`); with its listen port also 11470 (e.g. `WEBUI_INTERNAL_PORT=11470`) nginx forwards to itself |
+
+Play check (master, variant, first segments; file start and a seek):
+
+| Instance, checked from | Playable | Failures |
+|---|---|---|
+| dev with the fixes, same machine | 79 of 81 | firestream segments 502, vidmoly variant 504 (CDN errors at that moment) |
+| production, from the home network | 41 of 72 | DoodStream 15 (`200 error_wrong_ip`), Vinovo 8 (403), Vidsonic 4 (proxy bug), moflix paid player 2 (variant 403), vidmoly 2 |
+
+- Fixed on `staging`: Vidsonic's variant comes from the CDN root and the HLS proxy left that URI to the player (404); moflix's "Premium (No Ads)" video is its paid player (variants 403 without a paid session); kinoger's new WAF page ("Verification...") was read as the search result (0 hits on every search); kinox ran its search and detail pages for episode requests it cannot answer.
+- **IP-bound streams:** production reaches the sites through a VPN (stream tokens name 185.107.94.2, AS43350 NForce), the home network is 92.209.223.18. DoodStream and Vinovo bind their stream URLs to the resolving IP, so a player on another IP gets `error_wrong_ip` or 403. Streams through Scavengarr's HLS proxy are fetched from Scavengarr's IP and are not affected; VEEV, Playmate and FireStream played from the other IP.
+- Production only: kinoger returned nothing (the WAF page; the fix is on `staging`), and s.to gave no episode streams while dev did.
 
 ## AIOStreams
 

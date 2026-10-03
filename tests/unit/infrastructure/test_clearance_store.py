@@ -49,6 +49,7 @@ class TestRemember:
             [
                 _cookie("cf_clearance", ".filmfans.org", soon, "SECRET-CF"),
                 _cookie("__ddg8_", ".anime-loads.org", soon, "SECRET-DDG"),
+                _cookie("ha-waf-ticket", ".kinoger.com", soon, "SECRET-WAF"),
                 _cookie("PHPSESSID", "filmfans.org", soon),
                 _cookie("cf_clearance", ".gone.example", time.time() - 5),
                 _cookie("cf_clearance", ".session.example", -1),
@@ -64,6 +65,7 @@ class TestRemember:
         assert [(c["name"], c["domain"]) for c in saved] == [
             ("cf_clearance", ".filmfans.org"),
             ("__ddg8_", ".anime-loads.org"),
+            ("ha-waf-ticket", ".kinoger.com"),
         ]
         assert "partitionKey" not in saved[0]
         assert 1700 < cache.set.await_args.kwargs["ttl"] <= 1800

@@ -12,9 +12,10 @@ subsequent resources through the proxy as well.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from collections.abc import AsyncIterator
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, urlsplit
 
 import httpx
 import structlog
@@ -34,6 +35,9 @@ _manifest_cache: dict[str, tuple[bytes, str, float]] = {}
 # Global semaphore for CDN proxy fetches (prevents stampede).
 _CDN_SEMAPHORE = asyncio.Semaphore(50)
 
+# URI attribute of an HLS tag (EXT-X-MEDIA, EXT-X-KEY, EXT-X-MAP, …)
+_URI_ATTR_RE = re.compile(r'URI="([^"]*)"')
+
 
 def cdn_base_from_url(video_url: str) -> str:
     """Extract the CDN base directory from a video URL.
@@ -52,21 +56,50 @@ def cdn_base_from_url(video_url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}{base_path}"
 
 
+def _proxy_uri(uri: str, cdn_base: str, proxy_base: str) -> str:
+    """*uri* as a proxy URL when it points at the stream's CDN, else as is.
+
+    Relative URIs stay: they resolve against the proxy URL of the playlist
+    that lists them, which mirrors the CDN path. A URI from the CDN's root
+    (``/secure/…``, ``//host/…`` or an absolute URL outside *cdn_base*)
+    becomes ``<proxy_base>/<path>``; the proxy joins that absolute path
+    with the CDN origin (``build_cdn_url``). Other origins stay direct:
+    the proxy only fetches from the stream's own CDN.
+    """
+    if uri.startswith(cdn_base):
+        return proxy_base + uri[len(cdn_base) :]
+    base = urlsplit(cdn_base)
+    if uri.startswith("//"):
+        target = urlsplit(f"{base.scheme}:{uri}")
+    elif uri.startswith("/"):
+        target = urlsplit(f"{base.scheme}://{base.netloc}{uri}")
+    else:
+        target = urlsplit(uri)
+        if target.scheme not in ("http", "https"):
+            return uri  # relative
+    if (target.scheme, target.netloc) != (base.scheme, base.netloc):
+        return uri
+    query = f"?{target.query}" if target.query else ""
+    return f"{proxy_base}{target.path}{query}"
+
+
 def rewrite_manifest(content: str, cdn_base: str, proxy_base: str) -> str:
-    """Replace absolute CDN URLs with proxy URLs in an HLS manifest.
+    """Point the CDN URIs of an HLS manifest at the proxy.
 
-    Only rewrites lines that start with the *cdn_base* (absolute CDN
-    URLs).  Relative URLs (``index-v1-a1.m3u8?t=...``) are left as-is
-    because they resolve against the proxy URL naturally.
-
-    Query parameters (auth tokens) are preserved.
+    Rewrites URI lines and the ``URI="…"`` attributes of tags (audio
+    renditions, keys, init segments) with ``_proxy_uri``. Query parameters
+    (auth tokens) and line endings are preserved.
     """
     lines: list[str] = []
     for line in content.splitlines(keepends=True):
         stripped = line.strip()
-        # Skip comment/tag lines — only rewrite URI lines
-        if stripped and not stripped.startswith("#") and stripped.startswith(cdn_base):
-            line = line.replace(cdn_base, proxy_base, 1)
+        if stripped.startswith("#"):
+            line = _URI_ATTR_RE.sub(
+                lambda m: f'URI="{_proxy_uri(m.group(1), cdn_base, proxy_base)}"',
+                line,
+            )
+        elif stripped:
+            line = line.replace(stripped, _proxy_uri(stripped, cdn_base, proxy_base), 1)
         lines.append(line)
     return "".join(lines)
 

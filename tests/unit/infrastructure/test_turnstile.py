@@ -93,7 +93,15 @@ def _fast(monkeypatch: pytest.MonkeyPatch) -> None:
 class TestIsChallengePage:
     @pytest.mark.parametrize(
         "title",
-        ["Just a moment...", "Attention Required! | Cloudflare", "Nur einen Moment…"],
+        [
+            "Just a moment...",
+            "Attention Required! | Cloudflare",
+            "Nur einen Moment…",
+            # HostAdmin WAF (kinoger since 2026-10-03): proof of work, then
+            # a redirect while the title shows the target URL
+            "Verification...",
+            "Loading https://kinoger.com/index.php?do=search&story=Oppenheimer",
+        ],
     )
     async def test_challenge_titles(self, title: str) -> None:
         assert await is_challenge_page(_page([title])) is True
@@ -119,6 +127,21 @@ class TestSolveCloudflare:
 
         assert await solve_cloudflare(page, timeout_ms=10_000) is True
         frame.locator.return_value.first.click.assert_not_awaited()
+
+    async def test_waits_for_the_waf_proof_of_work(self) -> None:
+        """kinoger's WAF clears itself in about a second; reading earlier
+        returned its "Verification..." page as the search result."""
+        page = _page(
+            [
+                "Verification...",
+                "Verification...",
+                "Loading https://kinoger.com/index.php?do=search",
+                "Website-Suche",
+            ]
+        )
+
+        assert await solve_cloudflare(page, timeout_ms=10_000) is True
+        assert page.title.await_count == 4
 
     async def test_clicks_checkbox_in_challenge_frame(self) -> None:
         other = _frame("https://filmfans.org/")

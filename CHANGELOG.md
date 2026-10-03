@@ -4,6 +4,29 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ---
 
+## v0.2.1 - 2026-10-03
+
+Fixes from the first end-to-end test against Stremio Web: Vidsonic streams through the HLS proxy, moflix without its paid player, kinoger behind its new WAF page, kinox without work for episode requests, and a play check script that follows every stream to its media bytes.
+
+### Chore: Play Check Script for Stremio Streams
+- `scripts/stremio_playcheck.py` fetches every stream of a running instance the way a player does: HLS from the master to the first segments, files from the start and once in the middle, with the stream's `proxyHeaders`. The server's playback check reads only the start of a stream; this one found the Vidsonic proxy bug, moflix's paid player and the IP-bound streams of a VPN setup. Results of the 2026-10-03 end-to-end test: `docs/plans/stremio-latency.md`.
+
+### Perf: kinox Skips Episode Requests Without a Request
+- kinox cannot answer a season or episode request (its mirror API serves a series page's default episode, and films are another category), but it searched and loaded the closest hits with their mirrors before dropping them: "Dark" S01E01 loaded "Dark Paradise", "Dark Harvest" and "Dark Hearts". In the Stremio test s.to started 2 s late on that request (plugin slots busy) and was cut. kinox now returns at once for season requests.
+
+### Fix: kinoger Returned Nothing Behind Its New Verification Page
+- Since 2026-10-03 kinoger answers browsers with a "Verification..." page (HostAdmin WAF behind Cloudflare): a proof of work in a web worker, about a second, then a redirect titled "Loading <url>" and cookies `ha-waf-ticket`/`ha-waf-hash` (30 min). The stealth browser knew only Cloudflare's challenge titles and returned the verification page as the search result, so every kinoger search found 0 hits (25 of 25 in the end-to-end test).
+- Both titles count as challenge titles now (`is_challenge_page`), so the browser waits for the real page; the clearance store keeps the `ha-waf-*` cookies like `cf_clearance`. Checked live: in the stealth browser the verification page cleared by itself after about a second (twice, with fresh cookies), and searches return their hits again (Oppenheimer 3, Barbie 10, Dune 9 cards). In that last run the WAF did not challenge again, so the wait itself is covered by the unit tests.
+
+### Fix: moflix Served Its Paid Player as a Stream
+- moflix lists a "Premium (No Ads)" video next to the hoster mirrors: HLS on `moflix-stream.day` (`/movies/<release>/master.m3u8?md5=…&expires=…`). It is moflix's paid player (5 EUR a month): the master playlist answers anyone, every variant playlist answers 403 without a paid session (also with the master's token, Referer or Origin). The playback check reads only the master, so these streams were offered as "VIDHIDE · moflix" and failed in the player. v0.2.0's entry "moflix's Own HLS Streams Were Never Played" fixed their dispatch but not this.
+- The plugin drops videos named "Premium". Found by the end-to-end test against Stremio: 2 of 2 checked variants answered 403; moflix's watch page shows the paywall.
+
+### Fix: Vidsonic Streams Did Not Play Through the HLS Proxy
+- Found by the end-to-end test against Stremio: Vidsonic's master playlist lists its variant from the CDN root (`/secure/98/<id>/video.m3u8`). The HLS proxy rewrote only URIs starting with the stream's CDN directory, so the player resolved that path against Scavengarr's host and got a 404; every VIDSONIC stream (filmpalast) stopped after the master playlist.
+- The proxy now rewrites every URI of the stream's CDN, in URI lines and in the `URI="…"` attributes of tags (audio renditions, keys, init segments): root-relative and protocol-relative URIs and absolute CDN URLs outside the stream's directory become `<proxy>/<stream-id>//<path>`, which the proxy joins with the CDN origin. Relative URIs stay as they are; URIs of other origins stay direct (the proxy fetches from the stream's CDN only).
+- Checked live: Vidsonic, StreamUp and the XFS hosters play master, variant and segments through the proxy.
+
 ## v0.2.0 - 2026-10-02
 
 Massive expansion of the plugin ecosystem (2 → 41 plugins), Stremio addon integration, 60 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4808 tests (4767 excluding the opt-in live tests).
@@ -1123,5 +1146,6 @@ Current known issues:
 - **GoFile links do not resolve** (2026-09-29): GoFile refuses guest lookups (401 `error-notPremium`; its website adds an `X-Website-Token` from an obfuscated script).
 - **Vidmoly unreachable behind ad blockers** (2026-09-28): the embed page's script redirect sends non-browser clients (and the stealth browser, when the network blocks ad domains, e.g. Pi-hole) to an ad click tracker; no stream is reachable then.
 - **SuperVideo streams need a browser-like player** (2026-09-28): the CDN (`*.serversicuro.cc`) answers non-browser clients with a JavaScript redirect and then ad-tracker redirects; resolution works, playback in players without JavaScript does not.
+- **IP-bound streams** (2026-10-03): DoodStream and Vinovo bind a stream URL to the IP that resolved it (`200 error_wrong_ip`, 403 from another IP). They play only when the player's streaming server reaches the internet through Scavengarr's IP, e.g. both behind the same VPN; streams through the HLS proxy are not affected.
 - **Dead sites** (2026-10-01): megakino.to and movie4k.sx answer Cloudflare 522 (origin unreachable), so megakino_to and movie4k return nothing and the circuit breaker keeps them out of most requests; cineby's API host no longer resolves, and the shipped config disables it.
 - **Cloudflare-protected sites need a headful browser**: ddlspot, ddlvalley, scnsrc, filmfans, kinoger and serienfans only pass the interactive Turnstile with Patchright headful (Xvfb, `playwright.headless: false`) and `playwright.browser_fallback: true`. filmfans and serienfans rate-limit bursts (429): an uncached search takes ~2–2.5 min and can exceed Prowlarr's request timeout. See `docs/plans/antibot-patchright.md`.

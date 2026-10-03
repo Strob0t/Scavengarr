@@ -21,7 +21,6 @@ from urllib.parse import urljoin
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.relevance import (
-    SINGLE_TITLE_HITS,
     hit_title,
     relevant_hits,
 )
@@ -316,7 +315,6 @@ class KinoxPlugin(HttpxPluginBase):
         sem: asyncio.Semaphore,
         mirror_sem: asyncio.Semaphore,
         category: int | None,
-        season: int | None = None,
     ) -> SearchResult | None:
         """Fetch detail page for one search entry, then fetch mirror URLs.
 
@@ -329,12 +327,6 @@ class KinoxPlugin(HttpxPluginBase):
 
         async with sem:
             detail = await self._fetch_detail_page(url_path)
-
-        if season is not None and detail.is_series:
-            # The mirror API serves the page's default episode; it cannot be
-            # asked for a season/episode, so that would be the wrong episode
-            self._log.info("kinox_series_episode_unsupported", url=url_path)
-            return None
 
         # Extract slug: "/Stream/Batman_Begins.html" → "Batman_Begins"
         slug = url_path.replace("/Stream/", "").replace(".html", "")
@@ -380,10 +372,11 @@ class KinoxPlugin(HttpxPluginBase):
 
         Uses the search page to find movies/series, then fetches detail
         pages to extract year, hosters, and content type.
-        When *season* is provided nothing is returned for series: kinox's
-        mirror API only serves a page's default episode.
+        A season request gets nothing without a request: kinox's mirror API
+        only serves a series page's default episode, and films are another
+        category.
         """
-        if not query:
+        if not query or season is not None:
             return []
 
         # Accept movies (2xxx), TV (5xxx)
@@ -391,28 +384,17 @@ class KinoxPlugin(HttpxPluginBase):
             if not (2000 <= category < 3000 or 5000 <= category < 6000):
                 return []
 
-        # When season/episode are requested, restrict to series
-        effective_category = category
-        if season is not None and effective_category is None:
-            effective_category = 5000
-
         await self._ensure_client()
         await self._verify_domain()
 
-        search_entries = relevant_hits(
-            await self._search_page(query),
-            query,
-            hit_title,
-            limit=SINGLE_TITLE_HITS if season is not None else None,
-        )
+        search_entries = relevant_hits(await self._search_page(query), query, hit_title)
         if not search_entries:
             return []
 
         sem = self._new_semaphore()
         mirror_sem = self._new_semaphore()
         tasks = [
-            self._process_entry(e, sem, mirror_sem, effective_category, season)
-            for e in search_entries
+            self._process_entry(e, sem, mirror_sem, category) for e in search_entries
         ]
         task_results = await asyncio.gather(*tasks)
 
