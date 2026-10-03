@@ -1322,6 +1322,25 @@ class TestProxyHlsEndpoint:
         assert resp.headers.get("access-control-allow-origin") == "*"
 
     @patch(f"{_PROXY_MODULE}.fetch_hls_resource", new_callable=AsyncMock)
+    def test_head_on_manifest(self, mock_fetch: AsyncMock) -> None:
+        """Stremio Web asks for the content type with HEAD before it plays
+        (stremio-video's getContentType); a 405 without CORS headers ended
+        every proxied stream in "Video is not supported"."""
+        mock_fetch.return_value = (
+            b"#EXTM3U\n#EXTINF:10.0,\nseg-1.ts\n#EXT-X-ENDLIST\n",
+            "application/vnd.apple.mpegurl",
+        )
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=_make_hls_link())
+        client = TestClient(_make_app(stream_link_repo=repo))
+
+        resp = client.head(f"{_PREFIX}/stremio/proxy/hls-abc/master.m3u8?t=abc")
+
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "application/vnd.apple.mpegurl"
+        assert resp.headers.get("access-control-allow-origin") == "*"
+
+    @patch(f"{_PROXY_MODULE}.fetch_hls_resource", new_callable=AsyncMock)
     def test_variant_from_the_cdn_root(self, mock_fetch: AsyncMock) -> None:
         """Vidsonic lists its variant from the CDN root; the player follows
         the rewritten URL and the proxy fetches it from that root."""

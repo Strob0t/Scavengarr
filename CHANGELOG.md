@@ -4,6 +4,13 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ---
 
+## Unreleased (staging)
+
+### Fix: HLS-Proxy Streams in Stremio Web
+- In Stremio Web every stream through the HLS proxy (VOE, Vidsonic, StreamUp, XFS hosters) ended in error 83, "Video is not supported", whenever the streaming server could not probe it. Stremio Web then reads the stream's content type with a `HEAD` request (stremio-video's `getContentType`), and the proxy answered `HEAD` with 405 without CORS headers.
+- `HEAD` on `/api/v1/stremio/proxy/{stream_id}/{path}` now answers like `GET`; the server drops the body.
+- `docs/features/stremio-addon.md`: Stremio Web plays `proxyHeaders` streams through a streaming server, so the old "Web: not supported" row is fixed. New notes on self-hosted streaming servers: they must reach Scavengarr's and their own public names (a VPN container's DNS and firewall prevent it), and tsaridas/stremio-docker's nginx answers disguised HLS segments (`…_000.css`) with 404.
+
 ## v0.2.2 - 2026-10-03
 
 Reverse-proxy fix: `docker-compose.yml` trusts the proxy's forwarded headers from private networks, so stream proxy and Torznab links use `https://`.

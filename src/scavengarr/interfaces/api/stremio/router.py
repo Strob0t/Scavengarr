@@ -414,7 +414,9 @@ def _cdn_error_response(
     return _error_json(502, "CDN request failed")
 
 
-@router.get("/proxy/{stream_id}/{path:path}", response_model=None)
+@router.api_route(
+    "/proxy/{stream_id}/{path:path}", methods=["GET", "HEAD"], response_model=None
+)
 async def proxy_hls(
     stream_id: str,
     path: str,
@@ -428,6 +430,9 @@ async def proxy_hls(
     ``.ts`` segments get 403.  This endpoint fetches resources
     server-side with the stored headers and rewrites manifest URLs so
     the HLS player routes subsequent requests through the proxy too.
+
+    HEAD answers like GET (the server drops the body): Stremio Web reads
+    the stream's content type with a HEAD request before it plays.
     """
     state = cast(AppState, request.app.state)
 
