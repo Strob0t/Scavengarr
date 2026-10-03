@@ -4,7 +4,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ---
 
-## Unreleased (staging)
+## v0.2.1 - 2026-10-03
+
+Fixes from the first end-to-end test against Stremio Web: Vidsonic streams through the HLS proxy, moflix without its paid player, kinoger behind its new WAF page, kinox without work for episode requests, and a play check script that follows every stream to its media bytes.
 
 ### Chore: Play Check Script for Stremio Streams
 - `scripts/stremio_playcheck.py` fetches every stream of a running instance the way a player does: HLS from the master to the first segments, files from the start and once in the middle, with the stream's `proxyHeaders`. The server's playback check reads only the start of a stream; this one found the Vidsonic proxy bug, moflix's paid player and the IP-bound streams of a VPN setup. Results of the 2026-10-03 end-to-end test: `docs/plans/stremio-latency.md`.
@@ -1144,5 +1146,6 @@ Current known issues:
 - **GoFile links do not resolve** (2026-09-29): GoFile refuses guest lookups (401 `error-notPremium`; its website adds an `X-Website-Token` from an obfuscated script).
 - **Vidmoly unreachable behind ad blockers** (2026-09-28): the embed page's script redirect sends non-browser clients (and the stealth browser, when the network blocks ad domains, e.g. Pi-hole) to an ad click tracker; no stream is reachable then.
 - **SuperVideo streams need a browser-like player** (2026-09-28): the CDN (`*.serversicuro.cc`) answers non-browser clients with a JavaScript redirect and then ad-tracker redirects; resolution works, playback in players without JavaScript does not.
+- **IP-bound streams** (2026-10-03): DoodStream and Vinovo bind a stream URL to the IP that resolved it (`200 error_wrong_ip`, 403 from another IP). They play only when the player's streaming server reaches the internet through Scavengarr's IP, e.g. both behind the same VPN; streams through the HLS proxy are not affected.
 - **Dead sites** (2026-10-01): megakino.to and movie4k.sx answer Cloudflare 522 (origin unreachable), so megakino_to and movie4k return nothing and the circuit breaker keeps them out of most requests; cineby's API host no longer resolves, and the shipped config disables it.
 - **Cloudflare-protected sites need a headful browser**: ddlspot, ddlvalley, scnsrc, filmfans, kinoger and serienfans only pass the interactive Turnstile with Patchright headful (Xvfb, `playwright.headless: false`) and `playwright.browser_fallback: true`. filmfans and serienfans rate-limit bursts (429): an uncached search takes ~2–2.5 min and can exceed Prowlarr's request timeout. See `docs/plans/antibot-patchright.md`.
