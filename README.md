@@ -198,7 +198,7 @@ The browser also needs system libraries: install them once with `sudo poetry run
    ```
 3. Click **Install**. Open any movie or episode; Scavengarr's streams appear in the stream list.
 
-Stremio only loads addons over **HTTPS** (except on `localhost`). Put Scavengarr behind a reverse proxy with a certificate (Caddy, Traefik, nginx) when you use it from other devices. Details: [Stremio addon](docs/features/stremio-addon.md).
+Stremio only loads addons over **HTTPS** (except on `localhost`). Put Scavengarr behind a reverse proxy with a certificate (Caddy, Traefik, nginx) when you use it from other devices; `docker-compose.yml` trusts the proxy's `X-Forwarded-Proto` from private networks (`FORWARDED_ALLOW_IPS`), so the links Scavengarr builds use `https://`. Details: [Stremio addon](docs/features/stremio-addon.md).
 
 ### Prowlarr (and through it Sonarr/Radarr)
 

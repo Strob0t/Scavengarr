@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from uvicorn.middleware.proxy_headers import _TrustedHosts
 
 _ROOT = Path(__file__).resolve().parents[3]
 
@@ -24,6 +25,21 @@ _EXECUTED_DIRECTLY = [
     ".devcontainer/setup.sh",
     ".devcontainer/sync-jdownloader.sh",
 ]
+
+
+def test_compose_trusts_a_reverse_proxy_on_private_networks() -> None:
+    """Behind Caddy, Traefik or nginx the app must honor X-Forwarded-Proto,
+    or it writes http:// stream proxy and Torznab links (a redirect per
+    request, mixed content in a browser). uvicorn trusts 127.0.0.1 only; the
+    proxy reaches the container from the Docker gateway or the LAN."""
+    compose = yaml.safe_load((_ROOT / "docker-compose.yml").read_text())
+    value = compose["services"]["scavengarr"]["environment"]["FORWARDED_ALLOW_IPS"]
+
+    trusted = _TrustedHosts(value)
+
+    for host in ("127.0.0.1", "172.17.0.1", "172.20.0.1", "192.168.88.2", "10.1.2.3"):
+        assert host in trusted, host
+    assert "8.8.8.8" not in trusted
 
 
 def test_shipped_config_has_no_container_only_paths() -> None:

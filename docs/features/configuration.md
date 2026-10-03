@@ -143,8 +143,11 @@ Server bind address and port. These do not use the `SCAVENGARR_` prefix and are 
 |---|---|---|---|
 | `HOST` | string | `0.0.0.0` | Server bind address |
 | `PORT` | int | `7979` | Server bind port |
+| `FORWARDED_ALLOW_IPS` | string | `127.0.0.1,::1` | uvicorn: addresses or networks whose `X-Forwarded-Proto`/`X-Forwarded-For` are honored. `docker-compose.yml` sets the private networks (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`) |
 
 `HOST`/`PORT` may come from the real environment or a `--dotenv` file (the real environment wins); `--host`/`--port` take precedence over both.
+
+Behind a reverse proxy that terminates TLS (Caddy, Traefik, nginx) the app builds its absolute links (stream proxy URLs, Torznab feed links) from the request. It honors the proxy's `X-Forwarded-Proto` only from addresses in `FORWARDED_ALLOW_IPS`; a proxy outside that list gets `http://` links, which then cost a redirect per request and are blocked as mixed content in a browser. In Docker the proxy reaches the container from the bridge gateway (`172.16.0.0/12`), hence the private networks in `docker-compose.yml`. Every client in those networks can then set the headers too, which only affects its own links, the per-IP rate limit and the logged client address.
 
 ---
 

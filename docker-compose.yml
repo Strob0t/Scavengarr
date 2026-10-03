@@ -22,6 +22,11 @@ services:
       - scavengarr-cache:/app/cache # search cache, clearance cookies, scores
     environment:
       SCAVENGARR_LOG_LEVEL: INFO
+      # Honor X-Forwarded-Proto/-For of a reverse proxy (Caddy, Traefik, nginx)
+      # on a private network, so stream and Torznab links use its https://.
+      # uvicorn trusts only 127.0.0.1; the proxy comes in via the Docker
+      # gateway or the LAN. LAN clients can then set these headers too.
+      FORWARDED_ALLOW_IPS: "127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"
       # Byparr/FlareSolverr sidecar (profile "solver"):
       # SCAVENGARR_PLAYWRIGHT_SOLVER_URL: http://byparr:8191
       # Redis cache backend (profile "redis"):

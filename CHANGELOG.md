@@ -4,6 +4,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ---
 
+## Unreleased (staging)
+
+### Fix: http:// Links Behind a Reverse Proxy
+- Behind Caddy the production instance built its stream proxy URLs and Torznab links as `http://scavengarr.lan/…`: uvicorn honors `X-Forwarded-Proto` only from 127.0.0.1, and the proxy reaches the container from the Docker gateway. Every playlist and segment request through the HLS proxy then took a 308 redirect first, and a browser would block the links as mixed content.
+- `docker-compose.yml` sets `FORWARDED_ALLOW_IPS` to the private networks. Checked: a request from 172.17.0.2 with `X-Forwarded-Proto: https` gets `https://` links, without the header `http://`.
+
 ## v0.2.1 - 2026-10-03
 
 Fixes from the first end-to-end test against Stremio Web: Vidsonic streams through the HLS proxy, moflix without its paid player, kinoger behind its new WAF page, kinox without work for episode requests, and a play check script that follows every stream to its media bytes.
