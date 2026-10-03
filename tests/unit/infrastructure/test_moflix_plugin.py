@@ -275,6 +275,48 @@ class TestBuildSearchResult:
         # The site's own title page is no download link or stream
         assert p._build_search_result(entry, None) is None
 
+    def test_premium_player_is_skipped(self, moflix_mod):
+        """The "Premium (No Ads)" video is moflix's paid player: its master
+        playlist answers, every variant 403s without a paid session."""
+        p = moflix_mod.MoflixPlugin()
+        p.base_url = "https://moflix-stream.xyz"
+        premium = {
+            "id": 1620235,
+            "name": "Premium (No Ads)",
+            "type": "stream",
+            "src": "https://batman.moflix-stream.day/movies/Inception.2010/"
+            "master.m3u8?md5=ypLpIVq6&expires=1791049766",
+            "quality": None,
+        }
+        detail = {
+            **DETAIL_MOVIE_RESPONSE["title"],
+            "videos": [premium, *DETAIL_MOVIE_RESPONSE["title"]["videos"]],
+        }
+
+        sr = p._build_search_result(SEARCH_RESPONSE["results"][0], detail)
+
+        assert sr is not None
+        assert [lk["link"] for lk in sr.download_links or []] == [
+            "https://doods.to/e/abc123",
+            "https://moflix.upns.xyz/#xyz",
+        ]
+
+    def test_title_with_premium_video_only_gives_nothing(self, moflix_mod):
+        p = moflix_mod.MoflixPlugin()
+        p.base_url = "https://moflix-stream.xyz"
+        detail = {
+            **DETAIL_MOVIE_RESPONSE["title"],
+            "videos": [
+                {
+                    "name": "Premium (No Ads)",
+                    "type": "stream",
+                    "src": "https://joker.moflix-stream.day/x/master.m3u8",
+                }
+            ],
+        }
+
+        assert p._build_search_result(SEARCH_RESPONSE["results"][0], detail) is None
+
     def test_no_videos_fallback(self, moflix_mod):
         p = moflix_mod.MoflixPlugin()
         p.base_url = "https://moflix-stream.xyz"
