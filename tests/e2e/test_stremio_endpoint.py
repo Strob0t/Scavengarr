@@ -1321,6 +1321,35 @@ class TestProxyHlsEndpoint:
         assert "/api/v1/stremio/proxy/hls-abc/seg-1.ts" in body
         assert resp.headers.get("access-control-allow-origin") == "*"
 
+    @patch(f"{_PROXY_MODULE}.fetch_hls_resource", new_callable=AsyncMock)
+    def test_variant_from_the_cdn_root(self, mock_fetch: AsyncMock) -> None:
+        """Vidsonic lists its variant from the CDN root; the player follows
+        the rewritten URL and the proxy fetches it from that root."""
+        master = (
+            b"#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1646000\n"
+            b"/secure/98/r00/video.m3u8?expires=1&md5=ab\n"
+        )
+        variant = b"#EXTM3U\n#EXTINF:6,\nseg-1.ts\n#EXT-X-ENDLIST\n"
+        mock_fetch.side_effect = [
+            (master, "application/vnd.apple.mpegurl"),
+            (variant, "application/vnd.apple.mpegurl"),
+        ]
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=_make_hls_link())
+        client = TestClient(_make_app(stream_link_repo=repo))
+
+        body = client.get(f"{_PREFIX}/stremio/proxy/hls-abc/master.m3u8?t=abc").text
+        variant_url = body.splitlines()[-1]
+        assert variant_url.endswith(
+            "/api/v1/stremio/proxy/hls-abc//secure/98/r00/video.m3u8?expires=1&md5=ab"
+        )
+        resp = client.get(variant_url)
+
+        assert resp.status_code == 200
+        assert mock_fetch.await_args_list[1].args[1] == (
+            "https://cdn.dropcdn.io/secure/98/r00/video.m3u8?expires=1&md5=ab"
+        )
+
     @patch(f"{_PROXY_MODULE}.stream_hls_segment", new_callable=AsyncMock)
     def test_segment_streaming(self, mock_stream: AsyncMock) -> None:
         link = _make_hls_link()

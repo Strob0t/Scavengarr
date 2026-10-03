@@ -4,6 +4,13 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ---
 
+## Unreleased (staging)
+
+### Fix: Vidsonic Streams Did Not Play Through the HLS Proxy
+- Found by the end-to-end test against Stremio: Vidsonic's master playlist lists its variant from the CDN root (`/secure/98/<id>/video.m3u8`). The HLS proxy rewrote only URIs starting with the stream's CDN directory, so the player resolved that path against Scavengarr's host and got a 404; every VIDSONIC stream (filmpalast) stopped after the master playlist.
+- The proxy now rewrites every URI of the stream's CDN, in URI lines and in the `URI="…"` attributes of tags (audio renditions, keys, init segments): root-relative and protocol-relative URIs and absolute CDN URLs outside the stream's directory become `<proxy>/<stream-id>//<path>`, which the proxy joins with the CDN origin. Relative URIs stay as they are; URIs of other origins stay direct (the proxy fetches from the stream's CDN only).
+- Checked live: Vidsonic, StreamUp and the XFS hosters play master, variant and segments through the proxy.
+
 ## v0.2.0 - 2026-10-02
 
 Massive expansion of the plugin ecosystem (2 → 41 plugins), Stremio addon integration, 60 hoster resolvers, plugin base class standardization, search result caching, circuit breaker, global concurrency pool, graceful shutdown, multi-language search, and growth of the test suite from 160 to 4808 tests (4767 excluding the opt-in live tests).
