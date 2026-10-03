@@ -433,6 +433,19 @@ class TestPluginSearch:
         assert mirror_calls == []
 
     @pytest.mark.asyncio
+    async def test_episode_request_loads_nothing(self, plugin, mock_client):
+        """No answer is possible (series give the default episode, films are
+        another category), so an episode request costs no request at all: in
+        the Stremio test kinox loaded "Dark Paradise", "Dark Harvest" and
+        "Dark Hearts" with their mirrors for "Dark" S01E01."""
+        mock_client.get = AsyncMock()
+
+        results = await plugin.search("dark", category=5000, season=1, episode=1)
+
+        assert results == []
+        mock_client.get.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_mirror_requests_share_one_limit(self, plugin, mock_client):
         """Mirror AJAX calls of all entries share the plugin's concurrency."""
         search_resp = _make_response(SEARCH_HTML)

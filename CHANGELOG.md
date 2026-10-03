@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Perf: kinox Skips Episode Requests Without a Request
+- kinox cannot answer a season or episode request (its mirror API serves a series page's default episode, and films are another category), but it searched and loaded the closest hits with their mirrors before dropping them: "Dark" S01E01 loaded "Dark Paradise", "Dark Harvest" and "Dark Hearts". In the Stremio test s.to started 2 s late on that request (plugin slots busy) and was cut. kinox now returns at once for season requests.
+
 ### Fix: kinoger Returned Nothing Behind Its New Verification Page
 - Since 2026-10-03 kinoger answers browsers with a "Verification..." page (HostAdmin WAF behind Cloudflare): a proof of work in a web worker, about a second, then a redirect titled "Loading <url>" and cookies `ha-waf-ticket`/`ha-waf-hash` (30 min). The stealth browser knew only Cloudflare's challenge titles and returned the verification page as the search result, so every kinoger search found 0 hits (25 of 25 in the end-to-end test).
 - Both titles count as challenge titles now (`is_challenge_page`), so the browser waits for the real page; the clearance store keeps the `ha-waf-*` cookies like `cf_clearance`. Checked live: in the stealth browser the verification page cleared by itself after about a second (twice, with fresh cookies), and searches return their hits again (Oppenheimer 3, Barbie 10, Dune 9 cards). In that last run the WAF did not challenge again, so the wait itself is covered by the unit tests.
