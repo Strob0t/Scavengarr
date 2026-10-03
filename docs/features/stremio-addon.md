@@ -141,6 +141,8 @@ Direct (non-proxied) resolved streams include `behaviorHints` with a browser `Us
 | iOS | Partial (KSPlayer engine only) |
 | Web | Not supported (CORS restrictions) |
 
+> **Known issue (IP-bound streams):** DoodStream and Vinovo bind a stream URL to the IP that resolved it; another IP gets `200 error_wrong_ip` (DoodStream's CDN) or 403 (Vinovo). A direct stream therefore plays only when the player (Stremio's streaming server) reaches the internet through the same IP as Scavengarr: with Scavengarr behind a VPN and the player at home it fails. Streams through the HLS proxy are fetched by Scavengarr and are not affected. `scripts/stremio_playcheck.py` shows it from the player's machine.
+
 ### HLS Proxy
 
 ```http
@@ -382,6 +384,7 @@ Plugins declare `languages: list[str]` (default `["de"]`). The use case groups p
 | `tests/e2e/test_stremio_endpoint.py` | Full HTTP flow (manifest, catalog, stream, play, HLS proxy, health) |
 | `tests/e2e/test_stremio_series_e2e.py` | Series season/episode filtering |
 | `tests/e2e/test_stremio_streamable_e2e.py` | Streamable link verification |
+| `tests/unit/infrastructure/test_stremio_playcheck_script.py` | `scripts/stremio_playcheck.py`, which fetches every stream of a running instance like a player (HLS to the first segments, files with a seek) |
 
 ---
 

@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Chore: Play Check Script for Stremio Streams
+- `scripts/stremio_playcheck.py` fetches every stream of a running instance the way a player does: HLS from the master to the first segments, files from the start and once in the middle, with the stream's `proxyHeaders`. The server's playback check reads only the start of a stream; this one found the Vidsonic proxy bug, moflix's paid player and the IP-bound streams of a VPN setup. Results of the 2026-10-03 end-to-end test: `docs/plans/stremio-latency.md`.
+
 ### Perf: kinox Skips Episode Requests Without a Request
 - kinox cannot answer a season or episode request (its mirror API serves a series page's default episode, and films are another category), but it searched and loaded the closest hits with their mirrors before dropping them: "Dark" S01E01 loaded "Dark Paradise", "Dark Harvest" and "Dark Hearts". In the Stremio test s.to started 2 s late on that request (plugin slots busy) and was cut. kinox now returns at once for season requests.
 
