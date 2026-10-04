@@ -48,7 +48,7 @@ is unreachable.
 | `kinox` | www22.kinox.to | 8 | Streams | httpx | de |
 | `megakino` | megakino1.biz | 3 | Streams | httpx | de |
 | `megakino_to` | megakino.org | 1 | Streams | httpx | de |
-| `moflix` | moflix-stream.xyz | 1 | Streams | Playwright | de |
+| `moflix` | moflix-stream.xyz | 1 | Streams | httpx | de |
 | `movie2k` | movie2k.cx | 0 | Streams | httpx | de |
 | `movie4k` | movie4k.sx | 2 | Streams | httpx | de |
 | `movieblog` | movieblog.to | 0 | Downloads | httpx | de |

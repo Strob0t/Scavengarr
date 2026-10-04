@@ -219,7 +219,7 @@ Design:
 
 Tests: `test_httpx_browser_fallback.py` (`TestBrowserSessionReuse`: session reused, redirects too, rejected session → memo, expired → solved again, no session → memo), `test_stealth_pool.py` (`TestStealthPoolSession`), `test_solver_fetcher.py` (solution session, chain). Live in dev: moflix's API, challenged from the home IP, solved in 2 s; the next request went through httpx (origin 401 without moflix's API headers, so the challenge was passed).
 
-Follow-up: moflix's API through httpx with the session (it needs `Referer` and `X-XSRF-TOKEN`).
+moflix (1.2.0) moved from `PlaywrightPluginBase` to `HttpxPluginBase`: it loads the homepage once for the site's Laravel session and calls its API with `_fetch_text(..., headers=...)` (`Accept: application/json`, the site as `Referer`, the `XSRF-TOKEN` cookie as `X-XSRF-TOKEN`; 401 without them). A challenged API call goes through the browser once, the rest through httpx with its session. Live in dev (API challenged from the home IP): "Matrix" 4 results/28 links in 4.3 s including the 2 s solve, then "Dune" 6/24 in 0.9 s. Before, every search ran in the browser behind a lock (`_serialize_search`).
 
 ## Documentation per phase
 

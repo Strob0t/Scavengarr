@@ -276,6 +276,7 @@ class HttpxPluginBase:
         *,
         params: dict[str, str] | None = None,
         context: str = "",
+        headers: dict[str, str] | None = None,
     ) -> str | None:
         """GET *url* and return the body text (``None`` on failure).
 
@@ -285,6 +286,7 @@ class HttpxPluginBase:
         with the browser's session (see ``_fetch_via_browser()``).  Without
         a fetcher this behaves like a plain GET with ``_safe_fetch()``-style
         logging.  A host in the browser memo goes straight to the browser.
+        *headers* go with the httpx request (the browser sends its own).
         """
         memo_fetcher = self._cf_fetcher_for(url)
         if memo_fetcher is not None:
@@ -297,6 +299,8 @@ class HttpxPluginBase:
         kwargs = self._request_kwargs(client, url)
         if params:
             kwargs["params"] = params
+        if headers:
+            kwargs["headers"] = {**kwargs.get("headers", {}), **headers}
 
         try:
             resp = await client.get(url, **kwargs)

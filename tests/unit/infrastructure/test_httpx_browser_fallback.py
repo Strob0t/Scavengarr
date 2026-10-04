@@ -226,6 +226,19 @@ class TestFetchText:
         assert route.called
 
     @respx.mock
+    async def test_sends_extra_headers(self) -> None:
+        """An API that wants e.g. JSON and a CSRF token gets them."""
+        route = respx.get("https://cf.example/api").respond(200, text="{}")
+
+        async with httpx.AsyncClient() as client:
+            plugin = await _plugin_with_client(client)
+            await plugin._fetch_text(
+                "https://cf.example/api", headers={"Accept": "application/json"}
+            )
+
+        assert route.calls.last.request.headers["accept"] == "application/json"
+
+    @respx.mock
     async def test_cloudflare_challenge_falls_back_to_browser(self) -> None:
         respx.get("https://cf.example/api").respond(403, text=_CF_CHALLENGE)
         fetcher = AsyncMock()
