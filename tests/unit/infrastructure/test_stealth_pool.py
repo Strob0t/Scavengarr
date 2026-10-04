@@ -695,6 +695,40 @@ class TestStealthPoolClickThrough:
         assert result.url == "https://voe.sx/e/a"
         passed.assert_awaited_once()
 
+    async def test_submitted_gate_gets_time_for_its_redirect(self) -> None:
+        """On a Raspberry Pi the gate's widget used 28 of the 30 s budget, and
+        the redirect after its form came later: the passed gate was thrown
+        away (stealth_click_through_no_target, 2026-10-04)."""
+        shared_pool, _, context = _mock_pool_stack()
+        page, emit = _click_page(on_click=[["https://s.to/r?t=1"]])
+        context.new_page = AsyncMock(return_value=page)
+        clock = {"now": 0.0}
+
+        async def _pass(_page: object, *, timeout_ms: int) -> bool:
+            clock["now"] += timeout_ms / 1000 - 0.1
+            return True
+
+        async def _poll(ms: int) -> None:
+            clock["now"] += ms / 1000
+            if clock["now"] > 7.0:  # 2 s past the budget
+                emit([["https://s.to/r", "https://voe.sx/e/a"]])  # type: ignore[operator]
+
+        page.wait_for_timeout = AsyncMock(side_effect=_poll)
+
+        with (
+            patch(_PASS_WIDGET, AsyncMock(side_effect=_pass)),
+            patch(
+                "scavengarr.infrastructure.browser.stealth_pool.time",
+                MagicMock(monotonic=lambda: clock["now"]),
+            ),
+        ):
+            result = await StealthPool(browser_pool=shared_pool).click_through(
+                _EPISODE, "button.link-box", timeout=5
+            )
+
+        assert result is not None
+        assert result.url == "https://voe.sx/e/a"
+
     async def test_nothing_leaves_the_site_returns_none(self) -> None:
         shared_pool, _, context = _mock_pool_stack()
         page, _ = _click_page(on_click=[["https://s.to/r?t=1"]])

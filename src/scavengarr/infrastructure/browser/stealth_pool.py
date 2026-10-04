@@ -64,6 +64,10 @@ _NOT_MEDIA_RE = re.compile(r"thumbnail|sprite|preview", re.IGNORECASE)
 # click_through(): bound for the click itself, poll interval for the target
 _CLICK_TIMEOUT_MS = 5_000
 _CLICK_POLL_MS = 300
+# ...and the time a submitted gate gets for its redirect, past the timeout:
+# on a Raspberry Pi behind a VPN the gate's widget took 28 of 30 s and the
+# redirect after its form came too late (2026-10-04)
+_SUBMIT_REDIRECT_S = 10.0
 # Ad layers some sites put over the page (s.to: random class names, laid out
 # after a delay) take the clicks: Playwright then waits until its click
 # timeout ("… subtree intercepts pointer events"). Only the targets take
@@ -135,6 +139,21 @@ async def _click_clear_of_layers(page: Page, selector: str) -> None:
     targets = f"{selector}, {WIDGET_FORM}"
     await page.add_style_tag(content=_TARGET_ONLY_CSS.format(targets=targets))
     await page.locator(selector).first.click(timeout=_CLICK_TIMEOUT_MS)
+
+
+async def _wait_for_target(page: Page, targets: list[str], deadline: float) -> None:
+    """Poll until *targets* gets the link-out's target, passing a gate's widget.
+
+    A gate whose form went out gets ``_SUBMIT_REDIRECT_S`` for its redirect,
+    also past *deadline*: the widget may have used up the time.
+    """
+    passed = False
+    while not targets and (left := deadline - time.monotonic()) > 0:
+        if not passed:
+            passed = await pass_turnstile_widget(page, timeout_ms=int(left * 1000))
+            if passed:
+                deadline = max(deadline, time.monotonic() + _SUBMIT_REDIRECT_S)
+        await page.wait_for_timeout(_CLICK_POLL_MS)
 
 
 async def _close_popup(popup: Page) -> None:
@@ -523,13 +542,7 @@ class StealthPool:
                 if not await solve_cloudflare(page, timeout_ms=timeout_ms):
                     return None
                 await _click_clear_of_layers(page, selector)
-                passed = False
-                while not targets and (left := deadline - time.monotonic()) > 0:
-                    if not passed:
-                        passed = await pass_turnstile_widget(
-                            page, timeout_ms=int(left * 1000)
-                        )
-                    await page.wait_for_timeout(_CLICK_POLL_MS)
+                await _wait_for_target(page, targets, deadline)
                 if not targets:
                     log.info("stealth_click_through_no_target", url=page_url)
                     return None
