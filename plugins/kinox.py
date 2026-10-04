@@ -236,8 +236,7 @@ class KinoxPlugin(HttpxPluginBase):
         if html is None:
             return []
 
-        parser = _SearchResultParser()
-        parser.feed(html)
+        parser = await self._feed(_SearchResultParser(), html)
 
         self._log.info("kinox_search", query=query, count=len(parser.results))
         return parser.results
@@ -248,8 +247,7 @@ class KinoxPlugin(HttpxPluginBase):
         if html is None:
             return _DetailPageParser()
 
-        parser = _DetailPageParser()
-        parser.feed(html)
+        parser = await self._feed(_DetailPageParser(), html)
 
         self._log.info(
             "kinox_detail",

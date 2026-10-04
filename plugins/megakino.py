@@ -666,8 +666,7 @@ class MegakinoPlugin(HttpxPluginBase):
         if resp is None:
             return []
 
-        parser = _SearchResultParser(self.base_url)
-        parser.feed(resp.text)
+        parser = await self._feed(_SearchResultParser(self.base_url), resp.text)
 
         self._log.info(
             "megakino_search_page",
@@ -710,8 +709,7 @@ class MegakinoPlugin(HttpxPluginBase):
         if html is None:
             return None
 
-        parser = _DetailPageParser(self.base_url)
-        parser.feed(html)
+        parser = await self._feed(_DetailPageParser(self.base_url), html)
         parser.finalize()
 
         # Filter series links by episode (ep1, ep2, ... labels)

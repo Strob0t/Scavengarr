@@ -405,8 +405,7 @@ class StoPlugin(HttpxPluginBase):
         if html is None:
             return []
 
-        parser = _SearchSeriesParser(self.base_url)
-        parser.feed(html)
+        parser = await self._feed(_SearchSeriesParser(self.base_url), html)
 
         self._log.info(
             "sto_search_page",
@@ -425,8 +424,7 @@ class StoPlugin(HttpxPluginBase):
         if html is None:
             return _SeriesDetailParser(self.base_url)
 
-        parser = _SeriesDetailParser(self.base_url)
-        parser.feed(html)
+        parser = await self._feed(_SeriesDetailParser(self.base_url), html)
         return parser
 
     async def _scrape_episode_hosters(
@@ -438,8 +436,7 @@ class StoPlugin(HttpxPluginBase):
         if html is None:
             return []
 
-        parser = _EpisodeHosterParser()
-        parser.feed(html)
+        parser = await self._feed(_EpisodeHosterParser(), html)
         return parser.hosters
 
     async def _resolve_hoster_url(self, play_url: str, *, referer: str) -> str:

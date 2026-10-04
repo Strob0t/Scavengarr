@@ -561,8 +561,7 @@ class Movie2kPlugin(HttpxPluginBase):
         if html is None:
             return []
 
-        parser = _SearchResultParser(self.base_url)
-        parser.feed(html)
+        parser = await self._feed(_SearchResultParser(self.base_url), html)
 
         self._log.info(
             "movie2k_search_page",
@@ -598,8 +597,7 @@ class Movie2kPlugin(HttpxPluginBase):
             if html is None:
                 break
 
-            parser = _BrowseResultParser(self.base_url)
-            parser.feed(html)
+            parser = await self._feed(_BrowseResultParser(self.base_url), html)
             parser.finalize()
 
             if not parser.results:
@@ -635,8 +633,7 @@ class Movie2kPlugin(HttpxPluginBase):
         if html is None:
             return None
 
-        parser = _DetailPageParser(self.base_url)
-        parser.feed(html)
+        parser = await self._feed(_DetailPageParser(self.base_url), html)
         parser.finalize()
 
         links = parser.stream_links

@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Perf: Big Pages Parsed Off the Event Loop
+- html.parser took 21–27% of the Python CPU of a stream request on the Raspberry Pi (py-spy in production). It runs in Python on the event loop: a 300 KB detail page took 20 ms on x86 and several times as long on the Pi, and every timeout and request waited for it.
+- `HttpxPluginBase._feed(parser, html)` parses pages from 32 KB in a worker thread, where the loop gets the GIL back every few ms. sto, kinoger, kinoking, kinox, megakino and movie2k use it.
+
 ### Perf: s.to Seasons Stop Requesting Gated Link-outs
 - A Torznab search for "Dark" on s.to took 83 s and sent about 950 link-out requests: every episode and hoster of every matching series. Behind the VPN the gate let 3 of them through per pass, so 97 of 100 results kept the s.to link-out anyway.
 - Whole seasons (Torznab) no longer pass the gate, since a pass unlocks 3 link-outs. Once an episode's link-outs stay gated, the next episodes return theirs unresolved for 5 min, without requests (JDownloader can still follow them). Stream requests (one episode) still pass the gate in the browser as before.

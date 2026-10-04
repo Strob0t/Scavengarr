@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+from html.parser import HTMLParser
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -454,3 +456,41 @@ class TestOwnLinkResolutionBound:
         assert len(resolved) == 10
         assert resolved[3].download_link == "https://hoster.example/3"
         assert peak == 2
+
+
+# ---------------------------------------------------------------------------
+# _feed (html.parser off the event loop)
+# ---------------------------------------------------------------------------
+
+
+class _ThreadRecorder(HTMLParser):
+    """Records the thread that parsed and the paragraphs it saw."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.thread: threading.Thread | None = None
+        self.paragraphs = 0
+
+    def feed(self, data: str) -> None:
+        self.thread = threading.current_thread()
+        super().feed(data)
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.paragraphs += tag == "p"
+
+
+class TestFeed:
+    """html.parser runs in Python: a 300 KB page took 20 ms on x86 and
+    blocked the event loop several times as long on a Raspberry Pi."""
+
+    async def test_big_pages_are_parsed_in_a_worker_thread(self) -> None:
+        parser = await _TestPlugin()._feed(_ThreadRecorder(), "<p>x</p>" * 10_000)
+
+        assert parser.thread is not threading.current_thread()
+        assert parser.paragraphs == 10_000
+
+    async def test_small_pages_are_parsed_inline(self) -> None:
+        parser = await _TestPlugin()._feed(_ThreadRecorder(), "<p>x</p>")
+
+        assert parser.thread is threading.current_thread()
+        assert parser.paragraphs == 1

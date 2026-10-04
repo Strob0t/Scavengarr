@@ -200,8 +200,7 @@ class KinokingPlugin(HttpxPluginBase):
         )
         if html is None:
             return []
-        parser = _SearchCardParser()
-        parser.feed(html)
+        parser = await self._feed(_SearchCardParser(), html)
         return parser.results
 
     async def _search_cards(self, query: str) -> list[dict[str, str]]:
