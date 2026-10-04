@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: s.to Episode Streams Behind an Ad Layer
+- s.to gave no episode streams in production (`sto_link_gate_unsolved`). The browser's click on the hoster link box never reached it: s.to's ad script lays layers over the page (random class names, after a delay) that take the click, and Playwright waited until its click timeout ("<div …> subtree intercepts pointer events"). At home the layer showed up only now and then, in production on every try.
+- `StealthPool.click_through()` lets only the target take pointer events during the click (a temporary stylesheet) and gives the page its pointer events back right after it, so the Turnstile gate that may follow still works. Live: Dark S01E01 through the gate in 5.8 s, the next episodes in 0.5–0.7 s.
+
 ### Perf: httpx Goes On With the Browser's Session After a Challenge
 - Production (Raspberry Pi 4 behind a datacenter VPN) got nothing from kinoger: its site challenges the VPN IP, and after one challenge every page of the host went through the browser for 30 min, too slow for the 10 s Stremio budget on a Pi.
 - Measured from production's VPN IP: after a 3–4 s browser solve, plain httpx with the browser's cookies and User-Agent got kinoger's pages (HostAdmin WAF) and moflix's API (Cloudflare) in 0.3–0.4 s; curl_cffi (Chrome TLS fingerprint) did no better, so no new dependency.

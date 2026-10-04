@@ -573,6 +573,7 @@ def _click_page(
 
     box = MagicMock()
     box.click = AsyncMock(side_effect=_click)
+    page.add_style_tag = AsyncMock(return_value=MagicMock(evaluate=AsyncMock()))
     page.on = MagicMock(side_effect=_on)
     page.goto = AsyncMock(side_effect=_goto)
     page.route = AsyncMock()
@@ -605,6 +606,40 @@ class TestStealthPoolClickThrough:
         page.locator.assert_called_with("button.link-box")
         page.context.cookies.assert_awaited_once_with(_EPISODE)
         page.close.assert_awaited_once()
+
+    async def test_only_the_link_box_takes_the_click(self) -> None:
+        """s.to's ad script lays layers over the page, under random class
+        names and after a delay ("<div …> subtree intercepts pointer events",
+        2026-10-04). For the click nothing but the link box takes pointer
+        events; afterwards the page gets them back (the gate's widget)."""
+        shared_pool, _, context = _mock_pool_stack()
+        page, _ = _click_page(on_click=[["https://s.to/r?t=1", "https://voe.sx/e/a"]])
+        context.new_page = AsyncMock(return_value=page)
+        steps: list[str] = []
+        style = MagicMock()
+        style.evaluate = AsyncMock(side_effect=lambda *_a: steps.append("restore"))
+        page.add_style_tag = AsyncMock(
+            side_effect=lambda **_k: steps.append("isolate") or style
+        )
+        box = page.locator.return_value.first
+        click = box.click.side_effect
+
+        async def _click(**kwargs: object) -> None:
+            steps.append("click")
+            await click(**kwargs)
+
+        box.click = AsyncMock(side_effect=_click)
+
+        with patch(_PASS_WIDGET, AsyncMock(return_value=False)):
+            result = await StealthPool(browser_pool=shared_pool).click_through(
+                _EPISODE, "button.link-box", timeout=5
+            )
+
+        assert result is not None
+        assert steps == ["isolate", "click", "restore"]
+        css = page.add_style_tag.await_args.kwargs["content"]
+        assert "* { pointer-events: none !important; }" in css
+        assert "button.link-box, button.link-box *" in css
 
     async def test_ignores_offsite_pages_not_redirected_by_the_site(self) -> None:
         # Ad frames load other hosts directly or through their own redirects
