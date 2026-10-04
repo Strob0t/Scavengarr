@@ -85,6 +85,7 @@ Domain never imports FastAPI, httpx or diskcache.
 Invariants:
 - I/O dominates runtime: nothing may block the event loop. Independent URLs (detail pages, link validation) run in parallel with bounded concurrency.
 - Link validation: `HEAD` with redirects first, `GET` fallback only when needed; short timeouts, semaphore-limited.
+- Stremio search results are cached per title (`cache.search_ttl_seconds`, stale-while-revalidate, single-flight; `application/stremio/search_cache.py`); hoster resolution runs on every request. Background searches end in `StremioStreamUseCase.aclose()` at shutdown.
 - CrawlJobs contain only validated links, in deterministic order; job IDs are stable, TTL configurable.
 - Config precedence (high → low): CLI args → `SCAVENGARR_*` env → YAML → `.env` → defaults. See `docs/features/configuration.md`.
 - Logging: `structlog`, structured, with context fields (`plugin`, `stage`, `duration_ms`, `results_count`); never log secrets.
@@ -104,7 +105,7 @@ Invariants:
 - Modern typing only: `T | None`, `list[T]`, `dict[K, V]`, `collections.abc.Iterable`; never `Optional`/`List`/`Dict`/`typing.Iterable`. From `typing` import only `Any`, `Protocol`, `Literal`, `TypeVar`, `runtime_checkable`.
 - Fully typed signatures. Ports use `Protocol` (not `ABC`). Entities/value objects are `@dataclass` (`frozen=True` for immutables). `Literal` for fixed values; casts only with runtime checks.
 - No mutable default arguments (use `None` + create inside). Never swallow exceptions (`except: pass`); log and re-raise or map cleanly.
-- Async: `asyncio.gather` over sequential `await` in loops; CPU-bound parsing goes to `run_in_executor`.
+- Async: `asyncio.gather` over sequential `await` in loops; CPU-bound parsing goes to `run_in_executor` (html.parser pages through `HttpxPluginBase._feed()`, which parses big pages in a thread; the biggest pages use `selectolax`).
 - Prefer small functions/modules over deep class hierarchies; dependencies injected explicitly via constructors/factories.
 - Scraping: specific but robust selectors, `urljoin` for URLs, search terms encoded (`quote_plus`, or `quote(term, safe="")` in a path segment), missing fields → partial result + warning instead of abort.
 - Playwright: no `sleep()` waits (use conditions/locators), close contexts/pages deterministically, limit browser parallelism with a semaphore.
