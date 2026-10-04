@@ -27,7 +27,8 @@ from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 log = structlog.get_logger(__name__)
 
 _DOMAINS = frozenset({"playmate"})
-_FILE_ID_RE = re.compile(r"^/(?:watch/|e/)([A-Za-z0-9]{8,})(?:/|$)")
+# Watch page, short and player-frame links (/embed/: the frame some sites link)
+_FILE_ID_RE = re.compile(r"^/(?:watch/|e/|embed/)([A-Za-z0-9]{8,})(?:/|$)")
 _ORIGIN = "https://playmate.to"
 
 

@@ -10,6 +10,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 - moflix's search lists people next to titles (19 of 20 hits for "Oppenheimer"), and the plugin asked the title API for every hit: 46 answers 404 in the end-to-end test of 2026-10-04, and a person's id can be another title's ("Alan Oppenheimer" fetched a children's film).
 - It now fetches titles only, and only the relevant ones (`relevant_hits()`, at most 3 for a season or episode request), as the other plugins do.
 
+### Fix: Playmate Player-Frame Links
+- Links to Playmate's player frame (`playmate.to/embed/<id>`) were dropped as invalid (`playmate_invalid_url`); the resolver only needs the file code for its API, so `/embed/` is accepted next to `/watch/` and `/e/`.
+
 ### Fix: FireStream Links With "-" in the Id
 - FireStream ids use the URL-safe base64 alphabet (`777zhD-W`), and the resolver only accepted letters and digits (as JDownloader's pattern does), so such filmpalast and moflix links were dropped as invalid (`firestream_invalid_url`, 3 in the end-to-end test of 2026-10-04; their pages play). `-` and `_` are accepted now.
 
