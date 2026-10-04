@@ -78,6 +78,7 @@ def _normalize_layer(data: Mapping[str, Any]) -> dict[str, Any]:
         "http_timeout_resolve_seconds": ("http", "timeout_resolve_seconds"),
         "http_follow_redirects": ("http", "follow_redirects"),
         "http_user_agent": ("http", "user_agent"),
+        "http_http2": ("http", "http2"),
         "rate_limit_requests_per_second": ("http", "rate_limit_rps"),
         "rate_limit_adaptive": ("http", "rate_limit_adaptive"),
         "rate_limit_min_rps": ("http", "rate_limit_min_rps"),

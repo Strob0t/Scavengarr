@@ -99,6 +99,11 @@ from scavengarr.interfaces.app_state import AppState
 
 log = structlog.get_logger(__name__)
 
+# Shared HTTP client: idle connections stay open this long (httpx: 5 s), and
+# connecting to a host may take at most this long
+_KEEPALIVE_S = 60.0
+_CONNECT_TIMEOUT_S = 5.0
+
 
 def _auto_tune_concurrency(config: AppConfig) -> None:
     """Auto-tune max_concurrent_plugins based on host CPU/RAM capacity.
@@ -226,6 +231,12 @@ def build_http_client(config: AppConfig) -> httpx.AsyncClient:
     Scraped pages decide most URLs this client requests, so every request
     and redirect hop to a non-public address is refused, except for the
     configured solver sidecar (``playwright.solver_url``).
+
+    Connections stay open for a minute between requests: one stream request
+    talks to 18-42 hosts, and with httpx's 5 s default every pause between
+    two requests closed them all (TLS handshakes were 21% of the Python CPU
+    on a Raspberry Pi). A host that does not answer fails after
+    ``_CONNECT_TIMEOUT_S`` instead of the full read timeout.
     """
     rate_limiter = DomainRateLimiter(
         default_rps=config.rate_limit_requests_per_second,
@@ -234,8 +245,13 @@ def build_http_client(config: AppConfig) -> httpx.AsyncClient:
         min_rate=config.rate_limit_min_rps,
         max_rate=config.rate_limit_max_rps,
     )
+    limits = httpx.Limits(
+        max_connections=100,
+        max_keepalive_connections=100,
+        keepalive_expiry=_KEEPALIVE_S,
+    )
     transport = RetryTransport(
-        wrapped=httpx.AsyncHTTPTransport(),
+        wrapped=httpx.AsyncHTTPTransport(limits=limits, http2=config.http_http2),
         rate_limiter=rate_limiter,
         max_retries=config.http_retry_max_attempts,
         backoff_base=config.http_retry_backoff_base,
@@ -249,9 +265,10 @@ def build_http_client(config: AppConfig) -> httpx.AsyncClient:
     guard = PrivateAddressGuard(
         allowed_hosts=frozenset({solver_host}) if solver_host else frozenset()
     )
+    timeout = config.http_timeout_seconds
     return httpx.AsyncClient(
         transport=transport,
-        timeout=httpx.Timeout(config.http_timeout_seconds),
+        timeout=httpx.Timeout(timeout, connect=min(_CONNECT_TIMEOUT_S, timeout)),
         headers={"User-Agent": config.http_user_agent},
         follow_redirects=config.http_follow_redirects,
         event_hooks={"request": [guard]},

@@ -451,6 +451,17 @@ class AppConfig(BaseModel):
         ),
         description="User-Agent for outgoing HTTP requests.",
     )
+    http_http2: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "http_http2",
+            AliasPath("http", "http2"),
+        ),
+        description=(
+            "Offer HTTP/2 on outgoing connections (several requests to one host "
+            "share a connection). Off by default: not faster per se, measure it."
+        ),
+    )
 
     # Link validation toggle
     validate_download_links: bool = Field(
@@ -699,6 +710,7 @@ class EnvOverrides(BaseSettings):
     http_timeout_resolve_seconds: float | None = None
     http_follow_redirects: bool | None = None
     http_user_agent: str | None = None
+    http_http2: bool | None = None
 
     rate_limit_requests_per_second: float | None = None
     rate_limit_adaptive: bool | None = None

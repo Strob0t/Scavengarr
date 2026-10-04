@@ -20,7 +20,7 @@ structlog = "^26.1.0"
 diskcache = "^5.6.3"
 pydantic-settings = "^2.15.0"
 python-dotenv = "^1.2.4"
-httpx = "^0.28.1"
+httpx = { version = "^0.28.1", extras = ["http2"] }
 redis = {version = "^8.1.0", extras = ["redis"]}
 guessit = "^4.4.0"
 pyyaml = "^6.0"

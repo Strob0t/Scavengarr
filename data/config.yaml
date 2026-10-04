@@ -38,6 +38,7 @@ http:
   timeout_seconds: 15.0 # was 30 — cut slow requests faster
   timeout_resolve_seconds: 10.0 # was 15 — hosters that need >10s are likely dead
   follow_redirects: true # env: SCAVENGARR_HTTP_FOLLOW_REDIRECTS
+  http2: false # offer HTTP/2 (one connection per host); env: SCAVENGARR_HTTP_HTTP2
   # user_agent: default Scavengarr/<version> (+https://github.com/Strob0t/Scavengarr);
   # keep a contact URL in your own (Wikidata answers 403 without one)
   rate_limit_rps: 10.0 # was 5 — double throughput per domain
