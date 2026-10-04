@@ -35,6 +35,8 @@ services:
       # SCAVENGARR_CACHE_MAX_CONCURRENT: "50" # Redis takes more parallel ops
     shm_size: 1gb # Chromium (Playwright plugins, browser capture) needs shared memory
     init: true # reaps orphaned Chromium/driver processes (python would be PID 1)
+    # CPU profiles in the container (scripts/stremio_profile.py --py-spy):
+    # cap_add: [SYS_PTRACE]
     restart: unless-stopped
 
   byparr:

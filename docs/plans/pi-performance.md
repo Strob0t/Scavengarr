@@ -119,8 +119,19 @@ Order: build the measurement tools first and measure the current state, then imp
 
 ## How to re-measure
 
-- **Wall time per plugin:** poll `/api/v1/stats/metrics` during one stream request. A plugin's search count rises when its search ends.
-- **CPU:** read `/proc/<pid>/stat` for the Python and Chromium processes before and after the request (Portainer exec into the container).
-- **Request counts:** count the `HTTP Request:` log lines of the request window.
-- **Profile:** `py-spy record -r 100 -f raw -- python -m scavengarr.interfaces.cli …` on a local server. Startup imports are filtered out of the stacks.
-- Use the same three titles before and after a change, so the numbers stay comparable.
+`scripts/stremio_profile.py` measures the baseline titles, or the ids given, against a running container. Per request it reports:
+
+- wall time;
+- CPU of the Python and Chromium processes, read from `/proc` before and after;
+- httpx requests per host, counted from the `HTTP Request:` lines of the JSON container log.
+
+At the end it reports the event-loop lag from `/api/v1/stats/metrics`. `--repeat 2` runs a cold and a warm pass. `--py-spy` samples the app process on the Pi and prints the CPU share per category; it needs `cap_add: [SYS_PTRACE]` on the container, and py-spy is installed into `/tmp` and run as root.
+
+```bash
+PORTAINER_URL=http://192.168.88.2:9000 PORTAINER_API_KEY=… \
+  poetry run python scripts/stremio_profile.py --portainer \
+  --base https://scavengarr.lan --insecure \
+  --connect-to scavengarr.lan:192.168.88.2 --repeat 2 --py-spy
+```
+
+On the Docker host, `--docker` uses the docker CLI instead of Portainer. A local server can be profiled with `py-spy record -r 100 -f raw -- python -m scavengarr.interfaces.cli …`. Compare runs only when they use the same titles and the same pass (cold or warm).
