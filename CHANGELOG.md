@@ -6,6 +6,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Perf: httpx Goes On With the Browser's Session After a Challenge
+- Production (Raspberry Pi 4 behind a datacenter VPN) got nothing from kinoger: its site challenges the VPN IP, and after one challenge every page of the host went through the browser for 30 min, too slow for the 10 s Stremio budget on a Pi.
+- Measured from production's VPN IP: after a 3–4 s browser solve, plain httpx with the browser's cookies and User-Agent got kinoger's pages (HostAdmin WAF) and moflix's API (Cloudflare) in 0.3–0.4 s; curl_cffi (Chrome TLS fingerprint) did no better, so no new dependency.
+- `BrowserFetcherPort.session(url)` returns the browser's cookies for a site and its User-Agent (`StealthPool`, `SolverFetcher`, `ChainedBrowserFetcher`). `HttpxPluginBase._fetch_text()` takes them over after a browser fetch, so later requests to the host run through httpx (`{name}_browser_session_adopted`). A challenge within 5 min of a takeover sends the host to the browser for 30 min as before (`{name}_browser_session_rejected`); an expired clearance is solved again.
+- Covers every plugin that reads pages with `_fetch_text()` (kinoger, filmfans, serienfans, burningseries, kinox, sto). Docs: `docs/features/python-plugins.md`, `docs/plans/antibot-patchright.md` (Phase 4).
+
 ### Fix: HLS-Proxy Streams in Stremio Web
 - In Stremio Web every stream through the HLS proxy (VOE, Vidsonic, StreamUp, XFS hosters) ended in error 83, "Video is not supported", whenever the streaming server could not probe it. Stremio Web then reads the stream's content type with a `HEAD` request (stremio-video's `getContentType`), and the proxy answered `HEAD` with 405 without CORS headers.
 - `HEAD` on `/api/v1/stremio/proxy/{stream_id}/{path}` now answers like `GET`; the server drops the body.

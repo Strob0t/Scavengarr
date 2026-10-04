@@ -22,7 +22,7 @@ import httpx
 import structlog
 
 from scavengarr.domain.plugins.base import SearchResult
-from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort
+from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort, BrowserSession
 from scavengarr.infrastructure.browser.cloudflare import is_cloudflare_challenge
 from scavengarr.infrastructure.captcha.detect import detect_challenge
 
@@ -42,6 +42,9 @@ _BROWSER_FETCH_TIMEOUT_S = 30.0
 _MAX_REDIRECT_HOPS = 5
 # How long a host that showed a Cloudflare challenge skips plain httpx
 _CF_BLOCK_MEMO_S = 30 * 60
+# A challenge this soon after httpx took over the browser's session means the
+# site does not accept that session from httpx: its pages go to the browser
+_SESSION_TRUST_S = 5 * 60
 
 
 class HttpxPluginBase:
@@ -69,6 +72,10 @@ class HttpxPluginBase:
     # straight to the browser (a doomed httpx request still counts against
     # the site's rate limit)
     _cf_blocked_until: dict[str, float] = {}  # noqa: RUF012  # shared on purpose
+    # host -> the browser's User-Agent and when httpx took over the browser's
+    # session for that site (its clearance cookie is valid with that UA only)
+    _browser_user_agents: dict[str, str] = {}  # noqa: RUF012  # shared on purpose
+    _session_adopted_at: dict[str, float] = {}  # noqa: RUF012  # shared on purpose
 
     # --- Must be set by subclass ---
     name: str = ""
@@ -113,6 +120,8 @@ class HttpxPluginBase:
         """
         HttpxPluginBase._browser_fetcher = fetcher
         HttpxPluginBase._cf_blocked_until.clear()
+        HttpxPluginBase._browser_user_agents.clear()
+        HttpxPluginBase._session_adopted_at.clear()
 
     def _cf_fetcher_for(self, url: str) -> BrowserFetcherPort | None:
         """The browser fetcher if *url*'s host recently showed a challenge."""
@@ -272,9 +281,10 @@ class HttpxPluginBase:
 
         When the site answers with a Cloudflare challenge and a browser
         fetcher is injected, the same URL (query string included) is loaded
-        through the browser instead.  Without a fetcher this behaves like a
-        plain GET with ``_safe_fetch()``-style logging.  A host that showed
-        a challenge within ``_CF_BLOCK_MEMO_S`` goes straight to the browser.
+        through the browser instead, and later requests to the site go on
+        with the browser's session (see ``_fetch_via_browser()``).  Without
+        a fetcher this behaves like a plain GET with ``_safe_fetch()``-style
+        logging.  A host in the browser memo goes straight to the browser.
         """
         memo_fetcher = self._cf_fetcher_for(url)
         if memo_fetcher is not None:
@@ -284,7 +294,7 @@ class HttpxPluginBase:
             )
 
         client = await self._ensure_client()
-        kwargs = self._request_kwargs(client)
+        kwargs = self._request_kwargs(client, url)
         if params:
             kwargs["params"] = params
 
@@ -305,15 +315,8 @@ class HttpxPluginBase:
         challenge = detect_challenge(resp.status_code, resp.text, resp.headers)
         fetcher = self._browser_fetcher
         if fetcher is not None and challenge == "cloudflare_page":
-            self._log.info(
-                f"{self.name}_browser_fallback",
-                url=str(resp.url),
-                context=context,
-                challenge=challenge,
-            )
-            self._mark_cf_blocked(url)
-            return await fetcher.fetch_text(
-                str(resp.url), timeout=_BROWSER_FETCH_TIMEOUT_S
+            return await self._fetch_via_browser(
+                fetcher, str(resp.url), context=context, challenge=challenge
             )
 
         self._log.warning(
@@ -324,6 +327,61 @@ class HttpxPluginBase:
             challenge=challenge,
         )
         return None
+
+    async def _fetch_via_browser(
+        self,
+        fetcher: BrowserFetcherPort,
+        url: str,
+        *,
+        context: str,
+        challenge: str,
+    ) -> str | None:
+        """Load *url* in the browser and let httpx go on with its session.
+
+        The browser passes the site's challenge once (seconds; on a Raspberry
+        Pi several); every further page through it would cost that again.
+        The site's cookies and the browser's User-Agent pass the same check
+        through httpx, so later requests carry them. The host stays in the
+        browser memo while the browser works (parallel requests do not try
+        httpx), and for good when httpx meets a challenge despite a session
+        taken over less than ``_SESSION_TRUST_S`` ago: that site binds its
+        clearance to the browser.
+        """
+        host = urlparse(url).hostname or ""
+        self._mark_cf_blocked(url)
+        adopted_at = self._session_adopted_at.get(host)
+        if adopted_at is not None and time.monotonic() - adopted_at < _SESSION_TRUST_S:
+            self._log.info(
+                f"{self.name}_browser_session_rejected", url=url, context=context
+            )
+            return await fetcher.fetch_text(url, timeout=_BROWSER_FETCH_TIMEOUT_S)
+
+        self._log.info(
+            f"{self.name}_browser_fallback",
+            url=url,
+            context=context,
+            challenge=challenge,
+        )
+        body = await fetcher.fetch_text(url, timeout=_BROWSER_FETCH_TIMEOUT_S)
+        if body is None:
+            return None
+        session = await fetcher.session(url)
+        if isinstance(session, BrowserSession):
+            await self._adopt_browser_session(url, session)
+        return body
+
+    async def _adopt_browser_session(self, url: str, session: BrowserSession) -> None:
+        """Send the browser's cookies and User-Agent with requests to *url*'s site."""
+        await self._use_browser_session(url, session.cookies)
+        host = urlparse(url).hostname or ""
+        self._browser_user_agents[host] = session.user_agent
+        self._session_adopted_at[host] = time.monotonic()
+        self._cf_blocked_until.pop(host, None)
+        self._log.info(
+            f"{self.name}_browser_session_adopted",
+            host=host,
+            cookies=sorted(session.cookies),
+        )
 
     def _parse_json_text(self, body: str | None, context: str = "") -> dict | None:
         """Decode a JSON object from ``_fetch_text()`` (``None`` on failure)."""
@@ -388,13 +446,20 @@ class HttpxPluginBase:
         updated = await asyncio.gather(*(_one(r) for r in results))
         return [r for r in updated if r is not None]
 
-    def _request_kwargs(self, client: httpx.AsyncClient) -> dict[str, Any]:
-        """Per-plugin timeout and User-Agent when using the shared client."""
+    def _request_kwargs(
+        self, client: httpx.AsyncClient, url: str = ""
+    ) -> dict[str, Any]:
+        """Per-plugin timeout and User-Agent when using the shared client.
+
+        Requests to a site whose browser session httpx took over send the
+        browser's User-Agent instead (*url* names the site).
+        """
+        browser_ua = self._browser_user_agents.get(urlparse(url).hostname or "")
         if client is not self._shared_http_client:
-            return {}
+            return {"headers": {"User-Agent": browser_ua}} if browser_ua else {}
         return {
             "timeout": httpx.Timeout(self._timeout),
-            "headers": {"User-Agent": self._user_agent},
+            "headers": {"User-Agent": browser_ua or self._user_agent},
         }
 
     async def _use_browser_session(self, url: str, cookies: dict[str, str]) -> None:
@@ -433,7 +498,7 @@ class HttpxPluginBase:
             )
 
         client = await self._ensure_client()
-        kwargs = self._request_kwargs(client)
+        kwargs = self._request_kwargs(client, url)
         if referer:
             base_headers = kwargs.get("headers")
             headers = dict(base_headers) if isinstance(base_headers, dict) else {}

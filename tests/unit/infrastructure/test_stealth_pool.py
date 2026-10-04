@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from scavengarr.domain.ports.browser_fetcher import ClickThrough
+from scavengarr.domain.ports.browser_fetcher import BrowserSession, ClickThrough
 from scavengarr.infrastructure.browser.stealth_pool import (
     _BLOCKED_RESOURCE_TYPES,
     StealthPool,
@@ -362,6 +362,48 @@ def _request(
     request.is_navigation_request = MagicMock(return_value=navigation)
     request.redirected_from = redirected_from
     return request
+
+
+class TestStealthPoolSession:
+    """The site's cookies in the stealth context plus the browser's User-Agent."""
+
+    def _pool(self, cookies: list[dict[str, str]]) -> tuple[StealthPool, AsyncMock]:
+        shared_pool, _, context = _mock_pool_stack()
+        page = _mock_page()
+        page.evaluate = AsyncMock(return_value="Mozilla/5.0 Chrome/153.0.0.0")
+        context.new_page = AsyncMock(return_value=page)
+        context.cookies = AsyncMock(return_value=cookies)
+        return StealthPool(browser_pool=shared_pool), context
+
+    async def test_returns_cookies_and_user_agent(self) -> None:
+        pool, context = self._pool(
+            [
+                {"name": "ha-waf-ticket", "value": "t1"},
+                {"name": "PHPSESSID", "value": "s1"},
+            ]
+        )
+
+        session = await pool.session("https://kinoger.com/x")
+
+        assert session == BrowserSession(
+            cookies={"ha-waf-ticket": "t1", "PHPSESSID": "s1"},
+            user_agent="Mozilla/5.0 Chrome/153.0.0.0",
+        )
+        context.cookies.assert_awaited_once_with("https://kinoger.com/x")
+
+    async def test_user_agent_is_read_once(self) -> None:
+        pool, context = self._pool([{"name": "a", "value": "1"}])
+
+        await pool.session("https://kinoger.com/x")
+        await pool.session("https://kinoger.com/y")
+
+        context.new_page.assert_awaited_once()
+        context.new_page.return_value.close.assert_awaited_once()
+
+    async def test_without_cookies_there_is_no_session(self) -> None:
+        pool, _ = self._pool([])
+
+        assert await pool.session("https://kinoger.com/x") is None
 
 
 def _redirect_page(hops: list[tuple[list[str], int]]) -> MagicMock:

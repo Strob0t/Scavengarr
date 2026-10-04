@@ -158,7 +158,7 @@ Design:
 
 - **Config**: `playwright.browser_fallback` (bool, default `true`; `AppConfig` field `playwright_browser_fallback` with an `AliasPath`, env override `SCAVENGARR_PLAYWRIGHT_BROWSER_FALLBACK`) so operators on small hosts can disable the extra Chromium load. When `false`, no fetcher is injected.
 
-Out of scope for Phase 2: reusing `cf_clearance` cookies in httpx — the cookie is bound to the browser's TLS fingerprint and fails with httpx (see Phase 3).
+Out of scope for Phase 2: reusing `cf_clearance` cookies in httpx — the cookie is bound to the browser's TLS fingerprint and fails with httpx (see Phase 3). Corrected 2026-10-04 (Phase 4): for the sites measured then, the browser's cookies pass from httpx with the browser's User-Agent.
 
 Risks:
 - Latency: a browser fetch costs seconds; detail-page fan-out (semaphore `_max_concurrent`, default 5) may exceed the plugin search timeout in `PluginSearchRunner`. Measure with live smoke; if needed cap browser-fetched detail pages per search or remember CF-blocked domains per plugin (skip the doomed httpx request).
@@ -198,6 +198,28 @@ Only if plugins remain blocked after Phase 2.
 - `FlareSolverrFetcher` implementing `BrowserFetcherPort` via the FlareSolverr v1 API (`POST /v1`, `cmd: request.get`); Byparr is API-compatible.
 - Config `playwright.solver_url` (unset = disabled; `AppConfig` field `playwright_solver_url`, env `SCAVENGARR_PLAYWRIGHT_SOLVER_URL`). Composition builds a chained fetcher: StealthPool first, solver as fallback.
 - `curl_cffi` (TLS impersonation) only if solver latency becomes the bottleneck: reuse the solver's `cf_clearance` cookie + User-Agent for follow-up requests. This is a new dependency with its own client stack (no respx, no `RetryTransport`); needs a separate justification at that point.
+
+## Phase 4 — httpx goes on with the browser's session (2026-10-04)
+
+Problem: production (Raspberry Pi 4, all traffic through a datacenter VPN) answered kinoger and moflix with nothing. Their sites challenge the VPN IP; after one challenge `_fetch_text()` sent every page of the host through the browser for 30 min (moflix, a Playwright plugin, always runs in the browser). On the Pi a browser page costs seconds, so the 10 s Stremio budget ran out before the detail pages.
+
+Measured from production's VPN IP inside the production container (2026-10-04, one run each):
+
+| Site | httpx without cookies | Browser solve | httpx + browser cookies + UA | curl_cffi (`chrome`) + cookies + UA |
+|---|---|---|---|---|
+| kinoger (HostAdmin WAF, `ha-waf-*`) | 403 challenge | 4.0 s | 200 in 0.4 s | 200 in 0.4 s |
+| moflix API (Cloudflare, `cf_clearance`) | 403 challenge | 3.0 s | 200 in 0.3 s (with `Referer` and `X-XSRF-TOKEN`) | 200 in 0.3 s |
+
+From the home IP curl_cffi alone (no cookies) still got moflix's challenge. So the TLS fingerprint did not decide either check; the cookie plus the browser's User-Agent did, and curl_cffi adds nothing for these sites. The Phase 2 finding (cookie bound to the TLS fingerprint) may still hold for other sites, hence the fallback below.
+
+Design:
+- `BrowserFetcherPort.session(url) -> BrowserSession | None` (cookies for the site, User-Agent). `StealthPool` reads its persistent context's cookies and the browser's `navigator.userAgent` (read once); `SolverFetcher` keeps the latest solution's `cookies`/`userAgent` per host; `ChainedBrowserFetcher` asks the fetcher that served the host.
+- `HttpxPluginBase._fetch_via_browser()`: after the browser fetch, `_adopt_browser_session()` puts the cookies into the client's jar for the host and remembers the User-Agent per host (`_request_kwargs(client, url)`), and the host leaves the browser memo. During the solve the host stays in the memo, so parallel requests do not hit the challenge again.
+- A challenge less than `_SESSION_TRUST_S` (5 min) after adopting a session means the site does not accept it from httpx: memo for 30 min as before (`{name}_browser_session_rejected`). A later challenge (expired clearance) is solved again.
+
+Tests: `test_httpx_browser_fallback.py` (`TestBrowserSessionReuse`: session reused, redirects too, rejected session → memo, expired → solved again, no session → memo), `test_stealth_pool.py` (`TestStealthPoolSession`), `test_solver_fetcher.py` (solution session, chain). Live in dev: moflix's API, challenged from the home IP, solved in 2 s; the next request went through httpx (origin 401 without moflix's API headers, so the challenge was passed).
+
+Follow-up: moflix's API through httpx with the session (it needs `Referer` and `X-XSRF-TOKEN`).
 
 ## Documentation per phase
 

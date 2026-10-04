@@ -10,6 +10,7 @@ import pytest
 import respx
 import structlog.testing
 
+from scavengarr.domain.ports.browser_fetcher import BrowserSession
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 _CF_CHALLENGE = (
@@ -26,10 +27,9 @@ class _Plugin(HttpxPluginBase):
 
 @pytest.fixture(autouse=True)
 def _reset_fetcher() -> Iterator[None]:
-    HttpxPluginBase._cf_blocked_until.clear()
+    HttpxPluginBase.set_browser_fetcher(None)
     yield
     HttpxPluginBase.set_browser_fetcher(None)
-    HttpxPluginBase._cf_blocked_until.clear()
 
 
 async def _plugin_with_client(client: httpx.AsyncClient) -> _Plugin:
@@ -292,6 +292,118 @@ class TestFetchText:
         async with httpx.AsyncClient() as client:
             plugin = await _plugin_with_client(client)
             assert await plugin._fetch_text("https://cf.example/page") is None
+
+
+_SESSION = BrowserSession(cookies={"cf_clearance": "abc"}, user_agent="BrowserUA/1.0")
+
+
+def _solving_fetcher(session: BrowserSession | None = _SESSION) -> AsyncMock:
+    fetcher = AsyncMock()
+    fetcher.fetch_text = AsyncMock(return_value="<html>solved</html>")
+    fetcher.session = AsyncMock(return_value=session)
+    return fetcher
+
+
+class TestBrowserSessionReuse:
+    """After the browser passed a challenge, httpx goes on with its session.
+
+    Every page through the browser costs seconds (on a Raspberry Pi too many
+    for a Stremio request); the site's cookies and the browser's User-Agent
+    pass the same check through httpx (measured 2026-10-04 from a VPN IP).
+    """
+
+    @respx.mock
+    async def test_next_request_uses_the_browser_session(self) -> None:
+        respx.get("https://cf.example/a").respond(403, text=_CF_CHALLENGE)
+        route_b = respx.get("https://cf.example/b").respond(200, text="<html>b</html>")
+        fetcher = _solving_fetcher()
+        HttpxPluginBase.set_browser_fetcher(fetcher)
+
+        async with httpx.AsyncClient() as client:
+            plugin = await _plugin_with_client(client)
+            first = await plugin._fetch_text("https://cf.example/a")
+            second = await plugin._fetch_text("https://cf.example/b")
+
+        assert (first, second) == ("<html>solved</html>", "<html>b</html>")
+        sent = route_b.calls.last.request
+        assert sent.headers["cookie"] == "cf_clearance=abc"
+        assert sent.headers["user-agent"] == "BrowserUA/1.0"
+        fetcher.fetch_text.assert_awaited_once()
+        fetcher.session.assert_awaited_once_with("https://cf.example/a")
+
+    @respx.mock
+    async def test_redirects_use_the_browser_session(self) -> None:
+        respx.get("https://cf.example/a").respond(403, text=_CF_CHALLENGE)
+        route = respx.get("https://cf.example/external/x").respond(
+            302, headers={"Location": "https://filecrypt.cc/c"}
+        )
+        HttpxPluginBase.set_browser_fetcher(_solving_fetcher())
+
+        async with httpx.AsyncClient() as client:
+            plugin = await _plugin_with_client(client)
+            await plugin._fetch_text("https://cf.example/a")
+            target = await plugin._resolve_redirect("https://cf.example/external/x")
+
+        assert target == "https://filecrypt.cc/c"
+        assert route.calls.last.request.headers["user-agent"] == "BrowserUA/1.0"
+
+    @respx.mock
+    async def test_rejected_session_sends_the_host_to_the_browser(self) -> None:
+        """A challenge despite a fresh session: the site binds it to the browser."""
+        route = respx.get(url__startswith="https://cf.example/").respond(
+            403, text=_CF_CHALLENGE
+        )
+        fetcher = _solving_fetcher()
+        HttpxPluginBase.set_browser_fetcher(fetcher)
+
+        async with httpx.AsyncClient() as client:
+            plugin = await _plugin_with_client(client)
+            with structlog.testing.capture_logs() as logs:
+                await plugin._fetch_text("https://cf.example/a")
+                await plugin._fetch_text("https://cf.example/b")
+                await plugin._fetch_text("https://cf.example/c")
+
+        assert route.call_count == 2  # /c went straight to the browser
+        assert fetcher.fetch_text.await_count == 3
+        assert any(e["event"] == "cf-test_browser_session_rejected" for e in logs)
+
+    @respx.mock
+    async def test_expired_session_is_solved_again(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        route = respx.get(url__startswith="https://cf.example/").respond(
+            403, text=_CF_CHALLENGE
+        )
+        fetcher = _solving_fetcher()
+        HttpxPluginBase.set_browser_fetcher(fetcher)
+        clock = {"now": 1000.0}
+        monkeypatch.setattr(
+            "scavengarr.infrastructure.plugins.httpx_base.time.monotonic",
+            lambda: clock["now"],
+        )
+
+        async with httpx.AsyncClient() as client:
+            plugin = await _plugin_with_client(client)
+            await plugin._fetch_text("https://cf.example/a")
+            clock["now"] += 20 * 60  # the clearance ran out meanwhile
+            await plugin._fetch_text("https://cf.example/b")
+
+        assert route.call_count == 2
+        assert fetcher.session.await_count == 2  # solved and adopted again
+
+    @respx.mock
+    async def test_without_a_session_the_host_stays_in_the_browser(self) -> None:
+        route = respx.get(url__startswith="https://cf.example/").respond(
+            403, text=_CF_CHALLENGE
+        )
+        HttpxPluginBase.set_browser_fetcher(_solving_fetcher(session=None))
+
+        async with httpx.AsyncClient() as client:
+            plugin = await _plugin_with_client(client)
+            await plugin._fetch_text("https://cf.example/a")
+            await plugin._fetch_text("https://cf.example/b")
+
+        assert route.call_count == 1
 
 
 class TestUseBrowserSession:

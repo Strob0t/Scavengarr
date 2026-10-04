@@ -20,7 +20,7 @@ from urllib.parse import urlparse
 import structlog
 from patchright.async_api import Browser, BrowserContext, Page, Request, Route
 
-from scavengarr.domain.ports.browser_fetcher import ClickThrough
+from scavengarr.domain.ports.browser_fetcher import BrowserSession, ClickThrough
 from scavengarr.infrastructure.browser.turnstile import (
     is_challenge_page,
     pass_turnstile_widget,
@@ -191,6 +191,7 @@ class StealthPool:
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
         self._lock = asyncio.Lock()
+        self._user_agent: str | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -218,6 +219,7 @@ class StealthPool:
 
             self._browser, _ = await self._browser_pool.warmup()
             self._context = await self._browser.new_context()
+            self._user_agent = None  # a relaunched browser may be another version
 
             # Block heavy resources on all pages in this context
             await self._context.route("**/*", _block_resources)
@@ -317,6 +319,35 @@ class StealthPool:
             finally:
                 if page is not None and not page.is_closed():
                     await page.close()
+
+    async def session(self, url: str) -> BrowserSession | None:
+        """Return the context's cookies for *url* and the browser's User-Agent.
+
+        Implements ``BrowserFetcherPort``. The persistent context keeps the
+        cookies that ``fetch_text()`` collected while passing the site's
+        challenge.
+        """
+        context = await self._ensure_context()
+        cookies: dict[str, str] = {}
+        for cookie in await context.cookies(url):
+            name, value = cookie.get("name"), cookie.get("value")
+            if name and value is not None:
+                cookies[name] = value
+        if not cookies:
+            return None
+        return BrowserSession(
+            cookies=cookies, user_agent=await self._browser_user_agent()
+        )
+
+    async def _browser_user_agent(self) -> str:
+        """The User-Agent the browser sends (read once from a blank page)."""
+        if self._user_agent is None:
+            page = await self.new_page()
+            try:
+                self._user_agent = str(await page.evaluate("navigator.userAgent"))
+            finally:
+                await page.close()
+        return self._user_agent
 
     async def capture_media(self, url: str, *, timeout: float) -> CapturedMedia | None:
         """Open *url*, start its player and return the stream URL it requests.
