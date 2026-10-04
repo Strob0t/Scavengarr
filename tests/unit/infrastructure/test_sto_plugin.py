@@ -38,6 +38,7 @@ _GENRE_CATEGORY_MAP = _mod._GENRE_CATEGORY_MAP
 _genre_to_torznab = _mod._genre_to_torznab
 _determine_category = _mod._determine_category
 _relevant_series = _mod._relevant_series
+_GATE_RETRY_S = _mod._GATE_RETRY_S
 
 
 def _make_plugin() -> object:
@@ -982,3 +983,96 @@ class TestCloudflareFallback:
 
         assert results
         fetcher.fetch_text.assert_awaited_once()
+
+
+class TestGatedSeasons:
+    """Torznab scrapes whole seasons: about 950 link-outs for "Dark", of which
+    the gate let 3 through per pass (VPN IP, 2026-10-04), in 83 s. Seasons
+    return gated link-outs unresolved and stop requesting them."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_fetcher(self) -> Iterator[None]:
+        yield
+        _StoPlugin.set_browser_fetcher(None)
+
+    async def _plugin(self, client: httpx.AsyncClient) -> object:
+        plugin = _make_plugin()
+        plugin._client = client
+        plugin.base_url = "https://s.to"
+        return plugin
+
+    @respx.mock
+    async def test_seasons_do_not_pass_the_gate(self) -> None:
+        _gated_site(respx.mock, trusted="laravel_session=passed")
+        fetcher = _gate_fetcher(_PASSED)
+        _StoPlugin.set_browser_fetcher(fetcher)
+
+        async with httpx.AsyncClient() as client:
+            plugin = await self._plugin(client)
+            links = await plugin._episode_links(_EPISODE_URL, pass_gate=False)
+
+        assert links[0]["link"].startswith("https://s.to/r?t=")
+        fetcher.click_through.assert_not_awaited()
+
+    @respx.mock
+    async def test_after_a_gated_page_link_outs_are_not_requested(self) -> None:
+        _gated_site(respx.mock, trusted="laravel_session=passed")
+        link_outs = respx.mock.routes[1]
+
+        async with httpx.AsyncClient() as client:
+            plugin = await self._plugin(client)
+            await plugin._episode_links(_EPISODE_URL, pass_gate=False)
+            requested = link_outs.call_count
+            links = await plugin._episode_links(_EPISODE_URL, pass_gate=False)
+
+        assert requested == 3
+        assert link_outs.call_count == requested
+        assert [link["link"] for link in links] == [
+            "https://s.to/r?t=abc123",
+            "https://s.to/r?t=def456",
+            "https://s.to/r?t=ghi789",
+        ]
+        assert [link["hoster"] for link in links] == ["voe", "vidoza", "voe"]
+
+    @respx.mock
+    async def test_link_outs_are_requested_again_after_the_retry_time(
+        self,
+    ) -> None:
+        _gated_site(respx.mock, trusted="laravel_session=passed")
+        link_outs = respx.mock.routes[1]
+
+        async with httpx.AsyncClient() as client:
+            plugin = await self._plugin(client)
+            await plugin._episode_links(_EPISODE_URL, pass_gate=False)
+            plugin._gated_at -= _GATE_RETRY_S
+            await plugin._episode_links(_EPISODE_URL, pass_gate=False)
+
+        assert link_outs.call_count == 6
+
+    @respx.mock
+    async def test_a_stream_request_still_passes_the_gate(self) -> None:
+        _gated_site(respx.mock, trusted="laravel_session=passed")
+        fetcher = _gate_fetcher(_PASSED)
+        _StoPlugin.set_browser_fetcher(fetcher)
+
+        async with httpx.AsyncClient() as client:
+            plugin = await self._plugin(client)
+            await plugin._episode_links(_EPISODE_URL, pass_gate=False)
+            links = await plugin._episode_links(_EPISODE_URL)
+
+        assert links[0]["link"] == "https://voe.sx/e/abc123"
+        fetcher.click_through.assert_awaited_once()
+
+    @respx.mock
+    async def test_a_failed_pass_stops_season_link_outs(self) -> None:
+        _gated_site(respx.mock, trusted="laravel_session=passed")
+        _StoPlugin.set_browser_fetcher(_gate_fetcher(None))
+        link_outs = respx.mock.routes[1]
+
+        async with httpx.AsyncClient() as client:
+            plugin = await self._plugin(client)
+            await plugin._episode_links(_EPISODE_URL)
+            requested = link_outs.call_count
+            await plugin._episode_links(_EPISODE_URL, pass_gate=False)
+
+        assert link_outs.call_count == requested

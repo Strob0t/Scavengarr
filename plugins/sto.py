@@ -49,7 +49,8 @@ _OFFICIAL_PROVIDER = "Provider"
 # 28 s on a Raspberry Pi 4 behind a VPN (2026-10-04). The pass runs in the
 # background, a Stremio request does not wait for it
 _GATE_TIMEOUT_S = 60.0
-# After a failed pass, link-outs go without the browser for this long
+# After a failed pass, link-outs go without the browser for this long; after
+# gated link-outs, whole seasons do not request theirs for this long
 _GATE_RETRY_S = 300.0
 
 # ---------------------------------------------------------------------------
@@ -385,6 +386,8 @@ class StoPlugin(HttpxPluginBase):
         super().__init__()
         self._gate_task: asyncio.Task[bool] | None = None
         self._gate_failed_at = -_GATE_RETRY_S
+        # When link-outs last stayed gated (see _episode_links)
+        self._gated_at = -_GATE_RETRY_S
 
     async def _search_series(
         self,
@@ -454,15 +457,23 @@ class StoPlugin(HttpxPluginBase):
         )
         return target or full_url
 
-    async def _read_episode_links(self, episode_url: str) -> list[dict[str, str]]:
-        """Hoster links of an episode page, link-outs resolved in parallel."""
+    async def _read_episode_links(
+        self, episode_url: str, *, resolve: bool = True
+    ) -> list[dict[str, str]]:
+        """Hoster links of an episode page, link-outs resolved in parallel.
+
+        Without *resolve* the link-outs themselves are returned.
+        """
         hosters = await self._scrape_episode_hosters(episode_url)
-        resolved = await asyncio.gather(
-            *(
-                self._resolve_hoster_url(h["play_url"], referer=episode_url)
-                for h in hosters
+        if resolve:
+            resolved = await asyncio.gather(
+                *(
+                    self._resolve_hoster_url(h["play_url"], referer=episode_url)
+                    for h in hosters
+                )
             )
-        )
+        else:
+            resolved = [urljoin(self.base_url, h["play_url"]) for h in hosters]
         return [
             {
                 "hoster": h["provider"].lower(),
@@ -472,21 +483,34 @@ class StoPlugin(HttpxPluginBase):
             for h, url in zip(hosters, resolved, strict=True)
         ]
 
-    async def _episode_links(self, episode_url: str) -> list[dict[str, str]]:
+    async def _episode_links(
+        self, episode_url: str, *, pass_gate: bool = True
+    ) -> list[dict[str, str]]:
         """Hoster links of an episode page.
 
-        When no link-out of the page resolves, the site gates them: the
-        browser passes the gate once and the page is read again, its
-        link-outs now minted for the adopted session.
+        When no link-out of the page resolves, the site gates them. For one
+        episode (*pass_gate*, a stream request) the browser passes the gate
+        once and the page is read again, its link-outs now minted for the
+        adopted session. For whole seasons (Torznab) a pass does not help:
+        it unlocks 3 link-outs of the ~950 of a search (VPN IP, 2026-10-04).
+        Gated link-outs stay unresolved (JDownloader can still follow them),
+        and for ``_GATE_RETRY_S`` seasons do not request theirs at all.
         """
+        if not pass_gate and time.monotonic() - self._gated_at < _GATE_RETRY_S:
+            return await self._read_episode_links(episode_url, resolve=False)
         links = await self._read_episode_links(episode_url)
+        if self._gated(links) and pass_gate and await self._pass_link_gate(episode_url):
+            links = await self._read_episode_links(episode_url)
+        if self._gated(links):
+            self._gated_at = time.monotonic()
+        return links
+
+    def _gated(self, links: list[dict[str, str]]) -> bool:
+        """Whether no link-out resolved: all links stay on the site."""
         site = urlparse(self.base_url).hostname
-        gated = bool(links) and all(
+        return bool(links) and all(
             urlparse(link["link"]).hostname == site for link in links
         )
-        if gated and await self._pass_link_gate(episode_url):
-            links = await self._read_episode_links(episode_url)
-        return links
 
     async def _pass_link_gate(self, episode_url: str) -> bool:
         """Let the browser pass the link-out gate and adopt its session.
@@ -552,7 +576,7 @@ class StoPlugin(HttpxPluginBase):
             ep_title: str,
         ) -> dict[str, str | list[dict[str, str]]] | None:
             async with sem:
-                links = await self._episode_links(ep_url)
+                links = await self._episode_links(ep_url, pass_gate=False)
                 if not links:
                     return None
 

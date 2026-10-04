@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Perf: s.to Seasons Stop Requesting Gated Link-outs
+- A Torznab search for "Dark" on s.to took 83 s and sent about 950 link-out requests: every episode and hoster of every matching series. Behind the VPN the gate let 3 of them through per pass, so 97 of 100 results kept the s.to link-out anyway.
+- Whole seasons (Torznab) no longer pass the gate, since a pass unlocks 3 link-outs. Once an episode's link-outs stay gated, the next episodes return theirs unresolved for 5 min, without requests (JDownloader can still follow them). Stream requests (one episode) still pass the gate in the browser as before.
+
 ### Perf: Plugins Follow a Moved Site
 - hdfilme answered every search with a 301 from `hdfilme.cafe` to `hdfilme.ceo`, one more round trip per request.
 - `HttpxPluginBase` now adopts the new host as `base_url` when a request to the base host ends on another host after only permanent redirects (301/308) and with a status below 400 (`{name}_site_moved`). Temporary redirects and moves to an error page change nothing. Every httpx plugin gets this without a code change.
