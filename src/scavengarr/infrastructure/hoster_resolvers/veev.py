@@ -152,6 +152,10 @@ class VeevResolver:
         if page.status_code != 200:
             log.info("veev_http_error", status=page.status_code, url=url)
             return None
+        # veev redirects some links to another file code; the page's token
+        # belongs to that code (the API answers the old one "malformed request")
+        file_code = _extract_file_id(str(page.url)) or file_code
+        embed_url = str(page.url)
         if _OFFLINE_RE.search(page.text):
             log.info("veev_offline", file_code=file_code)
             return None

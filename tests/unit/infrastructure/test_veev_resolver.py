@@ -119,6 +119,28 @@ class TestVeevResolver:
         assert request.headers["X-Requested-With"] == "XMLHttpRequest"
 
     @respx.mock
+    async def test_asks_the_api_for_the_code_it_was_redirected_to(self) -> None:
+        """veev redirects some embed links to another file code; the page's
+        token belongs to that code, and the API answered the old one with
+        "malformed request" ("hashcheck": 1; 6 links on 2026-10-04)."""
+        old = "https://veev.to/e/BvdHl4N8GyKZvYh3DBKC3wGkMNasnCcjqSliKK"
+        new = "https://veev.to/e/5pi5uz0jufew"
+        respx.get(old).respond(302, headers={"Location": new})
+        respx.get(new).respond(200, text=_EMBED_HTML)
+        api = respx.get(_API).respond(
+            200, json={"status": "success", "file": {"dv": [{"s": _SOURCE_S}]}}
+        )
+
+        async with httpx.AsyncClient() as client:
+            result = await VeevResolver(http_client=client).resolve(old)
+
+        assert result is not None
+        assert result.video_url == _SOURCE
+        request = api.calls.last.request
+        assert request.url.params["file_code"] == "5pi5uz0jufew"
+        assert request.headers["Referer"] == new
+
+    @respx.mock
     async def test_playback_uses_the_resolving_user_agent(self) -> None:
         """veevcdn binds the stream token to the User-Agent that resolved it
         (other UA → 403), so playback must send the same one."""

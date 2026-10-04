@@ -10,6 +10,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 - moflix's search lists people next to titles (19 of 20 hits for "Oppenheimer"), and the plugin asked the title API for every hit: 46 answers 404 in the end-to-end test of 2026-10-04, and a person's id can be another title's ("Alan Oppenheimer" fetched a children's film).
 - It now fetches titles only, and only the relevant ones (`relevant_hits()`, at most 3 for a season or episode request), as the other plugins do.
 
+### Fix: VEEV Links That Redirect
+- veev redirects some embed links to another file code (it changes per request), and the page's token belongs to that code. The resolver asked the player API for the old code, which answered "malformed request" (`hashcheck: 1`; 6 links in the end-to-end test of 2026-10-04). It now asks for the code of the page it was redirected to; the 3 failed links of the test resolve.
+
 ### Fix: Playmate Player-Frame Links
 - Links to Playmate's player frame (`playmate.to/embed/<id>`) were dropped as invalid (`playmate_invalid_url`); the resolver only needs the file code for its API, so `/embed/` is accepted next to `/watch/` and `/e/`.
 
