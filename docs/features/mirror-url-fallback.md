@@ -32,6 +32,8 @@ _verify_domain()  (no-op if already verified or only one domain)
 
 Fallback only happens when the plugin calls `await self._verify_domain()` (usually at the start of `search()`). Most plugins have a single domain, where the call is a no-op. Some plugins implement their own loop instead — e.g. `plugins/boerse.py` tries each domain during login.
 
+**Site moves:** when a request of `HttpxPluginBase._fetch_text()` or `_safe_fetch()` to the base host ends on another host after only permanent redirects (301/308) and with a status below 400, that host becomes `base_url` (`{name}_site_moved`), without a plugin change. hdfilme answered every search with a 301 from `hdfilme.cafe` to `hdfilme.ceo`, one more round trip per request. Temporary redirects (302/307), redirects that stay on the host and moves that end on an error page change nothing. Like `_verify_domain()`, this lasts until a restart or `cleanup()`.
+
 ---
 
 ## Plugin Domain Configuration

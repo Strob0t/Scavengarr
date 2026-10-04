@@ -147,7 +147,7 @@ MIRROR_AJAX_HTML_FILEMOON = """\
 
 
 def _make_response(text: str) -> MagicMock:
-    resp = MagicMock(spec=httpx.Response)
+    resp = MagicMock(spec=httpx.Response, history=[])
     resp.status_code = 200
     resp.text = text
     resp.raise_for_status = MagicMock()
@@ -548,7 +548,7 @@ class TestPluginSearch:
         """When all AJAX mirror calls fail, there is no result."""
         search_resp = _make_response(SEARCH_HTML)
         detail_resp = _make_response(DETAIL_MOVIE_HTML)
-        error_resp = MagicMock(spec=httpx.Response)
+        error_resp = MagicMock(spec=httpx.Response, history=[])
         error_resp.status_code = 404
         error_resp.text = ""
         error_resp.headers = httpx.Headers()
@@ -601,7 +601,7 @@ class TestDomainVerification:
     async def test_first_domain_works(self, kinox_mod):
         p = kinox_mod.KinoxPlugin()
         mock_client = AsyncMock(spec=httpx.AsyncClient)
-        resp = MagicMock(spec=httpx.Response)
+        resp = MagicMock(spec=httpx.Response, history=[])
         resp.status_code = 200
         resp.url = httpx.URL("https://www22.kinox.to/")
         mock_client.head = AsyncMock(return_value=resp)
@@ -623,7 +623,7 @@ class TestDomainVerification:
             call_count += 1
             if call_count == 1:
                 raise httpx.ConnectError("Connection failed")
-            resp = MagicMock(spec=httpx.Response)
+            resp = MagicMock(spec=httpx.Response, history=[])
             resp.status_code = 200
             resp.url = httpx.URL("https://ww22.kinox.to/")
             return resp
@@ -734,7 +734,7 @@ class TestJsonMirrorAnswer:
     async def test_redirect_link_resolved_to_hoster(self, plugin):
         detail = _make_response(DETAIL_MOVIE_HTML)
         mirror = _make_response(_JSON_MIRROR_REDIRECT)
-        hop = MagicMock(spec=httpx.Response)
+        hop = MagicMock(spec=httpx.Response, history=[])
         hop.status_code = 302
         hop.is_redirect = True
         hop.headers = {"location": "https://dood.to/e/w71gg51eat6x"}
@@ -786,7 +786,7 @@ class TestCloudflareFallback:
 
     @pytest.fixture()
     def challenge(self):
-        resp = MagicMock(spec=httpx.Response)
+        resp = MagicMock(spec=httpx.Response, history=[])
         resp.status_code = 403
         resp.text = "<title>Just a moment...</title>"
         resp.headers = httpx.Headers()

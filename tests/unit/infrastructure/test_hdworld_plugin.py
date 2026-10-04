@@ -114,7 +114,7 @@ def _make_api_response(
     status_code: int = 200,
 ) -> httpx.Response:
     """Build a mock httpx.Response for the WP REST API."""
-    resp = MagicMock(spec=httpx.Response)
+    resp = MagicMock(spec=httpx.Response, history=[])
     resp.status_code = status_code
     resp.json.return_value = posts
     resp.text = json.dumps(posts)
@@ -545,7 +545,7 @@ class TestHdWorldSearch:
 
     @pytest.mark.asyncio
     async def test_invalid_json_response(self, hdworld_mod: object) -> None:
-        resp = MagicMock(spec=httpx.Response)
+        resp = MagicMock(spec=httpx.Response, history=[])
         resp.status_code = 200
         resp.json.side_effect = ValueError("bad json")
         resp.headers = {"X-WP-TotalPages": "1"}

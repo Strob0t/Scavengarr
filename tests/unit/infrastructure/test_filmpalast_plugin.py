@@ -35,7 +35,7 @@ def _make_plugin() -> object:
 
 
 def _mock_response(html: str, url: str = "https://filmpalast.to/test") -> MagicMock:
-    resp = MagicMock(spec=httpx.Response)
+    resp = MagicMock(spec=httpx.Response, history=[])
     resp.status_code = 200
     resp.text = html
     resp.url = url
@@ -486,7 +486,7 @@ class TestSearch:
         mock_client = AsyncMock(spec=httpx.AsyncClient)
 
         search_resp = _mock_response(_SEARCH_HTML)
-        error_resp = MagicMock(spec=httpx.Response)
+        error_resp = MagicMock(spec=httpx.Response, history=[])
         error_resp.status_code = 500
         error_resp.raise_for_status = MagicMock(
             side_effect=httpx.HTTPStatusError(

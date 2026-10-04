@@ -227,6 +227,26 @@ class HttpxPluginBase:
         self._client = None
         self._domain_verified = False
 
+    def _follow_site_move(self, resp: httpx.Response) -> None:
+        """Make a permanent move of the site to another host the base URL.
+
+        Only a chain of permanent redirects (301/308) from the base host
+        counts. hdfilme answered every search with a 301 from
+        hdfilme.cafe to hdfilme.ceo: one more round trip per request.
+        """
+        history = resp.history
+        if not history or any(r.status_code not in (301, 308) for r in history):
+            return
+        old = httpx.URL(self.base_url).netloc
+        if history[0].url.netloc != old or resp.url.netloc == old:
+            return
+        self.base_url = f"{resp.url.scheme}://{resp.url.netloc.decode('ascii')}"
+        self._log.info(
+            f"{self.name}_site_moved",
+            old=old.decode("ascii"),
+            new=resp.url.netloc.decode("ascii"),
+        )
+
     # ------------------------------------------------------------------
     # Convenience helpers
     # ------------------------------------------------------------------
@@ -256,6 +276,7 @@ class HttpxPluginBase:
             handler = getattr(client, method.lower(), client.get)
             resp = await handler(url, **kwargs)
             resp.raise_for_status()
+            self._follow_site_move(resp)
             return resp
         except httpx.TimeoutException:
             self._log.warning(
@@ -323,6 +344,7 @@ class HttpxPluginBase:
             return None
 
         if resp.status_code < 400:
+            self._follow_site_move(resp)
             return resp.text
 
         challenge = detect_challenge(resp.status_code, resp.text, resp.headers)

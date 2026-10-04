@@ -201,7 +201,7 @@ class TestSafeFetch:
     @pytest.mark.asyncio
     async def test_returns_response_on_success(self) -> None:
         plugin = _TestPlugin()
-        resp = MagicMock(spec=httpx.Response)
+        resp = MagicMock(spec=httpx.Response, history=[])
         resp.status_code = 200
         resp.raise_for_status = MagicMock()
 
@@ -227,7 +227,7 @@ class TestSafeFetch:
     @pytest.mark.asyncio
     async def test_returns_none_on_http_error(self) -> None:
         plugin = _TestPlugin()
-        resp = MagicMock(spec=httpx.Response)
+        resp = MagicMock(spec=httpx.Response, history=[])
         resp.status_code = 403
         resp.raise_for_status = MagicMock(
             side_effect=httpx.HTTPStatusError(
@@ -263,7 +263,7 @@ class TestSafeFetch:
 class TestSafeParseJson:
     def test_parses_valid_json(self) -> None:
         plugin = _TestPlugin()
-        resp = MagicMock(spec=httpx.Response)
+        resp = MagicMock(spec=httpx.Response, history=[])
         resp.json.return_value = {"data": [1, 2, 3]}
         resp.url = "https://example.com/api"
 
@@ -273,7 +273,7 @@ class TestSafeParseJson:
 
     def test_returns_none_on_invalid_json(self) -> None:
         plugin = _TestPlugin()
-        resp = MagicMock(spec=httpx.Response)
+        resp = MagicMock(spec=httpx.Response, history=[])
         resp.json.side_effect = ValueError("invalid")
         resp.url = "https://example.com/api"
 
@@ -348,7 +348,7 @@ class TestSharedHttpClient:
     @pytest.mark.asyncio
     async def test_safe_fetch_adds_per_plugin_overrides(self) -> None:
         shared = AsyncMock(spec=httpx.AsyncClient)
-        resp = MagicMock(spec=httpx.Response)
+        resp = MagicMock(spec=httpx.Response, history=[])
         resp.status_code = 200
         resp.raise_for_status = MagicMock()
         shared.get = AsyncMock(return_value=resp)
@@ -366,7 +366,7 @@ class TestSharedHttpClient:
     @pytest.mark.asyncio
     async def test_safe_fetch_no_overrides_with_own_client(self) -> None:
         plugin = _TestPlugin()
-        resp = MagicMock(spec=httpx.Response)
+        resp = MagicMock(spec=httpx.Response, history=[])
         resp.status_code = 200
         resp.raise_for_status = MagicMock()
         mock_client = AsyncMock(spec=httpx.AsyncClient)

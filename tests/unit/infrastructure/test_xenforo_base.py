@@ -34,7 +34,7 @@ class _Forum(XenForoPluginBase):
 
 
 def _resp(text: str, status: int = 200) -> MagicMock:
-    resp = MagicMock(spec=httpx.Response)
+    resp = MagicMock(spec=httpx.Response, history=[])
     resp.status_code = status
     resp.text = text
     resp.raise_for_status = MagicMock()

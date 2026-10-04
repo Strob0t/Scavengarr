@@ -30,7 +30,7 @@ def _load_plugin(name: str) -> Any:
 
 
 def _challenge(url: object, **_kwargs: object) -> MagicMock:
-    resp = MagicMock(spec=httpx.Response)
+    resp = MagicMock(spec=httpx.Response, history=[])
     resp.status_code = 403
     resp.text = "<title>Just a moment...</title>"
     resp.headers = httpx.Headers()

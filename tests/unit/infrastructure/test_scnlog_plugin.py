@@ -33,7 +33,7 @@ def _make_plugin() -> object:
 
 
 def _mock_response(html: str, url: str = "https://scnlog.me/test") -> MagicMock:
-    resp = MagicMock(spec=httpx.Response)
+    resp = MagicMock(spec=httpx.Response, history=[])
     resp.status_code = 200
     resp.text = html
     resp.url = url

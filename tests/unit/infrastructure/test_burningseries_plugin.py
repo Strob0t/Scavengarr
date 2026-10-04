@@ -192,7 +192,7 @@ MINIMAL_DETAIL_HTML = """\
 
 
 def _make_response(text: str) -> MagicMock:
-    resp = MagicMock(spec=httpx.Response)
+    resp = MagicMock(spec=httpx.Response, history=[])
     resp.status_code = 200
     resp.text = text
     resp.raise_for_status = MagicMock()
@@ -654,7 +654,7 @@ class TestDomainVerification:
     async def test_first_domain_works(self, bs_mod):
         p = bs_mod.BurningSeriesPlugin()
         mock_client = AsyncMock(spec=httpx.AsyncClient)
-        resp = MagicMock(spec=httpx.Response)
+        resp = MagicMock(spec=httpx.Response, history=[])
         resp.status_code = 200
         resp.url = httpx.URL("https://burningseries.ac/")
         mock_client.head = AsyncMock(return_value=resp)
@@ -676,7 +676,7 @@ class TestDomainVerification:
             call_count += 1
             if call_count == 1:
                 raise httpx.ConnectError("Connection failed")
-            resp = MagicMock(spec=httpx.Response)
+            resp = MagicMock(spec=httpx.Response, history=[])
             resp.status_code = 200
             resp.url = httpx.URL("https://bs.cine.to/")
             return resp
@@ -753,7 +753,7 @@ class TestCloudflareFallback:
     ):
         from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
-        challenge = MagicMock(spec=httpx.Response)
+        challenge = MagicMock(spec=httpx.Response, history=[])
         challenge.status_code = 403
         challenge.text = "<title>Just a moment...</title>"
         challenge.headers = httpx.Headers()

@@ -167,7 +167,7 @@ TV_DETAIL_RESPONSE = {
 
 
 def _make_json_response(data: dict, status_code: int = 200) -> MagicMock:
-    resp = MagicMock(spec=httpx.Response)
+    resp = MagicMock(spec=httpx.Response, history=[])
     resp.status_code = status_code
     resp.text = json.dumps(data)
     resp.json.return_value = data

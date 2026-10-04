@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Perf: Plugins Follow a Moved Site
+- hdfilme answered every search with a 301 from `hdfilme.cafe` to `hdfilme.ceo`, one more round trip per request.
+- `HttpxPluginBase` now adopts the new host as `base_url` when a request to the base host ends on another host after only permanent redirects (301/308) and with a status below 400 (`{name}_site_moved`). Temporary redirects and moves to an error page change nothing. Every httpx plugin gets this without a code change.
+
 ### Perf: Stremio Search Cache, Late Plugins and an Early Answer
 - Stream requests were not cached. Production searched the same title twice within 18 s, each time a full fan-out of about 15 s and 50–270 requests. A plugin cut by the search deadline lost all its results, and every answer waited for the slowest plugin up to the 10 s search budget.
 - **Search cache:** the title-matching search results of a request are cached per title, season and episode for `cache.search_ttl_seconds` (diskcache or Redis). Hoster resolution still runs on every request, since stream URLs expire and some are bound to the resolving IP.

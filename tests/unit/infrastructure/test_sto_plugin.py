@@ -51,7 +51,7 @@ def _mock_response(
     headers: dict[str, str] | None = None,
 ) -> MagicMock:
     """Create a mock httpx.Response."""
-    resp = MagicMock(spec=httpx.Response)
+    resp = MagicMock(spec=httpx.Response, history=[])
     resp.status_code = status_code
     resp.text = text
     resp.headers = headers or {}

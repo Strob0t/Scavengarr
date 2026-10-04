@@ -370,7 +370,7 @@ class TestPluginAttributes:
 
 def _mock_response(html: str, status: int = 200) -> httpx.Response:
     """Create a mock httpx.Response with given HTML content."""
-    resp = MagicMock(spec=httpx.Response)
+    resp = MagicMock(spec=httpx.Response, history=[])
     resp.status_code = status
     resp.text = html
     resp.raise_for_status = MagicMock()

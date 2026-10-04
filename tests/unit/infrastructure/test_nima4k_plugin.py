@@ -349,7 +349,7 @@ class TestSearchPost:
     async def test_post_search_returns_results(self) -> None:
         plugin = _make_plugin()
 
-        mock_response = AsyncMock(spec=httpx.Response)
+        mock_response = AsyncMock(spec=httpx.Response, history=[])
         mock_response.status_code = 200
         mock_response.text = _LISTING_HTML
         mock_response.raise_for_status = lambda: None
@@ -370,7 +370,7 @@ class TestSearchPost:
     async def test_post_search_sends_correct_data(self) -> None:
         plugin = _make_plugin()
 
-        mock_response = AsyncMock(spec=httpx.Response)
+        mock_response = AsyncMock(spec=httpx.Response, history=[])
         mock_response.status_code = 200
         mock_response.text = _EMPTY_HTML
         mock_response.raise_for_status = lambda: None
@@ -389,7 +389,7 @@ class TestSearchPost:
     async def test_post_search_empty_results(self) -> None:
         plugin = _make_plugin()
 
-        mock_response = AsyncMock(spec=httpx.Response)
+        mock_response = AsyncMock(spec=httpx.Response, history=[])
         mock_response.status_code = 200
         mock_response.text = _EMPTY_HTML
         mock_response.raise_for_status = lambda: None
@@ -418,7 +418,7 @@ class TestCategoryBrowsing:
     async def test_browse_category_returns_results(self) -> None:
         plugin = _make_plugin()
 
-        mock_response = AsyncMock(spec=httpx.Response)
+        mock_response = AsyncMock(spec=httpx.Response, history=[])
         mock_response.status_code = 200
         mock_response.text = _LISTING_HTML  # no pagination
         mock_response.raise_for_status = lambda: None
@@ -439,7 +439,7 @@ class TestCategoryBrowsing:
     async def test_browse_fetches_correct_url(self) -> None:
         plugin = _make_plugin()
 
-        mock_response = AsyncMock(spec=httpx.Response)
+        mock_response = AsyncMock(spec=httpx.Response, history=[])
         mock_response.status_code = 200
         mock_response.text = _EMPTY_HTML
         mock_response.raise_for_status = lambda: None
@@ -455,12 +455,12 @@ class TestCategoryBrowsing:
     async def test_browse_paginates(self) -> None:
         plugin = _make_plugin()
 
-        page1_response = AsyncMock(spec=httpx.Response)
+        page1_response = AsyncMock(spec=httpx.Response, history=[])
         page1_response.status_code = 200
         page1_response.text = _PAGINATION_HTML
         page1_response.raise_for_status = lambda: None
 
-        page2_response = AsyncMock(spec=httpx.Response)
+        page2_response = AsyncMock(spec=httpx.Response, history=[])
         page2_response.status_code = 200
         page2_response.text = _LISTING_HTML  # no more pagination
         page2_response.raise_for_status = lambda: None
@@ -478,12 +478,12 @@ class TestCategoryBrowsing:
     async def test_browse_stops_on_empty_page(self) -> None:
         plugin = _make_plugin()
 
-        page1_response = AsyncMock(spec=httpx.Response)
+        page1_response = AsyncMock(spec=httpx.Response, history=[])
         page1_response.status_code = 200
         page1_response.text = _PAGINATION_HTML
         page1_response.raise_for_status = lambda: None
 
-        empty_response = AsyncMock(spec=httpx.Response)
+        empty_response = AsyncMock(spec=httpx.Response, history=[])
         empty_response.status_code = 200
         empty_response.text = _EMPTY_HTML
         empty_response.raise_for_status = lambda: None
@@ -512,7 +512,7 @@ class TestSearchResultConstruction:
     async def test_result_has_download_links(self) -> None:
         plugin = _make_plugin()
 
-        mock_response = AsyncMock(spec=httpx.Response)
+        mock_response = AsyncMock(spec=httpx.Response, history=[])
         mock_response.status_code = 200
         mock_response.text = _LISTING_HTML
         mock_response.raise_for_status = lambda: None
@@ -529,7 +529,7 @@ class TestSearchResultConstruction:
     async def test_result_has_metadata(self) -> None:
         plugin = _make_plugin()
 
-        mock_response = AsyncMock(spec=httpx.Response)
+        mock_response = AsyncMock(spec=httpx.Response, history=[])
         mock_response.status_code = 200
         mock_response.text = _LISTING_HTML
         mock_response.raise_for_status = lambda: None
@@ -552,7 +552,7 @@ class TestSearchResultConstruction:
     async def test_result_category_from_genre_pills(self) -> None:
         plugin = _make_plugin()
 
-        mock_response = AsyncMock(spec=httpx.Response)
+        mock_response = AsyncMock(spec=httpx.Response, history=[])
         mock_response.status_code = 200
         mock_response.text = _LISTING_HTML
         mock_response.raise_for_status = lambda: None
@@ -571,7 +571,7 @@ class TestSearchResultConstruction:
     async def test_request_keeps_the_matching_results(self) -> None:
         plugin = _make_plugin()
 
-        mock_response = AsyncMock(spec=httpx.Response)
+        mock_response = AsyncMock(spec=httpx.Response, history=[])
         mock_response.status_code = 200
         mock_response.text = _LISTING_HTML
         mock_response.raise_for_status = lambda: None
