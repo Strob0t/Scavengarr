@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+import respx
 import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream
+from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.hoster_resolvers import extract_domain
 from scavengarr.infrastructure.hoster_resolvers.registry import (
     HosterResolverRegistry,
@@ -797,3 +800,134 @@ class TestMirrorDomainDispatch:
         resolver.resolve.assert_awaited_once_with(  # type: ignore[attr-defined]
             "https://streamtape.com/v/8vwOLp7aApUodrP"
         )
+
+
+async def _hang(url: str) -> ResolvedStream | None:
+    await asyncio.sleep(10)
+    return None
+
+
+async def _cut(resolving: Awaitable[ResolvedStream | None], *, after: float) -> None:
+    """Cancel a resolution after *after* seconds, as the Stremio deadline does."""
+    task = asyncio.ensure_future(resolving)
+    await asyncio.sleep(after)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+class TestCircuitBreaker:
+    """A hoster that never delivers from here cost every request its browser
+    capture: in production (VPN IP, 2026-10-04) DoodStream's Turnstile and
+    Dropload's captcha player gave no stream from 50 captures in an hour,
+    about 10 s of Chromium CPU per stream request."""
+
+    _MP4 = "https://cdn.example.com/v.mp4"
+
+    @staticmethod
+    def _registry(
+        resolve: Callable[[str], Awaitable[ResolvedStream | None]],
+        *,
+        resolve_timeout: float = 0.05,
+        failure_threshold: int = 1,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> tuple[HosterResolverRegistry, MagicMock]:
+        resolver = MagicMock()
+        resolver.name = "doodstream"
+        resolver.resolve = AsyncMock(side_effect=resolve)
+        registry = HosterResolverRegistry(
+            resolvers=[resolver],
+            http_client=http_client,
+            resolve_timeout=resolve_timeout,
+            verify_playback=http_client is not None,
+            circuit_breaker=PluginCircuitBreaker(failure_threshold=failure_threshold),
+        )
+        return registry, resolver
+
+    @classmethod
+    def _answers(
+        cls, *answers: str
+    ) -> Callable[[str], Awaitable[ResolvedStream | None]]:
+        """Resolver answering "hang", "stream" or "dead", one per call."""
+        queue = list(answers)
+
+        async def _resolve(url: str) -> ResolvedStream | None:
+            answer = queue.pop(0)
+            if answer == "hang":
+                await asyncio.sleep(10)
+            return ResolvedStream(video_url=cls._MP4) if answer == "stream" else None
+
+        return _resolve
+
+    async def test_a_timeout_counts(self) -> None:
+        registry, resolver = self._registry(_hang)
+
+        assert await registry.resolve("https://doodstream.com/e/a") is None
+        with structlog.testing.capture_logs() as logs:
+            assert await registry.resolve("https://doodstream.com/e/b") is None
+
+        assert resolver.resolve.await_count == 1
+        assert any(
+            e["event"] == "hoster_resolve_circuit_open" and e["hoster"] == "doodstream"
+            for e in logs
+        )
+
+    async def test_a_cut_after_half_the_timeout_counts(self) -> None:
+        """The Stremio deadline cuts most resolutions before resolve_timeout."""
+        registry, resolver = self._registry(_hang, resolve_timeout=0.2)
+
+        await _cut(registry.resolve("https://doodstream.com/e/a"), after=0.15)
+
+        assert await registry.resolve("https://doodstream.com/e/b") is None
+        assert resolver.resolve.await_count == 1
+
+    async def test_an_early_cut_does_not_count(self) -> None:
+        """Cut by the resolve grace or early stop: other hosters were faster."""
+        registry, _ = self._registry(self._answers("hang", "stream"), resolve_timeout=1)
+
+        await _cut(registry.resolve("https://doodstream.com/e/a"), after=0.02)
+
+        assert await registry.resolve("https://doodstream.com/e/b") is not None
+
+    async def test_a_stream_resets_it(self) -> None:
+        registry, resolver = self._registry(
+            self._answers("hang", "stream", "hang", "stream"), failure_threshold=2
+        )
+
+        for link in "abcd":
+            await registry.resolve(f"https://doodstream.com/e/{link}")
+
+        assert resolver.resolve.await_count == 4
+
+    async def test_a_dead_link_neither_counts_nor_resets_it(self) -> None:
+        """A file the hoster deleted says nothing about the hoster."""
+        registry, resolver = self._registry(
+            self._answers("hang", "dead", "hang", "stream"), failure_threshold=2
+        )
+
+        for link in "abcd":
+            await registry.resolve(f"https://doodstream.com/e/{link}")
+
+        assert resolver.resolve.await_count == 3
+
+    @respx.mock
+    async def test_an_unplayable_stream_counts(self) -> None:
+        respx.get(self._MP4).respond(502)
+        async with httpx.AsyncClient() as client:
+            registry, resolver = self._registry(
+                self._answers("stream", "stream"), http_client=client
+            )
+
+            assert await registry.resolve("https://doodstream.com/e/a") is None
+            assert await registry.resolve("https://doodstream.com/e/b") is None
+
+        assert resolver.resolve.await_count == 1
+
+    async def test_a_skipped_link_is_not_cached_as_dead(self) -> None:
+        registry, _ = self._registry(self._answers("hang", "stream"))
+        await registry.resolve("https://doodstream.com/e/a")
+        assert await registry.resolve("https://doodstream.com/e/b") is None
+
+        registry._circuit_breaker.reset("doodstream")  # type: ignore[union-attr]
+
+        assert await registry.resolve("https://doodstream.com/e/b") is not None

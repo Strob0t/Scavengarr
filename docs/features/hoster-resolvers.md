@@ -79,7 +79,7 @@ Some players create the stream URL only while they run. Filemoon's Byse player s
 - Popups opened by ad scripts (often on the first click) are closed.
 - Seek-preview playlists are not the stream: URLs containing `thumbnail`, `sprite` or `preview` are ignored (vixeo requests `thumbnails.m3u8`, a playlist of JPEGs, before the video).
 - Shares the `fetch_text()` concurrency limit (`fetch_concurrency`, at most 2 pages).
-- Resolvers call it only at play time (`/stremio/play/{id}` resolves one link), so a few seconds per resolve are acceptable (Filemoon live: 2–5 s).
+- Resolvers call it when a stream request resolves its top streams and at play time (`/stremio/play/{id}` resolves one link). Filemoon live: 2–5 s. A capture that cannot pass from the server's address runs into the time bound on every request; the registry's [circuit breaker](#registry-features) stops those (production through the VPN, 2026-10-04: DoodStream's Turnstile unsolved after 31–34 s, Dropload's captcha player without a stream after 19 s).
 - Dead files end the capture early: the page title and visible text (not the HTML, player scripts carry such strings as error templates) are checked for notices like "Video not found", "File is no longer available", "No such file", "has been removed" after the Cloudflare step and after every click (savefiles says so only after the play click). Live: dead dood link 0.7 s, dead savefiles link 8.5 s instead of 18 s.
 
 `_browser.py` (`capture_stream(stealth_pool, embed_url, hoster)`) turns a capture into a `ResolvedStream` (`is_hls` from `.m3u8`, `Referer` of the captured request, else the embed URL) and is shared by:
@@ -246,6 +246,7 @@ Adding a new XFS hoster requires only an `XFSConfig` constant appended to `ALL_X
 | Playback check | With `verify_playback=True`, resolver results must pass `check_playable()` (see [Playback check](#playback-check)); failures count as dead |
 | Time bound | `resolver.resolve()` gets `http.timeout_resolve_seconds` in total (its requests' own timeouts add up over several requests); the playback check runs after it |
 | Result cache | In-memory, keyed by URL: alive results 1 h, dead results 15 min. A timeout (the time bound or a request timeout) or network error (`httpx.TransportError`) is not cached: it says nothing about the link (`hoster_resolve_timeout`, `hoster_resolve_network_error`) |
+| Circuit breaker | Per resolver (`resolver.name`, so a hoster's mirror domains share it), a `PluginCircuitBreaker` (5 failures, 60 s cooldown doubling up to 1 h, half-open probe; wired in the composition root). Failures: a timeout, a cut after half of `http.timeout_resolve_seconds` (the Stremio deadline ends most resolutions before the time bound), an unplayable stream. A stream resets it; a dead link (`None`) neither counts nor resets it. While open, the resolver is skipped (`hoster_resolve_circuit_open`) and the link is not cached as dead. Reason: from production's VPN address (2026-10-04) DoodStream's Turnstile and Dropload's captcha player gave no stream from 50 browser captures in an hour, about 10 s of Chromium CPU per stream request |
 | Redirect cache | Redirect mappings cached 1 h |
 | Cache limits | Each cache holds at most 10,000 entries; expired entries are evicted every 1,000 `resolve()` calls |
 | Cleanup | `cleanup()` calls `cleanup()` on every resolver that has one (app shutdown) |

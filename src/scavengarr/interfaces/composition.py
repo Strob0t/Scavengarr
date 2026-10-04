@@ -546,6 +546,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         http_client=state.http_client,
         resolve_timeout=config.http_timeout_resolve_seconds,
         verify_playback=config.stremio.verify_streams,
+        # Skips hosters whose resolutions keep timing out or are unplayable
+        # (browser captures that cannot pass a challenge from this IP)
+        circuit_breaker=PluginCircuitBreaker(
+            failure_threshold=5,
+            cooldown_seconds=60.0,
+        ),
     )
     log.info(
         "hoster_resolver_registry_initialized",

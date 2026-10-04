@@ -11,6 +11,7 @@ import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
 from scavengarr.domain.ports.hoster_resolver import HosterResolverPort
+from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.hoster_resolvers._verify import check_playable
 
 log = structlog.get_logger(__name__)
@@ -71,7 +72,10 @@ class HosterResolverRegistry:
     """Dispatches hoster URL resolution to the appropriate resolver.
 
     Falls back to content-type probing when no specific resolver is registered.
-    Caches resolution outcomes and redirect mappings in-memory.
+    Caches resolution outcomes and redirect mappings in-memory. With a
+    *circuit_breaker*, a resolver whose resolutions keep running into the
+    timeout or giving unplayable streams is skipped for a while (keyed by
+    resolver name, so a hoster's mirror domains share it).
     """
 
     def __init__(
@@ -80,12 +84,14 @@ class HosterResolverRegistry:
         http_client: httpx.AsyncClient | None = None,
         resolve_timeout: float = 15.0,
         verify_playback: bool = False,
+        circuit_breaker: PluginCircuitBreaker | None = None,
     ) -> None:
         self._resolvers: dict[str, HosterResolverPort] = {}
         self._domain_map: dict[str, HosterResolverPort] = {}
         self._host_map: dict[str, HosterResolverPort] = {}
         self._http_client = http_client
         self._resolve_timeout = resolve_timeout
+        self._circuit_breaker = circuit_breaker
         # Resolver results must also pass check_playable (needs http_client)
         self._verify_playback = verify_playback and http_client is not None
         self._result_cache: dict[str, _CacheEntry[ResolvedStream | None]] = {}
@@ -279,6 +285,39 @@ class HosterResolverRegistry:
         for k in keys:
             del cache[k]
 
+    async def _judge(
+        self,
+        resolver: HosterResolverPort,
+        hoster_name: str,
+        url: str,
+        result: ResolvedStream | None,
+    ) -> tuple[ResolvedStream | None, bool]:
+        """Classify a resolver's answer: dead link, unplayable or a stream."""
+        if result is None:
+            log.warning("hoster_resolve_failed", hoster=hoster_name, url=url)
+            return None, True
+        if (
+            self._verify_playback
+            and self._http_client is not None
+            and not await check_playable(self._http_client, result)
+        ):
+            log.warning("hoster_resolve_unplayable", hoster=hoster_name, url=url)
+            self._record(resolver, failed=True)
+            return None, True
+        log.info("hoster_resolve_success", hoster=hoster_name, is_hls=result.is_hls)
+        self._record(resolver, failed=False)
+        return result, True
+
+    def _record(self, resolver: HosterResolverPort, *, failed: bool) -> None:
+        """Report a resolution's outcome to the circuit breaker."""
+        breaker = self._circuit_breaker
+        if breaker is None:
+            return
+        if failed:
+            breaker.record_failure(resolver.name)
+        else:
+            breaker.record_success(resolver.name)
+
     async def _resolve_with(
         self,
         resolver: HosterResolverPort,
@@ -303,29 +342,29 @@ class HosterResolverRegistry:
         Returns the stream (None = failed) and whether the outcome may be
         cached. The resolver gets ``resolve_timeout`` in total (the
         resolvers' own request timeouts add up over several requests).
+
+        The circuit breaker counts a timeout, a cut after half the timeout
+        (the Stremio deadline ends most resolutions before the timeout) and
+        an unplayable stream; a stream resets it. A dead link neither
+        counts nor resets it: it says nothing about the hoster.
         """
+        breaker = self._circuit_breaker
+        if breaker is not None and not breaker.allow(resolver.name):
+            log.info("hoster_resolve_circuit_open", hoster=resolver.name, url=url)
+            return None, False
+        started = time.monotonic()
         try:
             async with asyncio.timeout(self._resolve_timeout):
                 result = await resolver.resolve(url)
-            if (
-                result is not None
-                and self._verify_playback
-                and self._http_client is not None
-                and not await check_playable(self._http_client, result)
-            ):
-                log.warning("hoster_resolve_unplayable", hoster=hoster_name, url=url)
-                return None, True
-            if result is not None:
-                log.info(
-                    "hoster_resolve_success",
-                    hoster=hoster_name,
-                    is_hls=result.is_hls,
-                )
-                return result, True
-            log.warning("hoster_resolve_failed", hoster=hoster_name, url=url)
+            return await self._judge(resolver, hoster_name, url, result)
         except (TimeoutError, httpx.TimeoutException):
             log.warning("hoster_resolve_timeout", hoster=hoster_name, url=url)
+            self._record(resolver, failed=True)
             return None, False
+        except asyncio.CancelledError:
+            if time.monotonic() - started >= self._resolve_timeout / 2:
+                self._record(resolver, failed=True)
+            raise
         except httpx.TransportError as exc:
             log.warning(
                 "hoster_resolve_network_error",
