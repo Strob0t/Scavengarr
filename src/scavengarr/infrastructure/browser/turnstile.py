@@ -9,12 +9,15 @@ shadow root, and only a headful browser passes the check
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
 import structlog
-from patchright.async_api import Page
+from patchright.async_api import Locator, Page
+
+from scavengarr.infrastructure.captcha.altcha import AltchaError, solve_altcha
 
 T = TypeVar("T")
 
@@ -113,7 +116,47 @@ async def _settle(page: Page) -> None:
 _WIDGET_TOKEN = "[name='cf-turnstile-response']"
 # The form around a gate's widget (s.to: a modal after a link-out click)
 WIDGET_FORM = f"form:has({_WIDGET_TOKEN})"
-_SUBMIT_JS = "form => form.requestSubmit()"
+# submit(), not requestSubmit(): an ALTCHA widget's checkbox stays required
+# and unticked (its proof of work is done here); s.to's submit handlers only
+# drive its modal
+_SUBMIT_JS = "form => form.submit()"
+# ALTCHA next to Turnstile: s.to's gate for a VPN IP (2026-10-04)
+_ALTCHA_WIDGET = "altcha-widget[challengeurl]"
+_FETCH_JSON_JS = """async (url) => {
+    const resp = await fetch(url, {credentials: "include"});
+    return resp.ok ? await resp.json() : null;
+}"""
+_ADD_FIELD_JS = """(form, [name, value]) => {
+    for (const input of form.querySelectorAll("input")) {
+        if (input.name === name) input.remove();
+    }
+    const field = document.createElement("input");
+    field.type = "hidden";
+    field.name = name;
+    field.value = value;
+    form.appendChild(field);
+}"""
+
+
+async def _solve_altcha_widget(page: Page, form: Locator) -> bool:
+    """Put the solution of *form*'s ALTCHA widget into it; False without one.
+
+    The widget does not verify on a click here: its checkbox stayed unticked
+    in production. Like the widget, the page fetches the challenge; the
+    proof of work is solved in a thread and the payload goes into the form
+    under the widget's name. Raises ``AltchaError`` when that fails.
+    """
+    widget = form.locator(_ALTCHA_WIDGET).first
+    if not await widget.count():
+        return False
+    url = await widget.get_attribute("challengeurl")
+    challenge = await page.evaluate(_FETCH_JSON_JS, url)
+    if not isinstance(challenge, dict):
+        raise AltchaError(f"no challenge from {url}")
+    payload = await asyncio.to_thread(solve_altcha, challenge)
+    name = await widget.get_attribute("name") or "altcha"
+    await form.evaluate(_ADD_FIELD_JS, [name, payload])
+    return True
 
 
 async def pass_turnstile_widget(page: Page, *, timeout_ms: int) -> bool:
@@ -122,7 +165,9 @@ async def pass_turnstile_widget(page: Page, *, timeout_ms: int) -> bool:
     Sites that gate link-outs (s.to) show the widget in a modal instead of a
     challenge page. Like a page challenge it may clear by itself; otherwise
     the checkbox is ticked (again every ``_RECLICK_EVERY_S``). The widget's
-    token lands in a hidden ``cf-turnstile-response`` input of the form.
+    token lands in a hidden ``cf-turnstile-response`` input of the form. An
+    ALTCHA widget in the same form is solved before the submit
+    (``_solve_altcha_widget``; raises ``AltchaError`` when it cannot be).
     Returns False at once when no widget is shown, and when no token
     arrived within *timeout_ms*.
     """
@@ -134,8 +179,19 @@ async def pass_turnstile_widget(page: Page, *, timeout_ms: int) -> bool:
     last_click: float | None = None
     while (now := _now()) < deadline:
         if await token.input_value():
-            await page.locator(WIDGET_FORM).first.evaluate(_SUBMIT_JS)
-            log.info("turnstile_widget_passed", url=page.url, clicked=bool(last_click))
+            form = page.locator(WIDGET_FORM).first
+            try:
+                altcha = await _solve_altcha_widget(page, form)
+            except AltchaError as exc:
+                log.warning("altcha_widget_unsolved", url=page.url, error=str(exc))
+                raise
+            await form.evaluate(_SUBMIT_JS)
+            log.info(
+                "turnstile_widget_passed",
+                url=page.url,
+                clicked=bool(last_click),
+                altcha=altcha,
+            )
             return True
         due = last_click is None or now - last_click >= _RECLICK_EVERY_S
         if now - start >= _CLICK_AFTER_S and due and await _click_checkbox(page):

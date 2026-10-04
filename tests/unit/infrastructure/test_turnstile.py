@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -13,6 +17,7 @@ from scavengarr.infrastructure.browser.turnstile import (
     read_when_settled,
     solve_cloudflare,
 )
+from scavengarr.infrastructure.captcha.altcha import AltchaError
 
 
 class TestReadWhenSettled:
@@ -198,12 +203,33 @@ class TestSettleAfterSolve:
         page.wait_for_url.assert_not_awaited()
 
 
+_ALTCHA_URL = "https://serienstream.to/api/inline/verify-init"
+
+
+def _classic_altcha(*, number: int) -> dict[str, Any]:
+    salt = "43a7a6d1b2a9ef5e1df8"
+    return {
+        "algorithm": "SHA-256",
+        "challenge": hashlib.sha256(f"{salt}{number}".encode()).hexdigest(),
+        "maxnumber": 1000,
+        "salt": salt,
+        "signature": "e5b667a58048fe46ae601a76",
+    }
+
+
 def _widget_page(
-    tokens: list[str], frames: list[MagicMock] | None = None, *, shown: bool = True
+    tokens: list[str],
+    frames: list[MagicMock] | None = None,
+    *,
+    shown: bool = True,
+    altcha: dict[str, Any] | None = None,
+    altcha_shown: bool = False,
 ) -> tuple[MagicMock, MagicMock]:
     """Page with a Turnstile widget in a form; token values come in order.
 
-    Returns the page and the widget's form (to check the submit).
+    With *altcha_shown* the form holds an ALTCHA widget too, whose challenge
+    endpoint serves *altcha*. Returns the page and the widget's form (to
+    check the submit).
     """
     page = _page(["S01E02"], frames)
     seq = list(tokens)
@@ -215,6 +241,12 @@ def _widget_page(
     token_input.input_value = AsyncMock(side_effect=_token)
     form = MagicMock()
     form.evaluate = AsyncMock()
+    altcha_widget = MagicMock()
+    altcha_widget.count = AsyncMock(return_value=1 if altcha_shown else 0)
+    attributes = {"challengeurl": _ALTCHA_URL, "name": "altcha"}
+    altcha_widget.get_attribute = AsyncMock(side_effect=attributes.get)
+    form.locator = MagicMock(return_value=MagicMock(first=altcha_widget))
+    page.evaluate = AsyncMock(return_value=altcha)
 
     def _locator(selector: str) -> MagicMock:
         if selector.startswith("form"):
@@ -242,7 +274,33 @@ class TestPassTurnstileWidget:
 
         assert await pass_turnstile_widget(page, timeout_ms=10_000) is True
         form.evaluate.assert_awaited_once()
-        assert "requestSubmit" in form.evaluate.await_args.args[0]
+        assert "form.submit()" in form.evaluate.await_args.args[0]
+        page.evaluate.assert_not_awaited()
+
+    async def test_altcha_widget_in_the_form_is_solved_first(self) -> None:
+        """s.to's gate shows ALTCHA next to Turnstile for a VPN IP, and its
+        checkbox does not verify on a click (production, 2026-10-04). Like the
+        widget, the challenge is fetched by the page; the payload goes into
+        the form under the widget's name."""
+        challenge = _classic_altcha(number=321)
+        page, form = _widget_page(["token"], altcha=challenge, altcha_shown=True)
+
+        assert await pass_turnstile_widget(page, timeout_ms=10_000) is True
+
+        assert page.evaluate.await_args.args[1] == _ALTCHA_URL
+        add_field, submit = form.evaluate.await_args_list
+        name, payload = add_field.args[1]
+        assert name == "altcha"
+        assert json.loads(base64.b64decode(payload))["number"] == 321
+        assert "form.submit()" in submit.args[0]
+
+    async def test_unsolvable_altcha_widget_raises(self) -> None:
+        page, form = _widget_page(["token"], altcha=None, altcha_shown=True)
+
+        with pytest.raises(AltchaError, match="no challenge"):
+            await pass_turnstile_widget(page, timeout_ms=10_000)
+
+        form.evaluate.assert_not_awaited()
 
     async def test_ticks_checkbox_when_not_cleared(self) -> None:
         challenge = _frame("https://challenges.cloudflare.com/cdn-cgi/x")
