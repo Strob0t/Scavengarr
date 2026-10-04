@@ -61,10 +61,12 @@ for pid in filter(str.isdigit, os.listdir("/proc")):
     except OSError:
         continue
     fields = stat[stat.rindex(")") + 2:].split()
-    seconds = (int(fields[11]) + int(fields[12])) / tick
     kind = "chrome" if "chrom" in cmd else "python" if "python" in cmd else None
+    # Chromium closes renderers all the time: their CPU moves to the parent
+    # that reaped them (cutime/cstime), it must not drop out of the sum
+    used = fields[11:15] if kind == "chrome" else fields[11:13]
     if kind:
-        cpu[kind] += seconds
+        cpu[kind] += sum(int(v) for v in used) / tick
 print(json.dumps(cpu))
 """
 # PID of the app process
