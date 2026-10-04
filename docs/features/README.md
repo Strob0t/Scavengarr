@@ -65,6 +65,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** and **S
 | [More Plugins](../plans/more-plugins.md) | Plugin inventory and remaining candidates |
 | [Integration Tests](../plans/integration-tests.md) | Implemented: integration, E2E, and live smoke tests |
 | [Search Caching](../plans/search-caching.md) | Implemented: search result cache with `X-Cache` header |
+| [Pi Performance](../plans/pi-performance.md) | Baseline 2026-10-04: CPU, outbound requests and memory per stream request on a Raspberry Pi 4; candidate measures |
 | [Plugin Repair](../plans/plugin-repair.md) | Done: repaired plugins; hdfilme keyword search broken upstream (browsing works); streamworld removed (site gone) |
 | [Anti-Bot Hardening](../plans/antibot-patchright.md) | Done: Patchright instead of playwright-stealth, Turnstile solver, browser fallback port for httpx plugins |
 | [Stremio Latency](../plans/stremio-latency.md) | Done: answer deadline, per-hoster resolution, playback check, measured 10 s / 15 s budget |
