@@ -25,6 +25,8 @@ import re
 from html.parser import HTMLParser
 from urllib.parse import urljoin
 
+from selectolax.lexbor import LexborHTMLParser, LexborNode
+
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins import devideosrc
 from scavengarr.infrastructure.plugins.categories import (
@@ -56,8 +58,8 @@ _CATEGORY_PATH_MAP: dict[int, str] = {
 }
 
 
-class _SearchResultParser(HTMLParser):
-    """Parse hdfilme.cafe search result cards.
+class _SearchResultParser:
+    """Parse hdfilme.cafe search result cards (selectolax).
 
     Each result card has this structure::
 
@@ -82,42 +84,35 @@ class _SearchResultParser(HTMLParser):
             </div>
           </div>
         </div>
+
+    A card's title is the text of its last ``movie-title`` link, its URL
+    the last such link with an ``href``.
     """
 
     def __init__(self, base_url: str) -> None:
-        super().__init__()
         self.results: list[dict[str, str]] = []
         self._base_url = base_url
 
-        # Item tracking
-        self._in_item = False
-        self._item_div_depth = 0
+    def feed(self, html: str) -> None:
+        for item in LexborHTMLParser(html).css("div.item"):
+            if not _nested_item(item):
+                self._add_item(item)
 
-        # Title link
-        self._in_movie_title_a = False
-        self._current_title = ""
-        self._current_url = ""
-
-        # Meta spans (year, duration, quality)
-        self._in_meta = False
-        self._in_meta_span = False
-        self._meta_span_text = ""
-        self._meta_spans: list[str] = []
-
-    def _reset_item(self) -> None:
-        self._current_title = ""
-        self._current_url = ""
-        self._meta_spans = []
-
-    def _emit_item(self) -> None:
-        if not self._current_title or not self._current_url:
+    def _add_item(self, item: LexborNode) -> None:
+        title = url = ""
+        for link in item.css("a.movie-title"):
+            href = link.attributes.get("href") or ""
+            if href:
+                url = urljoin(self._base_url, href)
+            title = link.text().strip()
+        if not title or not url:
             return
 
         year = ""
         duration = ""
         quality = ""
-        for span in self._meta_spans:
-            text = span.strip()
+        for span in item.css("div.meta span"):
+            text = span.text().strip()
             if re.match(r"^\d{4}$", text):
                 year = text
             elif "min" in text.lower():
@@ -127,74 +122,24 @@ class _SearchResultParser(HTMLParser):
 
         self.results.append(
             {
-                "title": self._current_title,
-                "url": self._current_url,
+                "title": title,
+                "url": url,
                 "year": year,
                 "duration": duration,
                 "quality": quality,
             }
         )
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attr_dict = dict(attrs)
-        classes = (attr_dict.get("class") or "").split()
 
-        # Item boundary: <div class="item ...">
-        if tag == "div":
-            if self._in_item:
-                self._item_div_depth += 1
-            elif "item" in classes:
-                self._in_item = True
-                self._item_div_depth = 0
-                self._reset_item()
-
-        if not self._in_item:
-            return
-
-        # <a class="movie-title" ...>
-        if tag == "a" and "movie-title" in classes:
-            self._in_movie_title_a = True
-            href = attr_dict.get("href", "") or ""
-            if href:
-                self._current_url = urljoin(self._base_url, href)
-            self._current_title = ""
-
-        # <div class="meta ...">
-        if tag == "div" and "meta" in classes:
-            self._in_meta = True
-
-        # <span> inside meta div
-        if tag == "span" and self._in_meta:
-            self._in_meta_span = True
-            self._meta_span_text = ""
-
-    def handle_data(self, data: str) -> None:
-        if self._in_movie_title_a:
-            self._current_title += data
-
-        if self._in_meta_span:
-            self._meta_span_text += data
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "a" and self._in_movie_title_a:
-            self._in_movie_title_a = False
-            self._current_title = self._current_title.strip()
-
-        if tag == "span" and self._in_meta_span:
-            self._in_meta_span = False
-            text = self._meta_span_text.strip()
-            if text:
-                self._meta_spans.append(text)
-
-        if tag == "div":
-            if self._in_meta:
-                self._in_meta = False
-            if self._in_item:
-                if self._item_div_depth > 0:
-                    self._item_div_depth -= 1
-                else:
-                    self._in_item = False
-                    self._emit_item()
+def _nested_item(node: LexborNode) -> bool:
+    """Whether *node* lies inside another result card."""
+    parent = node.parent
+    while parent is not None:
+        classes = (parent.attributes.get("class") or "").split()
+        if parent.tag == "div" and "item" in classes:
+            return True
+        parent = parent.parent
+    return False
 
 
 class _DetailPageParser(HTMLParser):
@@ -503,8 +448,7 @@ class HdfilmePlugin(HttpxPluginBase):
         if html is None:
             return []
 
-        parser = _DetailPageParser(self.base_url)
-        parser.feed(html)
+        parser = await self._feed(_DetailPageParser(self.base_url), html)
 
         player = devideosrc.find_player(html)
         if player is None:

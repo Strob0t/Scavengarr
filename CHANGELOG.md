@@ -6,9 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
-### Perf: Big Pages Parsed Off the Event Loop
+### Perf: Big Pages Parsed Off the Event Loop or in C
 - html.parser took 21–27% of the Python CPU of a stream request on the Raspberry Pi (py-spy in production). It runs in Python on the event loop: a 300 KB detail page took 20 ms on x86 and several times as long on the Pi, and every timeout and request waited for it.
-- `HttpxPluginBase._feed(parser, html)` parses pages from 32 KB in a worker thread, where the loop gets the GIL back every few ms. sto, kinoger, kinoking, kinox, megakino and movie2k use it.
+- `HttpxPluginBase._feed(parser, html)` parses pages from 32 KB in a worker thread, where the loop gets the GIL back every few ms. sto, kinoger, kinoking, kinox, megakino, movie2k and hdfilme's detail pages use it.
+- The two hottest parsers on the Pi use selectolax (lexbor, a C parser; new dependency): filmpalast's detail pages (8.4% of the Python CPU; 20 ms → 2.3 ms per page on x86) and search pages, and hdfilme's search pages (5.9% with its detail pages; 8.3 ms → 1.4 ms). They return the same results on the captured real pages of hdfilme, streamcloud, streamkiste and filmpalast.
 
 ### Perf: s.to Seasons Stop Requesting Gated Link-outs
 - A Torznab search for "Dark" on s.to took 83 s and sent about 950 link-out requests: every episode and hoster of every matching series. Behind the VPN the gate let 3 of them through per pass, so 97 of 100 results kept the s.to link-out anyway.
