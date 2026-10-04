@@ -225,6 +225,18 @@ def build_browser_fetcher(
     return ChainedBrowserFetcher(fetchers)
 
 
+def use_eager_tasks() -> None:
+    """Start new tasks on the running loop eagerly (Python 3.12+).
+
+    A task runs until its first await when it is created, so tasks that
+    finish without suspending (cache hits, guards) skip a trip through the
+    event loop. uvicorn runs on uvloop when it is installed (``loop="auto"``).
+    """
+    loop = asyncio.get_running_loop()
+    loop.set_task_factory(asyncio.eager_task_factory)
+    log.info("event_loop_configured", loop=type(loop).__module__, eager_tasks=True)
+
+
 def build_http_client(config: AppConfig) -> httpx.AsyncClient:
     """Shared HTTP client: per-domain rate limit, 429/503 retry, SSRF guard.
 
@@ -359,6 +371,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     state = cast(AppState, app.state)
     config = state.config
+    use_eager_tasks()
 
     # 0) Metrics collector (zero-overhead, must exist before components that record)
     state.metrics = MetricsCollector()

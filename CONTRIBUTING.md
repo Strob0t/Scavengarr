@@ -19,7 +19,7 @@ Thanks for helping! New plugins and hoster resolvers are the most valuable contr
 
 ## Development setup
 
-Requirements: Python 3.12 or 3.13, [Poetry](https://python-poetry.org/), Git.
+Requirements: Python 3.12–3.14 (the Docker image runs 3.14), [Poetry](https://python-poetry.org/), Git.
 
 ```bash
 git clone https://github.com/Strob0t/Scavengarr.git

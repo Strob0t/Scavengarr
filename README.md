@@ -5,7 +5,7 @@
 **Self-hosted, German-first streams for Stremio — plus a Torznab indexer for your Arr stack.**
 
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
-[![Python 3.12 | 3.13](https://img.shields.io/badge/python-3.12%20%7C%203.13-3776AB?logo=python&logoColor=white)](pyproject.toml)
+[![Python 3.12 – 3.14](https://img.shields.io/badge/python-3.12%20%E2%80%93%203.14-3776AB?logo=python&logoColor=white)](pyproject.toml)
 [![Version](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2FStrob0t%2FScavengarr%2Fmain%2Fpyproject.toml&query=%24.tool.poetry.version&label=version&color=green)](CHANGELOG.md)
 [![Stremio addon](https://img.shields.io/badge/Stremio-addon-8A5AAB)](docs/features/stremio-addon.md)
 [![Torznab](https://img.shields.io/badge/Torznab-Prowlarr%20%7C%20Sonarr%20%7C%20Radarr-orange)](docs/features/torznab-api.md)
@@ -173,7 +173,7 @@ docker compose up -d --build
 
 ### Without Docker (Poetry)
 
-Requirements: Python 3.12 or 3.13, [Poetry](https://python-poetry.org/).
+Requirements: Python 3.12–3.14 (the Docker image runs 3.14), [Poetry](https://python-poetry.org/).
 
 ```bash
 git clone https://github.com/Strob0t/Scavengarr.git

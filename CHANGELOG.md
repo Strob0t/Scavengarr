@@ -6,6 +6,16 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Perf: uvloop, httptools, Eager Tasks and Python 3.14
+- On the Raspberry Pi the event loop took 13–16% of the Python CPU (py-spy in production, `docs/plans/pi-performance.md`).
+- **uvloop and httptools** are dependencies now, and uvicorn uses both when they are installed (`loop="auto"`, `http="auto"`): the event loop and the server's HTTP parser run in C. Of uvicorn's `standard` extra only these two are installed; websockets and watchfiles are not used.
+- **Eager tasks:** new tasks start eagerly (`asyncio.eager_task_factory`, set in the lifespan). A task runs until its first await when it is created, so a task that never suspends (cache hit, guard) skips a trip through the loop. The whole suite also passes with every test loop eager. The startup log `event_loop_configured` names the loop (`uvloop` or `asyncio`).
+- **Python 3.14:** the Docker image runs Python 3.14 (`python:3.14-slim`), whose interpreter and asyncio are faster.
+  - `pyproject.toml` allows 3.12–3.14 (it was `<3.14`).
+  - CI tests 3.12 (the dev container's version) and 3.14.
+  - The suite passes on 3.14.8.
+  - Images built from their own Dockerfile change `python:3.12-slim` to `python:3.14-slim`.
+
 ### Perf: Each Release Name Parsed Once
 - On the Raspberry Pi guessit, which parses release names, took 25–33% of the Python CPU of a stream request (py-spy in production, `docs/plans/pi-performance.md`).
 - The title matcher (title candidates, year), the release parser (quality, language) and the episode filter each parsed the same names, and the next request for the same title parsed them all again.

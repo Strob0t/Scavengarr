@@ -5,7 +5,7 @@
 # Run:    docker run -p 7979:7979 -v ./plugins:/app/plugins -v ./data:/app/config scavengarr
 
 # ── Stage 1: Install Python deps ─────────────────────────────────────────────
-FROM python:3.12-slim AS builder
+FROM python:3.14-slim AS builder
 
 RUN pip install --no-cache-dir poetry && \
     poetry config virtualenvs.in-project true
@@ -18,7 +18,7 @@ COPY src/ src/
 RUN poetry install --only main --no-interaction
 
 # ── Stage 2: Install Patchright Chromium ─────────────────────────────────────
-FROM python:3.12-slim AS browsers
+FROM python:3.14-slim AS browsers
 
 COPY --from=builder /app /app
 WORKDIR /app
@@ -35,7 +35,7 @@ RUN apt-get update && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # ── Stage 3: Production runtime ──────────────────────────────────────────────
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 # Runtime deps for Playwright Chromium
 RUN apt-get update && \
