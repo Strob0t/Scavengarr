@@ -97,6 +97,35 @@ A literature review proposed measures for fan-out, tail latency, caching, Python
 | Docker's embedded DNS | Not used: Scavengarr runs in gluetun's network namespace and uses its caching resolver |
 | SSD instead of the SD card | Applies: cache and config are on the SD card (`mmcblk0p2`) |
 
+## Baseline before the measures (2026-10-04, staging 7ead19f)
+
+Measured in production with `scripts/stremio_profile.py --py-spy` on the three baseline titles. The first pass ran right after a restart (cold), the later passes warm.
+
+| Pass | Wall | Python CPU | Chromium CPU | httpx requests | Streams |
+|---|---|---|---|---|---|
+| Cold (fresh container) | 15.1 s | 8.1 s | (not valid¹) | 144 | 5.3 |
+| Warm 1 | 14.8 s | 3.8 s | 7.4 s | 67 | 5.3 |
+| Warm 2 | 12.9 s | 4.4 s | 18.6 s | 53 | 5.0 |
+
+¹ Chromium closes renderers all the time, and their CPU dropped out of the sum (one request showed −12.7 s). The script now also counts what reaped children used (`cutime`/`cstime`); the warm passes were measured that way.
+
+- **Spread between requests:** large. The Breaking Bad episode gave 0–2 streams and used 8–39 s of Chromium CPU (gate passes, challenge solves). Compare means, not single requests.
+- **Event-loop lag** over the passes: p50 1.1–1.3 ms, p99 ~130 ms, max 384 ms.
+
+**Python CPU on the Pi** (py-spy, threads holding the GIL, 1499 samples in the warm passes, ~15 s CPU):
+
+| Inclusive | Warm | Cold + warm | Biggest callers |
+|---|---|---|---|
+| guessit/rebulk (release-name parsing) | 32.9% | 24.7% | `title_matcher._extract_title_candidates` 11.1%, `_extract_result_year` 3.7%, `release_parser.parse_quality` 3.6%, `_language_from_guessit` 2.9%: the same release title parsed several times |
+| `html.parser` | 26.6% | 20.9% | filmpalast detail pages 8.4%, hdfilme 5.9%, kinox 2.6%, megakino 2.0%, movie2k 1.5%, s.to 1.4% |
+| event loop (asyncio/anyio/selectors) | 12.6% | 15.5% | |
+| httpx/httpcore/h11 | 8.7% | 13.5% | |
+| `http.cookiejar` | 4.7% | 6.2% | |
+
+- TLS shows up with only 0.7–1.5% here: in GIL mode py-spy misses the handshakes, because OpenSSL releases the GIL. They still block the event loop thread; locally, without GIL mode, they were 21%.
+- The ranking on the Pi differs from the x86 profile above: release-name parsing and HTML parsing take about 60% of the Python CPU.
+- That puts the cheapest gain in parsing each release title only once. This was not in the decided plan; it is added because the profile shows it.
+
 ## Decided plan (maintainer, 2026-10-04)
 
 The maintainer chose one option per area, from at least three each.
