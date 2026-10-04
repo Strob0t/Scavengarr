@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import time
+from collections.abc import Callable
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from scavengarr.application.stremio.search_cache import STALE_SECONDS, CachedSearch
 from scavengarr.application.use_cases.stremio_stream import (
     StremioStreamUseCase,
 )
@@ -86,6 +89,8 @@ def _make_use_case(
     config: StremioConfig | None = None,
     stream_link_repo: AsyncMock | None = None,
     resolve_fn: AsyncMock | None = None,
+    cache: AsyncMock | None = None,
+    search_ttl_seconds: int = 0,
 ) -> StremioStreamUseCase:
     engine = search_engine or AsyncMock()
     # Default: validate_results returns input unchanged
@@ -110,6 +115,8 @@ def _make_use_case(
         stream_link_repo=stream_link_repo,
         resolve_fn=resolve_fn,
         pool=ConcurrencyPool(httpx_slots=100, pw_slots=100),
+        cache=cache,
+        search_ttl_seconds=search_ttl_seconds,
     )
 
 
@@ -1612,3 +1619,249 @@ class TestStreamLinkSaveFailures:
 
         assert len(result) == 2
         assert all(s.url.startswith("https://cdn.") for s in result)
+
+
+# ---------------------------------------------------------------------------
+# Search cache, single-flight, late plugins, early answer
+# ---------------------------------------------------------------------------
+
+_KEY = "stremio:search:tt1234567:None:None"
+_TTL = 1800
+
+
+def _memory_cache() -> AsyncMock:
+    """CachePort keeping its entries in ``cache.data``."""
+    data: dict[str, object] = {}
+    cache = AsyncMock()
+    cache.data = data
+    cache.get = AsyncMock(side_effect=lambda key: data.get(key))
+    cache.set = AsyncMock(
+        side_effect=lambda key, value, *, ttl=None: data.__setitem__(key, value)
+    )
+    return cache
+
+
+def _hit(link: str, title: str = "Iron Man") -> SearchResult:
+    """A search result with one hoster link (one stream per hoster)."""
+    return _make_search_result(
+        title=title,
+        download_link=link,
+        download_links=[{"url": link, "quality": "1080p"}],
+    )
+
+
+def _site(
+    results: list[SearchResult],
+    delay: float = 0.0,
+    *,
+    cancelled: asyncio.Event | None = None,
+) -> AsyncMock:
+    """Plugin answering with *results* after *delay* seconds."""
+
+    async def _search(*_args: object, **_kwargs: object) -> list[SearchResult]:
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            if cancelled is not None:
+                cancelled.set()
+            raise
+        return results
+
+    plugin = AsyncMock()
+    del plugin.scraping
+    plugin.isolated_search = AsyncMock(side_effect=_search)
+    return plugin
+
+
+def _cached_use_case(
+    sites: dict[str, AsyncMock],
+    cache: AsyncMock,
+    *,
+    ttl: int = _TTL,
+    soft: float = 0.2,
+    hard: float = 1.0,
+) -> StremioStreamUseCase:
+    tmdb = AsyncMock()
+    tmdb.get_title_and_year = AsyncMock(
+        return_value=TitleMatchInfo(title="Iron Man", year=2008)
+    )
+    plugins = MagicMock()
+    plugins.get_languages.return_value = ["de"]
+    plugins.get_by_provides.side_effect = lambda p: (
+        sorted(sites) if p == "stream" else []
+    )
+    plugins.get.side_effect = sites.__getitem__
+    return _make_use_case(
+        tmdb=tmdb,
+        plugins=plugins,
+        config=_make_config(
+            plugin_timeout_seconds=hard,
+            search_soft_deadline_seconds=soft,
+            stream_deadline_seconds=hard + 1.0,
+        ),
+        cache=cache,
+        search_ttl_seconds=ttl,
+    )
+
+
+async def _eventually(check: Callable[[], bool], timeout: float = 2.0) -> None:
+    end = time.monotonic() + timeout
+    while not check():
+        assert time.monotonic() < end, "condition not met in time"
+        await asyncio.sleep(0.01)
+
+
+def _links(cache: AsyncMock) -> list[str]:
+    entry = cache.data.get(_KEY)
+    return sorted(r.download_link for r in entry.results) if entry else []
+
+
+class TestSearchCache:
+    """Stremio search results are cached per title (stale-while-revalidate,
+    single-flight); slow plugins run on into the cache, and the answer goes
+    out at the soft deadline when there are results."""
+
+    async def test_miss_stores_the_matching_results(self) -> None:
+        cache = _memory_cache()
+        site = _site([_hit("https://voe.sx/e/1"), _hit("https://x.to/2", "Rugrats")])
+        uc = _cached_use_case({"a": site}, cache)
+
+        streams = await uc.execute(_make_request())
+
+        assert [s.url for s in streams] == ["https://voe.sx/e/1"]
+        assert _links(cache) == ["https://voe.sx/e/1"]
+        assert cache.data[_KEY].total == 2
+        assert cache.set.await_args.kwargs["ttl"] == _TTL + STALE_SECONDS
+
+    async def test_fresh_hit_skips_the_search(self) -> None:
+        cache = _memory_cache()
+        site = _site([_hit("https://voe.sx/e/1")])
+        uc = _cached_use_case({"a": site}, cache)
+
+        first = await uc.execute(_make_request())
+        second = await uc.execute(_make_request())
+
+        assert [s.url for s in second] == [s.url for s in first]
+        assert site.isolated_search.await_count == 1
+
+    async def test_stale_hit_answers_and_refreshes_in_the_background(self) -> None:
+        cache = _memory_cache()
+        cache.data[_KEY] = CachedSearch(
+            results=[_hit("https://voe.sx/e/old")],
+            total=1,
+            stored_at=time.time() - _TTL - 1,
+        )
+        site = _site([_hit("https://voe.sx/e/new")])
+        uc = _cached_use_case({"a": site}, cache)
+
+        streams = await uc.execute(_make_request())
+
+        assert [s.url for s in streams] == ["https://voe.sx/e/old"]
+        await _eventually(lambda: _links(cache) == ["https://voe.sx/e/new"])
+        assert time.time() - cache.data[_KEY].stored_at < _TTL
+        assert site.isolated_search.await_count == 1
+
+    async def test_concurrent_requests_share_one_search(self) -> None:
+        cache = _memory_cache()
+        site = _site([_hit("https://voe.sx/e/1")], delay=0.05)
+        uc = _cached_use_case({"a": site}, cache)
+
+        first, second = await asyncio.gather(
+            uc.execute(_make_request()), uc.execute(_make_request())
+        )
+
+        assert [s.url for s in first] == ["https://voe.sx/e/1"]
+        assert [s.url for s in second] == ["https://voe.sx/e/1"]
+        assert site.isolated_search.await_count == 1
+
+    async def test_answer_at_soft_deadline_late_plugin_fills_cache(self) -> None:
+        cache = _memory_cache()
+        cancelled = asyncio.Event()
+        late_hits = [_hit("https://dood.to/e/slow"), _hit("https://x.to/2", "Rugrats")]
+        sites = {
+            "fast": _site([_hit("https://voe.sx/e/fast")]),
+            "slow": _site(late_hits, delay=0.5, cancelled=cancelled),
+        }
+        uc = _cached_use_case(sites, cache, soft=0.1, hard=1.0)
+
+        started = time.monotonic()
+        streams = await uc.execute(_make_request())
+
+        assert time.monotonic() - started < 0.45
+        assert [s.url for s in streams] == ["https://voe.sx/e/fast"]
+        await _eventually(lambda: len(_links(cache)) == 2)
+        assert _links(cache) == ["https://dood.to/e/slow", "https://voe.sx/e/fast"]
+        assert cache.data[_KEY].total == 3
+        assert not cancelled.is_set()
+
+    async def test_without_results_the_answer_waits_for_late_plugins(self) -> None:
+        cache = _memory_cache()
+        site = _site([_hit("https://voe.sx/e/slow")], delay=0.3)
+        uc = _cached_use_case({"slow": site}, cache, soft=0.05, hard=1.0)
+
+        streams = await uc.execute(_make_request())
+
+        assert [s.url for s in streams] == ["https://voe.sx/e/slow"]
+        assert _links(cache) == ["https://voe.sx/e/slow"]
+
+    async def test_late_plugins_end_one_plugin_timeout_later(self) -> None:
+        cache = _memory_cache()
+        cancelled = asyncio.Event()
+        sites = {
+            "fast": _site([_hit("https://voe.sx/e/fast")]),
+            "stuck": _site([], delay=30, cancelled=cancelled),
+        }
+        uc = _cached_use_case(sites, cache, soft=0.05, hard=0.2)
+
+        await uc.execute(_make_request())
+
+        await asyncio.wait_for(cancelled.wait(), 2.0)
+        assert _links(cache) == ["https://voe.sx/e/fast"]
+
+    async def test_aclose_cancels_late_plugins(self) -> None:
+        cancelled = asyncio.Event()
+        sites = {
+            "fast": _site([_hit("https://voe.sx/e/fast")]),
+            "stuck": _site([], delay=30, cancelled=cancelled),
+        }
+        uc = _cached_use_case(sites, _memory_cache(), soft=0.05, hard=10.0)
+        await uc.execute(_make_request())
+
+        await uc.aclose()
+
+        assert cancelled.is_set()
+
+    async def test_cache_off_waits_until_the_hard_deadline(self) -> None:
+        """Without the cache an early answer would lose the late results."""
+        cache = _memory_cache()
+        sites = {
+            "fast": _site([_hit("https://voe.sx/e/fast")]),
+            "slow": _site([_hit("https://dood.to/e/slow")], delay=0.2),
+        }
+        uc = _cached_use_case(sites, cache, ttl=0, soft=0.05, hard=1.0)
+
+        streams = await uc.execute(_make_request())
+
+        assert sorted(s.url for s in streams) == [
+            "https://dood.to/e/slow",
+            "https://voe.sx/e/fast",
+        ]
+        cache.get.assert_not_awaited()
+        cache.set.assert_not_awaited()
+
+    async def test_aclose_cancels_a_waiting_search_and_its_late_plugins(
+        self,
+    ) -> None:
+        """A search waiting for late plugins (no results yet) is cancelled at
+        shutdown; its late plugins must stop with it."""
+        cancelled = asyncio.Event()
+        stuck = _site([], delay=30, cancelled=cancelled)
+        uc = _cached_use_case({"stuck": stuck}, _memory_cache(), soft=0.05, hard=10.0)
+        request = asyncio.create_task(uc.execute(_make_request()))
+        await asyncio.sleep(0.2)
+
+        await uc.aclose()
+
+        assert cancelled.is_set()
+        with pytest.raises(asyncio.CancelledError):
+            await request

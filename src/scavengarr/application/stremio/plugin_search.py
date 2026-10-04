@@ -12,6 +12,7 @@ import asyncio
 import time
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 import structlog
@@ -65,6 +66,46 @@ EpisodeFilterFn = Callable[
 BrowserWarmupFn = Callable[[], Coroutine[Any, Any, tuple[Any, Any]]]
 
 
+@dataclass(frozen=True)
+class LateSearch:
+    """A plugin search the deadline cut that runs on (``finish_late``)."""
+
+    plugin: str
+    task: asyncio.Task[list[SearchResult]]
+
+    @property
+    def results(self) -> list[SearchResult]:
+        """The results once the search has finished, else none."""
+        task = self.task
+        if not task.done() or task.cancelled() or task.exception() is not None:
+            return []
+        return task.result()
+
+
+async def finish_late(late: list[LateSearch], *, timeout: float) -> None:
+    """Wait up to *timeout* seconds for the late searches, then cancel the rest.
+
+    They are cancelled as well when the caller is cancelled while waiting.
+    """
+    tasks = [s.task for s in late]
+    if not tasks:
+        return
+    try:
+        await asyncio.wait(tasks, timeout=max(timeout, 0.0))
+    finally:
+        await _cancel(*(task for task in tasks if not task.done()))
+
+
+async def _cancel(*tasks: asyncio.Task[list[SearchResult]]) -> None:
+    """Cancel *tasks* and wait until they have stopped.
+
+    A cancellation of the caller itself still propagates (``gather``).
+    """
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
 class PluginSearchRunner:
     """Search plugins in parallel and collect validated results."""
 
@@ -104,6 +145,7 @@ class PluginSearchRunner:
         episode: int | None = None,
         budget: ConcurrencyBudgetPort,
         deadline: float | None = None,
+        late: list[LateSearch] | None = None,
     ) -> list[SearchResult]:
         """Search plugins with all query variants, deduplicate results.
 
@@ -146,6 +188,7 @@ class PluginSearchRunner:
                 episode=episode,
                 budget=budget,
                 deadline=deadline,
+                late=late,
             )
             for q in queries
         ]
@@ -202,6 +245,7 @@ class PluginSearchRunner:
         episode: int | None = None,
         budget: ConcurrencyBudgetPort,
         deadline: float | None = None,
+        late: list[LateSearch] | None = None,
     ) -> list[SearchResult]:
         """Search all plugins in parallel with bounded concurrency.
 
@@ -220,6 +264,7 @@ class PluginSearchRunner:
                         season=season,
                         episode=episode,
                         deadline=deadline,
+                        late=late,
                     )
             else:
                 async with budget.acquire_httpx():
@@ -230,6 +275,7 @@ class PluginSearchRunner:
                         season=season,
                         episode=episode,
                         deadline=deadline,
+                        late=late,
                     )
 
         tasks = [_search_one(name) for name in plugin_names]
@@ -249,6 +295,7 @@ class PluginSearchRunner:
         season: int | None = None,
         episode: int | None = None,
         deadline: float | None = None,
+        late: list[LateSearch] | None = None,
     ) -> list[SearchResult]:
         """Run a single plugin search with timeout, catching errors."""
         timeout = self._plugin_timeout
@@ -266,13 +313,13 @@ class PluginSearchRunner:
             log.info("stremio_plugin_circuit_open", plugin=name, category=category)
             return []
 
-        try:
-            return await asyncio.wait_for(
-                self._search_single_plugin(
-                    name, query, category, season=season, episode=episode
-                ),
-                timeout=timeout,
+        task = asyncio.ensure_future(
+            self._search_single_plugin(
+                name, query, category, season=season, episode=episode
             )
+        )
+        try:
+            return await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
         except TimeoutError:
             # A plugin that had at least half its timeout counts as failing
             # (dead hosts always run into the deadline and must still trip
@@ -283,10 +330,18 @@ class PluginSearchRunner:
                 plugin=name,
                 timeout=round(timeout, 2),
                 cut_by_deadline=timeout < self._plugin_timeout,
+                runs_on=late is not None,
             )
             if counts and self._circuit_breaker is not None:
                 self._circuit_breaker.record_failure(breaker_key)
+            if late is None:
+                await _cancel(task)
+            else:
+                late.append(LateSearch(name, task))
             return []
+        except asyncio.CancelledError:
+            await _cancel(task)
+            raise
 
     @staticmethod
     async def _dispatch_search(

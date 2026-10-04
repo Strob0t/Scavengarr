@@ -608,6 +608,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         circuit_breaker=state.circuit_breaker,
         # hdfilme, streamcloud, streamkiste: one database, one asked per request
         mirror_groups=_mirror_groups(state.plugins),
+        # Search results per title, shared with Torznab's TTL (0 = off)
+        cache=state.cache,
+        search_ttl_seconds=config.cache.search_ttl_seconds,
     )
     # The IMDB fallback (no TMDB key) has no trending lists, only search
     state.stremio_catalog_uc = StremioCatalogUseCase(
@@ -623,6 +626,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         # Drain in-flight requests before tearing down resources
         await state.graceful_shutdown.wait_for_drain(timeout=10.0)
+
+        # Background searches (cache refreshes, late plugins) use the
+        # browser, HTTP client and cache closed below
+        await state.stremio_stream_uc.aclose()
 
         if state._scoring_task is not None:
             state._scoring_task.cancel()

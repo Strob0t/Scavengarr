@@ -6,6 +6,15 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Perf: Stremio Search Cache, Late Plugins and an Early Answer
+- Stream requests were not cached. Production searched the same title twice within 18 s, each time a full fan-out of about 15 s and 50–270 requests. A plugin cut by the search deadline lost all its results, and every answer waited for the slowest plugin up to the 10 s search budget.
+- **Search cache:** the title-matching search results of a request are cached per title, season and episode for `cache.search_ttl_seconds` (diskcache or Redis). Hoster resolution still runs on every request, since stream URLs expire and some are bound to the resolving IP.
+  - **Stale-while-revalidate:** an expired entry still answers for 6 h while a background search refreshes it.
+  - **Single-flight:** requests for one title share one running search.
+- **Late plugins:** a plugin cut by the deadline runs on for up to `plugin_timeout_seconds` more, and its results are added to the cache entry for the next request (`stremio_late_plugins_done`).
+- **Early answer:** the search answers at `stremio.search_soft_deadline_seconds` (new, default 7 s) when it has results; without results it waits for the late plugins until `plugin_timeout_seconds`, as before.
+- `cache.search_ttl_seconds: 0` turns off all three and restores the previous behavior. App shutdown cancels background searches.
+
 ### Perf: uvloop, httptools, Eager Tasks and Python 3.14
 - On the Raspberry Pi the event loop took 13–16% of the Python CPU (py-spy in production, `docs/plans/pi-performance.md`).
 - **uvloop and httptools** are dependencies now, and uvicorn uses both when they are installed (`loop="auto"`, `http="auto"`): the event loop and the server's HTTP parser run in C. Of uvicorn's `standard` extra only these two are installed; websockets and watchfiles are not used.

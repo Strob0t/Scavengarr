@@ -10,10 +10,11 @@ import asyncio
 import random
 import time
 from collections import deque
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from contextvars import ContextVar
-from dataclasses import replace
-from typing import Protocol
+from dataclasses import dataclass, replace
+from functools import partial
+from typing import Any, Protocol
 from uuid import uuid4
 
 import structlog
@@ -22,12 +23,19 @@ from scavengarr.application.stremio.plugin_search import (
     BrowserWarmupFn,
     CircuitBreaker,
     EpisodeFilterFn,
+    LateSearch,
     PluginSearchRunner,
+    finish_late,
 )
 from scavengarr.application.stremio.queries import (
     build_lang_group_queries,
     build_multi_lang_reference,
     first_available_title,
+)
+from scavengarr.application.stremio.search_cache import (
+    CachedSearch,
+    SearchCache,
+    search_cache_key,
 )
 from scavengarr.application.stremio.stream_builder import (
     build_cache_link,
@@ -46,6 +54,7 @@ from scavengarr.domain.entities.stremio import (
     TitleMatchInfo,
 )
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.domain.ports.cache import CachePort
 from scavengarr.domain.ports.concurrency import (
     ConcurrencyBudgetPort,
     ConcurrencyPoolPort,
@@ -66,6 +75,7 @@ class _StremioConfig(Protocol):
     """Configuration values consumed by StremioStreamUseCase."""
 
     plugin_timeout_seconds: float
+    search_soft_deadline_seconds: float
     stream_deadline_seconds: float
     title_match_threshold: float
     title_year_bonus: float
@@ -137,6 +147,18 @@ class _HosterQueues:
         return [q.popleft() for q in queues if q]
 
 
+@dataclass(frozen=True)
+class _LateGroup:
+    """Late plugin searches of one language group, with its reference title."""
+
+    ref: TitleMatchInfo
+    searches: list[LateSearch]
+
+    def running(self) -> _LateGroup:
+        """The searches that have not finished yet."""
+        return replace(self, searches=[s for s in self.searches if not s.task.done()])
+
+
 # Callback type for resolving hoster embed URLs to playable video URLs.
 # Accepts (url, hoster_hint), returns ResolvedStream or None.
 ResolveCallback = Callable[[str, str], Awaitable[ResolvedStream | None]]
@@ -176,6 +198,8 @@ class StremioStreamUseCase:
         pool: ConcurrencyPoolPort,
         circuit_breaker: CircuitBreaker | None = None,
         mirror_groups: Mapping[str, str] | None = None,
+        cache: CachePort | None = None,
+        search_ttl_seconds: int = 0,
     ) -> None:
         self._tmdb = tmdb
         self._plugins = plugins
@@ -210,6 +234,12 @@ class StremioStreamUseCase:
         self._resolve_grace_s = config.resolve_grace_seconds
         self._deadline_s = config.stream_deadline_seconds
         self._plugin_timeout_s = config.plugin_timeout_seconds
+        self._soft_deadline_s = config.search_soft_deadline_seconds
+        self._search_cache = SearchCache(cache, ttl_seconds=search_ttl_seconds)
+        # Running searches per cache key (single-flight) and every task
+        # that outlives a request (refreshes, late plugins), for aclose()
+        self._searches: dict[str, asyncio.Task[CachedSearch]] = {}
+        self._tasks: set[asyncio.Task[Any]] = set()
         self._metrics = metrics
         self._score_store = score_store
         self._scoring_enabled = config.scoring_enabled
@@ -256,29 +286,29 @@ class StremioStreamUseCase:
             log.warning("stremio_title_not_found", imdb_id=request.imdb_id)
             return []
 
-        # --- Per-language-group search + filter ---
-        lang_groups = self._group_by_languages(selected)
-
-        async with self._pool.request() as budget:
-            all_results, filtered = await self._search_lang_groups(
-                lang_groups,
+        # --- Per-language-group search + filter (cached per title) ---
+        key = search_cache_key(request)
+        searched = await self._cached_search(
+            key,
+            partial(
+                self._search,
+                key,
+                self._group_by_languages(selected),
                 title_infos,
                 request,
                 category,
-                all_names_count=len(all_names),
-                selected_count=len(selected),
-                budget=budget,
-                # Plugins queue for slots; the search ends plugin_timeout
-                # after the request started, not after each plugin's start
-                deadline=started + self._plugin_timeout_s,
-            )
+                started=started,
+                scored=len(selected) < len(all_names),
+            ),
+        )
+        filtered = searched.results
 
         if not filtered:
-            if all_results:
+            if searched.total:
                 log.info(
                     "stremio_all_filtered",
                     imdb_id=request.imdb_id,
-                    total=len(all_results),
+                    total=searched.total,
                 )
             else:
                 log.info(
@@ -287,10 +317,11 @@ class StremioStreamUseCase:
                 )
             return []
 
+        # Cached results can come from plugins this request did not select
         plugin_languages: dict[str, str] = {
-            name: self._plugins.get_languages(name)[0]
-            for name in selected
-            if self._plugins.get_languages(name)
+            name: langs[0]
+            for name in all_names
+            if (langs := self._plugins.get_languages(name))
         }
 
         loop = asyncio.get_running_loop()
@@ -328,7 +359,7 @@ class StremioStreamUseCase:
         log.info(
             "stremio_search_complete",
             imdb_id=request.imdb_id,
-            result_count=len(all_results),
+            result_count=searched.total,
             filtered_count=len(filtered),
             stream_count=len(streams),
         )
@@ -352,6 +383,164 @@ class StremioStreamUseCase:
             groups.setdefault(key, []).append(name)
         return groups
 
+    async def _cached_search(
+        self, key: str, search: Callable[[], Coroutine[Any, Any, CachedSearch]]
+    ) -> CachedSearch:
+        """The search results for *key*: cached, from a running search, or new.
+
+        Requests for one key share one running search (single-flight). A
+        stale entry still answers while a background search refreshes it
+        (stale-while-revalidate). The search runs as its own task, so a
+        request that goes away does not cancel it for the others.
+        """
+        entry = await self._search_cache.get(key)
+        if entry is None:
+            return await asyncio.shield(self._shared_search(key, search))
+        stale = self._search_cache.is_stale(entry)
+        if stale:
+            self._shared_search(key, search)
+        log.info(
+            "stremio_search_cache_hit",
+            cache_key=key,
+            stale=stale,
+            age_s=round(time.time() - entry.stored_at),
+            result_count=len(entry.results),
+        )
+        return entry
+
+    def _shared_search(
+        self, key: str, search: Callable[[], Coroutine[Any, Any, CachedSearch]]
+    ) -> asyncio.Task[CachedSearch]:
+        """The running search for *key*; starts *search* when none runs."""
+        task = self._searches.get(key)
+        if task is None:
+            task = self._spawn(search())
+            self._searches[key] = task
+            task.add_done_callback(partial(self._search_done, key))
+        return task
+
+    def _search_done(self, key: str, task: asyncio.Task[CachedSearch]) -> None:
+        if self._searches.get(key) is task:
+            del self._searches[key]
+
+    def _spawn[T](self, coro: Coroutine[Any, Any, T]) -> asyncio.Task[T]:
+        """Run *coro* as a task that may outlive the request (see aclose)."""
+        task = asyncio.create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._task_done)
+        return task
+
+    def _task_done(self, task: asyncio.Task[Any]) -> None:
+        self._tasks.discard(task)
+        if not task.cancelled() and (error := task.exception()) is not None:
+            log.warning("stremio_background_search_failed", exc_info=error)
+
+    async def aclose(self) -> None:
+        """Cancel the searches still running (refreshes, late plugins)."""
+        tasks = list(self._tasks)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _search(
+        self,
+        key: str,
+        lang_groups: dict[tuple[str, ...], list[str]],
+        title_infos: dict[str, TitleMatchInfo | None],
+        request: StremioStreamRequest,
+        category: int,
+        *,
+        started: float,
+        scored: bool,
+    ) -> CachedSearch:
+        """Search the plugins, store the title-matching results, answer.
+
+        With the cache on, the answer goes out at the soft deadline when
+        there are results. Plugins still running then go on as late
+        plugins, and their results are added to the cache entry for the
+        next request. Without results the answer waits for the late
+        plugins until the hard deadline (``plugin_timeout_seconds``), as
+        without the early answer. With the cache off, plugins are cut at
+        the hard deadline.
+        """
+        cached = self._search_cache.enabled
+        hard = started + self._plugin_timeout_s
+        soft = min(started + self._soft_deadline_s, hard) if cached else hard
+        late: list[_LateGroup] = []
+        try:
+            async with self._pool.request() as budget:
+                all_results, filtered = await self._search_lang_groups(
+                    lang_groups,
+                    title_infos,
+                    request,
+                    category,
+                    scored=scored,
+                    budget=budget,
+                    # Plugins queue for slots; the search ends after the
+                    # request started, not after each plugin's start
+                    deadline=soft,
+                    late=late if cached else None,
+                )
+            entry = CachedSearch(
+                results=filtered, total=len(all_results), stored_at=time.time()
+            )
+            searches = [s.task for group in late for s in group.searches]
+            if searches and not filtered:
+                await asyncio.wait(searches, timeout=max(hard - time.monotonic(), 0.0))
+                entry = entry.merged(*await self._late_results(late))
+                late = [group.running() for group in late]
+            await self._search_cache.put(key, entry)
+        except BaseException:
+            # Cancelled (shutdown): late plugins must not run on unowned
+            await finish_late(
+                [s for group in late for s in group.searches], timeout=0.0
+            )
+            raise
+        late = [group for group in late if group.searches]
+        if late:
+            self._spawn(self._complete_late(key, late))
+        return entry
+
+    async def _complete_late(self, key: str, late: list[_LateGroup]) -> None:
+        """Wait for the late plugins; add their results to the cache entry.
+
+        They get ``plugin_timeout_seconds`` more and are cancelled then.
+        """
+        searches = [s for group in late for s in group.searches]
+        await finish_late(searches, timeout=self._plugin_timeout_s)
+        results, total = await self._late_results(late)
+        entry = await self._search_cache.get(key) or CachedSearch(
+            results=[], total=0, stored_at=time.time()
+        )
+        merged = entry.merged(results, total)
+        added = len(merged.results) - len(entry.results)
+        if added:
+            await self._search_cache.put(key, merged)
+        log.info(
+            "stremio_late_plugins_done",
+            cache_key=key,
+            plugins=sorted({s.plugin for s in searches}),
+            cancelled=sum(s.task.cancelled() for s in searches),
+            result_count=total,
+            added=added,
+        )
+
+    async def _late_results(
+        self, late: list[_LateGroup]
+    ) -> tuple[list[SearchResult], int]:
+        """Title-matching results of the finished late searches.
+
+        Returns them with the number of results before the title filter.
+        """
+        found = [[r for s in group.searches for r in s.results] for group in late]
+        matching = await asyncio.gather(
+            *(
+                self._title_filter(results, group.ref)
+                for results, group in zip(found, late, strict=True)
+            )
+        )
+        return [r for group in matching for r in group], sum(map(len, found))
+
     async def _search_lang_groups(
         self,
         lang_groups: dict[tuple[str, ...], list[str]],
@@ -359,15 +548,17 @@ class StremioStreamUseCase:
         request: StremioStreamRequest,
         category: int,
         *,
-        all_names_count: int,
-        selected_count: int,
+        scored: bool,
         budget: ConcurrencyBudgetPort,
         deadline: float,
+        late: list[_LateGroup] | None = None,
     ) -> tuple[list[SearchResult], list[SearchResult]]:
         """Search and filter each language group, returning aggregated results.
 
         Language groups are searched in parallel so that e.g. German and
         English plugins start at the same time instead of sequentially.
+        With a *late* collector, plugins the deadline cuts run on and are
+        added to it per language group instead of being cancelled.
 
         Returns (all_results, filtered_results).
         """
@@ -392,9 +583,13 @@ class StremioStreamUseCase:
                 queries=queries,
                 plugin_count=len(group_plugins),
                 languages=plugin_langs,
-                scored=selected_count < all_names_count,
+                scored=scored,
             )
 
+            group_late: list[LateSearch] | None = None
+            if late is not None:
+                group_late = []
+                late.append(_LateGroup(ref, group_late))
             group_results = await self._search_runner.search_with_fallback(
                 group_plugins,
                 queries,
@@ -403,27 +598,9 @@ class StremioStreamUseCase:
                 episode=request.episode,
                 budget=budget,
                 deadline=deadline,
+                late=group_late,
             )
-
-            if not group_results:
-                return group_results, []
-
-            loop = asyncio.get_running_loop()
-            group_filtered = await loop.run_in_executor(
-                None,
-                lambda ref=ref, gr=group_results: self._filter_fn(
-                    gr,
-                    ref,
-                    self._title_match_threshold,
-                    year_bonus=self._title_year_bonus,
-                    year_penalty=self._title_year_penalty,
-                    sequel_penalty=self._title_sequel_penalty,
-                    extra_words_penalty=self._title_extra_words_penalty,
-                    year_tolerance_movie=self._title_year_tolerance_movie,
-                    year_tolerance_series=self._title_year_tolerance_series,
-                ),
-            )
-            return group_results, group_filtered
+            return group_results, await self._title_filter(group_results, ref)
 
         group_tasks = [
             _search_one_group(lang_key, group_plugins)
@@ -438,6 +615,28 @@ class StremioStreamUseCase:
             filtered.extend(group_filt)
 
         return all_results, filtered
+
+    async def _title_filter(
+        self, results: list[SearchResult], ref: TitleMatchInfo
+    ) -> list[SearchResult]:
+        """The results whose title matches *ref* (in the executor: CPU work)."""
+        if not results:
+            return []
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: self._filter_fn(
+                results,
+                ref,
+                self._title_match_threshold,
+                year_bonus=self._title_year_bonus,
+                year_penalty=self._title_year_penalty,
+                sequel_penalty=self._title_sequel_penalty,
+                extra_words_penalty=self._title_extra_words_penalty,
+                year_tolerance_movie=self._title_year_tolerance_movie,
+                year_tolerance_series=self._title_year_tolerance_series,
+            ),
+        )
 
     async def _cache_and_proxy(
         self,

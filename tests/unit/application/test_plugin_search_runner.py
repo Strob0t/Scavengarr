@@ -9,7 +9,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from scavengarr.application.stremio.plugin_search import PluginSearchRunner
+from scavengarr.application.stremio.plugin_search import (
+    LateSearch,
+    PluginSearchRunner,
+    finish_late,
+)
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.concurrency import ConcurrencyPool
@@ -376,3 +380,97 @@ class TestMirrorGroups:
 
         assert plugins["hdfilme"].search.await_count == 1
         assert plugins["streamcloud"].search.await_count == 1
+
+
+def _endless_search(cancelled: asyncio.Event) -> AsyncMock:
+    """search() that never ends and sets *cancelled* when cancelled."""
+
+    async def _search(*_args: object, **_kwargs: object) -> list[SearchResult]:
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        return []
+
+    return AsyncMock(side_effect=_search)
+
+
+class TestLatePlugins:
+    """A plugin the deadline cuts runs on, so its results can reach the
+    cache for the next request instead of being lost (kinoking, or kinoger
+    while its challenge is solved)."""
+
+    async def _cut(
+        self, runner: PluginSearchRunner, late: list[LateSearch] | None
+    ) -> list[SearchResult]:
+        pool = ConcurrencyPool(httpx_slots=10, pw_slots=10)
+        async with pool.request() as budget:
+            return await runner.search_with_fallback(
+                ["a"],
+                ["q"],
+                2000,
+                budget=budget,
+                deadline=time.monotonic() + 0.05,
+                late=late,
+            )
+
+    async def test_cut_plugin_runs_on_and_delivers_late(self) -> None:
+        async def _slow(*_args: object, **_kwargs: object) -> list[SearchResult]:
+            await asyncio.sleep(0.15)
+            return [_sr("https://a/late")]
+
+        plugin = _plugin([])
+        plugin.search = AsyncMock(side_effect=_slow)
+        runner = _runner(_registry({"a": plugin}))
+        late: list[LateSearch] = []
+
+        assert await self._cut(runner, late) == []
+        assert [search.plugin for search in late] == ["a"]
+
+        assert late[0].results == []  # still running
+        await finish_late(late, timeout=1.0)
+
+        results = late[0].results
+        assert [r.download_link for r in results] == ["https://a/late"]
+        assert results[0].metadata["source_plugin"] == "a"
+
+    async def test_late_searches_past_the_timeout_are_cancelled(self) -> None:
+        cancelled = asyncio.Event()
+        plugin = _plugin([])
+        plugin.search = _endless_search(cancelled)
+        runner = _runner(_registry({"a": plugin}))
+        late: list[LateSearch] = []
+        await self._cut(runner, late)
+
+        await finish_late(late, timeout=0.05)
+
+        assert cancelled.is_set()
+        assert late[0].results == []
+
+    async def test_late_searches_are_cancelled_with_their_waiter(self) -> None:
+        """Shutdown cancels the task waiting for late plugins: they must
+        stop too instead of running on unowned."""
+        cancelled = asyncio.Event()
+        plugin = _plugin([])
+        plugin.search = _endless_search(cancelled)
+        runner = _runner(_registry({"a": plugin}))
+        late: list[LateSearch] = []
+        await self._cut(runner, late)
+
+        waiter = asyncio.create_task(finish_late(late, timeout=5.0))
+        await asyncio.sleep(0.01)
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+
+        assert cancelled.is_set()
+
+    async def test_without_a_collector_a_cut_plugin_is_cancelled(self) -> None:
+        cancelled = asyncio.Event()
+        plugin = _plugin([])
+        plugin.search = _endless_search(cancelled)
+        runner = _runner(_registry({"a": plugin}))
+
+        assert await self._cut(runner, None) == []
+        assert cancelled.is_set()

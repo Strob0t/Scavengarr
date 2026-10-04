@@ -2,7 +2,7 @@
 
 # Plan: Search Result Caching
 
-**Status:** Core implemented (2026-09-28) — cache invalidation endpoint, stale-while-revalidate, cache metrics and a TTL-expiry test are open
+**Status:** Core implemented (2026-09-28); Stremio search cache with stale-while-revalidate, single-flight, late plugins and early answer implemented (2026-10-04). Open for Torznab: cache invalidation endpoint, stale-while-revalidate, cache metrics, a TTL-expiry test
 **Priority:** Medium
 **Related:** `src/scavengarr/application/use_cases/torznab_search.py`, `src/scavengarr/infrastructure/cache/`
 
@@ -23,6 +23,36 @@ Key files:
 - `src/scavengarr/application/use_cases/torznab_search.py` — `_search_cache_key()`, `_cache_read()`, `_cache_write()`
 - `src/scavengarr/infrastructure/config/schema.py` — `search_ttl_seconds` config field
 - `src/scavengarr/interfaces/api/torznab/router.py` — `X-Cache` header injection
+
+## Stremio: Search Cache, Late Plugins, Early Answer (implemented 2026-10-04)
+
+**Problem:**
+- Stremio requests were not cached. Production served the same title twice within 17–18 s (Avengers: Endgame, Severance), each time a full fan-out of ~15 s and 50–270 outbound requests.
+- A plugin cut by the request deadline lost all its results, even when its search finished seconds later (kinoking, kinoger or moflix while solving a challenge).
+- The answer waited for the slowest plugin up to the 10 s search budget (`docs/plans/pi-performance.md`).
+
+**Design**, decided by the maintainer: cache with stale-while-revalidate and single-flight, partial results, and an early answer with the cache.
+
+- **What is cached:** the title-filtered search results of a request (`list[SearchResult]`), not the resolved streams, because hoster stream URLs expire and some are bound to the resolving IP. Resolution and ranking run on every request. Key: `stremio:search:{imdb_id}:{season}:{episode}`. Value: results, the unfiltered count, and the wall-clock time stored (`CachePort`, i.e. diskcache or Redis, so it survives restarts).
+- **Fresh and stale:**
+  - An entry younger than `cache.search_ttl_seconds` is fresh: the request skips the search.
+  - An older one stays usable for 6 h more (stale-while-revalidate, RFC 5861): the request answers from it, and a background search refreshes it.
+  - `cache.search_ttl_seconds: 0` turns the cache off, as for Torznab.
+- **Single-flight:** requests for one key share one running search (one future per key, in-process). Background refreshes do the same.
+- **Late plugins (partial results per plugin):** a plugin the deadline cuts is no longer cancelled. It runs on for at most another `plugin_timeout_seconds`, and its results are title-filtered and merged into the cache entry. The next request has them; the slow site is not asked twice.
+- **Early answer:** on a cache miss the search ends at `stremio.search_soft_deadline_seconds` (default 7 s); plugins still running continue as late plugins. If there is no result at all by then, the request waits for the late plugins until the hard search deadline (`plugin_timeout_seconds`, 10 s), as before. Resolution keeps `resolve_target_count`: every shown stream is resolved, but a request answers sooner, and the next one finds the complete set in the cache.
+
+**Concurrency slots:** a late plugin releases its concurrency slot when it is cut. Holding it would make the next requests' plugins queue behind slow sites. Late plugins are bounded by the plugins of one request and by `plugin_timeout_seconds`; browser work stays bounded by the stealth pool. App shutdown cancels them (`StremioStreamUseCase.aclose`).
+
+**Circuit breaker:** the cut counts as a timeout as before (when the plugin had half its timeout); a late plugin that then delivers results resets the breaker as any success does.
+
+**Affected files:**
+- `application/stremio/search_cache.py`: `CachedSearch` entries, key, fresh/stale, backend errors.
+- `application/use_cases/stremio_stream.py`: cache lookup, single-flight, soft deadline, background completion, `aclose()`.
+- `application/stremio/plugin_search.py`: late plugin tasks instead of cancelling (`LateSearch`, `finish_late`).
+- config (`stremio.search_soft_deadline_seconds`), `interfaces/composition.py` (wiring), docs.
+
+**Tests:** miss writes the cache; a fresh hit skips the search; a stale hit answers and refreshes in the background; concurrent requests search once; a cut plugin is not cancelled and its results land in the cache; the soft deadline answers early; without results the request waits for the hard deadline.
 
 ## Original Problem
 

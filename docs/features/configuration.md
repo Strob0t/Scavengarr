@@ -193,6 +193,7 @@ stremio:
   auto_tune_all: true           # container-aware auto-tune of concurrency params
   max_results_per_plugin: 50    # default: 100
   plugin_timeout_seconds: 10.0  # search budget from request start (default: 10)
+  search_soft_deadline_seconds: 7.0 # early answer with the search cache (default: 7)
   stream_deadline_seconds: 15.0 # answer budget per stream request (default: 15)
   title_match_threshold: 0.7
   resolve_target_count: 0       # 0 = resolve all streams (default: 15)
@@ -350,6 +351,7 @@ Controls the Stremio addon behavior: stream ranking, plugin concurrency, title m
 | `stremio.max_concurrent_plugins_auto` | bool | `true` | Legacy auto-tune of `max_concurrent_plugins` only; used only when `auto_tune_all` is `false` |
 | `stremio.max_results_per_plugin` | int | `100` | Max results per plugin in Stremio search |
 | `stremio.plugin_timeout_seconds` | float | `10.0` | Plugin search budget per stream request, counted from the request start (slot queueing included); running plugins are cut, queued ones skipped |
+| `stremio.search_soft_deadline_seconds` | float | `7.0` | With the search cache on (`cache.search_ttl_seconds` > 0): the search answers this long after the request start when it has results; plugins still running go on and their results are added to the cache for the next request. Values from `plugin_timeout_seconds` up turn the early answer off |
 | `stremio.stream_deadline_seconds` | float | `15.0` | Overall budget per stream request; hoster resolution stops here (at least 2 s after the search). Keep it above `plugin_timeout_seconds` |
 | `stremio.verify_streams` | bool | `true` | Playback check of every resolved video URL (first bytes with playback headers); unplayable streams are dropped |
 | `stremio.title_match_threshold` | float | `0.7` | Minimum title similarity score |
@@ -464,7 +466,7 @@ Logs are structured via `structlog` with ISO UTC timestamps and include context 
 | `cache.dir` | path | `./.cache/scavengarr` | SQLite database path (diskcache only) |
 | `cache.redis_url` | string | `redis://localhost:6379/0` | Redis connection URL (redis only, `SCAVENGARR_CACHE_REDIS_URL`) |
 | `cache.ttl_seconds` | int | `3600` | Default time-to-live for cache entries (seconds) |
-| `cache.search_ttl_seconds` | int | `900` | TTL for cached search results (seconds). 0 = disabled (YAML-only) |
+| `cache.search_ttl_seconds` | int | `900` | TTL for cached search results (seconds), Torznab and Stremio; Stremio entries answer 6 h longer while a background search refreshes them. 0 = disabled (YAML-only) |
 | `cache.crawljob_ttl_seconds` | int | `3600` | How long a Torznab result's CrawlJob stays downloadable (seconds, > 0); the grab answers 404 afterwards (YAML-only) |
 | `cache.max_concurrent` | int | `10` | Semaphore limit for parallel cache operations, both backends (`SCAVENGARR_CACHE_MAX_CONCURRENT`); Redis handles more, e.g. `50` |
 

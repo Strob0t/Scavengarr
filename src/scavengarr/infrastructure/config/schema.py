@@ -266,6 +266,17 @@ class StremioConfig(BaseModel):
             "too); plugins still running then are cut, queued ones skipped."
         ),
     )
+    search_soft_deadline_seconds: float = Field(
+        default=7.0,
+        gt=0,
+        description=(
+            "With the search cache on (cache.search_ttl_seconds > 0), the "
+            "plugin search answers this long after the request start when "
+            "it has results; plugins still running go on and their results "
+            "are added to the cache for the next request. Values from "
+            "plugin_timeout_seconds up turn the early answer off."
+        ),
+    )
     stream_deadline_seconds: float = Field(
         default=15.0,
         gt=0,

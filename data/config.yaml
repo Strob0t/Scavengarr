@@ -120,6 +120,9 @@ stremio:
   # docs/plans/stremio-latency.md): 10/15 s gave the same playable streams
   # as 12/17 s; 15 s per plugin (old) meant answers after 20–38 s
   plugin_timeout_seconds: 10.0 # plugin search ends 10 s after the request
+  # With the search cache on: answer at 7 s when there are results; slower
+  # plugins go on and fill the cache for the next request
+  search_soft_deadline_seconds: 7.0
   stream_deadline_seconds: 15.0 # hoster resolution ends, answer goes out
   verify_streams: true # drop resolved URLs that do not return video bytes
 
