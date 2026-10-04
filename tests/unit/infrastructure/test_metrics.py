@@ -2,7 +2,18 @@
 
 from __future__ import annotations
 
-from scavengarr.infrastructure.metrics import MetricsCollector, PluginStats
+import asyncio
+import contextlib
+import time
+
+from structlog.testing import capture_logs
+
+from scavengarr.infrastructure.metrics import (
+    LAG_WINDOW,
+    MetricsCollector,
+    PluginStats,
+    monitor_loop_lag,
+)
 
 
 class TestPluginStats:
@@ -89,3 +100,59 @@ class TestMetricsCollector:
         snap = m.snapshot()
         keys = list(snap["plugins"].keys())
         assert keys == ["alpha", "mid", "zeta"]
+
+
+class TestEventLoopLag:
+    """How late a periodic timer fires: CPU-bound work on the event loop
+    (parsing, logging) delays every callback, timers and deadlines included."""
+
+    def test_snapshot_without_samples(self) -> None:
+        assert MetricsCollector().snapshot()["event_loop"] == {"samples": 0}
+
+    def test_snapshot_percentiles(self) -> None:
+        m = MetricsCollector()
+        for lag in range(100):  # 0 … 99 ms
+            m.record_loop_lag(float(lag))
+
+        assert m.snapshot()["event_loop"] == {
+            "samples": 100,
+            "lag_ms_p50": 50.0,
+            "lag_ms_p99": 99.0,
+            "lag_ms_max": 99.0,
+        }
+
+    def test_window_keeps_the_latest_samples(self) -> None:
+        m = MetricsCollector()
+        for _ in range(LAG_WINDOW):
+            m.record_loop_lag(500.0)
+        for _ in range(LAG_WINDOW):
+            m.record_loop_lag(1.0)
+
+        assert m.snapshot()["event_loop"]["lag_ms_max"] == 1.0
+
+    async def test_monitor_records_a_blocked_loop(self) -> None:
+        m = MetricsCollector()
+        task = asyncio.create_task(monitor_loop_lag(m, interval=0.01, warn_ms=1e9))
+        await asyncio.sleep(0.02)
+        time.sleep(0.05)  # CPU-bound work holding the loop
+        await asyncio.sleep(0.03)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        lag = m.snapshot()["event_loop"]
+        assert lag["samples"] >= 2
+        assert lag["lag_ms_max"] >= 30.0
+
+    async def test_monitor_warns_on_a_long_stall(self) -> None:
+        m = MetricsCollector()
+        with capture_logs() as logs:
+            task = asyncio.create_task(monitor_loop_lag(m, interval=0.01, warn_ms=20))
+            await asyncio.sleep(0.02)
+            time.sleep(0.05)
+            await asyncio.sleep(0.03)
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+        assert any(e["event"] == "event_loop_lag" for e in logs)

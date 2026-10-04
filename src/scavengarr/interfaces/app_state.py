@@ -86,3 +86,6 @@ class AppState(State):
     plugin_score_store: PluginScoreStorePort | None
     scoring_scheduler: ScoringScheduler | None
     _scoring_task: asyncio.Task[None] | None
+
+    # Event-loop lag monitor (feeds metrics.event_loop)
+    _loop_lag_task: asyncio.Task[None]

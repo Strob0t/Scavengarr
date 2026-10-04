@@ -43,6 +43,11 @@ class TestMetricsEndpoint:
         data = client.get("/api/v1/stats/metrics").json()
         assert "plugins" in data
 
+    def test_contains_event_loop_lag(self) -> None:
+        client = _build_app()
+        data = client.get("/api/v1/stats/metrics").json()
+        assert data["event_loop"] == {"samples": 0}
+
     def test_contains_circuit_breaker(self) -> None:
         client = _build_app()
         data = client.get("/api/v1/stats/metrics").json()

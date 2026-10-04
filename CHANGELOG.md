@@ -4,6 +4,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ---
 
+## Unreleased (staging)
+
+### Feat: Event-Loop Lag in the Metrics
+- On the Raspberry Pi the Python process was busy for 34–82% of a stream request's wall time (`docs/plans/pi-performance.md`). CPU work on the event loop (parsing, TLS handshakes, logging) delays every callback, and with them the timeouts and deadlines.
+- A timer every 0.5 s records how late it fires. `/api/v1/stats/metrics` shows the lag's p50, p99 and maximum over the last 5 min (`event_loop`), and a stall of 250 ms or more is logged as `event_loop_lag`. This is the yardstick for the performance plan.
+
 ## v0.2.3 - 2026-10-04
 
 Production fixes from a Raspberry Pi behind a VPN: kinoger and moflix pass their challenges once and go on over httpx, s.to's link-out gate is passed (ad layers, Turnstile and ALTCHA), and HLS-proxy streams play in Stremio Web. Each fix was verified on the production instance before the release.

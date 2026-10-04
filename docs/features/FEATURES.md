@@ -273,7 +273,7 @@ Configuration follows a strict precedence hierarchy with typed validation.
 | Structured logging (structlog) | [x] Implemented | JSON and console formatters |
 | Context fields | [x] Implemented | e.g. `plugin`, `duration_ms`, `results_count` |
 | Health endpoints | [x] Implemented | `/api/v1/healthz` (liveness), `/api/v1/readyz` (readiness) |
-| Metrics endpoint | [x] Implemented | `/api/v1/stats/metrics` — plugin stats, circuit breaker, pool utilisation |
+| Metrics endpoint | [x] Implemented | `/api/v1/stats/metrics` — plugin stats, circuit breaker, pool utilisation, event-loop lag (`event_loop`: p50/p99/max of a 0.5 s timer over the last 5 min; a stall of 250 ms or more logs `event_loop_lag`) |
 | Plugin score endpoint | [x] Implemented | `/api/v1/stats/plugin-scores` — EWMA scores, filterable by `plugin`, `category`, `bucket` |
 
 ---

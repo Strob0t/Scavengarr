@@ -66,7 +66,7 @@ from scavengarr.infrastructure.hoster_resolvers.vinovo import VinovoResolver
 from scavengarr.infrastructure.hoster_resolvers.vixeo import VixeoResolver
 from scavengarr.infrastructure.hoster_resolvers.voe import VoeResolver
 from scavengarr.infrastructure.hoster_resolvers.xfs import create_all_xfs_resolvers
-from scavengarr.infrastructure.metrics import MetricsCollector
+from scavengarr.infrastructure.metrics import MetricsCollector, monitor_loop_lag
 from scavengarr.infrastructure.persistence.crawljob_cache import (
     CacheCrawlJobRepository,
 )
@@ -345,6 +345,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # 0) Metrics collector (zero-overhead, must exist before components that record)
     state.metrics = MetricsCollector()
+    state._loop_lag_task = asyncio.create_task(monitor_loop_lag(state.metrics))
 
     # 0b) Auto-tune concurrency based on detected container/host resources
     if config.stremio.auto_tune_all:
@@ -598,6 +599,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             with suppress(asyncio.CancelledError):
                 await state._scoring_task
             log.info("scoring_scheduler_stopped")
+
+        state._loop_lag_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await state._loop_lag_task
 
         # Stealth context first: it lives on the shared browser.
         if state.stealth_pool is not None:
