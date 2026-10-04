@@ -55,6 +55,10 @@ _DOMAINS = frozenset(
     }
 )
 
+# Byse players under a second-level name another resolver claims: moflix hands
+# out moflix-stream.link (Byse) next to moflix-stream.click (VidHide)
+_HOSTS = frozenset({"moflix-stream.link"})
+
 
 def _unpack_p_a_c_k(packed: str) -> str | None:
     """Unpack Dean Edwards packed JavaScript (delegates to shared module)."""
@@ -91,6 +95,11 @@ class FilemoonResolver:
     def supported_domains(self) -> frozenset[str]:
         """Mirror domains dispatched to this resolver by the registry."""
         return _DOMAINS
+
+    @property
+    def supported_hosts(self) -> frozenset[str]:
+        """Hosts dispatched here whose second-level name other hosts share."""
+        return _HOSTS
 
     async def resolve(self, url: str) -> ResolvedStream | None:
         """Parse a legacy embed page, else capture the Byse player's stream."""

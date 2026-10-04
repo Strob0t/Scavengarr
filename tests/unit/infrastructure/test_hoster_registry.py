@@ -931,3 +931,40 @@ class TestCircuitBreaker:
         registry._circuit_breaker.reset("doodstream")  # type: ignore[union-attr]
 
         assert await registry.resolve("https://doodstream.com/e/b") is not None
+
+
+class TestMoflixStreamHosts:
+    """moflix hands out two players under one second-level name:
+    moflix-stream.click is VidHide (EarnVids), moflix-stream.link runs
+    Filemoon's Byse player ("Byse Frontend"), which VidHide cannot read."""
+
+    @pytest.mark.parametrize(
+        ("url", "name"),
+        [
+            ("https://moflix-stream.link/e/olh8wkp6ejd0", "filemoon"),
+            ("https://moflix-stream.click/embed/kulz2q4qc0fl", "vidhide"),
+        ],
+    )
+    async def test_each_host_goes_to_its_player(self, url: str, name: str) -> None:
+        from scavengarr.infrastructure.hoster_resolvers.filemoon import (
+            FilemoonResolver,
+        )
+        from scavengarr.infrastructure.hoster_resolvers.xfs import (
+            create_all_xfs_resolvers,
+        )
+
+        client = MagicMock(spec=httpx.AsyncClient)
+        resolvers = [
+            FilemoonResolver(http_client=client),
+            *create_all_xfs_resolvers(http_client=client),
+        ]
+        for resolver in resolvers:
+            resolver.resolve = AsyncMock(  # type: ignore[method-assign]
+                return_value=ResolvedStream(video_url=f"https://{resolver.name}/v")
+            )
+        registry = HosterResolverRegistry(resolvers=resolvers)
+
+        result = await registry.resolve(url)
+
+        assert result is not None
+        assert result.video_url == f"https://{name}/v"

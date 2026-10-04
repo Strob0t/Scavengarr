@@ -169,6 +169,13 @@ class XFSResolver:
                 timeout=15,
                 headers=headers,
             )
+            if resp.status_code == 404 and url != embed_url:
+                # A mirror without the /e/ route: moflix-stream.click (VidHide)
+                # serves its player under the /embed/ and /v/ links it hands out
+                embed_url = url
+                resp = await self._http.get(
+                    embed_url, follow_redirects=True, timeout=15, headers=headers
+                )
         except httpx.HTTPError:
             log.warning(f"{hoster}_request_failed", url=embed_url)
             return None

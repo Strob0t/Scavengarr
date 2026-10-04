@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: moflix's Own Players Resolve Again
+- moflix hands out two players under one name, and the end-to-end test of 2026-10-04 found all 15 of their links of an hour failing:
+  - moflix-stream.click is VidHide (EarnVids) without the `/e/<id>` route the XFS resolver builds (404). Its player is under the `/embed/<id>` and `/v/<id>` links moflix hands out. An XFS video hoster whose `/e/` page answers 404 is now asked for the link's own URL.
+  - moflix-stream.link runs Filemoon's Byse player ("Byse Frontend"), which the VidHide resolver cannot read. The Filemoon resolver claims that host (`supported_hosts`); in production it resolved two links in 4.7 s (warm browser) and 15 s (cold).
+
 ### Perf: Hosters That Never Deliver Are Skipped
 - Production's stream requests started a browser capture for every DoodStream and Dropload link. From the VPN address DoodStream's Turnstile is not solved (31–34 s, 4 attempts) and Dropload's captcha player gives no stream (19 s). In an hour that was 50 captures, no stream, and about 10 s of Chromium CPU per stream request, a cached search included.
 - `HosterResolverRegistry` now has a circuit breaker per resolver (`PluginCircuitBreaker`: 5 failures, 60 s cooldown doubling up to 1 h). A timeout, a cut after half of `http.timeout_resolve_seconds` and an unplayable stream count; a stream resets it; a dead link neither counts nor resets it. While open, the hoster is skipped (`hoster_resolve_circuit_open`).

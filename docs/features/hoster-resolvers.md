@@ -43,7 +43,7 @@ The registry matches `extract_domain(url)` (second-level domain, e.g. `"https://
 
 A resolver can also claim full host names through a `supported_hosts` property, checked before the second-level name, when unrelated hosts share that name: `strmup` claims `kinoger.pw` (kinoger's Vidara player), while `kinoger.ru` links redirect to VOE mirrors and must reach the redirect step. `canonical_hoster()` knows claimed hosts too, and the Stremio stream converter asks for the URL host before its second-level name, so kinoger.pw streams are named `strmup`.
 
-A domain claimed by two resolvers stays with the first one registered (the composition registers the specific resolvers before the generic XFS/DDL ones) and is logged as `hoster_domain_conflict`; the shipped resolvers claim no domain twice. `moflix-stream` belongs to Vidhide (moflix-stream.click; JDownloader lists VidGuard with the former moflix-stream.day as offline).
+A domain claimed by two resolvers stays with the first one registered (the composition registers the specific resolvers before the generic XFS/DDL ones) and is logged as `hoster_domain_conflict`; the shipped resolvers claim no domain twice. `moflix-stream` belongs to Vidhide (moflix-stream.click; JDownloader lists VidGuard with the former moflix-stream.day as offline), except the host `moflix-stream.link`, which runs Filemoon's Byse player and is claimed by `filemoon`.
 
 ### Playback headers
 
@@ -110,7 +110,7 @@ Extract a direct video URL (`.mp4`/`.m3u8`) from an embed page.
 | Streamtape | `streamtape` | `streamtape`, `streamta`, `strtape`, `shavetape`, `tapeblocker`, `streamtapeadblock(user)`, `gettapeads`, … (13 names) | Token extraction from page source |
 | SuperVideo | `supervideo` | `supervideo.*` | XFS-style JWPlayer extraction; browser capture on a Cloudflare 403 |
 | DoodStream | `doodstream` | `dood`, `doods`, `doodstream`, `ds2play`, `d0o0d`, `vidply`, `myvidplay`, `playmogo`, … (23 names; all mirrors currently redirect to `playmogo.com`) | `pass_md5` endpoint extraction; browser capture on a Cloudflare challenge (the player passes an invisible Turnstile headful; its CDN URL `…cloudatacdn.com/…~id?token=…` has no file extension and is taken from the video element request) |
-| Filemoon | `filemoon` | `filemoon`, `filemooon`, `byse`, rotating Byse domains (`bysezejataos`, `bysekoze`, …; 14 names from JD2 `FilemoonSxCrawler`) | Packed JS unpacker (legacy pages); Byse player pages via browser capture (`StealthPool.capture_media`), after the details API `/api/videos/<id>/embed/details` rules out a gone video (404) or a domain-restricted embed (403 `embedding … not allowed`) |
+| Filemoon | `filemoon` | `filemoon`, `filemooon`, `byse`, rotating Byse domains (`bysezejataos`, `bysekoze`, …; 14 names from JD2 `FilemoonSxCrawler`); host `moflix-stream.link` (moflix's Byse player) | Packed JS unpacker (legacy pages); Byse player pages via browser capture (`StealthPool.capture_media`), after the details API `/api/videos/<id>/embed/details` rules out a gone video (404) or a domain-restricted embed (403 `embedding … not allowed`) |
 | StreamUp | `strmup` | `strmup`, `streamup`, `vidara`, `vidaraa`; host `kinoger.pw` | `streaming_url` from page, AJAX `/ajax/stream` fallback; HLS. Vidara hosts use the JSON API `POST /api/stream` (`{"device": "web", "filecode": id}` → `streaming_url`, 404 when gone; JD2 `VidaraTo`). kinoger.pw, kinoger's player tab, is a white-label Vidara (its page credits "Vidara" and calls the same API) |
 | Vidsonic | `vidsonic` | `vidsonic` | Hex-obfuscated, pipe-delimited HLS URL decoding |
 | Mixdrop | `mixdrop` | `mixdrop`, `mxdrop`, `m1xdrop`, `mixdrop23`, `mixdrp`, `miixdrop`, … (12 names from JD2 `MixdropCo`, without its dead ones) | Embed player (`/e/{id}`; `/f/` and `/emb/` read through it): `MDCore.wurl` from the packed setup (`unpacked_scripts()` in `_video_extract.py`) is the MP4 on the delivery CDN; a deleted file's player sets none. The CDN answers non-browser agents with 403 (was a validate-only DDL config until 2026-10-01: 36 of 36 mixdrop links were dropped as echo) |
@@ -202,7 +202,7 @@ The resolver fetches `/e/{file_id}`, checks offline markers and error redirects,
 | Streamwish | 32 domains (`streamwish`, `dwish`, `hglink`, `obeywish`, `awish`, `embedwish`, …) | Extended markers + Streamwish-specific markers |
 | Vidmoly | `vidmoly` | `/w/` path prefix support. Known issue: the embed page is a "Loading..." script redirect (`?ch=1&js=<JWT>`) that sends non-browser clients, and on networks that block ad domains (Pi-hole) even the stealth browser, to `click-v4.plarclck.com`; no stream is reachable then |
 | Vidoza | `vidoza`, `videzz` | Custom markers |
-| Vidhide | 6 primary (`vidhide`, `filelions`, …) + 25 aliases (`streamhide`, `louishide`, `moflix-stream`, …) | Lowercase-only file IDs |
+| Vidhide | 6 primary (`vidhide`, `filelions`, …) + 25 aliases (`streamhide`, `louishide`, `moflix-stream`, …) | Lowercase-only file IDs. moflix-stream.click answers `/e/<id>` with 404 and serves the player under its `/embed/<id>` and `/v/<id>` links: an XFS video hoster whose `/e/` page is 404 is asked for the link's own URL (JD2 `VidhideCom` treats `/embed/`, `/v/`, `/f/` links as official video URLs) |
 | Mp4Upload | `mp4upload` | Standard markers |
 | Uqload | `uqload` | Standard markers |
 | Vidshar | `vidshar`, `vedshare` | Standard markers |
