@@ -76,6 +76,27 @@ Ordered by measured share and effort.
 6. **Stream cache and prefetch.** Torznab searches are cached (`search-caching.md`); Stremio stream requests are not. Cache stream lists per id, and prefetch the next episode on an episode request: Stremio's autoplay asks for it, and the prefetch spreads s.to's quota of 3 link-outs per gate pass.
 7. **Chromium.** It holds 1.7 GB and uses 4–9 s CPU per request. Run the browser less often: session takeover already covers kinoger and moflix, the resolver captures remain. Also limit renderer processes.
 
+## Review of the literature research (2026-10-04)
+
+A literature review proposed measures for fan-out, tail latency, caching, Python and the Pi. It is the gitignored `.devdata/research/performance-deep-research.md`: Tail at Scale, Kwiken, SRE Book, RFC 5861, Mercator, uvloop/httptools, selectolax and Pi/Docker sources. Its proposals, checked against this baseline, production and the code:
+
+| Proposal | Verdict |
+|---|---|
+| `httpx.Limits` (keep-alive 60 s, 100 slots) and a separate connect timeout | Confirmed: handshakes are 21% of the CPU; the client uses the defaults |
+| `uvicorn[standard]` (uvloop, httptools) | Confirmed: the event loop takes 14% |
+| Stremio stream cache with stale-while-revalidate and single-flight | Confirmed: production served the same title twice within 17–18 s (Avengers: Endgame, Severance), a full fan-out each time |
+| Partial results when a plugin hits its timeout | Confirmed in code: `_run_plugin_with_timeout` returns `[]`, so a slow plugin's finished detail pages are lost (kinoking is often cut at 10 s) |
+| Fewer requests per stream request | Confirmed: two title variants double the fan-out ("Matrix" and "The Matrix": 205 requests against 105 for Interstellar) |
+| Resolve DNS once and connect to the IP the address guard checked | Confirmed in code: the guard and httpcore both resolve. The time saved is small, because gluetun caches (2 ms). It does close a DNS-rebinding gap in the SSRF guard |
+| selectolax instead of `html.parser`, parsing off the event loop | Confirmed at 9%; profile on the Pi first |
+| Early stop (`resolve_target_count > 0`) | Conflicts with the decision of 2026-10-01 (complete answers over an earlier end); needs the maintainer |
+| Token bucket "serializes every request per domain" | Overstated: it sleeps only when the bucket is empty, and then the spacing is the configured rate (10 rps, burst 10, AIMD up to 50). The `co.uk` key problem is real but hits no current site |
+| `cf_clearance` does not work with httpx (TLS fingerprint), use curl_cffi | Refuted for kinoger and moflix: httpx with the browser's cookies and User-Agent passes both from the VPN IP, and curl_cffi did no better (antibot-patchright.md Phase 4) |
+| Memory cgroup disabled on the Pi | Already fixed: `cgroup_enable=memory cgroup_memory=1` in the kernel command line, the cgroup reports 625 MB |
+| Cooler and CPU governor | No throttling seen: 54 °C at 1.8 GHz (the maximum), governor `ondemand`; one sample, Pi 4 |
+| Docker's embedded DNS | Not used: Scavengarr runs in gluetun's network namespace and uses its caching resolver |
+| SSD instead of the SD card | Applies: cache and config are on the SD card (`mmcblk0p2`) |
+
 ## How to re-measure
 
 - **Wall time per plugin:** poll `/api/v1/stats/metrics` during one stream request. A plugin's search count rises when its search ends.
