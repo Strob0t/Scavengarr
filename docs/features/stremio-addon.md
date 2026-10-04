@@ -23,7 +23,7 @@ Stremio App
   ├── GET /catalog/{type}/{id}/search={q}.json → TMDB search
   ├── GET /stream/{type}/{id}.json           → plugin search → resolved, ranked streams
   ├── GET /play/{stream_id}                  → hoster resolution → 302 video URL
-  ├── GET /proxy/{stream_id}/{path:path}     → HLS proxy (manifests + segments)
+  ├── GET|HEAD /proxy/{stream_id}/{path:path} → HLS proxy (manifests + segments)
   └── GET /health                            → component status
 ```
 
@@ -139,14 +139,19 @@ Direct (non-proxied) resolved streams include `behaviorHints` with a browser `Us
 | Desktop (Electron) | Full support |
 | Android | Partial (some Referer bugs with specific hosters) |
 | iOS | Partial (KSPlayer engine only) |
-| Web | Not supported (CORS restrictions) |
+| Web | With a streaming server: plays through the server's `/proxy` (checked 2026-10-03 with DoodStream, Vinovo, FireStream); without one not supported (CORS) |
 
 > **Known issue (IP-bound streams):** DoodStream and Vinovo bind a stream URL to the IP that resolved it; another IP gets `200 error_wrong_ip` (DoodStream's CDN) or 403 (Vinovo). A direct stream therefore plays only when the player (Stremio's streaming server) reaches the internet through the same IP as Scavengarr: with Scavengarr behind a VPN and the player at home it fails. Streams through the HLS proxy are fetched by Scavengarr and are not affected. `scripts/stremio_playcheck.py` shows it from the player's machine.
+
+> **Self-hosted streaming server (e.g. tsaridas/stremio-docker behind a reverse proxy):**
+> - **Reachability.** Stremio Web hands every stream to the server's `/hlsv2/probe` before it plays: a `proxyHeaders` stream as the server's own public URL (`https://stremio.example/proxy/…`), an HLS-proxy stream as Scavengarr's URL. The server must resolve and reach both names. In a VPN container's network (gluetun) its DNS knows no LAN names and its firewall blocks the LAN, so every probe answers 500 (map the names with `extra_hosts` on the VPN container and allow the target with `FIREWALL_OUTBOUND_SUBNETS`). Streams the browser can play directly still play then, through a `HEAD` check of their content type; transcoding (MKV, HEVC, AC3) does not.
+> - **Disguised segments.** tsaridas/stremio-docker's nginx nests `location ~* \.(jpg|jpeg|png|gif|ico|css|js|woff2|env)$` inside `location /`, and nginx matches it before its server routes. HLS segments disguised with such an extension (Playmate's `…_000.css`) are looked up as web player files and answer 404: error 81, "Error occurred when downloading".
 
 ### HLS Proxy
 
 ```http
-GET /api/v1/stremio/proxy/{stream_id}/{path:path}
+GET  /api/v1/stremio/proxy/{stream_id}/{path:path}
+HEAD /api/v1/stremio/proxy/{stream_id}/{path:path}
 ```
 
 Server-side proxy for HLS streams whose CDN requires headers (e.g. `Referer`) on **all** sub-requests — the master manifest, variant playlists, and segments. Stremio's `proxyHeaders` only applies to the initial manifest fetch, so sub-requests would otherwise get `403` from CDNs such as Dropload's `dropcdn.io`.
@@ -160,6 +165,7 @@ Server-side proxy for HLS streams whose CDN requires headers (e.g. `Referer`) on
 1. Paths not ending in `.m3u8` are streamed from the CDN as segments (`StreamingResponse`); a failed segment request closes its connection before the error is returned, so CDN errors cannot drain the shared HTTP connection pool.
 1. `.m3u8` manifests are fetched with the stored headers (cached for 60 s, at most 512 manifests: when full, expired ones go first, then the oldest), and the CDN's URIs are rewritten to proxy URLs, in URI lines and in the `URI="…"` attributes of tags (audio renditions, keys, init segments). Relative URIs are left as-is because they resolve against the proxy URL. A URI from the CDN's root (`/secure/98/<id>/video.m3u8`, Vidsonic's variants), a protocol-relative one or an absolute URL of the CDN outside the stream's directory becomes `<proxy>/<stream-id>//<path>`; the proxy joins that absolute path with the CDN origin. URIs of other origins stay direct, since the proxy fetches from the stream's own CDN only.
 1. CDN fetches share a global semaphore (50); CDN errors return `502`.
+1. `HEAD` answers like `GET`; the server drops the body. When its streaming server cannot probe a stream, Stremio Web reads the content type with `HEAD` (stremio-video's `getContentType`) before it plays. A `405` without CORS headers ended these streams in error 83, "Video is not supported".
 
 ### Play (Proxy Fallback)
 

@@ -20,7 +20,11 @@ from urllib.parse import urlsplit
 import httpx
 import structlog
 
-from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort, ClickThrough
+from scavengarr.domain.ports.browser_fetcher import (
+    BrowserFetcherPort,
+    BrowserSession,
+    ClickThrough,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -45,6 +49,8 @@ class SolverFetcher:
     def __init__(self, *, http_client: httpx.AsyncClient, base_url: str) -> None:
         self._http = http_client
         self._endpoint = base_url.rstrip("/") + "/v1"
+        # host -> session of the site's latest solution
+        self._sessions: dict[str, BrowserSession] = {}
 
     async def _solve(self, url: str, timeout: float) -> dict[str, Any] | None:
         """Run ``request.get`` and return the solution (``None`` on failure)."""
@@ -70,7 +76,28 @@ class SolverFetcher:
         if data.get("status") != "ok" or not isinstance(solution, dict):
             log.warning("solver_failed", url=url, message=data.get("message"))
             return None
+        self._keep_session(url, solution)
         return solution
+
+    def _keep_session(self, url: str, solution: dict[str, Any]) -> None:
+        """Remember the solution's cookies and User-Agent for *url*'s site."""
+        cookies = solution.get("cookies")
+        user_agent = solution.get("userAgent")
+        if not isinstance(cookies, list) or not isinstance(user_agent, str):
+            return
+        jar = {
+            c["name"]: c["value"]
+            for c in cookies
+            if isinstance(c, dict)
+            and isinstance(c.get("name"), str)
+            and isinstance(c.get("value"), str)
+        }
+        if jar:
+            host = urlsplit(url).hostname or ""
+            self._sessions[host] = BrowserSession(cookies=jar, user_agent=user_agent)
+
+    async def session(self, url: str) -> BrowserSession | None:
+        return self._sessions.get(urlsplit(url).hostname or "")
 
     async def fetch_text(self, url: str, *, timeout: float) -> str | None:
         solution = await self._solve(url, timeout)
@@ -105,13 +132,21 @@ class ChainedBrowserFetcher:
 
     def __init__(self, fetchers: Sequence[BrowserFetcherPort]) -> None:
         self._fetchers = tuple(fetchers)
+        # host -> the fetcher whose browser last passed that site
+        self._served: dict[str, BrowserFetcherPort] = {}
 
     async def fetch_text(self, url: str, *, timeout: float) -> str | None:
         for fetcher in self._fetchers:
             body = await fetcher.fetch_text(url, timeout=timeout)
             if body is not None:
+                self._served[urlsplit(url).hostname or ""] = fetcher
                 return body
         return None
+
+    async def session(self, url: str) -> BrowserSession | None:
+        """The session of the fetcher that last fetched *url*'s site."""
+        fetcher = self._served.get(urlsplit(url).hostname or "")
+        return await fetcher.session(url) if fetcher is not None else None
 
     async def resolve_redirect(self, url: str, *, timeout: float) -> str | None:
         for fetcher in self._fetchers:

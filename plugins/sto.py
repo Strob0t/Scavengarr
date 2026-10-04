@@ -45,8 +45,10 @@ _RESULTS_PER_PAGE = 24
 _LINK_BOX = "button.link-box[data-play-url]"
 # Provider name of the button that links to the series' streaming service
 _OFFICIAL_PROVIDER = "Provider"
-# The browser's time to pass the link-out gate (Turnstile takes ~6 s)
-_GATE_TIMEOUT_S = 30.0
+# The browser's time to pass the link-out gate: Turnstile took ~6 s at home,
+# 28 s on a Raspberry Pi 4 behind a VPN (2026-10-04). The pass runs in the
+# background, a Stremio request does not wait for it
+_GATE_TIMEOUT_S = 60.0
 # After a failed pass, link-outs go without the browser for this long
 _GATE_RETRY_S = 300.0
 

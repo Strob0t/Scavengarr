@@ -107,6 +107,39 @@ Play check (master, variant, first segments; file start and a seek):
 - **IP-bound streams:** production reaches the sites through a VPN (stream tokens name 185.107.94.2, AS43350 NForce), the home network is 92.209.223.18. DoodStream and Vinovo bind their stream URLs to the resolving IP, so a player on another IP gets `error_wrong_ip` or 403. Streams through Scavengarr's HLS proxy are fetched from Scavengarr's IP and are not affected; VEEV, Playmate and FireStream played from the other IP.
 - Production only: kinoger returned nothing (the WAF page; the fix is on `staging`), and s.to gave no episode streams while dev did.
 
+### Second round (2026-10-03 evening, production v0.2.2)
+
+stremio.lan's server loop was the maintainer's setup. The Stremio container shares the VPN container's network, where 8080 (qBittorrent) and 8090 (TorrServer) are taken, so nginx had been moved to the server's own port 11470; `WEBUI_INTERNAL_PORT=8095` with Caddy on 8095 fixed it. Playback in Stremio Web, *The Matrix* (9 streams):
+
+| Stream | Result | Cause |
+|---|---|---|
+| FireStream (filmpalast), FSST (kinoger) | plays | |
+| DoodStream (hdfilme), Vinovo (movie2k) | plays | IP-bound, but Stremio's server uses the same VPN as Scavengarr |
+| Vidsonic (filmpalast), VOE (megakino), StreamUp (moflix) | error 83 | HLS proxy: Stremio Web's `HEAD` content-type check got 405 without CORS headers (fixed on `staging`) |
+| Playmate (filmpalast) | error 81 | tsaridas/stremio-docker's nginx answers the disguised segments (`…_000.css`, `…_001.js`) as web player files: 404 |
+| VEEV (moflix) | error 83 | CDN 403 through the server's `/proxy` at play time; `HEAD`/`GET` through the same proxy answered 200/206 minutes later |
+
+- Every `/hlsv2/probe` answered 500: the server, in the VPN container's network, resolves no `*.lan` name and the VPN firewall blocks the LAN. It probes `http://127.0.0.1:11470/…` and internet URLs fine. Streams the browser can play directly still play (Stremio Web falls back to a `HEAD` content-type check); transcoding cannot work until `extra_hosts` and `FIREWALL_OUTBOUND_SUBNETS` are set on the VPN container.
+- Production answered in 32–39 s (4 requests) instead of about 15 s. Its `config.yaml` was still the first seed (cineby, disabled since 2026-10-01, was searching); kinoger averaged 24.5 s with 8 of 9 searches failed, moflix 21 s with 5 of 9.
+
+### Third round (2026-10-04, production on `staging`)
+
+After the config reseed production answers in 10.5–15.4 s. Measured with a script that polls `/api/v1/stats/metrics` during one stream request (when each plugin's search ends), logs and probes read through Portainer (exec into the container):
+
+| Request (warm) | Streams | Time | s.to |
+|---|---|---|---|
+| Inception | 5 (kinoger, filmpalast, movie2k, moflix ×2) | 15.3 s | — |
+| Interstellar | 8 (kinoger ×2, filmpalast ×2, megakino ×2, movie2k, moflix) | 15.2 s | — |
+| The Godfather | 4 (kinoger, movie2k ×2, einschalten) | 15.2 s | — |
+| Dark S02E01 | 1 (VOE · kinoking) | 10.5 s | link-out resolved (302), VOE ranked below kinoking's |
+| Breaking Bad S02E01 | 3 (kinoking, kinoger ×2) | 15.1 s | link-out resolved (302) |
+
+- **kinoger, moflix**: both challenge the VPN IP. httpx takes over the browser's session after one solve (Phase 4 of `antibot-patchright.md`); the first request after a restart misses them (the solve takes 10–20 s on the Pi and finishes in the background), later ones get them in 4–10 s. moflix returned nothing until its API, loaded directly by the browser with a stored clearance, answered 401 without the site's Referer; it is now asked by in-page `fetch()`.
+- **s.to**: three causes, one after the other. The ad layers took the clicks on the link box and the gate's checkbox; the gate's Turnstile widget took 16–70 s on the Pi; and for the VPN IP the gate is the tier `turnstile_altcha`, whose ALTCHA widget (required checkbox) blocked the form. With all three fixed the gate passes in about 20 s in the background. A pass unlocks exactly 3 link-outs for this IP (2 passes observed: 3 redirects each, then the gate again), so Stremio gets s.to for about three episode requests per pass. One stream per hoster is resolved, so an s.to VOE link loses to a better-ranked VOE stream of another site.
+- **Torznab on s.to** with the VPN IP: a search for "Dark" took 83 s and sent about 950 link-out requests (all matching series, every episode and hoster); 97 of 100 results kept the s.to link-out because the gate allowed 3.
+- **Play check** (`scripts/stremio_playcheck.py` from the home network): 6 of 9 streams playable, the HLS-proxy streams (VOE, Vidsonic, StreamUp) included; `HEAD` on the proxy answers 200 with CORS. The 3 failures are IP-bound (DoodStream `error_wrong_ip`, Vinovo 403, FSST 410) and play through Stremio's server in the same VPN.
+- megakino_to and movie4k: every domain answers Cloudflare 522 (origin down). kinoking is often cut at 10 s.
+
 ## AIOStreams
 
 Goal was an AIOStreams test user on `aiostreams.lan` with Scavengarr as addon, measured end to end. Not done: AIOStreams validates the addon manifest when a user is created or updated, and it can reach neither the dev instance (Docker NAT on the workstation) nor `scavengarr.lan` (502, backend down). Recommended user settings, from the AIOStreams v2.35.3 source (`packages/core/src/presets/custom.ts`, `packages/core/src/db/schemas.ts`):

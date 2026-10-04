@@ -118,3 +118,63 @@ class TestHostileChallenges:
 
         with pytest.raises(AltchaError, match="gave up"):
             solve_altcha(_challenge(key_prefix="00000000"))
+
+
+def _classic(
+    *, number: int = 4242, algorithm: str = "SHA-256", max_number: int = 100_000
+) -> dict[str, Any]:
+    """Classic ALTCHA challenge as s.to's gate serves it (2026-10-04)."""
+    salt = "0fe4841ebe00d49622cb"
+    digest = algorithm.replace("-", "").lower()
+    return {
+        "algorithm": algorithm,
+        "challenge": hashlib.new(digest, f"{salt}{number}".encode()).hexdigest(),
+        "maxnumber": max_number,
+        "salt": salt,
+        "signature": "b9d5b1bcd3f64e831aff9075d234961de995db3d6239",
+    }
+
+
+class TestSolveClassicAltcha:
+    """The classic format: find the number whose hash of salt + number is the
+    challenge (https://altcha.org/docs/proof-of-work/)."""
+
+    def test_payload_carries_challenge_and_number(self) -> None:
+        challenge = _classic(number=4242)
+
+        payload = _decode(solve_altcha(challenge))
+
+        assert payload["number"] == 4242
+        for key in ("algorithm", "challenge", "salt", "signature"):
+            assert payload[key] == challenge[key]
+        assert isinstance(payload["took"], int)
+
+    @pytest.mark.parametrize("algorithm", ["SHA-1", "SHA-512"])
+    def test_other_digests(self, algorithm: str) -> None:
+        payload = _decode(solve_altcha(_classic(number=17, algorithm=algorithm)))
+
+        assert payload["number"] == 17
+
+    def test_unsupported_algorithm_raises(self) -> None:
+        with pytest.raises(AltchaError, match="unsupported algorithm"):
+            solve_altcha({**_classic(), "algorithm": "MD5"})
+
+    def test_malformed_challenge_raises(self) -> None:
+        with pytest.raises(AltchaError, match="malformed"):
+            solve_altcha({"algorithm": "SHA-256", "salt": "x"})
+
+    def test_no_solution_up_to_maxnumber_raises(self) -> None:
+        with pytest.raises(AltchaError, match="no solution"):
+            solve_altcha(_classic(number=500, max_number=100))
+
+    def test_rejects_excessive_maxnumber(self) -> None:
+        with pytest.raises(AltchaError, match="maxnumber"):
+            solve_altcha(_classic(max_number=10**12))
+
+    def test_gives_up_after_the_time_budget(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(altcha, "_MAX_SECONDS", 0.0)
+
+        with pytest.raises(AltchaError, match="gave up"):
+            solve_altcha(_classic(number=99_000))

@@ -4,6 +4,33 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ---
 
+## v0.2.3 - 2026-10-04
+
+Production fixes from a Raspberry Pi behind a VPN: kinoger and moflix pass their challenges once and go on over httpx, s.to's link-out gate is passed (ad layers, Turnstile and ALTCHA), and HLS-proxy streams play in Stremio Web. Each fix was verified on the production instance before the release.
+
+### Fix: moflix Without Results Behind a Stored Clearance
+- In production moflix returned 0 results on every search, without an error event. A restarted browser gets the stored clearance cookies (`ClearanceStore`), so it loaded moflix's API without a challenge and got 401 (`stealth_http_error`): the API (Laravel Sanctum) serves only requests that carry its site's Referer, and a page load sends one only in a challenge's reload. The browser fetch returned nothing, httpx never took over the session, and the host stayed in the browser memo for 30 min.
+- `StealthPool.fetch_text()` asks a URL that answers the page load with an error (no challenge) once more by in-page `fetch()` from that page, the way the site's own pages call their API. Reproduced at home with a second API load in one browser context (401); with the fix httpx takes over the session and the next searches run over httpx (1.4 s, 0.3 s).
+
+### Fix: s.to Episode Streams in Production (Ad Layers, ALTCHA Gate)
+- s.to gave no episode streams in production (`sto_link_gate_unsolved`). The browser's click on the hoster link box never reached it: s.to's ad script lays layers over the page (random class names, after a delay) that take the click, and Playwright waited until its click timeout ("<div …> subtree intercepts pointer events"). At home the layer showed up only now and then, in production on every try.
+- `StealthPool.click_through()` lets only its targets take pointer events (a stylesheet that stays until the page closes): the link box and the form of the Turnstile gate the click may bring up. The same layers cover that widget: with the stylesheet removed after the link-box click, production's gate failed with `turnstile_widget_unsolved` (the checkbox click: "<div class=\"edyaqwc\">… intercepts pointer events"), at home now and then. The widget's iframe sits in a closed shadow root and inherits the value of its host; checked in Chromium with such a widget under a layer. Live: Dark S01E01 through the gate in 5.8 s, the next episodes in 0.5–0.7 s.
+- With that fix production passed the Turnstile widget (`turnstile_widget_passed`), but no redirect followed (`stealth_click_through_no_target`). For a VPN IP s.to's gate is the tier `turnstile_altcha`: the same form holds an ALTCHA widget whose checkbox is required, so the submit never left the page; at home the tier is `turnstile`. In our browser the widget does not verify on a click (its checkbox stays unticked). `pass_turnstile_widget()` now solves a form's ALTCHA widget before the submit, like the widget does: the page fetches the challenge from the widget's `challengeurl`, `solve_altcha()` (now also the classic format: the number whose SHA-256 of salt + number is the challenge) solves it in a thread, the payload goes into the form under the widget's name, and `form.submit()` sends it (the required checkbox would block `requestSubmit()`); a failure logs `altcha_widget_unsolved`. Verified in production with the new code: Dark S01E06 through the gate in 23.0 s (proof of work 0.3 s on the Pi), the next episodes in 6.4–6.7 s.
+- Production's Turnstile widget took 16–70 s on the Pi, and the first wait for the redirect had 1.85 s left after it: a submitted gate now gets up to 10 s for its redirect even past the timeout, and s.to gives the browser 60 s for the gate (`_GATE_TIMEOUT_S`; the pass runs in the background, a Stremio request does not wait for it).
+
+### Perf: httpx Goes On With the Browser's Session After a Challenge
+- Production (Raspberry Pi 4 behind a datacenter VPN) got nothing from kinoger: its site challenges the VPN IP, and after one challenge every page of the host went through the browser for 30 min, too slow for the 10 s Stremio budget on a Pi.
+- Measured from production's VPN IP: after a 3–4 s browser solve, plain httpx with the browser's cookies and User-Agent got kinoger's pages (HostAdmin WAF) and moflix's API (Cloudflare) in 0.3–0.4 s; curl_cffi (Chrome TLS fingerprint) did no better, so no new dependency.
+- `BrowserFetcherPort.session(url)` returns the browser's cookies for a site and its User-Agent (`StealthPool`, `SolverFetcher`, `ChainedBrowserFetcher`). `HttpxPluginBase._fetch_text()` takes them over after a browser fetch, so later requests to the host run through httpx (`{name}_browser_session_adopted`). A challenge within 5 min of a takeover sends the host to the browser for 30 min as before (`{name}_browser_session_rejected`); an expired clearance is solved again.
+- Covers every plugin that reads pages with `_fetch_text()` (kinoger, filmfans, serienfans, burningseries, kinox, sto). Docs: `docs/features/python-plugins.md`, `docs/plans/antibot-patchright.md` (Phase 4).
+- moflix 1.2.0 runs on httpx instead of the browser: the homepage once for the site's session, then its JSON API with the headers its own app sends (`_fetch_text(..., headers=...)`); a challenged call goes through the browser once. Live in dev: 0.9 s per search after the first (4.3 s with the 2 s solve); before, every search ran in the browser, one at a time.
+- A browser solve runs on when the Stremio deadline cuts the request that started it, so the next request gets the session. In production's logs every kinoger solve after a config reseed was thrown away at the 10 s cut (20 s per solve under load), so kinoger never recovered. A failed background solve is logged as `{name}_browser_solve_failed`.
+
+### Fix: HLS-Proxy Streams in Stremio Web
+- In Stremio Web every stream through the HLS proxy (VOE, Vidsonic, StreamUp, XFS hosters) ended in error 83, "Video is not supported", whenever the streaming server could not probe it. Stremio Web then reads the stream's content type with a `HEAD` request (stremio-video's `getContentType`), and the proxy answered `HEAD` with 405 without CORS headers.
+- `HEAD` on `/api/v1/stremio/proxy/{stream_id}/{path}` now answers like `GET`; the server drops the body.
+- `docs/features/stremio-addon.md`: Stremio Web plays `proxyHeaders` streams through a streaming server, so the old "Web: not supported" row is fixed. New notes on self-hosted streaming servers: they must reach Scavengarr's and their own public names (a VPN container's DNS and firewall prevent it), and tsaridas/stremio-docker's nginx answers disguised HLS segments (`…_000.css`) with 404.
+
 ## v0.2.2 - 2026-10-03
 
 Reverse-proxy fix: `docker-compose.yml` trusts the proxy's forwarded headers from private networks, so stream proxy and Torznab links use `https://`.
@@ -1147,6 +1174,9 @@ Foundation of the project: FastAPI server, Scrapy scraping engine, plugin loader
 ## KNOWN_ISSUES
 
 Current known issues:
+
+- **s.to link-out quota for VPN IPs** (2026-10-04): for a VPN IP s.to's gate is the tier `turnstile_altcha`, and one pass (about 20 s in the browser on a Raspberry Pi 4) unlocks 3 link-outs. Stremio episode requests get s.to for about three requests per pass; a Torznab search resolves the link-outs of every matching episode (about 950 requests and 83 s for "Dark"), and most results keep the s.to link-out.
+- **Playmate in tsaridas/stremio-docker's web player** (2026-10-04): the image's nginx answers Playmate's disguised HLS segments (`…_000.css`, `…_001.js`) as web player files, with 404, so Playmate streams fail there (error 81).
 
 - **animeloads captcha quota** (2026-09-29): anime-loads rate-limits captchas per IP (after ~30 captchas within ~40 min every answer was rejected for at least 10 min). An anonymous grab uses one captcha per episode, so only a few grabs per hour succeed; the rest end in HTTP 502. A login (`SCAVENGARR_ANIMELOADS_USERNAME`/`_PASSWORD`) needs one captcha per release.
 - **kinox hoster links unreachable** (2026-09-29): every mirror's `/redirect/<hash>` opens a "Verifizierung" page that asks for an image captcha ("Captcha eingeben", 2026-10-01), also in a real browser; kinox returns no results until the site drops it.

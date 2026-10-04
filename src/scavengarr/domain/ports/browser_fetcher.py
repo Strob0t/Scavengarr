@@ -14,6 +14,19 @@ class ClickThrough:
     cookies: dict[str, str] = field(default_factory=dict)  # the site's cookies
 
 
+@dataclass(frozen=True)
+class BrowserSession:
+    """A site's session in the browser: what an HTTP client needs to reuse it.
+
+    Anti-bot checks (Cloudflare's ``cf_clearance``, HostAdmin's WAF ticket)
+    accept their cookie from another client when it sends the same
+    User-Agent as the browser that passed the check.
+    """
+
+    cookies: dict[str, str]
+    user_agent: str
+
+
 @runtime_checkable
 class BrowserFetcherPort(Protocol):
     """Fetches a URL through a real browser (e.g. behind Cloudflare Turnstile).
@@ -51,5 +64,14 @@ class BrowserFetcherPort(Protocol):
         does not clear by itself, then its form is submitted. Returns the
         target with the site's cookies, whose session may then skip the gate;
         None when nothing left the site within *timeout* seconds.
+        """
+        ...
+
+    async def session(self, url: str) -> BrowserSession | None:
+        """Return the browser's session for *url*'s site.
+
+        Asked after ``fetch_text()`` passed the site's challenge, so plain
+        HTTP requests can go on with it. None when the browser holds no
+        cookies for the site.
         """
         ...

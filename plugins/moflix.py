@@ -1,27 +1,30 @@
 """moflix-stream.xyz Python plugin for Scavengarr.
 
-Scrapes moflix-stream.xyz (German streaming aggregator) via Playwright + REST API:
-- Playwright solves the Cloudflare JS challenge and obtains an XSRF-TOKEN cookie
-- API calls are executed from within the browser context using fetch()
+Scrapes moflix-stream.xyz (German streaming aggregator) through its REST API:
+- GET / once for the site's Laravel session (XSRF-TOKEN and session cookies)
 - GET /api/v1/search/{query}?query={query}&limit=20 for search
 - GET /api/v1/titles/{id}?load=videos,genres for title details + video embeds
+- API calls send ``Accept: application/json``, the site as ``Referer`` and the
+  XSRF-TOKEN cookie as ``X-XSRF-TOKEN`` (the API answers 401 without them)
 - Movies and TV series with TMDB metadata (rating, year, genres, IMDB ID)
 - Video embed links from multiple hosters (doods.to, etc.)
 
+Cloudflare challenges the API for some IPs (a VPN, at times a home line):
+``_fetch_text()`` lets the browser pass it once, then the calls go on over
+httpx with the browser's session. Until 1.2.0 the plugin ran every search in
+the browser, too slow for Stremio on a Raspberry Pi.
+
 Domain fallback: moflix-stream.xyz, moflix-stream.click
-Cloudflare JS challenge requires browser-based access (Playwright mode).
 """
 
 from __future__ import annotations
 
 import asyncio
 from typing import Any
-
-from patchright.async_api import Page
-from patchright.async_api import TimeoutError as PlaywrightTimeoutError
+from urllib.parse import quote, unquote, urlparse
 
 from scavengarr.domain.plugins.base import SearchResult
-from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
+from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
 # Configurable settings
@@ -31,9 +34,6 @@ _DOMAINS = [
     "moflix-stream.click",
 ]
 _SEARCH_LIMIT = 20  # API hard cap
-# ms for the XSRF-TOKEN cookie after the challenge (the base class solves
-# the challenge itself within ``_cf_timeout_ms``)
-_XSRF_COOKIE_TIMEOUT_MS = 10_000
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -60,102 +60,48 @@ def _pre_filter_by_category(results: list[dict], category: int | None) -> list[d
     return results
 
 
-# JavaScript executed in the browser to call the API with proper XSRF headers.
-_API_FETCH_JS = """
-async (url) => {
-    const token = document.cookie.match(/XSRF-TOKEN=([^;]+)/);
-    const headers = {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-    };
-    if (token) {
-        headers['X-XSRF-TOKEN'] = decodeURIComponent(token[1]);
-    }
-    const resp = await fetch(url, { headers });
-    if (!resp.ok) return { _error: resp.status };
-    return await resp.json();
-}
-"""
-
-
-class MoflixPlugin(PlaywrightPluginBase):
-    """Python plugin for moflix-stream.xyz using Playwright (Cloudflare bypass)."""
+class MoflixPlugin(HttpxPluginBase):
+    """Python plugin for moflix-stream.xyz (JSON API over httpx)."""
 
     name = "moflix"
-    version = "1.1.0"
-    mode = "playwright"
+    version = "1.2.0"
     provides = "stream"
 
     _domains = _DOMAINS
-    _serialize_search = True
 
-    async def _wait_for_cloudflare(self, page: "Page") -> bool:
-        """Solve the Cloudflare challenge, then wait for the XSRF-TOKEN cookie.
+    def _site_cookie(self, name: str) -> str | None:
+        """The value of the site's cookie *name* in the HTTP client's jar."""
+        if self._client is None:
+            return None
+        host = urlparse(self.base_url).hostname or ""
+        for cookie in self._client.cookies.jar:
+            if cookie.name == name and cookie.domain.lstrip(".") == host:
+                return cookie.value
+        return None
 
-        The base implementation solves the challenge (Turnstile click
-        included) and remembers the clearance; the site's app then sets the
-        cookie its API calls need (``_API_FETCH_JS`` reads it).
-        """
-        if not await super()._wait_for_cloudflare(page):
-            return False
-        try:
-            await page.wait_for_function(
-                "() => document.cookie.includes('XSRF-TOKEN=')",
-                timeout=_XSRF_COOKIE_TIMEOUT_MS,
-            )
-        except PlaywrightTimeoutError:
-            self._log.warning("moflix_xsrf_cookie_timeout")
-            return False
-        return True
+    def _api_headers(self) -> dict[str, str]:
+        """What the site's own app sends with its API calls."""
+        headers = {"Accept": "application/json", "Referer": f"{self.base_url}/"}
+        token = self._site_cookie("XSRF-TOKEN")
+        if token:
+            headers["X-XSRF-TOKEN"] = unquote(token)
+        return headers
 
-    async def _verify_domain(self) -> None:
-        """Navigate to a working domain and solve the Cloudflare challenge."""
-        if self._domain_verified:
-            return
-
-        page = await self._ensure_page()
-
-        for domain in self._domains:
-            url = f"https://{domain}/"
-            try:
-                await page.goto(url, wait_until="domcontentloaded")
-                if await self._wait_for_cloudflare(page):
-                    self.base_url = f"https://{domain}"
-                    self._domain_verified = True
-                    self._log.info("moflix_domain_found", domain=domain)
-                    return
-            except Exception:  # noqa: BLE001
-                continue
-
-        self.base_url = f"https://{self._domains[0]}"
-        self._domain_verified = True
-        self._log.warning("moflix_no_domain_reachable", fallback=self._domains[0])
+    async def _ensure_session(self) -> None:
+        """Start the site's session once (the homepage sets its cookies)."""
+        await self._ensure_client()
+        if self._site_cookie("XSRF-TOKEN") is None:
+            await self._fetch_text(f"{self.base_url}/", context="session")
 
     async def _api_fetch(self, path: str) -> dict[str, Any] | None:
-        """Call a moflix API endpoint from within the browser context."""
-        page = await self._ensure_page()
-        url = f"{self.base_url}{path}"
-
-        try:
-            data = await page.evaluate(_API_FETCH_JS, url)
-        except Exception as exc:  # noqa: BLE001
-            self._log.warning("moflix_api_fetch_failed", path=path, error=str(exc))
-            return None
-
-        if not isinstance(data, dict):
-            return None
-
-        if "_error" in data:
-            self._log.warning("moflix_api_error", path=path, status=data["_error"])
-            return None
-
-        return data
+        """Call a moflix API endpoint (``None`` on failure)."""
+        body = await self._fetch_text(
+            f"{self.base_url}{path}", context="api", headers=self._api_headers()
+        )
+        return self._parse_json_text(body, context="api")
 
     async def _api_search(self, query: str) -> list[dict]:
         """Search the API and return raw result dicts."""
-        # URL-encode the query for the path segment
-        from urllib.parse import quote
-
         encoded = quote(query, safe="")
         path = f"/api/v1/search/{encoded}?query={encoded}&limit={_SEARCH_LIMIT}"
 
@@ -303,8 +249,8 @@ class MoflixPlugin(PlaywrightPluginBase):
     ) -> list[SearchResult]:
         """Search moflix-stream.xyz and return results with video embed links.
 
-        Uses Playwright to bypass Cloudflare, then calls the site's REST API
-        from within the browser context.
+        Calls the site's REST API with the site's session (see
+        ``_ensure_session()``).
         When *season* is provided, only series results are returned.
         """
         if not query:
@@ -316,6 +262,7 @@ class MoflixPlugin(PlaywrightPluginBase):
                 return []
 
         await self._verify_domain()
+        await self._ensure_session()
 
         search_results = await self._api_search(query)
         if not search_results:

@@ -116,7 +116,7 @@ Differences from the httpx fallback:
 - **Cloudflare-aware:** a domain only counts as reachable if the Cloudflare challenge resolves within `_cf_timeout_ms`
 - **No redirect tracking:** `base_url` is set to `https://{domain}`, not the final URL
 
-Plugins can override `_verify_domain()` (e.g. `plugins/moflix.py` skips the status check and only waits for Cloudflare). An override of `_wait_for_cloudflare()` must call the base implementation (Turnstile solver, clearance memo) and add its own condition after it: moflix waits for its `XSRF-TOKEN` cookie with `page.wait_for_function()`.
+Plugins can override `_verify_domain()`. An override of `_wait_for_cloudflare()` must call the base implementation (Turnstile solver, clearance memo) and add its own condition after it (e.g. `page.wait_for_function()` for a cookie the site's app sets).
 
 ---
 

@@ -20,8 +20,9 @@ from urllib.parse import urlparse
 import structlog
 from patchright.async_api import Browser, BrowserContext, Page, Request, Route
 
-from scavengarr.domain.ports.browser_fetcher import ClickThrough
+from scavengarr.domain.ports.browser_fetcher import BrowserSession, ClickThrough
 from scavengarr.infrastructure.browser.turnstile import (
+    WIDGET_FORM,
     is_challenge_page,
     pass_turnstile_widget,
     read_when_settled,
@@ -42,7 +43,8 @@ _BLOCKED_RESOURCE_TYPES = frozenset(
 _RETRY_STATUSES = frozenset({429, 502, 503, 504})
 _RETRY_BACKOFF_S: tuple[float, ...] = (2.0, 5.0, 10.0)
 
-# In-page fetch for non-HTML responses (null on HTTP error)
+# In-page fetch for non-HTML responses and URLs that refuse a page load
+# (null on HTTP error); it sends the page's URL as Referer
 _FETCH_RAW_JS = """async (url) => {
     const resp = await fetch(url, {credentials: "include"});
     return resp.ok ? await resp.text() : null;
@@ -62,6 +64,19 @@ _NOT_MEDIA_RE = re.compile(r"thumbnail|sprite|preview", re.IGNORECASE)
 # click_through(): bound for the click itself, poll interval for the target
 _CLICK_TIMEOUT_MS = 5_000
 _CLICK_POLL_MS = 300
+# ...and the time a submitted gate gets for its redirect, past the timeout:
+# on a Raspberry Pi behind a VPN the gate's widget took 28 of 30 s and the
+# redirect after its form came too late (2026-10-04)
+_SUBMIT_REDIRECT_S = 10.0
+# Ad layers some sites put over the page (s.to: random class names, laid out
+# after a delay) take the clicks: Playwright then waits until its click
+# timeout ("… subtree intercepts pointer events"). Only the targets take
+# pointer events, so the user-like click reaches them. A Turnstile iframe in
+# a closed shadow root inherits the value of its host, a target's descendant
+_TARGET_ONLY_CSS = (
+    "* {{ pointer-events: none !important; }} "
+    ":is({targets}), :is({targets}) * {{ pointer-events: auto !important; }}"
+)
 
 _MEDIA_AUTOPLAY_WAIT_S = 3.0
 _MEDIA_CLICK_WAIT_S = 5.0
@@ -113,6 +128,32 @@ async def _allow_player_resources(route: Route) -> None:
         await route.abort()
     else:
         await route.continue_()
+
+
+async def _click_clear_of_layers(page: Page, selector: str) -> None:
+    """Click the first match of *selector*; no layer over it takes the click.
+
+    The rule stays until the page closes: the layers cover the gate's widget
+    that the click may bring up as well, so the widget's form is a target too.
+    """
+    targets = f"{selector}, {WIDGET_FORM}"
+    await page.add_style_tag(content=_TARGET_ONLY_CSS.format(targets=targets))
+    await page.locator(selector).first.click(timeout=_CLICK_TIMEOUT_MS)
+
+
+async def _wait_for_target(page: Page, targets: list[str], deadline: float) -> None:
+    """Poll until *targets* gets the link-out's target, passing a gate's widget.
+
+    A gate whose form went out gets ``_SUBMIT_REDIRECT_S`` for its redirect,
+    also past *deadline*: the widget may have used up the time.
+    """
+    passed = False
+    while not targets and (left := deadline - time.monotonic()) > 0:
+        if not passed:
+            passed = await pass_turnstile_widget(page, timeout_ms=int(left * 1000))
+            if passed:
+                deadline = max(deadline, time.monotonic() + _SUBMIT_REDIRECT_S)
+        await page.wait_for_timeout(_CLICK_POLL_MS)
 
 
 async def _close_popup(popup: Page) -> None:
@@ -191,6 +232,7 @@ class StealthPool:
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
         self._lock = asyncio.Lock()
+        self._user_agent: str | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -218,6 +260,7 @@ class StealthPool:
 
             self._browser, _ = await self._browser_pool.warmup()
             self._context = await self._browser.new_context()
+            self._user_agent = None  # a relaunched browser may be another version
 
             # Block heavy resources on all pages in this context
             await self._context.route("**/*", _block_resources)
@@ -296,7 +339,11 @@ class StealthPool:
         Implements ``BrowserFetcherPort``. HTML pages come back as rendered
         DOM; other types (JSON) are re-fetched in-page so the caller gets the
         raw body rather than Chrome's viewer markup. Same cookies and TLS
-        fingerprint as the cleared page.
+        fingerprint as the cleared page. A URL that answers the page load
+        with an error (no challenge) is asked once more by in-page fetch:
+        an API may serve only requests from its site's pages (moflix, Laravel
+        Sanctum: 401 without the site's Referer, which a page load lacks
+        unless a challenge's reload sends it).
         """
         timeout_ms = int(timeout * 1000)
         async with self._fetch_sem:
@@ -306,7 +353,7 @@ class StealthPool:
                 if not await self._navigate(
                     page, url, wait_until="domcontentloaded", timeout_ms=timeout_ms
                 ):
-                    return None
+                    return await page.evaluate(_FETCH_RAW_JS, url)
                 if not await solve_cloudflare(page, timeout_ms=timeout_ms):
                     return None
                 await self._remember(page)
@@ -317,6 +364,35 @@ class StealthPool:
             finally:
                 if page is not None and not page.is_closed():
                     await page.close()
+
+    async def session(self, url: str) -> BrowserSession | None:
+        """Return the context's cookies for *url* and the browser's User-Agent.
+
+        Implements ``BrowserFetcherPort``. The persistent context keeps the
+        cookies that ``fetch_text()`` collected while passing the site's
+        challenge.
+        """
+        context = await self._ensure_context()
+        cookies: dict[str, str] = {}
+        for cookie in await context.cookies(url):
+            name, value = cookie.get("name"), cookie.get("value")
+            if name and value is not None:
+                cookies[name] = value
+        if not cookies:
+            return None
+        return BrowserSession(
+            cookies=cookies, user_agent=await self._browser_user_agent()
+        )
+
+    async def _browser_user_agent(self) -> str:
+        """The User-Agent the browser sends (read once from a blank page)."""
+        if self._user_agent is None:
+            page = await self.new_page()
+            try:
+                self._user_agent = str(await page.evaluate("navigator.userAgent"))
+            finally:
+                await page.close()
+        return self._user_agent
 
     async def capture_media(self, url: str, *, timeout: float) -> CapturedMedia | None:
         """Open *url*, start its player and return the stream URL it requests.
@@ -465,14 +541,8 @@ class StealthPool:
                     return None
                 if not await solve_cloudflare(page, timeout_ms=timeout_ms):
                     return None
-                await page.locator(selector).first.click(timeout=_CLICK_TIMEOUT_MS)
-                passed = False
-                while not targets and (left := deadline - time.monotonic()) > 0:
-                    if not passed:
-                        passed = await pass_turnstile_widget(
-                            page, timeout_ms=int(left * 1000)
-                        )
-                    await page.wait_for_timeout(_CLICK_POLL_MS)
+                await _click_clear_of_layers(page, selector)
+                await _wait_for_target(page, targets, deadline)
                 if not targets:
                     log.info("stealth_click_through_no_target", url=page_url)
                     return None

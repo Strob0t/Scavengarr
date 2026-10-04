@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from scavengarr.domain.ports.browser_fetcher import ClickThrough
+from scavengarr.domain.ports.browser_fetcher import BrowserSession, ClickThrough
 from scavengarr.infrastructure.browser.stealth_pool import (
     _BLOCKED_RESOURCE_TYPES,
     StealthPool,
@@ -261,9 +261,10 @@ class TestStealthPoolFetchText:
             assert await pool.fetch_text("https://filmfans.org/x", timeout=10) is None
 
     async def test_http_error_without_challenge_returns_none(self) -> None:
+        # The in-page fetch gets the same 404
         shared_pool, _, context = _mock_pool_stack()
         context.new_page = AsyncMock(
-            return_value=_fetch_page(status=404, title="Not Found")
+            return_value=_fetch_page(status=404, title="Not Found", fetched=None)
         )
 
         text = await StealthPool(browser_pool=shared_pool).fetch_text(
@@ -271,6 +272,22 @@ class TestStealthPoolFetchText:
         )
 
         assert text is None
+
+    async def test_api_refusing_a_page_load_is_asked_in_page(self) -> None:
+        """moflix's API answers a request without its site's Referer with 401
+        (Laravel Sanctum). Only a challenge's reload sends one; production's
+        browser held a stored clearance, loaded the API directly and got 401
+        on every search (2026-10-04). The site's pages call it with fetch()."""
+        shared_pool, _, context = _mock_pool_stack()
+        page = _fetch_page(status=401, content_type="application/json", title="")
+        context.new_page = AsyncMock(return_value=page)
+
+        text = await StealthPool(browser_pool=shared_pool).fetch_text(
+            "https://moflix-stream.xyz/api/v1/search/x?query=x", timeout=10
+        )
+
+        assert text == '{"result": []}'
+        page.close.assert_awaited_once()
 
     async def test_navigation_error_returns_none(self) -> None:
         shared_pool, _, context = _mock_pool_stack()
@@ -332,7 +349,7 @@ class TestStealthPoolFetchText:
 
     async def test_rate_limit_gives_up_after_backoffs(self) -> None:
         shared_pool, _, context = _mock_pool_stack()
-        page = _fetch_page(title="Too Many Requests")
+        page = _fetch_page(title="Too Many Requests", fetched=None)
         page.goto = AsyncMock(return_value=MagicMock(status=429))
         context.new_page = AsyncMock(return_value=page)
 
@@ -362,6 +379,48 @@ def _request(
     request.is_navigation_request = MagicMock(return_value=navigation)
     request.redirected_from = redirected_from
     return request
+
+
+class TestStealthPoolSession:
+    """The site's cookies in the stealth context plus the browser's User-Agent."""
+
+    def _pool(self, cookies: list[dict[str, str]]) -> tuple[StealthPool, AsyncMock]:
+        shared_pool, _, context = _mock_pool_stack()
+        page = _mock_page()
+        page.evaluate = AsyncMock(return_value="Mozilla/5.0 Chrome/153.0.0.0")
+        context.new_page = AsyncMock(return_value=page)
+        context.cookies = AsyncMock(return_value=cookies)
+        return StealthPool(browser_pool=shared_pool), context
+
+    async def test_returns_cookies_and_user_agent(self) -> None:
+        pool, context = self._pool(
+            [
+                {"name": "ha-waf-ticket", "value": "t1"},
+                {"name": "PHPSESSID", "value": "s1"},
+            ]
+        )
+
+        session = await pool.session("https://kinoger.com/x")
+
+        assert session == BrowserSession(
+            cookies={"ha-waf-ticket": "t1", "PHPSESSID": "s1"},
+            user_agent="Mozilla/5.0 Chrome/153.0.0.0",
+        )
+        context.cookies.assert_awaited_once_with("https://kinoger.com/x")
+
+    async def test_user_agent_is_read_once(self) -> None:
+        pool, context = self._pool([{"name": "a", "value": "1"}])
+
+        await pool.session("https://kinoger.com/x")
+        await pool.session("https://kinoger.com/y")
+
+        context.new_page.assert_awaited_once()
+        context.new_page.return_value.close.assert_awaited_once()
+
+    async def test_without_cookies_there_is_no_session(self) -> None:
+        pool, _ = self._pool([])
+
+        assert await pool.session("https://kinoger.com/x") is None
 
 
 def _redirect_page(hops: list[tuple[list[str], int]]) -> MagicMock:
@@ -531,6 +590,7 @@ def _click_page(
 
     box = MagicMock()
     box.click = AsyncMock(side_effect=_click)
+    page.add_style_tag = AsyncMock(return_value=MagicMock(evaluate=AsyncMock()))
     page.on = MagicMock(side_effect=_on)
     page.goto = AsyncMock(side_effect=_goto)
     page.route = AsyncMock()
@@ -563,6 +623,38 @@ class TestStealthPoolClickThrough:
         page.locator.assert_called_with("button.link-box")
         page.context.cookies.assert_awaited_once_with(_EPISODE)
         page.close.assert_awaited_once()
+
+    async def test_only_the_link_box_and_gate_widget_take_clicks(self) -> None:
+        """s.to's ad script lays layers over the page, under random class
+        names and after a delay ("<div …> subtree intercepts pointer events",
+        2026-10-04): over the link box, then over the gate's Turnstile widget
+        the click brings up. Until the page closes nothing but these two
+        takes pointer events."""
+        shared_pool, _, context = _mock_pool_stack()
+        page, _ = _click_page(on_click=[["https://s.to/r?t=1", "https://voe.sx/e/a"]])
+        context.new_page = AsyncMock(return_value=page)
+        steps: list[str] = []
+        page.add_style_tag = AsyncMock(side_effect=lambda **_k: steps.append("isolate"))
+        box = page.locator.return_value.first
+        click = box.click.side_effect
+
+        async def _click(**kwargs: object) -> None:
+            steps.append("click")
+            await click(**kwargs)
+
+        box.click = AsyncMock(side_effect=_click)
+
+        with patch(_PASS_WIDGET, AsyncMock(return_value=False)):
+            result = await StealthPool(browser_pool=shared_pool).click_through(
+                _EPISODE, "button.link-box", timeout=5
+            )
+
+        assert result is not None
+        assert steps == ["isolate", "click"]
+        css = page.add_style_tag.await_args.kwargs["content"]
+        assert "* { pointer-events: none !important; }" in css
+        targets = "button.link-box, form:has([name='cf-turnstile-response'])"
+        assert f":is({targets}), :is({targets}) *" in css
 
     async def test_ignores_offsite_pages_not_redirected_by_the_site(self) -> None:
         # Ad frames load other hosts directly or through their own redirects
@@ -602,6 +694,40 @@ class TestStealthPoolClickThrough:
         assert result is not None
         assert result.url == "https://voe.sx/e/a"
         passed.assert_awaited_once()
+
+    async def test_submitted_gate_gets_time_for_its_redirect(self) -> None:
+        """On a Raspberry Pi the gate's widget used 28 of the 30 s budget, and
+        the redirect after its form came later: the passed gate was thrown
+        away (stealth_click_through_no_target, 2026-10-04)."""
+        shared_pool, _, context = _mock_pool_stack()
+        page, emit = _click_page(on_click=[["https://s.to/r?t=1"]])
+        context.new_page = AsyncMock(return_value=page)
+        clock = {"now": 0.0}
+
+        async def _pass(_page: object, *, timeout_ms: int) -> bool:
+            clock["now"] += timeout_ms / 1000 - 0.1
+            return True
+
+        async def _poll(ms: int) -> None:
+            clock["now"] += ms / 1000
+            if clock["now"] > 7.0:  # 2 s past the budget
+                emit([["https://s.to/r", "https://voe.sx/e/a"]])  # type: ignore[operator]
+
+        page.wait_for_timeout = AsyncMock(side_effect=_poll)
+
+        with (
+            patch(_PASS_WIDGET, AsyncMock(side_effect=_pass)),
+            patch(
+                "scavengarr.infrastructure.browser.stealth_pool.time",
+                MagicMock(monotonic=lambda: clock["now"]),
+            ),
+        ):
+            result = await StealthPool(browser_pool=shared_pool).click_through(
+                _EPISODE, "button.link-box", timeout=5
+            )
+
+        assert result is not None
+        assert result.url == "https://voe.sx/e/a"
 
     async def test_nothing_leaves_the_site_returns_none(self) -> None:
         shared_pool, _, context = _mock_pool_stack()

@@ -9,7 +9,11 @@ import httpx
 import pytest
 import respx
 
-from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort, ClickThrough
+from scavengarr.domain.ports.browser_fetcher import (
+    BrowserFetcherPort,
+    BrowserSession,
+    ClickThrough,
+)
 from scavengarr.infrastructure.browser.solver_fetcher import (
     ChainedBrowserFetcher,
     SolverFetcher,
@@ -103,6 +107,20 @@ class TestSolverFetcher:
         assert target == "https://filecrypt.cc/Container/X.html"
 
     @respx.mock
+    async def test_session_of_the_last_solution(self) -> None:
+        respx.post(f"{_SOLVER}/v1").respond(200, json=_solution())
+
+        async with httpx.AsyncClient() as client:
+            fetcher = SolverFetcher(http_client=client, base_url=_SOLVER)
+            await fetcher.fetch_text("https://site.example/page", timeout=40)
+            session = await fetcher.session("https://site.example/other")
+
+        assert session == BrowserSession(
+            cookies={"cf_clearance": "secret"}, user_agent="Mozilla/5.0"
+        )
+        assert await fetcher.session("https://elsewhere.example/") is None
+
+    @respx.mock
     async def test_resolve_redirect_same_host_returns_none(self) -> None:
         respx.post(f"{_SOLVER}/v1").respond(
             200, json=_solution(url="https://site.example/external/abc")
@@ -137,6 +155,21 @@ class TestChainedBrowserFetcher:
 
         assert await chain.fetch_text("https://x/", timeout=10) == "two"
         assert await chain.resolve_redirect("https://x/", timeout=10) == "https://t/"
+
+    async def test_session_comes_from_the_fetcher_that_answered(self) -> None:
+        """The browser that solved the page holds the site's session."""
+        first, second = AsyncMock(), AsyncMock()
+        first.fetch_text.return_value = None
+        second.fetch_text.return_value = "two"
+        session = BrowserSession(cookies={"a": "1"}, user_agent="UA")
+        second.session.return_value = session
+        chain = ChainedBrowserFetcher([first, second])
+
+        await chain.fetch_text("https://x.example/page", timeout=10)
+
+        assert await chain.session("https://x.example/next") == session
+        first.session.assert_not_awaited()
+        assert await chain.session("https://unknown.example/") is None
 
     async def test_all_fail_returns_none(self) -> None:
         only = AsyncMock()
