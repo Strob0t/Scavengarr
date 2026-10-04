@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import re
 
-from guessit import guessit
-
 from scavengarr.domain.entities.stremio import StreamLanguage, StreamQuality
+from scavengarr.infrastructure.stremio.release_guess import guess_release
 
 # --- Quality mappings ---
 
@@ -95,7 +94,7 @@ def parse_quality(
     """
     # 1) Try guessit on release_name
     if release_name:
-        guess = guessit(release_name)
+        guess = guess_release(release_name)
         screen_size = guess.get("screen_size")
         if screen_size and screen_size in _SCREEN_SIZE_TO_QUALITY:
             return _SCREEN_SIZE_TO_QUALITY[screen_size]
@@ -151,7 +150,7 @@ def parse_language(
 
 def _language_from_guessit(release_name: str) -> StreamLanguage | None:
     """Extract language info from a release name via guessit."""
-    guess = guessit(release_name)
+    guess = guess_release(release_name)
 
     # Check subtitle_language first (subs take priority as they're more specific)
     sub_langs = guess.get("subtitle_language")

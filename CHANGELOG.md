@@ -6,6 +6,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Perf: Each Release Name Parsed Once
+- On the Raspberry Pi guessit, which parses release names, took 25–33% of the Python CPU of a stream request (py-spy in production, `docs/plans/pi-performance.md`).
+- The title matcher (title candidates, year), the release parser (quality, language) and the episode filter each parsed the same names, and the next request for the same title parsed them all again.
+- `infrastructure/stremio/release_guess.py` parses a name once and caches the result: read-only, the last 4096 names.
+- Measured on x86 with 120 results: 3.5 s → 1.0 s for the first request, 3 ms for the same titles again.
+
 ### Perf: Connections Stay Open Between Stream Requests
 - The shared HTTP client used httpx's defaults: idle connections closed after 5 s, at most 20 kept. One stream request talks to 18–42 hosts, so every pause between two requests closed them all, and the next request paid the TCP and TLS handshakes again, one or two round trips through the VPN each. TLS handshakes were 21% of the Python CPU (`docs/plans/pi-performance.md`).
 - Idle connections now stay open for 60 s, up to 100. A connect may take at most 5 s, so a host that does not answer no longer costs the full read timeout (`http.timeout_seconds`).

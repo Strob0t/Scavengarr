@@ -11,9 +11,9 @@ import re
 from dataclasses import replace
 
 import structlog
-from guessit import guessit
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.stremio.release_guess import guess_release
 
 log = structlog.get_logger(__name__)
 
@@ -127,7 +127,7 @@ def filter_by_episode(
 
     filtered: list[SearchResult] = []
     for r in results:
-        info = guessit(r.title)
+        info = guess_release(r.title)
         r_season = info.get("season")
         r_episode = info.get("episode")
 
