@@ -221,6 +221,37 @@ Tests: `test_httpx_browser_fallback.py` (`TestBrowserSessionReuse`: session reus
 
 moflix (1.2.0) moved from `PlaywrightPluginBase` to `HttpxPluginBase`: it loads the homepage once for the site's Laravel session and calls its API with `_fetch_text(..., headers=...)` (`Accept: application/json`, the site as `Referer`, the `XSRF-TOKEN` cookie as `X-XSRF-TOKEN`; 401 without them). A challenged API call goes through the browser once, the rest through httpx with its session. Live in dev (API challenged from the home IP): "Matrix" 4 results/28 links in 4.3 s including the 2 s solve, then "Dune" 6/24 in 0.9 s. Before, every search ran in the browser behind a lock (`_serialize_search`).
 
+### Research (2026-10-04): clearance reuse, alternatives, papers
+
+How the clearance is bound:
+- Cloudflare documents `cf_clearance` as "tied to the specific visitor and device it was issued to", valid for the zone's Challenge Passage, 30 min by default with 15–45 min recommended. Precursor clearance re-evaluates it and can revoke it earlier ([clearance](https://developers.cloudflare.com/cloudflare-challenges/concepts/clearance/), [passage](https://developers.cloudflare.com/cloudflare-challenges/challenge-types/challenge-pages/challenge-passage/)). A challenged response carries `cf-mitigated: challenge` ([detect](https://developers.cloudflare.com/cloudflare-challenges/challenge-types/challenge-pages/detect-response/)).
+- In practice the same IP and the exact User-Agent are required (FlareSolverr, CapSolver). TLS (JA4) and HTTP/2 fingerprints feed Cloudflare's bot score ([JA4 signals](https://blog.cloudflare.com/ja4-signals/), [per-customer defenses](https://blog.cloudflare.com/per-customer-bot-defenses/)) rather than binding the cookie hard ([reqwest discussion](https://github.com/seanmonstar/reqwest/discussions/2227)). That matches the measurement above; a stricter zone may still turn httpx down, hence `{name}_browser_session_rejected`.
+
+Alternatives looked at:
+
+| Option | Status |
+|---|---|
+| Plain httpx with the browser's cookies + UA | built (Phase 4), measured from the VPN IP |
+| TLS-impersonating clients: curl_cffi 0.16.3 (profiles up to `chrome150`), wreq (ex-rnet), primp, tls-client-python ([curl_cffi FAQ](https://curl-cffi.readthedocs.io/en/latest/faq.html)) | not needed for kinoger/moflix (curl_cffi measured, no gain). Candidate if a site rejects the httpx session; pick the profile closest to Patchright's Chromium |
+| In-page `fetch()` from the cleared tab (browser TLS/HTTP2, same origin; not `context.request`, which uses Playwright's own HTTP stack) | candidate fallback for sites that reject the httpx session: a round trip instead of a page render per request |
+| Keep the clearance warm (re-solve per site before the Challenge Passage ends) | candidate: no Stremio request waits for a solve (3–4 s on the Pi, 20 s under load) |
+| Browser timezone/locale matching the VPN exit country ([FP-Inconsistent](https://arxiv.org/abs/2406.07647)) | candidate, small |
+| FlareSolverr/Byparr/Camoufox/nodriver/zendriver/SeleniumBase/Botasaurus | full browsers, no faster on a Pi; FlareSolverr/Byparr already supported (`playwright.solver_url`) |
+| Solver services (CapSolver, ~$1.20/1000) | rejected: third party sees the traffic, needs a sticky proxy on the exit IP |
+| Challenged domains through a non-datacenter IP | user decision (privacy); may avoid the challenge altogether |
+| Privacy Pass / Private Access Tokens | not viable: a token does not solve a challenge, v1 tokens dropped 2023 ([PAT](https://developers.cloudflare.com/cloudflare-challenges/reference/private-access-tokens/)) |
+
+Papers (each checked on a fetched page by the research):
+- Vastel et al., "FP-Scanner: The Privacy Implications of Browser Fingerprint Inconsistencies", USENIX Security 2018 ([link](https://www.usenix.org/conference/usenixsecurity18/presentation/vastel)) — spoofed fingerprints betray themselves by inconsistencies.
+- Segal, Fridman, Shuster, "Passive Fingerprinting of HTTP/2 Clients", Black Hat Europe 2017 ([PDF](https://www.blackhat.com/docs/eu-17/materials/eu-17-Shuster-Passive-Fingerprinting-Of-HTTP2-Clients-wp.pdf)) — origin of the HTTP/2 fingerprint.
+- Althouse et al., JA3, Salesforce 2017 ([repo](https://github.com/salesforce/ja3)); Althouse, "JA4+ Network Fingerprinting", FoxIO 2023 ([post](https://foxio.io/blog/ja4-network-fingerprinting)) — TLS client fingerprints.
+- Amin Azad, Starov, Laperdrix, Nikiforakis, "Web Runner 2049: Evaluating Third-Party Anti-bot Services", DIMVA 2020 ([link](https://par.nsf.gov/biblio/10170537)) — less common browsers got past up to 82% of protected sites.
+- Li, Amin Azad, Rahmati, Nikiforakis, "Good Bot, Bad Bot: Characterizing Automated Browsing Activity", IEEE S&P 2021 ([PDF](https://conferences.computer.org/sp/pdfs/sp/2021/893400b589.pdf)) — TLS handshakes expose bots that claim to be browsers.
+- Wu, Sun, Zhao, Cao, "Him of Many Faces: Characterizing Billion-scale Adversarial and Benign Browser Fingerprints on Commercial Websites", NDSS 2023 ([link](https://www.ndss-symposium.org/ndss-paper/him-of-many-faces-characterizing-billion-scale-adversarial-and-benign-browser-fingerprints-on-commercial-websites/)).
+- Venugopalan et al., "FP-Inconsistent: Measurement and Analysis of Fingerprint Inconsistencies in Evasive Bot Traffic", IMC 2025 ([arXiv](https://arxiv.org/abs/2406.07647)) — inconsistency rules cut evasion by about 45–48%.
+- Jarad, Bicakci, "When Handshakes Tell the Truth: Detecting Web Bad Bots via TLS Fingerprints", arXiv 2026 ([arXiv](https://arxiv.org/abs/2602.09606)) — JA4-based classifier, AUC 0.998.
+- Gundelach, Mühlhauser, Herrmann, "Detecting Bot Detection: Prevalence, Techniques, and Implications for Web Measurement Research", arXiv 2026 ([arXiv](https://arxiv.org/abs/2606.14525)) — Cloudflare caused 37% of the observed blocks.
+
 ## Documentation per phase
 
 - `CHANGELOG.md` (+ `KNOWN_ISSUES` updates as plugins recover).
