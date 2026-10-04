@@ -501,6 +501,41 @@ class TestPluginSearch:
         assert results[0].download_link == "https://doods.to/e/abc123"
 
     @respx.mock
+    async def test_people_are_not_fetched_as_titles(self, plugin):
+        """The search lists people too (19 of 20 hits for "Oppenheimer"):
+        their ids are no title ids (404) or another title's (the person
+        39318 is the title "Das Geheimnis des steinernen Monsters")."""
+        person = {"id": 39318, "name": "Alan Batman", "model_type": "person"}
+        _api_routes(search={"results": [*SEARCH_RESPONSE["results"], person]})
+        as_title = respx.get(url__startswith=f"{_BASE}/api/v1/titles/39318").respond(
+            404
+        )
+
+        results = await plugin.search("batman")
+
+        assert not as_title.called
+        assert len(results) == 2
+
+    @respx.mock
+    async def test_only_relevant_titles_are_fetched(self, plugin):
+        """Loose matches cost a detail request each ("Dune Part Two" also
+        lists "Dune Devils" and "Anatomie eines Falls")."""
+        hits = [
+            {"id": 2809, "name": "Dune: Part Two", "model_type": "title"},
+            {"id": 88277, "name": "Dune Devils", "model_type": "title"},
+            {"id": 77200, "name": "Anatomie eines Falls", "model_type": "title"},
+        ]
+        _api_routes(search={"results": hits}, details={2809: DETAIL_MOVIE_RESPONSE})
+        loose = respx.get(url__startswith=f"{_BASE}/api/v1/titles/88277").respond(404)
+        other = respx.get(url__startswith=f"{_BASE}/api/v1/titles/77200").respond(404)
+
+        results = await plugin.search("Dune Part Two", category=2000)
+
+        assert len(results) == 1
+        assert not loose.called
+        assert not other.called
+
+    @respx.mock
     async def test_entry_without_id_skipped(self, plugin):
         _api_routes(search={"results": [{"name": "No ID Movie", "is_series": False}]})
 
