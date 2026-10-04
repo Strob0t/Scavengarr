@@ -149,6 +149,8 @@ Direct (non-proxied) resolved streams include `behaviorHints` with a browser `Us
 > - **Reachability.** Stremio Web hands every stream to the server's `/hlsv2/probe` before it plays: a `proxyHeaders` stream as the server's own public URL (`https://stremio.example/proxy/…`), an HLS-proxy stream as Scavengarr's URL. The server must resolve and reach both names. In a VPN container's network (gluetun) its DNS knows no LAN names and its firewall blocks the LAN, so every probe answers 500 (map the names with `extra_hosts` on the VPN container and allow the target with `FIREWALL_OUTBOUND_SUBNETS`). Streams the browser can play directly still play then, through a `HEAD` check of their content type; transcoding (MKV, HEVC, AC3) does not.
 > - **Disguised segments.** tsaridas/stremio-docker's nginx nests `location ~* \.(jpg|jpeg|png|gif|ico|css|js|woff2|env)$` inside `location /`, and nginx matches it before its server routes. HLS segments disguised with such an extension (Playmate's `…_000.css`) are looked up as web player files and answer 404: error 81, "Error occurred when downloading".
 
+> **Behind a VPN container (gluetun):** gluetun's DNS refuses the hosts on its malicious list (`BLOCK_MALICIOUS`, on by default), and that list has mixdrop's CDN (`*.mxcontent.net`, checked 2026-10-04: REFUSED by gluetun, answered by 1.1.1.1 through the same tunnel). Scavengarr then resolves mixdrop links but no player can fetch them (`hoster_resolve_unplayable`; with `cannot resolve …mxcontent.net` in the log). Unblock it on the VPN container with `DNS_UNBLOCK_HOSTNAMES=mxcontent.net`, or `BLOCK_MALICIOUS=off` when gluetun still refuses it.
+
 ### HLS Proxy
 
 ```http

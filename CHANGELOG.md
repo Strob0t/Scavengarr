@@ -26,6 +26,7 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
   - the event loop's lag p99 fell from ~130 ms to 40 ms.
 - From the search cache an answer takes 4.2 s.
 - Release-name parsing no longer shows up in the profile; `html.parser` fell from 0.67 s to 0.20 s per request.
+- End-to-end test with the 17 titles of `stremio_measure.py` (`docs/plans/stremio-latency.md`, fourth round): median 12.4 s while the plugins search, 4.6 s from the search cache; 64 streams, 61 of them playable from the VPN address.
 
 ### Security: Connections Go to the Addresses the SSRF Guard Checked
 - The address guard of the shared HTTP client resolved a hostname to check that it is public, and httpcore resolved it again to connect. A hostile DNS server could answer the check with a public address and the connection with a LAN one (DNS rebinding).

@@ -140,6 +140,38 @@ After the config reseed production answers in 10.5–15.4 s. Measured with a scr
 - **Play check** (`scripts/stremio_playcheck.py` from the home network): 6 of 9 streams playable, the HLS-proxy streams (VOE, Vidsonic, StreamUp) included; `HEAD` on the proxy answers 200 with CORS. The 3 failures are IP-bound (DoodStream `error_wrong_ip`, Vinovo 403, FSST 410) and play through Stremio's server in the same VPN.
 - megakino_to and movie4k: every domain answers Cloudflare 522 (origin down). kinoking is often cut at 10 s.
 
+### Fourth round (2026-10-04 evening, production on `staging` 53f2f88)
+
+The measurement harness (`scripts/stremio_measure.py --pause 30`, the 17 titles) against `https://scavengarr.lan` after the performance plan (`docs/plans/pi-performance.md`), HTTP/2 on, no other traffic. Pass 1 searched (the titles' search-cache entries were older than the cache); pass 2 ran 8–13 minutes later and answered from the search cache, late plugins' results included. Logs and probes through Portainer (exec into the container: the same VPN address, DNS and code).
+
+| Pass | Median / max | Streams | Titles without stream |
+|---|---|---|---|
+| 1 (plugins search) | 12.4 / 15.3 s | 48 | 5 / 17 |
+| 2 (from the search cache) | 4.6 / 10.4 s | 64 | 3 / 17 |
+
+- Streams per plugin, pass 1 → 2: aniworld 18 → 20, filmpalast 5 → 11, megakino 9 → 9, movie2k 5 → 7, moflix 6 → 6, s.to 0 → 6, fireani 3 → 3, hdfilme 2 → 2.
+- Series: pass 1 had streams for 1 of 5 (The Last of Us), pass 2 for 3 of 5 (Dark: s.to; Stranger Things S04E01: filmpalast, s.to; The Last of Us: filmpalast, movie2k, s.to). s.to's gate pass (about 20 s on the Pi) does not fit a first request; its results reach the next one through the late plugins.
+
+**Fixed on `staging`** (TDD, deployed with the next build):
+
+| Finding | Evidence | Fix |
+|---|---|---|
+| The circuit breaker counted the early answer's cut (7 s) against plugins that run on | kinox (movies) opened after cuts it answered late without hits | A late plugin fails only when it is still running at the end of its extra time (fb3ad00) |
+| Browser captures that never deliver from the VPN address | 50 DoodStream and Dropload captures in an hour, no stream. Alone in the container: DoodStream's Turnstile unsolved after 31–34 s, Dropload's captcha player without a stream after 19 s. The final measurement's pass from the search cache still cost 10.1 s of Chromium CPU per request, all of it hoster resolution | Circuit breaker per hoster resolver: timeouts, cuts after half the resolve timeout and unplayable streams count (fa2e58f) |
+| moflix's own players failed 15 of 15 | moflix-stream.click (VidHide) answers `/e/<id>` with 404, its player is under `/embed/<id>`; moflix-stream.link is a Byse (Filemoon) player | XFS asks the link's own URL after a 404 on `/e/`; Filemoon claims moflix-stream.link: 4.7 s (warm browser) and 15 s (cold) in production (7600a06) |
+| moflix asked the title API for people | 19 of 20 hits for "Oppenheimer" are people: 46 answers 404; a person's id fetched an unrelated title | Titles only, relevant hits only (e9b1ba1) |
+
+**Site and environment state** (no code change):
+- **mixdrop:** its CDN `*.mxcontent.net` does not resolve in production. gluetun's DNS answers REFUSED, while 1.1.1.1 and 9.9.9.9 answer 168.80.32.64 through the same tunnel: gluetun's malicious-host list (`BLOCK_MALICIOUS`, on by default) blocks it. In 90 minutes 10 mixdrop resolutions gave an unplayable stream (its CDN unreachable) and 12 a player without a stream URL (`mixdrop_file_offline`). Fix in the VPN container: `DNS_UNBLOCK_HOSTNAMES=mxcontent.net`; if gluetun still refuses it (its unblock list misses hosts whose IP is listed, gluetun issue #3461), `BLOCK_MALICIOUS=off`.
+- **VOE:** 4 of 18 VOE links failed: the files answer "File access denied" (restricted by the uploader), on `/e/` as well.
+- **kinoger:** Cloudflare's Turnstile is not solved from the VPN address (`cloudflare_unsolved` after 33 s), so kinoger gives nothing in production; its breaker opens, and each half-open probe costs a browser solve.
+- **kinoking:** answers a series search in 1.2 s when run alone in the container, but stalled for more than 17 s in pass 1 without an answer. Its server serializes requests behind a slow movie page: after a cancelled movie page (12–17 s to build) the next search took 10.3 s instead of 0.3 s, over HTTP/1.1 and HTTP/2 alike.
+- **megakino_to, movie4k:** Cloudflare 522 (origin down); their breakers keep them out. **kinox.to** answered 503 (13 retries in 70 min).
+- The titles still without a stream after pass 2 are site state: *Good Bye, Lenin!* and Breaking Bad S01E01 have only DoodStream, Dropload and access-denied VOE links; Haus des Geldes S01E01 only a DoodStream link.
+- `SCAVENGARR_HTTP_HTTP2` was still on (the A/B in `pi-performance.md`: +22% CPU, not faster).
+
+**Play check** (`scripts/stremio_playcheck.py` inside the container, so from the VPN address like Stremio's server; the 17 titles once more, served from the search cache while it refreshed): 61 of 64 streams playable. The failures were CDN errors at that moment: moflix's FireStream and StreamUp segments 502 (the CDN did not answer the HLS proxy within 15 s), one fireani VOE segment without media bytes. MP4 streams answered in 0.45 s (median, seek included). HLS streams took 4.3 s to master, variant and two segment heads (median), but 15 of 56 took 15 s or more (aniworld's Vidmoly and VOE up to 46 s, a fireani VOE 84 s). Those times are mostly the CDNs answering through the VPN: Scavengarr's HLS proxy answered playlists in 0.6 s and segment heads in 0.23 s (median, its access log).
+
 ## AIOStreams
 
 Goal was an AIOStreams test user on `aiostreams.lan` with Scavengarr as addon, measured end to end. Not done: AIOStreams validates the addon manifest when a user is created or updated, and it can reach neither the dev instance (Docker NAT on the workstation) nor `scavengarr.lan` (502, backend down). Recommended user settings, from the AIOStreams v2.35.3 source (`packages/core/src/presets/custom.ts`, `packages/core/src/db/schemas.ts`):
