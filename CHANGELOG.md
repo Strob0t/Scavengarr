@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Security: Connections Go to the Addresses the SSRF Guard Checked
+- The address guard of the shared HTTP client resolved a hostname to check that it is public, and httpcore resolved it again to connect. A hostile DNS server could answer the check with a public address and the connection with a LAN one (DNS rebinding).
+- The client now connects to the addresses of the guard's lookup (`GuardedNetworkBackend`, IPv4 first, the next address when one refuses). TLS still verifies the hostname. A lookup answers checks and connections for 60 s (was 5 min for checks only).
+
 ### Perf: Lighter Chromium
 - On the Raspberry Pi Chromium held 1.7 GB in 15 processes.
 - Main frames share at most 2 renderer processes (`--renderer-process-limit=2`). Frames of other sites keep their own (site isolation): turning it off cut the renderers from 7 to 2 with 5 open pages, but made s.to's Turnstile gate fail in 2 of 2 tries.

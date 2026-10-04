@@ -143,7 +143,7 @@ Order: build the measurement tools first and measure the current state, then imp
 | s.to | While the gate is active and no pass is possible, return link-outs unresolved |
 | Parsing | Big pages off the event loop first, then selectolax for the hotspots the Pi profile shows |
 | Browser | `serviceWorkers="block"`, blocking by resource type everywhere, `--renderer-process-limit=2`, restart the browser after N solves. Done; the restart counts stealth pages (200), and site isolation stays on (check below) |
-| DNS/SSRF | Connect to the IP the address guard checked (one lookup, closes the DNS-rebinding gap) |
+| DNS/SSRF | Connect to the IP the address guard checked (one lookup, closes the DNS-rebinding gap). Done: `GuardedNetworkBackend` |
 | Pi host | No change |
 
 ## Recall check: title variants and the result cap (2026-10-04)

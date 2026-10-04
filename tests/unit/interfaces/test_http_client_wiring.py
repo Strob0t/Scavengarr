@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from scavengarr.infrastructure.common.private_address_guard import (
+    GuardedNetworkBackend,
     PrivateAddressError,
     PrivateAddressGuard,
 )
@@ -72,5 +73,19 @@ async def test_shared_client_refuses_the_lan_but_reaches_the_solver() -> None:
         await guards[0](httpx.Request("POST", "http://byparr:8191/v1"))
         with pytest.raises(PrivateAddressError):
             await guards[0](httpx.Request("GET", "http://192.168.88.1/"))
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_connections_go_to_the_addresses_the_guard_checked() -> None:
+    """One guard checks requests and connects: no second DNS lookup between
+    the check and the connection (DNS rebinding)."""
+    client = build_http_client(AppConfig())
+    try:
+        backend = _pool(client)._network_backend  # noqa: SLF001
+        hooks = client.event_hooks["request"]
+        assert isinstance(backend, GuardedNetworkBackend)
+        assert backend.guard in hooks
     finally:
         await client.aclose()

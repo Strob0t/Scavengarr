@@ -30,6 +30,7 @@ from scavengarr.infrastructure.browser.stealth_pool import StealthPool
 from scavengarr.infrastructure.cache.cache_factory import create_cache
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.common.private_address_guard import (
+    GuardedTransport,
     PrivateAddressGuard,
 )
 from scavengarr.infrastructure.common.rate_limiter import DomainRateLimiter
@@ -262,13 +263,6 @@ def build_http_client(config: AppConfig) -> httpx.AsyncClient:
         max_keepalive_connections=100,
         keepalive_expiry=_KEEPALIVE_S,
     )
-    transport = RetryTransport(
-        wrapped=httpx.AsyncHTTPTransport(limits=limits, http2=config.http_http2),
-        rate_limiter=rate_limiter,
-        max_retries=config.http_retry_max_attempts,
-        backoff_base=config.http_retry_backoff_base,
-        max_backoff=config.http_retry_max_backoff,
-    )
     solver_host = (
         urlparse(config.playwright_solver_url).hostname
         if config.playwright_solver_url
@@ -276,6 +270,14 @@ def build_http_client(config: AppConfig) -> httpx.AsyncClient:
     )
     guard = PrivateAddressGuard(
         allowed_hosts=frozenset({solver_host}) if solver_host else frozenset()
+    )
+    transport = RetryTransport(
+        # Connections go to the addresses the guard checked (DNS rebinding)
+        wrapped=GuardedTransport(guard, limits=limits, http2=config.http_http2),
+        rate_limiter=rate_limiter,
+        max_retries=config.http_retry_max_attempts,
+        backoff_base=config.http_retry_backoff_base,
+        max_backoff=config.http_retry_max_backoff,
     )
     timeout = config.http_timeout_seconds
     return httpx.AsyncClient(
