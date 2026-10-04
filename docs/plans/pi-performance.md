@@ -139,12 +139,29 @@ Order: build the measurement tools first and measure the current state, then imp
 | Event loop | `uvicorn[standard]` (uvloop, httptools), eager tasks and Python 3.14, all in one step |
 | Stremio cache | Search results per title or episode, with stale-while-revalidate and single-flight, in the `CachePort` (diskcache unless Redis is configured). Resolution stays fresh, because hoster links expire |
 | Answer | Partial results when a plugin hits its timeout. Once the cache exists, an early answer; the search goes on in the background and fills the cache |
-| Requests | Central only: title variants by plugin language, Stremio's `max_results_per_plugin` lowered after a recall check on a title set, base classes remember a site's redirect target |
+| Requests | Central only: title variants by plugin language, Stremio's `max_results_per_plugin` lowered after a recall check on a title set, base classes remember a site's redirect target. The check (below) kept the cap at 50: lowering it changed nothing |
 | s.to | While the gate is active and no pass is possible, return link-outs unresolved |
 | Parsing | Big pages off the event loop first, then selectolax for the hotspots the Pi profile shows |
 | Browser | `serviceWorkers="block"`, blocking by resource type everywhere, `--renderer-process-limit=2`, restart the browser after N solves |
 | DNS/SSRF | Connect to the IP the address guard checked (one lookup, closes the DNS-rebinding gap) |
 | Pi host | No change |
+
+## Recall check: title variants and the result cap (2026-10-04)
+
+Before the request measures changed what is searched, a probe ran in the production container (VPN, staging 7ead19f, with the browser fallback) over 12 titles: 8 films (four whose German title differs from the original, two with a colon) and 4 series episodes. Each of the 13 Stremio plugins searched every query variant on its own, with the result cap 50, and the localised title also with 24. s.to and aniworld were left out (link-out gate quota). "Streams" counts distinct (title, hoster) pairs, since the answer has one stream per hoster.
+
+| Queries | Search requests | Title-matching links | Streams |
+|---|---|---|---|
+| Every variant (localised title, base before a colon, TMDB original title and its base) | 909 | 81 | 58 |
+| Titles of the plugin's languages and their base (no original titles) | 700 (−23%) | 69 | 56 |
+| The same, original titles only when they found nothing | 778 | 69 | 56 |
+| Every variant only for a plugin whose title found nothing | 658 | 67 | 55 |
+| Localised title only | 534 (−41%) | 64 | 54 |
+
+- **Original titles:** as queries they cost 209 requests and added 2 streams, both for one title (filmpalast found "Pirates of the Caribbean" but not "Fluch der Karibik"). They are no longer queries; the title matching still accepts results under them.
+- **Base titles** stay: "Avengers" found Avengers: Endgame on four sites where "Avengers Endgame" did not (3 more streams).
+- **Result cap 24 instead of 50:** no effect. No plugin returned more than 24 results for an exact title (the plugins keep the relevant hits only), no title-matching result came after position 24, and the requests fell by 1.3% (534 → 527). The two links missing with 24 came from a timeout and a failed request. The cap stays at 50.
+- Timeouts at 30 s: kinoger in 18 of 31 searches (partly the probe's own load: its browser served two pages at a time) and kinoking in 21 of 31. megakino_to and movie4k answered with nothing (Cloudflare 522, see `stremio-latency.md`). A timed-out search counts as finding nothing, in every row of the table.
 
 ## How to re-measure
 

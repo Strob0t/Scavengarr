@@ -111,7 +111,12 @@ def build_lang_group_queries(
     title_infos: dict[str, TitleMatchInfo | None],
     languages: list[str],
 ) -> list[str]:
-    """Build deduplicated search queries for a group of languages."""
+    """Search queries of a language group: the titles of its languages.
+
+    Original titles (``alt_titles``) only serve the title matching. As
+    queries they cost 23% of the search requests and added 2 of 58
+    streams on a 12-title set (production, 2026-10-04).
+    """
     queries: list[str] = []
     for lang in languages:
         info = title_infos.get(lang)
@@ -120,8 +125,4 @@ def build_lang_group_queries(
         for q in build_search_queries(info.title):
             if q not in queries:
                 queries.append(q)
-        for alt in info.alt_titles:
-            for q in build_search_queries(alt):
-                if q not in queries:
-                    queries.append(q)
     return queries

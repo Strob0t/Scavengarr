@@ -206,7 +206,7 @@ Title matching prevents false positives when plugin results include sequels, spi
 | Threshold | `title_match_threshold` (0.7) minimum score |
 | Year tolerance | Movies ±1 year, series ±3 years |
 | Title candidates | Up to 4 deduplicated candidates: raw title, guessit title of `title`, guessit title of `release_name`, raw `release_name` |
-| Reference titles | Primary (localised) title plus `alt_titles` (TMDB original title when it differs) |
+| Reference titles | Primary (localised) title plus `alt_titles` (TMDB original title when it differs). Original titles are no search queries: a plugin is searched with the titles of its languages only (recall check in `docs/plans/pi-performance.md`) |
 
 ---
 

@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Perf: Plugins Searched With the Titles of Their Languages
+- A stream request searched every plugin with the localised title, its base before a colon, and the TMDB original title and its base: "Matrix" and "The Matrix" doubled the fan-out (205 requests against 105 for Interstellar).
+- A recall check in production (12 titles, 13 plugins, `docs/plans/pi-performance.md`) measured the original-title queries at 23% of the search requests for 2 of 58 streams, both on one title. A plugin is now searched with the titles of its languages and their base titles only; the title matching still accepts results under the original title.
+- The same check found no effect of a lower result cap (no plugin returned more than 24 results for an exact title), so `max_results_per_plugin` stays at 50.
+
 ### Perf: Big Pages Parsed Off the Event Loop or in C
 - html.parser took 21–27% of the Python CPU of a stream request on the Raspberry Pi (py-spy in production). It runs in Python on the event loop: a 300 KB detail page took 20 ms on x86 and several times as long on the Pi, and every timeout and request waited for it.
 - `HttpxPluginBase._feed(parser, html)` parses pages from 32 KB in a worker thread, where the loop gets the GIL back every few ms. sto, kinoger, kinoking, kinox, megakino, movie2k and hdfilme's detail pages use it.
