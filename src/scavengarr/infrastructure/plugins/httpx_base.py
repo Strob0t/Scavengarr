@@ -47,6 +47,13 @@ _CF_BLOCK_MEMO_S = 30 * 60
 _SESSION_TRUST_S = 5 * 60
 
 
+def _forget_solve(solve: asyncio.Task[str | None]) -> None:
+    """Drop a finished browser solve; its error was logged by the solve."""
+    HttpxPluginBase._background_solves.discard(solve)
+    if not solve.cancelled():
+        solve.exception()  # retrieved: a cut request never awaits it
+
+
 class HttpxPluginBase:
     """Shared base for httpx-based Python plugins.
 
@@ -76,6 +83,8 @@ class HttpxPluginBase:
     # session for that site (its clearance cookie is valid with that UA only)
     _browser_user_agents: dict[str, str] = {}  # noqa: RUF012  # shared on purpose
     _session_adopted_at: dict[str, float] = {}  # noqa: RUF012  # shared on purpose
+    # browser solves in flight (kept referenced: they outlive cut requests)
+    _background_solves: set[asyncio.Task[str | None]] = set()  # noqa: RUF012
 
     # --- Must be set by subclass ---
     name: str = ""
@@ -349,7 +358,9 @@ class HttpxPluginBase:
         browser memo while the browser works (parallel requests do not try
         httpx), and for good when httpx meets a challenge despite a session
         taken over less than ``_SESSION_TRUST_S`` ago: that site binds its
-        clearance to the browser.
+        clearance to the browser. The solve runs on when the Stremio deadline
+        cuts the request that started it, so the next request gets the
+        session (on a Raspberry Pi under load a solve took 20 s).
         """
         host = urlparse(url).hostname or ""
         self._mark_cf_blocked(url)
@@ -366,13 +377,29 @@ class HttpxPluginBase:
             context=context,
             challenge=challenge,
         )
-        body = await fetcher.fetch_text(url, timeout=_BROWSER_FETCH_TIMEOUT_S)
-        if body is None:
-            return None
-        session = await fetcher.session(url)
-        if isinstance(session, BrowserSession):
-            await self._adopt_browser_session(url, session)
-        return body
+        solve = asyncio.create_task(self._solve_and_adopt(fetcher, url))
+        self._background_solves.add(solve)
+        solve.add_done_callback(_forget_solve)
+        return await asyncio.shield(solve)
+
+    async def _solve_and_adopt(
+        self, fetcher: BrowserFetcherPort, url: str
+    ) -> str | None:
+        """Load *url* in the browser, then take over the browser's session."""
+        try:
+            body = await fetcher.fetch_text(url, timeout=_BROWSER_FETCH_TIMEOUT_S)
+            if body is None:
+                return None
+            session = await fetcher.session(url)
+            if isinstance(session, BrowserSession):
+                await self._adopt_browser_session(url, session)
+            return body
+        except Exception:
+            # Nobody may await a solve whose request was cut: log it here
+            self._log.warning(
+                f"{self.name}_browser_solve_failed", url=url, exc_info=True
+            )
+            raise
 
     async def _adopt_browser_session(self, url: str, session: BrowserSession) -> None:
         """Send the browser's cookies and User-Agent with requests to *url*'s site."""

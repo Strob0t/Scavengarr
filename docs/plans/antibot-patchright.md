@@ -234,7 +234,7 @@ Alternatives looked at:
 | Plain httpx with the browser's cookies + UA | built (Phase 4), measured from the VPN IP |
 | TLS-impersonating clients: curl_cffi 0.16.3 (profiles up to `chrome150`), wreq (ex-rnet), primp, tls-client-python ([curl_cffi FAQ](https://curl-cffi.readthedocs.io/en/latest/faq.html)) | not needed for kinoger/moflix (curl_cffi measured, no gain). Candidate if a site rejects the httpx session; pick the profile closest to Patchright's Chromium |
 | In-page `fetch()` from the cleared tab (browser TLS/HTTP2, same origin; not `context.request`, which uses Playwright's own HTTP stack) | candidate fallback for sites that reject the httpx session: a round trip instead of a page render per request |
-| Keep the clearance warm (re-solve per site before the Challenge Passage ends) | candidate: no Stremio request waits for a solve (3–4 s on the Pi, 20 s under load) |
+| Keep the clearance warm (re-solve per site before the Challenge Passage ends) | candidate: no Stremio request waits for a solve (3–4 s on the Pi, 20 s under load). The smaller variant is built: a solve runs on when the deadline cuts its request, so the next request gets the session, and the Pi only solves when someone searches |
 | Browser timezone/locale matching the VPN exit country ([FP-Inconsistent](https://arxiv.org/abs/2406.07647)) | candidate, small |
 | FlareSolverr/Byparr/Camoufox/nodriver/zendriver/SeleniumBase/Botasaurus | full browsers, no faster on a Pi; FlareSolverr/Byparr already supported (`playwright.solver_url`) |
 | Solver services (CapSolver, ~$1.20/1000) | rejected: third party sees the traffic, needs a sticky proxy on the exit IP |

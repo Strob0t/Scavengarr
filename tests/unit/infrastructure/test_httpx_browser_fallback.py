@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
 from unittest.mock import AsyncMock
 
@@ -403,6 +404,64 @@ class TestBrowserSessionReuse:
 
         assert route.call_count == 2
         assert fetcher.session.await_count == 2  # solved and adopted again
+
+    @respx.mock
+    async def test_solve_outlives_a_cut_request(self) -> None:
+        """A request cut by its Stremio deadline does not abort the browser's
+        solve: the next request gets the session (a solve takes seconds, on
+        a Raspberry Pi up to 20 s under load)."""
+        respx.get("https://cf.example/a").respond(403, text=_CF_CHALLENGE)
+        route_b = respx.get("https://cf.example/b").respond(200, text="<html>b</html>")
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def _slow_solve(url: str, *, timeout: float) -> str:
+            started.set()
+            await release.wait()
+            return "<html>solved</html>"
+
+        fetcher = _solving_fetcher()
+        fetcher.fetch_text = AsyncMock(side_effect=_slow_solve)
+        HttpxPluginBase.set_browser_fetcher(fetcher)
+
+        async with httpx.AsyncClient() as client:
+            plugin = await _plugin_with_client(client)
+            cut = asyncio.create_task(plugin._fetch_text("https://cf.example/a"))
+            await started.wait()
+            cut.cancel()
+            release.set()
+            await asyncio.gather(*HttpxPluginBase._background_solves)
+            second = await plugin._fetch_text("https://cf.example/b")
+
+        assert cut.cancelled()
+        assert second == "<html>b</html>"
+        assert route_b.calls.last.request.headers["cookie"] == "cf_clearance=abc"
+
+    @respx.mock
+    async def test_failed_background_solve_is_logged(self) -> None:
+        respx.get("https://cf.example/a").respond(403, text=_CF_CHALLENGE)
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def _broken_solve(url: str, *, timeout: float) -> str:
+            started.set()
+            await release.wait()
+            raise RuntimeError("browser gone")
+
+        fetcher = _solving_fetcher()
+        fetcher.fetch_text = AsyncMock(side_effect=_broken_solve)
+        HttpxPluginBase.set_browser_fetcher(fetcher)
+
+        async with httpx.AsyncClient() as client:
+            plugin = await _plugin_with_client(client)
+            cut = asyncio.create_task(plugin._fetch_text("https://cf.example/a"))
+            await started.wait()
+            cut.cancel()
+            with structlog.testing.capture_logs() as logs:
+                release.set()
+                await asyncio.gather(
+                    *HttpxPluginBase._background_solves, return_exceptions=True
+                )
+
+        assert any(e["event"] == "cf-test_browser_solve_failed" for e in logs)
 
     @respx.mock
     async def test_without_a_session_the_host_stays_in_the_browser(self) -> None:
