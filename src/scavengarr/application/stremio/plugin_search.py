@@ -13,6 +13,7 @@ import time
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
+from functools import partial
 from typing import Any, Protocol
 
 import structlog
@@ -321,10 +322,6 @@ class PluginSearchRunner:
         try:
             return await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
         except TimeoutError:
-            # A plugin that had at least half its timeout counts as failing
-            # (dead hosts always run into the deadline and must still trip
-            # the breaker); one that queued for most of the budget does not
-            counts = timeout >= self._plugin_timeout / 2
             log.warning(
                 "stremio_plugin_timeout",
                 plugin=name,
@@ -332,12 +329,19 @@ class PluginSearchRunner:
                 cut_by_deadline=timeout < self._plugin_timeout,
                 runs_on=late is not None,
             )
+            if late is not None:
+                # Not failing yet: it fails if still running when the late
+                # plugins are cut, its answer reports like any other
+                task.add_done_callback(partial(self._late_search_done, breaker_key))
+                late.append(LateSearch(name, task))
+                return []
+            # A plugin that had at least half its timeout counts as failing
+            # (dead hosts always run into the deadline and must still trip
+            # the breaker); one that queued for most of the budget does not
+            counts = timeout >= self._plugin_timeout / 2
             if counts and self._circuit_breaker is not None:
                 self._circuit_breaker.record_failure(breaker_key)
-            if late is None:
-                await _cancel(task)
-            else:
-                late.append(LateSearch(name, task))
+            await _cancel(task)
             return []
         except asyncio.CancelledError:
             await _cancel(task)
@@ -377,6 +381,16 @@ class PluginSearchRunner:
             self._circuit_breaker.record_failure(key)
         elif found:
             self._circuit_breaker.record_success(key)
+
+    def _late_search_done(
+        self, key: str, task: asyncio.Future[list[SearchResult]]
+    ) -> None:
+        """Report a late search cut at the end of its extra time as failing.
+
+        A late search that ends by itself reports in _search_single_plugin.
+        """
+        if task.cancelled() and self._circuit_breaker is not None:
+            self._circuit_breaker.record_failure(key)
 
     async def _search_single_plugin(
         self,
@@ -435,7 +449,8 @@ class PluginSearchRunner:
                 )
             # Record circuit breaker outcome — but NOT on cancellation
             # (BaseException), since the timeout handler in
-            # _run_plugin_with_timeout records that case instead.
+            # _run_plugin_with_timeout (for a late search _late_search_done)
+            # records that case instead.
             if not cancelled:
                 self._record_outcome(
                     _breaker_key(name, category), success=success, found=bool(results)

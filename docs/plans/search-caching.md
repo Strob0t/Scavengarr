@@ -44,7 +44,7 @@ Key files:
 
 **Concurrency slots:** a late plugin releases its concurrency slot when it is cut. Holding it would make the next requests' plugins queue behind slow sites. Late plugins are bounded by the plugins of one request and by `plugin_timeout_seconds`; browser work stays bounded by the stealth pool. App shutdown cancels them (`StremioStreamUseCase.aclose`).
 
-**Circuit breaker:** the cut counts as a timeout as before (when the plugin had half its timeout); a late plugin that then delivers results resets the breaker as any success does.
+**Circuit breaker:** a plugin cut by the soft deadline runs on and is not blamed for the cut; it counts as a timeout only when it is still running at the end of its extra time, and its answer reports like any other (results reset the breaker). The first version counted the cut (when the plugin had half its timeout), which opened the breaker for plugins that answered a few seconds later without hits (kinox for movies, end-to-end test 2026-10-04).
 
 **Affected files:**
 - `application/stremio/search_cache.py`: `CachedSearch` entries, key, fresh/stale, backend errors.

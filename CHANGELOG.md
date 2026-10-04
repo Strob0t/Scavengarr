@@ -50,6 +50,7 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
   - **Single-flight:** requests for one title share one running search.
 - **Late plugins:** a plugin cut by the deadline runs on for up to `plugin_timeout_seconds` more, and its results are added to the cache entry for the next request (`stremio_late_plugins_done`).
 - **Early answer:** the search answers at `stremio.search_soft_deadline_seconds` (new, default 7 s) when it has results; without results it waits for the late plugins until `plugin_timeout_seconds`, as before.
+- **Circuit breaker:** a late plugin is not blamed for the cut. It counts as a failure only when it is still running at the end of its extra time; its answer reports like any other. Counting the 7 s cut opened the breaker for plugins that answered a few seconds later without hits (kinox for movies in the end-to-end test of 2026-10-04).
 - `cache.search_ttl_seconds: 0` turns off all three and restores the previous behavior. App shutdown cancels background searches.
 
 ### Perf: uvloop, httptools, Eager Tasks and Python 3.14

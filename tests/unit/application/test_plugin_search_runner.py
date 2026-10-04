@@ -466,6 +466,48 @@ class TestLatePlugins:
 
         assert cancelled.is_set()
 
+    async def test_a_plugin_that_runs_on_is_not_failing_yet(self) -> None:
+        """The early answer cut kinox, movie2k and s.to at 7 s on most
+        requests; counted as failures, slow plugins that answered late
+        opened the breaker (kinox for movies in the e2e test)."""
+
+        async def _slow(*_args: object, **_kwargs: object) -> list[SearchResult]:
+            await asyncio.sleep(0.15)
+            return []
+
+        plugin = _plugin([])
+        plugin.search = AsyncMock(side_effect=_slow)
+        breaker = MagicMock()
+        breaker.allow.return_value = True
+        # The cut leaves the plugin more than half its timeout: it would count
+        runner = _runner(
+            _registry({"a": plugin}), circuit_breaker=breaker, plugin_timeout=0.08
+        )
+        late: list[LateSearch] = []
+
+        await self._cut(runner, late)
+        await finish_late(late, timeout=1.0)
+
+        breaker.record_failure.assert_not_called()
+
+    async def test_a_late_search_cut_at_the_end_counts_as_failure(self) -> None:
+        cancelled = asyncio.Event()
+        plugin = _plugin([])
+        plugin.search = _endless_search(cancelled)
+        breaker = MagicMock()
+        breaker.allow.return_value = True
+        runner = _runner(
+            _registry({"a": plugin}), circuit_breaker=breaker, plugin_timeout=0.08
+        )
+        late: list[LateSearch] = []
+
+        await self._cut(runner, late)
+        breaker.record_failure.assert_not_called()
+        await finish_late(late, timeout=0.05)
+
+        assert cancelled.is_set()
+        breaker.record_failure.assert_called_once_with("a:2000")
+
     async def test_without_a_collector_a_cut_plugin_is_cancelled(self) -> None:
         cancelled = asyncio.Event()
         plugin = _plugin([])
