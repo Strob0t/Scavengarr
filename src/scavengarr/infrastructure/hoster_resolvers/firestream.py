@@ -29,7 +29,8 @@ from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 log = structlog.get_logger(__name__)
 
 _DOMAINS = frozenset({"firestream"})
-_FILE_ID_RE = re.compile(r"^/e/([A-Za-z0-9]+)(?:/|$)")
+# URL-safe base64 IDs ("777zhD-W"); JDownloader's pattern misses "-" and "_"
+_FILE_ID_RE = re.compile(r"^/e/([A-Za-z0-9_-]+)(?:/|$)")
 _VIDEO_DATA_RE = re.compile(
     r'<script id="video-data" type="application/json">(.*?)</script>', re.DOTALL
 )

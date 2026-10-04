@@ -10,6 +10,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 - moflix's search lists people next to titles (19 of 20 hits for "Oppenheimer"), and the plugin asked the title API for every hit: 46 answers 404 in the end-to-end test of 2026-10-04, and a person's id can be another title's ("Alan Oppenheimer" fetched a children's film).
 - It now fetches titles only, and only the relevant ones (`relevant_hits()`, at most 3 for a season or episode request), as the other plugins do.
 
+### Fix: FireStream Links With "-" in the Id
+- FireStream ids use the URL-safe base64 alphabet (`777zhD-W`), and the resolver only accepted letters and digits (as JDownloader's pattern does), so such filmpalast and moflix links were dropped as invalid (`firestream_invalid_url`, 3 in the end-to-end test of 2026-10-04; their pages play). `-` and `_` are accepted now.
+
 ### Fix: moflix's Own Players Resolve Again
 - moflix hands out two players under one name, and the end-to-end test of 2026-10-04 found all 15 of their links of an hour failing:
   - moflix-stream.click is VidHide (EarnVids) without the `/e/<id>` route the XFS resolver builds (404). Its player is under the `/embed/<id>` and `/v/<id>` links moflix hands out. An XFS video hoster whose `/e/` page answers 404 is now asked for the link's own URL.
