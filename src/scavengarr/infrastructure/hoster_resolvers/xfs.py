@@ -544,6 +544,9 @@ VIDHIDE = XFSConfig(
         "file was removed",
         "Video embed restricted",
         "Downloads disabled",
+        # moflix-stream.click: "File is no longer available as it expired or
+        # has been deleted."
+        "File is no longer available",
     ),
     is_video_hoster=True,
     extra_domains=frozenset(

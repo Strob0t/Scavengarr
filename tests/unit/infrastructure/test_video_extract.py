@@ -86,6 +86,20 @@ class TestExtractHlsFromUnpacked:
     def test_returns_none_for_no_video(self) -> None:
         assert extract_hls_from_unpacked("var x = 1;") is None
 
+    def test_links_object_of_the_player(self) -> None:
+        """VidHide/EarnVids players (moflix-stream.click) keep the URLs in a
+        links object and pick one at runtime; JDownloader takes hls2."""
+        js = (
+            'var links={"hls3":"https://a.example.com/hls3/x/master.txt",'
+            '"hls2":"https://b.example.com/hls2/x/master.m3u8?t=abc"};'
+            'jwplayer("vplayer").setup({sources:[{file:links.hls4||links.hls3'
+            '||links.hls2,type:"hls"}]});'
+        )
+        assert (
+            extract_hls_from_unpacked(js)
+            == "https://b.example.com/hls2/x/master.m3u8?t=abc"
+        )
+
 
 # ---------------------------------------------------------------------------
 # extract_video_url — combined strategies
@@ -124,6 +138,25 @@ class TestExtractVideoUrl:
     def test_returns_none_for_plain_html(self) -> None:
         html = "<html><body><h1>Hello</h1></body></html>"
         assert extract_video_url(html) is None
+
+    def test_hls2_inside_packed_js(self) -> None:
+        """moflix-stream.click packs its player setup: the hls2 URL is only
+        in the unpacked code (end-to-end test 2026-10-04)."""
+        # The packer encodes words of the URL too: no URL in the raw page
+        payload = '0={"1":"https://cdn.4.com/hls2/x/master.5?t=abc"};2:[{3:0.hls4||0.hls3||0.1,type:"hls"}]'
+        packed_html = (
+            "<script>eval(function(p,a,c,k,e,d)"
+            "{e=function(c){return c};if(!''.replace(/^/,String))"
+            "{while(c--)d[c]=k[c]||c;k=[function(e)"
+            "{return d[e]}];e=function(){return'\\w+'};c=1};"
+            "while(c--)if(k[c])p=p.replace(new RegExp('\\b'+e(c)+'\\b','g'),k[c]);"
+            "return p}("
+            f"'{payload}',10,6,'links|hls2|sources|file|example|m3u8'.split('|'),0,{{}}))"
+            "</script>"
+        )
+        assert extract_video_url(packed_html) == (
+            "https://cdn.example.com/hls2/x/master.m3u8?t=abc"
+        )
 
     def test_skips_thumbnail_urls(self) -> None:
         html = '"https://cdn.example.com/thumbnail.m3u8"'

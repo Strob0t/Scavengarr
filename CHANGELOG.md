@@ -13,6 +13,7 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 ### Fix: moflix's Own Players Resolve Again
 - moflix hands out two players under one name, and the end-to-end test of 2026-10-04 found all 15 of their links of an hour failing:
   - moflix-stream.click is VidHide (EarnVids) without the `/e/<id>` route the XFS resolver builds (404). Its player is under the `/embed/<id>` and `/v/<id>` links moflix hands out. An XFS video hoster whose `/e/` page answers 404 is now asked for the link's own URL.
+  - Its player keeps the stream URLs in a packed `links={"hls2":…}` object; the shared extraction now reads `"hls2"` in unpacked code too (as JDownloader does), and "File is no longer available" marks a deleted file.
   - moflix-stream.link runs Filemoon's Byse player ("Byse Frontend"), which the VidHide resolver cannot read. The Filemoon resolver claims that host (`supported_hosts`); in production it resolved two links in 4.7 s (warm browser) and 15 s (cold).
 
 ### Perf: Hosters That Never Deliver Are Skipped

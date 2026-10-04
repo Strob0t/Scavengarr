@@ -228,7 +228,7 @@ Adding a new XFS hoster requires only an `XFSConfig` constant appended to `ALL_X
 `_video_extract.py` (`extract_video_url()`) is used by the XFS resolver and the Filemoon resolver. Strategies, in order:
 
 1. Streamwish `"hls2":"https://…"` JSON key.
-1. Dean Edwards packed JS (`eval(function(p,a,c,k,e,d)…)`) — unpacked (bases up to 62, the packer's default "Normal" encoding with `0-9a-zA-Z`; base 95 is not supported), then searched for JWPlayer `sources`/`file` HLS or MP4 URLs.
+1. Dean Edwards packed JS (`eval(function(p,a,c,k,e,d)…)`) — unpacked (bases up to 62, the packer's default "Normal" encoding with `0-9a-zA-Z`; base 95 is not supported), then searched for the player's `"hls2"` URL (VidHide/EarnVids keep `links={"hls2":…,"hls3":…}` in the packed code and pick one at runtime with `file:links.hls4||links.hls3||links.hls2`; JDownloader takes hls2), then for JWPlayer `sources`/`file` HLS or MP4 URLs.
 1. JWPlayer `sources: [{file: "…"}]` directly in the page (thumbnail/track URLs skipped).
 1. Any quoted `.m3u8`/`.mp4` URL in the page.
 
