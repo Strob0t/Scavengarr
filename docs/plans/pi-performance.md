@@ -1,6 +1,6 @@
 # Performance on the Raspberry Pi: Baseline
 
-Status: measured 2026-10-04 (v0.2.3). Purpose: a baseline to judge optimization proposals against (for example from a literature review), and the candidate measures the numbers point to. Nothing here is implemented yet.
+Status: baseline measured 2026-10-04 (v0.2.3). The decided measures are implemented and were measured again the same day (staging cfb4c6e, see [After the measures](#after-the-measures-2026-10-04-staging-cfb4c6e)). Purpose: a baseline to judge optimization proposals against (for example from a literature review), the candidate measures the numbers point to, and their effect.
 
 ## Setup
 
@@ -174,6 +174,62 @@ A probe in the production container opened 5 pages (kinoger, moflix, filmpalast,
 | `--renderer-process-limit=2 --disable-site-isolation-trials` | 2 | 441 MB |
 
 Frames of other sites keep their own process under site isolation, so the limit alone saves little. Without site isolation s.to's Turnstile gate failed in 2 of 2 tries (it passed in 2 of 2 with the limit alone), so site isolation stays on. kinoger's and moflix's Cloudflare challenges passed with every set. Playwright plugins with type-based resource blocking and blocked service workers returned what they returned before (ddlvalley 12 results, scnsrc 19, ddlspot none either way).
+
+## After the measures (2026-10-04, staging cfb4c6e)
+
+Measured the same way as the baseline, on Python 3.14.8 with uvloop, HTTP/2 on (`SCAVENGARR_HTTP_HTTP2=true`) and no other traffic.
+- The first pass ran right after a restart.
+- Before each warm pass the three titles' search-cache entries were deleted, so the plugins searched again, as in the baseline's warm passes.
+- The last pass answered from the search cache.
+
+| Pass | Wall | Python CPU | Chromium CPU | httpx requests | Streams |
+|---|---|---|---|---|---|
+| Cold (fresh container) | 13.9 s | 7.1 s | 29.8 s | 122 | 2.7 |
+| Warm 1 (searched again) | 11.4 s | 2.5 s | 11.2 s | 61 | 4.7 |
+| Warm 2 (searched again) | 11.2 s | 2.6 s | 11.5 s | 45 | 4.7 |
+| From the search cache | 4.2 s | 0.9 s | 10.1 s | 2 | 4.7 |
+
+Against the baseline's warm passes (means of 2 passes over 3 titles, so 6 requests each side):
+
+| | Before | After |
+|---|---|---|
+| Wall per request | 13.9 s | 11.3 s (−18%); 4.2 s from the search cache (−70%) |
+| Python CPU per request (process, native code included) | 4.1 s | 2.55 s (−38%) |
+| Python CPU on the GIL per request (py-spy) | 2.49 s | 1.13 s (−55%) |
+| Event-loop lag, p99 / max | ~130 / 384 ms | 40 / 60 ms |
+| httpx requests per request | 60 | 53 |
+| Streams per request | 5.15 | 4.7 |
+
+The streams are within the spread: Breaking Bad gave 0–2 in both series. The cold pass went from 15.1 s, 8.1 s Python CPU and 144 requests to 13.9 s, 7.1 s and 122.
+
+**Where the GIL time per warm request went** (py-spy, inclusive, 1496 samples before and 677 after; the rows overlap and do not add up):
+
+| | Before | After |
+|---|---|---|
+| guessit/rebulk (release names) | 0.82 s | 0.00 s |
+| `html.parser` | 0.67 s | 0.20 s |
+| httpx/httpcore/h11/h2 | 0.40 s | 0.40 s |
+| `http.cookiejar` | 0.13 s | 0.08 s |
+| patchright (browser driver) | 0.18 s | 0.17 s |
+
+**Regression found and fixed:** the first build after the measures kept 100 idle connections for 60 s. httpcore 1.0 scans its whole pool for every request and every finished response, and the scan is quadratic in the idle connections. It took 20% of the GIL samples of the first pass (2% before). With at most 20 idle connections (httpx's default count, commit cfb4c6e) it took 1.9–2.4%.
+
+**HTTP/1.1 against HTTP/2** (A/B in the production container on the same build): the Stremio plugins searched 2 titles without the browser fallback, 3 runs per protocol in alternating order.
+
+| | HTTP/1.1 | HTTP/2 |
+|---|---|---|
+| CPU of the run | 1.66–1.71 s | 2.03–2.11 s (+22%) |
+| New connections | 48–49 | 43–44 |
+| Wall | 35–40 s | 40 s (bounded by the slowest plugins' timeouts) |
+
+HTTP/2's framing (h2, hpack, hyperframe) runs in Python and costs more CPU on the Pi than the few handshakes it saves, and it is not faster. `http.http2` stays off.
+
+**What is left**, by size:
+- **Chromium:** ~10–11 s CPU per request even from the search cache, because hoster resolution runs on every request (stream URLs expire and some are IP-bound). A cold request also launches the browser and solves challenges (~30 s).
+- **httpx/httpcore:** 0.4 s on the GIL per request. Part of that is HTTP/2, which is now off.
+- **`html.parser`:** 0.2 s per request in plugins that still use it. They parse big pages in a worker thread (`_feed`).
+- **patchright:** the driver records a stack trace (`traceback.extract_stack`) for every message it sends to the browser.
+- **Log noise** in 15 min of tests: moflix logged 51 `moflix_http_error`; megakino_to and movie4k timed out (Cloudflare 522, origin down).
 
 ## How to re-measure
 

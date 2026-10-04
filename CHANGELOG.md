@@ -6,6 +6,14 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Measured: The Performance Plan on the Raspberry Pi
+- Production, 3 titles, the plugins searching again (`docs/plans/pi-performance.md`):
+  - a stream request took 11.3 s instead of 13.9 s;
+  - it used 2.55 s of Python CPU instead of 4.1 s (−55% of the CPU on the GIL);
+  - the event loop's lag p99 fell from ~130 ms to 40 ms.
+- From the search cache an answer takes 4.2 s.
+- Release-name parsing no longer shows up in the profile; `html.parser` fell from 0.67 s to 0.20 s per request.
+
 ### Security: Connections Go to the Addresses the SSRF Guard Checked
 - The address guard of the shared HTTP client resolved a hostname to check that it is public, and httpcore resolved it again to connect. A hostile DNS server could answer the check with a public address and the connection with a LAN one (DNS rebinding).
 - The client now connects to the addresses of the guard's lookup (`GuardedNetworkBackend`, IPv4 first, the next address when one refuses). TLS still verifies the hostname. A lookup answers checks and connections for 60 s (was 5 min for checks only).
@@ -63,7 +71,7 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 ### Perf: Connections Stay Open Between Stream Requests
 - The shared HTTP client used httpx's defaults: idle connections closed after 5 s, at most 20 kept. One stream request talks to 18–42 hosts, so every pause between two requests closed them all, and the next request paid the TCP and TLS handshakes again, one or two round trips through the VPN each. TLS handshakes were 21% of the Python CPU (`docs/plans/pi-performance.md`).
 - Idle connections now stay open for 60 s, at most 20 of them (httpx's default count). With 100 kept, production showed httpcore's pool scan, which runs for every request and finished response and is quadratic in the idle connections, holding the GIL 10–20% of the time during stream requests (2% before). A connect may take at most 5 s, so a host that does not answer no longer costs the full read timeout (`http.timeout_seconds`).
-- `http.http2` (`SCAVENGARR_HTTP_HTTP2`, off by default) offers HTTP/2, so the requests to one host share a connection. It needs `httpx[http2]` (h2). It is a switch because HTTP/2 is not faster per se; production measures it both ways.
+- `http.http2` (`SCAVENGARR_HTTP_HTTP2`, off by default) offers HTTP/2, so the requests to one host share a connection. It needs `httpx[http2]` (h2). Measured both ways in production: the plugin searches used 22% more CPU with HTTP/2 (its framing runs in Python) and were not faster, so it stays off.
 
 ### Feat: Event-Loop Lag in the Metrics
 - On the Raspberry Pi the Python process was busy for 34–82% of a stream request's wall time (`docs/plans/pi-performance.md`). CPU work on the event loop (parsing, TLS handshakes, logging) delays every callback, and with them the timeouts and deadlines.

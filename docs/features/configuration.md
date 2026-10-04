@@ -294,7 +294,7 @@ Controls the shared HTTP client used by httpx plugins, hoster resolvers, and API
 | `http.timeout_seconds` | float | `30.0` | Request timeout for scraping operations |
 | `http.timeout_resolve_seconds` | float | `15.0` | Time bound for one hoster resolution (the resolver's whole `resolve()`), and timeout of the registry's redirect and content-type requests |
 | `http.follow_redirects` | bool | `true` | Whether the HTTP client follows redirects |
-| `http.http2` | bool | `false` | Offer HTTP/2 on outgoing connections: requests to one host share a connection. Not faster per se, so it is off by default. The shared client keeps idle connections for 60 s (httpx: 5 s), up to 100, and gives a connect 5 s at most (`timeout_seconds` covers the read) |
+| `http.http2` | bool | `false` | Offer HTTP/2 on outgoing connections: requests to one host share a connection. Off by default: on a Raspberry Pi 4 the plugin searches used 22% more CPU with it (h2 runs in Python) and were not faster (`docs/plans/pi-performance.md`). The shared client keeps idle connections for 60 s (httpx: 5 s), at most 20, and gives a connect 5 s at most (`timeout_seconds` covers the read) |
 | `http.user_agent` | string | `Scavengarr/<version> (+https://github.com/Strob0t/Scavengarr)` | User-Agent header sent with every request |
 | `http.rate_limit_rps` | float | `5.0` | Per-domain rate limit (requests/second). 0 = unlimited |
 | `http.rate_limit_adaptive` | bool | `true` | Enable AIMD adaptive rate limiting per domain (`SCAVENGARR_RATE_LIMIT_ADAPTIVE`) |
