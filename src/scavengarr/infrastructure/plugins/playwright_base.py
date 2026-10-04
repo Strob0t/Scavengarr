@@ -28,6 +28,10 @@ if TYPE_CHECKING:
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.browser.clearance_store import ClearanceStore
 from scavengarr.infrastructure.browser.display import resolve_headless
+from scavengarr.infrastructure.browser.hardening import (
+    CHROMIUM_ARGS,
+    block_heavy_resources,
+)
 from scavengarr.infrastructure.browser.shared_browser import SharedBrowserPool
 from scavengarr.infrastructure.browser.turnstile import (
     is_challenge_page,
@@ -227,7 +231,8 @@ class PlaywrightPluginBase:
             try:
                 pw = await async_playwright().start()
                 browser = await pw.chromium.launch(
-                    headless=resolve_headless(self._headless)
+                    headless=resolve_headless(self._headless),
+                    args=list(CHROMIUM_ARGS),
                 )
                 self._pw = pw
                 return browser
@@ -258,7 +263,7 @@ class PlaywrightPluginBase:
         ``_serialize_search`` is True (persistent-page plugins).
 
         When ``_block_resources`` is True, aborts heavy resources
-        (images, fonts, CSS) to speed up navigation.
+        (images, fonts, CSS, media) to speed up navigation.
         """
         # Per-request isolation: if a ContextVar context was set by
         # isolated_search(), prefer it over the singleton.
@@ -277,7 +282,10 @@ class PlaywrightPluginBase:
 
     def _context_options(self) -> dict[str, Any]:
         """Keyword arguments for ``browser.new_context()``."""
-        options: dict[str, Any] = {"viewport": {"width": 1280, "height": 720}}
+        options: dict[str, Any] = {
+            "viewport": {"width": 1280, "height": 720},
+            "service_workers": "block",
+        }
         if self._browser_user_agent is not None:
             options["user_agent"] = self._browser_user_agent
         return options
@@ -288,10 +296,7 @@ class PlaywrightPluginBase:
         if store is not None:
             await store.restore(ctx)
         if self._block_resources:
-            await ctx.route(
-                "**/*.{png,jpg,jpeg,gif,svg,woff,woff2,ttf,css}",
-                lambda route: route.abort(),
-            )
+            await ctx.route("**/*", block_heavy_resources)
 
     async def _ensure_page(self) -> Page:
         """Get or create a persistent page."""

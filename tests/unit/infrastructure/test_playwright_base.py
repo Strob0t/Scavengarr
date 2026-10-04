@@ -8,6 +8,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.browser.hardening import (
+    CHROMIUM_ARGS,
+    block_heavy_resources,
+)
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
 # ---------------------------------------------------------------------------
@@ -181,7 +185,9 @@ class TestEnsureBrowser:
             mock_apw.return_value.start = AsyncMock(return_value=mock_pw)
             await plugin._ensure_browser()
 
-        mock_pw.chromium.launch.assert_awaited_once_with(headless=expected_headless)
+        mock_pw.chromium.launch.assert_awaited_once_with(
+            headless=expected_headless, args=list(CHROMIUM_ARGS)
+        )
 
     @pytest.mark.asyncio
     async def test_reuses_existing_browser(self) -> None:
@@ -401,9 +407,7 @@ class TestEnsureContext:
 
         await plugin._ensure_context()
 
-        mock_context.route.assert_awaited_once()
-        pattern = mock_context.route.await_args.args[0]
-        assert "png" in pattern and "css" in pattern
+        mock_context.route.assert_awaited_once_with("**/*", block_heavy_resources)
 
     @pytest.mark.asyncio
     async def test_no_user_agent_forced_by_default(self) -> None:
@@ -418,6 +422,7 @@ class TestEnsureContext:
         kwargs = mock_browser.new_context.await_args.kwargs
         assert "user_agent" not in kwargs
         assert kwargs["viewport"] == {"width": 1280, "height": 720}
+        assert kwargs["service_workers"] == "block"
 
     @pytest.mark.asyncio
     async def test_browser_user_agent_override_is_passed(self) -> None:
@@ -1158,7 +1163,9 @@ class TestSharedBrowserPool:
             mock_apw.return_value.start = AsyncMock(return_value=mock_pw)
             await pool.warmup()
 
-        mock_pw.chromium.launch.assert_awaited_once_with(headless=expected_headless)
+        mock_pw.chromium.launch.assert_awaited_once_with(
+            headless=expected_headless, args=list(CHROMIUM_ARGS)
+        )
 
     @pytest.mark.asyncio
     async def test_warmup_is_idempotent(self) -> None:
@@ -1575,3 +1582,52 @@ class TestSerializeSearch:
     def test_search_lock_created(self) -> None:
         plugin = _TestPlugin()
         assert isinstance(plugin._search_lock, asyncio.Lock)
+
+
+class TestSharedBrowserRecycle:
+    """Chromium's memory grows with the pages it rendered (1.7 GB on the Pi):
+    it restarts after enough pages, but never under an open page."""
+
+    @staticmethod
+    def _pool(*, pages: int, open_pages: int) -> tuple[object, AsyncMock, AsyncMock]:
+        from scavengarr.infrastructure.browser.shared_browser import (
+            _RECYCLE_AFTER_PAGES,
+            SharedBrowserPool,
+        )
+
+        pool = SharedBrowserPool(headless=True)
+        browser = _make_mock_browser()
+        context = MagicMock()
+        context.pages = [MagicMock() for _ in range(open_pages)]
+        browser.contexts = [context]
+        pw = AsyncMock()
+        pool._browser, pool._pw = browser, pw
+        for _ in range(_RECYCLE_AFTER_PAGES if pages < 0 else pages):
+            pool.note_page()
+        return pool, browser, pw
+
+    @pytest.mark.asyncio
+    async def test_restarts_after_enough_pages_when_idle(self) -> None:
+        pool, browser, pw = self._pool(pages=-1, open_pages=0)
+
+        await pool.recycle_when_idle()
+
+        browser.close.assert_awaited_once()
+        pw.stop.assert_awaited_once()
+        assert pool.is_running is False
+
+    @pytest.mark.asyncio
+    async def test_keeps_the_browser_while_a_page_is_open(self) -> None:
+        pool, browser, _ = self._pool(pages=-1, open_pages=1)
+
+        await pool.recycle_when_idle()
+
+        browser.close.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_keeps_the_browser_before_enough_pages(self) -> None:
+        pool, browser, _ = self._pool(pages=3, open_pages=0)
+
+        await pool.recycle_when_idle()
+
+        browser.close.assert_not_awaited()

@@ -8,11 +8,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from scavengarr.domain.ports.browser_fetcher import BrowserSession, ClickThrough
-from scavengarr.infrastructure.browser.stealth_pool import (
-    _BLOCKED_RESOURCE_TYPES,
-    StealthPool,
-    _block_resources,
+from scavengarr.infrastructure.browser.hardening import (
+    BLOCKED_RESOURCE_TYPES,
+    block_heavy_resources,
 )
+from scavengarr.infrastructure.browser.stealth_pool import StealthPool
 
 # ------------------------------------------------------------------
 # Helpers
@@ -32,6 +32,7 @@ def _mock_pool_stack() -> tuple[MagicMock, AsyncMock, AsyncMock]:
 
     shared_pool = MagicMock()
     shared_pool.warmup = AsyncMock(return_value=(browser, MagicMock()))
+    shared_pool.recycle_when_idle = AsyncMock()
 
     return shared_pool, browser, context
 
@@ -53,19 +54,19 @@ def _mock_page(
 
 
 # ------------------------------------------------------------------
-# _block_resources
+# block_heavy_resources
 # ------------------------------------------------------------------
 
 
 class TestBlockResources:
     """Route handler blocks heavy resource types."""
 
-    @pytest.mark.parametrize("rtype", sorted(_BLOCKED_RESOURCE_TYPES))
+    @pytest.mark.parametrize("rtype", sorted(BLOCKED_RESOURCE_TYPES))
     async def test_blocks_heavy_resource(self, rtype: str) -> None:
         route = AsyncMock()
         route.request = MagicMock()
         route.request.resource_type = rtype
-        await _block_resources(route)
+        await block_heavy_resources(route)
         route.abort.assert_awaited_once()
         route.continue_.assert_not_awaited()
 
@@ -74,7 +75,7 @@ class TestBlockResources:
         route = AsyncMock()
         route.request = MagicMock()
         route.request.resource_type = rtype
-        await _block_resources(route)
+        await block_heavy_resources(route)
         route.continue_.assert_awaited_once()
         route.abort.assert_not_awaited()
 
@@ -95,8 +96,8 @@ class TestStealthPoolLifecycle:
 
         assert ctx is context
         shared_pool.warmup.assert_awaited_once()
-        browser.new_context.assert_awaited_once()
-        context.route.assert_awaited_once()
+        browser.new_context.assert_awaited_once_with(service_workers="block")
+        context.route.assert_awaited_once_with("**/*", block_heavy_resources)
 
     async def test_ensure_context_reuses_existing(self) -> None:
         shared_pool, browser, context = _mock_pool_stack()
@@ -219,6 +220,18 @@ class TestStealthPoolFetchText:
 
         assert text == "<html><body>real page</body></html>"
         page.close.assert_awaited_once()
+
+    async def test_pages_count_toward_a_browser_restart(self) -> None:
+        """Every page counts; after it closes the browser may restart."""
+        shared_pool, _, context = _mock_pool_stack()
+        context.new_page = AsyncMock(return_value=_fetch_page())
+
+        await StealthPool(browser_pool=shared_pool).fetch_text(
+            "https://filmfans.org/x", timeout=10
+        )
+
+        shared_pool.note_page.assert_called_once_with()
+        shared_pool.recycle_when_idle.assert_awaited_once_with()
 
     async def test_returns_raw_body_for_non_html(self) -> None:
         """JSON is re-fetched in-page: raw text, not Chrome's JSON viewer."""

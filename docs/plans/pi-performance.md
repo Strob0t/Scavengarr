@@ -142,7 +142,7 @@ Order: build the measurement tools first and measure the current state, then imp
 | Requests | Central only: title variants by plugin language, Stremio's `max_results_per_plugin` lowered after a recall check on a title set, base classes remember a site's redirect target. The check (below) kept the cap at 50: lowering it changed nothing |
 | s.to | While the gate is active and no pass is possible, return link-outs unresolved |
 | Parsing | Big pages off the event loop first, then selectolax for the hotspots the Pi profile shows |
-| Browser | `serviceWorkers="block"`, blocking by resource type everywhere, `--renderer-process-limit=2`, restart the browser after N solves |
+| Browser | `serviceWorkers="block"`, blocking by resource type everywhere, `--renderer-process-limit=2`, restart the browser after N solves. Done; the restart counts stealth pages (200), and site isolation stays on (check below) |
 | DNS/SSRF | Connect to the IP the address guard checked (one lookup, closes the DNS-rebinding gap) |
 | Pi host | No change |
 
@@ -162,6 +162,18 @@ Before the request measures changed what is searched, a probe ran in the product
 - **Base titles** stay: "Avengers" found Avengers: Endgame on four sites where "Avengers Endgame" did not (3 more streams).
 - **Result cap 24 instead of 50:** no effect. No plugin returned more than 24 results for an exact title (the plugins keep the relevant hits only), no title-matching result came after position 24, and the requests fell by 1.3% (534 → 527). The two links missing with 24 came from a timeout and a failed request. The cap stays at 50.
 - Timeouts at 30 s: kinoger in 18 of 31 searches (partly the probe's own load: its browser served two pages at a time) and kinoking in 21 of 31. megakino_to and movie4k answered with nothing (Cloudflare 522, see `stremio-latency.md`). A timed-out search counts as finding nothing, in every row of the table.
+
+## Browser check (2026-10-04)
+
+A probe in the production container opened 5 pages (kinoger, moflix, filmpalast, hdfilme, s.to) in its own Chromium and counted that browser's processes:
+
+| Flags | Renderers | Renderer RSS (sum) |
+|---|---|---|
+| none | 7 | 1072 MB |
+| `--renderer-process-limit=2` | 6 | 1011 MB |
+| `--renderer-process-limit=2 --disable-site-isolation-trials` | 2 | 441 MB |
+
+Frames of other sites keep their own process under site isolation, so the limit alone saves little. Without site isolation s.to's Turnstile gate failed in 2 of 2 tries (it passed in 2 of 2 with the limit alone), so site isolation stays on. kinoger's and moflix's Cloudflare challenges passed with every set. Playwright plugins with type-based resource blocking and blocked service workers returned what they returned before (ddlvalley 12 results, scnsrc 19, ddlspot none either way).
 
 ## How to re-measure
 

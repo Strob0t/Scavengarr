@@ -21,6 +21,7 @@ import structlog
 from patchright.async_api import Browser, BrowserContext, Page, Request, Route
 
 from scavengarr.domain.ports.browser_fetcher import BrowserSession, ClickThrough
+from scavengarr.infrastructure.browser.hardening import block_heavy_resources
 from scavengarr.infrastructure.browser.turnstile import (
     WIDGET_FORM,
     is_challenge_page,
@@ -35,9 +36,6 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger(__name__)
 
-_BLOCKED_RESOURCE_TYPES = frozenset(
-    {"image", "font", "stylesheet", "media", "texttrack"}
-)
 
 # fetch_text() retries: rate limits / overloaded origin, then give up
 _RETRY_STATUSES = frozenset({429, 502, 503, 504})
@@ -111,14 +109,6 @@ async def _read_body(page: Page, url: str) -> str | None:
     if await page.evaluate("() => document.contentType") == "text/html":
         return await page.content()
     return await page.evaluate(_FETCH_RAW_JS, url)
-
-
-async def _block_resources(route: Route) -> None:
-    """Abort requests for heavy resource types."""
-    if route.request.resource_type in _BLOCKED_RESOURCE_TYPES:
-        await route.abort()
-    else:
-        await route.continue_()
 
 
 async def _allow_player_resources(route: Route) -> None:
@@ -259,11 +249,11 @@ class StealthPool:
                 return self._context
 
             self._browser, _ = await self._browser_pool.warmup()
-            self._context = await self._browser.new_context()
+            self._context = await self._browser.new_context(service_workers="block")
             self._user_agent = None  # a relaunched browser may be another version
 
             # Block heavy resources on all pages in this context
-            await self._context.route("**/*", _block_resources)
+            await self._context.route("**/*", block_heavy_resources)
             if self._clearance_store is not None:
                 await self._clearance_store.restore(self._context)
 
@@ -295,7 +285,14 @@ class StealthPool:
     async def new_page(self) -> Page:
         """Create a new page in the stealth context."""
         ctx = await self._ensure_context()
+        self._browser_pool.note_page()
         return await ctx.new_page()
+
+    async def _close(self, page: Page | None) -> None:
+        """Close *page*; the browser restarts when it is due and idle."""
+        if page is not None and not page.is_closed():
+            await page.close()
+        await self._browser_pool.recycle_when_idle()
 
     async def _navigate(
         self,
@@ -362,8 +359,7 @@ class StealthPool:
                 log.debug("stealth_fetch_error", url=url, exc_info=True)
                 return None
             finally:
-                if page is not None and not page.is_closed():
-                    await page.close()
+                await self._close(page)
 
     async def session(self, url: str) -> BrowserSession | None:
         """Return the context's cookies for *url* and the browser's User-Agent.
@@ -453,8 +449,7 @@ class StealthPool:
                 log.debug("stealth_capture_error", url=url, exc_info=True)
                 return None
             finally:
-                if page is not None and not page.is_closed():
-                    await page.close()
+                await self._close(page)
 
     async def resolve_redirect(self, url: str, *, timeout: float) -> str | None:
         """Return the first off-site URL *url* redirects to.
@@ -496,8 +491,7 @@ class StealthPool:
             except Exception:  # noqa: BLE001
                 log.debug("stealth_redirect_error", url=url, exc_info=True)
             finally:
-                if page is not None and not page.is_closed():
-                    await page.close()
+                await self._close(page)
         return targets[0] if targets else None
 
     async def click_through(
@@ -560,8 +554,7 @@ class StealthPool:
                 log.debug("stealth_click_through_error", url=page_url, exc_info=True)
                 return None
             finally:
-                if page is not None and not page.is_closed():
-                    await page.close()
+                await self._close(page)
 
     # ------------------------------------------------------------------
     # Internal

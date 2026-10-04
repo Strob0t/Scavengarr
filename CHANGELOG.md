@@ -6,6 +6,13 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Perf: Lighter Chromium
+- On the Raspberry Pi Chromium held 1.7 GB in 15 processes.
+- Main frames share at most 2 renderer processes (`--renderer-process-limit=2`). Frames of other sites keep their own (site isolation): turning it off cut the renderers from 7 to 2 with 5 open pages, but made s.to's Turnstile gate fail in 2 of 2 tries.
+- Browser contexts block service workers, and Playwright plugins abort heavy resources by type (image, font, stylesheet, media, text track) like the stealth context, instead of by file extension.
+- The shared Chromium restarts after 200 stealth pages once no page is open, since its memory grows with the pages it rendered.
+- Checked in production: kinoger's and moflix's challenges and s.to's gate (Turnstile with ALTCHA) pass with these settings; ddlvalley and scnsrc return the same results as before.
+
 ### Perf: Plugins Searched With the Titles of Their Languages
 - A stream request searched every plugin with the localised title, its base before a colon, and the TMDB original title and its base: "Matrix" and "The Matrix" doubled the fan-out (205 requests against 105 for Interstellar).
 - A recall check in production (12 titles, 13 plugins, `docs/plans/pi-performance.md`) measured the original-title queries at 23% of the search requests for 2 of 58 streams, both on one title. A plugin is now searched with the titles of its languages and their base titles only; the title matching still accepts results under the original title.
