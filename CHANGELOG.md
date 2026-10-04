@@ -62,7 +62,7 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ### Perf: Connections Stay Open Between Stream Requests
 - The shared HTTP client used httpx's defaults: idle connections closed after 5 s, at most 20 kept. One stream request talks to 18–42 hosts, so every pause between two requests closed them all, and the next request paid the TCP and TLS handshakes again, one or two round trips through the VPN each. TLS handshakes were 21% of the Python CPU (`docs/plans/pi-performance.md`).
-- Idle connections now stay open for 60 s, up to 100. A connect may take at most 5 s, so a host that does not answer no longer costs the full read timeout (`http.timeout_seconds`).
+- Idle connections now stay open for 60 s, at most 20 of them (httpx's default count). With 100 kept, production showed httpcore's pool scan, which runs for every request and finished response and is quadratic in the idle connections, holding the GIL 10–20% of the time during stream requests (2% before). A connect may take at most 5 s, so a host that does not answer no longer costs the full read timeout (`http.timeout_seconds`).
 - `http.http2` (`SCAVENGARR_HTTP_HTTP2`, off by default) offers HTTP/2, so the requests to one host share a connection. It needs `httpx[http2]` (h2). It is a switch because HTTP/2 is not faster per se; production measures it both ways.
 
 ### Feat: Event-Loop Lag in the Metrics

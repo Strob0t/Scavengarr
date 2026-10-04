@@ -104,6 +104,11 @@ log = structlog.get_logger(__name__)
 # connecting to a host may take at most this long
 _KEEPALIVE_S = 60.0
 _CONNECT_TIMEOUT_S = 5.0
+# At most this many idle connections (httpx's default). httpcore 1.0 scans
+# its whole pool for every request and every finished response, quadratic
+# in the idle connections: with 100 kept, the scan held the GIL 10-20% of
+# the time during stream requests on the Pi, 2% with httpx's defaults
+_KEEPALIVE_CONNECTIONS = 20
 
 
 def _auto_tune_concurrency(config: AppConfig) -> None:
@@ -245,11 +250,12 @@ def build_http_client(config: AppConfig) -> httpx.AsyncClient:
     and redirect hop to a non-public address is refused, except for the
     configured solver sidecar (``playwright.solver_url``).
 
-    Connections stay open for a minute between requests: one stream request
-    talks to 18-42 hosts, and with httpx's 5 s default every pause between
-    two requests closed them all (TLS handshakes were 21% of the Python CPU
-    on a Raspberry Pi). A host that does not answer fails after
-    ``_CONNECT_TIMEOUT_S`` instead of the full read timeout.
+    Idle connections stay open for a minute (up to
+    ``_KEEPALIVE_CONNECTIONS``): one stream request talks to 18-42 hosts,
+    and with httpx's 5 s default every pause between two requests closed
+    them all (TLS handshakes were 21% of the Python CPU on a Raspberry Pi).
+    A host that does not answer fails after ``_CONNECT_TIMEOUT_S`` instead
+    of the full read timeout.
     """
     rate_limiter = DomainRateLimiter(
         default_rps=config.rate_limit_requests_per_second,
@@ -260,7 +266,7 @@ def build_http_client(config: AppConfig) -> httpx.AsyncClient:
     )
     limits = httpx.Limits(
         max_connections=100,
-        max_keepalive_connections=100,
+        max_keepalive_connections=_KEEPALIVE_CONNECTIONS,
         keepalive_expiry=_KEEPALIVE_S,
     )
     solver_host = (

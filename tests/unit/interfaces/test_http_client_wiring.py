@@ -33,7 +33,9 @@ async def test_connections_stay_open_between_requests() -> None:
     try:
         pool = _pool(client)
         assert pool._keepalive_expiry == 60.0  # noqa: SLF001
-        assert pool._max_keepalive_connections == 100  # noqa: SLF001
+        # httpcore's pool scan is quadratic in idle connections: 100 cost
+        # 10-20% of the Python CPU of a stream request on the Pi
+        assert pool._max_keepalive_connections == 20  # noqa: SLF001
         assert pool._http2 is False  # noqa: SLF001
     finally:
         await client.aclose()

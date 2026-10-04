@@ -135,7 +135,7 @@ Order: build the measurement tools first and measure the current state, then imp
 | Area | Decision |
 |---|---|
 | Measurement | Script in `scripts/` (wall time, Python and Chromium CPU, httpx requests per host per stream request) and an event-loop lag metric in the app. py-spy also runs in production: `cap_add: SYS_PTRACE` on the container, py-spy run as root via exec |
-| Connections | `httpx.Limits` (keep-alive 60 s, 100 keep-alive slots), a separate connect timeout, HTTP/2 as a switch, measured with and without |
+| Connections | `httpx.Limits` (keep-alive 60 s, 100 keep-alive slots), a separate connect timeout, HTTP/2 as a switch, measured with and without. The keep-alive slots went back to httpx's 20: httpcore's pool scan is quadratic in idle connections and held the GIL 10–20% of the time with 100 (production, 2026-10-04) |
 | Event loop | `uvicorn[standard]` (uvloop, httptools), eager tasks and Python 3.14, all in one step |
 | Stremio cache | Search results per title or episode, with stale-while-revalidate and single-flight, in the `CachePort` (diskcache unless Redis is configured). Resolution stays fresh, because hoster links expire |
 | Answer | Partial results when a plugin hits its timeout. Once the cache exists, an early answer; the search goes on in the background and fills the cache |
