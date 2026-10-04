@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: moflix Without Results Behind a Stored Clearance
+- In production moflix returned 0 results on every search, without an error event. A restarted browser gets the stored clearance cookies (`ClearanceStore`), so it loaded moflix's API without a challenge and got 401 (`stealth_http_error`): the API (Laravel Sanctum) serves only requests that carry its site's Referer, and a page load sends one only in a challenge's reload. The browser fetch returned nothing, httpx never took over the session, and the host stayed in the browser memo for 30 min.
+- `StealthPool.fetch_text()` asks a URL that answers the page load with an error (no challenge) once more by in-page `fetch()` from that page, the way the site's own pages call their API. Reproduced at home with a second API load in one browser context (401); with the fix httpx takes over the session and the next searches run over httpx (1.4 s, 0.3 s).
+
 ### Fix: s.to Episode Streams Behind an Ad Layer
 - s.to gave no episode streams in production (`sto_link_gate_unsolved`). The browser's click on the hoster link box never reached it: s.to's ad script lays layers over the page (random class names, after a delay) that take the click, and Playwright waited until its click timeout ("<div …> subtree intercepts pointer events"). At home the layer showed up only now and then, in production on every try.
 - `StealthPool.click_through()` lets only its targets take pointer events (a stylesheet that stays until the page closes): the link box and the form of the Turnstile gate the click may bring up. The same layers cover that widget: with the stylesheet removed after the link-box click, production's gate failed with `turnstile_widget_unsolved` (the checkbox click: "<div class=\"edyaqwc\">… intercepts pointer events"), at home now and then. The widget's iframe sits in a closed shadow root and inherits the value of its host; checked in Chromium with such a widget under a layer. Live: Dark S01E01 through the gate in 5.8 s, the next episodes in 0.5–0.7 s.

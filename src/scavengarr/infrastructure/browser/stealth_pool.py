@@ -43,7 +43,8 @@ _BLOCKED_RESOURCE_TYPES = frozenset(
 _RETRY_STATUSES = frozenset({429, 502, 503, 504})
 _RETRY_BACKOFF_S: tuple[float, ...] = (2.0, 5.0, 10.0)
 
-# In-page fetch for non-HTML responses (null on HTTP error)
+# In-page fetch for non-HTML responses and URLs that refuse a page load
+# (null on HTTP error); it sends the page's URL as Referer
 _FETCH_RAW_JS = """async (url) => {
     const resp = await fetch(url, {credentials: "include"});
     return resp.ok ? await resp.text() : null;
@@ -319,7 +320,11 @@ class StealthPool:
         Implements ``BrowserFetcherPort``. HTML pages come back as rendered
         DOM; other types (JSON) are re-fetched in-page so the caller gets the
         raw body rather than Chrome's viewer markup. Same cookies and TLS
-        fingerprint as the cleared page.
+        fingerprint as the cleared page. A URL that answers the page load
+        with an error (no challenge) is asked once more by in-page fetch:
+        an API may serve only requests from its site's pages (moflix, Laravel
+        Sanctum: 401 without the site's Referer, which a page load lacks
+        unless a challenge's reload sends it).
         """
         timeout_ms = int(timeout * 1000)
         async with self._fetch_sem:
@@ -329,7 +334,7 @@ class StealthPool:
                 if not await self._navigate(
                     page, url, wait_until="domcontentloaded", timeout_ms=timeout_ms
                 ):
-                    return None
+                    return await page.evaluate(_FETCH_RAW_JS, url)
                 if not await solve_cloudflare(page, timeout_ms=timeout_ms):
                     return None
                 await self._remember(page)

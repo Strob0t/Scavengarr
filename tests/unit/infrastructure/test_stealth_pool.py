@@ -261,9 +261,10 @@ class TestStealthPoolFetchText:
             assert await pool.fetch_text("https://filmfans.org/x", timeout=10) is None
 
     async def test_http_error_without_challenge_returns_none(self) -> None:
+        # The in-page fetch gets the same 404
         shared_pool, _, context = _mock_pool_stack()
         context.new_page = AsyncMock(
-            return_value=_fetch_page(status=404, title="Not Found")
+            return_value=_fetch_page(status=404, title="Not Found", fetched=None)
         )
 
         text = await StealthPool(browser_pool=shared_pool).fetch_text(
@@ -271,6 +272,22 @@ class TestStealthPoolFetchText:
         )
 
         assert text is None
+
+    async def test_api_refusing_a_page_load_is_asked_in_page(self) -> None:
+        """moflix's API answers a request without its site's Referer with 401
+        (Laravel Sanctum). Only a challenge's reload sends one; production's
+        browser held a stored clearance, loaded the API directly and got 401
+        on every search (2026-10-04). The site's pages call it with fetch()."""
+        shared_pool, _, context = _mock_pool_stack()
+        page = _fetch_page(status=401, content_type="application/json", title="")
+        context.new_page = AsyncMock(return_value=page)
+
+        text = await StealthPool(browser_pool=shared_pool).fetch_text(
+            "https://moflix-stream.xyz/api/v1/search/x?query=x", timeout=10
+        )
+
+        assert text == '{"result": []}'
+        page.close.assert_awaited_once()
 
     async def test_navigation_error_returns_none(self) -> None:
         shared_pool, _, context = _mock_pool_stack()
@@ -332,7 +349,7 @@ class TestStealthPoolFetchText:
 
     async def test_rate_limit_gives_up_after_backoffs(self) -> None:
         shared_pool, _, context = _mock_pool_stack()
-        page = _fetch_page(title="Too Many Requests")
+        page = _fetch_page(title="Too Many Requests", fetched=None)
         page.goto = AsyncMock(return_value=MagicMock(status=429))
         context.new_page = AsyncMock(return_value=page)
 
