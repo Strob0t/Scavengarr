@@ -607,20 +607,17 @@ class TestStealthPoolClickThrough:
         page.context.cookies.assert_awaited_once_with(_EPISODE)
         page.close.assert_awaited_once()
 
-    async def test_only_the_link_box_takes_the_click(self) -> None:
+    async def test_only_the_link_box_and_gate_widget_take_clicks(self) -> None:
         """s.to's ad script lays layers over the page, under random class
         names and after a delay ("<div …> subtree intercepts pointer events",
-        2026-10-04). For the click nothing but the link box takes pointer
-        events; afterwards the page gets them back (the gate's widget)."""
+        2026-10-04): over the link box, then over the gate's Turnstile widget
+        the click brings up. Until the page closes nothing but these two
+        takes pointer events."""
         shared_pool, _, context = _mock_pool_stack()
         page, _ = _click_page(on_click=[["https://s.to/r?t=1", "https://voe.sx/e/a"]])
         context.new_page = AsyncMock(return_value=page)
         steps: list[str] = []
-        style = MagicMock()
-        style.evaluate = AsyncMock(side_effect=lambda *_a: steps.append("restore"))
-        page.add_style_tag = AsyncMock(
-            side_effect=lambda **_k: steps.append("isolate") or style
-        )
+        page.add_style_tag = AsyncMock(side_effect=lambda **_k: steps.append("isolate"))
         box = page.locator.return_value.first
         click = box.click.side_effect
 
@@ -636,10 +633,11 @@ class TestStealthPoolClickThrough:
             )
 
         assert result is not None
-        assert steps == ["isolate", "click", "restore"]
+        assert steps == ["isolate", "click"]
         css = page.add_style_tag.await_args.kwargs["content"]
         assert "* { pointer-events: none !important; }" in css
-        assert "button.link-box, button.link-box *" in css
+        targets = "button.link-box, form:has([name='cf-turnstile-response'])"
+        assert f":is({targets}), :is({targets}) *" in css
 
     async def test_ignores_offsite_pages_not_redirected_by_the_site(self) -> None:
         # Ad frames load other hosts directly or through their own redirects

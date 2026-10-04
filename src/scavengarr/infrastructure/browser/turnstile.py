@@ -111,6 +111,8 @@ async def _settle(page: Page) -> None:
 
 
 _WIDGET_TOKEN = "[name='cf-turnstile-response']"
+# The form around a gate's widget (s.to: a modal after a link-out click)
+WIDGET_FORM = f"form:has({_WIDGET_TOKEN})"
 _SUBMIT_JS = "form => form.requestSubmit()"
 
 
@@ -132,7 +134,7 @@ async def pass_turnstile_widget(page: Page, *, timeout_ms: int) -> bool:
     last_click: float | None = None
     while (now := _now()) < deadline:
         if await token.input_value():
-            await page.locator(f"form:has({_WIDGET_TOKEN})").first.evaluate(_SUBMIT_JS)
+            await page.locator(WIDGET_FORM).first.evaluate(_SUBMIT_JS)
             log.info("turnstile_widget_passed", url=page.url, clicked=bool(last_click))
             return True
         due = last_click is None or now - last_click >= _RECLICK_EVERY_S

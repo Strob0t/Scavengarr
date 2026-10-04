@@ -22,6 +22,7 @@ from patchright.async_api import Browser, BrowserContext, Page, Request, Route
 
 from scavengarr.domain.ports.browser_fetcher import BrowserSession, ClickThrough
 from scavengarr.infrastructure.browser.turnstile import (
+    WIDGET_FORM,
     is_challenge_page,
     pass_turnstile_widget,
     read_when_settled,
@@ -63,12 +64,13 @@ _NOT_MEDIA_RE = re.compile(r"thumbnail|sprite|preview", re.IGNORECASE)
 _CLICK_TIMEOUT_MS = 5_000
 _CLICK_POLL_MS = 300
 # Ad layers some sites put over the page (s.to: random class names, laid out
-# after a delay) take the first click: Playwright then waits until its click
-# timeout ("… subtree intercepts pointer events"). For the click only the
-# target takes pointer events, so the user-like click reaches it
+# after a delay) take the clicks: Playwright then waits until its click
+# timeout ("… subtree intercepts pointer events"). Only the targets take
+# pointer events, so the user-like click reaches them. A Turnstile iframe in
+# a closed shadow root inherits the value of its host, a target's descendant
 _TARGET_ONLY_CSS = (
     "* {{ pointer-events: none !important; }} "
-    "{selector}, {selector} * {{ pointer-events: auto !important; }}"
+    ":is({targets}), :is({targets}) * {{ pointer-events: auto !important; }}"
 )
 
 _MEDIA_AUTOPLAY_WAIT_S = 3.0
@@ -126,14 +128,12 @@ async def _allow_player_resources(route: Route) -> None:
 async def _click_clear_of_layers(page: Page, selector: str) -> None:
     """Click the first match of *selector*; no layer over it takes the click.
 
-    The page gets its pointer events back right after the click (a gate's
-    widget may follow).
+    The rule stays until the page closes: the layers cover the gate's widget
+    that the click may bring up as well, so the widget's form is a target too.
     """
-    style = await page.add_style_tag(content=_TARGET_ONLY_CSS.format(selector=selector))
-    try:
-        await page.locator(selector).first.click(timeout=_CLICK_TIMEOUT_MS)
-    finally:
-        await style.evaluate("s => s.remove()")
+    targets = f"{selector}, {WIDGET_FORM}"
+    await page.add_style_tag(content=_TARGET_ONLY_CSS.format(targets=targets))
+    await page.locator(selector).first.click(timeout=_CLICK_TIMEOUT_MS)
 
 
 async def _close_popup(popup: Page) -> None:
