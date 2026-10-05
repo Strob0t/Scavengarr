@@ -22,8 +22,9 @@ from __future__ import annotations
 
 import asyncio
 import re
-from html.parser import HTMLParser
 from urllib.parse import urljoin
+
+from selectolax.lexbor import LexborHTMLParser, LexborNode
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins import devideosrc
@@ -33,6 +34,7 @@ from scavengarr.infrastructure.plugins.categories import (
     served_category,
     stream_category,
 )
+from scavengarr.infrastructure.plugins.dom import ancestors, classes
 from scavengarr.infrastructure.plugins.episodes import filter_episodes
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.relevance import (
@@ -103,8 +105,8 @@ def _parse_release_text(text: str) -> tuple[str, list[str]]:
     return year, genres
 
 
-class _SearchResultParser(HTMLParser):
-    """Parse streamkiste.taxi DLE search result page.
+class _SearchResultParser:
+    """Parse streamkiste.taxi DLE search result page (selectolax).
 
     Each result is a card with structure like::
 
@@ -117,323 +119,106 @@ class _SearchResultParser(HTMLParser):
             <span class="icon-hd"></span>
           </div>
         </div>
+
+    A card inside another card belongs to the outer one. The last link of
+    a card's ``movie-title`` names the result, the last ``movie-release``
+    div gives its year and genres, the first ``icon-*`` span its quality.
     """
 
     def __init__(self, base_url: str) -> None:
-        super().__init__()
         self.results: list[dict[str, str | list[str] | bool]] = []
         self._base_url = base_url
 
-        self._in_card = False
-        self._card_div_depth = 0
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for card in tree.css("div.movie-preview.res_item"):
+            if not any(_is_card(parent) for parent in ancestors(card)):
+                self._add_card(card)
 
-        self._in_movie_title_div = False
-        self._movie_title_tag = ""
-        self._movie_title_div_depth = 0
-        self._in_title_a = False
-        self._current_title = ""
-        self._current_url = ""
-
-        self._in_release_div = False
-        self._release_text = ""
-
-        self._quality_badges: list[str] = []
-        self._year = ""
-        self._genres: list[str] = []
-
-    def _reset_card(self) -> None:
-        self._current_title = ""
-        self._current_url = ""
-        self._release_text = ""
-        self._quality_badges = []
-        self._year = ""
-        self._genres = []
-        self._in_movie_title_div = False
-        self._movie_title_tag = ""
-        self._movie_title_div_depth = 0
-
-    def _emit_card(self) -> None:
-        if not self._current_title or not self._current_url:
+    def _add_card(self, card: LexborNode) -> None:
+        title = url = ""
+        for link in card.css("div.movie-title a, span.movie-title a"):
+            href = link.attributes.get("href") or ""
+            if href:
+                url = urljoin(self._base_url, href)
+            title = (link.attributes.get("title") or link.text()).strip()
+        if not title or not url:
             return
 
-        year, genres = _parse_release_text(self._release_text)
-        if not self._year:
-            self._year = year
-        if not self._genres:
-            self._genres = genres
-
-        is_series = _detect_series(self._genres)
+        releases = card.css("div.movie-release")
+        year, genres = _parse_release_text(releases[-1].text() if releases else "")
+        badges = [
+            badge
+            for span in card.css("span")
+            for cls in classes(span)
+            if cls.startswith("icon-") and (badge := cls.replace("icon-", "").upper())
+        ]
 
         self.results.append(
             {
-                "title": _clean_title(self._current_title),
-                "url": self._current_url,
-                "genres": list(self._genres),
-                "year": self._year,
-                "quality": self._quality_badges[0] if self._quality_badges else "",
-                "is_series": is_series,
+                "title": _clean_title(title),
+                "url": url,
+                "genres": genres,
+                "year": year,
+                "quality": badges[0] if badges else "",
+                "is_series": _detect_series(genres),
             }
         )
 
-    def handle_starttag(  # noqa: C901
-        self,
-        tag: str,
-        attrs: list[tuple[str, str | None]],
-    ) -> None:
-        attr_dict = dict(attrs)
-        classes = (attr_dict.get("class") or "").split()
 
-        if tag == "div":
-            if self._in_card:
-                self._card_div_depth += 1
-                if "movie-title" in classes:
-                    self._in_movie_title_div = True
-                    self._movie_title_tag = "div"
-                    self._movie_title_div_depth = 0
-                elif self._in_movie_title_div:
-                    self._movie_title_div_depth += 1
-                if "movie-release" in classes:
-                    self._in_release_div = True
-                    self._release_text = ""
-            elif "movie-preview" in classes and "res_item" in classes:
-                self._in_card = True
-                self._card_div_depth = 0
-                self._reset_card()
-            return
-
-        if not self._in_card:
-            return
-
-        if tag == "a" and self._in_movie_title_div:
-            href = attr_dict.get("href", "") or ""
-            title_attr = attr_dict.get("title", "") or ""
-            if href:
-                self._current_url = urljoin(self._base_url, href)
-            self._in_title_a = True
-            self._current_title = title_attr or ""
-
-        if tag == "span":
-            if self._in_card and "movie-title" in classes:
-                self._in_movie_title_div = True
-                self._movie_title_tag = "span"
-                self._movie_title_div_depth = 0
-            for cls in classes:
-                if cls.startswith("icon-"):
-                    badge = cls.replace("icon-", "").upper()
-                    if badge:
-                        self._quality_badges.append(badge)
-
-    def handle_data(self, data: str) -> None:
-        if self._in_title_a and not self._current_title:
-            self._current_title += data
-
-        if self._in_release_div:
-            self._release_text += data
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "a" and self._in_title_a:
-            self._in_title_a = False
-            self._current_title = self._current_title.strip()
-
-        if (
-            tag == "span"
-            and self._in_movie_title_div
-            and self._movie_title_tag == "span"
-        ):
-            self._in_movie_title_div = False
-
-        if tag == "div":
-            if self._in_release_div:
-                self._in_release_div = False
-
-            if self._in_movie_title_div and self._movie_title_tag == "div":
-                if self._movie_title_div_depth > 0:
-                    self._movie_title_div_depth -= 1
-                else:
-                    self._in_movie_title_div = False
-
-            if self._in_card:
-                if self._card_div_depth > 0:
-                    self._card_div_depth -= 1
-                else:
-                    self._in_card = False
-                    self._emit_card()
+def _is_card(node: LexborNode) -> bool:
+    """Whether *node* is a search result card."""
+    names = classes(node)
+    return node.tag == "div" and "movie-preview" in names and "res_item" in names
 
 
-class _DetailPageParser(HTMLParser):
-    """Parse streamkiste detail page metadata.
+class _DetailPageParser:
+    """Parse streamkiste detail page metadata (selectolax).
 
     Stream links are not on the page itself; they come from the embedded
     devideosrc player (see ``scavengarr.infrastructure.plugins.devideosrc``).
 
     Metadata:
-    - Title from h1
-    - Year from .release text "(2026)"
+    - Title from the last h1
+    - Year from the first .release text "(2026)" with one
     - Genres from .categories a links
-    - Description from .info-right p
-    - IMDb rating from .average span
+    - Description from the last .info-right p
+    - IMDb rating from the last .average span with a number
     """
 
     def __init__(self, base_url: str) -> None:
-        super().__init__()
         self._base_url = base_url
-
-        # Metadata
         self.title = ""
         self.year = ""
         self.genres: list[str] = []
         self.description = ""
         self.imdb_rating = ""
 
-        # Title tracking (h1)
-        self._in_h1 = False
-        self._h1_text = ""
-
-        # Release text
-        self._in_release = False
-        self._release_tag = ""
-        self._release_text = ""
-
-        # Categories (.categories div with a links)
-        self._in_categories = False
-        self._categories_div_depth = 0
-        self._in_category_a = False
-        self._category_text = ""
-
-        # Description (.info-right p)
-        self._in_info_right = False
-        self._info_right_div_depth = 0
-        self._in_desc_p = False
-        self._desc_text = ""
-
-        # IMDb rating (.average)
-        self._in_average = False
-        self._average_div_depth = 0
-        self._in_average_span = False
-        self._average_text = ""
-
     @property
     def is_series(self) -> bool:
         return _detect_series(self.genres)
 
-    def handle_starttag(  # noqa: C901
-        self,
-        tag: str,
-        attrs: list[tuple[str, str | None]],
-    ) -> None:
-        attr_dict = dict(attrs)
-        classes = (attr_dict.get("class") or "").split()
-
-        # h1
-        if tag == "h1":
-            self._in_h1 = True
-            self._h1_text = ""
-
-        # Release: <div class="release"> or <span class="release">
-        if tag in ("div", "span") and "release" in classes:
-            self._in_release = True
-            self._release_tag = tag
-            self._release_text = ""
-
-        if tag == "div":
-            # Categories area
-            if self._in_categories:
-                self._categories_div_depth += 1
-            elif "categories" in classes:
-                self._in_categories = True
-                self._categories_div_depth = 0
-
-            # Info-right area
-            if self._in_info_right:
-                self._info_right_div_depth += 1
-            elif "info-right" in classes:
-                self._in_info_right = True
-                self._info_right_div_depth = 0
-
-            # Average rating area
-            if self._in_average:
-                self._average_div_depth += 1
-            elif "average" in classes:
-                self._in_average = True
-                self._average_div_depth = 0
-
-        # Category link inside .categories
-        if tag == "a" and self._in_categories:
-            self._in_category_a = True
-            self._category_text = ""
-
-        # Description paragraph inside .info-right
-        if tag == "p" and self._in_info_right:
-            self._in_desc_p = True
-            self._desc_text = ""
-
-        # Rating span inside .average
-        if tag == "span" and self._in_average:
-            self._in_average_span = True
-            self._average_text = ""
-
-    def handle_data(self, data: str) -> None:
-        if self._in_h1:
-            self._h1_text += data
-        if self._in_release:
-            self._release_text += data
-        if self._in_category_a:
-            self._category_text += data
-        if self._in_desc_p:
-            self._desc_text += data
-        if self._in_average_span:
-            self._average_text += data
-
-    def _end_div(self) -> None:
-        if self._in_categories:
-            if self._categories_div_depth > 0:
-                self._categories_div_depth -= 1
-            else:
-                self._in_categories = False
-
-        if self._in_info_right:
-            if self._info_right_div_depth > 0:
-                self._info_right_div_depth -= 1
-            else:
-                self._in_info_right = False
-
-        if self._in_average:
-            if self._average_div_depth > 0:
-                self._average_div_depth -= 1
-            else:
-                self._in_average = False
-
-    def handle_endtag(self, tag: str) -> None:  # noqa: C901
-        if tag == "h1" and self._in_h1:
-            self._in_h1 = False
-            self.title = _clean_title(self._h1_text)
-
-        if tag == self._release_tag and self._in_release:
-            self._in_release = False
-            text = self._release_text.strip()
-            m = re.search(r"\(?\b((?:19|20)\d{2})\b\)?", text)
-            # The film's .release comes first; related films below have their own
-            if m and not self.year:
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for h1 in tree.css("h1"):
+            self.title = _clean_title(h1.text())
+        # The film's .release comes first; related films below have their own
+        for release in tree.css("div.release, span.release"):
+            m = re.search(r"\(?\b((?:19|20)\d{2})\b\)?", release.text())
+            if m:
                 self.year = m.group(1)
-
-        if tag == "a" and self._in_category_a:
-            self._in_category_a = False
-            text = self._category_text.strip()
+                break
+        for link in tree.css("div.categories a"):
+            text = link.text().strip()
             if text:
                 self.genres.append(text)
-
-        if tag == "p" and self._in_desc_p:
-            self._in_desc_p = False
-            self.description = self._desc_text.strip()
-
-        if tag == "span" and self._in_average_span:
-            self._in_average_span = False
-            m = re.search(r"(\d+\.?\d*)", self._average_text.strip())
+        paragraphs = tree.css("div.info-right p")
+        if paragraphs:
+            self.description = paragraphs[-1].text().strip()
+        for span in tree.css("div.average span"):
+            m = re.search(r"(\d+\.?\d*)", span.text())
             if m:
                 self.imdb_rating = m.group(1)
-
-        if tag == "div":
-            self._end_div()
 
 
 class StreamkistePlugin(HttpxPluginBase):
