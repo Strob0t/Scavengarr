@@ -327,7 +327,7 @@ The composition root is where concrete implementations are wired together. It ru
 ### Initialization Order
 
 ```text
-0.  Telemetry + event-loop lag monitor, auto-tune concurrency (_auto_tune / _auto_tune_concurrency)
+0.  create_telemetry() (tracing only with telemetry.tracing_endpoint) + event-loop lag monitor, auto-tune concurrency (_auto_tune / _auto_tune_concurrency)
 1.  Cache via create_cache() (cleared on startup when environment == "dev")
 2.  httpx.AsyncClient with RetryTransport + DomainRateLimiter + PrivateAddressGuard; shared with HttpxPluginBase
 3.  PluginRegistry + discover() + per-plugin config overrides

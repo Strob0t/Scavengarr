@@ -125,7 +125,7 @@ flowchart LR
 
 ### Operations
 
-- Single container with Docker Compose; optional Byparr and Redis profiles
+- Single container with Docker Compose; optional Byparr, Redis and Tempo profiles
 - Health, readiness and metrics endpoints (`/api/v1/healthz`, `/api/v1/readyz`, Prometheus `/metrics` with a Grafana dashboard in `docker/`, `/api/v1/stats/metrics`)
 - Structured logs (JSON or console) with per-plugin context
 - Graceful shutdown that drains in-flight requests
@@ -159,6 +159,7 @@ Scavengarr reads `data/config.yaml` (mounted into the container) and the plugins
 |---|---|---|
 | `solver` | [Byparr](https://github.com/ThePhaseless/Byparr) captcha solver | uncomment `SCAVENGARR_PLAYWRIGHT_SOLVER_URL` |
 | `redis` | Redis as cache backend | uncomment `SCAVENGARR_CACHE_BACKEND`, `SCAVENGARR_CACHE_REDIS_URL` and `SCAVENGARR_CACHE_MAX_CONCURRENT` |
+| `tracing` | [Grafana Tempo](https://grafana.com/oss/tempo/) for traces on demand ([Observability](docs/features/observability.md)) | uncomment `SCAVENGARR_TELEMETRY_TRACING_ENDPOINT` |
 
 ```bash
 docker compose --profile solver --profile redis up -d --build

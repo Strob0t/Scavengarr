@@ -173,7 +173,7 @@ Step-by-step guides:
 | HTTP router, CLI, composition root | `src/scavengarr/interfaces/` (`composition.py`) |
 | Stremio addon | `src/scavengarr/interfaces/api/stremio/` |
 | Plugins | `plugins/` (generated list: `docs/plugins.md`, `scripts/generate_plugin_list.py`) |
-| Contributor guide, Docker Compose | `CONTRIBUTING.md`, `docker-compose.yml` (profiles `solver`, `redis`) |
+| Contributor guide, Docker Compose | `CONTRIBUTING.md`, `docker-compose.yml` (profiles `solver`, `redis`, `tracing`) |
 | Feature docs / architecture / plans | `docs/features/`, `docs/architecture/`, `docs/plans/` |
 | Refactor history | `docs/refactor/COMPLETED/` |
 | OpenSpec change specs | `openspec/changes/` |
