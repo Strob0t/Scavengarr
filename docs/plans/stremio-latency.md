@@ -172,7 +172,50 @@ The measurement harness (`scripts/stremio_measure.py --pause 30`, the 17 titles)
 
 **Play check** (`scripts/stremio_playcheck.py` inside the container, so from the VPN address like Stremio's server; the 17 titles once more, served from the search cache while it refreshed): 61 of 64 streams playable. The failures were CDN errors at that moment: moflix's FireStream and StreamUp segments 502 (the CDN did not answer the HLS proxy within 15 s), one fireani VOE segment without media bytes. MP4 streams answered in 0.45 s (median, seek included). HLS streams took 4.3 s to master, variant and two segment heads (median), but 15 of 56 took 15 s or more (aniworld's Vidmoly and VOE up to 46 s, a fireani VOE 84 s). Those times are mostly the CDNs answering through the VPN: Scavengarr's HLS proxy answered playlists in 0.6 s and segment heads in 0.23 s (median, its access log).
 
-The production logs of that evening showed four more resolver defects (FireStream ids with `-`, Playmate `/embed/` links, veev's redirect to another file code, moflix-stream.click's packed `hls2` URL), all fixed on `staging`; kinox's link-outs now sit behind an image captcha, and VOE denies some files to the VPN address. Details, the pending fifth round and the next options: `optimization-options.md`.
+The production logs of that evening showed four more resolver defects (FireStream ids with `-`, Playmate `/embed/` links, veev's redirect to another file code, moflix-stream.click's packed `hls2` URL), all fixed on `staging`; kinox's link-outs now sit behind an image captcha, and VOE denies some files to the VPN address. Details and the next options: `optimization-options.md`; the fifth round below measured the fixes.
+
+### Fifth round (2026-10-05, production on `staging` c4a6b6c)
+
+The harness and the 17 titles of the fourth round, after its fixes were deployed (each checked in the container). Changed environment: HTTP/2 off (`SCAVENGARR_HTTP_HTTP2=false`), every lookup of the VPN stack through gluetun's own DNS server over TLS with `BLOCK_MALICIOUS=off` (`stremio-addon.md`), and another exit address of the VPN (the same provider network, AS43350). A first attempt right after the stack's restart was dropped (load average 4.4, warm-up without streams); the round ran at a load below 1.2. Pass 1 searched (the titles' search-cache entries were deleted first), pass 2 followed at once from the search cache.
+
+| Pass | Median / max | Streams | Titles without stream |
+|---|---|---|---|
+| 1 (plugins search) | 11.1 / 14.0 s (fourth round 12.4 / 15.3 s) | 102 (48) | 0 / 17 (5 / 17) |
+| 2 (from the search cache) | 1.0 / 4.4 s (4.6 / 10.4 s) | 110 (64) | 0 / 17 (3 / 17) |
+
+- **Pass 1 phases** (from the log): the search ended at the soft deadline (7.0 s) in all 17 requests. megakino_to, whose site is down, was still running in every one, movie4k in 12; a plugin that delivers (kinoking, kinoger, s.to, hdfilme, fireani) in 13. The first stream came 1.2 s after the search (median of the 12 requests that resolved a new link; fourth round 1.4 s), the resolution took 4.1 s (median; 5.8 s).
+- **Streams per plugin**, pass 1 → 2: aniworld 27 → 27, filmpalast 15 → 15, kinoger 11 → 18, hdfilme 11 → 10, movie2k 10 → 10, moflix 10 → 10, megakino 6 → 6, einschalten 4 → 4, kinoking 3 → 3, fireani 3 → 3, s.to 2 → 4. kinoger, einschalten and moflix's own players delivered nothing in the fourth round.
+- **Late plugins** added results to 8 of the 17 cache entries (kinoking for movies, kinoger and s.to for series): pass 2's extra streams.
+- **Pass 2** answered in 0.0–1.8 s, except 5 requests at 4.1–4.4 s: a link resolved for the first time or again (a VOE link, a Filemoon half-open probe) held the answer for `resolve_grace_seconds`.
+
+**Hosters** (both passes):
+- **Circuit breaker open:** Dropload (since the warm-up; 28 skipped links) and Filemoon (24). No Filemoon or Byse capture finished inside the grace. Production's `http.timeout_resolve_seconds` is 10 s (`data/config.yaml`), so a cut counts as a failure from 5 s on: two Byse captures cut at 6.0 s in one request completed the five failures (the others came from requests before the round). moflix-stream.link's Byse player (7600a06) therefore delivers nothing on the Pi. A half-open probe is cut by the grace before 5 s, reports nothing and runs again after each cooldown, which never doubles; in the CPU measurement below one probe cost 6.3 s of Chromium.
+- **DoodStream** resolves from the new exit: 9 streams (dood 2, playmogo 7), 4 offline files, 2 unplayable. **mixdrop** resolves again (its CDN's address is no longer blocked): 1 stream, 5 offline files.
+- **VOE:** 18 resolved, 12 failed (7 with no working method, among them the files denied in the fourth round; 5 dead files).
+- **SuperVideo:** 13 of 13 failed. Its CDN (serversicuro.cc) answers the playlist URL with a "Loading..." page whose script redirects to the same URL with a `js` token (and sets a `sid` cookie), and a HEAD with a 302 to an ad domain whose connection fails; the resolver's HEAD check logs `supervideo_video_verify_error`. Following the redirect without a browser led to another CDN host (302); further steps are untested, because the CDN then answered the probes with 429.
+- veev: 1 resolved, 3 offline files. Vidmoly: 12 resolved.
+
+**Plugins without results:** megakino_to and movie4k (Cloudflare 522) and kinox (503 retries, the captcha gate before its links) gave 0 results in 36, 23 and 36 searches (`/api/v1/stats/metrics`), on average 15.0, 15.0 and 3.8 s per search; kinox sent 6–14 requests per search. megakino_to's breaker stayed closed (4 failures): its searches end empty after the plugin's own fetch timeouts, and an empty answer neither counts nor resets. kinoking took 8.5 s on average, and 10 of its 36 searches did not finish; its breaker for movies was open at the end of the round.
+
+**Play check** (inside the container): 107 of 110 streams playable. The failures were CDN errors: segments answered 502 for one moflix FireStream and two StreamUp streams (kinoger, moflix). MP4 streams answered in 0.40 s (median of 42), HLS streams in 2.2 s (median of 68; fourth round 4.3 s); 4 HLS streams took 15 s or more (fourth round 15 of 56).
+
+**CPU per request** (`scripts/stremio_profile.py --py-spy`, the three titles of `pi-performance.md`, two passes with their search-cache entries deleted before each, as in its final measurement):
+
+| | Final measurement of `pi-performance.md` | Fifth round |
+|---|---|---|
+| Wall | 11.3 s | 8.0 s |
+| Python CPU | 2.55 s | 2.47 s |
+| Chromium CPU | 11.3 s | 6.7 s (13.3 s in the first pass, 0 s in the second, whose links all came from the resolution cache) |
+| Python on the GIL (py-spy) | 1.13 s | 1.26 s |
+| Event-loop lag p99 / max | 40 / 60 ms | 73 / 224 ms |
+| httpx requests | 53 | 49 |
+| Streams | 4.7 | 6.7 |
+| From the search cache: wall, Python, Chromium | 4.2 s, 0.9 s, 10.1 s | 1.4 s, 0.22 s, 2.6 s (one Filemoon probe 6.3 s, the other answers 0–1.6 s) |
+
+- `html.parser` took 34% of the GIL samples (0.43 s per request; 0.20 s in the final measurement), almost all of it in worker threads (`_feed()`); 0.8% ran on the event loop. More working plugins parse more pages.
+- A single pass right after the play check measured more (4.2 s Python, 16.2 s Chromium per request, three requests); the repeat above follows the final measurement's method.
+
+**Evaluation:** the fixes doubled the streams of a first request, left no title without a stream, cut the cached answer from 4.6 to 1.0 s and the Chromium CPU per request by 40%. A first answer is now held by the structure: the soft deadline (7 s, reached in every request) and the resolve grace (4 s). The options that follow from it: `optimization-options.md`.
 
 ## AIOStreams
 

@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Measured: Fifth End-to-End Round
+- Production with the fixes below, the 17 titles of `stremio_measure.py` (`docs/plans/stremio-latency.md`, fifth round): median 11.1 s while the plugins search (was 12.4 s) with 102 streams (48) and none of the titles without a stream (5 of 17); 1.0 s from the search cache (4.6 s) with 110 streams, 107 of them playable from the VPN address.
+- CPU per stream request (3 titles, the plugins searching again): Chromium 6.7 s instead of 11.3 s, Python unchanged at 2.5 s for 6.7 streams instead of 4.7; from the search cache Chromium 2.6 s instead of 10.1 s.
+- Still open (`docs/plans/optimization-options.md`): every first answer waits for the soft deadline (megakino_to, whose site is down, still ran in all 17 requests), Filemoon's half-open probes repeat without a longer cooldown, and SuperVideo's CDN answers with a script redirect (13 of 13 links failed).
+
 ### Perf: moflix Fetches Relevant Titles Only
 - moflix's search lists people next to titles (19 of 20 hits for "Oppenheimer"), and the plugin asked the title API for every hit: 46 answers 404 in the end-to-end test of 2026-10-04, and a person's id can be another title's ("Alan Oppenheimer" fetched a children's film).
 - It now fetches titles only, and only the relevant ones (`relevant_hits()`, at most 3 for a season or episode request), as the other plugins do.

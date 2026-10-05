@@ -1,41 +1,44 @@
 # Optimization options after the performance plan
 
-Status: proposal (2026-10-04). Nothing here is decided. It follows the performance plan (`pi-performance.md`) and the end-to-end rounds in `stremio-latency.md`; evidence is from production (Raspberry Pi 4 behind a VPN), its logs and probes, and web research (sources inline).
+Status: proposal (2026-10-04, updated after the fifth end-to-end round on 2026-10-05). Nothing here is decided. It follows the performance plan (`pi-performance.md`) and the end-to-end rounds in `stremio-latency.md`; evidence is from production (Raspberry Pi 4 behind a VPN), its logs and probes, and web research (sources inline).
 
 ## Where the time goes
 
-First requests (the plugins search), production, fourth round, before the fixes of that evening:
+First requests (the plugins search), production, fifth round (`stremio-latency.md`), with every fix of the fourth round deployed:
 
 | Phase | Median | Range | What decides it |
 |---|---|---|---|
-| Search | 7.0 s | 7.0–7.0 s | The soft deadline (`search_soft_deadline_seconds`): every request had a plugin still running. The slow ones rarely deliver: kinoking 13.4 s on average, movie4k 13.4 s, megakino_to 13.1 s, kinoger 17.0 s. The plugins that deliver average 1.0–4.7 s (aniworld 1.0, fireani 1.5, megakino 1.5, filmpalast 2.0, moflix 2.6, hdfilme 4.0, movie2k 4.1, s.to 4.7). |
-| Resolve | 5.8 s | 3.5–8.2 s | The first playable stream 1.4 s after the search (median), then `resolve_grace_seconds` (4 s) for the others. |
-| Answer | 12.4 s | max 15.3 s | Search + resolve. From the search cache: 4.6 s (resolution only). |
+| Search | 7.0 s | 7.0–7.1 s | The soft deadline (`search_soft_deadline_seconds`), reached in all 17 requests. megakino_to (site down) was still running in every one, movie4k (site down) in 12, a plugin that delivers in 13: kinoking (8.5 s on average), kinoger (4.5 s, cut in 7), s.to (4.0 s, cut in 5), hdfilme, fireani. The other plugins that deliver average 1.0–2.9 s (aniworld 1.0, einschalten 1.3, fireani 1.3, movie2k 1.6, megakino 2.0, moflix 2.0, filmpalast 2.1, hdfilme 2.9). |
+| Resolve | 4.1 s | 1.3–6.8 s | The first stream 1.2 s after the search (median), then `resolve_grace_seconds` (4 s) for the others. |
+| Answer | 11.1 s | max 14.0 s | Search + resolve (fourth round 12.4 s). From the search cache 1.0 s (median); 5 of 17 cached answers waited for the grace (4.1–4.4 s) for a link resolved for the first time or again. |
 
-- CPU per request before the hoster breaker: Chromium about 10 s (hoster pages run in the browser, most of them never delivered), Python 2.5 s, of it 1.1 s on the GIL.
-- Plugin yield over two hours of production (`/api/v1/stats/metrics`): no result from kinoger (17 searches), megakino_to (21), movie4k (27), kinox (39) and einschalten (50); haschcon 2 of 50.
+- Yield: 102 streams in the first pass (fourth round 48) and 110 from the cache (64); every title had a stream. Play check: 107 of 110 playable, the failures CDN errors.
+- CPU per first request: Python 2.47 s (1.26 s on the GIL), Chromium 6.7 s (13.3 s in a pass with new links, mostly kinoger's Cloudflare solve and DoodStream captures; 0 s when every link comes from the resolution cache). From the search cache: Python 0.22 s, Chromium 2.6 s. The final measurement of the performance plan had 2.55 s, 1.13 s and 11.3 s; from the cache 0.9 s and 10.1 s.
 
 ## Since the fourth round
 
-**Fixed on `staging`, not yet in production** (each with tests; found in the fourth round and in the production logs of the same evening):
+**Fixed, in production since 2026-10-05** (each with tests; found in the fourth round and in the production logs of the same evening):
 
-| Commit | Finding |
-|---|---|
-| fb3ad00 | The circuit breaker counted the early answer's cut against plugins that run on (kinox opened for movies). |
-| fa2e58f | Circuit breaker per hoster resolver: 50 DoodStream and Dropload browser captures in an hour, none delivered. |
-| 7600a06, 4af38f5 | moflix's own players failed 15 of 15: moflix-stream.click has no `/e/` route and packs its URLs as `links={"hls2":…}`; moflix-stream.link is a Byse (Filemoon) player. |
-| e9b1ba1 | moflix fetched title details for people (19 of 20 hits for "Oppenheimer"; 184 answers 404 in three hours). |
-| 65077ba | FireStream ids with `-` were rejected; their pages play. |
-| 5bd2e43 | Playmate player-frame links (`/embed/`) were rejected. |
-| c4a6b6c | veev redirects links to another file code; the API answered the old one "malformed request" (3 of 3 failed links resolve now). |
+| Commit | Finding | Fifth round |
+|---|---|---|
+| fb3ad00 | The circuit breaker counted the early answer's cut against plugins that run on (kinox opened for movies). | Late plugins added results to 8 of 17 cache entries; kinox's breaker stayed closed. |
+| fa2e58f | Circuit breaker per hoster resolver: 50 DoodStream and Dropload browser captures in an hour, none delivered. | Dropload and Filemoon open (52 skipped links in two passes); Chromium per cached answer 2.6 s instead of 10.1 s. Filemoon's probes are a trade-off (below). |
+| 7600a06, 4af38f5 | moflix's own players failed 15 of 15: moflix-stream.click has no `/e/` route and packs its URLs as `links={"hls2":…}`; moflix-stream.link is a Byse (Filemoon) player. | moflix: 10 streams (VidHide, FireStream, StreamUp, Veev; 6 in the fourth round); the Byse player none. |
+| e9b1ba1 | moflix fetched title details for people (19 of 20 hits for "Oppenheimer"; 184 answers 404 in three hours). | No 404 from moflix's title API. |
+| 65077ba | FireStream ids with `-` were rejected; their pages play. | FireStream streams from filmpalast and moflix. |
+| 5bd2e43 | Playmate player-frame links (`/embed/`) were rejected. | 2 Playmate streams (filmpalast). |
+| c4a6b6c | veev redirects links to another file code; the API answered the old one "malformed request" (3 of 3 failed links resolve now). | 1 resolved, 3 offline files, no "malformed request". |
 
 **Site and environment state** (no code fix):
-- **kinox** puts its link-outs (`/redirect/<hash>`) behind a "Verifizierung" page: a reload loader (an XOR-obfuscated `setTimeout(reload, 100)`), then an image-selection captcha. The plugin finds titles and hosters but no links: 0 results in 39 searches, `kinox_no_hoster_links` 23 times in three hours.
-- **VOE** denies 7 files to the VPN address ("File access denied"); all 7 resolve from the home network.
-- **mixdrop's CDN** is refused by gluetun's DNS (its malicious IP list holds 168.80.0.0/15); the production compose turns `BLOCK_MALICIOUS` off and keeps every lookup in the tunnel (gluetun's own DNS server over TLS; a LAN resolver as upstream would send them outside the tunnel) (`stremio-addon.md`, "Behind a VPN container").
-- moflix-stream.click's CDN (dramiyos-cdn.com) did not answer from the home network within 20 s; from production untested.
+- **kinox** puts its link-outs (`/redirect/<hash>`) behind a "Verifizierung" page: a reload loader (an XOR-obfuscated `setTimeout(reload, 100)`), then an image-selection captcha. The plugin finds titles and hosters but no links: 0 results in 36 searches of the fifth round, 6–14 requests and 503 retries per search.
+- **megakino_to, movie4k:** Cloudflare 522 (origin down), 15 s per search, no result.
+- **VOE** denies some files to the VPN address ("File access denied"); they resolve from the home network.
+- **SuperVideo's CDN** answers the playlist URL with a script redirect (a "Loading..." page with a `js` token) and a HEAD with a redirect to an ad domain: 13 of 13 links failed in the fifth round (details in `stremio-latency.md`).
+- **mixdrop's CDN** was refused by gluetun's DNS (its malicious IP list holds 168.80.0.0/15); the production compose turns `BLOCK_MALICIOUS` off and keeps every lookup in the tunnel (gluetun's own DNS server over TLS; a LAN resolver as upstream would send them outside the tunnel) (`stremio-addon.md`, "Behind a VPN container"). mixdrop streams resolve and play since.
+- **The VPN's exit address** was another one of the same provider network (AS43350) in the fifth round. kinoger's Turnstile and DoodStream passed from it (both failed in the fourth round); whether the address or the sites changed is unknown. moflix-stream.click's CDN, slow from the home network, played from production (4 of 4 VidHide streams).
+- **Filemoon/Byse captures** take longer than the resolve grace on the Pi: none finished in the fifth round, so the hoster breaker keeps Filemoon open. Its half-open probe is cut by the grace before half the resolve timeout (production: 10 s), reports nothing and runs again after every cooldown, which does not double (option 5).
 
-**Fifth round: pending.** Production lost its network on the evening of 2026-10-04: the VPN container was recreated, the 17 containers that share its network were not (they kept the dead namespace: `lo` only). It was still offline on 2026-10-05 at 07:08 UTC, so the fixes above and the option estimates below are not measured in production yet. The round, once the containers are recreated with a build of `staging`: clear the 17 titles' search-cache entries, `scripts/stremio_measure.py --pause 30` twice (searching, then from the cache), `scripts/stremio_playcheck.py` inside the container, `scripts/stremio_profile.py --py-spy` for the CPU per request.
+**Fifth round** (2026-10-05, details in `stremio-latency.md`): first answers in 11.1 s (median; fourth round 12.4 s) with 102 streams (48) and no title without a stream (5 of 17); cached answers in 1.0 s (4.6 s) with 110 streams (64); 107 of 110 playable. Chromium per first request 6.7 s (11.3 s), Python unchanged at 2.5 s for 6.7 streams per request (4.7). What holds a first answer now is the structure: the soft deadline, reached in every request, and the resolve grace. Options 1–5 and 9 address it.
 
 ## Research findings
 
@@ -60,20 +63,24 @@ First requests (the plugins search), production, fourth round, before the fixes 
 
 | # | Option | Effect | Effort | Risk | Recommendation |
 |---|---|---|---|---|---|
-| 1 | Production config: disable the plugins that deliver nothing from the VPN (kinox, kinoger, megakino_to, movie4k) | No stream lost (0 results in 2 h); saves kinoger's browser solve per half-open probe (about 30 s of Chromium), the 13 s timeouts and kinox's 2.2 s plus its gated link-outs | config | A site that comes back stays off until re-enabled | Do |
-| 2 | Plugins predicted to miss the soft deadline do not hold the answer | Search phase 7 s → about 4–5 s (the delivering plugins' averages): answer about 2–3 s sooner | S–M | A slow plugin's results reach only the next request, as today for most | Do |
-| 3 | Re-resolvable stream links for binge and resume | Binge plays the next episode's stream object fetched one episode earlier, resume replays objects days old; proxy links expire after 2 h (`stream_link_ttl_seconds`), direct CDN links with their tokens | M | Longer-lived link entries in the cache | Do |
-| 4 | `Cache-Control: private, max-age` on stream answers (shorter than the shortest link lifetime; 60 s for empty answers) | Reopening a title in Stremio web or desktop comes from the client's cache | S | None with a short max-age; no effect through AIOStreams | Do |
-| 5 | Persist the circuit breakers across restarts | No relearning after each deploy or watchtower update (5 timeouts per dead plugin and category, each up to the hard deadline) | S | A stale open state; the half-open probes still run | Do |
-| 6 | Shorter resolve grace (4 → 2–3 s) | 1–2 s per first request | config | Fewer streams per answer; A/B in production after the hoster breaker | Measure |
-| 7 | Headless Chromium for hoster pages without a challenge, headful only for challenges | Up to about half of the browser CPU (vendor figure) | M | A hoster may detect headless; measure on the Pi first | Measure |
-| 8 | Block resources through CDP instead of `page.route()` | Keeps the HTTP and V8 code cache (inference) | S–M | Little; measure first | Measure |
-| 9 | Resolve while plugins still search | First stream at the search end instead of 1.4 s after it; with 2 an answer at about 7–8 s | M–L | More resolutions per request (load on hosters), complexity in the use case | Later |
-| 10 | Lazy play links: answer after the search, resolve on click (hybrid: only for hosters that resolved recently) | First answer at the search end (4–7 s), from the cache near-instant; binge and resume links stay valid | L | Dead links listed; resolution at click (browser hosters 5–15 s); HLS must stay a proxied playlist (Android redirect bug); every client request must hit a cached, merged resolution | Design spike |
-| 11 | VPN exit with a better reputation (German or residential) | VOE files denied to the VPN play; Turnstile of kinoger and DoodStream may pass | user infrastructure | Cost and privacy | User decision |
-| 12 | httpx2 (httpcore2 without the quadratic pool scan) | Allows more idle connections again; GIL share of the pool unmeasured since keep-alive 20 | S | respx cannot mock it yet: the resolver tests break | Wait |
-| 13 | ChaCha20 first for TLS 1.3 (OpenSSL config in the image) | Less decryption CPU on the Pi 4 where servers honor the client's order; matters for the HLS proxy | S | Untested | Measure |
-| 14 | Next-episode background search | Stremio's player already asks for the next episode when the current one starts; helps manual picks and AIOStreams' 7 s window | S–M | One more fan-out per episode | Optional |
-| 15 | Remaining `html.parser` pages to lexbor | 0.2 s on the GIL per request | M | Parser rewrites per plugin | Low priority |
+| 1 | Production config: disable the plugins that deliver nothing from the VPN (kinox, megakino_to, movie4k) | 0 results in 36, 23 and 36 searches of the fifth round; 4 of 17 first answers were held to the soft deadline by megakino_to and movie4k alone; saves kinox's 6–14 requests and 503 retries per search | config | A site that comes back stays off until re-enabled. kinoger, on this list before, delivers now (18 streams from the cache) | Do |
+| 2 | Dead sites trip the plugin breaker: a search that ends empty after fetch errors (timeouts, 5xx) counts as failing | `_safe_fetch()` and `_fetch_text()` turn fetch errors into an empty answer, and an empty answer neither counts nor resets: megakino_to's breaker stayed closed after 36 empty searches. With it, the breaker does option 1's work, and its half-open probes notice a site that is back | S–M | A site that fails one page but answers others; count only errors on the search request | Do |
+| 3 | Plugins predicted to miss the soft deadline do not hold the answer | The search ends at the soft deadline in every first request; the plugins that deliver average 1.0–4.5 s, kinoking 8.5 s: answer about 2–3 s sooner | S–M | A slow plugin's results reach only the next request, as today for most | Do |
+| 4 | Soft deadline 7 → 5 s (`search_soft_deadline_seconds`) | The cheap form of 3: 2 s off every first answer | config | kinoger (4.5 s on average, cut in 7 of 17 at 7 s) and s.to reach the first answer less often; their results still fill the cache. Measure with the harness | Measure |
+| 5 | Half-open hoster probes run to their end in the background and report | An open hoster's probe (Filemoon) is cut by the grace before half the resolve timeout, reports nothing and runs again after every cooldown, which stays at 60 s: each probe holds a cached answer up to 4 s and costs about 6 s of Chromium. Run to its end, it reopens the breaker with twice the cooldown or caches a stream for the next request | S–M | One background resolution per open hoster and cooldown; it must end at shutdown | Do |
+| 6 | Re-resolvable stream links for binge and resume | Binge plays the next episode's stream object fetched one episode earlier, resume replays objects days old; proxy links expire after 2 h (`stream_link_ttl_seconds`), direct CDN links with their tokens | M | Longer-lived link entries in the cache | Do |
+| 7 | `Cache-Control: private, max-age` on stream answers (shorter than the shortest link lifetime; 60 s for empty answers) | Reopening a title in Stremio web or desktop comes from the client's cache | S | None with a short max-age; no effect through AIOStreams | Do |
+| 8 | Persist the circuit breakers across restarts | No relearning after each deploy or watchtower update (5 timeouts per dead plugin and category, each up to the hard deadline) | S | A stale open state; the half-open probes still run | Do |
+| 9 | Shorter resolve grace (4 → 2–3 s) | The resolution takes 4.1 s (median): the first stream 1.2 s after the search, then the grace; 5 of 17 cached answers waited for it (4.1–4.4 s against 0.0–1.8 s) | config | Fewer streams per answer (browser hosters need 3–7 s); A/B in production | Measure |
+| 10 | SuperVideo: follow its CDN's script redirect without a browser (GET the playlist URL, take the `window.location.replace` target, check for `#EXTM3U`) | 13 of 13 SuperVideo links failed in the fifth round | S | Untested past the first redirect (the CDN answered the probes with 429); the token may be bound to the `sid` cookie or the address, and a player would need the HLS proxy | Probe first |
+| 11 | Headless Chromium for hoster pages without a challenge, headful only for challenges | Up to about half of the browser CPU (vendor figure); Chromium is 6.7 s per first request, 13.3 s with new links | M | A hoster may detect headless; measure on the Pi first | Measure |
+| 12 | Block resources through CDP instead of `page.route()` | Keeps the HTTP and V8 code cache (inference) | S–M | Little; measure first | Measure |
+| 13 | Resolve while plugins still search | First stream at the search end instead of 1.2 s after it; with 3 an answer at about 7–8 s | M–L | More resolutions per request (load on hosters), complexity in the use case | Later |
+| 14 | Lazy play links: answer after the search, resolve on click (hybrid: only for hosters that resolved recently) | First answer at the search end (4–7 s), from the cache near-instant; binge and resume links stay valid | L | Dead links listed; resolution at click (browser hosters 5–15 s); HLS must stay a proxied playlist (Android redirect bug); every client request must hit a cached, merged resolution | Design spike |
+| 15 | VPN exit with a better reputation (German or residential) | VOE files denied to the VPN play; SuperVideo's CDN may skip its script check. From the fifth round's exit address kinoger's and DoodStream's Turnstile already pass | user infrastructure | Cost and privacy | User decision |
+| 16 | httpx2 (httpcore2 without the quadratic pool scan) | Allows more idle connections again; GIL share of the pool unmeasured since keep-alive 20 | S | respx cannot mock it yet: the resolver tests break | Wait |
+| 17 | ChaCha20 first for TLS 1.3 (OpenSSL config in the image) | Less decryption CPU on the Pi 4 where servers honor the client's order; matters for the HLS proxy | S | Untested | Measure |
+| 18 | Next-episode background search | Stremio's player already asks for the next episode when the current one starts; helps manual picks and AIOStreams' 7 s window | S–M | One more fan-out per episode | Optional |
+| 19 | Remaining `html.parser` pages to lexbor | 0.43 s on the GIL per first request (34% of the samples; 0.20 s in the final measurement of the performance plan), in worker threads, so the event loop only waits for the GIL (lag p99 73 ms) | M | Parser rewrites per plugin | Low priority |
 
 Not recommended now: a scheduled warm-up of top lists (Comet's approach) costs the Pi a fan-out per title for one viewer; a Byparr/FlareSolverr sidecar does not fix the VPN address's reputation and burns the same Chromium CPU; Python's JIT and free-threading give a few percent at most on ARM.
