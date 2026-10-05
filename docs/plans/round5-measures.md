@@ -23,7 +23,7 @@ Decisions 9 and 10 came the same day, after the maintainer asked for more time p
 
 Order: 3, 5, 6 (small, independent), then 4, 1, 2 with 9 (the request flow), then 10, then 7, then the metrics. Each measure is test-driven, committed on its own and documented with the code. A sixth round measures 1–6, 9 and 10 in production.
 
-Done: 3 (1b7e01f), 5 (7ec1a5c), 6 (a3b7f50), 4 (20d27c5), 1 (a953721), 2 and 9 (71602d4), 10 (fa9194f). In progress: 7 (kinoger 2322933, s.to 64a3801).
+Done: 3 (1b7e01f), 5 (7ec1a5c), 6 (a3b7f50), 4 (20d27c5), 1 (a953721), 2 and 9 (71602d4), 10 (fa9194f), 7 (2322933 to fc8948b, one commit per plugin).
 
 ## 1. Plugin health check
 
@@ -114,7 +114,13 @@ The backend saves about a quarter of the proxy's CPU (15–27% across the runs).
 
 **Tests.** Unchanged plugin tests and real-page tests pass for every migrated plugin; a parse benchmark on the real pages before and after.
 
-**Verification.** Every parser input of the test suite and of live searches of all plugins (three titles each; mygully and myboerse need accounts the dev container lacks) was recorded on the base commit fa9194f: the class, its constructor arguments and the fed HTML. A replay parses each unique input with the old and the new parser and compares their public state. A migration counts only with every input identical. kinoger: 24 inputs identical, big pages 77 -> 6.3 ms (detail) and 32 -> 2.1 ms (search) on x86; s.to: 21 inputs identical, about 11 times faster.
+**Verification.** Every parser input of the test suite and of live searches of all plugins (three titles each; mygully and myboerse need accounts the dev container lacks) was recorded on the base commit fa9194f: the class, its constructor arguments and the fed HTML. A replay parses each unique input with the old and the new parser and compares their public state. A migration counts only with every input identical. kinoger and s.to set the pattern; the other plugins went to one subagent each, with the replay as acceptance test, and each diff was reviewed before its commit.
+
+**Result.** 28 plugins and the XenForo base. 2,989 of the 2,990 unique recorded inputs give identical results; the other is a description whose `\r\n` became `\n` (HTML5 input preprocessing, a fallback text that page does not use). Most migrations were also compared on fresh live pages (hundreds of pages; mygully and myboerse on synthetic pages). The recorded big pages (from 20 KB) took 17.4 s with html.parser and 1.6 s with selectolax on x86 (ddlvalley 7.0 -> 0.72 s, XenForo threads 4.0 -> 0.27 s, scnlog 4.2 -> 0.37 s, kinoger 109 -> 8 ms, s.to 81 -> 7 ms). Every page goes through `parse_page()` (`dom.py`): 17 plugins had parsed on the event loop.
+
+**Pitfalls found** (in `dom.py` and python-plugins.md): `LexborNode.__eq__` compares serialized HTML; a group selector returns a node once per matching part; `css_matches()` tests the subtree; class and `#id` selectors ignore case without a doctype.
+
+**Bugs found** (old behaviour the replays reproduced; fixed separately, with tests): aniworld's full description, streamkiste's year, genres and rating, kinox's year from a related entry, byte's empty film/series/book searches (`c=` lists no subgroups), warezomen's pagination row, hdsource's older posts (a quarter of the hits), scnsrc's awards line as title, jjs's part size as size.
 
 ## 9. Answer at 5 streams, when done, at most 60 s
 

@@ -6,6 +6,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Perf: Plugin Parsers on selectolax
+- Every plugin parser (28 plugins and the XenForo base of dataload and myboerse) reads pages with selectolax (lexbor, C) and CSS selectors instead of `html.parser` state machines in Python, which held the GIL for every page (34% of the GIL samples of a Stremio request on the Raspberry Pi, 0.43 s per first request).
+- Results stay the same: every parser input of the test suite and of live searches of all plugins was recorded on the base commit, and 2,989 of the 2,990 unique inputs give identical results (the other keeps a description's line breaks as `\n`, as HTML5 does). The recorded big pages (from 20 KB) parse in 1.6 instead of 17.4 s on x86.
+- Every page goes through `parse_page(parser, html)` (`infrastructure/plugins/dom.py`), which parses pages from 32 KiB in a worker thread; `HttpxPluginBase._feed()` is gone, and 17 plugins (5 on Playwright) no longer parse on the event loop. `docs/features/python-plugins.md` ("Parsing Pages") has the pattern and selectolax's pitfalls.
+- The migration found the bugs fixed under "Plugin Selectors That Missed the Live Theme".
+
 ### Fix: Plugin Selectors That Missed the Live Theme
 - Found while moving the parsers to selectolax (their results stay identical otherwise). aniworld: the current theme names the plot in `<p class="seri_des" data-full-description>`, the parser read `div.seri_des` only, so every result had the short search-API description instead of the full plot.
 - streamkiste: search cards name year and genres in `span.movie-release` (the parser read `div.movie-release`), so hits had neither, and series were not told from films before their detail page; the IMDb rating sits in `span.average` inside the IMDb link (the parser read `div.average span`), so it was always empty.

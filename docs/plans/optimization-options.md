@@ -1,6 +1,6 @@
 # Optimization options after the performance plan
 
-Status: proposal (2026-10-04, updated after the fifth end-to-end round on 2026-10-05). Decided on 2026-10-05 for the fifth round's findings: `round5-measures.md` (health check instead of options 1 and 2, resolution during the search (13), half-open probes that report (5), cached answers without waiting, SuperVideo (10), an asyncio network backend instead of ChaCha20 (17, measured useless), selectolax for every plugin (19)); the rest is open. It follows the performance plan (`pi-performance.md`) and the end-to-end rounds in `stremio-latency.md`; evidence is from production (Raspberry Pi 4 behind a VPN), its logs and probes, and web research (sources inline).
+Status: proposal (2026-10-04, updated after the fifth end-to-end round on 2026-10-05). Decided on 2026-10-05 for the fifth round's findings: `round5-measures.md` (health check instead of options 1 and 2, resolution during the search (13), half-open probes that report (5), cached answers without waiting, SuperVideo (10), an asyncio network backend instead of ChaCha20 (17, measured useless), selectolax for every plugin (19, done 2026-10-05: 17.4 -> 1.6 s for the recorded big pages on x86)); the rest is open. It follows the performance plan (`pi-performance.md`) and the end-to-end rounds in `stremio-latency.md`; evidence is from production (Raspberry Pi 4 behind a VPN), its logs and probes, and web research (sources inline).
 
 ## Where the time goes
 
