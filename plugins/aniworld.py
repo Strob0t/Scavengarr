@@ -16,8 +16,9 @@ from __future__ import annotations
 
 import asyncio
 import re
-from html.parser import HTMLParser
 from urllib.parse import urljoin
+
+from selectolax.lexbor import LexborHTMLParser
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
@@ -48,18 +49,17 @@ _LANG_MAP: dict[str, str] = {
 }
 
 
-class _DetailPageParser(HTMLParser):
-    """Parse aniworld.to anime detail page.
+class _DetailPageParser:
+    """Parse aniworld.to anime detail page (selectolax).
 
     Extracts:
     - Description from ``.seri_des`` div (via ``data-full-description``)
     - Genres from ``.genres ul li a`` elements
-    - Cover image URL from ``.seriesCoverBox img[data-src]``
+    - Cover image URL from the first ``img[data-src]`` (``.seriesCoverBox``)
     - First episode URL from ``table.seasonEpisodesList tbody tr td a``
     """
 
     def __init__(self, base_url: str) -> None:
-        super().__init__()
         self._base_url = base_url
 
         self.description = ""
@@ -67,123 +67,34 @@ class _DetailPageParser(HTMLParser):
         self.cover_url = ""
         self.first_episode_url = ""
 
-        # Description tracking
-        self._in_seri_des = False
-        self._seri_des_depth = 0
-        self._seri_des_text = ""
-
-        # Genre tracking
-        self._in_genres_div = False
-        self._genres_div_depth = 0
-        self._in_genre_ul = False
-        self._in_genre_li = False
-        self._in_genre_a = False
-        self._genre_a_text = ""
-
-        # Episode table tracking
-        self._in_episode_table = False
-        self._in_tbody = False
-        self._in_tr = False
-        self._found_first_episode = False
-
-    def handle_starttag(  # noqa: C901
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
-        attr_dict = dict(attrs)
-        classes = (attr_dict.get("class") or "").split()
-
-        # .seri_des div with data-full-description
-        if tag == "div" and "seri_des" in classes:
-            self._in_seri_des = True
-            self._seri_des_depth = 0
-            self._seri_des_text = ""
-            # Prefer data-full-description if available
-            full_desc = attr_dict.get("data-full-description", "")
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for div in tree.css("div.seri_des"):
+            # A full description wins (the last one); else the first
+            # non-empty text of a .seri_des div
+            full_desc = div.attributes.get("data-full-description") or ""
             if full_desc:
                 self.description = full_desc.strip()
-        elif tag == "div" and self._in_seri_des:
-            self._seri_des_depth += 1
-
-        # .genres div
-        if tag == "div" and "genres" in classes:
-            self._in_genres_div = True
-            self._genres_div_depth = 0
-        elif tag == "div" and self._in_genres_div:
-            self._genres_div_depth += 1
-
-        if self._in_genres_div and tag == "ul":
-            self._in_genre_ul = True
-        if self._in_genre_ul and tag == "li":
-            self._in_genre_li = True
-        if self._in_genre_li and tag == "a":
-            self._in_genre_a = True
-            self._genre_a_text = ""
-
-        # Cover image: .seriesCoverBox img with data-src
-        if tag == "img" and not self.cover_url:
-            data_src = attr_dict.get("data-src", "")
+            if not self.description:
+                self.description = div.text().strip()
+        for link in tree.css("div.genres ul li a"):
+            genre = link.text().strip()
+            if genre:
+                self.genres.append(genre)
+        for img in tree.css("img[data-src]"):
+            data_src = img.attributes.get("data-src") or ""
             if data_src:
-                # Check if parent is seriesCoverBox (we track via class)
                 self.cover_url = urljoin(self._base_url, data_src)
-
-        # Episode table
-        if tag == "table" and "seasonEpisodesList" in classes:
-            self._in_episode_table = True
-        if self._in_episode_table and tag == "tbody":
-            self._in_tbody = True
-        if self._in_tbody and tag == "tr":
-            self._in_tr = True
-
-        # First episode link in table
-        if self._in_tr and tag == "a" and not self._found_first_episode:
-            href = attr_dict.get("href", "") or ""
-            if href and "/staffel-" in href and "/episode-" in href:
+                break
+        for link in tree.css("table.seasonEpisodesList tbody tr a[href]"):
+            href = link.attributes.get("href") or ""
+            if "/staffel-" in href and "/episode-" in href:
                 self.first_episode_url = urljoin(self._base_url, href)
-                self._found_first_episode = True
-
-    def handle_data(self, data: str) -> None:
-        if self._in_genre_a:
-            self._genre_a_text += data
-
-        if self._in_seri_des and not self.description:
-            self._seri_des_text += data
-
-    def handle_endtag(self, tag: str) -> None:  # noqa: C901
-        if tag == "a" and self._in_genre_a:
-            self._in_genre_a = False
-            text = self._genre_a_text.strip()
-            if text:
-                self.genres.append(text)
-
-        if tag == "li" and self._in_genre_li:
-            self._in_genre_li = False
-        if tag == "ul" and self._in_genre_ul:
-            self._in_genre_ul = False
-
-        if tag == "div" and self._in_genres_div:
-            if self._genres_div_depth > 0:
-                self._genres_div_depth -= 1
-            else:
-                self._in_genres_div = False
-
-        if tag == "div" and self._in_seri_des:
-            if self._seri_des_depth > 0:
-                self._seri_des_depth -= 1
-            else:
-                self._in_seri_des = False
-                if not self.description:
-                    self.description = self._seri_des_text.strip()
-
-        if tag == "tr" and self._in_tr:
-            self._in_tr = False
-        if tag == "tbody" and self._in_tbody:
-            self._in_tbody = False
-        if tag == "table" and self._in_episode_table:
-            self._in_episode_table = False
+                break
 
 
-class _EpisodePageParser(HTMLParser):
-    """Parse aniworld.to episode page for hoster links.
+class _EpisodePageParser:
+    """Parse aniworld.to episode page for hoster links (selectolax).
 
     Extracts hoster redirect links from::
 
@@ -196,58 +107,27 @@ class _EpisodePageParser(HTMLParser):
     """
 
     def __init__(self, base_url: str) -> None:
-        super().__init__()
         self._base_url = base_url
         self.hoster_links: list[dict[str, str]] = []
 
-        self._current_li_lang_key = ""
-        self._current_li_redirect = ""
-        self._in_hoster_li = False
-        self._in_h4 = False
-        self._h4_text = ""
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attr_dict = dict(attrs)
-
-        # <li data-lang-key="..." data-link-target="/redirect/...">
-        if tag == "li":
-            lang_key = attr_dict.get("data-lang-key", "")
-            link_target = attr_dict.get("data-link-target", "")
-            if lang_key and link_target:
-                self._in_hoster_li = True
-                self._current_li_lang_key = lang_key
-                self._current_li_redirect = link_target
-
-        # <h4> inside hoster li (contains hoster name)
-        if self._in_hoster_li and tag == "h4":
-            self._in_h4 = True
-            self._h4_text = ""
-
-    def handle_data(self, data: str) -> None:
-        if self._in_h4:
-            self._h4_text += data
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "h4" and self._in_h4:
-            self._in_h4 = False
-            hoster_name = self._h4_text.strip()
-            if hoster_name and self._current_li_redirect:
-                lang_label = _LANG_MAP.get(
-                    self._current_li_lang_key,
-                    self._current_li_lang_key,
-                )
-                self.hoster_links.append(
-                    {
-                        "hoster": hoster_name.lower(),
-                        "link": urljoin(self._base_url, self._current_li_redirect),
-                        "language": lang_label,
-                    }
-                )
-
-        if tag == "li" and self._in_hoster_li:
-            self._in_hoster_li = False
-            self._current_li_lang_key = ""
-            self._current_li_redirect = ""
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for li in tree.css("li[data-lang-key][data-link-target]"):
+            lang_key = li.attributes.get("data-lang-key") or ""
+            redirect = li.attributes.get("data-link-target") or ""
+            if not lang_key or not redirect:
+                continue
+            # The <h4> names the hoster
+            for h4 in li.css("h4"):
+                hoster_name = h4.text().strip()
+                if hoster_name:
+                    self.hoster_links.append(
+                        {
+                            "hoster": hoster_name.lower(),
+                            "link": urljoin(self._base_url, redirect),
+                            "language": _LANG_MAP.get(lang_key, lang_key),
+                        }
+                    )
 
 
 class AniworldPlugin(HttpxPluginBase):
@@ -429,18 +309,7 @@ class AniworldPlugin(HttpxPluginBase):
 
 def _strip_html_tags(text: str) -> str:
     """Remove HTML tags from a string (e.g. <em> from AJAX results)."""
-
-    class _TagStripper(HTMLParser):
-        def __init__(self) -> None:
-            super().__init__()
-            self.parts: list[str] = []
-
-        def handle_data(self, data: str) -> None:
-            self.parts.append(data)
-
-    stripper = _TagStripper()
-    stripper.feed(text)
-    return "".join(stripper.parts).strip()
+    return LexborHTMLParser(text).text().strip()
 
 
 plugin = AniworldPlugin()
