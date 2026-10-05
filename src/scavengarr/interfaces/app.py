@@ -6,6 +6,7 @@ import asyncio
 import secrets
 import time
 from collections.abc import Awaitable, Callable
+from urllib.parse import parse_qsl, urlencode
 
 import structlog
 from fastapi import FastAPI, Request
@@ -21,6 +22,10 @@ from scavengarr.interfaces.app_state import AppState
 from scavengarr.interfaces.composition import lifespan
 
 log = structlog.get_logger(__name__)
+
+# Torznab's query parameters, the only ones whose values are logged
+_TORZNAB_PATH = "/api/v1/torznab/"
+_TORZNAB_KEYS = frozenset({"t", "q", "cat", "extended", "offset", "limit"})
 
 
 def create_app(config: AppConfig) -> FastAPI:
@@ -108,7 +113,7 @@ def create_app(config: AppConfig) -> FastAPI:
                 "http_request",
                 method=request.method,
                 path=request.url.path,
-                query=str(request.url.query),
+                query=loggable_query(request.url.path, request.url.query),
                 status_code=status_code,
                 duration_ms=round(duration_ms, 2),
                 client_host=(request.client.host if request.client else None),
@@ -116,3 +121,15 @@ def create_app(config: AppConfig) -> FastAPI:
             structlog.contextvars.reset_contextvars(**tokens)
 
     return app
+
+
+def loggable_query(path: str, query: str) -> str:
+    """*query* as the access log shows it: other values masked.
+
+    Only the Torznab API's own parameters keep their values, on its paths:
+    Prowlarr sends its apikey, and proxied HLS paths carry the CDN's tokens
+    and the client's address (``i=``), also under the names ``t`` and ``q``.
+    """
+    keep = _TORZNAB_KEYS if path.startswith(_TORZNAB_PATH) else frozenset()
+    pairs = parse_qsl(query, keep_blank_values=True)
+    return urlencode([(k, v if k in keep else "***") for k, v in pairs], safe="*")

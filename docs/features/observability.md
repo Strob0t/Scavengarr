@@ -99,6 +99,8 @@ sum(rate(scavengarr_hls_proxy_bytes_total[5m]))
 
 Every HTTP request gets a 12-hex-digit `request_id` in the structlog context: all its log lines carry it, and so do the lines of the tasks it starts (the shared search, background resolutions), which copy the context. The response has it as the `X-Request-ID` header. The id is generated; a client's own `X-Request-ID` is ignored (untrusted input in the logs).
 
+Each request ends with one `http_request` line: method, path, query, status, duration and client address. The query keeps its values only for Torznab's own parameters on Torznab paths (`t`, `q`, `cat`, `extended`, `offset`, `limit`); every other value is logged as `***`. Prowlarr sends its `apikey`, and proxied HLS paths carry the CDN's tokens and the client's address (`i=`, the VPN's exit address in production), also under the names `t` and `q`.
+
 ## Tracing on Demand
 
 Traces show one request as a tree: the request, its phases, each plugin search and each hoster resolution, with durations and outcomes. They cost a backend that runs around the clock, so they are off by default and meant for looking into a problem.

@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: The Access Log Masks Query Values
+- Each request's `http_request` log line logged its whole query string: Prowlarr's `apikey` on Torznab requests, and on proxied HLS requests the CDN's tokens and the client's address (`i=`, production's VPN exit address; 545 of the 575 proxy lines with a query in a dev-server end-to-end run). Only Torznab's own parameters keep their values on Torznab paths now; every other value is logged as `***` (`loggable_query()` in `interfaces/app.py`).
+
 ### Feat: Request Id and On-Demand Tracing
 - Every HTTP request gets a `request_id` in the log context (all its log lines and those of the searches and resolutions it starts) and the `X-Request-ID` response header, so one request can be followed through the logs.
 - `telemetry.tracing_endpoint` (`SCAVENGARR_TELEMETRY_TRACING_ENDPOINT`) sends the core's stages as OpenTelemetry spans over OTLP/HTTP: one trace per request with its phases, plugin searches and hoster resolutions. Off by default; without it the trace SDK and exporter are not loaded. Spans hold no URLs or titles, errors only their exception type.
