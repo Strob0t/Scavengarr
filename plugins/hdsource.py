@@ -14,8 +14,9 @@ No authentication required.
 from __future__ import annotations
 
 import re
-from html.parser import HTMLParser
 from urllib.parse import quote_plus
+
+from selectolax.lexbor import LexborHTMLParser, LexborNode
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.categories import (
@@ -74,6 +75,12 @@ _IMDB_ID_RE = re.compile(r"imdb\.com/title/(tt\d+)")
 # Date format on site: DD.MM.YY, HH:MM
 _DATE_RE = re.compile(r"(\d{2}\.\d{2}\.\d{2}),?\s*(\d{1,2}:\d{2})")
 
+# Page numbers of the pagination (the "next" link and the "dots" gap are none).
+_PAGE_NUMBERS = (
+    "div[class*='nav-links'] :is(a, span)[class*='page-numbers']"
+    ":not([class*='next']):not([class*='dots'])"
+)
+
 
 def _detect_category(css_classes: str) -> int:
     """Determine Torznab category from article CSS classes.
@@ -104,8 +111,8 @@ def _parse_date(date_str: str) -> str:
     return f"{year}-{month}-{day} {time_part}"
 
 
-class _SearchPageParser(HTMLParser):
-    """Parse hd-source.to WordPress search result pages.
+class _SearchPageParser:
+    """Parse hd-source.to WordPress search result pages (selectolax).
 
     Each result is an ``<article>`` with CSS classes encoding categories::
 
@@ -131,226 +138,76 @@ class _SearchPageParser(HTMLParser):
             </div>
           </div>
         </article>
+
+    The last link of the ``entry-title`` heading names the result, the last
+    ``blog-post-meta`` span dates it and the last ``search-content`` div
+    holds its size; an article without download links is skipped.
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self.results: list[dict] = []
 
-        # Article tracking
-        self._in_article = False
-        self._article_classes = ""
+    def feed(self, html: str) -> None:
+        for article in LexborHTMLParser(html).css("article"):
+            self._add_article(article)
 
-        # Title tracking
-        self._in_entry_title = False
-        self._entry_title_depth = 0
-        self._in_title_a = False
-        self._title_text = ""
-        self._title_url = ""
-
-        # Date tracking
-        self._in_blog_post_meta = False
-        self._meta_text = ""
-
-        # Collapsible content tracking
-        self._in_search_content = False
-        self._search_content_depth = 0
-
-        # Link tracking within collapsible
-        self._current_a_href = ""
-        self._current_a_classes = ""
-        self._in_a = False
-        self._a_text = ""
-
-        # Metadata extracted from collapsible
-        self._in_strong = False
-        self._strong_text = ""
-        self._content_text = ""
-
-        # Per-article accumulators
-        self._date_str = ""
-        self._size = ""
-        self._imdb_rating = ""
-        self._imdb_id = ""
-        self._download_links: list[dict[str, str]] = []
-        self._last_hoster = ""
-
-    def _reset_article(self) -> None:
-        self._article_classes = ""
-        self._title_text = ""
-        self._title_url = ""
-        self._date_str = ""
-        self._size = ""
-        self._imdb_rating = ""
-        self._imdb_id = ""
-        self._download_links = []
-        self._last_hoster = ""
-        self._content_text = ""
-
-    def _emit_article(self) -> None:
-        if not self._title_text or not self._download_links:
+    def _add_article(self, article: LexborNode) -> None:
+        title = url = ""
+        for link in article.css("h2[class*='entry-title'] a"):
+            href = link.attributes.get("href") or ""
+            if href and not href.startswith("javascript"):
+                title, url = link.text(), href
+        download_links = _download_links(article)
+        if not title or not download_links:
             return
 
-        category = _detect_category(self._article_classes)
-        published = _parse_date(self._date_str)
-
-        # Extract size from accumulated content text
-        size = self._size
-        if not size:
-            m = _SIZE_RE.search(self._content_text)
-            if m:
-                size = m.group(1)
+        imdb_rating = imdb_id = ""
+        for link in article.css("div[class*='search-content'] a[href*='imdb.com']"):
+            imdb = _IMDB_ID_RE.search(link.attributes.get("href") or "")
+            if imdb:
+                imdb_id = imdb.group(1)
+            rating = _IMDB_RE.search(link.text())
+            if rating:
+                imdb_rating = rating.group(1)
+        metas = article.css("span[class*='blog-post-meta']")
+        contents = article.css("div[class*='search-content']")
+        size = _SIZE_RE.search(contents[-1].text()) if contents else None
 
         self.results.append(
             {
-                "title": self._title_text.strip(),
-                "url": self._title_url,
-                "category": category,
-                "published_date": published,
-                "size": size.strip() if size else "",
-                "imdb_rating": self._imdb_rating,
-                "imdb_id": self._imdb_id,
-                "download_links": self._download_links.copy(),
+                "title": title.strip(),
+                "url": url,
+                "category": _detect_category(article.attributes.get("class") or ""),
+                "published_date": _parse_date(metas[-1].text()) if metas else "",
+                "size": size.group(1).strip() if size else "",
+                "imdb_rating": imdb_rating,
+                "imdb_id": imdb_id,
+                "download_links": download_links,
             }
         )
 
-    def handle_starttag(  # noqa: C901
-        self,
-        tag: str,
-        attrs: list[tuple[str, str | None]],
-    ) -> None:
-        attr_dict = dict(attrs)
-        classes = attr_dict.get("class", "") or ""
 
-        # --- Article start ---
-        if tag == "article":
-            self._in_article = True
-            self._reset_article()
-            self._article_classes = classes
+def _download_links(article: LexborNode) -> list[dict[str, str]]:
+    """The ``hosterlnk`` links of an article's ``search-content`` div.
 
-        if not self._in_article:
-            return
-
-        # --- H2 entry-title ---
-        if tag == "h2" and "entry-title" in classes:
-            self._in_entry_title = True
-            self._entry_title_depth = 0
-        elif tag == "h2" and self._in_entry_title:
-            self._entry_title_depth += 1
-
-        # --- Blog post meta (date) ---
-        if tag == "span" and "blog-post-meta" in classes:
-            self._in_blog_post_meta = True
-            self._meta_text = ""
-
-        # --- Title link inside h2 ---
-        if tag == "a" and self._in_entry_title:
-            href = attr_dict.get("href", "") or ""
-            if href and not href.startswith("javascript"):
-                self._in_title_a = True
-                self._title_text = ""
-                self._title_url = href
-
-        # --- Search content div ---
-        if tag == "div":
-            if self._in_search_content:
-                self._search_content_depth += 1
-            elif "search-content" in classes:
-                self._in_search_content = True
-                self._search_content_depth = 0
-                self._content_text = ""
-
-        # --- Links in search-content ---
-        if tag == "a" and self._in_search_content:
-            href = attr_dict.get("href", "") or ""
-            link_classes = classes
-            self._in_a = True
-            self._current_a_href = href
-            self._current_a_classes = link_classes
-            self._a_text = ""
-
-            # Hoster icon link (affiliate redirect before filecrypt link)
-            hoster_m = _HOSTER_PARAM_RE.search(href)
-            if hoster_m:
-                param = hoster_m.group(1)
-                self._last_hoster = _HOSTER_LABEL_MAP.get(param, param)
-
-            # Download link (filecrypt)
-            if "hosterlnk" in link_classes:
-                hoster = self._last_hoster or "filecrypt"
-                self._download_links.append({"hoster": hoster, "link": href})
-                self._last_hoster = ""
-
-            # IMDb link
-            if "imdb.com" in href:
-                imdb_id_m = _IMDB_ID_RE.search(href)
-                if imdb_id_m:
-                    self._imdb_id = imdb_id_m.group(1)
-
-        # --- Strong tag for labels ---
-        if tag == "strong" and self._in_search_content:
-            self._in_strong = True
-            self._strong_text = ""
-
-    def handle_data(self, data: str) -> None:
-        if self._in_title_a:
-            self._title_text += data
-
-        if self._in_blog_post_meta:
-            self._meta_text += data
-
-        if self._in_a and self._in_search_content:
-            self._a_text += data
-
-        if self._in_strong:
-            self._strong_text += data
-
-        if self._in_search_content:
-            self._content_text += data
-
-    def _handle_end_a(self) -> None:
-        if self._in_title_a:
-            self._in_title_a = False
-        if self._in_a:
-            self._in_a = False
-            if "imdb.com" in self._current_a_href:
-                m = _IMDB_RE.search(self._a_text)
-                if m:
-                    self._imdb_rating = m.group(1)
-
-    def _handle_end_div(self) -> None:
-        if self._in_search_content:
-            if self._search_content_depth > 0:
-                self._search_content_depth -= 1
-            else:
-                self._in_search_content = False
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "article" and self._in_article:
-            self._in_article = False
-            self._emit_article()
-            return
-        if not self._in_article:
-            return
-
-        if tag == "h2" and self._in_entry_title:
-            if self._entry_title_depth > 0:
-                self._entry_title_depth -= 1
-            else:
-                self._in_entry_title = False
-        elif tag == "span" and self._in_blog_post_meta:
-            self._in_blog_post_meta = False
-            self._date_str = self._meta_text.strip()
-        elif tag == "a":
-            self._handle_end_a()
-        elif tag == "strong" and self._in_strong:
-            self._in_strong = False
-        elif tag == "div":
-            self._handle_end_div()
+    Each is labelled by the hoster icon link before it (``af.php?v=<hoster>``),
+    else "filecrypt".
+    """
+    links: list[dict[str, str]] = []
+    hoster = ""
+    for link in article.css("div[class*='search-content'] a"):
+        href = link.attributes.get("href") or ""
+        param = _HOSTER_PARAM_RE.search(href)
+        if param:
+            hoster = _HOSTER_LABEL_MAP.get(param.group(1), param.group(1))
+        if "hosterlnk" in (link.attributes.get("class") or ""):
+            links.append({"hoster": hoster or "filecrypt", "link": href})
+            hoster = ""
+    return links
 
 
-class _PaginationParser(HTMLParser):
-    """Extract the last page number from WordPress pagination.
+class _PaginationParser:
+    """Extract the last page number from WordPress pagination (selectolax).
 
     Pagination structure::
 
@@ -363,59 +220,13 @@ class _PaginationParser(HTMLParser):
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self.last_page = 1
-        self._in_nav_links = False
-        self._nav_depth = 0
-        self._in_page_number = False
-        self._page_text = ""
 
-    def handle_starttag(
-        self,
-        tag: str,
-        attrs: list[tuple[str, str | None]],
-    ) -> None:
-        attr_dict = dict(attrs)
-        classes = attr_dict.get("class", "") or ""
-
-        if tag == "div":
-            if self._in_nav_links:
-                self._nav_depth += 1
-            elif "nav-links" in classes:
-                self._in_nav_links = True
-                self._nav_depth = 0
-
-        if not self._in_nav_links:
-            return
-
-        is_page_num = (
-            tag in ("a", "span")
-            and "page-numbers" in classes
-            and "next" not in classes
-            and "dots" not in classes
-        )
-        if is_page_num:
-            self._in_page_number = True
-            self._page_text = ""
-
-    def handle_data(self, data: str) -> None:
-        if self._in_page_number:
-            self._page_text += data
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag in ("a", "span") and self._in_page_number:
-            self._in_page_number = False
-            text = self._page_text.strip()
+    def feed(self, html: str) -> None:
+        for number in LexborHTMLParser(html).css(_PAGE_NUMBERS):
+            text = number.text().strip()
             if text.isdigit():
-                page_num = int(text)
-                if page_num > self.last_page:
-                    self.last_page = page_num
-
-        if tag == "div" and self._in_nav_links:
-            if self._nav_depth > 0:
-                self._nav_depth -= 1
-            else:
-                self._in_nav_links = False
+                self.last_page = max(self.last_page, int(text))
 
 
 class HdSourcePlugin(HttpxPluginBase):
