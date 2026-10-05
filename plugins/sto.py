@@ -18,8 +18,9 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
+
+from selectolax.lexbor import LexborHTMLParser, LexborNode
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort
@@ -69,6 +70,11 @@ _GENRE_CATEGORY_MAP: dict[str, int] = {
 }
 # The labels of this site's results
 _CATEGORIES = (5000, 5070, 5080)
+# Season link of a series page: /serie/{slug}/staffel-{n}
+_SEASON_RE = re.compile(r"/staffel-(\d+)")
+_EPISODE_NUMBER_RE = re.compile(r"^\d+$")
+# Images of an episode row that are no hoster icon
+_NOT_HOSTER_ICONS = frozenset({"flag", "poster", "cover"})
 
 
 def _genre_to_torznab(genre: str) -> int:
@@ -104,8 +110,8 @@ def _relevant_series(
     return relevant_hits(list(by_key.values()), query, hit_title, limit=limit)
 
 
-class _SearchSeriesParser(HTMLParser):
-    """Parse the series cards of an s.to search results page.
+class _SearchSeriesParser:
+    """Parse the series cards of an s.to search results page (selectolax).
 
     A card nests one ``/serie/{slug}`` anchor in another and names the
     series in the ``h6.show-title`` after the inner one::
@@ -115,215 +121,105 @@ class _SearchSeriesParser(HTMLParser):
           <h6 class="show-title" title="Series Title">Series Title</h6>
         </div></a>
 
-    The episode hits further down (``h6.small`` in the "Episoden"
-    section) belong to other series whose episode titles contain the term
-    and are skipped. The page renders its results twice (two layouts), so
-    each series is kept once.
+    A title belongs to the last ``/serie/`` anchor before its end. The
+    episode hits further down (``h6.small`` in the "Episoden" section)
+    belong to other series whose episode titles contain the term and are
+    skipped. The page renders its results twice (two layouts), so each
+    series is kept once.
     """
 
     def __init__(self, base_url: str) -> None:
-        super().__init__()
         self.results: list[dict[str, str]] = []
         self._base_url = base_url
-        self._href = ""
-        self._in_title = False
-        self._title = ""
-        self._seen: set[str] = set()
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attr_dict = dict(attrs)
-        if tag == "a":
-            href = attr_dict.get("href") or ""
-            if "/serie/" in href:
-                self._href = href
-        elif tag == "h6" and "show-title" in (attr_dict.get("class") or "").split():
-            self._in_title = True
-            self._title = ""
-
-    def handle_data(self, data: str) -> None:
-        if self._in_title:
-            self._title += data
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag != "h6" or not self._in_title:
-            return
-        self._in_title = False
-        title = self._title.strip()
-        url = urljoin(self._base_url, self._href)
-        if not title or not self._href or url in self._seen:
-            return
-        self._seen.add(url)
-        self.results.append(
-            {
-                "title": title,
-                "url": url,
-                "slug": self._href.rstrip("/").split("/")[-1],
-            }
-        )
+    def feed(self, html: str) -> None:
+        href = ""
+        seen: set[str] = set()
+        tree = LexborHTMLParser(html)
+        for node in tree.css("a[href*='/serie/'], h6.show-title"):
+            if node.tag == "a":
+                href = node.attributes.get("href") or ""
+                continue
+            # An anchor inside the title comes before the title's end
+            inner = node.css("a[href*='/serie/']")
+            if inner:
+                href = inner[-1].attributes.get("href") or ""
+            title = node.text().strip()
+            url = urljoin(self._base_url, href)
+            if not title or not href or url in seen:
+                continue
+            seen.add(url)
+            self.results.append(
+                {"title": title, "url": url, "slug": href.rstrip("/").split("/")[-1]}
+            )
 
 
-class _SeriesDetailParser(HTMLParser):
+class _SeriesDetailParser:
     """Parse s.to series detail page for genres, seasons, and episodes.
 
-    Page structure:
+    Page structure (selectolax):
     - ``<h1>Series Title</h1>``
     - Genre links: ``<a href="/genre/{name}">Genre</a>``
     - Season nav: ``<a href="/serie/{slug}/staffel-{n}">Staffel {n}</a>``
     - Episode table with rows containing:
       - ``<th>`` with episode number
       - ``<strong>`` with German title
-      - ``<div>`` with English title (after ``<span>`` with DE title)
       - ``<img alt="Hoster">`` for hoster icons
     """
 
     def __init__(self, base_url: str) -> None:
-        super().__init__()
         self._base_url = base_url
-
-        # Metadata
         self.title = ""
         self.genres: list[str] = []
         self.seasons: list[int] = []
-
         # Episode data for the currently displayed season
         self.episodes: list[dict[str, str]] = []
 
-        # State tracking
-        self._in_h1 = False
-        self._h1_text = ""
-        self._in_genre_a = False
-        self._genre_a_text = ""
-        self._in_season_a = False
-        self._season_a_href = ""
-
-        # Episode table tracking
-        self._in_episode_tr = False
-        self._in_th = False
-        self._th_text = ""
-        self._in_strong = False
-        self._strong_text = ""
-        self._episode_number = ""
-        self._episode_de_title = ""
-        self._episode_en_title = ""
-        self._episode_hosters: list[str] = []
-        self._in_episode_td = False
-        self._episode_td_count = 0
-
-    def handle_starttag(  # noqa: C901
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
-        attr_dict = dict(attrs)
-        href = attr_dict.get("href", "") or ""
-
-        if tag == "h1":
-            self._in_h1 = True
-            self._h1_text = ""
-
-        # Genre links: <a href="/genre/{name}">
-        if tag == "a" and "/genre/" in href:
-            self._in_genre_a = True
-            self._genre_a_text = ""
-
-        # Season navigation links: <a href="/serie/{slug}/staffel-{n}">
-        if tag == "a" and "/staffel-" in href:
-            self._in_season_a = True
-            self._season_a_href = href
-            m = re.search(r"/staffel-(\d+)", href)
-            if m:
-                season_num = int(m.group(1))
-                if season_num not in self.seasons:
-                    self.seasons.append(season_num)
-
-        # Episode table row
-        if tag == "tr":
-            self._in_episode_tr = True
-            self._episode_number = ""
-            self._episode_de_title = ""
-            self._episode_en_title = ""
-            self._episode_hosters = []
-            self._episode_td_count = 0
-
-        if tag == "th" and self._in_episode_tr:
-            self._in_th = True
-            self._th_text = ""
-
-        if tag == "td" and self._in_episode_tr:
-            self._in_episode_td = True
-            self._episode_td_count += 1
-
-        if tag == "strong" and self._in_episode_tr:
-            self._in_strong = True
-            self._strong_text = ""
-
-        # Hoster icons: <img alt="VOE"> within episode row
-        if tag == "img" and self._in_episode_tr:
-            alt = attr_dict.get("alt", "") or ""
-            if alt and alt.lower() not in {"", "flag", "poster", "cover"}:
-                self._episode_hosters.append(alt)
-
-    def handle_data(self, data: str) -> None:
-        if self._in_h1:
-            self._h1_text += data
-
-        if self._in_genre_a:
-            self._genre_a_text += data
-
-        if self._in_th:
-            self._th_text += data
-
-        if self._in_strong and self._in_episode_tr:
-            self._strong_text += data
-
-    def _handle_a_end(self) -> None:
-        if self._in_genre_a:
-            self._in_genre_a = False
-            genre = self._genre_a_text.strip()
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for h1 in tree.css("h1"):
+            self.title = h1.text().strip()
+        for link in tree.css("a[href*='/genre/']"):
+            genre = link.text().strip()
             if genre and genre not in self.genres:
                 self.genres.append(genre)
-        if self._in_season_a:
-            self._in_season_a = False
+        for link in tree.css("a[href*='/staffel-']"):
+            season = _SEASON_RE.search(link.attributes.get("href") or "")
+            if season and int(season.group(1)) not in self.seasons:
+                self.seasons.append(int(season.group(1)))
+        for row in tree.css("tr"):
+            self._add_episode(row)
 
-    def _handle_tr_end(self) -> None:
-        self._in_episode_tr = False
-        if self._episode_number:
-            self.episodes.append(
-                {
-                    "number": self._episode_number,
-                    "de_title": self._episode_de_title,
-                    "en_title": self._episode_en_title,
-                    "hosters": ",".join(self._episode_hosters),
-                }
-            )
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "h1" and self._in_h1:
-            self._in_h1 = False
-            self.title = self._h1_text.strip()
-
-        if tag == "a":
-            self._handle_a_end()
-
-        if tag == "th" and self._in_th:
-            self._in_th = False
-            text = self._th_text.strip()
-            if re.match(r"^\d+$", text):
-                self._episode_number = text
-
-        if tag == "strong" and self._in_strong:
-            self._in_strong = False
-            text = self._strong_text.strip()
-            if text and self._in_episode_tr and not self._episode_de_title:
-                self._episode_de_title = text
-
-        if tag == "td" and self._in_episode_td:
-            self._in_episode_td = False
-
-        if tag == "tr" and self._in_episode_tr:
-            self._handle_tr_end()
+    def _add_episode(self, row: LexborNode) -> None:
+        number = ""
+        for th in row.css("th"):
+            text = th.text().strip()
+            if _EPISODE_NUMBER_RE.match(text):
+                number = text
+        if not number:
+            return
+        de_title = next(
+            (text for strong in row.css("strong") if (text := strong.text().strip())),
+            "",
+        )
+        hosters = [
+            alt
+            for img in row.css("img[alt]")
+            if (alt := img.attributes.get("alt") or "")
+            and alt.lower() not in _NOT_HOSTER_ICONS
+        ]
+        self.episodes.append(
+            {
+                "number": number,
+                "de_title": de_title,
+                "en_title": "",
+                "hosters": ",".join(hosters),
+            }
+        )
 
 
-class _EpisodeHosterParser(HTMLParser):
-    """Parse s.to episode page for hoster buttons.
+class _EpisodeHosterParser:
+    """Parse s.to episode page for hoster buttons (selectolax).
 
     Episode pages contain hoster buttons grouped by language::
 
@@ -338,28 +234,24 @@ class _EpisodeHosterParser(HTMLParser):
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self.hosters: list[dict[str, str]] = []
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag not in {"button", "a"}:
-            return
-
-        attr_dict = dict(attrs)
-        play_url = attr_dict.get("data-play-url", "") or ""
-        provider = attr_dict.get("data-provider-name", "") or ""
-        language = attr_dict.get("data-language-label", "") or ""
-
-        # "Anbieter" (Provider) links to the streaming service that owns the
-        # series, no hoster to play
-        if play_url and provider and provider != _OFFICIAL_PROVIDER:
-            self.hosters.append(
-                {
-                    "play_url": play_url,
-                    "provider": provider,
-                    "language": language,
-                }
-            )
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for button in tree.css("button[data-play-url], a[data-play-url]"):
+            attrs = button.attributes
+            play_url = attrs.get("data-play-url") or ""
+            provider = attrs.get("data-provider-name") or ""
+            # "Anbieter" (Provider) links to the streaming service that owns
+            # the series, no hoster to play
+            if play_url and provider and provider != _OFFICIAL_PROVIDER:
+                self.hosters.append(
+                    {
+                        "play_url": play_url,
+                        "provider": provider,
+                        "language": attrs.get("data-language-label") or "",
+                    }
+                )
 
 
 def _episode_number(
