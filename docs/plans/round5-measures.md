@@ -12,12 +12,18 @@ The maintainer chose one solution per finding, from at least three each.
 | 2 | Every first answer waits for the soft deadline (7 s), then 4.1 s for the resolution | Resolve links while the plugins still search | M–L |
 | 3 | A half-open hoster probe (Filemoon) is cut by the grace before half the resolve timeout, reports nothing and repeats after every cooldown, which never doubles (about 6 s of Chromium each) | The probe runs to its end in the background and reports | S–M |
 | 4 | 5 of 17 cached answers waited for the grace (4.1–4.4 s) because one link was resolved for the first time or again | A cached answer goes out at once with the resolutions in the cache; the other links resolve in the background for the next request | M |
-| 5 | SuperVideo: 13 of 13 links failed; its CDN answers the playlist URL with a script redirect and a HEAD with a redirect to an ad domain | Follow the script redirect without a browser and require a real playlist | S |
+| 5 | SuperVideo: 13 of 13 links failed; its CDN answers the playlist URL with a script redirect and a HEAD with a redirect to an ad domain | First choice, following the script redirect, does not work (below). Decided instead: the hoster breaker pauses SuperVideo | S |
 | 6 | The HLS proxy used about 0.3 s of CPU per segment during playback (5–7% of a core), mostly TLS decryption: the Pi 4 has no AES instructions | Prefer ChaCha20 for TLS when the CPU has no AES instructions | S |
 | 7 | `html.parser` took 0.43 s on the GIL per first request (0.20 s after the performance plan) | Move every plugin parser to selectolax (lexbor) | XL |
 | 8 | VOE denies some files to the VPN address | No change: every title still had streams | – |
+| 9 | The first answer goes out at the soft deadline even when slow plugins would deliver more: 6 of 17 titles had fewer than 5 streams in the first answer, 4 still after the late plugins | Answer once 5 playable streams are resolved, else when every plugin and resolution is done, at most 60 s | M |
+| 10 | Autoplay plays the next episode's stream about an hour after Stremio fetched it, "Continue Watching" days later; Scavengarr hands out direct CDN URLs with the hosters' tokens and proxy links that live 2 h | Re-resolvable stream links | M |
 
-Order: 3, 5, 6 (small, independent), then 4, 1, 2 (the request flow), then 7, then the metrics. Each measure is test-driven, committed on its own and documented with the code. A sixth round measures 1–6 in production.
+Decisions 9 and 10 came the same day, after the maintainer asked for more time per search and for the binge case (episodes of about an hour with autoplay).
+
+Order: 3, 5, 6 (small, independent), then 4, 1, 2 with 9 (the request flow), then 10, then 7, then the metrics. Each measure is test-driven, committed on its own and documented with the code. A sixth round measures 1–6, 9 and 10 in production.
+
+Done: 3 (1b7e01f).
 
 ## 1. Plugin health check
 
@@ -65,13 +71,15 @@ Order: 3, 5, 6 (small, independent), then 4, 1, 2 (the request flow), then 7, th
 
 **Tests.** Cache hit with a cached stream: answers without calling the resolver, background resolution started once per URL; without a cached stream: resolves and waits as today; background tasks end with `aclose()`.
 
-## 5. SuperVideo behind its CDN's script redirect
+## 5. SuperVideo: the breaker pauses it
 
-**Problem.** The CDN (`serversicuro.cc`) answers the playlist URL with a "Loading..." page whose script calls `window.location.replace(<the same URL with a js token>)` and sets a `sid` cookie; a HEAD gets a 302 to an ad domain. The resolver's HEAD check fails (`supervideo_video_verify_error`).
+**Problem.** The CDN (`serversicuro.cc`) answers the playlist URL with a "Loading..." page whose script calls `window.location.replace(<the same URL with a js token>)` and sets a `sid` cookie; a HEAD gets a 302 to an ad domain. The resolver's own HEAD check marked each link dead (`supervideo_video_verify_error`), which the hoster breaker ignores, so every request tried the links again.
 
-**Design.** Replace the HEAD check by a GET with the playback headers: a body starting with `#EXTM3U` is the playlist; a script redirect is followed (GET, redirects included) and must end in a playlist. The stream uses the final URL, with the cookie in its headers if the CDN needs it (to be checked with one careful probe from production; the CDN answered repeated probes with 429).
+**Probes from production (2026-10-05).** Following the script's target, with the cookie and with a browser's navigation headers, ends on a parked ad page (`ww547.serversicuro.cc`, "Directory Index"). The app's browser capture (`StealthPool.capture_media`, 34.6 s on the Pi) got the playlist URL, but a player gets the script page under it too: SuperVideo plays only inside a browser session. The first choice (follow the redirect) therefore cannot work. `hoster-resolvers.md` already listed the CDN behavior as a known issue.
 
-**Tests.** respx: direct playlist; script redirect to a playlist; redirect to a non-playlist (fails); HEAD no longer used.
+**Decision and design.** The resolver drops its own HEAD check. The registry's playback check (`check_playable`, on in production) reads the body, counts the page as unplayable, and the hoster breaker pauses SuperVideo (60 s, doubling up to 1 h); its half-open probe (measure 3) finds out when the CDN serves a playlist again.
+
+**Tests.** The resolver sends no HEAD; registry plus resolver with the script page: `hoster_resolve_unplayable`, breaker open.
 
 ## 6. ChaCha20 when the CPU has no AES instructions
 
@@ -91,6 +99,32 @@ Order: 3, 5, 6 (small, independent), then 4, 1, 2 (the request flow), then 7, th
 **Design.** Rewrite each plugin's parsing with selectolax (`LexborHTMLParser`, CSS selectors) and identical results: the plugin's unit tests and the real-page tests (`tests/unit/infrastructure/test_real_pages.py`) are the specification. Big pages parse in a worker thread as `_feed()` does today. Order: the Stremio plugins with the biggest pages first (kinoger, s.to, megakino, movie2k, aniworld, kinoking, the DLE mirrors, kinox, burningseries), then the Torznab-only plugins. The first two set the pattern and any shared helper; the others follow it one plugin per commit. `AGENTS.md` §5 and `docs/features/python-plugins.md` change with the last one.
 
 **Tests.** Unchanged plugin tests and real-page tests pass for every migrated plugin; a parse benchmark on the real pages before and after.
+
+## 9. Answer at 5 streams, when done, at most 60 s
+
+**Problem.** The first answer goes out at the soft deadline (7 s) plus the resolve grace, also when slow plugins would deliver (kinoking about 8.5 s, s.to's gate about 20 s, kinoger with a Cloudflare solve): in the fifth round 6 of 17 titles had fewer than 5 streams in the first answer (Good Bye Lenin, Breaking Bad, Dark and Haus des Geldes 1 each, Stranger Things and The Last of Us 4), 4 still after the late plugins. Titles with many streams wait for the deadline all the same.
+
+**Design.**
+- The answer goes out when 5 playable streams of different hosters are resolved (`stremio.resolve_target_count`, default 5), or when every plugin and every resolution is done, at the latest at `stremio.stream_deadline_seconds` (60 s).
+- Each plugin gets more time (`plugin_timeout_seconds` 30 s instead of 10 s); plugins still running at the answer go on as late plugins and fill the search cache, as today. The soft deadline and the resolve grace give way to the target and the completion rule.
+- Measure 2 resolves during the search, so the target is often met before the slow plugins finish.
+- Expected: titles with many streams about 4–8 s instead of 11 s; titles with few streams when their plugins are done (about 20–30 s) instead of 11 s with fewer streams. The binge case does not wait for the answer (measure 10).
+- Risks: a worst case of 60 s; Stremio Web shows other addons' streams meanwhile (no client timeout found), other clients are untested with long waits.
+
+**Tests.** Use case: the answer goes out at the target while plugins still search; without enough streams it goes out when everything is done; the deadline caps it; late plugins still fill the cache.
+
+## 10. Re-resolvable stream links (binge and resume)
+
+**Problem.** When episode N starts, Stremio asks for episode N+1 and at the end of N plays that answer's stream object, about an hour later, without asking again; "Continue Watching" replays a stored stream object days later (research in `optimization-options.md`). Scavengarr's answers hold direct CDN URLs (MP4, and HLS without headers) with the hosters' tokens, and proxy links for HLS with headers whose stored link lives 2 h (`stream_link_ttl_seconds`) and is never resolved again. A measurement of how long the links stay playable is running (18 links of 7 titles, checked every 30 minutes for 2.5 h).
+
+**Design.**
+- Every stream in the answer points to Scavengarr: MP4 to `/play/{id}` (a 302 to the current video URL), HLS to the proxy.
+- The stored link keeps the hoster URL. `/play` and the proxy resolve it again when the stored video URL is older than a freshness bound (from the measurement) or when the CDN answers 403, 404 or 410 (once, past the registry's cache).
+- Stored links live for days (for "Continue Watching"); one entry per stream.
+- Constraints from the research: one tap on Android sent 11 requests (a HEAD from the streaming server, GETs from ExoPlayer and Lavf), so a re-resolution is shared per link and cached; HLS stays a proxied playlist (Android's HLS redirect bug); IP-bound streams (DoodStream, Vinovo) resolve from Scavengarr's address, which the maintainer's Stremio server shares.
+- Cost: one redirect per MP4 start; a re-resolution (1–5 s, browser hosters longer) when a link is stale at playback.
+
+**Tests.** `/play` re-resolves a stale link and redirects to the new URL and leaves a fresh one alone; the proxy re-resolves when the CDN refuses the master playlist; concurrent requests share one re-resolution; links outlive the old 2 h.
 
 ## 8. VOE
 
