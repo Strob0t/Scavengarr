@@ -22,8 +22,9 @@ from __future__ import annotations
 
 import asyncio
 import re
-from html.parser import HTMLParser
 from urllib.parse import urljoin
+
+from selectolax.lexbor import LexborHTMLParser, LexborNode
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins import devideosrc
@@ -101,8 +102,13 @@ def _clean_title(title: str) -> str:
     return title.strip()
 
 
-class _SearchResultParser(HTMLParser):
-    """Parse streamcloud.plus DLE search result page.
+def _hrefs(links: list[LexborNode]) -> list[str]:
+    """The non-empty ``href`` values of *links*."""
+    return [href for link in links if (href := link.attributes.get("href") or "")]
+
+
+class _SearchResultParser:
+    """Parse streamcloud.plus DLE search result page (selectolax).
 
     Each result is a card with structure::
 
@@ -117,150 +123,45 @@ class _SearchResultParser(HTMLParser):
           </div>
           <div class="f_year">2024</div>
         </div>
+
+    The (last) thumb link names the detail page, the first title link is
+    the fallback; the (last) title link's text names the result, the
+    thumb's ``title`` is the fallback.
     """
 
     def __init__(self, base_url: str) -> None:
-        super().__init__()
         self.results: list[dict[str, str]] = []
         self._base_url = base_url
 
-        # Card tracking
-        self._in_card = False
-        self._card_div_depth = 0
+    def feed(self, html: str) -> None:
+        for card in LexborHTMLParser(html).css("div.item.cf"):
+            self._add_card(card)
 
-        # Thumb link (detail URL)
-        self._in_thumb = False
-        self._thumb_div_depth = 0
-        self._current_url = ""
-        self._thumb_title = ""
-
-        # Title tracking
-        self._in_f_title = False
-        self._f_title_div_depth = 0
-        self._in_title_a = False
-        self._current_title = ""
-
-        # Year tracking
-        self._in_f_year = False
-        self._f_year_div_depth = 0
-        self._current_year = ""
-
-    def _reset_card(self) -> None:
-        self._current_url = ""
-        self._current_title = ""
-        self._current_year = ""
-        self._thumb_title = ""
-
-    def _emit_card(self) -> None:
-        title = self._current_title or self._thumb_title
-        if not title or not self._current_url:
+    def _add_card(self, card: LexborNode) -> None:
+        title_links = card.css("div.f_title a")
+        thumb_hrefs = _hrefs(card.css("div.thumb a"))
+        title_hrefs = _hrefs(title_links)
+        href = thumb_hrefs[-1] if thumb_hrefs else ""
+        if not href and title_hrefs:
+            href = title_hrefs[0]
+        title = title_links[-1].text().strip() if title_links else ""
+        thumbs = card.css("div.thumb")
+        if not title and thumbs:
+            title = thumbs[-1].attributes.get("title") or ""
+        if not title or not href:
             return
-
+        years = card.css("div.f_year")
         self.results.append(
             {
                 "title": _clean_title(title),
-                "url": self._current_url,
-                "year": self._current_year.strip(),
+                "url": urljoin(self._base_url, href),
+                "year": years[-1].text().strip() if years else "",
             }
         )
 
-    def handle_starttag(  # noqa: C901
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
-        attr_dict = dict(attrs)
-        classes = (attr_dict.get("class") or "").split()
 
-        # Card boundary: <div class="item cf item-video ...">
-        if tag == "div":
-            if self._in_card:
-                self._card_div_depth += 1
-
-                # Thumb area
-                if self._in_thumb:
-                    self._thumb_div_depth += 1
-                elif "thumb" in classes:
-                    self._in_thumb = True
-                    self._thumb_div_depth = 0
-                    self._thumb_title = attr_dict.get("title", "") or ""
-
-                # Title area
-                if self._in_f_title:
-                    self._f_title_div_depth += 1
-                elif "f_title" in classes:
-                    self._in_f_title = True
-                    self._f_title_div_depth = 0
-
-                # Year area
-                if self._in_f_year:
-                    self._f_year_div_depth += 1
-                elif "f_year" in classes:
-                    self._in_f_year = True
-                    self._f_year_div_depth = 0
-                    self._current_year = ""
-
-            elif "item" in classes and "cf" in classes:
-                self._in_card = True
-                self._card_div_depth = 0
-                self._reset_card()
-
-        if not self._in_card:
-            return
-
-        # Link inside thumb (detail URL)
-        if tag == "a" and self._in_thumb:
-            href = attr_dict.get("href", "") or ""
-            if href:
-                self._current_url = urljoin(self._base_url, href)
-
-        # Title link: <a> inside f_title div
-        if tag == "a" and self._in_f_title:
-            self._in_title_a = True
-            self._current_title = ""
-            href = attr_dict.get("href", "") or ""
-            if href and not self._current_url:
-                self._current_url = urljoin(self._base_url, href)
-
-    def handle_data(self, data: str) -> None:
-        if self._in_title_a:
-            self._current_title += data
-
-        if self._in_f_year:
-            self._current_year += data
-
-    def handle_endtag(self, tag: str) -> None:  # noqa: C901
-        if tag == "a" and self._in_title_a:
-            self._in_title_a = False
-            self._current_title = self._current_title.strip()
-
-        if tag == "div":
-            if self._in_f_year:
-                if self._f_year_div_depth > 0:
-                    self._f_year_div_depth -= 1
-                else:
-                    self._in_f_year = False
-
-            if self._in_f_title:
-                if self._f_title_div_depth > 0:
-                    self._f_title_div_depth -= 1
-                else:
-                    self._in_f_title = False
-
-            if self._in_thumb:
-                if self._thumb_div_depth > 0:
-                    self._thumb_div_depth -= 1
-                else:
-                    self._in_thumb = False
-
-            if self._in_card:
-                if self._card_div_depth > 0:
-                    self._card_div_depth -= 1
-                else:
-                    self._in_card = False
-                    self._emit_card()
-
-
-class _DetailPageParser(HTMLParser):
-    """Parse streamcloud detail page metadata.
+class _DetailPageParser:
+    """Parse streamcloud detail page metadata (selectolax).
 
     Stream links are not on the page itself; they come from the embedded
     devideosrc player (see ``scavengarr.infrastructure.plugins.devideosrc``).
@@ -271,15 +172,17 @@ class _DetailPageParser(HTMLParser):
         <strong>Veröffentlicht: </strong> <div><a href="/xfsearch/2008">2008</a></div>
         <strong>Spielzeit: </strong> <div>50 min</div>
         IMDb link: <a href="https://www.imdb.com/title/ttXXXXX/">6.1/10</a>
+
+    A label's value is the first ``<div>`` or ``<span>`` after it; the last
+    value of a field, year link and IMDb link wins. The description is the
+    first paragraph with more than 20 characters.
     """
 
-    _VALUE_TAGS = ("span", "div")
+    # Labels whose value is read, and the field it fills
+    _FIELDS = {"Genres:": "genres", "Spielzeit:": "runtime"}
 
     def __init__(self, base_url: str) -> None:
-        super().__init__()
         self._base_url = base_url
-
-        # Metadata
         self.year = ""
         self.genres: list[str] = []
         self.description = ""
@@ -287,118 +190,48 @@ class _DetailPageParser(HTMLParser):
         self.imdb_id = ""
         self.runtime = ""
 
-        # Description tracking
-        self._in_desc_p = False
-        self._desc_text = ""
-
-        # Metadata field tracking: value element after a <strong> label
-        self._last_strong_text = ""
-        self._in_strong = False
-        self._value_field = ""  # "genres" | "runtime" while inside the value
-        self._value_tag = ""
-        self._value_depth = 0
-        self._value_text = ""
-        self._in_year_a = False
-        self._year_text = ""
-
-        # IMDb link tracking
-        self._in_imdb_a = False
-        self._imdb_text = ""
-
     @property
     def is_series(self) -> bool:
         return _detect_series(self.genres)
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attr_dict = dict(attrs)
-
-        if self._value_field and tag == self._value_tag:
-            self._value_depth += 1
-
-        if tag == "strong":
-            self._in_strong = True
-            self._last_strong_text = ""
-
-        # Value element right after "Genres:" / "Spielzeit:"
-        if tag in self._VALUE_TAGS and not self._value_field:
-            field = {"Genres:": "genres", "Spielzeit:": "runtime"}.get(
-                self._last_strong_text
-            )
-            if field:
-                self._value_field = field
-                self._value_tag = tag
-                self._value_depth = 1
-                self._value_text = ""
-                self._last_strong_text = ""
-
-        if tag == "a":
-            href = attr_dict.get("href", "") or ""
-            # Year link: <a href="/xfsearch/2008">
-            if re.search(r"/xfsearch/\d{4}$", href):
-                self._in_year_a = True
-                self._year_text = ""
-
-            # IMDb link
-            if "imdb.com/title/" in href:
-                self._in_imdb_a = True
-                self._imdb_text = ""
-                m = re.search(r"(tt\d+)", href)
-                if m:
-                    self.imdb_id = m.group(1)
-
-        # Description paragraph (first <p> inside the detail info area)
-        if tag == "p" and not self._in_desc_p and not self.description:
-            self._in_desc_p = True
-            self._desc_text = ""
-
-    def handle_data(self, data: str) -> None:
-        if self._in_strong:
-            self._last_strong_text += data
-        if self._value_field:
-            self._value_text += data
-        if self._in_year_a:
-            self._year_text += data
-        if self._in_imdb_a:
-            self._imdb_text += data
-        if self._in_desc_p:
-            self._desc_text += data
-
-    def _end_value(self) -> None:
-        """Store the label value that just closed."""
-        raw = " ".join(self._value_text.split())
-        if self._value_field == "genres":
-            self.genres = [g.strip() for g in raw.split("/") if g.strip()]
-        else:
-            self.runtime = raw
-        self._value_field = ""
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "strong" and self._in_strong:
-            self._in_strong = False
-            self._last_strong_text = self._last_strong_text.strip()
-
-        if self._value_field and tag == self._value_tag:
-            self._value_depth -= 1
-            if not self._value_depth:
-                self._end_value()
-
-        if tag == "a" and self._in_year_a:
-            self._in_year_a = False
-            text = self._year_text.strip()
-            if re.match(r"\d{4}$", text):
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        self._read_fields(tree)
+        # Year link: <a href="/xfsearch/2008">2008</a>
+        for link in tree.css("a[href*='/xfsearch/']"):
+            text = link.text().strip()
+            href = link.attributes.get("href") or ""
+            if re.search(r"/xfsearch/\d{4}$", href) and re.match(r"\d{4}$", text):
                 self.year = text
-
-        if tag == "a" and self._in_imdb_a:
-            self._in_imdb_a = False
-            m = re.search(r"(\d+\.?\d*)/10", self._imdb_text.strip())
-            if m:
-                self.imdb_rating = m.group(1)
-
-        if tag == "p" and self._in_desc_p:
-            self._in_desc_p = False
-            text = self._desc_text.strip()
+        for link in tree.css("a[href*='imdb.com/title/']"):
+            imdb_id = re.search(r"(tt\d+)", link.attributes.get("href") or "")
+            if imdb_id:
+                self.imdb_id = imdb_id.group(1)
+            rating = re.search(r"(\d+\.?\d*)/10", link.text().strip())
+            if rating:
+                self.imdb_rating = rating.group(1)
+        for paragraph in tree.css("p"):
+            text = paragraph.text().strip()
             if len(text) > 20:
                 self.description = text
+                break
+
+    def _read_fields(self, tree: LexborHTMLParser) -> None:
+        """Values of the "Genres:" and "Spielzeit:" labels."""
+        label = ""
+        for node in tree.css("strong, span, div"):
+            if node.tag == "strong":
+                label = node.text().strip()
+                continue
+            field = self._FIELDS.get(label)
+            if not field:
+                continue
+            raw = " ".join(node.text().split())
+            if field == "genres":
+                self.genres = [g.strip() for g in raw.split("/") if g.strip()]
+            else:
+                self.runtime = raw
+            label = ""
 
 
 class StreamcloudPlugin(HttpxPluginBase):
