@@ -54,11 +54,17 @@ class StremioLinks:
     async def current(self, link: CachedStreamLink) -> CachedStreamLink | None:
         """*link* while its video URL is fresh, else resolved again.
 
-        ``None`` when the hoster gives no video anymore.
+        When the hoster gives no video, the stale video URL stays: its CDN
+        can still serve it (3 FireStream links of the dev-server end-to-end
+        run, 2026-10-05), and a refusal resolves again past the resolver's
+        cache (``refreshed``). ``None`` without a video URL to fall back to.
         """
         if link.video_url and time.time() - link.resolved_at < _FRESH_S:
             return link
-        return await self._resolve_again(link, refresh=False)
+        fresh = await self._resolve_again(link, refresh=False)
+        if fresh is None and link.video_url:
+            return link
+        return fresh
 
     async def refreshed(self, link: CachedStreamLink) -> CachedStreamLink | None:
         """*link* resolved again past the resolver's cache (the CDN refused it)."""

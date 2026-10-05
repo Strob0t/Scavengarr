@@ -1682,16 +1682,32 @@ class TestProxyResolvesAgain:
         app.state.hoster_resolver_registry.resolve.assert_not_awaited()
 
     @patch(f"{_PROXY_MODULE}.fetch_hls_resource", new_callable=AsyncMock)
-    def test_a_stream_the_hoster_no_longer_has_is_502(
+    def test_a_stale_stream_the_hoster_no_longer_gives_plays_its_stored_url(
+        self, mock_fetch: AsyncMock
+    ) -> None:
+        """3 FireStream links of the dev-server end-to-end run resolved no
+        more after an hour; their stored playlists still played."""
+        link = replace(_make_hls_link(), resolved_at=time.time() - 2 * 3600)
+        mock_fetch.return_value = (self._PLAYLIST, "application/vnd.apple.mpegurl")
+        app = self._app(link, None)
+
+        resp = TestClient(app).get(self._MASTER)
+
+        assert resp.status_code == 200
+        assert mock_fetch.call_args[0][1] == link.video_url
+
+    @patch(f"{_PROXY_MODULE}.fetch_hls_resource", new_callable=AsyncMock)
+    def test_a_stream_the_hoster_and_the_cdn_no_longer_have_is_502(
         self, mock_fetch: AsyncMock
     ) -> None:
         link = replace(_make_hls_link(), resolved_at=time.time() - 2 * 3600)
+        mock_fetch.side_effect = _refused(link.video_url)
         app = self._app(link, None)
 
         resp = TestClient(app).get(self._MASTER)
 
         assert resp.status_code == 502
-        mock_fetch.assert_not_awaited()
+        mock_fetch.assert_awaited_once()
 
 
 class TestProxyLeavesHlsToThePlayer:

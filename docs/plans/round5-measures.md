@@ -171,6 +171,7 @@ Both change when the answer goes out, so they share one design (refined while im
 - `/play` answers `HEAD` (it answered 405 before, which ended proxied streams in error 83 when the HLS proxy had the same gap).
 - The link id is the hoster URL's hash (`stream_link_id`), so one link per stream is refreshed by every answer; `stream_link_ttl_seconds` 7 days (was 2 h).
 - Cost: all HLS goes through the proxy now, also streams without headers (FireStream's, 2 of 18 in the measurement), at 75–88 ms of CPU per MB on the Pi.
+- Changed after the dev-server end-to-end run (2026-10-05): when a stale link's hoster gives no video, `current()` keeps the stale video URL instead of failing. After a restart and 63–73 minutes, 67 links resolved again and 64 of 70 streams played; the 3 FireStream links whose resolution failed still played from their stored playlists.
 
 ## 8. VOE
 

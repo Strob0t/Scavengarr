@@ -93,16 +93,26 @@ class TestCurrent:
         assert {r.video_url for r in results if r} == {_NEW}
         assert len(registry.calls) == 1
 
-    async def test_a_failed_resolution_gives_none(self) -> None:
+    async def test_a_failed_resolution_keeps_the_stale_video_url(self) -> None:
+        """The hoster can fail while its CDN still serves the stored URL:
+        3 FireStream links of the dev-server end-to-end run resolved no
+        more after an hour, their stored playlists still played."""
+        links, repo = _links(_Registry(None))
+        stale = _link(age=2 * 3600)
+
+        assert await links.current(stale) == stale
+        repo.save.assert_not_awaited()
+
+    async def test_without_a_video_url_a_failed_resolution_gives_none(self) -> None:
         links, repo = _links(_Registry(None))
 
-        assert await links.current(_link(age=2 * 3600)) is None
+        assert await links.current(_link(age=0, video_url="")) is None
         repo.save.assert_not_awaited()
 
     async def test_an_echoed_embed_url_gives_none(self) -> None:
         links, _ = _links(_Registry(ResolvedStream(video_url="https://voe.sx/e/abc")))
 
-        assert await links.current(_link(age=2 * 3600)) is None
+        assert await links.current(_link(age=0, video_url="")) is None
 
     async def test_a_failed_save_still_plays(self) -> None:
         links, repo = _links(_Registry(ResolvedStream(video_url=_NEW)))
@@ -123,6 +133,12 @@ class TestRefreshed:
 
         assert current is not None and current.video_url == _NEW
         assert registry.calls == [("https://voe.sx/e/abc", "voe", True)]
+
+    async def test_a_failed_resolution_gives_none(self) -> None:
+        """The CDN refused the stored URL: there is nothing to fall back to."""
+        links, _ = _links(_Registry(None))
+
+        assert await links.refreshed(_link(age=60)) is None
 
 
 class TestGet:

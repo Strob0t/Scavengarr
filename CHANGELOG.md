@@ -50,6 +50,7 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 ### Changed: Stream Links Resolve Again (Autoplay, Continue Watching)
 - Stremio plays a kept stream object later: autoplay plays the next episode's stream about an hour after it was fetched, "Continue Watching" days later. Every resolved stream now points at Scavengarr: a file at `/play/{id}` (a redirect to the current video URL), HLS at `/proxy/{id}/scavengarr.m3u8`, under which the proxy serves the current playlist.
 - A video URL older than an hour resolves again at playback (`stremio_link_resolved_again`); a playlist the CDN refuses (403, 404, 410) resolves once more past the resolver's cache. Concurrent requests for one link share one resolution.
+- When the hoster gives no video at that point, the stale video URL is still tried: in the dev-server end-to-end run, 3 FireStream links resolved no more after an hour while their stored playlists still played (they answered 502 before). A CDN refusal then resolves once more past the cache as above.
 - Links are kept 7 days (`stremio.stream_link_ttl_seconds`, was 2 h; `data/config.yaml` too) under an id from the hoster URL, one per stream. In the link-lifetime measurement every proxied HLS link answered 404 after 2 h because of the old TTL, while the CDN streams still played after 92 minutes.
 - `/play` answers `HEAD` (streaming servers ask with HEAD first).
 - HLS streams without headers go through the proxy too (a redirect to a playlist fails on Android).
