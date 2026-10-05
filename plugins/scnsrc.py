@@ -225,13 +225,19 @@ def _search_paths(category: int) -> tuple[str, ...]:
     )
 
 
+def _is_release_name(text: str) -> bool:
+    """Whether *text* looks like a scene release name (``Title.2023.1080p-GRP``)."""
+    return "." in text and len(text) > 10 and not any(c.isspace() for c in text)
+
+
 class _PostPageParser:
     """Extract release name and download links from a single post page (selectolax).
 
     Covers both layouts: TV posts (``tvshow_info`` block) and film/P2P posts
     (info table). In both, the release name is the first ``<strong>`` that
-    looks like a scene name, and the download links are anchors labelled
-    Torrent / Usenet / NZB inside ``div.storycontent``.
+    looks like a scene name (a period, more than 10 characters, no spaces:
+    film posts bold an awards line before it), and the download links are
+    anchors labelled Torrent / Usenet / NZB inside ``div.storycontent``.
     """
 
     _LINK_LABELS = frozenset({"torrent", "usenet", "nzb"})
@@ -245,7 +251,7 @@ class _PostPageParser:
         for story in _outermost(tree.css("div.storycontent")):
             for strong in story.css("strong"):
                 text = strong.text().strip()
-                if not self.release_name and "." in text and len(text) > 10:
+                if not self.release_name and _is_release_name(text):
                     self.release_name = text
             for link in story.css("a[href]"):
                 href = link.attributes.get("href") or ""
