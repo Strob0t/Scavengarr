@@ -170,6 +170,7 @@ Server-side proxy for HLS streams whose CDN requires headers (e.g. `Referer`) on
 1. `.m3u8` manifests are fetched with the stored headers (cached for 60 s, at most 512 manifests: when full, expired ones go first, then the oldest), and the CDN's URIs are rewritten to proxy URLs, in URI lines and in the `URI="…"` attributes of tags (audio renditions, keys, init segments). Relative URIs are left as-is because they resolve against the proxy URL. A URI from the CDN's root (`/secure/98/<id>/video.m3u8`, Vidsonic's variants), a protocol-relative one or an absolute URL of the CDN outside the stream's directory becomes `<proxy>/<stream-id>//<path>`; the proxy joins that absolute path with the CDN origin. URIs of other origins stay direct, since the proxy fetches from the stream's own CDN only.
 1. CDN fetches share a global semaphore (50); CDN errors return `502`.
 1. `HEAD` answers like `GET`; the server drops the body. When its streaming server cannot probe a stream, Stremio Web reads the content type with `HEAD` (stremio-video's `getContentType`) before it plays. A `405` without CORS headers ended these streams in error 83, "Video is not supported".
+1. The playlist is refused (`403`, `hls_proxy_converter_refused`) to a streaming server's ffmpeg (User-Agent `Lavf/`) unless `stremio.allow_hls_transcoding` is on. Stremio Web has its streaming server probe every stream; an HLS source (format `hls`) then goes through the server's converter (`/hlsv2/…`), which re-encodes the video with libx264, since it repackages MP4 and Matroska only. On a Raspberry Pi 4 without a usable hardware encoder ("no viable acceleration profiles detected" in the server log) a 1480×620 stream took 1–2 cores and 1080p stuttered (2026-10-05). The failed probe makes Stremio Web play the playlist itself with hls.js after a `HEAD` for its content type (`getPlayability` in stremio-video falls back to `canPlayStream`). Variants and segments are not refused. Native players (Android, desktop) never ask the server's converter.
 
 ### Play
 
@@ -331,6 +332,7 @@ Stremio settings live in `StremioConfig` (YAML section `stremio:`). See [Configu
 | `max_probe_count` | 50 | Top-ranked streams to resolve; streams beyond are dropped |
 | `probe_concurrency` | 10 | Parallel resolutions |
 | `resolve_target_count` | 5 | The answer goes out once this many hosters have a video, also while plugins search (`0` = wait until everything is done or the deadline) |
+| `allow_hls_transcoding` | `false` | Let Stremio's streaming server transcode HLS streams; off, the HLS proxy refuses its ffmpeg the playlist and Stremio Web plays HLS itself (see HLS Proxy) |
 | `verify_streams` | `true` | Playback check of every resolved URL: first bytes with the playback headers; error status, HTML or a non-playlist HLS answer drops the stream (result cached like a failed resolution) |
 | `stream_link_ttl_seconds` | 604800 | How long the links behind `/play/` and the HLS proxy are kept (`streamlink:{stream_id}`, 7 days); stale ones resolve again |
 | `probe_stealth_timeout_seconds` | 15 | Page timeout of the `StealthPool` (browser-based resolvers, Cloudflare fallback) |

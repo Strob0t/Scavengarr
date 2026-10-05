@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: 1080p HLS Streams Stutter in Stremio Web
+- Stremio Web has its streaming server probe every stream before it plays it. An HLS source (format `hls`) then always goes through the server's converter, which re-encodes the video with libx264: it repackages MP4 and Matroska only, because only their keyframes are indexed (`requiresTranscoding` in the server's `hls-converter`). On the maintainer's Raspberry Pi 4 (no usable hardware encoder) a 1480×620 stream took 1–2 cores, and 1080p, 2.3 times the pixels, stuttered. Each segment was also fetched twice, by one ffmpeg for the video and one for the audio.
+- The HLS proxy refuses the streaming server's ffmpeg (User-Agent `Lavf/`) the stream's playlist (`403`, `hls_proxy_converter_refused`). The failed probe makes Stremio Web read the content type with `HEAD` and play the playlist itself (hls.js): no transcoding, the original quality, each segment fetched once.
+- `stremio.allow_hls_transcoding: true` lets a server transcode again, for players that cannot decode a stream's codecs (HEVC in Firefox, AC3); hosters' HLS was H.264 and AAC in every probe.
+
 ### Changed: Stream Links Resolve Again (Autoplay, Continue Watching)
 - Stremio plays a kept stream object later: autoplay plays the next episode's stream about an hour after it was fetched, "Continue Watching" days later. Every resolved stream now points at Scavengarr: a file at `/play/{id}` (a redirect to the current video URL), HLS at `/proxy/{id}/scavengarr.m3u8`, under which the proxy serves the current playlist.
 - A video URL older than an hour resolves again at playback (`stremio_link_resolved_again`); a playlist the CDN refuses (403, 404, 410) resolves once more past the resolver's cache. Concurrent requests for one link share one resolution.

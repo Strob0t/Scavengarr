@@ -1665,3 +1665,71 @@ class TestProxyResolvesAgain:
 
         assert resp.status_code == 502
         mock_fetch.assert_not_awaited()
+
+
+class TestProxyLeavesHlsToThePlayer:
+    """Stremio Web lets its streaming server probe every stream. An HLS
+    source then goes through the server's converter, which re-encodes the
+    video (it repackages MP4 and Matroska only): on a Raspberry Pi 4 too
+    slow for 1080p. The proxy refuses the converter's ffmpeg the playlist,
+    and Stremio Web plays it itself."""
+
+    _MASTER = f"{_PREFIX}/stremio/proxy/hls-abc/{HLS_MASTER}"
+    _FFMPEG = {"User-Agent": "Lavf/60.16.100"}
+    _BROWSER = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) Chrome/140.0"}
+    _PLAYLIST = b"#EXTM3U\n#EXTINF:10.0,\nseg-1.ts\n#EXT-X-ENDLIST\n"
+
+    def _app(self, config: StremioConfig) -> FastAPI:
+        repo = AsyncMock()
+        repo.get = AsyncMock(
+            return_value=replace(_make_hls_link(), resolved_at=time.time())
+        )
+        app = _make_app(stream_link_repo=repo)
+        app.state.config.stremio = config
+        return app
+
+    @patch(f"{_PROXY_MODULE}.fetch_hls_resource", new_callable=AsyncMock)
+    def test_the_streaming_servers_ffmpeg_gets_no_playlist(
+        self, mock_fetch: AsyncMock
+    ) -> None:
+        app = self._app(StremioConfig())
+
+        resp = TestClient(app).get(self._MASTER, headers=self._FFMPEG)
+
+        assert resp.status_code == 403
+        mock_fetch.assert_not_awaited()
+        app.state.stream_link_repo.get.assert_not_awaited()
+
+    @patch(f"{_PROXY_MODULE}.fetch_hls_resource", new_callable=AsyncMock)
+    def test_the_player_gets_the_playlist(self, mock_fetch: AsyncMock) -> None:
+        mock_fetch.return_value = (self._PLAYLIST, "application/vnd.apple.mpegurl")
+        client = TestClient(self._app(StremioConfig()))
+
+        head = client.head(self._MASTER, headers=self._BROWSER)
+        resp = client.get(self._MASTER, headers=self._BROWSER)
+
+        assert head.status_code == 200
+        assert head.headers["content-type"] == "application/vnd.apple.mpegurl"
+        assert resp.status_code == 200
+        assert "seg-1.ts" in resp.text
+
+    @patch(f"{_PROXY_MODULE}.fetch_hls_resource", new_callable=AsyncMock)
+    def test_variants_are_not_refused(self, mock_fetch: AsyncMock) -> None:
+        """Only the stream's playlist decides who plays it."""
+        mock_fetch.return_value = (self._PLAYLIST, "application/vnd.apple.mpegurl")
+        client = TestClient(self._app(StremioConfig()))
+
+        resp = client.get(
+            f"{_PREFIX}/stremio/proxy/hls-abc/index-v1.m3u8", headers=self._FFMPEG
+        )
+
+        assert resp.status_code == 200
+
+    @patch(f"{_PROXY_MODULE}.fetch_hls_resource", new_callable=AsyncMock)
+    def test_a_server_may_transcode_when_allowed(self, mock_fetch: AsyncMock) -> None:
+        mock_fetch.return_value = (self._PLAYLIST, "application/vnd.apple.mpegurl")
+        app = self._app(StremioConfig(allow_hls_transcoding=True))
+
+        resp = TestClient(app).get(self._MASTER, headers=self._FFMPEG)
+
+        assert resp.status_code == 200

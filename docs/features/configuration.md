@@ -351,6 +351,7 @@ Controls the Stremio addon behavior: stream ranking, plugin concurrency, title m
 | `stremio.plugin_timeout_seconds` | float | `30.0` | Plugin search budget per stream request, counted from the request start (slot queueing included); running plugins are cut, queued ones skipped. The answer does not wait for the search |
 | `stremio.plugin_health_interval_seconds` | float | `1800.0` | How often every Stremio plugin's site is checked (HEAD on its domains); searches skip plugins whose site did not answer, and those are checked again every 5 minutes (`0` = off) |
 | `stremio.stream_deadline_seconds` | float | `60.0` | Latest answer of a stream request, from the request start: hoster resolution stops and the answer has what is resolved. Earlier at `resolve_target_count` streams or when the search and every resolution are done |
+| `stremio.allow_hls_transcoding` | bool | `false` | Let Stremio's streaming server transcode HLS streams; off, the HLS proxy refuses its ffmpeg the playlist and Stremio Web plays HLS itself (on a Raspberry Pi 4 the server's software transcoding stuttered at 1080p) |
 | `stremio.verify_streams` | bool | `true` | Playback check of every resolved video URL (first bytes with playback headers); unplayable streams are dropped |
 | `stremio.title_match_threshold` | float | `0.7` | Minimum title similarity score |
 | `stremio.title_year_bonus` | float | `0.2` | Score bonus for matching year |

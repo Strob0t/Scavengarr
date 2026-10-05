@@ -331,6 +331,18 @@ class StremioConfig(BaseModel):
         ),
     )
 
+    allow_hls_transcoding: bool = Field(
+        default=False,
+        description=(
+            "Let Stremio's streaming server transcode HLS streams. Stremio Web "
+            "has the server probe every stream, and an HLS source then goes "
+            "through the server's converter, which re-encodes the video (on a "
+            "Raspberry Pi 4 too slow for 1080p). Off, the HLS proxy refuses "
+            "the server's ffmpeg the stream's playlist, and Stremio Web plays "
+            "it itself."
+        ),
+    )
+
     verify_streams: bool = Field(
         default=True,
         description=(

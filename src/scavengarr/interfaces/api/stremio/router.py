@@ -45,6 +45,9 @@ _CORS_HEADERS = {
 # CDN answers to a playlist that a new resolution may fix (expired token)
 _REFUSED = frozenset({403, 404, 410})
 
+# FFmpeg's own User-Agent: Stremio's streaming server probes and converts with it
+_FFMPEG_AGENT = "Lavf/"
+
 
 def _catalogs(*, trending: bool) -> list[dict[str, Any]]:
     """The addon's catalogs: trending rows, searchable.
@@ -426,12 +429,18 @@ async def proxy_hls(
 
     HEAD answers like GET (the server drops the body): Stremio Web reads
     the stream's content type with a HEAD request before it plays.
+
+    The playlist is not served to a streaming server's converter unless
+    ``stremio.allow_hls_transcoding`` is on (``_converter_refused``).
     """
     state = cast(AppState, request.app.state)
     links = getattr(state, "stremio_links", None)
     if links is None:
         return _error_json(503, "stream links not configured")
     master = path == HLS_MASTER
+    if master and _converter_refused(state, request):
+        log.info("hls_proxy_converter_refused", stream_id=stream_id)
+        return _error_json(403, "HLS streams play in the player, not transcoded")
 
     link = await _proxy_link(links, stream_id, master=master)
     if isinstance(link, JSONResponse):
@@ -483,6 +492,23 @@ async def proxy_hls(
         content=rewritten,
         media_type="application/vnd.apple.mpegurl",
         headers=_CORS_HEADERS,
+    )
+
+
+def _converter_refused(state: AppState, request: Request) -> bool:
+    """Whether *request* is a streaming server's ffmpeg that may not transcode.
+
+    Stremio Web has its streaming server probe every stream before it plays
+    it. An HLS source (format ``hls``) then goes through the server's
+    converter, which re-encodes the video: it repackages MP4 and Matroska
+    only. On a Raspberry Pi 4 without a usable hardware encoder 1080p
+    stuttered at 1-2 cores. A failed probe makes Stremio Web read the
+    content type with HEAD and play the playlist itself (hls.js).
+    """
+    agent = request.headers.get("user-agent", "")
+    return (
+        agent.startswith(_FFMPEG_AGENT)
+        and not state.config.stremio.allow_hls_transcoding
     )
 
 
