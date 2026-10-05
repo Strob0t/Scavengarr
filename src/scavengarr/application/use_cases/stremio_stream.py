@@ -163,6 +163,10 @@ class _LateGroup:
 # Accepts (url, hoster_hint), returns ResolvedStream or None.
 ResolveCallback = Callable[[str, str], Awaitable[ResolvedStream | None]]
 
+# The cached outcome of resolving a URL, without resolving it: (True, stream),
+# (True, None) for a link cached as dead, (False, None) when not cached.
+CachedResolutionCallback = Callable[[str], tuple[bool, ResolvedStream | None]]
+
 
 class StremioStreamUseCase:
     """Resolve Stremio stream requests into sorted stream links.
@@ -192,6 +196,7 @@ class StremioStreamUseCase:
         max_results_var: ContextVar[int | None],
         stream_link_repo: StreamLinkRepository | None = None,
         resolve_fn: ResolveCallback | None = None,
+        cached_resolution_fn: CachedResolutionCallback | None = None,
         metrics: _MetricsRecorder | None = None,
         score_store: PluginScoreStorePort | None = None,
         browser_warmup_fn: BrowserWarmupFn | None = None,
@@ -228,6 +233,7 @@ class StremioStreamUseCase:
         self._title_year_tolerance_series = config.title_year_tolerance_series
         self._stream_link_repo = stream_link_repo
         self._resolve_fn = resolve_fn
+        self._cached_resolution_fn = cached_resolution_fn
         self._max_probe_count = config.max_probe_count
         self._probe_concurrency = config.probe_concurrency
         self._resolve_target = config.resolve_target_count
@@ -239,6 +245,8 @@ class StremioStreamUseCase:
         # Running searches per cache key (single-flight) and every task
         # that outlives a request (refreshes, late plugins), for aclose()
         self._searches: dict[str, asyncio.Task[CachedSearch]] = {}
+        # Resolutions of a cached answer's other links, one per cache key
+        self._background_resolutions: dict[str, asyncio.Task[Any]] = {}
         self._tasks: set[asyncio.Task[Any]] = set()
         self._metrics = metrics
         self._score_store = score_store
@@ -288,7 +296,7 @@ class StremioStreamUseCase:
 
         # --- Per-language-group search + filter (cached per title) ---
         key = search_cache_key(request)
-        searched = await self._cached_search(
+        searched, from_cache = await self._cached_search(
             key,
             partial(
                 self._search,
@@ -353,7 +361,12 @@ class StremioStreamUseCase:
                 started + self._deadline_s, time.monotonic() + _MIN_RESOLVE_WINDOW_S
             )
             streams = await self._cache_and_proxy(
-                streams, sorted_streams, base_url, deadline=deadline
+                streams,
+                sorted_streams,
+                base_url,
+                deadline=deadline,
+                key=key,
+                from_cache=from_cache,
             )
 
         log.info(
@@ -385,17 +398,18 @@ class StremioStreamUseCase:
 
     async def _cached_search(
         self, key: str, search: Callable[[], Coroutine[Any, Any, CachedSearch]]
-    ) -> CachedSearch:
+    ) -> tuple[CachedSearch, bool]:
         """The search results for *key*: cached, from a running search, or new.
 
         Requests for one key share one running search (single-flight). A
         stale entry still answers while a background search refreshes it
         (stale-while-revalidate). The search runs as its own task, so a
-        request that goes away does not cancel it for the others.
+        request that goes away does not cancel it for the others. Returns
+        the results and whether they came from the cache.
         """
         entry = await self._search_cache.get(key)
         if entry is None:
-            return await asyncio.shield(self._shared_search(key, search))
+            return await asyncio.shield(self._shared_search(key, search)), False
         stale = self._search_cache.is_stale(entry)
         if stale:
             self._shared_search(key, search)
@@ -406,7 +420,7 @@ class StremioStreamUseCase:
             age_s=round(time.time() - entry.stored_at),
             result_count=len(entry.results),
         )
-        return entry
+        return entry, True
 
     def _shared_search(
         self, key: str, search: Callable[[], Coroutine[Any, Any, CachedSearch]]
@@ -645,6 +659,8 @@ class StremioStreamUseCase:
         base_url: str,
         *,
         deadline: float,
+        key: str,
+        from_cache: bool,
     ) -> list[StremioStream]:
         """Resolve the streams and point them at their playable URLs.
 
@@ -659,8 +675,8 @@ class StremioStreamUseCase:
         # --- Resolve step: extract direct video URLs + headers ---
         resolved_map: dict[int, ResolvedStream] = {}
         if self._resolve_fn is not None:
-            resolved_map = await self._resolve_top_streams(
-                ranked, deadline, self._resolve_fn
+            resolved_map = await self._resolve(
+                ranked, deadline, self._resolve_fn, key=key, from_cache=from_cache
             )
 
         answer: list[tuple[StremioStream, CachedStreamLink | None]] = []
@@ -724,11 +740,74 @@ class StremioStreamUseCase:
             )
         return {sid for sid, _ in errors}
 
+    async def _resolve(
+        self,
+        ranked: list[RankedStream],
+        deadline: float,
+        resolve_fn: ResolveCallback,
+        *,
+        key: str,
+        from_cache: bool,
+    ) -> dict[int, ResolvedStream]:
+        """Resolve the streams; a cached search answers from cached resolutions.
+
+        Results from the search cache go out at once with the resolutions in
+        the resolver's cache when one of them is a video. The links without
+        one resolve in the background for the next request, one run per
+        cache key at a time (such answers waited for the resolve grace,
+        4.1-4.4 s, for one link resolved for the first time). Otherwise, and
+        for a new search, the streams resolve as ``_resolve_top_streams``
+        describes.
+        """
+        if from_cache and self._cached_resolution_fn is not None:
+            cached = self._cached_resolutions(ranked, self._cached_resolution_fn)
+            if any(is_direct_video_url(r, ranked[i].url) for i, r in cached.items()):
+                log.info("stremio_resolve_from_cache", resolved=len(cached))
+                if key not in self._background_resolutions:
+                    task = self._spawn(
+                        self._resolve_top_streams(
+                            ranked,
+                            time.monotonic() + self._deadline_s,
+                            resolve_fn,
+                            background=True,
+                        )
+                    )
+                    self._background_resolutions[key] = task
+                    task.add_done_callback(
+                        lambda _: self._background_resolutions.pop(key, None)
+                    )
+                return cached
+        return await self._resolve_top_streams(ranked, deadline, resolve_fn)
+
+    def _cached_resolutions(
+        self, ranked: list[RankedStream], cached_fn: CachedResolutionCallback
+    ) -> dict[int, ResolvedStream]:
+        """Each hoster's best stream whose resolution is cached.
+
+        A hoster's streams are taken in rank order past the links cached as
+        dead, up to the first one that is not cached.
+        """
+        hosters = _HosterQueues(ranked[: self._max_probe_count])
+        found: dict[int, ResolvedStream] = {}
+        candidates = hosters.first()
+        while candidates:
+            dead: list[int] = []
+            for idx in candidates:
+                cached, resolved = cached_fn(ranked[idx].url)
+                if resolved is not None:
+                    found[idx] = resolved
+                elif cached:
+                    dead.append(idx)
+            candidates = hosters.next_after(dead)
+        return found
+
     async def _resolve_top_streams(
         self,
         ranked: list[RankedStream],
         deadline: float,
         resolve_fn: ResolveCallback,
+        *,
+        background: bool = False,
     ) -> dict[int, ResolvedStream]:
         """Resolve the top streams to direct video URLs, one per hoster.
 
@@ -746,7 +825,9 @@ class StremioStreamUseCase:
         and what is resolved so far is returned; once the first video URL
         is there, that happens ``resolve_grace_seconds`` later at the
         latest (browser-resolved hosters take 3-7 s and held answers that
-        were complete but for them until the deadline).
+        were complete but for them until the deadline). In the *background*
+        (no answer waits) every hoster resolves until the deadline, without
+        the target and the grace.
 
         Returns a mapping of stream index -> ResolvedStream for
         successfully resolved streams.  Failed resolutions are omitted.
@@ -773,43 +854,48 @@ class StremioStreamUseCase:
         pending = {asyncio.create_task(_resolve_one(i)) for i in hosters.first()}
         resolved_map: dict[int, ResolvedStream] = {}
         video_count = 0
-        target = self._resolve_target
+        target = 0 if background else self._resolve_target
+        grace = 0.0 if background else self._resolve_grace_s
         attempted = 0
         timed_out = False
         end = deadline
 
-        while pending:
-            remaining = end - time.monotonic()
-            if remaining <= 0:
-                timed_out = True
-                break
-            done, pending = await asyncio.wait(
-                pending, timeout=remaining, return_when=asyncio.FIRST_COMPLETED
-            )
-            if not done:
-                timed_out = True
-                break
-            attempted += len(done)
-            first_video = video_count == 0
-            video_count += self._collect_resolved(done, ranked, resolved_map)
-            if first_video and video_count and self._resolve_grace_s > 0:
-                end = min(end, time.monotonic() + self._resolve_grace_s)
-            failed = [idx for idx, res in (t.result() for t in done) if res is None]
-            pending |= {
-                asyncio.create_task(_resolve_one(i)) for i in hosters.next_after(failed)
-            }
+        try:
+            while pending:
+                remaining = end - time.monotonic()
+                if remaining <= 0:
+                    timed_out = True
+                    break
+                done, pending = await asyncio.wait(
+                    pending, timeout=remaining, return_when=asyncio.FIRST_COMPLETED
+                )
+                if not done:
+                    timed_out = True
+                    break
+                attempted += len(done)
+                first_video = video_count == 0
+                video_count += self._collect_resolved(done, ranked, resolved_map)
+                if first_video and video_count and grace > 0:
+                    end = min(end, time.monotonic() + grace)
+                failed = [idx for idx, res in (t.result() for t in done) if res is None]
+                pending |= {
+                    asyncio.create_task(_resolve_one(i))
+                    for i in hosters.next_after(failed)
+                }
 
-            if target > 0 and video_count >= target:
-                break
-
-        # Cancel remaining tasks once target reached
-        for t in pending:
-            t.cancel()
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
+                if target > 0 and video_count >= target:
+                    break
+        finally:
+            # Target, deadline, or the caller was cancelled (shutdown, a
+            # client that went away): no resolution runs on unowned
+            for t in pending:
+                t.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
 
         log.info(
             "stremio_resolve_complete",
+            background=background,
             total=limit,
             attempted=attempted,
             resolved=len(resolved_map),

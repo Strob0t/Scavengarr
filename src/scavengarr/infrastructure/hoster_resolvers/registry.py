@@ -177,6 +177,18 @@ class HosterResolverRegistry:
             if cleanup_fn is not None:
                 await cleanup_fn()
 
+    def cached(self, url: str) -> tuple[bool, ResolvedStream | None]:
+        """The cached outcome of ``resolve(url)``, without resolving.
+
+        ``(True, stream)`` for a cached stream, ``(True, None)`` for a link
+        cached as dead, ``(False, None)`` when ``resolve()`` would have to
+        resolve it.
+        """
+        cached = self._result_cache.get(url.strip())
+        if cached is None or cached.is_expired:
+            return False, None
+        return True, cached.value
+
     async def resolve(self, url: str, hoster: str = "") -> ResolvedStream | None:
         """Resolve a hoster embed URL to a playable video URL.
 

@@ -6,6 +6,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Perf: Cached Answers Go Out at Once
+- An answer from the search cache waited for the resolve grace (4.1–4.4 s in the fifth end-to-end round) when one of its links had no cached resolution. It now goes out at once with the resolutions in the resolver's cache when one of them is a stream (`stremio_resolve_from_cache`); a hoster whose best link is cached as dead contributes its next cached one.
+- The links without a cached resolution resolve in the background, one run per title at a time, and fill the resolver's cache for the next request. Without a cached stream the answer resolves as before.
+- The resolver registry reads its cache without resolving (`cached(url)`).
+- A cancelled request (shutdown) now cancels its unfinished resolutions instead of leaving them running untracked.
+
 ### Perf: TLS Runs in the Event Loop, Not in Python
 - httpx's default network backend on asyncio is anyio, which runs TLS in Python. The shared client now connects through `AsyncioNetworkBackend` (asyncio streams; TLS in the event loop, uvloop in production), underneath the SSRF guard's `GuardedNetworkBackend`. Measured on the Raspberry Pi with 1 MB HLS segments through the proxy: 103–112 ms of CPU per MB before, 75–88 ms after.
 - An idle connection the server closed or sent something on (a 408) is retired before reuse: asyncio reads ahead into the stream's buffer, so the backend checks the buffer instead of polling the socket.

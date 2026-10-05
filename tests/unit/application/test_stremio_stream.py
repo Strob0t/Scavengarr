@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -88,7 +88,9 @@ def _make_use_case(
     search_engine: AsyncMock | None = None,
     config: StremioConfig | None = None,
     stream_link_repo: AsyncMock | None = None,
-    resolve_fn: AsyncMock | None = None,
+    resolve_fn: Callable[..., Awaitable[ResolvedStream | None]] | None = None,
+    cached_resolution_fn: Callable[[str], tuple[bool, ResolvedStream | None]]
+    | None = None,
     cache: AsyncMock | None = None,
     search_ttl_seconds: int = 0,
 ) -> StremioStreamUseCase:
@@ -114,6 +116,7 @@ def _make_use_case(
         max_results_var=search_max_results,
         stream_link_repo=stream_link_repo,
         resolve_fn=resolve_fn,
+        cached_resolution_fn=cached_resolution_fn,
         pool=ConcurrencyPool(httpx_slots=100, pw_slots=100),
         cache=cache,
         search_ttl_seconds=search_ttl_seconds,
@@ -1865,3 +1868,161 @@ class TestSearchCache:
         assert cancelled.is_set()
         with pytest.raises(asyncio.CancelledError):
             await request
+
+
+# ---------------------------------------------------------------------------
+# Cached answers: a search from the cache answers with cached resolutions
+# ---------------------------------------------------------------------------
+
+
+class _Resolutions:
+    """Resolver registry stand-in: resolve() caches, cached() peeks."""
+
+    def __init__(
+        self,
+        *,
+        alive: tuple[str, ...] = (),
+        dead: tuple[str, ...] = (),
+        delay: float = 0.0,
+    ) -> None:
+        self.store: dict[str, ResolvedStream | None] = {u: _video(u) for u in alive}
+        self.store.update(dict.fromkeys(dead))
+        self.delay = delay
+        self.calls: list[str] = []
+        self.cancelled = asyncio.Event()
+
+    async def resolve(self, url: str, hoster: str = "") -> ResolvedStream | None:
+        if url in self.store:
+            return self.store[url]
+        self.calls.append(url)
+        try:
+            await asyncio.sleep(self.delay)
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            raise
+        self.store[url] = _video(url)
+        return self.store[url]
+
+    def cached(self, url: str) -> tuple[bool, ResolvedStream | None]:
+        return url in self.store, self.store.get(url)
+
+
+_VOE = "https://voe.sx/e/best"
+_VOE_2 = "https://voe.sx/e/second"
+_DOOD = "https://dood.to/e/new"
+
+
+def _from_cache(
+    links: list[dict[str, str]],
+    resolutions: _Resolutions,
+    *,
+    cached: bool = True,
+) -> StremioStreamUseCase:
+    """Use case whose search for the title is in the cache (or, with
+    *cached* False, comes from a plugin)."""
+    results = [
+        _make_search_result(
+            title="Iron Man", release_name=link.pop("release"), download_links=[link]
+        )
+        for link in links
+    ]
+    cache = _memory_cache()
+    if cached:
+        cache.data[_KEY] = CachedSearch(
+            results=results, total=len(results), stored_at=time.time()
+        )
+    tmdb = AsyncMock()
+    tmdb.get_title_and_year = AsyncMock(
+        return_value=TitleMatchInfo(title="Iron Man", year=2008)
+    )
+    plugins = MagicMock()
+    plugins.get_languages.return_value = ["de"]
+    plugins.get_by_provides.side_effect = lambda p: ["a"] if p == "stream" else []
+    plugins.get.return_value = _site(results)
+    return _make_use_case(
+        tmdb=tmdb,
+        plugins=plugins,
+        config=_make_config(search_soft_deadline_seconds=0.1),
+        stream_link_repo=AsyncMock(),
+        resolve_fn=resolutions.resolve,
+        cached_resolution_fn=resolutions.cached,
+        cache=cache,
+        search_ttl_seconds=_TTL,
+    )
+
+
+def _link(url: str, release: str = "Iron.Man.2008.German.1080p.BluRay") -> dict:
+    return {"url": url, "hoster": url.split("/")[2].split(".")[0], "release": release}
+
+
+class TestCachedAnswers:
+    """A cached answer waited for the resolve grace (4.1-4.4 s) when one of
+    its links had no cached resolution; it goes out at once now, and the
+    other links resolve in the background for the next request."""
+
+    async def test_answers_at_once_with_the_cached_streams(self) -> None:
+        resolutions = _Resolutions(alive=(_VOE,), delay=0.5)
+        uc = _from_cache([_link(_VOE), _link(_DOOD)], resolutions)
+
+        started = time.monotonic()
+        streams = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        assert time.monotonic() - started < 0.3
+        assert [s.url for s in streams] == ["https://cdn.example/best.mp4"]
+        await _eventually(lambda: _DOOD in resolutions.store)
+        assert resolutions.calls == [_DOOD]
+
+    async def test_a_link_cached_as_dead_gives_way_to_the_hosters_next(
+        self,
+    ) -> None:
+        resolutions = _Resolutions(alive=(_VOE_2,), dead=(_VOE,))
+        uc = _from_cache(
+            [_link(_VOE), _link(_VOE_2, "Iron.Man.2008.German.720p.WEB")],
+            resolutions,
+        )
+
+        streams = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        assert [s.url for s in streams] == ["https://cdn.example/second.mp4"]
+        assert resolutions.calls == []
+
+    async def test_without_a_cached_stream_the_answer_waits_as_before(self) -> None:
+        resolutions = _Resolutions(dead=(_VOE,), delay=0.1)
+        uc = _from_cache([_link(_VOE), _link(_DOOD)], resolutions)
+
+        streams = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        assert [s.url for s in streams] == ["https://cdn.example/new.mp4"]
+        assert resolutions.calls == [_DOOD]
+
+    async def test_a_new_search_waits_for_its_links(self) -> None:
+        """Only an answer from the search cache goes out early."""
+        resolutions = _Resolutions(alive=(_VOE,), delay=0.1)
+        uc = _from_cache([_link(_VOE), _link(_DOOD)], resolutions, cached=False)
+
+        streams = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        assert sorted(s.url for s in streams) == [
+            "https://cdn.example/best.mp4",
+            "https://cdn.example/new.mp4",
+        ]
+
+    async def test_one_background_resolution_per_title(self) -> None:
+        resolutions = _Resolutions(alive=(_VOE,), delay=0.3)
+        uc = _from_cache([_link(_VOE), _link(_DOOD)], resolutions)
+
+        await uc.execute(_make_request(), base_url="http://localhost:8080")
+        await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        await _eventually(lambda: _DOOD in resolutions.store)
+        assert resolutions.calls == [_DOOD]
+
+    async def test_aclose_ends_the_background_resolution(self) -> None:
+        resolutions = _Resolutions(alive=(_VOE,), delay=30)
+        uc = _from_cache([_link(_VOE), _link(_DOOD)], resolutions)
+        await uc.execute(_make_request(), base_url="http://localhost:8080")
+        await _eventually(lambda: resolutions.calls == [_DOOD])
+
+        await uc.aclose()
+
+        assert resolutions.cancelled.is_set()

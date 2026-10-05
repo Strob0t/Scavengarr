@@ -615,6 +615,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         max_results_var=search_max_results,
         stream_link_repo=state.stream_link_repo,
         resolve_fn=state.hoster_resolver_registry.resolve,
+        # A cached search answers at once with the cached resolutions
+        cached_resolution_fn=state.hoster_resolver_registry.cached,
         metrics=state.metrics,
         score_store=state.plugin_score_store,
         browser_warmup_fn=state.shared_browser_pool.warmup,

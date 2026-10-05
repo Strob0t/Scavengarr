@@ -521,6 +521,34 @@ class TestHosterResolverRegistry:
         # Only one actual resolve call
         assert resolver.resolve.await_count == 1
 
+    async def test_cached_tells_alive_dead_and_unknown_apart(self) -> None:
+        """A cached search answers from the cache without resolving."""
+        stream = ResolvedStream(video_url="https://cdn.example.com/video.mp4")
+        resolver = MagicMock()
+        resolver.name = "voe"
+        resolver.resolve = AsyncMock(
+            side_effect=lambda url: None if url.endswith("dead") else stream
+        )
+        registry = HosterResolverRegistry(resolvers=[resolver])
+        await registry.resolve("https://voe.sx/e/alive")
+        await registry.resolve("https://voe.sx/e/dead")
+
+        assert registry.cached("https://voe.sx/e/alive\n") == (True, stream)
+        assert registry.cached("https://voe.sx/e/dead") == (True, None)
+        assert registry.cached("https://voe.sx/e/new") == (False, None)
+        assert resolver.resolve.await_count == 2
+
+    async def test_an_expired_resolution_is_not_cached(self) -> None:
+        resolver = MagicMock()
+        resolver.name = "voe"
+        resolver.resolve = AsyncMock(return_value=None)
+        registry = HosterResolverRegistry(resolvers=[resolver])
+        await registry.resolve("https://voe.sx/e/dead")
+
+        registry._result_cache["https://voe.sx/e/dead"].expires_at = 0.0
+
+        assert registry.cached("https://voe.sx/e/dead") == (False, None)
+
     @pytest.mark.asyncio
     async def test_resolver_is_bounded_by_resolve_timeout(self) -> None:
         """A hanging resolver is cut off (/play used to hang for a minute)."""
