@@ -16,14 +16,16 @@ from __future__ import annotations
 
 import asyncio
 import re
-from html.parser import HTMLParser
 from urllib.parse import quote_plus
+
+from selectolax.lexbor import LexborHTMLParser
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.categories import (
     category_matches,
     served_category,
 )
+from scavengarr.infrastructure.plugins.dom import classes
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -55,14 +57,17 @@ _FILECRYPT_RE = re.compile(r"https?://filecrypt\.cc/Container/\w+\.html")
 # Regex: size like "60.1 GB" or "6072 MB" or "1.2 GB"
 _SIZE_RE = re.compile(r"([\d.,]+\s*(?:[KMGT]i?)?B)\b", re.IGNORECASE)
 
+# Pagination classes of elements that name no page ("next", "prev", "...")
+_NOT_PAGE_NUMBERS = frozenset({"nextpostslink", "previouspostslink", "extend"})
+
 
 # ---------------------------------------------------------------------------
 # HTML parsers
 # ---------------------------------------------------------------------------
 
 
-class _SearchResultParser(HTMLParser):
-    """Parse jjs.page WordPress search result pages.
+class _SearchResultParser:
+    """Parse jjs.page WordPress search result pages (selectolax).
 
     Each result is an ``<article>`` with structure::
 
@@ -76,38 +81,41 @@ class _SearchResultParser(HTMLParser):
             <a href="https://jjs.page/jjmovies/uhd-jjmovies/">UltraHD</a>
           </p>
         </article>
+
+    The last link of the ``entry-title`` names the result, the links of the
+    ``post-meta`` give its category.
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self.results: list[dict[str, str | int]] = []
 
-        # Article tracking
-        self._in_article = False
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for article in tree.css("article"):
+            links = [
+                link
+                for link in article.css("h2.entry-title a")
+                if link.attributes.get("href")
+            ]
+            if not links:
+                continue
+            title = links[-1].text().strip()
+            url = (links[-1].attributes.get("href") or "").strip()
+            if not title or not url:
+                continue
+            hrefs = [
+                href
+                for link in article.css("p.post-meta a")
+                if (href := link.attributes.get("href") or "")
+            ]
+            self.results.append(
+                {"title": title, "url": url, "category": self._detect_category(hrefs)}
+            )
 
-        # Title tracking
-        self._in_entry_title = False
-        self._entry_title_depth = 0
-        self._in_title_a = False
-        self._title_text = ""
-        self._title_url = ""
-
-        # Post-meta tracking
-        self._in_post_meta = False
-        self._meta_text = ""
-        self._in_meta_a = False
-        self._meta_a_href = ""
-        self._category_hrefs: list[str] = []
-
-    def _reset_article(self) -> None:
-        self._title_text = ""
-        self._title_url = ""
-        self._meta_text = ""
-        self._category_hrefs = []
-
-    def _detect_category(self) -> int:
+    @staticmethod
+    def _detect_category(hrefs: list[str]) -> int:
         """Determine Torznab category from post-meta category links."""
-        for href in self._category_hrefs:
+        for href in hrefs:
             # e.g. "https://jjs.page/jjseries/" → "jjseries"
             # e.g. "https://jjs.page/jjmovies/hd-jjmovies/" → "jjmovies"
             path = href.rstrip("/").split("/")
@@ -121,99 +129,9 @@ class _SearchResultParser(HTMLParser):
                         return cat_id
         return 2000  # default: movies
 
-    def _emit_article(self) -> None:
-        title = self._title_text.strip()
-        url = self._title_url.strip()
-        if not title or not url:
-            return
 
-        category = self._detect_category()
-
-        self.results.append(
-            {
-                "title": title,
-                "url": url,
-                "category": category,
-            }
-        )
-
-    def handle_starttag(
-        self,
-        tag: str,
-        attrs: list[tuple[str, str | None]],
-    ) -> None:
-        attr_dict = dict(attrs)
-        classes = attr_dict.get("class", "") or ""
-
-        # --- Article start ---
-        if tag == "article":
-            self._in_article = True
-            self._reset_article()
-
-        if not self._in_article:
-            return
-
-        # --- H2 entry-title ---
-        if tag == "h2" and "entry-title" in classes:
-            self._in_entry_title = True
-            self._entry_title_depth = 0
-        elif tag == "h2" and self._in_entry_title:
-            self._entry_title_depth += 1
-
-        # --- Title link inside h2 ---
-        if tag == "a" and self._in_entry_title:
-            href = attr_dict.get("href", "") or ""
-            if href:
-                self._in_title_a = True
-                self._title_text = ""
-                self._title_url = href
-
-        # --- Post meta ---
-        if tag == "p" and "post-meta" in classes:
-            self._in_post_meta = True
-            self._meta_text = ""
-
-        # --- Category links in post-meta ---
-        if tag == "a" and self._in_post_meta:
-            href = attr_dict.get("href", "") or ""
-            if href:
-                self._in_meta_a = True
-                self._meta_a_href = href
-                self._category_hrefs.append(href)
-
-    def handle_data(self, data: str) -> None:
-        if self._in_title_a:
-            self._title_text += data
-        if self._in_post_meta:
-            self._meta_text += data
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "article" and self._in_article:
-            self._in_article = False
-            self._emit_article()
-            return
-
-        if not self._in_article:
-            return
-
-        if tag == "h2" and self._in_entry_title:
-            if self._entry_title_depth > 0:
-                self._entry_title_depth -= 1
-            else:
-                self._in_entry_title = False
-
-        if tag == "a":
-            if self._in_title_a:
-                self._in_title_a = False
-            if self._in_meta_a:
-                self._in_meta_a = False
-
-        if tag == "p" and self._in_post_meta:
-            self._in_post_meta = False
-
-
-class _PaginationParser(HTMLParser):
-    """Extract the last page number from wp-pagenavi pagination.
+class _PaginationParser:
+    """Extract the last page number from wp-pagenavi pagination (selectolax).
 
     Pagination structure::
 
@@ -227,72 +145,26 @@ class _PaginationParser(HTMLParser):
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self.last_page = 1
-        self._in_pagenavi = False
-        self._pagenavi_depth = 0
-        self._in_page_element = False
-        self._page_text = ""
-        self._is_last_link = False
 
-    def handle_starttag(
-        self,
-        tag: str,
-        attrs: list[tuple[str, str | None]],
-    ) -> None:
-        attr_dict = dict(attrs)
-        classes = attr_dict.get("class", "") or ""
-
-        if tag == "div":
-            if self._in_pagenavi:
-                self._pagenavi_depth += 1
-            elif "wp-pagenavi" in classes:
-                self._in_pagenavi = True
-                self._pagenavi_depth = 0
-
-        if not self._in_pagenavi:
-            return
-
-        if tag in ("a", "span"):
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for node in tree.css("div.wp-pagenavi a, div.wp-pagenavi span"):
+            names = classes(node)
             # Skip "next" and "prev" links, keep numbered pages
-            is_nav = "nextpostslink" in classes or "previouspostslink" in classes
-            is_extend = "extend" in classes
-            self._is_last_link = "last" in classes
-            if not is_nav and not is_extend:
-                self._in_page_element = True
-                self._page_text = ""
-
+            if _NOT_PAGE_NUMBERS.isdisjoint(names):
+                text = node.text().strip()
+                if text.isdigit():
+                    self.last_page = max(self.last_page, int(text))
             # Also extract page number from href for "last" link
-            if self._is_last_link:
-                href = attr_dict.get("href", "") or ""
-                m = re.search(r"/page/(\d+)/", href)
+            if "last" in names:
+                m = re.search(r"/page/(\d+)/", node.attributes.get("href") or "")
                 if m:
-                    page_num = int(m.group(1))
-                    if page_num > self.last_page:
-                        self.last_page = page_num
-
-    def handle_data(self, data: str) -> None:
-        if self._in_page_element:
-            self._page_text += data
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag in ("a", "span") and self._in_page_element:
-            self._in_page_element = False
-            text = self._page_text.strip()
-            if text.isdigit():
-                page_num = int(text)
-                if page_num > self.last_page:
-                    self.last_page = page_num
-
-        if tag == "div" and self._in_pagenavi:
-            if self._pagenavi_depth > 0:
-                self._pagenavi_depth -= 1
-            else:
-                self._in_pagenavi = False
+                    self.last_page = max(self.last_page, int(m.group(1)))
 
 
-class _DetailPageParser(HTMLParser):
-    """Parse jjs.page detail page for download links and metadata.
+class _DetailPageParser:
+    """Parse jjs.page detail page for download links and metadata (selectolax).
 
     Download section structure::
 
@@ -310,80 +182,29 @@ class _DetailPageParser(HTMLParser):
           </div>
         </div>
 
-    Size appears in NFO/description text.
+    Every filecrypt container link counts, inside the DDL section or not;
+    its text names the hoster. Size appears in NFO/description text.
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self.download_links: list[dict[str, str]] = []
         self._seen_links: set[str] = set()
         self.size: str = ""
-
-        # DDL section tracking
-        self._in_ddl_content = False
-        self._ddl_content_depth = 0
-        self._in_ddl_slot = False
-        self._ddl_slot_depth = 0
-        self._current_slot_id = ""
-
-        # Link tracking
-        self._in_a = False
-        self._a_href = ""
-        self._a_text = ""
-
-        # Size tracking
+        # The page's text nodes, a space before each: extract_size() takes
+        # the first size in it
         self._all_text = ""
 
-    def handle_starttag(
-        self,
-        tag: str,
-        attrs: list[tuple[str, str | None]],
-    ) -> None:
-        attr_dict = dict(attrs)
-        element_id = attr_dict.get("id", "") or ""
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for link in tree.css("a[href*='filecrypt.cc/Container/']"):
+            self._add_link(link.attributes.get("href") or "", link.text())
+        self._all_text += " " + tree.text(separator=" ")
 
-        if tag == "div":
-            # DDLContent container
-            if element_id == "DDLContent":
-                self._in_ddl_content = True
-                self._ddl_content_depth = 0
-            elif self._in_ddl_content:
-                self._ddl_content_depth += 1
-                # DDL slot divs (DDL1st, DDL2nd, DDL3rd)
-                if element_id.startswith("DDL") and element_id != "DDLSample":
-                    self._in_ddl_slot = True
-                    self._ddl_slot_depth = 0
-                    self._current_slot_id = element_id
-                elif self._in_ddl_slot:
-                    self._ddl_slot_depth += 1
-
-        # Links inside DDL slots
-        if tag == "a" and self._in_ddl_slot:
-            href = attr_dict.get("href", "") or ""
-            if href and "filecrypt.cc" in href:
-                self._in_a = True
-                self._a_href = href
-                self._a_text = ""
-
-        # Links outside DDL for filecrypt (fallback)
-        if tag == "a" and not self._in_ddl_slot:
-            href = attr_dict.get("href", "") or ""
-            if href and "filecrypt.cc/Container/" in href:
-                self._in_a = True
-                self._a_href = href
-                self._a_text = ""
-
-    def handle_data(self, data: str) -> None:
-        if self._in_a:
-            self._a_text += data
-        self._all_text += " " + data
-
-    def _finish_link(self) -> None:
-        """Process a completed <a> tag and store the download link."""
-        href = self._a_href
-        text = self._a_text.strip().lower()
-        if not (href and _FILECRYPT_RE.match(href)):
+    def _add_link(self, href: str, text: str) -> None:
+        """Store a filecrypt container link, its hoster named by its text."""
+        if not _FILECRYPT_RE.match(href):
             return
+        text = text.strip().lower()
         hoster = "filecrypt"
         if "ddownload" in text:
             hoster = "ddownload"
@@ -392,24 +213,6 @@ class _DetailPageParser(HTMLParser):
         if href not in self._seen_links:
             self._seen_links.add(href)
             self.download_links.append({"hoster": hoster, "link": href})
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "a" and self._in_a:
-            self._in_a = False
-            self._finish_link()
-
-        if tag == "div":
-            if self._in_ddl_slot:
-                if self._ddl_slot_depth > 0:
-                    self._ddl_slot_depth -= 1
-                else:
-                    self._in_ddl_slot = False
-                    self._current_slot_id = ""
-            elif self._in_ddl_content:
-                if self._ddl_content_depth > 0:
-                    self._ddl_content_depth -= 1
-                else:
-                    self._in_ddl_content = False
 
     def extract_size(self) -> str:
         """Extract file size from the page text."""
