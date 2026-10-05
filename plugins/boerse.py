@@ -17,9 +17,10 @@ import asyncio
 import hashlib
 import os
 import re
-from html.parser import HTMLParser
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
+
+from selectolax.lexbor import LexborHTMLParser
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.categories import (
@@ -94,8 +95,8 @@ _LINK_CONTAINER_HOSTS = {
 }
 
 
-class _PostLinkParser(HTMLParser):
-    """Extract download links from vBulletin post content.
+class _PostLinkParser:
+    """Extract download links from vBulletin post content (selectolax).
 
     Only captures links to known link-protection containers
     (keeplinks.org, share-links.biz, etc.) from post_message divs.
@@ -103,61 +104,29 @@ class _PostLinkParser(HTMLParser):
     """
 
     def __init__(self, base_domain: str) -> None:
-        super().__init__()
         self.links: list[dict[str, str]] = []
         self._base_domain = base_domain
-        self._in_post = False
-        self._div_depth = 0
-        self._in_a = False
-        self._current_href = ""
-        self._current_text = ""
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attr_dict = dict(attrs)
-        if tag == "div":
-            if self._in_post:
-                self._div_depth += 1
-            else:
-                div_id = attr_dict.get("id") or ""
-                if div_id.startswith("post_message"):
-                    self._in_post = True
-                    self._div_depth = 0
-        if tag == "a" and self._in_post:
-            href = attr_dict.get("href", "")
-            if href and href.startswith("http"):
-                self._in_a = True
-                self._current_href = href
-                self._current_text = ""
-
-    def handle_data(self, data: str) -> None:
-        if self._in_a:
-            self._current_text += data
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "div" and self._in_post:
-            if self._div_depth > 0:
-                self._div_depth -= 1
-            else:
-                self._in_post = False
-        if tag == "a" and self._in_a:
-            self._in_a = False
-            href = self._current_href
-            text = self._current_text.strip()
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        # Absolute links anywhere in a post (nested divs included)
+        for link in tree.css("div[id^='post_message'] a[href^='http']"):
+            href = link.attributes.get("href") or ""
 
             # Only accept links from known container services
             host = (urlparse(href).hostname or "").replace("www.", "")
             if not _is_container_host(host):
-                return
+                continue
 
             # Derive hoster name from anchor text
-            hoster = _hoster_from_text(text) or _hoster_from_url(href)
+            hoster = _hoster_from_text(link.text().strip()) or _hoster_from_url(href)
 
             if href not in [entry["link"] for entry in self.links]:
                 self.links.append({"hoster": hoster, "link": href})
 
 
-class _ThreadLinkParser(HTMLParser):
-    """Extract thread links from vBulletin search results page.
+class _ThreadLinkParser:
+    """Extract thread links from vBulletin search results page (selectolax).
 
     Search results are the ``<a id="thread_title_NNN">`` anchors; when a page
     has them, other thread links (sidebar "latest threads" etc.) are ignored.
@@ -167,16 +136,12 @@ class _ThreadLinkParser(HTMLParser):
     """
 
     def __init__(self, base_url: str) -> None:
-        super().__init__()
         self.next_page_url: str = ""
         self._base_url = base_url
         self._titled: list[str] = []  # from thread_title_* anchors
         self._other: list[str] = []
         self._seen_titled: set[str] = set()
         self._seen_other: set[str] = set()
-        self._in_nav_a = False
-        self._nav_a_href = ""
-        self._nav_a_text = ""
 
     @property
     def thread_urls(self) -> list[str]:
@@ -204,62 +169,45 @@ class _ThreadLinkParser(HTMLParser):
             seen.add(url)
             urls.append(url)
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag != "a":
-            return
-        attr_dict = dict(attrs)
-        href = attr_dict.get("href", "") or ""
-        if not href:
-            return
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for link in tree.css("a[href]"):
+            attrs = link.attributes
+            href = attrs.get("href") or ""
 
-        if "showthread.php" in href or "/threads/" in href:
-            titled = (attr_dict.get("id") or "").startswith("thread_title_")
-            self._add(self._thread_url(href), titled=titled)
+            if "showthread.php" in href or "/threads/" in href:
+                titled = (attrs.get("id") or "").startswith("thread_title_")
+                self._add(self._thread_url(href), titled=titled)
 
-        # Pagination links (search.php?...&page=N)
-        if "search.php" in href and "page=" in href:
-            if attr_dict.get("rel") == "next":
-                self.next_page_url = href
-            self._in_nav_a = True
-            self._nav_a_href = href
-            self._nav_a_text = ""
-
-    def handle_data(self, data: str) -> None:
-        if self._in_nav_a:
-            self._nav_a_text += data
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "a" and self._in_nav_a:
-            self._in_nav_a = False
-            text = self._nav_a_text.strip().lower()
-            if not self.next_page_url and text in {">", "›", "next"}:
-                self.next_page_url = self._nav_a_href
+            # Pagination links (search.php?...&page=N): the last rel="next"
+            # link, else the first one labelled ">", "›" or "next"
+            if "search.php" in href and "page=" in href:
+                label = link.text().strip().lower()
+                if attrs.get("rel") == "next":
+                    self.next_page_url = href
+                elif not self.next_page_url and label in {">", "›", "next"}:
+                    self.next_page_url = href
 
 
-class _ThreadTitleParser(HTMLParser):
-    """Extract thread title from vBulletin thread page."""
+class _ThreadTitleParser:
+    """Extract thread title from vBulletin thread page (selectolax).
+
+    The first ``<title>`` with text left after stripping the
+    " - Boerse.AM (...)" suffix names the thread.
+    """
 
     def __init__(self) -> None:
-        super().__init__()
         self.title: str | None = None
-        self._in_title_tag = False
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag == "title":
-            self._in_title_tag = True
-
-    def handle_data(self, data: str) -> None:
-        if self._in_title_tag and self.title is None:
-            text = data.strip()
+    def feed(self, html: str) -> None:
+        if self.title is not None:
+            return
+        for node in LexborHTMLParser(html).css("title"):
+            # Strip " - Boerse.AM (...)" suffix from <title>
+            text = re.sub(r"\s*-\s*[Bb]oerse\.\w+.*$", "", node.text().strip())
             if text:
-                # Strip " - Boerse.AM (...)" suffix from <title>
-                text = re.sub(r"\s*-\s*[Bb]oerse\.\w+.*$", "", text)
-                if text:
-                    self.title = text
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "title":
-            self._in_title_tag = False
+                self.title = text
+                return
 
 
 class BoersePlugin(PlaywrightPluginBase):
