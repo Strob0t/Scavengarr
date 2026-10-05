@@ -15,10 +15,13 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from html.parser import HTMLParser
+from collections.abc import Iterator
 from urllib.parse import urljoin
 
+from selectolax.lexbor import LexborHTMLParser, LexborNode
+
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.dom import ancestors, classes
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.relevance import (
     hit_title,
@@ -41,184 +44,131 @@ _DOMAINS = [
 ]
 
 
-class _SearchResultParser(HTMLParser):
-    """Parse search results from a kinox.to search page.
+# Result card: <div onclick="location.href='/Stream/{slug}.html';">
+_CARD_URL_RE = re.compile(r"/Stream/[^'\"]+")
+_YEAR_RE = re.compile(r"\d{4}")
+
+
+def _texts(node: LexborNode) -> Iterator[str]:
+    """The text of each text node under *node*, in document order."""
+    for child in node.traverse(include_text=True):
+        if child.tag == "-text":
+            yield child.text()
+
+
+def _card_url(node: LexborNode) -> str:
+    """The ``/Stream/`` path of a result card ("" for any other node)."""
+    if node.tag != "div":
+        return ""
+    m = _CARD_URL_RE.search(node.attributes.get("onclick") or "")
+    return m.group(0) if m else ""
+
+
+def _is_year(node: LexborNode) -> bool:
+    """Whether *node* is a ``<span class="Year">``."""
+    return node.tag == "span" and "Year" in classes(node)
+
+
+def _year(span: LexborNode) -> str:
+    """The year of a Year span: the last of its texts with four digits."""
+    years = [m.group(0) for text in _texts(span) if (m := _YEAR_RE.search(text))]
+    return years[-1] if years else ""
+
+
+def _title_text(heading: LexborNode) -> str:
+    """The text of an h1 outside its Year spans."""
+    return "".join(
+        node.text()
+        for node in heading.traverse(include_text=True)
+        if node.tag == "-text"
+        and not any(_is_year(parent) for parent in ancestors(node))
+    )
+
+
+class _SearchResultParser:
+    """Parse search results from a kinox.to search page (selectolax).
 
     Each result is a ``<div onclick="location.href='/Stream/...'"``> with:
     - ``<a href="/Stream/{slug}.html"><h1>Title</h1></a>``
     - ``<div class="Genre">`` with genre links and IMDb rating
+
+    A card inside another card belongs to the outer one.
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self.results: list[dict[str, str]] = []
 
-        # Card tracking
-        self._in_card = False
-        self._card_div_depth = 0
-        self._current_url = ""
-        self._current_title = ""
-        self._genre_parts: list[str] = []
-        self._current_imdb = ""
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for card in tree.css("div[onclick*='/Stream/']"):
+            url = _card_url(card)
+            if url and not any(_card_url(parent) for parent in ancestors(card)):
+                self._add_card(card, url)
 
-        # State flags
-        self._in_h1 = False
-        self._in_genre_link = False
-
-    def handle_starttag(  # noqa: C901
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
-        attr_dict = dict(attrs)
-
-        if tag == "div":
-            if self._in_card:
-                self._card_div_depth += 1
-            else:
-                onclick = attr_dict.get("onclick", "") or ""
-                m = re.search(r"/Stream/[^'\"]+", onclick)
-                if m:
-                    self._in_card = True
-                    self._card_div_depth = 0
-                    self._current_url = m.group(0)
-                    self._current_title = ""
-                    self._genre_parts = []
-                    self._current_imdb = ""
-
-        if not self._in_card:
+    def _add_card(self, card: LexborNode, url: str) -> None:
+        # The last h1 names the card
+        headings = card.css("h1")
+        title = headings[-1].text().strip() if headings else ""
+        if not title:
             return
-
-        if tag == "h1":
-            self._in_h1 = True
-            self._current_title = ""
-
-        if tag == "a":
-            href = attr_dict.get("href", "") or ""
-            if "/Genre/" in href:
-                self._in_genre_link = True
-
-    def handle_data(self, data: str) -> None:
-        if self._in_h1:
-            self._current_title += data
-
-        if self._in_genre_link:
-            self._genre_parts.append(data.strip())
-
-        if self._in_card and "/ 10" in data:
-            self._current_imdb = data.strip()
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "h1":
-            self._in_h1 = False
-
-        if tag == "a" and self._in_genre_link:
-            self._in_genre_link = False
-
-        if tag == "div" and self._in_card:
-            if self._card_div_depth > 0:
-                self._card_div_depth -= 1
-            else:
-                self._in_card = False
-                if self._current_title.strip() and self._current_url:
-                    self.results.append(
-                        {
-                            "title": self._current_title.strip(),
-                            "url": self._current_url,
-                            "genre": ", ".join(self._genre_parts),
-                            "imdb": self._current_imdb,
-                        }
-                    )
+        # Each text of a genre link is a genre; the card's last text with
+        # "/ 10" is its IMDb rating
+        genres = [
+            text.strip()
+            for link in card.css("a[href*='/Genre/']")
+            for text in _texts(link)
+        ]
+        ratings = [text.strip() for text in _texts(card) if "/ 10" in text]
+        self.results.append(
+            {
+                "title": title,
+                "url": url,
+                "genre": ", ".join(genres),
+                "imdb": ratings[-1] if ratings else "",
+            }
+        )
 
 
-class _DetailPageParser(HTMLParser):
-    """Parse a kinox.to movie/series detail page.
+class _DetailPageParser:
+    """Parse a kinox.to movie/series detail page (selectolax).
 
     Extracts:
     - Title from ``<h1><span>Title</span> <span class="Year">(YYYY)</span></h1>``
     - Year from ``<span class="Year">``
     - Hosters from ``<ul id="HosterList"><li id="Hoster_N">``
     - Series detection via ``<select id="SeasonSelection">``
+
+    The year is the last one in the page's Year spans (related entries have
+    them too). The title is the first h1 with text outside its Year span
+    that ends after a year: the "Navigation" h1 before it ends before one.
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self.title = ""
         self.year = ""
         self.hosters: list[dict[str, str]] = []
         self.is_series = False
 
-        # h1 / year tracking
-        self._in_h1 = False
-        self._in_year_span = False
-        self._h1_text = ""
-
-        # Hoster tracking
-        self._in_hoster_list = False
-        self._in_hoster_item = False
-        self._in_named_div = False
-        self._current_hoster_name = ""
-        self._current_hoster_id = ""
-
-    def handle_starttag(  # noqa: C901
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
-        attr_dict = dict(attrs)
-        classes = (attr_dict.get("class") or "").split()
-
-        if tag == "h1" and not self.title:
-            self._in_h1 = True
-            self._h1_text = ""
-
-        if tag == "span" and "Year" in classes:
-            self._in_year_span = True
-
-        if tag == "ul" and attr_dict.get("id") == "HosterList":
-            self._in_hoster_list = True
-
-        if tag == "li" and self._in_hoster_list:
-            li_id = attr_dict.get("id", "") or ""
-            if li_id.startswith("Hoster_"):
-                self._in_hoster_item = True
-                self._current_hoster_id = li_id.replace("Hoster_", "")
-                self._current_hoster_name = ""
-
-        if tag == "div" and "Named" in classes and self._in_hoster_item:
-            self._in_named_div = True
-
-        if tag == "select" and attr_dict.get("id") == "SeasonSelection":
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        self._read_title(tree)
+        for item in tree.css("ul#HosterList li[id^='Hoster_']"):
+            name = "".join(div.text() for div in item.css("div.Named")).strip()
+            if name:
+                hoster_id = (item.attributes.get("id") or "").replace("Hoster_", "")
+                self.hosters.append({"name": name, "id": hoster_id})
+        if tree.css_first("select#SeasonSelection") is not None:
             self.is_series = True
 
-    def handle_data(self, data: str) -> None:
-        if self._in_year_span:
-            m = re.search(r"\d{4}", data)
-            if m:
-                self.year = m.group(0)
-
-        if self._in_h1 and not self._in_year_span:
-            self._h1_text += data
-
-        if self._in_named_div:
-            self._current_hoster_name += data
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "span" and self._in_year_span:
-            self._in_year_span = False
-
-        if tag == "h1" and self._in_h1:
-            self._in_h1 = False
-            if self.year and not self.title:
-                self.title = self._h1_text.strip()
-
-        if tag == "ul" and self._in_hoster_list:
-            self._in_hoster_list = False
-
-        if tag == "li" and self._in_hoster_item:
-            self._in_hoster_item = False
-            name = self._current_hoster_name.strip()
-            if name:
-                self.hosters.append({"name": name, "id": self._current_hoster_id})
-
-        if tag == "div" and self._in_named_div:
-            self._in_named_div = False
+    def _read_title(self, tree: LexborHTMLParser) -> None:
+        for node in tree.css("h1, span.Year"):
+            if node.tag == "span":
+                self.year = _year(node) or self.year
+            # The h1's own Year spans come after it here but end before it
+            elif not self.title and (
+                self.year or any(_year(span) for span in node.css("span.Year"))
+            ):
+                self.title = _title_text(node).strip()
 
 
 class KinoxPlugin(HttpxPluginBase):
