@@ -641,9 +641,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Drain in-flight requests before tearing down resources
         await state.graceful_shutdown.wait_for_drain(timeout=10.0)
 
-        # Background searches (cache refreshes, late plugins) use the
-        # browser, HTTP client and cache closed below
+        # Background searches (cache refreshes, late plugins) and half-open
+        # hoster probes use the browser, HTTP client and cache closed below
         await state.stremio_stream_uc.aclose()
+        await state.hoster_resolver_registry.aclose()
 
         if state._scoring_task is not None:
             state._scoring_task.cancel()

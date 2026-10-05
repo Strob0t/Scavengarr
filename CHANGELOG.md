@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: Half-Open Hoster Probes Report Their Outcome
+- The hoster circuit breaker lets one probe through after its cooldown. Filemoon's browser captures take longer than the resolve grace on the Raspberry Pi, so the grace cut every probe before half of `http.timeout_resolve_seconds`, the probe reported nothing, and the breaker probed again after every cooldown without doubling it: about 6 s of Chromium CPU per probe, and the cached answer that carried it waited for the grace (fifth end-to-end round, 2026-10-05).
+- The probe now runs to its end in the background when its request is cut (`HosterResolverRegistry._resolve_with`, ended by `aclose()` at shutdown): a stream closes the breaker and stays in the resolution cache for the next request; a timeout or an unplayable stream reopens it with twice the cooldown (up to 1 h).
+
 ### Measured: Fifth End-to-End Round
 - Production with the fixes below, the 17 titles of `stremio_measure.py` (`docs/plans/stremio-latency.md`, fifth round): median 11.1 s while the plugins search (was 12.4 s) with 102 streams (48) and none of the titles without a stream (5 of 17); 1.0 s from the search cache (4.6 s) with 110 streams, 107 of them playable from the VPN address.
 - CPU per stream request (3 titles, the plugins searching again): Chromium 6.7 s instead of 11.3 s, Python unchanged at 2.5 s for 6.7 streams instead of 4.7; from the search cache Chromium 2.6 s instead of 10.1 s.

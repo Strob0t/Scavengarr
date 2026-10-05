@@ -830,6 +830,7 @@ class TestCircuitBreaker:
         *,
         resolve_timeout: float = 0.05,
         failure_threshold: int = 1,
+        cooldown_seconds: float = 60.0,
         http_client: httpx.AsyncClient | None = None,
     ) -> tuple[HosterResolverRegistry, MagicMock]:
         resolver = MagicMock()
@@ -840,7 +841,9 @@ class TestCircuitBreaker:
             http_client=http_client,
             resolve_timeout=resolve_timeout,
             verify_playback=http_client is not None,
-            circuit_breaker=PluginCircuitBreaker(failure_threshold=failure_threshold),
+            circuit_breaker=PluginCircuitBreaker(
+                failure_threshold=failure_threshold, cooldown_seconds=cooldown_seconds
+            ),
         )
         return registry, resolver
 
@@ -848,14 +851,21 @@ class TestCircuitBreaker:
     def _answers(
         cls, *answers: str
     ) -> Callable[[str], Awaitable[ResolvedStream | None]]:
-        """Resolver answering "hang", "stream" or "dead", one per call."""
+        """Resolver answering "hang", "stream", "slow" (a stream after 0.1 s)
+        or "dead", one per call."""
         queue = list(answers)
 
         async def _resolve(url: str) -> ResolvedStream | None:
             answer = queue.pop(0)
             if answer == "hang":
                 await asyncio.sleep(10)
-            return ResolvedStream(video_url=cls._MP4) if answer == "stream" else None
+            if answer == "slow":
+                await asyncio.sleep(0.1)
+            return (
+                ResolvedStream(video_url=cls._MP4)
+                if answer in ("stream", "slow")
+                else None
+            )
 
         return _resolve
 
@@ -931,6 +941,83 @@ class TestCircuitBreaker:
         registry._circuit_breaker.reset("doodstream")  # type: ignore[union-attr]
 
         assert await registry.resolve("https://doodstream.com/e/b") is not None
+
+    @staticmethod
+    async def _half_open(registry: HosterResolverRegistry) -> PluginCircuitBreaker:
+        """Open the breaker and let its cooldown run out: the next call probes."""
+        breaker = registry._circuit_breaker
+        assert breaker is not None
+        breaker.record_failure("doodstream")
+        await asyncio.sleep(0.03)
+        return breaker
+
+    async def test_a_cut_probe_runs_on_and_closes_the_breaker(self) -> None:
+        """Filemoon's half-open probe was cut by the resolve grace before it
+        could report, so the breaker probed again after every cooldown,
+        which never doubled (production, 2026-10-05)."""
+        registry, resolver = self._registry(
+            self._answers("slow"), resolve_timeout=1, cooldown_seconds=0.02
+        )
+        breaker = await self._half_open(registry)
+
+        await _cut(registry.resolve("https://doodstream.com/e/a"), after=0.02)
+        await asyncio.sleep(0.15)
+
+        assert breaker.is_closed("doodstream")
+        # The probe's stream is cached for the next request
+        assert await registry.resolve("https://doodstream.com/e/a") is not None
+        assert resolver.resolve.await_count == 1
+
+    async def test_a_cut_probe_that_fails_doubles_the_cooldown(self) -> None:
+        registry, _ = self._registry(_hang, resolve_timeout=0.1, cooldown_seconds=0.02)
+        breaker = await self._half_open(registry)
+
+        await _cut(registry.resolve("https://doodstream.com/e/a"), after=0.02)
+        await asyncio.sleep(0.15)
+
+        assert breaker.state("doodstream") == "open"
+        assert breaker._cooldowns["doodstream"] == pytest.approx(0.04)
+
+    async def test_aclose_ends_a_running_probe(self) -> None:
+        cancelled: list[str] = []
+
+        async def _hang_until_cancelled(url: str) -> ResolvedStream | None:
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                cancelled.append(url)
+                raise
+            return None
+
+        registry, _ = self._registry(
+            _hang_until_cancelled, resolve_timeout=5, cooldown_seconds=0.02
+        )
+        await self._half_open(registry)
+        await _cut(registry.resolve("https://doodstream.com/e/a"), after=0.02)
+        assert not cancelled
+
+        await registry.aclose()
+
+        assert cancelled == ["https://doodstream.com/e/a"]
+
+    async def test_a_resolution_with_the_breaker_closed_ends_with_its_request(
+        self,
+    ) -> None:
+        cancelled: list[str] = []
+
+        async def _hang_until_cancelled(url: str) -> ResolvedStream | None:
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                cancelled.append(url)
+                raise
+            return None
+
+        registry, _ = self._registry(_hang_until_cancelled, resolve_timeout=5)
+
+        await _cut(registry.resolve("https://doodstream.com/e/a"), after=0.02)
+
+        assert cancelled == ["https://doodstream.com/e/a"]
 
 
 class TestMoflixStreamHosts:

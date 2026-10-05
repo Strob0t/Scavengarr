@@ -97,6 +97,8 @@ class HosterResolverRegistry:
         self._result_cache: dict[str, _CacheEntry[ResolvedStream | None]] = {}
         self._redirect_cache: dict[str, _CacheEntry[str]] = {}
         self._resolve_count = 0
+        # Half-open probes run on when their request is cut (see _resolve_with)
+        self._probes: set[asyncio.Task[ResolvedStream | None]] = set()
         for resolver in resolvers or []:
             self.register(resolver)
 
@@ -325,11 +327,46 @@ class HosterResolverRegistry:
         url: str,
         cache_key: str,
     ) -> ResolvedStream | None:
-        """Resolve *url* with *resolver*; cache the outcome under *cache_key*."""
+        """Resolve *url* with *resolver*; cache the outcome under *cache_key*.
+
+        While the circuit breaker is open the resolver is skipped. Its
+        half-open probe runs to its end even when the request is cut: cut by
+        the resolve grace, Filemoon's probes never reported, so the breaker
+        probed again after every cooldown without doubling it (production,
+        2026-10-05). A probe that finds a stream closes the breaker and
+        leaves the stream in the cache for the next request.
+        """
+        breaker = self._circuit_breaker
+        if breaker is not None and not breaker.allow(resolver.name):
+            log.info("hoster_resolve_circuit_open", hoster=resolver.name, url=url)
+            return None
+        attempt = self._attempt(resolver, hoster_name, url, cache_key)
+        if breaker is None or breaker.state(resolver.name) != "half_open":
+            return await attempt
+        probe = asyncio.ensure_future(attempt)
+        self._probes.add(probe)
+        probe.add_done_callback(self._probes.discard)
+        return await asyncio.shield(probe)
+
+    async def _attempt(
+        self,
+        resolver: HosterResolverPort,
+        hoster_name: str,
+        url: str,
+        cache_key: str,
+    ) -> ResolvedStream | None:
+        """One resolution of *url*; its outcome is cached under *cache_key*."""
         result, cacheable = await self._try_resolver(resolver, hoster_name, url)
         if cacheable:
             self._cache_result(cache_key, result)
         return result
+
+    async def aclose(self) -> None:
+        """Cancel the half-open probes still running (at shutdown)."""
+        probes = list(self._probes)
+        for probe in probes:
+            probe.cancel()
+        await asyncio.gather(*probes, return_exceptions=True)
 
     async def _try_resolver(
         self,
@@ -348,10 +385,6 @@ class HosterResolverRegistry:
         an unplayable stream; a stream resets it. A dead link neither
         counts nor resets it: it says nothing about the hoster.
         """
-        breaker = self._circuit_breaker
-        if breaker is not None and not breaker.allow(resolver.name):
-            log.info("hoster_resolve_circuit_open", hoster=resolver.name, url=url)
-            return None, False
         started = time.monotonic()
         try:
             async with asyncio.timeout(self._resolve_timeout):
