@@ -17,9 +17,11 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from html.parser import HTMLParser
+
+from selectolax.lexbor import LexborHTMLParser, LexborNode
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.dom import ancestors, classes
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -31,8 +33,8 @@ _DOMAINS = ["filmfans.org"]
 _INIT_MOVIE_RE = re.compile(r"initMovie\(\s*'([^']+)'")
 
 
-class _ReleaseParser(HTMLParser):
-    """Parse release entries from a filmfans.org movie page.
+class _ReleaseParser:
+    """Parse release entries from a filmfans.org movie page (selectolax).
 
     Each release is a ``<div class="entry">`` containing:
     - ``<span class="morespec">Release.Name.Here</span>`` (release/scene name)
@@ -42,145 +44,61 @@ class _ReleaseParser(HTMLParser):
     """
 
     def __init__(self, base_url: str) -> None:
-        super().__init__()
         self.releases: list[dict[str, str | list[dict[str, str]]]] = []
         self._base_url = base_url
 
-        # Entry tracking
-        self._in_entry = False
-        self._entry_div_depth = 0
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for entry in tree.css("div.entry"):
+            # An entry inside another one is part of the outer entry
+            if not any(
+                parent.tag == "div" and "entry" in classes(parent)
+                for parent in ancestors(entry)
+            ):
+                self._add_entry(entry)
 
-        # Release name
-        self._in_morespec = False
-        self._current_release_name = ""
-
-        # Audiotag (size, resolution)
-        self._in_audiotag = False
-        self._in_small = False
-        self._small_text = ""
-        self._audiotag_text = ""
-        self._current_size = ""
-
-        # Download links
-        self._in_dlb_link = False
-        self._current_dl_href = ""
-        self._in_dlb_span = False
-        self._dlb_span_text = ""
-        self._current_download_links: list[dict[str, str]] = []
-
-    def _reset_entry(self) -> None:
-        self._current_release_name = ""
-        self._current_size = ""
-        self._current_download_links = []
-
-    def _emit_entry(self) -> None:
-        if not self._current_release_name or not self._current_download_links:
-            return
-        self.releases.append(
-            {
-                "release_name": self._current_release_name,
-                "size": self._current_size,
-                "download_links": self._current_download_links.copy(),
-            }
-        )
-
-    def handle_starttag(  # noqa: C901
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
-        attr_dict = dict(attrs)
-        classes = (attr_dict.get("class") or "").split()
-
-        # Entry boundary
-        if tag == "div":
-            if self._in_entry:
-                self._entry_div_depth += 1
-            elif "entry" in classes:
-                self._in_entry = True
-                self._entry_div_depth = 0
-                self._reset_entry()
-
-        if not self._in_entry:
-            return
-
-        # Release name: <span class="morespec">
-        if tag == "span" and "morespec" in classes:
-            self._in_morespec = True
-            self._current_release_name = ""
-
-        # Audiotag: <span class="audiotag">
-        if tag == "span" and "audiotag" in classes:
-            self._in_audiotag = True
-            self._small_text = ""
-            self._audiotag_text = ""
-
-        # Small label inside audiotag
-        if tag == "small" and self._in_audiotag:
-            self._in_small = True
-
-        # Download link: <a class="dlb row" href="/external/...">
-        if tag == "a" and "dlb" in classes:
-            href = attr_dict.get("href", "") or ""
-            if href:
-                self._in_dlb_link = True
+    def _add_entry(self, entry: LexborNode) -> None:
+        """Add the release of *entry* when it has a name and download links."""
+        # The last release name counts, and the last size
+        names = entry.css("span.morespec")
+        release_name = names[-1].text().strip() if names else ""
+        size = ""
+        for tag in entry.css("span.audiotag"):
+            size = _audiotag_size(tag) or size
+        download_links: list[dict[str, str]] = []
+        for link in entry.css("a.dlb"):
+            href = link.attributes.get("href") or ""
+            # Hoster name: the (last) <span> inside the link
+            spans = link.css("span")
+            hoster = spans[-1].text().strip() if spans else ""
+            if href and hoster:
                 if href.startswith("/"):
-                    self._current_dl_href = f"{self._base_url}{href}"
-                else:
-                    self._current_dl_href = href
-                self._dlb_span_text = ""
+                    href = f"{self._base_url}{href}"
+                download_links.append({"hoster": hoster, "link": href})
+        if release_name and download_links:
+            self.releases.append(
+                {
+                    "release_name": release_name,
+                    "size": size,
+                    "download_links": download_links,
+                }
+            )
 
-        # Hoster name: <span> inside dlb link
-        if tag == "span" and self._in_dlb_link:
-            self._in_dlb_span = True
-            self._dlb_span_text = ""
 
-    def handle_data(self, data: str) -> None:
-        if self._in_morespec:
-            self._current_release_name += data
+def _audiotag_size(tag: LexborNode) -> str:
+    """The size a "Größe:" audiotag names, else an empty string.
 
-        if self._in_small and self._in_audiotag:
-            self._small_text += data
-
-        if self._in_audiotag and not self._in_small:
-            self._audiotag_text += data
-
-        if self._in_dlb_span:
-            self._dlb_span_text += data
-
-    def handle_endtag(self, tag: str) -> None:  # noqa: C901
-        if tag == "span":
-            if self._in_morespec:
-                self._in_morespec = False
-                self._current_release_name = self._current_release_name.strip()
-
-            if self._in_dlb_span:
-                self._in_dlb_span = False
-
-            if self._in_audiotag and not self._in_small and not self._in_dlb_span:
-                # End of audiotag span
-                label = self._small_text.strip().rstrip(":")
-                value = self._audiotag_text.strip()
-                if label.lower() == "größe" and value:
-                    self._current_size = value
-                self._in_audiotag = False
-
-        if tag == "small" and self._in_small:
-            self._in_small = False
-
-        if tag == "a" and self._in_dlb_link:
-            self._in_dlb_link = False
-            hoster = self._dlb_span_text.strip()
-            if hoster and self._current_dl_href:
-                self._current_download_links.append(
-                    {"hoster": hoster, "link": self._current_dl_href}
-                )
-            self._current_dl_href = ""
-
-        if tag == "div" and self._in_entry:
-            if self._entry_div_depth > 0:
-                self._entry_div_depth -= 1
-            else:
-                self._in_entry = False
-                self._emit_entry()
+    The label is the tag's ``<small>`` text, the value the rest of its text.
+    """
+    label = value = ""
+    for child in tag.iter(include_text=True):
+        if child.tag == "small":
+            label += child.text()
+        else:
+            value += child.text()
+    if label.strip().rstrip(":").lower() == "größe":
+        return value.strip()
+    return ""
 
 
 class FilmfansPlugin(HttpxPluginBase):
