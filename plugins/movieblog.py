@@ -143,7 +143,7 @@ class _PaginationParser:
           </div>
         </div>
 
-    The next page is the ``alignright`` link whose first text reads
+    The next page is the first ``alignright`` link whose first text reads
     "Nächste Seite".
     """
 
@@ -154,12 +154,10 @@ class _PaginationParser:
         tree = LexborHTMLParser(html)
         nav = "div[class*='navigation_x'] div[class*='alignright'] a[href]"
         for link in tree.css(nav):
-            # The last such link wins, unless an earlier URL contains "Seite"
-            if "Seite" in self.next_page_url:
-                break
             href = link.attributes.get("href") or ""
             if href and "Nächste Seite" in _first_text(link):
                 self.next_page_url = href
+                return
 
 
 def _first_text(node: LexborNode) -> str:
