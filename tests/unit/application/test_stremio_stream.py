@@ -1911,16 +1911,22 @@ class _Resolutions:
         self.delay = delay
         self.calls: list[str] = []
         self.cancelled = asyncio.Event()
+        self.running = 0
+        self.most_at_once = 0
 
     async def resolve(self, url: str, hoster: str = "") -> ResolvedStream | None:
         if url in self.store:
             return self.store[url]
         self.calls.append(url)
+        self.running += 1
+        self.most_at_once = max(self.most_at_once, self.running)
         try:
             await asyncio.sleep(self.delay)
         except asyncio.CancelledError:
             self.cancelled.set()
             raise
+        finally:
+            self.running -= 1
         self.store[url] = _resolved(url)
         return self.store[url]
 
@@ -1976,6 +1982,49 @@ def _from_cache(
 
 def _link(url: str, release: str = "Iron.Man.2008.German.1080p.BluRay") -> dict:
     return {"url": url, "hoster": url.split("/")[2].split(".")[0], "release": release}
+
+
+_VOE_B = "https://voe.sx/e/other"
+_DOOD_B = "https://dood.to/e/other"
+_OTHER_TITLE = "tt7654321"
+
+
+def _cached_titles(
+    titles: dict[str, list[dict[str, str]]],
+    resolutions: _Resolutions,
+    **config: object,
+) -> StremioStreamUseCase:
+    """Use case with a search-cache entry per title (IMDb id: its links)."""
+    cache = _memory_cache()
+    for imdb_id, links in titles.items():
+        results = [
+            _make_search_result(
+                title="Iron Man",
+                release_name=link.pop("release"),
+                download_links=[link],
+            )
+            for link in links
+        ]
+        cache.data[f"stremio:search:{imdb_id}:None:None"] = CachedSearch(
+            results=results, total=len(results), stored_at=time.time()
+        )
+    tmdb = AsyncMock()
+    tmdb.get_title_and_year = AsyncMock(
+        return_value=TitleMatchInfo(title="Iron Man", year=2008)
+    )
+    plugins = MagicMock()
+    plugins.get_languages.return_value = ["de"]
+    plugins.get_by_provides.side_effect = lambda p: ["a"] if p == "stream" else []
+    return _make_use_case(
+        tmdb=tmdb,
+        plugins=plugins,
+        config=_make_config(**config),
+        stream_link_repo=AsyncMock(),
+        resolve_fn=resolutions.resolve,
+        cached_resolution_fn=resolutions.cached,
+        cache=cache,
+        search_ttl_seconds=_TTL,
+    )
 
 
 class TestCachedAnswers:
@@ -2070,6 +2119,53 @@ class TestCachedAnswers:
         await uc.aclose()
 
         assert resolutions.cancelled.is_set()
+
+
+class TestBackgroundResolutions:
+    """Cached answers resolve their other links in the background, one title
+    at a time: 17 cached titles asked within seconds started 17 runs at once,
+    and 12 Filemoon resolutions queued for the stealth browser's 2 pages
+    until their 10 s timeout, which opened its breaker (dev-server
+    end-to-end run, 2026-10-05)."""
+
+    _TITLES = {
+        "tt1234567": (_VOE, _DOOD),
+        _OTHER_TITLE: (_VOE_B, _DOOD_B),
+    }
+
+    def _use_case(
+        self, resolutions: _Resolutions, **config: object
+    ) -> StremioStreamUseCase:
+        titles = {
+            imdb_id: [_link(url) for url in urls]
+            for imdb_id, urls in self._TITLES.items()
+        }
+        return _cached_titles(titles, resolutions, **config)
+
+    async def _ask_both(self, uc: StremioStreamUseCase) -> None:
+        for imdb_id in self._TITLES:
+            await uc.execute(
+                _make_request(imdb_id=imdb_id), base_url="http://localhost:8080"
+            )
+
+    async def test_one_title_resolves_in_the_background_at_a_time(self) -> None:
+        resolutions = _Resolutions(alive=(_VOE, _VOE_B), delay=0.2)
+        uc = self._use_case(resolutions)
+
+        await self._ask_both(uc)
+
+        await _eventually(lambda: {_DOOD, _DOOD_B} <= resolutions.store.keys())
+        assert resolutions.most_at_once == 1
+
+    async def test_a_waiting_title_gets_its_whole_deadline(self) -> None:
+        """Counted from its request, the second title's 0.5 s would end 0.2 s
+        after the first title's resolution, before its own (0.3 s)."""
+        resolutions = _Resolutions(alive=(_VOE, _VOE_B), delay=0.3)
+        uc = self._use_case(resolutions, stream_deadline_seconds=0.5)
+
+        await self._ask_both(uc)
+
+        await _eventually(lambda: _DOOD_B in resolutions.store)
 
 
 def _answering_use_case(

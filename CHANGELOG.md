@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: Background Resolutions Run One Title at a Time
+- A cached answer resolves its other links in the background for the next request. 17 cached titles asked within seconds started 17 such runs at once: their browser captures queued for the stealth browser's 2 pages, and 12 Filemoon resolutions hit the 10 s resolve timeout, which opened Filemoon's breaker, although Filemoon resolved in 1.5–2 s on its own (dev-server end-to-end run, 2026-10-05). The runs now go one title at a time, each with its whole `stream_deadline_seconds` from its own start.
+
 ### Fix: The Access Log Masks Query Values
 - Each request's `http_request` log line logged its whole query string: Prowlarr's `apikey` on Torznab requests, and on proxied HLS requests the CDN's tokens and the client's address (`i=`, production's VPN exit address; 545 of the 575 proxy lines with a query in a dev-server end-to-end run). Only Torznab's own parameters keep their values on Torznab paths now; every other value is logged as `***` (`loggable_query()` in `interfaces/app.py`).
 

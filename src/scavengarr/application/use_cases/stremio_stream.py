@@ -113,6 +113,12 @@ _TitleFilterFn = Callable[..., list[SearchResult]]
 
 log = structlog.get_logger(__name__)
 
+# Cached answers resolve their other links in the background one title at a
+# time: 17 cached titles asked within seconds started 17 runs at once, and 12
+# Filemoon resolutions queued for the stealth browser's 2 pages until their
+# 10 s timeout, which opened its breaker (dev-server end-to-end run, 2026-10-05)
+_BACKGROUND_RUNS = 1
+
 # The cached outcome of resolving a URL, without resolving it: (True, stream),
 # (True, None) for a link cached as dead, (False, None) when not cached.
 CachedResolutionCallback = Callable[[str], tuple[bool, ResolvedStream | None]]
@@ -197,8 +203,10 @@ class StremioStreamUseCase:
         # that outlives a request (searches, background resolutions), for
         # aclose()
         self._searches: dict[str, SearchProgress] = {}
-        # Resolutions of a cached answer's other links, one per cache key
+        # Resolutions of a cached answer's other links, one per cache key,
+        # one cache key at a time
         self._background_resolutions: dict[str, asyncio.Task[Any]] = {}
+        self._background_runs = asyncio.Semaphore(_BACKGROUND_RUNS)
         self._tasks: set[asyncio.Task[Any]] = set()
         self._telemetry = telemetry
         self._score_store = score_store
@@ -657,12 +665,8 @@ class StremioStreamUseCase:
                 self._telemetry.count("stremio_phase", "cached", phase="resolve")
                 if key not in self._background_resolutions:
                     task = self._spawn(
-                        self._resolve_as_results_arrive(
-                            progress,
-                            plugin_languages,
-                            resolve_fn,
-                            deadline=time.monotonic() + self._deadline_s,
-                            background=True,
+                        self._resolve_in_background(
+                            progress, plugin_languages, resolve_fn
                         )
                     )
                     self._background_resolutions[key] = task
@@ -673,6 +677,26 @@ class StremioStreamUseCase:
         return await self._resolve_as_results_arrive(
             progress, plugin_languages, resolve_fn, deadline=deadline
         )
+
+    async def _resolve_in_background(
+        self,
+        progress: SearchProgress,
+        plugin_languages: dict[str, str],
+        resolve_fn: ResolveCallback,
+    ) -> None:
+        """Resolve a cached answer's other links for the next request.
+
+        One title at a time (``_BACKGROUND_RUNS``); the deadline counts
+        from the run's start, so a title that waited keeps its whole time.
+        """
+        async with self._background_runs:
+            await self._resolve_as_results_arrive(
+                progress,
+                plugin_languages,
+                resolve_fn,
+                deadline=time.monotonic() + self._deadline_s,
+                background=True,
+            )
 
     @staticmethod
     def _cached_resolutions(
