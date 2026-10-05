@@ -313,6 +313,13 @@ class TestAniworld:
         )
         assert detail.genres[:4] == ["Actiondrama", "Abenteuer", "Action", "Drama"]
 
+    def test_series_page_full_description(self) -> None:
+        """The page names its plot in <p class="seri_des" data-full-description>;
+        the parser read div.seri_des only and left the description empty."""
+        detail = _detail("aniworld", self._BASE, "detail-attack-on-titan")
+        assert detail.description.startswith("Vor mehreren hundert Jahren")
+        assert len(detail.description) > 500
+
     def test_episode_hosters_per_language(self) -> None:
         parser = _plugin_module("aniworld")._EpisodePageParser(self._BASE)
         parser.feed(_page("aniworld", "episode-attack-on-titan-s01e01"))

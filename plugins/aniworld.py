@@ -53,7 +53,8 @@ class _DetailPageParser:
     """Parse aniworld.to anime detail page (selectolax).
 
     Extracts:
-    - Description from ``.seri_des`` div (via ``data-full-description``)
+    - Description from ``.seri_des`` (via ``data-full-description``; a
+      ``<p>`` in the current theme, a ``<div>`` before)
     - Genres from ``.genres ul li a`` elements
     - Cover image URL from the first ``img[data-src]`` (``.seriesCoverBox``)
     - First episode URL from ``table.seasonEpisodesList tbody tr td a``
@@ -69,14 +70,14 @@ class _DetailPageParser:
 
     def feed(self, html: str) -> None:
         tree = LexborHTMLParser(html)
-        for div in tree.css("div.seri_des"):
+        for node in tree.css(".seri_des"):
             # A full description wins (the last one); else the first
-            # non-empty text of a .seri_des div
-            full_desc = div.attributes.get("data-full-description") or ""
+            # non-empty text of a .seri_des element
+            full_desc = node.attributes.get("data-full-description") or ""
             if full_desc:
                 self.description = full_desc.strip()
             if not self.description:
-                self.description = div.text().strip()
+                self.description = node.text().strip()
         for link in tree.css("div.genres ul li a"):
             genre = link.text().strip()
             if genre:
