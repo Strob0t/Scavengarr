@@ -23,7 +23,7 @@ Decisions 9 and 10 came the same day, after the maintainer asked for more time p
 
 Order: 3, 5, 6 (small, independent), then 4, 1, 2 with 9 (the request flow), then 10, then 7, then the metrics. Each measure is test-driven, committed on its own and documented with the code. A sixth round measures 1–6, 9 and 10 in production.
 
-Done: 3 (1b7e01f), 5 (7ec1a5c), 6 (a3b7f50), 4 (20d27c5), 1 (a953721), 2 and 9 (71602d4), 10.
+Done: 3 (1b7e01f), 5 (7ec1a5c), 6 (a3b7f50), 4 (20d27c5), 1 (a953721), 2 and 9 (71602d4), 10 (fa9194f). In progress: 7 (kinoger 2322933, s.to 64a3801).
 
 ## 1. Plugin health check
 
@@ -114,6 +114,8 @@ The backend saves about a quarter of the proxy's CPU (15–27% across the runs).
 
 **Tests.** Unchanged plugin tests and real-page tests pass for every migrated plugin; a parse benchmark on the real pages before and after.
 
+**Verification.** Every parser input of the test suite and of live searches of all plugins (three titles each; mygully and myboerse need accounts the dev container lacks) was recorded on the base commit fa9194f: the class, its constructor arguments and the fed HTML. A replay parses each unique input with the old and the new parser and compares their public state. A migration counts only with every input identical. kinoger: 24 inputs identical, big pages 77 -> 6.3 ms (detail) and 32 -> 2.1 ms (search) on x86; s.to: 21 inputs identical, about 11 times faster.
+
 ## 9. Answer at 5 streams, when done, at most 60 s
 
 **Problem.** The first answer goes out at the soft deadline (7 s) plus the resolve grace, also when slow plugins would deliver (kinoking about 8.5 s, s.to's gate about 20 s, kinoger with a Cloudflare solve): in the fifth round 6 of 17 titles had fewer than 5 streams in the first answer (Good Bye Lenin, Breaking Bad, Dark and Haus des Geldes 1 each, Stranger Things and The Last of Us 4), 4 still after the late plugins. Titles with many streams wait for the deadline all the same.
@@ -153,7 +155,7 @@ Both change when the answer goes out, so they share one design (refined while im
 
 **Tests.** `/play` re-resolves a stale link and redirects to the new URL and leaves a fresh one alone; the proxy re-resolves when the CDN refuses the master playlist; concurrent requests share one re-resolution; links outlive the old 2 h.
 
-**Measurement (2026-10-05).** 18 links of 7 titles from one round, checked like a player every 30 minutes: 16 played at 1, 31, 62 and 92 minutes (the other 2, FireStream's HLS, never did: their variant playlist was no playlist). At 123 minutes the 11 proxied HLS links answered 404 from Scavengarr itself (the stored link's 2 h TTL), the 5 direct DoodStream files still played. The CDNs' own limit lies beyond the measured time; the freshness bound is 1 h, the resolver cache's lifetime.
+**Measurement (2026-10-05).** 18 links of 7 titles from one round, checked like a player every 30 minutes: 16 played at 1, 31, 62 and 92 minutes (the other 2, FireStream's HLS, never did: their variant playlist was no playlist). At 123 and 153 minutes the 11 proxied HLS links answered 404 from Scavengarr itself (the stored link's 2 h TTL), the 5 direct DoodStream files still played. The CDNs' own limit lies beyond the measured time; the freshness bound is 1 h, the resolver cache's lifetime.
 
 **Implementation.**
 - `StremioLinks` (application) owns the stored links: `current(link)` gives a link whose video URL is less than an hour old as it is and resolves the others again (saved, `stremio_link_resolved_again`); `refreshed(link)` resolves past the resolver's cache (`HosterResolverRegistry.resolve(refresh=True)`). Concurrent requests for one link share one resolution (a shielded task; shutdown cancels it).
