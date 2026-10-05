@@ -2009,6 +2009,27 @@ class TestCachedAnswers:
         assert [_video(uc, s) for s in streams] == ["https://cdn.example/second.mp4"]
         assert resolutions.calls == []
 
+    async def test_an_unresolved_better_link_keeps_the_hosters_cached_stream(
+        self,
+    ) -> None:
+        """A plugin that answered after the first answer can rank a new link
+        of a hoster first: the cached answer dropped that hoster's stream
+        (3 of 17 titles of the dev-server E2E run, 2026-10-05). It keeps the
+        cached stream now; the new link resolves for the next request."""
+        resolutions = _Resolutions(alive=(_VOE_2,), delay=0.5)
+        uc = _from_cache(
+            [_link(_VOE), _link(_VOE_2, "Iron.Man.2008.German.720p.WEB")],
+            resolutions,
+        )
+
+        started = time.monotonic()
+        streams = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        assert time.monotonic() - started < 0.3
+        assert [_video(uc, s) for s in streams] == ["https://cdn.example/second.mp4"]
+        await _eventually(lambda: _VOE in resolutions.store)
+        assert resolutions.calls == [_VOE]
+
     async def test_without_a_cached_stream_the_answer_waits_as_before(self) -> None:
         resolutions = _Resolutions(dead=(_VOE,), delay=0.1)
         uc = _from_cache([_link(_VOE), _link(_DOOD)], resolutions)

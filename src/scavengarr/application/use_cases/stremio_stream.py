@@ -681,7 +681,10 @@ class StremioStreamUseCase:
         """Each hoster's best stream whose resolution is cached, by index.
 
         A hoster's streams are taken in rank order past the links cached as
-        dead, up to the first one that is not cached.
+        dead and the links not resolved yet: a plugin that answered after
+        the first answer can rank a new link of a hoster first, and the
+        hoster's stream of that answer dropped out (the background
+        resolution resolves the new link for the next request).
         """
         hosters: dict[object, list[int]] = {}
         for i, stream in enumerate(ranked):
@@ -689,10 +692,9 @@ class StremioStreamUseCase:
         found: dict[int, ResolvedStream] = {}
         for indices in hosters.values():
             for i in indices:
-                cached, resolved = cached_fn(ranked[i].url)
+                _, resolved = cached_fn(ranked[i].url)
                 if resolved is not None:
                     found[i] = resolved
-                if resolved is not None or not cached:
                     break
         return found
 

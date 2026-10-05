@@ -69,6 +69,7 @@ Done: 3 (1b7e01f), 5 (7ec1a5c), 6 (a3b7f50), 4 (20d27c5), 1 (a953721), 2 and 9 (
 - The resolver registry gets `cached(url)`: the cached resolution of a URL (stream, dead, or not cached), without resolving.
 - For a search from the cache, `_resolve_top_streams()` first takes each hoster's best link whose resolution is cached, in rank order (a dead one moves on to the next). With at least one stream that way, the answer goes out at once. The hosters without a cached stream resolve their next link in the background (the use case's `_spawn`, ended at shutdown), at most `probe_concurrency` at a time and each URL once, and fill the registry's cache for the next request.
 - Without a cached stream, the request resolves as today.
+- Changed after the dev-server end-to-end run (2026-10-05): a hoster's links are taken past the ones not resolved yet too. A plugin that answered after the first answer ranked a new link of a hoster first, and the cached answer dropped that hoster (3 of 17 titles had 4 streams instead of 5).
 
 **Tests.** Cache hit with a cached stream: answers without calling the resolver, background resolution started once per URL; without a cached stream: resolves and waits as today; background tasks end with `aclose()`.
 
