@@ -25,7 +25,7 @@ from scavengarr.infrastructure.plugins.categories import (
     is_series_title,
     served_category,
 )
-from scavengarr.infrastructure.plugins.dom import ancestors, classes
+from scavengarr.infrastructure.plugins.dom import ancestors, classes, parse_page
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -183,8 +183,7 @@ class ScnlogPlugin(HttpxPluginBase):
         if resp is None:
             return [], ""
 
-        parser = _SearchResultParser()
-        parser.feed(resp.text)
+        parser = await parse_page(_SearchResultParser(), resp.text)
 
         next_url = ""
         if parser.next_page_url:
@@ -208,8 +207,7 @@ class ScnlogPlugin(HttpxPluginBase):
         if resp is None:
             return "", []
 
-        parser = _DetailPageParser()
-        parser.feed(resp.text)
+        parser = await parse_page(_DetailPageParser(), resp.text)
         return parser.title.strip(), parser.links
 
     async def _paginate_search(

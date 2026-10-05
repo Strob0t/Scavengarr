@@ -21,6 +21,7 @@ from urllib.parse import urljoin
 from selectolax.lexbor import LexborHTMLParser
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.dom import parse_page
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.relevance import (
     SINGLE_TITLE_HITS,
@@ -206,8 +207,7 @@ class AniworldPlugin(HttpxPluginBase):
         if resp is None:
             return None
 
-        detail_parser = _DetailPageParser(self.base_url)
-        detail_parser.feed(resp.text)
+        detail_parser = await parse_page(_DetailPageParser(self.base_url), resp.text)
 
         # Determine which episode page to scrape
         hoster_links: list[dict[str, str]] = []
@@ -249,8 +249,7 @@ class AniworldPlugin(HttpxPluginBase):
         if resp is None:
             return []
 
-        parser = _EpisodePageParser(self.base_url)
-        parser.feed(resp.text)
+        parser = await parse_page(_EpisodePageParser(self.base_url), resp.text)
         return parser.hoster_links
 
     async def _scrape_all_details(

@@ -54,7 +54,7 @@ Scavengarr is plugin-driven. Each plugin defines how to scrape a specific source
 | Form-based auth (vBulletin) | [x] Implemented | MD5 password hashing, session cookies (e.g. `boerse`, `mygully`) |
 | Cloudflare bypass | [x] Implemented | JS challenge wait via Playwright |
 | Bounded concurrency | [x] Implemented | Semaphore-limited parallel detail-page scraping |
-| Custom HTML parsing | [x] Implemented | `HTMLParser` subclasses for extraction; selectolax (lexbor) for the biggest pages; big html.parser pages in a worker thread (`_feed`) |
+| Custom HTML parsing | [x] Implemented | selectolax (lexbor) parsers with CSS selectors; pages through `parse_page()`, big ones in a worker thread |
 | Environment variable credentials | [x] Implemented | `SCAVENGARR_<PLUGIN>_USERNAME` / `_PASSWORD` (see [Configuration](./configuration.md#plugin-credentials)) |
 | `HttpxPluginBase` | [x] Implemented | Shared base for httpx plugins (client, domain fallback, semaphore) |
 | `PlaywrightPluginBase` | [x] Implemented | Shared base for Playwright plugins (browser lifecycle, Cloudflare) |

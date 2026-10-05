@@ -23,7 +23,7 @@ from scavengarr.infrastructure.plugins.categories import (
     category_matches,
     served_category,
 )
-from scavengarr.infrastructure.plugins.dom import ancestors, classes
+from scavengarr.infrastructure.plugins.dom import ancestors, classes, parse_page
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
 # ---------------------------------------------------------------------------
@@ -186,8 +186,7 @@ class DDLSpotPlugin(PlaywrightPluginBase):
         async def _fetch_one(url: str) -> tuple[str, list[str]]:
             async with sem:
                 html = await self._fetch_detail_page(url)
-            parser = _DetailPageParser()
-            parser.feed(html)
+            parser = await parse_page(_DetailPageParser(), html)
             return url, parser.urls
 
         pairs = await asyncio.gather(*(_fetch_one(url) for url in urls))
@@ -268,8 +267,7 @@ class DDLSpotPlugin(PlaywrightPluginBase):
                     "ddlspot_search_page_failed", url=current_url, error=str(exc)
                 )
                 break
-            parser = _SearchResultParser()
-            parser.feed(html)
+            parser = await parse_page(_SearchResultParser(), html)
 
             if not parser.results:
                 break

@@ -25,7 +25,7 @@ from scavengarr.infrastructure.plugins.categories import (
     category_matches,
     served_category,
 )
-from scavengarr.infrastructure.plugins.dom import classes
+from scavengarr.infrastructure.plugins.dom import classes, parse_page
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -253,11 +253,9 @@ class JjsPlugin(HttpxPluginBase):
 
         html = resp.text
 
-        parser = _SearchResultParser()
-        parser.feed(html)
+        parser = await parse_page(_SearchResultParser(), html)
 
-        pag_parser = _PaginationParser()
-        pag_parser.feed(html)
+        pag_parser = await parse_page(_PaginationParser(), html)
 
         self._log.info(
             "jjs_search_page",
@@ -295,8 +293,7 @@ class JjsPlugin(HttpxPluginBase):
         if resp is None:
             return {"download_links": [], "size": ""}
 
-        parser = _DetailPageParser()
-        parser.feed(resp.text)
+        parser = await parse_page(_DetailPageParser(), resp.text)
 
         return {
             "download_links": parser.download_links,

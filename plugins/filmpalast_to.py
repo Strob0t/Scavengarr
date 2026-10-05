@@ -24,7 +24,7 @@ from scavengarr.infrastructure.plugins.categories import (
     category_matches,
     served_category,
 )
-from scavengarr.infrastructure.plugins.dom import classes
+from scavengarr.infrastructure.plugins.dom import classes, parse_page
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.relevance import (
     SINGLE_TITLE_HITS,
@@ -192,8 +192,7 @@ class FilmpalastPlugin(HttpxPluginBase):
         if resp is None:
             return [], False
 
-        parser = _SearchResultParser()
-        parser.feed(resp.text)
+        parser = await parse_page(_SearchResultParser(), resp.text)
 
         self._log.info(
             "filmpalast_search_page",
@@ -226,8 +225,7 @@ class FilmpalastPlugin(HttpxPluginBase):
         if resp is None:
             return "", "", []
 
-        parser = _DetailPageParser()
-        parser.feed(resp.text)
+        parser = await parse_page(_DetailPageParser(), resp.text)
         return parser.title.strip(), parser.release_name.strip(), parser.links
 
     async def search(

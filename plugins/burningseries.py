@@ -25,7 +25,7 @@ from urllib.parse import urljoin
 from selectolax.lexbor import LexborHTMLParser, LexborNode
 
 from scavengarr.domain.plugins.base import SearchResult
-from scavengarr.infrastructure.plugins.dom import ancestors, classes
+from scavengarr.infrastructure.plugins.dom import ancestors, classes, parse_page
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -247,7 +247,7 @@ class BurningSeriesPlugin(HttpxPluginBase):
         if html is None:
             return []
 
-        parser = await self._feed(_SeriesListParser(), html)
+        parser = await parse_page(_SeriesListParser(), html)
 
         # Deduplicate by slug (a series can appear in multiple genre sections)
         seen: set[str] = set()
@@ -275,7 +275,7 @@ class BurningSeriesPlugin(HttpxPluginBase):
         if html is None:
             return _SeriesDetailParser()
 
-        parser = await self._feed(_SeriesDetailParser(), html)
+        parser = await parse_page(_SeriesDetailParser(), html)
 
         self._log.info(
             "burningseries_detail",

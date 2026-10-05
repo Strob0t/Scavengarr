@@ -24,7 +24,7 @@ from scavengarr.infrastructure.plugins.categories import (
     is_series_title,
     served_category,
 )
-from scavengarr.infrastructure.plugins.dom import ancestors, classes
+from scavengarr.infrastructure.plugins.dom import ancestors, classes, parse_page
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
 # ---------------------------------------------------------------------------
@@ -234,8 +234,7 @@ class DDLValleyPlugin(PlaywrightPluginBase):
             await self._navigate_and_wait(page, url, wait_for_idle=False)
 
             html = await page.content()
-            parser = _SearchResultParser(self.base_url)
-            parser.feed(html)
+            parser = await parse_page(_SearchResultParser(self.base_url), html)
 
             self._log.info(
                 "ddlvalley_search_results",
@@ -258,13 +257,11 @@ class DDLValleyPlugin(PlaywrightPluginBase):
             return None
 
         # Extract title from <title> tag (more reliable than search page)
-        title_parser = _TitleParser()
-        title_parser.feed(html)
+        title_parser = await parse_page(_TitleParser(), html)
         title = title_parser.title or post.get("title", "Unknown")
 
         # Extract download links
-        link_parser = _DetailPageParser()
-        link_parser.feed(html)
+        link_parser = await parse_page(_DetailPageParser(), html)
 
         if not link_parser.links:
             self._log.debug("ddlvalley_no_links", url=post["url"], title=title)

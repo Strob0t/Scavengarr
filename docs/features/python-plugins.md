@@ -156,7 +156,6 @@ plugin = MySitePlugin()
 - `_verify_domain()` — sends `HEAD https://{domain}/` (5 s timeout) for each domain; the first status `< 400` wins and `base_url` is taken from the final URL after redirects (e.g. a `www.` prefix); if all fail, `_domains[0]` is kept and a warning is logged
 - `_fetch_text(url, *, params=None, context="", headers=None) -> str | None` — GET returning the body text (`headers` go with the httpx request, e.g. an API's `Accept`/`Referer`/`X-XSRF-TOKEN`: moflix); when the site answers with a Cloudflare challenge (`is_cloudflare_challenge`) and a browser fetcher is injected (`HttpxPluginBase.set_browser_fetcher()`, wired to the `StealthPool` when `playwright.browser_fallback` is on), the same URL (query string included) is loaded through the browser instead. JSON comes back as raw text: parse it with `json.loads`. A URL that answers the browser's page load with an error and no challenge is asked once more by in-page `fetch()`, which sends the site's Referer: an API behind Laravel Sanctum (moflix) answers a page load without one with 401, and once the browser holds a clearance no challenge reload sends it. Use it for every request of a Cloudflare-protected site
 - `_parse_json_text(body, context="") -> dict | None` — decodes a JSON object from `_fetch_text()` (logs `{name}_invalid_json`)
-- `await self._feed(parser, html) -> parser` — feeds an `html.parser` parser; pages from 32 KB are parsed in a worker thread (`asyncio.to_thread`), since html.parser runs in Python and a 300 KB page blocked the event loop for 20 ms on x86 and several times as long on a Raspberry Pi. Use it for detail and episode pages (sto, kinoger, kinoking, kinox, megakino, movie2k)
 - `_resolve_redirect(url, *, context="", referer="") -> str | None` — first off-site `Location` of a link-out URL (follows same-host hops); behind Cloudflare the browser fetcher resolves it. `referer` is sent as `Referer`: some sites redirect a link-out only when it is opened from the page that lists it (sto)
 - `_use_browser_session(url, cookies)` — sends a browser's session cookies (e.g. from `click_through()` below) with later requests to `url`'s site, replacing that site's cookies in the client
 - `self._browser_fetcher.click_through(page_url, selector, *, timeout) -> ClickThrough | None` (`BrowserFetcherPort`, `StealthPool` only; `None` without a browser) — opens a page in the browser, clicks the first element matching `selector` and returns where a same-site link-out redirected off-site (`ClickThrough.url`) plus the site's cookies (`ClickThrough.cookies`). Until the page closes only the target and the form of a Turnstile gate (`WIDGET_FORM`) take pointer events (a stylesheet, `_TARGET_ONLY_CSS`): s.to's ad script lays layers over the page, under random class names and after a delay, that would take the click on the link box and then on the gate's checkbox ("… subtree intercepts pointer events"). A Turnstile widget the click brings up is passed (`pass_turnstile_widget`: ticked when it does not clear, then its form is submitted with `form.submit()`); an ALTCHA widget in the same form (s.to's gate for a VPN IP) is solved first: the page fetches its challenge from the widget's `challengeurl`, `solve_altcha` solves it in a thread and the payload goes into the form under the widget's name (its checkbox does not verify on a click in our browser; `altcha_widget_unsolved` when this fails); the form's redirect then gets up to 10 s (`_SUBMIT_REDIRECT_S`) even past `timeout`, since the widget may have used it up (a Raspberry Pi behind a VPN: 28 of 30 s; s.to's `_GATE_TIMEOUT_S` is 60 s, the pass runs in the background). For sites that gate link-outs per session: pass the gate once in the browser, then continue in httpx with `_use_browser_session()` (sto)
@@ -287,6 +286,49 @@ _CATEGORY_MAP = { ... }
 ```
 
 Names such as `_MAX_PAGES`, `_PER_PAGE`, `_CATEGORY_MAP` or `_LANG_LABELS` are conventions used where the site needs them, not a required set. Some plugins also define a `categories` class attribute; it is plugin-internal and not read by core code.
+
+---
+
+## Parsing Pages
+
+Plugin parsers read pages with selectolax (lexbor, a C HTML5 parser): `LexborHTMLParser(html)` builds the tree, CSS selectors find the nodes. A parser is a small class with `feed(html)` and public result attributes; the plugin feeds every page through `await parse_page(parser, html)` (`infrastructure/plugins/dom.py`), which parses pages from 32 KiB in a worker thread (lexbor builds the tree without the GIL; selectolax took 0.3 ms for 32–64 KiB on x86, a thread hop 0.06 ms).
+
+```python
+from selectolax.lexbor import LexborHTMLParser
+
+from scavengarr.infrastructure.plugins.dom import parse_page
+
+
+class _SearchResultParser:
+    """Parse the result cards of a search page (selectolax)."""
+
+    def __init__(self, base_url: str) -> None:
+        self.results: list[dict[str, str]] = []
+        self._base_url = base_url
+
+    def feed(self, html: str) -> None:
+        for card in LexborHTMLParser(html).css("div.card"):
+            links = card.css("h2 a[href]")
+            if links:
+                href = links[-1].attributes.get("href") or ""
+                self.results.append(
+                    {"title": links[-1].text().strip(), "url": urljoin(self._base_url, href)}
+                )
+
+
+# in the plugin
+parser = await parse_page(_SearchResultParser(self.base_url), html)
+```
+
+Pitfalls (selectolax 1.0; also noted in `dom.py`):
+- `node.css(selector)` searches the subtree including the node itself; `node.css_matches(selector)` tests the whole subtree, not the node. Ancestor checks walk `ancestors(node)` and test `node.tag`, `classes(node)` and `node.attributes`.
+- A group selector returns a node once per part it matches (`a, a.x` gives `<a class="x">` twice): parts that can match one node go into `:is()` (`a:is(.x, [href])`).
+- `LexborNode.__eq__` compares the nodes' HTML: compare `node.mem_id` for identity, never `==`, `in` or `list.index()` on nodes.
+- Without a doctype (most test HTML) class and `#id` selectors ignore case; `[id='x']` and other attribute selectors stay exact.
+- `node.text()` is the deep text: entities decoded, `<script>`/`<style>` content included, comments excluded, `\r\n` turned into `\n`.
+- lexbor builds the HTML5 tree like a browser: it closes unclosed elements, repairs misnesting and inserts an implied `<tbody>`.
+
+Until 2026-10 the plugins parsed with `html.parser` state machines in Python, which held the GIL for every page (34% of the GIL samples of a Stremio request on the Raspberry Pi). All of them moved to selectolax with identical results on every recorded input (the test suite and live searches of every plugin), 6–15 times faster on big pages.
 
 ---
 
@@ -463,7 +505,7 @@ return [r for r in results if isinstance(r, SearchResult)]
 
 ### Custom HTML Parsers
 
-The plugin uses stdlib `HTMLParser` subclasses instead of CSS selectors for robustness against varied vBulletin markup:
+The plugin's parsers read the lexbor tree with CSS selectors (see [Parsing Pages](#parsing-pages)):
 
 | Parser | Purpose |
 |---|---|

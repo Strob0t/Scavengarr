@@ -22,7 +22,7 @@ from scavengarr.infrastructure.plugins.categories import (
     category_matches,
     served_category,
 )
-from scavengarr.infrastructure.plugins.dom import classes
+from scavengarr.infrastructure.plugins.dom import classes, parse_page
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -161,8 +161,7 @@ class WarezomenPlugin(HttpxPluginBase):
         if resp is None:
             return [], ""
 
-        parser = _SearchResultParser()
-        parser.feed(resp.text)
+        parser = await parse_page(_SearchResultParser(), resp.text)
 
         next_url = ""
         if parser.next_page_url:

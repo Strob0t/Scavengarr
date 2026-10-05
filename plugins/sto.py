@@ -28,6 +28,7 @@ from scavengarr.infrastructure.plugins.categories import (
     filter_by_category,
     served_category,
 )
+from scavengarr.infrastructure.plugins.dom import parse_page
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.relevance import (
     SINGLE_TITLE_HITS,
@@ -297,7 +298,7 @@ class StoPlugin(HttpxPluginBase):
         if html is None:
             return []
 
-        parser = await self._feed(_SearchSeriesParser(self.base_url), html)
+        parser = await parse_page(_SearchSeriesParser(self.base_url), html)
 
         self._log.info(
             "sto_search_page",
@@ -316,7 +317,7 @@ class StoPlugin(HttpxPluginBase):
         if html is None:
             return _SeriesDetailParser(self.base_url)
 
-        parser = await self._feed(_SeriesDetailParser(self.base_url), html)
+        parser = await parse_page(_SeriesDetailParser(self.base_url), html)
         return parser
 
     async def _scrape_episode_hosters(
@@ -328,7 +329,7 @@ class StoPlugin(HttpxPluginBase):
         if html is None:
             return []
 
-        parser = await self._feed(_EpisodeHosterParser(), html)
+        parser = await parse_page(_EpisodeHosterParser(), html)
         return parser.hosters
 
     async def _resolve_hoster_url(self, play_url: str, *, referer: str) -> str:

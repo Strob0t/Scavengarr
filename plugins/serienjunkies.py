@@ -22,6 +22,7 @@ from selectolax.lexbor import LexborHTMLParser
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.categories import served_category
+from scavengarr.infrastructure.plugins.dom import parse_page
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -187,8 +188,7 @@ class SerienjunkiesPlugin(HttpxPluginBase):
         if resp is None:
             return []
 
-        parser = _SearchResultParser()
-        parser.feed(resp.text)
+        parser = await parse_page(_SearchResultParser(), resp.text)
 
         self._log.info(
             "serienjunkies_search",
@@ -209,8 +209,7 @@ class SerienjunkiesPlugin(HttpxPluginBase):
         if resp is None:
             return "", ""
 
-        parser = _DetailPageParser()
-        parser.feed(resp.text)
+        parser = await parse_page(_DetailPageParser(), resp.text)
         return parser.media_id, parser.media_title
 
     async def _get_releases(self, media_id: str) -> dict:

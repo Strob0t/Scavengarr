@@ -21,7 +21,7 @@ import re
 from selectolax.lexbor import LexborHTMLParser, LexborNode
 
 from scavengarr.domain.plugins.base import SearchResult
-from scavengarr.infrastructure.plugins.dom import ancestors, classes
+from scavengarr.infrastructure.plugins.dom import ancestors, classes, parse_page
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -325,8 +325,7 @@ class SerienfansPlugin(HttpxPluginBase):
         if not html:
             return [], []
 
-        parser = _ReleaseParser(self.base_url)
-        parser.feed(html)
+        parser = await parse_page(_ReleaseParser(self.base_url), html)
 
         self._log.info(
             "serienfans_season_parsed",
@@ -424,8 +423,7 @@ class SerienfansPlugin(HttpxPluginBase):
         if html is None:
             return []
 
-        parser = _IndexPageParser()
-        parser.feed(html)
+        parser = await parse_page(_IndexPageParser(), html)
         return parser.series
 
     # ------------------------------------------------------------------

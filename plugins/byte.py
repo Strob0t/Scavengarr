@@ -27,7 +27,7 @@ from scavengarr.infrastructure.plugins.categories import (
     category_matches,
     served_category,
 )
-from scavengarr.infrastructure.plugins.dom import ancestors, classes
+from scavengarr.infrastructure.plugins.dom import ancestors, classes, parse_page
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -347,8 +347,7 @@ class BytePlugin(HttpxPluginBase):
         if html is None:
             return [], 0, 1
 
-        parser = _SearchResultParser(self.base_url)
-        parser.feed(html)
+        parser = await parse_page(_SearchResultParser(self.base_url), html)
         parser.flush_pending()
 
         self._log.info(
@@ -366,8 +365,7 @@ class BytePlugin(HttpxPluginBase):
         html = await self._fetch_text(widget_url, context="link_widget")
         if html is None:
             return []
-        parser = _WidgetLinkParser()
-        parser.feed(html)
+        parser = await parse_page(_WidgetLinkParser(), html)
         return parser.links
 
     async def _scrape_detail(self, result: dict[str, str]) -> SearchResult | None:
@@ -376,8 +374,7 @@ class BytePlugin(HttpxPluginBase):
         if html is None:
             return None
 
-        detail_parser = _DetailPageParser()
-        detail_parser.feed(html)
+        detail_parser = await parse_page(_DetailPageParser(), html)
 
         widget_urls = [urljoin(self.base_url, u) for u in detail_parser.widget_urls]
         widget_links = await asyncio.gather(

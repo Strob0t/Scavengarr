@@ -23,6 +23,7 @@ from scavengarr.infrastructure.plugins.categories import (
     category_matches,
     served_category,
 )
+from scavengarr.infrastructure.plugins.dom import parse_page
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -280,11 +281,9 @@ class HdSourcePlugin(HttpxPluginBase):
 
         html = resp.text
 
-        parser = _SearchPageParser()
-        parser.feed(html)
+        parser = await parse_page(_SearchPageParser(), html)
 
-        pag_parser = _PaginationParser()
-        pag_parser.feed(html)
+        pag_parser = await parse_page(_PaginationParser(), html)
 
         self._log.info(
             "hdsource_search_page",

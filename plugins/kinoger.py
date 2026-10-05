@@ -30,7 +30,7 @@ from scavengarr.infrastructure.plugins.categories import (
     served_category,
     stream_category,
 )
-from scavengarr.infrastructure.plugins.dom import ancestors, classes
+from scavengarr.infrastructure.plugins.dom import ancestors, classes, parse_page
 from scavengarr.infrastructure.plugins.episodes import episode_label, filter_episodes
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.relevance import (
@@ -395,7 +395,7 @@ class KinogerPlugin(HttpxPluginBase):
         if html is None:
             return []
 
-        parser = await self._feed(_SearchResultParser(self.base_url), html)
+        parser = await parse_page(_SearchResultParser(self.base_url), html)
 
         self._log.info(
             "kinoger_search_page",
@@ -439,7 +439,7 @@ class KinogerPlugin(HttpxPluginBase):
         if html is None:
             return None
 
-        parser = await self._feed(_DetailPageParser(self.base_url), html)
+        parser = await parse_page(_DetailPageParser(self.base_url), html)
         parser.finalize()
 
         links = parser.stream_links

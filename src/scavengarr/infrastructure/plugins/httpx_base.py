@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from typing import Any, Protocol
+from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -45,14 +45,6 @@ _CF_BLOCK_MEMO_S = 30 * 60
 # A challenge this soon after httpx took over the browser's session means the
 # site does not accept that session from httpx: its pages go to the browser
 _SESSION_TRUST_S = 5 * 60
-# Pages from this size (~2 ms of html.parser on x86) are parsed in a thread
-_THREAD_PARSE_CHARS = 32 * 1024
-
-
-class _Parser(Protocol):
-    """A plugin's page parser: html.parser or selectolax based."""
-
-    def feed(self, html: str, /) -> None: ...
 
 
 def _forget_solve(solve: asyncio.Task[str | None]) -> None:
@@ -234,21 +226,6 @@ class HttpxPluginBase:
             await self._client.aclose()
         self._client = None
         self._domain_verified = False
-
-    async def _feed[P: _Parser](self, parser: P, html: str) -> P:
-        """Feed *html* to *parser*; a big page in a worker thread.
-
-        html.parser runs in Python: a 300 KB page took 20 ms on x86 and
-        several times as long on a Raspberry Pi, all of it on the event
-        loop. In a thread the loop gets the GIL back every few ms.
-        selectolax (lexbor) builds its tree in C without the GIL; the
-        parser's queries on the tree hold it.
-        """
-        if len(html) < _THREAD_PARSE_CHARS:
-            parser.feed(html)
-        else:
-            await asyncio.to_thread(parser.feed, html)
-        return parser
 
     def _follow_site_move(self, resp: httpx.Response) -> None:
         """Make a permanent move of the site to another host the base URL.

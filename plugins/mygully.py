@@ -29,6 +29,7 @@ from scavengarr.infrastructure.plugins.categories import (
     is_series_title,
     served_category,
 )
+from scavengarr.infrastructure.plugins.dom import parse_page
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
 if TYPE_CHECKING:
@@ -398,8 +399,7 @@ class MyGullyPlugin(PlaywrightPluginBase):
         all_urls: list[str] = []
         seen: set[str] = set()
 
-        parser = _ThreadLinkParser(self.base_url)
-        parser.feed(html)
+        parser = await parse_page(_ThreadLinkParser(self.base_url), html)
         for url in parser.thread_urls:
             if url not in seen:
                 seen.add(url)
@@ -415,8 +415,7 @@ class MyGullyPlugin(PlaywrightPluginBase):
             except Exception:  # noqa: BLE001
                 break
 
-            parser = _ThreadLinkParser(self.base_url)
-            parser.feed(html)
+            parser = await parse_page(_ThreadLinkParser(self.base_url), html)
 
             new_count = 0
             for url in parser.thread_urls:
@@ -448,13 +447,11 @@ class MyGullyPlugin(PlaywrightPluginBase):
                 await page.close()
 
         # Extract title
-        title_parser = _ThreadTitleParser()
-        title_parser.feed(html)
+        title_parser = await parse_page(_ThreadTitleParser(), html)
         title = title_parser.title or "Unknown"
 
         # Extract download links from post content
-        link_parser = _PostLinkParser()
-        link_parser.feed(html)
+        link_parser = await parse_page(_PostLinkParser(), html)
 
         if not link_parser.links:
             return None

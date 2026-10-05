@@ -28,7 +28,7 @@ from scavengarr.infrastructure.plugins.categories import (
     served_category,
     stream_category,
 )
-from scavengarr.infrastructure.plugins.dom import classes
+from scavengarr.infrastructure.plugins.dom import classes, parse_page
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.relevance import (
     SINGLE_TITLE_HITS,
@@ -459,7 +459,7 @@ class MegakinoPlugin(HttpxPluginBase):
         if resp is None:
             return []
 
-        parser = await self._feed(_SearchResultParser(self.base_url), resp.text)
+        parser = await parse_page(_SearchResultParser(self.base_url), resp.text)
 
         self._log.info(
             "megakino_search_page",
@@ -502,7 +502,7 @@ class MegakinoPlugin(HttpxPluginBase):
         if html is None:
             return None
 
-        parser = await self._feed(_DetailPageParser(self.base_url), html)
+        parser = await parse_page(_DetailPageParser(self.base_url), html)
         parser.finalize()
 
         # Filter series links by episode (ep1, ep2, ... labels)

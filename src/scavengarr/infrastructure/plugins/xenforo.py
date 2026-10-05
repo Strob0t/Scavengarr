@@ -35,7 +35,7 @@ from scavengarr.infrastructure.plugins.categories import (
     category_matches,
     served_category,
 )
-from scavengarr.infrastructure.plugins.dom import ancestors, classes
+from scavengarr.infrastructure.plugins.dom import ancestors, classes, parse_page
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 _MAX_PAGES = 50  # 20-25 results per page → 1000 results
@@ -276,8 +276,9 @@ class XenForoPluginBase(HttpxPluginBase):
         username, password = self._credentials()
 
         page = await self._safe_fetch(f"{self.base_url}/login/", context="login")
-        token_parser = _LoginTokenParser()
-        token_parser.feed(page.text if page is not None else "")
+        token_parser = await parse_page(
+            _LoginTokenParser(), page.text if page is not None else ""
+        )
         if not token_parser.token:
             raise RuntimeError("Could not extract _xfToken from login page")
 
@@ -314,9 +315,8 @@ class XenForoPluginBase(HttpxPluginBase):
         self._logged_in = True
         self._log.info(f"{self.name}_login_success")
 
-    def _parse_results(self, html: str) -> tuple[list[dict[str, str]], str]:
-        parser = _SearchResultParser(self.base_url)
-        parser.feed(html)
+    async def _parse_results(self, html: str) -> tuple[list[dict[str, str]], str]:
+        parser = await parse_page(_SearchResultParser(self.base_url), html)
         parser.flush_pending()
         return parser.results, parser.next_page_url
 
@@ -345,7 +345,7 @@ class XenForoPluginBase(HttpxPluginBase):
         # expired session: it answers as for a guest
         if resp is None or _LOGGED_OUT_MARKER in resp.text:
             raise _SessionExpiredError
-        rows, next_url = self._parse_results(resp.text)
+        rows, next_url = await self._parse_results(resp.text)
         self._log.info(f"{self.name}_search_page", query=query, results=len(rows))
         return rows, next_url
 
@@ -356,7 +356,7 @@ class XenForoPluginBase(HttpxPluginBase):
         )
         if resp is None:
             return [], ""
-        return self._parse_results(resp.text)
+        return await self._parse_results(resp.text)
 
     async def _search_rows(self, query: str, nodes: list[int]) -> list[dict[str, str]]:
         """Search result rows of all pages (one new login if the session expired)."""
@@ -392,8 +392,7 @@ class XenForoPluginBase(HttpxPluginBase):
         if resp is None:
             return None
 
-        parser = _ThreadPostParser()
-        parser.feed(resp.text)
+        parser = await parse_page(_ThreadPostParser(), resp.text)
         if not parser.links:
             self._log.debug(f"{self.name}_no_links", url=row["url"])
             return None

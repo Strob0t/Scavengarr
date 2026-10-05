@@ -30,6 +30,7 @@ from selectolax.lexbor import LexborHTMLParser
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.hoster_resolvers import extract_domain
 from scavengarr.infrastructure.plugins.categories import served_category
+from scavengarr.infrastructure.plugins.dom import parse_page
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.relevance import (
     SINGLE_TITLE_HITS,
@@ -202,7 +203,7 @@ class KinokingPlugin(HttpxPluginBase):
         )
         if html is None:
             return []
-        parser = await self._feed(_SearchCardParser(), html)
+        parser = await parse_page(_SearchCardParser(), html)
         return parser.results
 
     async def _search_cards(self, query: str) -> list[dict[str, str]]:

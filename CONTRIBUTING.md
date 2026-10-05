@@ -112,7 +112,7 @@ Scavengarr follows Clean Architecture: outer layers depend on inner ones only, a
 |---|---|
 | HTTP framework | FastAPI + Uvicorn |
 | Static scraping | httpx |
-| HTML parsing | stdlib `html.parser`; `selectolax` (lexbor, C) for big pages |
+| HTML parsing | `selectolax` (lexbor, C, CSS selectors) |
 | Browser scraping | Patchright (Playwright fork, Chromium) |
 | Title matching | RapidFuzz |
 | Release parsing | guessit |

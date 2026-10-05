@@ -105,7 +105,7 @@ Invariants:
 - Modern typing only: `T | None`, `list[T]`, `dict[K, V]`, `collections.abc.Iterable`; never `Optional`/`List`/`Dict`/`typing.Iterable`. From `typing` import only `Any`, `Protocol`, `Literal`, `TypeVar`, `runtime_checkable`.
 - Fully typed signatures. Ports use `Protocol` (not `ABC`). Entities/value objects are `@dataclass` (`frozen=True` for immutables). `Literal` for fixed values; casts only with runtime checks.
 - No mutable default arguments (use `None` + create inside). Never swallow exceptions (`except: pass`); log and re-raise or map cleanly.
-- Async: `asyncio.gather` over sequential `await` in loops; CPU-bound parsing goes to `run_in_executor` (html.parser pages through `HttpxPluginBase._feed()`, which parses big pages in a thread; the biggest pages use `selectolax`).
+- Async: `asyncio.gather` over sequential `await` in loops; CPU-bound work goes off the event loop (`asyncio.to_thread`/`run_in_executor`). Plugin parsers use `selectolax` (lexbor, CSS selectors; helpers and pitfalls in `infrastructure/plugins/dom.py`), and every page goes through `await parse_page(parser, html)`, which parses pages from 32 KiB in a worker thread.
 - Prefer small functions/modules over deep class hierarchies; dependencies injected explicitly via constructors/factories.
 - Scraping: specific but robust selectors, `urljoin` for URLs, search terms encoded (`quote_plus`, or `quote(term, safe="")` in a path segment), missing fields → partial result + warning instead of abort.
 - Playwright: no `sleep()` waits (use conditions/locators), close contexts/pages deterministically, limit browser parallelism with a semaphore.

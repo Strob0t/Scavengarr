@@ -24,7 +24,7 @@ from scavengarr.infrastructure.plugins.categories import (
     served_category,
     stream_category,
 )
-from scavengarr.infrastructure.plugins.dom import ancestors, classes
+from scavengarr.infrastructure.plugins.dom import ancestors, classes, parse_page
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -204,8 +204,7 @@ class Nima4kPlugin(HttpxPluginBase):
         if resp is None:
             return []
 
-        parser = _ListingParser(self.base_url)
-        parser.feed(resp.text)
+        parser = await parse_page(_ListingParser(self.base_url), resp.text)
 
         self._log.info("nima4k_search_post", query=query, count=len(parser.results))
         return parser.results
@@ -225,8 +224,7 @@ class Nima4kPlugin(HttpxPluginBase):
         if resp is None:
             return [], False
 
-        parser = _ListingParser(self.base_url)
-        parser.feed(resp.text)
+        parser = await parse_page(_ListingParser(self.base_url), resp.text)
 
         self._log.info(
             "nima4k_browse_page",

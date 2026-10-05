@@ -21,7 +21,7 @@ from urllib.parse import urljoin
 from selectolax.lexbor import LexborHTMLParser, LexborNode
 
 from scavengarr.domain.plugins.base import SearchResult
-from scavengarr.infrastructure.plugins.dom import ancestors, classes
+from scavengarr.infrastructure.plugins.dom import ancestors, classes, parse_page
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.relevance import (
     hit_title,
@@ -185,7 +185,7 @@ class KinoxPlugin(HttpxPluginBase):
         if html is None:
             return []
 
-        parser = await self._feed(_SearchResultParser(), html)
+        parser = await parse_page(_SearchResultParser(), html)
 
         self._log.info("kinox_search", query=query, count=len(parser.results))
         return parser.results
@@ -196,7 +196,7 @@ class KinoxPlugin(HttpxPluginBase):
         if html is None:
             return _DetailPageParser()
 
-        parser = await self._feed(_DetailPageParser(), html)
+        parser = await parse_page(_DetailPageParser(), html)
 
         self._log.info(
             "kinox_detail",

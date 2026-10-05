@@ -25,7 +25,7 @@ from scavengarr.infrastructure.plugins.categories import (
     category_matches,
     served_category,
 )
-from scavengarr.infrastructure.plugins.dom import ancestors
+from scavengarr.infrastructure.plugins.dom import ancestors, parse_page
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
 # ---------------------------------------------------------------------------
@@ -299,8 +299,9 @@ class ScnSrcPlugin(PlaywrightPluginBase):
         """
         if post.get("links") or not post.get("url"):
             return post
-        parser = _PostPageParser()
-        parser.feed(await self._fetch_page(str(post["url"])))
+        parser = await parse_page(
+            _PostPageParser(), await self._fetch_page(str(post["url"]))
+        )
         return {**post, "release_name": parser.release_name, "links": parser.links}
 
     async def _search_page(
@@ -326,8 +327,7 @@ class ScnSrcPlugin(PlaywrightPluginBase):
 
         html = await self._fetch_page(url)
 
-        parser = _PostParser(self.base_url)
-        parser.feed(html)
+        parser = await parse_page(_PostParser(self.base_url), html)
 
         self._log.info(
             "scnsrc_search_page",

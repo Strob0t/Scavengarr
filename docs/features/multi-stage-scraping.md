@@ -56,7 +56,7 @@ The second step turns each detail page into a `SearchResult`:
 - For grouped links (several hosters per release), walk the container/group/item hierarchy and collect every link
 - On missing optional fields, return a partial result; on missing required fields, log and skip the item instead of aborting the whole search
 
-Plugins parse HTML with stdlib `html.parser.HTMLParser` subclasses (most httpx plugins and `plugins/boerse.py`), with JSON APIs via `_safe_parse_json()`, or with Playwright (`page.content()`, `page.evaluate()`). html.parser runs in Python: big pages go through `HttpxPluginBase._feed()`, which parses them in a worker thread. The biggest pages are parsed with `selectolax` (lexbor, a C parser, CSS selectors): filmpalast's ~300 KB detail pages took 20 ms with html.parser on x86 and 2.3 ms with selectolax, with the same results on the captured real pages. Such parsers keep the `feed(html)` interface, so tests and call sites stay the same.
+Plugins parse HTML with `selectolax` (lexbor, a C parser, CSS selectors; see [Parsing Pages](python-plugins.md#parsing-pages)), JSON APIs via `_safe_parse_json()`, or Playwright (`page.content()`, `page.evaluate()`). Every page goes through `parse_page(parser, html)` (`infrastructure/plugins/dom.py`), which parses pages from 32 KiB in a worker thread. Until 2026-10 the parsers were `html.parser` state machines in Python: filmpalast's ~300 KB detail pages took 20 ms with html.parser on x86 and 2.3 ms with selectolax, with the same results.
 
 ---
 

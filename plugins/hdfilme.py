@@ -34,7 +34,7 @@ from scavengarr.infrastructure.plugins.categories import (
     served_category,
     stream_category,
 )
-from scavengarr.infrastructure.plugins.dom import ancestors, classes
+from scavengarr.infrastructure.plugins.dom import ancestors, classes, parse_page
 from scavengarr.infrastructure.plugins.episodes import filter_episodes
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.relevance import (
@@ -294,8 +294,7 @@ class HdfilmePlugin(HttpxPluginBase):
         if html is None:
             return []
 
-        parser = _SearchResultParser(self.base_url)
-        parser.feed(html)
+        parser = await parse_page(_SearchResultParser(self.base_url), html)
 
         self._log.info(
             "hdfilme_search_results",
@@ -322,8 +321,7 @@ class HdfilmePlugin(HttpxPluginBase):
         if html is None:
             return []
 
-        parser = _SearchResultParser(self.base_url)
-        parser.feed(html)
+        parser = await parse_page(_SearchResultParser(self.base_url), html)
 
         self._log.info(
             "hdfilme_browse_page",
@@ -369,7 +367,7 @@ class HdfilmePlugin(HttpxPluginBase):
         if html is None:
             return []
 
-        parser = await self._feed(_DetailPageParser(self.base_url), html)
+        parser = await parse_page(_DetailPageParser(self.base_url), html)
 
         player = devideosrc.find_player(html)
         if player is None:

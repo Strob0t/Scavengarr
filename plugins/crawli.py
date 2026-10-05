@@ -27,7 +27,7 @@ from scavengarr.infrastructure.plugins.categories import (
     is_series_title,
     served_category,
 )
-from scavengarr.infrastructure.plugins.dom import classes
+from scavengarr.infrastructure.plugins.dom import classes, parse_page
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -208,8 +208,7 @@ class CrawliPlugin(HttpxPluginBase):
         if resp is None:
             return [], 1
 
-        parser = _SearchResultParser()
-        parser.feed(_decode_page(resp.text))
+        parser = await parse_page(_SearchResultParser(), _decode_page(resp.text))
 
         self._log.info(
             "crawli_search_page",

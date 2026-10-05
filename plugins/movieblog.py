@@ -26,6 +26,7 @@ from scavengarr.infrastructure.plugins.categories import (
     category_matches,
     served_category,
 )
+from scavengarr.infrastructure.plugins.dom import parse_page
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -254,11 +255,9 @@ class MovieblogPlugin(HttpxPluginBase):
             return [], ""
 
         html = resp.text
-        parser = _SearchResultParser()
-        parser.feed(html)
+        parser = await parse_page(_SearchResultParser(), html)
 
-        pag_parser = _PaginationParser()
-        pag_parser.feed(html)
+        pag_parser = await parse_page(_PaginationParser(), html)
 
         self._log.info(
             "movieblog_search_page",
@@ -313,8 +312,7 @@ class MovieblogPlugin(HttpxPluginBase):
             self._log.warning("movieblog_detail_failed", url=url)
             return None
 
-        parser = _DetailPageParser()
-        parser.feed(resp.text)
+        parser = await parse_page(_DetailPageParser(), resp.text)
 
         if not parser.download_links:
             return None
