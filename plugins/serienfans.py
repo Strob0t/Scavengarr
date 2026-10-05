@@ -17,9 +17,11 @@ from __future__ import annotations
 
 import asyncio
 import re
-from html.parser import HTMLParser
+
+from selectolax.lexbor import LexborHTMLParser, LexborNode
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.dom import ancestors, classes
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -67,8 +69,8 @@ _DESC_RE = re.compile(r'<meta property="og:description" content="([^"]*)"', re.D
 _COVER_RE = re.compile(r'<i class="cover"><img src="([^"]+)"')
 
 
-class _ReleaseParser(HTMLParser):
-    """Parse release entries from serienfans.org season API HTML.
+class _ReleaseParser:
+    """Parse release entries from serienfans.org season API HTML (selectolax).
 
     The season API returns JSON with an ``html`` field containing release
     entries. Each release is a ``<div class="entry">`` containing:
@@ -77,298 +79,127 @@ class _ReleaseParser(HTMLParser):
     - ``<a class="dlb row" href="/external/2/{hash}">`` download links
     - ``<div class="list simple">`` with per-episode download links
 
-    Uses a single div depth counter for the entry, with boolean flags
-    to track which context (episode list, episode row) we're in.
-    The ``<h3>`` tag may contain invalid nested ``<div>`` elements
-    which are tracked separately to avoid depth miscount.
+    Each row of the episode list below its ``head`` row is an episode:
+    number and title in its first two ``<div>`` cells, then its download
+    links. The entry's other links belong to the season pack; release name
+    and size count outside the episode list only.
     """
 
     def __init__(self, base_url: str) -> None:
-        super().__init__()
         self.releases: list[dict[str, str | list[dict[str, str]]]] = []
+        self.episodes: list[dict[str, str | list[dict[str, str]]]] = []
         self._base_url = base_url
 
-        # Entry tracking — single depth counter for all divs
-        self._in_entry = False
-        self._entry_div_depth = 0
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for entry in tree.css("div.entry"):
+            # An entry inside another one is part of the outer entry
+            if not any(
+                parent.tag == "div" and "entry" in classes(parent)
+                for parent in ancestors(entry)
+            ):
+                self._add_entry(entry)
 
-        # Track <h3> to ignore <div> tags inside it (invalid HTML nesting)
-        self._in_h3 = False
-        self._h3_div_depth = 0
-
-        # Scene release name (in <small> inside entry)
-        self._in_small = False
-        self._current_release_name = ""
-
-        # Quality/size from <span class="morespec">
-        self._in_morespec = False
-        self._current_morespec = ""
-
-        # Download links (complete season packs)
-        self._in_dlb_link = False
-        self._current_dl_href = ""
-        self._in_dlb_span = False
-        self._dlb_span_text = ""
-        self._current_download_links: list[dict[str, str]] = []
-
-        # Episode list context (flag only, depth via _entry_div_depth)
-        self._in_episode_list = False
-        self._episode_list_depth = 0  # entry_div_depth when list started
-
-        # Episode row context
-        self._in_episode_row = False
-        self._episode_row_depth = 0  # entry_div_depth when row started
-        self._episode_cell_index = 0
-        self._current_episode_num = ""
-        self._current_episode_title = ""
-        self._current_episode_links: list[dict[str, str]] = []
-        self.episodes: list[dict[str, str | list[dict[str, str]]]] = []
-
-    def _reset_entry(self) -> None:
-        self._current_release_name = ""
-        self._current_morespec = ""
-        self._current_download_links = []
-        self._in_episode_list = False
-
-    def _emit_entry(self) -> None:
-        if not self._current_download_links:
-            return
-        self.releases.append(
-            {
-                "release_name": self._current_release_name,
-                "size": self._current_morespec,
-                "download_links": self._current_download_links.copy(),
-            }
-        )
-
-    def _emit_episode(self) -> None:
-        num = self._current_episode_num.strip().rstrip(".")
-        title = self._current_episode_title.strip()
-        if num and self._current_episode_links:
-            self.episodes.append(
+    def _add_entry(self, entry: LexborNode) -> None:
+        """Add the episodes of *entry*, and its release when it has links."""
+        rows = _episode_rows(entry)
+        for row in rows:
+            self._add_episode(row)
+        # The last release name and size outside the episode list count
+        lists = {node.mem_id for node in entry.css("div.list.simple")}
+        release_name = size = ""
+        for node in entry.css("small, span.morespec"):
+            if _inside(node, lists):
+                continue
+            if node.tag == "small":
+                release_name = node.text().strip()
+            else:
+                size = node.text().strip()
+        # The links outside the episode rows are the season pack's
+        row_ids = {row.mem_id for row in rows}
+        download_links = [
+            link
+            for anchor in entry.css("a.dlb")
+            if not _inside(anchor, row_ids) and (link := self._link(anchor))
+        ]
+        if download_links:
+            self.releases.append(
                 {
-                    "episode_num": num,
-                    "episode_title": title,
-                    "download_links": self._current_episode_links.copy(),
+                    "release_name": release_name,
+                    "size": size,
+                    "download_links": download_links,
                 }
             )
 
-    def handle_starttag(  # noqa: C901
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
-        attr_dict = dict(attrs)
-        classes = (attr_dict.get("class") or "").split()
+    def _add_episode(self, row: LexborNode) -> None:
+        """Add the episode of *row* when it has a number and links."""
+        # Cells: number ("1."), title, links; their stripped texts are joined
+        cells = [cell for cell in row.iter() if cell.tag == "div"]
+        number = cells[0].text(strip=True).rstrip(".") if cells else ""
+        title = cells[1].text(strip=True) if len(cells) > 1 else ""
+        links = [link for anchor in row.css("a.dlb") if (link := self._link(anchor))]
+        if number and links:
+            self.episodes.append(
+                {
+                    "episode_num": number,
+                    "episode_title": title,
+                    "download_links": links,
+                }
+            )
 
-        # Track <h3> to ignore nested <div> (invalid HTML on serienfans)
-        if tag == "h3":
-            self._in_h3 = True
-            self._h3_div_depth = 0
-
-        # <div> inside <h3> — track separately, don't count for entry depth
-        if tag == "div" and self._in_h3:
-            self._h3_div_depth += 1
-            return
-
-        # All divs: single depth counter
-        if tag == "div":
-            if self._in_entry:
-                self._entry_div_depth += 1
-                # Detect episode list start
-                if "list" in classes and "simple" in classes:
-                    self._in_episode_list = True
-                    self._episode_list_depth = self._entry_div_depth
-                # Detect episode row start (inside list, not head)
-                elif (
-                    self._in_episode_list
-                    and "row" in classes
-                    and "head" not in classes
-                    and not self._in_episode_row
-                ):
-                    self._in_episode_row = True
-                    self._episode_row_depth = self._entry_div_depth
-                    self._episode_cell_index = 0
-                    self._current_episode_num = ""
-                    self._current_episode_title = ""
-                    self._current_episode_links = []
-            elif "entry" in classes:
-                self._in_entry = True
-                self._entry_div_depth = 0
-                self._reset_entry()
-
-        if not self._in_entry:
-            return
-
-        # Scene release name: <small> inside entry (not inside episode list)
-        if tag == "small" and not self._in_episode_list:
-            self._in_small = True
-            self._current_release_name = ""
-
-        # Quality/size: <span class="morespec">
-        if tag == "span" and "morespec" in classes and not self._in_episode_list:
-            self._in_morespec = True
-            self._current_morespec = ""
-
-        # Download link: <a class="dlb row" href="/external/...">
-        if tag == "a" and "dlb" in classes:
-            href = attr_dict.get("href", "") or ""
-            if href:
-                self._in_dlb_link = True
-                if href.startswith("/"):
-                    self._current_dl_href = f"{self._base_url}{href}"
-                else:
-                    self._current_dl_href = href
-                self._dlb_span_text = ""
-
-        # Hoster name: <span> inside dlb link
-        if tag == "span" and self._in_dlb_link:
-            self._in_dlb_span = True
-            self._dlb_span_text = ""
-
-    def handle_data(self, data: str) -> None:
-        if self._in_small and not self._in_episode_list:
-            self._current_release_name += data
-
-        if self._in_morespec:
-            self._current_morespec += data
-
-        if self._in_dlb_span:
-            self._dlb_span_text += data
-
-        # Episode row cell data
-        if self._in_episode_row and not self._in_dlb_link:
-            stripped = data.strip()
-            if stripped:
-                if self._episode_cell_index == 0:
-                    self._current_episode_num += stripped
-                elif self._episode_cell_index == 1:
-                    self._current_episode_title += stripped
-
-    def handle_endtag(self, tag: str) -> None:  # noqa: C901
-        # Handle </h3> and </div> inside <h3>
-        if tag == "h3" and self._in_h3:
-            self._in_h3 = False
-            return
-
-        if tag == "div" and self._in_h3:
-            if self._h3_div_depth > 0:
-                self._h3_div_depth -= 1
-            return
-
-        if tag == "small" and self._in_small:
-            self._in_small = False
-            self._current_release_name = self._current_release_name.strip()
-
-        if tag == "span":
-            if self._in_morespec:
-                self._in_morespec = False
-                self._current_morespec = self._current_morespec.strip()
-
-            if self._in_dlb_span:
-                self._in_dlb_span = False
-
-        if tag == "a" and self._in_dlb_link:
-            self._in_dlb_link = False
-            hoster = self._dlb_span_text.strip()
-            if hoster and self._current_dl_href:
-                link_entry = {"hoster": hoster, "link": self._current_dl_href}
-                if self._in_episode_row:
-                    self._current_episode_links.append(link_entry)
-                else:
-                    self._current_download_links.append(link_entry)
-            self._current_dl_href = ""
-
-        if tag == "div" and self._in_entry:
-            # Check if we're closing an episode row
-            if (
-                self._in_episode_row
-                and self._entry_div_depth == self._episode_row_depth
-            ):
-                self._emit_episode()
-                self._in_episode_row = False
-
-            # Check if we're closing the episode list
-            if (
-                self._in_episode_list
-                and self._entry_div_depth == self._episode_list_depth
-            ):
-                self._in_episode_list = False
-
-            # Track cell transitions in episode rows: closing a direct
-            # child div of the row means the cell is done.
-            if (
-                self._in_episode_row
-                and self._entry_div_depth == self._episode_row_depth + 1
-            ):
-                self._episode_cell_index += 1
-
-            # Decrement depth
-            if self._entry_div_depth > 0:
-                self._entry_div_depth -= 1
-            else:
-                # Entry closed
-                self._in_entry = False
-                self._in_episode_list = False
-                self._in_episode_row = False
-                self._emit_entry()
+    def _link(self, anchor: LexborNode) -> dict[str, str] | None:
+        """The link of an ``a.dlb``, named by its (last) ``<span>``."""
+        href = anchor.attributes.get("href") or ""
+        spans = anchor.css("span")
+        hoster = spans[-1].text().strip() if spans else ""
+        if not href or not hoster:
+            return None
+        if href.startswith("/"):
+            href = f"{self._base_url}{href}"
+        return {"hoster": hoster, "link": href}
 
 
-class _IndexPageParser(HTMLParser):
-    """Parse the index page to extract series url_ids and titles.
+def _episode_rows(entry: LexborNode) -> list[LexborNode]:
+    """The episode rows of *entry*: its episode list's rows below the head.
+
+    The rows inside an episode row (its link box) belong to it.
+    """
+    rows: list[LexborNode] = []
+    for row in entry.css("div.list.simple div.row"):
+        if "head" in classes(row) or (rows and _inside(row, {rows[-1].mem_id})):
+            continue
+        rows.append(row)
+    return rows
+
+
+def _inside(node: LexborNode, containers: set[int]) -> bool:
+    """Whether an ancestor of *node* is one of *containers* (``mem_id``)."""
+    return any(parent.mem_id in containers for parent in ancestors(node))
+
+
+class _IndexPageParser:
+    """Parse the index page to extract series url_ids and titles (selectolax).
 
     Structure: ``<a href="/{url_id}"><strong>Title</strong><small>(year)</small></a>``
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self.series: list[dict[str, str]] = []
-        self._in_link = False
-        self._current_url_id = ""
-        self._in_strong = False
-        self._current_title = ""
-        self._in_small = False
-        self._current_year = ""
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attr_dict = dict(attrs)
-
-        if tag == "a":
-            href = attr_dict.get("href", "") or ""
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for link in tree.css("a[href^='/']"):
+            href = link.attributes.get("href") or ""
             # Match series links like /breaking-bad (single path segment, no dots)
-            if href.startswith("/") and href.count("/") == 1 and "." not in href:
-                self._in_link = True
-                self._current_url_id = href.lstrip("/")
-                self._current_title = ""
-                self._current_year = ""
-
-        if tag == "strong" and self._in_link:
-            self._in_strong = True
-
-        if tag == "small" and self._in_link:
-            self._in_small = True
-
-    def handle_data(self, data: str) -> None:
-        if self._in_strong:
-            self._current_title += data
-        if self._in_small:
-            self._current_year += data
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "strong" and self._in_strong:
-            self._in_strong = False
-
-        if tag == "small" and self._in_small:
-            self._in_small = False
-
-        if tag == "a" and self._in_link:
-            self._in_link = False
-            if self._current_url_id and self._current_title.strip():
-                year = self._current_year.strip().strip("()")
+            if href.count("/") != 1 or "." in href:
+                continue
+            url_id = href.lstrip("/")
+            # The link's <strong> texts make the title, its <small> texts the year
+            title = "".join(strong.text() for strong in link.css("strong")).strip()
+            year = "".join(small.text() for small in link.css("small"))
+            if url_id and title:
                 self.series.append(
-                    {
-                        "url_id": self._current_url_id,
-                        "title": self._current_title.strip(),
-                        "year": year,
-                    }
+                    {"url_id": url_id, "title": title, "year": year.strip().strip("()")}
                 )
 
 
