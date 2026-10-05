@@ -114,7 +114,7 @@ class _SearchResultParser:
           <span class="movie-title">   (or <div class="movie-title">)
             <a href="/film/12345-title.html" title="Title">Title</a>
           </span>
-          <div class="movie-release">2025 - Action Komödie kinofilme</div>
+          <span class="movie-release">2025 - Action Komödie kinofilme</span>
           <div class="ico-bar">
             <span class="icon-hd"></span>
           </div>
@@ -122,7 +122,8 @@ class _SearchResultParser:
 
     A card inside another card belongs to the outer one. The last link of
     a card's ``movie-title`` names the result, the last ``movie-release``
-    div gives its year and genres, the first ``icon-*`` span its quality.
+    (a span in the current theme, a div before) gives its year and genres,
+    the first ``icon-*`` span its quality.
     """
 
     def __init__(self, base_url: str) -> None:
@@ -145,7 +146,7 @@ class _SearchResultParser:
         if not title or not url:
             return
 
-        releases = card.css("div.movie-release")
+        releases = card.css(".movie-release")
         year, genres = _parse_release_text(releases[-1].text() if releases else "")
         badges = [
             badge
@@ -183,7 +184,9 @@ class _DetailPageParser:
     - Year from the first .release text "(2026)" with one
     - Genres from .categories a links
     - Description from the last .info-right p
-    - IMDb rating from the last .average span with a number
+    - IMDb rating from the first .average with a number: the badge of the
+      IMDb link (``<a href="…imdb.com/title/…"><span class="average">``);
+      the old theme nested a span in ``div.average``
     """
 
     def __init__(self, base_url: str) -> None:
@@ -215,10 +218,11 @@ class _DetailPageParser:
         paragraphs = tree.css("div.info-right p")
         if paragraphs:
             self.description = paragraphs[-1].text().strip()
-        for span in tree.css("div.average span"):
-            m = re.search(r"(\d+\.?\d*)", span.text())
+        for node in tree.css(".average"):
+            m = re.search(r"(\d+\.?\d*)", node.text())
             if m:
                 self.imdb_rating = m.group(1)
+                break
 
 
 class StreamkistePlugin(HttpxPluginBase):

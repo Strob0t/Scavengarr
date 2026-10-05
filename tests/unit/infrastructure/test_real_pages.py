@@ -115,6 +115,23 @@ class TestDevideosrcSites:
         assert _detail(site, base_url, "detail-oppenheimer").year == "2023"
 
 
+class TestStreamkiste:
+    """The current theme's markup (span.movie-release, span/strong.average)."""
+
+    _BASE = "https://streamkiste.bid"
+
+    def test_search_hit_year_and_genres(self) -> None:
+        hit = _hit(
+            _search_hits("streamkiste", self._BASE, "search-oppenheimer"), "Oppenheimer"
+        )
+        assert hit["year"] == "2023"
+        assert hit["genres"] == ["Drama", "Historie", "Krieg", "Biographie"]
+
+    def test_detail_imdb_rating(self) -> None:
+        detail = _detail("streamkiste", self._BASE, "detail-oppenheimer")
+        assert detail.imdb_rating == "8.2"
+
+
 class TestKinoger:
     _BASE = "https://kinoger.com"
 
