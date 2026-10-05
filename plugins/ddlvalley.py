@@ -14,16 +14,17 @@ from __future__ import annotations
 
 import asyncio
 import re
-from html.parser import HTMLParser
 from urllib.parse import quote_plus, urljoin, urlparse
 
 from patchright.async_api import Error as PlaywrightError
+from selectolax.lexbor import LexborHTMLParser, LexborNode
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.categories import (
     is_series_title,
     served_category,
 )
+from scavengarr.infrastructure.plugins.dom import ancestors, classes
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
 # ---------------------------------------------------------------------------
@@ -79,138 +80,116 @@ _HOSTER_DOMAINS: set[str] = {
 }
 
 
-class _SearchResultParser(HTMLParser):
-    """Extract post links from WordPress search/listing pages.
+class _SearchResultParser:
+    """Extract post links from WordPress search/listing pages (selectolax).
 
     Finds <h2><a href="/slug/">Title</a></h2> patterns that link
     to detail pages on the same domain.
     """
 
     def __init__(self, base_url: str) -> None:
-        super().__init__()
         self.posts: list[dict[str, str]] = []
         self._base_url = base_url
-        self._in_h2 = False
-        self._in_a = False
-        self._current_href = ""
-        self._current_text = ""
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag == "h2":
-            self._in_h2 = True
-        elif tag == "a" and self._in_h2:
-            attr_dict = dict(attrs)
-            href = attr_dict.get("href", "")
-            if href:
-                self._in_a = True
-                self._current_href = href
-                self._current_text = ""
-
-    def handle_data(self, data: str) -> None:
-        if self._in_a:
-            self._current_text += data
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "a" and self._in_a:
-            self._in_a = False
-            href = self._current_href
-            title = self._current_text.strip()
-            if href and title:
-                url = urljoin(self._base_url, href)
-                # Only accept links to our own domain
-                if url.startswith(self._base_url) and url not in {
-                    p["url"] for p in self.posts
-                }:
-                    self.posts.append({"title": title, "url": url})
-        if tag == "h2":
-            self._in_h2 = False
+    def feed(self, html: str) -> None:
+        seen = {p["url"] for p in self.posts}
+        for link in LexborHTMLParser(html).css("h2 a"):
+            href = link.attributes.get("href") or ""
+            title = link.text().strip()
+            if not href or not title:
+                continue
+            url = urljoin(self._base_url, href)
+            # Only accept links to our own domain
+            if url.startswith(self._base_url) and url not in seen:
+                seen.add(url)
+                self.posts.append({"title": title, "url": url})
 
 
-class _DetailPageParser(HTMLParser):
-    """Extract download links from DDLValley detail page.
+class _DetailPageParser:
+    """Extract download links from DDLValley detail page (selectolax).
 
     Inside ``<div class="cont ...">`` looks for ``<a href>`` links
     pointing to known file hoster domains.  Tracks the current hoster
-    group from preceding ``<strong>`` tags.
+    group from preceding ``<strong>`` tags::
+
+        <div class="cont cl">
+          <strong>Rapidgator</strong><br>
+          <a href="https://rapidgator.net/file/abc">link1</a><br>
+          <strong>Uploaded</strong><br>
+          <a href="https://ul.to/xyz">link2</a><br>
+        </div>
+
+    Any bold text names the group from its end on, across ``cont`` divs;
+    of nested ``<strong>`` tags the innermost ones count.
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self.links: list[dict[str, str]] = []
-        self._in_cont = False
-        self._div_depth = 0
         self._current_hoster = ""
-        self._in_strong = False
-        self._strong_text = ""
         self._seen_urls: set[str] = set()
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attr_dict = dict(attrs)
+    def feed(self, html: str) -> None:
+        for cont in LexborHTMLParser(html).css("div.cont"):
+            # A cont div inside another one is read with the outer one
+            if not any(_is_cont(parent) for parent in ancestors(cont)):
+                self._read_cont(cont)
 
-        if tag == "div":
-            if self._in_cont:
-                self._div_depth += 1
+    def _read_cont(self, cont: LexborNode) -> None:
+        # A <strong> names the group at its end: the links inside it still
+        # belong to the group before it
+        strong: LexborNode | None = None
+        for node in cont.css("strong, a"):
+            if strong is not None and not _inside(node, strong):
+                self._set_hoster(strong)
+                strong = None
+            if node.tag == "strong":
+                strong = node  # a nested one replaces the outer one
             else:
-                classes = (attr_dict.get("class", "") or "").split()
-                if "cont" in classes:
-                    self._in_cont = True
-                    self._div_depth = 0
+                self._add_link(node)
+        if strong is not None:
+            self._set_hoster(strong)
 
-        if tag == "strong" and self._in_cont:
-            self._in_strong = True
-            self._strong_text = ""
+    def _set_hoster(self, strong: LexborNode) -> None:
+        text = strong.text().strip().lower()
+        if text:
+            self._current_hoster = text
 
-        if tag == "a" and self._in_cont:
-            href = attr_dict.get("href", "")
-            if href and href.startswith("http"):
-                host = (urlparse(href).hostname or "").replace("www.", "")
-                if _is_hoster_domain(host):
-                    hoster = self._current_hoster or _hoster_from_domain(host)
-                    if href not in self._seen_urls:
-                        self._seen_urls.add(href)
-                        self.links.append({"hoster": hoster, "link": href})
-
-    def handle_data(self, data: str) -> None:
-        if self._in_strong:
-            self._strong_text += data
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "div" and self._in_cont:
-            if self._div_depth > 0:
-                self._div_depth -= 1
-            else:
-                self._in_cont = False
-
-        if tag == "strong" and self._in_strong:
-            self._in_strong = False
-            text = self._strong_text.strip().lower()
-            if text:
-                self._current_hoster = text
+    def _add_link(self, link: LexborNode) -> None:
+        href = link.attributes.get("href") or ""
+        if not href.startswith("http"):
+            return
+        host = (urlparse(href).hostname or "").replace("www.", "")
+        if _is_hoster_domain(host) and href not in self._seen_urls:
+            self._seen_urls.add(href)
+            hoster = self._current_hoster or _hoster_from_domain(host)
+            self.links.append({"hoster": hoster, "link": href})
 
 
-class _TitleParser(HTMLParser):
-    """Extract page title from ``<title>`` tag, stripping site suffix."""
+def _is_cont(node: LexborNode) -> bool:
+    """Whether *node* is a post body (``<div class="cont ...">``)."""
+    return node.tag == "div" and "cont" in classes(node)
+
+
+def _inside(node: LexborNode, container: LexborNode) -> bool:
+    """Whether *node* lies inside *container*."""
+    return any(parent.mem_id == container.mem_id for parent in ancestors(node))
+
+
+class _TitleParser:
+    """Extract page title from ``<title>`` tag, stripping site suffix (selectolax)."""
 
     def __init__(self) -> None:
-        super().__init__()
         self.title: str | None = None
-        self._in_title = False
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag == "title":
-            self._in_title = True
-
-    def handle_data(self, data: str) -> None:
-        if self._in_title and self.title is None:
-            text = data.strip()
+    def feed(self, html: str) -> None:
+        if self.title is not None:
+            return
+        # The first title with more than the site suffix counts
+        for node in LexborHTMLParser(html).css("title"):
+            text = re.sub(r"\s*\|\s*DDLValley.*$", "", node.text().strip())
             if text:
-                text = re.sub(r"\s*\|\s*DDLValley.*$", "", text)
-                if text:
-                    self.title = text
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "title":
-            self._in_title = False
+                self.title = text
+                return
 
 
 class DDLValleyPlugin(PlaywrightPluginBase):
