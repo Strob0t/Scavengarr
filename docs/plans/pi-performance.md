@@ -231,6 +231,8 @@ HTTP/2's framing (h2, hpack, hyperframe) runs in Python and costs more CPU on th
 - **patchright:** the driver records a stack trace (`traceback.extract_stack`) for every message it sends to the browser.
 - **Log noise** in 15 min of tests: moflix logged 51 `moflix_http_error`; megakino_to and movie4k timed out (Cloudflare 522, origin down).
 
+The moflix noise was people in its search answer (fixed in e9b1ba1). What could come next, evaluated with research on Stremio clients, other addons, HTTP clients, Chromium and Cloudflare: `optimization-options.md`.
+
 ## How to re-measure
 
 `scripts/stremio_profile.py` measures the baseline titles, or the ids given, against a running container. Per request it reports:

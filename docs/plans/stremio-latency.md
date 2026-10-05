@@ -172,6 +172,8 @@ The measurement harness (`scripts/stremio_measure.py --pause 30`, the 17 titles)
 
 **Play check** (`scripts/stremio_playcheck.py` inside the container, so from the VPN address like Stremio's server; the 17 titles once more, served from the search cache while it refreshed): 61 of 64 streams playable. The failures were CDN errors at that moment: moflix's FireStream and StreamUp segments 502 (the CDN did not answer the HLS proxy within 15 s), one fireani VOE segment without media bytes. MP4 streams answered in 0.45 s (median, seek included). HLS streams took 4.3 s to master, variant and two segment heads (median), but 15 of 56 took 15 s or more (aniworld's Vidmoly and VOE up to 46 s, a fireani VOE 84 s). Those times are mostly the CDNs answering through the VPN: Scavengarr's HLS proxy answered playlists in 0.6 s and segment heads in 0.23 s (median, its access log).
 
+The production logs of that evening showed four more resolver defects (FireStream ids with `-`, Playmate `/embed/` links, veev's redirect to another file code, moflix-stream.click's packed `hls2` URL), all fixed on `staging`; kinox's link-outs now sit behind an image captcha, and VOE denies some files to the VPN address. Details, the pending fifth round and the next options: `optimization-options.md`.
+
 ## AIOStreams
 
 Goal was an AIOStreams test user on `aiostreams.lan` with Scavengarr as addon, measured end to end. Not done: AIOStreams validates the addon manifest when a user is created or updated, and it can reach neither the dev instance (Docker NAT on the workstation) nor `scavengarr.lan` (502, backend down). Recommended user settings, from the AIOStreams v2.35.3 source (`packages/core/src/presets/custom.ts`, `packages/core/src/db/schemas.ts`):
