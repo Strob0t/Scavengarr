@@ -20,7 +20,7 @@
 
 ## 3. Dashboard, docs, overhead
 
-- [ ] 3.1 Benchmark `tests/benchmark/test_telemetry_overhead.py` (stage cost, scrape of 650 series).
-- [ ] 3.2 Grafana dashboard JSON and the Prometheus scrape snippet.
-- [ ] 3.3 Docs: `docs/features/observability.md`, configuration, architecture, README, CHANGELOG, AGENTS.md.
+- [x] 3.1 Benchmark `tests/benchmark/test_telemetry_overhead.py` (stage cost, scrape of 650 series).
+- [x] 3.2 Grafana dashboard JSON and the Prometheus scrape snippet.
+- [x] 3.3 Docs: `docs/features/observability.md`, configuration, architecture, README, CHANGELOG, AGENTS.md.
 - [ ] 3.4 After the deploy: check `/metrics` on the Pi and the scrape cost.

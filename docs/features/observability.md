@@ -25,6 +25,18 @@ scrape_configs:
 
 The target is the host or container where Prometheus reaches port 7979. When Scavengarr shares the network of a VPN container (`network_mode: service:<vpn>`), the target is that container's name. Keep the interval at 60 s: the cost of the metrics is the cost of the scrapes (see [Cost](#cost)), 15 s would be four times as much.
 
+## Grafana
+
+Import `docker/grafana-dashboard.json` (Dashboards, New, Import) and pick the Prometheus data source. Its panels:
+
+- **Stremio answers:** answers in the range, version, why answers went out (target, done, deadline, cached), search state (cache, stale, search, joined), streams per answer, answer time by search state (p50, p95) and phase times (p95).
+- **Plugins:** search time per plugin (p95), outcomes per plugin (a table of plugins by outcome), results per plugin.
+- **Hoster resolutions:** outcomes per resolver, resolve time per resolver (p95), the breakers that are open now.
+- **HLS proxy:** throughput, time to first byte (p95), answers by status.
+- **Resources:** CPU of the container, of Python and of the rest (Chromium), memory, event-loop lag (p99).
+
+Range panels count over the selected time range: pick a day or a week to judge a change. Traffic is low (a few requests per hour), so the time series use 1-hour windows for answer times.
+
 ## How Recording Works
 
 The core records through one port, `TelemetryPort` (`domain/ports/telemetry.py`); `Telemetry` (`infrastructure/telemetry/`) implements it with prometheus-client.
@@ -101,13 +113,16 @@ Without an endpoint the trace SDK, the exporter and protobuf are not loaded and 
 
 ## Cost
 
-Measured on x86 (the Raspberry Pi 4 is about 3-4 times slower):
+Measured on x86 with `tests/benchmark/test_telemetry_overhead.py` (run manually: `poetry run pytest tests/benchmark/test_telemetry_overhead.py -s`); the Raspberry Pi 4 is about 3-4 times slower:
 
 | | Cost |
 |---|---|
-| One stage | 5.8 µs (a first stream request records about 60: about 1 ms on the Pi, against 9.2 s of CPU for the request) |
-| One count | 2.1 µs |
-| One scrape of 637 series | 4.2 ms (about 15 ms on the Pi; at 60 s about 20 s of CPU per day) |
+| One stage | 5.6 µs (a first stream request records about 60: about 1 ms on the Pi, against 9.2 s of CPU for the request) |
+| One count | 2.2 µs |
+| One stage with tracing on | 32 µs |
+| One scrape of 672 series (a busy day: 20 plugins, 12 resolvers) | 4.4 ms (about 15 ms on the Pi; at 60 s about 20 s of CPU per day) |
+
+The benchmark fails above 50 µs per stage or 20 ms per scrape.
 
 Label combinations exist only once they occurred, so the series grow with the plugins and resolvers in use. Nothing runs between scrapes except the event-loop timer that already ran before.
 
