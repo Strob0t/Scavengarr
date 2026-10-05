@@ -3,8 +3,9 @@
 Scrapes byte.to (German DDL site) with:
 - httpx for all requests (server-rendered HTML; Cloudflare challenges go
   through the shared browser fallback of HttpxPluginBase)
-- Advanced search via /?q=query&c=category_id&t=1
-- Category filtering via dropdown category ID parameter
+- Search via /?q=query&t=1 over every group; a category request keeps the
+  rows of its category (the site's c= lists only entries filed directly
+  under a group, not its subgroups)
 - Multi-page pagination (200 items per page, up to 5 pages)
 - Download links from the per-hoster link widgets (``/widgets/button.php``)
   embedded on detail pages
@@ -39,16 +40,6 @@ _WIDGET_PATH = "/widgets/button.php"
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-
-# Torznab category → site category ID (``c=``), for site groups that hold a
-# whole Torznab family; other requests search every group and keep their rows
-# (games and programs are separate groups, audiobooks sit under Bücher)
-_SEARCH_CATEGORY: dict[int, str] = {
-    2000: "1",  # Filme
-    5000: "2",  # Television
-    7000: "41",  # Bücher
-    6000: "46",  # XxX
-}
 
 # Site category name (lowercase) → Torznab category ID; the live menu,
 # checked 2026-09-29
@@ -340,7 +331,6 @@ class BytePlugin(HttpxPluginBase):
     async def _search_page(
         self,
         query: str,
-        site_category: str = "",
         page_num: int = 1,
     ) -> tuple[list[dict[str, str]], int, int]:
         """Fetch a single search results page.
@@ -348,8 +338,6 @@ class BytePlugin(HttpxPluginBase):
         Returns ``(results, total_hits, max_page)``.
         """
         params = {"q": query, "t": "1"}
-        if site_category:
-            params["c"] = site_category
         if page_num > 1:
             params.update({"h": "1", "e": "0", "start": str(page_num)})
 
@@ -421,10 +409,15 @@ class BytePlugin(HttpxPluginBase):
         )
 
     async def _search_rows(
-        self, query: str, site_category: str, category: int | None
+        self, query: str, category: int | None
     ) -> list[dict[str, str]]:
         """Result rows of *category* over the search pages, before their pages
-        are loaded."""
+        are loaded.
+
+        Every group is searched: the site's ``c=`` lists only entries filed
+        directly under a group, not its subgroups (``c=1``, Filme, and
+        ``c=2``, Television, answered every search with the empty search
+        form; checked 2026-10-05)."""
 
         def _wanted(rows: list[dict[str, str]]) -> list[dict[str, str]]:
             return [
@@ -435,7 +428,7 @@ class BytePlugin(HttpxPluginBase):
                 )
             ]
 
-        first_results, _, max_page = await self._search_page(query, site_category)
+        first_results, _, max_page = await self._search_page(query)
         rows = _wanted(first_results)
         limit = self.effective_max_results
 
@@ -443,7 +436,7 @@ class BytePlugin(HttpxPluginBase):
         for page_num in range(2, pages_needed + 1):
             if len(rows) >= limit:
                 break
-            more_results, _, _ = await self._search_page(query, site_category, page_num)
+            more_results, _, _ = await self._search_page(query, page_num)
             rows.extend(_wanted(more_results))
             if not more_results:
                 break
@@ -457,18 +450,14 @@ class BytePlugin(HttpxPluginBase):
         episode: int | None = None,
     ) -> list[SearchResult]:
         """Search byte.to and return results with download links."""
-        site_category = ""
         if category is not None:
             category = served_category(category, _SITE_CATEGORY_MAP.values())
             if category is None:
                 return []  # the site has no category for it
-            site_category = _SEARCH_CATEGORY.get(category) or _SEARCH_CATEGORY.get(
-                category - category % 1000, ""
-            )
         await self._ensure_client()
         await self._verify_domain()
 
-        all_results = await self._search_rows(query, site_category, category)
+        all_results = await self._search_rows(query, category)
         if not all_results:
             return []
 

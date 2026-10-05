@@ -27,7 +27,6 @@ _BytePlugin = _mod.BytePlugin
 _SearchResultParser = _mod._SearchResultParser
 _DetailPageParser = _mod._DetailPageParser
 _WidgetLinkParser = _mod._WidgetLinkParser
-_SEARCH_CATEGORY = _mod._SEARCH_CATEGORY
 _SITE_CATEGORY_MAP = _mod._SITE_CATEGORY_MAP
 _site_category_to_torznab = _mod._site_category_to_torznab
 
@@ -381,10 +380,6 @@ class TestCategoryMapping:
         assert _site_category_to_torznab("SERIEN") == 5000
         assert _site_category_to_torznab("serien") == 5000
 
-    def test_search_categories(self) -> None:
-        # Only site groups holding a whole Torznab family are searched by ID
-        assert _SEARCH_CATEGORY == {2000: "1", 5000: "2", 7000: "41", 6000: "46"}
-
 
 # ---------------------------------------------------------------------------
 # Plugin attributes
@@ -483,7 +478,10 @@ class TestPluginSearch:
         params = search.calls[0].request.url.params
         assert params["q"] == "test"
         assert params["t"] == "1"
-        assert params["c"] == "2"  # TV = site category "2"
+        # The site's c= lists only entries filed directly under a group, not
+        # its subgroups: c=2 (Television) and c=1 (Filme) answered every
+        # search with the empty search form (checked 2026-10-05)
+        assert "c" not in params
 
     @respx.mock
     async def test_movie_request_keeps_the_films(self) -> None:
@@ -493,7 +491,7 @@ class TestPluginSearch:
         results = await plugin.search("batman", category=2000)
         await plugin.cleanup()
 
-        assert search.calls[0].request.url.params["c"] == "1"
+        assert "c" not in search.calls[0].request.url.params
         # the series row of the page is dropped before its page is loaded
         assert [r.category for r in results] == [2000]
 
