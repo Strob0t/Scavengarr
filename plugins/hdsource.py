@@ -63,6 +63,10 @@ _HOSTER_LABEL_MAP: dict[str, str] = {
 # Regex to extract the affiliate "v" parameter from hoster icon links.
 _HOSTER_PARAM_RE = re.compile(r"af\.php\?v=(\w+)")
 
+# Label before a download link of older posts:
+#   <strong>Download:</strong> <a href="https://filecrypt.cc/...">Rapidgator.net</a>
+_OLD_LINK_LABEL_RE = re.compile(r"(?:Download|Mirror #\d+):$")
+
 # Regex to extract size like "6072 MB" or "1.2 GB".
 _SIZE_RE = re.compile(r"Größe:\s*([\d.,]+\s*(?:[KMGT]i?)?B)", re.IGNORECASE)
 
@@ -188,10 +192,12 @@ class _SearchPageParser:
 
 
 def _download_links(article: LexborNode) -> list[dict[str, str]]:
-    """The ``hosterlnk`` links of an article's ``search-content`` div.
+    """The download links of an article's ``search-content`` div.
 
-    Each is labelled by the hoster icon link before it (``af.php?v=<hoster>``),
-    else "filecrypt".
+    A ``hosterlnk`` link is labelled by the hoster icon link before it
+    (``af.php?v=<hoster>``), else "filecrypt". Older posts (a quarter of
+    the live search hits) list theirs after ``<strong>Download:</strong>``
+    or ``Mirror #N:`` labels, named by their text (``Rapidgator.net``).
     """
     links: list[dict[str, str]] = []
     hoster = ""
@@ -203,7 +209,30 @@ def _download_links(article: LexborNode) -> list[dict[str, str]]:
         if "hosterlnk" in (link.attributes.get("class") or ""):
             links.append({"hoster": hoster or "filecrypt", "link": href})
             hoster = ""
+        elif href and _has_old_link_label(link):
+            links.append({"hoster": _hoster_from_text(link.text()), "link": href})
     return links
+
+
+def _has_old_link_label(link: LexborNode) -> bool:
+    """Whether a ``Download:`` / ``Mirror #N:`` label stands before *link*."""
+    node = link.prev
+    while node is not None and node.tag == "-text" and not node.text().strip():
+        node = node.prev
+    return (
+        node is not None
+        and node.tag == "strong"
+        and _OLD_LINK_LABEL_RE.match(node.text().strip()) is not None
+    )
+
+
+def _hoster_from_text(text: str) -> str:
+    """Hoster label from a link text like ``Rapidgator.net`` (``rapidgator``);
+    a label of the icon links stays whole (``DDL.to`` -> ``ddl.to``)."""
+    name = text.strip().lower()
+    if name in _HOSTER_LABEL_MAP.values():
+        return name
+    return name.split(".")[0]
 
 
 class _PaginationParser:

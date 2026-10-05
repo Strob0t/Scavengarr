@@ -126,6 +126,39 @@ _NO_LINKS_ARTICLE_HTML = """
 </article>
 """
 
+# Older posts (78 of 304 articles in live searches, 2026-10-05) name their
+# filecrypt containers after <strong>Download:</strong> / Mirror #N: labels
+_OLD_POST_ARTICLE_HTML = """
+<article id="post-84723" class="post type-post hentry category-filme formate-1080p">
+  <header class="search-header">
+    <h2 class="entry-title">
+      <span class="blog-post-meta">12.03.17, 09:12 · </span>
+      <a href="https://hd-source.to/filme/norman-2016/">
+        Norman.2016.German.AC3D.DL.1080p.BluRay.x264-CLASSiCALHD
+      </a>
+    </h2>
+  </header>
+  <div class="wrap-collapsible">
+    <div class="collapsible-content">
+      <div class="search-content">
+        <p><strong>Format: </strong>MKV | <strong>Größe:</strong> 9627 MB |
+        <a href="https://www.imdb.com/title/tt4191702/">IMDb: 6.1</a> |
+        <a href="https://www.xrel.to/search.html?xrel_search_query=Norman">xREL</a><br>
+        <strong>Download:</strong> <a href="https://filecrypt.cc/Container/5D2EC49C6F.html"
+          target="_blank">DDownload.com </a><br>
+        <strong>Mirror #1:</strong> <a href="https://filecrypt.cc/Container/DA78F90192.html"
+          target="_blank">Rapidgator.net </a><br>
+        <strong>Mirror #2:</strong> <a href="https://filecrypt.cc/Container/F70302AC92.html"
+          target="_blank">DDL.to </a><br>
+        <strong>Passwort: </strong>hd-source.to</p>
+        <div class="afl"><span> <a href="https://hd-source.to/out/af.php?v=prem3us8m">
+          Freehoster Kostenlos &amp; Full Speed</a></span></div>
+      </div>
+    </div>
+  </div>
+</article>
+"""
+
 _PAGINATION_HTML = """
 <div class="nav-links">
   <span aria-current="page" class="page-numbers current">1</span>
@@ -189,6 +222,27 @@ class TestSearchPageParser:
         assert links[0]["hoster"] == "rapidgator"
         assert links[1]["link"] == "https://filecrypt.cc/Container/DEF456.html"
         assert links[1]["hoster"] == "ddl.to"
+
+    def test_download_links_of_older_posts(self) -> None:
+        parser = _SearchPageParser()
+        parser.feed(_OLD_POST_ARTICLE_HTML)
+
+        links = parser.results[0]["download_links"]
+        assert links == [
+            {
+                "hoster": "ddownload",
+                "link": "https://filecrypt.cc/Container/5D2EC49C6F.html",
+            },
+            {
+                "hoster": "rapidgator",
+                "link": "https://filecrypt.cc/Container/DA78F90192.html",
+            },
+            {
+                "hoster": "ddl.to",
+                "link": "https://filecrypt.cc/Container/F70302AC92.html",
+            },
+        ]
+        assert parser.results[0]["size"] == "9627 MB"
 
     def test_size_extracted(self) -> None:
         parser = _SearchPageParser()
