@@ -182,6 +182,7 @@ class StremioStreamUseCase:
             browser_warmup_fn=browser_warmup_fn,
             mirror_groups=mirror_groups,
             plugin_health=plugin_health,
+            score_store=score_store,
         )
         self._title_match_threshold = config.title_match_threshold
         self._title_year_bonus = config.title_year_bonus

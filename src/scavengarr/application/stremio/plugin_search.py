@@ -19,10 +19,16 @@ import structlog
 from scavengarr.domain.plugins.base import PluginProtocol, SearchResult
 from scavengarr.domain.ports.concurrency import ConcurrencyBudgetPort
 from scavengarr.domain.ports.plugin_registry import PluginRegistryPort
+from scavengarr.domain.ports.plugin_score_store import PluginScoreStorePort
 from scavengarr.domain.ports.search_engine import SearchEnginePort
 from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
 
 log = structlog.get_logger(__name__)
+
+# A mirror member's plugin score counts from this confidence on, as for the
+# scored plugin selection; a member without one ranks like a new snapshot
+_MIN_CONFIDENCE = 0.1
+_NEUTRAL_SCORE = 0.5
 
 
 class CircuitBreaker(Protocol):
@@ -79,6 +85,7 @@ class PluginSearchRunner:
         browser_warmup_fn: BrowserWarmupFn | None = None,
         mirror_groups: Mapping[str, str] | None = None,
         plugin_health: PluginHealth | None = None,
+        score_store: PluginScoreStorePort | None = None,
     ) -> None:
         self._plugins = plugins
         self._search_engine = search_engine
@@ -92,6 +99,8 @@ class PluginSearchRunner:
         # Plugin name -> mirror group: sites serving one database
         self._mirror_groups = mirror_groups or {}
         self._plugin_health = plugin_health
+        # Plugin scores pick a mirror group's member
+        self._score_store = score_store
 
     async def search_with_fallback(
         self,
@@ -131,7 +140,8 @@ class PluginSearchRunner:
         (before a mirror group picks its member).
         """
         plugin_names = self._reachable(plugin_names)
-        plugin_names = self._one_per_mirror_group(plugin_names, category)
+        scores = await self._mirror_scores(plugin_names, category)
+        plugin_names = self._one_per_mirror_group(plugin_names, category, scores)
 
         # --- Fire-and-forget pre-warm for shared Playwright browser ---
         if self._browser_warmup_fn is not None:
@@ -181,20 +191,53 @@ class PluginSearchRunner:
             self._telemetry.count("plugin_search", "unreachable", plugin=name)
         return [n for n in plugin_names if n not in unreachable]
 
-    def _one_per_mirror_group(
+    async def _mirror_scores(
         self, plugin_names: list[str], category: int | None
+    ) -> dict[str, float]:
+        """The plugin scores of the mirror-group members, where confident.
+
+        A failing score store leaves the members in their given order.
+        """
+        members = [name for name in plugin_names if name in self._mirror_groups]
+        store = self._score_store
+        if store is None or category is None or not members:
+            return {}
+        snapshots = await asyncio.gather(
+            *(store.get_snapshot(name, category, "current") for name in members),
+            return_exceptions=True,
+        )
+        scores: dict[str, float] = {}
+        failed: list[str] = []
+        for name, snapshot in zip(members, snapshots, strict=True):
+            if isinstance(snapshot, BaseException):
+                failed.append(name)
+            elif snapshot is not None and snapshot.confidence > _MIN_CONFIDENCE:
+                scores[name] = snapshot.final_score
+        if failed:
+            log.warning("stremio_mirror_scores_failed", plugins=failed)
+        return scores
+
+    def _one_per_mirror_group(
+        self,
+        plugin_names: list[str],
+        category: int | None,
+        scores: Mapping[str, float],
     ) -> list[str]:
-        """Keep one plugin per mirror group: the first with a closed breaker.
+        """Keep one plugin per mirror group: the best-scored member with a
+        closed breaker.
 
         Mirrors front one database (hdfilme, streamcloud, streamkiste):
-        asking all of them triples the work for the same streams. When no
-        member's breaker is closed, all stay in and their breakers decide,
-        so a half-open probe can bring one back.
+        asking all of them triples the work for the same streams. The member
+        with the best plugin score (the scoring subsystem's health and search
+        probes) is asked, without scores the first one. When no member's
+        breaker is closed, all stay in and their breakers decide, so a
+        half-open probe can bring one back.
         """
         if not self._mirror_groups:
             return plugin_names
+        ranked = sorted(plugin_names, key=lambda n: -scores.get(n, _NEUTRAL_SCORE))
         chosen: dict[str, str] = {}
-        for name in plugin_names:
+        for name in ranked:
             group = self._mirror_groups.get(name)
             if group is None or group in chosen:
                 continue

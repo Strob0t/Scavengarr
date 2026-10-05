@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: A Mirror Group Asks Its Best-Scored Member
+- hdfilme, streamcloud and streamkiste front one database, and a Stremio request asks one of them: the first in alphabetical order whose breaker was closed, so hdfilme whenever it answered, even with an empty or broken search. The member is now the reachable one with a closed breaker and the best plugin score of the scoring subsystem (health and search probes; a score with a confidence up to 0.1 counts as none), the first one on a tie or without scores (maintainer's decision after the dev-server end-to-end run, 2026-10-05).
+
 ### Fix: Background Resolutions Run One Title at a Time
 - A cached answer resolves its other links in the background for the next request. 17 cached titles asked within seconds started 17 such runs at once: their browser captures queued for the stealth browser's 2 pages, and 12 Filemoon resolutions hit the 10 s resolve timeout, which opened Filemoon's breaker, although Filemoon resolved in 1.5–2 s on its own (dev-server end-to-end run, 2026-10-05). The runs now go one title at a time, each with its whole `stream_deadline_seconds` from its own start.
 

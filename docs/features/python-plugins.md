@@ -179,7 +179,7 @@ plugin = MySitePlugin()
 
 ### DataApiPluginBase (shared site backends)
 
-When several sites front the same database (same ids, titles and links, other themes), set the same `mirror_group` on their plugins (hdfilme, streamcloud and streamkiste: `"hdfilme"`): a Stremio request then asks one of them, the next when its circuit breaker opens; Torznab keeps each as an indexer ([Mirror Groups](stremio-addon.md#mirror-groups)).
+When several sites front the same database (same ids, titles and links, other themes), set the same `mirror_group` on their plugins (hdfilme, streamcloud and streamkiste: `"hdfilme"`): a Stremio request then asks one of them, the reachable one with the best plugin score, the next when its circuit breaker opens; Torznab keeps each as an indexer ([Mirror Groups](stremio-addon.md#mirror-groups)).
 
 When several sites run the same backend, the site logic lives once in `src/scavengarr/infrastructure/plugins/` and the plugins only set `name`, `provides` and `_domains`. `DataApiPluginBase` (`data_api.py`, subclass of `HttpxPluginBase`) serves the "/data" JSON API of `megakino_to` and `movie4k`: browse/search with pagination, `/data/watch` details, season (detail `s`) and episode (stream `e`) filtering, skipping `deleted` streams and tolerant TMDB parsing. The two plugins used to be copies; the movie4k copy had lost the episode filter, the deleted-stream check and the TMDB handling (and mapped Torznab quality subcategories to genres).
 

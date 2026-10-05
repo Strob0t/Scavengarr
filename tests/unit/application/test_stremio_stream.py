@@ -18,6 +18,7 @@ from scavengarr.application.stremio.search_cache import STALE_SECONDS, CachedSea
 from scavengarr.application.use_cases.stremio_stream import (
     StremioStreamUseCase,
 )
+from scavengarr.domain.entities.scoring import PluginScoreSnapshot
 from scavengarr.domain.entities.stremio import (
     CachedStreamLink,
     ResolvedStream,
@@ -103,6 +104,8 @@ def _make_use_case(
     cache: AsyncMock | None = None,
     search_ttl_seconds: int = 0,
     telemetry: TelemetryPort = NO_TELEMETRY,
+    mirror_groups: dict[str, str] | None = None,
+    score_store: AsyncMock | None = None,
 ) -> StremioStreamUseCase:
     engine = search_engine or AsyncMock()
     # Default: validate_results returns input unchanged
@@ -131,6 +134,8 @@ def _make_use_case(
         cache=cache,
         search_ttl_seconds=search_ttl_seconds,
         telemetry=telemetry,
+        mirror_groups=mirror_groups,
+        score_store=score_store,
     )
 
 
@@ -2173,6 +2178,9 @@ def _answering_use_case(
     cache: AsyncMock,
     resolutions: _Resolutions,
     telemetry: TelemetryPort = NO_TELEMETRY,
+    *,
+    mirror_groups: dict[str, str] | None = None,
+    score_store: AsyncMock | None = None,
     **config: object,
 ) -> StremioStreamUseCase:
     """Use case that searches *sites* and resolves with *resolutions*."""
@@ -2196,7 +2204,40 @@ def _answering_use_case(
         cache=cache,
         search_ttl_seconds=_TTL,
         telemetry=telemetry,
+        mirror_groups=mirror_groups,
+        score_store=score_store,
     )
+
+
+class TestMirrorScores:
+    async def test_the_best_scored_mirror_member_is_searched(self) -> None:
+        """The plugin scores pick a mirror group's member."""
+        sites = {
+            "hdfilme": _site([_hit("https://voe.sx/e/a")]),
+            "streamcloud": _site([_hit("https://voe.sx/e/b")]),
+        }
+        store = AsyncMock()
+        store.get_snapshot = AsyncMock(
+            side_effect=lambda plugin, category, bucket: PluginScoreSnapshot(
+                plugin=plugin,
+                category=category,
+                bucket="current",
+                final_score=0.9 if plugin == "streamcloud" else 0.4,
+                confidence=0.5,
+            )
+        )
+        uc = _answering_use_case(
+            sites,
+            _memory_cache(),
+            _Resolutions(),
+            mirror_groups={"hdfilme": "hdfilme", "streamcloud": "hdfilme"},
+            score_store=store,
+        )
+
+        await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        assert sites["hdfilme"].isolated_search.await_count == 0
+        assert sites["streamcloud"].isolated_search.await_count == 1
 
 
 class TestAnswerPolicy:

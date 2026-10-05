@@ -11,6 +11,7 @@ import pytest
 from structlog.testing import capture_logs
 
 from scavengarr.application.stremio.plugin_search import PluginSearchRunner
+from scavengarr.domain.entities.scoring import PluginScoreSnapshot
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.concurrency import ConcurrencyPool
@@ -376,6 +377,113 @@ class TestMirrorGroups:
 
         assert plugins["hdfilme"].search.await_count == 1
         assert plugins["streamcloud"].search.await_count == 1
+
+
+def _scores(**members: tuple[float, float]) -> AsyncMock:
+    """Score store with (final_score, confidence) per plugin."""
+
+    async def _snapshot(
+        plugin: str, category: int, bucket: str
+    ) -> PluginScoreSnapshot | None:
+        if plugin not in members:
+            return None
+        score, confidence = members[plugin]
+        return PluginScoreSnapshot(
+            plugin=plugin,
+            category=category,
+            bucket="current",
+            final_score=score,
+            confidence=confidence,
+        )
+
+    store = AsyncMock()
+    store.get_snapshot = AsyncMock(side_effect=_snapshot)
+    return store
+
+
+class TestScoredMirrorGroups:
+    """A mirror group asks its member with the best plugin score (the
+    scoring subsystem's health and search probes), not the first one."""
+
+    _GROUPS = {  # noqa: RUF012
+        "hdfilme": "hdfilme",
+        "streamcloud": "hdfilme",
+        "streamkiste": "hdfilme",
+    }
+
+    def _plugins(self) -> dict[str, MagicMock]:
+        return {
+            name: _plugin([_sr("https://dood/1")])
+            for name in ("hdfilme", "streamcloud", "streamkiste", "other")
+        }
+
+    async def _searched(self, runner: PluginSearchRunner, plugins: dict) -> list[str]:
+        await _search(runner, list(plugins), ["q"])
+        return [n for n, p in plugins.items() if p.search.await_count]
+
+    async def test_the_best_scored_member_is_asked(self) -> None:
+        plugins = self._plugins()
+        store = _scores(hdfilme=(0.4, 0.5), streamcloud=(0.9, 0.5))
+        runner = _runner(
+            _registry(plugins), mirror_groups=self._GROUPS, score_store=store
+        )
+
+        assert await self._searched(runner, plugins) == ["streamcloud", "other"]
+
+    async def test_a_member_without_a_score_beats_a_bad_one(self) -> None:
+        """No score is the neutral 0.5 of a new snapshot."""
+        plugins = self._plugins()
+        store = _scores(hdfilme=(0.3, 0.5), streamcloud=(0.4, 0.5))
+        runner = _runner(
+            _registry(plugins), mirror_groups=self._GROUPS, score_store=store
+        )
+
+        assert await self._searched(runner, plugins) == ["streamkiste", "other"]
+
+    async def test_an_unconfident_score_counts_as_none(self) -> None:
+        plugins = self._plugins()
+        store = _scores(hdfilme=(0.3, 0.5), streamcloud=(0.9, 0.05))
+        runner = _runner(
+            _registry(plugins), mirror_groups=self._GROUPS, score_store=store
+        )
+
+        assert await self._searched(runner, plugins) == ["streamcloud", "other"]
+
+    async def test_the_best_member_with_an_open_breaker_gives_way(self) -> None:
+        plugins = self._plugins()
+        store = _scores(hdfilme=(0.4, 0.5), streamcloud=(0.9, 0.5))
+        breaker = PluginCircuitBreaker(failure_threshold=1, cooldown_seconds=60)
+        breaker.record_failure("streamcloud:2000")
+        runner = _runner(
+            _registry(plugins),
+            mirror_groups=self._GROUPS,
+            score_store=store,
+            circuit_breaker=breaker,
+        )
+
+        assert await self._searched(runner, plugins) == ["streamkiste", "other"]
+
+    async def test_a_failing_score_store_keeps_the_first_member(self) -> None:
+        plugins = self._plugins()
+        store = AsyncMock()
+        store.get_snapshot = AsyncMock(side_effect=ConnectionError("redis down"))
+        runner = _runner(
+            _registry(plugins), mirror_groups=self._GROUPS, score_store=store
+        )
+
+        assert await self._searched(runner, plugins) == ["hdfilme", "other"]
+
+    async def test_only_mirror_members_are_looked_up(self) -> None:
+        plugins = self._plugins()
+        store = _scores()
+        runner = _runner(
+            _registry(plugins), mirror_groups=self._GROUPS, score_store=store
+        )
+
+        await self._searched(runner, plugins)
+
+        looked_up = {c.args[0] for c in store.get_snapshot.await_args_list}
+        assert looked_up == {"hdfilme", "streamcloud", "streamkiste"}
 
 
 class _Health:
