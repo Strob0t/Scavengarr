@@ -66,7 +66,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** and **S
 | [Integration Tests](../plans/integration-tests.md) | Implemented: integration, E2E, and live smoke tests |
 | [Search Caching](../plans/search-caching.md) | Implemented: search result cache with `X-Cache` header |
 | [Pi Performance](../plans/pi-performance.md) | Done 2026-10-04: baseline, measures and their effect on a Raspberry Pi 4 (CPU, outbound requests, event-loop lag per stream request) |
-| [Round 5 Measures](../plans/round5-measures.md) | Decided 2026-10-05, in progress: plugin health check, resolution during the search, cached answers without waiting, half-open probes that report, SuperVideo, ChaCha20, selectolax for every plugin |
+| [Round 5 Measures](../plans/round5-measures.md) | Decided 2026-10-05, in progress: plugin health check, resolution during the search, cached answers without waiting, half-open probes that report, SuperVideo, HLS proxy CPU (asyncio network backend; ChaCha20 measured useless), selectolax for every plugin, answers at 5 streams or 60 s, re-resolvable stream links |
 | [Optimization Options](../plans/optimization-options.md) | Proposed 2026-10-04, updated 2026-10-05 after the fifth end-to-end round: where a stream request's time goes now, research on Stremio clients, other addons, HTTP clients, Chromium and Cloudflare; 19 evaluated options |
 | [Plugin Repair](../plans/plugin-repair.md) | Done: repaired plugins; hdfilme keyword search broken upstream (browsing works); streamworld removed (site gone) |
 | [Anti-Bot Hardening](../plans/antibot-patchright.md) | Done: Patchright instead of playwright-stealth, Turnstile solver, browser fallback port for httpx plugins |

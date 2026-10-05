@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import gzip
 import time
+from collections.abc import AsyncIterator
 
 import httpx
 import pytest
@@ -398,6 +400,47 @@ class TestStreamHlsSegment:
                 await hls_proxy.stream_hls_segment(client, url, {})
 
         assert seen and seen[0].is_closed
+
+    async def test_chunks_pass_through_as_the_cdn_sends_them(self) -> None:
+        """Unencoded segments are not copied into new chunks (proxy CPU)."""
+        parts = [b"\x47" * 100, b"\x48" * 100, b"\x49" * 100]
+
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, stream=_Chunks(parts))
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
+            chunks, _ = await stream_hls_segment(client, "https://cdn.test/1.ts", {})
+            received = [chunk async for chunk in chunks]
+
+        assert received == parts
+
+    async def test_an_encoded_segment_is_decoded(self) -> None:
+        """The proxy does not forward Content-Encoding: it sends plain bytes."""
+        data = b"\x47segment" * 100
+
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                headers={"Content-Encoding": "gzip"},
+                content=gzip.compress(data),
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
+            chunks, _ = await stream_hls_segment(client, "https://cdn.test/1.ts", {})
+            received = b"".join([chunk async for chunk in chunks])
+
+        assert received == data
+
+
+class _Chunks(httpx.AsyncByteStream):
+    """A response body arriving in the given chunks."""
+
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = chunks
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for chunk in self._chunks:
+            yield chunk
 
 
 # ---------------------------------------------------------------------------

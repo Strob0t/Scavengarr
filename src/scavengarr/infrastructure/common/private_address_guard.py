@@ -24,8 +24,7 @@ import httpcore
 import httpx
 import structlog
 
-# httpcore.AnyIOBackend is typed by its fallback for a missing anyio
-from httpcore._backends.anyio import AnyIOBackend
+from scavengarr.infrastructure.common.asyncio_network import AsyncioNetworkBackend
 
 log = structlog.get_logger(__name__)
 
@@ -110,7 +109,8 @@ class GuardedNetworkBackend(httpcore.AsyncNetworkBackend):
     server could answer the guard with a public address and the connection
     with a LAN one. TLS still checks the hostname: httpcore sends the
     request's host as SNI, whatever address the socket went to. The
-    addresses are tried in turn, IPv4 first.
+    addresses are tried in turn, IPv4 first, with *backend* (asyncio
+    streams unless given: TLS in the event loop instead of in Python).
     """
 
     def __init__(
@@ -119,7 +119,7 @@ class GuardedNetworkBackend(httpcore.AsyncNetworkBackend):
         backend: httpcore.AsyncNetworkBackend | None = None,
     ) -> None:
         self.guard = guard
-        self._backend = backend or AnyIOBackend()
+        self._backend = backend or AsyncioNetworkBackend()
 
     async def connect_tcp(
         self,

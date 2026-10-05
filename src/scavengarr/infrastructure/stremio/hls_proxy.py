@@ -177,7 +177,11 @@ async def stream_hls_segment(
     Raises ``httpx.HTTPStatusError`` on non-2xx responses.
 
     Uses ``httpx.stream()`` so that segment bytes flow through the
-    proxy without loading the entire 2-10 MB segment into memory.
+    proxy without loading the entire 2-10 MB segment into memory. The
+    CDN's chunks pass through as they arrive: re-chunking them
+    (``aiter_bytes(chunk_size=…)``) copied every byte once more. Only an
+    encoded body (``Content-Encoding``, which the proxy does not forward)
+    is decoded.
     """
     async with _CDN_SEMAPHORE:
         resp = await http_client.send(
@@ -195,10 +199,11 @@ async def stream_hls_segment(
         resp.raise_for_status()
 
     ct = resp.headers.get("content-type", "application/octet-stream")
+    encoded = resp.headers.get("content-encoding", "identity").lower() != "identity"
 
     async def _iter() -> AsyncIterator[bytes]:
         try:
-            async for chunk in resp.aiter_bytes(chunk_size=65536):
+            async for chunk in resp.aiter_bytes() if encoded else resp.aiter_raw():
                 yield chunk
         finally:
             await resp.aclose()

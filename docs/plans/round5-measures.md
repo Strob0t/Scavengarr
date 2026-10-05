@@ -13,7 +13,7 @@ The maintainer chose one solution per finding, from at least three each.
 | 3 | A half-open hoster probe (Filemoon) is cut by the grace before half the resolve timeout, reports nothing and repeats after every cooldown, which never doubles (about 6 s of Chromium each) | The probe runs to its end in the background and reports | S–M |
 | 4 | 5 of 17 cached answers waited for the grace (4.1–4.4 s) because one link was resolved for the first time or again | A cached answer goes out at once with the resolutions in the cache; the other links resolve in the background for the next request | M |
 | 5 | SuperVideo: 13 of 13 links failed; its CDN answers the playlist URL with a script redirect and a HEAD with a redirect to an ad domain | First choice, following the script redirect, does not work (below). Decided instead: the hoster breaker pauses SuperVideo | S |
-| 6 | The HLS proxy used about 0.3 s of CPU per segment during playback (5–7% of a core), mostly TLS decryption: the Pi 4 has no AES instructions | Prefer ChaCha20 for TLS when the CPU has no AES instructions | S |
+| 6 | The HLS proxy used about 0.3 s of CPU per segment during playback (5–7% of a core); the assumed cause, AES decryption without AES instructions, measured wrong: httpx's default network backend (anyio) runs TLS in Python | First choice, ChaCha20, brings nothing (below). Decided instead: an httpcore network backend on asyncio streams, segments passed through as received | S–M |
 | 7 | `html.parser` took 0.43 s on the GIL per first request (0.20 s after the performance plan) | Move every plugin parser to selectolax (lexbor) | XL |
 | 8 | VOE denies some files to the VPN address | No change: every title still had streams | – |
 | 9 | The first answer goes out at the soft deadline even when slow plugins would deliver more: 6 of 17 titles had fewer than 5 streams in the first answer, 4 still after the late plugins | Answer once 5 playable streams are resolved, else when every plugin and resolution is done, at most 60 s | M |
@@ -23,7 +23,7 @@ Decisions 9 and 10 came the same day, after the maintainer asked for more time p
 
 Order: 3, 5, 6 (small, independent), then 4, 1, 2 with 9 (the request flow), then 10, then 7, then the metrics. Each measure is test-driven, committed on its own and documented with the code. A sixth round measures 1–6, 9 and 10 in production.
 
-Done: 3 (1b7e01f), 5.
+Done: 3 (1b7e01f), 5 (7ec1a5c), 6.
 
 ## 1. Plugin health check
 
@@ -81,16 +81,29 @@ Done: 3 (1b7e01f), 5.
 
 **Tests.** The resolver sends no HEAD; registry plus resolver with the script page: `hoster_resolve_unplayable`, breaker open.
 
-## 6. ChaCha20 when the CPU has no AES instructions
+## 6. HLS proxy CPU: asyncio network backend
 
-**Problem.** The Pi 4's Cortex-A72 has no ARMv8 crypto extensions (no `aes` flag in production's `/proc/cpuinfo`): OpenSSL decrypts AES-256-GCM at about 25 MB/s and ChaCha20-Poly1305 at about 80 MB/s (source in `optimization-options.md`). Production's Python 3.14.8 with OpenSSL 3.5.7 offers `TLS_AES_256_GCM_SHA384` first, and the HLS proxy decrypts every segment it relays.
+**Problem.** The HLS proxy used about 0.3 s of CPU per segment during playback (5–7% of a core; 259–320 ms per MB in production, measured while other services loaded the Pi). The first choice assumed TLS decryption as the cause: the Pi 4 has no `aes` CPU flag, and a figure from a kernel pull request (`optimization-options.md`) gave AES-256-GCM 25 MB/s against 80 MB/s for ChaCha20-Poly1305.
 
-**Design.**
-- TLS 1.3 (most CDNs): `docker/entrypoint.sh` sets `OPENSSL_CONF` to a shipped config with ChaCha20 first in `Ciphersuites`, only when `/proc/cpuinfo` lists no `aes` flag. Python 3.14's `ssl` has no `set_ciphersuites()` and cannot reorder TLS 1.3 suites itself. Chromium (BoringSSL) already prefers ChaCha20 on such CPUs.
-- TLS 1.2: the shared client's SSL context (`GuardedTransport`) puts ChaCha20 first under the same condition.
-- A server that picks its own order keeps AES. One probe from production shows which CDNs honor the client's order and the CPU per MB before and after.
+**ChaCha20 does not help.** Measured in the production container (Python 3.14.8, OpenSSL 3.5.7): 20 MB over TLS cost 0.66 s of CPU with `TLS_AES_256_GCM_SHA384` and 0.68 s with `TLS_CHACHA20_POLY1305_SHA256`, about 33 ms per MB either way. A py-spy profile of the proxy during playback showed where its CPU goes: anyio 29%, asyncio 15%, httpcore/h11/httpx 26%, `ssl` 9%. httpx's default network backend on asyncio is anyio, which runs TLS in Python (`TLSStream` around an `ssl.SSLObject`); asyncio streams leave TLS to the event loop, compiled in uvloop.
 
-**Tests.** Cipher order only without AES instructions (CPU flags injected); entrypoint check in `test_repository_files.py` style (`sh -n`, the condition).
+**Benchmark.** In the production container, uvicorn on uvloop relays 1 MB from Cloudflare's speed test (TLS through the VPN) to a local client; the server's CPU per MB, as medians of the rounds. The prototype ran once at a higher load, the final module three times (3, 5 and 10 rounds) at a load of about 3:
+
+| Variant | Prototype | Final module |
+|---|---|---|
+| anyio (httpx's default), re-chunked to 64 KiB (before) | 126 / 135 | 104 / 103 / 112 |
+| asyncio streams, re-chunked | 91 / 93 | 88 / 75 / 87 |
+| asyncio streams, chunks passed through (`aiter_raw`, after) | 65 / 84 | 77 / 79 / 85 |
+
+The backend saves about a quarter of the proxy's CPU (15–27% across the runs). Passing the chunks through adds nothing measurable (−11, +4 and −2 ms per MB); it stays because it is no more code than re-chunking. A 1 MiB reader buffer instead of asyncio's 64 KiB made no difference (79 against 79).
+
+**Decision and design.** The maintainer chose the asyncio backend with chunks passed through, after the benchmark of the variants.
+- `AsyncioNetworkBackend` (`infrastructure/common/asyncio_network.py`) is an httpcore network backend on `asyncio.open_connection()` streams, with TLS through `StreamWriter.start_tls()`. It behaves like httpcore's anyio backend: the same exceptions (timeouts as `ConnectTimeout`, `ReadTimeout`, `WriteTimeout`; `OSError`, `ssl.SSLError` included, as `ConnectError`, `ReadError`, `WriteError`), the same `get_extra_info` keys, and closing aborts the connection without waiting for the server's TLS close_notify (asyncio's `close()` waits up to 30 s for it).
+- httpcore retires an idle connection that is readable (`is_readable`): the server closed it or sent something unasked. asyncio reads the socket ahead into the stream's buffer, so the backend checks the buffer, EOF, a stored error and a closing transport; polling the socket, as the anyio backend does, would miss a 408 sent on an idle connection, and the next request would read it as its answer.
+- `GuardedNetworkBackend` connects with it unless given another backend, so the whole shared client (plugins, resolvers, the proxy) uses it.
+- `stream_hls_segment` passes the CDN's chunks through and decodes only an encoded body (`Content-Encoding`, which the proxy does not forward).
+
+**Tests.** `test_asyncio_network.py` against local servers: a request, keep-alive reuse, a connection the server closed (plain and TLS), a 408 on an idle connection (a mutation check confirmed that "never readable", EOF alone and the anyio-style socket poll fail it), read timeout, connect error, TLS with a generated certificate, an untrusted certificate. `test_hls_proxy.py`: chunks pass through unchanged, an encoded segment arrives decoded.
 
 ## 7. Plugin parsers on selectolax
 
