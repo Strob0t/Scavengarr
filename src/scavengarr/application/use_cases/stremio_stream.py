@@ -7,12 +7,13 @@ IMDb ID -> TMDB title -> parallel plugin search
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import heapq
 import random
 import time
-from collections import deque
-from collections.abc import Awaitable, Callable, Coroutine, Mapping
+from collections.abc import Callable, Coroutine, Mapping
 from contextvars import ContextVar
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from functools import partial
 from typing import Any, Protocol
 from uuid import uuid4
@@ -23,21 +24,23 @@ from scavengarr.application.stremio.plugin_search import (
     BrowserWarmupFn,
     CircuitBreaker,
     EpisodeFilterFn,
-    LateSearch,
     PluginHealth,
     PluginSearchRunner,
-    finish_late,
 )
 from scavengarr.application.stremio.queries import (
     build_lang_group_queries,
     build_multi_lang_reference,
     first_available_title,
 )
+from scavengarr.application.stremio.resolution import (
+    HosterResolution,
+    ResolveCallback,
+)
 from scavengarr.application.stremio.search_cache import (
-    CachedSearch,
     SearchCache,
     search_cache_key,
 )
+from scavengarr.application.stremio.search_progress import SearchProgress
 from scavengarr.application.stremio.stream_builder import (
     build_cache_link,
     build_stream_from_resolved,
@@ -76,7 +79,6 @@ class _StremioConfig(Protocol):
     """Configuration values consumed by StremioStreamUseCase."""
 
     plugin_timeout_seconds: float
-    search_soft_deadline_seconds: float
     stream_deadline_seconds: float
     title_match_threshold: float
     title_year_bonus: float
@@ -89,7 +91,6 @@ class _StremioConfig(Protocol):
     max_probe_count: int
     probe_concurrency: int
     resolve_target_count: int
-    resolve_grace_seconds: float
     scoring_enabled: bool
     max_plugins_scored: int
     exploration_probability: float
@@ -120,50 +121,6 @@ _TitleFilterFn = Callable[..., list[SearchResult]]
 
 log = structlog.get_logger(__name__)
 
-# Resolution always gets this long after the plugin search, even when the
-# search alone used up the stream deadline (otherwise nothing is returned).
-_MIN_RESOLVE_WINDOW_S = 2.0
-
-
-class _HosterQueues:
-    """Stream indices grouped by hoster and language, handed out in rank order.
-
-    A group gets its next stream only after the previous one failed.
-    Streams without a hoster name each form their own group.
-    """
-
-    def __init__(self, ranked: list[RankedStream]) -> None:
-        self._queues: dict[tuple[str, str] | int, deque[int]] = {}
-        for i, stream in enumerate(ranked):
-            self._queues.setdefault(hoster_key(stream) or i, deque()).append(i)
-        self._key_of = {i: key for key, q in self._queues.items() for i in q}
-
-    def first(self) -> list[int]:
-        """The best stream of every hoster."""
-        return [q.popleft() for q in self._queues.values()]
-
-    def next_after(self, failed: list[int]) -> list[int]:
-        """The next stream of each hoster whose stream in *failed* failed."""
-        queues = (self._queues[self._key_of[i]] for i in failed)
-        return [q.popleft() for q in queues if q]
-
-
-@dataclass(frozen=True)
-class _LateGroup:
-    """Late plugin searches of one language group, with its reference title."""
-
-    ref: TitleMatchInfo
-    searches: list[LateSearch]
-
-    def running(self) -> _LateGroup:
-        """The searches that have not finished yet."""
-        return replace(self, searches=[s for s in self.searches if not s.task.done()])
-
-
-# Callback type for resolving hoster embed URLs to playable video URLs.
-# Accepts (url, hoster_hint), returns ResolvedStream or None.
-ResolveCallback = Callable[[str, str], Awaitable[ResolvedStream | None]]
-
 # The cached outcome of resolving a URL, without resolving it: (True, stream),
 # (True, None) for a link cached as dead, (False, None) when not cached.
 CachedResolutionCallback = Callable[[str], tuple[bool, ResolvedStream | None]]
@@ -175,11 +132,12 @@ class StremioStreamUseCase:
     Flow:
         1. Resolve IMDb ID to German title via TMDB.
         2. Discover plugins that provide streams.
-        3. Search all plugins in parallel (bounded concurrency).
-        4. Convert SearchResults to RankedStreams.
-        5. Sort by language, quality, and hoster.
-        6. Probe hoster URLs to filter dead links (optional).
-        7. Format into StremioStream objects.
+        3. Search all plugins in parallel (bounded concurrency), one
+           search per title shared by its requests, cached.
+        4. Convert and rank the results as they arrive.
+        5. Resolve each hoster's best link meanwhile; answer once enough
+           hosters resolved, when everything is done, or at the deadline.
+        6. Format into StremioStream objects.
     """
 
     def __init__(
@@ -240,14 +198,13 @@ class StremioStreamUseCase:
         self._max_probe_count = config.max_probe_count
         self._probe_concurrency = config.probe_concurrency
         self._resolve_target = config.resolve_target_count
-        self._resolve_grace_s = config.resolve_grace_seconds
         self._deadline_s = config.stream_deadline_seconds
         self._plugin_timeout_s = config.plugin_timeout_seconds
-        self._soft_deadline_s = config.search_soft_deadline_seconds
         self._search_cache = SearchCache(cache, ttl_seconds=search_ttl_seconds)
         # Running searches per cache key (single-flight) and every task
-        # that outlives a request (refreshes, late plugins), for aclose()
-        self._searches: dict[str, asyncio.Task[CachedSearch]] = {}
+        # that outlives a request (searches, background resolutions), for
+        # aclose()
+        self._searches: dict[str, SearchProgress] = {}
         # Resolutions of a cached answer's other links, one per cache key
         self._background_resolutions: dict[str, asyncio.Task[Any]] = {}
         self._tasks: set[asyncio.Task[Any]] = set()
@@ -299,7 +256,7 @@ class StremioStreamUseCase:
 
         # --- Per-language-group search + filter (cached per title) ---
         key = search_cache_key(request)
-        searched, from_cache = await self._cached_search(
+        progress, from_cache = await self._search_progress(
             key,
             partial(
                 self._search,
@@ -312,21 +269,6 @@ class StremioStreamUseCase:
                 scored=len(selected) < len(all_names),
             ),
         )
-        filtered = searched.results
-
-        if not filtered:
-            if searched.total:
-                log.info(
-                    "stremio_all_filtered",
-                    imdb_id=request.imdb_id,
-                    total=searched.total,
-                )
-            else:
-                log.info(
-                    "stremio_search_no_results",
-                    imdb_id=request.imdb_id,
-                )
-            return []
 
         # Cached results can come from plugins this request did not select
         plugin_languages: dict[str, str] = {
@@ -335,18 +277,41 @@ class StremioStreamUseCase:
             if (langs := self._plugins.get_languages(name))
         }
 
-        loop = asyncio.get_running_loop()
-        ranked = await loop.run_in_executor(
-            None,
-            lambda: self._convert_fn(filtered, plugin_languages=plugin_languages),
-        )
-        sorted_streams = self._sorter.sort(ranked)
-        if self._resolve_fn is None:
-            sorted_streams = deduplicate_by_hoster(sorted_streams)
+        deadline = started + self._deadline_s
+        served_here = self._stream_link_repo is not None and bool(base_url)
+        resolved: dict[int, ResolvedStream] = {}
+        if served_here and self._resolve_fn is not None:
+            ranked, resolved = await self._resolve(
+                progress,
+                plugin_languages,
+                self._resolve_fn,
+                deadline=deadline,
+                key=key,
+                from_cache=from_cache,
+            )
         else:
-            # Deduplicated by the resolution (one resolved stream per
-            # hoster): a hoster keeps its best stream that actually resolves
-            sorted_streams = sorted_streams[: self._max_probe_count]
+            await progress.wait(deadline)
+            ranked = await self._rank(progress.results, plugin_languages)
+            if self._resolve_fn is None:
+                ranked = deduplicate_by_hoster(ranked)
+            else:
+                ranked = ranked[: self._max_probe_count]
+
+        if not progress.results:
+            if progress.total:
+                log.info(
+                    "stremio_all_filtered",
+                    imdb_id=request.imdb_id,
+                    total=progress.total,
+                    search_done=progress.done,
+                )
+            else:
+                log.info(
+                    "stremio_search_no_results",
+                    imdb_id=request.imdb_id,
+                    search_done=progress.done,
+                )
+            return []
 
         streams = [
             format_stream(
@@ -356,27 +321,16 @@ class StremioStreamUseCase:
                 season=request.season,
                 episode=request.episode,
             )
-            for s in sorted_streams
+            for s in ranked
         ]
-
-        if self._stream_link_repo and base_url:
-            deadline = max(
-                started + self._deadline_s, time.monotonic() + _MIN_RESOLVE_WINDOW_S
-            )
-            streams = await self._cache_and_proxy(
-                streams,
-                sorted_streams,
-                base_url,
-                deadline=deadline,
-                key=key,
-                from_cache=from_cache,
-            )
+        if served_here:
+            streams = await self._cache_and_proxy(streams, ranked, resolved, base_url)
 
         log.info(
             "stremio_search_complete",
             imdb_id=request.imdb_id,
-            result_count=searched.total,
-            filtered_count=len(filtered),
+            result_count=progress.total,
+            filtered_count=len(progress.results),
             stream_count=len(streams),
         )
 
@@ -399,20 +353,21 @@ class StremioStreamUseCase:
             groups.setdefault(key, []).append(name)
         return groups
 
-    async def _cached_search(
-        self, key: str, search: Callable[[], Coroutine[Any, Any, CachedSearch]]
-    ) -> tuple[CachedSearch, bool]:
-        """The search results for *key*: cached, from a running search, or new.
+    async def _search_progress(
+        self, key: str, search: Callable[[SearchProgress], Coroutine[Any, Any, None]]
+    ) -> tuple[SearchProgress, bool]:
+        """The results for *key*: from the cache, or of the running or a new search.
 
-        Requests for one key share one running search (single-flight). A
-        stale entry still answers while a background search refreshes it
-        (stale-while-revalidate). The search runs as its own task, so a
-        request that goes away does not cancel it for the others. Returns
-        the results and whether they came from the cache.
+        Requests for one key share one running search (single-flight) and
+        read its results while it runs. A stale entry still answers while a
+        background search refreshes it (stale-while-revalidate). The search
+        runs as its own task, so a request that goes away does not cancel it
+        for the others. Returns the progress and whether it came from the
+        cache.
         """
         entry = await self._search_cache.get(key)
         if entry is None:
-            return await asyncio.shield(self._shared_search(key, search)), False
+            return self._shared_search(key, search), False
         stale = self._search_cache.is_stale(entry)
         if stale:
             self._shared_search(key, search)
@@ -423,21 +378,24 @@ class StremioStreamUseCase:
             age_s=round(time.time() - entry.stored_at),
             result_count=len(entry.results),
         )
-        return entry, True
+        return SearchProgress.finished(entry), True
 
     def _shared_search(
-        self, key: str, search: Callable[[], Coroutine[Any, Any, CachedSearch]]
-    ) -> asyncio.Task[CachedSearch]:
+        self, key: str, search: Callable[[SearchProgress], Coroutine[Any, Any, None]]
+    ) -> SearchProgress:
         """The running search for *key*; starts *search* when none runs."""
-        task = self._searches.get(key)
-        if task is None:
-            task = self._spawn(search())
-            self._searches[key] = task
-            task.add_done_callback(partial(self._search_done, key))
-        return task
+        progress = self._searches.get(key)
+        if progress is None:
+            progress = SearchProgress()
+            self._searches[key] = progress
+            task = self._spawn(search(progress))
+            task.add_done_callback(partial(self._search_done, key, progress))
+        return progress
 
-    def _search_done(self, key: str, task: asyncio.Task[CachedSearch]) -> None:
-        if self._searches.get(key) is task:
+    def _search_done(
+        self, key: str, progress: SearchProgress, _task: asyncio.Task[None]
+    ) -> None:
+        if self._searches.get(key) is progress:
             del self._searches[key]
 
     def _spawn[T](self, coro: Coroutine[Any, Any, T]) -> asyncio.Task[T]:
@@ -453,7 +411,7 @@ class StremioStreamUseCase:
             log.warning("stremio_background_search_failed", exc_info=error)
 
     async def aclose(self) -> None:
-        """Cancel the searches still running (refreshes, late plugins)."""
+        """Cancel the searches and background resolutions still running."""
         tasks = list(self._tasks)
         for task in tasks:
             task.cancel()
@@ -466,97 +424,34 @@ class StremioStreamUseCase:
         title_infos: dict[str, TitleMatchInfo | None],
         request: StremioStreamRequest,
         category: int,
+        progress: SearchProgress,
         *,
         started: float,
         scored: bool,
-    ) -> CachedSearch:
-        """Search the plugins, store the title-matching results, answer.
+    ) -> None:
+        """Search the plugins until they are done; store the matching results.
 
-        With the cache on, the answer goes out at the soft deadline when
-        there are results. Plugins still running then go on as late
-        plugins, and their results are added to the cache entry for the
-        next request. Without results the answer waits for the late
-        plugins until the hard deadline (``plugin_timeout_seconds``), as
-        without the early answer. With the cache off, plugins are cut at
-        the hard deadline.
+        The plugins get ``plugin_timeout_seconds`` from the request start.
+        Their title-matching results go into *progress* as they arrive: the
+        answers do not wait for the search (``_resolve``), they read it.
         """
-        cached = self._search_cache.enabled
-        hard = started + self._plugin_timeout_s
-        soft = min(started + self._soft_deadline_s, hard) if cached else hard
-        late: list[_LateGroup] = []
         try:
             async with self._pool.request() as budget:
-                all_results, filtered = await self._search_lang_groups(
+                await self._search_lang_groups(
                     lang_groups,
                     title_infos,
                     request,
                     category,
+                    progress,
                     scored=scored,
                     budget=budget,
                     # Plugins queue for slots; the search ends after the
                     # request started, not after each plugin's start
-                    deadline=soft,
-                    late=late if cached else None,
+                    deadline=started + self._plugin_timeout_s,
                 )
-            entry = CachedSearch(
-                results=filtered, total=len(all_results), stored_at=time.time()
-            )
-            searches = [s.task for group in late for s in group.searches]
-            if searches and not filtered:
-                await asyncio.wait(searches, timeout=max(hard - time.monotonic(), 0.0))
-                entry = entry.merged(*await self._late_results(late))
-                late = [group.running() for group in late]
-            await self._search_cache.put(key, entry)
-        except BaseException:
-            # Cancelled (shutdown): late plugins must not run on unowned
-            await finish_late(
-                [s for group in late for s in group.searches], timeout=0.0
-            )
-            raise
-        late = [group for group in late if group.searches]
-        if late:
-            self._spawn(self._complete_late(key, late))
-        return entry
-
-    async def _complete_late(self, key: str, late: list[_LateGroup]) -> None:
-        """Wait for the late plugins; add their results to the cache entry.
-
-        They get ``plugin_timeout_seconds`` more and are cancelled then.
-        """
-        searches = [s for group in late for s in group.searches]
-        await finish_late(searches, timeout=self._plugin_timeout_s)
-        results, total = await self._late_results(late)
-        entry = await self._search_cache.get(key) or CachedSearch(
-            results=[], total=0, stored_at=time.time()
-        )
-        merged = entry.merged(results, total)
-        added = len(merged.results) - len(entry.results)
-        if added:
-            await self._search_cache.put(key, merged)
-        log.info(
-            "stremio_late_plugins_done",
-            cache_key=key,
-            plugins=sorted({s.plugin for s in searches}),
-            cancelled=sum(s.task.cancelled() for s in searches),
-            result_count=total,
-            added=added,
-        )
-
-    async def _late_results(
-        self, late: list[_LateGroup]
-    ) -> tuple[list[SearchResult], int]:
-        """Title-matching results of the finished late searches.
-
-        Returns them with the number of results before the title filter.
-        """
-        found = [[r for s in group.searches for r in s.results] for group in late]
-        matching = await asyncio.gather(
-            *(
-                self._title_filter(results, group.ref)
-                for results, group in zip(found, late, strict=True)
-            )
-        )
-        return [r for group in matching for r in group], sum(map(len, found))
+        finally:
+            progress.finish()
+        await self._search_cache.put(key, progress.entry())
 
     async def _search_lang_groups(
         self,
@@ -564,34 +459,32 @@ class StremioStreamUseCase:
         title_infos: dict[str, TitleMatchInfo | None],
         request: StremioStreamRequest,
         category: int,
+        progress: SearchProgress,
         *,
         scored: bool,
         budget: ConcurrencyBudgetPort,
         deadline: float,
-        late: list[_LateGroup] | None = None,
-    ) -> tuple[list[SearchResult], list[SearchResult]]:
-        """Search and filter each language group, returning aggregated results.
+    ) -> None:
+        """Search each language group; title-filter each plugin's results.
 
         Language groups are searched in parallel so that e.g. German and
         English plugins start at the same time instead of sequentially.
-        With a *late* collector, plugins the deadline cuts run on and are
-        added to it per language group instead of being cancelled.
-
-        Returns (all_results, filtered_results).
+        Each plugin's results are filtered with its group's reference title
+        when they arrive and go into *progress*.
         """
 
         async def _search_one_group(
             lang_key: tuple[str, ...],
             group_plugins: list[str],
-        ) -> tuple[list[SearchResult], list[SearchResult]]:
+        ) -> None:
             plugin_langs = list(lang_key)
             ref = build_multi_lang_reference(title_infos, plugin_langs)
             if ref is None:
-                return [], []
+                return
 
             queries = build_lang_group_queries(title_infos, plugin_langs)
             if not queries:
-                return [], []
+                return
 
             log.info(
                 "stremio_search_start",
@@ -603,11 +496,10 @@ class StremioStreamUseCase:
                 scored=scored,
             )
 
-            group_late: list[LateSearch] | None = None
-            if late is not None:
-                group_late = []
-                late.append(_LateGroup(ref, group_late))
-            group_results = await self._search_runner.search_with_fallback(
+            async def _found(results: list[SearchResult]) -> None:
+                progress.add(results, await self._title_filter(results, ref))
+
+            await self._search_runner.search_with_fallback(
                 group_plugins,
                 queries,
                 category,
@@ -615,23 +507,15 @@ class StremioStreamUseCase:
                 episode=request.episode,
                 budget=budget,
                 deadline=deadline,
-                late=group_late,
+                on_results=_found,
             )
-            return group_results, await self._title_filter(group_results, ref)
 
-        group_tasks = [
-            _search_one_group(lang_key, group_plugins)
-            for lang_key, group_plugins in lang_groups.items()
-        ]
-        group_outcomes = await asyncio.gather(*group_tasks)
-
-        all_results: list[SearchResult] = []
-        filtered: list[SearchResult] = []
-        for group_all, group_filt in group_outcomes:
-            all_results.extend(group_all)
-            filtered.extend(group_filt)
-
-        return all_results, filtered
+        await asyncio.gather(
+            *(
+                _search_one_group(lang_key, group_plugins)
+                for lang_key, group_plugins in lang_groups.items()
+            )
+        )
 
     async def _title_filter(
         self, results: list[SearchResult], ref: TitleMatchInfo
@@ -659,29 +543,20 @@ class StremioStreamUseCase:
         self,
         streams: list[StremioStream],
         ranked: list[RankedStream],
+        resolved_map: dict[int, ResolvedStream],
         base_url: str,
-        *,
-        deadline: float,
-        key: str,
-        from_cache: bool,
     ) -> list[StremioStream]:
-        """Resolve the streams and point them at their playable URLs.
+        """Point the streams at their playable URLs.
 
-        When a resolve callback is configured, resolves hoster embed URLs
-        to direct video URLs and attaches ``behaviorHints.proxyHeaders``
-        so Stremio sends the correct HTTP headers (Referer, User-Agent)
-        when playing the stream. Without one, streams go through the
-        ``/play/`` endpoint. Only streams served through our own endpoints
-        (``/play/``, the HLS proxy) get their link saved; one save per
-        ranked stream (dozens) delayed the answer by seconds.
+        With a resolve callback, the streams in *resolved_map* (by index)
+        get their direct video URL or an HLS proxy URL, with
+        ``behaviorHints.proxyHeaders`` so Stremio sends the right HTTP
+        headers (Referer, User-Agent); the others are dropped. Without one,
+        streams go through the ``/play/`` endpoint. Only streams served
+        through our own endpoints (``/play/``, the HLS proxy) get their link
+        saved; one save per ranked stream (dozens) delayed the answer by
+        seconds.
         """
-        # --- Resolve step: extract direct video URLs + headers ---
-        resolved_map: dict[int, ResolvedStream] = {}
-        if self._resolve_fn is not None:
-            resolved_map = await self._resolve(
-                ranked, deadline, self._resolve_fn, key=key, from_cache=from_cache
-            )
-
         answer: list[tuple[StremioStream, CachedStreamLink | None]] = []
         skipped_echo = 0
         skipped_unresolved = 0
@@ -745,33 +620,36 @@ class StremioStreamUseCase:
 
     async def _resolve(
         self,
-        ranked: list[RankedStream],
-        deadline: float,
+        progress: SearchProgress,
+        plugin_languages: dict[str, str],
         resolve_fn: ResolveCallback,
         *,
+        deadline: float,
         key: str,
         from_cache: bool,
-    ) -> dict[int, ResolvedStream]:
-        """Resolve the streams; a cached search answers from cached resolutions.
+    ) -> tuple[list[RankedStream], dict[int, ResolvedStream]]:
+        """The ranked streams and their resolutions, by index.
 
         Results from the search cache go out at once with the resolutions in
         the resolver's cache when one of them is a video. The links without
         one resolve in the background for the next request, one run per
         cache key at a time (such answers waited for the resolve grace,
-        4.1-4.4 s, for one link resolved for the first time). Otherwise, and
-        for a new search, the streams resolve as ``_resolve_top_streams``
-        describes.
+        4.1-4.4 s, for one link resolved for the first time). Otherwise the
+        streams resolve as ``_resolve_as_results_arrive`` describes.
         """
         if from_cache and self._cached_resolution_fn is not None:
+            ranked = await self._rank(progress.results, plugin_languages)
+            ranked = ranked[: self._max_probe_count]
             cached = self._cached_resolutions(ranked, self._cached_resolution_fn)
             if any(is_direct_video_url(r, ranked[i].url) for i, r in cached.items()):
                 log.info("stremio_resolve_from_cache", resolved=len(cached))
                 if key not in self._background_resolutions:
                     task = self._spawn(
-                        self._resolve_top_streams(
-                            ranked,
-                            time.monotonic() + self._deadline_s,
+                        self._resolve_as_results_arrive(
+                            progress,
+                            plugin_languages,
                             resolve_fn,
+                            deadline=time.monotonic() + self._deadline_s,
                             background=True,
                         )
                     )
@@ -779,154 +657,129 @@ class StremioStreamUseCase:
                     task.add_done_callback(
                         lambda _: self._background_resolutions.pop(key, None)
                     )
-                return cached
-        return await self._resolve_top_streams(ranked, deadline, resolve_fn)
+                return ranked, cached
+        return await self._resolve_as_results_arrive(
+            progress, plugin_languages, resolve_fn, deadline=deadline
+        )
 
+    @staticmethod
     def _cached_resolutions(
-        self, ranked: list[RankedStream], cached_fn: CachedResolutionCallback
+        ranked: list[RankedStream], cached_fn: CachedResolutionCallback
     ) -> dict[int, ResolvedStream]:
-        """Each hoster's best stream whose resolution is cached.
+        """Each hoster's best stream whose resolution is cached, by index.
 
         A hoster's streams are taken in rank order past the links cached as
         dead, up to the first one that is not cached.
         """
-        hosters = _HosterQueues(ranked[: self._max_probe_count])
+        hosters: dict[object, list[int]] = {}
+        for i, stream in enumerate(ranked):
+            hosters.setdefault(hoster_key(stream) or stream.url, []).append(i)
         found: dict[int, ResolvedStream] = {}
-        candidates = hosters.first()
-        while candidates:
-            dead: list[int] = []
-            for idx in candidates:
-                cached, resolved = cached_fn(ranked[idx].url)
+        for indices in hosters.values():
+            for i in indices:
+                cached, resolved = cached_fn(ranked[i].url)
                 if resolved is not None:
-                    found[idx] = resolved
-                elif cached:
-                    dead.append(idx)
-            candidates = hosters.next_after(dead)
+                    found[i] = resolved
+                if resolved is not None or not cached:
+                    break
         return found
 
-    async def _resolve_top_streams(
+    async def _resolve_as_results_arrive(
         self,
-        ranked: list[RankedStream],
-        deadline: float,
+        progress: SearchProgress,
+        plugin_languages: dict[str, str],
         resolve_fn: ResolveCallback,
         *,
+        deadline: float,
         background: bool = False,
-    ) -> dict[int, ResolvedStream]:
-        """Resolve the top streams to direct video URLs, one per hoster.
+    ) -> tuple[list[RankedStream], dict[int, ResolvedStream]]:
+        """Resolve the search's links while it runs; stop when the answer is due.
 
-        Hosters are resolved in parallel, the streams of one hoster in rank
-        order: a hoster's next stream is only tried after its better one
-        failed, and none after one resolved.  This yields the best working
-        stream per hoster without opening connections for every candidate
-        at once (bursts to dozens of CDNs look like a port scan to home
-        routers, which then block the machine).  Streams without a hoster
-        name are each their own group.
-
-        Uses early-stop: once ``resolve_target_count`` genuine video URLs
-        have been extracted, remaining tasks are cancelled.  At *deadline*
-        (``time.monotonic()`` value) unfinished resolutions are cancelled
-        and what is resolved so far is returned; once the first video URL
-        is there, that happens ``resolve_grace_seconds`` later at the
-        latest (browser-resolved hosters take 3-7 s and held answers that
-        were complete but for them until the deadline). In the *background*
-        (no answer waits) every hoster resolves until the deadline, without
-        the target and the grace.
-
-        Returns a mapping of stream index -> ResolvedStream for
-        successfully resolved streams.  Failed resolutions are omitted.
+        Each new batch of results is ranked with the ones before and handed
+        to a ``HosterResolution`` (one link per hoster at a time, rank
+        order). The answer is due when ``resolve_target_count`` hosters have
+        a video, or when the search is done and no resolution runs or is
+        due, at the latest at *deadline* (``time.monotonic()``); resolutions
+        still running then are cancelled. In the *background* (no answer
+        waits) there is no target: every hoster resolves until done or the
+        deadline, which fills the resolver's cache.
         """
-        limit = min(len(ranked), self._max_probe_count)
-        semaphore = asyncio.Semaphore(self._probe_concurrency)
-        hosters = _HosterQueues(ranked[:limit])
-
-        async def _resolve_one(idx: int) -> tuple[int, ResolvedStream | None]:
-            async with semaphore:
-                r = ranked[idx]
-                try:
-                    return idx, await resolve_fn(r.url, r.hoster)
-                except Exception:
-                    log.debug(
-                        "stremio_resolve_failed",
-                        index=idx,
-                        hoster=r.hoster,
-                        url=r.url[:80],
-                        exc_info=True,
-                    )
-                    return idx, None
-
-        pending = {asyncio.create_task(_resolve_one(i)) for i in hosters.first()}
-        resolved_map: dict[int, ResolvedStream] = {}
-        video_count = 0
+        changed = asyncio.Event()
+        resolution = HosterResolution(
+            resolve_fn,
+            concurrency=self._probe_concurrency,
+            limit=self._max_probe_count,
+            changed=changed,
+        )
         target = 0 if background else self._resolve_target
-        grace = 0.0 if background else self._resolve_grace_s
-        attempted = 0
-        timed_out = False
-        end = deadline
-
+        ranked: list[RankedStream] = []
+        seen = 0
+        reason = "deadline"
+        progress.listen(changed)
         try:
-            while pending:
-                remaining = end - time.monotonic()
+            while True:
+                changed.clear()
+                if seen < len(progress.results):
+                    new = progress.results[seen:]
+                    seen += len(new)
+                    converted = await self._convert(new, plugin_languages)
+                    # Score only the new streams: re-sorting all of them per
+                    # batch scored every stream again (10 ms per request on
+                    # x86 for 200). The stable merge keeps the full sort's order
+                    ranked = list(
+                        heapq.merge(
+                            ranked,
+                            self._sorter.sort(converted),
+                            key=lambda s: -s.rank_score,
+                        )
+                    )
+                    resolution.update(ranked)
+                    continue
+                if target > 0 and resolution.videos() >= target:
+                    reason = "target"
+                    break
+                if progress.done and not resolution.pending():
+                    reason = "done"
+                    break
+                remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    timed_out = True
                     break
-                done, pending = await asyncio.wait(
-                    pending, timeout=remaining, return_when=asyncio.FIRST_COMPLETED
-                )
-                if not done:
-                    timed_out = True
-                    break
-                attempted += len(done)
-                first_video = video_count == 0
-                video_count += self._collect_resolved(done, ranked, resolved_map)
-                if first_video and video_count and grace > 0:
-                    end = min(end, time.monotonic() + grace)
-                failed = [idx for idx, res in (t.result() for t in done) if res is None]
-                pending |= {
-                    asyncio.create_task(_resolve_one(i))
-                    for i in hosters.next_after(failed)
-                }
-
-                if target > 0 and video_count >= target:
-                    break
+                with contextlib.suppress(TimeoutError):
+                    async with asyncio.timeout(remaining):
+                        await changed.wait()
         finally:
-            # Target, deadline, or the caller was cancelled (shutdown, a
-            # client that went away): no resolution runs on unowned
-            for t in pending:
-                t.cancel()
-            if pending:
-                await asyncio.gather(*pending, return_exceptions=True)
-
+            progress.unlisten(changed)
+            unfinished = resolution.unfinished
+            await resolution.aclose()
+        resolved = resolution.resolved()
         log.info(
             "stremio_resolve_complete",
             background=background,
-            total=limit,
-            attempted=attempted,
-            resolved=len(resolved_map),
-            video_streams=video_count,
-            early_stop=target > 0 and video_count >= target,
-            deadline_hit=timed_out and end == deadline,
-            grace_hit=timed_out and end < deadline,
-            unfinished=len(pending) if timed_out else 0,
+            reason=reason,
+            search_done=progress.done,
+            total=len(resolution.ranked),
+            attempted=resolution.started - unfinished,
+            resolved=len(resolved),
+            video_streams=resolution.videos(),
+            unfinished=unfinished,
         )
-        return resolved_map
+        return resolution.ranked, resolved
 
-    @staticmethod
-    def _collect_resolved(
-        done: set[asyncio.Task[tuple[int, ResolvedStream | None]]],
-        ranked: list[RankedStream],
-        resolved_map: dict[int, ResolvedStream],
-    ) -> int:
-        """Store finished resolutions; return how many are direct videos."""
-        videos = 0
-        for task in done:
-            idx, resolved = task.result()
-            if resolved is None:
-                continue
-            resolved_map[idx] = resolved
-            original_url = ranked[idx].url if idx < len(ranked) else ""
-            if is_direct_video_url(resolved, original_url):
-                videos += 1
-        return videos
+    async def _rank(
+        self, results: list[SearchResult], plugin_languages: dict[str, str]
+    ) -> list[RankedStream]:
+        """The streams of *results*, best first."""
+        return self._sorter.sort(await self._convert(results, plugin_languages))
+
+    async def _convert(
+        self, results: list[SearchResult], plugin_languages: dict[str, str]
+    ) -> list[RankedStream]:
+        """The streams of *results* (in the executor: CPU work)."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: self._convert_fn(results, plugin_languages=plugin_languages),
+        )
 
     async def _resolve_title_info(
         self,

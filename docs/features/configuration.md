@@ -192,12 +192,10 @@ playwright:
 stremio:
   auto_tune_all: true           # container-aware auto-tune of concurrency params
   max_results_per_plugin: 50    # default: 100
-  plugin_timeout_seconds: 10.0  # search budget from request start (default: 10)
-  search_soft_deadline_seconds: 7.0 # early answer with the search cache (default: 7)
-  stream_deadline_seconds: 15.0 # answer budget per stream request (default: 15)
+  plugin_timeout_seconds: 30.0  # search budget from request start (default: 30)
+  stream_deadline_seconds: 60.0 # latest answer of a stream request (default: 60)
   title_match_threshold: 0.7
-  resolve_target_count: 0       # 0 = resolve all streams (default: 15)
-  resolve_grace_seconds: 4.0    # wait for other hosters after the first stream
+  resolve_target_count: 5       # answer once 5 hosters have a video (default: 5)
   max_probe_count: 80           # default: 50
 
 scoring:
@@ -350,10 +348,9 @@ Controls the Stremio addon behavior: stream ranking, plugin concurrency, title m
 | `stremio.auto_tune_all` | bool | `true` | Container-aware auto-tune of all concurrency params (cgroup v2/v1) |
 | `stremio.max_concurrent_plugins_auto` | bool | `true` | Legacy auto-tune of `max_concurrent_plugins` only; used only when `auto_tune_all` is `false` |
 | `stremio.max_results_per_plugin` | int | `100` | Max results per plugin in Stremio search |
-| `stremio.plugin_timeout_seconds` | float | `10.0` | Plugin search budget per stream request, counted from the request start (slot queueing included); running plugins are cut, queued ones skipped |
+| `stremio.plugin_timeout_seconds` | float | `30.0` | Plugin search budget per stream request, counted from the request start (slot queueing included); running plugins are cut, queued ones skipped. The answer does not wait for the search |
 | `stremio.plugin_health_interval_seconds` | float | `1800.0` | How often every Stremio plugin's site is checked (HEAD on its domains); searches skip plugins whose site did not answer, and those are checked again every 5 minutes (`0` = off) |
-| `stremio.search_soft_deadline_seconds` | float | `7.0` | With the search cache on (`cache.search_ttl_seconds` > 0): the search answers this long after the request start when it has results; plugins still running go on and their results are added to the cache for the next request. Values from `plugin_timeout_seconds` up turn the early answer off |
-| `stremio.stream_deadline_seconds` | float | `15.0` | Overall budget per stream request; hoster resolution stops here (at least 2 s after the search). Keep it above `plugin_timeout_seconds` |
+| `stremio.stream_deadline_seconds` | float | `60.0` | Latest answer of a stream request, from the request start: hoster resolution stops and the answer has what is resolved. Earlier at `resolve_target_count` streams or when the search and every resolution are done |
 | `stremio.verify_streams` | bool | `true` | Playback check of every resolved video URL (first bytes with playback headers); unplayable streams are dropped |
 | `stremio.title_match_threshold` | float | `0.7` | Minimum title similarity score |
 | `stremio.title_year_bonus` | float | `0.2` | Score bonus for matching year |
@@ -365,8 +362,7 @@ Controls the Stremio addon behavior: stream ranking, plugin concurrency, title m
 | `stremio.stream_link_ttl_seconds` | int | `7200` | TTL for cached stream links (2h) |
 | `stremio.probe_concurrency` | int | `10` | Max parallel hoster resolutions (auto-tuned at startup by default) |
 | `stremio.max_probe_count` | int | `50` | Max streams to resolve (top-ranked first) |
-| `stremio.resolve_target_count` | int | `15` | Stop resolving after this many successes (0 = disabled) |
-| `stremio.resolve_grace_seconds` | float | `4.0` | Once the first stream is resolved, wait at most this long for the other hosters instead of until `stream_deadline_seconds` (0 = disabled) |
+| `stremio.resolve_target_count` | int | `5` | The answer goes out once this many hosters have a video, also while plugins search (0 = wait until the search and every resolution are done, or the deadline) |
 | `stremio.probe_stealth_timeout_seconds` | float | `15.0` | Page timeout of the stealth browser (Patchright): browser-based resolvers and the Cloudflare fallback |
 
 `stremio.probe_at_stream_time`, `probe_timeout_seconds`, `probe_stealth_enabled` and `probe_stealth_concurrency` were removed with the unused stream-time liveness probe; configs that still set them load (the keys are ignored).

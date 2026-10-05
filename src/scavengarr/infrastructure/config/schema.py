@@ -258,23 +258,14 @@ class StremioConfig(BaseModel):
     )
 
     plugin_timeout_seconds: float = Field(
-        default=10.0,
+        default=30.0,
         gt=0,
         description=(
-            "Plugin search budget per Stremio request, counted from the "
+            "Plugin search budget per Stremio search, counted from the "
             "request start (plugins waiting for a concurrency slot use it up "
-            "too); plugins still running then are cut, queued ones skipped."
-        ),
-    )
-    search_soft_deadline_seconds: float = Field(
-        default=7.0,
-        gt=0,
-        description=(
-            "With the search cache on (cache.search_ttl_seconds > 0), the "
-            "plugin search answers this long after the request start when "
-            "it has results; plugins still running go on and their results "
-            "are added to the cache for the next request. Values from "
-            "plugin_timeout_seconds up turn the early answer off."
+            "too); plugins still running then are cut, queued ones skipped. "
+            "The answer does not wait for the search: plugins still running "
+            "when it goes out fill the search cache."
         ),
     )
     plugin_health_interval_seconds: float = Field(
@@ -287,13 +278,13 @@ class StremioConfig(BaseModel):
         ),
     )
     stream_deadline_seconds: float = Field(
-        default=15.0,
+        default=60.0,
         gt=0,
         description=(
-            "Overall budget for one Stremio stream request, from request start "
-            "to answer. Hoster resolution stops at the deadline (at least 2 s "
-            "after the plugin search) and returns what is resolved. Keep "
-            "plugin_timeout_seconds below it so resolution gets a window."
+            "Latest answer of a Stremio stream request, from the request "
+            "start: resolution stops then and the answer has what is "
+            "resolved. Earlier when resolve_target_count streams resolved, "
+            "or when the search and every resolution are done."
         ),
     )
 
@@ -359,21 +350,12 @@ class StremioConfig(BaseModel):
         ),
     )
     resolve_target_count: int = Field(
-        default=15,
+        default=5,
         description=(
-            "Target number of successfully resolved video streams. "
-            "Resolution stops early once this many genuine video URLs "
-            "have been extracted, cancelling remaining resolve tasks. "
-            "Set to 0 to disable early-stop (resolve all streams)."
-        ),
-    )
-    resolve_grace_seconds: float = Field(
-        default=4.0,
-        ge=0.0,
-        description=(
-            "Once the first stream is resolved, the answer waits at most "
-            "this long for the other hosters (browser-resolved ones take "
-            "3-7 s) instead of until stream_deadline_seconds. 0 disables it."
+            "The answer goes out once this many hosters have a resolved "
+            "video stream (resolutions still running are cancelled), even "
+            "while plugins still search. 0: the answer waits until the "
+            "search and every resolution are done (or the deadline)."
         ),
     )
 

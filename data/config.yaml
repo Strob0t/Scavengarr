@@ -116,14 +116,13 @@ stremio:
   auto_tune_all: true # container-aware auto-tune ALL concurrency params (cgroup v2/v1)
   max_concurrent_playwright: 7 # was 5 — more parallel PW plugins
   max_results_per_plugin: 50 # was 100 — fewer results per plugin, faster turnaround
-  # Answer budget, both counted from the request start (measured 2026-09-29,
-  # docs/plans/stremio-latency.md): 10/15 s gave the same playable streams
-  # as 12/17 s; 15 s per plugin (old) meant answers after 20–38 s
-  plugin_timeout_seconds: 10.0 # plugin search ends 10 s after the request
-  # With the search cache on: answer at 7 s when there are results; slower
-  # plugins go on and fill the cache for the next request
-  search_soft_deadline_seconds: 7.0
-  stream_deadline_seconds: 15.0 # hoster resolution ends, answer goes out
+  # Answer policy (decided 2026-10-05, docs/plans/round5-measures.md): the
+  # answer goes out at resolve_target_count streams or when the search and
+  # every resolution are done, at the latest stream_deadline_seconds after
+  # the request; links resolve while plugins search, and plugins still
+  # running at the answer fill the search cache
+  plugin_timeout_seconds: 30.0 # plugin search ends 30 s after the request
+  stream_deadline_seconds: 60.0 # latest answer
   verify_streams: true # drop resolved URLs that do not return video bytes
 
   # Title matching
@@ -142,12 +141,8 @@ stremio:
   probe_concurrency: 20 # parallel resolutions (auto-tuned when auto_tune_all)
   max_probe_count: 80 # top-ranked streams to resolve (was 50)
 
-  # Resolution early-stop (0 = disabled, resolve all streams)
-  resolve_target_count: 0
-  # Once a stream is resolved, wait at most this long for the other hosters
-  # (browser-resolved ones take 3-7 s; DoodStream mirrors land 3.2-4.0 s
-  # after the first stream, Dropload's captcha 7 s); measured 2026-10-01
-  resolve_grace_seconds: 4.0
+  # The answer goes out once this many hosters have a video
+  resolve_target_count: 5
 
   # Stealth browser (Patchright): browser-based resolvers, Cloudflare fallback
   probe_stealth_timeout_seconds: 10.0 # page timeout (default 15)

@@ -23,7 +23,7 @@ Decisions 9 and 10 came the same day, after the maintainer asked for more time p
 
 Order: 3, 5, 6 (small, independent), then 4, 1, 2 with 9 (the request flow), then 10, then 7, then the metrics. Each measure is test-driven, committed on its own and documented with the code. A sixth round measures 1–6, 9 and 10 in production.
 
-Done: 3 (1b7e01f), 5 (7ec1a5c), 6 (a3b7f50), 4 (20d27c5), 1.
+Done: 3 (1b7e01f), 5 (7ec1a5c), 6 (a3b7f50), 4 (20d27c5), 1 (a953721), 2 and 9.
 
 ## 1. Plugin health check
 
@@ -126,6 +126,19 @@ The backend saves about a quarter of the proxy's CPU (15–27% across the runs).
 - Risks: a worst case of 60 s; Stremio Web shows other addons' streams meanwhile (no client timeout found), other clients are untested with long waits.
 
 **Tests.** Use case: the answer goes out at the target while plugins still search; without enough streams it goes out when everything is done; the deadline caps it; late plugins still fill the cache.
+
+### Implementation of 2 and 9 together
+
+Both change when the answer goes out, so they share one design (refined while implementing, 2026-10-05):
+
+- **The search runs to its end.** A search (single-flight per cache key, its own task, as before) runs every plugin until it is done, at the latest `plugin_timeout_seconds` after the request start. The soft deadline and the late plugins are gone: the answer no longer waits for the search, so nothing needs to cut it early. Each plugin's results pass the title filter when they arrive and go into the search's `SearchProgress` (results deduplicated by `download_link`, the count before the filter, done), which every request waiting on the search reads. The cache entry is stored when the search ends.
+- **Resolution as results arrive.** A request ranks the results it has and gives the ranking to its `HosterResolution`: each hoster and language resolves its best-ranked link that is not known dead, the next one only after it failed (the port-scan rule of the resolve phase), and a better-ranked link that arrives later resolves too; each URL once, at most `probe_concurrency` at a time, among the top `max_probe_count`. A new ranking after each plugin's results replaces the `on_results` callback of the first design with the progress the request reads.
+- **Answer.** When `resolve_target_count` hosters (5) have a video, or when the search is done and no resolution runs or is due, at the latest `stream_deadline_seconds` (60 s) after the request start. Unfinished resolutions are cancelled; the search goes on and fills the cache. Answers from the search cache keep measure 4 in front; without a cached stream they resolve the same way, with a finished progress. Without a resolver (or a base URL) the answer waits for the search.
+- **Removed.** `search_soft_deadline_seconds`, `resolve_grace_seconds` (old values are ignored: unknown settings are), the late plugins (`LateSearch`, `finish_late`, `CachedSearch.merged`) and `_MIN_RESOLVE_WINDOW_S`.
+- **Defaults** `plugin_timeout_seconds` 30, `stream_deadline_seconds` 60, `resolve_target_count` 5, and in `data/config.yaml` (production had 10, 15 and 0, "resolve all").
+- **Trade-off.** A search holds its share of the concurrency pool until it ends (up to 30 s; before, until the soft deadline): a concurrent request gets half the plugin slots meanwhile. Plugins still queued for a slot at 7 s are no longer skipped.
+
+**Tests (as implemented).** `SearchProgress`: deduplication, the count, listeners. `HosterResolution`: rank order per hoster, the next link after a failure, a better link that arrives later, one resolution per URL, the concurrency bound, a video before an echo, cancellation. Use case: the answer at the target while a plugin still searches, when everything is done, at the deadline; the search fills the cache after the answer; a request joining a running search; cached answers as in measure 4.
 
 ## 10. Re-resolvable stream links (binge and resume)
 

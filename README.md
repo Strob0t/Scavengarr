@@ -222,8 +222,8 @@ The settings you are most likely to change:
 
 | Setting (YAML) | Environment variable | Default | What it does |
 |---|---|---|---|
-| `stremio.plugin_timeout_seconds` | — | `10` | Search budget per Stremio request, counted from the request start |
-| `stremio.stream_deadline_seconds` | — | `15` | Answer budget per Stremio request; resolution stops here |
+| `stremio.plugin_timeout_seconds` | — | `30` | Search budget per Stremio request, counted from the request start |
+| `stremio.stream_deadline_seconds` | — | `60` | Latest answer of a Stremio request; it goes out earlier at `stremio.resolve_target_count` (5) streams or when everything is done |
 | `stremio.verify_streams` | — | `true` | Drop resolved streams that do not return video |
 | `stremio.language_scores` | — | `de` > `de-sub` > `en-sub` > `en` | Language ranking of streams |
 | `stremio.max_results_per_plugin` | — | `100` | Results per plugin and Stremio request |
@@ -236,7 +236,7 @@ The settings you are most likely to change:
 | `http.api_rate_limit_rpm` | `SCAVENGARR_API_RATE_LIMIT_RPM` | `120` | Requests per minute per client IP on the API |
 | `logging.level` | `SCAVENGARR_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 
-Keep `stream_deadline_seconds` above `plugin_timeout_seconds`, so hoster resolution gets a few seconds after the search. The full reference is in [docs/features/configuration.md](docs/features/configuration.md).
+The answer does not wait for the whole search: it goes out once 5 streams resolve. The full reference is in [docs/features/configuration.md](docs/features/configuration.md).
 
 ---
 
@@ -265,7 +265,7 @@ Want a site that is missing? Plugins are single Python files — see [Contributi
 <details>
 <summary><b>Streams take long to appear</b></summary>
 
-An answer takes at most `stream_deadline_seconds` (15 s by default). If it is still too slow for you, lower `plugin_timeout_seconds` and `stream_deadline_seconds` together (e.g. 8 s / 12 s): you get fewer streams, sooner. Raising them brings in slower sites but did not add playable streams in our measurements (details in [docs/plans/stremio-latency.md](docs/plans/stremio-latency.md)).
+An answer goes out once `stremio.resolve_target_count` streams (5) resolve, or when the search and every resolution are done, at the latest after `stream_deadline_seconds` (60 s by default). For faster answers with fewer streams, lower `resolve_target_count` (e.g. 3) or `stream_deadline_seconds`; for more streams per answer, raise `resolve_target_count`.
 
 </details>
 

@@ -27,23 +27,6 @@ def _entry(*links: str, age: float = 0.0) -> CachedSearch:
     )
 
 
-class TestCachedSearch:
-    def test_merged_adds_only_new_links(self) -> None:
-        entry = _entry("https://a/1")
-
-        merged = entry.merged(
-            [_result("https://a/1"), _result("https://b/2"), _result("https://b/2")],
-            total=5,
-        )
-
-        assert [r.download_link for r in merged.results] == [
-            "https://a/1",
-            "https://b/2",
-        ]
-        assert merged.total == 6
-        assert merged.stored_at == entry.stored_at
-
-
 class TestSearchCacheKey:
     def test_one_key_per_title_season_and_episode(self) -> None:
         movie = StremioStreamRequest(imdb_id="tt0816692", content_type="movie")

@@ -6,6 +6,13 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: Stremio Answers at 5 Streams, Links Resolve While Plugins Search
+- The answer goes out once `stremio.resolve_target_count` hosters (default 5) have a video, or when the search and every resolution are done, at the latest `stremio.stream_deadline_seconds` (default 60) after the request (`stremio_resolve_complete` with `reason`). The fifth end-to-end round's first answers waited for the soft deadline (7 s) and the grace (4 s): titles with many streams had 5 after about 5 s, titles with few got fewer because slow plugins were not waited for.
+- Links resolve while the plugins search: each plugin's results pass the title filter when they arrive (`SearchProgress`), each request ranks them and resolves each hoster's best link (`HosterResolution`: rank order per hoster, a better link that arrives later too, each URL once).
+- The search runs until every plugin is done, at most `stremio.plugin_timeout_seconds` (default 30, was 10); plugins still running at the answer fill the search cache. Requests on one search read its results while it runs.
+- Removed: `stremio.search_soft_deadline_seconds`, `stremio.resolve_grace_seconds` (old values are ignored) and the late plugins. `data/config.yaml` follows the new defaults (it had 10 s, 15 s and `resolve_target_count: 0`).
+- Trade-off: a search holds its share of the concurrency pool until it ends, so a concurrent request gets half the plugin slots meanwhile. Behind AIOStreams the per-addon timeout must now exceed 60 s.
+
 ### Perf: Stremio Searches Skip Plugins Whose Site Is Down
 - A plugin whose site is down ran in every search until the deadline: its fetch errors end as empty answers, which the circuit breaker does not count. megakino_to and movie4k held every first answer of the fifth end-to-end round to the soft deadline.
 - `PluginHealthMonitor` checks every Stremio plugin's site (HEAD on its domains) every `stremio.plugin_health_interval_seconds` (default 1800, `0` = off) and the unreachable ones every 5 minutes; searches skip those (`stremio_plugins_unreachable`), and a mirror group picks a reachable member.

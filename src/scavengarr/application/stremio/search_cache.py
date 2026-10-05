@@ -7,7 +7,7 @@ hoster stream URLs expire and some are bound to the resolving IP.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 import structlog
 
@@ -29,16 +29,6 @@ class CachedSearch:
     results: list[SearchResult]
     total: int  # results before the title filter
     stored_at: float  # time.time() of the search
-
-    def merged(self, results: list[SearchResult], total: int) -> CachedSearch:
-        """This entry plus those of *results* it lacks (by ``download_link``)."""
-        seen = {r.download_link for r in self.results}
-        added: list[SearchResult] = []
-        for r in results:
-            if r.download_link not in seen:
-                seen.add(r.download_link)
-                added.append(r)
-        return replace(self, results=[*self.results, *added], total=self.total + total)
 
 
 def search_cache_key(request: StremioStreamRequest) -> str:
