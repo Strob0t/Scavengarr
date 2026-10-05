@@ -15,7 +15,7 @@ The user set a hard limit: recording, collecting and showing the metrics must co
 - **Collected at scrape time**: open circuit breakers (plugins and hosters), container CPU and memory (cgroup v2: Python, Chromium and the rest of the container), the Python process.
 - **`/api/v1/stats/metrics`** keeps its JSON shape and reads the same metrics; `MetricsCollector` and its plugin counters are replaced.
 - **Request id**: every HTTP request gets a `request_id` in the structlog context (all its log lines, also of the searches it starts) and an `X-Request-ID` response header.
-- **On-demand tracing**: `telemetry.tracing_endpoint` (OTLP/HTTP) turns OpenTelemetry spans on for the same stages. Off by default; the OpenTelemetry SDK is imported only when it is on. Tempo comes as the compose profile `tracing`.
+- **On-demand tracing**: `telemetry.tracing_endpoint` (OTLP/HTTP) turns OpenTelemetry spans on for the same stages. Off by default; the trace SDK and the exporter are imported only when it is on (FastAPI imports the OpenTelemetry API, and redis-py the SDK's metric types, anyway). Tempo comes as the compose profile `tracing`.
 - **Grafana dashboard** (JSON in the repo) and the Prometheus scrape snippet in the docs.
 
 ## Impact

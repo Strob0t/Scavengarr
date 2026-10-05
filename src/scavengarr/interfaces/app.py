@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import secrets
 import time
 from collections.abc import Awaitable, Callable
 
@@ -89,8 +90,14 @@ def create_app(config: AppConfig) -> FastAPI:
         gs: GracefulShutdown = app.state.graceful_shutdown
         gs.request_started()
         start = time.perf_counter()
+        # Every log line of the request, and of the tasks it starts (a shared
+        # search, background resolutions), carries its id. Generated: a
+        # client's own X-Request-ID would be untrusted input in the logs
+        request_id = secrets.token_hex(6)
+        tokens = structlog.contextvars.bind_contextvars(request_id=request_id)
         try:
             response = await call_next(request)
+            response.headers["X-Request-ID"] = request_id
             return response
         finally:
             gs.request_finished()
@@ -106,5 +113,6 @@ def create_app(config: AppConfig) -> FastAPI:
                 duration_ms=round(duration_ms, 2),
                 client_host=(request.client.host if request.client else None),
             )
+            structlog.contextvars.reset_contextvars(**tokens)
 
     return app

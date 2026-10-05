@@ -13,10 +13,10 @@
 
 ## 2. Request id and tracing
 
-- [ ] 2.1 Request id in the `http_request` middleware: structlog contextvar, `X-Request-ID` header; tests.
-- [ ] 2.2 `telemetry.tracing_endpoint` config (YAML, env), docs.
-- [ ] 2.3 OpenTelemetry setup imported only when on; spans for stages except the HLS proxy; root span with `request_id`; flush at shutdown; tests with an in-memory exporter.
-- [ ] 2.4 Compose profile `tracing` with Tempo and its config.
+- [x] 2.1 Request id in the `http_request` middleware: structlog contextvar, `X-Request-ID` header; tests.
+- [x] 2.2 `telemetry.tracing_endpoint` config (YAML, env), docs.
+- [x] 2.3 OpenTelemetry setup imported only when on; spans for stages except the HLS proxy; root span with `request_id`; flush at shutdown; tests with an in-memory exporter.
+- [x] 2.4 Compose profile `tracing` with Tempo and its config.
 
 ## 3. Dashboard, docs, overhead
 

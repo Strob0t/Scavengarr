@@ -9,6 +9,10 @@ from unittest.mock import AsyncMock, MagicMock
 from urllib.parse import urlparse
 
 import pytest
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+    InMemorySpanExporter,
+)
 
 from scavengarr.application.stremio.search_cache import STALE_SECONDS, CachedSearch
 from scavengarr.application.use_cases.stremio_stream import (
@@ -35,6 +39,7 @@ from scavengarr.infrastructure.stremio.stream_converter import convert_search_re
 from scavengarr.infrastructure.stremio.stream_sorter import StreamSorter
 from scavengarr.infrastructure.stremio.title_matcher import filter_by_title_match
 from scavengarr.infrastructure.telemetry import Telemetry
+from scavengarr.infrastructure.telemetry.tracing import Tracing
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -2355,3 +2360,22 @@ class TestTelemetry:
 
         assert _requests(t, "none", "error") == 1
         assert _phases(t, "metadata", "error") == 1
+
+    async def test_with_tracing_a_request_is_one_trace(self) -> None:
+        exporter = InMemorySpanExporter()
+        t = Telemetry(tracing=Tracing(SimpleSpanProcessor(exporter)))
+        sites = {"a": _site([_hit("https://voe.sx/e/1")])}
+        uc = _answering_use_case(sites, _memory_cache(), _Resolutions(), telemetry=t)
+
+        await uc.execute(_make_request(), base_url="http://localhost:8080")
+        await uc.aclose()
+
+        spans = exporter.get_finished_spans()
+        assert {s.name for s in spans} >= {
+            "stremio_request",
+            "stremio_phase metadata",
+            "stremio_phase search",
+            "plugin_search a",
+            "stremio_phase resolve",
+        }
+        assert len({s.context.trace_id for s in spans if s.context}) == 1

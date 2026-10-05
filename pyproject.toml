@@ -31,6 +31,8 @@ uvloop = "^0.23.0"
 httptools = "^0.8.0"
 selectolax = "^1.0.0"
 prometheus-client = "^0.26.0"
+opentelemetry-sdk = "^1.45.0"
+opentelemetry-exporter-otlp-proto-http = "^1.45.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0.2"

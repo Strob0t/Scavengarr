@@ -21,6 +21,7 @@ _SECTION_KEYS: set[str] = {
     "cache",
     "stremio",
     "scoring",
+    "telemetry",
 }
 
 
@@ -98,6 +99,7 @@ def _normalize_layer(data: Mapping[str, Any]) -> dict[str, Any]:
         "cache_backend": ("cache", "backend"),
         "cache_redis_url": ("cache", "redis_url"),
         "cache_max_concurrent": ("cache", "max_concurrent"),
+        "telemetry_tracing_endpoint": ("telemetry", "tracing_endpoint"),
     }
 
     for flat_key, (section, section_key) in flat_map.items():

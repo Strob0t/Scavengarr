@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Feat: Request Id and On-Demand Tracing
+- Every HTTP request gets a `request_id` in the log context (all its log lines and those of the searches and resolutions it starts) and the `X-Request-ID` response header, so one request can be followed through the logs.
+- `telemetry.tracing_endpoint` (`SCAVENGARR_TELEMETRY_TRACING_ENDPOINT`) sends the core's stages as OpenTelemetry spans over OTLP/HTTP: one trace per request with its phases, plugin searches and hoster resolutions. Off by default; without it the trace SDK and exporter are not loaded. Spans hold no URLs or titles, errors only their exception type.
+- `docker compose --profile tracing up -d tempo` starts Grafana Tempo 3.1 (`docker/tempo.yaml`, traces kept 3 days).
+
 ### Feat: Prometheus Metrics
 - `GET /metrics` serves Prometheus metrics of the core (prometheus-client): every Stremio stream request by the state of its search results (cache, stale, new or joined search), its phases and why the answer went out (target, done, deadline, cached), streams per answer, every plugin search and every hoster resolution with duration and outcome (`hits`, `empty`, `cut`, `breaker_open`, `unplayable`, ...), HLS proxy requests with time to first byte and bytes, the event-loop lag, open circuit breakers and the container's CPU and memory (Chromium included). `docs/features/observability.md` has the families, a scrape job and queries.
 - One port records everything: `TelemetryPort.stage()` times a step and records its outcome (`cut` for a cancellation). The plugin search runner, the hoster resolver registry, the Stremio use case and the HLS proxy route use it; plugins and resolvers stay unchanged. Labels come from fixed sets only (no titles, ids, URLs or domains).

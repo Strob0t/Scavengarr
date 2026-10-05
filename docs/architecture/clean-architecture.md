@@ -279,7 +279,7 @@ Infrastructure implements the ports defined by Domain and provides concrete adap
 - **TMDB** (`tmdb/`): `HttpxTmdbClient` and the key-less `ImdbFallbackClient`.
 - **Scoring** (`scoring/`): EWMA plugin scoring, health/search probers, query pool, background `ScoringScheduler`.
 - **Runtime services** (top-level modules): `PluginCircuitBreaker`, `ConcurrencyPool`, `GracefulShutdown`, `detect_resources()` (cgroup-aware).
-- **Telemetry** (`telemetry/`): `Telemetry` implements `TelemetryPort` with prometheus-client (stage durations and outcomes, values, the JSON statistics), scrape-time collectors for circuit breakers and the container's cgroup, the event-loop lag monitor. See [Observability](../features/observability.md).
+- **Telemetry** (`telemetry/`): `Telemetry` implements `TelemetryPort` with prometheus-client (stage durations and outcomes, values, the JSON statistics) and, with `telemetry.tracing_endpoint`, OpenTelemetry spans (`tracing.py`, loaded only then), scrape-time collectors for circuit breakers and the container's cgroup, the event-loop lag monitor. See [Observability](../features/observability.md).
 
 ---
 

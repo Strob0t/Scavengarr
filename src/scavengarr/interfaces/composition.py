@@ -94,7 +94,7 @@ from scavengarr.infrastructure.stremio.episode_filter import filter_by_episode
 from scavengarr.infrastructure.stremio.stream_converter import convert_search_results
 from scavengarr.infrastructure.stremio.stream_sorter import StreamSorter
 from scavengarr.infrastructure.stremio.title_matcher import filter_by_title_match
-from scavengarr.infrastructure.telemetry import Telemetry, monitor_loop_lag
+from scavengarr.infrastructure.telemetry import create_telemetry, monitor_loop_lag
 from scavengarr.infrastructure.telemetry.collectors import BreakerCollector
 from scavengarr.infrastructure.tmdb.client import HttpxTmdbClient
 from scavengarr.infrastructure.tmdb.imdb_fallback import ImdbFallbackClient
@@ -399,8 +399,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     config = state.config
     use_eager_tasks()
 
-    # 0) Telemetry (must exist before the components that record)
-    state.telemetry = Telemetry()
+    # 0) Telemetry (must exist before the components that record); tracing
+    #    only with an OTLP endpoint
+    state.telemetry = create_telemetry(config.telemetry.tracing_endpoint)
+    if state.telemetry.tracing is not None:
+        log.info("tracing_enabled", endpoint=config.telemetry.tracing_endpoint)
     state._loop_lag_task = asyncio.create_task(monitor_loop_lag(state.telemetry))
 
     # 0b) Auto-tune concurrency based on detected container/host resources
@@ -715,5 +718,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         await state.cache.aclose()
         log.info("cache_closed")
+
+        # Spans of everything closed above still go out (blocks up to 3 s)
+        await asyncio.to_thread(state.telemetry.close)
 
         log.info("app_shutdown_complete")

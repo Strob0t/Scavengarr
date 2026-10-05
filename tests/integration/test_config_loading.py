@@ -191,6 +191,41 @@ class TestEnvOverrides:
         assert config.cache.max_concurrent == 25
 
 
+class TestTelemetrySettings:
+    """Tracing is off unless an OTLP/HTTP endpoint is set."""
+
+    def test_tracing_off_by_default(self) -> None:
+        assert load_config().telemetry.tracing_endpoint is None
+
+    def test_endpoint_from_yaml(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.yaml"
+        path.write_text(
+            yaml.dump({"telemetry": {"tracing_endpoint": "http://tempo:4318"}}),
+            encoding="utf-8",
+        )
+
+        assert load_config(config_path=path).telemetry.tracing_endpoint == (
+            "http://tempo:4318"
+        )
+
+    def test_endpoint_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(
+            "SCAVENGARR_TELEMETRY_TRACING_ENDPOINT", "http://192.168.1.2:4318"
+        )
+
+        assert load_config().telemetry.tracing_endpoint == "http://192.168.1.2:4318"
+
+    def test_endpoint_must_be_http(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.yaml"
+        path.write_text(
+            yaml.dump({"telemetry": {"tracing_endpoint": "tempo:4318"}}),
+            encoding="utf-8",
+        )
+
+        with pytest.raises(ValueError, match="tracing_endpoint"):
+            load_config(config_path=path)
+
+
 class TestCliOverrides:
     """CLI overrides beat everything (highest precedence)."""
 

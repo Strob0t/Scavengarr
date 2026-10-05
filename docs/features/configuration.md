@@ -121,6 +121,7 @@ These variables are read by the `EnvOverrides` Pydantic Settings model (case-ins
 | `SCAVENGARR_SCORING_ENABLED` | bool | `true` | `scoring.enabled` |
 | `SCAVENGARR_SCORING_W_HEALTH` | float | `0.4` | `scoring.w_health` |
 | `SCAVENGARR_SCORING_W_SEARCH` | float | `0.6` | `scoring.w_search` |
+| `SCAVENGARR_TELEMETRY_TRACING_ENDPOINT` | string | (unset) | `telemetry.tracing_endpoint` (OTLP/HTTP base URL; set, it turns tracing on) |
 
 All other settings (including the whole `stremio:` section and the link validation keys) are YAML-only. Unprefixed `CACHE_*` variables are not read; use the `SCAVENGARR_CACHE_*` names above.
 
@@ -218,7 +219,7 @@ cache:
 
 ### Canonical Section Keys
 
-The loader recognizes the sections `plugins`, `http`, `playwright`, `logging`, `cache`, `stremio`, and `scoring`, plus the top-level keys `app_name`, `environment`, `tmdb_api_key`, `validate_download_links`, `validation_timeout_seconds`, and `validation_max_concurrent`. Flat keys (from env/CLI) are mapped to their sectioned equivalents:
+The loader recognizes the sections `plugins`, `http`, `playwright`, `logging`, `cache`, `stremio`, `scoring`, and `telemetry`, plus the top-level keys `app_name`, `environment`, `tmdb_api_key`, `validate_download_links`, `validation_timeout_seconds`, and `validation_max_concurrent`. Flat keys (from env/CLI) are mapped to their sectioned equivalents:
 
 | Flat key (env/CLI) | Sectioned key (YAML) |
 |---|---|
@@ -242,6 +243,7 @@ The loader recognizes the sections `plugins`, `http`, `playwright`, `logging`, `
 | `cache_ttl_seconds` | `cache.ttl_seconds` |
 | `cache_backend`, `cache_redis_url`, `cache_max_concurrent` | `cache.backend`, `cache.redis_url`, `cache.max_concurrent` |
 | `scoring_enabled`, `scoring_w_health`, `scoring_w_search` | `scoring.enabled`, `scoring.w_health`, `scoring.w_search` |
+| `telemetry_tracing_endpoint` | `telemetry.tracing_endpoint` |
 
 Other flat keys are dropped.
 
@@ -441,7 +443,7 @@ Controls the background plugin scoring and probing system. See [Plugin Scoring &
 - `dev` / `test` → `console` (human-readable, colored output)
 - `prod` → `json` (machine-parseable, suitable for log aggregation)
 
-Logs are structured via `structlog` with ISO UTC timestamps and include context fields such as `plugin`, `query`, and result counts. Secrets are masked in every string field, rendered tracebacks included (`_redact_secrets`): values of `api_key`/`apikey`, `access_token`, `token`, `password`/`passwd` and `secret` parameters (TMDB key in retry and error URLs, the Torznab `apikey` in request logs) and passwords in URLs (`redis://:***@redis:6379/0`).
+Logs are structured via `structlog` with ISO UTC timestamps and include context fields such as `plugin`, `query`, and result counts. Every line of an HTTP request, and of the tasks it starts, carries the request's `request_id` (also sent as the `X-Request-ID` response header). Secrets are masked in every string field, rendered tracebacks included (`_redact_secrets`): values of `api_key`/`apikey`, `access_token`, `token`, `password`/`passwd` and `secret` parameters (TMDB key in retry and error URLs, the Torznab `apikey` in request logs) and passwords in URLs (`redis://:***@redis:6379/0`).
 
 **Console format example (simplified):**
 
@@ -455,6 +457,14 @@ Logs are structured via `structlog` with ISO UTC timestamps and include context 
 ```json
 {"timestamp": "2025-01-01T12:00:00Z", "level": "info", "event": "search_cache_hit", "plugin": "filmpalast", "query": "iron man", "result_count": 5}
 ```
+
+### Telemetry
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `telemetry.tracing_endpoint` | string | (unset) | OTLP/HTTP base URL of a trace backend (Tempo: `http://tempo:4318`); `/v1/traces` is appended. Set, the core's stages go there as OpenTelemetry spans; unset, tracing is off and its SDK is not loaded. Behind a VPN container use an IP: a host name would be looked up through the VPN |
+
+Prometheus metrics (`/metrics`) need no setting. See [Observability](./observability.md).
 
 ### Cache
 

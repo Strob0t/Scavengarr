@@ -3,7 +3,8 @@
 Every stage has a duration histogram ``scavengarr_<stage>_seconds`` by its
 labels and an outcome counter ``scavengarr_<stage>_total`` by its labels and
 outcome: a histogram per outcome would multiply the series. The buckets
-follow the deadlines (``docs/features/observability.md``).
+follow the deadlines (``docs/features/observability.md``). With tracing on,
+a stage is also a span (``tracing.py``).
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from collections import deque
 from collections.abc import Iterator
 from dataclasses import dataclass
 from types import TracebackType
+from typing import TYPE_CHECKING
 
 from prometheus_client import (
     CollectorRegistry,
@@ -33,6 +35,9 @@ from scavengarr.domain.ports.telemetry import AttributeValue, StageName, ValueNa
 from scavengarr.infrastructure.telemetry.collectors import ContainerCollector
 from scavengarr.infrastructure.version import APP_VERSION
 
+if TYPE_CHECKING:
+    from scavengarr.infrastructure.telemetry.tracing import TracedStage, Tracing
+
 # The creation time of every counter and histogram would double the series
 disable_created_metrics()
 
@@ -48,6 +53,9 @@ class _StageSpec:
     labels: tuple[str, ...]
     buckets: tuple[float, ...]
     doc: str
+    # The label whose value names the span (``plugin_search kinoger``)
+    span_label: str | None = None
+    traced: bool = True
 
 
 # The answer goes out at the latest 60 s after the request
@@ -58,22 +66,31 @@ _STAGES: dict[StageName, _StageSpec] = {
         ("source",), _REQUEST_BUCKETS, "Stremio stream requests by search state"
     ),
     "stremio_phase": _StageSpec(
-        ("phase",), _REQUEST_BUCKETS, "Phases of Stremio stream requests"
+        ("phase",),
+        _REQUEST_BUCKETS,
+        "Phases of Stremio stream requests",
+        span_label="phase",
     ),
     # The search ends 30 s after the request
     "plugin_search": _StageSpec(
         ("plugin",),
         (1.0, 2.0, 4.0, 7.0, 10.0, 15.0, 30.0),
         "Plugin searches of Stremio requests",
+        span_label="plugin",
     ),
     # A resolution gets 15 s
     "hoster_resolve": _StageSpec(
-        ("resolver",), (0.5, 1.0, 2.0, 4.0, 7.0, 15.0), "Hoster resolutions"
+        ("resolver",),
+        (0.5, 1.0, 2.0, 4.0, 7.0, 15.0),
+        "Hoster resolutions",
+        span_label="resolver",
     ),
+    # A span per segment would bury the requests in the traces
     "hls_proxy": _StageSpec(
         ("kind",),
         (0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 4.0),
         "HLS proxy requests until the answer starts",
+        traced=False,
     ),
 }
 
@@ -95,7 +112,7 @@ def _outcome_of(error: type[BaseException] | None) -> str:
 class _Stage:
     """One running stage; records itself on exit (exceptions propagate)."""
 
-    __slots__ = ("_labels", "_name", "_owner", "_started", "outcome")
+    __slots__ = ("_labels", "_name", "_owner", "_span", "_started", "outcome")
 
     def __init__(
         self, owner: Telemetry, name: StageName, labels: dict[str, str]
@@ -105,36 +122,45 @@ class _Stage:
         self._name: StageName = name
         self._labels = labels
         self._started = 0.0
+        self._span: TracedStage | None = None
 
     def label(self, **labels: str) -> None:
         self._labels.update(labels)
+        if self._span is not None:
+            self._span.set_attributes(labels)
 
     def annotate(self, **attributes: AttributeValue) -> None:
-        pass
+        if self._span is not None:
+            self._span.set_attributes(attributes)
 
     def __enter__(self) -> _Stage:
+        self._span = self._owner.start_span(self._name, self._labels)
         self._started = time.perf_counter()
         return self
 
     def __exit__(
         self,
         error: type[BaseException] | None,
-        _exc: BaseException | None,
+        exc: BaseException | None,
         _tb: TracebackType | None,
     ) -> None:
         seconds = time.perf_counter() - self._started
         outcome = self.outcome or _outcome_of(error)
         self._owner.finish(self._name, self._labels, outcome, seconds)
+        if self._span is not None:
+            self._span.end(outcome, exc)
 
 
 class Telemetry:
     """The ``TelemetryPort`` on prometheus-client, with its own registry.
 
-    Also keeps the event-loop lag samples and the plugin statistics of
+    With *tracing*, every stage but the HLS proxy is also a span. Also keeps
+    the event-loop lag samples and the plugin statistics of
     ``/api/v1/stats/metrics``.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, tracing: Tracing | None = None) -> None:
+        self.tracing = tracing
         self.registry = CollectorRegistry()
         self._started = time.monotonic()
         self._durations = {
@@ -215,6 +241,19 @@ class Telemetry:
         """Record an ended stage (called by the stage)."""
         self._durations[name].labels(**labels).observe(seconds)
         self._outcomes[name].labels(**labels, outcome=outcome).inc()
+
+    def start_span(self, name: StageName, labels: dict[str, str]) -> TracedStage | None:
+        """The span of a starting stage, with tracing on (called by the stage)."""
+        spec = _STAGES[name]
+        if self.tracing is None or not spec.traced:
+            return None
+        span_name = f"{name} {labels[spec.span_label]}" if spec.span_label else name
+        return self.tracing.start(span_name, labels)
+
+    def close(self) -> None:
+        """Send the spans still queued (at shutdown; blocks briefly)."""
+        if self.tracing is not None:
+            self.tracing.close()
 
     # ------------------------------------------------------------------
     # Event loop, exposition, JSON statistics

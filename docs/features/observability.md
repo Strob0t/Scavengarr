@@ -1,6 +1,6 @@
 # Observability
 
-Scavengarr records the steps of its core as Prometheus metrics: every Stremio stream request, its phases, every plugin search, every hoster resolution and every HLS proxy request. Prometheus scrapes them from `GET /metrics`, Grafana shows them. The metrics come from real use, so a change of the answer policy, a timeout or a breaker can be judged the next day without a test round.
+Scavengarr records the steps of its core as Prometheus metrics: every Stremio stream request, its phases, every plugin search, every hoster resolution and every HLS proxy request. Prometheus scrapes them from `GET /metrics`, Grafana shows them. The metrics come from real use, so a change of the answer policy, a timeout or a breaker can be judged the next day without a test round. A request id ties the log lines of one request together, and on demand the same steps go to Tempo as traces.
 
 Change spec: `openspec/changes/add-observability/`.
 
@@ -83,6 +83,22 @@ rate(scavengarr_container_cpu_seconds_total[5m]) - rate(process_cpu_seconds_tota
 sum(rate(scavengarr_hls_proxy_bytes_total[5m]))
 ```
 
+## Request Id
+
+Every HTTP request gets a 12-hex-digit `request_id` in the structlog context: all its log lines carry it, and so do the lines of the tasks it starts (the shared search, background resolutions), which copy the context. The response has it as the `X-Request-ID` header. The id is generated; a client's own `X-Request-ID` is ignored (untrusted input in the logs).
+
+## Tracing on Demand
+
+Traces show one request as a tree: the request, its phases, each plugin search and each hoster resolution, with durations and outcomes. They cost a backend that runs around the clock, so they are off by default and meant for looking into a problem.
+
+1. Start Tempo: `docker compose --profile tracing up -d tempo` (`docker/tempo.yaml`: OTLP/HTTP on 4318, query API on 3200, traces kept 3 days, 512 MB memory limit).
+2. Set `telemetry.tracing_endpoint` (or `SCAVENGARR_TELEMETRY_TRACING_ENDPOINT`) to `http://tempo:4318` and restart Scavengarr. Behind a VPN container use the host's IP: name lookups would go through the VPN.
+3. Add Tempo to Grafana as a data source (`http://<host>:3200`) and search with TraceQL, for example `{ name = "stremio_request" && duration > 10s }` or `{ span.request_id = "a1b2c3d4e5f6" }` with the id from a log line.
+
+Every stage but the HLS proxy (a span per segment would bury the requests) is a span named after the stage and its subject: `stremio_request`, `stremio_phase search`, `plugin_search kinoger`, `hoster_resolve voe`. Spans carry the stage's labels, its outcome and a few details (IMDb id, content type); an error sets the span's status to the exception type, not its message. They never carry URLs (stream URLs hold tokens) or titles. The root span carries the `request_id`. Spans go out in batches every 5 s from a background thread; at shutdown the rest gets 3 s.
+
+Without an endpoint the trace SDK, the exporter and protobuf are not loaded and no export thread runs. FastAPI's own OpenTelemetry integration (switched on by `OTEL_EXPORTER_OTLP_ENDPOINT`) is separate; Scavengarr does not use it.
+
 ## Cost
 
 Measured on x86 (the Raspberry Pi 4 is about 3-4 times slower):
@@ -94,3 +110,5 @@ Measured on x86 (the Raspberry Pi 4 is about 3-4 times slower):
 | One scrape of 637 series | 4.2 ms (about 15 ms on the Pi; at 60 s about 20 s of CPU per day) |
 
 Label combinations exist only once they occurred, so the series grow with the plugins and resolvers in use. Nothing runs between scrapes except the event-loop timer that already ran before.
+
+Tracing, when on, adds a span per stage (about 60-100 per first stream request) and Tempo's 0.2-0.7 GB of memory while it runs. The OpenTelemetry packages add about 5 MB to the image; installed, they cost about 2 MB of memory even with tracing off, as redis-py loads the SDK's metric types when they are there.

@@ -22,6 +22,27 @@ LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 LogFormat = Literal["json", "console"]
 
 
+class TelemetryConfig(BaseModel):
+    """Metrics and on-demand tracing (``docs/features/observability.md``)."""
+
+    tracing_endpoint: str | None = Field(
+        default=None,
+        description=(
+            "OTLP/HTTP base URL (e.g. http://192.168.1.2:4318) that turns "
+            "tracing on: the core's stages go there as OpenTelemetry spans "
+            "(/v1/traces is appended). Off when unset. An IP needs no DNS "
+            "lookup (behind a VPN container, lookups go through the VPN)."
+        ),
+    )
+
+    @field_validator("tracing_endpoint")
+    @classmethod
+    def _http_url(cls, value: str | None) -> str | None:
+        if value is not None and not value.startswith(("http://", "https://")):
+            raise ValueError("tracing_endpoint must start with http:// or https://")
+        return value
+
+
 class ScoringConfig(BaseModel):
     """Background plugin scoring and probing configuration."""
 
@@ -437,6 +458,9 @@ class AppConfig(BaseModel):
     # Scoring (YAML section: scoring)
     scoring: ScoringConfig = Field(default_factory=ScoringConfig)
 
+    # Metrics and tracing (YAML section: telemetry)
+    telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
+
     # HTTP engine (YAML section: http.*)
     http_timeout_seconds: float = Field(
         default=30.0,
@@ -756,6 +780,8 @@ class EnvOverrides(BaseSettings):
     cache_max_concurrent: int | None = None
 
     tmdb_api_key: str | None = None
+
+    telemetry_tracing_endpoint: str | None = None
 
     # Scoring env overrides (flat)
     scoring_enabled: bool | None = None

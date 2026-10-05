@@ -3,6 +3,7 @@
 #   docker compose up -d --build                    # Scavengarr only
 #   docker compose --profile solver up -d --build   # + Byparr captcha solver
 #   docker compose --profile redis up -d --build    # + Redis cache backend
+#   docker compose --profile tracing up -d --build  # + Tempo for traces
 #
 # Profiles only start the extra service; enable its use in Scavengarr by
 # uncommenting the matching environment line below.
@@ -33,6 +34,8 @@ services:
       # SCAVENGARR_CACHE_BACKEND: redis
       # SCAVENGARR_CACHE_REDIS_URL: redis://redis:6379/0
       # SCAVENGARR_CACHE_MAX_CONCURRENT: "50" # Redis takes more parallel ops
+      # Traces to Tempo (profile "tracing"); Prometheus scrapes /metrics anyway:
+      # SCAVENGARR_TELEMETRY_TRACING_ENDPOINT: http://tempo:4318
     shm_size: 1gb # Chromium (Playwright plugins, browser capture) needs shared memory
     init: true # reaps orphaned Chromium/driver processes (python would be PID 1)
     # CPU profiles in the container (scripts/stremio_profile.py --py-spy):
@@ -56,5 +59,21 @@ services:
       retries: 3
     restart: unless-stopped
 
+  # Traces on demand (docs/features/observability.md): add it to Grafana as a
+  # Tempo data source (http://<host>:3200); keeps 3 days
+  tempo:
+    image: grafana/tempo:3.1.0
+    container_name: scavengarr-tempo
+    profiles: ["tracing"]
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./docker/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "3200:3200" # query API for Grafana
+    mem_limit: 512m
+    restart: unless-stopped
+
 volumes:
   scavengarr-cache:
+  tempo-data:

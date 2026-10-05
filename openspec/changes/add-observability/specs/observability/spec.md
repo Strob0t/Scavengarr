@@ -142,11 +142,11 @@ The system SHALL give every HTTP request a generated `request_id`, bind it to th
 - **THEN** the id is generated anyway
 
 ### Requirement: On-Demand Tracing
-The system SHALL export the stages as OpenTelemetry spans over OTLP/HTTP when `telemetry.tracing_endpoint` is set, and SHALL NOT import OpenTelemetry otherwise.
+The system SHALL export the stages as OpenTelemetry spans over OTLP/HTTP when `telemetry.tracing_endpoint` is set, and SHALL NOT load the trace SDK or the exporter otherwise.
 
 #### Scenario: Tracing off (default)
 - **WHEN** `telemetry.tracing_endpoint` is not set
-- **THEN** no span is created and no OpenTelemetry module is imported
+- **THEN** no span is created, the trace SDK and the exporter are not imported and no export thread runs
 
 #### Scenario: Tracing on
 - **WHEN** the endpoint is set and a Stremio request runs
