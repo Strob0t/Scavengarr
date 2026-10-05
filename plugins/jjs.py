@@ -56,6 +56,16 @@ _FILECRYPT_RE = re.compile(r"https?://filecrypt\.cc/Container/\w+\.html")
 
 # Regex: size like "60.1 GB" or "6072 MB" or "1.2 GB"
 _SIZE_RE = re.compile(r"([\d.,]+\s*(?:[KMGT]i?)?B)\b", re.IGNORECASE)
+# Release pages give the part size first, season packs only that:
+#   Partgröße: max. 1020 MB Parts: 10 Stück Gesamtgröße: 9.24 GB
+#   Partgröße: max. 1020 MB Enthaltene Episoden: 10 Stück
+_TOTAL_SIZE_RE = re.compile(
+    r"Gesamtgr(?:ö|oe)(?:ß|ss)e:\s*([\d.,]+\s*(?:[KMGT]i?)?B)\b", re.IGNORECASE
+)
+_PART_SIZE_RE = re.compile(
+    r"Partgr(?:ö|oe)(?:ß|ss)e:\s*(?:max\.\s*)?[\d.,]+\s*(?:[KMGT]i?)?B\b",
+    re.IGNORECASE,
+)
 
 # Pagination classes of elements that name no page ("next", "prev", "...")
 _NOT_PAGE_NUMBERS = frozenset({"nextpostslink", "previouspostslink", "extend"})
@@ -215,10 +225,13 @@ class _DetailPageParser:
             self.download_links.append({"hoster": hoster, "link": href})
 
     def extract_size(self) -> str:
-        """Extract file size from the page text."""
+        """The release's total size ("Gesamtgröße"), else the first size
+        that is no part size."""
         if self.size:
             return self.size
-        m = _SIZE_RE.search(self._all_text)
+        m = _TOTAL_SIZE_RE.search(self._all_text) or _SIZE_RE.search(
+            _PART_SIZE_RE.sub(" ", self._all_text)
+        )
         if m:
             self.size = m.group(1).strip()
         return self.size
