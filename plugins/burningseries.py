@@ -247,8 +247,7 @@ class BurningSeriesPlugin(HttpxPluginBase):
         if html is None:
             return []
 
-        parser = _SeriesListParser()
-        parser.feed(html)
+        parser = await self._feed(_SeriesListParser(), html)
 
         # Deduplicate by slug (a series can appear in multiple genre sections)
         seen: set[str] = set()
@@ -276,8 +275,7 @@ class BurningSeriesPlugin(HttpxPluginBase):
         if html is None:
             return _SeriesDetailParser()
 
-        parser = _SeriesDetailParser()
-        parser.feed(html)
+        parser = await self._feed(_SeriesDetailParser(), html)
 
         self._log.info(
             "burningseries_detail",
