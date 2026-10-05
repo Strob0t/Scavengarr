@@ -9,13 +9,13 @@ Scrapes hdfilme.cafe (German streaming site, DLE-based CMS) with:
 - Category detection from detail page: /serien/ genre link → TV (5000)
 - Bounded concurrency for detail page scraping
 
-Domain: hdfilme.cafe (2026-09-28: hdfilme.legal → .press → .party → .bid all
-redirect here).
+Domain: hdfilme.cafe, which redirects to hdfilme.ceo since 2026-10-05
+(2026-09-28: hdfilme.legal → .press → .party → .bid redirected to .cafe).
 No authentication required.
 
-Known upstream breakage (2026-09-28): the site's own keyword search answers
-with a PHP fatal error (``engine/mods/sfilter/filter.php``); browsing a
-category (empty query) works.
+Upstream breakage 2026-09-28: the site's own keyword search answered with a
+PHP fatal error (``engine/mods/sfilter/filter.php``); on hdfilme.ceo it
+works again (2026-10-05, 25 hits for "Iron Man").
 """
 
 from __future__ import annotations
@@ -46,6 +46,8 @@ from scavengarr.infrastructure.plugins.relevance import (
 # ---------------------------------------------------------------------------
 # Configurable settings
 # ---------------------------------------------------------------------------
+# hdfilme.cafe redirects permanently to hdfilme.ceo (followed at the first
+# request, HttpxPluginBase._follow_site_move)
 _DOMAINS = ["hdfilme.cafe"]
 
 # ---------------------------------------------------------------------------

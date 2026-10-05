@@ -80,6 +80,16 @@ class TestFindPlayer:
         html = '<iframe src="https://devideosrc.co/movie/tt2395427"></iframe>'
         assert devideosrc.find_player(html) == DevideosrcPlayer("movie", "tt2395427")
 
+    def test_custom_movie_player(self) -> None:
+        """hdfilme.ceo (2026-10-05) embeds the player under /custom/, loaded
+        lazily from data-src; its classic page /movie/<imdb> still carries
+        the token."""
+        html = (
+            '<iframe id="hd-player-frame" src="about:blank" '
+            'data-src="https://devideosrc.co/custom/movie/tt1300854"></iframe>'
+        )
+        assert devideosrc.find_player(html) == DevideosrcPlayer("movie", "tt1300854")
+
     def test_serial_script_with_imdb_var(self) -> None:
         html = (
             "<script>var imdb = 'tt0903747';"

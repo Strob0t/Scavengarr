@@ -24,6 +24,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 - Every page goes through `parse_page(parser, html)` (`infrastructure/plugins/dom.py`), which parses pages from 32 KiB in a worker thread; `HttpxPluginBase._feed()` is gone, and 17 plugins (5 on Playwright) no longer parse on the event loop. `docs/features/python-plugins.md` ("Parsing Pages") has the pattern and selectolax's pitfalls.
 - The migration found the bugs fixed under "Plugin Selectors That Missed the Live Theme".
 
+### Fix: hdfilme Films Without Streams
+- hdfilme.cafe moved to hdfilme.ceo (a permanent redirect, which the plugin follows), and its film pages now embed devideosrc's newer player under `/custom/movie/<imdb>`, lazily from `data-src`. `find_player` knew only `/movie/<imdb>`, so every film page had "no player" and hdfilme gave no film streams (live smoke test, 2026-10-05). The classic `/movie/<imdb>` page still carries the token, so the IMDb id is now read from either path. Series pages still embed `/serial/`.
+- hdfilme is the first member of its mirror group (hdfilme, streamcloud, streamkiste), which a Stremio request asks alone while its breaker is closed; empty answers do not count as failures, so the group's film streams were missing altogether.
+
 ### Fix: Plugin Selectors That Missed the Live Theme
 - Found while moving the parsers to selectolax (their results stay identical otherwise). aniworld: the current theme names the plot in `<p class="seri_des" data-full-description>`, the parser read `div.seri_des` only, so every result had the short search-API description instead of the full plot.
 - streamkiste: search cards name year and genres in `span.movie-release` (the parser read `div.movie-release`), so hits had neither, and series were not told from films before their detail page; the IMDb rating sits in `span.average` inside the IMDb link (the parser read `div.average span`), so it was always empty.
