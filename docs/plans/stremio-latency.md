@@ -217,12 +217,37 @@ The harness and the 17 titles of the fourth round, after its fixes were deployed
 
 **Evaluation:** the fixes doubled the streams of a first request, left no title without a stream, cut the cached answer from 4.6 to 1.0 s and the Chromium CPU per request by 40%. A first answer is now held by the structure: the soft deadline (7 s, reached in every request) and the resolve grace (4 s). The options that follow from it: `optimization-options.md`.
 
+### Dev-server A/B round (2026-10-05, after the round-5 measures)
+
+The measures of `round5-measures.md` against the fifth round's code, side by side in the dev container (x86, 16 cores, the home connection without the VPN, so absolute times are not the Pi's): each server on 127.0.0.1 under Xvfb with a fresh cache and its commit's `data/config.yaml`. The old code is b003bd2 (plugin timeout 10 s, soft deadline 7 s, grace 4 s, every link resolved), the new one `staging` at 661104b (the fixes below came out of this round). The fifth round's harness and titles (`stremio_measure.py`, 90 s between groups; play check with `stremio_playcheck.py`'s fetches on the stored stream objects), plus the server's CPU from `/proc` (its process, and its child processes for Chromium) and the event-loop lag from `/api/v1/stats/metrics`. Run 2 is a second fresh instance an hour after run 1; kinoking, down during run 1, was back.
+
+| | Old code | `staging` run 1 | `staging` run 2 |
+|---|---|---|---|
+| Pass 1: median / max | 11.3 / 11.8 s | 6.0 / 30.0 s | 4.6 / 24.8 s |
+| Pass 1: streams; titles without; below 5 | 103; 1; 4 | 70; 0; 4 | 73; 0; 4 |
+| Pass 1: CPU of Python / Chromium (17 titles) | 13.5 / 53.6 s | 10.1 / 49.0 s | 10.9 / 46.2 s |
+| Pass 1: event-loop lag p99 / max | 6 / 11 ms | 2 / 3 ms | 2 / 3 ms |
+| Pass 2 (search cache): median / max | 4.0 / 10.0 s | 0.03 / 0.96 s | 0.03 / 0.55 s |
+| Play check of pass 1's streams | 99 of 103 | 64 of 70 | 72 of 73 |
+
+- **Answer** (measures 2 and 9): in run 2, 13 first answers went out at the target of 5 streams (2.3–19.5 s, median 4.3 s), 4 when the search was done (3.4–24.8 s). The titles with few streams (Good Bye Lenin, Breaking Bad, Dark, Haus des Geldes) got as many streams as with the old code, one more for Good Bye Lenin, but waited for the slowest plugin. 22 more titles traced on demand (17:10–17:35) show it: kinoking ran into the 30 s plugin timeout in the 8 films it searched (then its breaker skipped it; series: hits after 1–8 s in 5 of 12), kinoger answered after 17–29 s or was cut, and its streams completed the target of 4 series at 23–30 s. Cuts after half the plugin timeout open a plugin's breaker; kinoking's opened for films and series. Fewer streams per answer (70–73 against 103) are the target rule's intent.
+- **Cached answers** (measure 4): 0.03 s instead of 4.0 s. They lost a hoster in 3 of 17 titles (fixed, below); after the fix they had the 73 streams of the first answers. After the search cache's TTL, stale entries answered at once too and revalidated (median 0.03 s).
+- **Health check** (measure 1): 60 s after the start, megakino_to, movie4k and kinoking were unreachable (kinoking's site then took TLS connections but sent no HTTP answer in 15 s); all 17 searches skipped them. kinoking was found back 26 minutes later.
+- **Half-open probe, SuperVideo** (measures 3 and 5): SuperVideo's breaker opened after 5 unplayable links. After the cooldown, one request's probe ran to its end (7 s, unplayable) and reopened it, while the request's three other SuperVideo links were skipped.
+- **Filemoon**: on its own, 4 of 4 embeds resolved in 1.5–2 s, but faster hosters reach the target first: in 9 traced titles, 17 of 20 Filemoon resolutions were cut at the answer (all before 5 s, so none counted for the breaker) and 3 found a stream. When 17 cached titles were asked within seconds (pass 2, and again after the TTL), their background resolutions ran at once, and 12 and 16 Filemoon resolutions hit the 10 s timeout, which opened its breaker (the stealth browser loads 2 pages at a time). The old code's answers, which resolved every link, had 8 playing Filemoon streams.
+- **HLS proxy** (measure 6, the 1080p fix): ffmpeg (`Lavf/`) was refused the playlist of 57 of 57 HLS streams (the old code served it), a player got it with HEAD and GET for 57 of 57. CPU per relayed MB of one VOE stream (rounds of 40 segments, about 40 MB, idle-corrected): old code 34–36 ms, `staging` 39–46 ms, the same with httpx's anyio backend 47–52 ms, with 64 KiB pieces (fixed, below) 25 ms. VOE's CDN sends 4 KiB TLS records, and passing them through cost a response write each; on x86 the asyncio backend saves 14% on its own.
+- **Links** (measure 10): after a restart and 63–73 minutes, run 1's stored stream objects resolved again (67 links, `stremio_link_resolved_again`) and 64 of 70 played. 3 FireStream links whose hoster gave no video failed although their stored playlists still answered (fixed, below).
+- **Metrics and tracing**: `/metrics` answered 46 KB, 610 series, at 5.6 ms of CPU per scrape (0.01% of a core at a 60 s interval). With `telemetry.tracing_endpoint`, a local OTLP receiver got one trace per request (phases, plugin searches, resolutions; `/play` and proxy re-resolutions as traces of their own with the request id), without URLs or titles in attributes. The access log held the CDN's tokens and the client's address in proxy queries (fixed, below).
+- **Play check failures** were CDN timeouts: StreamUp's CDN took 15–40 s per segment in the dev network, and FireStream's answered some segments after more than 15 s; fetched directly moments later, both delivered.
+
+Fixes from the round, each with tests: cached answers keep a hoster's cached stream (fe58559), the HLS proxy sends 64 KiB pieces (bac6583), the access log masks query values (577e7cd), a stale link keeps its video URL when the hoster fails (930f21f).
+
 ## AIOStreams
 
 Goal was an AIOStreams test user on `aiostreams.lan` with Scavengarr as addon, measured end to end. Not done: AIOStreams validates the addon manifest when a user is created or updated, and it can reach neither the dev instance (Docker NAT on the workstation) nor `scavengarr.lan` (502, backend down). Recommended user settings, from the AIOStreams v2.35.3 source (`packages/core/src/presets/custom.ts`, `packages/core/src/db/schemas.ts`):
 
 - Scavengarr as `custom` preset with `manifestUrl: https://scavengarr.lan/api/v1/stremio/manifest.json`, `resources: ["stream"]`, `mediaTypes: ["movie", "series"]`.
-- `timeout: 17000` (ms, per addon; AIOStreams default 7000 would cut every Scavengarr answer): `stream_deadline_seconds` + 2 s headroom.
+- `timeout: 62000` (ms, per addon; AIOStreams default 7000 would cut most Scavengarr answers): `stream_deadline_seconds` (60 s since the round-5 measures) + 2 s headroom.
 - `preferredLanguages: ["German", "Multi", "Dual Audio", "English", "Unknown"]`, `sortCriteria.global`: language, resolution, quality (all `desc`).
 - Scavengarr already returns one working stream per hoster, so AIOStreams dedup and result limits need no special handling for it. Whether AIOStreams parses language and resolution from Scavengarr's stream names reliably is unverified; if not, `formatPassthrough: true` keeps Scavengarr's own labels.
 

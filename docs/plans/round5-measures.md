@@ -1,6 +1,6 @@
 # Measures after the fifth end-to-end round
 
-Status: decided 2026-10-05, in progress. Evidence: the fifth round in `stremio-latency.md`, the options in `optimization-options.md`, production logs and probes. Metrics and on-demand tracing follow these measures (`observability.md`, to be written).
+Status: implemented 2026-10-05 and checked on the dev server against the fifth round's code (`stremio-latency.md`, dev-server A/B round, which also brought four fixes); the sixth round in production is open. Evidence: the fifth round in `stremio-latency.md`, the options in `optimization-options.md`, production logs and probes. Metrics and on-demand tracing: `docs/features/observability.md`.
 
 ## Decisions (maintainer, 2026-10-05)
 
