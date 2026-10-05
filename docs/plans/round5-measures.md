@@ -23,7 +23,7 @@ Decisions 9 and 10 came the same day, after the maintainer asked for more time p
 
 Order: 3, 5, 6 (small, independent), then 4, 1, 2 with 9 (the request flow), then 10, then 7, then the metrics. Each measure is test-driven, committed on its own and documented with the code. A sixth round measures 1–6, 9 and 10 in production.
 
-Done: 3 (1b7e01f).
+Done: 3 (1b7e01f), 5.
 
 ## 1. Plugin health check
 

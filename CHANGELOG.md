@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: SuperVideo Pauses While Its CDN Refuses Players
+- SuperVideo's CDN answers a player with a "Loading..." page whose script leads to a parked ad page, and a HEAD with a redirect to an ad domain. The resolver's own HEAD check marked each link dead, which the hoster circuit breaker ignores: 13 of 13 links failed in the fifth end-to-end round, every request tried again.
+- The resolver no longer checks the URL itself. The registry's playback check reads the page, counts the stream as unplayable, and the breaker pauses SuperVideo (60 s, doubling up to 1 h) until a probe finds a playlist again.
+
 ### Fix: Half-Open Hoster Probes Report Their Outcome
 - The hoster circuit breaker lets one probe through after its cooldown. Filemoon's browser captures take longer than the resolve grace on the Raspberry Pi, so the grace cut every probe before half of `http.timeout_resolve_seconds`, the probe reported nothing, and the breaker probed again after every cooldown without doubling it: about 6 s of Chromium CPU per probe, and the cached answer that carried it waited for the grace (fifth end-to-end round, 2026-10-05).
 - The probe now runs to its end in the background when its request is cut (`HosterResolverRegistry._resolve_with`, ended by `aclose()` at shutdown): a stream closes the breaker and stays in the resolution cache for the next request; a timeout or an unplayable stream reopens it with twice the cooldown (up to 1 h).

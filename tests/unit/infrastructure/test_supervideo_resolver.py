@@ -6,11 +6,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+import respx
+import structlog
 
 from scavengarr.infrastructure.browser.cloudflare import (
     is_cloudflare_challenge,
 )
 from scavengarr.infrastructure.browser.stealth_pool import CapturedMedia
+from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
+from scavengarr.infrastructure.hoster_resolvers.registry import HosterResolverRegistry
 from scavengarr.infrastructure.hoster_resolvers.supervideo import (
     SuperVideoResolver,
     _extract_html5_video,
@@ -357,9 +361,11 @@ class TestSuperVideoResolver:
         assert result is None
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("head_status", [200, 206])
-    async def test_head_accepts_200_and_206(self, head_status: int) -> None:
-        """HEAD verification should accept both 200 and 206."""
+    async def test_leaves_the_playback_check_to_the_registry(self) -> None:
+        """No HEAD of its own: SuperVideo's CDN answers a HEAD with a redirect
+        to an ad domain and the playlist URL with a script page (2026-10-05).
+        The registry's playback check reads the body, counts the page as
+        unplayable, and the hoster breaker pauses SuperVideo."""
         html = """
         <html><script>
         sources: [{file:"https://sv1.supervideo.cc/v/abc.mp4"}]
@@ -369,62 +375,54 @@ class TestSuperVideoResolver:
         mock_resp.status_code = 200
         mock_resp.text = html
 
-        head_resp = MagicMock()
-        head_resp.status_code = head_status
-
         client = AsyncMock(spec=httpx.AsyncClient)
         client.get = AsyncMock(return_value=mock_resp)
-        client.head = AsyncMock(return_value=head_resp)
 
         resolver = SuperVideoResolver(http_client=client)
         result = await resolver.resolve("https://supervideo.cc/e/abc123def456")
 
         assert result is not None
         assert result.video_url == "https://sv1.supervideo.cc/v/abc.mp4"
+        assert result.headers == {"Referer": "https://supervideo.cc/e/abc123def456"}
+        client.head.assert_not_awaited()
 
-    @pytest.mark.asyncio
-    async def test_returns_none_when_head_verification_fails(self) -> None:
-        """Video URL extracted but HEAD returns 403 → None."""
-        html = """
-        <html><script>
-        sources: [{file:"https://sv1.supervideo.cc/v/abc.mp4"}]
-        </script></html>
-        """
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = html
 
-        head_resp = MagicMock()
-        head_resp.status_code = 403
+class TestSuperVideoCdnScriptPage:
+    """From production's VPN address the CDN (serversicuro.cc) answers the
+    playlist URL with a "Loading..." page whose script redirects to an ad
+    domain (2026-10-05): 13 of 13 links failed in the fifth round, each
+    cheaply, and the breaker never learned of it."""
 
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-        client.head = AsyncMock(return_value=head_resp)
+    _EMBED = "https://supervideo.cc/e/abc123def456"
+    _MASTER = "https://hfs326.serversicuro.cc/hls2/02/00344/abc_n/master.m3u8?t=x"
+    _SCRIPT_PAGE = (
+        "<html><head><title>Loading...</title></head><body><script "
+        "type='text/javascript'>window.location.replace('"
+        "https://hfs326.serversicuro.cc/hls2/02/00344/abc_n/master.m3u8?t=x&js=y"
+        "');</script></body></html>"
+    )
 
-        resolver = SuperVideoResolver(http_client=client)
-        result = await resolver.resolve("https://supervideo.cc/e/abc123def456")
-        assert result is None
-        client.head.assert_awaited_once()
+    @respx.mock
+    async def test_the_breaker_pauses_supervideo(self) -> None:
+        respx.get(self._EMBED).respond(
+            200, text=f'<script>sources: [{{file:"{self._MASTER}"}}]</script>'
+        )
+        respx.get(self._MASTER).respond(
+            200, text=self._SCRIPT_PAGE, headers={"Content-Type": "text/html"}
+        )
+        async with httpx.AsyncClient() as client:
+            registry = HosterResolverRegistry(
+                resolvers=[SuperVideoResolver(http_client=client)],
+                http_client=client,
+                verify_playback=True,
+                circuit_breaker=PluginCircuitBreaker(failure_threshold=1),
+            )
+            with structlog.testing.capture_logs() as logs:
+                assert await registry.resolve(self._EMBED) is None
 
-    @pytest.mark.asyncio
-    async def test_returns_none_when_head_network_error(self) -> None:
-        """Video URL extracted but HEAD network error → None."""
-        html = """
-        <html><script>
-        sources: [{file:"https://sv1.supervideo.cc/v/abc.mp4"}]
-        </script></html>
-        """
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = html
-
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-        client.head = AsyncMock(side_effect=httpx.ConnectError("timeout"))
-
-        resolver = SuperVideoResolver(http_client=client)
-        result = await resolver.resolve("https://supervideo.cc/e/abc123def456")
-        assert result is None
+        assert any(e["event"] == "hoster_resolve_unplayable" for e in logs)
+        assert registry._circuit_breaker is not None
+        assert registry._circuit_breaker.state("supervideo") == "open"
 
 
 class TestSuperVideoBrowserFallback:

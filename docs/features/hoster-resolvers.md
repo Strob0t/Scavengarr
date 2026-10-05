@@ -65,7 +65,7 @@ Video-extracting resolvers set `ResolvedStream.headers` with the headers require
 
 ### CDN verification
 
-`_verify.py` provides `verify_video_url()`: a HEAD request (8 s timeout, redirects followed) with the playback headers. Only `200`/`206` counts as reachable. It is used by the XFS video path, VOE, Streamtape, and SuperVideo, and filters out IP-locked CDN tokens (e.g. LULUVID/LULUVDOO tokens bound to Cloudflare's edge IP).
+`_verify.py` provides `verify_video_url()`: a HEAD request (8 s timeout, redirects followed) with the playback headers. Only `200`/`206` counts as reachable. It is used by the XFS video path, VOE and Streamtape, and filters out IP-locked CDN tokens (e.g. LULUVID/LULUVDOO tokens bound to Cloudflare's edge IP).
 
 ### Playback check
 
@@ -94,7 +94,7 @@ Some players create the stream URL only while they run. Filemoon's Byse player s
 
 Without a `StealthPool` (tests, `stealth_pool=None`) these paths return `None`. Captured URLs are not HEAD-verified: the browser just requested them.
 
-> **Known issue:** SuperVideo's CDN (`*.serversicuro.cc`) answers non-browser clients with a "Loading..." page whose script redirects to a tokenized URL, which in turn redirects curl/httpx to ad trackers, even with the browser's User-Agent and cookie. The resolved URL plays in a browser but not in players that do not run JavaScript.
+> **Known issue:** SuperVideo's CDN (`*.serversicuro.cc`) answers non-browser clients with a "Loading..." page whose script redirects to a tokenized URL, which in turn redirects curl/httpx to ad trackers, even with the browser's User-Agent and cookie. The resolved URL plays in a browser but not in players that do not run JavaScript. From production's VPN address none of 13 links played in the fifth end-to-end round (2026-10-05); the script's target redirects to a parked ad page even with a browser's navigation headers, and a browser capture gets the playlist URL, under which a player still gets the script page. SuperVideo therefore has no HEAD check of its own: the registry's playback check reads the page, counts it as unplayable, and the hoster breaker pauses SuperVideo (60 s, doubling up to 1 h) until a probe finds a playlist again.
 
 ---
 
