@@ -6,6 +6,13 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: Stream Links Resolve Again (Autoplay, Continue Watching)
+- Stremio plays a kept stream object later: autoplay plays the next episode's stream about an hour after it was fetched, "Continue Watching" days later. Every resolved stream now points at Scavengarr: a file at `/play/{id}` (a redirect to the current video URL), HLS at `/proxy/{id}/scavengarr.m3u8`, under which the proxy serves the current playlist.
+- A video URL older than an hour resolves again at playback (`stremio_link_resolved_again`); a playlist the CDN refuses (403, 404, 410) resolves once more past the resolver's cache. Concurrent requests for one link share one resolution.
+- Links are kept 7 days (`stremio.stream_link_ttl_seconds`, was 2 h; `data/config.yaml` too) under an id from the hoster URL, one per stream. In the link-lifetime measurement every proxied HLS link answered 404 after 2 h because of the old TTL, while the CDN streams still played after 92 minutes.
+- `/play` answers `HEAD` (streaming servers ask with HEAD first).
+- HLS streams without headers go through the proxy too (a redirect to a playlist fails on Android).
+
 ### Changed: Stremio Answers at 5 Streams, Links Resolve While Plugins Search
 - The answer goes out once `stremio.resolve_target_count` hosters (default 5) have a video, or when the search and every resolution are done, at the latest `stremio.stream_deadline_seconds` (default 60) after the request (`stremio_resolve_complete` with `reason`). The fifth end-to-end round's first answers waited for the soft deadline (7 s) and the grace (4 s): titles with many streams had 5 after about 5 s, titles with few got fewer because slow plugins were not waited for.
 - Links resolve while the plugins search: each plugin's results pass the title filter when they arrive (`SearchProgress`), each request ranks them and resolves each hoster's best link (`HosterResolution`: rank order per hoster, a better link that arrives later too, each URL once).

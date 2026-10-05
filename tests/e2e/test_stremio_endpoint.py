@@ -19,6 +19,8 @@ Endpoints covered:
 from __future__ import annotations
 
 import json
+import time
+from dataclasses import replace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -27,6 +29,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from scavengarr.application.stremio.stream_builder import HLS_MASTER
+from scavengarr.application.use_cases.stremio_links import StremioLinks
 from scavengarr.domain.entities.stremio import (
     CachedStreamLink,
     ResolvedStream,
@@ -111,6 +115,10 @@ def _make_app(
     app.state.stremio_stream_uc = stremio_stream_uc
     app.state.stream_link_repo = stream_link_repo
     app.state.hoster_resolver_registry = hoster_resolver_registry
+    if stream_link_repo is not None:
+        app.state.stremio_links = StremioLinks(
+            repo=stream_link_repo, resolver=hoster_resolver_registry or AsyncMock()
+        )
     app.state.http_client = http_client or MagicMock()
 
     return app
@@ -811,26 +819,6 @@ class TestPlayEndpoint:
         assert resp.status_code == 503
         assert "not configured" in resp.json()["error"]
 
-    def test_play_no_resolver_configured(self) -> None:
-        """When hoster_resolver_registry is None, return 503."""
-        link = CachedStreamLink(
-            stream_id="abc123",
-            hoster_url="https://voe.sx/e/abc123",
-            title="Test",
-            hoster="voe",
-        )
-
-        repo = AsyncMock()
-        repo.get = AsyncMock(return_value=link)
-
-        app = _make_app(stream_link_repo=repo, hoster_resolver_registry=None)
-        client = TestClient(app)
-
-        resp = client.get(f"{_PREFIX}/stremio/play/abc123")
-
-        assert resp.status_code == 503
-        assert "resolver" in resp.json()["error"]
-
     def test_play_cors_headers_on_redirect(self) -> None:
         link = CachedStreamLink(
             stream_id="abc123",
@@ -915,7 +903,7 @@ class TestPlayEndpoint:
         client.get(f"{_PREFIX}/stremio/play/test1")
 
         registry.resolve.assert_awaited_once_with(
-            "https://streamtape.com/v/abc", hoster="streamtape"
+            "https://streamtape.com/v/abc", "streamtape", refresh=False
         )
 
 
@@ -1570,3 +1558,110 @@ class TestProxyHlsEndpoint:
         forwarded_headers = call_args[0][2]
         assert forwarded_headers["Referer"] == "https://mysite.io/"
         assert forwarded_headers["Origin"] == "https://mysite.io"
+
+
+def _refused(url: str, status: int = 403) -> httpx.HTTPStatusError:
+    request = httpx.Request("GET", url)
+    return httpx.HTTPStatusError(
+        "refused", request=request, response=httpx.Response(status, request=request)
+    )
+
+
+class TestProxyResolvesAgain:
+    """A stream object Stremio kept (autoplay an hour later, Continue
+    Watching days later) still plays: the playlist under its fixed name is
+    the current one."""
+
+    _MASTER = f"{_PREFIX}/stremio/proxy/hls-abc/{HLS_MASTER}"
+    _PLAYLIST = b"#EXTM3U\n#EXTINF:10.0,\nseg-1.ts\n#EXT-X-ENDLIST\n"
+
+    def _app(self, link: CachedStreamLink, resolved: ResolvedStream | None):
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=link)
+        registry = AsyncMock()
+        registry.resolve = AsyncMock(return_value=resolved)
+        return _make_app(stream_link_repo=repo, hoster_resolver_registry=registry)
+
+    @patch(f"{_PROXY_MODULE}.fetch_hls_resource", new_callable=AsyncMock)
+    def test_the_fixed_name_serves_the_stored_playlist(
+        self, mock_fetch: AsyncMock
+    ) -> None:
+        link = replace(_make_hls_link(), resolved_at=time.time())
+        mock_fetch.return_value = (self._PLAYLIST, "application/vnd.apple.mpegurl")
+        app = self._app(link, None)
+
+        resp = TestClient(app).get(self._MASTER)
+
+        assert resp.status_code == 200
+        assert mock_fetch.call_args[0][1] == link.video_url
+        assert "seg-1.ts" in resp.text
+        app.state.hoster_resolver_registry.resolve.assert_not_awaited()
+
+    @patch(f"{_PROXY_MODULE}.fetch_hls_resource", new_callable=AsyncMock)
+    def test_a_stale_playlist_resolves_again(self, mock_fetch: AsyncMock) -> None:
+        link = replace(_make_hls_link(), resolved_at=time.time() - 2 * 3600)
+        new = ResolvedStream(
+            video_url="https://cdn.dropcdn.io/hls2/02/video/master.m3u8?t=new",
+            is_hls=True,
+            headers={"Referer": "https://dropload.io/"},
+        )
+        mock_fetch.return_value = (self._PLAYLIST, "application/vnd.apple.mpegurl")
+        app = self._app(link, new)
+
+        resp = TestClient(app).get(self._MASTER)
+
+        assert resp.status_code == 200
+        assert mock_fetch.call_args[0][1] == new.video_url
+        saved = app.state.stream_link_repo.save.await_args.args[0]
+        assert saved.video_url == new.video_url
+
+    @patch(f"{_PROXY_MODULE}.fetch_hls_resource", new_callable=AsyncMock)
+    def test_a_refused_playlist_resolves_again_once(
+        self, mock_fetch: AsyncMock
+    ) -> None:
+        """An expired token: 403 from the CDN, then a new resolution past the
+        resolver's cache."""
+        link = replace(_make_hls_link(), resolved_at=time.time())
+        new = ResolvedStream(
+            video_url="https://cdn.dropcdn.io/hls2/02/video/master.m3u8?t=new",
+            is_hls=True,
+        )
+        mock_fetch.side_effect = [
+            _refused(link.video_url),
+            (self._PLAYLIST, "application/vnd.apple.mpegurl"),
+        ]
+        app = self._app(link, new)
+
+        resp = TestClient(app).get(self._MASTER)
+
+        assert resp.status_code == 200
+        assert mock_fetch.call_args[0][1] == new.video_url
+        app.state.hoster_resolver_registry.resolve.assert_awaited_once_with(
+            link.hoster_url, link.hoster, refresh=True
+        )
+
+    @patch(f"{_PROXY_MODULE}.fetch_hls_resource", new_callable=AsyncMock)
+    def test_a_refused_variant_is_not_resolved_again(
+        self, mock_fetch: AsyncMock
+    ) -> None:
+        """Variants follow a playlist fetched moments before."""
+        link = replace(_make_hls_link(), resolved_at=time.time())
+        mock_fetch.side_effect = _refused(link.video_url)
+        app = self._app(link, None)
+
+        resp = TestClient(app).get(f"{_PREFIX}/stremio/proxy/hls-abc/index-v1.m3u8")
+
+        assert resp.status_code == 502
+        app.state.hoster_resolver_registry.resolve.assert_not_awaited()
+
+    @patch(f"{_PROXY_MODULE}.fetch_hls_resource", new_callable=AsyncMock)
+    def test_a_stream_the_hoster_no_longer_has_is_502(
+        self, mock_fetch: AsyncMock
+    ) -> None:
+        link = replace(_make_hls_link(), resolved_at=time.time() - 2 * 3600)
+        app = self._app(link, None)
+
+        resp = TestClient(app).get(self._MASTER)
+
+        assert resp.status_code == 502
+        mock_fetch.assert_not_awaited()

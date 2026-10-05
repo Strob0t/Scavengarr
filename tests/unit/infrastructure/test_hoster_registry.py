@@ -538,6 +538,20 @@ class TestHosterResolverRegistry:
         assert registry.cached("https://voe.sx/e/new") == (False, None)
         assert resolver.resolve.await_count == 2
 
+    async def test_refresh_resolves_past_the_cache(self) -> None:
+        """A CDN refused the cached stream: the next resolution is new."""
+        old = ResolvedStream(video_url="https://cdn.example.com/old.mp4")
+        new = ResolvedStream(video_url="https://cdn.example.com/new.mp4")
+        resolver = MagicMock()
+        resolver.name = "voe"
+        resolver.resolve = AsyncMock(side_effect=[old, new])
+        registry = HosterResolverRegistry(resolvers=[resolver])
+        await registry.resolve("https://voe.sx/e/abc")
+
+        assert await registry.resolve("https://voe.sx/e/abc", refresh=True) == new
+        assert await registry.resolve("https://voe.sx/e/abc") == new
+        assert resolver.resolve.await_count == 2
+
     async def test_an_expired_resolution_is_not_cached(self) -> None:
         resolver = MagicMock()
         resolver.name = "voe"

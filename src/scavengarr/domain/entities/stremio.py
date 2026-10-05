@@ -113,20 +113,22 @@ class TitleMatchInfo:
 
 @dataclass(frozen=True)
 class CachedStreamLink:
-    """A cached hoster URL for deferred stream resolution.
+    """A stream of an answer behind ``/play`` or the HLS proxy.
 
-    When ``is_hls`` is ``True`` and ``video_headers`` is non-empty, the
-    HLS proxy endpoint uses ``video_url`` + ``video_headers`` to fetch
-    manifests/segments on behalf of the client (applying Referer etc.).
+    The hoster URL stays so the stream can be resolved again: ``/play``
+    redirects to ``video_url`` and the HLS proxy fetches it (with
+    ``video_headers``) while it is fresh (``resolved_at``), else they
+    resolve the hoster URL again.
     """
 
     stream_id: str
     hoster_url: str
     title: str = ""
     hoster: str = ""
-    video_url: str = ""  # resolved CDN URL (for HLS proxy)
-    video_headers: str = ""  # JSON-encoded headers dict (for HLS proxy)
+    video_url: str = ""  # resolved CDN URL
+    video_headers: str = ""  # JSON-encoded headers dict for the CDN
     is_hls: bool = False  # whether the stream is HLS
+    resolved_at: float = 0.0  # time.time() of video_url's resolution; 0: none
 
 
 @dataclass(frozen=True)

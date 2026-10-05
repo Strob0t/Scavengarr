@@ -22,6 +22,7 @@ from unittest.mock import AsyncMock, MagicMock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from scavengarr.application.use_cases.stremio_links import StremioLinks
 from scavengarr.application.use_cases.stremio_stream import StremioStreamUseCase
 from scavengarr.domain.entities.stremio import (
     CachedStreamLink,
@@ -176,6 +177,7 @@ def _make_streamable_app(
     app.state.stremio_stream_uc = use_case
     app.state.stream_link_repo = stream_link_repo
     app.state.hoster_resolver_registry = None
+    app.state.stremio_links = StremioLinks(repo=stream_link_repo, resolver=AsyncMock())
 
     return app
 
@@ -352,9 +354,14 @@ class TestMovieStreamableResolution:
         assert resp.status_code == 200
         streams = resp.json()["streams"]
         assert len(streams) >= 1
+        saved = {
+            c.args[0].stream_id: c.args[0]
+            for c in app.state.stream_link_repo.save.await_args_list
+        }
         for s in streams:
             _assert_streamable(s)
-            assert ".mp4" in s["url"]
+            # /play/ redirects to the stored link's video URL
+            assert ".mp4" in saved[s["url"].rsplit("/play/", 1)[1]].video_url
 
     def test_resolve_produces_hls_urls(self) -> None:
         """All streams should have .m3u8 HLS URLs with behaviorHints."""
@@ -1269,8 +1276,7 @@ class TestFullPipelineStreamable:
         play_repo = AsyncMock()
         play_registry = AsyncMock()
         play_registry.resolve = AsyncMock(return_value=resolved)
-        app.state.stream_link_repo = play_repo
-        app.state.hoster_resolver_registry = play_registry
+        app.state.stremio_links = StremioLinks(repo=play_repo, resolver=play_registry)
 
         client = TestClient(app)
 

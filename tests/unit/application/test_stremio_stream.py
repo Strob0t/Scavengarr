@@ -6,6 +6,7 @@ import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock, MagicMock
+from urllib.parse import urlparse
 
 import pytest
 
@@ -17,6 +18,7 @@ from scavengarr.domain.entities.stremio import (
     CachedStreamLink,
     ResolvedStream,
     StreamQuality,
+    StremioStream,
     StremioStreamRequest,
     TitleMatchInfo,
 )
@@ -910,7 +912,7 @@ class TestResolverEchoFiltering:
         result = await uc.execute(_make_request(), base_url="http://localhost:8080")
 
         assert len(result) >= 1
-        assert "master.m3u8" in result[0].url
+        assert _video(uc, result[0]) == "https://cdn.voe.sx/hls/master.m3u8"
 
     async def test_mixed_streams_only_playable_kept(self) -> None:
         """Mix of echo and real resolvers → only playable streams in output."""
@@ -965,7 +967,7 @@ class TestResolverEchoFiltering:
 
         # Only the VOE stream should remain
         assert len(result) == 1
-        assert "master.m3u8" in result[0].url
+        assert _video(uc, result[0]).endswith("master.m3u8")
 
     async def test_unresolved_streams_dropped_when_resolver_configured(self) -> None:
         """Streams that fail resolution (None) are dropped to avoid 502 proxy."""
@@ -1376,7 +1378,23 @@ def _resolving_use_case(
     )
 
 
-def _video(url: str) -> ResolvedStream:
+def _stream_id(url: str) -> str:
+    path = urlparse(url).path
+    if "/play/" in path:
+        return path.rsplit("/play/", 1)[1]
+    return path.split("/proxy/", 1)[1].split("/", 1)[0]
+
+
+def _video(uc: StremioStreamUseCase, stream: StremioStream) -> str:
+    """The video URL behind *stream*: /play and the HLS proxy serve the
+    stored link's."""
+    repo = uc._stream_link_repo
+    assert isinstance(repo, AsyncMock)
+    saved = {c.args[0].stream_id: c.args[0] for c in repo.save.await_args_list}
+    return saved[_stream_id(stream.url)].video_url
+
+
+def _resolved(url: str) -> ResolvedStream:
     return ResolvedStream(
         video_url=f"https://cdn.example/{url.rsplit('/', 1)[-1]}.mp4",
         headers={"Referer": "https://voe.sx/"},
@@ -1407,29 +1425,29 @@ class TestResolvePhase:
         take the working second VOE stream with it."""
 
         async def _resolve(url: str, hoster: str = "") -> ResolvedStream | None:
-            return None if url.endswith("/best") else _video(url)
+            return None if url.endswith("/best") else _resolved(url)
 
         uc = _resolving_use_case([dict(_BEST), dict(_SECOND)], _resolve)
 
         result = await uc.execute(_make_request(), base_url="http://localhost:8080")
 
-        assert [s.url for s in result] == ["https://cdn.example/second.mp4"]
+        assert [_video(uc, s) for s in result] == ["https://cdn.example/second.mp4"]
 
     async def test_one_stream_per_hoster(self) -> None:
         async def _resolve(url: str, hoster: str = "") -> ResolvedStream:
-            return _video(url)
+            return _resolved(url)
 
         uc = _resolving_use_case([dict(_BEST), dict(_SECOND)], _resolve)
 
         result = await uc.execute(_make_request(), base_url="http://localhost:8080")
 
-        assert [s.url for s in result] == ["https://cdn.example/best.mp4"]
+        assert [_video(uc, s) for s in result] == ["https://cdn.example/best.mp4"]
 
     async def test_one_stream_per_hoster_and_language(self) -> None:
         """Dub and sub on the same hoster are different content (anime)."""
 
         async def _resolve(url: str, hoster: str = "") -> ResolvedStream:
-            return _video(url)
+            return _resolved(url)
 
         sub = {
             "url": "https://voe.sx/e/sub",
@@ -1440,7 +1458,7 @@ class TestResolvePhase:
 
         result = await uc.execute(_make_request(), base_url="http://localhost:8080")
 
-        assert [s.url for s in result] == [
+        assert [_video(uc, s) for s in result] == [
             "https://cdn.example/best.mp4",
             "https://cdn.example/sub.mp4",
         ]
@@ -1455,7 +1473,7 @@ class TestResolvePhase:
 
         async def _resolve(url: str, hoster: str = "") -> ResolvedStream:
             calls.append(url)
-            return _video(url)
+            return _resolved(url)
 
         uc = _resolving_use_case([dict(_BEST), dict(_SECOND)], _resolve)
 
@@ -1467,7 +1485,7 @@ class TestResolvePhase:
         async def _resolve(url: str, hoster: str = "") -> ResolvedStream | None:
             if "slow" in url:
                 await asyncio.sleep(10)
-            return _video(url)
+            return _resolved(url)
 
         uc = _resolving_use_case(
             [dict(_SLOW), dict(_FAST)],
@@ -1480,7 +1498,7 @@ class TestResolvePhase:
         result = await uc.execute(_make_request(), base_url="http://localhost:8080")
 
         assert loop.time() - start < 2
-        assert [s.url for s in result] == ["https://cdn.example/fast.mp4"]
+        assert [_video(uc, s) for s in result] == ["https://cdn.example/fast.mp4"]
 
     def test_answer_policy_defaults(self) -> None:
         """5 streams or everything done, at most 60 s, plugins 30 s
@@ -1497,7 +1515,7 @@ class TestResolvePhase:
         async def _resolve(url: str, hoster: str = "") -> ResolvedStream:
             if "slow" in url:
                 await asyncio.sleep(10)
-            return _video(url)
+            return _resolved(url)
 
         uc = _resolving_use_case(
             [dict(_SLOW), dict(_FAST)],
@@ -1510,7 +1528,7 @@ class TestResolvePhase:
         result = await uc.execute(_make_request(), base_url="http://localhost:8080")
 
         assert loop.time() - start < 2
-        assert [s.url for s in result] == ["https://cdn.example/fast.mp4"]
+        assert [_video(uc, s) for s in result] == ["https://cdn.example/fast.mp4"]
 
     async def test_below_the_target_the_answer_waits_for_every_resolution(
         self,
@@ -1520,13 +1538,13 @@ class TestResolvePhase:
         async def _resolve(url: str, hoster: str = "") -> ResolvedStream:
             if "slow" in url:
                 await asyncio.sleep(0.3)
-            return _video(url)
+            return _resolved(url)
 
         uc = _resolving_use_case([dict(_SLOW), dict(_FAST)], _resolve)
 
         result = await uc.execute(_make_request(), base_url="http://localhost:8080")
 
-        assert sorted(s.url for s in result) == [
+        assert sorted(_video(uc, s) for s in result) == [
             "https://cdn.example/fast.mp4",
             "https://cdn.example/slow.mp4",
         ]
@@ -1585,43 +1603,64 @@ class TestStreamLinkSaveFailures:
         assert len(result) == 1
         assert result[0].url.startswith("http://localhost:8080/api/v1/stremio/play/")
 
-    async def test_only_links_the_answer_serves_are_saved(self) -> None:
+    async def test_only_the_answered_streams_save_a_link(self) -> None:
         """Saving a link per ranked stream (73 for one film) delayed the
-        answer by 6 s; only proxied streams need theirs (/proxy/, /play/)."""
+        answer by 6 s; each answered stream needs one, behind /play/ or the
+        proxy."""
         repo = AsyncMock()
 
         async def _resolve(url: str, hoster: str = "") -> ResolvedStream | None:
-            if "voe" in url:  # HLS needing a Referer: served through the proxy
+            if "voe" in url:
                 return ResolvedStream(
                     video_url="https://cdn.voe.example/hls/master.m3u8",
                     headers={"Referer": "https://voe.sx/"},
                     is_hls=True,
                 )
-            return ResolvedStream(video_url="https://cdn.example/video.mp4")
+            return None
 
         result = await self._use_case(repo, AsyncMock(side_effect=_resolve)).execute(
             _make_request(), base_url="http://localhost:8080"
         )
 
-        assert len(result) == 2
+        assert len(result) == 1
         saved = [c.args[0].hoster_url for c in repo.save.await_args_list]
         assert saved == ["https://voe.sx/e/abc"]
 
-    async def test_direct_streams_survive_failed_saves(self) -> None:
+    async def test_a_stream_whose_link_is_not_saved_is_dropped(self) -> None:
+        """/play/ and the proxy would not find it."""
+
+        async def _save(link: CachedStreamLink) -> None:
+            if "voe" in link.hoster_url:
+                raise RuntimeError("cache down")
+
         repo = AsyncMock()
-        repo.save = AsyncMock(side_effect=RuntimeError("cache down"))
+        repo.save = AsyncMock(side_effect=_save)
 
         async def _resolve(url: str, hoster: str = "") -> ResolvedStream:
             return ResolvedStream(
                 video_url=f"{url}.mp4".replace("https://", "https://cdn.")
             )
 
-        result = await self._use_case(repo, AsyncMock(side_effect=_resolve)).execute(
-            _make_request(), base_url="http://localhost:8080"
-        )
+        uc = self._use_case(repo, AsyncMock(side_effect=_resolve))
+        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
 
-        assert len(result) == 2
-        assert all(s.url.startswith("https://cdn.") for s in result)
+        assert [_video(uc, s) for s in result] == [
+            "https://cdn.streamtape.com/v/xyz.mp4"
+        ]
+
+    async def test_a_link_keeps_its_id_in_every_answer(self) -> None:
+        """Stremio keeps the stream object (Continue Watching): its link is
+        the same one, refreshed by each answer."""
+        repo = AsyncMock()
+
+        async def _resolve(url: str, hoster: str = "") -> ResolvedStream:
+            return ResolvedStream(video_url=f"{url}.mp4")
+
+        uc = self._use_case(repo, AsyncMock(side_effect=_resolve))
+        first = await uc.execute(_make_request(), base_url="http://localhost:8080")
+        second = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        assert sorted(s.url for s in first) == sorted(s.url for s in second)
 
 
 # ---------------------------------------------------------------------------
@@ -1856,7 +1895,7 @@ class _Resolutions:
         dead: tuple[str, ...] = (),
         delay: float = 0.0,
     ) -> None:
-        self.store: dict[str, ResolvedStream | None] = {u: _video(u) for u in alive}
+        self.store: dict[str, ResolvedStream | None] = {u: _resolved(u) for u in alive}
         self.store.update(dict.fromkeys(dead))
         self.delay = delay
         self.calls: list[str] = []
@@ -1871,7 +1910,7 @@ class _Resolutions:
         except asyncio.CancelledError:
             self.cancelled.set()
             raise
-        self.store[url] = _video(url)
+        self.store[url] = _resolved(url)
         return self.store[url]
 
     def cached(self, url: str) -> tuple[bool, ResolvedStream | None]:
@@ -1939,7 +1978,7 @@ class TestCachedAnswers:
         streams = await uc.execute(_make_request(), base_url="http://localhost:8080")
 
         assert time.monotonic() - started < 0.3
-        assert [s.url for s in streams] == ["https://cdn.example/best.mp4"]
+        assert [_video(uc, s) for s in streams] == ["https://cdn.example/best.mp4"]
         await _eventually(lambda: _DOOD in resolutions.store)
         assert resolutions.calls == [_DOOD]
 
@@ -1954,7 +1993,7 @@ class TestCachedAnswers:
 
         streams = await uc.execute(_make_request(), base_url="http://localhost:8080")
 
-        assert [s.url for s in streams] == ["https://cdn.example/second.mp4"]
+        assert [_video(uc, s) for s in streams] == ["https://cdn.example/second.mp4"]
         assert resolutions.calls == []
 
     async def test_without_a_cached_stream_the_answer_waits_as_before(self) -> None:
@@ -1963,7 +2002,7 @@ class TestCachedAnswers:
 
         streams = await uc.execute(_make_request(), base_url="http://localhost:8080")
 
-        assert [s.url for s in streams] == ["https://cdn.example/new.mp4"]
+        assert [_video(uc, s) for s in streams] == ["https://cdn.example/new.mp4"]
         assert resolutions.calls == [_DOOD]
 
     async def test_a_new_search_waits_for_its_links(self) -> None:
@@ -1973,7 +2012,7 @@ class TestCachedAnswers:
 
         streams = await uc.execute(_make_request(), base_url="http://localhost:8080")
 
-        assert sorted(s.url for s in streams) == [
+        assert sorted(_video(uc, s) for s in streams) == [
             "https://cdn.example/best.mp4",
             "https://cdn.example/new.mp4",
         ]
@@ -2047,7 +2086,7 @@ class TestAnswerPolicy:
         streams = await uc.execute(_make_request(), base_url="http://localhost:8080")
 
         assert time.monotonic() - started < 0.4
-        assert [s.url for s in streams] == ["https://cdn.example/fast.mp4"]
+        assert [_video(uc, s) for s in streams] == ["https://cdn.example/fast.mp4"]
         # The slow plugin goes on and its results reach the cache
         await _eventually(lambda: len(_links(cache)) == 2)
 
@@ -2073,7 +2112,7 @@ class TestAnswerPolicy:
         assert not slow_done.is_set()
         streams = await request
 
-        assert sorted(s.url for s in streams) == [
+        assert sorted(_video(uc, s) for s in streams) == [
             "https://cdn.example/fast.mp4",
             "https://cdn.example/slow.mp4",
         ]
@@ -2087,7 +2126,7 @@ class TestAnswerPolicy:
 
         streams = await uc.execute(_make_request(), base_url="http://localhost:8080")
 
-        assert sorted(s.url for s in streams) == [
+        assert sorted(_video(uc, s) for s in streams) == [
             "https://cdn.example/1.mp4",
             "https://cdn.example/2.mp4",
         ]
@@ -2109,7 +2148,7 @@ class TestAnswerPolicy:
         streams = await uc.execute(_make_request(), base_url="http://localhost:8080")
 
         assert 0.25 < time.monotonic() - started < 1.5
-        assert [s.url for s in streams] == ["https://cdn.example/fast.mp4"]
+        assert [_video(uc, s) for s in streams] == ["https://cdn.example/fast.mp4"]
         await uc.aclose()
 
     async def test_requests_on_one_search_both_answer_at_the_target(self) -> None:
@@ -2125,7 +2164,7 @@ class TestAnswerPolicy:
         )
 
         assert time.monotonic() - started < 0.4
-        assert [s.url for s in first] == ["https://cdn.example/fast.mp4"]
-        assert [s.url for s in second] == ["https://cdn.example/fast.mp4"]
+        assert [_video(uc, s) for s in first] == ["https://cdn.example/fast.mp4"]
+        assert [_video(uc, s) for s in second] == ["https://cdn.example/fast.mp4"]
         assert fast.isolated_search.await_count == 1
         await uc.aclose()

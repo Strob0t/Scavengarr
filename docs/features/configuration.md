@@ -359,7 +359,7 @@ Controls the Stremio addon behavior: stream ranking, plugin concurrency, title m
 | `stremio.title_extra_words_penalty` | float | `0.35` | Score penalty when the result adds words to the reference title ("Dark Matter" for "Dark"); such a result needs a matching year to pass |
 | `stremio.title_year_tolerance_movie` | int | `1` | Allowed year difference for movies (±N) |
 | `stremio.title_year_tolerance_series` | int | `3` | Allowed year difference for series (±N) |
-| `stremio.stream_link_ttl_seconds` | int | `7200` | TTL for cached stream links (2h) |
+| `stremio.stream_link_ttl_seconds` | int | `604800` | How long the links behind `/play` and the HLS proxy are kept (7 days): Stremio plays kept stream objects later (autoplay, Continue Watching), stale video URLs resolve again |
 | `stremio.probe_concurrency` | int | `10` | Max parallel hoster resolutions (auto-tuned at startup by default) |
 | `stremio.max_probe_count` | int | `50` | Max streams to resolve (top-ranked first) |
 | `stremio.resolve_target_count` | int | `5` | The answer goes out once this many hosters have a video, also while plugins search (0 = wait until the search and every resolution are done, or the deadline) |

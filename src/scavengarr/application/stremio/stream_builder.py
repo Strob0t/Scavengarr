@@ -6,10 +6,11 @@ behaviorHints, cache link construction and proxy URL building.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import time
 from dataclasses import replace
 from typing import Any
-from urllib.parse import urlparse
 
 from scavengarr.domain.entities.stremio import (
     CachedStreamLink,
@@ -20,6 +21,11 @@ from scavengarr.domain.entities.stremio import (
 )
 
 _ADDON_NAME = "Scavengarr"
+
+# The proxy path of an HLS stream's playlist: the proxy serves the current
+# playlist under it, whatever the CDN names it (a new resolution may change
+# the name and its tokens)
+HLS_MASTER = "scavengarr.m3u8"
 
 _QUALITY_LABELS: dict[StreamQuality, str] = {
     StreamQuality.UHD_4K: "4K",
@@ -192,27 +198,38 @@ def build_behavior_hints(
     }
 
 
+def stream_link_id(hoster_url: str) -> str:
+    """The stored link's id of a hoster URL: one link per stream, the same in
+    every answer, so a stream object Stremio kept stays valid."""
+    return hashlib.sha256(hoster_url.encode()).hexdigest()[:32]
+
+
 def build_cache_link(
     stream_id: str,
     ranked: RankedStream,
     resolved: ResolvedStream | None,
 ) -> CachedStreamLink:
-    """The link ``/play/`` and ``/proxy/`` look up, with HLS proxy metadata."""
-    if resolved is not None and resolved.is_hls and resolved.headers:
+    """The link ``/play/`` and ``/proxy/`` look up.
+
+    It keeps the hoster URL for a resolution later and the resolved video
+    with the time of its resolution.
+    """
+    if resolved is None:
         return CachedStreamLink(
             stream_id=stream_id,
             hoster_url=ranked.url,
             title=ranked.title,
             hoster=ranked.hoster,
-            video_url=resolved.video_url,
-            video_headers=json.dumps(resolved.headers),
-            is_hls=True,
         )
     return CachedStreamLink(
         stream_id=stream_id,
         hoster_url=ranked.url,
         title=ranked.title,
         hoster=ranked.hoster,
+        video_url=resolved.video_url,
+        video_headers=json.dumps(resolved.headers) if resolved.headers else "",
+        is_hls=resolved.is_hls,
+        resolved_at=time.time(),
     )
 
 
@@ -229,24 +246,24 @@ def build_stream_from_resolved(
     Returns ``None`` when the resolver only echoed back the original URL
     (embed/download page — Stremio cannot play HTML pages). The playback
     hints are added to the stream's own hints (``bingeGroup``, ``filename``).
+
+    Every stream points at Scavengarr, so it can resolve the hoster URL
+    again when Stremio plays the kept stream object later (autoplay of the
+    next episode, "Continue Watching"): HLS through the proxy (a redirect
+    to a playlist fails on Android, stremio-bugs #1574; the proxy also
+    sends the CDN's headers on every sub-request), a file through
+    ``/play/`` (a redirect to the current video URL).
     """
     if not is_direct_video_url(resolved, original_url):
         return None
 
-    if resolved.is_hls and resolved.headers:
-        # HLS stream requiring headers on sub-requests — route through
-        # our proxy so manifests/segments get the correct Referer etc.
-        # Preserve the original filename and CDN auth query params.
-        parsed_video = urlparse(resolved.video_url)
-        manifest_name = parsed_video.path.rsplit("/", 1)[-1] or "master.m3u8"
-        qs = f"?{parsed_video.query}" if parsed_video.query else ""
-        proxy_url = f"{base_url}/api/v1/stremio/proxy/{sid}/{manifest_name}{qs}"
-        playback: dict[str, Any] = {"notWebReady": True}
-        url = proxy_url
+    playback: dict[str, Any]
+    if resolved.is_hls:
+        url = f"{base_url}/api/v1/stremio/proxy/{sid}/{HLS_MASTER}"
+        playback = {"notWebReady": True}
     else:
-        # Direct video URL (MP4 or HLS without special headers)
+        url = f"{base_url}/api/v1/stremio/play/{sid}"
         playback = build_behavior_hints(resolved, user_agent=user_agent)
-        url = resolved.video_url
     return replace(
         stream, url=url, behavior_hints={**(stream.behavior_hints or {}), **playback}
     )

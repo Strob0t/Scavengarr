@@ -48,7 +48,7 @@ IMDb/TMDB ID → title lookup per plugin language → search cache, or plugin se
 1. **Ranking** — sort by language, quality, and hoster bonus.
 1. **Resolution** — starts while the plugins still search: each batch of results is ranked with the ones before, and the request's `HosterResolution` resolves, among the top `max_probe_count` streams, each hoster's best link via `HosterResolverRegistry.resolve` (bounded by `probe_concurrency`): the streams of one hoster and language in rank order, the next one only after the better one failed, none while one runs or after one resolved; a better-ranked link that arrives later resolves too, and each URL resolves once. With `verify_streams` every resolved URL must also pass a playback check. **The answer** goes out once `resolve_target_count` (5) hosters have a video, or when the search is done and no resolution runs or is due, at the latest `stream_deadline_seconds` (60 s) after the request started (`stremio_resolve_complete` with `reason` target, done or deadline). Unfinished resolutions are cancelled, also when the request itself is cancelled (shutdown). The first answers of the fifth end-to-end round waited for a 7 s soft deadline and a 4 s grace although titles with many streams had 5 after about 5 s, and titles with few streams got fewer because slow plugins (kinoking 8.5 s, the s.to gate 20 s) were not waited for. Without a resolver (or without a base URL) the answer waits for the search, at most until `stream_deadline_seconds`. Results from the search cache answer at once when the resolver's cache holds a stream for one of their hosters (`stremio_resolve_from_cache`): each hoster contributes its best link with a cached resolution, past links cached as dead, and the answer does not wait for the links without one. Those resolve in the background, one run per title at a time, without the target, until `stream_deadline_seconds` (or shutdown), and fill the resolver's cache for the next request. Without a cached stream the results resolve as above.
 1. **Dedup** — this yields the best *working* stream per hoster and language (`hoster_key()`: dub and sub on one hoster are different content, e.g. anime), so a hoster whose best-ranked link is dead still contributes its next one. Resolving every candidate at once instead opened dozens of connections to distinct CDNs within a second, which the home router blocked like a port scan (the whole machine lost network for ~30–60 s).
-1. **Caching + formatting** — only streams served through the HLS proxy or `/play/` get a `CachedStreamLink` in the stream link cache, since only those endpoints look it up (saved in parallel; a failed save is logged as `stremio_stream_link_save_failed` and drops those streams; direct video URLs need no link). Saving a link for every ranked stream cost seconds per answer. Resolved streams are returned with a direct URL or an HLS proxy URL. Streams that are not resolved (failed, only echoed the embed URL, beyond `max_probe_count`, or cancelled by the early stop) are dropped.
+1. **Caching + formatting** — every answered stream points at Scavengarr and gets a `CachedStreamLink` (hoster URL, resolved video URL and headers, `resolved_at`), so the stream can resolve again when Stremio plays the kept stream object later: autoplay plays the next episode's stream about an hour after it was fetched, "Continue Watching" days later. HLS goes through the HLS proxy, a file through `/play/` (both below). The link's id comes from the hoster URL (`stream_link_id`): one link per stream, refreshed by every answer that has it, kept for `stream_link_ttl_seconds` (7 days). Links are saved in parallel; a failed save is logged as `stremio_stream_link_save_failed` and drops those streams. Saving a link for every ranked stream (73 for one film) cost seconds per answer; one per answered stream does not. Streams that are not resolved (failed, only echoed the embed URL, beyond `max_probe_count`, or cancelled at the answer) are dropped.
 
 ---
 
@@ -109,13 +109,13 @@ Stremio's binge watching (Settings → Player → auto-play next episode) reques
 
 ### Stream behaviorHints (proxyHeaders)
 
-Direct (non-proxied) resolved streams include `behaviorHints` with a browser `User-Agent` merged with the resolver's headers:
+A resolved file points at `/play/{stream_id}` (a redirect to its video URL) with `behaviorHints` holding a browser `User-Agent` merged with the resolver's headers:
 
 ```json
 {
   "name": "Scavengarr\n1080p",
   "description": "Movie.Title.2021.German.DL.1080p.WEB.x264\nGerman Dub · 1.4 GB\nVOE · kinoger",
-  "url": "https://cdn.hoster.com/video.mp4",
+  "url": "https://scavengarr.example/api/v1/stremio/play/3f2a…",
   "behaviorHints": {
     "bingeGroup": "scavengarr|de",
     "filename": "Movie.Title.2021.German.DL.1080p.WEB.x264",
@@ -131,7 +131,7 @@ Direct (non-proxied) resolved streams include `behaviorHints` with a browser `Us
 ```
 
 - `notWebReady: true` routes playback through Stremio's local streaming server.
-- `proxyHeaders.request` tells Stremio which HTTP headers to send when fetching the video.
+- `proxyHeaders.request` tells Stremio which HTTP headers to send when fetching the video. Stremio's streaming server follows `/play/`'s redirect with them (checked 2026-10-05 against the maintainer's server: the redirected request still carried the `Referer`).
 - Most hoster CDNs reject requests without a valid `Referer` header.
 
 **Platform support:**
@@ -143,7 +143,7 @@ Direct (non-proxied) resolved streams include `behaviorHints` with a browser `Us
 | iOS | Partial (KSPlayer engine only) |
 | Web | With a streaming server: plays through the server's `/proxy` (checked 2026-10-03 with DoodStream, Vinovo, FireStream); without one not supported (CORS) |
 
-> **Known issue (IP-bound streams):** DoodStream and Vinovo bind a stream URL to the IP that resolved it; another IP gets `200 error_wrong_ip` (DoodStream's CDN) or 403 (Vinovo). A direct stream therefore plays only when the player (Stremio's streaming server) reaches the internet through the same IP as Scavengarr: with Scavengarr behind a VPN and the player at home it fails. Streams through the HLS proxy are fetched by Scavengarr and are not affected. `scripts/stremio_playcheck.py` shows it from the player's machine.
+> **Known issue (IP-bound streams):** DoodStream and Vinovo bind a stream URL to the IP that resolved it; another IP gets `200 error_wrong_ip` (DoodStream's CDN) or 403 (Vinovo). A file stream (a redirect from `/play/`) therefore plays only when the player (Stremio's streaming server) reaches the internet through the same IP as Scavengarr: with Scavengarr behind a VPN and the player at home it fails. Streams through the HLS proxy are fetched by Scavengarr and are not affected. `scripts/stremio_playcheck.py` shows it from the player's machine.
 
 > **Self-hosted streaming server (e.g. tsaridas/stremio-docker behind a reverse proxy):**
 > - **Reachability.** Stremio Web hands every stream to the server's `/hlsv2/probe` before it plays: a `proxyHeaders` stream as the server's own public URL (`https://stremio.example/proxy/…`), an HLS-proxy stream as Scavengarr's URL. The server must resolve and reach both names. In a VPN container's network (gluetun) its DNS knows no LAN names and its firewall blocks the LAN, so every probe answers 500 (map the names with `extra_hosts` on the VPN container and allow the target with `FIREWALL_OUTBOUND_SUBNETS`). Streams the browser can play directly still play then, through a `HEAD` check of their content type; transcoding (MKV, HEVC, AC3) does not.
@@ -160,29 +160,31 @@ HEAD /api/v1/stremio/proxy/{stream_id}/{path:path}
 
 Server-side proxy for HLS streams whose CDN requires headers (e.g. `Referer`) on **all** sub-requests — the master manifest, variant playlists, and segments. Stremio's `proxyHeaders` only applies to the initial manifest fetch, so sub-requests would otherwise get `403` from CDNs such as Dropload's `dropcdn.io`.
 
-**When is it used?** For every resolved stream with `is_hls` and non-empty `headers`. This covers all XFS video hosters (they always set `Referer`), StreamUp, Vidsonic, and any other resolver that returns HLS with headers. Such streams get `behaviorHints: {"notWebReady": true}` only. MP4 streams and HLS streams without headers use the direct URL with `proxyHeaders`.
+**When is it used?** For every resolved HLS stream (`is_hls`), with or without headers: a redirect to an HLS playlist fails on Android (stremio-bugs #1574), and the stream must be able to resolve again later. Streams with headers need it on every sub-request anyway (all XFS video hosters set `Referer`, StreamUp, Vidsonic). Such streams get `behaviorHints: {"notWebReady": true}` only. A stream's URL is `/proxy/{stream_id}/scavengarr.m3u8` (`HLS_MASTER`): under this fixed name the proxy serves the current playlist, whatever the CDN calls it.
 
 **How it works:**
 
-1. Look up the `CachedStreamLink` (`video_url`, `video_headers`, `is_hls`); `404` if missing, `400` if it is not an HLS proxy stream.
-1. Build the CDN URL from the CDN base of `video_url` + `path`, using the request query string or, if empty, the original `video_url` query (auth tokens). A `path` that would leave the stream's CDN (absolute URL, `//host`, other scheme) is answered with `400`: the path comes from the client, and without this check the endpoint was an open proxy into the server's network (SSRF).
+1. Look up the `CachedStreamLink` (`video_url`, `video_headers`, `is_hls`); `404` if missing, `400` if it is not an HLS proxy stream. For the playlist (`scavengarr.m3u8`) the link is the current one: a video URL resolved more than an hour ago resolves again (`StremioLinks`, shared by concurrent requests, saved), and when the CDN refuses the playlist with 403, 404 or 410 (an expired token) the hoster URL resolves once more past the resolver's cache and the playlist is fetched again (`502` when the hoster has no video anymore). Variants and segments follow a playlist fetched moments before and keep the link.
+1. The playlist is `video_url` itself; other paths are the CDN base of `video_url` + `path`, with the request query string or, if empty, the original `video_url` query (auth tokens). A `path` that would leave the stream's CDN (absolute URL, `//host`, other scheme) is answered with `400`: the path comes from the client, and without this check the endpoint was an open proxy into the server's network (SSRF).
 1. Paths not ending in `.m3u8` are streamed from the CDN as segments (`StreamingResponse`); a failed segment request closes its connection before the error is returned, so CDN errors cannot drain the shared HTTP connection pool. The CDN's chunks pass through as they arrive; only an encoded body (`Content-Encoding`, which the proxy does not forward) is decoded. TLS runs in the event loop (the shared client's `AsyncioNetworkBackend`): on the Raspberry Pi 4 a relayed MB costs 75–88 ms of CPU, against 103–112 ms with httpx's default anyio backend.
 1. `.m3u8` manifests are fetched with the stored headers (cached for 60 s, at most 512 manifests: when full, expired ones go first, then the oldest), and the CDN's URIs are rewritten to proxy URLs, in URI lines and in the `URI="…"` attributes of tags (audio renditions, keys, init segments). Relative URIs are left as-is because they resolve against the proxy URL. A URI from the CDN's root (`/secure/98/<id>/video.m3u8`, Vidsonic's variants), a protocol-relative one or an absolute URL of the CDN outside the stream's directory becomes `<proxy>/<stream-id>//<path>`; the proxy joins that absolute path with the CDN origin. URIs of other origins stay direct, since the proxy fetches from the stream's own CDN only.
 1. CDN fetches share a global semaphore (50); CDN errors return `502`.
 1. `HEAD` answers like `GET`; the server drops the body. When its streaming server cannot probe a stream, Stremio Web reads the content type with `HEAD` (stremio-video's `getContentType`) before it plays. A `405` without CORS headers ended these streams in error 83, "Video is not supported".
 
-### Play (Proxy Fallback)
+### Play
 
 ```http
-GET /api/v1/stremio/play/{stream_id}
+GET  /api/v1/stremio/play/{stream_id}
+HEAD /api/v1/stremio/play/{stream_id}
 ```
 
-Fallback endpoint for cached stream links (see the known issue above for when its URLs are emitted):
+The URL of every resolved file stream (and of all streams without a resolver):
 
-1. Look up `stream_id` in the stream link cache (`404` if expired).
-1. Resolve via `HosterResolverRegistry` using the cached hoster URL and hoster hint.
-1. Return a **302 redirect** to the resolved `.mp4`/`.m3u8` URL.
-1. Return **502** if resolution fails or the resolver only echoed the embed page (never redirects to embed pages).
+1. Look up `stream_id` in the stream link cache (`404` if missing; links are kept `stream_link_ttl_seconds`, 7 days).
+1. Take the stored video URL while it is fresh (resolved less than an hour ago: every working link of the measurement still played after 92 minutes), else resolve the hoster URL again (`StremioLinks`: concurrent requests for one link share one resolution, one tap on Android sent 11; the new video URL is saved).
+1. Return a **302 redirect** to the video URL.
+1. Return **502** if the hoster gives no video or only echoes the embed page (never redirects to embed pages).
+1. `HEAD` answers like `GET`: a streaming server asks with `HEAD` first.
 
 ### Health
 
@@ -330,7 +332,7 @@ Stremio settings live in `StremioConfig` (YAML section `stremio:`). See [Configu
 | `probe_concurrency` | 10 | Parallel resolutions |
 | `resolve_target_count` | 5 | The answer goes out once this many hosters have a video, also while plugins search (`0` = wait until everything is done or the deadline) |
 | `verify_streams` | `true` | Playback check of every resolved URL: first bytes with the playback headers; error status, HTML or a non-playlist HLS answer drops the stream (result cached like a failed resolution) |
-| `stream_link_ttl_seconds` | 7200 | TTL of cached stream links (`streamlink:{stream_id}`) |
+| `stream_link_ttl_seconds` | 604800 | How long the links behind `/play/` and the HLS proxy are kept (`streamlink:{stream_id}`, 7 days); stale ones resolve again |
 | `probe_stealth_timeout_seconds` | 15 | Page timeout of the `StealthPool` (browser-based resolvers, Cloudflare fallback) |
 
 Resolution is the liveness check: a stream is only returned when its hoster link resolves (and passes the playback check).
@@ -353,7 +355,7 @@ Defaults, with production's values (`data/config.yaml`) where they differ:
 | Keep-alive (fixed) | 60 s, 20 connections | Idle connections of the shared client | Saves TLS handshakes between requests |
 | Circuit breakers (fixed) | 5 failures, then 60 s doubling to 1 h | A plugin per category, a hoster resolver | Skipped while open; one half-open probe |
 | `stremio.plugin_health_interval_seconds` | 1800 s; unreachable ones every 5 min, the first check 60 s after the start | The plugin site checks | Unreachable plugins are skipped |
-| `stremio.stream_link_ttl_seconds` | 7200 s | Stored links of `/play` and the HLS proxy | Older links answer 404 |
+| `stremio.stream_link_ttl_seconds` | 7 days | Stored links of `/play` and the HLS proxy | Older links answer 404; a video URL older than 1 h (fixed) resolves again at playback |
 | HLS proxy (fixed) | manifests cached 60 s, CDN fetch 15 s | Manifest and segment requests | |
 | SSRF guard (fixed) | DNS answers cached 60 s | Checked addresses | |
 

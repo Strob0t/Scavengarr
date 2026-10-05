@@ -23,6 +23,7 @@ def _serialize_link(link: CachedStreamLink) -> str:
             "video_url": link.video_url,
             "video_headers": link.video_headers,
             "is_hls": link.is_hls,
+            "resolved_at": link.resolved_at,
         }
     )
 
@@ -38,13 +39,14 @@ def _deserialize_link(data: str) -> CachedStreamLink:
         video_url=d.get("video_url", ""),
         video_headers=d.get("video_headers", ""),
         is_hls=d.get("is_hls", False),
+        resolved_at=d.get("resolved_at", 0.0),
     )
 
 
 class CacheStreamLinkRepository:
     """Stores cached stream links via CachePort (Redis or Diskcache)."""
 
-    def __init__(self, cache: CachePort, ttl_seconds: int = 7200) -> None:
+    def __init__(self, cache: CachePort, ttl_seconds: int = 7 * 24 * 3600) -> None:
         self.cache = cache
         self.ttl = ttl_seconds
 

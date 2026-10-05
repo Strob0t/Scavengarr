@@ -23,7 +23,7 @@ Decisions 9 and 10 came the same day, after the maintainer asked for more time p
 
 Order: 3, 5, 6 (small, independent), then 4, 1, 2 with 9 (the request flow), then 10, then 7, then the metrics. Each measure is test-driven, committed on its own and documented with the code. A sixth round measures 1–6, 9 and 10 in production.
 
-Done: 3 (1b7e01f), 5 (7ec1a5c), 6 (a3b7f50), 4 (20d27c5), 1 (a953721), 2 and 9.
+Done: 3 (1b7e01f), 5 (7ec1a5c), 6 (a3b7f50), 4 (20d27c5), 1 (a953721), 2 and 9 (71602d4), 10.
 
 ## 1. Plugin health check
 
@@ -152,6 +152,15 @@ Both change when the answer goes out, so they share one design (refined while im
 - Cost: one redirect per MP4 start; a re-resolution (1–5 s, browser hosters longer) when a link is stale at playback.
 
 **Tests.** `/play` re-resolves a stale link and redirects to the new URL and leaves a fresh one alone; the proxy re-resolves when the CDN refuses the master playlist; concurrent requests share one re-resolution; links outlive the old 2 h.
+
+**Measurement (2026-10-05).** 18 links of 7 titles from one round, checked like a player every 30 minutes: 16 played at 1, 31, 62 and 92 minutes (the other 2, FireStream's HLS, never did: their variant playlist was no playlist). At 123 minutes the 11 proxied HLS links answered 404 from Scavengarr itself (the stored link's 2 h TTL), the 5 direct DoodStream files still played. The CDNs' own limit lies beyond the measured time; the freshness bound is 1 h, the resolver cache's lifetime.
+
+**Implementation.**
+- `StremioLinks` (application) owns the stored links: `current(link)` gives a link whose video URL is less than an hour old as it is and resolves the others again (saved, `stremio_link_resolved_again`); `refreshed(link)` resolves past the resolver's cache (`HosterResolverRegistry.resolve(refresh=True)`). Concurrent requests for one link share one resolution (a shielded task; shutdown cancels it).
+- Every resolved stream points at Scavengarr: a file at `/play/{id}` (a 302 to the current video URL, with the `proxyHeaders` as before), HLS at `/proxy/{id}/scavengarr.m3u8`, under which the proxy serves the current playlist. A probe against the maintainer's Stremio streaming server showed that its `/proxy` follows a redirect and keeps the `Referer`.
+- `/play` answers `HEAD` (it answered 405 before, which ended proxied streams in error 83 when the HLS proxy had the same gap).
+- The link id is the hoster URL's hash (`stream_link_id`), so one link per stream is refreshed by every answer; `stream_link_ttl_seconds` 7 days (was 2 h).
+- Cost: all HLS goes through the proxy now, also streams without headers (FireStream's, 2 of 18 in the measurement), at 75–88 ms of CPU per MB on the Pi.
 
 ## 8. VOE
 

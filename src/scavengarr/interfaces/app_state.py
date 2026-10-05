@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     import asyncio
 
     from scavengarr.application.use_cases.stremio_catalog import StremioCatalogUseCase
+    from scavengarr.application.use_cases.stremio_links import StremioLinks
     from scavengarr.application.use_cases.stremio_stream import StremioStreamUseCase
     from scavengarr.domain.ports import (
         CachePort,
@@ -73,6 +74,8 @@ class AppState(State):
     tmdb_client: TmdbClientPort | None
     stremio_stream_uc: StremioStreamUseCase | None
     stremio_catalog_uc: StremioCatalogUseCase | None
+    # The stored links behind /play and the HLS proxy
+    stremio_links: StremioLinks
 
     # Global concurrency pool (fair-share httpx + PW slots)
     concurrency_pool: ConcurrencyPool | None

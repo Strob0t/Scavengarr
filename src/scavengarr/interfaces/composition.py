@@ -16,6 +16,7 @@ from fastapi import FastAPI
 
 from scavengarr.application.factories import CrawlJobFactory
 from scavengarr.application.use_cases.stremio_catalog import StremioCatalogUseCase
+from scavengarr.application.use_cases.stremio_links import StremioLinks
 from scavengarr.application.use_cases.stremio_stream import StremioStreamUseCase
 from scavengarr.domain.entities.crawljob import Priority
 from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort
@@ -583,6 +584,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         "stream_link_repo_initialized",
         ttl_seconds=config.stremio.stream_link_ttl_seconds,
     )
+    # /play and the HLS proxy resolve a stale or refused link again
+    state.stremio_links = StremioLinks(
+        repo=state.stream_link_repo, resolver=state.hoster_resolver_registry
+    )
 
     # 11) Plugin scoring (optional — background health + search probes)
     state.plugin_score_store = None
@@ -668,9 +673,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Drain in-flight requests before tearing down resources
         await state.graceful_shutdown.wait_for_drain(timeout=10.0)
 
-        # Background searches (cache refreshes, late plugins) and half-open
-        # hoster probes use the browser, HTTP client and cache closed below
+        # Background searches and resolutions, links resolved again and
+        # half-open hoster probes use the browser, HTTP client and cache
+        # closed below
         await state.stremio_stream_uc.aclose()
+        await state.stremio_links.aclose()
         await state.hoster_resolver_registry.aclose()
 
         if state._scoring_task is not None:

@@ -73,12 +73,14 @@ class TestCacheStreamLinkRepository:
         result = await repo.get("corrupt")
         assert result is None
 
-    async def test_default_ttl_is_7200(self, mock_cache: AsyncMock) -> None:
+    async def test_default_ttl_is_a_week(self, mock_cache: AsyncMock) -> None:
+        """Links resolve again when stale, so Continue Watching days later
+        still plays."""
         link = _make_link()
         repo = CacheStreamLinkRepository(cache=mock_cache)
         await repo.save(link)
         call_kwargs = mock_cache.set.call_args[1]
-        assert call_kwargs["ttl"] == 7200
+        assert call_kwargs["ttl"] == 7 * 24 * 3600
 
     async def test_save_includes_hls_proxy_fields(self, mock_cache: AsyncMock) -> None:
         link = CachedStreamLink(
@@ -110,6 +112,7 @@ class TestCacheStreamLinkRepository:
             video_url="https://cdn.dropcdn.io/hls2/master.m3u8",
             video_headers='{"Referer": "https://dropload.io/"}',
             is_hls=True,
+            resolved_at=1791200000.5,
         )
         serialized = _serialize_link(link)
         mock_cache.get = AsyncMock(return_value=serialized)
@@ -120,6 +123,7 @@ class TestCacheStreamLinkRepository:
         assert result.video_url == "https://cdn.dropcdn.io/hls2/master.m3u8"
         assert result.video_headers == '{"Referer": "https://dropload.io/"}'
         assert result.is_hls is True
+        assert result.resolved_at == 1791200000.5
 
     async def test_backward_compat_missing_hls_fields(
         self, mock_cache: AsyncMock
@@ -141,3 +145,4 @@ class TestCacheStreamLinkRepository:
         assert result.video_url == ""
         assert result.video_headers == ""
         assert result.is_hls is False
+        assert result.resolved_at == 0.0

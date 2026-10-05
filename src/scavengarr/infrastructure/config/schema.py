@@ -322,8 +322,13 @@ class StremioConfig(BaseModel):
     )
 
     stream_link_ttl_seconds: int = Field(
-        default=7200,
-        description="TTL for cached stream links (seconds). Default 2h.",
+        default=7 * 24 * 3600,
+        description=(
+            "How long the links behind /play and the HLS proxy are kept "
+            "(seconds, default 7 days): Stremio plays a kept stream object "
+            "later (autoplay, Continue Watching), and a link whose video URL "
+            "is stale resolves again."
+        ),
     )
 
     verify_streams: bool = Field(

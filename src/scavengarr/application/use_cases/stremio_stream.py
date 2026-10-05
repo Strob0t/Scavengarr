@@ -16,7 +16,6 @@ from contextvars import ContextVar
 from dataclasses import replace
 from functools import partial
 from typing import Any, Protocol
-from uuid import uuid4
 
 import structlog
 
@@ -48,6 +47,7 @@ from scavengarr.application.stremio.stream_builder import (
     format_stream,
     hoster_key,
     is_direct_video_url,
+    stream_link_id,
 )
 from scavengarr.domain.entities.stremio import (
     CachedStreamLink,
@@ -562,7 +562,7 @@ class StremioStreamUseCase:
         skipped_unresolved = 0
         has_resolver = bool(self._resolve_fn)
         for i, stream in enumerate(streams):
-            sid = uuid4().hex
+            sid = stream_link_id(ranked[i].url)
             resolved = resolved_map.get(i)
             if resolved is not None:
                 built = build_stream_from_resolved(

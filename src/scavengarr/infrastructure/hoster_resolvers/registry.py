@@ -189,10 +189,13 @@ class HosterResolverRegistry:
             return False, None
         return True, cached.value
 
-    async def resolve(self, url: str, hoster: str = "") -> ResolvedStream | None:
+    async def resolve(
+        self, url: str, hoster: str = "", *, refresh: bool = False
+    ) -> ResolvedStream | None:
         """Resolve a hoster embed URL to a playable video URL.
 
-        1. Check result cache for previously resolved URL; probe a streaming
+        1. Check result cache for previously resolved URL (not with
+           *refresh*: the CDN refused the cached stream); probe a streaming
            playlist URL (``.m3u8``, ``.mpd``) directly.
         2. Try the specific hoster resolver (URL domain takes priority over hint).
         3. If URL domain has no resolver, follow HTTP redirects and retry.
@@ -210,7 +213,7 @@ class HosterResolverRegistry:
             self._evict_expired()
 
         # 0. Check result cache
-        cached = self._result_cache.get(url)
+        cached = None if refresh else self._result_cache.get(url)
         if cached is not None and not cached.is_expired:
             log.debug("hoster_resolve_cache_hit", url=url)
             return cached.value

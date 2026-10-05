@@ -135,7 +135,9 @@ stremio:
   title_year_tolerance_series: 3
 
   # Stream link caching
-  stream_link_ttl_seconds: 7200 # 2 hours
+  # Links behind /play and the HLS proxy: Stremio plays kept stream
+  # objects later (autoplay, Continue Watching); stale ones resolve again
+  stream_link_ttl_seconds: 604800 # 7 days
 
   # Hoster resolution at /stream time
   probe_concurrency: 20 # parallel resolutions (auto-tuned when auto_tune_all)

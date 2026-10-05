@@ -5,10 +5,13 @@ from __future__ import annotations
 import pytest
 
 from scavengarr.application.stremio.stream_builder import (
+    HLS_MASTER,
+    build_cache_link,
     build_stream_from_resolved,
     deduplicate_by_hoster,
     format_stream,
     is_direct_video_url,
+    stream_link_id,
 )
 from scavengarr.domain.entities.stremio import (
     RankedStream,
@@ -382,97 +385,59 @@ class TestBuildStreamFromResolved:
     _SID = "abc123"
     _UA = DEFAULT_USER_AGENT
 
-    def test_hls_with_headers_builds_proxy_url(self) -> None:
-        resolved = ResolvedStream(
-            video_url="https://cdn.dropcdn.io/hls2/video/master.m3u8?t=abc&expires=123",
-            is_hls=True,
-            headers={"Referer": "https://dropload.io/"},
-        )
+    def _build(self, resolved: ResolvedStream) -> StremioStream:
         result = build_stream_from_resolved(
             self._STREAM,
             resolved,
-            "https://dropload.io/e/xyz",
+            "https://example.com/e/abc",
             self._SID,
             self._BASE_URL,
             self._UA,
         )
         assert result is not None
+        return result
+
+    def test_hls_goes_through_the_proxy(self) -> None:
+        """Its playlist name and tokens stay in the stored link: the proxy
+        maps the fixed name to the current playlist, which a resolution
+        later may change."""
+        result = self._build(
+            ResolvedStream(
+                video_url="https://cdn.dropcdn.io/hls2/video/master.m3u8?t=abc",
+                is_hls=True,
+                headers={"Referer": "https://dropload.io/"},
+            )
+        )
         assert result.url == (
-            f"{self._BASE_URL}/api/v1/stremio/proxy/{self._SID}"
-            "/master.m3u8?t=abc&expires=123"
+            f"{self._BASE_URL}/api/v1/stremio/proxy/{self._SID}/{HLS_MASTER}"
         )
         assert result.behavior_hints == {
             "bingeGroup": "scavengarr|de",
             "notWebReady": True,
         }
 
-    def test_hls_with_headers_preserves_custom_filename(self) -> None:
-        resolved = ResolvedStream(
-            video_url="https://cdn.example.com/hls/index-v1-a1.m3u8?token=xyz",
-            is_hls=True,
-            headers={"Referer": "https://example.com/"},
+    def test_hls_without_headers_goes_through_the_proxy_too(self) -> None:
+        """A redirect to an HLS playlist fails on Android (stremio-bugs
+        #1574): HLS stays a playlist Scavengarr serves."""
+        result = self._build(
+            ResolvedStream(
+                video_url="https://cdn.example.com/video/master.m3u8", is_hls=True
+            )
         )
-        result = build_stream_from_resolved(
-            self._STREAM,
-            resolved,
-            "https://example.com/e/abc",
-            self._SID,
-            self._BASE_URL,
-            self._UA,
-        )
-        assert result is not None
-        assert "/index-v1-a1.m3u8?token=xyz" in result.url
+        assert result.url.endswith(f"/proxy/{self._SID}/{HLS_MASTER}")
+        assert "proxyHeaders" not in result.behavior_hints
 
-    def test_hls_with_headers_no_query_string(self) -> None:
-        resolved = ResolvedStream(
-            video_url="https://cdn.example.com/hls/master.m3u8",
-            is_hls=True,
-            headers={"Referer": "https://example.com/"},
+    def test_a_file_goes_through_play(self) -> None:
+        """/play redirects to the current video URL; Stremio's streaming
+        server follows the redirect with the proxyHeaders (checked
+        2026-10-05)."""
+        result = self._build(
+            ResolvedStream(
+                video_url="https://delivery.voe.sx/video.mp4",
+                headers={"Referer": "https://voe.sx/"},
+            )
         )
-        result = build_stream_from_resolved(
-            self._STREAM,
-            resolved,
-            "https://example.com/e/abc",
-            self._SID,
-            self._BASE_URL,
-            self._UA,
-        )
-        assert result is not None
-        assert result.url.endswith(f"/proxy/{self._SID}/master.m3u8")
-        assert "?" not in result.url
-
-    def test_hls_without_headers_direct_url(self) -> None:
-        resolved = ResolvedStream(
-            video_url="https://cdn.example.com/video/master.m3u8",
-            is_hls=True,
-        )
-        result = build_stream_from_resolved(
-            self._STREAM,
-            resolved,
-            "https://example.com/e/abc",
-            self._SID,
-            self._BASE_URL,
-            self._UA,
-        )
-        assert result is not None
-        assert result.url == "https://cdn.example.com/video/master.m3u8"
-        assert "proxyHeaders" in result.behavior_hints
-
-    def test_direct_mp4_builds_direct_url(self) -> None:
-        resolved = ResolvedStream(
-            video_url="https://delivery.voe.sx/video.mp4",
-            headers={"Referer": "https://voe.sx/"},
-        )
-        result = build_stream_from_resolved(
-            self._STREAM,
-            resolved,
-            "https://voe.sx/e/abc",
-            self._SID,
-            self._BASE_URL,
-            self._UA,
-        )
-        assert result is not None
-        assert result.url == "https://delivery.voe.sx/video.mp4"
+        assert result.url == f"{self._BASE_URL}/api/v1/stremio/play/{self._SID}"
         assert (
             result.behavior_hints["proxyHeaders"]["request"]["Referer"]
             == "https://voe.sx/"
@@ -507,3 +472,38 @@ class TestBuildStreamFromResolved:
         assert result is not None
         assert result.name == self._STREAM.name
         assert result.description == self._STREAM.description
+
+
+class TestStreamLinks:
+    def test_the_id_follows_the_hoster_url(self) -> None:
+        """One stored link per stream, the same in every answer."""
+        assert stream_link_id("https://voe.sx/e/a") == stream_link_id(
+            "https://voe.sx/e/a"
+        )
+        assert stream_link_id("https://voe.sx/e/a") != stream_link_id(
+            "https://voe.sx/e/b"
+        )
+        assert len(stream_link_id("https://voe.sx/e/a")) == 32
+
+    def test_a_resolved_stream_is_stored_with_its_video(self) -> None:
+        ranked = RankedStream(url="https://voe.sx/e/a", hoster="voe", title="Iron Man")
+        resolved = ResolvedStream(
+            video_url="https://cdn.example/a.mp4",
+            headers={"Referer": "https://voe.sx/"},
+        )
+
+        link = build_cache_link("sid", ranked, resolved)
+
+        assert link.hoster_url == "https://voe.sx/e/a"
+        assert link.video_url == "https://cdn.example/a.mp4"
+        assert link.video_headers == '{"Referer": "https://voe.sx/"}'
+        assert link.is_hls is False
+        assert link.resolved_at > 0
+
+    def test_without_a_resolution_only_the_hoster_url(self) -> None:
+        ranked = RankedStream(url="https://voe.sx/e/a", hoster="voe")
+
+        link = build_cache_link("sid", ranked, None)
+
+        assert link.video_url == ""
+        assert link.resolved_at == 0.0

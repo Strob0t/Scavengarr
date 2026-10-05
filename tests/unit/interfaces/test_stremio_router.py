@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import time
 from unittest.mock import AsyncMock, MagicMock
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from scavengarr.application.use_cases.stremio_links import StremioLinks
 from scavengarr.domain.entities.stremio import (
     CachedStreamLink,
     ResolvedStream,
@@ -40,6 +42,9 @@ def _make_app(
     app.state.stremio_catalog_uc = stremio_catalog_uc
     if stream_link_repo is not None:
         app.state.stream_link_repo = stream_link_repo
+        app.state.stremio_links = StremioLinks(
+            repo=stream_link_repo, resolver=hoster_resolver_registry or AsyncMock()
+        )
     if hoster_resolver_registry is not None:
         app.state.hoster_resolver_registry = hoster_resolver_registry
 
@@ -482,7 +487,58 @@ class TestPlayEndpoint:
 
         assert resp.status_code == 302
         assert resp.headers["location"] == "https://delivery.voe.sx/video/abc123.mp4"
-        registry.resolve.assert_called_once_with("https://voe.sx/e/test", hoster="voe")
+        registry.resolve.assert_called_once_with(
+            "https://voe.sx/e/test", "voe", refresh=False
+        )
+
+    def test_head_redirects_too(self) -> None:
+        """A streaming server asks with HEAD first; a 405 ended streams in
+        error 83 before."""
+        link = CachedStreamLink(
+            stream_id="abc123",
+            hoster_url="https://voe.sx/e/test",
+            hoster="voe",
+            video_url="https://delivery.voe.sx/video/abc123.mp4",
+            resolved_at=time.time(),
+        )
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=link)
+        registry = AsyncMock()
+
+        app = _make_app(stream_link_repo=repo, hoster_resolver_registry=registry)
+        client = TestClient(app, follow_redirects=False)
+
+        resp = client.head("/api/v1/stremio/play/abc123")
+
+        assert resp.status_code == 302
+        assert resp.headers["location"] == "https://delivery.voe.sx/video/abc123.mp4"
+        registry.resolve.assert_not_awaited()
+
+    def test_a_stale_link_redirects_to_a_new_resolution(self) -> None:
+        """Autoplay plays the next episode an hour after Stremio fetched
+        it, Continue Watching days later."""
+        link = CachedStreamLink(
+            stream_id="abc123",
+            hoster_url="https://voe.sx/e/test",
+            hoster="voe",
+            video_url="https://delivery.voe.sx/old.mp4",
+            resolved_at=time.time() - 2 * 3600,
+        )
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=link)
+        registry = AsyncMock()
+        registry.resolve = AsyncMock(
+            return_value=ResolvedStream(video_url="https://delivery.voe.sx/new.mp4")
+        )
+
+        app = _make_app(stream_link_repo=repo, hoster_resolver_registry=registry)
+        client = TestClient(app, follow_redirects=False)
+
+        resp = client.get("/api/v1/stremio/play/abc123")
+
+        assert resp.headers["location"] == "https://delivery.voe.sx/new.mp4"
+        saved = repo.save.await_args.args[0]
+        assert saved.video_url == "https://delivery.voe.sx/new.mp4"
 
     def test_returns_502_when_resolution_fails(self) -> None:
         link = CachedStreamLink(
@@ -532,24 +588,6 @@ class TestPlayEndpoint:
 
         assert resp.status_code == 503
         assert "not configured" in resp.json()["error"]
-
-    def test_returns_503_when_resolver_not_configured(self) -> None:
-        link = CachedStreamLink(
-            stream_id="abc123",
-            hoster_url="https://voe.sx/e/test",
-            title="Iron Man",
-            hoster="voe",
-        )
-        repo = AsyncMock()
-        repo.get = AsyncMock(return_value=link)
-        # No hoster_resolver_registry set
-        app = _make_app(stream_link_repo=repo)
-        client = TestClient(app)
-
-        resp = client.get("/api/v1/stremio/play/abc123")
-
-        assert resp.status_code == 503
-        assert "resolver not configured" in resp.json()["error"]
 
     def test_cors_headers_on_play(self) -> None:
         repo = AsyncMock()
