@@ -138,7 +138,7 @@ class _SearchResultParser:
 
     def _add_card(self, card: LexborNode) -> None:
         title = url = ""
-        for link in card.css("div.movie-title a, span.movie-title a"):
+        for link in card.css(":is(div, span).movie-title a"):
             href = link.attributes.get("href") or ""
             if href:
                 url = urljoin(self._base_url, href)

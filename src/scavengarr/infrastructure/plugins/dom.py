@@ -2,6 +2,10 @@
 
 ``LexborNode.css_matches()`` tests a node's whole subtree, not the node:
 ancestor checks walk ``ancestors()`` and test each node themselves.
+A group selector returns a node once per part it matches (``a, a.x``
+gives ``<a class="x">`` twice): parts that can match one node go into
+``:is()`` (``a:is(.x, [href])``). ``LexborNode.__eq__`` compares the
+nodes' HTML, not their identity: compare ``mem_id``.
 """
 
 from __future__ import annotations

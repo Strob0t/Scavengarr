@@ -136,7 +136,7 @@ class _SearchResultParser:
     def feed(self, html: str) -> None:
         title = url = ""
         tree = LexborHTMLParser(html)
-        for block in tree.css("div.titlecontrol, div.general_box"):
+        for block in tree.css("div:is(.titlecontrol, .general_box)"):
             if "titlecontrol" in classes(block):
                 for link in block.css("div.title a"):
                     href = link.attributes.get("href") or ""

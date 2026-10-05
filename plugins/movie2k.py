@@ -175,7 +175,7 @@ class _BrowseResultParser:
             text = meta.text()
             genres = [
                 genre
-                for link in meta.css("a[href*='/movies/'], a[href*='/tv/']")
+                for link in meta.css("a:is([href*='/movies/'], [href*='/tv/'])")
                 if (genre := link.text().strip())
             ]
 
