@@ -237,6 +237,19 @@ class TestDetailPageParser:
 
         assert parser.title == "Batman Begins"
 
+    def test_year_of_the_title_not_of_related_entries(self, kinox_mod):
+        """Related entries below the film carry Year spans too; the page's last
+        one gave the film another year."""
+        related = (
+            '<div class="Grahpics"><h1><a href="/Stream/Batman_Forever.html">'
+            'Batman Forever</a></h1><span class="Year">(1995)</span></div>\n'
+        )
+        parser = kinox_mod._DetailPageParser()
+        parser.feed(DETAIL_MOVIE_HTML + related)
+
+        assert parser.title == "Batman Begins"
+        assert parser.year == "2005"
+
     def test_empty_page(self, kinox_mod):
         parser = kinox_mod._DetailPageParser()
         parser.feed("")

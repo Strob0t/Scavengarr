@@ -138,9 +138,9 @@ class _DetailPageParser:
     - Hosters from ``<ul id="HosterList"><li id="Hoster_N">``
     - Series detection via ``<select id="SeasonSelection">``
 
-    The year is the last one in the page's Year spans (related entries have
-    them too). The title is the first h1 with text outside its Year span
-    that ends after a year: the "Navigation" h1 before it ends before one.
+    The title and year come from the first h1 with text outside its Year
+    span and a year in it: the "Navigation" h1 before it has none, and the
+    related entries further down carry Year spans of their own.
     """
 
     def __init__(self) -> None:
@@ -161,14 +161,13 @@ class _DetailPageParser:
             self.is_series = True
 
     def _read_title(self, tree: LexborHTMLParser) -> None:
-        for node in tree.css("h1, span.Year"):
-            if node.tag == "span":
-                self.year = _year(node) or self.year
-            # The h1's own Year spans come after it here but end before it
-            elif not self.title and (
-                self.year or any(_year(span) for span in node.css("span.Year"))
-            ):
-                self.title = _title_text(node).strip()
+        for heading in tree.css("h1"):
+            title = _title_text(heading).strip()
+            years = [year for span in heading.css("span.Year") if (year := _year(span))]
+            if title and years:
+                self.title = title
+                self.year = years[-1]
+                return
 
 
 class KinoxPlugin(HttpxPluginBase):
