@@ -24,6 +24,7 @@ from scavengarr.infrastructure.plugins.categories import (
     category_matches,
     served_category,
 )
+from scavengarr.infrastructure.plugins.dom import classes
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.relevance import (
     SINGLE_TITLE_HITS,
@@ -151,13 +152,9 @@ class _DetailPageParser:
             hoster = "".join(
                 p.text()
                 for p in item.css("p")
-                if "hostName" in _classes(p) or not _classes(p)
+                if "hostName" in classes(p) or not classes(p)
             ).strip()
             self.links.append({"hoster": hoster or "unknown", "link": link})
-
-
-def _classes(node: LexborNode) -> list[str]:
-    return (node.attributes.get("class") or "").split()
 
 
 def _player_link(button: LexborNode) -> str:
