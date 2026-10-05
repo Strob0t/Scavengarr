@@ -11,6 +11,7 @@ import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
 from scavengarr.domain.ports.hoster_resolver import HosterResolverPort
+from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.hoster_resolvers._verify import check_playable
 
@@ -26,6 +27,9 @@ _EVICT_INTERVAL = 1000
 
 # Maximum number of entries in each cache (result + redirect)
 _MAX_CACHE_SIZE = 10_000
+
+# Telemetry name of content-type probes (URLs without a hoster resolver)
+_DIRECT = "direct"
 
 # Streaming playlists, which plugins sometimes hand out directly. Not file
 # suffixes: hoster pages end in the file name (streamtape /v/<id>/x.mp4)
@@ -55,12 +59,14 @@ def extract_domain(url: str) -> str:
 
 
 class _CacheEntry[T]:
-    """Time-bounded cache entry (resolver results, redirect targets)."""
+    """Time-bounded cache entry (resolver results, redirect targets); a
+    result keeps the name of the resolver that produced it."""
 
-    __slots__ = ("value", "expires_at")
+    __slots__ = ("expires_at", "resolver", "value")
 
-    def __init__(self, value: T, ttl: int) -> None:
+    def __init__(self, value: T, ttl: int, resolver: str = "") -> None:
         self.value = value
+        self.resolver = resolver
         self.expires_at = time.monotonic() + ttl
 
     @property
@@ -75,7 +81,8 @@ class HosterResolverRegistry:
     Caches resolution outcomes and redirect mappings in-memory. With a
     *circuit_breaker*, a resolver whose resolutions keep running into the
     timeout or giving unplayable streams is skipped for a while (keyed by
-    resolver name, so a hoster's mirror domains share it).
+    resolver name, so a hoster's mirror domains share it). Every resolution
+    is recorded in *telemetry* by resolver name (``direct`` for a probe).
     """
 
     def __init__(
@@ -85,6 +92,7 @@ class HosterResolverRegistry:
         resolve_timeout: float = 15.0,
         verify_playback: bool = False,
         circuit_breaker: PluginCircuitBreaker | None = None,
+        telemetry: TelemetryPort = NO_TELEMETRY,
     ) -> None:
         self._resolvers: dict[str, HosterResolverPort] = {}
         self._domain_map: dict[str, HosterResolverPort] = {}
@@ -92,6 +100,7 @@ class HosterResolverRegistry:
         self._http_client = http_client
         self._resolve_timeout = resolve_timeout
         self._circuit_breaker = circuit_breaker
+        self._telemetry = telemetry
         # Resolver results must also pass check_playable (needs http_client)
         self._verify_playback = verify_playback and http_client is not None
         self._result_cache: dict[str, _CacheEntry[ResolvedStream | None]] = {}
@@ -216,6 +225,7 @@ class HosterResolverRegistry:
         cached = None if refresh else self._result_cache.get(url)
         if cached is not None and not cached.is_expired:
             log.debug("hoster_resolve_cache_hit", url=url)
+            self._telemetry.count("hoster_resolve", "cached", resolver=cached.resolver)
             return cached.value
 
         # URL domain is authoritative; fall back to plugin-provided hint
@@ -225,9 +235,7 @@ class HosterResolverRegistry:
         # own HLS playlists on moflix-stream.day, and that domain's resolver
         # (VidHide) expects an embed page and failed on every one
         if _is_playlist_url(url):
-            result = await self._probe_content_type(url, hoster_name)
-            self._cache_result(url, result)
-            return result
+            return await self._probe(url, hoster_name)
 
         # 1. Try specific resolver for URL host or domain (claimed host, name
         #    match, then domain alias)
@@ -265,18 +273,26 @@ class HosterResolverRegistry:
                 return await self._resolve_with(resolver, hoster, url, url)
 
         # 4. Fallback: content-type probing
-        result = await self._probe_content_type(url, hoster_name)
-        self._cache_result(url, result)
+        return await self._probe(url, hoster_name)
+
+    async def _probe(self, url: str, hoster_name: str) -> ResolvedStream | None:
+        """Content-type probe of a URL without a resolver (``direct``), cached."""
+        with self._telemetry.stage("hoster_resolve", resolver=_DIRECT) as stage:
+            result = await self._probe_content_type(url, hoster_name)
+            stage.outcome = "dead" if result is None else "stream"
+        self._cache_result(url, result, _DIRECT)
         return result
 
-    def _cache_result(self, url: str, result: ResolvedStream | None) -> None:
+    def _cache_result(
+        self, url: str, result: ResolvedStream | None, resolver: str
+    ) -> None:
         """Cache a resolution result with appropriate TTL.
 
         When the cache exceeds ``_MAX_CACHE_SIZE``, the oldest entries
         (by insertion order) are evicted to make room.
         """
         ttl = _CACHE_TTL_ALIVE if result is not None else _CACHE_TTL_DEAD
-        self._result_cache[url] = _CacheEntry(result, ttl)
+        self._result_cache[url] = _CacheEntry(result, ttl, resolver)
         self._enforce_max_size(self._result_cache)
 
     def _evict_expired(self) -> None:
@@ -308,11 +324,12 @@ class HosterResolverRegistry:
         hoster_name: str,
         url: str,
         result: ResolvedStream | None,
-    ) -> tuple[ResolvedStream | None, bool]:
-        """Classify a resolver's answer: dead link, unplayable or a stream."""
+    ) -> tuple[str, ResolvedStream | None]:
+        """Classify a resolver's answer: ``dead`` link, ``unplayable`` or a
+        ``stream``; the stream only for the last."""
         if result is None:
             log.warning("hoster_resolve_failed", hoster=hoster_name, url=url)
-            return None, True
+            return "dead", None
         if (
             self._verify_playback
             and self._http_client is not None
@@ -320,10 +337,10 @@ class HosterResolverRegistry:
         ):
             log.warning("hoster_resolve_unplayable", hoster=hoster_name, url=url)
             self._record(resolver, failed=True)
-            return None, True
+            return "unplayable", None
         log.info("hoster_resolve_success", hoster=hoster_name, is_hls=result.is_hls)
         self._record(resolver, failed=False)
-        return result, True
+        return "stream", result
 
     def _record(self, resolver: HosterResolverPort, *, failed: bool) -> None:
         """Report a resolution's outcome to the circuit breaker."""
@@ -354,6 +371,9 @@ class HosterResolverRegistry:
         breaker = self._circuit_breaker
         if breaker is not None and not breaker.allow(resolver.name):
             log.info("hoster_resolve_circuit_open", hoster=resolver.name, url=url)
+            self._telemetry.count(
+                "hoster_resolve", "breaker_open", resolver=resolver.name
+            )
             return None
         attempt = self._attempt(resolver, hoster_name, url, cache_key)
         if breaker is None or breaker.state(resolver.name) != "half_open":
@@ -373,7 +393,7 @@ class HosterResolverRegistry:
         """One resolution of *url*; its outcome is cached under *cache_key*."""
         result, cacheable = await self._try_resolver(resolver, hoster_name, url)
         if cacheable:
-            self._cache_result(cache_key, result)
+            self._cache_result(cache_key, result, resolver.name)
         return result
 
     async def aclose(self) -> None:
@@ -401,35 +421,43 @@ class HosterResolverRegistry:
         counts nor resets it: it says nothing about the hoster.
         """
         started = time.monotonic()
-        try:
-            async with asyncio.timeout(self._resolve_timeout):
-                result = await resolver.resolve(url)
-            return await self._judge(resolver, hoster_name, url, result)
-        except (TimeoutError, httpx.TimeoutException):
-            log.warning("hoster_resolve_timeout", hoster=hoster_name, url=url)
-            self._record(resolver, failed=True)
-            return None, False
-        except asyncio.CancelledError:
-            if time.monotonic() - started >= self._resolve_timeout / 2:
+        with self._telemetry.stage("hoster_resolve", resolver=resolver.name) as stage:
+            try:
+                async with asyncio.timeout(self._resolve_timeout):
+                    result = await resolver.resolve(url)
+                stage.outcome, stream = await self._judge(
+                    resolver, hoster_name, url, result
+                )
+                return stream, True
+            except (TimeoutError, httpx.TimeoutException):
+                log.warning("hoster_resolve_timeout", hoster=hoster_name, url=url)
                 self._record(resolver, failed=True)
-            raise
-        except httpx.TransportError as exc:
-            log.warning(
-                "hoster_resolve_network_error",
-                hoster=hoster_name,
-                url=url,
-                error=str(exc),
-            )
-            return None, False
-        except httpx.HTTPError as exc:
-            log.warning(
-                "hoster_resolve_http_error",
-                hoster=hoster_name,
-                url=url,
-                error=str(exc),
-            )
-        except Exception:
-            log.exception("hoster_resolve_error", hoster=hoster_name, url=url)
+                stage.outcome = "timeout"
+                return None, False
+            except asyncio.CancelledError:
+                if time.monotonic() - started >= self._resolve_timeout / 2:
+                    self._record(resolver, failed=True)
+                raise
+            except httpx.TransportError as exc:
+                log.warning(
+                    "hoster_resolve_network_error",
+                    hoster=hoster_name,
+                    url=url,
+                    error=str(exc),
+                )
+                stage.outcome = "network_error"
+                return None, False
+            except httpx.HTTPError as exc:
+                log.warning(
+                    "hoster_resolve_http_error",
+                    hoster=hoster_name,
+                    url=url,
+                    error=str(exc),
+                )
+                stage.outcome = "http_error"
+            except Exception:
+                log.exception("hoster_resolve_error", hoster=hoster_name, url=url)
+                stage.outcome = "error"
         return None, True
 
     async def _follow_redirects(self, url: str) -> str | None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncGenerator
 from typing import Any, cast
 from urllib.parse import urlparse
 
@@ -21,6 +22,7 @@ from scavengarr.domain.entities.stremio import (
     StremioStream,
     StremioStreamRequest,
 )
+from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
 from scavengarr.infrastructure.stremio.hls_proxy import (
     build_cdn_url,
     cdn_base_from_url,
@@ -432,8 +434,54 @@ async def proxy_hls(
 
     The playlist is not served to a streaming server's converter unless
     ``stremio.allow_hls_transcoding`` is on (``_converter_refused``).
+
+    Each request is recorded by kind with its answer's status, until the
+    answer starts; segments with the bytes sent.
     """
     state = cast(AppState, request.app.state)
+    telemetry: TelemetryPort = getattr(state, "telemetry", NO_TELEMETRY)
+    kind = _hls_kind(path)
+    with telemetry.stage("hls_proxy", kind=kind) as stage:
+        response = await _proxy_hls(state, telemetry, stream_id, path, request)
+        stage.outcome = str(response.status_code)
+    if (
+        request.method == "GET"
+        and response.status_code == 200
+        and not isinstance(response, StreamingResponse)
+    ):
+        telemetry.record("hls_proxy_bytes", len(response.body), kind=kind)
+    return response
+
+
+def _hls_kind(path: str) -> str:
+    """The stream's own playlist (``master``), another ``playlist`` or a
+    ``segment``."""
+    if path == HLS_MASTER:
+        return "master"
+    return "playlist" if path.endswith(".m3u8") else "segment"
+
+
+async def _counted(
+    chunks: AsyncGenerator[bytes], telemetry: TelemetryPort
+) -> AsyncGenerator[bytes]:
+    """A segment's chunks; the bytes sent are recorded when it ends."""
+    sent = 0
+    try:
+        async for chunk in chunks:
+            sent += len(chunk)
+            yield chunk
+    finally:
+        await chunks.aclose()
+        telemetry.record("hls_proxy_bytes", sent, kind="segment")
+
+
+async def _proxy_hls(
+    state: AppState,
+    telemetry: TelemetryPort,
+    stream_id: str,
+    path: str,
+    request: Request,
+) -> Response | JSONResponse:
     links = getattr(state, "stremio_links", None)
     if links is None:
         return _error_json(503, "stream links not configured")
@@ -467,7 +515,7 @@ async def proxy_hls(
         except httpx.HTTPError as exc:
             return _cdn_error_response(stream_id, target_url, exc)
         return StreamingResponse(
-            content=chunk_iter,
+            content=_counted(chunk_iter, telemetry),
             media_type=content_type,
             headers=_CORS_HEADERS,
         )

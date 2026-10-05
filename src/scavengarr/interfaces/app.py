@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Awaitable, Callable
 
@@ -12,6 +13,7 @@ from starlette.responses import Response
 
 from scavengarr.infrastructure.config import AppConfig
 from scavengarr.infrastructure.graceful_shutdown import GracefulShutdown
+from scavengarr.infrastructure.telemetry import CONTENT_TYPE, Telemetry
 from scavengarr.infrastructure.version import APP_VERSION
 from scavengarr.interfaces.api.middleware import RateLimitMiddleware
 from scavengarr.interfaces.app_state import AppState
@@ -63,6 +65,14 @@ def create_app(config: AppConfig) -> FastAPI:
             "plugins": len(plugins.list_names()) if plugins else 0,
             "hosters": registry.supported_hosters if registry else [],
         }
+
+    @app.get("/metrics", include_in_schema=False)
+    async def metrics() -> Response:
+        """Prometheus metrics, rendered in a worker thread (a few ms of CPU
+        that would otherwise hold the event loop)."""
+        telemetry: Telemetry = app.state.telemetry
+        body = await asyncio.to_thread(telemetry.render)
+        return Response(body, media_type=CONTENT_TYPE)
 
     @app.get("/api/v1/readyz")
     async def readyz() -> Response:

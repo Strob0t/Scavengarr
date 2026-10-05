@@ -74,17 +74,18 @@ async def plugin_scores(
 async def metrics(request: Request) -> JSONResponse:
     """Return in-memory runtime metrics.
 
-    Includes plugin search stats, circuit breaker state,
-    concurrency pool utilisation, and graceful-shutdown status.
+    Includes plugin search stats (from the Prometheus metrics, ``/metrics``),
+    circuit breaker state, concurrency pool utilisation, and graceful-shutdown
+    status.
     """
     state = cast(AppState, request.app.state)
 
     data: dict[str, Any] = {}
 
-    # Plugin metrics
-    m = getattr(state, "metrics", None)
-    if m is not None:
-        data.update(m.snapshot())
+    # Plugin statistics and event-loop lag
+    telemetry = getattr(state, "telemetry", None)
+    if telemetry is not None:
+        data.update(telemetry.snapshot())
 
     # Circuit breaker snapshot
     cb = getattr(state, "circuit_breaker", None)

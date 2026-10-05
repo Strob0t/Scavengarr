@@ -20,6 +20,7 @@ from scavengarr.domain.plugins.base import PluginProtocol, SearchResult
 from scavengarr.domain.ports.concurrency import ConcurrencyBudgetPort
 from scavengarr.domain.ports.plugin_registry import PluginRegistryPort
 from scavengarr.domain.ports.search_engine import SearchEnginePort
+from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
 
 log = structlog.get_logger(__name__)
 
@@ -49,19 +50,6 @@ def _breaker_key(name: str, category: int | None) -> str:
     return name if category is None else f"{name}:{category}"
 
 
-class PluginSearchMetrics(Protocol):
-    """Records per-plugin search metrics."""
-
-    def record_plugin_search(
-        self,
-        name: str,
-        duration_ns: int,
-        result_count: int,
-        *,
-        success: bool,
-    ) -> None: ...
-
-
 EpisodeFilterFn = Callable[
     [list[SearchResult], int | None, int | None], list[SearchResult]
 ]
@@ -86,7 +74,7 @@ class PluginSearchRunner:
         max_results_var: ContextVar[int | None],
         plugin_timeout: float,
         max_results_per_plugin: int,
-        metrics: PluginSearchMetrics | None = None,
+        telemetry: TelemetryPort = NO_TELEMETRY,
         circuit_breaker: CircuitBreaker | None = None,
         browser_warmup_fn: BrowserWarmupFn | None = None,
         mirror_groups: Mapping[str, str] | None = None,
@@ -98,7 +86,7 @@ class PluginSearchRunner:
         self._max_results_var = max_results_var
         self._plugin_timeout = plugin_timeout
         self._max_results_per_plugin = max_results_per_plugin
-        self._metrics = metrics
+        self._telemetry = telemetry
         self._circuit_breaker = circuit_breaker
         self._browser_warmup_fn = browser_warmup_fn
         # Plugin name -> mirror group: sites serving one database
@@ -189,6 +177,8 @@ class PluginSearchRunner:
         unreachable = [n for n in plugin_names if not health.is_reachable(n)]
         if unreachable:
             log.info("stremio_plugins_unreachable", plugins=unreachable)
+        for name in unreachable:
+            self._telemetry.count("plugin_search", "unreachable", plugin=name)
         return [n for n in plugin_names if n not in unreachable]
 
     def _one_per_mirror_group(
@@ -282,6 +272,7 @@ class PluginSearchRunner:
             timeout = min(timeout, deadline - time.monotonic())
             if timeout <= 0:
                 log.info("stremio_plugin_skipped_deadline", plugin=name)
+                self._telemetry.count("plugin_search", "skipped", plugin=name)
                 return []
 
         # Circuit breaker: skip plugins that have been failing consistently
@@ -290,6 +281,7 @@ class PluginSearchRunner:
             breaker_key
         ):
             log.info("stremio_plugin_circuit_open", plugin=name, category=category)
+            self._telemetry.count("plugin_search", "breaker_open", plugin=name)
             return []
 
         try:
@@ -370,47 +362,45 @@ class PluginSearchRunner:
             log.warning("stremio_plugin_not_found", plugin=name, exc_info=True)
             return []
 
-        t0 = time.perf_counter_ns()
         success = False
         cancelled = False
         results: list[SearchResult] = []
-        try:
-            token = self._max_results_var.set(self._max_results_per_plugin)
+        with self._telemetry.stage("plugin_search", plugin=name) as stage:
             try:
-                raw = await self._dispatch_search(
-                    plugin, query, category, season=season, episode=episode
+                token = self._max_results_var.set(self._max_results_per_plugin)
+                try:
+                    raw = await self._dispatch_search(
+                        plugin, query, category, season=season, episode=episode
+                    )
+                finally:
+                    self._max_results_var.reset(token)
+                loop = asyncio.get_running_loop()
+                raw = await loop.run_in_executor(
+                    None, self._episode_filter_fn, raw, season, episode
                 )
+                results = await self._search_engine.validate_results(raw)
+                success = True
+                stage.outcome = "hits" if results else "empty"
+            except Exception:
+                log.warning("stremio_plugin_search_error", plugin=name, exc_info=True)
+                stage.outcome = "error"
+                results = []
+            except BaseException:
+                cancelled = True
+                log.warning("stremio_plugin_search_cancelled", plugin=name)
+                raise
             finally:
-                self._max_results_var.reset(token)
-            loop = asyncio.get_running_loop()
-            raw = await loop.run_in_executor(
-                None, self._episode_filter_fn, raw, season, episode
-            )
-            results = await self._search_engine.validate_results(raw)
-            success = True
-        except Exception:
-            log.warning("stremio_plugin_search_error", plugin=name, exc_info=True)
-            results = []
-        except BaseException:
-            cancelled = True
-            log.warning("stremio_plugin_search_cancelled", plugin=name)
-            raise
-        finally:
-            duration_ns = time.perf_counter_ns() - t0
-            if self._metrics is not None:
-                self._metrics.record_plugin_search(
-                    name,
-                    duration_ns,
-                    len(results),
-                    success=success,
-                )
-            # Record circuit breaker outcome — but NOT on cancellation
-            # (BaseException), since the timeout handler in
-            # _run_plugin_with_timeout records that case instead.
-            if not cancelled:
-                self._record_outcome(
-                    _breaker_key(name, category), success=success, found=bool(results)
-                )
+                # Record circuit breaker outcome — but NOT on cancellation
+                # (BaseException), since the timeout handler in
+                # _run_plugin_with_timeout records that case instead.
+                if not cancelled:
+                    self._record_outcome(
+                        _breaker_key(name, category),
+                        success=success,
+                        found=bool(results),
+                    )
+        if results:
+            self._telemetry.record("plugin_results", len(results), plugin=name)
 
         # Tag results with source plugin for downstream use
         for r in results:

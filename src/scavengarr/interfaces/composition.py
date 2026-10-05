@@ -68,7 +68,6 @@ from scavengarr.infrastructure.hoster_resolvers.vinovo import VinovoResolver
 from scavengarr.infrastructure.hoster_resolvers.vixeo import VixeoResolver
 from scavengarr.infrastructure.hoster_resolvers.voe import VoeResolver
 from scavengarr.infrastructure.hoster_resolvers.xfs import create_all_xfs_resolvers
-from scavengarr.infrastructure.metrics import MetricsCollector, monitor_loop_lag
 from scavengarr.infrastructure.persistence.crawljob_cache import (
     CacheCrawlJobRepository,
 )
@@ -95,6 +94,8 @@ from scavengarr.infrastructure.stremio.episode_filter import filter_by_episode
 from scavengarr.infrastructure.stremio.stream_converter import convert_search_results
 from scavengarr.infrastructure.stremio.stream_sorter import StreamSorter
 from scavengarr.infrastructure.stremio.title_matcher import filter_by_title_match
+from scavengarr.infrastructure.telemetry import Telemetry, monitor_loop_lag
+from scavengarr.infrastructure.telemetry.collectors import BreakerCollector
 from scavengarr.infrastructure.tmdb.client import HttpxTmdbClient
 from scavengarr.infrastructure.tmdb.imdb_fallback import ImdbFallbackClient
 from scavengarr.infrastructure.torznab.search_engine import HttpxSearchEngine
@@ -398,9 +399,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     config = state.config
     use_eager_tasks()
 
-    # 0) Metrics collector (zero-overhead, must exist before components that record)
-    state.metrics = MetricsCollector()
-    state._loop_lag_task = asyncio.create_task(monitor_loop_lag(state.metrics))
+    # 0) Telemetry (must exist before the components that record)
+    state.telemetry = Telemetry()
+    state._loop_lag_task = asyncio.create_task(monitor_loop_lag(state.telemetry))
 
     # 0b) Auto-tune concurrency based on detected container/host resources
     if config.stremio.auto_tune_all:
@@ -509,7 +510,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         solver=bool(config.playwright_solver_url),
     )
 
-    # 9) Hoster resolver registry (for extracting video URLs from embed pages)
+    # 9) Hoster resolver registry (for extracting video URLs from embed pages).
+    #    Its breaker skips hosters whose resolutions keep timing out or are
+    #    unplayable (browser captures that cannot pass a challenge from this IP)
+    hoster_breaker = PluginCircuitBreaker(failure_threshold=5, cooldown_seconds=60.0)
     state.hoster_resolver_registry = HosterResolverRegistry(
         resolvers=[
             # Streaming resolvers (extract direct video URLs)
@@ -563,12 +567,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         http_client=state.http_client,
         resolve_timeout=config.http_timeout_resolve_seconds,
         verify_playback=config.stremio.verify_streams,
-        # Skips hosters whose resolutions keep timing out or are unplayable
-        # (browser captures that cannot pass a challenge from this IP)
-        circuit_breaker=PluginCircuitBreaker(
-            failure_threshold=5,
-            cooldown_seconds=60.0,
-        ),
+        circuit_breaker=hoster_breaker,
+        telemetry=state.telemetry,
     )
     log.info(
         "hoster_resolver_registry_initialized",
@@ -617,6 +617,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         cooldown_seconds=60.0,
     )
     log.info("circuit_breaker_initialized")
+    state.telemetry.registry.register(
+        BreakerCollector({"plugin": state.circuit_breaker, "hoster": hoster_breaker})
+    )
 
     # 14b) Plugin health: Stremio searches skip sites that do not answer
     state.plugin_health = _plugin_health(state, config)
@@ -646,7 +649,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         resolve_fn=state.hoster_resolver_registry.resolve,
         # A cached search answers at once with the cached resolutions
         cached_resolution_fn=state.hoster_resolver_registry.cached,
-        metrics=state.metrics,
+        telemetry=state.telemetry,
         score_store=state.plugin_score_store,
         browser_warmup_fn=state.shared_browser_pool.warmup,
         pool=state.concurrency_pool,

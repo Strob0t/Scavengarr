@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from urllib.parse import urljoin, urlparse, urlsplit
 
 import httpx
@@ -170,7 +170,7 @@ async def stream_hls_segment(
     http_client: httpx.AsyncClient,
     url: str,
     headers: dict[str, str],
-) -> tuple[AsyncIterator[bytes], str]:
+) -> tuple[AsyncGenerator[bytes], str]:
     """Stream an HLS segment from CDN without buffering full body.
 
     Returns ``(byte_iterator, content_type)``.
@@ -201,7 +201,7 @@ async def stream_hls_segment(
     ct = resp.headers.get("content-type", "application/octet-stream")
     encoded = resp.headers.get("content-encoding", "identity").lower() != "identity"
 
-    async def _iter() -> AsyncIterator[bytes]:
+    async def _iter() -> AsyncGenerator[bytes]:
         try:
             async for chunk in resp.aiter_bytes() if encoded else resp.aiter_raw():
                 yield chunk

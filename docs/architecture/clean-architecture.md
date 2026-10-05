@@ -134,8 +134,9 @@ Ports define the boundaries between Application and Infrastructure. All are `Pro
 | `TmdbClientPort` | `ports/tmdb.py` | async | `find_by_imdb_id`, `get_title_and_year`, `get_title_by_tmdb_id`, `trending_movies`, `trending_tv`, `search_movies`, `search_tv` |
 | `ConcurrencyPoolPort` | `ports/concurrency.py` | async context manager | `request()` → `ConcurrencyBudgetPort` |
 | `ConcurrencyBudgetPort` | `ports/concurrency.py` | async context manager | `acquire_httpx()`, `acquire_pw()` |
+| `TelemetryPort` | `ports/telemetry.py` | sync | `stage()` (context manager timing a step), `count()`, `record()`; `NO_TELEMETRY` records nothing |
 
-Key design choice: `PluginRegistryPort` is **synchronous** (plugin files are loaded from disk, not from network). All other ports are **asynchronous** because they involve I/O (HTTP, cache, validation) or awaitable slot acquisition.
+Key design choice: `PluginRegistryPort` is **synchronous** (plugin files are loaded from disk, not from network), and so is `TelemetryPort` (in-memory counters). All other ports are **asynchronous** because they involve I/O (HTTP, cache, validation) or awaitable slot acquisition.
 
 ### Exception Hierarchy
 
@@ -277,7 +278,8 @@ Infrastructure implements the ports defined by Domain and provides concrete adap
 - **Stremio** (`stremio/`): stream converter, sorter, title matcher, release parser, episode filter, HLS proxy.
 - **TMDB** (`tmdb/`): `HttpxTmdbClient` and the key-less `ImdbFallbackClient`.
 - **Scoring** (`scoring/`): EWMA plugin scoring, health/search probers, query pool, background `ScoringScheduler`.
-- **Runtime services** (top-level modules): `PluginCircuitBreaker`, `ConcurrencyPool`, `GracefulShutdown`, `MetricsCollector`, `detect_resources()` (cgroup-aware).
+- **Runtime services** (top-level modules): `PluginCircuitBreaker`, `ConcurrencyPool`, `GracefulShutdown`, `detect_resources()` (cgroup-aware).
+- **Telemetry** (`telemetry/`): `Telemetry` implements `TelemetryPort` with prometheus-client (stage durations and outcomes, values, the JSON statistics), scrape-time collectors for circuit breakers and the container's cgroup, the event-loop lag monitor. See [Observability](../features/observability.md).
 
 ---
 
@@ -299,6 +301,7 @@ The Interfaces layer handles input/output exclusively. It contains no business l
 | `api/download/router.py` | `GET /api/v1/download/{job_id}` (serves `.crawljob` files), `GET /api/v1/download/{job_id}/info` |
 | `api/stremio/router.py` | Stremio addon: `manifest.json`, catalog, catalog search, stream, `play/{stream_id}` (302), HLS `proxy/{stream_id}/{path}`, `health` |
 | `api/stats/router.py` | `GET /api/v1/stats/plugin-scores`, `GET /api/v1/stats/metrics` |
+| `app.py` | `GET /api/v1/healthz`, `GET /api/v1/readyz`, `GET /metrics` (Prometheus) |
 
 ### CLI (argparse + Uvicorn)
 
@@ -324,7 +327,7 @@ The composition root is where concrete implementations are wired together. It ru
 ### Initialization Order
 
 ```text
-0.  MetricsCollector, auto-tune concurrency (_auto_tune / _auto_tune_concurrency)
+0.  Telemetry + event-loop lag monitor, auto-tune concurrency (_auto_tune / _auto_tune_concurrency)
 1.  Cache via create_cache() (cleared on startup when environment == "dev")
 2.  httpx.AsyncClient with RetryTransport + DomainRateLimiter + PrivateAddressGuard; shared with HttpxPluginBase
 3.  PluginRegistry + discover() + per-plugin config overrides

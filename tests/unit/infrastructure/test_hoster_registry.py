@@ -19,6 +19,7 @@ from scavengarr.infrastructure.hoster_resolvers import extract_domain
 from scavengarr.infrastructure.hoster_resolvers.registry import (
     HosterResolverRegistry,
 )
+from scavengarr.infrastructure.telemetry import Telemetry
 
 
 class TestExtractDomain:
@@ -1097,3 +1098,167 @@ class TestMoflixStreamHosts:
 
         assert result is not None
         assert result.video_url == f"https://{name}/v"
+
+
+class TestTelemetry:
+    """Every resolution is recorded in the registry, labeled by resolver."""
+
+    _URL = "https://doodstream.com/e/a"
+    _MP4 = "https://cdn.example.com/v.mp4"
+
+    @staticmethod
+    def _registry(
+        resolve: Callable[[str], Awaitable[ResolvedStream | None]],
+        *,
+        http_client: httpx.AsyncClient | None = None,
+        failure_threshold: int = 5,
+    ) -> tuple[HosterResolverRegistry, Telemetry]:
+        resolver = MagicMock()
+        resolver.name = "doodstream"
+        resolver.resolve = AsyncMock(side_effect=resolve)
+        telemetry = Telemetry()
+        registry = HosterResolverRegistry(
+            resolvers=[resolver],
+            http_client=http_client,
+            resolve_timeout=0.05,
+            verify_playback=http_client is not None,
+            circuit_breaker=PluginCircuitBreaker(failure_threshold=failure_threshold),
+            telemetry=telemetry,
+        )
+        return registry, telemetry
+
+    @staticmethod
+    def _outcome(
+        t: Telemetry, outcome: str, resolver: str = "doodstream"
+    ) -> float | None:
+        return t.registry.get_sample_value(
+            "scavengarr_hoster_resolve_total",
+            {"resolver": resolver, "outcome": outcome},
+        )
+
+    @staticmethod
+    def _timed(t: Telemetry, resolver: str = "doodstream") -> float | None:
+        return t.registry.get_sample_value(
+            "scavengarr_hoster_resolve_seconds_count", {"resolver": resolver}
+        )
+
+    @staticmethod
+    def _raising(error: Exception) -> Callable[[str], Awaitable[ResolvedStream | None]]:
+        async def _resolve(url: str) -> ResolvedStream | None:
+            raise error
+
+        return _resolve
+
+    async def test_stream(self) -> None:
+        async def _stream(url: str) -> ResolvedStream | None:
+            return ResolvedStream(video_url=self._MP4)
+
+        registry, t = self._registry(_stream)
+
+        await registry.resolve(self._URL)
+
+        assert self._outcome(t, "stream") == 1
+        assert self._timed(t) == 1
+
+    async def test_dead_link(self) -> None:
+        async def _dead(url: str) -> ResolvedStream | None:
+            return None
+
+        registry, t = self._registry(_dead)
+
+        await registry.resolve(self._URL)
+
+        assert self._outcome(t, "dead") == 1
+
+    @respx.mock
+    async def test_unplayable_stream(self) -> None:
+        respx.get(self._MP4).respond(502)
+
+        async def _stream(url: str) -> ResolvedStream | None:
+            return ResolvedStream(video_url=self._MP4)
+
+        async with httpx.AsyncClient() as client:
+            registry, t = self._registry(_stream, http_client=client)
+            await registry.resolve(self._URL)
+
+        assert self._outcome(t, "unplayable") == 1
+
+    async def test_timeout(self) -> None:
+        registry, t = self._registry(_hang)
+
+        await registry.resolve(self._URL)
+
+        assert self._outcome(t, "timeout") == 1
+        assert self._timed(t) == 1
+
+    @pytest.mark.parametrize(
+        ("error", "outcome"),
+        [
+            (httpx.ConnectError("refused"), "network_error"),
+            (
+                httpx.HTTPStatusError(
+                    "500",
+                    request=httpx.Request("GET", "https://doodstream.com/e/a"),
+                    response=httpx.Response(500),
+                ),
+                "http_error",
+            ),
+            (RuntimeError("parser broke"), "error"),
+        ],
+    )
+    async def test_errors(self, error: Exception, outcome: str) -> None:
+        registry, t = self._registry(self._raising(error))
+
+        assert await registry.resolve(self._URL) is None
+
+        assert self._outcome(t, outcome) == 1
+
+    async def test_cut(self) -> None:
+        registry, t = self._registry(_hang)
+        registry._resolve_timeout = 10.0
+
+        await _cut(registry.resolve(self._URL), after=0.02)
+
+        assert self._outcome(t, "cut") == 1
+        assert self._timed(t) == 1
+
+    async def test_cached_resolution_counts_for_its_resolver(self) -> None:
+        async def _stream(url: str) -> ResolvedStream | None:
+            return ResolvedStream(video_url=self._MP4)
+
+        registry, t = self._registry(_stream)
+
+        await registry.resolve(self._URL)
+        await registry.resolve(self._URL)
+
+        assert self._outcome(t, "cached") == 1
+        assert self._timed(t) == 1
+
+    async def test_open_breaker(self) -> None:
+        registry, t = self._registry(_hang, failure_threshold=1)
+
+        await registry.resolve(self._URL)
+        await registry.resolve("https://doodstream.com/e/b")
+
+        assert self._outcome(t, "breaker_open") == 1
+
+    @pytest.mark.parametrize(
+        ("content_type", "outcome"),
+        [("application/vnd.apple.mpegurl", "stream"), ("text/html", "dead")],
+    )
+    async def test_a_url_without_resolver_is_probed_as_direct(
+        self, content_type: str, outcome: str
+    ) -> None:
+        response = MagicMock()
+        response.headers = {"content-type": content_type}
+        response.url = "https://cdn.example.com/master.m3u8"
+        http_client = AsyncMock(spec=httpx.AsyncClient)
+        http_client.head = AsyncMock(return_value=response)
+        telemetry = Telemetry()
+        registry = HosterResolverRegistry(http_client=http_client, telemetry=telemetry)
+
+        await registry.resolve("https://cdn.example.com/master.m3u8")
+        await registry.resolve("https://cdn.example.com/master.m3u8")
+
+        assert self._outcome(telemetry, outcome, resolver="direct") == 1
+        assert self._outcome(telemetry, "cached", resolver="direct") == 1

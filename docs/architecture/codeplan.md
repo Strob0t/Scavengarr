@@ -71,7 +71,7 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 | `infrastructure/circuit_breaker.py` | Per-plugin circuit breaker (closed/open/half-open) | `PluginCircuitBreaker` |
 | `infrastructure/concurrency.py` | Global fair-share httpx + Playwright slots | `ConcurrencyPool`, `RequestBudget` |
 | `infrastructure/graceful_shutdown.py` | Readiness and in-flight request draining | `GracefulShutdown` |
-| `infrastructure/metrics.py` | In-memory runtime metrics | `MetricsCollector`, `PluginStats`, `ProbeStats` |
+| `infrastructure/telemetry/` | Prometheus metrics of the core's stages, scrape-time collectors, event-loop lag | `Telemetry`, `BreakerCollector`, `ContainerCollector`, `monitor_loop_lag()` |
 | `infrastructure/resource_detector.py` | cgroup v2/v1 CPU and memory detection | `detect_resources()`, `DetectedResources` |
 
 ### Interfaces

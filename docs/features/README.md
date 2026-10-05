@@ -49,6 +49,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** and **S
 | [Plugin Scoring & Probing](./plugin-scoring-and-probing.md) | EWMA-based plugin ranking via background health and search probes |
 | [Mirror URL Fallback](./mirror-url-fallback.md) | Automatic domain fallback when primary mirrors are unreachable |
 | [Prowlarr Integration](./prowlarr-integration.md) | Step-by-step Prowlarr setup, endpoint mapping, category sync |
+| [Observability](./observability.md) | Prometheus metrics of Stremio requests, plugin searches, hoster resolutions and the HLS proxy; scrape job, queries, cost |
 
 ### Architecture
 

@@ -40,6 +40,7 @@ from scavengarr.domain.entities.stremio import (
     TitleMatchInfo,
 )
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.domain.ports.telemetry import NO_TELEMETRY
 from scavengarr.infrastructure.concurrency import ConcurrencyPool
 from scavengarr.infrastructure.config.schema import StremioConfig
 from scavengarr.infrastructure.hoster_resolvers import HosterResolverRegistry
@@ -51,6 +52,7 @@ from scavengarr.infrastructure.stremio.episode_filter import filter_by_episode
 from scavengarr.infrastructure.stremio.stream_converter import convert_search_results
 from scavengarr.infrastructure.stremio.stream_sorter import StreamSorter
 from scavengarr.infrastructure.stremio.title_matcher import filter_by_title_match
+from scavengarr.infrastructure.telemetry import Telemetry
 from scavengarr.infrastructure.version import APP_VERSION
 from scavengarr.interfaces.api.stremio.router import router
 
@@ -1101,6 +1103,7 @@ class TestStreamFullFlow:
         plugin_names: list[str] | None = None,
         plugin: _FakePythonPlugin | None = None,
         search_results: list[SearchResult] | None = None,
+        telemetry: Telemetry | None = None,
     ) -> FastAPI:
         """Build app with a real StremioStreamUseCase."""
         from scavengarr.application.use_cases.stremio_stream import (
@@ -1142,6 +1145,7 @@ class TestStreamFullFlow:
             max_results_var=search_max_results,
             stream_link_repo=stream_link_repo,
             pool=ConcurrencyPool(),
+            telemetry=telemetry or NO_TELEMETRY,
         )
 
         app = FastAPI()
@@ -1249,6 +1253,29 @@ class TestStreamFullFlow:
             # Every URL should be a proxy play URL
             for s in streams:
                 assert "/api/v1/stremio/play/" in s["url"]
+
+    def test_the_request_is_in_the_metrics(self) -> None:
+        plugin = _FakePythonPlugin(name="hdfilme")
+        result = _make_search_result(
+            title="Iron Man", download_link="https://voe.sx/e/ironman"
+        )
+        plugin._results = [result]
+        telemetry = Telemetry()
+        app = self._make_full_flow_app(
+            title_info=TitleMatchInfo(title="Iron Man", year=2008),
+            plugin=plugin,
+            search_results=[result],
+            telemetry=telemetry,
+        )
+
+        TestClient(app).get(f"{_PREFIX}/stremio/stream/movie/tt0371746.json")
+
+        text = telemetry.render().decode()
+        request = 'scavengarr_stremio_request_total{outcome="streams",source="search"}'
+        assert f"{request} 1.0" in text
+        search = 'scavengarr_plugin_search_total{outcome="hits",plugin="hdfilme"}'
+        assert f"{search} 1.0" in text
+        assert "tt0371746" not in text
 
 
 # ---------------------------------------------------------------------------
@@ -1733,3 +1760,78 @@ class TestProxyLeavesHlsToThePlayer:
         resp = TestClient(app).get(self._MASTER, headers=self._FFMPEG)
 
         assert resp.status_code == 200
+
+
+class TestProxyTelemetry:
+    """Each proxy request is recorded by kind and answer status; segments
+    with the bytes sent."""
+
+    _PLAYLIST = b"#EXTM3U\n#EXTINF:10.0,\nseg-1.ts\n#EXT-X-ENDLIST\n"
+
+    def _client(self, link: Any) -> tuple[TestClient, Telemetry]:
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=link)
+        app = _make_app(stream_link_repo=repo)
+        app.state.config.stremio = StremioConfig()
+        app.state.telemetry = Telemetry()
+        return TestClient(app), app.state.telemetry
+
+    @staticmethod
+    def _total(t: Telemetry, kind: str, outcome: str) -> float | None:
+        return t.registry.get_sample_value(
+            "scavengarr_hls_proxy_total", {"kind": kind, "outcome": outcome}
+        )
+
+    @staticmethod
+    def _bytes(t: Telemetry, kind: str) -> float | None:
+        return t.registry.get_sample_value(
+            "scavengarr_hls_proxy_bytes_total", {"kind": kind}
+        )
+
+    @patch(f"{_PROXY_MODULE}.fetch_hls_resource", new_callable=AsyncMock)
+    def test_playlists(self, mock_fetch: AsyncMock) -> None:
+        mock_fetch.return_value = (self._PLAYLIST, "application/vnd.apple.mpegurl")
+        client, t = self._client(replace(_make_hls_link(), resolved_at=time.time()))
+
+        master = client.get(f"{_PREFIX}/stremio/proxy/hls-abc/{HLS_MASTER}")
+        client.get(f"{_PREFIX}/stremio/proxy/hls-abc/index-v1.m3u8")
+
+        assert self._total(t, "master", "200") == 1
+        assert self._total(t, "playlist", "200") == 1
+        assert self._bytes(t, "master") == len(master.content)
+        seconds = t.registry.get_sample_value(
+            "scavengarr_hls_proxy_seconds_count", {"kind": "master"}
+        )
+        assert seconds == 1
+
+    @patch(f"{_PROXY_MODULE}.stream_hls_segment", new_callable=AsyncMock)
+    def test_segment_bytes(self, mock_stream: AsyncMock) -> None:
+        async def _chunks() -> Any:
+            yield b"\x00" * 1000
+            yield b"\x01" * 500
+
+        mock_stream.return_value = (_chunks(), "video/mp2t")
+        client, t = self._client(_make_hls_link())
+
+        resp = client.get(f"{_PREFIX}/stremio/proxy/hls-abc/seg-1.ts?t=abc")
+
+        assert len(resp.content) == 1500
+        assert self._total(t, "segment", "200") == 1
+        assert self._bytes(t, "segment") == 1500
+
+    def test_converter_refused(self) -> None:
+        client, t = self._client(_make_hls_link())
+
+        client.get(
+            f"{_PREFIX}/stremio/proxy/hls-abc/{HLS_MASTER}",
+            headers={"User-Agent": "Lavf/60.16.100"},
+        )
+
+        assert self._total(t, "master", "403") == 1
+
+    def test_unknown_stream(self) -> None:
+        client, t = self._client(None)
+
+        client.get(f"{_PREFIX}/stremio/proxy/hls-abc/seg-1.ts")
+
+        assert self._total(t, "segment", "404") == 1

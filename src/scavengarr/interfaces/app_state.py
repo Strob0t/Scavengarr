@@ -31,9 +31,9 @@ if TYPE_CHECKING:
     from scavengarr.infrastructure.browser.stealth_pool import StealthPool
     from scavengarr.infrastructure.concurrency import ConcurrencyPool
     from scavengarr.infrastructure.hoster_resolvers import HosterResolverRegistry
-    from scavengarr.infrastructure.metrics import MetricsCollector
     from scavengarr.infrastructure.plugins.health_monitor import PluginHealthMonitor
     from scavengarr.infrastructure.scoring.scheduler import ScoringScheduler
+    from scavengarr.infrastructure.telemetry import Telemetry
 
 
 class AppState(State):
@@ -67,8 +67,8 @@ class AppState(State):
     # Playwright Stealth pool (optional — for CF bypass probing)
     stealth_pool: StealthPool | None
 
-    # Metrics (zero-impact in-memory counters)
-    metrics: MetricsCollector
+    # Metrics of the core's stages (/metrics, /api/v1/stats/metrics)
+    telemetry: Telemetry
 
     # Stremio (optional — requires TMDB API key)
     tmdb_client: TmdbClientPort | None
@@ -96,5 +96,5 @@ class AppState(State):
     plugin_health: PluginHealthMonitor | None
     _plugin_health_task: asyncio.Task[None] | None
 
-    # Event-loop lag monitor (feeds metrics.event_loop)
+    # Event-loop lag monitor (feeds telemetry)
     _loop_lag_task: asyncio.Task[None]

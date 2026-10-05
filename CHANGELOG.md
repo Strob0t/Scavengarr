@@ -6,6 +6,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Feat: Prometheus Metrics
+- `GET /metrics` serves Prometheus metrics of the core (prometheus-client): every Stremio stream request by the state of its search results (cache, stale, new or joined search), its phases and why the answer went out (target, done, deadline, cached), streams per answer, every plugin search and every hoster resolution with duration and outcome (`hits`, `empty`, `cut`, `breaker_open`, `unplayable`, ...), HLS proxy requests with time to first byte and bytes, the event-loop lag, open circuit breakers and the container's CPU and memory (Chromium included). `docs/features/observability.md` has the families, a scrape job and queries.
+- One port records everything: `TelemetryPort.stage()` times a step and records its outcome (`cut` for a cancellation). The plugin search runner, the hoster resolver registry, the Stremio use case and the HLS proxy route use it; plugins and resolvers stay unchanged. Labels come from fixed sets only (no titles, ids, URLs or domains).
+- Cost on x86: 5.8 µs per recorded step, 4.2 ms per scrape of 637 series (rendered in a worker thread); at a 60 s scrape interval about 20 s of CPU per day on a Raspberry Pi 4.
+- `/api/v1/stats/metrics` keeps its JSON; its plugin statistics come from the new metrics. `MetricsCollector` (`infrastructure/metrics.py`) is replaced by `Telemetry` (`infrastructure/telemetry/`).
+
 ### Perf: Plugin Parsers on selectolax
 - Every plugin parser (28 plugins and the XenForo base of dataload and myboerse) reads pages with selectolax (lexbor, C) and CSS selectors instead of `html.parser` state machines in Python, which held the GIL for every page (34% of the GIL samples of a Stremio request on the Raspberry Pi, 0.43 s per first request).
 - Results stay the same: every parser input of the test suite and of live searches of all plugins was recorded on the base commit, and 2,989 of the 2,990 unique inputs give identical results (the other keeps a description's line breaks as `\n`, as HTML5 does). The recorded big pages (from 20 KB) parse in 1.6 instead of 17.4 s on x86.

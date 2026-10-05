@@ -14,6 +14,7 @@ from scavengarr.application.stremio.plugin_search import PluginSearchRunner
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.concurrency import ConcurrencyPool
+from scavengarr.infrastructure.telemetry import Telemetry
 
 _max_results_var: ContextVar[int | None] = ContextVar(
     "runner_test_max_results", default=None
@@ -144,14 +145,12 @@ class TestSinglePlugin:
     async def test_plugin_error_returns_empty_and_records_failure(self) -> None:
         breaker = MagicMock()
         breaker.allow.return_value = True
-        metrics = MagicMock()
         registry = _registry({"a": _plugin(RuntimeError("boom"))})
-        runner = _runner(registry, circuit_breaker=breaker, metrics=metrics)
+        runner = _runner(registry, circuit_breaker=breaker)
 
         assert await _search(runner, ["a"], ["q"]) == []
         breaker.record_failure.assert_called_once_with("a:2000")
         breaker.record_success.assert_not_called()
-        assert metrics.record_plugin_search.call_args.kwargs == {"success": False}
 
     async def test_success_recorded(self) -> None:
         breaker = MagicMock()
@@ -490,3 +489,99 @@ class TestDeadlineCut:
 
         assert results == []
         assert cancelled.is_set()
+
+
+class TestTelemetry:
+    """Every plugin search is recorded in the runner, not in the plugins."""
+
+    def _sample(self, t: Telemetry, outcome: str, plugin: str = "a") -> float | None:
+        return t.registry.get_sample_value(
+            "scavengarr_plugin_search_total", {"plugin": plugin, "outcome": outcome}
+        )
+
+    def _timed(self, t: Telemetry, plugin: str = "a") -> float | None:
+        return t.registry.get_sample_value(
+            "scavengarr_plugin_search_seconds_count", {"plugin": plugin}
+        )
+
+    @pytest.mark.parametrize(
+        ("answer", "outcome"),
+        [
+            ([_sr("https://a/1"), _sr("https://a/2")], "hits"),
+            ([], "empty"),
+            (RuntimeError("boom"), "error"),
+        ],
+    )
+    async def test_outcome_and_duration(
+        self, answer: list[SearchResult] | Exception, outcome: str
+    ) -> None:
+        t = Telemetry()
+        runner = _runner(_registry({"a": _plugin(answer)}), telemetry=t)
+
+        await _search(runner, ["a"], ["q"])
+
+        assert self._sample(t, outcome) == 1
+        assert self._timed(t) == 1
+
+    async def test_results_are_counted(self) -> None:
+        t = Telemetry()
+        answer = [_sr("https://a/1"), _sr("https://a/2")]
+        runner = _runner(_registry({"a": _plugin(answer)}), telemetry=t)
+
+        await _search(runner, ["a"], ["q"])
+
+        results = t.registry.get_sample_value(
+            "scavengarr_plugin_results_total", {"plugin": "a"}
+        )
+        assert results == 2
+
+    async def test_a_plugin_the_deadline_cuts_is_cut(self) -> None:
+        t = Telemetry()
+        plugin = _plugin([])
+        plugin.search = _endless_search(asyncio.Event())
+        runner = _runner(_registry({"a": plugin}), telemetry=t)
+
+        pool = ConcurrencyPool(httpx_slots=10, pw_slots=10)
+        async with pool.request() as budget:
+            await runner.search_with_fallback(
+                ["a"], ["q"], 2000, budget=budget, deadline=time.monotonic() + 0.05
+            )
+
+        assert self._sample(t, "cut") == 1
+        assert self._timed(t) == 1
+
+    async def test_open_breaker_counts_without_duration(self) -> None:
+        t = Telemetry()
+        breaker = MagicMock()
+        breaker.allow.return_value = False
+        runner = _runner(
+            _registry({"a": _plugin([])}), circuit_breaker=breaker, telemetry=t
+        )
+
+        await _search(runner, ["a"], ["q"])
+
+        assert self._sample(t, "breaker_open") == 1
+        assert self._timed(t) is None
+
+    async def test_plugin_without_slot_before_the_deadline_is_skipped(self) -> None:
+        t = Telemetry()
+        runner = _runner(_registry({"a": _plugin([])}), telemetry=t)
+
+        pool = ConcurrencyPool(httpx_slots=1, pw_slots=1)
+        async with pool.request() as budget:
+            await runner.search_with_fallback(
+                ["a"], ["q"], 2000, budget=budget, deadline=time.monotonic() - 1
+            )
+
+        assert self._sample(t, "skipped") == 1
+        assert self._timed(t) is None
+
+    async def test_unreachable_plugin_is_counted(self) -> None:
+        t = Telemetry()
+        plugins = {"up": _plugin([]), "down": _plugin([])}
+        runner = _runner(_registry(plugins), plugin_health=_Health("down"), telemetry=t)
+
+        await _search(runner, ["up", "down"], ["q"])
+
+        assert self._sample(t, "unreachable", plugin="down") == 1
+        assert self._sample(t, "empty", plugin="up") == 1

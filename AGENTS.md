@@ -89,6 +89,7 @@ Invariants:
 - CrawlJobs contain only validated links, in deterministic order; job IDs are stable, TTL configurable.
 - Config precedence (high → low): CLI args → `SCAVENGARR_*` env → YAML → `.env` → defaults. See `docs/features/configuration.md`.
 - Logging: `structlog`, structured, with context fields (`plugin`, `stage`, `duration_ms`, `results_count`); never log secrets.
+- Metrics: the core records its steps through `TelemetryPort` (`stage()`: duration and outcome; plugin search runner, hoster resolver registry, Stremio use case, HLS proxy), never plugins or resolvers; label values only from fixed sets (no titles, ids, URLs, domains). See `docs/features/observability.md`.
 
 ---
 

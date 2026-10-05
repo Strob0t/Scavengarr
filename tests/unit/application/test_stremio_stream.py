@@ -23,6 +23,7 @@ from scavengarr.domain.entities.stremio import (
     TitleMatchInfo,
 )
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
 from scavengarr.infrastructure.concurrency import ConcurrencyPool
 from scavengarr.infrastructure.config.schema import StremioConfig
 from scavengarr.infrastructure.plugins.constants import (
@@ -33,6 +34,7 @@ from scavengarr.infrastructure.stremio.episode_filter import filter_by_episode
 from scavengarr.infrastructure.stremio.stream_converter import convert_search_results
 from scavengarr.infrastructure.stremio.stream_sorter import StreamSorter
 from scavengarr.infrastructure.stremio.title_matcher import filter_by_title_match
+from scavengarr.infrastructure.telemetry import Telemetry
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -95,6 +97,7 @@ def _make_use_case(
     | None = None,
     cache: AsyncMock | None = None,
     search_ttl_seconds: int = 0,
+    telemetry: TelemetryPort = NO_TELEMETRY,
 ) -> StremioStreamUseCase:
     engine = search_engine or AsyncMock()
     # Default: validate_results returns input unchanged
@@ -122,6 +125,7 @@ def _make_use_case(
         pool=ConcurrencyPool(httpx_slots=100, pw_slots=100),
         cache=cache,
         search_ttl_seconds=search_ttl_seconds,
+        telemetry=telemetry,
     )
 
 
@@ -1721,6 +1725,7 @@ def _cached_use_case(
     *,
     ttl: int = _TTL,
     hard: float = 1.0,
+    telemetry: TelemetryPort = NO_TELEMETRY,
 ) -> StremioStreamUseCase:
     tmdb = AsyncMock()
     tmdb.get_title_and_year = AsyncMock(
@@ -1741,6 +1746,7 @@ def _cached_use_case(
         ),
         cache=cache,
         search_ttl_seconds=ttl,
+        telemetry=telemetry,
     )
 
 
@@ -1927,6 +1933,7 @@ def _from_cache(
     resolutions: _Resolutions,
     *,
     cached: bool = True,
+    telemetry: TelemetryPort = NO_TELEMETRY,
 ) -> StremioStreamUseCase:
     """Use case whose search for the title is in the cache (or, with
     *cached* False, comes from a plugin)."""
@@ -1958,6 +1965,7 @@ def _from_cache(
         cached_resolution_fn=resolutions.cached,
         cache=cache,
         search_ttl_seconds=_TTL,
+        telemetry=telemetry,
     )
 
 
@@ -2042,6 +2050,7 @@ def _answering_use_case(
     sites: dict[str, AsyncMock],
     cache: AsyncMock,
     resolutions: _Resolutions,
+    telemetry: TelemetryPort = NO_TELEMETRY,
     **config: object,
 ) -> StremioStreamUseCase:
     """Use case that searches *sites* and resolves with *resolutions*."""
@@ -2064,6 +2073,7 @@ def _answering_use_case(
         cached_resolution_fn=resolutions.cached,
         cache=cache,
         search_ttl_seconds=_TTL,
+        telemetry=telemetry,
     )
 
 
@@ -2168,3 +2178,180 @@ class TestAnswerPolicy:
         assert [_video(uc, s) for s in second] == ["https://cdn.example/fast.mp4"]
         assert fast.isolated_search.await_count == 1
         await uc.aclose()
+
+
+# ---------------------------------------------------------------------------
+# Telemetry: requests, phases and answers are recorded in the use case
+# ---------------------------------------------------------------------------
+
+
+def _value(t: Telemetry, name: str, **labels: str) -> float | None:
+    return t.registry.get_sample_value(name, labels)
+
+
+def _requests(t: Telemetry, source: str, outcome: str) -> float | None:
+    return _value(t, "scavengarr_stremio_request_total", source=source, outcome=outcome)
+
+
+def _phases(t: Telemetry, phase: str, outcome: str) -> float | None:
+    return _value(t, "scavengarr_stremio_phase_total", phase=phase, outcome=outcome)
+
+
+def _one_stream_plugin(tmdb: AsyncMock, telemetry: Telemetry) -> StremioStreamUseCase:
+    plugins = MagicMock()
+    plugins.get_languages.return_value = ["de"]
+    plugins.get_by_provides.side_effect = lambda p: ["a"] if p == "stream" else []
+    return _make_use_case(tmdb=tmdb, plugins=plugins, telemetry=telemetry)
+
+
+class TestTelemetry:
+    """Each request records its search state, phases, end reason and streams."""
+
+    @pytest.fixture
+    def t(self) -> Telemetry:
+        return Telemetry()
+
+    async def test_a_new_search(self, t: Telemetry) -> None:
+        sites = {
+            "a": _site([_hit("https://voe.sx/e/1")]),
+            "b": _site([_hit("https://dood.to/e/2")]),
+        }
+        uc = _answering_use_case(sites, _memory_cache(), _Resolutions(), telemetry=t)
+
+        streams = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        assert len(streams) == 2
+        assert _requests(t, "search", "streams") == 1
+        seconds = "scavengarr_stremio_request_seconds_count"
+        assert _value(t, seconds, source="search") == 1
+        assert _phases(t, "metadata", "found") == 1
+        assert _phases(t, "resolve", "done") == 1
+        await _eventually(lambda: _phases(t, "search", "ok") == 1)
+        assert _value(t, "scavengarr_stremio_streams_bucket", le="2.0") == 1
+        assert _value(t, "scavengarr_stremio_streams_bucket", le="1.0") == 0
+
+    async def test_answer_at_the_target(self, t: Telemetry) -> None:
+        sites = {
+            "fast": _site([_hit("https://voe.sx/e/fast")]),
+            "slow": _site([_hit("https://dood.to/e/slow")], delay=0.5),
+        }
+        uc = _answering_use_case(
+            sites, _memory_cache(), _Resolutions(), telemetry=t, resolve_target_count=1
+        )
+
+        await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        assert _phases(t, "resolve", "target") == 1
+        await uc.aclose()
+
+    async def test_answer_at_the_deadline(self, t: Telemetry) -> None:
+        sites = {
+            "fast": _site([_hit("https://voe.sx/e/fast")]),
+            "stuck": _site([], delay=30),
+        }
+        uc = _answering_use_case(
+            sites,
+            _memory_cache(),
+            _Resolutions(),
+            telemetry=t,
+            plugin_timeout_seconds=10.0,
+            stream_deadline_seconds=0.3,
+        )
+
+        await uc.execute(_make_request(), base_url="http://localhost:8080")
+        await uc.aclose()
+
+        assert _phases(t, "resolve", "deadline") == 1
+        # Shutdown cut the search and its stuck plugin
+        assert _phases(t, "search", "cut") == 1
+        stuck = {"plugin": "stuck", "outcome": "cut"}
+        assert _value(t, "scavengarr_plugin_search_total", **stuck) == 1
+
+    async def test_fresh_cache_entry(self, t: Telemetry) -> None:
+        site = _site([_hit("https://voe.sx/e/1")])
+        uc = _cached_use_case({"a": site}, _memory_cache(), telemetry=t)
+
+        await uc.execute(_make_request())
+        await uc.execute(_make_request())
+
+        assert _requests(t, "search", "streams") == 1
+        assert _requests(t, "cache", "streams") == 1
+
+    async def test_stale_cache_entry(self, t: Telemetry) -> None:
+        cache = _memory_cache()
+        cache.data[_KEY] = CachedSearch(
+            results=[_hit("https://voe.sx/e/old")],
+            total=1,
+            stored_at=time.time() - _TTL - 1,
+        )
+        site = _site([_hit("https://voe.sx/e/new")])
+        uc = _cached_use_case({"a": site}, cache, telemetry=t)
+
+        await uc.execute(_make_request())
+
+        assert _requests(t, "stale", "streams") == 1
+        await _eventually(lambda: _phases(t, "search", "ok") == 1)
+
+    async def test_a_request_joining_a_running_search(self, t: Telemetry) -> None:
+        site = _site([_hit("https://voe.sx/e/1")], delay=0.05)
+        uc = _cached_use_case({"a": site}, _memory_cache(), telemetry=t)
+
+        await asyncio.gather(uc.execute(_make_request()), uc.execute(_make_request()))
+
+        assert _requests(t, "search", "streams") == 1
+        assert _requests(t, "joined", "streams") == 1
+        await _eventually(lambda: _phases(t, "search", "ok") == 1)
+        seconds = "scavengarr_stremio_phase_seconds_count"
+        assert _value(t, seconds, phase="search") == 1
+
+    async def test_a_cached_answer_counts_without_a_duration(
+        self, t: Telemetry
+    ) -> None:
+        resolutions = _Resolutions(alive=(_VOE,), delay=0.05)
+        uc = _from_cache([_link(_VOE), _link(_DOOD)], resolutions, telemetry=t)
+
+        await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        assert _requests(t, "cache", "streams") == 1
+        assert _phases(t, "resolve", "cached") == 1
+        seconds = "scavengarr_stremio_phase_seconds_count"
+        assert _value(t, seconds, phase="resolve") is None
+        await _eventually(lambda: _phases(t, "background_resolve", "done") == 1)
+
+    async def test_title_not_found(self, t: Telemetry) -> None:
+        tmdb = AsyncMock()
+        tmdb.get_title_and_year = AsyncMock(return_value=None)
+        uc = _one_stream_plugin(tmdb, t)
+
+        assert await uc.execute(_make_request()) == []
+
+        assert _requests(t, "none", "no_title") == 1
+        assert _phases(t, "metadata", "not_found") == 1
+        assert _value(t, "scavengarr_stremio_streams_bucket", le="0.0") == 1
+
+    async def test_no_stream_plugins(self, t: Telemetry) -> None:
+        plugins = MagicMock()
+        plugins.get_by_provides.return_value = []
+        uc = _make_use_case(plugins=plugins, telemetry=t)
+
+        assert await uc.execute(_make_request()) == []
+
+        assert _requests(t, "none", "no_plugins") == 1
+
+    async def test_nothing_found(self, t: Telemetry) -> None:
+        uc = _cached_use_case({"a": _site([])}, _memory_cache(), telemetry=t)
+
+        assert await uc.execute(_make_request()) == []
+
+        assert _requests(t, "search", "empty") == 1
+
+    async def test_a_failing_request_is_an_error(self, t: Telemetry) -> None:
+        tmdb = AsyncMock()
+        tmdb.get_title_and_year = AsyncMock(side_effect=RuntimeError("tmdb down"))
+        uc = _one_stream_plugin(tmdb, t)
+
+        with pytest.raises(RuntimeError):
+            await uc.execute(_make_request())
+
+        assert _requests(t, "none", "error") == 1
+        assert _phases(t, "metadata", "error") == 1

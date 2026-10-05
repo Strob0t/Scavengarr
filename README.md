@@ -126,7 +126,7 @@ flowchart LR
 ### Operations
 
 - Single container with Docker Compose; optional Byparr and Redis profiles
-- Health, readiness and metrics endpoints (`/api/v1/healthz`, `/api/v1/readyz`, `/api/v1/stats/metrics`)
+- Health, readiness and metrics endpoints (`/api/v1/healthz`, `/api/v1/readyz`, Prometheus `/metrics`, `/api/v1/stats/metrics`)
 - Structured logs (JSON or console) with per-plugin context
 - Graceful shutdown that drains in-flight requests
 - Configuration via YAML, environment variables or CLI flags

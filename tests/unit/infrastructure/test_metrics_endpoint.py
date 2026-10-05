@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.concurrency import ConcurrencyPool
 from scavengarr.infrastructure.graceful_shutdown import GracefulShutdown
-from scavengarr.infrastructure.metrics import MetricsCollector
+from scavengarr.infrastructure.telemetry import Telemetry
 
 
 def _build_app() -> TestClient:
@@ -19,7 +19,7 @@ def _build_app() -> TestClient:
 
     app = FastAPI()
     app.state = AppState()
-    app.state.metrics = MetricsCollector()
+    app.state.telemetry = Telemetry()
     app.state.circuit_breaker = PluginCircuitBreaker()
     app.state.concurrency_pool = ConcurrencyPool(httpx_slots=10, pw_slots=3)
     app.state.graceful_shutdown = GracefulShutdown()
@@ -75,9 +75,10 @@ class TestMetricsEndpoint:
         client = _build_app()
         # Record a search
         app = client.app
-        app.state.metrics.record_plugin_search(
-            "test-plugin", 1_000_000, 5, success=True
-        )
+        telemetry = app.state.telemetry
+        with telemetry.stage("plugin_search", plugin="test-plugin") as stage:
+            stage.outcome = "hits"
+        telemetry.record("plugin_results", 5, plugin="test-plugin")
         data = client.get("/api/v1/stats/metrics").json()
         assert "test-plugin" in data["plugins"]
         assert data["plugins"]["test-plugin"]["searches"] == 1

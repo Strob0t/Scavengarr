@@ -35,7 +35,7 @@ Current plugin, resolver, and test counts are listed in the [repository README](
 | Multi-Language Search | [x] Implemented | Per-language TMDB title resolution, plugins declare `languages` |
 | Stream Deduplication | [x] Implemented | Per-hoster dedup keeps the best-ranked stream that resolved |
 | Graceful Shutdown | [x] Implemented | Drain in-flight requests before stopping |
-| Health & Metrics | [x] Implemented | `/api/v1/healthz`, `/api/v1/readyz`, `/api/v1/stats/metrics` |
+| Health & Metrics | [x] Implemented | `/api/v1/healthz`, `/api/v1/readyz`, `/metrics` (Prometheus), `/api/v1/stats/metrics` |
 | HTTP Rate Limiting | [x] Implemented | Adaptive per-domain token bucket + 429/503 retry with backoff |
 | API Rate Limiting | [x] Implemented | Per-IP request limit on the API (`http.api_rate_limit_rpm`) |
 | Test Suite | [x] Implemented | Unit, integration, E2E, and opt-in live smoke tests |
@@ -274,6 +274,7 @@ Configuration follows a strict precedence hierarchy with typed validation.
 | Structured logging (structlog) | [x] Implemented | JSON and console formatters |
 | Context fields | [x] Implemented | e.g. `plugin`, `duration_ms`, `results_count` |
 | Health endpoints | [x] Implemented | `/api/v1/healthz` (liveness), `/api/v1/readyz` (readiness) |
+| Prometheus metrics | [x] Implemented | `/metrics` — Stremio requests, phases and answer reasons, plugin searches, hoster resolutions, HLS proxy, event-loop lag, open breakers, container CPU and memory; recorded in the core through `TelemetryPort.stage()` ([Observability](./observability.md)) |
 | Metrics endpoint | [x] Implemented | `/api/v1/stats/metrics` — plugin stats, circuit breaker, pool utilisation, event-loop lag (`event_loop`: p50/p99/max of a 0.5 s timer over the last 5 min; a stall of 250 ms or more logs `event_loop_lag`) |
 | Plugin score endpoint | [x] Implemented | `/api/v1/stats/plugin-scores` — EWMA scores, filterable by `plugin`, `category`, `bucket` |
 
@@ -329,7 +330,7 @@ Infrastructure (implements Domain ports)
 | Concurrency pool | `src/scavengarr/infrastructure/concurrency.py` |
 | Resource detector | `src/scavengarr/infrastructure/resource_detector.py` |
 | Graceful shutdown | `src/scavengarr/infrastructure/graceful_shutdown.py` |
-| Metrics collector | `src/scavengarr/infrastructure/metrics.py` |
+| Telemetry (metrics) | `src/scavengarr/domain/ports/telemetry.py`, `src/scavengarr/infrastructure/telemetry/` |
 | Plugin scoring | `src/scavengarr/infrastructure/scoring/` |
 | Torznab router | `src/scavengarr/interfaces/api/torznab/` |
 | Stremio router | `src/scavengarr/interfaces/api/stremio/` |
