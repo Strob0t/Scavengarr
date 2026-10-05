@@ -111,6 +111,27 @@ _PAGINATION_HTML = """
 </body></html>
 """
 
+# The live site's pagination is a row of the results table (2026-10-05)
+_LIVE_PAGINATION_HTML = """
+<!DOCTYPE html>
+<html><body>
+<table class="download">
+<tbody>
+  <tr>
+    <td class="n"><a rel="nofollow" title="Result.One"
+       href="https://example.com/1">Result.One</a></td>
+    <td class="n">example</td>
+    <td class="t2">Movie</td>
+    <td>01-Jan-2025</td>
+  </tr>
+  <tr><td colspan="4" id="pages">[ 1 ] &nbsp; <a href="/download/windows/2/"
+      title="Downloads | Page 2">Next Page &gt;</a></td></tr>
+  <tr><td class="d" colspan="4"></td></tr>
+</tbody>
+</table>
+</body></html>
+"""
+
 _PAGE2_HTML = """
 <html><body>
 <table class="download">
@@ -182,6 +203,13 @@ class TestSearchResultParser:
         parser = _SearchResultParser()
         parser.feed(_PAGINATION_HTML)
         assert parser.next_page_url == "/download/test/2/"
+
+    def test_pagination_row_of_the_results_table(self) -> None:
+        """The live pagination row is no result, and its link the next page."""
+        parser = _SearchResultParser()
+        parser.feed(_LIVE_PAGINATION_HTML)
+        assert [r["title"] for r in parser.results] == ["Result.One"]
+        assert parser.next_page_url == "/download/windows/2/"
 
     def test_no_pagination(self) -> None:
         parser = _SearchResultParser()

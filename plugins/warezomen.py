@@ -22,7 +22,7 @@ from scavengarr.infrastructure.plugins.categories import (
     category_matches,
     served_category,
 )
-from scavengarr.infrastructure.plugins.dom import ancestors, classes
+from scavengarr.infrastructure.plugins.dom import classes
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -76,8 +76,11 @@ class _SearchResultParser:
 
     Separator rows (``<td class="d" colspan="4">``) are ignored.
 
-    Pagination is detected via ``<td id="pages"><a>Next Page</a></td>``
-    outside the results table.
+    Pagination is the "Next Page" link of ``<td id="pages">``, on the live
+    site a row of the results table (no result)::
+
+        <tr><td colspan="4" id="pages">[ 1 ] &nbsp;
+          <a href="/download/windows/2/">Next Page &gt;</a></td></tr>
     """
 
     def __init__(self) -> None:
@@ -88,18 +91,19 @@ class _SearchResultParser:
         tree = LexborHTMLParser(html)
         for row in tree.css("table.download tbody tr"):
             self._add_row(row)
-        # The last "Next Page" link outside the results table; HTML5 parsing
-        # drops a <td id="pages"> outside any table, so the link alone counts
+        # The last "Next Page" link (HTML5 parsing drops a <td id="pages">
+        # outside any table, so the link alone counts)
         for link in tree.css("a"):
-            if "next page" in link.text().strip().lower() and not any(
-                _is_results_table(parent) for parent in ancestors(link)
-            ):
+            if "next page" in link.text().strip().lower():
                 self.next_page_url = link.attributes.get("href") or ""
 
     def _add_row(self, row: LexborNode) -> None:
         cells = row.css("td")
-        # A separator cell drops its row
-        if not cells or any(_is_separator(cell) for cell in cells):
+        # A separator or the pagination cell drops its row
+        if not cells or any(
+            _is_separator(cell) or cell.attributes.get("id") == "pages"
+            for cell in cells
+        ):
             return
         # Title link: the last <a> of the first cell, with title attr and href
         links = cells[0].css("a")
@@ -117,11 +121,6 @@ class _SearchResultParser:
                     "published_date": _cell_text(cells, 3),
                 }
             )
-
-
-def _is_results_table(node: LexborNode) -> bool:
-    """Whether *node* is the results table (``<table class="download">``)."""
-    return node.tag == "table" and "download" in classes(node)
 
 
 def _is_separator(cell: LexborNode) -> bool:
