@@ -24,6 +24,7 @@ from scavengarr.application.stremio.plugin_search import (
     CircuitBreaker,
     EpisodeFilterFn,
     LateSearch,
+    PluginHealth,
     PluginSearchRunner,
     finish_late,
 )
@@ -203,6 +204,7 @@ class StremioStreamUseCase:
         pool: ConcurrencyPoolPort,
         circuit_breaker: CircuitBreaker | None = None,
         mirror_groups: Mapping[str, str] | None = None,
+        plugin_health: PluginHealth | None = None,
         cache: CachePort | None = None,
         search_ttl_seconds: int = 0,
     ) -> None:
@@ -223,6 +225,7 @@ class StremioStreamUseCase:
             circuit_breaker=circuit_breaker,
             browser_warmup_fn=browser_warmup_fn,
             mirror_groups=mirror_groups,
+            plugin_health=plugin_health,
         )
         self._title_match_threshold = config.title_match_threshold
         self._title_year_bonus = config.title_year_bonus

@@ -82,6 +82,7 @@ from scavengarr.infrastructure.plugins.constants import (
     DEFAULT_USER_AGENT,
     search_max_results,
 )
+from scavengarr.infrastructure.plugins.health_monitor import PluginHealthMonitor
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 from scavengarr.infrastructure.resource_detector import detect_resources
@@ -365,6 +366,21 @@ def _wire_scoring(state: AppState, config: AppConfig) -> asyncio.Task[None]:
     return asyncio.create_task(state.scoring_scheduler.run_forever())
 
 
+def _plugin_health(state: AppState, config: AppConfig) -> PluginHealthMonitor | None:
+    """Checks of the Stremio plugins' sites; ``None`` when turned off."""
+    interval = config.stremio.plugin_health_interval_seconds
+    if interval <= 0:
+        return None
+    names = state.plugins.get_by_provides("stream")
+    log.info("plugin_health_monitor_started", plugins=len(names), interval_s=interval)
+    return PluginHealthMonitor(
+        prober=HealthProber(http_client=state.http_client),
+        plugins=state.plugins,
+        names=names,
+        interval_s=interval,
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Lifespan Hook: Initialize and cleanup all resources (DI Composition Root).
@@ -597,6 +613,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     log.info("circuit_breaker_initialized")
 
+    # 14b) Plugin health: Stremio searches skip sites that do not answer
+    state.plugin_health = _plugin_health(state, config)
+    state._plugin_health_task = (
+        asyncio.create_task(state.plugin_health.run_forever())
+        if state.plugin_health is not None
+        else None
+    )
+
     # 15) Stremio use cases (always initialized — fallback handles missing key)
     state.stremio_stream_uc = StremioStreamUseCase(
         tmdb=state.tmdb_client,
@@ -624,6 +648,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         circuit_breaker=state.circuit_breaker,
         # hdfilme, streamcloud, streamkiste: one database, one asked per request
         mirror_groups=_mirror_groups(state.plugins),
+        plugin_health=state.plugin_health,
         # Search results per title, shared with Torznab's TTL (0 = off)
         cache=state.cache,
         search_ttl_seconds=config.cache.search_ttl_seconds,
@@ -653,6 +678,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             with suppress(asyncio.CancelledError):
                 await state._scoring_task
             log.info("scoring_scheduler_stopped")
+
+        if state._plugin_health_task is not None:
+            state._plugin_health_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await state._plugin_health_task
 
         state._loop_lag_task.cancel()
         with suppress(asyncio.CancelledError):

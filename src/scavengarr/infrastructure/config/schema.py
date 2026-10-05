@@ -277,6 +277,15 @@ class StremioConfig(BaseModel):
             "plugin_timeout_seconds up turn the early answer off."
         ),
     )
+    plugin_health_interval_seconds: float = Field(
+        default=1800.0,
+        ge=0,
+        description=(
+            "How often every Stremio plugin's site is checked (HEAD on its "
+            "domains); searches skip plugins whose site did not answer, and "
+            "those are checked again every 5 minutes. 0 turns the check off."
+        ),
+    )
     stream_deadline_seconds: float = Field(
         default=15.0,
         gt=0,

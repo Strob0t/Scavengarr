@@ -8,6 +8,7 @@ from contextvars import ContextVar
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from structlog.testing import capture_logs
 
 from scavengarr.application.stremio.plugin_search import (
     LateSearch,
@@ -379,6 +380,47 @@ class TestMirrorGroups:
         await _search(runner, ["hdfilme", "streamcloud"], ["q"])
 
         assert plugins["hdfilme"].search.await_count == 1
+        assert plugins["streamcloud"].search.await_count == 1
+
+
+class _Health:
+    def __init__(self, *down: str) -> None:
+        self._down = set(down)
+
+    def is_reachable(self, name: str) -> bool:
+        return name not in self._down
+
+
+class TestPluginHealth:
+    """Plugins whose site failed the periodic check are not searched: such
+    plugins held every first answer to the deadline (fifth round)."""
+
+    async def test_an_unreachable_plugin_is_not_searched(self) -> None:
+        plugins = {
+            "up": _plugin([_sr("https://a/1")]),
+            "down": _plugin([_sr("https://b/1")]),
+        }
+        runner = _runner(_registry(plugins), plugin_health=_Health("down"))
+
+        with capture_logs() as logs:
+            results = await _search(runner, ["up", "down"], ["q"])
+
+        assert [r.download_link for r in results] == ["https://a/1"]
+        assert plugins["down"].search.await_count == 0
+        skipped = [e for e in logs if e["event"] == "stremio_plugins_unreachable"]
+        assert [e["plugins"] for e in skipped] == [["down"]]
+
+    async def test_a_mirror_group_picks_a_reachable_member(self) -> None:
+        plugins = TestMirrorGroups()._plugins()
+        runner = _runner(
+            _registry(plugins),
+            mirror_groups=TestMirrorGroups._GROUPS,
+            plugin_health=_Health("hdfilme"),
+        )
+
+        await _search(runner, ["hdfilme", "streamcloud", "other"], ["q"])
+
+        assert plugins["hdfilme"].search.await_count == 0
         assert plugins["streamcloud"].search.await_count == 1
 
 

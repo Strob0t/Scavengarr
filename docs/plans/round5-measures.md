@@ -23,7 +23,7 @@ Decisions 9 and 10 came the same day, after the maintainer asked for more time p
 
 Order: 3, 5, 6 (small, independent), then 4, 1, 2 with 9 (the request flow), then 10, then 7, then the metrics. Each measure is test-driven, committed on its own and documented with the code. A sixth round measures 1–6, 9 and 10 in production.
 
-Done: 3 (1b7e01f), 5 (7ec1a5c), 6 (a3b7f50), 4.
+Done: 3 (1b7e01f), 5 (7ec1a5c), 6 (a3b7f50), 4 (20d27c5), 1.
 
 ## 1. Plugin health check
 
@@ -34,6 +34,7 @@ Done: 3 (1b7e01f), 5 (7ec1a5c), 6 (a3b7f50), 4.
 - Unreachable: no answer (DNS, connect or read error, timeout) or a status of 500 and up without a challenge page. A challenge page means the site is up behind Cloudflare (kinoger). One failed probe marks a site unreachable, one good probe brings it back; both are logged (`plugin_unreachable`, `plugin_reachable`).
 - `PluginSearchRunner.search_with_fallback()` drops unreachable plugins before it picks one per mirror group (`PluginHealthPort.is_reachable()`, a Protocol in the application layer), and logs `stremio_plugins_unreachable`.
 - Off with `stremio.plugin_health_interval_seconds: 0` (default 1800).
+- Added in the implementation: a site counts as reachable when any of the plugin's domains answers (the plugin picks its working domain itself, `_verify_domain`), and a check in which no site answers changes nothing (`plugin_health_no_answer`): a VPN reconnect during the 30-minute check would otherwise mark every plugin unreachable.
 - Cost: about 40–60 HEAD requests an hour, 1–2 s of CPU an hour on the Pi.
 - Limit: kinox stays. Its site answers; only its link-outs sit behind an image captcha. It held no answer alone in the fifth round.
 

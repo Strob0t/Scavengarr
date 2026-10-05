@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Perf: Stremio Searches Skip Plugins Whose Site Is Down
+- A plugin whose site is down ran in every search until the deadline: its fetch errors end as empty answers, which the circuit breaker does not count. megakino_to and movie4k held every first answer of the fifth end-to-end round to the soft deadline.
+- `PluginHealthMonitor` checks every Stremio plugin's site (HEAD on its domains) every `stremio.plugin_health_interval_seconds` (default 1800, `0` = off) and the unreachable ones every 5 minutes; searches skip those (`stremio_plugins_unreachable`), and a mirror group picks a reachable member.
+- Unreachable: no answer or a server error without a challenge page (522). A Cloudflare challenge counts as up. One answer from any of the plugin's domains brings it back; a check in which no site answers changes nothing (the own network is down then).
+
 ### Perf: Cached Answers Go Out at Once
 - An answer from the search cache waited for the resolve grace (4.1–4.4 s in the fifth end-to-end round) when one of its links had no cached resolution. It now goes out at once with the resolutions in the resolver's cache when one of them is a stream (`stremio_resolve_from_cache`); a hoster whose best link is cached as dead contributes its next cached one.
 - The links without a cached resolution resolve in the background, one run per title at a time, and fill the resolver's cache for the next request. Without a cached stream the answer resolves as before.

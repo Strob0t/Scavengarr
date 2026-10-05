@@ -351,6 +351,7 @@ Controls the Stremio addon behavior: stream ranking, plugin concurrency, title m
 | `stremio.max_concurrent_plugins_auto` | bool | `true` | Legacy auto-tune of `max_concurrent_plugins` only; used only when `auto_tune_all` is `false` |
 | `stremio.max_results_per_plugin` | int | `100` | Max results per plugin in Stremio search |
 | `stremio.plugin_timeout_seconds` | float | `10.0` | Plugin search budget per stream request, counted from the request start (slot queueing included); running plugins are cut, queued ones skipped |
+| `stremio.plugin_health_interval_seconds` | float | `1800.0` | How often every Stremio plugin's site is checked (HEAD on its domains); searches skip plugins whose site did not answer, and those are checked again every 5 minutes (`0` = off) |
 | `stremio.search_soft_deadline_seconds` | float | `7.0` | With the search cache on (`cache.search_ttl_seconds` > 0): the search answers this long after the request start when it has results; plugins still running go on and their results are added to the cache for the next request. Values from `plugin_timeout_seconds` up turn the early answer off |
 | `stremio.stream_deadline_seconds` | float | `15.0` | Overall budget per stream request; hoster resolution stops here (at least 2 s after the search). Keep it above `plugin_timeout_seconds` |
 | `stremio.verify_streams` | bool | `true` | Playback check of every resolved video URL (first bytes with playback headers); unplayable streams are dropped |

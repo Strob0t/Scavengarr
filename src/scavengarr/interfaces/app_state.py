@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from scavengarr.infrastructure.concurrency import ConcurrencyPool
     from scavengarr.infrastructure.hoster_resolvers import HosterResolverRegistry
     from scavengarr.infrastructure.metrics import MetricsCollector
+    from scavengarr.infrastructure.plugins.health_monitor import PluginHealthMonitor
     from scavengarr.infrastructure.scoring.scheduler import ScoringScheduler
 
 
@@ -86,6 +87,11 @@ class AppState(State):
     plugin_score_store: PluginScoreStorePort | None
     scoring_scheduler: ScoringScheduler | None
     _scoring_task: asyncio.Task[None] | None
+
+    # Checks of the Stremio plugins' sites (optional: off when the
+    # stremio.plugin_health_interval_seconds is 0)
+    plugin_health: PluginHealthMonitor | None
+    _plugin_health_task: asyncio.Task[None] | None
 
     # Event-loop lag monitor (feeds metrics.event_loop)
     _loop_lag_task: asyncio.Task[None]

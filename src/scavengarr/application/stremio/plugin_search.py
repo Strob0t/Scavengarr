@@ -35,6 +35,12 @@ class CircuitBreaker(Protocol):
     def record_failure(self, name: str) -> None: ...
 
 
+class PluginHealth(Protocol):
+    """Whether a plugin's site answered its last periodic check."""
+
+    def is_reachable(self, name: str) -> bool: ...
+
+
 def _breaker_key(name: str, category: int | None) -> str:
     """Circuit breaker entry of a plugin: one per requested category.
 
@@ -123,6 +129,7 @@ class PluginSearchRunner:
         circuit_breaker: CircuitBreaker | None = None,
         browser_warmup_fn: BrowserWarmupFn | None = None,
         mirror_groups: Mapping[str, str] | None = None,
+        plugin_health: PluginHealth | None = None,
     ) -> None:
         self._plugins = plugins
         self._search_engine = search_engine
@@ -135,6 +142,7 @@ class PluginSearchRunner:
         self._browser_warmup_fn = browser_warmup_fn
         # Plugin name -> mirror group: sites serving one database
         self._mirror_groups = mirror_groups or {}
+        self._plugin_health = plugin_health
 
     async def search_with_fallback(
         self,
@@ -167,7 +175,11 @@ class PluginSearchRunner:
         *deadline* (``time.monotonic()`` value) ends the whole search: a
         plugin still waiting for a slot then is skipped, a running one is
         cut at the deadline instead of after its own full timeout.
+
+        Plugins whose site failed the periodic health check are skipped
+        (before a mirror group picks its member).
         """
+        plugin_names = self._reachable(plugin_names)
         plugin_names = self._one_per_mirror_group(plugin_names, category)
 
         # --- Fire-and-forget pre-warm for shared Playwright browser ---
@@ -205,6 +217,16 @@ class PluginSearchRunner:
                         seen.add(r.download_link)
                         all_results.append(r)
         return all_results
+
+    def _reachable(self, plugin_names: list[str]) -> list[str]:
+        """The plugins whose site answered its last health check."""
+        health = self._plugin_health
+        if health is None:
+            return plugin_names
+        unreachable = [n for n in plugin_names if not health.is_reachable(n)]
+        if unreachable:
+            log.info("stremio_plugins_unreachable", plugins=unreachable)
+        return [n for n in plugin_names if n not in unreachable]
 
     def _one_per_mirror_group(
         self, plugin_names: list[str], category: int | None
