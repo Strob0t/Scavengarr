@@ -35,6 +35,9 @@ _manifest_cache: dict[str, tuple[bytes, str, float]] = {}
 # Global semaphore for CDN proxy fetches (prevents stampede).
 _CDN_SEMAPHORE = asyncio.Semaphore(50)
 
+# Segments go out in pieces of this size (``stream_hls_segment``)
+_SEGMENT_CHUNK = 65536
+
 # URI attribute of an HLS tag (EXT-X-MEDIA, EXT-X-KEY, EXT-X-MAP, …)
 _URI_ATTR_RE = re.compile(r'URI="([^"]*)"')
 
@@ -177,11 +180,12 @@ async def stream_hls_segment(
     Raises ``httpx.HTTPStatusError`` on non-2xx responses.
 
     Uses ``httpx.stream()`` so that segment bytes flow through the
-    proxy without loading the entire 2-10 MB segment into memory. The
-    CDN's chunks pass through as they arrive: re-chunking them
-    (``aiter_bytes(chunk_size=…)``) copied every byte once more. Only an
-    encoded body (``Content-Encoding``, which the proxy does not forward)
-    is decoded.
+    proxy without loading the entire 2-10 MB segment into memory. They go
+    out in pieces of ``_SEGMENT_CHUNK``: VOE's CDN sends 4 KiB TLS
+    records, and passed through one by one, each a response write, they
+    cost the proxy 39-46 ms of CPU per MB against 34-36 ms in 64 KiB
+    pieces (dev-server end-to-end run, 2026-10-05). An encoded body
+    (``Content-Encoding``, which the proxy does not forward) is decoded.
     """
     async with _CDN_SEMAPHORE:
         resp = await http_client.send(
@@ -199,11 +203,10 @@ async def stream_hls_segment(
         resp.raise_for_status()
 
     ct = resp.headers.get("content-type", "application/octet-stream")
-    encoded = resp.headers.get("content-encoding", "identity").lower() != "identity"
 
     async def _iter() -> AsyncGenerator[bytes]:
         try:
-            async for chunk in resp.aiter_bytes() if encoded else resp.aiter_raw():
+            async for chunk in resp.aiter_bytes(chunk_size=_SEGMENT_CHUNK):
                 yield chunk
         finally:
             await resp.aclose()

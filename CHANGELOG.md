@@ -72,7 +72,7 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 ### Perf: TLS Runs in the Event Loop, Not in Python
 - httpx's default network backend on asyncio is anyio, which runs TLS in Python. The shared client now connects through `AsyncioNetworkBackend` (asyncio streams; TLS in the event loop, uvloop in production), underneath the SSRF guard's `GuardedNetworkBackend`. Measured on the Raspberry Pi with 1 MB HLS segments through the proxy: 103–112 ms of CPU per MB before, 75–88 ms after.
 - An idle connection the server closed or sent something on (a 408) is retired before reuse: asyncio reads ahead into the stream's buffer, so the backend checks the buffer instead of polling the socket.
-- The HLS proxy passes a segment's chunks through as the CDN sends them and decodes only an encoded body.
+- The HLS proxy sends segments in 64 KiB pieces and decodes an encoded body. Passing the CDN's chunks through, as decided first, cost more CPU: VOE's CDN sends 4 KiB TLS records, and each became a response write. Dev-server end-to-end run (x86, 2026-10-05), CPU per relayed MB of one VOE stream: 34 ms before both changes, 41 ms with the asyncio backend and the chunks passed through, 25 ms with 64 KiB pieces.
 - ChaCha20 instead of AES-GCM for TLS, decided first for the proxy's CPU, was dropped: production's OpenSSL 3.5.7 decrypts both at the same speed on the Pi (0.66 against 0.68 s of CPU for 20 MB).
 
 ### Fix: SuperVideo Pauses While Its CDN Refuses Players

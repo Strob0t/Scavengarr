@@ -401,9 +401,11 @@ class TestStreamHlsSegment:
 
         assert seen and seen[0].is_closed
 
-    async def test_chunks_pass_through_as_the_cdn_sends_them(self) -> None:
-        """Unencoded segments are not copied into new chunks (proxy CPU)."""
-        parts = [b"\x47" * 100, b"\x48" * 100, b"\x49" * 100]
+    async def test_small_cdn_chunks_go_out_in_64_kib_pieces(self) -> None:
+        """VOE's CDN sends 4 KiB TLS records. Passed through one by one, each
+        a response write, the proxy used 39-46 ms of CPU per MB against
+        34-36 ms in 64 KiB pieces (dev-server end-to-end run, 2026-10-05)."""
+        parts = [bytes([i]) * 4096 for i in range(40)]
 
         def _cdn(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, stream=_Chunks(parts))
@@ -412,7 +414,8 @@ class TestStreamHlsSegment:
             chunks, _ = await stream_hls_segment(client, "https://cdn.test/1.ts", {})
             received = [chunk async for chunk in chunks]
 
-        assert received == parts
+        assert [len(chunk) for chunk in received] == [65536, 65536, 32768]
+        assert b"".join(received) == b"".join(parts)
 
     async def test_an_encoded_segment_is_decoded(self) -> None:
         """The proxy does not forward Content-Encoding: it sends plain bytes."""
