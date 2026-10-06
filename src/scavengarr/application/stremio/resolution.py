@@ -149,6 +149,9 @@ class HosterResolution:
         if self._claim is not None:
             # The task's own context: the claim ends with it
             page_claim.set(self._claim)
+        if stream.source_plugin:
+            # Its log lines name the plugin (hoster_without_resolver)
+            structlog.contextvars.bind_contextvars(plugin=stream.source_plugin)
         async with self._semaphore:
             try:
                 return await self._resolve_fn(stream.url, stream.hoster)

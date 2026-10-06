@@ -286,7 +286,7 @@ Configuration follows a strict precedence hierarchy with typed validation.
 | Context fields | [x] Implemented | e.g. `plugin`, `duration_ms`, `results_count` |
 | Health endpoints | [x] Implemented | `/api/v1/healthz` (liveness), `/api/v1/readyz` (readiness) |
 | Prometheus metrics | [x] Implemented | `/metrics` — Stremio requests, phases and answer reasons, plugin searches, hoster resolutions, HLS proxy, event-loop lag, open breakers, container CPU and memory; recorded in the core through `TelemetryPort.stage()` ([Observability](./observability.md)) |
-| Metrics endpoint | [x] Implemented | `/api/v1/stats/metrics` — plugin stats, circuit breaker, pool utilisation, event-loop lag (`event_loop`: p50/p99/max of a 0.5 s timer over the last 5 min; a stall of 250 ms or more logs `event_loop_lag`) |
+| Metrics endpoint | [x] Implemented | `/api/v1/stats/metrics` — plugin stats, circuit breaker, hosters without a resolver (`unresolved_hosters`), pool utilisation, event-loop lag (`event_loop`: p50/p99/max of a 0.5 s timer over the last 5 min; a stall of 250 ms or more logs `event_loop_lag`) |
 | Tracing | [x] Implemented | Optional OpenTelemetry spans of the recorded stages: Stremio requests, plugin searches, hoster resolutions, HLS proxy (`telemetry.tracing_endpoint`; the `tracing` profile of `docker-compose.yml` runs Tempo); no URLs or titles |
 | Plugin score endpoint | [x] Implemented | `/api/v1/stats/plugin-scores` — EWMA scores, filterable by `plugin`, `category`, `bucket` |
 

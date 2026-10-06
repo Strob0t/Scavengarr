@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import Counter
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from dataclasses import replace
 from functools import partial
@@ -39,6 +40,9 @@ _MAX_CACHE_SIZE = 10_000
 
 # Telemetry name of content-type probes (URLs without a hoster resolver)
 _DIRECT = "direct"
+
+# Most hosters without a resolver that are counted (unresolved_hosts)
+_MAX_UNRESOLVED = 1000
 
 # Streaming playlists, which plugins sometimes hand out directly. Not file
 # suffixes: hoster pages end in the file name (streamtape /v/<id>/x.mp4)
@@ -105,6 +109,8 @@ class HosterResolverRegistry:
         self._resolve_count = 0
         # Half-open probes run on when their request is cut (see _resolve_with)
         self._probes: set[asyncio.Task[ResolvedStream | None]] = set()
+        # Probes of links no resolver claims, by hoster (unresolved_hosts)
+        self._unresolved: Counter[str] = Counter()
         for resolver in resolvers or []:
             self.register(resolver)
 
@@ -270,7 +276,20 @@ class HosterResolverRegistry:
                 return await self._resolve_with(resolver, hoster, url, url)
 
         # 4. Fallback: content-type probing
+        self._count_unresolved(hoster_name)
         return await self._probe(url, hoster_name)
+
+    def _count_unresolved(self, hoster: str) -> None:
+        """A link no resolver claims: which resolver to build next."""
+        log.info("hoster_without_resolver", hoster=hoster)
+        # Scraped links name the hosters, so the set is open: new ones stop
+        # counting at the cap, the counted ones go on
+        if hoster in self._unresolved or len(self._unresolved) < _MAX_UNRESOLVED:
+            self._unresolved[hoster] += 1
+
+    def unresolved_hosts(self, top: int = 20) -> dict[str, int]:
+        """The hosters probed for want of a resolver, the most frequent first."""
+        return dict(self._unresolved.most_common(top))
 
     async def _probe(self, url: str, hoster_name: str) -> ResolvedStream | None:
         """Content-type probe of a URL without a resolver (``direct``), cached."""

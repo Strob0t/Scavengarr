@@ -17,6 +17,7 @@ from scavengarr.domain.entities.stremio import ResolvedStream
 from scavengarr.infrastructure.browser.page_gate import PageBusy, PageGate
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.hoster_resolvers import extract_domain
+from scavengarr.infrastructure.hoster_resolvers import registry as registry_module
 from scavengarr.infrastructure.hoster_resolvers.registry import (
     HosterResolverRegistry,
 )
@@ -1491,3 +1492,55 @@ class TestBusyBrowser:
         assert result is not None
         assert result.video_url == self._MP4
         await holder
+
+
+class TestUnresolvedHosters:
+    """Links no resolver claims are counted by hoster: which resolver to
+    build next, and which plugin hands out such links."""
+
+    @respx.mock
+    async def test_probes_are_counted_and_logged_by_hoster(self) -> None:
+        respx.head(url__regex=r"https://(byse|other)\.").respond(
+            200, headers={"content-type": "text/html"}
+        )
+        respx.head("https://cdn.example.com/master.m3u8").respond(
+            200, headers={"content-type": "application/vnd.apple.mpegurl"}
+        )
+        async with httpx.AsyncClient() as client:
+            registry = HosterResolverRegistry(http_client=client)
+            with structlog.testing.capture_logs() as logs:
+                await registry.resolve("https://byse.sx/e/1")
+                await registry.resolve("https://other.net/e/2")
+                await registry.resolve("https://byse.sx/e/3")
+                await registry.resolve("https://byse.sx/e/3")  # cached
+                # A playlist needs no resolver (moflix hands out its own)
+                await registry.resolve("https://cdn.example.com/master.m3u8")
+
+        assert registry.unresolved_hosts() == {"byse": 2, "other": 1}
+        events = [e for e in logs if e["event"] == "hoster_without_resolver"]
+        assert events == [
+            {"event": "hoster_without_resolver", "log_level": "info", "hoster": h}
+            for h in ("byse", "other", "byse")
+        ]
+
+    async def test_most_frequent_first_and_at_most_twenty(self) -> None:
+        registry = HosterResolverRegistry()
+        for i in range(25):
+            for link in range(i + 1):
+                await registry.resolve(f"https://hoster{i}.net/e/{link}")
+
+        top = registry.unresolved_hosts()
+
+        assert list(top) == [f"hoster{i}" for i in range(24, 4, -1)]
+        assert top["hoster24"] == 25
+
+    async def test_new_hosters_stop_counting_at_the_cap(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(registry_module, "_MAX_UNRESOLVED", 2)
+        registry = HosterResolverRegistry()
+        for url in ("https://a.net/1", "https://b.net/1", "https://c.net/1"):
+            await registry.resolve(url)
+        await registry.resolve("https://a.net/2")
+
+        assert registry.unresolved_hosts() == {"a": 2, "b": 1}

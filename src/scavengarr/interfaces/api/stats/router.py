@@ -92,6 +92,12 @@ async def metrics(request: Request) -> JSONResponse:
     if cb is not None:
         data["circuit_breaker"] = cb.snapshot()
 
+    # Hosters probed for want of a resolver, the most frequent first (an open
+    # set of names, so JSON only and no Prometheus label)
+    registry = getattr(state, "hoster_resolver_registry", None)
+    if registry is not None:
+        data["unresolved_hosters"] = registry.unresolved_hosts()
+
     # Concurrency pool utilisation
     pool = getattr(state, "concurrency_pool", None)
     if pool is not None:

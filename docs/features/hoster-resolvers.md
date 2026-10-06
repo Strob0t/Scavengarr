@@ -37,6 +37,8 @@ class HosterResolverPort(Protocol):
 
 `resolve()` returns `ResolvedStream(video_url=..., headers=..., is_hls=..., quality=...)` on success and `None` when the file is offline, deleted, or cannot be extracted.
 
+A link that reaches the last branch (no resolver, not a playlist) is logged as `hoster_without_resolver` (INFO) with its hoster name (the URL's second-level domain, never the URL) and, in a Stremio request, the plugin that delivered it (`plugin`, from the log context). The registry counts these probes per hoster (`unresolved_hosts()`; at most 1,000 names, new ones beyond are not counted), and `GET /api/v1/stats/metrics` lists the 20 most frequent under `unresolved_hosters`, the most frequent first: it says which resolver to build next. The counts start at zero with every restart; a cached answer is not counted again.
+
 ### Domain dispatch
 
 The registry matches `extract_domain(url)` (second-level domain, e.g. `"https://www.voe.sx/e/abc"` → `"voe"`) against resolver names. Resolvers that expose a `supported_domains` property are also registered under every alias domain (e.g. `filelions` → `vidhide`, `d0000d` → `doodstream`, `streamta` → `streamtape`): all XFS and generic DDL resolvers plus the individual resolvers with mirror lists (VOE, DoodStream, Streamtape, VidGuard, Strmup, Filemoon, FireStream, Mixdrop, DDownload, Serienstream). Other individual resolvers are reached when the URL's second-level domain equals the resolver `name`, via a redirect to such a domain, or via the plugin-provided hoster hint. The registry strips surrounding whitespace from the URL first (scraped links sometimes end in a newline).
@@ -264,6 +266,8 @@ Adding a new XFS hoster requires an `XFSConfig` constant appended to `ALL_XFS_CO
 ---
 
 ## Adding a New Resolver
+
+Which one: `unresolved_hosters` of `GET /api/v1/stats/metrics` (in production `poetry run python scripts/prodctl.py state --keys unresolved_hosters`) lists the hosters whose links the plugins deliver without a resolver, the most frequent first; `prodctl.py logs --since 1d --grep hoster_without_resolver --fields hoster,plugin` names the plugins.
 
 **XFS-based hoster:** add an `XFSConfig` constant in `xfs.py` (`name`, `domains`, `file_id_re`, `offline_markers`, `is_video_hoster`, optionally `needs_captcha`/`extra_domains`) and append it to `ALL_XFS_CONFIGS`. **Generic DDL hoster:** add a `GenericDDLConfig` constant in `generic_ddl.py` and append it to `ALL_DDL_CONFIGS`. In both cases the per-config tests pick it up (raise the count assertions in the test file and the counts in this doc and AGENTS.md), and the composition root picks the config up via `create_all_xfs_resolvers()` / `create_all_ddl_resolvers()`.
 

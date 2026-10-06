@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: Hosters Without a Resolver Are Counted
+- A link no resolver claims was probed with `HEAD` and logged at DEBUG only, so nobody saw which hosters the plugins deliver without a resolver (in 6 h of production all 81 such probes were dead: embed pages). The registry now logs `hoster_without_resolver` (INFO; the hoster name, never the URL, and in a Stremio request the plugin) and counts the probes per hoster; `GET /api/v1/stats/metrics` lists the 20 most frequent under `unresolved_hosters`, the most frequent first (JSON only: the set of names is open). Streaming playlists, which need no resolver, are not counted. Every resolution of a Stremio request now logs with its plugin's name ([hoster-resolvers.md](docs/features/hoster-resolvers.md#adding-a-new-resolver)).
+
 ### Added: The Startup Log Names the Configuration
 - `config_effective` (INFO) lists every setting that differs from its default after all layers, with the YAML file read; secrets show as `***`, dict-typed settings (`plugins.overrides`) their keys. `config_unknown_keys` (WARNING) names the YAML keys no setting accepts, which loading ignored silently: a misspelled key, or one a release removed (a `config.yaml` seeded months earlier ran unnoticed). `scripts/prodctl.py logs --since 7d --grep config_` answers what production runs with ([configuration.md](docs/features/configuration.md#what-the-server-logs-at-startup)).
 

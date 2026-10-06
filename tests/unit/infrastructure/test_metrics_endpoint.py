@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 from fastapi.testclient import TestClient
 
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
@@ -91,3 +93,13 @@ class TestMetricsEndpoint:
             cb.record_failure("flaky")
         data = client.get("/api/v1/stats/metrics").json()
         assert data["circuit_breaker"]["flaky"]["state"] == "open"
+
+    def test_unresolved_hosters_most_frequent_first(self) -> None:
+        client = _build_app()
+        registry = MagicMock()
+        registry.unresolved_hosts.return_value = {"byse": 7, "other": 2}
+        client.app.state.hoster_resolver_registry = registry
+
+        data = client.get("/api/v1/stats/metrics").json()
+
+        assert list(data["unresolved_hosters"].items()) == [("byse", 7), ("other", 2)]

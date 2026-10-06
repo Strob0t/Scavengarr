@@ -99,7 +99,7 @@ Open and still worth their place, not repeated here: optimization-options.md opt
 | 3 | I4 build identity (**done** 2026-10-06; the startup line is the existing `app_startup_complete`, not a new `app_started`; the Pi's own Dockerfile passes no commit, so production reports one from I7's image on) | below | `infrastructure/version.py`, `infrastructure/telemetry/` (build info), `/health` routes, `Dockerfile.prod` | Yes |
 | 4 | I9 config drift guard (**done** 2026-10-06) | below | `infrastructure/config/` (loader), `interfaces/composition.py` (startup log) | Yes |
 | 5 | I16 OpenSpec hygiene (**done** 2026-10-06; `add-observability` archived after it, v0.3.0 being out) | below | `openspec/changes/` | Yes |
-| 6 | I3 unknown-hoster inventory | below | `hoster_resolvers/registry.py`, the stats route | Resolver area: check first |
+| 6 | I3 unknown-hoster inventory (**done** 2026-10-06; the plugin comes from the log context the resolution binds) | below | `hoster_resolvers/registry.py`, the stats route | Resolver area: check first |
 | 7 | I2 quality and size from the stream | `openspec/changes/add-stream-media-quality/` | `hoster_resolvers/_verify.py`, `registry.py`, `domain/entities/stremio.py`, `application/stremio/stream_builder.py`, the use case's answer step (the sorter is reused, not changed) | Stremio and resolver area: check first |
 | 8 | I7 container image pipeline | `openspec/changes/add-container-image/` | `.github/workflows/`, `Dockerfile.prod`, `docker/entrypoint.sh`, `docker-compose.yml`, README, AGENTS.md §1 | Yes |
 | 9 | I8 alert rules | below | `docker/prometheus-alerts.yml`, `docs/features/observability.md` | Yes |

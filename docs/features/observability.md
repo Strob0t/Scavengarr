@@ -9,7 +9,7 @@ Spec: `openspec/specs/observability/spec.md` (from the change `openspec/changes/
 | Endpoint | Content |
 |---|---|
 | `GET /metrics` | All metrics below, Prometheus text format (0.0.4), rendered in a worker thread |
-| `GET /api/v1/stats/metrics` | JSON for a quick look: plugin statistics (from the same metrics), event-loop lag of the last 5 minutes (p50/p99/max), plugin circuit breakers (hoster breakers only in `/metrics`), concurrency pool, shutdown state |
+| `GET /api/v1/stats/metrics` | JSON for a quick look: plugin statistics (from the same metrics), event-loop lag of the last 5 minutes (p50/p99/max), plugin circuit breakers (hoster breakers only in `/metrics`), the 20 hosters probed most often for want of a resolver (`unresolved_hosters`, an open set of names and so no Prometheus label; [Hoster Resolvers](./hoster-resolvers.md#architecture)), concurrency pool, shutdown state |
 
 ## Prometheus
 
