@@ -2,7 +2,7 @@
 
 - [x] 1.1 `Dockerfile.prod`: `ARG`/`ENV` `SCAVENGARR_COMMIT`, `SCAVENGARR_BUILT` (item I4), `COPY plugins/ /app/plugins/`, the default config at `/app/config.default.yaml`, OCI labels from build arguments; the image still starts without any volume.
 - [x] 1.2 `docker/entrypoint.sh`: seed `/app/config/config.yaml` from `/app/config.default.yaml` when missing (log one line); keep the executable bit (`tests/unit/infrastructure/test_repository_files.py`). (Done: the default sits beside the entrypoint, `/app/config.default.yaml`, and the target is `SCAVENGARR_CONFIG`; an unwritable directory logs why and the app starts on its defaults; tests in `tests/unit/infrastructure/test_entrypoint.py`. Also done: `COPY --chown` instead of the final `chown -R`, which duplicated the venv and Chromium in a layer.)
-- [ ] 1.3 Local check: `docker build -f Dockerfile.prod --build-arg SCAVENGARR_COMMIT=$(git rev-parse --short HEAD) .` is not possible in the dev container (no Docker, AGENTS.md §9) — verify the Dockerfile by the first workflow run instead, and `bash -n docker/entrypoint.sh`.
+- [x] 1.3 Local check: `docker build -f Dockerfile.prod --build-arg SCAVENGARR_COMMIT=$(git rev-parse --short HEAD) .` is not possible in the dev container (no Docker, AGENTS.md §9) — verify the Dockerfile by the first workflow run instead, and `bash -n docker/entrypoint.sh`. (Done: `bash -n` and `sh -n` pass; the first run built both architectures, 2026-10-06.)
 
 ## 2. Workflow
 

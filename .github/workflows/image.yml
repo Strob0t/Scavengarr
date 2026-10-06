@@ -137,4 +137,12 @@ jobs:
       - name: Inspect
         env:
           VERSION: ${{ steps.meta.outputs.version }}
-        run: docker buildx imagetools inspect "$IMAGE:$VERSION"
+        run: |
+          docker buildx imagetools inspect "$IMAGE:$VERSION"
+          # Compressed size per platform, what a first pull downloads
+          docker buildx imagetools inspect --raw "$IMAGE:$VERSION" \
+            | jq -r '.manifests[] | select(.platform.os != "unknown") | "\(.platform.architecture) \(.digest)"' \
+            | while read -r arch digest; do
+                bytes=$(docker buildx imagetools inspect --raw "$IMAGE@$digest" | jq '[.layers[].size] | add')
+                echo "$arch: $((bytes / 1048576)) MiB compressed" | tee -a "$GITHUB_STEP_SUMMARY"
+              done
