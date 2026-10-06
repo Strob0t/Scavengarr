@@ -2,7 +2,7 @@
 
 Scavengarr records the steps of its core as Prometheus metrics: every Stremio stream request, its phases, every plugin search of a Stremio request, every hoster resolution and every HLS proxy request. Prometheus scrapes them from `GET /metrics`, Grafana shows them. The metrics come from real use, so a change of the answer policy, a timeout or a breaker can be judged the next day without a test round. A request id ties the log lines of one request together, and on demand the same steps go to Tempo as traces.
 
-Change spec: `openspec/changes/add-observability/`.
+Spec: `openspec/specs/observability/spec.md` (from the change `openspec/changes/archive/2026-10-06-add-observability/`).
 
 ## Endpoints
 

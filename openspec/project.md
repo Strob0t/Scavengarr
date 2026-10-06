@@ -126,11 +126,12 @@ OpenSpec changes live in `openspec/changes/<change-id>/`:
 ### Changes
 
 Open (`openspec list`):
-- `add-observability` – Prometheus metrics, request ids, on-demand tracing: complete, shipped in v0.3.0
 - `add-stream-media-quality` – Stream quality and size from the stream itself (approved 2026-10-06)
 - `add-container-image` – A published multi-arch container image (approved 2026-10-06)
 - `persist-resolver-state` – Hoster resolutions and circuit breakers that survive a restart (approved 2026-10-06)
 - `add-anime-ids` – `kitsu:` stream requests (approved 2026-10-06)
+
+Archived after its release: `add-observability` (Prometheus metrics, request ids, on-demand tracing; shipped in v0.3.0), its requirements now in `specs/observability/spec.md`.
 
 Archived unfinished on 2026-10-06, without specs (`changes/archive/`; untouched since January, [ideas-backlog.md](../docs/plans/ideas-backlog.md) I16):
 - `add-config-system` – Type-safe config loading (Pydantic Settings): implemented except wrapped YAML errors; the startup log's `config_effective` (secrets masked) came later without it
