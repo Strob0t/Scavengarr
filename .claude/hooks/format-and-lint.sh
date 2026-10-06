@@ -6,6 +6,8 @@
 
 FILE_PATH=$(jq -r '.tool_input.file_path // empty')
 [[ $FILE_PATH == *.py && -f $FILE_PATH ]] || exit 0
+# Only the repository's files: scratch scripts elsewhere follow no project rules.
+[[ $FILE_PATH == "$CLAUDE_PROJECT_DIR"/* ]] || exit 0
 
 cd "$CLAUDE_PROJECT_DIR" || exit 0
 # Project venv; in a git worktree (no own .venv) the main checkout's venv; else PATH.
@@ -18,7 +20,8 @@ unset FORCE_COLOR         # plain text for Claude: ANSI escapes only cost tokens
 export NO_COLOR=1
 
 "$RUFF" format --quiet "$FILE_PATH" >/dev/null 2>&1
-if ! OUT=$("$RUFF" check --fix --quiet --output-format concise "$FILE_PATH" 2>&1); then
+# F401 stays to pre-commit: an import added before its first use would be deleted here.
+if ! OUT=$("$RUFF" check --fix --ignore F401 --quiet --output-format concise "$FILE_PATH" 2>&1); then
   echo "ruff found issues it could not fix in $FILE_PATH:" >&2
   echo "$OUT" >&2
   exit 2

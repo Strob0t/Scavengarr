@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Chore: The ruff Edit Hook Lints Repository Files Only and Keeps New Imports
+- `.claude/hooks/format-and-lint.sh` skips Python files outside the repository (scratch scripts follow no project rules) and leaves unused imports (F401) to pre-commit: `ruff check --fix` deleted an import added before its first use, and the next edit failed with an undefined name (254 of 385 hook blocks in one week were F821).
+
 ### Fix: Eager Tasks on uvloop Under Python 3.13 and 3.14
 - uvicorn runs on uvloop, and uvloop 0.23 hands the task factory `eager_start=None`. asyncio's `eager_task_factory` refused that keyword on Python 3.13 (the app did not start), and on 3.14, the Docker image's Python, the `None` overrode its eager start: the app logged `eager_tasks=True` while every task started lazily. `use_eager_tasks()` installs its own factory (`eager_task_factory` in the composition root), which starts tasks eagerly unless a caller asks for `eager_start=False`. Checked on uvloop with Python 3.12, 3.13 and 3.14. Found by the code review (2026-10-06).
 
