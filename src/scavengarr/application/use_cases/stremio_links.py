@@ -19,7 +19,10 @@ from typing import Any, Protocol
 
 import structlog
 
-from scavengarr.application.stremio.stream_builder import is_direct_video_url
+from scavengarr.application.stremio.stream_builder import (
+    is_direct_video_url,
+    with_resolution,
+)
 from scavengarr.domain.entities.stremio import CachedStreamLink, ResolvedStream
 from scavengarr.domain.ports.stream_link_repository import StreamLinkRepository
 
@@ -210,14 +213,7 @@ class StremioLinks:
         self, link: CachedStreamLink, resolved: ResolvedStream
     ) -> CachedStreamLink:
         """*link* with the video of *resolved*, saved for the next request."""
-        fresh = replace(
-            link,
-            video_url=resolved.video_url,
-            video_headers=json.dumps(resolved.headers) if resolved.headers else "",
-            is_hls=resolved.is_hls,
-            # A resolution from the registry's cache can be an hour old
-            resolved_at=resolved.resolved_at or time.time(),
-        )
+        fresh = with_resolution(link, resolved)
         try:
             await self._repo.save(fresh)
         except Exception:

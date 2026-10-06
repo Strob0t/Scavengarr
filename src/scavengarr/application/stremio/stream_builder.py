@@ -214,18 +214,22 @@ def build_cache_link(
     It keeps the hoster URL for a resolution later and the resolved video
     with the time of its resolution.
     """
-    if resolved is None:
-        return CachedStreamLink(
-            stream_id=stream_id,
-            hoster_url=ranked.url,
-            title=ranked.title,
-            hoster=ranked.hoster,
-        )
-    return CachedStreamLink(
+    link = CachedStreamLink(
         stream_id=stream_id,
         hoster_url=ranked.url,
         title=ranked.title,
         hoster=ranked.hoster,
+    )
+    return link if resolved is None else with_resolution(link, resolved)
+
+
+def with_resolution(
+    link: CachedStreamLink, resolved: ResolvedStream
+) -> CachedStreamLink:
+    """*link* with the video of *resolved*, as ``/play/`` and ``/proxy/``
+    read it (headers as JSON, the time of the resolution)."""
+    return replace(
+        link,
         video_url=resolved.video_url,
         video_headers=json.dumps(resolved.headers) if resolved.headers else "",
         is_hls=resolved.is_hls,
