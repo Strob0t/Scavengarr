@@ -61,7 +61,7 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 | `infrastructure/common/` | Converters, parsers, outbound rate limiting, retry and the SSRF guard | `to_int`, `parse_size_to_bytes`, `TokenBucket`, `DomainRateLimiter`, `RetryTransport`, `PrivateAddressGuard` |
 | `infrastructure/config/` | Layered configuration | `DEFAULT_CONFIG`, `AppConfig`, `CacheConfig`, `StremioConfig`, `ScoringConfig`, `PluginsConfig`, `PluginOverride`, `EnvOverrides`, `load_config()` |
 | `infrastructure/hoster_resolvers/` | Hoster URL resolution | `HosterResolverRegistry`, `extract_domain`, `XFSResolver`/`XFSConfig`, `GenericDDLResolver`/`GenericDDLConfig`, dedicated `*Resolver` classes, `verify_video_url`, `check_playable` |
-| `infrastructure/browser/` | Browser process and Cloudflare handling | `SharedBrowserPool` (one Chromium), `StealthPool` (CF-bypass context on it), `PageGate` (its pages, by claim), `ClearanceStore` (challenge cookies across restarts), `SolverFetcher`/`ChainedBrowserFetcher` (optional Byparr/FlareSolverr sidecar), `resolve_headless`, `is_cloudflare_challenge` |
+| `infrastructure/browser/` | Browser process and Cloudflare handling | `SharedBrowserPool` (one Chromium), `StealthPool` (CF-bypass context on it), `PageGate` (its pages, by claim), `PageBudget` (their count), `ClearanceStore` (challenge cookies across restarts), `SolverFetcher`/`ChainedBrowserFetcher` (optional Byparr/FlareSolverr sidecar), `resolve_headless`, `is_cloudflare_challenge` |
 | `infrastructure/captcha/` | In-process captcha handling | `detect_challenge` (challenge/captcha classification), `solve_altcha` (ALTCHA proof of work) |
 | `infrastructure/logging/` | structlog + stdlib setup with async emission | `configure_logging()` |
 | `infrastructure/persistence/` | `CachePort`-backed repositories (JSON) | `CacheCrawlJobRepository`, `CacheStreamLinkRepository`, `CachePluginScoreStore` |
@@ -75,7 +75,7 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 | `infrastructure/concurrency.py` | Global fair-share httpx + Playwright slots | `ConcurrencyPool`, `RequestBudget` |
 | `infrastructure/graceful_shutdown.py` | Readiness and in-flight request draining | `GracefulShutdown` |
 | `infrastructure/telemetry/` | Prometheus metrics of the core's stages, scrape-time collectors, event-loop lag | `Telemetry`, `BreakerCollector`, `ContainerCollector`, `monitor_loop_lag()` |
-| `infrastructure/resource_detector.py` | cgroup v2/v1 CPU and memory detection | `detect_resources()`, `DetectedResources` |
+| `infrastructure/resource_detector.py` | cgroup v2/v1 CPU and memory detection, CPU load and free memory | `detect_resources()`, `DetectedResources`, `ResourceSampler` |
 | `infrastructure/version.py` | The app version from the package metadata (its only source is `pyproject.toml`) | `APP_VERSION`, `APP_USER_AGENT` |
 
 ### Interfaces

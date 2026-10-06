@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from scavengarr.infrastructure.resource_detector import (
+    ResourceSampler,
     _detect_cpu_v1,
     _detect_cpu_v2,
     _detect_mem_v1,
@@ -296,3 +297,112 @@ class TestDetectResources:
             result = detect_resources()
             with pytest.raises(AttributeError):
                 result.cpu_cores = 99  # type: ignore[misc]
+
+
+class _Machine:
+    """Fake ``/proc`` and cgroup v2 files of a container."""
+
+    def __init__(self, tmp_path: Path) -> None:
+        self.proc = tmp_path / "proc"
+        (self.proc / "self").mkdir(parents=True)
+        (self.proc / "self" / "cgroup").write_text("0::/\n")
+        self.cgroup = tmp_path / "cgroup"
+        self.cgroup.mkdir()
+        self.cpu(busy=0, idle=0)
+        self.host_memory(available_mb=4000)
+        self.container(usage_s=0.0, quota=None)
+        self.memory(limit_mb=None, current_mb=500, inactive_mb=100)
+
+    def cpu(self, *, busy: int, idle: int) -> None:
+        """Host jiffies: *busy* split over user/system/softirq, *idle* + iowait."""
+        user, system, softirq = busy // 2, busy // 4, busy - busy // 2 - busy // 4
+        (self.proc / "stat").write_text(
+            f"cpu  {user} 0 {system} {idle} 0 0 {softirq} 0 0 0\n"
+            "cpu0 1 0 1 1 0 0 0 0 0 0\n"
+        )
+
+    def host_memory(self, *, available_mb: int) -> None:
+        (self.proc / "meminfo").write_text(
+            f"MemTotal:        8000000 kB\nMemAvailable:    {available_mb * 1024} kB\n"
+        )
+
+    def container(self, *, usage_s: float, quota: float | None) -> None:
+        (self.cgroup / "cpu.stat").write_text(
+            f"usage_usec {int(usage_s * 1_000_000)}\nuser_usec 0\n"
+        )
+        limit = "max" if quota is None else str(int(quota * 100_000))
+        (self.cgroup / "cpu.max").write_text(f"{limit} 100000\n")
+
+    def memory(
+        self, *, limit_mb: int | None, current_mb: int, inactive_mb: int
+    ) -> None:
+        mb = 1024**2
+        limit = "max" if limit_mb is None else str(limit_mb * mb)
+        (self.cgroup / "memory.max").write_text(f"{limit}\n")
+        (self.cgroup / "memory.current").write_text(f"{current_mb * mb}\n")
+        (self.cgroup / "memory.stat").write_text(
+            f"anon 1\ninactive_file {inactive_mb * mb}\nactive_file 2\n"
+        )
+
+    def sampler(self) -> ResourceSampler:
+        return ResourceSampler(proc=self.proc, cgroup_root=self.cgroup)
+
+
+class TestResourceSampler:
+    """What the browser page budget reads every few seconds."""
+
+    def test_the_first_sample_has_no_cpu_share(self, tmp_path: Path) -> None:
+        machine = _Machine(tmp_path)
+
+        assert machine.sampler().sample().cpu_busy is None
+
+    def test_the_hosts_busy_share_since_the_last_sample(self, tmp_path: Path) -> None:
+        machine = _Machine(tmp_path)
+        sampler = machine.sampler()
+        machine.cpu(busy=1000, idle=1000)
+        sampler.sample()
+
+        machine.cpu(busy=1300, idle=1100)  # 300 of 400 jiffies busy
+
+        assert sampler.sample().cpu_busy == pytest.approx(0.75)
+
+    def test_a_cpu_limit_counts_when_the_container_is_busier(
+        self, tmp_path: Path
+    ) -> None:
+        """Under ``--cpus 1`` the container can be at its limit on an idle host."""
+        machine = _Machine(tmp_path)
+        sampler = machine.sampler()
+        machine.container(usage_s=10.0, quota=1.0)
+        with patch(f"{_MOD}.time.monotonic", return_value=100.0):
+            sampler.sample()
+
+        machine.container(usage_s=10.95, quota=1.0)  # 0.95 s in 1 s
+        machine.cpu(busy=10, idle=90)
+        with patch(f"{_MOD}.time.monotonic", return_value=101.0):
+            usage = sampler.sample()
+
+        assert usage.cpu_busy == pytest.approx(0.95)
+
+    def test_free_memory_is_the_hosts_without_a_limit(self, tmp_path: Path) -> None:
+        machine = _Machine(tmp_path)
+        machine.host_memory(available_mb=3000)
+
+        assert machine.sampler().sample().memory_free == 3000 * 1024**2
+
+    def test_a_memory_limit_counts_when_it_leaves_less(self, tmp_path: Path) -> None:
+        """The page cache (inactive files) is given back under pressure."""
+        machine = _Machine(tmp_path)
+        machine.host_memory(available_mb=3000)
+        machine.memory(limit_mb=2000, current_mb=1800, inactive_mb=300)
+
+        assert machine.sampler().sample().memory_free == 500 * 1024**2
+
+    def test_nothing_known_without_the_files(self, tmp_path: Path) -> None:
+        sampler = ResourceSampler(
+            proc=tmp_path / "missing", cgroup_root=tmp_path / "missing"
+        )
+        sampler.sample()
+
+        usage = sampler.sample()
+
+        assert (usage.cpu_busy, usage.memory_free) == (None, None)

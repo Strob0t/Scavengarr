@@ -22,6 +22,7 @@ from scavengarr.domain.entities.crawljob import Priority
 from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort
 from scavengarr.domain.ports.cache import CachePort
 from scavengarr.infrastructure.browser.clearance_store import ClearanceStore
+from scavengarr.infrastructure.browser.page_budget import PageBudget
 from scavengarr.infrastructure.browser.page_gate import PageGate
 from scavengarr.infrastructure.browser.shared_browser import SharedBrowserPool
 from scavengarr.infrastructure.browser.solver_fetcher import (
@@ -520,19 +521,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Solved Cloudflare/DDoS-Guard challenges survive restarts
     clearance_store = ClearanceStore(state.cache)
     PlaywrightPluginBase.set_clearance_store(clearance_store)
-    # RAM budget: at most 2 stealth pages at a time
-    pages = PageGate(
-        limit=min(config.stremio.max_concurrent_playwright, 2),
-        telemetry=state.telemetry,
-    )
+    # The stealth browser's pages: 2 at the start, then adapted to the waits
+    # for a page, the CPU and the free memory, up to max_concurrent_playwright
+    ceiling = config.stremio.max_concurrent_playwright
+    pages = PageGate(limit=min(ceiling, 2), telemetry=state.telemetry)
     state.telemetry.registry.register(BrowserPagesCollector(pages))
+    state._page_budget_task = asyncio.create_task(
+        PageBudget(pages, ceiling=ceiling).run_forever()
+    )
     state.stealth_pool = StealthPool(
         browser_pool=state.shared_browser_pool,
         clearance_store=clearance_store,
         timeout_ms=int(config.stremio.probe_stealth_timeout_seconds * 1000),
         pages=pages,
     )
-    log.info("stealth_pool_configured", pages=pages.limit)
+    log.info("browser_pages_budget", start=pages.limit, ceiling=ceiling)
 
     # 8b) httpx plugins fall back to the stealth browser (and/or an external
     #     solver) on CF challenges
@@ -732,6 +735,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         state._loop_lag_task.cancel()
         with suppress(asyncio.CancelledError):
             await state._loop_lag_task
+
+        state._page_budget_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await state._page_budget_task
 
         # Stealth context first: it lives on the shared browser.
         if state.stealth_pool is not None:

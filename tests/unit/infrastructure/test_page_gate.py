@@ -332,3 +332,49 @@ class TestOrder:
         )
 
         assert order == ["capture", "background"]
+
+
+class TestAdaptiveLimit:
+    """``PageBudget`` changes the limit while pages are in use."""
+
+    async def test_a_raised_limit_serves_waiters_at_once(self) -> None:
+        gate = PageGate(limit=1)
+        release = asyncio.Event()
+        tasks = [asyncio.create_task(_hold(gate, release)) for _ in range(3)]
+        await _settle()
+
+        gate.set_limit(3)
+        await _settle()
+
+        assert (gate.in_use, gate.waiting) == (3, 0)
+        release.set()
+        await asyncio.gather(*tasks)
+
+    async def test_a_lowered_limit_takes_no_page_away(self) -> None:
+        gate = PageGate(limit=2)
+        release = asyncio.Event()
+        tasks = [asyncio.create_task(_hold(gate, release)) for _ in range(3)]
+        await _settle()
+
+        gate.set_limit(1)
+        await _settle()
+
+        assert (gate.limit, gate.in_use, gate.waiting) == (1, 2, 1)
+        release.set()
+        await asyncio.gather(*tasks)
+        assert gate.in_use == 0
+
+    async def test_the_longest_wait_includes_waits_still_running(self) -> None:
+        gate = PageGate(limit=1)
+        release = asyncio.Event()
+        holder = asyncio.create_task(_hold(gate, release))
+        await _settle()
+        waiter = asyncio.create_task(_hold(gate, release))
+        await _settle()
+        await asyncio.sleep(0.05)
+
+        assert gate.take_longest_wait() >= 0.05
+        release.set()
+        await asyncio.gather(holder, waiter)
+        assert gate.take_longest_wait() >= 0.05
+        assert gate.take_longest_wait() == 0.0

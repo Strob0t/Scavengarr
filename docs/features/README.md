@@ -78,7 +78,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** and **S
 | [Next Steps](../plans/next-steps.md) | In progress: status snapshot of 2026-09-29 (live run, release, CI) and prioritized next steps, incl. the stremio.lan live test setup |
 | [Ideas Backlog](../plans/ideas-backlog.md) | Decided 2026-10-06: snapshot of production and repository, six new findings (httpx log noise, discarded stream quality and size, hosters without a resolver, no build identity, kinox without yield, hand-made deployment), 16 evaluated ideas, the decisions, and the handoff to the implementing agent (order, working rules, task specifications; the larger items as OpenSpec changes `add-anime-ids`, `persist-resolver-state`, `add-container-image`, `add-stream-media-quality`) |
 | [Stremio Stream Split](../plans/stremio-stream-split.md) | Proposed 2026-10-06 (item I14): split the 942-line stream use case into phase collaborators under `application/stremio/` (title resolution, plugin selection, title search, resolve flow, answer assembly) in five behaviour-preserving commits; exclusive-access rule |
-| [Browser Page Budget](../plans/browser-page-budget.md) | In progress 2026-10-06: the stealth browser's pages by urgency (play, earliest deadline, background last), the wait kept out of the resolve timeout, and a page count that follows waits, CPU and memory; `browser_page` metrics |
+| [Browser Page Budget](../plans/browser-page-budget.md) | Implemented 2026-10-06, to be measured in the seventh round: the stealth browser's pages by urgency (play, earliest deadline, background last), the wait kept out of the resolve timeout, and a page count that follows waits, CPU and memory; `browser_page` metrics |
 
 ### Refactoring History
 
@@ -135,7 +135,7 @@ src/scavengarr/
     persistence/             # CrawlJob, stream link, and plugin score repositories
     stremio/                 # Stream converter/sorter, title matcher, release parser, episode filter, HLS proxy
     tmdb/                    # TMDB client + IMDB fallback
-    browser/                 # Shared Chromium pool, stealth context and its page gate, headful/headless, Cloudflare detection
+    browser/                 # Shared Chromium pool, stealth context, its page gate and page budget, headful/headless, Cloudflare detection
     hoster_resolvers/        # Hoster resolvers (individual + generic DDL + XFS), probes
     scoring/                 # EWMA scoring, health/search probers, scheduler
     config/                  # Pydantic schema, loader, defaults
@@ -146,7 +146,7 @@ src/scavengarr/
     circuit_breaker.py       # Circuit breaker (plugins and hosters)
     concurrency.py           # Global concurrency pool
     graceful_shutdown.py     # Drain in-flight requests
-    resource_detector.py     # cgroup v2/v1 CPU/memory detection
+    resource_detector.py     # cgroup v2/v1 CPU/memory detection and sampling
     version.py               # App version from the package metadata
   interfaces/                # Frameworks & drivers
     api/                     # FastAPI routers (torznab, stremio, download, stats) + rate-limit middleware

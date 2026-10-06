@@ -2,7 +2,7 @@
 
 # Plan: Browser Page Budget (Who Gets a Stealth Page, and How Many There Are)
 
-**Status:** In progress (2026-10-06). Decided by the maintainer: options 2 and 1 for the order of the pages, option 3 fully adaptive ("up and down"), bounded by the container's CPUs and RAM; a `browser_page` metric first; measured in a seventh round.
+**Status:** Implemented on staging (2026-10-06), to be measured in the seventh round. Decided by the maintainer: options 2 and 1 for the order of the pages, option 3 fully adaptive ("up and down"), bounded by the container's CPUs and RAM; a `browser_page` metric first; measured in a seventh round.
 **Priority:** High (titles with few streams wait 30 s for kinoger, which no longer finishes in production)
 **Related:** `src/scavengarr/infrastructure/browser/stealth_pool.py`, `infrastructure/hoster_resolvers/registry.py`, `application/stremio/plugin_search.py`, `application/stremio/resolution.py`, `application/use_cases/stremio_links.py`, [Stremio latency, sixth round](stremio-latency.md#sixth-round-2026-10-06-production-on-staging-f0b9d18)
 
@@ -44,17 +44,18 @@ The variable lives in the domain port module rather than being injected like `se
   - The resolve clock stops while waiting: the registry publishes its `asyncio.timeout` in the context variable `work_clock`; the gate pauses it (`reschedule(None)`) for the wait and gives it its remaining time back once the page is granted. `resolve_timeout` then measures the work only.
   - `PageBusy` from a capture reaches the registry: outcome `busy`, not cached, not counted by the breaker. The page loads of plugins (`fetch_text`, `resolve_redirect`, `click_through`) answer `None` as on any failure (the chained solver sidecar can still answer).
   - Not built: the plugin page timeout `min(30 s, remaining)`. The plugin's `wait_for` cancels its page at the search deadline anyway, and the one page that outlives it on purpose (the shielded Cloudflare solve of `HttpxPluginBase._solve_and_adopt`, which keeps the session for the next request) must keep its full time.
-- **Metrics:** stages `browser_page_wait` (outcomes `ok`, `busy`, `cut`) and `browser_page` (the work while the page is held), both labelled by `kind`; traced, so a request's trace shows its queueing. A collector gauge `scavengarr_browser_pages{state="limit|in_use|waiting"}`. The start budget is logged (`browser_pages_budget`).
+- **Metrics:** stages `browser_page_wait` (outcomes `ok`, `busy`, `cut`) and `browser_page` (the work while the page is held), both labelled by `kind`; traced, so a request's trace shows its queueing. A collector gauge `scavengarr_browser_pages{state="limit|in_use|waiting"}`. The start budget is logged (`browser_pages_budget`: `start`, `ceiling`).
 
 ### Page count (option 3, fully adaptive)
 
 `PageBudget` in `infrastructure/browser/page_budget.py`, a background task started and stopped by the composition root, changes the gate's limit every 5 s:
 
 - **Bounds:** at least 1 page; at most `stremio.max_concurrent_playwright` (auto-tuned at startup from the container's CPU and memory limits, else the host's: `min(cpu, mem_gb / 0.15, 10)`); starts at `min(2, ceiling)`, today's value.
-- **Signals** (`ResourceSampler` in `infrastructure/resource_detector.py`, which already reads the cgroup limits; the own-cgroup helpers of the telemetry collector move there): CPU busy share since the last sample, the larger of the host's (`/proc/stat`) and, with a CPU limit, the container's share of its quota (`cpu.stat`, `cpu.max`); free memory, the smaller of the host's `MemAvailable` and, with a memory limit, the cgroup's room (`memory.max` minus `memory.current` plus `inactive_file`); the longest page wait since the last sample (gate). PSI would be better but the Pi's kernel has none.
+- **Signals** (`ResourceSampler` in `infrastructure/resource_detector.py`, which already reads the cgroup limits; the own-cgroup helpers of the telemetry collector move there): CPU busy share since the last sample, the larger of the host's (`/proc/stat`) and, with a CPU limit, the container's share of its quota (`cpu.stat`, `cpu.max`); free memory, the smaller of the host's `MemAvailable` and, with a memory limit, the cgroup's room (`memory.max` minus `memory.current` plus `inactive_file`); the longest page wait since the last sample (gate, waits still running included). PSI would be better but the Pi's kernel has none.
 - **Up** (one page) when a page request waited at least 1 s, the CPU was at most 70 % busy, at least two pages' worth of memory (2 × 200 MB) is free, and the last change is 30 s ago (a new page's own CPU shows only after it ran).
-- **Down** (one page) when free memory is below one page (at once), or the CPU was at least 90 % busy on two samples in a row and the last change is 10 s ago; also back towards the start value after 2 minutes without waits, so an old burst leaves no large limit behind.
-- The band between 70 and 90 % holds the count; changes are logged (`browser_pages_changed`: from, to, reason, CPU, free memory, wait).
+- **Down** (one page) when free memory is below one page (at once), or the CPU was at least 90 % busy on two samples in a row and the last change is 10 s ago.
+- **Idle:** back to the start value after 2 minutes without waits and without changes, so an old burst leaves no large limit behind; from below only with the room the up rule asks for.
+- The band between 70 and 90 % holds the count; unknown CPU or memory (no `/proc`) allows no step up. Changes are logged (`browser_pages_changed`: `pages`, `previous`, `reason` (`wait`, `memory`, `cpu`, `idle`), `cpu_busy`, `memory_free_mb`, `waited_s`).
 
 On the Pi (4 cores, no cgroup limits, 1.4 cores taken by other containers) the ceiling is 4 and the count will mostly stay at 1–2; the kinoger fix there comes from parts 1 and 2. Part 3 pays on larger hosts and protects playback (the Stremio server's CPU) under pressure.
 

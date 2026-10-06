@@ -2,7 +2,7 @@
 
 # Plan: Stremio Response Time and Playable Streams
 
-**Status:** Done (2026-09-29) for the latency budget; the end-to-end rounds up to the sixth (2026-10-06) are appended. Open: how the stealth browser's pages are shared (kinoger, sixth round; planned in [browser-page-budget.md](browser-page-budget.md)). AIOStreams deferred by decision: Scavengarr is added to Stremio directly; the [AIOStreams](#aiostreams) notes stay for later.
+**Status:** Done (2026-09-29) for the latency budget; the end-to-end rounds up to the sixth (2026-10-06) are appended. Open: the seventh round, which measures how the stealth browser's pages are now shared (kinoger, sixth round; built after [browser-page-budget.md](browser-page-budget.md)). AIOStreams deferred by decision: Scavengarr is added to Stremio directly; the [AIOStreams](#aiostreams) notes stay for later.
 **Priority:** High (Stremio is the main use case; cold answers take 17–38 s)
 **Related:** `src/scavengarr/application/use_cases/stremio_stream.py`, `application/stremio/plugin_search.py`, `infrastructure/circuit_breaker.py`, `infrastructure/hoster_resolvers/`, `data/config.yaml`
 

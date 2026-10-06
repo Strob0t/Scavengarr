@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: The Stealth Browser's Page Count Follows the Machine
+- The stealth browser ran 2 pages on every host: a larger host could not use its CPUs, and the Pi under the load of its other containers had no brake. `PageBudget` now adapts the count every 5 s between 1 and `stremio.max_concurrent_playwright` (auto-tuned from the container's CPUs and memory). One page more when a page request waited at least 1 s, the CPU is at most 70 % busy and two pages' worth of memory (400 MB) is free, at most every 30 s; one page less when less than 200 MB is free (at once) or the CPU was at least 90 % busy on two samples in a row (at most every 10 s); back to 2 after two minutes without waits and changes. The CPU is the host's busy share or, under a CPU limit, the container's share of it; free memory is the host's or, under a memory limit, what the limit leaves. A lower count takes no running page away. Changes are logged (`browser_pages_changed`) and show in `scavengarr_browser_pages{state="limit"}`.
+
 ### Fix: kinoger's Pages No Longer Queue Behind Hoster Captures
 - The stealth browser handed its 2 pages out in arrival order, and since links resolve while plugins search, the hoster captures of an answer (Filemoon, Dropload, SuperVideo, DoodStream's fallback) took them during the search: 13 of 13 kinoger searches ran into the 30 s plugin timeout in the sixth production round (7.9-17.3 s alone), and titles with few streams waited the full 30 s for it. The next free page now goes to a resolution at play time, then to the earliest due work (a search's plugin pages, due when the search ends, before the captures of its answer, due at the answer deadline), and to background resolutions only while nobody else waits. A running page is never taken away.
 

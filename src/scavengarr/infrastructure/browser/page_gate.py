@@ -9,8 +9,8 @@ background work only while nobody else waits; a running page is never
 taken away. Work that cannot start ``_MIN_WORK_S`` before it is due gets
 no page (``PageBusy``), and the timeout of a resolution (``work_clock``)
 stops while it waits. The wait for a page and the work on it are recorded
-by kind (``browser_page_wait``, ``browser_page``). See
-``docs/plans/browser-page-budget.md``.
+by kind (``browser_page_wait``, ``browser_page``). ``PageBudget`` changes
+the limit while pages are in use. See ``docs/plans/browser-page-budget.md``.
 """
 
 from __future__ import annotations
@@ -49,6 +49,7 @@ class _Waiter:
 
     key: tuple[int, float, int]  # rank, due, arrival
     granted: asyncio.Future[None] = field(compare=False)
+    arrived: float = field(compare=False)  # time.monotonic()
 
 
 @contextmanager
@@ -77,6 +78,7 @@ class PageGate:
         self._in_use = 0
         self._waiters: list[_Waiter] = []
         self._arrivals = itertools.count()
+        self._longest_wait = 0.0  # since the last take_longest_wait()
 
     @property
     def limit(self) -> int:
@@ -89,6 +91,20 @@ class PageGate:
     @property
     def waiting(self) -> int:
         return len(self._waiters)
+
+    def set_limit(self, limit: int) -> None:
+        """Change the limit; a lower one takes no running page away."""
+        self._limit = limit
+        self._grant()
+
+    def take_longest_wait(self) -> float:
+        """The longest wait for a page since the last call, running waits
+        included."""
+        now = time.monotonic()
+        running = [now - waiter.arrived for waiter in self._waiters]
+        longest = max([self._longest_wait, *running])
+        self._longest_wait = 0.0
+        return longest
 
     @asynccontextmanager
     async def page(self, kind: PageKind, *, timeout: float) -> AsyncIterator[None]:
@@ -126,6 +142,7 @@ class PageGate:
         waiter = _Waiter(
             (_RANK[claim.kind], claim.due, next(self._arrivals)),
             asyncio.get_running_loop().create_future(),
+            time.monotonic(),
         )
         self._waiters.append(waiter)
         try:
@@ -141,6 +158,9 @@ class PageGate:
             if isinstance(exc, TimeoutError):
                 raise PageBusy from None
             raise
+        finally:
+            waited = time.monotonic() - waiter.arrived
+            self._longest_wait = max(self._longest_wait, waited)
 
     def _release(self) -> None:
         self._in_use -= 1

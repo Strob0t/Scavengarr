@@ -511,7 +511,7 @@ A browser page costs far more RAM and CPU than an HTTP request:
 - Limit browser parallelism with a semaphore.
 
 > **Scavengarr hint**
-> Plugins and hoster resolvers share one Chromium process (`SharedBrowserPool`, `src/scavengarr/infrastructure/browser/shared_browser.py`), driven through patchright, a Playwright fork. Playwright plugins bound their pages with `_new_semaphore()`; challenge fallbacks and hoster captures share the page limit of `StealthPool` (`src/scavengarr/infrastructure/browser/stealth_pool.py`, at most 2 pages).
+> Plugins and hoster resolvers share one Chromium process (`SharedBrowserPool`, `src/scavengarr/infrastructure/browser/shared_browser.py`), driven through patchright, a Playwright fork. Playwright plugins bound their pages with `_new_semaphore()`; challenge fallbacks and hoster captures share the page limit of `StealthPool` (`src/scavengarr/infrastructure/browser/stealth_pool.py`: 2 pages at the start, adapted by `PageBudget` between 1 and `stremio.max_concurrent_playwright`).
 
 ---
 

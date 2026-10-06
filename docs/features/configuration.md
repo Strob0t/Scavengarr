@@ -326,7 +326,7 @@ Controls the Playwright browser engine for JavaScript-heavy sites.
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `playwright.headless` | bool | `false` | `false`: headful when a display exists (`DISPLAY`, e.g. Xvfb), otherwise headless with one `browser_headful_no_display` warning. `true`: always headless |
-| `playwright.browser_fallback` | bool | `true` | httpx plugins load pages that answer with a Cloudflare challenge through the shared browser (stealth context, at most `min(stremio.max_concurrent_playwright, 2)` pages at a time). `false`: no browser for httpx plugins; Cloudflare-protected httpx plugins (filmfans, kinoger, serienfans) then return nothing |
+| `playwright.browser_fallback` | bool | `true` | httpx plugins load pages that answer with a Cloudflare challenge through the shared browser (stealth context; its pages start at `min(stremio.max_concurrent_playwright, 2)` and follow the waits for a page, the CPU and the free memory, up to `stremio.max_concurrent_playwright`). `false`: no browser for httpx plugins; Cloudflare-protected httpx plugins (filmfans, kinoger, serienfans) then return nothing |
 | `playwright.solver_url` | string | unset | Base URL of an optional [Byparr](https://github.com/ThePhaseless/Byparr) or FlareSolverr sidecar (FlareSolverr v1 API, e.g. `http://byparr:8191`). Order: own browser (if `browser_fallback`) → solver. With `browser_fallback: false` the solver is used alone, e.g. on hosts without RAM for Chromium. Byparr is recommended: maintained, Firefox-based, no Xvfb needed; FlareSolverr's own README says its captcha solvers do not work |
 | `playwright.timeout_ms` | int | `30000` | Currently unused (no effect) |
 
@@ -346,7 +346,7 @@ Controls the Stremio addon behavior: stream ranking, plugin concurrency, title m
 | `stremio.quality_multiplier` | int | `10` | Multiplier for quality value in ranking |
 | `stremio.hoster_scores` | dict | `{supervideo: 5, voe: 4, filemoon: 3, streamtape: 2, doodstream: 1}` | Hoster reliability bonus (tie-breaker) |
 | `stremio.max_concurrent_plugins` | int | `5` | Max parallel plugin searches (auto-tuned at startup by default) |
-| `stremio.max_concurrent_playwright` | int | `5` | Max parallel Playwright plugin searches (auto-tuned at startup by default) |
+| `stremio.max_concurrent_playwright` | int | `5` | Max parallel Playwright plugin searches and the most pages of the stealth browser (auto-tuned at startup by default) |
 | `stremio.auto_tune_all` | bool | `true` | Container-aware auto-tune of all concurrency params (cgroup v2/v1) |
 | `stremio.max_concurrent_plugins_auto` | bool | `true` | Legacy auto-tune of `max_concurrent_plugins` only; used only when `auto_tune_all` is `false` |
 | `stremio.max_results_per_plugin` | int | `100` | Max results per plugin in Stremio search |

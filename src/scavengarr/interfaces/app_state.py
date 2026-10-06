@@ -98,3 +98,6 @@ class AppState(State):
 
     # Event-loop lag monitor (feeds telemetry)
     _loop_lag_task: asyncio.Task[None]
+
+    # Adapts the stealth browser's page limit (PageBudget)
+    _page_budget_task: asyncio.Task[None]
