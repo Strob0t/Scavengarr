@@ -195,8 +195,8 @@ async def stream_hls_segment(
     proxy without loading the entire 2-10 MB segment into memory. They go
     out in pieces of ``_SEGMENT_CHUNK``: VOE's CDN sends 4 KiB TLS
     records, and passed through one by one, each a response write, they
-    cost the proxy 39-46 ms of CPU per MB against 34-36 ms in 64 KiB
-    pieces (dev-server end-to-end run, 2026-10-05). An encoded body
+    cost the proxy 39-46 ms of CPU per MB against 25 ms in 64 KiB pieces
+    (dev-server end-to-end run, 2026-10-05). An encoded body
     (``Content-Encoding``, which the proxy does not forward) is decoded.
 
     For a HEAD request (*head*) the iterator is empty: the CDN's answer

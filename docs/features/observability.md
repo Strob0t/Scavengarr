@@ -1,6 +1,6 @@
 # Observability
 
-Scavengarr records the steps of its core as Prometheus metrics: every Stremio stream request, its phases, every plugin search, every hoster resolution and every HLS proxy request. Prometheus scrapes them from `GET /metrics`, Grafana shows them. The metrics come from real use, so a change of the answer policy, a timeout or a breaker can be judged the next day without a test round. A request id ties the log lines of one request together, and on demand the same steps go to Tempo as traces.
+Scavengarr records the steps of its core as Prometheus metrics: every Stremio stream request, its phases, every plugin search of a Stremio request, every hoster resolution and every HLS proxy request. Prometheus scrapes them from `GET /metrics`, Grafana shows them. The metrics come from real use, so a change of the answer policy, a timeout or a breaker can be judged the next day without a test round. A request id ties the log lines of one request together, and on demand the same steps go to Tempo as traces.
 
 Change spec: `openspec/changes/add-observability/`.
 
@@ -9,7 +9,7 @@ Change spec: `openspec/changes/add-observability/`.
 | Endpoint | Content |
 |---|---|
 | `GET /metrics` | All metrics below, Prometheus text format (0.0.4), rendered in a worker thread |
-| `GET /api/v1/stats/metrics` | JSON for a quick look: plugin statistics (from the same metrics), event-loop lag of the last 5 minutes (p50/p99/max), circuit breakers, concurrency pool, shutdown state |
+| `GET /api/v1/stats/metrics` | JSON for a quick look: plugin statistics (from the same metrics), event-loop lag of the last 5 minutes (p50/p99/max), plugin circuit breakers (hoster breakers only in `/metrics`), concurrency pool, shutdown state |
 
 ## Prometheus
 
@@ -58,9 +58,9 @@ All names start with `scavengarr_`. Outcomes in *italics* are counted without a 
 | `stremio_request_seconds`, `stremio_request_total` | `source`, `outcome` | `source`: `cache` (fresh cache entry), `stale` (stale entry, refreshed in the background), `search` (new search), `joined` (the title's search was running), `none` (ended before the search). `outcome`: `streams`, `empty`, `no_title`, `no_plugins`, `error`, `cut` |
 | `stremio_phase_seconds`, `stremio_phase_total` | `phase`, `outcome` | `metadata` (plugin selection and TMDB titles): `found`, `not_found`. `search` (the shared search, once per search): `ok`, `cut`. `resolve` (resolution while the search runs): `target`, `done`, `deadline`, *`cached`* (a cached answer). `background_resolve` (the other links of a cached answer): `done`, `deadline` |
 | `stremio_streams` | | Streams per answer (histogram) |
-| `plugin_search_seconds`, `plugin_search_total` | `plugin`, `outcome` | `hits`, `empty`, `error`, `cut` (search deadline or shutdown), *`breaker_open`*, *`skipped`* (no slot before the search deadline), *`unreachable`* (failed the periodic health check) |
+| `plugin_search_seconds`, `plugin_search_total` | `plugin`, `outcome` | Stremio searches only; Torznab searches are not recorded. `hits`, `empty`, `error`, `cut` (search deadline or shutdown), *`breaker_open`*, *`skipped`* (no slot before the search deadline), *`unreachable`* (failed the periodic health check) |
 | `plugin_results_total` | `plugin` | Validated results |
-| `hoster_resolve_seconds`, `hoster_resolve_total` | `resolver`, `outcome` | Resolver name, `direct` for content-type probes (playlists, URLs without a resolver). `stream`, `dead`, `unplayable`, `timeout`, `network_error`, `http_error`, `error`, `cut`, *`cached`*, *`breaker_open`* |
+| `hoster_resolve_seconds`, `hoster_resolve_total` | `resolver`, `outcome` | Resolver name, `direct` for content-type probes (playlists, URLs without a resolver). `stream`, `dead`, `unplayable`, `check_error` (the playback check failed), `timeout`, `network_error`, `http_error`, `error`, `cut`, *`cached`*, *`breaker_open`* |
 | `hls_proxy_seconds`, `hls_proxy_total` | `kind`, `outcome` | `master` (the stream's playlist), `playlist`, `segment`; outcome is the answer's HTTP status. The duration ends when the answer starts (time to first byte for the player) |
 | `hls_proxy_bytes_total` | `kind` | Bytes sent (playlists and segments) |
 | `event_loop_lag_seconds` | | How late a 0.5 s timer fired: CPU work on the event loop delays every timeout and deadline by as much |
@@ -111,7 +111,7 @@ Log lines name a CDN by its second-level domain (`cdn=dropcdn`, `extract_domain(
 poetry run python scripts/prodctl.py ps                       # containers and their state
 poetry run python scripts/prodctl.py stats                    # CPU cores, memory, processes, network
 poetry run python scripts/prodctl.py logs --since 30m --grep kinoger --fields plugin,duration_ms
-poetry run python scripts/prodctl.py metrics --grep stage_duration_seconds_count
+poetry run python scripts/prodctl.py metrics --grep plugin_search_seconds_count
 poetry run python scripts/prodctl.py state --keys circuit_breaker,event_loop
 poetry run python scripts/prodctl.py probe tasks              # where the asyncio tasks wait
 ```
@@ -125,7 +125,7 @@ poetry run python scripts/prodctl.py probe tasks              # where the asynci
 Traces show one request as a tree: the request, its phases, each plugin search and each hoster resolution, with durations and outcomes. They cost a backend that runs around the clock, so they are off by default and meant for looking into a problem.
 
 1. Start Tempo: `docker compose --profile tracing up -d tempo` (`docker/tempo.yaml`: OTLP/HTTP on 4318, query API on 3200, traces kept 3 days, 512 MB memory limit).
-2. Set `telemetry.tracing_endpoint` (or `SCAVENGARR_TELEMETRY_TRACING_ENDPOINT`) to `http://tempo:4318` and restart Scavengarr. Behind a VPN container use the host's IP: name lookups would go through the VPN.
+2. Set `telemetry.tracing_endpoint` (or `SCAVENGARR_TELEMETRY_TRACING_ENDPOINT`) to `http://tempo:4318` and restart Scavengarr. Behind a VPN container, publish Tempo's port 4318 (`- "4318:4318"`) and use the host's IP: name lookups would go through the VPN.
 3. Add Tempo to Grafana as a data source (`http://<host>:3200`) and search with TraceQL, for example `{ name = "stremio_request" && duration > 10s }` or `{ span.request_id = "a1b2c3d4e5f6" }` with the id from a log line.
 
 Every stage but the HLS proxy (a span per segment would bury the requests) is a span named after the stage and its subject: `stremio_request`, `stremio_phase search`, `plugin_search kinoger`, `hoster_resolve voe`. Spans carry the stage's labels, its outcome and a few details (IMDb id, content type); an error sets the span's status to the exception type, not its message. They never carry URLs (stream URLs hold tokens) or titles. The root span carries the `request_id`. Spans go out in batches every 5 s from a background thread; at shutdown the rest gets at most 3 s, also when the endpoint does not answer, and what has not gone out by then is dropped.

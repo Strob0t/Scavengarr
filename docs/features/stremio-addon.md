@@ -41,7 +41,7 @@ IMDb/TMDB ID → title lookup per plugin language → search cache, or plugin se
 1. **Title resolution** — per plugin language, look up title + year via TMDB `/find` (or the IMDB Suggest/Wikidata fallback); `tmdb:` IDs are resolved via the TMDB ID.
 1. **Search cache** — the title-matching search results of a request are cached per title, season and episode (`stremio:search:{content_type}:{imdb_id}:{season}:{episode}`; the content type keeps a TMDB movie and series with the same number apart, `CachePort`: diskcache or Redis) for `cache.search_ttl_seconds`; resolution and ranking run on every request, since hoster stream URLs expire and some are bound to the resolving IP. A fresh entry skips the plugin search. An older one still answers for 6 h while one background search refreshes it (stale-while-revalidate). Refreshes run one title at a time, each with the whole plugin time from its own start: a burst of stale titles would split the plugin slots with the requests' own searches, and a refresh cut short replaces its entry with a thinner one. Requests for the same title share one running search (single-flight), and a search goes on when the request that started it goes away. Entries without results are not stored. `cache.search_ttl_seconds: 0` turns the cache off; the search and the answer work the same without it.
 1. **Plugin search** — `PluginSearchRunner` searches each language group with the full title and, if the title contains `:`, the base title before the colon; bounded by the global `ConcurrencyPool`, with circuit breaker. The search ends `plugin_timeout_seconds` after the request started (a stale entry's refresh: after its own start): plugins waiting for a concurrency slot use up that budget too, running ones are cut at the deadline, queued ones are skipped. Each result goes on once (`result_key`: plugin, title, release, links), so the title filter scores a result both queries find once. Plugins whose site failed the periodic health check are skipped (`stremio_plugins_unreachable`), before a mirror group picks its member: `PluginHealthMonitor` sends a HEAD to every Stremio plugin's domains every `plugin_health_interval_seconds` (30 min, the first check 60 s after the start, 5 at a time) and to the unreachable ones every 5 minutes. A site is unreachable when a check and its retry 30 s later get no answer (DNS, connect or read error, 5 s timeout) or a server error and no challenge page (522: Cloudflare cannot reach it); a challenge page means it is up behind Cloudflare. One answer from any of the plugin's domains brings it back (`plugin_unreachable`, `plugin_reachable`). A check in which no site answers changes nothing (`plugin_health_no_answer`: the own network or DNS is down). Such plugins used to run in every search until the deadline, since their fetch errors end as empty answers, which the circuit breaker does not count. The search runs as its own task until every plugin is done (at most `plugin_timeout_seconds`, 30 s): each plugin's results pass the title filter when they arrive and go into the search's `SearchProgress`, which the requests on the search read while it runs; the cache entry is stored when it ends. The answer does not wait for it (Resolution below), so plugins still running at the answer fill the cache for the next request. The search holds its share of the concurrency pool until it ends: a concurrent request gets half the plugin slots meanwhile. App shutdown cancels it.
-1. **Episode filtering** — for series requests, results are filtered by season/episode (guessit on release names; a title without an episode, such as a show page, a season page ("Staffel 1") or a season pack (`S01`), falls back to episode labels such as `1x5` or `S01E05` in `download_links`). Multi-episode and multi-season releases (`S01E01-E03`, `S01-S03`) are kept when they contain the requested episode/season.
+1. **Episode filtering** — for series requests, results are filtered by season/episode (guessit on the result title; a title without an episode, such as a show page, a season page ("Staffel 1") or a season pack (`S01`), falls back to episode labels such as `1x5` or `S01E05` in `download_links`). Multi-episode and multi-season releases (`S01E01-E03`, `S01-S03`) are kept when they contain the requested episode/season.
 1. **Link validation** — Python plugin results are validated by the search engine.
 1. **Title matching** — false positives (sequels, spin-offs) are filtered via fuzzy scoring.
 1. **Stream conversion** — `SearchResult` objects become `RankedStream` objects with parsed quality/language.
@@ -54,7 +54,7 @@ IMDb/TMDB ID → title lookup per plugin language → search cache, or plugin se
 
 ## Endpoints
 
-All endpoints are prefixed with `/api/v1/stremio/`. All responses carry `Access-Control-Allow-Origin: *`.
+All endpoints are prefixed with `/api/v1/stremio/`. All responses except `/health` carry `Access-Control-Allow-Origin: *`.
 
 ### Manifest
 
@@ -96,8 +96,8 @@ Each stream contains:
 
 - `name` — `Scavengarr` and the quality on a second line (`4K`, `1080p`, `720p`, `SD`, `TS`, `CAM`; no line for unknown quality). Stremio shows `name` in a narrow column, like other addons' `Torrentio\n1080p`.
 - `description` — one short line per fact, since Stremio cuts long lines: the site's own title (release name, else the site's title, else the reference title with the year; series titles get ` SxxEyy` unless they are release names), then `language · size`, then `HOSTER · plugin`. The site's title shows a wrong match that the reference title would hide.
-- `url` — direct video URL, or `/api/v1/stremio/proxy/{stream_id}/{manifest}` for HLS streams that need headers
-- `behaviorHints` — `bingeGroup` and `filename` on every stream, plus the playback hints (see below)
+- `url` — `/api/v1/stremio/play/{stream_id}` for a file, `/api/v1/stremio/proxy/{stream_id}/scavengarr.m3u8` for every HLS stream
+- `behaviorHints` — `bingeGroup` on every stream, `filename` when the site gives a release name, plus the playback hints (see below)
 
 ### Autoplay of the next episode (bingeGroup)
 
@@ -105,7 +105,7 @@ Stremio's binge watching (Settings → Player → auto-play next episode) reques
 
 `behaviorHints.filename` carries the release name when the site has one; Stremio passes it to subtitle addons (OpenSubtitles matches releases by name).
 
-> **Known issue:** `/play/{stream_id}` URLs are only emitted when no hoster resolver is wired into the use case. The default composition always wires `HosterResolverRegistry.resolve`, so unresolved streams are omitted from the response instead of falling back to `/play/`.
+A stream whose link does not resolve (or only echoes the embed page) is left out of the answer: `/play/` would fail on it too (502).
 
 ### Stream behaviorHints (proxyHeaders)
 
@@ -161,7 +161,7 @@ HEAD /api/v1/stremio/proxy/{stream_id}/{path:path}
 
 Server-side proxy for HLS streams whose CDN requires headers (e.g. `Referer`) on **all** sub-requests — the master manifest, variant playlists, and segments. Stremio's `proxyHeaders` only applies to the initial manifest fetch, so sub-requests would otherwise get `403` from CDNs such as Dropload's `dropcdn.io`.
 
-**When is it used?** For every resolved HLS stream (`is_hls`), with or without headers: a redirect to an HLS playlist fails on Android (stremio-bugs #1574), and the stream must be able to resolve again later. Streams with headers need it on every sub-request anyway (all XFS video hosters set `Referer`, StreamUp, Vidsonic). Such streams get `behaviorHints: {"notWebReady": true}` only. A stream's URL is `/proxy/{stream_id}/scavengarr.m3u8` (`HLS_MASTER`): under this fixed name the proxy serves the current playlist, whatever the CDN calls it.
+**When is it used?** For every resolved HLS stream (`is_hls`), with or without headers: a redirect to an HLS playlist fails on Android (stremio-bugs #1574), and the stream must be able to resolve again later. Streams with headers need it on every sub-request anyway (all XFS video hosters set `Referer`, StreamUp, Vidsonic). Their only playback hint is `notWebReady: true` (no `proxyHeaders`); `bingeGroup` and `filename` stay. A stream's URL is `/proxy/{stream_id}/scavengarr.m3u8` (`HLS_MASTER`): under this fixed name the proxy serves the current playlist, whatever the CDN calls it.
 
 **How it works:**
 
@@ -185,7 +185,7 @@ The URL of every resolved file stream (and of all streams without a resolver):
 1. Look up `stream_id` in the stream link cache (`404` if missing; links are kept `stream_link_ttl_seconds`, 7 days).
 1. Take the stored video URL while it is fresh (resolved less than an hour ago: every working link of the measurement still played after 92 minutes), else resolve the hoster URL again (`StremioLinks`: concurrent requests for one link share one resolution, one tap on Android sent 11; the new video URL is saved).
 1. Return a **302 redirect** to the video URL.
-1. Return **502** if the hoster gives no video or only echoes the embed page (never redirects to embed pages).
+1. When the hoster gives no video (or only echoes the embed page), the stored video URL is still tried: its CDN may still serve it. **502** only without a stored video URL (never a redirect to an embed page).
 1. `HEAD` answers like `GET`: a streaming server asks with `HEAD` first.
 
 ### Health
@@ -305,7 +305,7 @@ Stremio settings live in `StremioConfig` (YAML section `stremio:`). See [Configu
 
 | Setting | Default | Description |
 |---|---|---|
-| `max_concurrent_plugins` | 10 | httpx slots of the global concurrency pool |
+| `max_concurrent_plugins` | 5 | httpx slots of the global concurrency pool |
 | `max_concurrent_playwright` | 5 | Playwright slots of the global concurrency pool |
 | `max_results_per_plugin` | 100 | Per-plugin result limit in Stremio searches |
 | `plugin_timeout_seconds` | 30 | Plugin search budget, counted from the request start (queueing for a slot included; a stale entry's refresh: from its own start); the answer does not wait for it |
@@ -351,7 +351,7 @@ Defaults, with production's values (`data/config.yaml`) where they differ:
 | `stremio.stream_deadline_seconds` | 60 s | The answer, from the request start | Latest answer: running resolutions are cancelled, the search goes on |
 | `cache.search_ttl_seconds` | 900 s (1800 s), plus 6 h stale | A search cache entry | Fresh: no search; stale: answers while one background search refreshes it (one title at a time) |
 | Resolution cache (fixed) | streams 1 h, dead links 15 min, redirects 1 h | The resolver registry's results | A cached search answers at once with them, the rest resolves in the background |
-| `http_timeout_resolve_seconds` | 15 s (10 s) | One hoster resolution | Cut resolutions are not cached; from half of it on they count for the hoster breaker |
+| `http_timeout_resolve_seconds` | 15 s (10 s) | One hoster resolution | Timeouts and cut resolutions are not cached; a timeout counts for the hoster breaker, a cut neither counts nor resets it |
 | `stremio.probe_stealth_timeout_seconds` | 15 s (10 s) | A page of the stealth browser (browser hosters, Cloudflare fallback) | |
 | `http_timeout_seconds` | 30 s (15 s), connect 5 s | Each request of the shared HTTP client | Plugins' fetches, resolvers' requests |
 | `http_retry_*` | 3 retries, backoff from 1 s to 30 s (2, 0.5 s, 10 s) | Retries of 429 and 503 answers | |
@@ -359,14 +359,14 @@ Defaults, with production's values (`data/config.yaml`) where they differ:
 | Circuit breakers (fixed) | 5 failures, then 60 s doubling to 1 h | A plugin per category, a hoster resolver | Skipped while open; one half-open probe |
 | `stremio.plugin_health_interval_seconds` | 1800 s; unreachable ones every 5 min, the first check 60 s after the start; a site without an answer is tried again after 30 s | The plugin site checks | Unreachable plugins are skipped |
 | `stremio.stream_link_ttl_seconds` | 7 days | Stored links of `/play` and the HLS proxy | Older links answer 404; a video URL older than 1 h (fixed) resolves again at playback |
-| HLS proxy (fixed) | manifests cached 60 s, CDN fetch 15 s | Manifest and segment requests | |
+| HLS proxy (fixed) | manifests cached 60 s and fetched within 15 s; segments within `http_timeout_seconds` | Manifest and segment requests | |
 | SSRF guard (fixed) | DNS answers cached 60 s | Checked addresses | |
 
 Scored plugin selection keys (`scoring_enabled`, `max_plugins_scored`, `exploration_probability`, …) are documented in [Plugin Scoring & Probing](./plugin-scoring-and-probing.md#configuration).
 
 ### Circuit Breaker
 
-`PluginCircuitBreaker` is created in the composition root with hardcoded values (`failure_threshold=5`, `cooldown_seconds=60.0`, `max_cooldown_seconds=3600.0`); they are not configurable. The breaker tracks each plugin per requested category (`kinoking:2000` for its movies, `kinoking:5000` for its series): a site can be too slow for one content type only (kinoking's movie pages take 12–17 s to answer, its series pages 1 s), and its movies must not cost every movie request the search budget while its series keep coming. After 5 consecutive failures (exceptions or timeouts) a plugin is skipped for that category for 60 s (`stremio_plugin_circuit_open`). An answer without results neither counts nor resets the breaker: kinoking answers a search without hits at once, and those answers kept closing the breaker between its timeouts. After the cooldown a single probe request is allowed (half-open): concurrent requests skip the plugin until the probe reports, and a probe that never reports (cancelled, or a timeout that is not counted) is replaced by the next request after one more cooldown. Success resets the breaker and its cooldown, failure reopens it with twice the previous cooldown (60 s → 2 min → 4 min … capped at 1 h). Stremio requests are usually minutes apart, so a fixed 60 s cooldown would let an unreachable plugin cost almost every request its full timeout. A timeout counts as a failure when the plugin had at least half of `plugin_timeout_seconds`; a plugin cut by the search deadline after queueing for most of the budget is not blamed. A late plugin (search cache on) is not blamed for the cut: it counts as a failure only when it is still running at the end of its extra time (`_late_search_done`), and when it answers, the answer reports like any other (results reset the breaker). Counting the 7 s cut opened the breaker for plugins that answered a few seconds later without hits (kinox for movies in the 2026-10-04 end-to-end test).
+`PluginCircuitBreaker` is created in the composition root with hardcoded values (`failure_threshold=5`, `cooldown_seconds=60.0`, `max_cooldown_seconds=3600.0`); they are not configurable. The breaker tracks each plugin per requested category (`kinoking:2000` for its movies, `kinoking:5000` for its series): a site can be too slow for one content type only (kinoking's movie pages take 12–17 s to answer, its series pages 1 s), and its movies must not cost every movie request the search budget while its series keep coming. After 5 consecutive failures (exceptions or timeouts) a plugin is skipped for that category for 60 s (`stremio_plugin_circuit_open`). An answer without results neither counts nor resets the breaker: kinoking answers a search without hits at once, and those answers kept closing the breaker between its timeouts. After the cooldown a single probe request is allowed (half-open): concurrent requests skip the plugin until the probe reports, and a probe that never reports (cancelled, or a timeout that is not counted) is replaced by the next request after one more cooldown. Success resets the breaker and its cooldown, failure reopens it with twice the previous cooldown (60 s → 2 min → 4 min … capped at 1 h). Stremio requests are usually minutes apart, so a fixed 60 s cooldown would let an unreachable plugin cost almost every request its full timeout. A timeout counts as a failure when the plugin had at least half of `plugin_timeout_seconds`; a plugin cut by the search deadline after queueing for most of the budget is not blamed.
 
 Hoster resolution has a breaker of its own, per resolver: a hoster whose resolutions keep timing out or giving unplayable streams is skipped the same way, except that its half-open probe runs to its end even when the request is cut ([Registry Features](hoster-resolvers.md#registry-features)).
 
@@ -405,6 +405,11 @@ Plugins declare `languages: list[str]` (default `["de"]`). The use case groups p
 | `tests/unit/infrastructure/test_check_playable.py` | Playback check of resolved URLs (`verify_streams`) |
 | `tests/unit/application/test_stremio_catalog.py` | Catalog use case |
 | `tests/unit/application/test_plugin_search_runner.py` | `PluginSearchRunner` (fan-out, timeout, search deadline, circuit breaker, mirror groups) |
+| `tests/unit/application/test_search_progress.py` | `SearchProgress` (results while the search runs) |
+| `tests/unit/application/test_search_cache.py` | `SearchCache` (stale-while-revalidate) |
+| `tests/unit/application/test_hoster_resolution.py` | `HosterResolution` (resolution while the search runs) |
+| `tests/unit/application/test_stremio_links.py` | `StremioLinks` (resolving again, refused playlists, pinned copies, per-player links) |
+| `tests/unit/infrastructure/test_plugin_health.py` | `PluginHealthMonitor` |
 | `tests/unit/interfaces/test_mirror_groups.py` | The mirror groups the plugins declare |
 | `tests/unit/application/test_stremio_queries.py` | Search queries and multi-language references |
 | `tests/unit/application/test_stremio_stream_builder.py` | Stream formatting, dedup, direct-video detection, proxy URLs |
@@ -438,6 +443,11 @@ Plugins declare `languages: list[str]` (default `["de"]`). The use case groups p
 | Stream use case | `src/scavengarr/application/use_cases/stremio_stream.py` |
 | Catalog use case | `src/scavengarr/application/use_cases/stremio_catalog.py` |
 | Plugin search runner | `src/scavengarr/application/stremio/plugin_search.py` |
+| Search progress | `src/scavengarr/application/stremio/search_progress.py` |
+| Search cache | `src/scavengarr/application/stremio/search_cache.py` |
+| Hoster resolution | `src/scavengarr/application/stremio/resolution.py` |
+| Stream links (`/play`, HLS proxy) | `src/scavengarr/application/use_cases/stremio_links.py` |
+| Plugin health monitor | `src/scavengarr/infrastructure/plugins/health_monitor.py` |
 | Query building | `src/scavengarr/application/stremio/queries.py` |
 | Stream building | `src/scavengarr/application/stremio/stream_builder.py` |
 | Stream converter | `src/scavengarr/infrastructure/stremio/stream_converter.py` |
