@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: SuperVideo's Ad Pages Stay Out With `verify_streams` Off
+- SuperVideo has no check of its own and relies on the registry's playback check, which `stremio.verify_streams: false` turned off: its CDN's script and ad pages reached Stremio as streams. A resolver without a check of its own now sets `needs_playback_check`, and the registry checks its results with `verify_streams` off too (the hoster breaker pauses SuperVideo as before). Found by the code review (2026-10-06).
+
 ### Fix: warezomen Follows Only Its Pagination Link
 - warezomen took the last link reading "next page" anywhere on a search page as the next page: on a result list's last page a result whose short title read "Next Page …" sent the search to that result's download page. Only the pagination cell's "Next Page" link counts now. The parser is also tested on a captured search page (`tests/fixtures/html/warezomen/`). Found by the code review (2026-10-06).
 

@@ -329,11 +329,14 @@ class HosterResolverRegistry:
 
         A failed playback check (timeout, reset) says nothing about the
         stream, like a failed resolver request: neither cached nor counted.
+        A resolver without a check of its own (``needs_playback_check``) is
+        checked with *verify_playback* off too.
         """
         if result is None:
             log.warning("hoster_resolve_failed", hoster=hoster_name, url=url)
             return "dead", None, True
-        if self._verify_playback and self._http_client is not None:
+        unchecked = getattr(resolver, "needs_playback_check", False) is True
+        if (self._verify_playback or unchecked) and self._http_client is not None:
             try:
                 playable = await check_playable(self._http_client, result)
             except httpx.HTTPError as exc:

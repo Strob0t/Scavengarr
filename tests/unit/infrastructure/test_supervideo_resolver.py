@@ -402,8 +402,11 @@ class TestSuperVideoCdnScriptPage:
         "');</script></body></html>"
     )
 
+    @pytest.mark.parametrize("verify_streams", [True, False])
     @respx.mock
-    async def test_the_breaker_pauses_supervideo(self) -> None:
+    async def test_the_breaker_pauses_supervideo(self, verify_streams: bool) -> None:
+        """With ``verify_streams`` off too: the resolver has no check of its
+        own, so its ad pages would reach Stremio as streams."""
         respx.get(self._EMBED).respond(
             200, text=f'<script>sources: [{{file:"{self._MASTER}"}}]</script>'
         )
@@ -414,7 +417,7 @@ class TestSuperVideoCdnScriptPage:
             registry = HosterResolverRegistry(
                 resolvers=[SuperVideoResolver(http_client=client)],
                 http_client=client,
-                verify_playback=True,
+                verify_playback=verify_streams,
                 circuit_breaker=PluginCircuitBreaker(failure_threshold=1),
             )
             with structlog.testing.capture_logs() as logs:

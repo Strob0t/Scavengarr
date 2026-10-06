@@ -182,6 +182,10 @@ class SuperVideoResolver:
     JS challenge is detected (403 + "Just a moment").
     """
 
+    # No check of its own (see resolve): the registry checks its streams
+    # with verify_streams off too
+    needs_playback_check = True
+
     def __init__(
         self,
         http_client: httpx.AsyncClient,

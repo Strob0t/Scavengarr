@@ -373,7 +373,8 @@ class StremioConfig(BaseModel):
         description=(
             "Check every resolved video URL before returning it (first bytes "
             "with the playback headers); error pages, HTML and broken HLS "
-            "playlists are dropped instead of shown in Stremio."
+            "playlists are dropped instead of shown in Stremio. Off, only "
+            "resolvers without a check of their own (SuperVideo) are checked."
         ),
     )
     probe_concurrency: int = Field(

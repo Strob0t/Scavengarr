@@ -334,7 +334,7 @@ Stremio settings live in `StremioConfig` (YAML section `stremio:`). See [Configu
 | `probe_concurrency` | 10 | Parallel resolutions |
 | `resolve_target_count` | 5 | The answer goes out once this many hosters have a video, also while plugins search (`0` = wait until everything is done or the deadline) |
 | `allow_hls_transcoding` | `false` | Let Stremio's streaming server transcode HLS streams; off, the HLS proxy refuses its ffmpeg the playlist and Stremio Web plays HLS itself (see HLS Proxy) |
-| `verify_streams` | `true` | Playback check of every resolved URL: first bytes with the playback headers; error status, HTML or a non-playlist HLS answer drops the stream (result cached like a failed resolution) |
+| `verify_streams` | `true` | Playback check of every resolved URL: first bytes with the playback headers; error status, HTML or a non-playlist HLS answer drops the stream (result cached like a failed resolution). Off, only resolvers without a check of their own (SuperVideo) are checked |
 | `stream_link_ttl_seconds` | 604800 | How long the links behind `/play/` and the HLS proxy are kept (`streamlink:{stream_id}`, 7 days); stale ones resolve again |
 | `probe_stealth_timeout_seconds` | 15 | Page timeout of the `StealthPool` (browser-based resolvers, Cloudflare fallback) |
 
