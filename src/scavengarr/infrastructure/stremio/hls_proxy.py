@@ -183,6 +183,8 @@ async def stream_hls_segment(
     http_client: httpx.AsyncClient,
     url: str,
     headers: dict[str, str],
+    *,
+    head: bool = False,
 ) -> tuple[AsyncGenerator[bytes], str]:
     """Stream an HLS segment from CDN without buffering full body.
 
@@ -196,6 +198,9 @@ async def stream_hls_segment(
     cost the proxy 39-46 ms of CPU per MB against 34-36 ms in 64 KiB
     pieces (dev-server end-to-end run, 2026-10-05). An encoded body
     (``Content-Encoding``, which the proxy does not forward) is decoded.
+
+    For a HEAD request (*head*) the iterator is empty: the CDN's answer
+    is closed after its status and headers, before its bytes.
     """
     async with _CDN_SEMAPHORE:
         resp = await http_client.send(
@@ -216,6 +221,8 @@ async def stream_hls_segment(
 
     async def _iter() -> AsyncGenerator[bytes]:
         try:
+            if head:
+                return
             async for chunk in resp.aiter_bytes(chunk_size=_SEGMENT_CHUNK):
                 yield chunk
         finally:

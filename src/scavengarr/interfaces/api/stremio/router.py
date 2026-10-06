@@ -434,7 +434,8 @@ async def proxy_hls(
     CDN, so a stream object Stremio kept still plays later.
 
     HEAD answers like GET (the server drops the body): Stremio Web reads
-    the stream's content type with a HEAD request before it plays.
+    the stream's content type with a HEAD request before it plays. A
+    segment is not downloaded for HEAD.
 
     The playlist is not served to a streaming server's converter unless
     ``stremio.allow_hls_transcoding`` is on (``_converter_refused``).
@@ -512,14 +513,15 @@ async def _proxy_hls(
 
     # Segments (.ts) — stream without buffering full body
     if not master and not path.endswith(".m3u8"):
+        head = request.method == "HEAD"
         try:
             chunk_iter, content_type = await stream_hls_segment(
-                state.http_client, target_url, _cdn_headers(link)
+                state.http_client, target_url, _cdn_headers(link), head=head
             )
         except httpx.HTTPError as exc:
             return _cdn_error_response(stream_id, target_url, exc)
         return StreamingResponse(
-            content=_counted(chunk_iter, telemetry),
+            content=chunk_iter if head else _counted(chunk_iter, telemetry),
             media_type=content_type,
             headers=_CORS_HEADERS,
         )

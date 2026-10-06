@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: HEAD on an HLS Segment Downloads Nothing
+- The HLS proxy answered `HEAD` on a segment like `GET`: it downloaded the whole segment (2-10 MB) from the CDN, the server dropped the body, and `scavengarr_hls_proxy_bytes_total` counted the bytes as sent. `HEAD` now takes the CDN's status and content type and closes its answer before the bytes. Found by the code review (2026-10-06).
+
 ### Fix: Log Lines From Worker Threads Keep the Request ID
 - The title filter, the stream conversion and the episode filter ran in worker threads through `loop.run_in_executor`, which does not copy the context variables: their log lines (`title_match_summary` among them) had no `request_id`. They run through `asyncio.to_thread` now, which copies them. AGENTS.md asks for `to_thread`. Found by the code review (2026-10-06).
 

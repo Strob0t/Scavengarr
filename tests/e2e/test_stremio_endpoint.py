@@ -1998,6 +1998,23 @@ class TestProxyTelemetry:
         assert self._total(t, "segment", "200") == 1
         assert self._bytes(t, "segment") == 1500
 
+    @patch(f"{_PROXY_MODULE}.stream_hls_segment", new_callable=AsyncMock)
+    def test_a_head_request_counts_no_segment_bytes(
+        self, mock_stream: AsyncMock
+    ) -> None:
+        async def _chunks() -> Any:
+            yield b"\x00" * 1000
+
+        mock_stream.return_value = (_chunks(), "video/mp2t")
+        client, t = self._client(_make_hls_link())
+
+        resp = client.head(f"{_PREFIX}/stremio/proxy/hls-abc/seg-1.ts?t=abc")
+
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "video/mp2t"
+        assert mock_stream.await_args.kwargs["head"] is True
+        assert self._bytes(t, "segment") is None
+
     def test_converter_refused(self) -> None:
         client, t = self._client(_make_hls_link())
 

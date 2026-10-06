@@ -438,6 +438,26 @@ class TestStreamHlsSegment:
         assert [len(chunk) for chunk in received] == [65536, 65536, 32768]
         assert b"".join(received) == b"".join(parts)
 
+    async def test_a_head_request_reads_no_segment_bytes(self) -> None:
+        """HEAD wants the CDN's status and content type, not its 2-10 MB."""
+        body = _Chunks([b"\x47" * 1000])
+
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200, headers={"Content-Type": "video/mp2t"}, stream=body
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
+            chunks, content_type = await stream_hls_segment(
+                client, "https://cdn.test/1.ts", {}, head=True
+            )
+            received = [chunk async for chunk in chunks]
+
+        assert received == []
+        assert content_type == "video/mp2t"
+        assert not body.read
+        assert body.closed
+
     async def test_an_encoded_segment_is_decoded(self) -> None:
         """The proxy does not forward Content-Encoding: it sends plain bytes."""
         data = b"\x47segment" * 100
@@ -461,10 +481,16 @@ class _Chunks(httpx.AsyncByteStream):
 
     def __init__(self, chunks: list[bytes]) -> None:
         self._chunks = chunks
+        self.read = False
+        self.closed = False
 
     async def __aiter__(self) -> AsyncIterator[bytes]:
+        self.read = True
         for chunk in self._chunks:
             yield chunk
+
+    async def aclose(self) -> None:
+        self.closed = True
 
 
 # ---------------------------------------------------------------------------
