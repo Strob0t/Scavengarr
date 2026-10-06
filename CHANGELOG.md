@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: CDN Tokens No Longer Reach the Logs Through httpx and uvicorn
+- The app's `http_request` line masks query values, but two third-party lines repeated every URL whole: uvicorn's access log (each proxied HLS request with the CDN's tokens) and httpx's `HTTP Request: GET <url>` line for every outgoing request (video URLs with tokens and the client's address, `i=`). Production logs carried both (2026-10-06). uvicorn now runs with `access_log=False` (`http_request` is the access log), and third-party records show URLs by their origin only (`HTTP Request: GET https://cdn.example.net "HTTP/1.1 200 OK"`), tracebacks included.
+
 ### Chore: prodctl Prints Whole Tracebacks
 - `scripts/prodctl.py logs` cut every record to 400 characters, so a traceback ended before its error. `--width 0` prints records whole (`--width N` cuts to N characters, 400 by default).
 
