@@ -40,14 +40,12 @@ class CrawlJobFactory:
         self,
         result: SearchResult,
         *,
-        job_id: str | None = None,
         resolve_plugin: str | None = None,
     ) -> CrawlJob:
         """Create CrawlJob from validated SearchResult.
 
         Args:
             result: Validated search result (with reachable download_link).
-            job_id: Optional custom job ID (default: auto-generated UUID4).
             resolve_plugin: Plugin that resolves the links at grab time
                 (``GrabResolvingPlugin``); ``None`` if the links are final.
 

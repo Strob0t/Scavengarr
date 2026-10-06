@@ -193,7 +193,7 @@ https://hoster3.example/file/ghi
 
 ## CrawlJobFactory
 
-`CrawlJobFactory.create_from_search_result(result, *, job_id=None)` converts a `SearchResult` into a `CrawlJob`.
+`CrawlJobFactory.create_from_search_result(result, *, resolve_plugin=None)` converts a `SearchResult` into a `CrawlJob`; `resolve_plugin` names the plugin that resolves the links at grab time.
 
 ### Constructor Parameters
 
