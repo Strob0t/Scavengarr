@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: kinoger's Pages No Longer Queue Behind Hoster Captures
+- The stealth browser handed its 2 pages out in arrival order, and since links resolve while plugins search, the hoster captures of an answer (Filemoon, Dropload, SuperVideo, DoodStream's fallback) took them during the search: 13 of 13 kinoger searches ran into the 30 s plugin timeout in the sixth production round (7.9-17.3 s alone), and titles with few streams waited the full 30 s for it. The next free page now goes to a resolution at play time, then to the earliest due work (a search's plugin pages, due when the search ends, before the captures of its answer, due at the answer deadline), and to background resolutions only while nobody else waits. A running page is never taken away.
+
 ### Fix: Waiting for a Browser Page No Longer Trips a Hoster's Breaker
 - A hoster resolution's time bound (`http.timeout_resolve_seconds`, 10 s in production) included the wait for one of the stealth browser's pages: a Filemoon capture that waited 9 s had 1 s left, timed out, and the timeout counted for the hoster's circuit breaker, which opened for Filemoon, Dropload and SuperVideo in the sixth production round although they were healthy. The clock now stops while a capture waits for a page.
 - Work that gets no page 3 s before its request is due (a Stremio search's end, an answer's deadline) no longer starts a page that would be cut: a capture reports `busy` (`hoster_resolve_busy`), neither cached nor counted by the breaker, a plugin's page load answers nothing as on any failure (the optional solver sidecar can still answer). Work without a due time (Torznab searches, the scoring probes) waits as before.
@@ -1542,7 +1545,7 @@ Foundation of the project: FastAPI server, Scrapy scraping engine, plugin loader
 
 Current known issues:
 
-- **kinoger times out in production** (2026-10-06, sixth round): 13 of 13 Stremio searches hit the 30 s plugin timeout, its breakers opened, and titles with few streams waited 30 s for it. Every kinoger page goes through the stealth browser (Cloudflare binds the clearance to the browser), whose 2 pages hoster captures share while plugins search; alone in the container the same searches took 7.9–17.3 s. How the browser's pages are shared is open (`docs/plans/stremio-latency.md`, sixth round).
+- **kinoger times out in production** (2026-10-06, sixth round): 13 of 13 Stremio searches hit the 30 s plugin timeout, its breakers opened, and titles with few streams waited 30 s for it. Every kinoger page goes through the stealth browser (Cloudflare binds the clearance to the browser), whose 2 pages hoster captures share while plugins search; alone in the container the same searches took 7.9–17.3 s. Pages now go to the earliest due work (plugin pages before captures) on staging; the seventh round has to confirm it (`docs/plans/browser-page-budget.md`).
 - **s.to link-out quota for VPN IPs** (2026-10-04): for a VPN IP s.to's gate is the tier `turnstile_altcha`, and one pass (about 20 s in the browser on a Raspberry Pi 4) unlocks 3 link-outs. Stremio episode requests get s.to for about three requests per pass; a Torznab search resolves the link-outs of every matching episode (about 950 requests and 83 s for "Dark"), and most results keep the s.to link-out.
 - **Playmate in tsaridas/stremio-docker's web player** (2026-10-04): the image's nginx answers Playmate's disguised HLS segments (`…_000.css`, `…_001.js`) as web player files, with 404, so Playmate streams fail there (error 81).
 

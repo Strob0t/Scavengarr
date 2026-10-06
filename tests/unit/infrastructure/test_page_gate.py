@@ -51,7 +51,7 @@ class TestLimit:
         assert gate.in_use == 0
         assert gate.waiting == 0
 
-    async def test_waiters_get_pages_in_arrival_order(self) -> None:
+    async def test_equal_claims_get_pages_in_arrival_order(self) -> None:
         gate = PageGate(limit=1)
         first = asyncio.Event()
         rest = asyncio.Event()
@@ -270,3 +270,65 @@ class TestWorkClock:
             await work
         await holder
         assert gate.in_use == 0
+
+
+async def _claimed_hold(
+    gate: PageGate,
+    release: asyncio.Event,
+    order: list[str],
+    name: str,
+    kind: PageKind,
+    due_in: float,
+) -> None:
+    """``_hold`` under a claim of *kind*, due in *due_in* seconds."""
+    _claim(kind, due_in)
+    await _hold(gate, release, order, name)
+
+
+class TestOrder:
+    """The next free page goes to playback, then to the earliest due work;
+    background work only gets one while nobody else waits. kinoger's pages
+    queued behind the captures of its own answer until its 30 s timeout
+    (sixth round, 2026-10-06)."""
+
+    @staticmethod
+    async def _served(waiters: list[tuple[str, PageKind, float]]) -> list[str]:
+        """The order in which *waiters* (name, kind, due in) get one page."""
+        gate = PageGate(limit=1)
+        first = asyncio.Event()
+        rest = asyncio.Event()
+        order: list[str] = []
+        holder = asyncio.create_task(_hold(gate, first, order, "holder"))
+        await _settle()
+        tasks = [
+            asyncio.create_task(_claimed_hold(gate, rest, order, name, kind, due_in))
+            for name, kind, due_in in waiters
+        ]
+        await _settle()
+        first.set()
+        rest.set()
+        await asyncio.gather(holder, *tasks)
+        return order[1:]
+
+    async def test_the_earliest_due_work_goes_first(self) -> None:
+        order = await self._served(
+            [
+                ("capture", "capture", 60),
+                ("plugin", "plugin", 30),
+                ("older capture", "capture", 40),
+            ]
+        )
+
+        assert order == ["plugin", "older capture", "capture"]
+
+    async def test_playback_goes_first(self) -> None:
+        order = await self._served([("plugin", "plugin", 10), ("play", "play", 15)])
+
+        assert order == ["play", "plugin"]
+
+    async def test_background_work_goes_last(self) -> None:
+        order = await self._served(
+            [("background", "background", 10), ("capture", "capture", 60)]
+        )
+
+        assert order == ["capture", "background"]

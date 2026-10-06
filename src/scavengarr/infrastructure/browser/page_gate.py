@@ -1,13 +1,15 @@
 """The stealth browser's pages: how many may be open, and who gets the next.
 
 Plugin pages behind Cloudflare, hoster captures and link-outs share one
-headful browser, and a page costs about 200 MB and much CPU. Pages are
-handed out in the order they were asked for. The work's claim
-(``page_claim``) names what a page is for and when the work is due: work
-that cannot start ``_MIN_WORK_S`` before then gets no page (``PageBusy``),
-and the timeout of a resolution (``work_clock``) stops while it waits. The
-wait for a page and the work on it are recorded by kind
-(``browser_page_wait``, ``browser_page``). See
+headful browser, and a page costs about 200 MB and much CPU. The work's
+claim (``page_claim``) names what a page is for and when the work is due.
+The next free page goes to playback, then to the earliest due work (a
+search's plugin pages before the captures of its answer), and to
+background work only while nobody else waits; a running page is never
+taken away. Work that cannot start ``_MIN_WORK_S`` before it is due gets
+no page (``PageBusy``), and the timeout of a resolution (``work_clock``)
+stops while it waits. The wait for a page and the work on it are recorded
+by kind (``browser_page_wait``, ``browser_page``). See
 ``docs/plans/browser-page-budget.md``.
 """
 
@@ -23,6 +25,10 @@ from dataclasses import dataclass, field
 
 from scavengarr.domain.ports.browser_fetcher import PageClaim, PageKind, page_claim
 from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
+
+# Who goes first: playback, then plugin pages and captures by due time,
+# background work last
+_RANK: dict[PageKind, int] = {"play": 0, "plugin": 1, "capture": 1, "background": 2}
 
 # Work that gets its page later than this before it is due rarely finishes:
 # Filemoon's capture, the shortest browser work, took 1.5-2 s (2026-10-06)
@@ -41,7 +47,7 @@ class PageBusy(Exception):
 class _Waiter:
     """A page request that waits; the smallest key is served first."""
 
-    key: tuple[int, ...]
+    key: tuple[int, float, int]  # rank, due, arrival
     granted: asyncio.Future[None] = field(compare=False)
 
 
@@ -63,7 +69,7 @@ def _clock_stopped() -> Iterator[None]:
 
 
 class PageGate:
-    """At most *limit* pages at a time, handed out in arrival order."""
+    """At most *limit* pages at a time, handed out by the claims' urgency."""
 
     def __init__(self, *, limit: int, telemetry: TelemetryPort = NO_TELEMETRY) -> None:
         self._limit = limit
@@ -100,7 +106,7 @@ class PageGate:
         with self._telemetry.stage("browser_page_wait", kind=claim.kind) as wait:
             try:
                 with _clock_stopped():
-                    await self._acquire(latest)
+                    await self._acquire(claim, latest)
             except PageBusy:
                 wait.outcome = "busy"
                 raise
@@ -110,15 +116,16 @@ class PageGate:
         finally:
             self._release()
 
-    async def _acquire(self, latest: float | None) -> None:
-        """Take a page, waiting until *latest* at most (``time.monotonic()``)."""
+    async def _acquire(self, claim: PageClaim, latest: float | None) -> None:
+        """Take a page for *claim*, waiting until *latest* at most."""
         if latest is not None and latest <= time.monotonic():
             raise PageBusy
         if self._in_use < self._limit and not self._waiters:
             self._in_use += 1
             return
         waiter = _Waiter(
-            (next(self._arrivals),), asyncio.get_running_loop().create_future()
+            (_RANK[claim.kind], claim.due, next(self._arrivals)),
+            asyncio.get_running_loop().create_future(),
         )
         self._waiters.append(waiter)
         try:
@@ -140,7 +147,7 @@ class PageGate:
         self._grant()
 
     def _grant(self) -> None:
-        """Hand free pages to the waiters, first key first."""
+        """Hand free pages to the most urgent waiters."""
         while self._waiters and self._in_use < self._limit:
             waiter = min(self._waiters)
             self._waiters.remove(waiter)
