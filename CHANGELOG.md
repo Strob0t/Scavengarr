@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: Playback Requests Count Against No Rate Limit
+- Every stream now points at `/play` (or the HLS proxy), which the per-IP rate limit (`http.api_rate_limit_rpm`, 120) counted like a search, unlike the HLS proxy: a player asks `/play` again for each seek (8 requests within a second at a playback start in production), and clients behind one proxy address share the budget, so a 429 could end a playback. `/play` is exempt like the proxy. Found by the code review (2026-10-06).
+
 ### Fix: The Answer Waits for No Link Pushed Out of the Top
 - A Stremio request resolves links among its top `max_probe_count` streams while results arrive. A link that better results pushed out of the top kept resolving: the answer waited for it once the search was done, although its outcome could no longer be part of it, and it held one of the `probe_concurrency` slots. Such a resolution is now cancelled. Found by the code review (2026-10-06).
 

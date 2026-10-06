@@ -300,7 +300,7 @@ Controls the shared HTTP client used by httpx plugins, hoster resolvers, and API
 | `http.rate_limit_adaptive` | bool | `true` | Enable AIMD adaptive rate limiting per domain (`SCAVENGARR_RATE_LIMIT_ADAPTIVE`) |
 | `http.rate_limit_min_rps` | float | `0.5` | Adaptive lower bound per domain (`SCAVENGARR_RATE_LIMIT_MIN_RPS`) |
 | `http.rate_limit_max_rps` | float | `50.0` | Adaptive upper bound per domain (`SCAVENGARR_RATE_LIMIT_MAX_RPS`) |
-| `http.api_rate_limit_rpm` | int | `120` | Incoming API requests per client IP per minute (sliding window, HTTP 429 when exceeded). 0 = unlimited. Not counted: the HLS proxy (`/api/v1/stremio/proxy/…`, a playing stream loads a segment every few seconds) and the health endpoints (`healthz`, `readyz`, `stremio/health`) |
+| `http.api_rate_limit_rpm` | int | `120` | Incoming API requests per client IP per minute (sliding window, HTTP 429 when exceeded). 0 = unlimited. Not counted: the requests of a playing stream, the HLS proxy (`/api/v1/stremio/proxy/…`, a segment every few seconds) and `/api/v1/stremio/play/…` (again for each seek; a 429 would end the playback), and the health endpoints (`healthz`, `readyz`, `stremio/health`) |
 | `http.retry_max_attempts` | int | `3` | Max retry attempts on 429/503 responses. 0 = no retries (`SCAVENGARR_HTTP_RETRY_MAX_ATTEMPTS`) |
 | `http.retry_backoff_base` | float | `1.0` | Base delay in seconds for exponential backoff (`SCAVENGARR_HTTP_RETRY_BACKOFF_BASE`) |
 | `http.retry_max_backoff` | float | `30.0` | Maximum backoff delay in seconds (`SCAVENGARR_HTTP_RETRY_MAX_BACKOFF`) |

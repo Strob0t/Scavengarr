@@ -15,10 +15,12 @@ log = structlog.get_logger(__name__)
 # How many dispatch cycles between full sweeps of stale client entries.
 _GC_INTERVAL = 256
 
-# Not counted: HLS manifests and segments of a playing stream (every few
-# seconds, dozens at playback start) and health probes
+# Not counted: the requests of a playing stream (HLS manifests and segments
+# every few seconds, dozens at playback start; /play again for each seek),
+# a 429 would end its playback, and health probes
 _EXEMPT_PREFIXES = (
     "/api/v1/stremio/proxy/",
+    "/api/v1/stremio/play/",
     "/api/v1/stremio/health",
     "/api/v1/healthz",
     "/api/v1/readyz",

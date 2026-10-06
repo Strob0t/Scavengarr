@@ -25,13 +25,16 @@ def _create_app(rpm: int = 5) -> Starlette:
 
 
 class TestRateLimitExemptions:
-    def test_hls_proxy_and_health_are_not_counted(self) -> None:
+    def test_playback_and_health_are_not_counted(self) -> None:
         """A playing stream loads a segment every few seconds (dozens at
-        start); health probes come from the orchestrator."""
+        start) and asks ``/play`` again for each seek (8 requests within a
+        second at a playback start in production, 2026-10-06); health
+        probes come from the orchestrator."""
         app = Starlette(
             routes=[
                 Route("/", _hello),
                 Route("/api/v1/stremio/proxy/{sid}/{path:path}", _hello),
+                Route("/api/v1/stremio/play/{sid}", _hello),
                 Route("/api/v1/healthz", _hello),
             ]
         )
@@ -40,6 +43,7 @@ class TestRateLimitExemptions:
 
         for _ in range(10):
             assert client.get("/api/v1/stremio/proxy/abc/seg1.ts").status_code == 200
+            assert client.get("/api/v1/stremio/play/abc").status_code == 200
             assert client.get("/api/v1/healthz").status_code == 200
 
         # The budget of the counted endpoints is untouched
