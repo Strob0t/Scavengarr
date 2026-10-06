@@ -6,7 +6,8 @@ Scrapes crawli.net (German download search engine) with:
 - Category filtering via the section path (film, serie, spiel, music, apps);
   results are labelled by the section that listed them
 - The page arrives base64-encoded for a script to write (since 2026-09)
-- Pagination up to 1000 items (10 results/page, max 100 pages)
+- Pagination up to 1000 items (10 results/page, max 100 pages); a page
+  links a window of pages (page 1 up to 8, page 8 up to 11)
 - Single-stage: title, source URL, date, description all on search page
 
 Multi-domain support: crawli.net, www.crawli.net.
@@ -129,7 +130,8 @@ class _SearchResultParser:
     last title link, source URL and date of the box count, and the
     description joins the paragraphs of the ``scont`` div.
 
-    Pagination is in ``#foot > span.pages > a`` with ``p-N`` links.
+    Pagination is in ``#foot > span.pages > a`` with ``p-N`` links; the
+    highest one is the last page this page knows of.
     """
 
     def __init__(self) -> None:
@@ -266,15 +268,16 @@ class CrawliPlugin(HttpxPluginBase):
         if not all_results:
             return []
 
-        pages_to_fetch = min(max_page, _MAX_PAGES)
         page_num = 2
-        while (
-            len(all_results) < self.effective_max_results and page_num <= pages_to_fetch
+        while len(all_results) < self.effective_max_results and page_num <= min(
+            max_page, _MAX_PAGES
         ):
-            page_results, _ = await self._search_page(query, section, page_num)
+            page_results, page_max = await self._search_page(query, section, page_num)
             if not page_results:
                 break
             all_results.extend(page_results)
+            # The site links a window of pages: page 1 up to 8, page 8 up to 11
+            max_page = max(max_page, page_max)
             page_num += 1
         return all_results[: self.effective_max_results]
 

@@ -253,6 +253,22 @@ class TestSearchResultParser:
 # ===========================================================================
 # Plugin integration tests
 # ===========================================================================
+def _window_page(page: int, *, last: int) -> str:
+    """A result page of one result whose pagination links pages up to *last*."""
+    links = "".join(
+        f'<a href="//crawli.net/all/batman/p-{n}/">{n}</a>' for n in range(2, last + 1)
+    )
+    return (
+        '<html><body><div class="entry-content sresd">'
+        f'<strong class="sres"><a href="http://crawli.net/go/?/{page}/" '
+        f'class="sres3">Batman.Page{page}.2025</a></strong>'
+        '<div class="scont"><p></p>'
+        f'<address class="resl author">example.com/batman-{page}</address>'
+        "</div></div>"
+        f'<div id="foot"><span class="pages">{links}</span></div></body></html>'
+    )
+
+
 def _mock_response(html: str, status_code: int = 200) -> httpx.Response:
     """Create a mock httpx.Response."""
     return httpx.Response(
@@ -377,6 +393,28 @@ class TestCrawliPlugin:
         # 3 from page 1 + 1 from page 2 = 4
         assert len(results) == 4
         assert mock_client.get.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_search_follows_the_sliding_page_window(self) -> None:
+        """The site links a window of pages (page 1 up to 8, page 8 up to 11):
+        page 1 linking up to page 2 does not end the search there."""
+        p = _make_plugin()
+        p._domain_verified = True
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(
+            side_effect=[
+                _mock_response(_window_page(1, last=2)),
+                _mock_response(_window_page(2, last=3)),
+                _mock_response(_window_page(3, last=3)),
+            ]
+        )
+        p._client = mock_client
+
+        results = await p.search("Batman")
+
+        assert mock_client.get.call_count == 3
+        assert len(results) == 3
 
     @pytest.mark.asyncio
     async def test_search_url_encodes_query(self) -> None:

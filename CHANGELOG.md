@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: crawli Reads Past Page 8
+- crawli took the last result page from page 1's pagination, but the site links a window of pages (page 1 up to 8, page 8 up to 11): a search stopped after 80 results. Every page now extends the window, up to 100 pages (1000 results). Checked on the live site (2026-10-06). Found by the code review (2026-10-06).
+
 ### Fix: byte Files Magazines and Movie Collections Under Their Categories
 - byte's category map took its names from the site menu, which writes "Magazine-Zeitungen"; search results and detail pages write "Magazine - Zeitungen", so magazines and newspapers came out as 8000 (Other) and a book request (7000) dropped them. The lookup now spaces dashes the same way for both spellings (`_category_key`), and "Movie Collections" (missing, so 8000) counts as films. Checked on the live site (2026-10-06). Found by the code review (2026-10-06).
 
