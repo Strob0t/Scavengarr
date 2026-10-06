@@ -15,7 +15,7 @@ Scavengarr now has a `SharedBrowserPool` that manages a single Chromium process 
 - **SharedBrowserPool** (`src/scavengarr/infrastructure/browser/shared_browser.py`): singleton Chromium process, pre-warmed on first Stremio request
 - **Composition-time pool injection**: plugins receive the shared pool via `set_shared_pool()` at startup
 - **Per-request BrowserContext isolation**: `isolated_search()` creates a fresh `BrowserContext` per request, preventing state corruption
-- **`_serialize_search` mode**: plugins that rely on persistent page state (e.g. moflix) serialize via `asyncio.Lock`
+- **`_serialize_search` mode**: plugins that rely on persistent page state serialize via `asyncio.Lock` (no plugin uses it today)
 - **Cookie-based session transfer**: authenticated plugins (boerse, mygully) login in temporary contexts and inject cookies into per-request contexts
 - **Ownership-aware cleanup**: `PlaywrightPluginBase.cleanup()` only closes the browser when the plugin owns it (standalone mode)
 - **Disconnection recovery**: `_ensure_browser()` checks `browser.is_connected()` and relaunches transparently
@@ -25,7 +25,7 @@ Scavengarr now has a `SharedBrowserPool` that manages a single Chromium process 
 
 ```yaml
 playwright:
-  headless: true
+  headless: false  # headful under Xvfb, headless without a display
   timeout_ms: 30000
 
 stremio:
@@ -41,5 +41,5 @@ stremio:
 
 ## Dependencies
 
-- `playwright` package (already in `pyproject.toml`)
+- `patchright` package (in `pyproject.toml`)
 - Browser binaries installed in container (`python -m patchright install chromium` in `Dockerfile.prod`)

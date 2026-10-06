@@ -2,7 +2,7 @@
 
 # Plan: Search Result Caching
 
-**Status:** Core implemented (2026-09-28); Stremio search cache with stale-while-revalidate, single-flight, late plugins and early answer implemented (2026-10-04). Open for Torznab: cache invalidation endpoint, stale-while-revalidate, cache metrics, a TTL-expiry test
+**Status:** Core implemented (2026-09-28); Stremio search cache with stale-while-revalidate and single-flight implemented (2026-10-04); its late plugins and early answer were replaced on 2026-10-05 by a search that runs to its end ([round5-measures.md](round5-measures.md) §9). Open for Torznab: cache invalidation endpoint, stale-while-revalidate, cache metrics, a TTL-expiry test
 **Priority:** Medium
 **Related:** `src/scavengarr/application/use_cases/torznab_search.py`, `src/scavengarr/infrastructure/cache/`
 
@@ -25,6 +25,8 @@ Key files:
 - `src/scavengarr/interfaces/api/torznab/router.py` — `X-Cache` header injection
 
 ## Stremio: Search Cache, Late Plugins, Early Answer (implemented 2026-10-04)
+
+> **Replaced in part on 2026-10-05:** the search now runs to its end (at most `plugin_timeout_seconds`, 30 s), each plugin's results reach `SearchProgress` as they arrive, the answer goes out at 5 streams, when everything is done, or at 60 s, and a search holds its pool share until it ends ([round5-measures.md](round5-measures.md) §9). The "Late plugins", "Early answer", "Concurrency slots" and "Circuit breaker" paragraphs below, and the soft-deadline parts of the affected files and tests, describe the 2026-10-04 design.
 
 **Problem:**
 - Stremio requests were not cached. Production served the same title twice within 17–18 s (Avengers: Endgame, Severance), each time a full fan-out of ~15 s and 50–270 outbound requests.
