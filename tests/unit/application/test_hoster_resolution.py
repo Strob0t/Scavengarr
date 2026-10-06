@@ -217,8 +217,8 @@ class TestProgress:
         assert resolution.videos() == 1
 
     async def test_cached_outcomes_with_eager_tasks(self) -> None:
-        """Production runs eager tasks: a cached resolution ends inside
-        create_task, and the hoster's next link must still start."""
+        """Under eager tasks a cached resolution ends inside create_task,
+        and the hoster's next link must still start."""
         loop = asyncio.get_running_loop()
         loop.set_task_factory(asyncio.eager_task_factory)
         try:

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import os
-from collections.abc import AsyncIterator, Coroutine
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from functools import partial
-from typing import Any, cast
+from typing import cast
 from urllib.parse import urlparse
 
 import httpx
@@ -240,38 +240,21 @@ def build_browser_fetcher(
     return ChainedBrowserFetcher(fetchers)
 
 
-def eager_task_factory(
-    loop: asyncio.AbstractEventLoop,
-    coro: Coroutine[Any, Any, Any],
-    *,
-    eager_start: bool | None = None,
-    **kwargs: Any,
-) -> asyncio.Task[Any]:
-    """asyncio's eager task factory, on uvloop as well.
+def configure_event_loop() -> None:
+    """Start the running loop's tasks lazily, asyncio's default.
 
-    uvloop 0.23 hands the factory ``eager_start=None``: Python 3.13's
-    factory refused the keyword (the app did not start) and 3.14's let it
-    override the eager start, so every task started lazily (code review,
-    2026-10-06). An explicit ``False`` still starts lazily.
-    """
-    return asyncio.Task(
-        coro,
-        loop=loop,
-        eager_start=True if eager_start is None else eager_start,
-        **kwargs,
-    )
-
-
-def use_eager_tasks() -> None:
-    """Start new tasks on the running loop eagerly (Python 3.12+).
-
-    A task runs until its first await when it is created, so tasks that
-    finish without suspending (cache hits, guards) skip a trip through the
-    event loop. uvicorn runs on uvloop when it is installed (``loop="auto"``).
+    uvicorn runs on uvloop when it is installed (``loop="auto"``). anyio,
+    under Starlette's middleware and httpcore's connection locks, keeps its
+    own tasks lazy only under asyncio's own eager task factory, which uvloop
+    0.23 cannot use (it hands the factory ``eager_start=None``: refused on
+    Python 3.13, a lazy start on 3.14). Under a factory of the app's own a
+    task group's child that suspended inside a cancel scope at once lost
+    that scope, and every proxied HLS variant answered 500 (production,
+    2026-10-06).
     """
     loop = asyncio.get_running_loop()
-    loop.set_task_factory(eager_task_factory)
-    log.info("event_loop_configured", loop=type(loop).__module__, eager_tasks=True)
+    loop.set_task_factory(None)
+    log.info("event_loop_configured", loop=type(loop).__module__)
 
 
 def build_http_client(config: AppConfig) -> httpx.AsyncClient:
@@ -425,7 +408,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     state = cast(AppState, app.state)
     config = state.config
-    use_eager_tasks()
+    configure_event_loop()
 
     # 0) Telemetry (must exist before the components that record); tracing
     #    only with an OTLP endpoint

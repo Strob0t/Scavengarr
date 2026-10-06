@@ -122,7 +122,7 @@ class HosterResolution:
     def _start_due(self) -> None:
         """Start each hoster's best link that is neither known dead nor tried.
 
-        Repeats until nothing more starts: with eager tasks (production) a
+        Repeats until nothing more starts: under an eager task factory a
         cached outcome ends inside ``create_task``, and a dead one makes the
         hoster's next link due at once.
         """
