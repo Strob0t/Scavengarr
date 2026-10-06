@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Chore: Real Pages of the Remaining Stremio Plugins
+- einschalten, fireani, haschcon, kinox and moflix had no tests on their sites' own pages, so a changed site or API showed up in production first. Their search and detail pages and API answers are fixtures now (captured 2026-10-06, 84 KB; 16 plugins in all), and `test_real_pages.py` drives the JSON plugins' own requests against them: einschalten's search, fireani's GetAnime and GetEpisode, haschcon's player page and moflix's whole search. kinox's mirror answers sit behind the site's verification wall; its fixtures stop at the detail page.
+- `scripts/capture_pages.py` records a JSON API's answer as `.json`, and `--fixture` stores it as `.json.gz`.
+
 ### Added: Resolutions and Circuit Breakers Outlive a Restart
 - A restart forgot every hoster resolution (cached for an hour), every redirect and every open circuit breaker: the first cached answers after a deploy waited for the resolve grace again, and hosters known to be down cost their timeouts until five failures opened their breakers again at 60 s. `HosterStateStore` keeps one snapshot of the unexpired resolutions and redirects and of the plugin and hoster breakers that are not closed in the cache backend (`hoster_state:v1`), written every 30 s when something changed and at shutdown, and restores it before the app reports ready, every lifetime and cooldown shortened by the downtime. A breaker whose cooldown ran out meanwhile comes back with its probe due and keeps its doubled cooldown. A snapshot of another version or one that cannot be read is deleted (`hoster_state_discarded`); `hoster_state_restored` logs the counts, and `/api/v1/stats/metrics` shows them under `hoster_state`. At the cache's cap of 10,000 resolutions (2.9 MiB) a write costs 10 ms of export and 9 ms of pickling on x86, a start 39 ms ([hoster-resolvers.md](docs/features/hoster-resolvers.md#registry-features)).
 

@@ -113,8 +113,10 @@ tests/
   fixtures/
     html/
       hdfilme/, kinoger/, megakino/, streamcloud/, streamkiste/,
-      filmpalast/, movie2k/, aniworld/, sto/, kinoking/, warezomen/
+      filmpalast/, movie2k/, aniworld/, sto/, kinoking/, warezomen/,
+      einschalten/, fireani/, haschcon/, kinox/, moflix/
         search-oppenheimer.html.gz, detail-oppenheimer.html.gz, ...
+        search-oppenheimer.json.gz, ...   # a JSON API's answers
                                 # real pages, parsed in tests/unit/infrastructure/test_real_pages.py
       testsite/
         search_results.html     # Stage 1 response (unused so far)
@@ -134,6 +136,8 @@ tests/
 Fixtures should be captured from real sites once and committed as static files. Never make real HTTP requests to external sites in CI.
 
 **Real pages (2026-10-01):** search and detail pages of the five DataLife Engine sites, captured from a live run of the plugins (Oppenheimer, The Last of Us), the per-visitor `dle_login_hash` scrubbed, gzipped (230 KB for 13 pages). `test_real_pages.py` runs the plugins' parsers on them with values read off the pages. They found what the hand-written fixtures could not: kinoger's series pages hand out the first episode for every request, streamkiste reads the wrong year, kinoger's detail metadata is empty. Recapture when a site changes its theme: `scripts/capture_pages.py <plugin> "<query>"` records a live search's pages, `--fixture <page> <name>` stores one (scrubbed, gzipped).
+
+**More sites (2026-10-06):** 16 plugins have real pages now. aniworld, sto, kinoking, filmpalast, movie2k and warezomen followed the DataLife Engine sites, and einschalten, fireani, haschcon, kinox and moflix complete the Stremio plugins (12 pages, 84 KB). Four of the five answer from a JSON API: the capture script stores such an answer as `<name>.json`, `--fixture` as `<name>.json.gz`, and `_json()` in `test_real_pages.py` reads it. The JSON plugins' tests drive the plugin's own requests against `respx` routes that answer with the captured JSON (einschalten's search, fireani's GetAnime/GetEpisode RPCs, haschcon's player page, moflix's whole search), so a changed API shape fails there. kinox's mirror answers, which carry its hoster links, sit behind the site's verification wall; its fixtures cover the search and the detail page (hoster names and ids).
 
 ### Test Infrastructure
 

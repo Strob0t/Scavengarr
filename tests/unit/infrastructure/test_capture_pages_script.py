@@ -51,3 +51,29 @@ def test_store_fixture_writes_scrubbed_gzip(
     assert gzip.decompress(target.read_bytes()).decode() == (
         "<p>Oppenheimer</p><script>dle_login_hash = '0'</script>"
     )
+
+
+def test_a_json_answer_is_stored_as_a_json_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(_mod, "_FIXTURE_DIR", tmp_path)
+    page = tmp_path / "00-search.json"
+    page.write_text('{"data": [{"id": 872585, "title": "Oppenheimer"}]}')
+
+    target = _mod.store_fixture("einschalten", page, "search-oppenheimer")
+
+    assert target == tmp_path / "einschalten" / "search-oppenheimer.json.gz"
+    assert gzip.decompress(target.read_bytes()).decode() == page.read_text()
+
+
+@pytest.mark.parametrize(
+    ("text", "suffix"),
+    [
+        ('{"data": []}', ".json"),
+        ('[{"id": 1}]', ".json"),
+        ("<!DOCTYPE html><p>{}</p>", ".html"),
+        ("{not json", ".html"),
+    ],
+)
+def test_a_captured_page_is_named_by_its_content(text: str, suffix: str) -> None:
+    assert _mod.page_suffix(text) == suffix
