@@ -1,0 +1,14 @@
+{
+  "name": "scavengarr-dev",
+  "owner": {
+    "name": "Scavengarr"
+  },
+  "description": "Claude Code plugins for developing Scavengarr",
+  "plugins": [
+    {
+      "name": "basedpyright-lsp",
+      "source": "./basedpyright-lsp",
+      "description": "basedpyright language server from the project venv: type diagnostics after each edit and the LSP tool"
+    }
+  ]
+}

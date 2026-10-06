@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Chore: basedpyright Language Server Plugin for Claude Code
+- `.claude/plugins/` holds a local plugin marketplace (`scavengarr-dev`) with `basedpyright-lsp`: Claude Code starts the venv's `basedpyright-langserver` (`scripts/langserver.sh` finds the main checkout's venv from a worktree and resolves imports against the venv's interpreter), so it sees type errors after each edit and looks up definitions and references through the `LSP` tool instead of text search. Wiring per machine: see `AGENTS.md` §9. A stdio smoke test from the worktree and the main checkout reported exactly the planted type error, with `httpx` resolved, within 0.8 s.
+
 ### Chore: The Test Suite Runs on Parallel Workers
 - New dev dependency pytest-xdist: `poetry run pytest -n auto` runs the full suite in 15 s instead of 47 s (16 threads; at most 8 workers through `--maxprocesses=8` in `addopts`, since 16 took 20 s). CI, `AGENTS.md`, `CONTRIBUTING.md` and the `test`/`commit` skills use `-n auto`; a single test file stays faster without it (1.1 s instead of 2.4 s). Eleven parallel full runs (4 to 16 workers) passed, so the tests share no state between workers.
 

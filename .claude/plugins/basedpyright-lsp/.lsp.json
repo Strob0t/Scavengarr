@@ -1,0 +1,10 @@
+{
+  "basedpyright": {
+    "command": "${CLAUDE_PLUGIN_ROOT}/scripts/langserver.sh",
+    "args": ["--stdio"],
+    "extensionToLanguage": {
+      ".py": "python",
+      ".pyi": "python"
+    }
+  }
+}

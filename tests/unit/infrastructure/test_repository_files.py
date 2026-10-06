@@ -22,6 +22,7 @@ _EXECUTED_DIRECTLY = [
     "docker/entrypoint.sh",
     ".claude/hooks/block-dangerous.sh",
     ".claude/hooks/format-and-lint.sh",
+    ".claude/plugins/basedpyright-lsp/scripts/langserver.sh",
     ".devcontainer/setup.sh",
     ".devcontainer/sync-jdownloader.sh",
 ]
