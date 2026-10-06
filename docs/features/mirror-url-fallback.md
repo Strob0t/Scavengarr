@@ -146,7 +146,7 @@ async def _ensure_session(self) -> None:
             cookies = await login_ctx.cookies()
             if any(c["name"] == "bbsessionhash" for c in cookies):
                 self.base_url = domain_url
-                self._session_cookies = cookies
+                self._session_cookies = self._cookie_params(cookies)
                 self._logged_in = True
                 return
         except Exception:

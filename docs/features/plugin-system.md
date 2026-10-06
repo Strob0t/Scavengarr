@@ -12,7 +12,7 @@ Scavengarr is plugin-driven. Each plugin knows how to search one source site and
 
 Key characteristics:
 - **Python-only:** every plugin is a `.py` file in the plugin directory that exports a module-level `plugin` instance.
-- **Two base classes:** `HttpxPluginBase` (33 plugins) and `PlaywrightPluginBase` (9 plugins), see [Python Plugins](./python-plugins.md#plugin-base-classes).
+- **Two base classes:** `HttpxPluginBase` and `PlaywrightPluginBase` (the generated [plugin list](../plugins.md) gives each plugin's engine), see [Python Plugins](./python-plugins.md#plugin-base-classes).
 - **Loaded at startup:** discovery only indexes files, but startup wiring imports every plugin once and caches the instances for the process lifetime.
 - **Shared resources:** httpx plugins share one rate-limited, retrying HTTP client; Playwright plugins share one Chromium process.
 
@@ -34,8 +34,10 @@ PluginRegistry.discover()
   v
 _apply_plugin_overrides()            (plugins.overrides from YAML)
   |-- first registry call imports every plugin file once
+  |   (without overrides _inject_shared_browser_pool() makes it)
+  |-- get(name); an unknown name logs plugin_override_unknown
   |-- enabled: false -> registry.remove(name)
-  |-- otherwise get(name) and set _timeout / _max_concurrent / _max_results
+  |-- otherwise set _timeout (httpx only) / _max_concurrent / _max_results
   |
   v
 _inject_shared_browser_pool()
@@ -163,7 +165,7 @@ class PluginNotFoundError(PluginError): ...  # Name not in registry
 | Exception | Trigger |
 |---|---|
 | `PluginLoadError` | Module has no `plugin` variable, no `search` method, or empty `name` |
-| `PluginLoadError` | `SyntaxError` or `ImportError` during module import |
+| `PluginLoadError` | Any exception during module import (`SyntaxError`, `ImportError`, an error in module-level code) |
 | `PluginNotFoundError` | `registry.get("unknown-name")`; the Torznab router maps it to a Torznab "plugin not found" error |
 
 ---
