@@ -185,11 +185,12 @@ def _apply_plugin_overrides(plugins: PluginRegistry, config: AppConfig) -> None:
     """Apply per-plugin YAML overrides (timeout, concurrency, enabled)."""
     for name, override in config.plugins.overrides.items():
         try:
+            # Unknown names raise here, a misspelled disable included
+            plugin = plugins.get(name)
             if not override.enabled:
                 plugins.remove(name)
                 log.info("plugin_disabled_by_config", plugin=name)
                 continue
-            plugin = plugins.get(name)
             if not isinstance(plugin, HttpxPluginBase | PlaywrightPluginBase):
                 log.warning("plugin_override_unsupported", plugin=name)
                 continue

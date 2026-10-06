@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: A Misspelled Disable Override Is Reported
+- `plugins.overrides.<name>.enabled: false` with a name no plugin has disabled nothing and logged `plugin_disabled_by_config` as if it had; it now logs the `plugin_override_unknown` warning like every other unknown override. Found by the doc review (2026-10-06).
+
 ### Fix: A Search Probe of an Unknown Plugin Reports It
 - `MiniSearchProber` caught `KeyError` for an unknown plugin, but the registry raises `PluginNotFoundError`, so the probe raised instead of reporting `plugin_not_found` (its test mocked the `KeyError`). The scheduler probes only registered plugins, so production never hit it. Found by the doc review (2026-10-06).
 

@@ -273,7 +273,7 @@ The `environment` setting controls several behavioral defaults (see [Environment
 | `plugins.overrides.<name>.max_results` | int | — | Override the plugin's max results |
 | `plugins.overrides.<name>.enabled` | bool | `true` | `false` removes the plugin from the registry |
 
-The plugin registry scans the plugin directory at startup for `.py` files. All plugins are imported once during startup wiring and cached in memory. Unknown plugin names in `overrides` are logged as a warning. See [Plugin System](./plugin-system.md) and [Per-Plugin Overrides](./plugin-system.md#per-plugin-overrides) for details.
+The plugin registry scans the plugin directory at startup for `.py` files. All plugins are imported once during startup wiring and cached in memory. Unknown plugin names in `overrides` are logged as a warning (`plugin_override_unknown`), a misspelled `enabled: false` included. See [Plugin System](./plugin-system.md) and [Per-Plugin Overrides](./plugin-system.md#per-plugin-overrides) for details.
 
 ```yaml
 plugins:

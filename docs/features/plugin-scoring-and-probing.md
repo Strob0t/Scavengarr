@@ -299,7 +299,7 @@ plugins:
 | Max results | `max_results` | `_max_results` | 1000 |
 | Enabled | `enabled` | (plugin removed from the registry) | `true` |
 
-Overrides are applied right after `plugins.discover()` in the composition root. Unknown plugin names are logged as `plugin_override_unknown` warnings; with `enabled: false` an unknown name only logs `plugin_disabled_by_config`. A `timeout` override applies to httpx plugins only; on a Playwright plugin it is skipped with the warning `plugin_timeout_override_unsupported`.
+Overrides are applied right after `plugins.discover()` in the composition root. Unknown plugin names are logged as `plugin_override_unknown` warnings, a misspelled `enabled: false` included. A `timeout` override applies to httpx plugins only; on a Playwright plugin it is skipped with the warning `plugin_timeout_override_unsupported`.
 
 ---
 
