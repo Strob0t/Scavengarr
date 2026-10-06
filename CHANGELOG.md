@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: A Plugin Leaves a Dead Host Its Site Moved To
+- `HttpxPluginBase` makes a permanent move of a site (301/308 from the base host to another) the base URL, and kept it until a restart. hdfilme moves on every few days, and its old host redirects to the newest one: a new host that died kept every search on it. A request to the new host without an answer (timeout, connect or DNS error) now sends the plugin back to the base URL the site moved from (`{name}_site_move_undone`). Found by the code review (2026-10-06).
+
 ### Fix: A Plugin Site Counts as Down Only After a Retry
 - The plugin health check marked a site unreachable after one try without an answer within 5 s, and the Stremio search skipped the plugin until the next check 5 minutes later (movie2k in production: no answer at one check, an answer at the next). A reachable site without an answer is now tried again after 30 s before it counts as unreachable; an unreachable one is not retried. Found by the code review (2026-10-06).
 

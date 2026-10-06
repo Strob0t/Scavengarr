@@ -96,3 +96,43 @@ class TestSiteMove:
             await plugin._fetch_text("https://old.example/a")
 
         assert plugin.base_url == "https://old.example"
+
+    @respx.mock
+    async def test_a_failing_new_host_sends_the_plugin_back(self) -> None:
+        """hdfilme moves on every few days (.legal, .press, .party, .bid,
+        .cafe, .ceo), and the old host redirects to the newest one; a new
+        host that died kept every search on it until a restart."""
+        respx.get("https://old.example/a").respond(
+            301, headers={"Location": "https://new.example/a"}
+        )
+        respx.get("https://new.example/a").respond(200, text="ok")
+        respx.get("https://new.example/b").mock(side_effect=httpx.ConnectError("gone"))
+        respx.get("https://cdn.example/x").mock(side_effect=httpx.ConnectError("x"))
+
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            plugin = _plugin(client)
+            await plugin._fetch_text("https://old.example/a")
+            await plugin._fetch_text("https://cdn.example/x")
+            assert plugin.base_url == "https://new.example"
+
+            assert await plugin._fetch_text("https://new.example/b") is None
+
+        assert plugin.base_url == "https://old.example"
+
+    @respx.mock
+    async def test_safe_fetch_goes_back_too(self) -> None:
+        respx.get("https://old.example/api").respond(
+            308, headers={"Location": "https://new.example/api"}
+        )
+        respx.get("https://new.example/api").mock(
+            side_effect=[httpx.Response(200, json={}), httpx.ReadTimeout("slow")]
+        )
+
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            plugin = _plugin(client)
+            await plugin._safe_fetch("https://old.example/api")
+            assert plugin.base_url == "https://new.example"
+
+            assert await plugin._safe_fetch("https://new.example/api") is None
+
+        assert plugin.base_url == "https://old.example"
