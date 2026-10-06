@@ -7,6 +7,7 @@ import importlib
 import json
 import py_compile
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
 
@@ -41,13 +42,18 @@ def _record(**fields: object) -> str:
 
 
 @pytest.fixture
-def portainer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Fake credentials and a private request budget; the Docker endpoint."""
+def portainer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    """Fake credentials and a private request budget; the mocked Docker endpoint.
+
+    The mock starts here, before the routes: a route added before
+    ``respx.mock`` starts is part of its snapshot and outlives the test.
+    """
     monkeypatch.setattr(_mod, "credentials", lambda: (_PORTAINER, "key"))
     monkeypatch.setattr(_mod, "_BUDGET", tmp_path / "budget.json")
-    respx.get(f"{_PORTAINER}/api/endpoints").respond(json=[{"Id": 3, "Type": 1}])
-    respx.get(f"{_DOCKER}/containers/json").respond(json=[])
-    return tmp_path
+    with respx.mock:
+        respx.get(f"{_PORTAINER}/api/endpoints").respond(json=[{"Id": 3, "Type": 1}])
+        respx.get(f"{_DOCKER}/containers/json").respond(json=[])
+        yield tmp_path
 
 
 class TestSeconds:
@@ -158,7 +164,6 @@ class TestProbes:
 
 
 class TestCommands:
-    @respx.mock
     def test_logs_print_masked_lines_and_a_count(
         self, portainer: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -182,7 +187,6 @@ class TestCommands:
         assert logs.calls.last.request.url.params["timestamps"] == "1"
         assert (portainer / "budget.json").exists()
 
-    @respx.mock
     def test_a_probe_runs_in_the_container_and_passes_its_exit_code(
         self, portainer: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
