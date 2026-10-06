@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import Mapping
 from unittest.mock import AsyncMock
 
 import pytest
@@ -27,10 +28,20 @@ def _link(*, age: float, video_url: str = _OLD) -> CachedStreamLink:
 
 
 class _Registry:
-    def __init__(self, result: ResolvedStream | None, delay: float = 0.0) -> None:
+    def __init__(
+        self,
+        result: ResolvedStream | None,
+        delay: float = 0.0,
+        *,
+        bound: tuple[str, ...] = (),
+        for_player: ResolvedStream | None = None,
+    ) -> None:
         self.result = result
         self.delay = delay
+        self.bound = bound
+        self.for_player = for_player
         self.calls: list[tuple[str, str, bool]] = []
+        self.player_calls: list[tuple[str, str, dict[str, str]]] = []
 
     async def resolve(
         self, url: str, hoster: str = "", *, refresh: bool = False
@@ -38,6 +49,16 @@ class _Registry:
         self.calls.append((url, hoster, refresh))
         await asyncio.sleep(self.delay)
         return self.result
+
+    def bound_headers(self, url: str, hoster: str = "") -> tuple[str, ...]:
+        return self.bound
+
+    async def resolve_for_client(
+        self, url: str, hoster: str, headers: Mapping[str, str]
+    ) -> ResolvedStream | None:
+        self.player_calls.append((url, hoster, dict(headers)))
+        await asyncio.sleep(self.delay)
+        return self.for_player
 
 
 def _links(
@@ -121,6 +142,150 @@ class TestCurrent:
         current = await links.current(_link(age=2 * 3600))
 
         assert current is not None and current.video_url == _NEW
+
+
+_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/131.0.0.0 Safari/537.36"
+_PLAYER_URL = "https://cdn.example/player.mp4"
+_FIREFOX = {"user-agent": _UA, "accept-language": "de", "referer": "https://s.lan/"}
+
+
+def _veev_link(*, age: float = 60) -> CachedStreamLink:
+    return CachedStreamLink(
+        stream_id="sid",
+        hoster_url="https://veev.to/e/abc",
+        hoster="veev",
+        video_url=_OLD,
+        video_headers=json.dumps({"Referer": "https://veev.to/", "User-Agent": _UA}),
+        resolved_at=time.time() - age,
+    )
+
+
+def _veev_registry(delay: float = 0.0, *, plays: bool = True) -> _Registry:
+    return _Registry(
+        ResolvedStream(video_url=_NEW),
+        delay,
+        bound=("user-agent", "accept-language"),
+        for_player=(
+            ResolvedStream(
+                video_url=_PLAYER_URL,
+                headers={"User-Agent": _UA, "Accept-Language": "de"},
+            )
+            if plays
+            else None
+        ),
+    )
+
+
+class TestPlayerBoundHosters:
+    """veevcdn binds the video URL to the User-Agent and the Accept-Language
+    of the resolution; Stremio's streaming server passes the browser's
+    Accept-Language on, and the stored URL answered it 403 (production,
+    2026-10-06)."""
+
+    async def test_a_player_with_other_bound_headers_gets_its_own_link(
+        self,
+    ) -> None:
+        registry = _veev_registry()
+        links, repo = _links(registry)
+
+        current = await links.current(_veev_link(), _FIREFOX)
+
+        assert current is not None
+        assert current.video_url == _PLAYER_URL
+        assert current.stream_id.startswith("sid-")
+        assert json.loads(current.video_headers)["Accept-Language"] == "de"
+        assert registry.player_calls == [
+            (
+                "https://veev.to/e/abc",
+                "veev",
+                {"user-agent": _UA, "accept-language": "de"},
+            )
+        ]
+        assert registry.calls == []
+        repo.save.assert_awaited_once_with(current)
+
+    async def test_a_player_sending_the_stored_headers_gets_the_stored_link(
+        self,
+    ) -> None:
+        """ffmpeg's probe through Stremio's proxy sends our User-Agent and
+        no Accept-Language: the URL resolved for the answer plays."""
+        registry = _veev_registry()
+        links, _ = _links(registry)
+        link = _veev_link()
+
+        assert await links.current(link, {"User-Agent": _UA}) == link
+        assert registry.player_calls == []
+
+    async def test_the_players_link_is_used_while_fresh(self) -> None:
+        own = CachedStreamLink(
+            stream_id="sid-own",
+            hoster_url="https://veev.to/e/abc",
+            hoster="veev",
+            video_url=_PLAYER_URL,
+            resolved_at=time.time() - 60,
+        )
+        registry = _veev_registry()
+        links, repo = _links(registry, own)
+
+        assert await links.current(_veev_link(), _FIREFOX) == own
+        assert registry.player_calls == []
+        assert repo.get.await_args.args[0].startswith("sid-")
+
+    async def test_a_stale_players_link_resolves_again(self) -> None:
+        own = CachedStreamLink(
+            stream_id="sid-own",
+            hoster_url="https://veev.to/e/abc",
+            hoster="veev",
+            video_url=_OLD,
+            resolved_at=time.time() - 2 * 3600,
+        )
+        registry = _veev_registry()
+        links, _ = _links(registry, own)
+
+        current = await links.current(_veev_link(), _FIREFOX)
+
+        assert current is not None and current.video_url == _PLAYER_URL
+        assert len(registry.player_calls) == 1
+
+    async def test_requests_of_one_player_share_one_resolution(self) -> None:
+        """Firefox sends a HEAD and a GET through Stremio's proxy."""
+        registry = _veev_registry(delay=0.05)
+        links, _ = _links(registry)
+
+        results = await asyncio.gather(
+            *(links.current(_veev_link(), _FIREFOX) for _ in range(3))
+        )
+
+        assert {r.video_url for r in results if r} == {_PLAYER_URL}
+        assert len(registry.player_calls) == 1
+
+    async def test_two_players_get_a_link_each(self) -> None:
+        registry = _veev_registry()
+        links, _ = _links(registry)
+
+        german = await links.current(_veev_link(), _FIREFOX)
+        english = await links.current(
+            _veev_link(), {**_FIREFOX, "accept-language": "en-US,en;q=0.5"}
+        )
+
+        assert german is not None and english is not None
+        assert german.stream_id != english.stream_id
+        assert len(registry.player_calls) == 2
+
+    async def test_a_failed_player_resolution_plays_the_stored_link(self) -> None:
+        links, repo = _links(_veev_registry(plays=False))
+        link = _veev_link()
+
+        assert await links.current(link, _FIREFOX) == link
+        repo.save.assert_not_awaited()
+
+    async def test_other_hosters_ignore_the_players_headers(self) -> None:
+        registry = _Registry(ResolvedStream(video_url=_NEW))
+        links, _ = _links(registry)
+        link = _link(age=60)
+
+        assert await links.current(link, _FIREFOX) == link
+        assert registry.player_calls == []
 
 
 class TestRefreshed:

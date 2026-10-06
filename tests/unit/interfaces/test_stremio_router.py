@@ -42,9 +42,12 @@ def _make_app(
     app.state.stremio_catalog_uc = stremio_catalog_uc
     if stream_link_repo is not None:
         app.state.stream_link_repo = stream_link_repo
-        app.state.stremio_links = StremioLinks(
-            repo=stream_link_repo, resolver=hoster_resolver_registry or AsyncMock()
-        )
+        resolver = hoster_resolver_registry or AsyncMock()
+        if isinstance(getattr(resolver, "bound_headers", None), AsyncMock):
+            # bound_headers is synchronous: an AsyncMock attribute would
+            # return a coroutine; these hosters bind no player headers
+            resolver.bound_headers = MagicMock(return_value=())
+        app.state.stremio_links = StremioLinks(repo=stream_link_repo, resolver=resolver)
     if hoster_resolver_registry is not None:
         app.state.hoster_resolver_registry = hoster_resolver_registry
 

@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: VEEV Plays in Stremio Web
+- veevcdn binds a video URL to the User-Agent and the Accept-Language of its resolution: another value, or an Accept-Language the resolution did not send, gets 403. Stremio's streaming server sets the User-Agent of our `proxyHeaders` but passes the browser's other headers on, so in Stremio Web (Firefox) the probe played (206, ffmpeg sends no Accept-Language) and the playback 6 s later got 403 (production, 2026-10-06).
+- A resolver whose CDN binds the video URL to the player's request headers implements `ClientBoundResolverPort` (`bound_headers`, `resolve_for_client`); VEEV binds `user-agent` and `accept-language`. `/play` resolves such a hoster again for a player that sends other values than the stored link was resolved with, and keeps that link per player (`<stream id>-<digest>`, fresh for an hour); the player sends the CDN the same headers after the redirect. Requests of one player share one resolution (VEEV: 0.5 s); a failed one falls back to the stored link.
+- Checked in production with the browser's Accept-Language: resolved with it, 206; the stored URL, 403.
+
 ### Changed: A Mirror Group Asks Its Best-Scored Member
 - hdfilme, streamcloud and streamkiste front one database, and a Stremio request asks one of them: the first in alphabetical order whose breaker was closed, so hdfilme whenever it answered, even with an empty or broken search. The member is now the reachable one with a closed breaker and the best plugin score of the scoring subsystem (health and search probes; a score with a confidence up to 0.1 counts as none), the first one on a tie or without scores (maintainer's decision after the dev-server end-to-end run, 2026-10-05).
 

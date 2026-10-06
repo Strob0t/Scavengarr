@@ -57,11 +57,17 @@ Video-extracting resolvers set `ResolvedStream.headers` with the headers require
 | Streamtape | `Referer: https://<response host>/` |
 | DoodStream | `Referer: <base_url>` |
 | XFS video hosters | `Referer: <embed URL after redirects>` |
-| Veev | `Referer: <origin>/`, `User-Agent: <UA used to resolve>` (token is UA-bound) |
+| Veev | `Referer: <origin>/`, `User-Agent` and, for a player's resolution, `Accept-Language` used to resolve (the token is bound to both, see below) |
 | FireStream, Playmate, Vixeo, gxplayer | none (signed / public HLS URLs) |
 | fsst | none (KVS `get_file` links) |
 | StreamUp (strmup) | `Origin: <scheme>://<host>`, `Referer: <scheme>://<host>/` |
 | Vidsonic | `Origin: <scheme>://<host>`, `Referer: <scheme>://<host>/` |
+
+### Player-bound CDNs
+
+Some CDNs bind a video URL to request headers of its resolution that a player sends itself, so `proxyHeaders` cannot set them for every player. veevcdn binds the `User-Agent` and the `Accept-Language`: another value, or an `Accept-Language` the resolution did not send, gets 403. Stremio's streaming server sets the headers of `proxyHeaders` and passes the browser's other headers on, so in Stremio Web the stored URL failed (production, 2026-10-06).
+
+Such a resolver implements `ClientBoundResolverPort` (`domain/ports/hoster_resolver.py`): `bound_headers` names the bound headers (lower case), `resolve_for_client(url, headers)` resolves with a player's values. The registry offers both (`bound_headers(url)`, `resolve_for_client(url, hoster, headers)`, uncached, with the circuit breaker and the resolve timeout of `resolve`), and `/play` uses them (see [Stremio Addon](./stremio-addon.md)).
 
 ### CDN verification
 

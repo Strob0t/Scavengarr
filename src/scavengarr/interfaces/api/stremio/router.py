@@ -337,7 +337,10 @@ async def stremio_play(
         1. Look up the stored link by stream_id (404 when missing).
         2. Take its video URL while fresh, else resolve the hoster URL
            again (``StremioLinks``: autoplay and "Continue Watching" play a
-           stream object Stremio kept for an hour or for days).
+           stream object Stremio kept for an hour or for days). A hoster
+           whose CDN binds the video URL to the player's headers (VEEV)
+           resolves for this request's headers: the player sends the CDN the
+           same ones after the redirect.
         3. Redirect to the video URL (302); 502 when the hoster gives no
            video (never a redirect to an embed page).
 
@@ -354,7 +357,7 @@ async def stremio_play(
         log.warning("stremio_play_not_found", stream_id=stream_id)
         return _error_json(404, "stream expired or not found")
 
-    current = await links.current(link)
+    current = await links.current(link, request.headers)
     if current is None:
         log.warning(
             "stremio_play_resolution_failed",

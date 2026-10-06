@@ -177,7 +177,10 @@ def _make_streamable_app(
     app.state.stremio_stream_uc = use_case
     app.state.stream_link_repo = stream_link_repo
     app.state.hoster_resolver_registry = None
-    app.state.stremio_links = StremioLinks(repo=stream_link_repo, resolver=AsyncMock())
+    app.state.stremio_links = StremioLinks(
+        repo=stream_link_repo,
+        resolver=AsyncMock(bound_headers=MagicMock(return_value=())),
+    )
 
     return app
 
@@ -1274,7 +1277,7 @@ class TestFullPipelineStreamable:
             is_hls=False,
         )
         play_repo = AsyncMock()
-        play_registry = AsyncMock()
+        play_registry = AsyncMock(bound_headers=MagicMock(return_value=()))
         play_registry.resolve = AsyncMock(return_value=resolved)
         app.state.stremio_links = StremioLinks(repo=play_repo, resolver=play_registry)
 

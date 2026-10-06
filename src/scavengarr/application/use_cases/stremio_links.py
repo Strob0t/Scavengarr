@@ -10,10 +10,12 @@ refused it (measure 10 of ``docs/plans/round5-measures.md``).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import time
+from collections.abc import Callable, Coroutine, Mapping
 from dataclasses import replace
-from typing import Protocol
+from typing import Any, Protocol
 
 import structlog
 
@@ -34,6 +36,24 @@ class _Resolver(Protocol):
         self, url: str, hoster: str = "", *, refresh: bool = False
     ) -> ResolvedStream | None: ...
 
+    def bound_headers(self, url: str, hoster: str = "") -> tuple[str, ...]: ...
+
+    async def resolve_for_client(
+        self, url: str, hoster: str, headers: Mapping[str, str]
+    ) -> ResolvedStream | None: ...
+
+
+def _bound(headers: Mapping[str, str], names: tuple[str, ...]) -> dict[str, str]:
+    """The non-empty values of *headers* named in *names*, by lower-case name."""
+    lowered = {name.lower(): value for name, value in headers.items()}
+    return {name: lowered[name] for name in names if lowered.get(name)}
+
+
+def _player_link_id(stream_id: str, player: dict[str, str]) -> str:
+    """The stored link of *stream_id* resolved for one player's headers."""
+    digest = hashlib.sha256(json.dumps(sorted(player.items())).encode()).hexdigest()
+    return f"{stream_id}-{digest[:16]}"
+
 
 class StremioLinks:
     """Stored stream links, resolved again when stale or refused.
@@ -51,14 +71,25 @@ class StremioLinks:
         """The stored link, as it is."""
         return await self._repo.get(stream_id)
 
-    async def current(self, link: CachedStreamLink) -> CachedStreamLink | None:
+    async def current(
+        self, link: CachedStreamLink, player: Mapping[str, str] | None = None
+    ) -> CachedStreamLink | None:
         """*link* while its video URL is fresh, else resolved again.
 
         When the hoster gives no video, the stale video URL stays: its CDN
         can still serve it (3 FireStream links of the dev-server end-to-end
         run, 2026-10-05), and a refusal resolves again past the resolver's
         cache (``refreshed``). ``None`` without a video URL to fall back to.
+
+        *player* holds the request headers of the player asking. A hoster
+        whose CDN binds video URLs to some of them (VEEV) gets a link of its
+        own for a player that sends other values than *link* was resolved
+        with; the stored link stays the fallback.
         """
+        if player is not None:
+            own = await self._for_player(link, player)
+            if own is not None:
+                return own
         if link.video_url and time.time() - link.resolved_at < _FRESH_S:
             return link
         fresh = await self._resolve_again(link, refresh=False)
@@ -77,16 +108,90 @@ class StremioLinks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
 
+    async def _for_player(
+        self, link: CachedStreamLink, player: Mapping[str, str]
+    ) -> CachedStreamLink | None:
+        """*link* resolved for *player*, when its hoster's CDN binds headers
+        the player sends other values of; ``None`` otherwise or on failure."""
+        names = self._resolver.bound_headers(link.hoster_url, link.hoster)
+        if not names:
+            return None
+        wanted = _bound(player, names)
+        if wanted == _bound(json.loads(link.video_headers or "{}"), names):
+            return None
+        own_id = _player_link_id(link.stream_id, wanted)
+        own = await self._repo.get(own_id)
+        if (
+            own is not None
+            and own.video_url
+            and time.time() - own.resolved_at < _FRESH_S
+        ):
+            return own
+        return await self._shared(
+            own_id, lambda: self._resolve_for_player(link, own_id, wanted)
+        )
+
+    async def _resolve_for_player(
+        self, link: CachedStreamLink, own_id: str, player: dict[str, str]
+    ) -> CachedStreamLink | None:
+        resolved = await self._resolver.resolve_for_client(
+            link.hoster_url, link.hoster, player
+        )
+        if resolved is None or not is_direct_video_url(resolved, link.hoster_url):
+            log.warning(
+                "stremio_link_player_resolve_failed",
+                stream_id=link.stream_id,
+                hoster=link.hoster,
+            )
+            return None
+        own = await self._store(replace(link, stream_id=own_id), resolved)
+        log.info(
+            "stremio_link_resolved_for_player",
+            stream_id=link.stream_id,
+            hoster=link.hoster,
+        )
+        return own
+
     async def _resolve_again(
         self, link: CachedStreamLink, *, refresh: bool
     ) -> CachedStreamLink | None:
-        task = self._running.get(link.stream_id)
+        return await self._shared(
+            link.stream_id, lambda: self._resolve(link, refresh=refresh)
+        )
+
+    async def _shared(
+        self,
+        key: str,
+        start: Callable[[], Coroutine[Any, Any, CachedStreamLink | None]],
+    ) -> CachedStreamLink | None:
+        """One resolution per *key* for all requests that ask meanwhile."""
+        task = self._running.get(key)
         if task is None:
-            task = asyncio.ensure_future(self._resolve(link, refresh=refresh))
-            self._running[link.stream_id] = task
-            task.add_done_callback(lambda _: self._running.pop(link.stream_id, None))
+            task = asyncio.ensure_future(start())
+            self._running[key] = task
+            task.add_done_callback(lambda _: self._running.pop(key, None))
         # A request that goes away (players cancel many) ends no shared work
         return await asyncio.shield(task)
+
+    async def _store(
+        self, link: CachedStreamLink, resolved: ResolvedStream
+    ) -> CachedStreamLink:
+        """*link* with the video of *resolved*, saved for the next request."""
+        fresh = replace(
+            link,
+            video_url=resolved.video_url,
+            video_headers=json.dumps(resolved.headers) if resolved.headers else "",
+            is_hls=resolved.is_hls,
+            resolved_at=time.time(),
+        )
+        try:
+            await self._repo.save(fresh)
+        except Exception:
+            # It plays now; the next request resolves again
+            log.warning(
+                "stremio_link_save_failed", stream_id=link.stream_id, exc_info=True
+            )
+        return fresh
 
     async def _resolve(
         self, link: CachedStreamLink, *, refresh: bool
@@ -102,20 +207,7 @@ class StremioLinks:
                 refresh=refresh,
             )
             return None
-        fresh = replace(
-            link,
-            video_url=resolved.video_url,
-            video_headers=json.dumps(resolved.headers) if resolved.headers else "",
-            is_hls=resolved.is_hls,
-            resolved_at=time.time(),
-        )
-        try:
-            await self._repo.save(fresh)
-        except Exception:
-            # It plays now; the next request resolves again
-            log.warning(
-                "stremio_link_save_failed", stream_id=link.stream_id, exc_info=True
-            )
+        fresh = await self._store(link, resolved)
         log.info(
             "stremio_link_resolved_again",
             stream_id=link.stream_id,

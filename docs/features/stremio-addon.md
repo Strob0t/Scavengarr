@@ -132,6 +132,7 @@ A resolved file points at `/play/{stream_id}` (a redirect to its video URL) with
 
 - `notWebReady: true` routes playback through Stremio's local streaming server.
 - `proxyHeaders.request` tells Stremio which HTTP headers to send when fetching the video. Stremio's streaming server follows `/play/`'s redirect with them (checked 2026-10-05 against the maintainer's server: the redirected request still carried the `Referer`).
+- The streaming server sets only those headers and passes the browser's other ones on, `Accept-Language` among them. A CDN that binds the video URL to such a header (VEEV, a `ClientBoundResolverPort` in [Hoster Resolvers](./hoster-resolvers.md)) refused the stored URL in Stremio Web (Firefox), while ffmpeg's probe, which sends no `Accept-Language`, played it (production, 2026-10-06). `/play` therefore resolves such a hoster again for a player whose bound headers differ from the stored link's and redirects there; the player sends the CDN the same headers after the redirect. The player's link is kept apart from the stored one (`<stream id>-<digest of the headers>`, fresh for an hour), its requests share one resolution, and a failed one falls back to the stored link.
 - Most hoster CDNs reject requests without a valid `Referer` header.
 
 **Platform support:**

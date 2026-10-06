@@ -1262,3 +1262,89 @@ class TestTelemetry:
 
         assert self._outcome(telemetry, outcome, resolver="direct") == 1
         assert self._outcome(telemetry, "cached", resolver="direct") == 1
+
+
+class _PlayerBound:
+    """A hoster whose CDN binds video URLs to the player's headers (VEEV)."""
+
+    name = "veev"
+    supported_domains = frozenset({"veev"})
+    bound_headers = ("user-agent", "accept-language")
+
+    def __init__(self) -> None:
+        self.plain_calls = 0
+        self.player_calls: list[tuple[str, dict[str, str]]] = []
+
+    async def resolve(self, url: str) -> ResolvedStream | None:
+        self.plain_calls += 1
+        return ResolvedStream(video_url="https://cdn.example/shared.mp4")
+
+    async def resolve_for_client(
+        self, url: str, headers: dict[str, str]
+    ) -> ResolvedStream | None:
+        self.player_calls.append((url, dict(headers)))
+        return ResolvedStream(video_url="https://cdn.example/player.mp4")
+
+
+class TestClientBoundResolution:
+    """veevcdn binds the video URL to the player's User-Agent and
+    Accept-Language (production, 2026-10-06)."""
+
+    _URL = "https://veev.to/e/abcdefghijkl"
+    _PLAYER = {"user-agent": "Firefox", "accept-language": "de"}
+
+    @staticmethod
+    def _voe() -> SimpleNamespace:
+        return SimpleNamespace(
+            name="voe",
+            supported_domains=frozenset({"voe"}),
+            resolve=AsyncMock(return_value=ResolvedStream(video_url="https://c/v.mp4")),
+        )
+
+    def test_names_the_headers_a_hosters_cdn_binds(self) -> None:
+        registry = HosterResolverRegistry(resolvers=[_PlayerBound()])
+
+        assert registry.bound_headers(self._URL) == ("user-agent", "accept-language")
+
+    def test_other_hosters_bind_no_headers(self) -> None:
+        registry = HosterResolverRegistry(resolvers=[self._voe()])
+
+        assert registry.bound_headers("https://voe.sx/e/abc") == ()
+        assert registry.bound_headers("https://unknown.example/e/abc") == ()
+
+    async def test_resolves_for_the_player_past_the_shared_cache(self) -> None:
+        resolver = _PlayerBound()
+        registry = HosterResolverRegistry(resolvers=[resolver])
+        await registry.resolve(self._URL)
+
+        stream = await registry.resolve_for_client(self._URL, "veev", self._PLAYER)
+        shared = await registry.resolve(self._URL)
+
+        assert stream is not None
+        assert stream.video_url == "https://cdn.example/player.mp4"
+        assert resolver.player_calls == [(self._URL, self._PLAYER)]
+        assert shared is not None
+        assert shared.video_url == "https://cdn.example/shared.mp4"
+        assert resolver.plain_calls == 1
+
+    async def test_a_hoster_binding_no_headers_gives_none(self) -> None:
+        voe = self._voe()
+        registry = HosterResolverRegistry(resolvers=[voe])
+
+        stream = await registry.resolve_for_client(
+            "https://voe.sx/e/abc", "voe", self._PLAYER
+        )
+
+        assert stream is None
+        voe.resolve.assert_not_awaited()
+
+    async def test_an_open_breaker_skips_the_player_resolution(self) -> None:
+        resolver = _PlayerBound()
+        breaker = PluginCircuitBreaker(failure_threshold=1, cooldown_seconds=60)
+        breaker.record_failure("veev")
+        registry = HosterResolverRegistry(resolvers=[resolver], circuit_breaker=breaker)
+
+        assert (
+            await registry.resolve_for_client(self._URL, "veev", self._PLAYER) is None
+        )
+        assert resolver.player_calls == []

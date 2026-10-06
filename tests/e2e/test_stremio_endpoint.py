@@ -118,9 +118,12 @@ def _make_app(
     app.state.stream_link_repo = stream_link_repo
     app.state.hoster_resolver_registry = hoster_resolver_registry
     if stream_link_repo is not None:
-        app.state.stremio_links = StremioLinks(
-            repo=stream_link_repo, resolver=hoster_resolver_registry or AsyncMock()
-        )
+        resolver = hoster_resolver_registry or AsyncMock()
+        if isinstance(getattr(resolver, "bound_headers", None), AsyncMock):
+            # bound_headers is synchronous: an AsyncMock attribute would
+            # return a coroutine; these hosters bind no player headers
+            resolver.bound_headers = MagicMock(return_value=())
+        app.state.stremio_links = StremioLinks(repo=stream_link_repo, resolver=resolver)
     app.state.http_client = http_client or MagicMock()
 
     return app
@@ -883,6 +886,47 @@ class TestPlayEndpoint:
 
         assert resp.status_code == 302
         assert resp.headers["location"] == "https://cdn.filemoon.sx/master.m3u8"
+
+    def test_play_resolves_for_a_player_whose_headers_the_cdn_binds(self) -> None:
+        """VEEV: Stremio's streaming server passes Firefox's Accept-Language
+        on to the CDN, which binds the URL to it (production, 2026-10-06)."""
+        link = CachedStreamLink(
+            stream_id="veev1",
+            hoster_url="https://veev.to/e/abc",
+            hoster="veev",
+            video_url="https://cdn.veev.example/stored.mp4",
+            video_headers=json.dumps({"User-Agent": "UA"}),
+            resolved_at=time.time(),
+        )
+        repo = AsyncMock()
+        repo.get = AsyncMock(side_effect=lambda sid: link if sid == "veev1" else None)
+        registry = AsyncMock()
+        registry.bound_headers = MagicMock(
+            return_value=("user-agent", "accept-language")
+        )
+        registry.resolve_for_client = AsyncMock(
+            return_value=ResolvedStream(video_url="https://cdn.veev.example/own.mp4")
+        )
+        client = TestClient(
+            _make_app(stream_link_repo=repo, hoster_resolver_registry=registry),
+            follow_redirects=False,
+        )
+
+        browser = client.get(
+            f"{_PREFIX}/stremio/play/veev1",
+            headers={"User-Agent": "UA", "Accept-Language": "de"},
+        )
+        probe = client.get(
+            f"{_PREFIX}/stremio/play/veev1", headers={"User-Agent": "UA"}
+        )
+
+        assert browser.headers["location"] == "https://cdn.veev.example/own.mp4"
+        assert probe.headers["location"] == "https://cdn.veev.example/stored.mp4"
+        registry.resolve_for_client.assert_awaited_once_with(
+            "https://veev.to/e/abc",
+            "veev",
+            {"user-agent": "UA", "accept-language": "de"},
+        )
 
     def test_play_resolver_receives_correct_hoster(self) -> None:
         link = CachedStreamLink(

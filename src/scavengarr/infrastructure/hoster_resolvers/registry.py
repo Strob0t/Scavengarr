@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Awaitable, Callable, Mapping
+from functools import partial
 from urllib.parse import urlparse
 
 import httpx
 import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
-from scavengarr.domain.ports.hoster_resolver import HosterResolverPort
+from scavengarr.domain.ports.hoster_resolver import (
+    ClientBoundResolverPort,
+    HosterResolverPort,
+)
 from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.hoster_resolvers._verify import check_playable
@@ -352,6 +357,51 @@ class HosterResolverRegistry:
         else:
             breaker.record_success(resolver.name)
 
+    def bound_headers(self, url: str, hoster: str = "") -> tuple[str, ...]:
+        """Request headers the CDN of *url*'s hoster binds video URLs to.
+
+        Empty for most hosters: their video URLs play for any player.
+        """
+        url = url.strip()
+        resolver = self._resolver_for(url, extract_domain(url) or hoster)
+        if isinstance(resolver, ClientBoundResolverPort):
+            return resolver.bound_headers
+        return ()
+
+    async def resolve_for_client(
+        self, url: str, hoster: str, headers: Mapping[str, str]
+    ) -> ResolvedStream | None:
+        """Resolve *url* for the player sending *headers* (lower-case names).
+
+        Only for a hoster whose CDN binds video URLs to the player's headers
+        (``bound_headers``), else ``None``. Not cached: the stream belongs to
+        that player, and the caller keeps it per player. The circuit breaker
+        and the resolve timeout apply as in ``resolve``.
+        """
+        url = url.strip()
+        hoster_name = extract_domain(url) or hoster
+        resolver = self._resolver_for(url, hoster_name)
+        if not isinstance(resolver, ClientBoundResolverPort):
+            return None
+        if not self._breaker_allows(resolver, url):
+            return None
+        stream, _ = await self._try_resolver(
+            resolver,
+            hoster_name,
+            url,
+            resolve=partial(resolver.resolve_for_client, url, headers),
+        )
+        return stream
+
+    def _breaker_allows(self, resolver: HosterResolverPort, url: str) -> bool:
+        """Whether the circuit breaker lets *resolver* resolve now."""
+        breaker = self._circuit_breaker
+        if breaker is None or breaker.allow(resolver.name):
+            return True
+        log.info("hoster_resolve_circuit_open", hoster=resolver.name, url=url)
+        self._telemetry.count("hoster_resolve", "breaker_open", resolver=resolver.name)
+        return False
+
     async def _resolve_with(
         self,
         resolver: HosterResolverPort,
@@ -368,13 +418,9 @@ class HosterResolverRegistry:
         2026-10-05). A probe that finds a stream closes the breaker and
         leaves the stream in the cache for the next request.
         """
-        breaker = self._circuit_breaker
-        if breaker is not None and not breaker.allow(resolver.name):
-            log.info("hoster_resolve_circuit_open", hoster=resolver.name, url=url)
-            self._telemetry.count(
-                "hoster_resolve", "breaker_open", resolver=resolver.name
-            )
+        if not self._breaker_allows(resolver, url):
             return None
+        breaker = self._circuit_breaker
         attempt = self._attempt(resolver, hoster_name, url, cache_key)
         if breaker is None or breaker.state(resolver.name) != "half_open":
             return await attempt
@@ -408,12 +454,15 @@ class HosterResolverRegistry:
         resolver: HosterResolverPort,
         hoster_name: str,
         url: str,
+        *,
+        resolve: Callable[[], Awaitable[ResolvedStream | None]] | None = None,
     ) -> tuple[ResolvedStream | None, bool]:
         """Attempt resolution with a specific resolver, logging success/failure.
 
         Returns the stream (None = failed) and whether the outcome may be
         cached. The resolver gets ``resolve_timeout`` in total (the
         resolvers' own request timeouts add up over several requests).
+        *resolve* replaces ``resolver.resolve(url)`` (a player's resolution).
 
         The circuit breaker counts a timeout, a cut after half the timeout
         (the Stremio deadline ends most resolutions before the timeout) and
@@ -424,7 +473,7 @@ class HosterResolverRegistry:
         with self._telemetry.stage("hoster_resolve", resolver=resolver.name) as stage:
             try:
                 async with asyncio.timeout(self._resolve_timeout):
-                    result = await resolver.resolve(url)
+                    result = await (resolve() if resolve else resolver.resolve(url))
                 stage.outcome, stream = await self._judge(
                     resolver, hoster_name, url, result
                 )
