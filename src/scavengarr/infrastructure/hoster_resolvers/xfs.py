@@ -169,6 +169,13 @@ class XFSResolver:
                 timeout=15,
                 headers=headers,
             )
+            if resp.status_code == 404 and url != embed_url:
+                # A mirror without the /e/ route: moflix-stream.click (VidHide)
+                # serves its player under the /embed/ and /v/ links it hands out
+                embed_url = url
+                resp = await self._http.get(
+                    embed_url, follow_redirects=True, timeout=15, headers=headers
+                )
         except httpx.HTTPError:
             log.warning(f"{hoster}_request_failed", url=embed_url)
             return None
@@ -212,7 +219,11 @@ class XFSResolver:
         if not await self._verify_video_url(video_url, cdn_headers, hoster):
             return None
 
-        log.debug(f"{hoster}_video_extracted", file_id=file_id, url=video_url[:80])
+        log.debug(
+            f"{hoster}_video_extracted",
+            file_id=file_id,
+            cdn=extract_domain(video_url),
+        )
         return ResolvedStream(
             video_url=video_url,
             is_hls=is_hls,
@@ -537,6 +548,9 @@ VIDHIDE = XFSConfig(
         "file was removed",
         "Video embed restricted",
         "Downloads disabled",
+        # moflix-stream.click: "File is no longer available as it expired or
+        # has been deleted."
+        "File is no longer available",
     ),
     is_video_hoster=True,
     extra_domains=frozenset(

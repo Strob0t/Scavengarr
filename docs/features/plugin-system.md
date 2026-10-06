@@ -12,7 +12,7 @@ Scavengarr is plugin-driven. Each plugin knows how to search one source site and
 
 Key characteristics:
 - **Python-only:** every plugin is a `.py` file in the plugin directory that exports a module-level `plugin` instance.
-- **Two base classes:** `HttpxPluginBase` (33 plugins) and `PlaywrightPluginBase` (9 plugins), see [Python Plugins](./python-plugins.md#plugin-base-classes).
+- **Two base classes:** `HttpxPluginBase` and `PlaywrightPluginBase` (the generated [plugin list](../plugins.md) gives each plugin's engine), see [Python Plugins](./python-plugins.md#plugin-base-classes).
 - **Loaded at startup:** discovery only indexes files, but startup wiring imports every plugin once and caches the instances for the process lifetime.
 - **Shared resources:** httpx plugins share one rate-limited, retrying HTTP client; Playwright plugins share one Chromium process.
 
@@ -34,8 +34,10 @@ PluginRegistry.discover()
   v
 _apply_plugin_overrides()            (plugins.overrides from YAML)
   |-- first registry call imports every plugin file once
+  |   (without overrides _inject_shared_browser_pool() makes it)
+  |-- get(name); an unknown name logs plugin_override_unknown
   |-- enabled: false -> registry.remove(name)
-  |-- otherwise get(name) and set _timeout / _max_concurrent / _max_results
+  |-- otherwise set _timeout (httpx only) / _max_concurrent / _max_results
   |
   v
 _inject_shared_browser_pool()
@@ -86,8 +88,8 @@ or in YAML as `plugins.plugin_dir` (a top-level `plugin_dir` key is also accepte
 ```yaml
 plugins:
   overrides:
-    boerse:
-      timeout: 30          # seconds, sets _timeout
+    kinoking:
+      timeout: 30          # seconds, sets _timeout (httpx plugins only)
       max_concurrent: 2    # sets _max_concurrent (semaphore size)
       max_results: 500     # sets _max_results
     kinox:
@@ -142,11 +144,12 @@ Optional capability: a plugin whose links sit behind a captcha or a download quo
 | Path | Plugins | Call |
 |---|---|---|
 | Torznab search (`TorznabSearchUseCase`) | the plugin named in the URL | `plugin.search(query, category=category)`; results are cached per query (`cache_ttl` on the plugin overrides the default TTL) and then link-validated |
-| Stremio streams (`PluginSearchRunner`) | all plugins with `provides` `"stream"` or `"both"` | `plugin.isolated_search(query, category, season=..., episode=...)` under the global concurrency pool, with per-plugin timeout and circuit breaker |
+| Stremio streams (`PluginSearchRunner`) | the plugins with `provides` `"stream"` or `"both"` whose site answered its last health check, one per mirror group (with `stremio.scoring_enabled`: the top `max_plugins_scored` by score plus an exploration slot) | `plugin.isolated_search(query, category, season=..., episode=...)` under the global concurrency pool, with per-plugin timeout and circuit breaker |
+| Scoring probes (`MiniSearchProber`) | the stream plugins, in the background (`scoring.enabled`) | `plugin.search(query, category=category)` with `search_max_results` at `scoring.search_max_items` (20) and a `scoring.search_timeout_seconds` (10 s) timeout |
 
-`isolated_search()` is a passthrough for httpx plugins. Playwright plugins run it in a per-request `BrowserContext` (or serialized behind a lock when `_serialize_search = True`), so concurrent Stremio requests do not share page state. Torznab requests call `search()` directly and share the plugin's persistent context.
+`isolated_search()` is a passthrough for httpx plugins. Playwright plugins run it in a per-request `BrowserContext` (or serialized behind a lock when `_serialize_search = True`), so concurrent Stremio requests do not share page state. Torznab requests and scoring probes call `search()` directly and share the plugin's persistent context.
 
-During Stremio searches, the `search_max_results` context variable lowers the pagination limit; plugins read it through `effective_max_results`.
+During Stremio searches and scoring probes, the `search_max_results` context variable lowers the pagination limit; plugins read it through `effective_max_results`.
 
 ---
 
@@ -157,13 +160,12 @@ During Stremio searches, the `search_max_results` context variable lowers the pa
 class PluginError(Exception): ...            # Base class
 class PluginLoadError(PluginError): ...      # Import or protocol failure
 class PluginNotFoundError(PluginError): ...  # Name not in registry
-class DuplicatePluginError(PluginError): ... # Defined, currently not raised
 ```
 
 | Exception | Trigger |
 |---|---|
 | `PluginLoadError` | Module has no `plugin` variable, no `search` method, or empty `name` |
-| `PluginLoadError` | `SyntaxError` or `ImportError` during module import |
+| `PluginLoadError` | Any exception during module import (`SyntaxError`, `ImportError`, an error in module-level code) |
 | `PluginNotFoundError` | `registry.get("unknown-name")`; the Torznab router maps it to a Torznab "plugin not found" error |
 
 ---

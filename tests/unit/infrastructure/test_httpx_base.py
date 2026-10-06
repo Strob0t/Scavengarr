@@ -201,7 +201,7 @@ class TestSafeFetch:
     @pytest.mark.asyncio
     async def test_returns_response_on_success(self) -> None:
         plugin = _TestPlugin()
-        resp = MagicMock(spec=httpx.Response)
+        resp = MagicMock(spec=httpx.Response, history=[])
         resp.status_code = 200
         resp.raise_for_status = MagicMock()
 
@@ -227,7 +227,7 @@ class TestSafeFetch:
     @pytest.mark.asyncio
     async def test_returns_none_on_http_error(self) -> None:
         plugin = _TestPlugin()
-        resp = MagicMock(spec=httpx.Response)
+        resp = MagicMock(spec=httpx.Response, history=[])
         resp.status_code = 403
         resp.raise_for_status = MagicMock(
             side_effect=httpx.HTTPStatusError(
@@ -263,7 +263,7 @@ class TestSafeFetch:
 class TestSafeParseJson:
     def test_parses_valid_json(self) -> None:
         plugin = _TestPlugin()
-        resp = MagicMock(spec=httpx.Response)
+        resp = MagicMock(spec=httpx.Response, history=[])
         resp.json.return_value = {"data": [1, 2, 3]}
         resp.url = "https://example.com/api"
 
@@ -273,7 +273,7 @@ class TestSafeParseJson:
 
     def test_returns_none_on_invalid_json(self) -> None:
         plugin = _TestPlugin()
-        resp = MagicMock(spec=httpx.Response)
+        resp = MagicMock(spec=httpx.Response, history=[])
         resp.json.side_effect = ValueError("invalid")
         resp.url = "https://example.com/api"
 
@@ -348,7 +348,7 @@ class TestSharedHttpClient:
     @pytest.mark.asyncio
     async def test_safe_fetch_adds_per_plugin_overrides(self) -> None:
         shared = AsyncMock(spec=httpx.AsyncClient)
-        resp = MagicMock(spec=httpx.Response)
+        resp = MagicMock(spec=httpx.Response, history=[])
         resp.status_code = 200
         resp.raise_for_status = MagicMock()
         shared.get = AsyncMock(return_value=resp)
@@ -364,9 +364,31 @@ class TestSharedHttpClient:
         assert call_kwargs["headers"] == {"User-Agent": "CustomAgent/1.0"}
 
     @pytest.mark.asyncio
+    async def test_safe_fetch_extra_headers_keep_the_user_agent(self) -> None:
+        """aniworld's AJAX search adds a header: its request went out with
+        the app's own User-Agent instead of the plugin's."""
+        shared = AsyncMock(spec=httpx.AsyncClient)
+        resp = MagicMock(spec=httpx.Response, history=[])
+        resp.status_code = 200
+        resp.raise_for_status = MagicMock()
+        shared.get = AsyncMock(return_value=resp)
+        HttpxPluginBase.set_shared_http_client(shared)
+
+        plugin = _TestPlugin()
+        plugin._user_agent = "CustomAgent/1.0"
+        await plugin._safe_fetch(
+            "https://example.com/ajax", headers={"X-Requested-With": "XMLHttpRequest"}
+        )
+
+        assert shared.get.call_args[1]["headers"] == {
+            "User-Agent": "CustomAgent/1.0",
+            "X-Requested-With": "XMLHttpRequest",
+        }
+
+    @pytest.mark.asyncio
     async def test_safe_fetch_no_overrides_with_own_client(self) -> None:
         plugin = _TestPlugin()
-        resp = MagicMock(spec=httpx.Response)
+        resp = MagicMock(spec=httpx.Response, history=[])
         resp.status_code = 200
         resp.raise_for_status = MagicMock()
         mock_client = AsyncMock(spec=httpx.AsyncClient)

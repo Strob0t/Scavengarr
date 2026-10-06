@@ -2,9 +2,9 @@
 
 # Plan: Anti-Bot Hardening (Patchright + Browser Fallback)
 
-**Status:** Phase 0–2 done (2026-09-28): all six Cloudflare-blocked plugins return results again. Phase 3 (FlareSolverr/Byparr) not needed. Captcha hosters settled: veev works via its player API (`VeevResolver`); vinovo and wolfstream stay disabled (captcha per request)
+**Status:** Phase 0–2 done (2026-09-28): all six Cloudflare-blocked plugins return results again. Phase 3 (FlareSolverr/Byparr) built as an option in v0.2.0 (`SolverFetcher`, `playwright.solver_url`), not verified against a running sidecar. Phase 4 done (2026-10-04). Captcha hosters settled: veev and vinovo work via their player APIs (`VeevResolver`, `VinovoResolver`); wolfstream stays disabled (captcha per request)
 **Priority:** High (blocks 6 plugins and 3 hoster resolvers)
-**Related:** `docs/plans/plugin-repair.md`, `CHANGELOG.md` → `KNOWN_ISSUES`, `src/scavengarr/infrastructure/plugins/{playwright_base,shared_browser,httpx_base}.py`, `src/scavengarr/infrastructure/hoster_resolvers/{stealth_pool,cloudflare,supervideo,probe,xfs}.py`, `src/scavengarr/interfaces/composition.py`
+**Related:** `docs/plans/plugin-repair.md`, `CHANGELOG.md` → `KNOWN_ISSUES`, `src/scavengarr/infrastructure/plugins/{playwright_base,httpx_base}.py`, `src/scavengarr/infrastructure/browser/{shared_browser,stealth_pool,cloudflare,turnstile,solver_fetcher}.py`, `src/scavengarr/infrastructure/hoster_resolvers/{supervideo,xfs}.py`, `src/scavengarr/interfaces/composition.py`
 
 ## Problem
 
@@ -193,9 +193,9 @@ Findings beyond the plan:
 
 ## Phase 3 — Optional: FlareSolverr/Byparr adapter
 
-Only if plugins remain blocked after Phase 2.
+Only if plugins remain blocked after Phase 2. Built as an option in v0.2.0: own browser first, the solver when it fails (`ChainedBrowserFetcher`).
 
-- `FlareSolverrFetcher` implementing `BrowserFetcherPort` via the FlareSolverr v1 API (`POST /v1`, `cmd: request.get`); Byparr is API-compatible.
+- `SolverFetcher` (planned as `FlareSolverrFetcher`) implementing `BrowserFetcherPort` via the FlareSolverr v1 API (`POST /v1`, `cmd: request.get`); Byparr is API-compatible.
 - Config `playwright.solver_url` (unset = disabled; `AppConfig` field `playwright_solver_url`, env `SCAVENGARR_PLAYWRIGHT_SOLVER_URL`). Composition builds a chained fetcher: StealthPool first, solver as fallback.
 - `curl_cffi` (TLS impersonation) only if solver latency becomes the bottleneck: reuse the solver's `cf_clearance` cookie + User-Agent for follow-up requests. This is a new dependency with its own client stack (no respx, no `RetryTransport`); needs a separate justification at that point.
 

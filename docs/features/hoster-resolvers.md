@@ -39,11 +39,11 @@ class HosterResolverPort(Protocol):
 
 ### Domain dispatch
 
-The registry matches `extract_domain(url)` (second-level domain, e.g. `"https://www.voe.sx/e/abc"` → `"voe"`) against resolver names. Resolvers that expose a `supported_domains` property are also registered under every alias domain (e.g. `filelions` → `vidhide`, `d0000d` → `doodstream`, `streamta` → `streamtape`): all XFS and generic DDL resolvers plus the individual resolvers with mirror lists (VOE, DoodStream, Streamtape, VidGuard, Strmup, Filemoon, FireStream, DDownload, Serienstream). Other individual resolvers are reached when the URL's second-level domain equals the resolver `name`, via a redirect to such a domain, or via the plugin-provided hoster hint. The registry strips surrounding whitespace from the URL first (scraped links sometimes end in a newline).
+The registry matches `extract_domain(url)` (second-level domain, e.g. `"https://www.voe.sx/e/abc"` → `"voe"`) against resolver names. Resolvers that expose a `supported_domains` property are also registered under every alias domain (e.g. `filelions` → `vidhide`, `d0000d` → `doodstream`, `streamta` → `streamtape`): all XFS and generic DDL resolvers plus the individual resolvers with mirror lists (VOE, DoodStream, Streamtape, VidGuard, Strmup, Filemoon, FireStream, Mixdrop, DDownload, Serienstream). Other individual resolvers are reached when the URL's second-level domain equals the resolver `name`, via a redirect to such a domain, or via the plugin-provided hoster hint. The registry strips surrounding whitespace from the URL first (scraped links sometimes end in a newline).
 
 A resolver can also claim full host names through a `supported_hosts` property, checked before the second-level name, when unrelated hosts share that name: `strmup` claims `kinoger.pw` (kinoger's Vidara player), while `kinoger.ru` links redirect to VOE mirrors and must reach the redirect step. `canonical_hoster()` knows claimed hosts too, and the Stremio stream converter asks for the URL host before its second-level name, so kinoger.pw streams are named `strmup`.
 
-A domain claimed by two resolvers stays with the first one registered (the composition registers the specific resolvers before the generic XFS/DDL ones) and is logged as `hoster_domain_conflict`; the shipped resolvers claim no domain twice. `moflix-stream` belongs to Vidhide (moflix-stream.click; JDownloader lists VidGuard with the former moflix-stream.day as offline).
+A domain claimed by two resolvers stays with the first one registered (the composition registers the specific resolvers before the generic XFS/DDL ones) and is logged as `hoster_domain_conflict`; the shipped resolvers claim no domain twice. `moflix-stream` belongs to Vidhide (moflix-stream.click; JDownloader lists VidGuard with the former moflix-stream.day as offline), except the host `moflix-stream.link`, which runs Filemoon's Byse player and is claimed by `filemoon`.
 
 ### Playback headers
 
@@ -57,29 +57,38 @@ Video-extracting resolvers set `ResolvedStream.headers` with the headers require
 | Streamtape | `Referer: https://<response host>/` |
 | DoodStream | `Referer: <base_url>` |
 | XFS video hosters | `Referer: <embed URL after redirects>` |
-| Veev | `Referer: <origin>/`, `User-Agent: <UA used to resolve>` (token is UA-bound) |
-| FireStream, Playmate, Vixeo, gxplayer | none (signed / public HLS URLs) |
+| Veev | `Referer: <origin>/`, `User-Agent` and, for a player's resolution, `Accept-Language` used to resolve (the token is bound to both, see below) |
+| FireStream, Playmate, gxplayer | none (signed / public HLS URLs) |
 | fsst | none (KVS `get_file` links) |
+| Mixdrop | `Referer: <embed URL after redirects>` |
+| Vinovo | `Referer: <origin>/`, `User-Agent` (the stream token is bound to it) |
+| Browser-captured streams (Vixeo; Filemoon, XFS, DoodStream and SuperVideo on a capture) | `Referer` of the captured request, else the embed URL |
 | StreamUp (strmup) | `Origin: <scheme>://<host>`, `Referer: <scheme>://<host>/` |
 | Vidsonic | `Origin: <scheme>://<host>`, `Referer: <scheme>://<host>/` |
 
+### Player-bound CDNs
+
+Some CDNs bind a video URL to request headers of its resolution that a player sends itself, so `proxyHeaders` cannot set them for every player. veevcdn binds the `User-Agent` and the `Accept-Language`: another value, or an `Accept-Language` the resolution did not send, gets 403. Stremio's streaming server sets the headers of `proxyHeaders` and passes the browser's other headers on, so in Stremio Web the stored URL failed (production, 2026-10-06).
+
+Such a resolver implements `ClientBoundResolverPort` (`domain/ports/hoster_resolver.py`): `bound_headers` names the bound headers (lower case), `resolve_for_client(url, headers)` resolves with a player's values. The registry offers both (`bound_headers(url)`, `resolve_for_client(url, hoster, headers)`, uncached, with the circuit breaker and the resolve timeout of `resolve`), and `/play` uses them (see [Stremio Addon](./stremio-addon.md)).
+
 ### CDN verification
 
-`_verify.py` provides `verify_video_url()`: a HEAD request (8 s timeout, redirects followed) with the playback headers. Only `200`/`206` counts as reachable. It is used by the XFS video path, VOE, Streamtape, and SuperVideo, and filters out IP-locked CDN tokens (e.g. LULUVID/LULUVDOO tokens bound to Cloudflare's edge IP).
+`_verify.py` provides `verify_video_url()`: a HEAD request (8 s timeout, redirects followed) with the playback headers. Only `200`/`206` counts as reachable. It is used by the XFS video path, VOE and Streamtape, and filters out IP-locked CDN tokens (e.g. LULUVID/LULUVDOO tokens bound to Cloudflare's edge IP).
 
 ### Playback check
 
-`_verify.py` also provides `check_playable(http_client, stream)`, which the registry applies to every resolver result when it is built with `verify_playback=True` (composition root: `stremio.verify_streams`, default on). It sends a streamed GET with the stream's playback headers, the player's browser User-Agent (`DEFAULT_USER_AGENT`, as in the `proxyHeaders`; CDNs such as mixdrop's answer the app's own agent with 403) plus `Range: bytes=0-1023` (6 s timeout, redirects followed) and reads at most the first 1 KiB. The stream is unplayable when the status is `>= 400`, the answer is HTML (`Content-Type: text/html` or a body starting with `<`), or an HLS stream (`is_hls`) does not start with `#EXTM3U`; network errors count as unplayable too. The registry then logs `hoster_resolve_unplayable`, returns `None` and caches the URL as dead (15 min) like a failed resolution. Unlike `verify_video_url()` (HEAD, only in some resolvers) it covers every resolver and catches servers that answer HEAD with 200 but serve an error page (measured: mixdrop/supervideo HTML pages, CDN 404/502, expired TLS certificates). The content-type probe fallback is not checked again (it already looked at the response).
+`_verify.py` also provides `check_playable(http_client, stream)`, which the registry applies to every resolver result when it is built with `verify_playback=True` (composition root: `stremio.verify_streams`, default on). It sends a streamed GET with the stream's playback headers, the player's browser User-Agent (`DEFAULT_USER_AGENT`, as in the `proxyHeaders`; CDNs such as mixdrop's answer the app's own agent with 403) plus `Range: bytes=0-1023` (6 s timeout, redirects followed) and reads at most the first 1 KiB. The stream is unplayable when the status is `>= 400`, the answer is HTML (`Content-Type: text/html` or a body starting with `<`), or an HLS stream (`is_hls`) does not start with `#EXTM3U`. A failed check request (timeout, reset) is no verdict: the registry logs `hoster_resolve_check_error` and neither caches the link nor counts it for the breaker. The registry then logs `hoster_resolve_unplayable`, returns `None` and caches the URL as dead (15 min) like a failed resolution. Unlike `verify_video_url()` (HEAD, only in some resolvers) it covers every resolver and catches servers that answer HEAD with 200 but serve an error page (measured: mixdrop/supervideo HTML pages, CDN 404/502, expired TLS certificates). The content-type probe fallback is not checked again (it already looked at the response). A resolver without a check of its own sets `needs_playback_check = True` (SuperVideo): the registry checks its results with `verify_playback` off too.
 
 ### Browser capture
 
-Some players create the stream URL only while they run. Filemoon's Byse player shows "Click play button in order to verify you're a human" and then runs a fingerprint attestation, a proof-of-work captcha (a custom memory-hard hash, not SHA-256, about 65k attempts at difficulty 16) and an AES-GCM encrypted playback call. Replaying that flow in Python is slow and breaks with every Byse update, so the resolver lets the player do it: `StealthPool.capture_media(url, timeout=...)` opens the embed page in the Patchright stealth context, solves a Cloudflare challenge if present, waits 3 s for autoplay, then clicks the page centre (the play button) up to 3 times, 5 s apart, and returns the first request for a `.m3u8`/`.mpd`/`.mp4`/`master.txt` URL as `CapturedMedia(url, referer)`.
+Some players create the stream URL only while they run. Filemoon's Byse player shows "Click play button in order to verify you're a human" and then runs a fingerprint attestation, a proof-of-work captcha (a custom memory-hard hash, not SHA-256, about 65k attempts at difficulty 16) and an AES-GCM encrypted playback call. Replaying that flow in Python is slow and breaks with every Byse update, so the resolver lets the player do it: `StealthPool.capture_media(url, timeout=...)` opens the embed page in the Patchright stealth context, solves a Cloudflare challenge if present, waits 3 s for autoplay, then clicks the page centre (the play button) up to 3 times, 5 s apart, and returns the first request for a `.m3u8`/`.mpd`/`.mp4`/`master.txt` URL, or the video element's request (extension-less CDN URLs), as `CapturedMedia(url, referer)`.
 
 - The page loads with stylesheets and fonts (a page route overrides the context's resource block): without CSS the play button is not where the click lands. Only `media` downloads are aborted; their URL is already known when requested.
 - Popups opened by ad scripts (often on the first click) are closed.
 - Seek-preview playlists are not the stream: URLs containing `thumbnail`, `sprite` or `preview` are ignored (vixeo requests `thumbnails.m3u8`, a playlist of JPEGs, before the video).
-- Shares the `fetch_text()` concurrency limit (`fetch_concurrency`, at most 2 pages).
-- Resolvers call it only at play time (`/stremio/play/{id}` resolves one link), so a few seconds per resolve are acceptable (Filemoon live: 2–5 s).
+- Shares the stealth browser's pages (`PageGate`: 2 at the start, then `PageBudget` adapts the count to the waits, the CPU and the free memory) with the plugins' page loads: playback first, then the earliest due work (a search's plugin pages before the captures of its answer), background resolutions last. The wait and the work are recorded by kind (`browser_page_wait`, `browser_page`, see [Observability](observability.md)). A capture whose request is due within 3 s gets no page and raises `PageBusy`: the registry reports `busy` (`hoster_resolve_busy`), neither cached nor counted by the breaker.
+- Resolvers call it when a stream request resolves its top streams and at play time (`/stremio/play/{id}` resolves one link). Filemoon live: 2–5 s. A capture that cannot pass from the server's address runs into the time bound on every request; the registry's [circuit breaker](#registry-features) stops those (production through the VPN, 2026-10-04: DoodStream's Turnstile unsolved after 31–34 s, Dropload's captcha player without a stream after 19 s).
 - Dead files end the capture early: the page title and visible text (not the HTML, player scripts carry such strings as error templates) are checked for notices like "Video not found", "File is no longer available", "No such file", "has been removed" after the Cloudflare step and after every click (savefiles says so only after the play click). Live: dead dood link 0.7 s, dead savefiles link 8.5 s instead of 18 s.
 
 `_browser.py` (`capture_stream(stealth_pool, embed_url, hoster)`) turns a capture into a `ResolvedStream` (`is_hls` from `.m3u8`, `Referer` of the captured request, else the embed URL) and is shared by:
@@ -94,7 +103,7 @@ Some players create the stream URL only while they run. Filemoon's Byse player s
 
 Without a `StealthPool` (tests, `stealth_pool=None`) these paths return `None`. Captured URLs are not HEAD-verified: the browser just requested them.
 
-> **Known issue:** SuperVideo's CDN (`*.serversicuro.cc`) answers non-browser clients with a "Loading..." page whose script redirects to a tokenized URL, which in turn redirects curl/httpx to ad trackers, even with the browser's User-Agent and cookie. The resolved URL plays in a browser but not in players that do not run JavaScript.
+> **Known issue:** SuperVideo's CDN (`*.serversicuro.cc`) answers non-browser clients with a "Loading..." page whose script redirects to a tokenized URL, which in turn redirects curl/httpx to ad trackers, even with the browser's User-Agent and cookie. The resolved URL plays in a browser but not in players that do not run JavaScript. From production's VPN address none of 13 links played in the fifth end-to-end round (2026-10-05); the script's target redirects to a parked ad page even with a browser's navigation headers, and a browser capture gets the playlist URL, under which a player still gets the script page. SuperVideo therefore has no HEAD check of its own: the registry's playback check (also with `verify_streams` off) reads the page, counts it as unplayable, and the hoster breaker pauses SuperVideo (60 s, doubling up to 1 h) until a probe finds a playlist again.
 
 ---
 
@@ -106,16 +115,21 @@ Extract a direct video URL (`.mp4`/`.m3u8`) from an embed page.
 
 | Resolver | `name` | Domains accepted | Technique |
 |---|---|---|---|
-| VOE | `voe` | `voe.*`; rotating mirrors via redirect or hoster hint | Multi-method: `application/json` deobfuscation chain, direct regex, base64 variables |
+| VOE | `voe` | 134 names, `voe` included (`_voe_domains.py`); newer mirrors via redirect or hoster hint | Multi-method: `application/json` deobfuscation chain, direct regex, base64 variables |
 | Streamtape | `streamtape` | `streamtape`, `streamta`, `strtape`, `shavetape`, `tapeblocker`, `streamtapeadblock(user)`, `gettapeads`, … (13 names) | Token extraction from page source |
 | SuperVideo | `supervideo` | `supervideo.*` | XFS-style JWPlayer extraction; browser capture on a Cloudflare 403 |
 | DoodStream | `doodstream` | `dood`, `doods`, `doodstream`, `ds2play`, `d0o0d`, `vidply`, `myvidplay`, `playmogo`, … (23 names; all mirrors currently redirect to `playmogo.com`) | `pass_md5` endpoint extraction; browser capture on a Cloudflare challenge (the player passes an invisible Turnstile headful; its CDN URL `…cloudatacdn.com/…~id?token=…` has no file extension and is taken from the video element request) |
-| Filemoon | `filemoon` | `filemoon`, `filemooon`, `byse`, rotating Byse domains (`bysezejataos`, `bysekoze`, …; 14 names from JD2 `FilemoonSxCrawler`) | Packed JS unpacker (legacy pages); Byse player pages via browser capture (`StealthPool.capture_media`), after the details API `/api/videos/<id>/embed/details` rules out a gone video (404) or a domain-restricted embed (403 `embedding … not allowed`) |
+| Filemoon | `filemoon` | `filemoon`, `filemooon`, `byse`, rotating Byse domains (`bysezejataos`, `bysekoze`, …; 14 names from JD2 `FilemoonSxCrawler`); host `moflix-stream.link` (moflix's Byse player) | Packed JS unpacker (legacy pages); Byse player pages via browser capture (`StealthPool.capture_media`), after the details API `/api/videos/<id>/embed/details` rules out a gone video (404) or a domain-restricted embed (403 `embedding … not allowed`) |
 | StreamUp | `strmup` | `strmup`, `streamup`, `vidara`, `vidaraa`; host `kinoger.pw` | `streaming_url` from page, AJAX `/ajax/stream` fallback; HLS. Vidara hosts use the JSON API `POST /api/stream` (`{"device": "web", "filecode": id}` → `streaming_url`, 404 when gone; JD2 `VidaraTo`). kinoger.pw, kinoger's player tab, is a white-label Vidara (its page credits "Vidara" and calls the same API) |
 | Vidsonic | `vidsonic` | `vidsonic` | Hex-obfuscated, pipe-delimited HLS URL decoding |
 | Mixdrop | `mixdrop` | `mixdrop`, `mxdrop`, `m1xdrop`, `mixdrop23`, `mixdrp`, `miixdrop`, … (12 names from JD2 `MixdropCo`, without its dead ones) | Embed player (`/e/{id}`; `/f/` and `/emb/` read through it): `MDCore.wurl` from the packed setup (`unpacked_scripts()` in `_video_extract.py`) is the MP4 on the delivery CDN; a deleted file's player sets none. The CDN answers non-browser agents with 403 (was a validate-only DDL config until 2026-10-01: 36 of 36 mixdrop links were dropped as echo) |
 | gxplayer | `gxplayer` | `gxplayer.xyz` (`/watch?v=<8 chars>`; megakino's "Stream in HD" tab) | Port of JD2 `GxplayerXyz`: the watch page's video object (`"id"`, `"uid"`, `"md5"`) gives the HLS master `/m3u8/{uid}/{md5}/master.txt?s=1&id={id}&cache=1` on the page's host; "Video is not found" (a 200 page) or 404 means gone. Its segments are MPEG-TS served as `font/woff` under `.html` names |
 | fsst | `fsst` | `fsst.online` (`/embed/<id>/`, `/videos/<id>/…`; kinoger's first player tab) | The embed page redirects to its Kernel Video Sharing player host (incvideo1.online), whose Playerjs setup lists every quality (`file:"[360p]<url>,[720p]<url>,[1080p]<url>"`); the best one is taken. The `get_file` links redirect to the MP4 on the CDN. 404 (a player playing `video_error.mp4`) means gone. Was a validate-only DDL config whose ID pattern (`/<id>`) did not match the `/embed/<id>/` links kinoger serves, so every fsst link was dropped |
+| FireStream | `firestream` | `firestream.to` → `firestream.site` (`/e/<id>`, ids in the URL-safe base64 alphabet such as `777zhD-W`; JD2's pattern misses `-` and `_`) | Port of JD2 `FirestreamTo`: embed page → `<script id="video-data">` (`encodingStatus` must be `completed`) + `<script id="token-blob">` → `POST /api/videos/<id>/resolve` `{"blob"}` on the host that served the page (the token is host-bound) → `signedVideoUrl` (HLS); 404 embed page = gone |
+| Vixeo | `vixeo` | `vixeo.io` (`/e/<id>`; `/login` and other paths are not videos) | Vidsonic's current player: a JavaScript app that builds the signed `*.vidsonic.net/secure/.../index.m3u8` URL at runtime, so the stream is taken from the browser capture (~4 s) |
+| Playmate | `playmate` | `playmate.to` (`/watch/<id>`, `/e/<id>`, `/embed/<id>`) | Port of JD2 `PlaymateTo`: `GET /api/video-meta?filecode=` (404 / `success: false` = gone) → `POST /api/s` `{"c": id, "d": "web"}` with `Origin` + watch-page `Referer` → `sx` (HLS master, `master.txt`). The API answers 403 to non-browser user agents |
+| Vinovo | `vinovo` | `vinovo.to`, `vinovo.si` (`/e/` or `/d/`, 12+ chars) | Player API without captcha (Turnstile only guards the official download button): page token from `<meta name="token">` and CDN base from `data-base` on `/e/{id}`, `POST /api/file/url/{id}` (`recaptcha=&token=…`, XHR) → stream token → `{data-base}/stream/{token}` (port of JDownloader `VinovoTo`, stream path); offline on "Video not found". Token bound to the resolving User-Agent like veev; the CDN can take ~30 s to the first byte |
+| Veev | `veev` | `veev.to` (`/e/`, `/d/` or bare ID, 12+ chars) | Player API without captcha: LZW-decode the `window._vvto` token, `/dl?op=player_api&cmd=gi`, decode `file.dv[0].s` → direct MP4. veev redirects some links to another (per request changing) file code: the API is asked for the code of the page the token came from, else it answers "malformed request" (`hashcheck`) (port of JDownloader `VeevTo`); offline on `Watch video - Veev.to` title or "File not found". Resolves with a browser User-Agent and returns it in the playback headers: veevcdn binds the stream token to the User-Agent and the Accept-Language (another value gets 403; see [Player-bound CDNs](#player-bound-cdns)) |
 
 ### Validate-only resolvers (individual)
 
@@ -126,13 +140,8 @@ Check availability and return the original URL without headers. The Stremio addo
 | VidGuard | `vidguard` | `vidguard`, `vid-guard`, `vgfplay`, `vgembed`, `v6embed`, `vembed`, `bembed`, `listeamed` | Embed page validation (`/d/`, `/e/`, `/v/` paths). JDownloader lists the hoster as offline |
 | Vidking | `vidking` | `vidking.net` | Page validation (`/e/`, `/d/`, `/embed/movie/{id}`, `/embed/tv/{id}/{s}/{e}`) |
 | Stmix | `stmix` | `stmix.io` | Page validation |
-| SerienStream | `serienstream` | `s.to`, `www.s.to`, `serienstream.*`, `serien.*` | Page validation (`/serie/` or `/serien/` slug) |
+| SerienStream | `serienstream` | `serienstream.*`, `serien.*` (the old `s.to` is gone) | Page validation (`/serie/` or `/serien/` slug) |
 | SendVid | `sendvid` | `sendvid.com` | Status API (`/api/v1/videos/{id}/status.json`, 404 = offline) + page 200 check |
-| FireStream | `firestream` | `firestream.to` → `firestream.site` (`/e/<id>`) | Port of JD2 `FirestreamTo`: embed page → `<script id="video-data">` (`encodingStatus` must be `completed`) + `<script id="token-blob">` → `POST /api/videos/<id>/resolve` `{"blob"}` on the host that served the page (the token is host-bound) → `signedVideoUrl` (HLS); 404 embed page = gone |
-| Vixeo | `vixeo` | `vixeo.io` (`/e/<id>`; `/login` and other paths are not videos) | Vidsonic's current player: a JavaScript app that builds the signed `*.vidsonic.net/secure/.../index.m3u8` URL at runtime, so the stream is taken from the browser capture (~4 s) |
-| Playmate | `playmate` | `playmate.to` (`/watch/<id>`, `/e/<id>`) | Port of JD2 `PlaymateTo`: `GET /api/video-meta?filecode=` (404 / `success: false` = gone) → `POST /api/s` `{"c": id, "d": "web"}` with `Origin` + watch-page `Referer` → `sx` (HLS master, `master.txt`). The API answers 403 to non-browser user agents |
-| Vinovo | `vinovo` | `vinovo.to`, `vinovo.si` (`/e/` or `/d/`, 12+ chars) | Player API without captcha (Turnstile only guards the official download button): page token from `<meta name="token">` and CDN base from `data-base` on `/e/{id}`, `POST /api/file/url/{id}` (`recaptcha=&token=…`, XHR) → stream token → `{data-base}/stream/{token}` (port of JDownloader `VinovoTo`, stream path); offline on "Video not found". Token bound to the resolving User-Agent like veev; the CDN can take ~30 s to the first byte |
-| Veev | `veev` | `veev.to` (`/e/`, `/d/` or bare ID, 12+ chars) | Player API without captcha: LZW-decode the `window._vvto` token, `/dl?op=player_api&cmd=gi`, decode `file.dv[0].s` → direct MP4 (port of JDownloader `VeevTo`); offline on `Watch video - Veev.to` title or "File not found". Resolves with a browser User-Agent and returns it in the playback headers: veevcdn binds the stream token to that UA (another UA gets 403) |
 
 ### DDL resolvers (individual)
 
@@ -163,7 +172,7 @@ Validate file availability without extracting a video URL and return the canonic
 | Turbobit | `turbobit`, `turb`, `turbo` | Minimum file ID length 6 |
 | Uploaded | `uploaded`, `ul` | Optional `/file/` prefix |
 
-Adding a new generic DDL hoster requires only a `GenericDDLConfig` constant appended to `ALL_DDL_CONFIGS`. Tests are parameterised automatically.
+Adding a new generic DDL hoster requires a `GenericDDLConfig` constant appended to `ALL_DDL_CONFIGS`. The per-config tests pick it up; raise the count assertion in `test_generic_ddl_resolver.py` and the counts in this doc and AGENTS.md.
 
 ### XFS resolvers (25 hosters)
 
@@ -199,10 +208,10 @@ The resolver fetches `/e/{file_id}`, checks offline markers and error redirects,
 | Dropload | `dropload`, `dr0pstream` | Extended markers; the dr0pstream player sits behind a Turnstile play button (browser capture) |
 | Goodstream | `goodstream` | `/video/embed/<short id>/<size>` links (goodstream.one, formerly .uno; the `/e/<id>` route serves the same page); `No such file` offline marker |
 | Savefiles | `savefiles`, `streamhls` | Extended markers |
-| Streamwish | 32 domains (`streamwish`, `dwish`, `hglink`, `obeywish`, `awish`, `embedwish`, …) | Extended markers + Streamwish-specific markers |
+| Streamwish | 29 domains (`streamwish`, `dwish`, `hglink`, `obeywish`, `awish`, `embedwish`, …) | Extended markers + Streamwish-specific markers |
 | Vidmoly | `vidmoly` | `/w/` path prefix support. Known issue: the embed page is a "Loading..." script redirect (`?ch=1&js=<JWT>`) that sends non-browser clients, and on networks that block ad domains (Pi-hole) even the stealth browser, to `click-v4.plarclck.com`; no stream is reachable then |
 | Vidoza | `vidoza`, `videzz` | Custom markers |
-| Vidhide | 6 primary (`vidhide`, `filelions`, …) + 25 aliases (`streamhide`, `louishide`, `moflix-stream`, …) | Lowercase-only file IDs |
+| Vidhide | 6 primary (`vidhide`, `filelions`, …) + 25 aliases (`streamhide`, `louishide`, `moflix-stream`, …) | Lowercase-only file IDs. moflix-stream.click answers `/e/<id>` with 404 and serves the player under its `/embed/<id>` and `/v/<id>` links: an XFS video hoster whose `/e/` page is 404 is asked for the link's own URL (JD2 `VidhideCom` treats `/embed/`, `/v/`, `/f/` links as official video URLs) |
 | Mp4Upload | `mp4upload` | Standard markers |
 | Uqload | `uqload` | Standard markers |
 | Vidshar | `vidshar`, `vedshare` | Standard markers |
@@ -219,18 +228,18 @@ The resolver fetches `/e/{file_id}`, checks offline markers and error redirects,
 |---|---|---|
 | Wolfstream | `wolfstream` | Anti-bot JS redirect to an ad domain (retested 2026-09-28) |
 
-Veev and Vinovo left this list: they have their own resolvers now (see below).
+Veev and Vinovo left this list: they have their own resolvers now (see above).
 
-Adding a new XFS hoster requires only an `XFSConfig` constant appended to `ALL_XFS_CONFIGS`. Tests are parameterised automatically.
+Adding a new XFS hoster requires an `XFSConfig` constant appended to `ALL_XFS_CONFIGS`. The per-config tests pick it up; raise the count assertions in `test_xfs_resolver.py` and the counts in this doc and AGENTS.md.
 
 ### Shared video extraction
 
-`_video_extract.py` (`extract_video_url()`) is used by the XFS resolver and the Filemoon resolver. Strategies, in order:
+`extract_video_url()` in `_video_extract.py` is used by the XFS resolver; Filemoon and Mixdrop use the module's unpacker helpers (`unpack_p_a_c_k()`, `extract_hls_from_unpacked()`, `unpacked_scripts()`). Its strategies, in order:
 
 1. Streamwish `"hls2":"https://…"` JSON key.
-1. Dean Edwards packed JS (`eval(function(p,a,c,k,e,d)…)`) — unpacked (bases up to 62, the packer's default "Normal" encoding with `0-9a-zA-Z`; base 95 is not supported), then searched for JWPlayer `sources`/`file` HLS or MP4 URLs.
+1. Dean Edwards packed JS (`eval(function(p,a,c,k,e,d)…)`) — unpacked (bases up to 62, the packer's default "Normal" encoding with `0-9a-zA-Z`; base 95 is not supported), then searched for the player's `"hls2"` URL (VidHide/EarnVids keep `links={"hls2":…,"hls3":…}` in the packed code and pick one at runtime with `file:links.hls4||links.hls3||links.hls2`; JDownloader takes hls2), then for JWPlayer `sources`/`file` HLS or MP4 URLs.
 1. JWPlayer `sources: [{file: "…"}]` directly in the page (thumbnail/track URLs skipped).
-1. Any quoted `.m3u8`/`.mp4` URL in the page.
+1. Any quoted `.m3u8` URL in the page (thumbnail/track URLs skipped).
 
 ---
 
@@ -239,13 +248,14 @@ Adding a new XFS hoster requires only an `XFSConfig` constant appended to `ALL_X
 | Feature | Description |
 |---|---|
 | Domain matching | Claimed hosts (`supported_hosts`) first, then resolver `name`, then `supported_domains` aliases (XFS, generic DDL and individual resolvers with mirror lists) |
-| Redirect following | Unknown domains are followed via GET; the final domain is dispatched again |
+| Redirect following | Unknown domains are followed with a HEAD request (redirects followed); the final domain is dispatched again |
 | Hoster hint | Plugin-provided hoster name as a fallback for rotating mirror domains |
 | Canonical names | `canonical_hoster(name)` returns the resolver name for a hoster label or second-level domain (`filelions` → `vidhide`), `None` when no resolver handles it; the Stremio stream converter uses it so mirror domains share one hoster name |
-| Content-type probe | HEAD request; `video/*` or `application/vnd.apple.mpegurl` responses become a `ResolvedStream`. Streaming playlists (`.m3u8`, `.mpd`) go there first: the resolver of a playlist's domain expects an embed page, not a playlist (moflix's playlists on `moflix-stream.day` went to VidHide and failed 60 of 60 times; they turned out to be moflix's paid player, which the plugin drops since 2026-10-03). File suffixes do not count: hoster pages end in the file name (streamtape `/v/<id>/x.mp4`) |
+| Content-type probe | HEAD request; `video/*` or `application/vnd.apple.mpegurl` responses below 400 become a `ResolvedStream` (a CDN can type its error page by the path). Streaming playlists (`.m3u8`, `.mpd`) go there first: the resolver of a playlist's domain expects an embed page, not a playlist (moflix's playlists on `moflix-stream.day` went to VidHide and failed 60 of 60 times; they turned out to be moflix's paid player, which the plugin drops since 2026-10-03). File suffixes do not count: hoster pages end in the file name (streamtape `/v/<id>/x.mp4`) |
 | Playback check | With `verify_playback=True`, resolver results must pass `check_playable()` (see [Playback check](#playback-check)); failures count as dead |
-| Time bound | `resolver.resolve()` gets `http.timeout_resolve_seconds` in total (its requests' own timeouts add up over several requests); the playback check runs after it |
-| Result cache | In-memory, keyed by URL: alive results 1 h, dead results 15 min. A timeout (the time bound or a request timeout) or network error (`httpx.TransportError`) is not cached: it says nothing about the link (`hoster_resolve_timeout`, `hoster_resolve_network_error`) |
+| Time bound | `resolver.resolve()` gets `http.timeout_resolve_seconds` in total (its requests' own timeouts add up over several requests); the playback check runs after it. The clock stops while a capture waits for a stealth browser page (the registry publishes its `asyncio.timeout` as `work_clock`, `PageGate` pauses it): a Filemoon capture that waited 9 of its 10 s timed out and tripped the breaker of a healthy hoster (sixth round, 2026-10-06) |
+| Result cache | In-memory, keyed by URL: alive results 1 h, dead results 15 min. A stream carries the time of its resolution (`ResolvedStream.resolved_at`, stamped once), also when it comes from the cache, so a stored link is as old as its resolution. The time bound, a request timeout or network error that reaches the registry (`httpx.TransportError`), a capture without a browser page in time (`busy`) and a failed playback check request (`hoster_resolve_check_error`, `check_playable` raises it) are not cached: they say nothing about the link (`hoster_resolve_timeout`, `hoster_resolve_network_error`). Most resolvers catch `httpx.HTTPError` themselves and return `None` (Mixdrop lets it through), and the content-type probe returns `None` on any error; both are cached as dead, so a network blip there hides the link for 15 min. `cached(url)` reads an entry without resolving (alive, dead or not cached): cached Stremio answers take their streams from it. `resolve(url, refresh=True)` resolves past it, when a CDN refused the cached stream |
+| Circuit breaker | Per resolver (`resolver.name`, so a hoster's mirror domains share it), a `PluginCircuitBreaker` (5 failures, 60 s cooldown doubling up to 1 h, half-open probe; wired in the composition root). Failures: a timeout (the time bound, or a request timeout the resolver lets through) and an unplayable stream. A stream resets it; a dead link (`None`), a failed request (resolver or playback check), a capture without a browser page in time (`busy`) and a cut neither count nor reset it: they say nothing about the hoster. Most cuts come from the answer going out once enough other hosters have a video, so counting cuts after half the time bound opened the breakers of healthy hosters (code review, 2026-10-06). While open, the resolver is skipped (`hoster_resolve_circuit_open`) and the link is not cached as dead. The half-open probe runs to its end even when its request is cut (a task shielded from the request, at most `http.timeout_resolve_seconds`; `aclose()` ends it at shutdown): a stream closes the breaker and stays in the cache for the next request, a failure reopens it with twice the cooldown, and a probe without a verdict frees the probe slot (`PluginCircuitBreaker.release`), so the next link probes (it held the slot for a whole cooldown, up to an hour). Cut by the resolve grace, Filemoon's probes never reported, and the breaker probed again after every cooldown without doubling it (production, 2026-10-05). Reason: from production's VPN address (2026-10-04) DoodStream's Turnstile and Dropload's captcha player gave no stream from 50 browser captures in an hour, about 10 s of Chromium CPU per stream request |
 | Redirect cache | Redirect mappings cached 1 h |
 | Cache limits | Each cache holds at most 10,000 entries; expired entries are evicted every 1,000 `resolve()` calls |
 | Cleanup | `cleanup()` calls `cleanup()` on every resolver that has one (app shutdown) |
@@ -255,7 +265,7 @@ Adding a new XFS hoster requires only an `XFSConfig` constant appended to `ALL_X
 
 ## Adding a New Resolver
 
-**XFS-based hoster:** add an `XFSConfig` constant in `xfs.py` (`name`, `domains`, `file_id_re`, `offline_markers`, `is_video_hoster`, optionally `needs_captcha`/`extra_domains`) and append it to `ALL_XFS_CONFIGS`. **Generic DDL hoster:** add a `GenericDDLConfig` constant in `generic_ddl.py` and append it to `ALL_DDL_CONFIGS`. In both cases tests are parameterised automatically and the composition root picks the config up via `create_all_xfs_resolvers()` / `create_all_ddl_resolvers()`.
+**XFS-based hoster:** add an `XFSConfig` constant in `xfs.py` (`name`, `domains`, `file_id_re`, `offline_markers`, `is_video_hoster`, optionally `needs_captcha`/`extra_domains`) and append it to `ALL_XFS_CONFIGS`. **Generic DDL hoster:** add a `GenericDDLConfig` constant in `generic_ddl.py` and append it to `ALL_DDL_CONFIGS`. In both cases the per-config tests pick it up (raise the count assertions in the test file and the counts in this doc and AGENTS.md), and the composition root picks the config up via `create_all_xfs_resolvers()` / `create_all_ddl_resolvers()`.
 
 **Any other hoster:**
 
@@ -313,7 +323,8 @@ The XFS resolver tests are parameterised over all `ALL_XFS_CONFIGS` entries and 
 |---|---|
 | Port | `src/scavengarr/domain/ports/hoster_resolver.py` |
 | `ResolvedStream` entity | `src/scavengarr/domain/entities/stremio.py` |
-| Registry + `extract_domain()` | `src/scavengarr/infrastructure/hoster_resolvers/registry.py` |
+| Registry | `src/scavengarr/infrastructure/hoster_resolvers/registry.py` |
+| `extract_domain()` | `src/scavengarr/infrastructure/hoster_resolvers/_domain.py` |
 | XFS module | `src/scavengarr/infrastructure/hoster_resolvers/xfs.py` |
 | Generic DDL module | `src/scavengarr/infrastructure/hoster_resolvers/generic_ddl.py` |
 | Video extraction utilities | `src/scavengarr/infrastructure/hoster_resolvers/_video_extract.py` |

@@ -23,19 +23,19 @@ Current plugin, resolver, and test counts are listed in the [repository README](
 | Structured Logging | [x] Implemented | JSON/console output via structlog with context fields |
 | Stremio Addon | [x] Implemented | Manifest, catalog, stream resolution with TMDB metadata |
 | Hoster Resolver System | [x] Implemented | Individual, generic DDL, and XFS consolidated resolvers |
-| Plugin Base Classes | [x] Implemented | `HttpxPluginBase` / `PlaywrightPluginBase` shared base classes |
+| Plugin Base Classes | [x] Implemented | `HttpxPluginBase` / `PlaywrightPluginBase` shared base classes, plus `DataApiPluginBase` and `XenForoPluginBase` for sites on one backend |
 | Per-Plugin Overrides | [x] Implemented | YAML `plugins.overrides`: timeout, max concurrency, max results, enable/disable |
 | Search Result Caching | [x] Implemented | `cache.search_ttl_seconds` (default 900s) with `X-Cache: HIT/MISS` header |
 | Plugin Scoring & Probing | [x] Implemented | EWMA-based background scoring with health + search probes |
-| Circuit Breaker | [x] Implemented | Failure tracking per plugin and category, auto-skip after 5 consecutive failures |
+| Circuit Breaker | [x] Implemented | Failure tracking per plugin and category, and per hoster resolver (timeouts, unplayable streams); auto-skip after 5 consecutive failures |
 | Global Concurrency Pool | [x] Implemented | Fair-share httpx/Playwright slot budgets across requests |
 | Container-Aware Auto-Tune | [x] Implemented | Concurrency limits derived from cgroup v2/v1 CPU/memory at startup |
 | Shared Browser Pool | [x] Implemented | One Chromium process shared by all Playwright plugins |
 | Stealth Pool | [x] Implemented | Own Patchright context on the shared Chromium for Cloudflare-protected hosters and probes |
 | Multi-Language Search | [x] Implemented | Per-language TMDB title resolution, plugins declare `languages` |
-| Stream Deduplication | [x] Implemented | Per-hoster dedup keeps the best-ranked stream that resolved |
+| Stream Deduplication | [x] Implemented | One stream per hoster and language (dub and sub both stay): the best-ranked link that resolved |
 | Graceful Shutdown | [x] Implemented | Drain in-flight requests before stopping |
-| Health & Metrics | [x] Implemented | `/api/v1/healthz`, `/api/v1/readyz`, `/api/v1/stats/metrics` |
+| Health & Metrics | [x] Implemented | `/api/v1/healthz`, `/api/v1/readyz`, `/metrics` (Prometheus), `/api/v1/stats/metrics` |
 | HTTP Rate Limiting | [x] Implemented | Adaptive per-domain token bucket + 429/503 retry with backoff |
 | API Rate Limiting | [x] Implemented | Per-IP request limit on the API (`http.api_rate_limit_rpm`) |
 | Test Suite | [x] Implemented | Unit, integration, E2E, and opt-in live smoke tests |
@@ -44,17 +44,19 @@ Current plugin, resolver, and test counts are listed in the [repository README](
 
 ## Plugin System
 
-Scavengarr is plugin-driven. Each plugin defines how to scrape a specific source site. All plugins are Python-based, inheriting from `HttpxPluginBase` (for static HTML) or `PlaywrightPluginBase` (for JS-heavy sites), and implement the `PluginProtocol` (`name` + `async search()`).
+Scavengarr is plugin-driven. Each plugin defines how to scrape a specific source site. All plugins are Python-based, inheriting from `HttpxPluginBase` (for static HTML) or `PlaywrightPluginBase` (for JS-heavy sites), and implement the `PluginProtocol` (`name`, `provides` and `async search()`).
 
 | Capability | Status | Notes |
 |---|---|---|
-| `PluginProtocol` compliance | [x] Implemented | `name` + `async search()` contract |
+| `PluginProtocol` compliance | [x] Implemented | `name`, `provides` and `async search()` contract |
 | Playwright integration | [x] Implemented | Full browser automation (Chromium) |
 | Domain fallback | [x] Implemented | Try multiple mirrors sequentially |
 | Form-based auth (vBulletin) | [x] Implemented | MD5 password hashing, session cookies (e.g. `boerse`, `mygully`) |
-| Cloudflare bypass | [x] Implemented | JS challenge wait via Playwright |
+| Form-based auth (XenForo) | [x] Implemented | `XenForoPluginBase` login with the page's CSRF token (`dataload`, `myboerse`) |
+| Cloudflare | [x] Implemented | Headful browser with a Turnstile solver, clearance cookies kept across restarts, browser fallback for httpx plugins, optional Byparr/FlareSolverr sidecar |
+| Captchas | [x] Implemented | Built-in ALTCHA proof-of-work and image captcha solvers (see [Captcha Solving](../plans/captcha-solving.md)) |
 | Bounded concurrency | [x] Implemented | Semaphore-limited parallel detail-page scraping |
-| Custom HTML parsing | [x] Implemented | `HTMLParser` subclasses for extraction |
+| Custom HTML parsing | [x] Implemented | selectolax (lexbor) parsers with CSS selectors; pages through `parse_page()`, big ones in a worker thread |
 | Environment variable credentials | [x] Implemented | `SCAVENGARR_<PLUGIN>_USERNAME` / `_PASSWORD` (see [Configuration](./configuration.md#plugin-credentials)) |
 | `HttpxPluginBase` | [x] Implemented | Shared base for httpx plugins (client, domain fallback, semaphore) |
 | `PlaywrightPluginBase` | [x] Implemented | Shared base for Playwright plugins (browser lifecycle, Cloudflare) |
@@ -73,24 +75,27 @@ Scavengarr includes a full Stremio addon that provides catalog browsing, search,
 |---|---|---|
 | Addon manifest | [x] Implemented | `/api/v1/stremio/manifest.json` with movie + series types |
 | TMDB catalog (trending) | [x] Implemented | Trending movies and series via TMDB API |
-| Catalog search | [x] Implemented | TMDB-based search with German locale |
+| Catalog search | [x] Implemented | TMDB search with German locale; IMDb search without a TMDB key |
 | Stream resolution | [x] Implemented | IMDb ID → plugin search → ranked streams |
 | Title matching | [x] Implemented | rapidfuzz-based scoring with multi-candidate support |
-| `/play/` endpoint | [x] Implemented | 302 redirect to resolved video URL |
+| `/play/` endpoint | [x] Implemented | 302 to the current video URL; resolves the hoster link again when it is older than an hour (links kept 7 days) |
 | Stream link caching | [x] Implemented | Cached hoster URLs with TTL |
 | IMDB fallback | [x] Implemented | Title lookup without TMDB API key via IMDB Suggest API (+ Wikidata for German titles) |
 | Per-plugin timeout | [x] Implemented | Slow plugins don't block the response |
 | behaviorHints.proxyHeaders | [x] Implemented | Pre-resolve hoster URLs, emit Referer/User-Agent for CDN playback |
-| HLS proxy endpoint | [x] Implemented | `/api/v1/stremio/proxy/{stream_id}/{path}` for HLS streams requiring Referer on all sub-requests |
+| HLS proxy endpoint | [x] Implemented | `/api/v1/stremio/proxy/{stream_id}/{path}` for every HLS stream: sends the CDN's headers on each sub-request (a redirect to a playlist fails on Android) |
 | Health endpoint | [x] Implemented | `/api/v1/stremio/health` reports component status |
 | Circuit breaker integration | [x] Implemented | Skip consistently failing plugins |
+| Plugin health check | [x] Implemented | Every Stremio plugin's site is checked every 30 min (an unreachable one every 5 min); searches skip the unreachable ones |
+| Mirror groups | [x] Implemented | Plugins on one database (`mirror_group`) are asked one at a time: the reachable one with the best score, the next when it gives nothing |
 | Concurrency pool integration | [x] Implemented | Fair-share httpx/PW slots across concurrent requests |
 | Multi-language search | [x] Implemented | Per-language TMDB titles, plugins declare `languages` |
-| Stream deduplication | [x] Implemented | Per-hoster dedup keeps the best-ranked stream that resolved |
-| Stream deadline | [x] Implemented | `plugin_timeout_seconds` (search) and `stream_deadline_seconds` (answer) from request start |
+| Stream deduplication | [x] Implemented | One stream per hoster and language (dub and sub both stay): the best-ranked link that resolved |
+| Stream deadline | [x] Implemented | `plugin_timeout_seconds` (search, 30 s) and `stream_deadline_seconds` (latest answer, 60 s) from request start; the answer goes out at `resolve_target_count` (5) streams or when everything is done |
+| Stremio search cache | [x] Implemented | Title-matching search results per title (`cache.search_ttl_seconds`), stale-while-revalidate (one refresh at a time), single-flight; requests read a running search's results as they arrive, plugins still running at the answer fill the cache |
 | Playback check | [x] Implemented | `verify_streams`: resolved URLs must return video/playlist bytes |
 | Scored plugin selection | [x] Implemented | Optional top-N plugin selection by score (`stremio.scoring_enabled`) |
-| Early-stop resolve | [x] Implemented | Stop resolving after `resolve_target_count` (default 15) successes |
+| Early-stop resolve | [x] Implemented | Resolution during the search; the answer goes out once `resolve_target_count` (default 5) hosters have a video |
 
 **Detailed docs:** [Stremio Addon](./stremio-addon.md)
 
@@ -114,6 +119,11 @@ Validates file availability and extracts direct video URLs from streaming hoster
 | FireStream | [x] Implemented | Page token → `/api/videos/<id>/resolve` → signed HLS (JD2 `FirestreamTo`) |
 | Vixeo | [x] Implemented | Browser capture of Vidsonic's player app |
 | Playmate | [x] Implemented | `/api/video-meta` + `/api/s` → HLS master (JD2 `PlaymateTo`) |
+| Mixdrop | [x] Implemented | `MDCore.wurl` from the packed player setup → MP4 |
+| gxplayer | [x] Implemented | Watch page video object → HLS master (JD2 `GxplayerXyz`) |
+| fsst | [x] Implemented | Kernel Video Sharing player → best-quality `get_file` MP4 |
+| Veev | [x] Implemented | LZW-decoded page token → player API → MP4 (JD2 `VeevTo`) |
+| Vinovo | [x] Implemented | Page token → `/api/file/url/{id}` → stream token (JD2 `VinovoTo`) |
 
 ### Validate-only streaming hosters (no video extraction)
 
@@ -124,7 +134,7 @@ These resolvers confirm the embed URL is alive and return it unchanged.
 | VidGuard | [x] Implemented | Multi-domain embed page validation |
 | Vidking | [x] Implemented | Embed page validation |
 | Stmix | [x] Implemented | Embed page validation |
-| SerienStream | [x] Implemented | s.to / serien.sx domain matching |
+| SerienStream | [x] Implemented | `serienstream.*` / `serien.*` domain matching |
 | SendVid | [x] Implemented | Availability check |
 
 ### DDL resolvers (validate only)
@@ -136,7 +146,7 @@ These resolvers confirm the embed URL is alive and return it unchanged.
 | DDownload | [x] Implemented | XFS page check with canonical URL normalization |
 | Mediafire | [x] Implemented | Public file info API, offline via error 110 |
 | GoFile | [x] Implemented | Ephemeral guest token, content availability API |
-| Generic DDL | [x] Implemented | Alfafile, AlphaDDL, Fastpic, Filecrypt, FileFactory, FSST, Go4up, Mixdrop, Nitroflare, 1fichier, Turbobit, Uploaded |
+| Generic DDL | [x] Implemented | Alfafile, AlphaDDL, Fastpic, Filecrypt, FileFactory, Go4up, Nitroflare, 1fichier, Turbobit, Uploaded |
 
 ### XFS consolidated resolvers (generic `XFSResolver`)
 
@@ -144,7 +154,7 @@ These resolvers confirm the embed URL is alive and return it unchanged.
 |---|---|
 | DDL (validate only) | Katfile, Hexupload, Clicknupload, Filestore, Uptobox, Hotlink |
 | Video (extract URL) | Funxd, Bigwarp, Dropload, Goodstream, Savefiles, Streamwish, Vidmoly, Vidoza, Vidhide, Mp4Upload, Uqload, Vidshar, Vidroba, Vidspeed, StreamRuby, Lulustream, Upstream, Vidnest |
-| Captcha-required (return `None`) | Veev, Vinovo, Wolfstream |
+| Captcha-required (return `None`) | Wolfstream |
 
 ### System features
 
@@ -159,7 +169,7 @@ These resolvers confirm the embed URL is alive and return it unchanged.
 | XFS video URL verification | [x] Implemented | HEAD check filters IP-locked CDN tokens (e.g. LULUVID) |
 | Domain alias mapping | [x] Implemented | All `supported_domains` mapped (e.g., vidhide family) |
 | respx-based tests | [x] Implemented | All resolver tests use httpx-native HTTP mocking |
-| Live contract tests | [x] Implemented | Opt-in resolver live/dead URL validation (`tests/live/test_resolver_live.py`) |
+| Live contract tests | [ ] Scaffold | Opt-in live/dead URL checks of the XFS resolvers (`tests/live/test_resolver_live.py`); no URLs filled in yet, so no case runs |
 | Live Stremio use case | [x] Implemented | Opt-in end-to-end run of the in-process app: stream list for a film and a series episode, then playlist + first segment of a stream like a player (`tests/live/test_stremio_e2e_live.py`) |
 
 **Detailed docs:** [Hoster Resolvers](./hoster-resolvers.md)
@@ -193,7 +203,8 @@ CrawlJobs bundle multiple validated download links into `.crawljob` files for JD
 | Configurable TTL | [x] Implemented | Time-to-live for cached jobs |
 | Download endpoint | [x] Implemented | `/api/v1/download/{job_id}` serves the `.crawljob` file; `/api/v1/download/{job_id}/info` returns metadata |
 | Cache-backed storage | [x] Implemented | JSON-serialized via the cache port (diskcache or Redis) |
-| Validate-first policy | [x] Implemented | Only validated links enter CrawlJobs |
+| Validate-first policy | [x] Implemented | Search-time links are validated (`validate_download_links`); grab-time links come from the plugin unchecked |
+| Grab-time resolution | [x] Implemented | Captcha or quota sites keep page URLs; the download endpoint resolves them when a release is grabbed |
 
 **Detailed docs:** [CrawlJob System](./crawljob-system.md)
 
@@ -226,8 +237,9 @@ Links are validated in parallel before inclusion in search results and CrawlJobs
 | Feature | Status | Details |
 |---|---|---|
 | HEAD request primary | [x] Implemented | Fast validation without downloading |
-| GET fallback | [x] Implemented | On any HEAD failure (some hosters block HEAD) |
-| Parallel execution | [x] Implemented | Semaphore-bounded concurrent checks (`validation_max_concurrent`) |
+| GET fallback | [x] Implemented | On a HEAD status of 400 or more, a read timeout or another error, not after a failed connection (some hosters block HEAD) |
+| Parallel execution | [x] Implemented | Semaphore-bounded concurrent checks (`validation_max_concurrent`), at most 4 per host |
+| Result cache | [x] Implemented | Valid links 6 h, invalid ones 15 min; a host that refuses connections is skipped for 60 s, doubling up to 15 min |
 | Status-based decisions | [x] Implemented | 2xx/3xx valid; ≥400 or network error invalid |
 | Redirect following | [x] Implemented | Redirects are always followed |
 | Configurable timeouts | [x] Implemented | `validation_timeout_seconds` per request |
@@ -273,7 +285,9 @@ Configuration follows a strict precedence hierarchy with typed validation.
 | Structured logging (structlog) | [x] Implemented | JSON and console formatters |
 | Context fields | [x] Implemented | e.g. `plugin`, `duration_ms`, `results_count` |
 | Health endpoints | [x] Implemented | `/api/v1/healthz` (liveness), `/api/v1/readyz` (readiness) |
-| Metrics endpoint | [x] Implemented | `/api/v1/stats/metrics` — plugin stats, circuit breaker, pool utilisation |
+| Prometheus metrics | [x] Implemented | `/metrics` — Stremio requests, phases and answer reasons, plugin searches, hoster resolutions, HLS proxy, event-loop lag, open breakers, container CPU and memory; recorded in the core through `TelemetryPort.stage()` ([Observability](./observability.md)) |
+| Metrics endpoint | [x] Implemented | `/api/v1/stats/metrics` — plugin stats, circuit breaker, pool utilisation, event-loop lag (`event_loop`: p50/p99/max of a 0.5 s timer over the last 5 min; a stall of 250 ms or more logs `event_loop_lag`) |
+| Tracing | [x] Implemented | Optional OpenTelemetry spans of the recorded stages: Stremio requests, plugin searches, hoster resolutions, HLS proxy (`telemetry.tracing_endpoint`; the `tracing` profile of `docker-compose.yml` runs Tempo); no URLs or titles |
 | Plugin score endpoint | [x] Implemented | `/api/v1/stats/plugin-scores` — EWMA scores, filterable by `plugin`, `category`, `bucket` |
 
 ---
@@ -328,7 +342,7 @@ Infrastructure (implements Domain ports)
 | Concurrency pool | `src/scavengarr/infrastructure/concurrency.py` |
 | Resource detector | `src/scavengarr/infrastructure/resource_detector.py` |
 | Graceful shutdown | `src/scavengarr/infrastructure/graceful_shutdown.py` |
-| Metrics collector | `src/scavengarr/infrastructure/metrics.py` |
+| Telemetry (metrics) | `src/scavengarr/domain/ports/telemetry.py`, `src/scavengarr/infrastructure/telemetry/` |
 | Plugin scoring | `src/scavengarr/infrastructure/scoring/` |
 | Torznab router | `src/scavengarr/interfaces/api/torznab/` |
 | Stremio router | `src/scavengarr/interfaces/api/stremio/` |

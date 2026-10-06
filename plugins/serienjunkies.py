@@ -17,10 +17,12 @@ from __future__ import annotations
 
 import asyncio
 import re
-from html.parser import HTMLParser
+
+from selectolax.lexbor import LexborHTMLParser
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.categories import served_category
+from scavengarr.infrastructure.plugins.dom import parse_page
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -51,81 +53,50 @@ _HOSTER_NAMES: dict[str, str] = {
 # ---------------------------------------------------------------------------
 # Search result parser (for /serie/search?q= page)
 # ---------------------------------------------------------------------------
-class _SearchResultParser(HTMLParser):
-    """Parse serienjunkies.org search results page.
+class _SearchResultParser:
+    """Parse serienjunkies.org search results page (selectolax).
 
     Results are in a ``<table>`` with rows like::
 
         <tr><td><a href="/serie/breaking-bad">Breaking Bad</a></td></tr>
+
+    Each ``/serie/{slug}`` link in a table cell names a series (the search
+    form's ``/serie/search`` excepted); the first link of a slug wins.
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self.results: list[dict[str, str]] = []
-        self._in_td = False
-        self._in_a = False
-        self._current_href = ""
-        self._current_title = ""
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attr_dict = dict(attrs)
-
-        if tag == "td":
-            self._in_td = True
-
-        if tag == "a" and self._in_td:
-            href = attr_dict.get("href", "") or ""
-            if href.startswith("/serie/") and href != "/serie/search":
-                self._in_a = True
-                self._current_href = href
-                self._current_title = ""
-
-    def handle_data(self, data: str) -> None:
-        if self._in_a:
-            self._current_title += data
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "a" and self._in_a:
-            self._in_a = False
-            title = self._current_title.strip()
-            if title and self._current_href:
-                slug = self._current_href.rstrip("/").rsplit("/", 1)[-1]
-                if not any(r["slug"] == slug for r in self.results):
-                    self.results.append(
-                        {
-                            "title": title,
-                            "slug": slug,
-                        }
-                    )
-            self._current_href = ""
-            self._current_title = ""
-
-        if tag == "td":
-            self._in_td = False
+    def feed(self, html: str) -> None:
+        for link in LexborHTMLParser(html).css("td a[href^='/serie/']"):
+            href = link.attributes.get("href") or ""
+            title = link.text().strip()
+            if href == "/serie/search" or not title:
+                continue
+            slug = href.rstrip("/").rsplit("/", 1)[-1]
+            if not any(r["slug"] == slug for r in self.results):
+                self.results.append({"title": title, "slug": slug})
 
 
 # ---------------------------------------------------------------------------
 # Detail page parser (extracts media ID from data-mediaid attribute)
 # ---------------------------------------------------------------------------
-class _DetailPageParser(HTMLParser):
-    """Parse serienjunkies.org detail page for media ID.
+class _DetailPageParser:
+    """Parse serienjunkies.org detail page for media ID (selectolax).
 
-    The page contains a Vue mount point::
+    The page contains a Vue mount point (the last one wins)::
 
         <div id="v-release-list" data-mediaid="..." data-mediatitle="...">
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self.media_id: str = ""
         self.media_title: str = ""
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attr_dict = dict(attrs)
-
-        if tag == "div" and attr_dict.get("id") == "v-release-list":
-            self.media_id = attr_dict.get("data-mediaid", "") or ""
-            self.media_title = attr_dict.get("data-mediatitle", "") or ""
+    def feed(self, html: str) -> None:
+        for div in LexborHTMLParser(html).css("div[id='v-release-list']"):
+            self.media_id = div.attributes.get("data-mediaid") or ""
+            self.media_title = div.attributes.get("data-mediatitle") or ""
 
 
 # ---------------------------------------------------------------------------
@@ -217,8 +188,7 @@ class SerienjunkiesPlugin(HttpxPluginBase):
         if resp is None:
             return []
 
-        parser = _SearchResultParser()
-        parser.feed(resp.text)
+        parser = await parse_page(_SearchResultParser(), resp.text)
 
         self._log.info(
             "serienjunkies_search",
@@ -239,8 +209,7 @@ class SerienjunkiesPlugin(HttpxPluginBase):
         if resp is None:
             return "", ""
 
-        parser = _DetailPageParser()
-        parser.feed(resp.text)
+        parser = await parse_page(_DetailPageParser(), resp.text)
         return parser.media_id, parser.media_title
 
     async def _get_releases(self, media_id: str) -> dict:

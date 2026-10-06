@@ -1,0 +1,8 @@
+{
+  "name": "basedpyright-lsp",
+  "version": "1.0.0",
+  "description": "basedpyright language server from the project venv: type diagnostics after each edit and the LSP tool",
+  "author": {
+    "name": "Scavengarr"
+  }
+}

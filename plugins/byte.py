@@ -3,8 +3,9 @@
 Scrapes byte.to (German DDL site) with:
 - httpx for all requests (server-rendered HTML; Cloudflare challenges go
   through the shared browser fallback of HttpxPluginBase)
-- Advanced search via /?q=query&c=category_id&t=1
-- Category filtering via dropdown category ID parameter
+- Search via /?q=query&t=1 over every group; a category request keeps the
+  rows of its category (the site's c= lists only entries filed directly
+  under a group, not its subgroups)
 - Multi-page pagination (200 items per page, up to 5 pages)
 - Download links from the per-hoster link widgets (``/widgets/button.php``)
   embedded on detail pages
@@ -17,14 +18,16 @@ from __future__ import annotations
 
 import asyncio
 import re
-from html.parser import HTMLParser
 from urllib.parse import urljoin
+
+from selectolax.lexbor import LexborHTMLParser, LexborNode
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.categories import (
     category_matches,
     served_category,
 )
+from scavengarr.infrastructure.plugins.dom import ancestors, classes, parse_page
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -38,18 +41,8 @@ _WIDGET_PATH = "/widgets/button.php"
 # Constants
 # ---------------------------------------------------------------------------
 
-# Torznab category → site category ID (``c=``), for site groups that hold a
-# whole Torznab family; other requests search every group and keep their rows
-# (games and programs are separate groups, audiobooks sit under Bücher)
-_SEARCH_CATEGORY: dict[int, str] = {
-    2000: "1",  # Filme
-    5000: "2",  # Television
-    7000: "41",  # Bücher
-    6000: "46",  # XxX
-}
-
-# Site category name (lowercase) → Torznab category ID; the live menu,
-# checked 2026-09-29
+# Site category name (as ``_category_key`` spells it) → Torznab category
+# ID; the live menu, checked 2026-10-06 (Wallpaper stays Other)
 _SITE_CATEGORY_MAP: dict[str, int] = {
     # Filme
     **dict.fromkeys(
@@ -67,6 +60,7 @@ _SITE_CATEGORY_MAP: dict[str, int] = {
             "hd - 1080p",
             "hd - 1080p x265",
             "uhd - 2160p",
+            "movie collections",
         ),
         2000,
     ),
@@ -114,7 +108,7 @@ _SITE_CATEGORY_MAP: dict[str, int] = {
             "comics",
             "magazine",
             "englische magazine",
-            "magazine-zeitungen",
+            "magazine - zeitungen",
             "tageszeitungen",
         ),
         7000,
@@ -137,135 +131,65 @@ _SITE_CATEGORY_MAP: dict[str, int] = {
 }
 
 
-class _SearchResultParser(HTMLParser):
-    """Extract search results from byte.to search page.
+class _SearchResultParser:
+    """Extract search results from byte.to search page (selectolax).
 
     Parses ``<table class="SEARCH_ITEMLIST">`` for:
     - Title links inside ``<p class="TITLE"><a href="...">``
     - Category links with ``href="/?cat=N"``
     - Total hit count from ``<h1>Suche nach: ... (N Treffer)</h1>``
     - Pagination from ``<table class="NAVIGATION">``
+
+    A title waits for the next category link; the next ``TITLE`` paragraph
+    (or ``flush_pending()``) emits it without a category.
     """
 
     def __init__(self, base_url: str) -> None:
-        super().__init__()
         self.results: list[dict[str, str]] = []
         self.total_hits: int = 0
         self.max_page: int = 1
         self._base_url = base_url
 
-        # Title tracking
-        self._in_title_p = False
-        self._in_title_a = False
-        self._current_href = ""
-        self._current_title = ""
-
         # Pending result (title found, waiting for category)
         self._pending_url = ""
         self._pending_title = ""
 
-        # Category tracking
-        self._in_cat_a = False
-        self._current_category = ""
-
-        # Hit count
-        self._in_h1 = False
-        self._h1_text = ""
-
-        # Navigation
-        self._in_nav = False
-
-    def _handle_a_start(self, attr_dict: dict[str, str | None]) -> None:
-        href = attr_dict.get("href", "") or ""
-
-        if self._in_title_p and href:
-            self._in_title_a = True
-            self._current_href = href
-            self._current_title = ""
-        elif self._in_nav and href and "start=" in href:
-            m = re.search(r"start=(\d+)", href)
-            if m:
-                page_num = int(m.group(1))
-                if page_num > self.max_page:
-                    self.max_page = page_num
-        elif href.startswith("/?cat=") and self._pending_url:
-            self._in_cat_a = True
-            self._current_category = ""
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attr_dict = dict(attrs)
-
-        if tag == "h1":
-            self._in_h1 = True
-            self._h1_text = ""
-
-        if tag == "table":
-            cls = (attr_dict.get("class", "") or "").upper()
-            if cls == "NAVIGATION":
-                self._in_nav = True
-
-        if tag == "p":
-            cls = (attr_dict.get("class", "") or "").upper()
-            if cls == "TITLE":
-                # Flush any pending result without category
-                if self._pending_url:
-                    self.results.append(
-                        {
-                            "title": self._pending_title,
-                            "url": self._pending_url,
-                            "category": "",
-                        }
-                    )
-                    self._pending_url = ""
-                self._in_title_p = True
-
-        if tag == "a":
-            self._handle_a_start(attr_dict)
-
-    def handle_data(self, data: str) -> None:
-        if self._in_h1:
-            self._h1_text += data
-        if self._in_title_a:
-            self._current_title += data
-        if self._in_cat_a:
-            self._current_category += data
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "h1" and self._in_h1:
-            self._in_h1 = False
-            m = re.search(r"\((\d+)\s+Treffer\)", self._h1_text)
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for h1 in tree.css("h1"):
+            m = re.search(r"\((\d+)\s+Treffer\)", h1.text())
             if m:
                 self.total_hits = int(m.group(1))
+        # Title paragraphs and links in document order
+        for node in tree.css("p, a"):
+            if node.tag == "a":
+                self._handle_a(node)
+            elif _class_attr(node) == "TITLE":
+                # Flush any pending result without category
+                self.flush_pending()
 
-        if tag == "table" and self._in_nav:
-            self._in_nav = False
+    def _handle_a(self, link: LexborNode) -> None:
+        href = link.attributes.get("href") or ""
 
-        if tag == "a":
-            if self._in_title_a:
-                self._in_title_a = False
-                title = self._current_title.strip()
-                href = self._current_href
-                if title and href:
-                    url = urljoin(self._base_url, href)
-                    self._pending_url = url
-                    self._pending_title = title
-
-            if self._in_cat_a:
-                self._in_cat_a = False
-                category = self._current_category.strip()
-                if self._pending_url:
-                    self.results.append(
-                        {
-                            "title": self._pending_title,
-                            "url": self._pending_url,
-                            "category": category,
-                        }
-                    )
-                    self._pending_url = ""
-                    self._pending_title = ""
-
-        if tag == "p" and self._in_title_p:
-            self._in_title_p = False
+        if href and _inside(link, "p", "TITLE"):
+            title = link.text().strip()
+            if title:
+                self._pending_url = urljoin(self._base_url, href)
+                self._pending_title = title
+        elif "start=" in href and _inside(link, "table", "NAVIGATION"):
+            m = re.search(r"start=(\d+)", href)
+            if m:
+                self.max_page = max(self.max_page, int(m.group(1)))
+        elif href.startswith("/?cat=") and self._pending_url:
+            self.results.append(
+                {
+                    "title": self._pending_title,
+                    "url": self._pending_url,
+                    "category": link.text().strip(),
+                }
+            )
+            self._pending_url = ""
+            self._pending_title = ""
 
     def flush_pending(self) -> None:
         """Emit any pending result that has no category yet."""
@@ -281,8 +205,8 @@ class _SearchResultParser(HTMLParser):
             self._pending_title = ""
 
 
-class _DetailPageParser(HTMLParser):
-    """Extract metadata and link widget URLs from a byte.to detail page.
+class _DetailPageParser:
+    """Extract metadata and link widget URLs from a byte.to detail page (selectolax).
 
     Finds:
     - Release name: first ``<td>`` text matching scene-release pattern
@@ -290,37 +214,30 @@ class _DetailPageParser(HTMLParser):
       share a cell)
     - Link widgets: ``<iframe src=".../widgets/button.php?...">``, one per
       hoster link
+
+    Only cells without cells inside count: the layout cells around the
+    detail tables hold the whole page.
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self.release_name: str = ""
         self.size: str = ""
         self.category: str = ""
         self.widget_urls: list[str] = []
 
-        self._in_td = False
-        self._td_text = ""
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag == "td":
-            self._in_td = True
-            self._td_text = ""
-        elif tag == "iframe":
-            src = (dict(attrs).get("src", "") or "").strip()
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for iframe in tree.css("iframe"):
+            src = (iframe.attributes.get("src") or "").strip()
             if _WIDGET_PATH in src and src not in self.widget_urls:
                 self.widget_urls.append(src)
+        for td in tree.css("td"):
+            # css() matches the cell itself too
+            if len(td.css("td")) == 1:
+                self._read_cell(td.text())
 
-    def handle_data(self, data: str) -> None:
-        if self._in_td:
-            self._td_text += data
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag != "td" or not self._in_td:
-            return
-
-        self._in_td = False
-        text = " ".join(self._td_text.split())
+    def _read_cell(self, cell_text: str) -> None:
+        text = " ".join(cell_text.split())
         label, sep, value = text.partition(":")
         label = label.lower()
 
@@ -341,8 +258,8 @@ class _DetailPageParser(HTMLParser):
             self.release_name = text
 
 
-class _WidgetLinkParser(HTMLParser):
-    """Extract the download link from a byte.to link widget.
+class _WidgetLinkParser:
+    """Extract the download link from a byte.to link widget (selectolax).
 
     Structure::
 
@@ -356,53 +273,58 @@ class _WidgetLinkParser(HTMLParser):
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self.links: list[dict[str, str]] = []
-        self._in_a = False
-        self._href = ""
-        self._text = ""
-        self._img_host = ""
-        self._offline = False
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attr_dict = dict(attrs)
-
-        if tag == "a":
-            href = (attr_dict.get("href", "") or "").strip()
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for link in tree.css("a"):
+            href = (link.attributes.get("href") or "").strip()
             if href.startswith("http"):
-                self._in_a = True
-                self._href = href
-                self._text = ""
-                self._img_host = ""
-                self._offline = False
-        elif not self._in_a:
-            return
-        elif tag == "img":
-            host = attr_dict.get("title") or attr_dict.get("alt") or ""
-            if "." in host:
-                self._img_host = host.strip()
-        elif tag == "span":
-            classes = (attr_dict.get("class", "") or "").split()
-            self._offline = "red-dot" in classes
+                self._add_link(link, href)
 
-    def handle_data(self, data: str) -> None:
-        if self._in_a:
-            self._text += data
+    def _add_link(self, link: LexborNode, href: str) -> None:
+        # The last host icon and the last status dot of the link count
+        img_host = ""
+        offline = False
+        for node in link.css("img, span"):
+            if node.tag == "img":
+                attrs = node.attributes
+                host = attrs.get("title") or attrs.get("alt") or ""
+                if "." in host:
+                    img_host = host.strip()
+            else:
+                offline = "red-dot" in classes(node)
 
-    def handle_endtag(self, tag: str) -> None:
-        if tag != "a" or not self._in_a:
-            return
-
-        self._in_a = False
-        host = self._img_host or self._text.strip().lower().removeprefix("online")
+        host = img_host or link.text().strip().lower().removeprefix("online")
         hoster = host.strip().split(".")[0].lower()
-        if hoster and not self._offline:
-            self.links.append({"hoster": hoster, "link": self._href})
+        if hoster and not offline:
+            self.links.append({"hoster": hoster, "link": href})
+
+
+def _class_attr(node: LexborNode) -> str:
+    """The class attribute of *node* in upper case (the site writes TITLE)."""
+    return (node.attributes.get("class") or "").upper()
+
+
+def _inside(node: LexborNode, tag: str, class_attr: str) -> bool:
+    """Whether *node* sits in a *tag* element whose upper-case class
+    attribute is *class_attr*."""
+    return any(
+        parent.tag == tag and _class_attr(parent) == class_attr
+        for parent in ancestors(node)
+    )
+
+
+def _category_key(name: str) -> str:
+    """A site category name as the map spells it: lower case, one space
+    around a dash (the menu writes "Magazine-Zeitungen", results and detail
+    pages "Magazine - Zeitungen")."""
+    return " ".join(name.lower().replace("-", " - ").split())
 
 
 def _site_category_to_torznab(category_name: str) -> int:
     """Map site category name to Torznab category ID (8000 if unknown)."""
-    return _SITE_CATEGORY_MAP.get(category_name.lower().strip(), 8000)
+    return _SITE_CATEGORY_MAP.get(_category_key(category_name), 8000)
 
 
 class BytePlugin(HttpxPluginBase):
@@ -417,7 +339,6 @@ class BytePlugin(HttpxPluginBase):
     async def _search_page(
         self,
         query: str,
-        site_category: str = "",
         page_num: int = 1,
     ) -> tuple[list[dict[str, str]], int, int]:
         """Fetch a single search results page.
@@ -425,8 +346,6 @@ class BytePlugin(HttpxPluginBase):
         Returns ``(results, total_hits, max_page)``.
         """
         params = {"q": query, "t": "1"}
-        if site_category:
-            params["c"] = site_category
         if page_num > 1:
             params.update({"h": "1", "e": "0", "start": str(page_num)})
 
@@ -436,8 +355,7 @@ class BytePlugin(HttpxPluginBase):
         if html is None:
             return [], 0, 1
 
-        parser = _SearchResultParser(self.base_url)
-        parser.feed(html)
+        parser = await parse_page(_SearchResultParser(self.base_url), html)
         parser.flush_pending()
 
         self._log.info(
@@ -455,8 +373,7 @@ class BytePlugin(HttpxPluginBase):
         html = await self._fetch_text(widget_url, context="link_widget")
         if html is None:
             return []
-        parser = _WidgetLinkParser()
-        parser.feed(html)
+        parser = await parse_page(_WidgetLinkParser(), html)
         return parser.links
 
     async def _scrape_detail(self, result: dict[str, str]) -> SearchResult | None:
@@ -465,8 +382,7 @@ class BytePlugin(HttpxPluginBase):
         if html is None:
             return None
 
-        detail_parser = _DetailPageParser()
-        detail_parser.feed(html)
+        detail_parser = await parse_page(_DetailPageParser(), html)
 
         widget_urls = [urljoin(self.base_url, u) for u in detail_parser.widget_urls]
         widget_links = await asyncio.gather(
@@ -498,10 +414,15 @@ class BytePlugin(HttpxPluginBase):
         )
 
     async def _search_rows(
-        self, query: str, site_category: str, category: int | None
+        self, query: str, category: int | None
     ) -> list[dict[str, str]]:
         """Result rows of *category* over the search pages, before their pages
-        are loaded."""
+        are loaded.
+
+        Every group is searched: the site's ``c=`` lists only entries filed
+        directly under a group, not its subgroups (``c=1``, Filme, and
+        ``c=2``, Television, answered every search with the empty search
+        form; checked 2026-10-05)."""
 
         def _wanted(rows: list[dict[str, str]]) -> list[dict[str, str]]:
             return [
@@ -512,7 +433,7 @@ class BytePlugin(HttpxPluginBase):
                 )
             ]
 
-        first_results, _, max_page = await self._search_page(query, site_category)
+        first_results, _, max_page = await self._search_page(query)
         rows = _wanted(first_results)
         limit = self.effective_max_results
 
@@ -520,7 +441,7 @@ class BytePlugin(HttpxPluginBase):
         for page_num in range(2, pages_needed + 1):
             if len(rows) >= limit:
                 break
-            more_results, _, _ = await self._search_page(query, site_category, page_num)
+            more_results, _, _ = await self._search_page(query, page_num)
             rows.extend(_wanted(more_results))
             if not more_results:
                 break
@@ -534,18 +455,14 @@ class BytePlugin(HttpxPluginBase):
         episode: int | None = None,
     ) -> list[SearchResult]:
         """Search byte.to and return results with download links."""
-        site_category = ""
         if category is not None:
             category = served_category(category, _SITE_CATEGORY_MAP.values())
             if category is None:
                 return []  # the site has no category for it
-            site_category = _SEARCH_CATEGORY.get(category) or _SEARCH_CATEGORY.get(
-                category - category % 1000, ""
-            )
         await self._ensure_client()
         await self._verify_domain()
 
-        all_results = await self._search_rows(query, site_category, category)
+        all_results = await self._search_rows(query, category)
         if not all_results:
             return []
 

@@ -18,8 +18,9 @@ from __future__ import annotations
 import asyncio
 import base64
 import re
-from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
+
+from selectolax.lexbor import LexborHTMLParser, LexborNode
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.categories import (
@@ -28,6 +29,7 @@ from scavengarr.infrastructure.plugins.categories import (
     served_category,
     stream_category,
 )
+from scavengarr.infrastructure.plugins.dom import ancestors, parse_page
 from scavengarr.infrastructure.plugins.episodes import episode_label, filter_episodes
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.relevance import (
@@ -85,8 +87,8 @@ def _domain_from_url(url: str) -> str:
 # ---------------------------------------------------------------------------
 # Search result parser (for /search?q= page)
 # ---------------------------------------------------------------------------
-class _SearchResultParser(HTMLParser):
-    """Parse movie2k.cx search results page.
+class _SearchResultParser:
+    """Parse movie2k.cx search results page (selectolax).
 
     Each result is a separate <table> with structure::
 
@@ -102,58 +104,31 @@ class _SearchResultParser(HTMLParser):
     """
 
     def __init__(self, base_url: str) -> None:
-        super().__init__()
         self.results: list[dict[str, str]] = []
         self._base_url = base_url
 
-        # State tracking
-        self._in_h2 = False
-        self._in_title_a = False
-        self._current_title = ""
-        self._current_url = ""
+    def feed(self, html: str) -> None:
+        for heading in LexborHTMLParser(html).css("h2"):
+            title, url = _title_link(heading, self._base_url)
+            # Deduplicate: same URL can appear multiple times
+            if title and url and not any(r["url"] == url for r in self.results):
+                self.results.append({"title": title, "url": url})
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attr_dict = dict(attrs)
 
-        if tag == "h2":
-            self._in_h2 = True
-            self._current_title = ""
-            self._current_url = ""
-
-        if tag == "a" and self._in_h2:
-            href = attr_dict.get("href", "") or ""
-            if href and "/stream/" in href:
-                self._current_url = urljoin(self._base_url, href)
-                self._in_title_a = True
-                self._current_title = ""
-
-    def handle_data(self, data: str) -> None:
-        if self._in_title_a:
-            self._current_title += data
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "a" and self._in_title_a:
-            self._in_title_a = False
-
-        if tag == "h2" and self._in_h2:
-            self._in_h2 = False
-            title = self._current_title.strip()
-            if title and self._current_url:
-                # Deduplicate: same URL can appear multiple times
-                if not any(r["url"] == self._current_url for r in self.results):
-                    self.results.append(
-                        {
-                            "title": title,
-                            "url": self._current_url,
-                        }
-                    )
+def _title_link(heading: LexborNode, base_url: str) -> tuple[str, str]:
+    """Title and URL of a result's ``h2``: its last ``/stream/`` link."""
+    links = heading.css("a[href*='/stream/']")
+    if not links:
+        return "", ""
+    href = links[-1].attributes.get("href") or ""
+    return links[-1].text().strip(), urljoin(base_url, href)
 
 
 # ---------------------------------------------------------------------------
 # Browse result parser (for /movies?page= and /tv/all?page= pages)
 # ---------------------------------------------------------------------------
-class _BrowseResultParser(HTMLParser):
-    """Parse movie2k.cx movies/TV listing page.
+class _BrowseResultParser:
+    """Parse movie2k.cx movies/TV listing page (selectolax).
 
     Similar to search but with inline metadata::
 
@@ -163,150 +138,87 @@ class _BrowseResultParser(HTMLParser):
           | Bewertung: 6.3 | 2025 | 100 Min
           <a href="#">Info</a>
         </div>
+
+    The first div after a result's ``h2`` (before the next ``h2``) holds its
+    metadata. A result without one is kept without metadata: at the next
+    ``h2``, or in ``finalize()`` for the page's last one.
     """
 
     def __init__(self, base_url: str) -> None:
-        super().__init__()
         self.results: list[dict[str, str | list[str]]] = []
         self._base_url = base_url
+        # (title, url) of the last h2 while its metadata div has not come
+        self._pending: tuple[str, str] | None = None
 
-        # State tracking
-        self._in_h2 = False
-        self._in_title_a = False
-        self._current_title = ""
-        self._current_url = ""
+    def feed(self, html: str) -> None:
+        heading = 0  # mem_id of the last h2
+        for node in LexborHTMLParser(html).css("h2, div"):
+            if node.tag == "h2":
+                # New result starts: emit previous if pending
+                self.finalize()
+                heading = node.mem_id
+                title, url = _title_link(node, self._base_url)
+                self._pending = (title, url) if url else None
+            elif self._pending and all(p.mem_id != heading for p in ancestors(node)):
+                # Meta div follows h2 (a div inside the h2 starts before its end)
+                self._emit_result(*self._pending, node)
+                self._pending = None
 
-        # Metadata div after h2
-        self._in_meta_div = False
-        self._meta_div_depth = 0
-        self._meta_text = ""
-        self._genres: list[str] = []
-        self._in_genre_a = False
-        self._genre_text = ""
-        self._expecting_meta = False
-
-    def _emit_result(self) -> None:
-        if not self._current_title or not self._current_url:
-            self._reset()
+    def _emit_result(self, title: str, url: str, meta: LexborNode | None) -> None:
+        if not title:
             return
 
-        # Parse metadata from accumulated text
+        # Metadata text and genre links of the meta div
+        text = ""
+        genres: list[str] = []
+        if meta is not None:
+            text = meta.text()
+            genres = [
+                genre
+                for link in meta.css("a:is([href*='/movies/'], [href*='/tv/'])")
+                if (genre := link.text().strip())
+            ]
+
+        # Parse metadata from the text
         year = ""
         rating = ""
         runtime = ""
 
-        m = _YEAR_RE.search(self._meta_text)
+        m = _YEAR_RE.search(text)
         if m:
             year = m.group(0)
-        m = _RATING_RE.search(self._meta_text)
+        m = _RATING_RE.search(text)
         if m:
             rating = m.group(1)
-        m = _RUNTIME_RE.search(self._meta_text)
+        m = _RUNTIME_RE.search(text)
         if m:
             runtime = m.group(1)
 
         # Deduplicate
-        if not any(r["url"] == self._current_url for r in self.results):
+        if not any(r["url"] == url for r in self.results):
             self.results.append(
                 {
-                    "title": self._current_title,
-                    "url": self._current_url,
-                    "genres": list(self._genres),
+                    "title": title,
+                    "url": url,
+                    "genres": genres,
                     "year": year,
                     "rating": rating,
                     "runtime": runtime,
                 }
             )
-        self._reset()
-
-    def _reset(self) -> None:
-        self._current_title = ""
-        self._current_url = ""
-        self._meta_text = ""
-        self._genres = []
-        self._expecting_meta = False
-
-    def handle_starttag(  # noqa: C901
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
-        attr_dict = dict(attrs)
-
-        if tag == "h2":
-            # New result starts: emit previous if pending
-            if self._expecting_meta and self._current_url:
-                self._emit_result()
-            self._in_h2 = True
-            self._current_title = ""
-            self._current_url = ""
-
-        if tag == "a" and self._in_h2:
-            href = attr_dict.get("href", "") or ""
-            if href and "/stream/" in href:
-                self._current_url = urljoin(self._base_url, href)
-                self._in_title_a = True
-                self._current_title = ""
-
-        # Meta div follows h2 (first div after h2 end)
-        if tag == "div" and self._expecting_meta and not self._in_meta_div:
-            self._in_meta_div = True
-            self._meta_div_depth = 0
-            self._meta_text = ""
-            self._genres = []
-        elif tag == "div" and self._in_meta_div:
-            self._meta_div_depth += 1
-
-        # Genre links inside meta div
-        if tag == "a" and self._in_meta_div:
-            href = attr_dict.get("href", "") or ""
-            if "/movies/" in href or "/tv/" in href:
-                self._in_genre_a = True
-                self._genre_text = ""
-
-    def handle_data(self, data: str) -> None:
-        if self._in_title_a:
-            self._current_title += data
-        if self._in_genre_a:
-            self._genre_text += data
-        if self._in_meta_div:
-            self._meta_text += data
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "a":
-            if self._in_title_a:
-                self._in_title_a = False
-            if self._in_genre_a:
-                self._in_genre_a = False
-                text = self._genre_text.strip()
-                if text:
-                    self._genres.append(text)
-
-        if tag == "h2" and self._in_h2:
-            self._in_h2 = False
-            self._current_title = self._current_title.strip()
-            if self._current_url:
-                self._expecting_meta = True
-
-        if tag == "div" and self._in_meta_div:
-            if self._meta_div_depth > 0:
-                self._meta_div_depth -= 1
-            else:
-                self._in_meta_div = False
-                self._expecting_meta = False
-                # Emit the result now that metadata is collected
-                if self._current_url:
-                    self._emit_result()
 
     def finalize(self) -> None:
         """Emit any remaining pending result."""
-        if self._current_url and self._current_title:
-            self._emit_result()
+        if self._pending:
+            self._emit_result(*self._pending, None)
+            self._pending = None
 
 
 # ---------------------------------------------------------------------------
 # Detail page parser (for /stream/{slug} page)
 # ---------------------------------------------------------------------------
-class _DetailPageParser(HTMLParser):
-    """Parse movie2k.cx detail/stream page.
+class _DetailPageParser:
+    """Parse movie2k.cx detail/stream page (selectolax).
 
     Stream links::
 
@@ -326,184 +238,92 @@ class _DetailPageParser(HTMLParser):
     """
 
     def __init__(self, base_url: str) -> None:
-        super().__init__()
         self._base_url = base_url
 
         # Stream links; a series page lists every episode in its own
         # <table data-episode-id="…">
         self.stream_links: list[dict[str, str]] = []
         self.episodes_listed = False
-        self._episode: tuple[int, int] | None = None
-        self._episode_table_depth = 0
-        self._in_script = False
-        self._in_stream_div = False
-        self._stream_div_depth = 0
-        self._in_stream_a = False
-        self._stream_a_href = ""
-        self._stream_quality = ""
 
         # Title
         self.title = ""
-        self._in_h1 = False
-        self._h1_text = ""
 
         # Genres
         self.genres: list[str] = []
-        self._in_genre_a = False
-        self._genre_text = ""
 
         # IMDB
         self.imdb_url = ""
         self.imdb_rating = ""
-        self._in_imdb_a = False
-        self._imdb_text = ""
 
-        # Metadata text (accumulated from divs)
+        # Metadata text (the page's text blocks)
         self.year = ""
         self.runtime = ""
         self.country = ""
         self.description = ""
         self._meta_texts: list[str] = []
 
-        # Description tracking — the long div with movie summary
-        self._seen_h1 = False
-        self._in_desc_candidate = False
-        self._desc_depth = 0
-        self._desc_text = ""
-
-    def handle_starttag(  # noqa: C901
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
-        attr_dict = dict(attrs)
-        tag_id = attr_dict.get("id", "") or ""
-        href = attr_dict.get("href", "") or ""
-        alt = attr_dict.get("alt", "") or ""
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        # Inline scripts and styles are no page text (the description)
+        tree.strip_tags(["script", "style"])
 
         # Stream link container: <div id="tablemoviesindex2">
-        if tag == "div" and tag_id == "tablemoviesindex2":
-            self._in_stream_div = True
-            self._stream_div_depth = 0
-        elif tag == "div" and self._in_stream_div:
-            self._stream_div_depth += 1
+        for link in tree.css("div[id='tablemoviesindex2'] a"):
+            self._add_stream_link(link)
 
-        if tag in ("script", "style"):
-            self._in_script = True
+        # Title: <h1> (the last one)
+        for h1 in tree.css("h1"):
+            # Clean title: remove "Qualität:" suffix and whitespace
+            title = h1.text().strip()
+            self.title = re.sub(r"\s*Qualität:.*$", "", title).strip()
 
-        # Episode of a series page: <table data-episode-id="…">
-        if tag == "table":
-            if self._episode is not None:
-                self._episode_table_depth += 1
-            else:
-                self._episode = _episode_from_id(attr_dict.get("data-episode-id") or "")
-                self._episode_table_depth = 0
-
-        # Stream link inside stream div: <a href="https://voe.sx/..."> (films)
-        # or <a href="#" onclick="return loadMirror('https://...')"> (series)
-        if tag == "a" and self._in_stream_div:
-            mirror = _LOAD_MIRROR_RE.search(attr_dict.get("onclick") or "")
-            url = (
-                href if href.startswith("http") else (mirror.group(1) if mirror else "")
-            )
-            if url.startswith("http") and "movie2k" not in url:
-                self._in_stream_a = True
-                self._stream_a_href = url
-                self._stream_quality = ""
-
-        # Quality image inside stream link: <img alt="HD-1080p">
-        if tag == "img" and self._in_stream_a:
-            if alt and ("HD" in alt or "SD" in alt or "CAM" in alt):
-                self._stream_quality = alt
-
-        # Quality image in h1: <img alt="HD">
-        if tag == "img" and self._in_h1:
-            pass  # Ignore quality img in title
-
-        # Title: <h1>
-        if tag == "h1":
-            self._in_h1 = True
-            self._h1_text = ""
-
-        # Genre links: <a href="/movies/{Genre}">
-        if tag == "a" and "/movies/" in href and not self._in_stream_div:
-            self._in_genre_a = True
-            self._genre_text = ""
-
-        # IMDB link: <a href="https://www.imdb.com/title/...">
-        if tag == "a" and "imdb.com" in href:
-            self._in_imdb_a = True
-            self._imdb_text = ""
-            self.imdb_url = href
-
-    def handle_data(self, data: str) -> None:
-        if self._in_script:
-            return  # inline scripts are no page text (the description)
-        if self._in_h1:
-            self._h1_text += data
-        if self._in_genre_a:
-            self._genre_text += data
-        if self._in_imdb_a:
-            self._imdb_text += data
-
-        # Collect all visible text for metadata extraction
-        text = data.strip()
-        if text and len(text) > 10:
-            self._meta_texts.append(text)
-
-    def _end_a_tag(self) -> None:
-        """Handle closing of ``<a>`` tag for streams, genres, IMDB."""
-        if self._in_stream_a:
-            self._in_stream_a = False
-            if self._stream_a_href:
-                domain = _domain_from_url(self._stream_a_href)
-                link = {
-                    "hoster": domain,
-                    "link": self._stream_a_href,
-                    "quality": self._stream_quality or "HD",
-                }
-                if self._episode is not None:
-                    self.episodes_listed = True
-                    link["label"] = episode_label(*self._episode, domain)
-                self.stream_links.append(link)
-            self._stream_a_href = ""
-            self._stream_quality = ""
-
-        if self._in_genre_a:
-            self._in_genre_a = False
-            text = self._genre_text.strip()
-            if text and text not in self.genres:
+        # Genre links: <a href="/movies/{Genre}"> outside the stream links
+        for link in tree.css("a[href*='/movies/']"):
+            text = link.text().strip()
+            if text and text not in self.genres and not _in_stream_div(link):
                 self.genres.append(text)
 
-        if self._in_imdb_a:
-            self._in_imdb_a = False
-            text = self._imdb_text.strip()
-            m = re.search(r"([\d.]+)", text)
+        # IMDB link: <a href="https://www.imdb.com/title/..."> (the last one)
+        for link in tree.css("a[href*='imdb.com']"):
+            self.imdb_url = link.attributes.get("href") or ""
+            m = re.search(r"([\d.]+)", link.text().strip())
             if m:
                 self.imdb_rating = m.group(1)
 
-    def handle_endtag(self, tag: str) -> None:
-        if tag in ("script", "style"):
-            self._in_script = False
-        if tag == "table" and self._episode is not None:
-            if self._episode_table_depth:
-                self._episode_table_depth -= 1
-            else:
-                self._episode = None
-        if tag == "a":
-            self._end_a_tag()
+        # Collect all visible text for metadata extraction, a block per text
+        # node (elements have no text_content)
+        if tree.root is not None:
+            for node in tree.root.traverse(include_text=True, skip_empty=True):
+                text = (node.text_content or "").strip()
+                if len(text) > 10:
+                    self._meta_texts.append(text)
 
-        if tag == "div" and self._in_stream_div:
-            if self._stream_div_depth > 0:
-                self._stream_div_depth -= 1
-            else:
-                self._in_stream_div = False
+    def _add_stream_link(self, link: LexborNode) -> None:
+        """Add a link of a stream div unless it stays on the site.
 
-        if tag == "h1" and self._in_h1:
-            self._in_h1 = False
-            self._seen_h1 = True
-            # Clean title: remove "Qualität:" suffix and whitespace
-            title = self._h1_text.strip()
-            title = re.sub(r"\s*Qualität:.*$", "", title).strip()
-            self.title = title
+        <a href="https://voe.sx/..."> (films) or
+        <a href="#" onclick="return loadMirror('https://...')"> (series)
+        """
+        href = link.attributes.get("href") or ""
+        mirror = _LOAD_MIRROR_RE.search(link.attributes.get("onclick") or "")
+        url = href if href.startswith("http") else (mirror.group(1) if mirror else "")
+        if not url.startswith("http") or "movie2k" in url:
+            return
+
+        # Quality image inside stream link: <img alt="HD-1080p"> (the last one)
+        quality = ""
+        for img in link.css("img"):
+            alt = img.attributes.get("alt") or ""
+            if "HD" in alt or "SD" in alt or "CAM" in alt:
+                quality = alt
+
+        domain = _domain_from_url(url)
+        stream = {"hoster": domain, "link": url, "quality": quality or "HD"}
+        episode = _episode_of(link)
+        if episode is not None:
+            self.episodes_listed = True
+            stream["label"] = episode_label(*episode, domain)
+        self.stream_links.append(stream)
 
     def finalize(self) -> None:
         """Post-processing: extract year, runtime, country from collected text."""
@@ -540,6 +360,29 @@ class _DetailPageParser(HTMLParser):
         self.genres = unique
 
 
+def _in_stream_div(node: LexborNode) -> bool:
+    """Whether *node* is inside a ``<div id="tablemoviesindex2">``."""
+    return any(
+        parent.tag == "div" and parent.attributes.get("id") == "tablemoviesindex2"
+        for parent in ancestors(node)
+    )
+
+
+def _episode_of(link: LexborNode) -> tuple[int, int] | None:
+    """(season, episode) of a series page's stream link.
+
+    The link's outermost ``<table data-episode-id="…">`` names it; tables
+    nested in that one are part of the episode.
+    """
+    episode = None
+    for parent in ancestors(link):
+        if parent.tag == "table":
+            found = _episode_from_id(parent.attributes.get("data-episode-id") or "")
+            if found is not None:
+                episode = found
+    return episode
+
+
 # ---------------------------------------------------------------------------
 # Plugin class
 # ---------------------------------------------------------------------------
@@ -561,8 +404,7 @@ class Movie2kPlugin(HttpxPluginBase):
         if html is None:
             return []
 
-        parser = _SearchResultParser(self.base_url)
-        parser.feed(html)
+        parser = await parse_page(_SearchResultParser(self.base_url), html)
 
         self._log.info(
             "movie2k_search_page",
@@ -598,8 +440,7 @@ class Movie2kPlugin(HttpxPluginBase):
             if html is None:
                 break
 
-            parser = _BrowseResultParser(self.base_url)
-            parser.feed(html)
+            parser = await parse_page(_BrowseResultParser(self.base_url), html)
             parser.finalize()
 
             if not parser.results:
@@ -635,8 +476,7 @@ class Movie2kPlugin(HttpxPluginBase):
         if html is None:
             return None
 
-        parser = _DetailPageParser(self.base_url)
-        parser.feed(html)
+        parser = await parse_page(_DetailPageParser(self.base_url), html)
         parser.finalize()
 
         links = parser.stream_links

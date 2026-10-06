@@ -22,6 +22,31 @@ LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 LogFormat = Literal["json", "console"]
 
 
+class TelemetryConfig(BaseModel):
+    """Metrics and on-demand tracing (``docs/features/observability.md``)."""
+
+    tracing_endpoint: str | None = Field(
+        default=None,
+        description=(
+            "OTLP/HTTP base URL (e.g. http://192.168.1.2:4318) that turns "
+            "tracing on: the core's stages go there as OpenTelemetry spans "
+            "(/v1/traces is appended). Off when unset. An IP needs no DNS "
+            "lookup (behind a VPN container, lookups go through the VPN)."
+        ),
+    )
+
+    @field_validator("tracing_endpoint")
+    @classmethod
+    def _http_url(cls, value: str | None) -> str | None:
+        # An empty value is off: compose files keep tracing optional with
+        # ${TRACING_ENDPOINT:-}, and "" stopped the app at start
+        if value is None or not value.strip():
+            return None
+        if not value.startswith(("http://", "https://")):
+            raise ValueError("tracing_endpoint must start with http:// or https://")
+        return value
+
+
 class ScoringConfig(BaseModel):
     """Background plugin scoring and probing configuration."""
 
@@ -258,22 +283,35 @@ class StremioConfig(BaseModel):
     )
 
     plugin_timeout_seconds: float = Field(
-        default=10.0,
+        default=30.0,
         gt=0,
         description=(
-            "Plugin search budget per Stremio request, counted from the "
+            "Plugin search budget per Stremio search, counted from the "
             "request start (plugins waiting for a concurrency slot use it up "
-            "too); plugins still running then are cut, queued ones skipped."
+            "too; a stale search-cache entry's refresh: from its own start); "
+            "plugins still running then are cut, queued ones skipped. "
+            "The answer does not wait for the search: plugins still running "
+            "when it goes out fill the search cache."
+        ),
+    )
+    plugin_health_interval_seconds: float = Field(
+        default=1800.0,
+        ge=0,
+        description=(
+            "How often every Stremio plugin's site is checked (HEAD on its "
+            "domains); searches skip plugins whose site did not answer (twice, "
+            "30 s apart), and those are checked again every 5 minutes. 0 turns "
+            "the check off."
         ),
     )
     stream_deadline_seconds: float = Field(
-        default=15.0,
+        default=60.0,
         gt=0,
         description=(
-            "Overall budget for one Stremio stream request, from request start "
-            "to answer. Hoster resolution stops at the deadline (at least 2 s "
-            "after the plugin search) and returns what is resolved. Keep "
-            "plugin_timeout_seconds below it so resolution gets a window."
+            "Latest answer of a Stremio stream request, from the request "
+            "start: resolution stops then and the answer has what is "
+            "resolved. Earlier when resolve_target_count streams resolved, "
+            "or when the search and every resolution are done."
         ),
     )
 
@@ -311,8 +349,25 @@ class StremioConfig(BaseModel):
     )
 
     stream_link_ttl_seconds: int = Field(
-        default=7200,
-        description="TTL for cached stream links (seconds). Default 2h.",
+        default=7 * 24 * 3600,
+        description=(
+            "How long the links behind /play and the HLS proxy are kept "
+            "(seconds, default 7 days): Stremio plays a kept stream object "
+            "later (autoplay, Continue Watching), and a link whose video URL "
+            "is stale resolves again."
+        ),
+    )
+
+    allow_hls_transcoding: bool = Field(
+        default=False,
+        description=(
+            "Let Stremio's streaming server transcode HLS streams. Stremio Web "
+            "has the server probe every stream, and an HLS source then goes "
+            "through the server's converter, which re-encodes the video (on a "
+            "Raspberry Pi 4 too slow for 1080p). Off, the HLS proxy refuses "
+            "the server's ffmpeg the stream's playlist, and Stremio Web plays "
+            "it itself."
+        ),
     )
 
     verify_streams: bool = Field(
@@ -320,7 +375,8 @@ class StremioConfig(BaseModel):
         description=(
             "Check every resolved video URL before returning it (first bytes "
             "with the playback headers); error pages, HTML and broken HLS "
-            "playlists are dropped instead of shown in Stremio."
+            "playlists are dropped instead of shown in Stremio. Off, only "
+            "resolvers without a check of their own (SuperVideo) are checked."
         ),
     )
     probe_concurrency: int = Field(
@@ -339,21 +395,12 @@ class StremioConfig(BaseModel):
         ),
     )
     resolve_target_count: int = Field(
-        default=15,
+        default=5,
         description=(
-            "Target number of successfully resolved video streams. "
-            "Resolution stops early once this many genuine video URLs "
-            "have been extracted, cancelling remaining resolve tasks. "
-            "Set to 0 to disable early-stop (resolve all streams)."
-        ),
-    )
-    resolve_grace_seconds: float = Field(
-        default=4.0,
-        ge=0.0,
-        description=(
-            "Once the first stream is resolved, the answer waits at most "
-            "this long for the other hosters (browser-resolved ones take "
-            "3-7 s) instead of until stream_deadline_seconds. 0 disables it."
+            "The answer goes out once this many hosters have a resolved "
+            "video stream (resolutions still running are cancelled), even "
+            "while plugins still search. 0: the answer waits until the "
+            "search and every resolution are done (or the deadline)."
         ),
     )
 
@@ -418,6 +465,9 @@ class AppConfig(BaseModel):
     # Scoring (YAML section: scoring)
     scoring: ScoringConfig = Field(default_factory=ScoringConfig)
 
+    # Metrics and tracing (YAML section: telemetry)
+    telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
+
     # HTTP engine (YAML section: http.*)
     http_timeout_seconds: float = Field(
         default=30.0,
@@ -450,6 +500,17 @@ class AppConfig(BaseModel):
             AliasPath("http", "user_agent"),
         ),
         description="User-Agent for outgoing HTTP requests.",
+    )
+    http_http2: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "http_http2",
+            AliasPath("http", "http2"),
+        ),
+        description=(
+            "Offer HTTP/2 on outgoing connections (several requests to one host "
+            "share a connection). Off by default: not faster per se, measure it."
+        ),
     )
 
     # Link validation toggle
@@ -699,6 +760,7 @@ class EnvOverrides(BaseSettings):
     http_timeout_resolve_seconds: float | None = None
     http_follow_redirects: bool | None = None
     http_user_agent: str | None = None
+    http_http2: bool | None = None
 
     rate_limit_requests_per_second: float | None = None
     rate_limit_adaptive: bool | None = None
@@ -725,6 +787,8 @@ class EnvOverrides(BaseSettings):
     cache_max_concurrent: int | None = None
 
     tmdb_api_key: str | None = None
+
+    telemetry_tracing_endpoint: str | None = None
 
     # Scoring env overrides (flat)
     scoring_enabled: bool | None = None

@@ -21,6 +21,8 @@ import structlog
 from patchright.async_api import Browser, BrowserContext, Page, Request, Route
 
 from scavengarr.domain.ports.browser_fetcher import BrowserSession, ClickThrough
+from scavengarr.infrastructure.browser.hardening import block_heavy_resources
+from scavengarr.infrastructure.browser.page_gate import PageBusy, PageGate
 from scavengarr.infrastructure.browser.turnstile import (
     WIDGET_FORM,
     is_challenge_page,
@@ -35,9 +37,6 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger(__name__)
 
-_BLOCKED_RESOURCE_TYPES = frozenset(
-    {"image", "font", "stylesheet", "media", "texttrack"}
-)
 
 # fetch_text() retries: rate limits / overloaded origin, then give up
 _RETRY_STATUSES = frozenset({429, 502, 503, 504})
@@ -111,14 +110,6 @@ async def _read_body(page: Page, url: str) -> str | None:
     if await page.evaluate("() => document.contentType") == "text/html":
         return await page.content()
     return await page.evaluate(_FETCH_RAW_JS, url)
-
-
-async def _block_resources(route: Route) -> None:
-    """Abort requests for heavy resource types."""
-    if route.request.resource_type in _BLOCKED_RESOURCE_TYPES:
-        await route.abort()
-    else:
-        await route.continue_()
 
 
 async def _allow_player_resources(route: Route) -> None:
@@ -206,7 +197,8 @@ class StealthPool:
 
     Runs on the Chromium of :class:`SharedBrowserPool` (one browser process
     for plugins and resolvers) in its own persistent context, so Cloudflare
-    clearance cookies survive between fetches.
+    clearance cookies survive between fetches. Every operation holds one
+    page of *pages* (``PageGate``).
 
     Usage::
 
@@ -220,15 +212,15 @@ class StealthPool:
         *,
         browser_pool: SharedBrowserPool,
         timeout_ms: int = 15_000,
-        fetch_concurrency: int = 2,
+        pages: PageGate | None = None,
         clearance_store: ClearanceStore | None = None,
     ) -> None:
         self._browser_pool = browser_pool
         # Solved challenges survive restarts (cf_clearance, __ddg* cookies)
         self._clearance_store = clearance_store
         self._timeout_ms = timeout_ms
-        # Bounds fetch_text() pages (RAM budget: headful pages are heavy)
-        self._fetch_sem = asyncio.Semaphore(fetch_concurrency)
+        # Bounds the pages of all operations (headful pages are heavy)
+        self._pages = pages or PageGate(limit=2)
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
         self._lock = asyncio.Lock()
@@ -259,11 +251,11 @@ class StealthPool:
                 return self._context
 
             self._browser, _ = await self._browser_pool.warmup()
-            self._context = await self._browser.new_context()
+            self._context = await self._browser.new_context(service_workers="block")
             self._user_agent = None  # a relaunched browser may be another version
 
             # Block heavy resources on all pages in this context
-            await self._context.route("**/*", _block_resources)
+            await self._context.route("**/*", block_heavy_resources)
             if self._clearance_store is not None:
                 await self._clearance_store.restore(self._context)
 
@@ -295,7 +287,13 @@ class StealthPool:
     async def new_page(self) -> Page:
         """Create a new page in the stealth context."""
         ctx = await self._ensure_context()
+        self._browser_pool.note_page()
         return await ctx.new_page()
+
+    async def _close(self, page: Page | None) -> None:
+        """Close *page* (the operation's lease lets the browser restart)."""
+        if page is not None and not page.is_closed():
+            await page.close()
 
     async def _navigate(
         self,
@@ -310,7 +308,7 @@ class StealthPool:
 
         Returns False on a permanent error status (not a challenge page).
         429/502/503/504 are retried after each backoff in ``_RETRY_BACKOFF_S``;
-        the caller's fetch slot stays taken while waiting, which also throttles
+        the caller's page stays taken while waiting, which also throttles
         the other fetches. *done* short-circuits (and swallows the aborted
         navigation) once the caller has what it needs.
         """
@@ -346,24 +344,30 @@ class StealthPool:
         unless a challenge's reload sends it).
         """
         timeout_ms = int(timeout * 1000)
-        async with self._fetch_sem:
-            page: Page | None = None
-            try:
-                page = await self.new_page()
-                if not await self._navigate(
-                    page, url, wait_until="domcontentloaded", timeout_ms=timeout_ms
-                ):
-                    return await page.evaluate(_FETCH_RAW_JS, url)
-                if not await solve_cloudflare(page, timeout_ms=timeout_ms):
+        try:
+            async with (
+                self._pages.page("plugin", timeout=timeout),
+                self._browser_pool.lease(),
+            ):
+                page: Page | None = None
+                try:
+                    page = await self.new_page()
+                    if not await self._navigate(
+                        page, url, wait_until="domcontentloaded", timeout_ms=timeout_ms
+                    ):
+                        return await page.evaluate(_FETCH_RAW_JS, url)
+                    if not await solve_cloudflare(page, timeout_ms=timeout_ms):
+                        return None
+                    await self._remember(page)
+                    return await read_when_settled(page, lambda: _read_body(page, url))
+                except Exception:  # noqa: BLE001
+                    log.debug("stealth_fetch_error", url=url, exc_info=True)
                     return None
-                await self._remember(page)
-                return await read_when_settled(page, lambda: _read_body(page, url))
-            except Exception:  # noqa: BLE001
-                log.debug("stealth_fetch_error", url=url, exc_info=True)
-                return None
-            finally:
-                if page is not None and not page.is_closed():
-                    await page.close()
+                finally:
+                    await self._close(page)
+        except PageBusy:
+            log.info("stealth_page_busy", url=url)
+            return None
 
     async def session(self, url: str) -> BrowserSession | None:
         """Return the context's cookies for *url* and the browser's User-Agent.
@@ -372,17 +376,18 @@ class StealthPool:
         cookies that ``fetch_text()`` collected while passing the site's
         challenge.
         """
-        context = await self._ensure_context()
-        cookies: dict[str, str] = {}
-        for cookie in await context.cookies(url):
-            name, value = cookie.get("name"), cookie.get("value")
-            if name and value is not None:
-                cookies[name] = value
-        if not cookies:
-            return None
-        return BrowserSession(
-            cookies=cookies, user_agent=await self._browser_user_agent()
-        )
+        async with self._browser_pool.lease():
+            context = await self._ensure_context()
+            cookies: dict[str, str] = {}
+            for cookie in await context.cookies(url):
+                name, value = cookie.get("name"), cookie.get("value")
+                if name and value is not None:
+                    cookies[name] = value
+            if not cookies:
+                return None
+            return BrowserSession(
+                cookies=cookies, user_agent=await self._browser_user_agent()
+            )
 
     async def _browser_user_agent(self) -> str:
         """The User-Agent the browser sends (read once from a blank page)."""
@@ -405,7 +410,10 @@ class StealthPool:
         *timeout* bounds navigation and the Cloudflare challenge.
         """
         timeout_ms = int(timeout * 1000)
-        async with self._fetch_sem:
+        async with (
+            self._pages.page("capture", timeout=timeout),
+            self._browser_pool.lease(),
+        ):
             page: Page | None = None
             try:
                 page = await self.new_page()
@@ -453,8 +461,7 @@ class StealthPool:
                 log.debug("stealth_capture_error", url=url, exc_info=True)
                 return None
             finally:
-                if page is not None and not page.is_closed():
-                    await page.close()
+                await self._close(page)
 
     async def resolve_redirect(self, url: str, *, timeout: float) -> str | None:
         """Return the first off-site URL *url* redirects to.
@@ -477,27 +484,33 @@ class StealthPool:
                 targets.append(request.url)
 
         timeout_ms = int(timeout * 1000)
-        async with self._fetch_sem:
-            page: Page | None = None
-            try:
-                page = await self.new_page()
-                page.on("request", _on_request)
-                if not await self._navigate(
-                    page,
-                    url,
-                    wait_until="commit",
-                    timeout_ms=timeout_ms,
-                    done=lambda: bool(targets),
-                ):
-                    return None
-                # A challenge page redirects once solved; the listener sees it
-                if not targets and await is_challenge_page(page):
-                    await solve_cloudflare(page, timeout_ms=timeout_ms)
-            except Exception:  # noqa: BLE001
-                log.debug("stealth_redirect_error", url=url, exc_info=True)
-            finally:
-                if page is not None and not page.is_closed():
-                    await page.close()
+        try:
+            async with (
+                self._pages.page("plugin", timeout=timeout),
+                self._browser_pool.lease(),
+            ):
+                page: Page | None = None
+                try:
+                    page = await self.new_page()
+                    page.on("request", _on_request)
+                    if not await self._navigate(
+                        page,
+                        url,
+                        wait_until="commit",
+                        timeout_ms=timeout_ms,
+                        done=lambda: bool(targets),
+                    ):
+                        return None
+                    # A challenge page redirects once solved; the listener sees it
+                    if not targets and await is_challenge_page(page):
+                        await solve_cloudflare(page, timeout_ms=timeout_ms)
+                except Exception:  # noqa: BLE001
+                    log.debug("stealth_redirect_error", url=url, exc_info=True)
+                finally:
+                    await self._close(page)
+        except PageBusy:
+            log.info("stealth_page_busy", url=url)
+            return None
         return targets[0] if targets else None
 
     async def click_through(
@@ -527,41 +540,52 @@ class StealthPool:
 
         deadline = time.monotonic() + timeout
         timeout_ms = int(timeout * 1000)
-        async with self._fetch_sem:
-            page: Page | None = None
-            try:
-                page = await self.new_page()
-                page.on("request", _on_request)
-                page.on("popup", _close_popup)
-                # Full layout: the click must hit the element like a user's
-                await page.route("**/*", _allow_player_resources)
-                if not await self._navigate(
-                    page, page_url, wait_until="domcontentloaded", timeout_ms=timeout_ms
-                ):
+        try:
+            async with (
+                self._pages.page("plugin", timeout=timeout),
+                self._browser_pool.lease(),
+            ):
+                page: Page | None = None
+                try:
+                    page = await self.new_page()
+                    page.on("request", _on_request)
+                    page.on("popup", _close_popup)
+                    # Full layout: the click must hit the element like a user's
+                    await page.route("**/*", _allow_player_resources)
+                    if not await self._navigate(
+                        page,
+                        page_url,
+                        wait_until="domcontentloaded",
+                        timeout_ms=timeout_ms,
+                    ):
+                        return None
+                    if not await solve_cloudflare(page, timeout_ms=timeout_ms):
+                        return None
+                    await _click_clear_of_layers(page, selector)
+                    await _wait_for_target(page, targets, deadline)
+                    if not targets:
+                        log.info("stealth_click_through_no_target", url=page_url)
+                        return None
+                    await self._remember(page)
+                    cookies = await page.context.cookies(page_url)
+                    return ClickThrough(
+                        url=targets[0],
+                        cookies={
+                            name: c.get("value", "")
+                            for c in cookies
+                            if (name := c.get("name"))
+                        },
+                    )
+                except Exception:  # noqa: BLE001
+                    log.debug(
+                        "stealth_click_through_error", url=page_url, exc_info=True
+                    )
                     return None
-                if not await solve_cloudflare(page, timeout_ms=timeout_ms):
-                    return None
-                await _click_clear_of_layers(page, selector)
-                await _wait_for_target(page, targets, deadline)
-                if not targets:
-                    log.info("stealth_click_through_no_target", url=page_url)
-                    return None
-                await self._remember(page)
-                cookies = await page.context.cookies(page_url)
-                return ClickThrough(
-                    url=targets[0],
-                    cookies={
-                        name: c.get("value", "")
-                        for c in cookies
-                        if (name := c.get("name"))
-                    },
-                )
-            except Exception:  # noqa: BLE001
-                log.debug("stealth_click_through_error", url=page_url, exc_info=True)
-                return None
-            finally:
-                if page is not None and not page.is_closed():
-                    await page.close()
+                finally:
+                    await self._close(page)
+        except PageBusy:
+            log.info("stealth_page_busy", url=page_url)
+            return None
 
     # ------------------------------------------------------------------
     # Internal

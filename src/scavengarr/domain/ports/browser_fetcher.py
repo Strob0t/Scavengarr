@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
+
+# What a browser page is wanted for: playback (a stream resolved again at
+# play time), a plugin's page, a hoster capture for an answer, or work for
+# later requests (background resolutions)
+PageKind = Literal["play", "plugin", "capture", "background"]
 
 
 @dataclass(frozen=True)
@@ -25,6 +31,23 @@ class BrowserSession:
 
     cookies: dict[str, str]
     user_agent: str
+
+
+@dataclass(frozen=True, slots=True)
+class PageClaim:
+    """Whom browser work serves and when it is due (``time.monotonic()``).
+
+    The browser hands out its pages by the claim of the work that asks.
+    """
+
+    kind: PageKind
+    due: float
+
+
+# The claim of the browser work the running code starts: set by the
+# application around a search or a resolution, inherited by the tasks it
+# starts (plugins and resolvers sit between it and the browser)
+page_claim: ContextVar[PageClaim | None] = ContextVar("page_claim", default=None)
 
 
 @runtime_checkable

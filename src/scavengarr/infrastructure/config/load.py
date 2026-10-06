@@ -21,6 +21,7 @@ _SECTION_KEYS: set[str] = {
     "cache",
     "stremio",
     "scoring",
+    "telemetry",
 }
 
 
@@ -78,6 +79,7 @@ def _normalize_layer(data: Mapping[str, Any]) -> dict[str, Any]:
         "http_timeout_resolve_seconds": ("http", "timeout_resolve_seconds"),
         "http_follow_redirects": ("http", "follow_redirects"),
         "http_user_agent": ("http", "user_agent"),
+        "http_http2": ("http", "http2"),
         "rate_limit_requests_per_second": ("http", "rate_limit_rps"),
         "rate_limit_adaptive": ("http", "rate_limit_adaptive"),
         "rate_limit_min_rps": ("http", "rate_limit_min_rps"),
@@ -97,6 +99,7 @@ def _normalize_layer(data: Mapping[str, Any]) -> dict[str, Any]:
         "cache_backend": ("cache", "backend"),
         "cache_redis_url": ("cache", "redis_url"),
         "cache_max_concurrent": ("cache", "max_concurrent"),
+        "telemetry_tracing_endpoint": ("telemetry", "tracing_endpoint"),
     }
 
     for flat_key, (section, section_key) in flat_map.items():

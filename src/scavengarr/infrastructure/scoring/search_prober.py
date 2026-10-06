@@ -11,7 +11,9 @@ import httpx
 import structlog
 
 from scavengarr.domain.entities.scoring import ProbeResult
+from scavengarr.domain.plugins.exceptions import PluginNotFoundError
 from scavengarr.domain.ports.plugin_registry import PluginRegistryPort
+from scavengarr.infrastructure.plugins.constants import search_max_results
 
 log = structlog.get_logger(__name__)
 
@@ -76,7 +78,7 @@ class MiniSearchProber:
 
         try:
             plugin = self._plugins.get(plugin_name)
-        except KeyError:
+        except PluginNotFoundError:
             return ProbeResult(
                 started_at=started_at,
                 duration_ms=0.0,
@@ -84,6 +86,8 @@ class MiniSearchProber:
                 error_kind="plugin_not_found",
             )
 
+        # The plugin pages only as far as the probe counts
+        token = search_max_results.set(max_items)
         try:
             results = await asyncio.wait_for(
                 plugin.search(query, category=category),
@@ -110,6 +114,8 @@ class MiniSearchProber:
                 ok=False,
                 error_kind="search_error",
             )
+        finally:
+            search_max_results.reset(token)
 
         items_found = len(results)
         items_used = min(items_found, max_items)

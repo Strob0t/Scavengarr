@@ -103,12 +103,7 @@ Entities and value types are implemented as `@dataclass` classes.
 
 ### Value Objects
 
-Value objects are immutable configuration types (`frozen=True` dataclasses):
-
-| Value Object | File | Purpose |
-|---|---|---|
-| `AuthConfig` | `plugins/plugin_schema.py` | Authentication settings (`none`/`basic`/`form`/`cookie`) |
-| `HttpOverrides` | `plugins/plugin_schema.py` | Per-plugin HTTP configuration overrides |
+The frozen entities above double as value objects. The domain has no configuration value objects of its own: per-plugin overrides are `PluginOverride` in `infrastructure/config/schema.py`.
 
 ### Enums
 
@@ -130,12 +125,15 @@ Ports define the boundaries between Application and Infrastructure. All are `Pro
 | `CrawlJobRepository` | `ports/crawljob_repository.py` | async | `save`, `get` |
 | `StreamLinkRepository` | `ports/stream_link_repository.py` | async | `save`, `get` |
 | `HosterResolverPort` | `ports/hoster_resolver.py` | async | `name` (property), `resolve` |
+| `ClientBoundResolverPort` | `ports/hoster_resolver.py` | async | extends `HosterResolverPort`: `bound_headers` (property), `resolve_for_client` (a link for one player's headers) |
 | `PluginScoreStorePort` | `ports/plugin_score_store.py` | async | `get_snapshot`, `put_snapshot`, `list_snapshots`, `get_last_run`, `set_last_run` |
 | `TmdbClientPort` | `ports/tmdb.py` | async | `find_by_imdb_id`, `get_title_and_year`, `get_title_by_tmdb_id`, `trending_movies`, `trending_tv`, `search_movies`, `search_tv` |
 | `ConcurrencyPoolPort` | `ports/concurrency.py` | async context manager | `request()` → `ConcurrencyBudgetPort` |
 | `ConcurrencyBudgetPort` | `ports/concurrency.py` | async context manager | `acquire_httpx()`, `acquire_pw()` |
+| `BrowserFetcherPort` | `ports/browser_fetcher.py` | async | `fetch_text`, `resolve_redirect`, `click_through`, `session` |
+| `TelemetryPort` | `ports/telemetry.py` | sync | `stage()` (context manager timing a step), `count()`, `record()`; `NO_TELEMETRY` records nothing |
 
-Key design choice: `PluginRegistryPort` is **synchronous** (plugin files are loaded from disk, not from network). All other ports are **asynchronous** because they involve I/O (HTTP, cache, validation) or awaitable slot acquisition.
+Key design choice: `PluginRegistryPort` is **synchronous** (plugin files are loaded from disk, not from network), and so is `TelemetryPort` (in-memory counters). All other ports are **asynchronous** because they involve I/O (HTTP, cache, validation) or awaitable slot acquisition.
 
 ### Exception Hierarchy
 
@@ -143,20 +141,14 @@ Key design choice: `PluginRegistryPort` is **synchronous** (plugin files are loa
 TorznabError (base)
 ├── TorznabBadRequest         → HTTP 400
 ├── TorznabUnsupportedAction  → HTTP 422
-├── TorznabNoPluginsAvailable → HTTP 503 (defined, currently not raised)
 ├── TorznabPluginNotFound     → HTTP 404
-├── TorznabUnsupportedPlugin  → HTTP 422 (defined, currently not raised)
 └── TorznabExternalError      → HTTP 502 (dev) / 200 (prod)
 
 PluginError (base)
 ├── PluginLoadError           Python plugin import/contract failure
-├── PluginNotFoundError       Plugin name not in registry
-└── DuplicatePluginError      Two plugins share the same name (defined, currently not raised)
+└── PluginNotFoundError       Plugin name not in registry
 
-StremioError (base)
-├── StremioTitleNotFound
-├── StremioNoPluginsAvailable
-└── StremioExternalError
+CrawlJobResolveError          Grab-time link resolution failed → HTTP 502 (download router)
 ```
 
 Domain exceptions carry business meaning. The Interfaces layer maps them to HTTP status codes.
@@ -176,8 +168,9 @@ The Application layer contains use cases that orchestrate business logic. It kno
 | `TorznabSearchUseCase` | `use_cases/torznab_search.py` | async | Validate query, resolve plugin, cache lookup, `plugin.search()`, cache write (unvalidated), `engine.validate_results()` chunk-wise until the requested page is full, build `TorznabItem`s + CrawlJobs for that page; returns `SearchResponse(items, cache_hit)` |
 | `CrawlJobResolveUseCase` | `use_cases/crawljob_resolve.py` | async | Grab time: resolve a job's page URLs via its `GrabResolvingPlugin`, store and return the resolved job; `CrawlJobResolveError` → HTTP 502 |
 | `TorznabCapsUseCase` | `use_cases/torznab_caps.py` | sync | Build `TorznabCaps` for a named plugin (XML is rendered by the presenter) |
-| `TorznabIndexersUseCase` | `use_cases/torznab_indexers.py` | sync | List all discovered plugins with version/mode (returns `list[dict]`) |
-| `StremioStreamUseCase` | `use_cases/stremio_stream.py` | async | IMDb ID → title(s) → plugin fan-out (search deadline) → title/episode filter → convert, sort → resolve one working stream per hoster (answer deadline) → cached play/proxy links; returns `list[StremioStream]` |
+| `TorznabIndexersUseCase` | `use_cases/torznab_indexers.py` | sync | List the loaded plugins (sorted by name; files that failed to load are left out) with version/mode (returns `list[dict]`) |
+| `StremioStreamUseCase` | `use_cases/stremio_stream.py` | async | IMDb ID → title(s) → cached or shared plugin search per title (fan-out with search deadline) → title/episode filter → convert, sort → resolve one working stream per hoster (answer deadline) → cached play/proxy links; returns `list[StremioStream]` |
+| `StremioLinks` | `use_cases/stremio_links.py` | async | Stored stream links behind `/play` and the HLS proxy: the video URL while under 1 h old, else resolved again (one resolution per link for all requests; per player for hosters whose CDN binds the URL to the player's headers, VEEV; past the resolver cache after a CDN refusal) |
 | `StremioCatalogUseCase` | `use_cases/stremio_catalog.py` | async | TMDB trending and search catalogs (`list[StremioMetaPreview]`) |
 
 Helpers for `StremioStreamUseCase` live in `application/stremio/`:
@@ -185,6 +178,9 @@ Helpers for `StremioStreamUseCase` live in `application/stremio/`:
 - `plugin_search.py` — `PluginSearchRunner`: plugin fan-out with fair-share concurrency budget, a search deadline counted from the request start, circuit breaker, metrics and fallback queries.
 - `queries.py` — search query normalization (`build_search_query`, `build_search_queries`) and multi-language title references.
 - `stream_builder.py` — `format_stream`, `deduplicate_by_hoster` (only without resolver; with one, resolution picks one stream per hoster), `is_direct_video_url`, behavior hints and cache/proxy link building.
+- `search_cache.py` — `SearchCache`: the title-filtered plugin results per title (`cache.search_ttl_seconds`, stale-while-revalidate). Resolved streams are not cached with them: hoster stream URLs expire, and some are bound to the resolving IP.
+- `search_progress.py` — `SearchProgress`: the title-matching results of a running search so far, shared by every request waiting on it (single-flight).
+- `resolution.py` — `HosterResolution`: one request's resolutions; each hoster resolves its best-ranked link, the next only after that one failed.
 
 #### TorznabSearchUseCase — the central orchestrator
 
@@ -231,7 +227,8 @@ class CrawlJobFactory:
     def __init__(self, *, ttl_seconds: int = 3600, auto_start: bool = True, default_priority: Priority = Priority.DEFAULT):
         ...
 
-    def create_from_search_result(self, result: SearchResult, *, job_id: str | None = None) -> CrawlJob:
+    def create_from_search_result(self, result: SearchResult, *, resolve_plugin: str | None = None) -> CrawlJob:
+        # resolve_plugin: the GrabResolvingPlugin that resolves the links at grab time
         # Bundle validated_links (fallback: download_link) into text (CRLF-separated)
         # Set package_name from result.title
         # Build comment from description + size + source_url
@@ -259,7 +256,10 @@ Infrastructure implements the ports defined by Domain and provides concrete adap
 | `PluginScoreStorePort` | `CachePluginScoreStore` | `persistence/plugin_score_cache.py` |
 | `TmdbClientPort` | `HttpxTmdbClient` / `ImdbFallbackClient` | `tmdb/client.py` / `tmdb/imdb_fallback.py` |
 | `HosterResolverPort` | `XFSResolver`, `GenericDDLResolver`, dedicated `*Resolver` classes | `hoster_resolvers/` |
+| `ClientBoundResolverPort` | `VeevResolver` | `hoster_resolvers/veev.py` |
 | `ConcurrencyPoolPort` | `ConcurrencyPool` (budget: `RequestBudget`) | `concurrency.py` |
+| `BrowserFetcherPort` | `StealthPool`, `SolverFetcher`, `ChainedBrowserFetcher` | `browser/` |
+| `TelemetryPort` | `Telemetry` | `telemetry/` |
 
 ### Subsystems
 
@@ -267,17 +267,18 @@ Infrastructure implements the ports defined by Domain and provides concrete adap
 - **Plugins** (`plugins/`): discovery, loading and caching of Python plugins. `PluginRegistry` indexes `.py` files lazily and caches loaded plugins in memory. All plugins inherit from `HttpxPluginBase` or `PlaywrightPluginBase`; Playwright plugins share one Chromium via `SharedBrowserPool`.
 - **Search Engine** (`torznab/search_engine.py`): `HttpxSearchEngine` validates links on plugin results — batch HEAD/GET via `HttpLinkValidator`, promotes alternative links when the primary is dead, drops results with no valid link; results with `validated_links` already set pass through unchanged.
 - **Presenter** (`torznab/presenter.py`): renders Domain entities (`TorznabCaps`, `TorznabItem`) to Torznab-compliant RSS 2.0 XML.
-- **Validation** (`validation/`): HTTP link validation with HEAD-first, GET-fallback strategy, bounded concurrency (global and per host), an in-memory TTL result cache and a 15-minute skip list for hosts that refuse connections.
+- **Validation** (`validation/`): HTTP link validation with HEAD-first, GET-fallback strategy, bounded concurrency (global and per host), an in-memory TTL result cache and a skip list for hosts that refuse connections (60 s, doubling up to 15 min).
 - **Persistence** (`persistence/`): `CachePort`-backed repositories (CrawlJobs, stream links, plugin scores) with JSON serialization.
 - **Configuration** (`config/`): layered config loading (defaults < YAML < ENV < CLI) with Pydantic validation.
 - **Logging** (`logging/`): structured logging via structlog with an async `QueueHandler` for non-blocking emission.
-- **Common** (`common/`): `to_int`, `parse_size_to_bytes`, `DomainRateLimiter`/`TokenBucket` (optionally adaptive), `RetryTransport` (429/503 retry + rate limiting), `PrivateAddressGuard` (the shared client refuses non-public targets, SSRF).
+- **Common** (`common/`): `to_int`, `parse_size_to_bytes`, `DomainRateLimiter`/`TokenBucket` (optionally adaptive), `RetryTransport` (429/503 retry + rate limiting), `PrivateAddressGuard` (the shared client refuses non-public targets, SSRF; its `GuardedNetworkBackend` connects to the checked addresses, so no second DNS lookup can rebind them), `AsyncioNetworkBackend` (the connections underneath: asyncio streams, TLS in the event loop instead of in Python as with httpx's default anyio backend).
 - **Hoster resolvers** (`hoster_resolvers/`): `HosterResolverRegistry`, XFS/generic-DDL/dedicated resolvers; `StealthPool` (in `infrastructure/browser/`) for Cloudflare-protected pages and for capturing the stream request of players that build it at runtime (`capture_media`: manifests/MP4 by URL, extension-less CDN URLs by the video element's request type). See [Hoster Resolvers](../features/hoster-resolvers.md).
-- **Browser fetchers and anti-bot** (`browser/`, `captcha/`): `BrowserFetcherPort` implementations `StealthPool` and `SolverFetcher` (Byparr/FlareSolverr sidecar), chained by `ChainedBrowserFetcher` (`fetch_text`, `resolve_redirect`, and `click_through` for link-out gates, which only the own browser can do); `ClearanceStore` keeps challenge cookies in `CachePort` across restarts; `detect_challenge` classifies challenges and captchas; `solve_altcha` solves ALTCHA proof of work. See [Captcha Solving](../plans/captcha-solving.md).
+- **Browser fetchers and anti-bot** (`browser/`, `captcha/`): `BrowserFetcherPort` implementations `StealthPool` and `SolverFetcher` (Byparr/FlareSolverr sidecar), chained by `ChainedBrowserFetcher` (`fetch_text`, `resolve_redirect`, `click_through` for link-out gates, which only the own browser can do, and `session`: the site's cookies and User-Agent after a passed challenge, so plain HTTP requests can go on); `PageGate` hands out the stealth browser's pages by the work's `PageClaim` (the context variable `page_claim` of the browser port, set by the application around searches and resolutions), and `PageBudget` adapts their count to the waits, the CPU and the free memory (`ResourceSampler`); `ClearanceStore` keeps challenge cookies in `CachePort` across restarts; `detect_challenge` classifies challenges and captchas; `solve_altcha` solves ALTCHA proof of work. See [Captcha Solving](../plans/captcha-solving.md).
 - **Stremio** (`stremio/`): stream converter, sorter, title matcher, release parser, episode filter, HLS proxy.
 - **TMDB** (`tmdb/`): `HttpxTmdbClient` and the key-less `ImdbFallbackClient`.
 - **Scoring** (`scoring/`): EWMA plugin scoring, health/search probers, query pool, background `ScoringScheduler`.
-- **Runtime services** (top-level modules): `PluginCircuitBreaker`, `ConcurrencyPool`, `GracefulShutdown`, `MetricsCollector`, `detect_resources()` (cgroup-aware).
+- **Runtime services** (top-level modules): `PluginCircuitBreaker`, `ConcurrencyPool`, `GracefulShutdown`, `detect_resources()` (cgroup-aware).
+- **Telemetry** (`telemetry/`): `Telemetry` implements `TelemetryPort` with prometheus-client (stage durations and outcomes, values, the JSON statistics) and, with `telemetry.tracing_endpoint`, OpenTelemetry spans (`tracing.py`, loaded only then), scrape-time collectors for circuit breakers and the container's cgroup, the event-loop lag monitor. See [Observability](../features/observability.md).
 
 ---
 
@@ -299,6 +300,7 @@ The Interfaces layer handles input/output exclusively. It contains no business l
 | `api/download/router.py` | `GET /api/v1/download/{job_id}` (serves `.crawljob` files), `GET /api/v1/download/{job_id}/info` |
 | `api/stremio/router.py` | Stremio addon: `manifest.json`, catalog, catalog search, stream, `play/{stream_id}` (302), HLS `proxy/{stream_id}/{path}`, `health` |
 | `api/stats/router.py` | `GET /api/v1/stats/plugin-scores`, `GET /api/v1/stats/metrics` |
+| `app.py` | `GET /api/v1/healthz`, `GET /api/v1/readyz`, `GET /metrics` (Prometheus) |
 
 ### CLI (argparse + Uvicorn)
 
@@ -324,7 +326,7 @@ The composition root is where concrete implementations are wired together. It ru
 ### Initialization Order
 
 ```text
-0.  MetricsCollector, auto-tune concurrency (_auto_tune / _auto_tune_concurrency)
+0.  create_telemetry() (tracing only with telemetry.tracing_endpoint) + event-loop lag monitor, auto-tune concurrency (_auto_tune / _auto_tune_concurrency)
 1.  Cache via create_cache() (cleared on startup when environment == "dev")
 2.  httpx.AsyncClient with RetryTransport + DomainRateLimiter + PrivateAddressGuard; shared with HttpxPluginBase
 3.  PluginRegistry + discover() + per-plugin config overrides
@@ -332,13 +334,15 @@ The composition root is where concrete implementations are wired together. It ru
 5.  CacheCrawlJobRepository
 6.  CrawlJobFactory
 7.  TMDB client (HttpxTmdbClient with API key, else ImdbFallbackClient)
-8.  SharedBrowserPool (one Chromium) + StealthPool (own context on that browser)
-9.  HosterResolverRegistry (dedicated + generic DDL + XFS resolvers)
-10. CacheStreamLinkRepository
+8.  SharedBrowserPool (one Chromium) + ClearanceStore (challenge cookies, shared with the Playwright plugins) + StealthPool (own context on that browser)
+8b. Browser fetcher for httpx plugins (HttpxPluginBase.set_browser_fetcher: StealthPool and/or the solver sidecar)
+9.  HosterResolverRegistry (dedicated + generic DDL + XFS resolvers, own hoster circuit breaker)
+10. CacheStreamLinkRepository + StremioLinks
 11. Plugin scoring (CachePluginScoreStore + ScoringScheduler task, only if scoring.enabled)
 12. SharedBrowserPool injected into Playwright plugins
 13. ConcurrencyPool
 14. PluginCircuitBreaker
+14b. PluginHealthMonitor task (unless stremio.plugin_health_interval_seconds is 0)
 15. StremioStreamUseCase + StremioCatalogUseCase
     → GracefulShutdown.mark_ready()
 ```
@@ -347,12 +351,15 @@ The composition root is where concrete implementations are wired together. It ru
 
 ```text
 1. Drain in-flight requests (GracefulShutdown, 10 s timeout)
-2. Cancel scoring task
-3. StealthPool.cleanup() (its context lives on the shared browser)
-4. SharedBrowserPool.cleanup()
-5. HosterResolverRegistry.cleanup()
-6. http_client.aclose()
-7. cache.aclose()
+2. StremioStreamUseCase.aclose(), StremioLinks.aclose(), HosterResolverRegistry.aclose()
+   (background searches and resolutions, half-open hoster probes)
+3. Cancel the scoring, plugin-health and loop-lag tasks
+4. StealthPool.cleanup() (its context lives on the shared browser)
+5. SharedBrowserPool.cleanup()
+6. HosterResolverRegistry.cleanup()
+7. http_client.aclose()
+8. cache.aclose()
+9. Telemetry.close() in a worker thread (the last spans go out, up to 3 s)
 ```
 
 All resources are stored on `AppState` and accessible from any request handler via `request.app.state`.
@@ -400,6 +407,8 @@ HTTP GET /api/v1/download/{job_id}
 ├─ Router (download/router.py)
 │   ├─ CrawlJobRepository.get(job_id) → CrawlJob (404 if missing)
 │   ├─ Check expiry (is_expired() → 404)
+│   ├─ CrawlJobResolveUseCase.execute(job) → jobs with resolve_plugin: grab-time links
+│   │   via that GrabResolvingPlugin, saved (CrawlJobResolveError → 502)
 │   └─ CrawlJob.to_crawljob_format() → .crawljob content
 │
 └─ Response(content=crawljob, media_type="application/x-crawljob")
@@ -416,10 +425,10 @@ Domain exceptions are translated to HTTP responses in the Torznab router. Every 
 | `TorznabBadRequest` | 400 | 400 (empty RSS) | Invalid query parameters |
 | `TorznabPluginNotFound` | 404 | 404 (empty RSS) | Plugin not in registry |
 | `TorznabUnsupportedAction` | 422 | 422 (empty RSS) | Action not caps/search |
-| `TorznabUnsupportedPlugin` | 422 | 422 (empty RSS) | Unsupported plugin (currently not raised) |
-| `TorznabNoPluginsAvailable` | 503 | 503 (empty RSS) | No plugins discovered (currently not raised) |
 | `TorznabExternalError` | 502 | 200 (empty RSS) | Upstream/network failure |
 | Unhandled `Exception` | 500 | 200 (empty RSS) | Unexpected error |
+
+The download router answers a missing or expired CrawlJob with 404 and `CrawlJobResolveError` (grab-time links could not be resolved) with 502, in every environment.
 
 ---
 
@@ -445,6 +454,8 @@ def test_crawljob_not_expired():
 - Mock all ports (`PluginRegistryPort`, `SearchEnginePort`, `CrawlJobRepository`, …).
 - Test orchestration logic: correct flow, error handling, edge cases.
 - `PluginRegistryPort` is synchronous — use `MagicMock`.
+- `TelemetryPort` is synchronous too — pass `NO_TELEMETRY`.
+- The concurrency ports hand out async context managers from plain methods (`request()`, `acquire_httpx()`, `acquire_pw()`), which an `AsyncMock` turns into coroutines — use a real `ConcurrencyPool`.
 - All other ports are async — use `AsyncMock`.
 
 ```python
@@ -485,20 +496,20 @@ async def test_search_returns_items(mock_plugins, mock_engine, ...):
 
 ### Why injected callables in StremioStreamUseCase
 
-- `StremioStreamUseCase` receives infrastructure behaviour as injected callables and protocols: `convert_fn`, `filter_fn`, `episode_filter_fn`, `resolve_fn`, `browser_warmup_fn`, `sorter`, plus local protocols (`_StremioConfig`, `_MetricsRecorder`, `CircuitBreaker`).
-- This keeps `application/` free of infrastructure imports while the composition root plugs in `convert_search_results`, `filter_by_title_match`, `filter_by_episode`, `probe_urls_stealth` and `HosterResolverRegistry.resolve`.
+- `StremioStreamUseCase` receives infrastructure behaviour as injected callables and protocols: `convert_fn`, `filter_fn`, `episode_filter_fn`, `resolve_fn`, `cached_resolution_fn`, `browser_warmup_fn`, `sorter`, plus local protocols (`_StremioConfig`, `_StreamSorter`, `CircuitBreaker`, `PluginHealth`) and the `TelemetryPort`.
+- This keeps `application/` free of infrastructure imports while the composition root plugs in `convert_search_results`, `filter_by_title_match`, `filter_by_episode`, `HosterResolverRegistry.resolve`, `HosterResolverRegistry.cached` and `SharedBrowserPool.warmup`.
 
 ### Why CrawlJob instead of direct download URLs
 
 - Prowlarr/Sonarr/Radarr expect a single download URL per result.
 - Multi-link results (multiple mirror hosters) need bundling.
-- CrawlJob provides: stable ID, TTL-based expiry, multi-link packaging.
+- CrawlJob provides: a unique id per job (UUID4), TTL-based expiry, multi-link packaging.
 - The download endpoint serves `.crawljob` files on demand.
 
 ### Why HTTP 200 on upstream errors in production
 
 - Prowlarr treats non-200 responses as indexer failures and may disable the indexer.
-- Returning HTTP 200 with empty results for upstream/unexpected failures preserves Prowlarr stability; genuine client errors keep their 4xx/503 status.
+- Returning HTTP 200 with empty results for upstream/unexpected failures preserves Prowlarr stability; genuine client errors keep their 4xx status, and a failed reachability probe its 503.
 - In development, proper HTTP status codes and error descriptions aid debugging.
 
 ### Why layered configuration

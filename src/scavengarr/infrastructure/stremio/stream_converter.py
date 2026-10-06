@@ -10,7 +10,7 @@ from collections.abc import Callable
 from urllib.parse import urlparse
 
 from scavengarr.domain.entities.stremio import RankedStream
-from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.domain.plugins.base import SearchResult, link_url
 from scavengarr.infrastructure.stremio.release_parser import (
     parse_language,
     parse_quality,
@@ -108,8 +108,7 @@ def _convert_single_result(
 
     if result.download_links:
         for link in result.download_links:
-            # Plugins use "link" key (some older ones use "url")
-            url = (link.get("link", "") or link.get("url", "")).strip()
+            url = link_url(link)
             if not url:
                 continue
 

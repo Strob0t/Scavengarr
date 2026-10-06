@@ -68,15 +68,7 @@ class TorznabUnsupportedAction(TorznabError):
     pass
 
 
-class TorznabNoPluginsAvailable(TorznabError):
-    pass
-
-
 class TorznabPluginNotFound(TorznabError):
-    pass
-
-
-class TorznabUnsupportedPlugin(TorznabError):
     pass
 
 

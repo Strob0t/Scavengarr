@@ -8,6 +8,8 @@ import httpx
 import respx
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.domain.plugins.exceptions import PluginNotFoundError
+from scavengarr.infrastructure.plugins.constants import search_max_results
 from scavengarr.infrastructure.scoring.search_prober import (
     MiniSearchProber,
     _extract_hoster,
@@ -101,7 +103,7 @@ class TestProbe:
     @respx.mock
     async def test_plugin_not_found(self) -> None:
         registry = MagicMock()
-        registry.get.side_effect = KeyError("unknown")
+        registry.get.side_effect = PluginNotFoundError("unknown")
         async with httpx.AsyncClient() as client:
             prober = MiniSearchProber(
                 plugins=registry,
@@ -144,6 +146,25 @@ class TestProbe:
 
         assert probe.items_found == 30
         assert probe.items_used == 20
+
+    async def test_plugin_pages_only_to_max_items(self) -> None:
+        """Plugins paged up to their 1000-result limit for a probe that
+        counts 20 results, and long lists ran into the probe's timeout."""
+        seen: list[int | None] = []
+
+        async def _search(query: str, category: int | None = None) -> list:
+            seen.append(search_max_results.get())
+            return _make_results(3)
+
+        registry = _mock_registry()
+        registry.get.return_value.search = _search
+        async with httpx.AsyncClient() as client:
+            prober = MiniSearchProber(plugins=registry, http_client=client)
+            probe = await prober.probe("sto", "query", 2000, max_items=20)
+
+        assert probe.ok is True
+        assert seen == [20]
+        assert search_max_results.get() is None
 
     @respx.mock
     async def test_hoster_partial_reachable(self) -> None:

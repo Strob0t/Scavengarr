@@ -32,8 +32,8 @@ Torznab's `<link>` element expects a URL that returns a downloadable file. Since
 ## End-to-End Flow
 
 1. **Search** — Torznab `?t=search&q=...` makes the plugin return `SearchResult` objects with download links.
-1. **Link validation** — `HttpxSearchEngine.validate_results()` drops dead links and results without any valid link (see [Link Validation](./link-validation.md)).
-1. **CrawlJob creation** — `CrawlJobFactory` converts each `SearchResult` into its own `CrawlJob`.
+1. **Link validation** — `HttpxSearchEngine.validate_results()` checks the results in order until the requested page (`offset + limit`) is full; it drops dead links and results without any valid link (see [Link Validation](./link-validation.md)).
+1. **CrawlJob creation** — `CrawlJobFactory` converts each `SearchResult` of that page into its own `CrawlJob`.
 1. **Cache storage** — `CacheCrawlJobRepository` stores each job under `crawljob:{job_id}` with the `cache.crawljob_ttl_seconds` TTL (default 3600); all jobs of a search are saved in parallel. An item whose job could not be saved is dropped from the answer (`crawljob_save_failed`): its grab would answer 404.
 1. **Torznab XML** — each `<item>` has `<link>` and `<enclosure>` pointing to `/api/v1/download/{job_id}`.
 1. **Grab** — Sonarr/Radarr request the download URL when a result is grabbed.
@@ -46,6 +46,7 @@ Sonarr/Radarr                      Scavengarr
      │─────────────────────────────────→│
      │                                  │── Lookup in cache
      │                                  │── Check expiry
+     │                                  │── Resolve links (jobs with resolve_plugin)
      │                                  │── Serialize to .crawljob
      │  200 OK (application/x-crawljob) │
      │←─────────────────────────────────│
@@ -181,7 +182,7 @@ setBeforePackagizerEnabled=false
 
 ### Multi-Link Packaging
 
-When a search result has several validated download links (e.g. from different hosters), all of them go into the same `.crawljob` file, in the deterministic order produced by link validation (primary link first, then alternatives). JDownloader processes all links in the job, which gives redundancy if one hoster is slow or offline.
+When a search result has several validated download links (e.g. from different hosters), all of them go into the same `.crawljob` file, in the deterministic order produced by link validation (primary link first, then alternatives). JDownloader processes all links in the job, which gives redundancy if one hoster is slow or offline. With `validate_download_links: false` no link is checked, and each job holds only the result's `download_link` (unless the plugin filled `validated_links` itself).
 
 ```text
 text=https://hoster1.example/file/abc
@@ -193,7 +194,7 @@ https://hoster3.example/file/ghi
 
 ## CrawlJobFactory
 
-`CrawlJobFactory.create_from_search_result(result, *, job_id=None)` converts a `SearchResult` into a `CrawlJob`.
+`CrawlJobFactory.create_from_search_result(result, *, resolve_plugin=None)` converts a `SearchResult` into a `CrawlJob`; `resolve_plugin` names the plugin that resolves the links at grab time.
 
 ### Constructor Parameters
 

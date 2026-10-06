@@ -13,16 +13,17 @@ Categories: Software (4000), Games (4050), Movies (2000), TV (5000), E-Books (70
 from __future__ import annotations
 
 import asyncio
-from html.parser import HTMLParser
 from urllib.parse import quote_plus, urljoin
 
 from patchright.async_api import Error as PlaywrightError
+from selectolax.lexbor import LexborHTMLParser, LexborNode
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.categories import (
     category_matches,
     served_category,
 )
+from scavengarr.infrastructure.plugins.dom import ancestors, classes, parse_page
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
 # ---------------------------------------------------------------------------
@@ -50,200 +51,114 @@ def _row_category(row: dict[str, str]) -> int:
     return _CATEGORY_MAP.get(row.get("type_str", "").strip().lower(), 8000)
 
 
-class _SearchResultParser(HTMLParser):
-    """Parse the flat table from DDLSpot search results.
+class _SearchResultParser:
+    """Parse the flat table from DDLSpot search results (selectolax).
 
     The table uses alternating row pairs:
     - Title row (``<tr class="row">``): title link, age, type, size, link count
     - Detail row (next ``<tr>``): filename and hoster info in ``<td class="links">``
 
+    A title row counts once its detail row follows. The "Next Page" link
+    sits below the table::
+
+        <div class="box-content">[ 1 ] &nbsp;
+          <a href="/o/oppenheimer/2/" title="Downloads | Page 2">Next Page »</a>
+        </div>
+
     Produces a list of dicts with keys: title, detail_url, size, type_str.
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self.results: list[dict[str, str]] = []
         self.next_page_url: str = ""
 
-        # State tracking
-        self._in_table = False
-        self._in_tbody = False
-        self._in_title_row = False
-        self._in_detail_row = False
-        self._td_index = 0
-        self._in_td = False
-        self._in_a = False
-        self._in_nav_a = False
-        self._nav_a_href = ""
-        self._nav_a_text = ""
-
-        # Current row data
-        self._current_title = ""
-        self._current_title_attr = ""
-        self._current_detail_url = ""
-        self._current_size = ""
-        self._current_type = ""
-        self._expect_detail_row = False
-
-    def handle_starttag(  # noqa: C901
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
-        attr_dict = dict(attrs)
-
-        if tag == "table":
-            classes = (attr_dict.get("class") or "").split()
-            if "download" in classes:
-                self._in_table = True
-
-        # Track potential "Next Page" links outside the table
-        if tag == "a" and not self._in_table:
-            href = attr_dict.get("href", "")
-            if href:
-                self._in_nav_a = True
-                self._nav_a_href = href
-                self._nav_a_text = ""
-
-        if not self._in_table:
-            return
-
-        if tag == "tbody":
-            self._in_tbody = True
-
-        if tag == "tr" and self._in_tbody:
-            self._handle_tr(attr_dict)
-
-        if tag == "td" and (self._in_title_row or self._in_detail_row):
-            self._in_td = True
-            self._td_index += 1
-
-        if tag == "a" and self._in_title_row and self._td_index == 1:
-            href = attr_dict.get("href", "")
-            if href:
-                self._current_detail_url = href
-            # The link text is truncated ("...X265-Me.."); the title attribute
-            # holds the full name as "<name> | <hosters>".
-            full = (attr_dict.get("title") or "").split(" | ")[0].strip()
-            if full:
-                self._current_title_attr = full
-            self._in_a = True
-
-    def _handle_tr(self, attr_dict: dict[str, str | None]) -> None:
-        classes = (attr_dict.get("class") or "").split()
-        if "row" in classes:
-            # Title row
-            self._in_title_row = True
-            self._in_detail_row = False
-            self._td_index = 0
-            self._current_title = ""
-            self._current_title_attr = ""
-            self._current_detail_url = ""
-            self._current_size = ""
-            self._current_type = ""
-        elif self._expect_detail_row:
-            # Detail row (follows title row)
-            self._in_detail_row = True
-            self._in_title_row = False
-            self._td_index = 0
-
-    def handle_data(self, data: str) -> None:
-        if self._in_nav_a:
-            self._nav_a_text += data
-
-        if not self._in_td:
-            return
-
-        text = data.strip()
-        if not text:
-            return
-
-        if self._in_title_row:
-            if self._td_index == 1 and self._in_a:
-                # <b>Iron</b> <b>Man</b> ... arrives as separate chunks
-                sep = " " if self._current_title else ""
-                self._current_title += sep + text
-            elif self._td_index == 3:
-                self._current_type = text
-            elif self._td_index == 4:
-                self._current_size = text
-
-    def _handle_a_end(self) -> None:
-        if self._in_a:
-            self._in_a = False
-        if self._in_nav_a:
-            self._in_nav_a = False
-            if "next page" in self._nav_a_text.strip().lower():
-                self.next_page_url = self._nav_a_href
-
-    def _handle_tr_end(self) -> None:
-        if self._in_title_row:
-            self._in_title_row = False
-            self._expect_detail_row = True
-        elif self._in_detail_row:
-            self._in_detail_row = False
-            self._expect_detail_row = False
-            title = self._current_title_attr or self._current_title
-            if title and self._current_detail_url:
-                self.results.append(
-                    {
-                        "title": title,
-                        "detail_url": self._current_detail_url,
-                        "size": self._current_size,
-                        "type_str": self._current_type,
-                    }
-                )
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "table" and self._in_table:
-            self._in_table = False
-            self._in_tbody = False
-        elif tag == "tbody":
-            self._in_tbody = False
-        elif tag == "a":
-            self._handle_a_end()
-        elif tag == "td":
-            self._in_td = False
-        elif tag == "tr":
-            self._handle_tr_end()
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        # The last title row, until its detail row follows
+        pending: dict[str, str] | None = None
+        for tr in tree.css("table.download tbody tr"):
+            if "row" in classes(tr):
+                pending = _read_title_row(tr)
+            elif pending is not None:
+                if pending["title"] and pending["detail_url"]:
+                    self.results.append(pending)
+                pending = None
+        # The last "Next Page" link outside the table
+        for link in tree.css("a[href]"):
+            href = link.attributes.get("href") or ""
+            if (
+                href
+                and "next page" in link.text().lower()
+                and not any(_is_download_table(node) for node in ancestors(link))
+            ):
+                self.next_page_url = href
 
 
-class _DetailPageParser(HTMLParser):
-    """Parse a DDLSpot detail page for download URLs.
+def _read_title_row(row: LexborNode) -> dict[str, str]:
+    """Title, detail URL, size and type of a title row ("" if missing)."""
+    cells = row.css("td")
+    links = cells[0].css("a") if cells else []
+    title = detail_url = ""
+    for link in links:
+        detail_url = link.attributes.get("href") or detail_url
+        # The link text is truncated ("...X265-Me.."); the title attribute
+        # holds the full name as "<name> | <hosters>".
+        title = (link.attributes.get("title") or "").split(" | ")[0].strip() or title
+    if not title:
+        # <b>Iron</b> <b>Man</b> ... are separate text nodes
+        title = " ".join(text for link in links for text in _texts(link))
+    return {
+        "title": title,
+        "detail_url": detail_url,
+        "size": _cell_text(cells, 3),
+        "type_str": _cell_text(cells, 2),
+    }
+
+
+def _cell_text(cells: list[LexborNode], index: int) -> str:
+    """The last text of the cell at *index* ("" if none)."""
+    texts = _texts(cells[index]) if index < len(cells) else []
+    return texts[-1] if texts else ""
+
+
+def _texts(node: LexborNode) -> list[str]:
+    """The stripped, non-empty text nodes of *node*, in document order."""
+    return [
+        text
+        for child in node.traverse(include_text=True)
+        if (text := (child.text_content or "").strip())
+    ]
+
+
+def _is_download_table(node: LexborNode) -> bool:
+    """Whether *node* is the search results table."""
+    return node.tag == "table" and "download" in classes(node)
+
+
+class _DetailPageParser:
+    """Parse a DDLSpot detail page for download URLs (selectolax).
 
     Download URLs appear as plain text in ``<div class="links-box">``,
     one URL per line separated by ``<br>`` tags.
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self.urls: list[str] = []
-        self._in_links_box = False
-        self._div_depth = 0
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attr_dict = dict(attrs)
-        if tag == "div":
-            if self._in_links_box:
-                self._div_depth += 1
-            else:
-                classes = (attr_dict.get("class") or "").split()
-                if "links-box" in classes:
-                    self._in_links_box = True
-                    self._div_depth = 0
-
-    def handle_data(self, data: str) -> None:
-        if not self._in_links_box:
-            return
-        for line in data.split("\n"):
-            line = line.strip()
-            if line.startswith("http"):
-                self.urls.append(line)
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "div" and self._in_links_box:
-            if self._div_depth > 0:
-                self._div_depth -= 1
-            else:
-                self._in_links_box = False
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for box in tree.css("div.links-box"):
+            # A box inside another one is part of it
+            if any(
+                node.tag == "div" and "links-box" in classes(node)
+                for node in ancestors(box)
+            ):
+                continue
+            # One line per text node and newline: a <br> ends a URL too
+            for line in box.text(separator="\n").split("\n"):
+                url = line.strip()
+                if url.startswith("http"):
+                    self.urls.append(url)
 
 
 class DDLSpotPlugin(PlaywrightPluginBase):
@@ -271,8 +186,7 @@ class DDLSpotPlugin(PlaywrightPluginBase):
         async def _fetch_one(url: str) -> tuple[str, list[str]]:
             async with sem:
                 html = await self._fetch_detail_page(url)
-            parser = _DetailPageParser()
-            parser.feed(html)
+            parser = await parse_page(_DetailPageParser(), html)
             return url, parser.urls
 
         pairs = await asyncio.gather(*(_fetch_one(url) for url in urls))
@@ -353,8 +267,7 @@ class DDLSpotPlugin(PlaywrightPluginBase):
                     "ddlspot_search_page_failed", url=current_url, error=str(exc)
                 )
                 break
-            parser = _SearchResultParser()
-            parser.feed(html)
+            parser = await parse_page(_SearchResultParser(), html)
 
             if not parser.results:
                 break

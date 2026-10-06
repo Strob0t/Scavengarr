@@ -13,7 +13,3 @@ class PluginLoadError(PluginError):
 
 class PluginNotFoundError(PluginError):
     """Raised when a plugin name is not known to the registry."""
-
-
-class DuplicatePluginError(PluginError):
-    """Raised when two plugins resolve to the same name."""

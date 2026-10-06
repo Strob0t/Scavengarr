@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
+from scavengarr.infrastructure.hoster_resolvers._domain import extract_domain
 
 if TYPE_CHECKING:
     from scavengarr.infrastructure.browser.stealth_pool import StealthPool
@@ -38,7 +39,7 @@ async def capture_stream(
     if media is None:
         log.info(f"{hoster}_browser_no_stream", url=embed_url)
         return None
-    log.debug(f"{hoster}_browser_stream", url=media.url[:80])
+    log.debug(f"{hoster}_browser_stream", cdn=extract_domain(media.url))
     return ResolvedStream(
         video_url=media.url,
         is_hls=".m3u8" in media.url,

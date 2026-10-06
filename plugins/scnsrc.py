@@ -16,14 +16,16 @@ from __future__ import annotations
 
 import asyncio
 import re
-from html.parser import HTMLParser
 from urllib.parse import quote_plus, urljoin
+
+from selectolax.lexbor import LexborHTMLParser, LexborNode
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.categories import (
     category_matches,
     served_category,
 )
+from scavengarr.infrastructure.plugins.dom import outermost, parse_page
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
 # ---------------------------------------------------------------------------
@@ -114,187 +116,84 @@ _CATEGORY_NAME_MAP: dict[str, int] = {
 }
 
 
-class _PostParser(HTMLParser):
-    """Extract posts from scnsrc.me listing/search pages.
+class _PostParser:
+    """Extract posts from scnsrc.me listing/search pages (selectolax).
 
     Each post has:
     - ``<div class="post" id="post-NNN">``
     - ``<h2><a href="/slug/">Title</a></h2>``
     - ``<div class="cat meta">`` with category link
     - ``<div class="tvshow_info">`` with release name + download links
+
+    A post nested in another one is part of it. The last title link and the
+    last category link win.
     """
 
+    _HOSTER_LABELS = frozenset({"torrent", "usenet", "nzb", "ddl"})
+
     def __init__(self, base_url: str) -> None:
-        super().__init__()
         self.results: list[dict[str, str | list[dict[str, str]]]] = []
         self._base_url = base_url
 
-        # State tracking
-        self._in_post = False
-        self._post_div_depth = 0
-        self._in_h2 = False
-        self._in_h2_a = False
-        self._in_tvshow_info = False
-        self._tvshow_div_depth = 0
-        self._in_strong = False
-        self._in_cat_meta = False
-        self._in_cat_a = False
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for post in outermost(tree.css("div.post[id^='post-']")):
+            self._add_post(post)
 
-        # Current post data
-        self._current_title = ""
-        self._current_url = ""
-        self._current_release = ""
-        self._current_links: list[dict[str, str]] = []
-        self._current_category = ""
-        self._strong_text = ""
-        self._after_download_label = False
-
-    def _reset_post(self) -> None:
-        self._current_title = ""
-        self._current_url = ""
-        self._current_release = ""
-        self._current_links = []
-        self._current_category = ""
-        self._after_download_label = False
-
-    def _emit_post(self) -> None:
-        title = self._current_release or self._current_title
-        if title and (self._current_links or self._current_url):
+    def _add_post(self, post: LexborNode) -> None:
+        title = url = category = ""
+        for link in post.css("h2 a[href]"):
+            href = link.attributes.get("href") or ""
+            if href:
+                url = _clean_wayback_url(urljoin(self._base_url, href))
+                title = link.text().strip()
+        # "s": selectors match rel values case-insensitively otherwise
+        for link in post.css("div.cat a[rel*='category' s]"):
+            if text := link.text().strip():
+                category = text
+        release, links = self._read_tvshow_info(post)
+        title = release or title
+        if title and (links or url):
             self.results.append(
                 {
                     "title": title,
-                    "url": self._current_url,
-                    "release_name": self._current_release,
-                    "links": self._current_links.copy(),
-                    "category": self._current_category,
+                    "url": url,
+                    "release_name": release,
+                    "links": links,
+                    "category": category,
                 }
             )
 
-    def _handle_div_start(self, attr_dict: dict[str, str | None]) -> None:
-        classes = (attr_dict.get("class", "") or "").split()
+    def _read_tvshow_info(self, post: LexborNode) -> tuple[str, list[dict[str, str]]]:
+        """Release name and download links of the post's ``tvshow_info``.
 
-        if self._in_post:
-            self._post_div_depth += 1
-        elif "post" in classes:
-            post_id = attr_dict.get("id", "")
-            if post_id and str(post_id).startswith("post-"):
-                self._in_post = True
-                self._post_div_depth = 0
-                self._reset_post()
-
-        if self._in_post and "tvshow_info" in (attr_dict.get("class", "") or ""):
-            self._in_tvshow_info = True
-            self._tvshow_div_depth = 0
-        elif self._in_tvshow_info:
-            self._tvshow_div_depth += 1
-
-        if self._in_post and "cat" in classes:
-            self._in_cat_meta = True
-
-    def _handle_a_start(self, attr_dict: dict[str, str | None]) -> None:
-        href = str(attr_dict.get("href", "") or "")
-
-        if self._in_h2 and href:
-            self._in_h2_a = True
-            self._current_url = _clean_wayback_url(urljoin(self._base_url, href))
-            self._current_title = ""
-
-        if self._in_cat_meta and "category" in (attr_dict.get("rel", "") or ""):
-            self._in_cat_a = True
-
-        if self._in_tvshow_info and href and self._after_download_label:
-            self._current_links.append(
-                {
-                    "hoster": "",
-                    "link": _clean_wayback_url(href),
-                }
-            )
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attr_dict = dict(attrs)
-
-        if tag == "div":
-            self._handle_div_start(attr_dict)
-        elif tag == "h2" and self._in_post:
-            self._in_h2 = True
-        elif tag == "a":
-            self._handle_a_start(attr_dict)
-        elif tag == "strong" and self._in_tvshow_info:
-            self._in_strong = True
-            self._strong_text = ""
-
-    def handle_data(self, data: str) -> None:
-        text = data.strip()
-
-        if self._in_h2_a:
-            self._current_title += data
-
-        if self._in_strong:
-            self._strong_text += data
-
-        if self._in_cat_a and text:
-            self._current_category = text
-
-        # Set hoster name on last link from anchor text
-        if (
-            self._in_tvshow_info
-            and self._current_links
-            and not self._in_strong
-            and text
-        ):
-            last = self._current_links[-1]
-            if not last["hoster"] and text.lower() in {
-                "torrent",
-                "usenet",
-                "nzb",
-                "ddl",
-            }:
-                last["hoster"] = text.lower()
-
-    def _handle_strong_end(self) -> None:
-        self._in_strong = False
-        text = self._strong_text.strip()
-        lower = text.lower()
-        if lower.startswith("download"):
-            self._after_download_label = True
-        elif lower.startswith("info"):
-            # Stop collecting links after "Info:" label
-            self._after_download_label = False
-        elif text and not self._current_release:
-            if "." in text and len(text) > 10:
-                self._current_release = text
-
-    def _handle_div_end(self) -> None:
-        if self._in_tvshow_info:
-            if self._tvshow_div_depth > 0:
-                self._tvshow_div_depth -= 1
-            else:
-                self._in_tvshow_info = False
-                self._after_download_label = False
-
-        if self._in_cat_meta and not self._in_tvshow_info:
-            self._in_cat_meta = False
-
-        if self._in_post and not self._in_tvshow_info:
-            if self._post_div_depth > 0:
-                self._post_div_depth -= 1
-            else:
-                self._in_post = False
-                self._emit_post()
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "a":
-            if self._in_h2_a:
-                self._in_h2_a = False
-                self._current_title = self._current_title.strip()
-            if self._in_cat_a:
-                self._in_cat_a = False
-        elif tag == "h2":
-            self._in_h2 = False
-        elif tag == "strong" and self._in_strong:
-            self._handle_strong_end()
-        elif tag == "div":
-            self._handle_div_end()
+        The release name is the first ``<strong>`` that looks like a scene
+        name. A ``Download:`` label starts the links, an ``Info:`` label (or
+        the block's end) stops them; a link's text names its hoster.
+        """
+        release = ""
+        links: list[dict[str, str]] = []
+        for box in outermost(post.css("div[class*='tvshow_info']")):
+            after_download_label = False
+            for node in box.css("strong, a"):
+                if node.tag == "strong":
+                    text = node.text().strip()
+                    lower = text.lower()
+                    if lower.startswith("download"):
+                        after_download_label = True
+                    elif lower.startswith("info"):
+                        after_download_label = False
+                    elif not release and "." in text and len(text) > 10:
+                        release = text
+                elif after_download_label and (href := node.attributes.get("href")):
+                    label = node.text().strip().lower()
+                    links.append(
+                        {
+                            "hoster": label if label in self._HOSTER_LABELS else "",
+                            "link": _clean_wayback_url(href),
+                        }
+                    )
+        return release, links
 
 
 def _clean_wayback_url(url: str) -> str:
@@ -316,65 +215,41 @@ def _search_paths(category: int) -> tuple[str, ...]:
     )
 
 
-class _PostPageParser(HTMLParser):
-    """Extract release name and download links from a single post page.
+def _is_release_name(text: str) -> bool:
+    """Whether *text* looks like a scene release name (``Title.2023.1080p-GRP``)."""
+    return "." in text and len(text) > 10 and not any(c.isspace() for c in text)
+
+
+class _PostPageParser:
+    """Extract release name and download links from a single post page (selectolax).
 
     Covers both layouts: TV posts (``tvshow_info`` block) and film/P2P posts
     (info table). In both, the release name is the first ``<strong>`` that
-    looks like a scene name, and the download links are anchors labelled
-    Torrent / Usenet / NZB inside ``div.storycontent``.
+    looks like a scene name (a period, more than 10 characters, no spaces:
+    film posts bold an awards line before it), and the download links are
+    anchors labelled Torrent / Usenet / NZB inside ``div.storycontent``.
     """
 
     _LINK_LABELS = frozenset({"torrent", "usenet", "nzb"})
 
     def __init__(self) -> None:
-        super().__init__()
         self.release_name = ""
         self.links: list[dict[str, str]] = []
-        self._story_depth = 0  # >0 while inside div.storycontent
-        self._in_strong = False
-        self._strong_text = ""
-        self._href = ""
-        self._a_text = ""
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attr_dict = dict(attrs)
-        if tag == "div":
-            classes = (attr_dict.get("class") or "").split()
-            if self._story_depth:
-                self._story_depth += 1
-            elif "storycontent" in classes:
-                self._story_depth = 1
-        if not self._story_depth:
-            return
-        if tag == "strong":
-            self._in_strong = True
-            self._strong_text = ""
-        elif tag == "a":
-            self._href = attr_dict.get("href") or ""
-            self._a_text = ""
-
-    def handle_data(self, data: str) -> None:
-        if self._in_strong:
-            self._strong_text += data
-        if self._href:
-            self._a_text += data
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "div" and self._story_depth:
-            self._story_depth -= 1
-        elif tag == "strong" and self._in_strong:
-            self._in_strong = False
-            text = self._strong_text.strip()
-            if not self.release_name and "." in text and len(text) > 10:
-                self.release_name = text
-        elif tag == "a" and self._href:
-            label = self._a_text.strip().lower()
-            if label in self._LINK_LABELS and self._href.startswith("http"):
-                self.links.append(
-                    {"hoster": label, "link": _clean_wayback_url(self._href)}
-                )
-            self._href = ""
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for story in outermost(tree.css("div.storycontent")):
+            for strong in story.css("strong"):
+                text = strong.text().strip()
+                if not self.release_name and _is_release_name(text):
+                    self.release_name = text
+            for link in story.css("a[href]"):
+                href = link.attributes.get("href") or ""
+                label = link.text().strip().lower()
+                if label in self._LINK_LABELS and href.startswith("http"):
+                    self.links.append(
+                        {"hoster": label, "link": _clean_wayback_url(href)}
+                    )
 
 
 class ScnSrcPlugin(PlaywrightPluginBase):
@@ -414,8 +289,9 @@ class ScnSrcPlugin(PlaywrightPluginBase):
         """
         if post.get("links") or not post.get("url"):
             return post
-        parser = _PostPageParser()
-        parser.feed(await self._fetch_page(str(post["url"])))
+        parser = await parse_page(
+            _PostPageParser(), await self._fetch_page(str(post["url"]))
+        )
         return {**post, "release_name": parser.release_name, "links": parser.links}
 
     async def _search_page(
@@ -441,8 +317,7 @@ class ScnSrcPlugin(PlaywrightPluginBase):
 
         html = await self._fetch_page(url)
 
-        parser = _PostParser(self.base_url)
-        parser.feed(html)
+        parser = await parse_page(_PostParser(self.base_url), html)
 
         self._log.info(
             "scnsrc_search_page",

@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from urllib.parse import urljoin, urlparse, urlsplit
 
 import httpx
@@ -34,6 +34,9 @@ _manifest_cache: dict[str, tuple[bytes, str, float]] = {}
 
 # Global semaphore for CDN proxy fetches (prevents stampede).
 _CDN_SEMAPHORE = asyncio.Semaphore(50)
+
+# Segments go out in pieces of this size (``stream_hls_segment``)
+_SEGMENT_CHUNK = 65536
 
 # URI attribute of an HLS tag (EXT-X-MEDIA, EXT-X-KEY, EXT-X-MAP, …)
 _URI_ATTR_RE = re.compile(r'URI="([^"]*)"')
@@ -56,15 +59,18 @@ def cdn_base_from_url(video_url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}{base_path}"
 
 
-def _proxy_uri(uri: str, cdn_base: str, proxy_base: str) -> str:
+def _proxy_uri(uri: str, cdn_base: str, proxy_base: str, playlist_dir: str) -> str:
     """*uri* as a proxy URL when it points at the stream's CDN, else as is.
 
-    Relative URIs stay: they resolve against the proxy URL of the playlist
-    that lists them, which mirrors the CDN path. A URI from the CDN's root
+    A relative URI becomes ``<proxy_base><playlist_dir><uri>``: resolved
+    against the request URL instead, it went to whatever link that URL
+    named, not to the one *proxy_base* names (the playlist's own, which a
+    later resolution leaves alone). A URI from the CDN's root
     (``/secure/…``, ``//host/…`` or an absolute URL outside *cdn_base*)
     becomes ``<proxy_base>/<path>``; the proxy joins that absolute path
-    with the CDN origin (``build_cdn_url``). Other origins stay direct:
-    the proxy only fetches from the stream's own CDN.
+    with the CDN origin (``build_cdn_url``). Other origins and schemes
+    (``data:``, ``skd:``) stay: the proxy only fetches from the stream's own
+    CDN.
     """
     if uri.startswith(cdn_base):
         return proxy_base + uri[len(cdn_base) :]
@@ -75,31 +81,38 @@ def _proxy_uri(uri: str, cdn_base: str, proxy_base: str) -> str:
         target = urlsplit(f"{base.scheme}://{base.netloc}{uri}")
     else:
         target = urlsplit(uri)
+        if not target.scheme:
+            return f"{proxy_base}{playlist_dir}{uri}"
         if target.scheme not in ("http", "https"):
-            return uri  # relative
+            return uri
     if (target.scheme, target.netloc) != (base.scheme, base.netloc):
         return uri
     query = f"?{target.query}" if target.query else ""
     return f"{proxy_base}{target.path}{query}"
 
 
-def rewrite_manifest(content: str, cdn_base: str, proxy_base: str) -> str:
+def rewrite_manifest(
+    content: str, cdn_base: str, proxy_base: str, playlist_dir: str = ""
+) -> str:
     """Point the CDN URIs of an HLS manifest at the proxy.
 
     Rewrites URI lines and the ``URI="…"`` attributes of tags (audio
-    renditions, keys, init segments) with ``_proxy_uri``. Query parameters
-    (auth tokens) and line endings are preserved.
+    renditions, keys, init segments) with ``_proxy_uri``; *playlist_dir* is
+    the manifest's directory below *proxy_base* (``720p/``; empty for the
+    stream's own playlist). Query parameters (auth tokens) and line endings
+    are preserved.
     """
+
+    def proxied(uri: str) -> str:
+        return _proxy_uri(uri, cdn_base, proxy_base, playlist_dir)
+
     lines: list[str] = []
     for line in content.splitlines(keepends=True):
         stripped = line.strip()
         if stripped.startswith("#"):
-            line = _URI_ATTR_RE.sub(
-                lambda m: f'URI="{_proxy_uri(m.group(1), cdn_base, proxy_base)}"',
-                line,
-            )
+            line = _URI_ATTR_RE.sub(lambda m: f'URI="{proxied(m.group(1))}"', line)
         elif stripped:
-            line = line.replace(stripped, _proxy_uri(stripped, cdn_base, proxy_base), 1)
+            line = line.replace(stripped, proxied(stripped), 1)
         lines.append(line)
     return "".join(lines)
 
@@ -170,14 +183,24 @@ async def stream_hls_segment(
     http_client: httpx.AsyncClient,
     url: str,
     headers: dict[str, str],
-) -> tuple[AsyncIterator[bytes], str]:
+    *,
+    head: bool = False,
+) -> tuple[AsyncGenerator[bytes], str]:
     """Stream an HLS segment from CDN without buffering full body.
 
     Returns ``(byte_iterator, content_type)``.
     Raises ``httpx.HTTPStatusError`` on non-2xx responses.
 
     Uses ``httpx.stream()`` so that segment bytes flow through the
-    proxy without loading the entire 2-10 MB segment into memory.
+    proxy without loading the entire 2-10 MB segment into memory. They go
+    out in pieces of ``_SEGMENT_CHUNK``: VOE's CDN sends 4 KiB TLS
+    records, and passed through one by one, each a response write, they
+    cost the proxy 39-46 ms of CPU per MB against 25 ms in 64 KiB pieces
+    (dev-server end-to-end run, 2026-10-05). An encoded body
+    (``Content-Encoding``, which the proxy does not forward) is decoded.
+
+    For a HEAD request (*head*) the iterator is empty: the CDN's answer
+    is closed after its status and headers, before its bytes.
     """
     async with _CDN_SEMAPHORE:
         resp = await http_client.send(
@@ -196,9 +219,11 @@ async def stream_hls_segment(
 
     ct = resp.headers.get("content-type", "application/octet-stream")
 
-    async def _iter() -> AsyncIterator[bytes]:
+    async def _iter() -> AsyncGenerator[bytes]:
         try:
-            async for chunk in resp.aiter_bytes(chunk_size=65536):
+            if head:
+                return
+            async for chunk in resp.aiter_bytes(chunk_size=_SEGMENT_CHUNK):
                 yield chunk
         finally:
             await resp.aclose()

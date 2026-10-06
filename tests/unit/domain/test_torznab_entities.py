@@ -11,11 +11,9 @@ from scavengarr.domain.entities import (
     TorznabExternalError,
     TorznabIndexInfo,
     TorznabItem,
-    TorznabNoPluginsAvailable,
     TorznabPluginNotFound,
     TorznabQuery,
     TorznabUnsupportedAction,
-    TorznabUnsupportedPlugin,
 )
 
 
@@ -106,9 +104,7 @@ class TestTorznabExceptions:
         exceptions = [
             TorznabBadRequest,
             TorznabUnsupportedAction,
-            TorznabNoPluginsAvailable,
             TorznabPluginNotFound,
-            TorznabUnsupportedPlugin,
             TorznabExternalError,
         ]
         for exc_class in exceptions:

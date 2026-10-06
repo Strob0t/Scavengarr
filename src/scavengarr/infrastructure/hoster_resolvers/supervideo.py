@@ -21,7 +21,6 @@ from scavengarr.infrastructure.browser.cloudflare import (
     is_cloudflare_challenge,
 )
 from scavengarr.infrastructure.hoster_resolvers._browser import capture_stream
-from scavengarr.infrastructure.hoster_resolvers._verify import verify_video_url
 
 if TYPE_CHECKING:
     from scavengarr.infrastructure.browser.stealth_pool import StealthPool
@@ -183,6 +182,10 @@ class SuperVideoResolver:
     JS challenge is detected (403 + "Just a moment").
     """
 
+    # No check of its own (see resolve): the registry checks its streams
+    # with verify_streams off too
+    needs_playback_check = True
+
     def __init__(
         self,
         http_client: httpx.AsyncClient,
@@ -214,19 +217,19 @@ class SuperVideoResolver:
             return None
 
         result = self._extract_video(html, url)
-        if result is not None:
-            # Add Referer header required for CDN playback
-            playback_headers = {"Referer": embed_url}
-            if not await self._verify_video_url(result.video_url, playback_headers):
-                log.warning("supervideo_video_unreachable", url=result.video_url[:120])
-                return None
-            return ResolvedStream(
-                video_url=result.video_url,
-                is_hls=result.is_hls,
-                quality=result.quality,
-                headers=playback_headers,
-            )
-        return None
+        if result is None:
+            return None
+        # No check of its own: the CDN answers a HEAD with a redirect to an
+        # ad domain and the playlist URL with a script page (2026-10-05).
+        # The registry's playback check reads the body, counts the page as
+        # unplayable, and the hoster breaker pauses SuperVideo until a
+        # probe finds a playlist again.
+        return ResolvedStream(
+            video_url=result.video_url,
+            is_hls=result.is_hls,
+            quality=result.quality,
+            headers={"Referer": embed_url},
+        )
 
     # ------------------------------------------------------------------
     # Fetch strategies
@@ -267,10 +270,6 @@ class SuperVideoResolver:
         except httpx.HTTPError:
             log.warning("supervideo_request_failed", url=embed_url)
             return None, False
-
-    async def _verify_video_url(self, url: str, headers: dict[str, str]) -> bool:
-        """HEAD-check the CDN URL to verify it is accessible."""
-        return await verify_video_url(self._http, url, headers, "supervideo")
 
     # ------------------------------------------------------------------
     # Extraction

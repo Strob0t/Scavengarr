@@ -311,6 +311,19 @@ class TestPaginationParser:
 
         assert parser.next_page_url == ("https://movieblog.to/page/3/?s=test")
 
+    def test_the_first_next_page_link_wins(self) -> None:
+        """A page that repeats the navigation keeps the first link (the old
+        parser kept the last one, unless a URL contained "Seite")."""
+        nav = (
+            '<div class="navigation_x"><div class="alignright">'
+            '<a href="https://movieblog.to/page/{n}/?s=test">'
+            "Nächste Seite &raquo;</a></div></div>"
+        )
+        parser = _PaginationParser()
+        parser.feed(nav.format(n=2) + nav.format(n=9))
+
+        assert parser.next_page_url == "https://movieblog.to/page/2/?s=test"
+
     def test_last_page_has_no_next(self) -> None:
         """On the last page, no Nächste Seite link exists."""
         html = (

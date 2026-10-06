@@ -15,7 +15,7 @@
 
 ## 2. YAML Plugin Schema (superseded)
 
-YAML plugins were implemented and later removed in `42fced9`. `AuthConfig` and `HttpOverrides` survive as plain dataclasses in `src/scavengarr/domain/plugins/plugin_schema.py`.
+YAML plugins were implemented and later removed in `42fced9`. `AuthConfig` and `HttpOverrides` survived as plain dataclasses in `src/scavengarr/domain/plugins/plugin_schema.py` until 2026-10-06, when they were removed unused.
 
 - [ ] 2.1 Create `src/scavengarr/plugins/schema.py` with Pydantic models (superseded):
   - [ ] `ScrapySelectors(BaseModel)`:
@@ -75,7 +75,7 @@ YAML plugins were implemented and later removed in `42fced9`. `AuthConfig` and `
   - [x] `PluginLoadError` - Generic load failures
   - [ ] `PluginValidationError` - Schema/protocol validation failures (superseded: removed in `03454a8`)
   - [x] `PluginNotFoundError` - Plugin name doesn't exist in registry
-  - [x] `DuplicatePluginError` - Two plugins with same name (defined, but never raised)
+  - [ ] `DuplicatePluginError` - Two plugins with same name (superseded: never raised, removed 2026-10-06)
 
 ## 4. Plugin Loader
 
@@ -121,7 +121,7 @@ YAML plugins were implemented and later removed in `42fced9`. `AuthConfig` and `
       - [x] Check if already cached
       - [x] If not, call `load_python_plugin(path)`
       - [x] Extract name from the loaded plugin's `name` attribute (planned fallback `plugin.__class__.__name__.lower()` not implemented)
-      - [ ] Validate name uniqueness (raise `DuplicatePluginError` if exists) — duplicates are skipped instead (first wins)
+      - [ ] Validate name uniqueness (raise `DuplicatePluginError` if exists) — duplicates are logged (`plugin_name_duplicate`) and skipped instead (first wins)
       - [x] Cache the plugin
       - [x] Return plugin
     - [x] Method `get(self, name: str) -> PluginProtocol`:
@@ -137,7 +137,7 @@ YAML plugins were implemented and later removed in `42fced9`. `AuthConfig` and `
 - [x] 6.1 Package exports (planned: `src/scavengarr/plugins/__init__.py`):
   - [x] Export `PluginRegistry` (and `load_python_plugin`) from `src/scavengarr/infrastructure/plugins/__init__.py`
   - [x] Export `SearchResult`, `PluginProtocol`, `PluginProvides` from `src/scavengarr/domain/plugins/__init__.py` (`PluginDefinition` superseded)
-  - [x] Export exceptions (`PluginLoadError`, `PluginNotFoundError`, `DuplicatePluginError`)
+  - [x] Export exceptions (`PluginLoadError`, `PluginNotFoundError`; `DuplicatePluginError` removed 2026-10-06)
 
 ## 7. Integration with Main App
 
@@ -257,7 +257,7 @@ plugin = TestPythonPlugin()
   - [ ] Test `list_names()` returns alphabetically sorted list
   - [ ] Test `get_by_mode("scrapy")` filters correctly (superseded; `get_mode()` is tested)
   - [ ] Test `get_by_mode("playwright")` filters correctly (superseded; `get_mode()` is tested)
-  - [ ] Test duplicate plugin names raise `DuplicatePluginError`
+  - [ ] Test duplicate plugin names raise `DuplicatePluginError` (superseded: duplicates are skipped, first wins)
   - [ ] Test `load_all()` forces loading of all plugins (superseded)
 - [ ] 8.5 Create `tests/integration/test_plugin_loading.py` (not created)
   - [ ] Test loading all fixture plugins via registry

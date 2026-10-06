@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     import asyncio
 
     from scavengarr.application.use_cases.stremio_catalog import StremioCatalogUseCase
+    from scavengarr.application.use_cases.stremio_links import StremioLinks
     from scavengarr.application.use_cases.stremio_stream import StremioStreamUseCase
     from scavengarr.domain.ports import (
         CachePort,
@@ -30,8 +31,9 @@ if TYPE_CHECKING:
     from scavengarr.infrastructure.browser.stealth_pool import StealthPool
     from scavengarr.infrastructure.concurrency import ConcurrencyPool
     from scavengarr.infrastructure.hoster_resolvers import HosterResolverRegistry
-    from scavengarr.infrastructure.metrics import MetricsCollector
+    from scavengarr.infrastructure.plugins.health_monitor import PluginHealthMonitor
     from scavengarr.infrastructure.scoring.scheduler import ScoringScheduler
+    from scavengarr.infrastructure.telemetry import Telemetry
 
 
 class AppState(State):
@@ -65,13 +67,15 @@ class AppState(State):
     # Playwright Stealth pool (optional — for CF bypass probing)
     stealth_pool: StealthPool | None
 
-    # Metrics (zero-impact in-memory counters)
-    metrics: MetricsCollector
+    # Metrics of the core's stages (/metrics, /api/v1/stats/metrics)
+    telemetry: Telemetry
 
     # Stremio (optional — requires TMDB API key)
     tmdb_client: TmdbClientPort | None
     stremio_stream_uc: StremioStreamUseCase | None
     stremio_catalog_uc: StremioCatalogUseCase | None
+    # The stored links behind /play and the HLS proxy
+    stremio_links: StremioLinks
 
     # Global concurrency pool (fair-share httpx + PW slots)
     concurrency_pool: ConcurrencyPool | None
@@ -86,3 +90,14 @@ class AppState(State):
     plugin_score_store: PluginScoreStorePort | None
     scoring_scheduler: ScoringScheduler | None
     _scoring_task: asyncio.Task[None] | None
+
+    # Checks of the Stremio plugins' sites (optional: off when the
+    # stremio.plugin_health_interval_seconds is 0)
+    plugin_health: PluginHealthMonitor | None
+    _plugin_health_task: asyncio.Task[None] | None
+
+    # Event-loop lag monitor (feeds telemetry)
+    _loop_lag_task: asyncio.Task[None]
+
+    # Adapts the stealth browser's page limit (PageBudget)
+    _page_budget_task: asyncio.Task[None]

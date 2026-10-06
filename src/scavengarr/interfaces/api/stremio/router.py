@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncGenerator
 from typing import Any, cast
 from urllib.parse import urlparse
 
@@ -12,12 +13,17 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from starlette.responses import StreamingResponse
 
+from scavengarr.application.stremio.stream_builder import HLS_MASTER
+from scavengarr.application.use_cases.stremio_links import StremioLinks
 from scavengarr.domain.entities.stremio import (
+    CachedStreamLink,
     StremioContentType,
     StremioMetaPreview,
     StremioStream,
     StremioStreamRequest,
 )
+from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
+from scavengarr.infrastructure.hoster_resolvers._domain import extract_domain
 from scavengarr.infrastructure.stremio.hls_proxy import (
     build_cdn_url,
     cdn_base_from_url,
@@ -38,6 +44,9 @@ _CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "*",
 }
+
+# FFmpeg's own User-Agent: Stremio's streaming server probes and converts with it
+_FFMPEG_AGENT = "Lavf/"
 
 
 def _catalogs(*, trending: bool) -> list[dict[str, Any]]:
@@ -315,38 +324,39 @@ async def stremio_stream(
     return JSONResponse(content={"streams": stremio_streams}, headers=_CORS_HEADERS)
 
 
-@router.get("/play/{stream_id}", response_model=None)
+@router.api_route("/play/{stream_id}", methods=["GET", "HEAD"], response_model=None)
 async def stremio_play(
     request: Request,
     stream_id: str,
 ) -> JSONResponse | RedirectResponse:
-    """Resolve a cached stream link to a playable video URL.
+    """Redirect to the current video URL of a stream link.
 
     Flow:
-        1. Look up the cached hoster URL by stream_id.
-        2. Use HosterResolverRegistry to extract the actual video URL.
-        3. Redirect to the resolved video URL (302).
-        4. Return 502 if resolution fails (never redirect to an embed page).
+        1. Look up the stored link by stream_id (404 when missing).
+        2. Take its video URL while fresh, else resolve the hoster URL
+           again (``StremioLinks``: autoplay and "Continue Watching" play a
+           stream object Stremio kept for an hour or for days). A hoster
+           whose CDN binds the video URL to the player's headers (VEEV)
+           resolves for this request's headers: the player sends the CDN the
+           same ones after the redirect.
+        3. Redirect to the video URL (302); 502 when the hoster gives no
+           video (never a redirect to an embed page).
+
+    HEAD answers like GET: a streaming server asks with HEAD first.
     """
     state = cast(AppState, request.app.state)
 
-    repo = getattr(state, "stream_link_repo", None)
-    if repo is None:
-        return _error_json(503, "stream link repository not configured")
+    links = getattr(state, "stremio_links", None)
+    if links is None:
+        return _error_json(503, "stream links not configured")
 
-    link = await repo.get(stream_id)
+    link = await links.get(stream_id)
     if link is None:
         log.warning("stremio_play_not_found", stream_id=stream_id)
         return _error_json(404, "stream expired or not found")
 
-    # Resolve hoster embed URL to actual video URL
-    registry = getattr(state, "hoster_resolver_registry", None)
-    if registry is None:
-        log.warning("stremio_play_no_resolver", stream_id=stream_id)
-        return _error_json(503, "hoster resolver not configured")
-
-    resolved = await registry.resolve(link.hoster_url, hoster=link.hoster)
-    if resolved is None:
+    current = await links.current(link, request.headers)
+    if current is None:
         log.warning(
             "stremio_play_resolution_failed",
             stream_id=stream_id,
@@ -355,30 +365,15 @@ async def stremio_play(
         )
         return _error_json(502, "could not extract video URL from hoster")
 
-    # Guard: reject resolved URLs that are just the embed page echoed back.
-    # Stremio cannot play HTML pages — only redirect to actual video URLs.
-    if (
-        resolved.video_url == link.hoster_url
-        and not resolved.is_hls
-        and not resolved.headers
-    ):
-        log.warning(
-            "stremio_play_not_a_video",
-            stream_id=stream_id,
-            hoster=link.hoster,
-            url=link.hoster_url,
-        )
-        return _error_json(502, "resolver returned embed page, not a video URL")
-
     log.info(
         "stremio_play_resolved",
         stream_id=stream_id,
         hoster=link.hoster,
-        video_url=resolved.video_url[:80],
-        is_hls=resolved.is_hls,
+        cdn=extract_domain(current.video_url),
+        is_hls=current.is_hls,
     )
     return RedirectResponse(
-        url=resolved.video_url,
+        url=current.video_url,
         status_code=302,
         headers=_CORS_HEADERS,
     )
@@ -403,13 +398,13 @@ def _cdn_error_response(
             "hls_proxy_cdn_error",
             stream_id=stream_id,
             status=exc.response.status_code,
-            url=target_url[:120],
+            cdn=extract_domain(target_url),
         )
         return _error_json(502, "CDN returned error")
     log.warning(
         "hls_proxy_network_error",
         stream_id=stream_id,
-        url=target_url[:120],
+        cdn=extract_domain(target_url),
     )
     return _error_json(502, "CDN request failed")
 
@@ -431,75 +426,216 @@ async def proxy_hls(
     server-side with the stored headers and rewrites manifest URLs so
     the HLS player routes subsequent requests through the proxy too.
 
+    The stream's playlist has a fixed path (``HLS_MASTER``): the proxy
+    serves the current one, resolved again when stale or refused by the
+    CDN, so a stream object Stremio kept still plays later.
+
     HEAD answers like GET (the server drops the body): Stremio Web reads
-    the stream's content type with a HEAD request before it plays.
+    the stream's content type with a HEAD request before it plays. A
+    segment is not downloaded for HEAD.
+
+    The playlist is not served to a streaming server's converter unless
+    ``stremio.allow_hls_transcoding`` is on (``_converter_refused``).
+
+    Each request is recorded by kind with its answer's status, until the
+    answer starts; segments with the bytes sent.
     """
     state = cast(AppState, request.app.state)
+    telemetry: TelemetryPort = getattr(state, "telemetry", NO_TELEMETRY)
+    kind = _hls_kind(path)
+    with telemetry.stage("hls_proxy", kind=kind) as stage:
+        response = await _proxy_hls(state, telemetry, stream_id, path, request)
+        stage.outcome = str(response.status_code)
+    if (
+        request.method == "GET"
+        and response.status_code == 200
+        and not isinstance(response, StreamingResponse)
+    ):
+        telemetry.record("hls_proxy_bytes", len(response.body), kind=kind)
+    return response
 
-    repo = getattr(state, "stream_link_repo", None)
-    if repo is None:
-        return _error_json(503, "stream link repository not configured")
 
-    link = await repo.get(stream_id)
-    if link is None:
-        log.warning("hls_proxy_not_found", stream_id=stream_id)
-        return _error_json(404, "stream expired or not found")
+def _hls_kind(path: str) -> str:
+    """The stream's own playlist (``master``), another ``playlist`` or a
+    ``segment``."""
+    if path == HLS_MASTER:
+        return "master"
+    return "playlist" if path.endswith(".m3u8") else "segment"
 
-    if not link.video_url or not link.is_hls:
-        log.warning("hls_proxy_not_hls", stream_id=stream_id)
-        return _error_json(400, "stream is not an HLS proxy stream")
 
-    # Reconstruct CDN headers
-    headers: dict[str, str] = {}
-    if link.video_headers:
-        try:
-            headers = json.loads(link.video_headers)
-        except (json.JSONDecodeError, ValueError):
-            log.warning("hls_proxy_bad_headers", stream_id=stream_id)
-
-    cdn_base = cdn_base_from_url(link.video_url)
-    query_string = _resolve_query_string(request.url.query or "", link.video_url)
+async def _counted(
+    chunks: AsyncGenerator[bytes], telemetry: TelemetryPort
+) -> AsyncGenerator[bytes]:
+    """A segment's chunks; the bytes sent are recorded when it ends."""
+    sent = 0
     try:
-        target_url = build_cdn_url(cdn_base, path, query_string)
-    except ValueError:
-        log.warning("hls_proxy_foreign_path", stream_id=stream_id, path=path[:80])
-        return _error_json(400, "path outside the stream's CDN")
+        async for chunk in chunks:
+            sent += len(chunk)
+            yield chunk
+    finally:
+        await chunks.aclose()
+        telemetry.record("hls_proxy_bytes", sent, kind="segment")
+
+
+async def _proxy_hls(
+    state: AppState,
+    telemetry: TelemetryPort,
+    stream_id: str,
+    path: str,
+    request: Request,
+) -> Response | JSONResponse:
+    links = getattr(state, "stremio_links", None)
+    if links is None:
+        return _error_json(503, "stream links not configured")
+    master = path == HLS_MASTER
+    if master and _converter_refused(state, request):
+        log.info("hls_proxy_converter_refused", stream_id=stream_id)
+        return _error_json(403, "HLS streams play in the player, not transcoded")
+
+    link = await _proxy_link(links, stream_id, master=master)
+    if isinstance(link, JSONResponse):
+        return link
+
+    if master:
+        target_url = link.video_url
+    else:
+        query_string = _resolve_query_string(request.url.query or "", link.video_url)
+        try:
+            target_url = build_cdn_url(
+                cdn_base_from_url(link.video_url), path, query_string
+            )
+        except ValueError:
+            log.warning("hls_proxy_foreign_path", stream_id=stream_id, path=path[:80])
+            return _error_json(400, "path outside the stream's CDN")
 
     # Segments (.ts) — stream without buffering full body
-    if not path.endswith(".m3u8"):
+    if not master and not path.endswith(".m3u8"):
+        head = request.method == "HEAD"
         try:
             chunk_iter, content_type = await stream_hls_segment(
-                state.http_client, target_url, headers
+                state.http_client, target_url, _cdn_headers(link), head=head
             )
         except httpx.HTTPError as exc:
             return _cdn_error_response(stream_id, target_url, exc)
         return StreamingResponse(
-            content=chunk_iter,
+            content=chunk_iter if head else _counted(chunk_iter, telemetry),
             media_type=content_type,
             headers=_CORS_HEADERS,
         )
 
     # Manifests (.m3u8) — fetch, rewrite URLs, return
-    try:
-        body, content_type = await fetch_hls_resource(
-            state.http_client, target_url, headers
-        )
-    except httpx.HTTPError as exc:
-        return _cdn_error_response(stream_id, target_url, exc)
+    fetched = await _fetch_playlist(
+        state.http_client, links, link, target_url, master=master
+    )
+    if isinstance(fetched, JSONResponse):
+        return fetched
+    body, link = fetched
 
+    # What the playlist lists goes to a copy of its link: a later resolution
+    # under the stream's id leaves a running playback alone
+    link = await links.pinned(link)
     proxy_base = (
-        f"{str(request.base_url).rstrip('/')}/api/v1/stremio/proxy/{stream_id}/"
+        f"{str(request.base_url).rstrip('/')}/api/v1/stremio/proxy/{link.stream_id}/"
     )
     rewritten = rewrite_manifest(
         body.decode("utf-8", errors="replace"),
-        cdn_base,
+        cdn_base_from_url(link.video_url),
         proxy_base,
+        playlist_dir="" if master else path[: path.rfind("/") + 1],
     )
     return Response(
         content=rewritten,
         media_type="application/vnd.apple.mpegurl",
         headers=_CORS_HEADERS,
     )
+
+
+def _converter_refused(state: AppState, request: Request) -> bool:
+    """Whether *request* is a streaming server's ffmpeg that may not transcode.
+
+    Stremio Web has its streaming server probe every stream before it plays
+    it. An HLS source (format ``hls``) then goes through the server's
+    converter, which re-encodes the video: it repackages MP4 and Matroska
+    only. On a Raspberry Pi 4 without a usable hardware encoder 1080p
+    stuttered at 1-2 cores. A failed probe makes Stremio Web read the
+    content type with HEAD and play the playlist itself (hls.js).
+    """
+    agent = request.headers.get("user-agent", "")
+    return (
+        agent.startswith(_FFMPEG_AGENT)
+        and not state.config.stremio.allow_hls_transcoding
+    )
+
+
+async def _proxy_link(
+    links: StremioLinks, stream_id: str, *, master: bool
+) -> CachedStreamLink | JSONResponse:
+    """The stream's link for a proxy request; for its playlist the current one.
+
+    Other paths (variants, segments) follow a playlist fetched moments
+    before and keep its link.
+    """
+    link = await links.get(stream_id)
+    if link is None:
+        log.warning("hls_proxy_not_found", stream_id=stream_id)
+        return _error_json(404, "stream expired or not found")
+
+    if master:
+        current = await links.current(link)
+        if current is None:
+            log.warning("hls_proxy_resolution_failed", stream_id=stream_id)
+            return _error_json(502, "could not extract video URL from hoster")
+        link = current
+
+    if not link.video_url or not link.is_hls:
+        log.warning("hls_proxy_not_hls", stream_id=stream_id)
+        return _error_json(400, "stream is not an HLS proxy stream")
+    return link
+
+
+async def _fetch_playlist(
+    http_client: httpx.AsyncClient,
+    links: StremioLinks,
+    link: CachedStreamLink,
+    target_url: str,
+    *,
+    master: bool,
+) -> tuple[bytes, CachedStreamLink] | JSONResponse:
+    """A playlist's body, and the link it came with.
+
+    When the CDN refuses the stream's own playlist, it is fetched once
+    more from the link ``StremioLinks.after_refusal`` gives (an expired
+    token).
+    """
+    try:
+        body, _ = await fetch_hls_resource(http_client, target_url, _cdn_headers(link))
+        return body, link
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code
+        fresh = await links.after_refusal(link, status) if master else None
+        if fresh is None or not fresh.is_hls:
+            return _cdn_error_response(link.stream_id, target_url, exc)
+    except httpx.HTTPError as exc:
+        return _cdn_error_response(link.stream_id, target_url, exc)
+
+    try:
+        body, _ = await fetch_hls_resource(
+            http_client, fresh.video_url, _cdn_headers(fresh)
+        )
+    except httpx.HTTPError as exc:
+        return _cdn_error_response(link.stream_id, fresh.video_url, exc)
+    return body, fresh
+
+
+def _cdn_headers(link: CachedStreamLink) -> dict[str, str]:
+    """The headers the stream's CDN wants (stored as JSON)."""
+    if not link.video_headers:
+        return {}
+    try:
+        return json.loads(link.video_headers)
+    except (json.JSONDecodeError, ValueError):
+        log.warning("hls_proxy_bad_headers", stream_id=link.stream_id)
+        return {}
 
 
 @router.get("/health")
@@ -533,9 +669,9 @@ async def stremio_health(request: Request) -> JSONResponse:
     )
 
     metrics_snapshot: dict[str, object] = {}
-    metrics = getattr(state, "metrics", None)
-    if metrics is not None:
-        metrics_snapshot = metrics.snapshot()
+    telemetry = getattr(state, "telemetry", None)
+    if telemetry is not None:
+        metrics_snapshot = telemetry.snapshot()
 
     content: dict[str, object] = {
         "healthy": healthy,

@@ -89,6 +89,14 @@ def extract_hls_from_unpacked(js: str) -> str | None:
     """
     normalized = js.replace("\\'", "'").replace('\\"', '"')
 
+    # Pattern 0: the player's links object (VidHide/EarnVids, Streamwish):
+    # sources:[{file:links.hls4||links.hls3||links.hls2}] picks a URL of
+    # links={"hls2":"https://…/master.m3u8?t=…",…} at runtime; JDownloader
+    # takes hls2 (moflix-stream.click packs it, 2026-10-04)
+    m = re.search(r'"hls2"\s*:\s*"(https?://[^"]+)"', normalized)
+    if m:
+        return m.group(1)
+
     # Pattern 1: sources:[{file:"https://...master.m3u8"}]
     m = re.search(
         r"""sources\s*:\s*\[\s*\{[^}]*file\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)""",

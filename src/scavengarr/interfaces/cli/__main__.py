@@ -123,6 +123,9 @@ def start(argv: Iterable[str] | None = None) -> None:
         host=host,
         port=port,
         log_config=None,
+        # The app's http_request line is the access log, its query masked;
+        # uvicorn's own repeated each request with the CDN's tokens
+        access_log=False,
     )
 
 

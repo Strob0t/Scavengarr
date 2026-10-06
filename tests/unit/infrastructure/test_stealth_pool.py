@@ -3,16 +3,25 @@
 from __future__ import annotations
 
 import asyncio
+import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from scavengarr.domain.ports.browser_fetcher import BrowserSession, ClickThrough
-from scavengarr.infrastructure.browser.stealth_pool import (
-    _BLOCKED_RESOURCE_TYPES,
-    StealthPool,
-    _block_resources,
+from scavengarr.domain.ports.browser_fetcher import (
+    BrowserSession,
+    ClickThrough,
+    PageClaim,
+    page_claim,
 )
+from scavengarr.infrastructure.browser.hardening import (
+    BLOCKED_RESOURCE_TYPES,
+    block_heavy_resources,
+)
+from scavengarr.infrastructure.browser.page_gate import PageBusy, PageGate
+from scavengarr.infrastructure.browser.stealth_pool import StealthPool
 
 # ------------------------------------------------------------------
 # Helpers
@@ -53,28 +62,49 @@ def _mock_page(
 
 
 # ------------------------------------------------------------------
-# _block_resources
+# block_heavy_resources
 # ------------------------------------------------------------------
 
 
 class TestBlockResources:
     """Route handler blocks heavy resource types."""
 
-    @pytest.mark.parametrize("rtype", sorted(_BLOCKED_RESOURCE_TYPES))
+    @pytest.mark.parametrize("rtype", sorted(BLOCKED_RESOURCE_TYPES))
     async def test_blocks_heavy_resource(self, rtype: str) -> None:
         route = AsyncMock()
         route.request = MagicMock()
         route.request.resource_type = rtype
-        await _block_resources(route)
+        await block_heavy_resources(route)
         route.abort.assert_awaited_once()
         route.continue_.assert_not_awaited()
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://www.anime-loads.org/.well-known/ddos-guard/mark/?data=x",
+            "https://check.ddos-guard.net/set/id/abc",
+        ],
+    )
+    async def test_lets_ddos_guards_check_images_through(self, url: str) -> None:
+        """DDoS-Guard's check sets its cookies through image beacons:
+        blocked, the challenge reloaded until it timed out (animeloads, 0 of
+        3; code review, 2026-10-06)."""
+        route = AsyncMock()
+        route.request = MagicMock()
+        route.request.resource_type = "image"
+        route.request.url = url
+
+        await block_heavy_resources(route)
+
+        route.continue_.assert_awaited_once()
+        route.abort.assert_not_awaited()
 
     @pytest.mark.parametrize("rtype", ["document", "script", "xhr", "fetch"])
     async def test_allows_essential_resources(self, rtype: str) -> None:
         route = AsyncMock()
         route.request = MagicMock()
         route.request.resource_type = rtype
-        await _block_resources(route)
+        await block_heavy_resources(route)
         route.continue_.assert_awaited_once()
         route.abort.assert_not_awaited()
 
@@ -95,8 +125,8 @@ class TestStealthPoolLifecycle:
 
         assert ctx is context
         shared_pool.warmup.assert_awaited_once()
-        browser.new_context.assert_awaited_once()
-        context.route.assert_awaited_once()
+        browser.new_context.assert_awaited_once_with(service_workers="block")
+        context.route.assert_awaited_once_with("**/*", block_heavy_resources)
 
     async def test_ensure_context_reuses_existing(self) -> None:
         shared_pool, browser, context = _mock_pool_stack()
@@ -220,6 +250,49 @@ class TestStealthPoolFetchText:
         assert text == "<html><body>real page</body></html>"
         page.close.assert_awaited_once()
 
+    async def test_pages_count_toward_a_browser_restart(self) -> None:
+        shared_pool, _, context = _mock_pool_stack()
+        context.new_page = AsyncMock(return_value=_fetch_page())
+
+        await StealthPool(browser_pool=shared_pool).fetch_text(
+            "https://filmfans.org/x", timeout=10
+        )
+
+        shared_pool.note_page.assert_called_once_with()
+
+    async def test_the_browser_is_held_from_opening_a_page_to_closing_it(
+        self,
+    ) -> None:
+        """A restart when no context listed a page killed a page the other
+        slot was still opening (code review, 2026-10-06)."""
+        events: list[str] = []
+        shared_pool, _, context = _mock_pool_stack()
+
+        @asynccontextmanager
+        async def _lease() -> AsyncIterator[None]:
+            events.append("held")
+            yield
+            events.append("released")
+
+        shared_pool.lease = _lease
+        page = _fetch_page()
+
+        async def _new_page() -> AsyncMock:
+            events.append("opened")
+            return page
+
+        async def _close() -> None:
+            events.append("closed")
+
+        context.new_page = AsyncMock(side_effect=_new_page)
+        page.close = AsyncMock(side_effect=_close)
+
+        await StealthPool(browser_pool=shared_pool).fetch_text(
+            "https://filmfans.org/x", timeout=10
+        )
+
+        assert events == ["held", "opened", "closed", "released"]
+
     async def test_returns_raw_body_for_non_html(self) -> None:
         """JSON is re-fetched in-page: raw text, not Chrome's JSON viewer."""
         shared_pool, _, context = _mock_pool_stack()
@@ -319,7 +392,7 @@ class TestStealthPoolFetchText:
             return page
 
         context.new_page = AsyncMock(side_effect=lambda: _new_page())
-        pool = StealthPool(browser_pool=shared_pool, fetch_concurrency=2)
+        pool = StealthPool(browser_pool=shared_pool, pages=PageGate(limit=2))
 
         await asyncio.gather(
             *(pool.fetch_text(f"https://x.org/{i}", timeout=10) for i in range(6))
@@ -1002,3 +1075,31 @@ class TestStealthPoolCaptureMediaThumbnails:
 
         assert media is not None
         assert media.url.startswith("https://sfy-01-fr.vidsonic.net/")
+
+
+class TestBusyPages:
+    """Work due before a page could do it gets none."""
+
+    @staticmethod
+    def _too_late() -> None:
+        page_claim.set(PageClaim("plugin", time.monotonic() + 1.0))
+
+    async def test_a_plugin_page_answers_none(self) -> None:
+        shared_pool, _, context = _mock_pool_stack()
+        pool = StealthPool(browser_pool=shared_pool)
+        self._too_late()
+
+        assert await pool.fetch_text("https://x.org/a", timeout=30) is None
+        assert await pool.resolve_redirect("https://x.org/b", timeout=30) is None
+        assert await pool.click_through("https://x.org/c", "a", timeout=30) is None
+        context.new_page.assert_not_awaited()
+
+    async def test_a_capture_reports_it(self) -> None:
+        """The registry neither caches nor counts it."""
+        shared_pool, _, context = _mock_pool_stack()
+        pool = StealthPool(browser_pool=shared_pool)
+        self._too_late()
+
+        with pytest.raises(PageBusy):
+            await pool.capture_media("https://filemoon.sx/e/a", timeout=15)
+        context.new_page.assert_not_awaited()

@@ -148,6 +148,8 @@ class HttpxPluginBase:
         self._client: httpx.AsyncClient | None = None
         self._domain_verified: bool = False
         self.base_url: str = f"https://{self._domains[0]}" if self._domains else ""
+        # The base URL before the site moved (_follow_site_move)
+        self._moved_from: str | None = None
         self._log = structlog.get_logger(self.name or __name__)
 
     @property
@@ -227,6 +229,47 @@ class HttpxPluginBase:
         self._client = None
         self._domain_verified = False
 
+    def _follow_site_move(self, resp: httpx.Response) -> None:
+        """Make a permanent move of the site to another host the base URL.
+
+        Only a chain of permanent redirects (301/308) from the base host
+        counts. hdfilme answered every search with a 301 from
+        hdfilme.cafe to hdfilme.ceo: one more round trip per request.
+        """
+        history = resp.history
+        if not history or any(r.status_code not in (301, 308) for r in history):
+            return
+        old = httpx.URL(self.base_url).netloc
+        if history[0].url.netloc != old or resp.url.netloc == old:
+            return
+        if self._moved_from is None:
+            self._moved_from = self.base_url
+        self.base_url = f"{resp.url.scheme}://{resp.url.netloc.decode('ascii')}"
+        self._log.info(
+            f"{self.name}_site_moved",
+            old=old.decode("ascii"),
+            new=resp.url.netloc.decode("ascii"),
+        )
+
+    def _undo_site_move(self, url: str) -> None:
+        """Go back to the base URL the site moved from when *url*, on the
+        host it moved to, gets no answer.
+
+        hdfilme moves on every few days, and its old host redirects to the
+        newest one; a new host that died kept every search on it until a
+        restart.
+        """
+        moved_from = self._moved_from
+        host = httpx.URL(url).netloc
+        if moved_from is None or host != httpx.URL(self.base_url).netloc:
+            return
+        self.base_url, self._moved_from = moved_from, None
+        self._log.warning(
+            f"{self.name}_site_move_undone",
+            host=host.decode("ascii"),
+            base_url=moved_from,
+        )
+
     # ------------------------------------------------------------------
     # Convenience helpers
     # ------------------------------------------------------------------
@@ -241,23 +284,27 @@ class HttpxPluginBase:
     ) -> httpx.Response | None:
         """Fetch *url* with structured error logging.
 
-        When using a shared client, per-plugin timeout and headers are
-        applied per-request so each plugin's overrides still work.
+        Sends the plugin's timeout and User-Agent like ``_fetch_text()``
+        (``_request_kwargs()``: the browser's User-Agent to a site whose
+        session httpx took over); the caller's *headers* go on top.
         Returns ``None`` on failure instead of raising.
         """
         client = await self._ensure_client()
 
-        # Apply per-plugin overrides when using the shared client
-        if client is self._shared_http_client:
-            kwargs.setdefault("timeout", httpx.Timeout(self._timeout))
-            kwargs.setdefault("headers", {"User-Agent": self._user_agent})
+        defaults = self._request_kwargs(client, url)
+        if "timeout" in defaults:
+            kwargs.setdefault("timeout", defaults["timeout"])
+        if "headers" in defaults:
+            kwargs["headers"] = {**defaults["headers"], **(kwargs.get("headers") or {})}
 
         try:
             handler = getattr(client, method.lower(), client.get)
             resp = await handler(url, **kwargs)
             resp.raise_for_status()
+            self._follow_site_move(resp)
             return resp
         except httpx.TimeoutException:
+            self._undo_site_move(url)
             self._log.warning(
                 f"{self.name}_timeout",
                 url=url,
@@ -271,6 +318,8 @@ class HttpxPluginBase:
                 context=context,
             )
         except Exception as exc:  # noqa: BLE001
+            if isinstance(exc, httpx.TransportError):
+                self._undo_site_move(url)
             self._log.warning(
                 f"{self.name}_fetch_error",
                 url=url,
@@ -314,15 +363,19 @@ class HttpxPluginBase:
         try:
             resp = await client.get(url, **kwargs)
         except httpx.TimeoutException:
+            self._undo_site_move(url)
             self._log.warning(f"{self.name}_timeout", url=url, context=context)
             return None
         except Exception as exc:  # noqa: BLE001
+            if isinstance(exc, httpx.TransportError):
+                self._undo_site_move(url)
             self._log.warning(
                 f"{self.name}_fetch_error", url=url, error=str(exc), context=context
             )
             return None
 
         if resp.status_code < 400:
+            self._follow_site_move(resp)
             return resp.text
 
         challenge = detect_challenge(resp.status_code, resp.text, resp.headers)

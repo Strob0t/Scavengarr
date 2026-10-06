@@ -63,6 +63,7 @@ coverage.xml
 # ── AI Tools ───────────────────────────────────────
 .claude/*
 !.claude/hooks/
+!.claude/plugins/
 !.claude/skills/
 .llm-context
 .continue

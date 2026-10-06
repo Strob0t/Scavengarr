@@ -82,7 +82,7 @@ class FsstResolver:
             log.warning("fsst_no_player_source", file_id=file_id)
             return None
 
-        log.debug("fsst_resolved", file_id=file_id, video_url=source[:80])
+        log.debug("fsst_resolved", file_id=file_id, cdn=extract_domain(source))
         return ResolvedStream(
             video_url=source, is_hls=".m3u8" in source, quality=StreamQuality.UNKNOWN
         )

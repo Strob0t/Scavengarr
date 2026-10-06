@@ -26,13 +26,20 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
+
+from selectolax.lexbor import LexborHTMLParser, LexborNode
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.categories import (
     category_matches,
     served_category,
+)
+from scavengarr.infrastructure.plugins.dom import ancestors, classes, parse_page
+from scavengarr.infrastructure.plugins.forum_links import (
+    hoster_from_text,
+    hoster_from_url,
+    is_link_container,
 )
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
@@ -44,51 +51,9 @@ _CSRF_RE = re.compile(r'data-csrf="([^"]+)"')
 # XenForo marks pages of guests (session expired or never logged in)
 _LOGGED_OUT_MARKER = 'data-logged-in="false"'
 
-# Link-protection / container services the forums post their downloads on
-_LINK_CONTAINER_HOSTS = (
-    "hide.cx",
-    "filecrypt.cc",
-    "filecrypt.co",
-    "keeplinks.org",
-    "keeplinks.eu",
-    "tolink.to",
-    "safelinks.to",
-    "share-links.biz",
-    "share-links.org",
-    "protectlinks.com",
-)
-
 
 class _SessionExpiredError(Exception):
     """The search was answered as for a guest, or the POST was rejected."""
-
-
-def _is_container_host(host: str) -> bool:
-    """Check if a hostname belongs to a known link container."""
-    return any(host == c or host.endswith(f".{c}") for c in _LINK_CONTAINER_HOSTS)
-
-
-def _hoster_from_text(text: str) -> str:
-    """Derive the hoster name from anchor text like 'Online rapidgator.net'."""
-    if not text:
-        return ""
-    m = re.search(r"online\s+(\S+)", text, re.IGNORECASE)
-    if m:
-        domain = m.group(1).rstrip(".").removeprefix("www.")
-        return domain.split(".")[0].lower()
-    # Plain hoster name
-    if not text.startswith("http") and len(text.split()) <= 2:
-        return text.strip().lower()
-    return ""
-
-
-def _hoster_from_url(url: str) -> str:
-    """Name of the URL's domain (``https://hide.cx/...`` → ``hide``)."""
-    try:
-        host = urlparse(url).hostname or ""
-    except ValueError:
-        return "unknown"
-    return host.removeprefix("www.").split(".")[0] or "unknown"
 
 
 def _node_id_from_url(url: str) -> int | None:
@@ -103,23 +68,28 @@ def _is_own_cookie(host: str, cookie_domain: str) -> bool:
     return bool(domain) and (host == domain or host.endswith(f".{domain}"))
 
 
-class _LoginTokenParser(HTMLParser):
-    """Extract ``<input type="hidden" name="_xfToken" value="...">``."""
+class _LoginTokenParser:
+    """Extract ``<input type="hidden" name="_xfToken" value="...">`` (selectolax)."""
 
     def __init__(self) -> None:
-        super().__init__()
         self.token: str = ""
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag != "input":
-            return
-        attr_dict = dict(attrs)
-        if attr_dict.get("name") == "_xfToken" and not self.token:
-            self.token = attr_dict.get("value", "") or ""
+    def feed(self, html: str) -> None:
+        # The first non-empty token wins
+        for node in LexborHTMLParser(html).css("input[name='_xfToken']"):
+            self.token = self.token or node.attributes.get("value") or ""
 
 
-class _SearchResultParser(HTMLParser):
-    """Parse a XenForo search results page.
+def _in_result_title(link: LexborNode) -> bool:
+    """Whether *link* is in a result title (``h3.contentRow-title``)."""
+    return any(
+        parent.tag == "h3" and "contentRow-title" in classes(parent)
+        for parent in ancestors(link)
+    )
+
+
+class _SearchResultParser:
+    """Parse a XenForo search results page (selectolax).
 
     Extracts thread URLs, titles and forum info, and the next-page link::
 
@@ -133,105 +103,52 @@ class _SearchResultParser(HTMLParser):
             </div>
           </div>
         </li>
+
+    The ``/threads/`` link in an ``h3.contentRow-title`` names a result, the
+    first ``/forums/`` link after it its forum. A result without a forum link
+    stays pending until the next title or ``flush_pending()``.
     """
 
     def __init__(self, base_url: str) -> None:
-        super().__init__()
         self.results: list[dict[str, str]] = []
         self.next_page_url: str = ""
         self._base_url = base_url
-
-        # Title link tracking
-        self._in_h3 = False
-        self._in_title_a = False
-        self._current_href = ""
-        self._current_title = ""
-
-        # Forum link tracking
+        # The last result title, until a forum link follows
         self._pending_url = ""
         self._pending_title = ""
-        self._in_forum_a = False
-        self._current_forum = ""
-        self._current_forum_href = ""
 
-        # Pagination
-        self._in_nav_a = False
-        self._nav_a_href = ""
-        self._nav_a_text = ""
-
-    def handle_starttag(  # noqa: C901
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
-        attr_dict = dict(attrs)
-        href = attr_dict.get("href", "") or ""
-
-        if tag == "h3":
-            classes = (attr_dict.get("class") or "").split()
-            if "contentRow-title" in classes:
-                self._in_h3 = True
-
-        if tag == "a" and self._in_h3 and "/threads/" in href:
-            self._in_title_a = True
-            self._current_href = href
-            self._current_title = ""
-
-        # Forum link (in minor content area)
-        if tag == "a" and "/forums/" in href and self._pending_url:
-            self._in_forum_a = True
-            self._current_forum = ""
-            self._current_forum_href = href
-
-        # Pagination: XenForo marks the next-page link; search result pages
-        # use "?page=N", thread lists "page-N"
-        if tag == "a" and "pageNav-jump--next" in (attr_dict.get("class") or ""):
-            self.next_page_url = href
-        elif tag == "a" and href and ("page-" in href or "page=" in href):
-            self._in_nav_a = True
-            self._nav_a_href = href
-            self._nav_a_text = ""
-
-    def handle_data(self, data: str) -> None:
-        if self._in_title_a:
-            self._current_title += data
-        if self._in_forum_a:
-            self._current_forum += data
-        if self._in_nav_a:
-            self._nav_a_text += data
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "h3" and self._in_h3:
-            self._in_h3 = False
-
-        if tag == "a":
-            if self._in_title_a:
-                self._in_title_a = False
-                title = self._current_title.strip()
-                href = self._current_href
-                if title and href:
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for link in tree.css("a:is([href*='/threads/'], [href*='/forums/'])"):
+            href = link.attributes.get("href") or ""
+            if "/threads/" in href and _in_result_title(link):
+                title = link.text().strip()
+                if title:
                     # Flush any pending result without forum info
                     self.flush_pending()
                     self._pending_url = urljoin(self._base_url, href)
                     self._pending_title = title
+            elif "/forums/" in href and self._pending_url:
+                self.results.append(
+                    {
+                        "title": self._pending_title,
+                        "url": self._pending_url,
+                        "forum": link.text().strip(),
+                        "forum_href": href,
+                    }
+                )
+                self._pending_url = ""
+                self._pending_title = ""
 
-            if self._in_forum_a:
-                self._in_forum_a = False
-                if self._pending_url:
-                    self.results.append(
-                        {
-                            "title": self._pending_title,
-                            "url": self._pending_url,
-                            "forum": self._current_forum.strip(),
-                            "forum_href": self._current_forum_href,
-                        }
-                    )
-                    self._pending_url = ""
-                    self._pending_title = ""
-
-            if self._in_nav_a:
-                self._in_nav_a = False
-                text = self._nav_a_text.strip().lower()
-                if text in {"nächste", "next", "nächste…", "next…", "›", "»"}:
-                    self.next_page_url = self._nav_a_href
+        # Pagination: XenForo marks the next-page link; search result pages
+        # use "?page=N", thread lists "page-N" (the last next link wins)
+        for link in tree.css(
+            "a:is([class*='pageNav-jump--next'], [href*='page-'], [href*='page='])"
+        ):
+            marked = "pageNav-jump--next" in (link.attributes.get("class") or "")
+            text = link.text().strip().lower()
+            if marked or text in {"nächste", "next", "nächste…", "next…", "›", "»"}:
+                self.next_page_url = link.attributes.get("href") or ""
 
     def flush_pending(self) -> None:
         """Emit any pending result that has no forum yet."""
@@ -248,61 +165,26 @@ class _SearchResultParser(HTMLParser):
             self._pending_title = ""
 
 
-class _ThreadPostParser(HTMLParser):
-    """Extract the download links from the posts of a XenForo thread.
+class _ThreadPostParser:
+    """Extract the download links from the posts of a XenForo thread (selectolax).
 
     Only ``<a>`` links inside ``<div class="bbWrapper">`` (post bodies) that
     point to a known link container count.
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self.links: list[dict[str, str]] = []
-        self._in_message_body = False
-        self._div_depth = 0
-        self._in_a = False
-        self._current_href = ""
-        self._current_text = ""
         self._seen_urls: set[str] = set()
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attr_dict = dict(attrs)
-        classes = (attr_dict.get("class") or "").split()
-
-        if tag == "div":
-            if self._in_message_body:
-                self._div_depth += 1
-            elif "bbWrapper" in classes:
-                self._in_message_body = True
-                self._div_depth = 0
-
-        if tag == "a" and self._in_message_body:
-            href = attr_dict.get("href", "") or ""
-            if href.startswith("http"):
-                self._in_a = True
-                self._current_href = href
-                self._current_text = ""
-
-    def handle_data(self, data: str) -> None:
-        if self._in_a:
-            self._current_text += data
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "div" and self._in_message_body:
-            if self._div_depth > 0:
-                self._div_depth -= 1
-            else:
-                self._in_message_body = False
-
-        if tag == "a" and self._in_a:
-            self._in_a = False
-            href = self._current_href
+    def feed(self, html: str) -> None:
+        for link in LexborHTMLParser(html).css("div.bbWrapper a[href^='http']"):
+            href = link.attributes.get("href") or ""
             if href in self._seen_urls:
-                return
-            if not _is_container_host(urlparse(href).hostname or ""):
-                return
-            text = self._current_text.strip()
-            hoster = _hoster_from_text(text) or _hoster_from_url(href)
+                continue
+            if not is_link_container(href):
+                continue
+            text = link.text().strip()
+            hoster = hoster_from_text(text) or hoster_from_url(href)
             self._seen_urls.add(href)
             self.links.append({"hoster": hoster, "link": href})
 
@@ -357,8 +239,9 @@ class XenForoPluginBase(HttpxPluginBase):
         username, password = self._credentials()
 
         page = await self._safe_fetch(f"{self.base_url}/login/", context="login")
-        token_parser = _LoginTokenParser()
-        token_parser.feed(page.text if page is not None else "")
+        token_parser = await parse_page(
+            _LoginTokenParser(), page.text if page is not None else ""
+        )
         if not token_parser.token:
             raise RuntimeError("Could not extract _xfToken from login page")
 
@@ -395,9 +278,8 @@ class XenForoPluginBase(HttpxPluginBase):
         self._logged_in = True
         self._log.info(f"{self.name}_login_success")
 
-    def _parse_results(self, html: str) -> tuple[list[dict[str, str]], str]:
-        parser = _SearchResultParser(self.base_url)
-        parser.feed(html)
+    async def _parse_results(self, html: str) -> tuple[list[dict[str, str]], str]:
+        parser = await parse_page(_SearchResultParser(self.base_url), html)
         parser.flush_pending()
         return parser.results, parser.next_page_url
 
@@ -426,7 +308,7 @@ class XenForoPluginBase(HttpxPluginBase):
         # expired session: it answers as for a guest
         if resp is None or _LOGGED_OUT_MARKER in resp.text:
             raise _SessionExpiredError
-        rows, next_url = self._parse_results(resp.text)
+        rows, next_url = await self._parse_results(resp.text)
         self._log.info(f"{self.name}_search_page", query=query, results=len(rows))
         return rows, next_url
 
@@ -437,7 +319,7 @@ class XenForoPluginBase(HttpxPluginBase):
         )
         if resp is None:
             return [], ""
-        return self._parse_results(resp.text)
+        return await self._parse_results(resp.text)
 
     async def _search_rows(self, query: str, nodes: list[int]) -> list[dict[str, str]]:
         """Search result rows of all pages (one new login if the session expired)."""
@@ -473,8 +355,7 @@ class XenForoPluginBase(HttpxPluginBase):
         if resp is None:
             return None
 
-        parser = _ThreadPostParser()
-        parser.feed(resp.text)
+        parser = await parse_page(_ThreadPostParser(), resp.text)
         if not parser.links:
             self._log.debug(f"{self.name}_no_links", url=row["url"])
             return None

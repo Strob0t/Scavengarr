@@ -23,12 +23,14 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from html.parser import HTMLParser
 from typing import Any
+
+from selectolax.lexbor import LexborHTMLParser
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.hoster_resolvers import extract_domain
 from scavengarr.infrastructure.plugins.categories import served_category
+from scavengarr.infrastructure.plugins.dom import parse_page
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.relevance import (
     SINGLE_TITLE_HITS,
@@ -136,8 +138,8 @@ def _pick_episodes(
     return sorted(picked, key=lambda e: e.get("episode_number") or 0)
 
 
-class _SearchCardParser(HTMLParser):
-    """Parse kinoking.cc search result cards.
+class _SearchCardParser:
+    """Parse kinoking.cc search result cards (selectolax).
 
     Cards have structure::
 
@@ -146,37 +148,38 @@ class _SearchCardParser(HTMLParser):
              data-title="Iron Man" data-quality="HD">
 
     ``data-type`` is ``movie`` or ``series``. The page's JS templates contain
-    placeholder cards (``data-id="${...}"``), which are skipped.
+    placeholder cards (``data-id="${...}"``), which are skipped. A card
+    listed twice (also across ``feed()`` calls) is kept once.
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self.results: list[dict[str, str]] = []
         self._seen: set[tuple[str, str]] = set()
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag != "div":
-            return
-        attr_dict = dict(attrs)
-        if "fav-data-source" not in (attr_dict.get("class") or "").split():
-            return
-        card_id = attr_dict.get("data-id") or ""
-        card_type = attr_dict.get("data-type") or ""
-        title = (attr_dict.get("data-title") or "").strip()
-        if not card_id.isdigit() or card_type not in ("movie", "series") or not title:
-            return
-        if (card_type, card_id) in self._seen:
-            return
-        self._seen.add((card_type, card_id))
-        self.results.append(
-            {
-                "id": card_id,
-                "type": card_type,
-                "title": title,
-                "tmdb": attr_dict.get("data-tmdb") or "",
-                "quality": attr_dict.get("data-quality") or "",
-            }
-        )
+    def feed(self, html: str) -> None:
+        for card in LexborHTMLParser(html).css("div.fav-data-source"):
+            attrs = card.attributes
+            card_id = attrs.get("data-id") or ""
+            card_type = attrs.get("data-type") or ""
+            title = (attrs.get("data-title") or "").strip()
+            if (
+                not card_id.isdigit()
+                or card_type not in ("movie", "series")
+                or not title
+            ):
+                continue
+            if (card_type, card_id) in self._seen:
+                continue
+            self._seen.add((card_type, card_id))
+            self.results.append(
+                {
+                    "id": card_id,
+                    "type": card_type,
+                    "title": title,
+                    "tmdb": attrs.get("data-tmdb") or "",
+                    "quality": attrs.get("data-quality") or "",
+                }
+            )
 
 
 class KinokingPlugin(HttpxPluginBase):
@@ -200,8 +203,7 @@ class KinokingPlugin(HttpxPluginBase):
         )
         if html is None:
             return []
-        parser = _SearchCardParser()
-        parser.feed(html)
+        parser = await parse_page(_SearchCardParser(), html)
         return parser.results
 
     async def _search_cards(self, query: str) -> list[dict[str, str]]:

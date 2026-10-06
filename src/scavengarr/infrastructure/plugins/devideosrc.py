@@ -2,7 +2,8 @@
 
 Sites like streamcloud and hdfilme embed a devideosrc player instead of
 listing hoster links themselves: ``https://devideosrc.co/movie/<imdb>`` for
-movies, ``https://devideosrc.co/serial/<imdb>`` for series. The player page
+movies (hdfilme: ``/custom/movie/<imdb>``, a newer player whose classic
+page still works), ``https://devideosrc.co/serial/<imdb>`` for series. The player page
 carries a signed token and loads the hoster embeds with::
 
     POST https://devideosrc.co/api/embed-links
@@ -42,7 +43,9 @@ PlayerKind = Literal["movie", "tv"]
 _PAGE_ATTEMPTS = 3
 _PAGE_RETRY_DELAY_S = 2.0  # x attempt number
 
-_MOVIE_PLAYER_RE = re.compile(r"devideosrc\.co/movie/(tt\d+)")
+# hdfilme.ceo embeds /custom/movie/<imdb> (lazily, from data-src); the
+# classic page /movie/<imdb> still carries the token
+_MOVIE_PLAYER_RE = re.compile(r"devideosrc\.co/(?:custom/)?movie/(tt\d+)")
 _SERIAL_PLAYER_RE = re.compile(r"devideosrc\.co/serial/")
 _IMDB_RE = re.compile(r"devideosrc\.co/(?:embed/download|serial)/(tt\d+)")
 _IMDB_VAR_RE = re.compile(r"""var\s+imdb\s*=\s*['"](tt\d+)['"]""")

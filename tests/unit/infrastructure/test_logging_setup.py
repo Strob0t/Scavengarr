@@ -97,10 +97,64 @@ class TestSecretRedaction:
         line = formatter.format(record)
 
         assert "SECRET1" not in line
-        assert "api_key=***" in line
 
     def test_structlog_events_are_redacted_after_rendering_exceptions(self) -> None:
         processors = setup._structlog_processors()
         assert processors.index(setup._redact_secrets) > processors.index(
             structlog.processors.format_exc_info
         )
+
+
+class TestThirdPartyUrls:
+    """Third-party lines show URLs by origin: video URLs carry CDN tokens."""
+
+    def _line(self, record: logging.LogRecord) -> dict[str, str]:
+        formatter = setup._make_processor_formatter(AppConfig(log_format="json"))
+        return json.loads(formatter.format(record))
+
+    def test_httpx_request_line_names_the_origin_only(self) -> None:
+        # httpx logs every request: 'HTTP Request: %s %s "%s %d %s"'
+        record = logging.LogRecord(
+            "httpx",
+            logging.INFO,
+            __file__,
+            1,
+            'HTTP Request: %s %s "%s %d %s"',
+            (
+                "GET",
+                "https://cdn.example.net/hls/abc/video.m3u8?t=TOKEN1&i=203.0.113.7",
+                "HTTP/1.1",
+                200,
+                "OK",
+            ),
+            None,
+        )
+
+        line = self._line(record)
+
+        assert (
+            line["event"]
+            == 'HTTP Request: GET https://cdn.example.net "HTTP/1.1 200 OK"'
+        )
+
+    def test_traceback_names_the_origin_only(self) -> None:
+        try:
+            raise RuntimeError(
+                "Client error '403 Forbidden' for url "
+                "'https://cdn.example.net/hls/abc/video.m3u8?t=TOKEN1'"
+            )
+        except RuntimeError:
+            exc_info = sys.exc_info()
+        record = logging.LogRecord(
+            "uvicorn.error", logging.ERROR, __file__, 1, "Exception", None, exc_info
+        )
+
+        line = self._line(record)
+
+        assert "TOKEN1" not in line["exception"]
+        assert "/hls/abc" not in line["exception"]
+        assert "for url 'https://cdn.example.net'" in line["exception"]
+
+    def test_own_events_keep_their_urls(self) -> None:
+        # The app's events follow their own rules (CDNs by domain only)
+        assert setup._shorten_urls not in setup._structlog_processors()

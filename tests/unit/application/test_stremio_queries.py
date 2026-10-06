@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from scavengarr.application.stremio.queries import (
+    build_lang_group_queries,
     build_multi_lang_reference,
     build_search_queries,
     build_search_query,
@@ -180,3 +181,41 @@ class TestBuildMultiLangReference:
         ref = build_multi_lang_reference(infos, ["de"])
         assert ref is not None
         assert ref.content_type == "movie"
+
+
+# ---------------------------------------------------------------------------
+# build_lang_group_queries
+# ---------------------------------------------------------------------------
+
+
+class TestBuildLangGroupQueries:
+    """A plugin is searched with the titles of its languages. Original titles
+    (``alt_titles``) only serve the title matching: as queries they cost
+    23% of the search requests and added 2 of 58 streams on a 12-title set
+    (production, 2026-10-04)."""
+
+    _GODFATHER = {
+        "de": TitleMatchInfo(title="Der Pate", year=1972, alt_titles=["The Godfather"]),
+        "en": TitleMatchInfo(title="The Godfather", year=1972),
+    }
+
+    def test_original_title_is_no_query(self) -> None:
+        assert build_lang_group_queries(self._GODFATHER, ["de"]) == ["Der Pate"]
+
+    def test_bilingual_group_gets_both_titles(self) -> None:
+        queries = build_lang_group_queries(self._GODFATHER, ["de", "en"])
+
+        assert queries == ["Der Pate", "The Godfather"]
+
+    def test_base_title_of_a_colon_title_stays(self) -> None:
+        infos = {"de": TitleMatchInfo(title="Avengers: Endgame", year=2019)}
+
+        assert build_lang_group_queries(infos, ["de"]) == [
+            "Avengers Endgame",
+            "Avengers",
+        ]
+
+    def test_language_without_title_adds_nothing(self) -> None:
+        infos = {"de": None, "en": TitleMatchInfo(title="Severance", year=2022)}
+
+        assert build_lang_group_queries(infos, ["de", "en"]) == ["Severance"]

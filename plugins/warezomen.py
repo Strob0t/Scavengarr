@@ -13,14 +13,16 @@ No authentication required.
 from __future__ import annotations
 
 import re
-from html.parser import HTMLParser
 from urllib.parse import urljoin
+
+from selectolax.lexbor import LexborHTMLParser, LexborNode
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.categories import (
     category_matches,
     served_category,
 )
+from scavengarr.infrastructure.plugins.dom import classes, parse_page
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -59,8 +61,8 @@ def _slugify(text: str) -> str:
 # ---------------------------------------------------------------------------
 # HTML parser
 # ---------------------------------------------------------------------------
-class _SearchResultParser(HTMLParser):
-    """Parse warezomen.com search results table.
+class _SearchResultParser:
+    """Parse warezomen.com search results table (selectolax).
 
     Each result row has structure::
 
@@ -74,131 +76,62 @@ class _SearchResultParser(HTMLParser):
 
     Separator rows (``<td class="d" colspan="4">``) are ignored.
 
-    Pagination is detected via ``<td id="pages"><a>Next Page</a></td>``.
+    Pagination is the "Next Page" link of ``<td id="pages">``, on the live
+    site a row of the results table (no result)::
+
+        <tr><td colspan="4" id="pages">[ 1 ] &nbsp;
+          <a href="/download/windows/2/">Next Page &gt;</a></td></tr>
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self.results: list[dict[str, str]] = []
         self.next_page_url: str = ""
 
-        # State tracking
-        self._in_table = False
-        self._in_tbody = False
-        self._in_row = False
-        self._td_index = 0
-        self._in_td = False
-        self._in_a = False
-        self._is_separator = False
-        self._in_pages_td = False
-        self._in_pages_a = False
-        self._pages_a_href = ""
-        self._pages_a_text = ""
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for row in tree.css("table.download tbody tr"):
+            self._add_row(row)
+        # The pagination cell's "Next Page" link; a result's short title can
+        # read "Next Page" too
+        for link in tree.css("#pages a"):
+            if link.text(strip=True).lower().startswith("next page"):
+                self.next_page_url = link.attributes.get("href") or ""
+                break
 
-        # Current row data
-        self._current_title = ""
-        self._current_href = ""
-        self._current_type = ""
-        self._current_date = ""
-
-    def handle_starttag(  # noqa: C901
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
-        attr_dict = dict(attrs)
-        classes = (attr_dict.get("class", "") or "").split()
-
-        # Detect results table
-        if tag == "table" and "download" in classes:
-            self._in_table = True
-            return
-
-        if not self._in_table:
-            # Detect pagination <td id="pages">
-            if tag == "td" and attr_dict.get("id") == "pages":
-                self._in_pages_td = True
-            if tag == "a" and self._in_pages_td:
-                self._in_pages_a = True
-                self._pages_a_href = attr_dict.get("href", "") or ""
-                self._pages_a_text = ""
-            return
-
-        if tag == "tbody":
-            self._in_tbody = True
-
-        if tag == "tr" and self._in_tbody:
-            self._in_row = True
-            self._td_index = 0
-            self._is_separator = False
-            self._current_title = ""
-            self._current_href = ""
-            self._current_type = ""
-            self._current_date = ""
-
-        if tag == "td" and self._in_row:
-            self._td_index += 1
-            self._in_td = True
-            # Detect separator row: <td class="d" colspan="4">
-            if "d" in classes and attr_dict.get("colspan"):
-                self._is_separator = True
-
-        # Title link: first <td class="n"> contains <a> with title attr and href
-        if (
-            tag == "a"
-            and self._in_td
-            and self._td_index == 1
-            and not self._is_separator
+    def _add_row(self, row: LexborNode) -> None:
+        cells = row.css("td")
+        # A separator or the pagination cell drops its row
+        if not cells or any(
+            _is_separator(cell) or cell.attributes.get("id") == "pages"
+            for cell in cells
         ):
-            self._in_a = True
-            self._current_title = attr_dict.get("title", "") or ""
-            self._current_href = attr_dict.get("href", "") or ""
-
-    def handle_data(self, data: str) -> None:
-        if self._in_pages_a:
-            self._pages_a_text += data
-
-        if not self._in_td or self._is_separator:
             return
+        # Title link: the last <a> of the first cell, with title attr and href
+        links = cells[0].css("a")
+        if not links:
+            return
+        title = links[-1].attributes.get("title") or ""
+        href = links[-1].attributes.get("href") or ""
+        if title and href:
+            self.results.append(
+                {
+                    "title": title,
+                    "download_link": href,
+                    # 3rd td holds the type, the 4th the date
+                    "type": _cell_text(cells, 2),
+                    "published_date": _cell_text(cells, 3),
+                }
+            )
 
-        # 3rd td holds the type, the 4th the date
-        if self._td_index == 3:
-            self._current_type += data.strip()
-        elif self._td_index == 4:
-            self._current_date += data.strip()
 
-    def _handle_a_end(self) -> None:
-        if self._in_a:
-            self._in_a = False
-        if self._in_pages_a:
-            self._in_pages_a = False
-            if "next page" in self._pages_a_text.strip().lower():
-                self.next_page_url = self._pages_a_href
+def _is_separator(cell: LexborNode) -> bool:
+    """Whether *cell* is a separator cell (``<td class="d" colspan="4">``)."""
+    return "d" in classes(cell) and bool(cell.attributes.get("colspan"))
 
-    def _handle_tr_end(self) -> None:
-        if self._in_row:
-            self._in_row = False
-            if not self._is_separator and self._current_title and self._current_href:
-                self.results.append(
-                    {
-                        "title": self._current_title,
-                        "download_link": self._current_href,
-                        "type": self._current_type,
-                        "published_date": self._current_date,
-                    }
-                )
 
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "a":
-            self._handle_a_end()
-        elif tag == "td":
-            self._in_td = False
-            if self._in_pages_td and not self._in_table:
-                self._in_pages_td = False
-        elif tag == "tr":
-            self._handle_tr_end()
-        elif tag == "tbody":
-            self._in_tbody = False
-        elif tag == "table" and self._in_table:
-            self._in_table = False
+def _cell_text(cells: list[LexborNode], index: int) -> str:
+    """Text of the cell at *index*: its text pieces, each stripped, joined."""
+    return cells[index].text(strip=True) if index < len(cells) else ""
 
 
 # ---------------------------------------------------------------------------
@@ -229,8 +162,7 @@ class WarezomenPlugin(HttpxPluginBase):
         if resp is None:
             return [], ""
 
-        parser = _SearchResultParser()
-        parser.feed(resp.text)
+        parser = await parse_page(_SearchResultParser(), resp.text)
 
         next_url = ""
         if parser.next_page_url:

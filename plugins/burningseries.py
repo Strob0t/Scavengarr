@@ -20,10 +20,12 @@ from __future__ import annotations
 
 import asyncio
 import re
-from html.parser import HTMLParser
 from urllib.parse import urljoin
 
+from selectolax.lexbor import LexborHTMLParser, LexborNode
+
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.dom import ancestors, classes, parse_page
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -59,12 +61,13 @@ _GENRE_CATEGORY: dict[str, int] = {
     "sport": 5060,
 }
 
-# Episode page in the episode table (hoster links add a /<Hoster> segment)
-_EPISODE_HREF_RE = re.compile(r"^serie/[^/]+/\d+/(\d+)-[^/]+/[a-z]+$")
+# Episode page in the episode table (hoster links add a /<Hoster> segment):
+# serie/<slug>/<season>/<episode>-<name>/<language>
+_EPISODE_HREF_RE = re.compile(r"^serie/[^/]+/(\d+)/(\d+)-[^/]+/[a-z]+$")
 
 
-class _SeriesListParser(HTMLParser):
-    """Parse the /andere-serien page to extract series names, URL slugs, genres.
+class _SeriesListParser:
+    """Parse /andere-serien for series names, URL slugs and genres (selectolax).
 
     HTML structure::
 
@@ -75,84 +78,30 @@ class _SeriesListParser(HTMLParser):
             ...
           </ul>
         </div>
+
+    A ``serie/`` link takes the genre of the last ``strong`` before it.
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self.series: list[dict[str, str]] = []
 
-        # Genre tracking
-        self._in_genre_div = False
-        self._genre_div_depth = 0
-        self._in_genre_strong = False
-        self._current_genre = ""
-
-        # Link tracking
-        self._in_li_a = False
-        self._current_href = ""
-        self._current_title = ""
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attr_dict = dict(attrs)
-        classes = (attr_dict.get("class") or "").split()
-
-        if tag == "div" and "genre" in classes:
-            self._in_genre_div = True
-            self._genre_div_depth = 0
-            return
-
-        if tag == "div" and self._in_genre_div:
-            self._genre_div_depth += 1
-
-        if not self._in_genre_div:
-            return
-
-        if tag == "strong":
-            self._in_genre_strong = True
-            self._current_genre = ""
-
-        if tag == "a":
-            href = attr_dict.get("href", "") or ""
-            if "serie/" in href:
-                self._in_li_a = True
-                self._current_href = href
-                self._current_title = ""
-
-    def handle_data(self, data: str) -> None:
-        if self._in_genre_strong:
-            self._current_genre += data
-
-        if self._in_li_a:
-            self._current_title += data
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "strong" and self._in_genre_strong:
-            self._in_genre_strong = False
-
-        if tag == "a" and self._in_li_a:
-            self._in_li_a = False
-            title = self._current_title.strip()
-            href = self._current_href.strip()
+    def feed(self, html: str) -> None:
+        genre = ""
+        tree = LexborHTMLParser(html)
+        for node in tree.css("div.genre strong, div.genre a[href*='serie/']"):
+            if node.tag == "strong":
+                genre = node.text().strip()
+                continue
+            title = node.text().strip()
+            href = (node.attributes.get("href") or "").strip()
             if title and href:
                 # Extract slug from href like "serie/Breaking-Bad"
                 slug = href.replace("serie/", "").strip("/")
-                self.series.append(
-                    {
-                        "title": title,
-                        "slug": slug,
-                        "genre": self._current_genre.strip(),
-                    }
-                )
-
-        if tag == "div" and self._in_genre_div:
-            if self._genre_div_depth > 0:
-                self._genre_div_depth -= 1
-            else:
-                self._in_genre_div = False
+                self.series.append({"title": title, "slug": slug, "genre": genre})
 
 
-class _SeriesDetailParser(HTMLParser):
-    """Parse a series detail page at /serie/{slug}.
+class _SeriesDetailParser:
+    """Parse a series detail page at /serie/{slug} (selectolax).
 
     Extracts title, description, genres, year range, season count,
     and episode info from the series page HTML.
@@ -177,205 +126,88 @@ class _SeriesDetailParser(HTMLParser):
           <div id="seasons"><ul><li>...</li></ul></div>
           <table class="episodes"><tbody><tr>...</tr></tbody></table>
         </section>
+
+    The first ``h2`` of ``sp_left`` names the series (without its
+    ``small``), the first ``p`` after it outside ``infos`` describes it.
+    An info label ``span`` names the next ``p`` of ``infos``.
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self.title = ""
         self.description = ""
         self.genres: list[str] = []
         self.year = ""
         self.season_count = 0
         self.episode_count = 0
-
-        # h2 tracking
-        self._in_h2 = False
-        self._in_h2_small = False
-        self._h2_text = ""
-
-        # Description: first <p> after <h2> inside sp_left
-        self._in_sp_left = False
-        self._sp_left_depth = 0
-        self._got_h2 = False
-        self._in_desc_p = False
-        self._got_description = False
-
-        # Info section tracking
-        self._in_infos = False
-        self._infos_depth = 0
-        self._current_info_label = ""
-        self._in_info_span_label = False
-        self._in_info_p = False
-        self._info_p_depth = 0
-        self._in_info_span = False
-        self._in_info_em = False
-
-        # Seasons tracking
-        self._in_seasons = False
-        self._seasons_depth = 0
-
-        # Episodes tracking: episode page per number; rows without
-        # hosters are marked "disabled"
+        # Episode page per number; rows without hosters are marked "disabled"
         self.episode_links: dict[int, str] = {}
-        self._in_episodes_table = False
-        self._in_episode_tr = False
-        self._episode_disabled = False
+        # Seasons the episode table links to: bs.to answers a season it
+        # lacks with another season's page
+        self.episode_seasons: set[int] = set()
 
-    def handle_starttag(  # noqa: C901
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
-        attr_dict = dict(attrs)
-        classes = (attr_dict.get("class") or "").split()
-        elem_id = attr_dict.get("id", "") or ""
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        self._read_heading(tree)
+        self._read_infos(tree)
+        self.season_count = len(tree.css("div#seasons li"))
+        self._read_episodes(tree)
 
-        # Track sp_left div
-        if tag == "div" and elem_id == "sp_left":
-            self._in_sp_left = True
-            self._sp_left_depth = 0
-            return
+    def _read_heading(self, tree: LexborHTMLParser) -> None:
+        heading = False
+        for node in tree.css("div#sp_left h2, div#sp_left p"):
+            if not heading:
+                if node.tag == "h2":
+                    heading = True
+                    self.title = _text_outside(node, "small").strip()
+            elif node.tag == "p" and not any(
+                parent.tag == "div" and "infos" in classes(parent)
+                for parent in ancestors(node)
+            ):
+                self.description = node.text().strip()
+                return
 
-        if tag == "div" and self._in_sp_left:
-            self._sp_left_depth += 1
+    def _read_infos(self, tree: LexborHTMLParser) -> None:
+        label = ""
+        for node in tree.css("div.infos span, div.infos p"):
+            if node.tag == "p":
+                self._read_info(label.strip(), node)
+                label = ""  # a label names one value
+            elif not any(parent.tag == "p" for parent in ancestors(node)):
+                label = node.text()
 
-        # h2 for title
-        if tag == "h2" and self._in_sp_left and not self._got_h2:
-            self._in_h2 = True
-            self._h2_text = ""
+    def _read_info(self, label: str, value: LexborNode) -> None:
+        if label == "Genres":
+            for span in value.css("span"):
+                genre = span.text().strip().rstrip(",")
+                if genre:
+                    self.genres.append(genre)
+        elif label == "Produktionsjahre":
+            # Each text stripped: "2023 - <i>Unbekannt</i>" is "2023 -Unbekannt"
+            for em in value.css("em"):
+                self.year += em.text(strip=True)
 
-        if tag == "small" and self._in_h2:
-            self._in_h2_small = True
+    def _read_episodes(self, tree: LexborHTMLParser) -> None:
+        rows = tree.css("table.episodes tr")
+        self.episode_count = len(rows)
+        for row in rows:
+            if "disabled" in classes(row):
+                continue
+            for link in row.css("a"):
+                match = _EPISODE_HREF_RE.match(link.attributes.get("href") or "")
+                if match:
+                    self.episode_seasons.add(int(match.group(1)))
+                    self.episode_links.setdefault(int(match.group(2)), match.group(0))
 
-        # First <p> after <h2> = description
-        if (
-            tag == "p"
-            and self._in_sp_left
-            and self._got_h2
-            and not self._got_description
-            and not self._in_infos
-        ):
-            self._in_desc_p = True
 
-        # Infos section
-        if tag == "div" and "infos" in classes:
-            self._in_infos = True
-            self._infos_depth = 0
-            return
-
-        if tag == "div" and self._in_infos:
-            self._infos_depth += 1
-
-        # Info label <span> (direct child of info div, e.g., "Genres")
-        if tag == "span" and self._in_infos and not self._in_info_p:
-            self._in_info_span_label = True
-            self._current_info_label = ""
-
-        # Info value <p>
-        if tag == "p" and self._in_infos:
-            self._in_info_p = True
-            self._info_p_depth = 0
-
-        # Genre spans inside info <p>
-        if tag == "span" and self._in_info_p:
-            self._in_info_span = True
-
-        # Year <em> inside info <p>
-        if tag == "em" and self._in_info_p:
-            self._in_info_em = True
-
-        # Seasons section
-        if tag == "div" and elem_id == "seasons":
-            self._in_seasons = True
-            self._seasons_depth = 0
-            return
-
-        if tag == "div" and self._in_seasons:
-            self._seasons_depth += 1
-
-        if tag == "li" and self._in_seasons:
-            self.season_count += 1
-
-        # Episodes table
-        if tag == "table" and "episodes" in classes:
-            self._in_episodes_table = True
-
-        if tag == "tr" and self._in_episodes_table:
-            self._in_episode_tr = True
-            self.episode_count += 1
-            self._episode_disabled = "disabled" in classes
-
-        if tag == "a" and self._in_episode_tr and not self._episode_disabled:
-            match = _EPISODE_HREF_RE.match(attr_dict.get("href") or "")
-            if match:
-                self.episode_links.setdefault(int(match.group(1)), match.group(0))
-
-    def handle_data(self, data: str) -> None:
-        if self._in_h2 and not self._in_h2_small:
-            self._h2_text += data
-
-        if self._in_desc_p:
-            self.description += data
-
-        if self._in_info_span_label:
-            self._current_info_label += data
-
-        if self._in_info_span and self._current_info_label.strip() == "Genres":
-            text = data.strip().rstrip(",")
-            if text:
-                self.genres.append(text)
-
-        if self._in_info_em and self._current_info_label.strip() == "Produktionsjahre":
-            self.year += data.strip()
-
-    def handle_endtag(self, tag: str) -> None:  # noqa: C901
-        if tag == "small" and self._in_h2_small:
-            self._in_h2_small = False
-
-        if tag == "h2" and self._in_h2:
-            self._in_h2 = False
-            self._got_h2 = True
-            self.title = self._h2_text.strip()
-
-        if tag == "p" and self._in_desc_p:
-            self._in_desc_p = False
-            self._got_description = True
-            self.description = self.description.strip()
-
-        if tag == "span" and self._in_info_span_label and not self._in_info_p:
-            self._in_info_span_label = False
-
-        if tag == "span" and self._in_info_span:
-            self._in_info_span = False
-
-        if tag == "em" and self._in_info_em:
-            self._in_info_em = False
-
-        if tag == "p" and self._in_info_p:
-            self._in_info_p = False
-            self._current_info_label = ""
-
-        if tag == "div" and self._in_infos:
-            if self._infos_depth > 0:
-                self._infos_depth -= 1
-            else:
-                self._in_infos = False
-
-        if tag == "div" and self._in_sp_left and not self._in_infos:
-            if self._sp_left_depth > 0:
-                self._sp_left_depth -= 1
-            else:
-                self._in_sp_left = False
-
-        if tag == "div" and self._in_seasons:
-            if self._seasons_depth > 0:
-                self._seasons_depth -= 1
-            else:
-                self._in_seasons = False
-
-        if tag == "table" and self._in_episodes_table:
-            self._in_episodes_table = False
-
-        if tag == "tr" and self._in_episode_tr:
-            self._in_episode_tr = False
+def _text_outside(node: LexborNode, tag: str) -> str:
+    """The text of *node* without the text of its *tag* elements."""
+    parts: list[str] = []
+    for child in node.iter(include_text=True):
+        if child.is_text_node:
+            parts.append(child.text_content or "")
+        elif child.tag != tag:
+            parts.append(_text_outside(child, tag))
+    return "".join(parts)
 
 
 def _genre_to_category(genre: str) -> int:
@@ -420,8 +252,7 @@ class BurningSeriesPlugin(HttpxPluginBase):
         if html is None:
             return []
 
-        parser = _SeriesListParser()
-        parser.feed(html)
+        parser = await parse_page(_SeriesListParser(), html)
 
         # Deduplicate by slug (a series can appear in multiple genre sections)
         seen: set[str] = set()
@@ -449,8 +280,7 @@ class BurningSeriesPlugin(HttpxPluginBase):
         if html is None:
             return _SeriesDetailParser()
 
-        parser = _SeriesDetailParser()
-        parser.feed(html)
+        parser = await parse_page(_SeriesDetailParser(), html)
 
         self._log.info(
             "burningseries_detail",
@@ -474,8 +304,16 @@ class BurningSeriesPlugin(HttpxPluginBase):
 
         Links the series page, the German season page, or the episode page
         from the season's episode table (None when the episode has no
-        hosters there).
+        hosters there). None for a season the series lacks: bs.to redirects
+        it to another season, and S09E02 of Breaking Bad linked an episode
+        of season 1 (code review, 2026-10-06).
         """
+        if (
+            season is not None
+            and detail.episode_seasons
+            and season not in detail.episode_seasons
+        ):
+            return None
         title = detail.title or listing_entry["title"]
         year = detail.year
         slug = listing_entry["slug"]

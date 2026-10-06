@@ -2,7 +2,7 @@
 
 # Mirror URL Fallback
 
-> Plugins list their mirror domains in `_domains`; `_verify_domain()` picks the first reachable one as `base_url` and keeps it until `cleanup()`.
+> Plugins list their mirror domains in `_domains`; `_verify_domain()` picks the first reachable one as `base_url` and keeps it until a restart.
 
 ---
 
@@ -32,6 +32,8 @@ _verify_domain()  (no-op if already verified or only one domain)
 
 Fallback only happens when the plugin calls `await self._verify_domain()` (usually at the start of `search()`). Most plugins have a single domain, where the call is a no-op. Some plugins implement their own loop instead — e.g. `plugins/boerse.py` tries each domain during login.
 
+**Site moves:** when a request of `HttpxPluginBase._fetch_text()` or `_safe_fetch()` to the base host ends on another host after only permanent redirects (301/308) and with a status below 400, that host becomes `base_url` (`{name}_site_moved`), without a plugin change. hdfilme answered every search with a 301 from `hdfilme.cafe` to `hdfilme.ceo`, one more round trip per request. Temporary redirects (302/307), redirects that stay on the host and moves that end on an error page change nothing. The move lasts until a restart or until a request to the new host gets no answer (timeout, connect or DNS error): then the base URL goes back to the one the site moved from (`{name}_site_move_undone`), whose redirect leads to the site's newest host. hdfilme moves on every few days (`.legal`, `.press`, `.party`, `.bid`, `.cafe`, `.ceo`), and a dead new host kept every search on it until a restart.
+
 ---
 
 ## Plugin Domain Configuration
@@ -46,7 +48,7 @@ class ExampleSitePlugin(HttpxPluginBase):
 - Domains are bare host names; the base classes build `https://{domain}`
 - Order is the fallback priority — list the most reliable mirror first
 - Before verification, `base_url` is `https://{_domains[0]}`
-- The verified domain is kept (`_domain_verified`) until `cleanup()`; the base classes do not re-probe after later request errors
+- The verified domain is kept (`_domain_verified`) for the life of the process (`cleanup()` resets it, but the app does not call it); the base classes do not re-probe after later request errors
 
 ---
 
@@ -79,7 +81,7 @@ async def _verify_domain(self) -> None:
 Key behaviors:
 - `HEAD` request per domain with a 5 s timeout (`DEFAULT_DOMAIN_CHECK_TIMEOUT`)
 - The first status `< 400` wins; errors and timeouts move on to the next domain
-- `base_url` uses the final URL after redirects, so `aniworld.info` → `www.aniworld.info` produces a correct base
+- `base_url` uses the final URL after redirects, so a bare domain that redirects to `www.` produces a correct base
 - If all domains fail, the first domain is used and `{name}_no_domain_reachable` is logged
 
 ---
@@ -99,7 +101,7 @@ async def _verify_domain(self) -> None:
             resp = await page.goto(
                 f"https://{domain}/", timeout=5_000, wait_until="domcontentloaded"
             )
-            if resp and resp.status < 400 and await self._wait_for_cloudflare(page):
+            if resp and await self._passes_cloudflare(page, resp):
                 self.base_url = f"https://{domain}"
                 self._domain_verified = True
                 return
@@ -113,7 +115,7 @@ async def _verify_domain(self) -> None:
 
 Differences from the httpx fallback:
 - **Browser-based:** navigates the plugin's persistent page instead of sending HTTP requests
-- **Cloudflare-aware:** a domain only counts as reachable if the Cloudflare challenge resolves within `_cf_timeout_ms`
+- **Cloudflare-aware:** a domain counts when it answers below 400, or with a Cloudflare challenge page that is solved within `_cf_timeout_ms` (`_passes_cloudflare()`); an error status without a challenge fails
 - **No redirect tracking:** `base_url` is set to `https://{domain}`, not the final URL
 
 Plugins can override `_verify_domain()`. An override of `_wait_for_cloudflare()` must call the base implementation (Turnstile solver, clearance memo) and add its own condition after it (e.g. `page.wait_for_function()` for a cookie the site's app sets).
@@ -144,7 +146,7 @@ async def _ensure_session(self) -> None:
             cookies = await login_ctx.cookies()
             if any(c["name"] == "bbsessionhash" for c in cookies):
                 self.base_url = domain_url
-                self._session_cookies = cookies
+                self._session_cookies = self._cookie_params(cookies)
                 self._logged_in = True
                 return
         except Exception:
@@ -167,8 +169,6 @@ See [Python Plugins](./python-plugins.md#reference-implementation-boersepy) for 
 ## Health Endpoint
 
 `GET /api/v1/torznab/{plugin_name}/health` probes the plugin's current `base_url` (`HEAD`, falling back to a ranged `GET` on 405/501, 5 s timeout) and reports `reachable`, `status_code` and `error`. Any HTTP response counts as reachable; only network errors report `false`.
-
-The endpoint also has mirror probing: if a plugin exposes a `mirror_urls` attribute and the primary is unreachable, each mirror is probed and listed under `mirrors`. No plugin currently sets `mirror_urls` (it is separate from `_domains`), so today the health endpoint probes only the primary URL.
 
 ```bash
 curl http://localhost:7979/api/v1/torznab/example-site/health | jq

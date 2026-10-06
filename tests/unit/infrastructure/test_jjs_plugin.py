@@ -355,6 +355,55 @@ class TestDetailPageParser:
 
         assert parser.extract_size() == "1020 MB"
 
+    def test_total_size_not_the_part_size(self) -> None:
+        """Live detail pages give the part size first (all 44 checked)."""
+        html = (
+            "<html><body><div class='entry-content'><p>"
+            "<strong>Partgröße:</strong>  max. 1020 MB "
+            "<strong>Parts:</strong>  10 Stück "
+            "<strong>Gesamtgröße:</strong>  9.24 GB</p></div></body></html>"
+        )
+        parser = _DetailPageParser()
+        parser.feed(html)
+
+        assert parser.extract_size() == "9.24 GB"
+
+    def test_season_pack_has_no_size(self) -> None:
+        """A season pack names its part size and episode count only."""
+        html = (
+            "<html><body><div class='entry-content'><p>"
+            "<strong>Partgröße:</strong>  max. 1020 MB "
+            "<strong>Enthaltene Episoden:</strong>  10 Stück</p></div></body></html>"
+        )
+        parser = _DetailPageParser()
+        parser.feed(html)
+
+        assert parser.extract_size() == ""
+
+    @pytest.mark.parametrize(
+        "nfo",
+        [
+            "BITRATE : 19.6 Mb/s",
+            "Bit rate : 7 072 kb/s",
+            "Dateigröße : 207 MiB",
+            "<style>.x{color:#2b2b2b}</style>",
+        ],
+    )
+    def test_a_season_pack_takes_no_size_from_its_nfo(self, nfo: str) -> None:
+        """The first size anywhere on the page was a bitrate, one episode's
+        size or CSS (6 of 7 and 9 of 16 live season packs; code review,
+        2026-10-06): Sonarr and Radarr rejected the packs as too small."""
+        html = (
+            "<html><body><div class='entry-content'><p>"
+            "<strong>Partgröße:</strong>  max. 1020 MB "
+            "<strong>Enthaltene Episoden:</strong>  52 Stück</p>"
+            f"<pre>{nfo}</pre></div></body></html>"
+        )
+        parser = _DetailPageParser()
+        parser.feed(html)
+
+        assert parser.extract_size() == ""
+
     def test_no_download_links(self) -> None:
         html = "<html><body><p>No downloads</p></body></html>"
         parser = _DetailPageParser()

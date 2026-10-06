@@ -125,7 +125,7 @@ def _make_json_response(
     status_code: int = 200,
     headers: dict[str, str] | None = None,
 ) -> MagicMock:
-    resp = MagicMock(spec=httpx.Response)
+    resp = MagicMock(spec=httpx.Response, history=[])
     resp.status_code = status_code
     resp.text = json.dumps(data)
     resp.json.return_value = data
@@ -138,7 +138,7 @@ def _make_text_response(
     text: str,
     status_code: int = 200,
 ) -> MagicMock:
-    resp = MagicMock(spec=httpx.Response)
+    resp = MagicMock(spec=httpx.Response, history=[])
     resp.status_code = status_code
     resp.text = text
     resp.raise_for_status = MagicMock()

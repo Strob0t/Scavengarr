@@ -25,6 +25,7 @@ import structlog
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
 from scavengarr.infrastructure.browser.cloudflare import is_cloudflare_challenge
 from scavengarr.infrastructure.hoster_resolvers._browser import capture_stream
+from scavengarr.infrastructure.hoster_resolvers._domain import extract_domain
 
 if TYPE_CHECKING:
     from scavengarr.infrastructure.browser.stealth_pool import StealthPool
@@ -151,7 +152,7 @@ class DoodStreamResolver:
         expiry = int(time.time() * 1000)
         video_url = f"{video_base}?token={token}&expiry={expiry}"
 
-        log.debug("doodstream_resolved", video_url=video_url[:80])
+        log.debug("doodstream_resolved", cdn=extract_domain(video_url))
         return ResolvedStream(
             video_url=video_url,
             quality=StreamQuality.UNKNOWN,

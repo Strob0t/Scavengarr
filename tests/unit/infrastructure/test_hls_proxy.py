@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import gzip
 import time
+from collections.abc import AsyncIterator
 
 import httpx
 import pytest
@@ -81,13 +83,34 @@ https://ds7.dropcdn.io/hls2/01/00017/yw6c47u0v5nb_h/seg-2-v1-a1.ts?t=abc
 
 
 class TestRewriteManifest:
-    def test_master_manifest_relative_urls_unchanged(self) -> None:
+    def test_relative_uris_point_at_the_playlists_link(self) -> None:
+        """Resolved against the playlist's proxy URL, a relative URI went to
+        the shared link of the stream, which a later resolution can move to
+        another CDN node (code review, 2026-10-06)."""
         cdn_base = "https://ds7.dropcdn.io/hls2/01/00017/yw6c47u0v5nb_h/"
-        proxy_base = "http://localhost:7979/api/v1/stremio/proxy/abc123/"
+        proxy_base = "http://localhost:7979/api/v1/stremio/proxy/abc123.pinned/"
+
         result = rewrite_manifest(_MASTER_MANIFEST, cdn_base, proxy_base)
-        # Relative URLs should remain untouched
-        assert "index-v1-a1.m3u8?t=abc123" in result
-        assert cdn_base not in result or result == _MASTER_MANIFEST
+
+        assert f"\n{proxy_base}index-v1-a1.m3u8?t=abc123\n" in result
+        assert f"\n{proxy_base}index-v2-a1.m3u8?t=abc123\n" in result
+
+    def test_relative_uris_of_a_variant_resolve_in_its_directory(self) -> None:
+        cdn_base = "https://cdn.example.com/hls/a/"
+        proxy_base = "http://proxy/p/sid.pinned/"
+        content = "#EXTM3U\n#EXTINF:4.0,\nseg-1.ts\n"
+
+        result = rewrite_manifest(content, cdn_base, proxy_base, playlist_dir="720p/")
+
+        assert result.splitlines()[2] == "http://proxy/p/sid.pinned/720p/seg-1.ts"
+
+    @pytest.mark.parametrize("uri", ["data:text/plain;base64,AAAA", "skd://key-id"])
+    def test_uris_of_other_schemes_stay(self, uri: str) -> None:
+        content = f'#EXTM3U\n#EXT-X-KEY:METHOD=SAMPLE-AES,URI="{uri}"\n'
+
+        result = rewrite_manifest(content, "https://cdn.example.com/a/", "http://p/s/")
+
+        assert f'URI="{uri}"' in result
 
     def test_variant_manifest_absolute_urls_rewritten(self) -> None:
         cdn_base = "https://ds7.dropcdn.io/hls2/01/00017/yw6c47u0v5nb_h/"
@@ -197,7 +220,7 @@ class TestRewriteManifest:
 
         assert lines[1].endswith('URI="http://proxy/p/sid//aud/de/index.m3u8"')
         assert lines[2].endswith('URI="http://proxy/p/sid/key.bin"')
-        assert lines[3] == '#EXT-X-MAP:URI="init.mp4"'  # relative: resolves itself
+        assert lines[3] == '#EXT-X-MAP:URI="http://proxy/p/sid/init.mp4"'
         assert lines[4].endswith('URI="https://subs.example.net/de.m3u8"')
 
     def test_keeps_line_endings(self) -> None:
@@ -398,6 +421,76 @@ class TestStreamHlsSegment:
                 await hls_proxy.stream_hls_segment(client, url, {})
 
         assert seen and seen[0].is_closed
+
+    async def test_small_cdn_chunks_go_out_in_64_kib_pieces(self) -> None:
+        """VOE's CDN sends 4 KiB TLS records. Passed through one by one, each
+        a response write, the proxy used 39-46 ms of CPU per MB against
+        34-36 ms in 64 KiB pieces (dev-server end-to-end run, 2026-10-05)."""
+        parts = [bytes([i]) * 4096 for i in range(40)]
+
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, stream=_Chunks(parts))
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
+            chunks, _ = await stream_hls_segment(client, "https://cdn.test/1.ts", {})
+            received = [chunk async for chunk in chunks]
+
+        assert [len(chunk) for chunk in received] == [65536, 65536, 32768]
+        assert b"".join(received) == b"".join(parts)
+
+    async def test_a_head_request_reads_no_segment_bytes(self) -> None:
+        """HEAD wants the CDN's status and content type, not its 2-10 MB."""
+        body = _Chunks([b"\x47" * 1000])
+
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200, headers={"Content-Type": "video/mp2t"}, stream=body
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
+            chunks, content_type = await stream_hls_segment(
+                client, "https://cdn.test/1.ts", {}, head=True
+            )
+            received = [chunk async for chunk in chunks]
+
+        assert received == []
+        assert content_type == "video/mp2t"
+        assert not body.read
+        assert body.closed
+
+    async def test_an_encoded_segment_is_decoded(self) -> None:
+        """The proxy does not forward Content-Encoding: it sends plain bytes."""
+        data = b"\x47segment" * 100
+
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                headers={"Content-Encoding": "gzip"},
+                content=gzip.compress(data),
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
+            chunks, _ = await stream_hls_segment(client, "https://cdn.test/1.ts", {})
+            received = b"".join([chunk async for chunk in chunks])
+
+        assert received == data
+
+
+class _Chunks(httpx.AsyncByteStream):
+    """A response body arriving in the given chunks."""
+
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = chunks
+        self.read = False
+        self.closed = False
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        self.read = True
+        for chunk in self._chunks:
+            yield chunk
+
+    async def aclose(self) -> None:
+        self.closed = True
 
 
 # ---------------------------------------------------------------------------

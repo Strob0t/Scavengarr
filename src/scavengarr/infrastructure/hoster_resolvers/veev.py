@@ -17,6 +17,7 @@ Offline: ``<title>Watch video - Veev.to</title>`` or "File not found".
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from urllib.parse import urlparse
 
 import httpx
@@ -29,9 +30,12 @@ from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 log = structlog.get_logger(__name__)
 
 _DOMAINS = frozenset({"veev"})
-# veevcdn binds the stream token to the resolving User-Agent (another UA
-# gets 403), so resolve with a browser UA and hand it on for playback
+# veevcdn binds the stream token to the resolving User-Agent and
+# Accept-Language (another value, or one more header, gets 403; production,
+# 2026-10-06), so resolve with a browser UA and hand it on for playback;
+# /play resolves again with a player's own values
 _USER_AGENT = DEFAULT_USER_AGENT
+_BOUND_HEADERS = ("user-agent", "accept-language")
 _FILE_ID_RE = re.compile(r"^/(?:e/|d/)?([A-Za-z0-9]{12,})(?:/|$|\.html)")
 _TOKEN_RE = re.compile(r'window\._vvto\s*\[\s*\w+\s*\]\s*=\s*"([^"]+)"')
 _OFFLINE_RE = re.compile(
@@ -129,7 +133,24 @@ class VeevResolver:
     def name(self) -> str:
         return "veev"
 
+    @property
+    def bound_headers(self) -> tuple[str, ...]:
+        return _BOUND_HEADERS
+
     async def resolve(self, url: str) -> ResolvedStream | None:
+        return await self._resolve(url, {"User-Agent": _USER_AGENT})
+
+    async def resolve_for_client(
+        self, url: str, headers: Mapping[str, str]
+    ) -> ResolvedStream | None:
+        """Resolve *url* with the player's User-Agent and Accept-Language."""
+        client = {"User-Agent": headers.get("user-agent") or _USER_AGENT}
+        if language := headers.get("accept-language"):
+            client["Accept-Language"] = language
+        return await self._resolve(url, client)
+
+    async def _resolve(self, url: str, client: dict[str, str]) -> ResolvedStream | None:
+        """Resolve *url*, every request with the *client* headers the CDN binds."""
         file_code = _extract_file_id(url)
         if not file_code:
             log.warning("veev_invalid_url", url=url)
@@ -141,10 +162,7 @@ class VeevResolver:
 
         try:
             page = await self._http.get(
-                embed_url,
-                follow_redirects=True,
-                timeout=15,
-                headers={"User-Agent": _USER_AGENT},
+                embed_url, follow_redirects=True, timeout=15, headers=client
             )
         except httpx.HTTPError:
             log.warning("veev_request_failed", url=url)
@@ -152,6 +170,10 @@ class VeevResolver:
         if page.status_code != 200:
             log.info("veev_http_error", status=page.status_code, url=url)
             return None
+        # veev redirects some links to another file code; the page's token
+        # belongs to that code (the API answers the old one "malformed request")
+        file_code = _extract_file_id(str(page.url)) or file_code
+        embed_url = str(page.url)
         if _OFFLINE_RE.search(page.text):
             log.info("veev_offline", file_code=file_code)
             return None
@@ -166,7 +188,7 @@ class VeevResolver:
             log.warning("veev_bad_token", file_code=file_code)
             return None
 
-        source = await self._player_source(origin, embed_url, file_code, ch)
+        source = await self._player_source(origin, embed_url, file_code, ch, client)
         if not source:
             return None
         video_url = _unwrap(_lzw_decode(source), steps[0])
@@ -178,11 +200,16 @@ class VeevResolver:
         return ResolvedStream(
             video_url=video_url,
             quality=StreamQuality.UNKNOWN,
-            headers={"Referer": f"{origin}/", "User-Agent": _USER_AGENT},
+            headers={"Referer": f"{origin}/", **client},
         )
 
     async def _player_source(
-        self, origin: str, embed_url: str, file_code: str, ch: str
+        self,
+        origin: str,
+        embed_url: str,
+        file_code: str,
+        ch: str,
+        client: dict[str, str],
     ) -> str | None:
         """Ask the player API for the encoded source (``file.dv[0].s``)."""
         try:
@@ -199,7 +226,7 @@ class VeevResolver:
                 headers={
                     "X-Requested-With": "XMLHttpRequest",
                     "Referer": embed_url,
-                    "User-Agent": _USER_AGENT,
+                    **client,
                 },
                 timeout=15,
             )

@@ -18,15 +18,21 @@ import asyncio
 import hashlib
 import os
 import re
-from html.parser import HTMLParser
 from typing import TYPE_CHECKING
-from urllib.parse import urlparse
+
+from selectolax.lexbor import LexborHTMLParser
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.categories import (
     filter_by_category,
     is_series_title,
     served_category,
+)
+from scavengarr.infrastructure.plugins.dom import parse_page
+from scavengarr.infrastructure.plugins.forum_links import (
+    hoster_from_text,
+    hoster_from_url,
+    is_link_container,
 )
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
@@ -71,86 +77,38 @@ _INTERNAL_HOSTS = {
     "mygully.to",
 }
 
-# Known link-protection / container services.
-# Only links from these domains are treated as download links.
-_LINK_CONTAINER_HOSTS = {
-    "keeplinks.org",
-    "keeplinks.eu",
-    "keeplinks.co",
-    "share-links.biz",
-    "share-links.org",
-    "filecrypt.cc",
-    "filecrypt.co",
-    "safelinks.to",
-    "protectlinks.com",
-    "hide.cx",
-    "linkcrypt.ws",
-}
 
-
-class _PostLinkParser(HTMLParser):
-    """Extract download links from vBulletin post content.
+class _PostLinkParser:
+    """Extract download links from vBulletin post content (selectolax).
 
     Only captures links to known link-protection containers
-    (keeplinks.org, filecrypt.cc, etc.) from post_message divs.
+    (keeplinks.org, filecrypt.cc, etc.) from post_message divs,
+    nested divs included.
     The hoster name is derived from the anchor text when available.
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self.links: list[dict[str, str]] = []
-        self._in_post = False
-        self._div_depth = 0
-        self._in_a = False
-        self._current_href = ""
-        self._current_text = ""
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attr_dict = dict(attrs)
-        if tag == "div":
-            if self._in_post:
-                self._div_depth += 1
-            else:
-                div_id = attr_dict.get("id") or ""
-                if div_id.startswith("post_message"):
-                    self._in_post = True
-                    self._div_depth = 0
-        if tag == "a" and self._in_post:
-            href = attr_dict.get("href", "")
-            if href and href.startswith("http"):
-                self._in_a = True
-                self._current_href = href
-                self._current_text = ""
-
-    def handle_data(self, data: str) -> None:
-        if self._in_a:
-            self._current_text += data
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "div" and self._in_post:
-            if self._div_depth > 0:
-                self._div_depth -= 1
-            else:
-                self._in_post = False
-        if tag == "a" and self._in_a:
-            self._in_a = False
-            href = self._current_href
-            text = self._current_text.strip()
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for anchor in tree.css("div[id^='post_message'] a[href^='http']"):
+            href = anchor.attributes.get("href") or ""
 
             # Only accept links from known container services
-            host = (urlparse(href).hostname or "").replace("www.", "")
-            if not _is_container_host(host):
-                return
+            if not is_link_container(href):
+                continue
 
             # Derive hoster name from anchor text
-            hoster = _hoster_from_text(text) or _hoster_from_url(href)
+            text = anchor.text().strip()
+            hoster = hoster_from_text(text) or hoster_from_url(href)
 
             if href not in [entry["link"] for entry in self.links]:
                 self.links.append({"hoster": hoster, "link": href})
 
 
-class _ThreadLinkParser(HTMLParser):
-    """Extract thread links from vBulletin search results page.
+class _ThreadLinkParser:
+    """Extract thread links from vBulletin search results page (selectolax).
 
     Handles both friendly URLs (/thread/{id}-{slug}/) and
     classic URLs (showthread.php?t={id}). Normalizes by thread ID
@@ -158,14 +116,10 @@ class _ThreadLinkParser(HTMLParser):
     """
 
     def __init__(self, base_url: str) -> None:
-        super().__init__()
         self.thread_urls: list[str] = []
         self.next_page_url: str = ""
         self._base_url = base_url
         self._seen_ids: set[str] = set()
-        self._in_nav_a = False
-        self._nav_a_href = ""
-        self._nav_a_text = ""
 
     def _handle_thread_link(self, href: str) -> None:
         # Try classic format: showthread.php?t=12345
@@ -190,60 +144,43 @@ class _ThreadLinkParser(HTMLParser):
             self.thread_urls.append(url)
             return
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag != "a":
-            return
-        attr_dict = dict(attrs)
-        href = attr_dict.get("href", "")
-        if not href:
-            return
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for link in tree.css("a[href]"):
+            href = link.attributes.get("href") or ""
+            if not href:
+                continue
 
-        if "showthread.php" in href or "/thread/" in href:
-            self._handle_thread_link(href)
+            if "showthread.php" in href or "/thread/" in href:
+                self._handle_thread_link(href)
 
-        # Detect pagination links (search.php?...&page=N)
-        if "search.php" in href and "page=" in href:
-            self._in_nav_a = True
-            self._nav_a_href = href
-            self._nav_a_text = ""
-
-    def handle_data(self, data: str) -> None:
-        if self._in_nav_a:
-            self._nav_a_text += data
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "a" and self._in_nav_a:
-            self._in_nav_a = False
-            text = self._nav_a_text.strip().lower()
-            # vBulletin ">" or "Next" or German "Weiter"
-            if text in {">", "next", "\u00bb", "weiter"}:
-                self.next_page_url = self._nav_a_href
+            # Pagination links (search.php?...&page=N): vBulletin ">" or
+            # "Next" or German "Weiter"; the last one wins
+            if "search.php" in href and "page=" in href:
+                text = link.text().strip().lower()
+                if text in {">", "next", "\u00bb", "weiter"}:
+                    self.next_page_url = href
 
 
-class _ThreadTitleParser(HTMLParser):
-    """Extract thread title from vBulletin thread page."""
+class _ThreadTitleParser:
+    """Extract thread title from vBulletin thread page (selectolax).
+
+    The first ``<title>`` with text left after stripping its
+    " - myGully.com (...)" suffix names the thread.
+    """
 
     def __init__(self) -> None:
-        super().__init__()
         self.title: str | None = None
-        self._in_title_tag = False
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag == "title":
-            self._in_title_tag = True
-
-    def handle_data(self, data: str) -> None:
-        if self._in_title_tag and self.title is None:
-            text = data.strip()
-            if text:
-                # Strip " - myGully.com (...)" suffix from <title>
-                text = re.sub(r"\s*-\s*myGully\.com.*$", "", text, flags=re.IGNORECASE)
-                if text:
-                    self.title = text
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "title":
-            self._in_title_tag = False
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for node in tree.css("title"):
+            # Strip " - myGully.com (...)" suffix from <title>
+            text = re.sub(
+                r"\s*-\s*myGully\.com.*$", "", node.text().strip(), flags=re.IGNORECASE
+            )
+            if text and self.title is None:
+                self.title = text
 
 
 class MyGullyPlugin(PlaywrightPluginBase):
@@ -449,8 +386,7 @@ class MyGullyPlugin(PlaywrightPluginBase):
         all_urls: list[str] = []
         seen: set[str] = set()
 
-        parser = _ThreadLinkParser(self.base_url)
-        parser.feed(html)
+        parser = await parse_page(_ThreadLinkParser(self.base_url), html)
         for url in parser.thread_urls:
             if url not in seen:
                 seen.add(url)
@@ -466,8 +402,7 @@ class MyGullyPlugin(PlaywrightPluginBase):
             except Exception:  # noqa: BLE001
                 break
 
-            parser = _ThreadLinkParser(self.base_url)
-            parser.feed(html)
+            parser = await parse_page(_ThreadLinkParser(self.base_url), html)
 
             new_count = 0
             for url in parser.thread_urls:
@@ -499,13 +434,11 @@ class MyGullyPlugin(PlaywrightPluginBase):
                 await page.close()
 
         # Extract title
-        title_parser = _ThreadTitleParser()
-        title_parser.feed(html)
+        title_parser = await parse_page(_ThreadTitleParser(), html)
         title = title_parser.title or "Unknown"
 
         # Extract download links from post content
-        link_parser = _PostLinkParser()
-        link_parser.feed(html)
+        link_parser = await parse_page(_PostLinkParser(), html)
 
         if not link_parser.links:
             return None
@@ -569,40 +502,6 @@ class MyGullyPlugin(PlaywrightPluginBase):
         if category is not None:
             results = filter_by_category(results, category)
         return results
-
-
-def _is_container_host(host: str) -> bool:
-    """Check if a hostname belongs to a known link container."""
-    return any(host.endswith(c) for c in _LINK_CONTAINER_HOSTS)
-
-
-def _hoster_from_text(text: str) -> str:
-    """Derive hoster name from anchor text.
-
-    Handles patterns like 'RapidGator' or 'download via ddownload.com'.
-    """
-    if not text:
-        return ""
-    # "download via rapidgator.net" -> "rapidgator"
-    m = re.search(r"via\s+(\S+)", text, re.IGNORECASE)
-    if m:
-        host = m.group(1).rstrip(".")
-        parts = host.replace("www.", "").split(".")
-        return parts[0].lower() if parts else ""
-    # Plain hoster name like "RapidGator", "DDownload"
-    if not text.startswith("http") and len(text.split()) <= 2:
-        return text.strip().lower()
-    return ""
-
-
-def _hoster_from_url(url: str) -> str:
-    """Extract hoster name from URL domain."""
-    try:
-        host = urlparse(url).hostname or ""
-        parts = host.replace("www.", "").split(".")
-        return parts[0] if parts else "unknown"
-    except Exception:  # noqa: BLE001
-        return "unknown"
 
 
 plugin = MyGullyPlugin()

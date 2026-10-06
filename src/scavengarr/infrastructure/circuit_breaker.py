@@ -1,8 +1,9 @@
-"""Per-plugin circuit breaker to skip consistently failing plugins.
+"""Circuit breaker to skip consistently failing plugins or hosters.
 
-When a plugin accumulates ``failure_threshold`` consecutive failures
-(exceptions or timeouts), the breaker opens and subsequent calls are
-short-circuited for ``cooldown_seconds``.  After the cooldown, a
+Keys are plugins per category (Stremio plugin search) or hoster resolvers
+(``HosterResolverRegistry``). When a key accumulates ``failure_threshold``
+consecutive failures (exceptions or timeouts), the breaker opens and
+subsequent calls are short-circuited for ``cooldown_seconds``.  After the cooldown, a
 single probe request is allowed (half-open state); concurrent calls
 stay blocked until it reports.  If the probe succeeds the breaker
 resets; if it fails the breaker reopens with twice the cooldown.  A
@@ -112,6 +113,13 @@ class PluginCircuitBreaker:
         if count >= self._threshold:
             self._states[name] = _State.OPEN
             self._opened_at[name] = time.monotonic()
+
+    def release(self, name: str) -> None:
+        """End a half-open probe that gave no verdict (a deleted file, a
+        failed request): the next call probes instead of waiting out the
+        cooldown. Other states stay as they are."""
+        if self._states.get(name) == _State.HALF_OPEN:
+            self._probe_started.pop(name, None)
 
     def is_closed(self, name: str) -> bool:
         """Whether *name* runs normally (no failure streak); unlike

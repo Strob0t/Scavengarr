@@ -29,8 +29,6 @@ _BoersePlugin = _boerse.BoersePlugin
 _PostLinkParser = _boerse._PostLinkParser
 _ThreadLinkParser = _boerse._ThreadLinkParser
 _ThreadTitleParser = _boerse._ThreadTitleParser
-_hoster_from_url = _boerse._hoster_from_url
-_hoster_from_text = _boerse._hoster_from_text
 _CATEGORY_FORUM_MAP = _boerse._CATEGORY_FORUM_MAP
 _thread_category = _boerse._thread_category
 
@@ -444,6 +442,22 @@ class TestPostLinkParser:
         assert len(parser.links) == 1
         assert "keeplinks.org" in parser.links[0]["link"]
 
+    def test_look_alike_container_hosts_skipped(self) -> None:
+        """A host that only ends like a container's is none (notfilecrypt.cc)."""
+        html = """
+        <div id="post_message_790">
+        <a href="https://notfilecrypt.cc/Container/ABC.html">RapidGator</a>
+        <a href="https://www.keeplinks.org/p53/abc">DDownload</a>
+        </div>
+        """
+
+        parser = _PostLinkParser("boerse.am")
+        parser.feed(html)
+
+        assert [link["link"] for link in parser.links] == [
+            "https://www.keeplinks.org/p53/abc"
+        ]
+
     def test_links_outside_post_div_ignored(self) -> None:
         html = """
         <a href="https://www.keeplinks.org/p53/out">Outside</a>
@@ -637,24 +651,6 @@ class TestTitleParser:
         parser = _ThreadTitleParser()
         parser.feed("<title>Movie Title - boerse.am</title>")
         assert parser.title == "Movie Title"
-
-
-class TestHosterHelpers:
-    def test_hoster_from_url(self) -> None:
-        assert _hoster_from_url("https://www.keeplinks.org/p53/abc") == "keeplinks"
-        assert _hoster_from_url("https://rapidgator.net/file/abc") == "rapidgator"
-
-    def test_hoster_from_text_via_pattern(self) -> None:
-        assert _hoster_from_text("download via ddownload.com") == "ddownload"
-        assert _hoster_from_text("download via rapidgator.net") == "rapidgator"
-
-    def test_hoster_from_text_plain_name(self) -> None:
-        assert _hoster_from_text("RapidGator") == "rapidgator"
-        assert _hoster_from_text("DDownload") == "ddownload"
-
-    def test_hoster_from_text_empty(self) -> None:
-        assert _hoster_from_text("") == ""
-        assert _hoster_from_text("https://example.com") == ""
 
 
 class TestCategoryForumMapping:

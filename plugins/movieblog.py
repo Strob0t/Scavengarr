@@ -17,14 +17,16 @@ from __future__ import annotations
 
 import asyncio
 import re
-from html.parser import HTMLParser
 from urllib.parse import quote_plus
+
+from selectolax.lexbor import LexborHTMLParser, LexborNode
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.categories import (
     category_matches,
     served_category,
 )
+from scavengarr.infrastructure.plugins.dom import parse_page
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -58,8 +60,8 @@ _HOSTER_MAP: dict[str, str] = {
 # ---------------------------------------------------------------------------
 # Search result parser (search listing page)
 # ---------------------------------------------------------------------------
-class _SearchResultParser(HTMLParser):
-    """Parse movieblog.to search results.
+class _SearchResultParser:
+    """Parse movieblog.to search results (selectolax).
 
     Structure per result::
 
@@ -78,107 +80,41 @@ class _SearchResultParser(HTMLParser):
             ...
           </p>
         </div>
+
+    A result is a div whose class is exactly ``post``: the last link with
+    an href in one of its ``h1`` names it, the ``category tag`` links of
+    its ``info_x`` paragraphs give its category.
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self.results: list[dict[str, str | int]] = []
 
-        # Post tracking
-        self._in_post = False
-        self._post_depth = 0
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for post in tree.css("div.post"):
+            if (post.attributes.get("class") or "").strip() != "post":
+                continue
+            links = [a for a in post.css("h1 a") if a.attributes.get("href")]
+            title = links[-1].text().strip() if links else ""
+            if title:
+                self.results.append(
+                    {
+                        "title": title,
+                        "url": links[-1].attributes.get("href") or "",
+                        "category": _detect_category(_category_hrefs(post)),
+                    }
+                )
 
-        # Title tracking (h1 inside post)
-        self._in_h1 = False
-        self._in_title_link = False
-        self._current_url = ""
-        self._current_title = ""
 
-        # Category tracking (info_x paragraph)
-        self._in_info_x = False
-        self._info_x_depth = 0
-        self._in_cat_link = False
-        self._cat_href = ""
-        self._categories: list[str] = []
-
-    def handle_starttag(
-        self,
-        tag: str,
-        attrs: list[tuple[str, str | None]],
-    ) -> None:
-        attr_dict = dict(attrs)
-        classes = attr_dict.get("class", "") or ""
-
-        # Track div.post containers
-        if tag == "div":
-            if "post" == classes.strip():
-                self._in_post = True
-                self._post_depth = 0
-                self._current_url = ""
-                self._current_title = ""
-                self._categories = []
-            elif self._in_post:
-                self._post_depth += 1
-
-        # h1 title inside post
-        if tag == "h1" and self._in_post:
-            self._in_h1 = True
-
-        # Link inside h1 = title link
-        if tag == "a" and self._in_h1:
-            href = attr_dict.get("href", "") or ""
-            if href:
-                self._current_url = href
-                self._in_title_link = True
-                self._current_title = ""
-
-        # p.info_x = category info
-        if tag == "p" and "info_x" in classes:
-            self._in_info_x = True
-            self._info_x_depth = 0
-
-        # Category tag links inside info_x
-        if tag == "a" and self._in_info_x:
-            rel = attr_dict.get("rel", "") or ""
-            href = attr_dict.get("href", "") or ""
-            if "category" in rel and "tag" in rel:
-                self._in_cat_link = True
-                self._cat_href = href
-
-    def handle_data(self, data: str) -> None:
-        if self._in_title_link:
-            self._current_title += data
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "a" and self._in_title_link:
-            self._in_title_link = False
-
-        if tag == "a" and self._in_cat_link:
-            self._in_cat_link = False
-            self._categories.append(self._cat_href)
-            self._cat_href = ""
-
-        if tag == "h1" and self._in_h1:
-            self._in_h1 = False
-
-        if tag == "p" and self._in_info_x:
-            self._in_info_x = False
-
-        if tag == "div" and self._in_post:
-            if self._post_depth > 0:
-                self._post_depth -= 1
-            else:
-                # End of post div → emit result
-                self._in_post = False
-                if self._current_title.strip() and self._current_url:
-                    category = _detect_category(self._categories)
-                    self.results.append(
-                        {
-                            "title": self._current_title.strip(),
-                            "url": self._current_url,
-                            "category": category,
-                        }
-                    )
+def _category_hrefs(post: LexborNode) -> list[str]:
+    """The targets of the ``category tag`` links in a post's ``info_x``."""
+    return [
+        link.attributes.get("href") or ""
+        for info in post.css("p[class*='info_x']")
+        for link in info.css("a[rel]")
+        # [rel*=...] would match case-insensitively
+        if "category" in (rel := link.attributes.get("rel") or "") and "tag" in rel
+    ]
 
 
 def _detect_category(cat_hrefs: list[str]) -> int:
@@ -193,8 +129,8 @@ def _detect_category(cat_hrefs: list[str]) -> int:
 # ---------------------------------------------------------------------------
 # Pagination parser
 # ---------------------------------------------------------------------------
-class _PaginationParser(HTMLParser):
-    """Extract next page URL from navigation_x div.
+class _PaginationParser:
+    """Extract next page URL from navigation_x div (selectolax).
 
     Structure::
 
@@ -206,67 +142,37 @@ class _PaginationParser(HTMLParser):
             <a href="/page/2/?s=query">Nächste Seite »</a>
           </div>
         </div>
+
+    The next page is the first ``alignright`` link whose first text reads
+    "Nächste Seite".
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self.next_page_url: str = ""
 
-        self._in_nav = False
-        self._nav_depth = 0
-        self._in_right = False
-        self._right_depth = 0
-        self._capture_href = False
-        self._last_href = ""
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        nav = "div[class*='navigation_x'] div[class*='alignright'] a[href]"
+        for link in tree.css(nav):
+            href = link.attributes.get("href") or ""
+            if href and "Nächste Seite" in _first_text(link):
+                self.next_page_url = href
+                return
 
-    def handle_starttag(
-        self,
-        tag: str,
-        attrs: list[tuple[str, str | None]],
-    ) -> None:
-        attr_dict = dict(attrs)
-        classes = attr_dict.get("class", "") or ""
 
-        if tag == "div":
-            if "navigation_x" in classes:
-                self._in_nav = True
-                self._nav_depth = 0
-            elif self._in_nav:
-                self._nav_depth += 1
-                if "alignright" in classes:
-                    self._in_right = True
-                    self._right_depth = 0
-
-        # Capture last link href inside alignright
-        if tag == "a" and self._in_right:
-            href = attr_dict.get("href", "") or ""
-            if href and "Seite" not in self.next_page_url:
-                self._last_href = href
-                self._capture_href = True
-
-    def handle_data(self, data: str) -> None:
-        if self._capture_href and "Nächste Seite" in data:
-            self.next_page_url = self._last_href
-        self._capture_href = False
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "div" and self._in_nav:
-            if self._in_right:
-                if self._right_depth > 0:
-                    self._right_depth -= 1
-                else:
-                    self._in_right = False
-            if self._nav_depth > 0:
-                self._nav_depth -= 1
-            else:
-                self._in_nav = False
+def _first_text(node: LexborNode) -> str:
+    """The first text node under *node*, "" without one."""
+    for child in node.traverse(include_text=True):
+        if child.is_text_node:
+            return child.text()
+    return ""
 
 
 # ---------------------------------------------------------------------------
 # Detail page parser
 # ---------------------------------------------------------------------------
-class _DetailPageParser(HTMLParser):
-    """Parse movieblog.to detail page for download links and metadata.
+class _DetailPageParser:
+    """Parse movieblog.to detail page for download links and metadata (selectolax).
 
     Download structure::
 
@@ -282,49 +188,26 @@ class _DetailPageParser(HTMLParser):
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self.download_links: list[dict[str, str]] = []
-
-        self._in_a = False
-        self._a_href = ""
-        self._a_text = ""
         self._all_text = ""
 
-    def handle_starttag(
-        self,
-        tag: str,
-        attrs: list[tuple[str, str | None]],
-    ) -> None:
-        if tag == "a":
-            attr_dict = dict(attrs)
-            href = attr_dict.get("href", "") or ""
-            if href and "filecrypt.cc/Container/" in href:
-                self._in_a = True
-                self._a_href = href
-                self._a_text = ""
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for link in tree.css("a[href*='filecrypt.cc/Container/']"):
+            self._add_link(link.attributes.get("href") or "", link.text())
+        # All text, a space before each text node (tags separate words)
+        self._all_text += " " + tree.text(separator=" ")
 
-    def handle_data(self, data: str) -> None:
-        if self._in_a:
-            self._a_text += data
-        self._all_text += " " + data
-
-    def _finish_link(self) -> None:
-        """Store a completed filecrypt link with hoster label."""
-        href = self._a_href
-        text = self._a_text.strip().lower()
+    def _add_link(self, href: str, text: str) -> None:
+        """Store a filecrypt link with hoster label."""
         if not _FILECRYPT_RE.match(href):
             return
-        hoster = _detect_hoster(text)
+        hoster = _detect_hoster(text.strip().lower())
         if not any(d["link"] == href for d in self.download_links):
             self.download_links.append({"hoster": hoster, "link": href})
 
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "a" and self._in_a:
-            self._in_a = False
-            self._finish_link()
-
     def extract_size(self) -> str:
-        """Extract file size from raw HTML text."""
+        """Extract file size from the page text."""
         m = _SIZE_RE.search(self._all_text)
         if m:
             return m.group(1).strip()
@@ -370,11 +253,9 @@ class MovieblogPlugin(HttpxPluginBase):
             return [], ""
 
         html = resp.text
-        parser = _SearchResultParser()
-        parser.feed(html)
+        parser = await parse_page(_SearchResultParser(), html)
 
-        pag_parser = _PaginationParser()
-        pag_parser.feed(html)
+        pag_parser = await parse_page(_PaginationParser(), html)
 
         self._log.info(
             "movieblog_search_page",
@@ -429,8 +310,7 @@ class MovieblogPlugin(HttpxPluginBase):
             self._log.warning("movieblog_detail_failed", url=url)
             return None
 
-        parser = _DetailPageParser()
-        parser.feed(resp.text)
+        parser = await parse_page(_DetailPageParser(), resp.text)
 
         if not parser.download_links:
             return None

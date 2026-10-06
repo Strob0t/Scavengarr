@@ -40,7 +40,8 @@ Some sites need fewer steps (a JSON API that returns links directly) or more (an
 
 The first step fetches the site's search results and collects detail URLs:
 
-- Pass the Torznab category to the site's own filter (URL segment, dropdown ID, forum ID) when available
+- Answer the category with `served_category()`: a category the site does not have returns `[]` without a request; pass the served category to the site's own filter (URL segment, dropdown ID, forum ID) when available
+- Keep only the relevant hits before fetching detail pages: `relevant_hits()` (see [Python Plugins](python-plugins.md#adding-a-new-plugin), step 3)
 - Resolve relative links with `urljoin(self.base_url, href)`, not string concatenation
 - Drop duplicate detail URLs before fetching them
 - Paginate until `self.effective_max_results` items or no more results (see [Pagination](#pagination))
@@ -52,11 +53,12 @@ The first step fetches the site's search results and collects detail URLs:
 The second step turns each detail page into a `SearchResult`:
 
 - Set `title` and `download_link` (required), plus `download_links` for all hoster links (`{"hoster": ..., "link": ...}`), `size`, `release_name`, `category` and `source_url` (the detail page URL) where available
+- Label `category` from the site's data, never with the requested one, then keep the matches with `filter_by_category()`
 - Read URLs from attributes (`href`, `data-url`, embed `src`) rather than text content
 - For grouped links (several hosters per release), walk the container/group/item hierarchy and collect every link
 - On missing optional fields, return a partial result; on missing required fields, log and skip the item instead of aborting the whole search
 
-Plugins parse HTML with stdlib `html.parser.HTMLParser` subclasses (most httpx plugins and `plugins/boerse.py`), with JSON APIs via `_safe_parse_json()`, or with Playwright (`page.content()`, `page.evaluate()`).
+Plugins parse HTML with `selectolax` (lexbor, a C parser, CSS selectors; see [Parsing Pages](python-plugins.md#parsing-pages)), JSON APIs via `_safe_parse_json()`, or Playwright (`page.content()`, `page.evaluate()`). Every page goes through `parse_page(parser, html)` (`infrastructure/plugins/dom.py`), which parses pages from 32 KiB in a worker thread. Until 2026-10 the parsers were `html.parser` state machines in Python: filmpalast's ~300 KB detail pages took 20 ms with html.parser on x86 and 2.3 ms with selectolax, with the same results.
 
 ---
 
@@ -113,7 +115,7 @@ Each plugin sets `_MAX_PAGES` from the site's results-per-page (e.g. 200/page = 
 - **Rate limiting:** httpx plugins share one app-wide client whose `RetryTransport` applies a per-domain token-bucket rate limiter (`DomainRateLimiter`, optionally adaptive) before every request. Plugins do not add their own delays. Playwright traffic does not go through this client.
 - **429 / 503:** retried automatically by `RetryTransport` with exponential backoff, honouring `Retry-After`. A 429/503 served from Cloudflare's cache (`cf-cache-status: HIT/STALE/UPDATING`) is returned at once: it would come back unchanged on retry, and it does not lower the domain's adaptive rate.
 - **Other HTTP errors, timeouts, network errors:** `_safe_fetch()` logs a warning and returns `None`; the plugin skips that page or item.
-- **Unreachable domains:** handled once per plugin lifetime by `_verify_domain()`, not per request (see [Mirror URL Fallback](./mirror-url-fallback.md)).
+- **Unreachable domains:** `_verify_domain()` picks the domain once per plugin lifetime, not per request. httpx plugins follow a permanent site move and undo it when the new host stops answering, and Stremio skips plugins whose site failed the last health check (see [Mirror URL Fallback](./mirror-url-fallback.md)).
 
 ---
 
@@ -121,7 +123,7 @@ Each plugin sets `_MAX_PAGES` from the site's results-per-page (e.g. 200/page = 
 
 Link validation is not part of the plugin. For Torznab searches, the use case passes the plugin's results page by page (only as many as the requested `offset + limit` need) to `HttpxSearchEngine.validate_results()`, which batch-checks `download_link` and every `download_links` entry, promotes the first valid alternative when the primary link is dead, and drops results without any valid link. Results that already carry `validated_links` are passed through unchecked. Details: [Link Validation](./link-validation.md).
 
-There is no result-level deduplication after the plugin; plugins that can return duplicates must de-duplicate themselves.
+Torznab does not de-duplicate results after the plugin; plugins that can return duplicates must de-duplicate themselves. Stremio drops a result found again (`result_key()`: plugin, title, release, links; the full and the base title find many results twice) and keeps one stream per hoster and language.
 
 ---
 

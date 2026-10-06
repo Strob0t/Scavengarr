@@ -6,7 +6,8 @@ Scrapes crawli.net (German download search engine) with:
 - Category filtering via the section path (film, serie, spiel, music, apps);
   results are labelled by the section that listed them
 - The page arrives base64-encoded for a script to write (since 2026-09)
-- Pagination up to 1000 items (10 results/page, max 100 pages)
+- Pagination up to 1000 items (10 results/page, max 100 pages); a page
+  links a window of pages (page 1 up to 8, page 8 up to 11)
 - Single-stage: title, source URL, date, description all on search page
 
 Multi-domain support: crawli.net, www.crawli.net.
@@ -17,8 +18,9 @@ from __future__ import annotations
 
 import base64
 import re
-from html.parser import HTMLParser
 from urllib.parse import quote_plus
+
+from selectolax.lexbor import LexborHTMLParser, LexborNode
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.categories import (
@@ -26,6 +28,7 @@ from scavengarr.infrastructure.plugins.categories import (
     is_series_title,
     served_category,
 )
+from scavengarr.infrastructure.plugins.dom import classes, parse_page
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -100,8 +103,14 @@ _DATE_RE = re.compile(r"\d{2}\.\d{2}\.\d{4}")
 # ---------------------------------------------------------------------------
 # HTML parser
 # ---------------------------------------------------------------------------
-class _SearchResultParser(HTMLParser):
-    """Parse crawli.net search results page.
+def _last_text(node: LexborNode, selector: str) -> str:
+    """The stripped text of the last match of *selector* in *node*."""
+    matches = node.css(selector)
+    return matches[-1].text().strip() if matches else ""
+
+
+class _SearchResultParser:
+    """Parse crawli.net search results page (selectolax).
 
     Each result has structure::
 
@@ -117,149 +126,53 @@ class _SearchResultParser(HTMLParser):
           </div>
         </div>
 
-    Pagination is in ``#foot > span.pages > a`` with ``p-N`` links.
+    A result needs its ``scont`` div, a title link and a source URL; the
+    last title link, source URL and date of the box count, and the
+    description joins the paragraphs of the ``scont`` div.
+
+    Pagination is in ``#foot > span.pages > a`` with ``p-N`` links; the
+    highest one is the last page this page knows of.
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self.results: list[dict[str, str]] = []
         self.max_page: int = 1
 
-        # State tracking
-        self._in_sres = False
-        self._in_title_a = False
-        self._in_scont = False
-        self._scont_depth = 0
-        self._in_address = False
-        self._in_small = False
-        self._in_p = False
-        self._in_foot_pages = False
-
-        # Current result data
-        self._current_title = ""
-        self._current_source_url = ""
-        self._current_date = ""
-        self._current_description = ""
-
-    def _reset_result(self) -> None:
-        self._current_kind = ""
-        self._current_title = ""
-        self._current_source_url = ""
-        self._current_date = ""
-        self._current_description = ""
-
-    def _emit_result(self) -> None:
-        title = self._current_title.strip()
-        source_url = self._current_source_url.strip()
-        if title and source_url:
-            # Ensure source URL has a scheme
-            if not source_url.startswith("http"):
-                source_url = f"https://{source_url}"
-            self.results.append(
-                {
-                    "kind": self._current_kind,
-                    "title": title,
-                    "source_url": source_url,
-                    "date": self._current_date.strip(),
-                    "description": self._current_description.strip(),
-                }
-            )
-        self._reset_result()
-
-    def handle_starttag(  # noqa: C901
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
-        attr_dict = dict(attrs)
-        classes = (attr_dict.get("class", "") or "").split()
-
-        # Detect result container: <div class="entry-content sresd">
-        if tag == "div" and "entry-content" in classes and "sresd" in classes:
-            self._reset_result()
-
-        # Title strong: <strong class="sres">
-        if tag == "strong" and "sres" in classes:
-            self._in_sres = True
-
-        # Title link: <a class="sres3">, the class marks the section
-        kind = next((c for c in classes if _KIND_RE.fullmatch(c)), "")
-        if tag == "a" and self._in_sres and kind:
-            self._in_title_a = True
-            self._current_kind = kind
-            self._current_title = ""
-
-        # Content container: <div class="scont">
-        if tag == "div" and "scont" in classes:
-            self._in_scont = True
-            self._scont_depth = 0
-        elif tag == "div" and self._in_scont:
-            self._scont_depth += 1
-
-        # Source URL: <address class="resl author">
-        if tag == "address" and "resl" in classes:
-            self._in_address = True
-            self._current_source_url = ""
-
-        # Date: <small class="rtime published">
-        if tag == "small" and "rtime" in classes:
-            self._in_small = True
-            self._current_date = ""
-
-        # Description paragraph inside scont
-        if tag == "p" and self._in_scont:
-            self._in_p = True
-
-        # Pagination: <span class="pages"> inside #foot
-        if tag == "div" and attr_dict.get("id") == "foot":
-            self._in_foot_pages = True
-
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for box in tree.css("div.entry-content.sresd"):
+            self._add_result(box)
         # Pagination links: <a href="//crawli.net/{cat}/{query}/p-N/">
-        if tag == "a" and self._in_foot_pages:
-            href = attr_dict.get("href", "") or ""
-            m = re.search(r"/p-(\d+)/", href)
+        for link in tree.css("div#foot a"):
+            m = re.search(r"/p-(\d+)/", link.attributes.get("href") or "")
             if m:
-                page_num = int(m.group(1))
-                if page_num > self.max_page:
-                    self.max_page = page_num
+                self.max_page = max(self.max_page, int(m.group(1)))
 
-    def handle_data(self, data: str) -> None:
-        if self._in_title_a:
-            self._current_title += data
-
-        if self._in_address:
-            self._current_source_url += data
-
-        if self._in_small:
-            self._current_date += data
-
-        if self._in_p and self._in_scont:
-            self._current_description += data
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "a" and self._in_title_a:
-            self._in_title_a = False
-
-        if tag == "strong" and self._in_sres:
-            self._in_sres = False
-
-        if tag == "address" and self._in_address:
-            self._in_address = False
-
-        if tag == "small" and self._in_small:
-            self._in_small = False
-
-        if tag == "p" and self._in_p:
-            self._in_p = False
-
-        if tag == "div" and self._in_scont:
-            if self._scont_depth > 0:
-                self._scont_depth -= 1
-            else:
-                self._in_scont = False
-                # End of result entry — emit it
-                self._emit_result()
-
-        if tag == "div" and self._in_foot_pages:
-            self._in_foot_pages = False
+    def _add_result(self, box: LexborNode) -> None:
+        content = box.css_first("div.scont")
+        if content is None:
+            return  # a result ends with its content div
+        kind = title = ""
+        for link in box.css("strong.sres a"):
+            # Title link: <a class="sres3">, the class marks the section
+            link_kind = next((c for c in classes(link) if _KIND_RE.fullmatch(c)), "")
+            if link_kind:
+                kind, title = link_kind, link.text().strip()
+        source_url = _last_text(box, "address.resl")
+        if not title or not source_url:
+            return
+        # Ensure source URL has a scheme
+        if not source_url.startswith("http"):
+            source_url = f"https://{source_url}"
+        self.results.append(
+            {
+                "kind": kind,
+                "title": title,
+                "source_url": source_url,
+                "date": _last_text(box, "small.rtime"),
+                "description": "".join(p.text() for p in content.css("p")).strip(),
+            }
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -297,8 +210,7 @@ class CrawliPlugin(HttpxPluginBase):
         if resp is None:
             return [], 1
 
-        parser = _SearchResultParser()
-        parser.feed(_decode_page(resp.text))
+        parser = await parse_page(_SearchResultParser(), _decode_page(resp.text))
 
         self._log.info(
             "crawli_search_page",
@@ -356,15 +268,16 @@ class CrawliPlugin(HttpxPluginBase):
         if not all_results:
             return []
 
-        pages_to_fetch = min(max_page, _MAX_PAGES)
         page_num = 2
-        while (
-            len(all_results) < self.effective_max_results and page_num <= pages_to_fetch
+        while len(all_results) < self.effective_max_results and page_num <= min(
+            max_page, _MAX_PAGES
         ):
-            page_results, _ = await self._search_page(query, section, page_num)
+            page_results, page_max = await self._search_page(query, section, page_num)
             if not page_results:
                 break
             all_results.extend(page_results)
+            # The site links a window of pages: page 1 up to 8, page 8 up to 11
+            max_page = max(max_page, page_max)
             page_num += 1
         return all_results[: self.effective_max_results]
 

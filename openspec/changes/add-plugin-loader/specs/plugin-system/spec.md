@@ -114,7 +114,7 @@ The system SHALL validate Python plugins implement the required protocol. Status
 - **AND** the error message includes the syntax error traceback
 
 ### Requirement: Authentication Configuration (superseded)
-The system SHALL support authentication configuration for YAML plugins via the `auth` section. Status: superseded — Python plugins implement authentication themselves (e.g. boerse, mygully, dataload); a plain `AuthConfig` dataclass remains in `src/scavengarr/domain/plugins/plugin_schema.py`.
+The system SHALL support authentication configuration for YAML plugins via the `auth` section. Status: superseded — Python plugins implement authentication themselves (e.g. boerse, mygully, dataload); the plain `AuthConfig` dataclass that remained in `src/scavengarr/domain/plugins/plugin_schema.py` was removed unused (2026-10-06).
 
 #### Scenario: No authentication
 - **WHEN** a plugin has `auth.type: "none"` or omits the `auth` field
@@ -177,11 +177,11 @@ The system SHALL provide a registry to retrieve loaded plugins by name or filter
 - **AND** Python plugins are excluded from results
 
 ### Requirement: Plugin Name Uniqueness
-The system SHALL enforce unique plugin names across all loaded plugins. Status: partially implemented — `DuplicatePluginError` exists in `src/scavengarr/domain/plugins/exceptions.py` but is never raised; `list_names()` skips duplicate names and the first-loaded plugin wins.
+The system SHALL enforce unique plugin names across all loaded plugins. Status: partially implemented — no error is raised: the registry logs a duplicate name (`plugin_name_duplicate`) and skips it, and the first file (by file name) wins. `DuplicatePluginError` was never raised and was removed (2026-10-06).
 
 #### Scenario: Duplicate plugin names rejected
 - **WHEN** two files `duplicate.yaml` and `duplicate.py` both define `name: "duplicate"`
-- **THEN** the second plugin raises a `DuplicatePluginError` with message "Plugin name 'duplicate' already exists" (not implemented: the duplicate is silently skipped)
+- **THEN** the second plugin raises a `DuplicatePluginError` with message "Plugin name 'duplicate' already exists" (not implemented: the duplicate is logged and skipped)
 - **AND** only the first-loaded plugin is retained in the registry
 
 ### Requirement: Lazy Loading

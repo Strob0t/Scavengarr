@@ -19,8 +19,9 @@ from __future__ import annotations
 
 import asyncio
 import re
-from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
+
+from selectolax.lexbor import LexborHTMLParser, LexborNode
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.categories import (
@@ -28,6 +29,12 @@ from scavengarr.infrastructure.plugins.categories import (
     filter_by_category,
     served_category,
     stream_category,
+)
+from scavengarr.infrastructure.plugins.dom import (
+    ancestors,
+    classes,
+    outermost,
+    parse_page,
 )
 from scavengarr.infrastructure.plugins.episodes import episode_label, filter_episodes
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
@@ -55,6 +62,15 @@ _EPISODE_PLAYER_RE = re.compile(r"""\.player\(\s*['"]\s*(https?://[^'"\s]+)""")
 _EPISODE_ID_RE = re.compile(r"^(\d+)-(\d+)$")
 # Year in the page title: "Oppenheimer (2023)"
 _TITLE_YEAR_RE = re.compile(r"\(((?:19|20)\d{2})\)")
+# JS player init of a tab without an iframe:
+#   fsst.show(1,[['https://fsst.online/embed/905450/']],0.2)
+#   ollhd.show(1,[['https://voe.sx/e/6qprs3ixu8el']],0.2)
+_PLAYER_SHOW_RE = re.compile(r"""\.show\(\d+,\s*\[\[['"]?(https?://[^'"\]]+)""")
+_IMDB_RATING_RE = re.compile(r"(\d+\.?\d*)")
+# Badges that name a quality
+_QUALITY_BADGES = frozenset(
+    {"WEBRIP", "BDRIP", "CAMRIP", "TS", "HD", "SD", "4K", "HDTV"}
+)
 
 
 def _detect_series(badge: str, genres: list[str]) -> bool:
@@ -86,8 +102,8 @@ def _domain_from_url(url: str) -> str:
         return "unknown"
 
 
-class _SearchResultParser(HTMLParser):
-    """Parse kinoger.com DLE search result page.
+class _SearchResultParser:
+    """Parse kinoger.com DLE search result page (selectolax).
 
     Each result is a pair of sibling divs::
 
@@ -111,198 +127,64 @@ class _SearchResultParser(HTMLParser):
             ...
           </div>
         </div>
+
+    The ``/stream/`` link in a ``titlecontrol``'s ``title`` div names a
+    result; the next ``general_box`` holds its genres (the links of
+    ``li.category``) and its quality (the first bold text of
+    ``content_text``).
     """
 
     def __init__(self, base_url: str) -> None:
-        super().__init__()
         self.results: list[dict[str, str | list[str] | bool]] = []
         self._base_url = base_url
 
-        # Phase tracking: titlecontrol → general_box
-        self._in_titlecontrol = False
-        self._titlecontrol_depth = 0
-        self._in_title_div = False
-        self._title_div_depth = 0
-        self._in_title_a = False
+    def feed(self, html: str) -> None:
+        title = url = ""
+        tree = LexborHTMLParser(html)
+        for block in tree.css("div:is(.titlecontrol, .general_box)"):
+            if "titlecontrol" in classes(block):
+                for link in block.css("div.title a"):
+                    href = link.attributes.get("href") or ""
+                    if "/stream/" in href:
+                        url = urljoin(self._base_url, href)
+                        title = link.text().strip()
+            elif url:
+                if title:
+                    self._add_card(title, url, block)
+                title = url = ""
 
-        self._in_general_box = False
-        self._general_box_depth = 0
-
-        # Category <li> inside general_box
-        self._in_category_li = False
-        self._in_category_a = False
-        self._category_text = ""
-
-        # Quality from content_text
-        self._in_content_text = False
-        self._content_text_depth = 0
-        self._in_bold = False
-        self._quality_text = ""
-
-        # Accumulated card data
-        self._current_title = ""
-        self._current_url = ""
-        self._genres: list[str] = []
-        self._quality = ""
-
-    def _reset_card(self) -> None:
-        self._current_title = ""
-        self._current_url = ""
-        self._genres = []
-        self._quality = ""
-
-    def _emit_card(self) -> None:
-        if not self._current_title or not self._current_url:
-            self._reset_card()
-            return
-
-        # Filter out "Stream" from genres
-        genres = [g for g in self._genres if g.lower() != "stream"]
-
-        # Classify quality text: might be a series badge (S01, S01-04) or quality
-        quality = ""
-        series_badge = ""
-        if self._quality:
-            if _SERIES_BADGE_RE.search(self._quality):
-                series_badge = self._quality
-            else:
-                quality = self._quality
-
-        is_series = _detect_series(series_badge, genres)
-
-        # Also detect series from title suffix ("Serie" is stripped by _clean_title)
-        raw_title = self._current_title.strip()
-        if raw_title.endswith(" Serie") or raw_title.endswith(" serie"):
-            is_series = True
-
+    def _add_card(self, raw_title: str, url: str, box: LexborNode) -> None:
+        # "Stream" is the site's section, not a genre
+        genres = [
+            text
+            for link in box.css("li.category a")
+            if (text := link.text().strip()) and text.lower() != "stream"
+        ]
+        bold = next(
+            (text for b in box.css("div.content_text b") if (text := b.text().strip())),
+            "",
+        )
+        # The bold text is a series badge (S01, S01-04) or a quality
+        series_badge = bold if _SERIES_BADGE_RE.search(bold) else ""
+        quality = "" if series_badge else bold
+        # A " Serie" title suffix marks a series too (_clean_title strips it)
+        is_series = _detect_series(series_badge, genres) or raw_title.endswith(
+            (" Serie", " serie")
+        )
         self.results.append(
             {
                 "title": _clean_title(raw_title),
-                "url": self._current_url,
+                "url": url,
                 "genres": genres,
                 "quality": quality,
                 "badge": series_badge,
                 "is_series": is_series,
             }
         )
-        self._reset_card()
-
-    def handle_starttag(  # noqa: C901
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
-        attr_dict = dict(attrs)
-        classes = (attr_dict.get("class") or "").split()
-        href = attr_dict.get("href", "") or ""
-
-        # --- titlecontrol block ---
-        if tag == "div":
-            if self._in_titlecontrol:
-                self._titlecontrol_depth += 1
-                if "title" in classes and not self._in_title_div:
-                    self._in_title_div = True
-                    self._title_div_depth = 0
-                elif self._in_title_div:
-                    self._title_div_depth += 1
-            elif "titlecontrol" in classes:
-                self._in_titlecontrol = True
-                self._titlecontrol_depth = 0
-
-            # --- general_box block ---
-            if self._in_general_box:
-                self._general_box_depth += 1
-                if "content_text" in classes:
-                    self._in_content_text = True
-                    self._content_text_depth = 0
-                elif self._in_content_text:
-                    self._content_text_depth += 1
-            elif "general_box" in classes and self._current_url:
-                # Only enter general_box if we have a pending title from titlecontrol
-                self._in_general_box = True
-                self._general_box_depth = 0
-
-        # Title link inside titlecontrol
-        if tag == "a" and self._in_title_div:
-            if href and "/stream/" in href:
-                self._current_url = urljoin(self._base_url, href)
-                self._in_title_a = True
-                self._current_title = ""
-
-        # Category <li> inside general_box
-        if tag == "li" and self._in_general_box and "category" in classes:
-            self._in_category_li = True
-
-        if tag == "a" and self._in_category_li:
-            self._in_category_a = True
-            self._category_text = ""
-
-        # Bold tag for quality detection in content_text
-        if tag == "b" and self._in_content_text:
-            self._in_bold = True
-            self._quality_text = ""
-
-    def handle_data(self, data: str) -> None:
-        if self._in_title_a:
-            self._current_title += data
-
-        if self._in_category_a:
-            self._category_text += data
-
-        if self._in_bold and self._in_content_text:
-            self._quality_text += data
-
-    def handle_endtag(self, tag: str) -> None:  # noqa: C901
-        if tag == "a":
-            if self._in_title_a:
-                self._in_title_a = False
-                self._current_title = self._current_title.strip()
-            if self._in_category_a:
-                self._in_category_a = False
-                text = self._category_text.strip()
-                if text:
-                    self._genres.append(text)
-
-        if tag == "li" and self._in_category_li:
-            self._in_category_li = False
-
-        if tag == "b" and self._in_bold:
-            self._in_bold = False
-            text = self._quality_text.strip()
-            if text and not self._quality:
-                self._quality = text
-
-        if tag == "div":
-            # Close title div (with depth tracking)
-            if self._in_title_div and self._in_titlecontrol:
-                if self._title_div_depth > 0:
-                    self._title_div_depth -= 1
-                else:
-                    self._in_title_div = False
-
-            # Close titlecontrol
-            if self._in_titlecontrol:
-                if self._titlecontrol_depth > 0:
-                    self._titlecontrol_depth -= 1
-                else:
-                    self._in_titlecontrol = False
-
-            # Close content_text
-            if self._in_content_text and self._in_general_box:
-                if self._content_text_depth > 0:
-                    self._content_text_depth -= 1
-                else:
-                    self._in_content_text = False
-
-            # Close general_box → emit card
-            if self._in_general_box:
-                if self._general_box_depth > 0:
-                    self._general_box_depth -= 1
-                else:
-                    self._in_general_box = False
-                    self._emit_card()
 
 
-class _DetailPageParser(HTMLParser):
-    """Parse kinoger.com detail page for stream tabs and metadata.
+class _DetailPageParser:
+    """Parse kinoger.com detail page for stream tabs and metadata (selectolax).
 
     Stream tabs have structure::
 
@@ -326,39 +208,16 @@ class _DetailPageParser(HTMLParser):
     and its ``container-video`` div stands alone.
 
     Metadata from the page body:
-    - Year from text or meta
-    - Genres from breadcrumbs
-    - Description from content area
+    - Title and year from the last ``h1`` (year: the first one with it)
+    - Genres from breadcrumbs and the post info's category links
+    - Description from the content area
     - IMDb rating if present
     """
 
     def __init__(self, base_url: str) -> None:
-        super().__init__()
         self._base_url = base_url
-
-        # Stream tabs
         self.stream_links: list[dict[str, str]] = []
-        self._tab_labels: dict[str, str] = {}  # tab id → label text
-        self._current_label_for = ""
-        self._in_label = False
-        self._label_title_attr = ""
-        self._label_text = ""
-
-        # Section/iframe tracking
-        self._in_section = False
-        self._section_id = ""
-        self._section_iframe_src = ""
-        self._section_episodes: list[tuple[int, int, str]] = []
-        self._section_film = False
         self.episodes_listed = False
-        # Open <div>s of a tab-less player container (0 = none)
-        self._player_div_depth = 0
-
-        # Script-in-section tracking (JS player init with embedded URLs)
-        self._in_section_script = False
-        self._section_script_data = ""
-
-        # Metadata
         self.title = ""
         self.year = ""
         self.genres: list[str] = []
@@ -369,272 +228,52 @@ class _DetailPageParser(HTMLParser):
         self.is_series = False
         self.badge = ""
 
-        # Title tracking (h1)
-        self._in_h1 = False
-        self._h1_text = ""
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        self._read_players(tree)
+        self._read_metadata(tree)
 
-        # Breadcrumb tracking (genres)
-        self._in_breadcrumbs = False
-        self._in_breadcrumb_li = False
-        self._breadcrumb_text = ""
-        self._genres: list[str] = []
-        # Category list of the post info (the live theme's genres)
-        self._in_category_li = False
-        self._in_category_a = False
-
-        # Badge tracking
-        self._in_badge_span = False
-        self._badge_text = ""
-
-        # Description tracking
-        self._in_desc = False
-        self._desc_div_depth = 0
-        self._desc_text = ""
-
-        # IMDb tracking
-        self._in_imdb_span = False
-        self._imdb_text = ""
-
-    def handle_starttag(  # noqa: C901
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
-        attr_dict = dict(attrs)
-        classes = (attr_dict.get("class") or "").split()
-
-        # Tab labels: <label for="tab1" title="Stream HD+">
-        if tag == "label":
-            for_attr = attr_dict.get("for", "") or ""
-            if for_attr.startswith("tab"):
-                self._in_label = True
-                self._current_label_for = for_attr
-                self._label_title_attr = attr_dict.get("title", "") or ""
-                self._label_text = ""
-
-        # Sections with iframes: <section id="content1">
-        if tag == "section":
-            section_id = attr_dict.get("id", "") or ""
-            if section_id.startswith("content"):
-                self._start_section(section_id)
-
+    def _read_players(self, tree: LexborHTMLParser) -> None:
+        # <label for="tab1" title="Stream HD+"> names <section id="content1">
+        labels: dict[str, str] = {}
+        for label in tree.css("label[for^='tab']"):
+            text = label.attributes.get("title") or label.text().strip()
+            if text:
+                tab = label.attributes.get("for") or ""
+                labels[f"content{tab.replace('tab', '')}"] = text
         # A page with one player has no tabs: its player container stands
         # alone and is read like a tab without a label
-        if tag == "div" and self._player_div_depth:
-            self._player_div_depth += 1
-        elif (
-            tag == "div"
-            and not self._in_section
-            and (attr_dict.get("id") or "").startswith("container-video")
-        ):
-            self._start_section("")
-            self._player_div_depth = 1
-
-        # The player's episode list (kinog-serial, kinoger-serial, ...):
-        # a film's player hides its single "1 Часть" entry
-        if (
-            tag == "ul"
-            and self._in_section
-            and (attr_dict.get("id") or "").endswith("-serial")
-        ):
-            style = (attr_dict.get("style") or "").replace(" ", "").lower()
-            self._section_film = "display:none" in style
-
-        # Iframe inside section
-        if tag == "iframe" and self._in_section:
-            src = attr_dict.get("src", "") or ""
-            if src:
-                self._section_iframe_src = src
-
-        # Episode of a series tab (season-episode in data-id)
-        if tag == "span" and self._in_section:
-            url = _EPISODE_PLAYER_RE.search(attr_dict.get("onclick") or "")
-            number = _EPISODE_ID_RE.match(attr_dict.get("data-id") or "")
-            if url and number:
-                self._section_episodes.append(
-                    (int(number.group(1)), int(number.group(2)), url.group(1))
+        for player in tree.css("section[id^='content'], div[id^='container-video']"):
+            if player.tag == "section":
+                self._add_player(
+                    labels.get(player.attributes.get("id") or "", ""), player
                 )
+            elif not any(_is_player(parent) for parent in ancestors(player)):
+                self._add_player("", player)
 
-        # Script inside section (JS player init with embedded URLs)
-        if tag == "script" and self._in_section:
-            self._in_section_script = True
-            self._section_script_data = ""
-
-        # h1
-        if tag == "h1":
-            self._in_h1 = True
-            self._h1_text = ""
-
-        # Breadcrumbs: <ul class="breadcrumbs">
-        if tag == "ul" and "breadcrumbs" in classes:
-            self._in_breadcrumbs = True
-
-        if tag == "li" and self._in_breadcrumbs:
-            self._in_breadcrumb_li = True
-            self._breadcrumb_text = ""
-
-        # <li class="category"><a>Stream</a> / <a>Drama</a></li>
-        if tag == "li" and "category" in classes:
-            self._in_category_li = True
-        if tag == "a" and self._in_category_li:
-            self._in_category_a = True
-            self._breadcrumb_text = ""
-
-        # Badge span
-        if tag == "span" and "badge" in classes:
-            self._in_badge_span = True
-            self._badge_text = ""
-
-        # Description area: <div class="full-text">
-        if tag == "div":
-            if self._in_desc:
-                self._desc_div_depth += 1
-            elif "full-text" in classes:
-                self._in_desc = True
-                self._desc_div_depth = 0
-                self._desc_text = ""
-
-        # IMDb rating span: <span class="imdb">
-        if tag == "span" and "imdb" in classes:
-            self._in_imdb_span = True
-            self._imdb_text = ""
-
-    def handle_data(self, data: str) -> None:
-        if self._in_section_script:
-            self._section_script_data += data
-
-        if self._in_label:
-            self._label_text += data
-
-        if self._in_h1:
-            self._h1_text += data
-
-        if self._in_breadcrumb_li or self._in_category_a:
-            self._breadcrumb_text += data
-
-        if self._in_badge_span:
-            self._badge_text += data
-
-        if self._in_desc:
-            self._desc_text += data
-
-        if self._in_imdb_span:
-            self._imdb_text += data
-
-    def handle_endtag(self, tag: str) -> None:  # noqa: C901
-        if tag == "label" and self._in_label:
-            self._in_label = False
-            label_text = self._label_title_attr or self._label_text.strip()
-            if self._current_label_for and label_text:
-                # Map tab ID → content ID: "tab1" → "content1"
-                num = self._current_label_for.replace("tab", "")
-                content_id = f"content{num}"
-                self._tab_labels[content_id] = label_text
-
-        # End of <script> inside section — extract URLs from JS player init
-        if tag == "script" and self._in_section_script:
-            self._in_section_script = False
-            if not self._section_iframe_src and self._section_script_data:
-                # Extract URLs from JS patterns like:
-                #   fsst.show(1,[['https://fsst.online/embed/905450/']],0.2)
-                #   ollhd.show(1,[['https://voe.sx/e/6qprs3ixu8el']],0.2)
-                m = re.search(
-                    r"""\.show\(\d+,\s*\[\[['"]?(https?://[^'"\]]+)""",
-                    self._section_script_data,
-                )
-                if m:
-                    self._section_iframe_src = m.group(1)
-
-        if tag == "section" and self._in_section and not self._player_div_depth:
-            self._close_section()
-
-        if tag == "div" and self._player_div_depth:
-            self._player_div_depth -= 1
-            if not self._player_div_depth:
-                self._close_section()
-
-        if tag == "h1" and self._in_h1:
-            self._in_h1 = False
-            self.title = _clean_title(self._h1_text)
-            year = _TITLE_YEAR_RE.search(self._h1_text)
-            if year and not self.year:
-                self.year = year.group(1)
-
-        if tag == "li" and self._in_breadcrumb_li:
-            self._in_breadcrumb_li = False
-            text = self._breadcrumb_text.strip()
-            if text:
-                self._genres.append(text)
-
-        if tag == "a" and self._in_category_a:
-            self._in_category_a = False
-            text = self._breadcrumb_text.strip()
-            if text:
-                self._genres.append(text)
-
-        if tag == "li" and self._in_category_li:
-            self._in_category_li = False
-            self.genres = [g for g in self._genres if g.lower() != "stream"]
-
-        if tag == "ul" and self._in_breadcrumbs:
-            self._in_breadcrumbs = False
-            # Filter out "Stream" from genres
-            self.genres = [g for g in self._genres if g.lower() != "stream"]
-
-        if tag == "span" and self._in_badge_span:
-            self._in_badge_span = False
-            text = self._badge_text.strip()
-            if text:
-                self.badge = text
-                if _SERIES_BADGE_RE.search(text):
-                    self.is_series = True
-                elif text.upper() in (
-                    "WEBRIP",
-                    "BDRIP",
-                    "CAMRIP",
-                    "TS",
-                    "HD",
-                    "SD",
-                    "4K",
-                    "HDTV",
-                ):
-                    self.quality = text
-
-        if tag == "div" and self._in_desc:
-            if self._desc_div_depth > 0:
-                self._desc_div_depth -= 1
-            else:
-                self._in_desc = False
-                self.description = self._desc_text.strip()
-
-        if tag == "span" and self._in_imdb_span:
-            self._in_imdb_span = False
-            text = self._imdb_text.strip()
-            m = re.search(r"(\d+\.?\d*)", text)
-            if m:
-                self.imdb_rating = m.group(1)
-
-    def _start_section(self, section_id: str) -> None:
-        self._in_section = True
-        self._section_id = section_id
-        self._section_iframe_src = ""
-        self._section_episodes = []
-        self._section_film = False
-
-    def _close_section(self) -> None:
-        self._in_section = False
-        self._in_section_script = False
-        self._end_section()
-
-    def _end_section(self) -> None:
+    def _add_player(self, label: str, player: LexborNode) -> None:
         """Links of a player tab: every episode of a series, else its stream.
 
         A series tab's player script starts at the first episode, so its
         URL alone would serve episode 1 for every request. A film's tab
         lists its stream as a hidden episode 1-1.
         """
-        label = self._tab_labels.get(self._section_id, "")
-        if self._section_episodes and not self._section_film:
+        episodes: list[tuple[int, int, str]] = []
+        for span in player.css("span[data-id]"):
+            url = _EPISODE_PLAYER_RE.search(span.attributes.get("onclick") or "")
+            number = _EPISODE_ID_RE.match(span.attributes.get("data-id") or "")
+            if url and number:
+                episodes.append(
+                    (int(number.group(1)), int(number.group(2)), url.group(1))
+                )
+        # The player's episode list (kinog-serial, kinoger-serial, ...):
+        # a film's player hides its single "1 Часть" entry
+        lists = player.css("ul[id$='-serial']")
+        style = (lists[-1].attributes.get("style") or "") if lists else ""
+        film = "display:none" in style.replace(" ", "").lower()
+        if episodes and not film:
             self.episodes_listed = True
-            for season, episode, url in self._section_episodes:
+            for season, episode, url in episodes:
                 self.stream_links.append(
                     {
                         "hoster": _domain_from_url(url),
@@ -643,13 +282,44 @@ class _DetailPageParser(HTMLParser):
                     }
                 )
             return
-        url = self._section_iframe_src or next(
-            (url for _, _, url in self._section_episodes), ""
-        )
+        url = _player_url(player) or next((url for _, _, url in episodes), "")
         if url:
             self.stream_links.append(
                 {"hoster": _domain_from_url(url), "link": url, "label": label}
             )
+
+    def _read_metadata(self, tree: LexborHTMLParser) -> None:
+        for h1 in tree.css("h1"):
+            text = h1.text()
+            self.title = _clean_title(text)
+            year = _TITLE_YEAR_RE.search(text)
+            if year and not self.year:
+                self.year = year.group(1)
+        # Breadcrumbs, or the live theme's <li class="category"><a>Stream</a>
+        # / <a>Drama</a></li>; "Stream" is the site's section
+        self.genres = [
+            text
+            for node in tree.css("ul.breadcrumbs li, li.category a")
+            if (text := node.text().strip()) and text.lower() != "stream"
+        ]
+        for span in tree.css("span.badge"):
+            self._read_badge(span.text().strip())
+        descriptions = outermost(tree.css("div.full-text"))
+        if descriptions:
+            self.description = descriptions[-1].text().strip()
+        for span in tree.css("span.imdb"):
+            rating = _IMDB_RATING_RE.search(span.text().strip())
+            if rating:
+                self.imdb_rating = rating.group(1)
+
+    def _read_badge(self, text: str) -> None:
+        if not text:
+            return
+        self.badge = text
+        if _SERIES_BADGE_RE.search(text):
+            self.is_series = True
+        elif text.upper() in _QUALITY_BADGES:
+            self.quality = text
 
     def finalize(self) -> None:
         """Post-processing: detect series from genres, extract year/runtime."""
@@ -664,6 +334,28 @@ class _DetailPageParser(HTMLParser):
             m = re.search(r"\b(19|20)\d{2}\b", self.description)
             if m:
                 self.year = m.group(0)
+
+
+def _is_player(node: LexborNode) -> bool:
+    """Whether *node* is a player tab or a player container."""
+    node_id = node.attributes.get("id") or ""
+    if node.tag == "section":
+        return node_id.startswith("content")
+    return node.tag == "div" and node_id.startswith("container-video")
+
+
+def _player_url(player: LexborNode) -> str:
+    """The player's iframe (the last one), else the URL its script shows."""
+    url = ""
+    for iframe in player.css("iframe"):
+        url = iframe.attributes.get("src") or url
+    if url:
+        return url
+    for script in player.css("script"):
+        show = _PLAYER_SHOW_RE.search(script.text())
+        if show:
+            return show.group(1)
+    return ""
 
 
 class KinogerPlugin(HttpxPluginBase):
@@ -701,8 +393,7 @@ class KinogerPlugin(HttpxPluginBase):
         if html is None:
             return []
 
-        parser = _SearchResultParser(self.base_url)
-        parser.feed(html)
+        parser = await parse_page(_SearchResultParser(self.base_url), html)
 
         self._log.info(
             "kinoger_search_page",
@@ -746,8 +437,7 @@ class KinogerPlugin(HttpxPluginBase):
         if html is None:
             return None
 
-        parser = _DetailPageParser(self.base_url)
-        parser.feed(html)
+        parser = await parse_page(_DetailPageParser(self.base_url), html)
         parser.finalize()
 
         links = parser.stream_links

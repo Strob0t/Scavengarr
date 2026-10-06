@@ -29,9 +29,6 @@ _MyGullyPlugin = _mygully.MyGullyPlugin
 _PostLinkParser = _mygully._PostLinkParser
 _ThreadLinkParser = _mygully._ThreadLinkParser
 _ThreadTitleParser = _mygully._ThreadTitleParser
-_hoster_from_url = _mygully._hoster_from_url
-_hoster_from_text = _mygully._hoster_from_text
-_is_container_host = _mygully._is_container_host
 _CATEGORY_FORUM_MAP = _mygully._CATEGORY_FORUM_MAP
 _thread_category = _mygully._thread_category
 
@@ -705,40 +702,6 @@ class TestTitleParser:
         parser = _ThreadTitleParser()
         parser.feed("<title>Plain Title</title>")
         assert parser.title == "Plain Title"
-
-
-class TestHosterHelpers:
-    def test_hoster_from_url(self) -> None:
-        assert _hoster_from_url("https://www.keeplinks.org/p53/abc") == "keeplinks"
-        assert _hoster_from_url("https://rapidgator.net/file/abc") == "rapidgator"
-
-    def test_hoster_from_text_via_pattern(self) -> None:
-        assert _hoster_from_text("download via ddownload.com") == "ddownload"
-        assert _hoster_from_text("download via rapidgator.net") == "rapidgator"
-
-    def test_hoster_from_text_plain_name(self) -> None:
-        assert _hoster_from_text("RapidGator") == "rapidgator"
-        assert _hoster_from_text("DDownload") == "ddownload"
-
-    def test_hoster_from_text_empty(self) -> None:
-        assert _hoster_from_text("") == ""
-        assert _hoster_from_text("https://example.com") == ""
-
-
-class TestContainerHostCheck:
-    def test_known_containers_accepted(self) -> None:
-        assert _is_container_host("keeplinks.org") is True
-        assert _is_container_host("keeplinks.co") is True
-        assert _is_container_host("filecrypt.cc") is True
-        assert _is_container_host("hide.cx") is True
-        assert _is_container_host("linkcrypt.ws") is True
-        assert _is_container_host("share-links.biz") is True
-
-    def test_unknown_hosts_rejected(self) -> None:
-        assert _is_container_host("mygully.com") is False
-        assert _is_container_host("imdb.com") is False
-        assert _is_container_host("youtube.com") is False
-        assert _is_container_host("google.com") is False
 
 
 class TestCategoryForumMapping:

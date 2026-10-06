@@ -115,6 +115,23 @@ class TestDevideosrcSites:
         assert _detail(site, base_url, "detail-oppenheimer").year == "2023"
 
 
+class TestStreamkiste:
+    """The current theme's markup (span.movie-release, span/strong.average)."""
+
+    _BASE = "https://streamkiste.bid"
+
+    def test_search_hit_year_and_genres(self) -> None:
+        hit = _hit(
+            _search_hits("streamkiste", self._BASE, "search-oppenheimer"), "Oppenheimer"
+        )
+        assert hit["year"] == "2023"
+        assert hit["genres"] == ["Drama", "Historie", "Krieg", "Biographie"]
+
+    def test_detail_imdb_rating(self) -> None:
+        detail = _detail("streamkiste", self._BASE, "detail-oppenheimer")
+        assert detail.imdb_rating == "8.2"
+
+
 class TestKinoger:
     _BASE = "https://kinoger.com"
 
@@ -312,6 +329,13 @@ class TestAniworld:
             "https://aniworld.to/anime/stream/attack-on-titan/staffel-1/episode-1"
         )
         assert detail.genres[:4] == ["Actiondrama", "Abenteuer", "Action", "Drama"]
+
+    def test_series_page_full_description(self) -> None:
+        """The page names its plot in <p class="seri_des" data-full-description>;
+        the parser read div.seri_des only and left the description empty."""
+        detail = _detail("aniworld", self._BASE, "detail-attack-on-titan")
+        assert detail.description.startswith("Vor mehreren hundert Jahren")
+        assert len(detail.description) > 500
 
     def test_episode_hosters_per_language(self) -> None:
         parser = _plugin_module("aniworld")._EpisodePageParser(self._BASE)
@@ -541,3 +565,16 @@ class TestMovie2k:
         assert results[0].category == 5000
         labels = [lk["label"] for lk in results[0].download_links or []]
         assert labels and all(label.startswith("1x1 ") for label in labels)
+
+
+class TestWarezomen:
+    """Page 2 of a search (captured 2026-10-06): previous and next page."""
+
+    def test_search_page_rows_and_next_page(self) -> None:
+        parser = _plugin_module("warezomen")._SearchResultParser()
+        parser.feed(_page("warezomen", "search-windows-page-2"))
+
+        assert len(parser.results) == 60
+        assert parser.results[0]["title"].startswith("Windows Server 2025 LTSC")
+        assert {r["type"] for r in parser.results} == {"Software", "Other"}
+        assert parser.next_page_url == "/download/windows/3/"

@@ -34,7 +34,7 @@ import re
 from typing import Any
 from urllib.parse import parse_qs, quote_plus, unquote, urlsplit
 
-from patchright.async_api import Page
+from patchright.async_api import BrowserContext, Page, Route
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.clicknload import decrypt_cnl
@@ -180,6 +180,11 @@ _EXTRACT_PAGINATION_JS = (
 )
 
 
+async def _load(route: Route) -> None:
+    """Let a request through (it would be blocked as a heavy resource)."""
+    await route.continue_()
+
+
 def _detect_category(content_type: str) -> int:
     """Map anime-loads content type to Torznab category."""
     return _TYPE_CATEGORY.get(content_type.lower().strip(), 5070)
@@ -321,6 +326,14 @@ class AnimeLoadsPlugin(PlaywrightPluginBase):
     provides = "download"
 
     _domains = _DOMAINS
+
+    async def _configure_context(self, ctx: BrowserContext) -> None:
+        """The base context, plus the grab's captcha images past the blocker
+        (the route added last runs first): the captcha compares them, and
+        with images blocked every grab gave nothing (code review,
+        2026-10-06)."""
+        await super()._configure_context(ctx)
+        await ctx.route("**/files/captcha*", _load)
 
     async def _wait_for_ddos_guard(self, page: "Page") -> bool:
         """Wait for DDoS-Guard JS challenge to resolve.

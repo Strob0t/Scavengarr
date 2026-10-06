@@ -9,21 +9,22 @@ Scrapes hdfilme.cafe (German streaming site, DLE-based CMS) with:
 - Category detection from detail page: /serien/ genre link → TV (5000)
 - Bounded concurrency for detail page scraping
 
-Domain: hdfilme.cafe (2026-09-28: hdfilme.legal → .press → .party → .bid all
-redirect here).
+Domain: hdfilme.cafe, which redirects to hdfilme.ceo since 2026-10-05
+(2026-09-28: hdfilme.legal → .press → .party → .bid redirected to .cafe).
 No authentication required.
 
-Known upstream breakage (2026-09-28): the site's own keyword search answers
-with a PHP fatal error (``engine/mods/sfilter/filter.php``); browsing a
-category (empty query) works.
+Upstream breakage 2026-09-28: the site's own keyword search answered with a
+PHP fatal error (``engine/mods/sfilter/filter.php``); on hdfilme.ceo it
+works again (2026-10-05, 25 hits for "Iron Man").
 """
 
 from __future__ import annotations
 
 import asyncio
 import re
-from html.parser import HTMLParser
 from urllib.parse import urljoin
+
+from selectolax.lexbor import LexborHTMLParser, LexborNode
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins import devideosrc
@@ -33,6 +34,7 @@ from scavengarr.infrastructure.plugins.categories import (
     served_category,
     stream_category,
 )
+from scavengarr.infrastructure.plugins.dom import classes, outermost, parse_page
 from scavengarr.infrastructure.plugins.episodes import filter_episodes
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.relevance import (
@@ -44,6 +46,8 @@ from scavengarr.infrastructure.plugins.relevance import (
 # ---------------------------------------------------------------------------
 # Configurable settings
 # ---------------------------------------------------------------------------
+# hdfilme.cafe redirects permanently to hdfilme.ceo (followed at the first
+# request, HttpxPluginBase._follow_site_move)
 _DOMAINS = ["hdfilme.cafe"]
 
 # ---------------------------------------------------------------------------
@@ -56,8 +60,8 @@ _CATEGORY_PATH_MAP: dict[int, str] = {
 }
 
 
-class _SearchResultParser(HTMLParser):
-    """Parse hdfilme.cafe search result cards.
+class _SearchResultParser:
+    """Parse hdfilme.cafe search result cards (selectolax).
 
     Each result card has this structure::
 
@@ -82,42 +86,34 @@ class _SearchResultParser(HTMLParser):
             </div>
           </div>
         </div>
+
+    A card's title is the text of its last ``movie-title`` link, its URL
+    the last such link with an ``href``.
     """
 
     def __init__(self, base_url: str) -> None:
-        super().__init__()
         self.results: list[dict[str, str]] = []
         self._base_url = base_url
 
-        # Item tracking
-        self._in_item = False
-        self._item_div_depth = 0
+    def feed(self, html: str) -> None:
+        for item in outermost(LexborHTMLParser(html).css("div.item")):
+            self._add_item(item)
 
-        # Title link
-        self._in_movie_title_a = False
-        self._current_title = ""
-        self._current_url = ""
-
-        # Meta spans (year, duration, quality)
-        self._in_meta = False
-        self._in_meta_span = False
-        self._meta_span_text = ""
-        self._meta_spans: list[str] = []
-
-    def _reset_item(self) -> None:
-        self._current_title = ""
-        self._current_url = ""
-        self._meta_spans = []
-
-    def _emit_item(self) -> None:
-        if not self._current_title or not self._current_url:
+    def _add_item(self, item: LexborNode) -> None:
+        title = url = ""
+        for link in item.css("a.movie-title"):
+            href = link.attributes.get("href") or ""
+            if href:
+                url = urljoin(self._base_url, href)
+            title = link.text().strip()
+        if not title or not url:
             return
 
         year = ""
         duration = ""
         quality = ""
-        for span in self._meta_spans:
-            text = span.strip()
+        for span in item.css("div.meta span"):
+            text = span.text().strip()
             if re.match(r"^\d{4}$", text):
                 year = text
             elif "min" in text.lower():
@@ -127,96 +123,47 @@ class _SearchResultParser(HTMLParser):
 
         self.results.append(
             {
-                "title": self._current_title,
-                "url": self._current_url,
+                "title": title,
+                "url": url,
                 "year": year,
                 "duration": duration,
                 "quality": quality,
             }
         )
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attr_dict = dict(attrs)
-        classes = (attr_dict.get("class") or "").split()
 
-        # Item boundary: <div class="item ...">
-        if tag == "div":
-            if self._in_item:
-                self._item_div_depth += 1
-            elif "item" in classes:
-                self._in_item = True
-                self._item_div_depth = 0
-                self._reset_item()
-
-        if not self._in_item:
-            return
-
-        # <a class="movie-title" ...>
-        if tag == "a" and "movie-title" in classes:
-            self._in_movie_title_a = True
-            href = attr_dict.get("href", "") or ""
-            if href:
-                self._current_url = urljoin(self._base_url, href)
-            self._current_title = ""
-
-        # <div class="meta ...">
-        if tag == "div" and "meta" in classes:
-            self._in_meta = True
-
-        # <span> inside meta div
-        if tag == "span" and self._in_meta:
-            self._in_meta_span = True
-            self._meta_span_text = ""
-
-    def handle_data(self, data: str) -> None:
-        if self._in_movie_title_a:
-            self._current_title += data
-
-        if self._in_meta_span:
-            self._meta_span_text += data
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "a" and self._in_movie_title_a:
-            self._in_movie_title_a = False
-            self._current_title = self._current_title.strip()
-
-        if tag == "span" and self._in_meta_span:
-            self._in_meta_span = False
-            text = self._meta_span_text.strip()
-            if text:
-                self._meta_spans.append(text)
-
-        if tag == "div":
-            if self._in_meta:
-                self._in_meta = False
-            if self._in_item:
-                if self._item_div_depth > 0:
-                    self._item_div_depth -= 1
-                else:
-                    self._in_item = False
-                    self._emit_item()
-
-
-class _DetailPageParser(HTMLParser):
-    """Parse hdfilme.cafe film/series detail page.
+class _DetailPageParser:
+    """Parse hdfilme.cafe film/series detail page (selectolax).
 
     Stream links are not on the page; they come from the embedded
     devideosrc player.
+
+    The info section's meta line::
+
+        <div class="info md:pl-5 md:flex-grow">
+          <h1 class="font-bold ...">Title</h1>
+          <div class="border-b border-gray-700 ...">
+            <span><a href="/drama/">Drama</a>&nbsp;<a href="/krieg/">Krieg</a></span>
+            <span class="align-text-bottom divider ...">|</span>
+            <span><a href="/xfsearch/country/usa/">USA</a></span>
+            <span class="align-text-bottom divider ...">|</span>
+            <span>2023</span>
+            ...
+          </div>
+        </div>
 
     Extracts:
     - Genres from ``<a href="/{genre}/">GenreName</a>`` in info section
     - Year, duration, quality from metadata spans
     - TMDB URL from ``<a href="themoviedb.org/...">``
     - IMDb URL from ``<a href="imdb.com/title/...">``
-    - Description from h2 heading (distinguishes film/series)
-    - Series detection from ``Staffel/Episode:`` in metadata or /serien/ genre
+    - Description from the ``prose`` div, without its links' text
+    - Series detection from ``Staffel/Episode:`` in metadata, a /serien/
+      genre, a TMDB ``/tv/`` link or the h2 heading
     """
 
     def __init__(self, base_url: str) -> None:
-        super().__init__()
         self._base_url = base_url
-
-        # Metadata
         self.imdb_id = ""
         self.tmdb_url = ""
         self.imdb_url = ""
@@ -228,178 +175,91 @@ class _DetailPageParser(HTMLParser):
         self.title = ""
         self.description = ""
 
-        # Info section tracking
-        self._in_info = False
-        self._info_div_depth = 0
-        self._in_genre_span = False
-        self._in_genre_a = False
-        self._genre_a_href = ""
-        self._genre_a_text = ""
-        self._in_meta_line = False
-        self._meta_line_div_depth = 0
-        self._in_meta_span = False
-        self._meta_span_text = ""
-        self._meta_spans: list[str] = []
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        self._read_headings(tree)
+        for line in tree.css("div.info div.border-b"):
+            self._read_meta_line(line)
+        self._read_links(tree)
+        # The last description wins
+        for prose in tree.css("div.prose"):
+            self.description = _text_outside_links(prose).strip()
 
-        # H1 tracking
-        self._in_h1 = False
-        self._h1_text = ""
-
-        # H2 tracking (series detection)
-        self._in_h2 = False
-        self._h2_text = ""
-
-        # Description
-        self._in_prose = False
-        self._prose_text = ""
-        self._in_prose_a = False
-
-    def handle_starttag(  # noqa: C901
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
-        attr_dict = dict(attrs)
-        classes = (attr_dict.get("class") or "").split()
-        href = attr_dict.get("href", "") or ""
-
-        # h1
-        if tag == "h1":
-            self._in_h1 = True
-            self._h1_text = ""
-
-        # h2
-        if tag == "h2":
-            self._in_h2 = True
-            self._h2_text = ""
-
-        # Info section: <div class="info md:pl-5 md:flex-grow">
-        if tag == "div" and "info" in classes:
-            self._in_info = True
-            self._info_div_depth = 0
-        elif tag == "div" and self._in_info:
-            self._info_div_depth += 1
-
-        # Genre span (first span in meta line, contains genre links)
-        if self._in_info and tag == "div" and "border-b" in classes:
-            self._in_meta_line = True
-            self._meta_line_div_depth = 0
-        elif tag == "div" and self._in_meta_line:
-            self._meta_line_div_depth += 1
-
-        # Track first span in meta line for genres
-        if self._in_meta_line and tag == "span" and not self._in_genre_span:
-            # Check if this is a divider span
-            if "divider" not in classes and "align-text-bottom" not in classes:
-                if not self.genres and not self._in_genre_span:
-                    self._in_genre_span = True
-
-        # Genre links inside the genre span
-        if self._in_genre_span and tag == "a":
-            self._in_genre_a = True
-            self._genre_a_href = href
-            self._genre_a_text = ""
-
-        # Meta spans for year/duration/quality
-        if self._in_meta_line and tag == "span":
-            self._in_meta_span = True
-            self._meta_span_text = ""
-
-        # TMDB link
-        if tag == "a" and "themoviedb.org" in href:
-            self.tmdb_url = href
-            if "/tv/" in href:
-                self.is_series = True
-
-        # IMDb link
-        if tag == "a" and "imdb.com/title/" in href:
-            self.imdb_url = href
-            m = re.search(r"title/(tt\d+)", href)
-            if m and not self.imdb_id:
-                self.imdb_id = m.group(1)
-
-        # Description prose
-        if tag == "div" and "prose" in classes:
-            self._in_prose = True
-            self._prose_text = ""
-
-        if self._in_prose and tag == "a":
-            self._in_prose_a = True
-
-    def handle_data(self, data: str) -> None:
-        if self._in_h1:
-            self._h1_text += data
-
-        if self._in_h2:
-            self._h2_text += data
-
-        if self._in_genre_a:
-            self._genre_a_text += data
-
-        if self._in_meta_span:
-            self._meta_span_text += data
-
-        if self._in_prose and not self._in_prose_a:
-            self._prose_text += data
-
-    def handle_endtag(self, tag: str) -> None:  # noqa: C901
-        if tag == "h1" and self._in_h1:
-            self._in_h1 = False
-            self.title = self._h1_text.strip()
+    def _read_headings(self, tree: LexborHTMLParser) -> None:
+        # The last h1 names the title
+        for h1 in tree.css("h1"):
+            self.title = h1.text().strip()
             # Remove " hdfilme" suffix
             if self.title.lower().endswith(" hdfilme"):
                 self.title = self.title[: -len(" hdfilme")].strip()
-
-        if tag == "h2" and self._in_h2:
-            self._in_h2 = False
-            h2 = self._h2_text.strip().lower()
-            if "stream serien" in h2 or "serien kostenlos" in h2:
+        for h2 in tree.css("h2"):
+            heading = h2.text().strip().lower()
+            if "stream serien" in heading or "serien kostenlos" in heading:
                 self.is_series = True
 
-        if tag == "a" and self._in_genre_a:
-            self._in_genre_a = False
-            genre_text = self._genre_a_text.strip()
-            genre_href = self._genre_a_href
-            if genre_text:
-                self.genres.append(genre_text)
-                if "/serien/" in genre_href:
-                    self.is_series = True
+    def _read_links(self, tree: LexborHTMLParser) -> None:
+        """TMDB and IMDb links: the last URL wins, the first IMDb id."""
+        for link in tree.css("a[href*='themoviedb.org']"):
+            self.tmdb_url = link.attributes.get("href") or ""
+            if "/tv/" in self.tmdb_url:
+                self.is_series = True
+        for link in tree.css("a[href*='imdb.com/title/']"):
+            self.imdb_url = link.attributes.get("href") or ""
+            m = re.search(r"title/(tt\d+)", self.imdb_url)
+            if m and not self.imdb_id:
+                self.imdb_id = m.group(1)
 
-        if tag == "span" and self._in_genre_span:
-            # The first span ends with the divider
-            pass
+    def _read_meta_line(self, line: LexborNode) -> None:
+        """Genres, year, duration and quality from a meta line's spans.
 
-        if tag == "span" and self._in_meta_span:
-            self._in_meta_span = False
-            text = self._meta_span_text.strip()
-            if text:
-                self._meta_spans.append(text)
-                if re.match(r"^\d{4}$", text):
-                    self.year = text
-                elif "min" in text.lower():
-                    self.duration = text
-                elif "Staffel/Episode:" in text or "Staffel" in text:
-                    self.is_series = True
-                elif text.upper() in ("HD", "CAM", "TS", "SD", "4K", "HD/DEUTSCH"):
-                    self.quality = text
+        Every link from the first non-divider span on is a genre (the
+        country links too), unless an earlier meta line had genres.
+        """
+        in_genres = False
+        for node in line.css("span, a"):
+            if node.tag == "a":
+                if in_genres:
+                    self._add_genre(node)
+                continue
+            if not in_genres and not self.genres and not _is_divider(node):
+                in_genres = True
+            self._read_meta_span(node.text().strip())
 
-        if tag == "div" and self._in_meta_line:
-            if self._meta_line_div_depth > 0:
-                self._meta_line_div_depth -= 1
-            else:
-                self._in_meta_line = False
-                self._in_genre_span = False
+    def _add_genre(self, link: LexborNode) -> None:
+        genre = link.text().strip()
+        if genre:
+            self.genres.append(genre)
+            if "/serien/" in (link.attributes.get("href") or ""):
+                self.is_series = True
 
-        if tag == "div" and self._in_info:
-            if self._info_div_depth > 0:
-                self._info_div_depth -= 1
-            else:
-                self._in_info = False
+    def _read_meta_span(self, text: str) -> None:
+        if not text:
+            return
+        if re.match(r"^\d{4}$", text):
+            self.year = text
+        elif "min" in text.lower():
+            self.duration = text
+        elif "Staffel" in text:  # "Staffel/Episode: 5x08"
+            self.is_series = True
+        elif text.upper() in ("HD", "CAM", "TS", "SD", "4K", "HD/DEUTSCH"):
+            self.quality = text
 
-        if tag == "a" and self._in_prose_a:
-            self._in_prose_a = False
 
-        if tag == "div" and self._in_prose:
-            self._in_prose = False
-            self.description = self._prose_text.strip()
+def _is_divider(span: LexborNode) -> bool:
+    """Whether *span* is a ``|`` divider of the meta line."""
+    names = classes(span)
+    return "divider" in names or "align-text-bottom" in names
+
+
+def _text_outside_links(node: LexborNode) -> str:
+    """The text of *node* without the text of its links."""
+    parts: list[str] = []
+    for child in node.iter(include_text=True):
+        if child.is_text_node:
+            parts.append(child.text_content or "")
+        elif child.is_element_node and child.tag != "a":
+            parts.append(_text_outside_links(child))
+    return "".join(parts)
 
 
 class HdfilmePlugin(HttpxPluginBase):
@@ -428,8 +288,7 @@ class HdfilmePlugin(HttpxPluginBase):
         if html is None:
             return []
 
-        parser = _SearchResultParser(self.base_url)
-        parser.feed(html)
+        parser = await parse_page(_SearchResultParser(self.base_url), html)
 
         self._log.info(
             "hdfilme_search_results",
@@ -456,8 +315,7 @@ class HdfilmePlugin(HttpxPluginBase):
         if html is None:
             return []
 
-        parser = _SearchResultParser(self.base_url)
-        parser.feed(html)
+        parser = await parse_page(_SearchResultParser(self.base_url), html)
 
         self._log.info(
             "hdfilme_browse_page",
@@ -503,8 +361,7 @@ class HdfilmePlugin(HttpxPluginBase):
         if html is None:
             return []
 
-        parser = _DetailPageParser(self.base_url)
-        parser.feed(html)
+        parser = await parse_page(_DetailPageParser(self.base_url), html)
 
         player = devideosrc.find_player(html)
         if player is None:

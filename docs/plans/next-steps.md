@@ -2,13 +2,13 @@
 
 # Plan: Project Status and Next Steps
 
-**Status:** In progress. Proposed 2026-09-30; the CI part of item 2 is done (2026-09-30). Items 1 and 6 wait for the maintainer; items 2–5 can start without further input.
+**Status:** In progress. Proposed 2026-09-30. Done: items 1 and 4, the CI part of item 2, items 3.1, 3.3 and 3.4, the dependency updates. Open: monitoring and the scheduled live run (maintainer's host), items 3.5 and 3.6 (3.2 to confirm), the DLE base (deferred until the next DLE search fix), the decisions of item 6 (OpenSpec decided 2026-10-06).
 **Priority:** High for 1–3 (the work since February does not reach the Stremio setup, nothing guards `staging`, a quarter of the tested plugins return nothing), medium for 4–5.
 **Source:** Assessment after the [code review fixes](code-review-fixes.md) on 2026-09-29: repository and GitHub state, dependency check, the full live smoke run (`pytest -m live`), a coverage run and a probe of the production instance.
 
 ## Summary
 
-The code is in good shape; delivery and operation are not. The tests are extensive and green, the architecture is clean, the docs match the code, and the live Stremio end-to-end test plays streams. But nothing has been released since February, production is down, no CI runs the tests, and plugin health is only checked by hand.
+As of 2026-09-29 (the status line has what changed since): the code is in good shape; delivery and operation are not. The tests are extensive and green, the architecture is clean, the docs match the code, and the live Stremio end-to-end test plays streams. But nothing has been released since February, production is down, no CI runs the tests, and plugin health is only checked by hand.
 
 | # | Item | Who | Size |
 |---|---|---|---|
@@ -50,13 +50,13 @@ From the dev container, `poetry run pytest -m live`: 24 passed, 10 failed, 7 ski
 
 ## 1. Bring `staging` to production (maintainer)
 
-- **Start production again** with the current code: `docker compose up -d --build` in the checkout on the host (192.168.88.2). Check that `/api/v1/healthz` answers 200 and that a Stremio stream request returns streams.
-- **Release v0.2.0** (**2026-10-02:** released on request: version 0.2.0, CHANGELOG, `staging` merged into `main` by pull request; the production restart on the host is open) (merge only on explicit request, AGENTS.md §1): version `0.1.0` → `0.2.0` (minor: new features since February), "Unreleased (staging)" becomes "v0.2.0 - <date>", the `2025-XX-XX` placeholder of v0.1.0 gets filled in, PR `staging` → `main`, merge, sync back. The public `main` then no longer shows the February state.
+- **Start production again** with the current code: `docker compose up -d --build` in the checkout on the host. Check that `/api/v1/healthz` answers 200 and that a Stremio stream request returns streams.
+- **Release v0.2.0** (**2026-10-02:** released on request: version 0.2.0, CHANGELOG, `staging` merged into `main` by pull request; production runs `staging` since then, v0.2.3's fixes verified on the production instance on 2026-10-04) (merge only on explicit request, AGENTS.md §1): version `0.1.0` → `0.2.0` (minor: new features since February), "Unreleased (staging)" becomes "v0.2.0 - <date>", the `2025-XX-XX` placeholder of v0.1.0 gets filled in, PR `staging` → `main`, merge, sync back. The public `main` then no longer shows the February state.
 
 ## 2. Safety net
 
 - **CI** (agent) — **Done 2026-09-30:** `.github/workflows/ci.yml` runs `poetry install --with dev`, `pre-commit run --all-files` and `pytest` without live tests on every push to `staging`, on pull requests to `staging` (where CONTRIBUTING.md sends contributors) and `main`, and on demand. Free for public repositories. No non-live test needs a real browser: in a clean clone with an empty `PLAYWRIGHT_BROWSERS_PATH`, a fresh `HOME` and no `SCAVENGARR_*` variables, install took 25 s, pre-commit 40 s and the 4547 tests 62 s, all green.
-- **Monitoring** (maintainer's host): the app already has `/api/v1/healthz`, `/api/v1/readyz`, `/api/v1/torznab/{plugin}/health` and `/api/v1/stats/plugin-scores`. A monitor on the host (for example Uptime Kuma) would have reported the 502 right away.
+- **Monitoring** (maintainer's host): the app already has `/api/v1/healthz`, `/api/v1/readyz`, `/api/v1/torznab/{plugin}/health` and `/api/v1/stats/plugin-scores`. A monitor on the host (for example Uptime Kuma) would have reported the 502 right away. `/metrics` serves Prometheus metrics (dashboard: `docker/grafana-dashboard.json`); open: the Prometheus scrape job on the host (maintainer) and the alert rules ([ideas-backlog.md](ideas-backlog.md) I8).
 - **Scheduled live run** (maintainer's host): `pytest -m live` once a week from the home network (about 13 min), with the result as a notification. Not on GitHub-hosted runners: they use datacenter IPs, which Cloudflare-protected sites challenge harder, so the results would not show what the home network sees. No self-hosted runner either, since pull requests from forks of a public repository could run code on it.
 
 ## 3. Plugin round for Stremio
@@ -98,18 +98,20 @@ AGENTS.md requires fully typed code, but only the editor checks it.
 | Question | Recommendation |
 |---|---|
 | Keep the repository public? | Private, if it is for personal use: nobody follows it (0 stars, 0 forks), and a takedown notice against the sites named in `docs/plugins.md` would hit the whole repository. |
-| OpenSpec | Archive both changes and drop the OpenSpec block from AGENTS.md: `docs/plans/` is the process in use, and the block costs context in every agent session. |
+| OpenSpec | **Decided 2026-10-06: keep it.** Archive `add-config-system` and `add-plugin-loader` ([ideas-backlog.md](ideas-backlog.md) I16); new changes use it (`add-observability` and the advisor review's changes). |
 | Torznab `cat=` with several ids | Pass all ids to the plugins (a port change); today `cat=5070,5000` becomes a strict 5070 request ([open observations](code-review-fixes.md#open-observations)). |
 | DDL hosters in Stremio | Decide whether validate-only DDL hosters may appear as Stremio streams; today the playback check drops them all. |
 | Forum credentials | Provide them as `SCAVENGARR_*` variables if the forum plugins should be checked live. |
 | Persist `~/.claude` in the dev container | Yes: a named volume on `/home/vscode/.claude` keeps Claude Code's login, sessions and memory across rebuilds (today they live in the container filesystem and are lost). The Dockerfile must create the directory owned by `vscode`, otherwise Docker creates the mount point as root. |
 
-## Next session: live tests with stremio.lan
+## Live tests with stremio.lan (done 2026-10-03)
+
+Done on 2026-10-03 (item 3, end-to-end test with Stremio Web); the later rounds, up to the sixth, are in [stremio-latency.md](stremio-latency.md). The setup notes below still apply.
 
 Goal: run the Stremio use case against the maintainer's Stremio Web instance (`https://stremio.lan`) with a Scavengarr started in the dev container.
 
 - The dev container publishes port 7979 on all host interfaces (AGENTS.md §9); start the server with `--host 0.0.0.0 --port 7979`. The manifest is at `/api/v1/stremio/manifest.json`.
-- `https://stremio.lan` is an HTTPS page, so the browser blocks plain-HTTP addon and stream URLs (mixed content). The instance needs an HTTPS route, for example a Caddy site on 192.168.88.2 that proxies to `<workstation>:7979`.
+- `https://stremio.lan` is an HTTPS page, so the browser blocks plain-HTTP addon and stream URLs (mixed content). The instance needs an HTTPS route, for example a Caddy site on the host that proxies to `<workstation>:7979`.
 - Stream and proxy URLs are built from `request.base_url`. uvicorn trusts `X-Forwarded-*` headers only from `127.0.0.1` by default, so behind Caddy on another host start the server with `FORWARDED_ALLOW_IPS=<caddy-ip>`; otherwise the URLs come out as `http://`.
 - Measure against the budget in [stremio-latency.md](stremio-latency.md): time until the streams show and the share of streams that play, for German films, series, new releases and anime.
 - Claude Code's memory is not part of the repository: after the rebuild restore it from the gitignored copy with `mkdir -p ~/.claude/projects/-workspaces-scavengarr/memory && cp .claude/memory-backup/* ~/.claude/projects/-workspaces-scavengarr/memory/`.

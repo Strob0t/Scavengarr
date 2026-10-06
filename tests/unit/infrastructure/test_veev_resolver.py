@@ -7,6 +7,7 @@ import pytest
 import respx
 
 from scavengarr.domain.entities.stremio import StreamQuality
+from scavengarr.domain.ports.hoster_resolver import ClientBoundResolverPort
 from scavengarr.infrastructure.hoster_resolvers.veev import (
     VeevResolver,
     _build_array,
@@ -35,6 +36,8 @@ _EMBED_HTML = (
     f'<script>window._vvto[ab] = "{_TOKEN}";</script></body></html>'
 )
 _API = "https://veev.to/dl"
+_FIREFOX = "Mozilla/5.0 (X11; Linux x86_64; rv:156.0) Gecko/20100101 Firefox/156.0"
+_GERMAN = "de,en-US;q=0.7,en;q=0.3"
 
 
 class TestDecoding:
@@ -119,6 +122,28 @@ class TestVeevResolver:
         assert request.headers["X-Requested-With"] == "XMLHttpRequest"
 
     @respx.mock
+    async def test_asks_the_api_for_the_code_it_was_redirected_to(self) -> None:
+        """veev redirects some embed links to another file code; the page's
+        token belongs to that code, and the API answered the old one with
+        "malformed request" ("hashcheck": 1; 6 links on 2026-10-04)."""
+        old = "https://veev.to/e/BvdHl4N8GyKZvYh3DBKC3wGkMNasnCcjqSliKK"
+        new = "https://veev.to/e/5pi5uz0jufew"
+        respx.get(old).respond(302, headers={"Location": new})
+        respx.get(new).respond(200, text=_EMBED_HTML)
+        api = respx.get(_API).respond(
+            200, json={"status": "success", "file": {"dv": [{"s": _SOURCE_S}]}}
+        )
+
+        async with httpx.AsyncClient() as client:
+            result = await VeevResolver(http_client=client).resolve(old)
+
+        assert result is not None
+        assert result.video_url == _SOURCE
+        request = api.calls.last.request
+        assert request.url.params["file_code"] == "5pi5uz0jufew"
+        assert request.headers["Referer"] == new
+
+    @respx.mock
     async def test_playback_uses_the_resolving_user_agent(self) -> None:
         """veevcdn binds the stream token to the User-Agent that resolved it
         (other UA → 403), so playback must send the same one."""
@@ -135,6 +160,58 @@ class TestVeevResolver:
         assert ua.startswith("Mozilla/5.0")
         assert page.calls.last.request.headers["User-Agent"] == ua
         assert api.calls.last.request.headers["User-Agent"] == ua
+
+    def test_the_cdn_binds_user_agent_and_accept_language(self) -> None:
+        resolver = VeevResolver(http_client=httpx.AsyncClient())
+
+        assert isinstance(resolver, ClientBoundResolverPort)
+        assert resolver.bound_headers == ("user-agent", "accept-language")
+
+    @respx.mock
+    async def test_resolves_as_the_player_asking(self) -> None:
+        """veevcdn binds the token to the User-Agent and the Accept-Language
+        of the resolution: Stremio's streaming server passes the browser's
+        Accept-Language on, and the stored URL answered 403; resolved with
+        it, 206 (production, 2026-10-06)."""
+        page = respx.get(_EMBED).respond(200, text=_EMBED_HTML)
+        api = respx.get(_API).respond(
+            200, json={"status": "success", "file": {"dv": [{"s": _SOURCE_S}]}}
+        )
+
+        async with httpx.AsyncClient() as client:
+            result = await VeevResolver(http_client=client).resolve_for_client(
+                _EMBED, {"user-agent": _FIREFOX, "accept-language": _GERMAN}
+            )
+
+        assert result is not None
+        assert result.video_url == _SOURCE
+        assert result.headers == {
+            "Referer": "https://veev.to/",
+            "User-Agent": _FIREFOX,
+            "Accept-Language": _GERMAN,
+        }
+        for call in (page.calls.last, api.calls.last):
+            assert call.request.headers["User-Agent"] == _FIREFOX
+            assert call.request.headers["Accept-Language"] == _GERMAN
+
+    @respx.mock
+    async def test_a_player_without_those_headers_gets_the_default_user_agent(
+        self,
+    ) -> None:
+        page = respx.get(_EMBED).respond(200, text=_EMBED_HTML)
+        respx.get(_API).respond(
+            200, json={"status": "success", "file": {"dv": [{"s": _SOURCE_S}]}}
+        )
+
+        async with httpx.AsyncClient() as client:
+            result = await VeevResolver(http_client=client).resolve_for_client(
+                _EMBED, {}
+            )
+
+        assert result is not None
+        assert result.headers["User-Agent"].startswith("Mozilla/5.0")
+        assert "Accept-Language" not in result.headers
+        assert "Accept-Language" not in page.calls.last.request.headers
 
     @respx.mock
     @pytest.mark.parametrize(

@@ -159,7 +159,7 @@ LINKS_RESPONSE_STATUS_FALSE: dict = {
 
 
 def _make_json_response(data: dict, status_code: int = 200) -> MagicMock:
-    resp = MagicMock(spec=httpx.Response)
+    resp = MagicMock(spec=httpx.Response, history=[])
     resp.status_code = status_code
     resp.text = json.dumps(data)
     resp.json.return_value = data
@@ -339,7 +339,7 @@ class TestPluginSearch:
     async def test_non_json_answer_skips_only_that_title(self, plugin, mock_client):
         """A DDoS-Guard HTML page (200) for one title must not abort the search."""
         search = {**SEARCH_RESPONSE, "pages": 1}
-        html_page = MagicMock(spec=httpx.Response)
+        html_page = MagicMock(spec=httpx.Response, history=[])
         html_page.status_code = 200
         html_page.text = "<html>checking your browser</html>"
         html_page.json.side_effect = ValueError("not json")

@@ -15,8 +15,9 @@ No authentication required.
 from __future__ import annotations
 
 import asyncio
-from html.parser import HTMLParser
 from urllib.parse import quote_plus, urljoin, urlparse
+
+from selectolax.lexbor import LexborHTMLParser
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.categories import (
@@ -24,6 +25,7 @@ from scavengarr.infrastructure.plugins.categories import (
     is_series_title,
     served_category,
 )
+from scavengarr.infrastructure.plugins.dom import ancestors, classes, parse_page
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -74,8 +76,8 @@ def _row_category(row: dict[str, str]) -> int:
 # ---------------------------------------------------------------------------
 # HTML parsers
 # ---------------------------------------------------------------------------
-class _SearchResultParser(HTMLParser):
-    """Parse scnlog.me search results page (2026 layout).
+class _SearchResultParser:
+    """Parse scnlog.me search results page (2026 layout, selectolax).
 
     Each result has structure::
 
@@ -92,52 +94,31 @@ class _SearchResultParser(HTMLParser):
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self.results: list[dict[str, str]] = []
         self.next_page_url: str = ""
 
-        self._title_div_depth = 0  # >0 while inside div.title
-        self._in_a = False
-        self._current_title = ""
-        self._current_href = ""
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attr_dict = dict(attrs)
-        classes = (attr_dict.get("class", "") or "").split()
-
-        if tag == "div":
-            if self._title_div_depth:
-                self._title_div_depth += 1
-            elif "title" in classes:
-                self._title_div_depth = 1
-                self._current_title = ""
-                self._current_href = ""
-        elif tag == "a":
-            href = attr_dict.get("href", "") or ""
-            if "next" in classes and href:
-                self.next_page_url = href
-            elif self._title_div_depth and href:
-                self._in_a = True
-                self._current_href = href
-
-    def handle_data(self, data: str) -> None:
-        if self._in_a:
-            self._current_title += data
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "a":
-            self._in_a = False
-        elif tag == "div" and self._title_div_depth:
-            self._title_div_depth -= 1
-            if not self._title_div_depth:
-                title = self._current_title.strip()
-                href = self._current_href.strip()
-                if title and href:
-                    self.results.append({"title": title, "detail_url": href})
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for link in tree.css("a.next"):
+            self.next_page_url = link.attributes.get("href") or self.next_page_url
+        for box in tree.css("div.title"):
+            # A title div inside another one is part of the outer one
+            if any(p.tag == "div" and "title" in classes(p) for p in ancestors(box)):
+                continue
+            # The title is the text of its links, the URL the last link's
+            links = [
+                a
+                for a in box.css("a")
+                if a.attributes.get("href") and "next" not in classes(a)
+            ]
+            title = "".join(a.text() for a in links).strip()
+            href = (links[-1].attributes.get("href") or "").strip() if links else ""
+            if title and href:
+                self.results.append({"title": title, "detail_url": href})
 
 
-class _DetailPageParser(HTMLParser):
-    """Parse scnlog.me detail page for download links (2026 layout).
+class _DetailPageParser:
+    """Parse scnlog.me detail page for download links (2026 layout, selectolax).
 
     Structure::
 
@@ -147,44 +128,24 @@ class _DetailPageParser(HTMLParser):
           ...
         </div>
 
-    Link texts are the URLs themselves, so the hoster name is taken from
-    the link's domain.
+    The title is the first ``h1.single-title`` with text. Link texts are the
+    URLs themselves, so the hoster name is taken from the link's domain.
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self.title: str = ""
         self.links: list[dict[str, str]] = []
 
-        self._in_h1 = False
-        self._download_depth = 0  # >0 while inside div.download
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attr_dict = dict(attrs)
-        classes = (attr_dict.get("class", "") or "").split()
-
-        if tag == "h1" and "single-title" in classes and not self.title:
-            self._in_h1 = True
-        elif tag == "div":
-            if self._download_depth:
-                self._download_depth += 1
-            elif "download" in classes:
-                self._download_depth = 1
-        elif tag == "a" and self._download_depth:
-            href = (attr_dict.get("href", "") or "").strip()
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for h1 in tree.css("h1.single-title"):
+            self.title = h1.text().strip()
+            if self.title:
+                break
+        for link in tree.css("div.download a"):
+            href = (link.attributes.get("href") or "").strip()
             if href.startswith("http"):
                 self.links.append({"hoster": _hoster_name(href), "link": href})
-
-    def handle_data(self, data: str) -> None:
-        if self._in_h1:
-            self.title += data
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "h1" and self._in_h1:
-            self._in_h1 = False
-            self.title = self.title.strip()
-        elif tag == "div" and self._download_depth:
-            self._download_depth -= 1
 
 
 def _hoster_name(url: str) -> str:
@@ -222,8 +183,7 @@ class ScnlogPlugin(HttpxPluginBase):
         if resp is None:
             return [], ""
 
-        parser = _SearchResultParser()
-        parser.feed(resp.text)
+        parser = await parse_page(_SearchResultParser(), resp.text)
 
         next_url = ""
         if parser.next_page_url:
@@ -247,8 +207,7 @@ class ScnlogPlugin(HttpxPluginBase):
         if resp is None:
             return "", []
 
-        parser = _DetailPageParser()
-        parser.feed(resp.text)
+        parser = await parse_page(_DetailPageParser(), resp.text)
         return parser.title.strip(), parser.links
 
     async def _paginate_search(

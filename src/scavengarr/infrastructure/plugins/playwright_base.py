@@ -28,6 +28,10 @@ if TYPE_CHECKING:
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.browser.clearance_store import ClearanceStore
 from scavengarr.infrastructure.browser.display import resolve_headless
+from scavengarr.infrastructure.browser.hardening import (
+    CHROMIUM_ARGS,
+    block_heavy_resources,
+)
 from scavengarr.infrastructure.browser.shared_browser import SharedBrowserPool
 from scavengarr.infrastructure.browser.turnstile import (
     is_challenge_page,
@@ -227,7 +231,8 @@ class PlaywrightPluginBase:
             try:
                 pw = await async_playwright().start()
                 browser = await pw.chromium.launch(
-                    headless=resolve_headless(self._headless)
+                    headless=resolve_headless(self._headless),
+                    args=list(CHROMIUM_ARGS),
                 )
                 self._pw = pw
                 return browser
@@ -258,7 +263,7 @@ class PlaywrightPluginBase:
         ``_serialize_search`` is True (persistent-page plugins).
 
         When ``_block_resources`` is True, aborts heavy resources
-        (images, fonts, CSS) to speed up navigation.
+        (images, fonts, CSS, media) to speed up navigation.
         """
         # Per-request isolation: if a ContextVar context was set by
         # isolated_search(), prefer it over the singleton.
@@ -269,6 +274,15 @@ class PlaywrightPluginBase:
             if req_ctx is not None:
                 return req_ctx
 
+        if (
+            self._context is not None
+            and self._browser is not None
+            and not self._browser.is_connected()
+        ):
+            # The shared browser restarted (or crashed): a context kept from
+            # before is dead, and boerse, mygully and animeloads failed every
+            # search until the app restarted (code review, 2026-10-06)
+            self._context = None
         if self._context is None:
             browser = await self._ensure_browser()
             self._context = await browser.new_context(**self._context_options())
@@ -277,7 +291,10 @@ class PlaywrightPluginBase:
 
     def _context_options(self) -> dict[str, Any]:
         """Keyword arguments for ``browser.new_context()``."""
-        options: dict[str, Any] = {"viewport": {"width": 1280, "height": 720}}
+        options: dict[str, Any] = {
+            "viewport": {"width": 1280, "height": 720},
+            "service_workers": "block",
+        }
         if self._browser_user_agent is not None:
             options["user_agent"] = self._browser_user_agent
         return options
@@ -288,10 +305,7 @@ class PlaywrightPluginBase:
         if store is not None:
             await store.restore(ctx)
         if self._block_resources:
-            await ctx.route(
-                "**/*.{png,jpg,jpeg,gif,svg,woff,woff2,ttf,css}",
-                lambda route: route.abort(),
-            )
+            await ctx.route("**/*", block_heavy_resources)
 
     async def _ensure_page(self) -> Page:
         """Get or create a persistent page."""
@@ -548,7 +562,22 @@ class PlaywrightPluginBase:
 
         For all other plugins, a fresh BrowserContext is created,
         set into the ContextVar, and torn down after search completes.
+
+        On the shared browser the search holds it (``lease()``): it may
+        restart between operations, not under one.
         """
+        if self._shared_pool is None:
+            return await self._isolated_search(query, category, season, episode)
+        async with self._shared_pool.lease():
+            return await self._isolated_search(query, category, season, episode)
+
+    async def _isolated_search(
+        self,
+        query: str,
+        category: int | None,
+        season: int | None,
+        episode: int | None,
+    ) -> list[SearchResult]:
         if self._serialize_search:
             async with self._search_lock:
                 return await self.search(

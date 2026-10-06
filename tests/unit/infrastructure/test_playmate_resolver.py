@@ -27,6 +27,9 @@ class TestExtractFileId:
             f"https://playmate.to/watch/{_FID}",
             f"https://www.playmate.to/watch/{_FID}",
             f"https://playmate.to/e/{_FID}",
+            # The player frame's URL: links with it were rejected as invalid
+            # (end-to-end test 2026-10-04); the meta API knows their codes
+            f"https://playmate.to/embed/{_FID}",
         ],
     )
     def test_valid(self, url: str) -> None:

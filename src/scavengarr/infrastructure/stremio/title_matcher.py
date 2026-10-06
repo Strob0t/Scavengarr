@@ -12,12 +12,12 @@ from __future__ import annotations
 import re
 
 import structlog
-from guessit import guessit
 from rapidfuzz import fuzz
 from unidecode import unidecode as _unidecode
 
 from scavengarr.domain.entities.stremio import TitleMatchInfo
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.stremio.release_guess import guess_release
 
 log = structlog.get_logger(__name__)
 
@@ -149,11 +149,11 @@ def _extract_title_candidates(result: SearchResult) -> list[str]:
 
     # 2. guessit-parsed title from result.title
     if result.title:
-        _add(guessit(result.title).get("title"))
+        _add(guess_release(result.title).get("title"))
 
     # 3. guessit-parsed title from release_name
     if result.release_name:
-        _add(guessit(result.release_name).get("title"))
+        _add(guess_release(result.release_name).get("title"))
 
     # 4. raw release_name (normalised) as fallback
     _add(result.release_name)
@@ -174,7 +174,7 @@ def _extract_result_year(result: SearchResult) -> int | None:
 
     for src in (result.title, result.release_name):
         if src:
-            guess_year = guessit(src).get("year")
+            guess_year = guess_release(src).get("year")
             if guess_year:
                 return int(guess_year)
 

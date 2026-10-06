@@ -13,8 +13,9 @@ No authentication required. Password for all releases: NIMA4K
 from __future__ import annotations
 
 import re
-from html.parser import HTMLParser
 from urllib.parse import urljoin
+
+from selectolax.lexbor import LexborHTMLParser, LexborNode
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.categories import (
@@ -22,6 +23,12 @@ from scavengarr.infrastructure.plugins.categories import (
     is_series_title,
     served_category,
     stream_category,
+)
+from scavengarr.infrastructure.plugins.dom import (
+    ancestors,
+    classes,
+    outermost,
+    parse_page,
 )
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
@@ -50,8 +57,8 @@ _SPORT_PILLS = frozenset({"sport", "sports"})
 _SERIES_PILLS = frozenset({"serien", "tv"})
 
 
-class _ListingParser(HTMLParser):
-    """Parse article cards from nima4k.org listing/search pages.
+class _ListingParser:
+    """Parse article cards from nima4k.org listing/search pages (selectolax).
 
     Each article is a ``<div class="article">`` containing:
     - ``<h2><a class="release-details" href="/release/ID/slug">Title</a></h2>``
@@ -64,207 +71,80 @@ class _ListingParser(HTMLParser):
     """
 
     def __init__(self, base_url: str) -> None:
-        super().__init__()
         self.results: list[dict[str, str | list[str]]] = []
         self.has_next_page: bool = False
         self._base_url = base_url
 
-        # Article tracking
-        self._in_article = False
-        self._article_div_depth = 0
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        # An article div nested in an article is part of the outer one
+        for article in outermost(tree.css("div.article")):
+            self._add_article(article)
+        # Any link of a pagination outside the articles counts as a next page
+        if any(
+            link.attributes.get("href")
+            for pagination in tree.css("ul.uk-pagination")
+            if not _inside_article(pagination)
+            for link in pagination.css("a")
+        ):
+            self.has_next_page = True
 
-        # Title/URL
-        self._in_h2 = False
-        self._in_release_a = False
-        self._current_title = ""
-        self._current_url = ""
-
-        # Subtitle (release name)
-        self._in_subtitle = False
-        self._current_subtitle = ""
-
-        # Release infos (size)
-        self._in_release_infos = False
-        self._in_li = False
-        self._li_text = ""
-        self._current_size = ""
-        self._li_count = 0
-
-        # Genre pills (categories)
-        self._in_genre_pills = False
-        self._in_pill_a = False
-        self._pill_href = ""
-        self._pill_text = ""
-        self._current_categories: list[str] = []
-
-        # Meta (date)
-        self._in_meta_p = False
-        self._in_meta_span = False
-        self._current_date = ""
-
-        # Pagination
-        self._in_pagination = False
-        self._found_next = False
-
-    def _reset_article(self) -> None:
-        self._current_title = ""
-        self._current_url = ""
-        self._current_subtitle = ""
-        self._current_size = ""
-        self._current_categories = []
-        self._current_date = ""
-
-    def _emit_article(self) -> None:
-        if not self._current_title or not self._current_url:
+    def _add_article(self, article: LexborNode) -> None:
+        # The last title link names the article; one without href keeps the
+        # URL of an earlier one
+        title = url = ""
+        for link in article.css("h2 a.release-details"):
+            title = link.text().strip()
+            if href := link.attributes.get("href"):
+                url = urljoin(self._base_url, href)
+        if not title or not url:
             return
+        subtitles = article.css("span.subtitle")
+        # The first info that reads like a size ("Größe 36,90 GB")
+        size = next(
+            (
+                text
+                for li in article.css("ul.release-infos li")
+                if (text := li.text().strip()) and _looks_like_size(text)
+            ),
+            "",
+        )
+        # Genre pills, without the IMDb / xREL links
+        categories = [
+            text
+            for link in article.css("ul.genre-pills a")
+            if (href := link.attributes.get("href"))
+            and "imdb.com" not in href
+            and "xrel.to" not in href
+            and (text := link.text().strip())
+        ]
+        # The date: the first span of the meta line with text
+        date = next(
+            (
+                text
+                for span in article.css("p.meta span")
+                if (text := span.text().strip())
+            ),
+            "",
+        )
         self.results.append(
             {
-                "title": self._current_title,
-                "url": self._current_url,
-                "release_name": self._current_subtitle,
-                "size": self._current_size,
-                "categories": self._current_categories.copy(),
-                "date": self._current_date,
+                "title": title,
+                "url": url,
+                "release_name": subtitles[-1].text().strip() if subtitles else "",
+                "size": size,
+                "categories": categories,
+                "date": date,
             }
         )
 
-    def handle_starttag(  # noqa: C901
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
-        attr_dict = dict(attrs)
-        classes = (attr_dict.get("class") or "").split()
 
-        # Article boundary
-        if tag == "div":
-            if self._in_article:
-                self._article_div_depth += 1
-            elif "article" in classes:
-                self._in_article = True
-                self._article_div_depth = 0
-                self._reset_article()
-
-        if not self._in_article and tag == "ul" and "uk-pagination" in classes:
-            self._in_pagination = True
-
-        if self._in_pagination and tag == "a":
-            href = attr_dict.get("href", "") or ""
-            if href:
-                self._found_next = True
-
-        if not self._in_article:
-            return
-
-        # h2 → title link
-        if tag == "h2":
-            self._in_h2 = True
-
-        if tag == "a" and self._in_h2 and "release-details" in classes:
-            self._in_release_a = True
-            href = attr_dict.get("href", "") or ""
-            if href:
-                self._current_url = urljoin(self._base_url, href)
-            self._current_title = ""
-
-        # Genre pill link — skip IMDb / xREL links
-        if tag == "a" and self._in_genre_pills:
-            href = attr_dict.get("href", "") or ""
-            if href and "imdb.com" not in href and "xrel.to" not in href:
-                self._in_pill_a = True
-                self._pill_href = href
-                self._pill_text = ""
-
-        # Subtitle span
-        if tag == "span" and "subtitle" in classes:
-            self._in_subtitle = True
-            self._current_subtitle = ""
-
-        # Release infos list
-        if tag == "ul" and "release-infos" in classes:
-            self._in_release_infos = True
-            self._li_count = 0
-
-        if tag == "li" and self._in_release_infos:
-            self._in_li = True
-            self._li_text = ""
-            self._li_count += 1
-
-        # Genre pills list
-        if tag == "ul" and "genre-pills" in classes:
-            self._in_genre_pills = True
-
-        # Meta paragraph
-        if tag == "p" and "meta" in classes:
-            self._in_meta_p = True
-
-        if tag == "span" and self._in_meta_p:
-            self._in_meta_span = True
-
-    def handle_data(self, data: str) -> None:
-        text = data.strip()
-
-        if self._in_release_a:
-            self._current_title += data
-
-        if self._in_subtitle:
-            self._current_subtitle += data
-
-        if self._in_li and self._in_release_infos:
-            self._li_text += data
-
-        if self._in_pill_a:
-            self._pill_text += data
-
-        if self._in_meta_span and text:
-            if not self._current_date:
-                self._current_date = text
-
-    def handle_endtag(self, tag: str) -> None:  # noqa: C901
-        if tag == "a":
-            if self._in_release_a:
-                self._in_release_a = False
-                self._current_title = self._current_title.strip()
-            if self._in_pill_a:
-                self._in_pill_a = False
-                pill = self._pill_text.strip()
-                if pill:
-                    self._current_categories.append(pill)
-
-        if tag == "h2":
-            self._in_h2 = False
-
-        if tag == "span":
-            if self._in_subtitle:
-                self._in_subtitle = False
-                self._current_subtitle = self._current_subtitle.strip()
-            if self._in_meta_span:
-                self._in_meta_span = False
-
-        if tag == "li" and self._in_li:
-            self._in_li = False
-            text = self._li_text.strip()
-            # First li with a size-like pattern is the size
-            if text and not self._current_size and _looks_like_size(text):
-                self._current_size = text
-
-        if tag == "ul":
-            if self._in_release_infos:
-                self._in_release_infos = False
-            if self._in_genre_pills:
-                self._in_genre_pills = False
-            if self._in_pagination:
-                self._in_pagination = False
-                if self._found_next:
-                    self.has_next_page = True
-
-        if tag == "p" and self._in_meta_p:
-            self._in_meta_p = False
-
-        if tag == "div" and self._in_article:
-            if self._article_div_depth > 0:
-                self._article_div_depth -= 1
-            else:
-                self._in_article = False
-                self._emit_article()
+def _inside_article(node: LexborNode) -> bool:
+    """Whether *node* lies in an article card (``<div class="article">``)."""
+    return any(
+        parent.tag == "div" and "article" in classes(parent)
+        for parent in ancestors(node)
+    )
 
 
 def _looks_like_size(text: str) -> bool:
@@ -328,8 +208,7 @@ class Nima4kPlugin(HttpxPluginBase):
         if resp is None:
             return []
 
-        parser = _ListingParser(self.base_url)
-        parser.feed(resp.text)
+        parser = await parse_page(_ListingParser(self.base_url), resp.text)
 
         self._log.info("nima4k_search_post", query=query, count=len(parser.results))
         return parser.results
@@ -349,8 +228,7 @@ class Nima4kPlugin(HttpxPluginBase):
         if resp is None:
             return [], False
 
-        parser = _ListingParser(self.base_url)
-        parser.feed(resp.text)
+        parser = await parse_page(_ListingParser(self.base_url), resp.text)
 
         self._log.info(
             "nima4k_browse_page",

@@ -16,11 +16,14 @@ from fastapi import FastAPI
 
 from scavengarr.application.factories import CrawlJobFactory
 from scavengarr.application.use_cases.stremio_catalog import StremioCatalogUseCase
+from scavengarr.application.use_cases.stremio_links import StremioLinks
 from scavengarr.application.use_cases.stremio_stream import StremioStreamUseCase
 from scavengarr.domain.entities.crawljob import Priority
 from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort
 from scavengarr.domain.ports.cache import CachePort
 from scavengarr.infrastructure.browser.clearance_store import ClearanceStore
+from scavengarr.infrastructure.browser.page_budget import PageBudget
+from scavengarr.infrastructure.browser.page_gate import PageGate
 from scavengarr.infrastructure.browser.shared_browser import SharedBrowserPool
 from scavengarr.infrastructure.browser.solver_fetcher import (
     ChainedBrowserFetcher,
@@ -30,6 +33,7 @@ from scavengarr.infrastructure.browser.stealth_pool import StealthPool
 from scavengarr.infrastructure.cache.cache_factory import create_cache
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.common.private_address_guard import (
+    GuardedTransport,
     PrivateAddressGuard,
 )
 from scavengarr.infrastructure.common.rate_limiter import DomainRateLimiter
@@ -66,7 +70,6 @@ from scavengarr.infrastructure.hoster_resolvers.vinovo import VinovoResolver
 from scavengarr.infrastructure.hoster_resolvers.vixeo import VixeoResolver
 from scavengarr.infrastructure.hoster_resolvers.voe import VoeResolver
 from scavengarr.infrastructure.hoster_resolvers.xfs import create_all_xfs_resolvers
-from scavengarr.infrastructure.metrics import MetricsCollector
 from scavengarr.infrastructure.persistence.crawljob_cache import (
     CacheCrawlJobRepository,
 )
@@ -81,6 +84,7 @@ from scavengarr.infrastructure.plugins.constants import (
     DEFAULT_USER_AGENT,
     search_max_results,
 )
+from scavengarr.infrastructure.plugins.health_monitor import PluginHealthMonitor
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 from scavengarr.infrastructure.resource_detector import detect_resources
@@ -92,12 +96,27 @@ from scavengarr.infrastructure.stremio.episode_filter import filter_by_episode
 from scavengarr.infrastructure.stremio.stream_converter import convert_search_results
 from scavengarr.infrastructure.stremio.stream_sorter import StreamSorter
 from scavengarr.infrastructure.stremio.title_matcher import filter_by_title_match
+from scavengarr.infrastructure.telemetry import create_telemetry, monitor_loop_lag
+from scavengarr.infrastructure.telemetry.collectors import (
+    BreakerCollector,
+    BrowserPagesCollector,
+)
 from scavengarr.infrastructure.tmdb.client import HttpxTmdbClient
 from scavengarr.infrastructure.tmdb.imdb_fallback import ImdbFallbackClient
 from scavengarr.infrastructure.torznab.search_engine import HttpxSearchEngine
 from scavengarr.interfaces.app_state import AppState
 
 log = structlog.get_logger(__name__)
+
+# Shared HTTP client: idle connections stay open this long (httpx: 5 s), and
+# connecting to a host may take at most this long
+_KEEPALIVE_S = 60.0
+_CONNECT_TIMEOUT_S = 5.0
+# At most this many idle connections (httpx's default). httpcore 1.0 scans
+# its whole pool for every request and every finished response, quadratic
+# in the idle connections: with 100 kept, the scan held the GIL 10-20% of
+# the time during stream requests on the Pi, 2% with httpx's defaults
+_KEEPALIVE_CONNECTIONS = 20
 
 
 def _auto_tune_concurrency(config: AppConfig) -> None:
@@ -171,11 +190,12 @@ def _apply_plugin_overrides(plugins: PluginRegistry, config: AppConfig) -> None:
     """Apply per-plugin YAML overrides (timeout, concurrency, enabled)."""
     for name, override in config.plugins.overrides.items():
         try:
+            # Unknown names raise here, a misspelled disable included
+            plugin = plugins.get(name)
             if not override.enabled:
                 plugins.remove(name)
                 log.info("plugin_disabled_by_config", plugin=name)
                 continue
-            plugin = plugins.get(name)
             if not isinstance(plugin, HttpxPluginBase | PlaywrightPluginBase):
                 log.warning("plugin_override_unsupported", plugin=name)
                 continue
@@ -220,12 +240,36 @@ def build_browser_fetcher(
     return ChainedBrowserFetcher(fetchers)
 
 
+def configure_event_loop() -> None:
+    """Start the running loop's tasks lazily, asyncio's default.
+
+    uvicorn runs on uvloop when it is installed (``loop="auto"``). anyio,
+    under Starlette's middleware and httpcore's connection locks, keeps its
+    own tasks lazy only under asyncio's own eager task factory, which uvloop
+    0.23 cannot use (it hands the factory ``eager_start=None``: refused on
+    Python 3.13, a lazy start on 3.14). Under a factory of the app's own a
+    task group's child that suspended inside a cancel scope at once lost
+    that scope, and every proxied HLS variant answered 500 (production,
+    2026-10-06).
+    """
+    loop = asyncio.get_running_loop()
+    loop.set_task_factory(None)
+    log.info("event_loop_configured", loop=type(loop).__module__)
+
+
 def build_http_client(config: AppConfig) -> httpx.AsyncClient:
     """Shared HTTP client: per-domain rate limit, 429/503 retry, SSRF guard.
 
     Scraped pages decide most URLs this client requests, so every request
     and redirect hop to a non-public address is refused, except for the
     configured solver sidecar (``playwright.solver_url``).
+
+    Idle connections stay open for a minute (up to
+    ``_KEEPALIVE_CONNECTIONS``): one stream request talks to 18-42 hosts,
+    and with httpx's 5 s default every pause between two requests closed
+    them all (TLS handshakes were 21% of the Python CPU on a Raspberry Pi).
+    A host that does not answer fails after ``_CONNECT_TIMEOUT_S`` instead
+    of the full read timeout.
     """
     rate_limiter = DomainRateLimiter(
         default_rps=config.rate_limit_requests_per_second,
@@ -234,12 +278,10 @@ def build_http_client(config: AppConfig) -> httpx.AsyncClient:
         min_rate=config.rate_limit_min_rps,
         max_rate=config.rate_limit_max_rps,
     )
-    transport = RetryTransport(
-        wrapped=httpx.AsyncHTTPTransport(),
-        rate_limiter=rate_limiter,
-        max_retries=config.http_retry_max_attempts,
-        backoff_base=config.http_retry_backoff_base,
-        max_backoff=config.http_retry_max_backoff,
+    limits = httpx.Limits(
+        max_connections=100,
+        max_keepalive_connections=_KEEPALIVE_CONNECTIONS,
+        keepalive_expiry=_KEEPALIVE_S,
     )
     solver_host = (
         urlparse(config.playwright_solver_url).hostname
@@ -249,9 +291,18 @@ def build_http_client(config: AppConfig) -> httpx.AsyncClient:
     guard = PrivateAddressGuard(
         allowed_hosts=frozenset({solver_host}) if solver_host else frozenset()
     )
+    transport = RetryTransport(
+        # Connections go to the addresses the guard checked (DNS rebinding)
+        wrapped=GuardedTransport(guard, limits=limits, http2=config.http_http2),
+        rate_limiter=rate_limiter,
+        max_retries=config.http_retry_max_attempts,
+        backoff_base=config.http_retry_backoff_base,
+        max_backoff=config.http_retry_max_backoff,
+    )
+    timeout = config.http_timeout_seconds
     return httpx.AsyncClient(
         transport=transport,
-        timeout=httpx.Timeout(config.http_timeout_seconds),
+        timeout=httpx.Timeout(timeout, connect=min(_CONNECT_TIMEOUT_S, timeout)),
         headers={"User-Agent": config.http_user_agent},
         follow_redirects=config.http_follow_redirects,
         event_hooks={"request": [guard]},
@@ -328,6 +379,21 @@ def _wire_scoring(state: AppState, config: AppConfig) -> asyncio.Task[None]:
     return asyncio.create_task(state.scoring_scheduler.run_forever())
 
 
+def _plugin_health(state: AppState, config: AppConfig) -> PluginHealthMonitor | None:
+    """Checks of the Stremio plugins' sites; ``None`` when turned off."""
+    interval = config.stremio.plugin_health_interval_seconds
+    if interval <= 0:
+        return None
+    names = state.plugins.get_by_provides("stream")
+    log.info("plugin_health_monitor_started", plugins=len(names), interval_s=interval)
+    return PluginHealthMonitor(
+        prober=HealthProber(http_client=state.http_client),
+        plugins=state.plugins,
+        names=names,
+        interval_s=interval,
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Lifespan Hook: Initialize and cleanup all resources (DI Composition Root).
@@ -342,9 +408,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     state = cast(AppState, app.state)
     config = state.config
+    configure_event_loop()
 
-    # 0) Metrics collector (zero-overhead, must exist before components that record)
-    state.metrics = MetricsCollector()
+    # 0) Telemetry (must exist before the components that record); tracing
+    #    only with an OTLP endpoint
+    state.telemetry = create_telemetry(config.telemetry.tracing_endpoint)
+    if state.telemetry.tracing is not None:
+        log.info("tracing_enabled", endpoint=config.telemetry.tracing_endpoint)
+    state._loop_lag_task = asyncio.create_task(monitor_loop_lag(state.telemetry))
 
     # 0b) Auto-tune concurrency based on detected container/host resources
     if config.stremio.auto_tune_all:
@@ -433,14 +504,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Solved Cloudflare/DDoS-Guard challenges survive restarts
     clearance_store = ClearanceStore(state.cache)
     PlaywrightPluginBase.set_clearance_store(clearance_store)
+    # The stealth browser's pages: 2 at the start, then adapted to the waits
+    # for a page, the CPU and the free memory, up to max_concurrent_playwright
+    ceiling = config.stremio.max_concurrent_playwright
+    pages = PageGate(limit=min(ceiling, 2), telemetry=state.telemetry)
+    state.telemetry.registry.register(BrowserPagesCollector(pages))
+    state._page_budget_task = asyncio.create_task(
+        PageBudget(pages, ceiling=ceiling).run_forever()
+    )
     state.stealth_pool = StealthPool(
         browser_pool=state.shared_browser_pool,
         clearance_store=clearance_store,
         timeout_ms=int(config.stremio.probe_stealth_timeout_seconds * 1000),
-        # RAM budget: at most 2 browser-fetched pages at a time
-        fetch_concurrency=min(config.stremio.max_concurrent_playwright, 2),
+        pages=pages,
     )
-    log.info("stealth_pool_configured")
+    log.info("browser_pages_budget", start=pages.limit, ceiling=ceiling)
 
     # 8b) httpx plugins fall back to the stealth browser (and/or an external
     #     solver) on CF challenges
@@ -453,7 +531,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         solver=bool(config.playwright_solver_url),
     )
 
-    # 9) Hoster resolver registry (for extracting video URLs from embed pages)
+    # 9) Hoster resolver registry (for extracting video URLs from embed pages).
+    #    Its breaker skips hosters whose resolutions keep timing out or are
+    #    unplayable (browser captures that cannot pass a challenge from this IP)
+    hoster_breaker = PluginCircuitBreaker(failure_threshold=5, cooldown_seconds=60.0)
     state.hoster_resolver_registry = HosterResolverRegistry(
         resolvers=[
             # Streaming resolvers (extract direct video URLs)
@@ -507,6 +588,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         http_client=state.http_client,
         resolve_timeout=config.http_timeout_resolve_seconds,
         verify_playback=config.stremio.verify_streams,
+        circuit_breaker=hoster_breaker,
+        telemetry=state.telemetry,
     )
     log.info(
         "hoster_resolver_registry_initialized",
@@ -521,6 +604,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     log.info(
         "stream_link_repo_initialized",
         ttl_seconds=config.stremio.stream_link_ttl_seconds,
+    )
+    # /play and the HLS proxy resolve a stale or refused link again
+    state.stremio_links = StremioLinks(
+        repo=state.stream_link_repo, resolver=state.hoster_resolver_registry
     )
 
     # 11) Plugin scoring (optional — background health + search probes)
@@ -551,6 +638,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         cooldown_seconds=60.0,
     )
     log.info("circuit_breaker_initialized")
+    state.telemetry.registry.register(
+        BreakerCollector({"plugin": state.circuit_breaker, "hoster": hoster_breaker})
+    )
+
+    # 14b) Plugin health: Stremio searches skip sites that do not answer
+    state.plugin_health = _plugin_health(state, config)
+    state._plugin_health_task = (
+        asyncio.create_task(state.plugin_health.run_forever())
+        if state.plugin_health is not None
+        else None
+    )
 
     # 15) Stremio use cases (always initialized — fallback handles missing key)
     state.stremio_stream_uc = StremioStreamUseCase(
@@ -570,13 +668,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         max_results_var=search_max_results,
         stream_link_repo=state.stream_link_repo,
         resolve_fn=state.hoster_resolver_registry.resolve,
-        metrics=state.metrics,
+        # A cached search answers at once with the cached resolutions
+        cached_resolution_fn=state.hoster_resolver_registry.cached,
+        telemetry=state.telemetry,
         score_store=state.plugin_score_store,
         browser_warmup_fn=state.shared_browser_pool.warmup,
         pool=state.concurrency_pool,
         circuit_breaker=state.circuit_breaker,
         # hdfilme, streamcloud, streamkiste: one database, one asked per request
         mirror_groups=_mirror_groups(state.plugins),
+        plugin_health=state.plugin_health,
+        # Search results per title, shared with Torznab's TTL (0 = off)
+        cache=state.cache,
+        search_ttl_seconds=config.cache.search_ttl_seconds,
     )
     # The IMDB fallback (no TMDB key) has no trending lists, only search
     state.stremio_catalog_uc = StremioCatalogUseCase(
@@ -593,11 +697,31 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Drain in-flight requests before tearing down resources
         await state.graceful_shutdown.wait_for_drain(timeout=10.0)
 
+        # Background searches and resolutions, links resolved again and
+        # half-open hoster probes use the browser, HTTP client and cache
+        # closed below
+        await state.stremio_stream_uc.aclose()
+        await state.stremio_links.aclose()
+        await state.hoster_resolver_registry.aclose()
+
         if state._scoring_task is not None:
             state._scoring_task.cancel()
             with suppress(asyncio.CancelledError):
                 await state._scoring_task
             log.info("scoring_scheduler_stopped")
+
+        if state._plugin_health_task is not None:
+            state._plugin_health_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await state._plugin_health_task
+
+        state._loop_lag_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await state._loop_lag_task
+
+        state._page_budget_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await state._page_budget_task
 
         # Stealth context first: it lives on the shared browser.
         if state.stealth_pool is not None:
@@ -616,5 +740,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         await state.cache.aclose()
         log.info("cache_closed")
+
+        # Spans of everything closed above still go out (blocks up to 3 s)
+        await asyncio.to_thread(state.telemetry.close)
 
         log.info("app_shutdown_complete")

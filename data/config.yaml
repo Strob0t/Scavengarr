@@ -38,6 +38,7 @@ http:
   timeout_seconds: 15.0 # was 30 — cut slow requests faster
   timeout_resolve_seconds: 10.0 # was 15 — hosters that need >10s are likely dead
   follow_redirects: true # env: SCAVENGARR_HTTP_FOLLOW_REDIRECTS
+  http2: false # offer HTTP/2 (one connection per host); env: SCAVENGARR_HTTP_HTTP2
   # user_agent: default Scavengarr/<version> (+https://github.com/Strob0t/Scavengarr);
   # keep a contact URL in your own (Wikidata answers 403 without one)
   rate_limit_rps: 10.0 # was 5 — double throughput per domain
@@ -58,6 +59,7 @@ validation_max_concurrent: 30 # was 20 — more parallel validations
 playwright:
   headless: false # headful under Xvfb (Cloudflare Turnstile), headless fallback without DISPLAY; env: SCAVENGARR_PLAYWRIGHT_HEADLESS
   browser_fallback: true # httpx plugins load Cloudflare-challenged pages via the browser; env: SCAVENGARR_PLAYWRIGHT_BROWSER_FALLBACK
+  # solver_url: "http://byparr:8191" # optional Byparr/FlareSolverr sidecar (compose profile solver)
   timeout_ms: 20000 # was 30000 — 20s is plenty for page load
 
 # -- Logging ----------------------------------------------------------
@@ -115,12 +117,16 @@ stremio:
   auto_tune_all: true # container-aware auto-tune ALL concurrency params (cgroup v2/v1)
   max_concurrent_playwright: 7 # was 5 — more parallel PW plugins
   max_results_per_plugin: 50 # was 100 — fewer results per plugin, faster turnaround
-  # Answer budget, both counted from the request start (measured 2026-09-29,
-  # docs/plans/stremio-latency.md): 10/15 s gave the same playable streams
-  # as 12/17 s; 15 s per plugin (old) meant answers after 20–38 s
-  plugin_timeout_seconds: 10.0 # plugin search ends 10 s after the request
-  stream_deadline_seconds: 15.0 # hoster resolution ends, answer goes out
+  # Answer policy (decided 2026-10-05, docs/plans/round5-measures.md): the
+  # answer goes out at resolve_target_count streams or when the search and
+  # every resolution are done, at the latest stream_deadline_seconds after
+  # the request; links resolve while plugins search, and plugins still
+  # running at the answer fill the search cache
+  plugin_timeout_seconds: 30.0 # plugin search ends 30 s after the request
+  stream_deadline_seconds: 60.0 # latest answer
   verify_streams: true # drop resolved URLs that do not return video bytes
+  plugin_health_interval_seconds: 1800.0 # check every plugin's site; searches skip sites that did not answer (0 = off)
+  allow_hls_transcoding: false # let Stremio's streaming server transcode HLS (too slow for 1080p on a Pi 4)
 
   # Title matching
   title_match_threshold: 0.7
@@ -132,18 +138,16 @@ stremio:
   title_year_tolerance_series: 3
 
   # Stream link caching
-  stream_link_ttl_seconds: 7200 # 2 hours
+  # Links behind /play and the HLS proxy: Stremio plays kept stream
+  # objects later (autoplay, Continue Watching); stale ones resolve again
+  stream_link_ttl_seconds: 604800 # 7 days
 
   # Hoster resolution at /stream time
   probe_concurrency: 20 # parallel resolutions (auto-tuned when auto_tune_all)
   max_probe_count: 80 # top-ranked streams to resolve (was 50)
 
-  # Resolution early-stop (0 = disabled, resolve all streams)
-  resolve_target_count: 0
-  # Once a stream is resolved, wait at most this long for the other hosters
-  # (browser-resolved ones take 3-7 s; DoodStream mirrors land 3.2-4.0 s
-  # after the first stream, Dropload's captcha 7 s); measured 2026-10-01
-  resolve_grace_seconds: 4.0
+  # The answer goes out once this many hosters have a video
+  resolve_target_count: 5
 
   # Stealth browser (Patchright): browser-based resolvers, Cloudflare fallback
   probe_stealth_timeout_seconds: 10.0 # page timeout (default 15)
@@ -155,3 +159,7 @@ stremio:
   max_items_total: 50
   max_items_per_plugin: 20
   exploration_probability: 0.15
+
+# -- Telemetry --------------------------------------------------------
+# telemetry:
+#   tracing_endpoint: "http://tempo:4318" # OTLP/HTTP; the core's stages as OpenTelemetry spans (compose profile tracing); off when unset

@@ -332,20 +332,20 @@ class TestSearchApi:
         plugin = _make_plugin()
 
         # Mock search API response
-        search_response = AsyncMock(spec=httpx.Response)
+        search_response = AsyncMock(spec=httpx.Response, history=[])
         search_response.status_code = 200
         search_response.json.return_value = _SEARCH_API_RESPONSE
         search_response.raise_for_status = lambda: None
         search_response.text = json.dumps(search_response.json.return_value)
 
         # Mock movie page response (with initMovie script)
-        movie_page_response = AsyncMock(spec=httpx.Response)
+        movie_page_response = AsyncMock(spec=httpx.Response, history=[])
         movie_page_response.status_code = 200
         movie_page_response.text = _MOVIE_PAGE_WITH_INIT
         movie_page_response.raise_for_status = lambda: None
 
         # Mock API v1 response (release HTML)
-        api_v1_response = AsyncMock(spec=httpx.Response)
+        api_v1_response = AsyncMock(spec=httpx.Response, history=[])
         api_v1_response.status_code = 200
         api_v1_response.json.return_value = _API_V1_RESPONSE
         api_v1_response.raise_for_status = lambda: None
@@ -373,7 +373,7 @@ class TestSearchApi:
     async def test_search_api_url(self) -> None:
         plugin = _make_plugin()
 
-        search_response = AsyncMock(spec=httpx.Response)
+        search_response = AsyncMock(spec=httpx.Response, history=[])
         search_response.status_code = 200
         search_response.json.return_value = _EMPTY_SEARCH_RESPONSE
         search_response.raise_for_status = lambda: None
@@ -393,7 +393,7 @@ class TestSearchApi:
     async def test_search_empty_results(self) -> None:
         plugin = _make_plugin()
 
-        search_response = AsyncMock(spec=httpx.Response)
+        search_response = AsyncMock(spec=httpx.Response, history=[])
         search_response.status_code = 200
         search_response.json.return_value = _EMPTY_SEARCH_RESPONSE
         search_response.raise_for_status = lambda: None
@@ -421,7 +421,7 @@ class TestSearchApi:
     async def test_search_invalid_json_returns_empty(self) -> None:
         plugin = _make_plugin()
 
-        search_response = AsyncMock(spec=httpx.Response)
+        search_response = AsyncMock(spec=httpx.Response, history=[])
         search_response.status_code = 200
         search_response.json.side_effect = json.JSONDecodeError("err", "", 0)
         search_response.raise_for_status = lambda: None
@@ -450,7 +450,7 @@ class TestCategoryFiltering:
     async def test_movie_category_accepted(self) -> None:
         plugin = _make_plugin()
 
-        search_response = AsyncMock(spec=httpx.Response)
+        search_response = AsyncMock(spec=httpx.Response, history=[])
         search_response.status_code = 200
         search_response.json.return_value = _EMPTY_SEARCH_RESPONSE
         search_response.raise_for_status = lambda: None
@@ -489,7 +489,7 @@ class TestCategoryFiltering:
     async def test_no_category_accepted(self) -> None:
         plugin = _make_plugin()
 
-        search_response = AsyncMock(spec=httpx.Response)
+        search_response = AsyncMock(spec=httpx.Response, history=[])
         search_response.status_code = 200
         search_response.json.return_value = _EMPTY_SEARCH_RESPONSE
         search_response.raise_for_status = lambda: None
@@ -509,7 +509,7 @@ class TestSearchResultConstruction:
     async def test_result_has_release_name_as_title(self) -> None:
         plugin = _make_plugin()
 
-        search_response = AsyncMock(spec=httpx.Response)
+        search_response = AsyncMock(spec=httpx.Response, history=[])
         search_response.status_code = 200
         search_response.json.return_value = {
             "result": [
@@ -520,12 +520,12 @@ class TestSearchResultConstruction:
         search_response.raise_for_status = lambda: None
         search_response.text = json.dumps(search_response.json.return_value)
 
-        movie_page_response = AsyncMock(spec=httpx.Response)
+        movie_page_response = AsyncMock(spec=httpx.Response, history=[])
         movie_page_response.status_code = 200
         movie_page_response.text = _MOVIE_PAGE_WITH_INIT
         movie_page_response.raise_for_status = lambda: None
 
-        api_v1_response = AsyncMock(spec=httpx.Response)
+        api_v1_response = AsyncMock(spec=httpx.Response, history=[])
         api_v1_response.status_code = 200
         api_v1_response.json.return_value = _API_V1_RESPONSE
         api_v1_response.raise_for_status = lambda: None
@@ -544,7 +544,7 @@ class TestSearchResultConstruction:
     async def test_result_has_download_links(self) -> None:
         plugin = _make_plugin()
 
-        search_response = AsyncMock(spec=httpx.Response)
+        search_response = AsyncMock(spec=httpx.Response, history=[])
         search_response.status_code = 200
         search_response.json.return_value = {
             "result": [
@@ -555,12 +555,12 @@ class TestSearchResultConstruction:
         search_response.raise_for_status = lambda: None
         search_response.text = json.dumps(search_response.json.return_value)
 
-        movie_page_response = AsyncMock(spec=httpx.Response)
+        movie_page_response = AsyncMock(spec=httpx.Response, history=[])
         movie_page_response.status_code = 200
         movie_page_response.text = _MOVIE_PAGE_WITH_INIT
         movie_page_response.raise_for_status = lambda: None
 
-        api_v1_response = AsyncMock(spec=httpx.Response)
+        api_v1_response = AsyncMock(spec=httpx.Response, history=[])
         api_v1_response.status_code = 200
         api_v1_response.json.return_value = _API_V1_RESPONSE
         api_v1_response.raise_for_status = lambda: None
@@ -580,7 +580,7 @@ class TestSearchResultConstruction:
     async def test_result_has_source_url(self) -> None:
         plugin = _make_plugin()
 
-        search_response = AsyncMock(spec=httpx.Response)
+        search_response = AsyncMock(spec=httpx.Response, history=[])
         search_response.status_code = 200
         search_response.json.return_value = {
             "result": [
@@ -591,12 +591,12 @@ class TestSearchResultConstruction:
         search_response.raise_for_status = lambda: None
         search_response.text = json.dumps(search_response.json.return_value)
 
-        movie_page_response = AsyncMock(spec=httpx.Response)
+        movie_page_response = AsyncMock(spec=httpx.Response, history=[])
         movie_page_response.status_code = 200
         movie_page_response.text = _MOVIE_PAGE_WITH_INIT
         movie_page_response.raise_for_status = lambda: None
 
-        api_v1_response = AsyncMock(spec=httpx.Response)
+        api_v1_response = AsyncMock(spec=httpx.Response, history=[])
         api_v1_response.status_code = 200
         api_v1_response.json.return_value = _API_V1_RESPONSE
         api_v1_response.raise_for_status = lambda: None
@@ -615,7 +615,7 @@ class TestSearchResultConstruction:
     async def test_result_category_always_movies(self) -> None:
         plugin = _make_plugin()
 
-        search_response = AsyncMock(spec=httpx.Response)
+        search_response = AsyncMock(spec=httpx.Response, history=[])
         search_response.status_code = 200
         search_response.json.return_value = {
             "result": [{"url_id": "test", "year": 2024, "title": "Test"}],
@@ -624,12 +624,12 @@ class TestSearchResultConstruction:
         search_response.raise_for_status = lambda: None
         search_response.text = json.dumps(search_response.json.return_value)
 
-        movie_page_response = AsyncMock(spec=httpx.Response)
+        movie_page_response = AsyncMock(spec=httpx.Response, history=[])
         movie_page_response.status_code = 200
         movie_page_response.text = _MOVIE_PAGE_WITH_INIT
         movie_page_response.raise_for_status = lambda: None
 
-        api_v1_response = AsyncMock(spec=httpx.Response)
+        api_v1_response = AsyncMock(spec=httpx.Response, history=[])
         api_v1_response.status_code = 200
         api_v1_response.json.return_value = _API_V1_RESPONSE
         api_v1_response.raise_for_status = lambda: None
@@ -649,7 +649,7 @@ class TestSearchResultConstruction:
     async def test_result_has_size(self) -> None:
         plugin = _make_plugin()
 
-        search_response = AsyncMock(spec=httpx.Response)
+        search_response = AsyncMock(spec=httpx.Response, history=[])
         search_response.status_code = 200
         search_response.json.return_value = {
             "result": [{"url_id": "test", "year": 2024, "title": "Test"}],
@@ -658,12 +658,12 @@ class TestSearchResultConstruction:
         search_response.raise_for_status = lambda: None
         search_response.text = json.dumps(search_response.json.return_value)
 
-        movie_page_response = AsyncMock(spec=httpx.Response)
+        movie_page_response = AsyncMock(spec=httpx.Response, history=[])
         movie_page_response.status_code = 200
         movie_page_response.text = _MOVIE_PAGE_WITH_INIT
         movie_page_response.raise_for_status = lambda: None
 
-        api_v1_response = AsyncMock(spec=httpx.Response)
+        api_v1_response = AsyncMock(spec=httpx.Response, history=[])
         api_v1_response.status_code = 200
         api_v1_response.json.return_value = _API_V1_RESPONSE
         api_v1_response.raise_for_status = lambda: None
@@ -683,7 +683,7 @@ class TestSearchResultConstruction:
     async def test_result_has_year_as_published_date(self) -> None:
         plugin = _make_plugin()
 
-        search_response = AsyncMock(spec=httpx.Response)
+        search_response = AsyncMock(spec=httpx.Response, history=[])
         search_response.status_code = 200
         search_response.json.return_value = {
             "result": [{"url_id": "test", "year": 2005, "title": "Test"}],
@@ -692,12 +692,12 @@ class TestSearchResultConstruction:
         search_response.raise_for_status = lambda: None
         search_response.text = json.dumps(search_response.json.return_value)
 
-        movie_page_response = AsyncMock(spec=httpx.Response)
+        movie_page_response = AsyncMock(spec=httpx.Response, history=[])
         movie_page_response.status_code = 200
         movie_page_response.text = _MOVIE_PAGE_WITH_INIT
         movie_page_response.raise_for_status = lambda: None
 
-        api_v1_response = AsyncMock(spec=httpx.Response)
+        api_v1_response = AsyncMock(spec=httpx.Response, history=[])
         api_v1_response.status_code = 200
         api_v1_response.json.return_value = _API_V1_RESPONSE
         api_v1_response.raise_for_status = lambda: None
@@ -796,7 +796,7 @@ class TestMoviePageErrors:
     async def test_movie_page_error_skips_movie(self) -> None:
         plugin = _make_plugin()
 
-        search_response = AsyncMock(spec=httpx.Response)
+        search_response = AsyncMock(spec=httpx.Response, history=[])
         search_response.status_code = 200
         search_response.json.return_value = {
             "result": [
@@ -809,13 +809,13 @@ class TestMoviePageErrors:
         search_response.text = json.dumps(search_response.json.return_value)
 
         # good-movie: movie page with initMovie script
-        movie_page_response = AsyncMock(spec=httpx.Response)
+        movie_page_response = AsyncMock(spec=httpx.Response, history=[])
         movie_page_response.status_code = 200
         movie_page_response.text = _MOVIE_PAGE_WITH_INIT
         movie_page_response.raise_for_status = lambda: None
 
         # good-movie: API v1 response with release HTML
-        api_v1_response = AsyncMock(spec=httpx.Response)
+        api_v1_response = AsyncMock(spec=httpx.Response, history=[])
         api_v1_response.status_code = 200
         api_v1_response.json.return_value = _API_V1_RESPONSE
         api_v1_response.raise_for_status = lambda: None
@@ -840,7 +840,7 @@ class TestMoviePageErrors:
     async def test_movie_without_url_id_skipped(self) -> None:
         plugin = _make_plugin()
 
-        search_response = AsyncMock(spec=httpx.Response)
+        search_response = AsyncMock(spec=httpx.Response, history=[])
         search_response.status_code = 200
         search_response.json.return_value = {
             "result": [

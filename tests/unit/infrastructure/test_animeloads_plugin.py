@@ -149,6 +149,28 @@ class TestPluginAttributes:
 # ---------------------------------------------------------------------------
 
 
+class TestCaptchaImages:
+    """The grab's captcha compares images: with images blocked, every grab
+    gave nothing (code review, 2026-10-06)."""
+
+    async def test_captcha_images_load_past_the_blocker(
+        self, animeloads_mod: ModuleType
+    ) -> None:
+        plugin = animeloads_mod.AnimeLoadsPlugin()
+        ctx = AsyncMock()
+
+        await plugin._configure_context(ctx)
+
+        patterns = [call.args[0] for call in ctx.route.await_args_list]
+        assert patterns == ["**/*", "**/files/captcha*"]
+        route = AsyncMock()
+        route.request = MagicMock()
+        route.request.resource_type = "image"
+        await ctx.route.await_args_list[-1].args[1](route)
+        route.continue_.assert_awaited_once()
+        route.abort.assert_not_awaited()
+
+
 class TestDetectCategory:
     @pytest.mark.parametrize(
         ("content_type", "expected"),

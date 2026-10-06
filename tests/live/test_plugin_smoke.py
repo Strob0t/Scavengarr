@@ -45,6 +45,7 @@ HTTPX_PLUGINS: list[tuple[str, str]] = [
     ("kinox", "Iron Man"),
     ("megakino", "Iron Man"),
     ("megakino_to", "Iron Man"),
+    ("moflix", "Iron Man"),
     ("movie2k", "Iron Man"),
     ("movie4k", "Iron Man"),
     ("nox", "Iron Man"),
@@ -63,7 +64,6 @@ PLAYWRIGHT_PLUGINS: list[tuple[str, str]] = [
     ("boerse", "Iron Man"),
     ("ddlspot", "Iron Man"),
     ("ddlvalley", "Iron Man"),
-    ("moflix", "Iron Man"),
     ("mygully", "Iron Man"),
     ("scnsrc", "Iron Man"),
 ]

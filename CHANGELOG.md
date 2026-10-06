@@ -4,6 +4,389 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ---
 
+## v0.3.0 - 2026-10-06
+
+Stremio latency and playback on a Raspberry Pi behind a VPN: answers go out at 5 streams while links resolve during the plugin search, cached answers at once, and plugins whose site is down are skipped; the stealth browser's pages go to the most urgent work, and their count follows waits, CPU and memory. HLS plays in Stremio Web again (1080p stutter, VEEV, the proxy's 500s under Python 3.13 with anyio). Prometheus metrics, request ids and on-demand tracing, plugin parsers on selectolax, read-only production diagnostics (`scripts/prodctl.py`), and the fixes of two code reviews.
+
+### Fix: CDN Tokens No Longer Reach the Logs Through httpx and uvicorn
+- The app's `http_request` line masks query values, but two third-party lines repeated every URL whole: uvicorn's access log (each proxied HLS request with the CDN's tokens) and httpx's `HTTP Request: GET <url>` line for every outgoing request (video URLs with tokens and the client's address, `i=`). Production logs carried both (2026-10-06). uvicorn now runs with `access_log=False` (`http_request` is the access log), and third-party records show URLs by their origin only (`HTTP Request: GET https://cdn.example.net "HTTP/1.1 200 OK"`), tracebacks included.
+
+### Chore: prodctl Prints Whole Tracebacks
+- `scripts/prodctl.py logs` cut every record to 400 characters, so a traceback ended before its error. `--width 0` prints records whole (`--width N` cuts to N characters, 400 by default).
+
+### Added: The Stealth Browser's Page Count Follows the Machine
+- The stealth browser ran 2 pages on every host: a larger host could not use its CPUs, and the Pi under the load of its other containers had no brake. `PageBudget` now adapts the count every 5 s between 1 and `stremio.max_concurrent_playwright` (auto-tuned from the container's CPUs and memory). One page more when a page request waited at least 1 s, the CPU is at most 70 % busy and two pages' worth of memory (400 MB) is free, at most every 30 s; one page less when less than 200 MB is free (at once) or the CPU was at least 90 % busy on two samples in a row (at most every 10 s); back to 2 after two minutes without waits and changes. The CPU is the host's busy share or, under a CPU limit, the container's share of it; free memory is the host's or, under a memory limit, what the limit leaves. A lower count takes no running page away. Changes are logged (`browser_pages_changed`) and show in `scavengarr_browser_pages{state="limit"}`.
+
+### Fix: kinoger's Pages No Longer Queue Behind Hoster Captures
+- The stealth browser handed its 2 pages out in arrival order, and since links resolve while plugins search, the hoster captures of an answer (Filemoon, Dropload, SuperVideo, DoodStream's fallback) took them during the search: 13 of 13 kinoger searches ran into the 30 s plugin timeout in the sixth production round (7.9-17.3 s alone), and titles with few streams waited the full 30 s for it. The next free page now goes to a resolution at play time, then to the earliest due work (a search's plugin pages, due when the search ends, before the captures of its answer, due at the answer deadline), and to background resolutions only while nobody else waits. A running page is never taken away.
+
+### Fix: Waiting for a Browser Page No Longer Trips a Hoster's Breaker
+- A hoster resolution's time bound (`http.timeout_resolve_seconds`, 10 s in production) included the wait for one of the stealth browser's pages: a Filemoon capture that waited 9 s had 1 s left, timed out, and the timeout counted for the hoster's circuit breaker, which opened for Filemoon, Dropload and SuperVideo in the sixth production round although they were healthy. The clock now stops while a capture waits for a page.
+- Work that gets no page 3 s before its request is due (a Stremio search's end, an answer's deadline) no longer starts a page that would be cut: a capture reports `busy` (`hoster_resolve_busy`), neither cached nor counted by the breaker, a plugin's page load answers nothing as on any failure (the optional solver sidecar can still answer). Work without a due time (Torznab searches, the scoring probes) waits as before.
+
+### Added: Metrics of the Stealth Browser's Pages
+- Plugin pages behind Cloudflare, hoster captures and link-outs share the stealth browser's 2 pages, and in the sixth production round kinoger's pages queued behind captures until its 30 s timeout. The wait for a page and the work on it are now recorded by what the page is for (`scavengarr_browser_page_wait_*` and `scavengarr_browser_page_*`, `kind`: `play`, `plugin`, `capture`, `background`), the limit, pages in use and waiting requests as the gauge `scavengarr_browser_pages`; with tracing on, a request's trace shows its queueing (`browser_page_wait capture`). The application names what browser work is for and when it is due (`PageClaim`), the groundwork for handing the pages out by urgency ([browser-page-budget.md](docs/plans/browser-page-budget.md)).
+
+### Fix: Alfafile Links With a File Name Resolve
+- The Alfafile resolver's file-ID pattern ended right after the id, so a link with the file name after it (`/file/<id>/<name>`) was not recognized; the other generic DDL hosters accept trailing parts. Found by the doc review (2026-10-06).
+
+### Fix: Search Probes Page Only As Far As They Count
+- The scoring's search probes count the first `scoring.search_max_items` (20) results, but the plugins paged up to their 1000-result limit: extra requests to the sites every probe run, and a long result list could run into the probe's 10 s timeout and count as a failed probe. A probe now sets the plugins' result limit (`search_max_results`) like a Stremio search. Found by the doc review (2026-10-06).
+
+### Fix: Plugin Requests Keep Their User-Agent
+- `_safe_fetch()` with extra headers sent the app's own `Scavengarr/<version>` User-Agent instead of the plugin's (aniworld's search), and its requests to a site whose browser session httpx had taken over (the search POSTs of megakino, streamcloud and streamkiste after a Cloudflare challenge) went out without the browser's User-Agent, which the clearance cookie needs. It now sends them like `_fetch_text()`. Found by the doc review (2026-10-06).
+
+### Fix: A Misspelled Disable Override Is Reported
+- `plugins.overrides.<name>.enabled: false` with a name no plugin has disabled nothing and logged `plugin_disabled_by_config` as if it had; it now logs the `plugin_override_unknown` warning like every other unknown override. Found by the doc review (2026-10-06).
+
+### Fix: A Search Probe of an Unknown Plugin Reports It
+- `MiniSearchProber` caught `KeyError` for an unknown plugin, but the registry raises `PluginNotFoundError`, so the probe raised instead of reporting `plugin_not_found` (its test mocked the `KeyError`). The scheduler probes only registered plugins, so production never hit it. Found by the doc review (2026-10-06).
+
+### Fix: A Mirror Member That Delivers Alone Ranks First Again
+- A mirror group member that gave nothing while its standby delivered ranks behind the other members until it delivers again. It cleared that mark only when it delivered with a standby behind it; delivering alone, while the other members' breakers were open, left it behind once they were back. Any delivery clears it now. Found by the doc review (2026-10-06).
+
+### Performance: The Title Filter Scores Each Search Result Once
+- The full and the base title of a Stremio search find many results of a plugin twice, and the title filter scored both copies (about 24 ms of CPU per search); only the answer dropped the second. `PluginSearchRunner` now hands each result on once, by the key the search progress uses (plugin, title, release, links: the old `download_link` check of its unused return value would have merged another plugin's result). Found by the code review (2026-10-06).
+
+### Performance: A Fully Cached Stremio Answer Resolves Nothing in the Background
+- An answer from the search cache started a background resolution for the next request even when every link already had a cached outcome (a video or dead): it ranked the results once more and resolved nothing. It starts only for links without one now. Found by the code review (2026-10-06).
+
+### Refactor: The HLS Proxy's Refusal Rule Lives in `StremioLinks`
+- Which CDN answers to a stream's playlist resolve the hoster URL again (403, 404, 410: an expired token) was decided in the Stremio router, against the layer rule (interfaces do I/O only). `StremioLinks.after_refusal(link, status)` (application) now decides it and resolves past the resolver's cache; the router fetches and answers. Behavior is unchanged. Found by the code review (2026-10-06).
+
+### Refactor: One Filter for Nested Matches
+- Eight plugin parsers (ddlvalley, filmfans, hdfilme, kinoger, nima4k, scnsrc, serienfans, streamkiste) each wrote their own filter that drops a selector's matches nested in another match; they now share `outermost()` in `infrastructure/plugins/dom.py`. kinox and kinoger's player check test other conditions and keep theirs. Found by the code review (2026-10-06).
+
+### Performance: diskcache Writes One at a Time
+- The diskcache adapter let up to `cache.max_concurrent` writes run in parallel, but SQLite has one writer: the parallel writes only waited for its lock. A Stremio answer saves the links of its streams together, and 20 links took 80-100 ms to save; with the writes one after another (an `asyncio.Lock` for `set`, `delete` and `clear`) they take 5-6 ms. Reads stay parallel. This also helps the search cache and the plugin scores; Redis is unchanged. Found by the code review (2026-10-06).
+
+### Fix: crawli Reads Past Page 8
+- crawli took the last result page from page 1's pagination, but the site links a window of pages (page 1 up to 8, page 8 up to 11): a search stopped after 80 results. Every page now extends the window, up to 100 pages (1000 results). Checked on the live site (2026-10-06). Found by the code review (2026-10-06).
+
+### Fix: byte Files Magazines and Movie Collections Under Their Categories
+- byte's category map took its names from the site menu, which writes "Magazine-Zeitungen"; search results and detail pages write "Magazine - Zeitungen", so magazines and newspapers came out as 8000 (Other) and a book request (7000) dropped them. The lookup now spaces dashes the same way for both spellings (`_category_key`), and "Movie Collections" (missing, so 8000) counts as films. Checked on the live site (2026-10-06). Found by the code review (2026-10-06).
+
+### Fix: Forum Plugins Share One Link-Container Check
+- boerse and mygully took any host ending in a container's domain for a link container (`notfilecrypt.cc` counted as `filecrypt.cc`), and the three forum parsers kept their own container lists and anchor-text helpers. They now share `infrastructure/plugins/forum_links.py` (`is_link_container`, `hoster_from_text`, `hoster_from_url`): a container's host or one of its subdomains counts, and every forum knows every container of the lists (boerse gains hide.cx, keeplinks.co, linkcrypt.ws and tolink.to; mygully tolink.to; dataload and myboerse keeplinks.co and linkcrypt.ws). Found by the code review (2026-10-06).
+
+### Fix: A Failing Score Store No Longer Fails a Stremio Request
+- The scored plugin selection (`stremio.scoring_enabled`) read the plugin scores without catching errors: a score store that failed to read one snapshot failed the whole stream request. A snapshot that cannot be read now counts as none, as the mirror-group ranking already handled it; both read through one helper (`current_snapshots`), which logs `plugin_scores_unreadable` (replaces `stremio_mirror_scores_failed`). Found by the code review (2026-10-06).
+
+### Fix: A Refused Probe Is No Stream
+- The registry's content-type probe (playlists, URLs without a resolver) took any HEAD answer with a video type as a stream, also a 403 or 404: a CDN that types its error page by the path made a refusal a stream, cached for an hour. Only answers below 400 count now (`hoster_probe_refused`). The probe tests use `respx` instead of mocked responses. Found by the code review (2026-10-06).
+
+### Fix: Results With Other Hoster Links Stay Apart in a Running Search
+- A running Stremio search keeps each result once (the full and the base title find many twice), by plugin, title, release, link and the URLs of its `download_links`. The key read those URLs under `url`, but plugins store them under `link`: two results of one plugin with the same title, release and page link but other hoster links collapsed into one. The three readers of a link's URL (search progress, stream converter, episode filter) now share `link_url()` in `domain/plugins/base.py`. Found by the code review (2026-10-06).
+
+### Fix: A Refused Stream Resolves Past the Cache Even While Another Request Resolves It
+- When the CDN refuses a stored HLS playlist, the hoster URL resolves again past the resolver's cache. Requests for one link shared one resolution, keyed by the link only: a refresh that came while a request resolved the stale link from the cache joined it and got the refused URL again (`502`). A refresh now runs on its own, and requests that come meanwhile join it. Found by the code review (2026-10-06).
+
+### Fix: A Plugin Leaves a Dead Host Its Site Moved To
+- `HttpxPluginBase` makes a permanent move of a site (301/308 from the base host to another) the base URL, and kept it until a restart. hdfilme moves on every few days, and its old host redirects to the newest one: a new host that died kept every search on it. A request to the new host without an answer (timeout, connect or DNS error) now sends the plugin back to the base URL the site moved from (`{name}_site_move_undone`). Found by the code review (2026-10-06).
+
+### Fix: A Plugin Site Counts as Down Only After a Retry
+- The plugin health check marked a site unreachable after one try without an answer within 5 s, and the Stremio search skipped the plugin until the next check 5 minutes later (movie2k in production: no answer at one check, an answer at the next). A reachable site without an answer is now tried again after 30 s before it counts as unreachable; an unreachable one is not retried. Found by the code review (2026-10-06).
+
+### Fix: Stale Search-Cache Entries Refresh One Title at a Time
+- A stale search-cache entry answers while a background search refreshes it. Every stale title asked for started its refresh at once: the refreshes split the plugin slots with the requests' own searches (fair share), so a burst of stale titles left each search a slot or two, and a refresh cut short by `plugin_timeout_seconds` replaced its entry with a thinner one. Refreshes now run one title at a time, and a refresh's plugin time counts from its own start, so a title that waited keeps its whole time. Found by the code review (2026-10-06).
+
+### Fix: Playback Requests Count Against No Rate Limit
+- Every stream now points at `/play` (or the HLS proxy), which the per-IP rate limit (`http.api_rate_limit_rpm`, 120) counted like a search, unlike the HLS proxy: a player asks `/play` again for each seek (8 requests within a second at a playback start in production), and clients behind one proxy address share the budget, so a 429 could end a playback. `/play` is exempt like the proxy. Found by the code review (2026-10-06).
+
+### Fix: The Answer Waits for No Link Pushed Out of the Top
+- A Stremio request resolves links among its top `max_probe_count` streams while results arrive. A link that better results pushed out of the top kept resolving: the answer waited for it once the search was done, although its outcome could no longer be part of it, and it held one of the `probe_concurrency` slots. Such a resolution is now cancelled. Found by the code review (2026-10-06).
+
+### Fix: A Mirror Group Fails Over When Its Member Gives Nothing
+- A Stremio request asks one member of a mirror group (hdfilme, streamcloud, streamkiste). Empty answers trip no breaker, so a member whose parser broke after a theme change kept being asked while the others still delivered. A member that gives nothing for a query (no hits, an error, a timeout) now hands it to the next member with a closed breaker, within the search deadline; when that one delivers, the member ranks behind the others until it delivers again. A title the database lacks costs two searches instead of one, never three. Found by the code review (2026-10-06).
+
+### Fix: SuperVideo's Ad Pages Stay Out With `verify_streams` Off
+- SuperVideo has no check of its own and relies on the registry's playback check, which `stremio.verify_streams: false` turned off: its CDN's script and ad pages reached Stremio as streams. A resolver without a check of its own now sets `needs_playback_check`, and the registry checks its results with `verify_streams` off too (the hoster breaker pauses SuperVideo as before). Found by the code review (2026-10-06).
+
+### Fix: warezomen Follows Only Its Pagination Link
+- warezomen took the last link reading "next page" anywhere on a search page as the next page: on a result list's last page a result whose short title read "Next Page …" sent the search to that result's download page. Only the pagination cell's "Next Page" link counts now. The parser is also tested on a captured search page (`tests/fixtures/html/warezomen/`). Found by the code review (2026-10-06).
+
+### Fix: HEAD on an HLS Segment Downloads Nothing
+- The HLS proxy answered `HEAD` on a segment like `GET`: it downloaded the whole segment (2-10 MB) from the CDN, the server dropped the body, and `scavengarr_hls_proxy_bytes_total` counted the bytes as sent. `HEAD` now takes the CDN's status and content type and closes its answer before the bytes. Found by the code review (2026-10-06).
+
+### Fix: Log Lines From Worker Threads Keep the Request ID
+- The title filter, the stream conversion and the episode filter ran in worker threads through `loop.run_in_executor`, which does not copy the context variables: their log lines (`title_match_summary` among them) had no `request_id`. They run through `asyncio.to_thread` now, which copies them. AGENTS.md asks for `to_thread`. Found by the code review (2026-10-06).
+
+### Fix: A TMDB Movie and Series With the Same Number Share No Cached Search
+- The Stremio search cache key held the id, season and episode, not the content type. TMDB numbers movies and series separately, so `movie/tmdb:1399` and a `series/tmdb:1399` request without season and episode read each other's results. The key is `stremio:search:{content_type}:{imdb_id}:{season}:{episode}` now; entries stored under the old key are not read again and expire. Found by the code review (2026-10-06).
+
+### Fix: A Silent Tracing Endpoint Delays the Shutdown 3 s at Most
+- `Tracing.close()` flushed the queued spans with OpenTelemetry's `force_flush`, whose timeout SDK 1.45 ignores: against an endpoint that took the connection and never answered, every queued batch waited the 5 s export timeout (20 s for 2,000 spans, measured), on top of the 10 s request drain, so `docker stop` could end in a SIGKILL. The shutdown now runs in a daemon thread and the app waits 3 s for it; spans not sent by then are dropped. Found by the code review (2026-10-06).
+
+### Fix: The Stremio Health Check Reports Its Metrics Again
+- `/api/v1/stremio/health` answered `"metrics": {}` since the Prometheus metrics replaced the old collector: it still read `state.metrics`, which nothing sets any more. It returns the telemetry's statistics now, as `/api/v1/stats/metrics` does (`uptime_seconds`, `plugins`, `event_loop`). Found by the code review (2026-10-06).
+
+### Fix: A Silent Address Holds Up a Connection 250 ms, Not the Whole Timeout
+- `GuardedNetworkBackend` tried a host's checked addresses one after another and gave each the full connect timeout. When the first address dropped the SYNs, every new connection waited 5 s (15 s for plugins and resolvers, so the resolver registry cut the resolution before the second address was tried). The addresses now race under one timeout (Happy Eyeballs, RFC 8305, with asyncio's `staggered_race`): the next starts when the previous one failed or after 250 ms, as with httpcore's anyio backend before. Found by the code review (2026-10-06).
+
+### Chore: Read-Only Production Diagnostics (`scripts/prodctl.py`)
+- `scripts/prodctl.py` replaces ad-hoc Portainer scripts: `ps`, `stats` (CPU cores, memory without page cache, processes, network), `logs` (JSON records as `key=value`, health checks dropped, `--grep`, `--fields`, `--since`), `metrics`, `state` (`/api/v1/stats/metrics`) and `probe` (a Python file run inside the container). Everything printed passes `portainer.mask()`: URLs keep only scheme and host, IP addresses, tokens and credentials (also `user:password@` in URLs) are replaced. A budget shared by all processes allows 100 Portainer requests per minute; GETs are retried on 429 and 502 to 504, an exec only when Portainer refused it before it ran (429).
+- The Portainer client moved from `stremio_profile.py` into `scripts/portainer.py` (shared, with credentials from `.env.devcontainer`, which wins over a stale key in the environment); it lists containers once per client instead of before every request.
+- Versioned read-only probes in `scripts/probes/`: `resources`, `tasks`, `links`, `redis`. Documented in `docs/features/observability.md` and `AGENTS.md` §9, which also gains the agents' working rules (symbol lookup, short output, background CI watch, production only through `prodctl.py`).
+
+### Chore: basedpyright Language Server Plugin for Claude Code
+- `.claude/plugins/` holds a local plugin marketplace (`scavengarr-dev`) with `basedpyright-lsp`: Claude Code starts the venv's `basedpyright-langserver` (`scripts/langserver.sh` finds the main checkout's venv from a worktree and resolves imports against the venv's interpreter), so it sees type errors after each edit and looks up definitions and references through the `LSP` tool instead of text search. Wiring per machine: see `AGENTS.md` §9. A stdio smoke test from the worktree and the main checkout reported exactly the planted type error, with `httpx` resolved, within 0.8 s.
+
+### Chore: The Test Suite Runs on Parallel Workers
+- New dev dependency pytest-xdist: `poetry run pytest -n auto` runs the full suite in 15 s instead of 47 s (16 threads; at most 8 workers through `--maxprocesses=8` in `addopts`, since 16 took 20 s). CI, `AGENTS.md`, `CONTRIBUTING.md` and the `test`/`commit` skills use `-n auto`; a single test file stays faster without it (1.1 s instead of 2.4 s). Eleven parallel full runs (4 to 16 workers) passed, so the tests share no state between workers.
+
+### Chore: The ruff Edit Hook Lints Repository Files Only and Keeps New Imports
+- `.claude/hooks/format-and-lint.sh` skips Python files outside the repository (scratch scripts follow no project rules) and leaves unused imports (F401) to pre-commit: `ruff check --fix` deleted an import added before its first use, and the next edit failed with an undefined name (254 of 385 hook blocks in one week were F821).
+
+### Fix: The App Starts on Python 3.13, and Tasks Start Lazily
+- uvicorn runs on uvloop, and uvloop 0.23 hands the task factory `eager_start=None`. asyncio's `eager_task_factory` refused that keyword on Python 3.13 (the app did not start), and on 3.14, the Docker image's Python, the `None` overrode its eager start: the app logged `eager_tasks=True` while every task started lazily. Found by the code review (2026-10-06).
+- A factory of the app's own that started tasks eagerly on uvloop (staging, deployed 2026-10-06) broke anyio: anyio, under Starlette's middleware and httpcore's connection locks, keeps its own tasks lazy only under asyncio's factory. A task group's child that suspended inside a cancel scope at once lost that scope ("Attempted to exit a cancel scope that isn't the current tasks's current cancel scope"), and every proxied HLS variant answered 500: the master playlist played, its variant did not, in Stremio Web as in any player.
+- The event loop now keeps asyncio's lazy task start (`configure_event_loop()` in the composition root), as in every measured production round; `event_loop_configured` names the loop.
+
+### Fix: An Empty Tracing Endpoint Turns Tracing Off
+- `SCAVENGARR_TELEMETRY_TRACING_ENDPOINT=` (a compose file keeping tracing optional with `${TRACING_ENDPOINT:-}`) failed the config's URL check, and the app did not start. An empty or blank value means off now, as the telemetry factory already treated it. Found by the code review (2026-10-06).
+
+### Fix: burningseries Gives Nothing for a Season the Series Lacks
+- bs.to redirects a season it lacks to another season, and the plugin read that season's episode table: Sonarr's search for Breaking Bad S09E02 got an episode of season 1, in English, and a season search a non-existent "S09". The episode links name their season now (`episode_seasons`); a page of another season gives no result. Live: S02E02 and S05 link their pages, S09E02 and S09 give nothing. The logic predates this release; found by the code review (2026-10-06).
+
+### Fix: jjs Takes No Size From a Season Pack's NFO
+- A detail page without "Gesamtgröße" (season packs name their part size and episode count only) took the first size anywhere on the page: a bitrate ("19.6 Mb/s" became 20 MB), one episode's size or CSS (`#2b2b2b` became "2b"), on 6 of 7 and 9 of 16 live season packs. Sonarr and Radarr rejected those packs as too small. jjs reports the total size only ("Gesamtgröße", "Total size"), else no size. Live: 10 of 10 film results keep their sizes. Found by the code review (2026-10-06).
+
+### Fix: animeloads Passes DDoS-Guard and Its Captcha Again
+- Blocking images by resource type (instead of by file extension) also blocked DDoS-Guard's check beacons, which set the `__ddg*` cookies, so the challenge reloaded until it timed out (0 of 3 searches), and the grab's captcha images, so every grab gave nothing. `block_heavy_resources` lets DDoS-Guard's check images through (also for the stealth context), and animeloads lets its captcha images through with a route of its own. A live search passed again in 12 s. Found by the code review (2026-10-06).
+
+### Fix: Logs Name a CDN, Not Its URL
+- The HLS proxy's CDN errors, `/play`'s redirect, the playback check and several resolvers logged video URLs (up to 120 characters, one in full at debug level), whose path and query carry tokens and the client's address (`i=`, production's VPN exit address). They log the CDN's second-level domain now (`cdn=`); `extract_domain()` moved to `hoster_resolvers/_domain.py`. Found by the code review (2026-10-06).
+
+### Fix: The Browser Restart Waits for Its Operations
+- The shared Chromium restarted after 200 stealth pages once no context listed a page. A page another slot was still opening was not listed yet, so the restart killed it (10 of 10 trials): the capture failed and its working link was cached as dead for 15 minutes. The restart also ran inside the finishing request, while it held a page slot and its resolve timeout.
+- Operations hold the browser with `SharedBrowserPool.lease()` (the stealth pool's fetches and captures, a plugin's `isolated_search()`). The last one to end after 200 pages starts the restart in a task of its own; new operations wait until it is done.
+- A Playwright plugin's kept context died with the restart, and boerse, mygully and animeloads failed every search until the app restarted. `_ensure_context()` makes it again when the browser it belonged to is closed. Found by the code review (2026-10-06).
+
+### Fix: A Later Resolution Leaves a Running HLS Playback Alone
+- All answers and devices share one stored link per hoster URL (`stream_link_id`). When a second device, AIOStreams or a reopened stream list resolved the hoster URL again (another CDN node), the next variant and segment requests of a running playback went to the new node with the old path and token: 403, the proxy answered 502, and the playback stopped when its buffer ran dry.
+- A served playlist points at a copy of the link it came from (`StremioLinks.pinned`: `<stream id>.<digest of the video URL>`, one per resolution), which later resolutions leave alone. Relative URIs become absolute URLs of that copy (`rewrite_manifest(..., playlist_dir)`); a playlist under the old URL form still plays. Found by the code review (2026-10-06).
+
+### Fix: Streams Play While the Cache Fails
+- Every answered stream points at `/play` or the HLS proxy, so a stream whose link could not be saved was dropped: with diskcache raising on every write (locked, disk full) every Stremio answer was empty, and with Redis losing the writes every `/play` and HLS proxy request answered 404.
+- `CacheStreamLinkRepository` keeps the links of the latest answers in memory (4096) and reads them from there first; a failed cache write or read is logged (`stream_link_save_failed`, `stream_link_load_failed`), and the cache keeps the links across restarts. Found by the code review (2026-10-06).
+
+### Fix: An Echo Leaves No Hoster Out of a Cached Answer
+- A cached answer took each hoster's first cached outcome in rank order, also an echoed embed URL (a resolver that only validates a link). The answer drops echoes, so the hoster was left out of every cached answer for the hour the echo stayed cached, although a lower-ranked link of it had a video. `_cached_resolutions` passes echoes like dead links now. Found by the code review (2026-10-06).
+
+### Fix: A Stored Link Is as Old as Its Resolution
+- A stored link took the time its answer was built as `resolved_at`, also for a stream from the resolver registry's cache, which answers for an hour. `/play` and the HLS proxy therefore counted video URLs up to two hours old as fresh (fresh: one hour) and redirected to expired tokens.
+- `ResolvedStream.resolved_at` carries the time of the resolution: the registry stamps it once, its cache answers with it, and `build_cache_link` and `StremioLinks` store it. Found by the code review (2026-10-06).
+
+### Fix: Only Verdicts Count Against a Hoster's Breaker
+- A resolution cut after half of `http.timeout_resolve_seconds` counted as a failure. Most cuts come from the answer going out once enough other hosters have a video, and the timed window includes the wait for the stealth browser's pages, so five cuts opened the breakers of healthy hosters (Filemoon, SuperVideo, DoodStream). Cuts count no more.
+- A half-open probe that ended without a verdict (a dead link, a failed request) kept the probe slot, and the alive links after it were refused for a whole cooldown, up to an hour. `PluginCircuitBreaker.release()` frees the slot, so the next link probes.
+- A failed playback check request (timeout, reset on a loaded Pi) cached a working link as dead for 15 minutes and counted against the hoster, while the same error from the resolver did neither. `check_playable` raises it now, and the registry treats it like a failed resolver request (`hoster_resolve_check_error`).
+- Found by the code review of `origin/main..staging` (2026-10-06), each reproduced in a test first.
+
+### Fix: VEEV Plays in Stremio Web
+- veevcdn binds a video URL to the User-Agent and the Accept-Language of its resolution: another value, or an Accept-Language the resolution did not send, gets 403. Stremio's streaming server sets the User-Agent of our `proxyHeaders` but passes the browser's other headers on, so in Stremio Web (Firefox) the probe played (206, ffmpeg sends no Accept-Language) and the playback 6 s later got 403 (production, 2026-10-06).
+- A resolver whose CDN binds the video URL to the player's request headers implements `ClientBoundResolverPort` (`bound_headers`, `resolve_for_client`); VEEV binds `user-agent` and `accept-language`. `/play` resolves such a hoster again for a player that sends other values than the stored link was resolved with, and keeps that link per player (`<stream id>-<digest>`, fresh for an hour); the player sends the CDN the same headers after the redirect. Requests of one player share one resolution (VEEV: 0.5 s); a failed one falls back to the stored link.
+- Checked in production with the browser's Accept-Language: resolved with it, 206; the stored URL, 403.
+
+### Changed: A Mirror Group Asks Its Best-Scored Member
+- hdfilme, streamcloud and streamkiste front one database, and a Stremio request asks one of them: the first in alphabetical order whose breaker was closed, so hdfilme whenever it answered, even with an empty or broken search. The member is now the reachable one with a closed breaker and the best plugin score of the scoring subsystem (health and search probes; a score with a confidence up to 0.1 counts as none), the first one on a tie or without scores (maintainer's decision after the dev-server end-to-end run, 2026-10-05).
+
+### Fix: Background Resolutions Run One Title at a Time
+- A cached answer resolves its other links in the background for the next request. 17 cached titles asked within seconds started 17 such runs at once: their browser captures queued for the stealth browser's 2 pages, and 12 Filemoon resolutions hit the 10 s resolve timeout, which opened Filemoon's breaker, although Filemoon resolved in 1.5–2 s on its own (dev-server end-to-end run, 2026-10-05). The runs now go one title at a time, each with its whole `stream_deadline_seconds` from its own start.
+
+### Fix: The Access Log Masks Query Values
+- Each request's `http_request` log line logged its whole query string: Prowlarr's `apikey` on Torznab requests, and on proxied HLS requests the CDN's tokens and the client's address (`i=`, production's VPN exit address; 545 of the 575 proxy lines with a query in a dev-server end-to-end run). Only Torznab's own parameters keep their values on Torznab paths now; every other value is logged as `***` (`loggable_query()` in `interfaces/app.py`).
+
+### Feat: Request Id and On-Demand Tracing
+- Every HTTP request gets a `request_id` in the log context (all its log lines and those of the searches and resolutions it starts) and the `X-Request-ID` response header, so one request can be followed through the logs.
+- `telemetry.tracing_endpoint` (`SCAVENGARR_TELEMETRY_TRACING_ENDPOINT`) sends the core's stages as OpenTelemetry spans over OTLP/HTTP: one trace per request with its phases, plugin searches and hoster resolutions. Off by default; without it the trace SDK and exporter are not loaded. Spans hold no URLs or titles, errors only their exception type.
+- `docker compose --profile tracing up -d tempo` starts Grafana Tempo 3.1 (`docker/tempo.yaml`, traces kept 3 days).
+
+### Feat: Prometheus Metrics
+- `GET /metrics` serves Prometheus metrics of the core (prometheus-client): every Stremio stream request by the state of its search results (cache, stale, new or joined search), its phases and why the answer went out (target, done, deadline, cached), streams per answer, every plugin search and every hoster resolution with duration and outcome (`hits`, `empty`, `cut`, `breaker_open`, `unplayable`, ...), HLS proxy requests with time to first byte and bytes, the event-loop lag, open circuit breakers and the container's CPU and memory (Chromium included). `docs/features/observability.md` has the families, a scrape job and queries.
+- One port records everything: `TelemetryPort.stage()` times a step and records its outcome (`cut` for a cancellation). The plugin search runner, the hoster resolver registry, the Stremio use case and the HLS proxy route use it; plugins and resolvers stay unchanged. Labels come from fixed sets only (no titles, ids, URLs or domains).
+- Cost on x86: 5.6 µs per recorded step, 4.4 ms per scrape of 672 series (rendered in a worker thread); at a 60 s scrape interval about 20 s of CPU per day on a Raspberry Pi 4. `tests/benchmark/test_telemetry_overhead.py` measures it.
+- `docker/grafana-dashboard.json`: a Grafana dashboard of answers (why they went out, search state, answer and phase times), plugins and resolvers (time and outcomes), open breakers, the HLS proxy and CPU (container, Python, Chromium) and memory.
+- `/api/v1/stats/metrics` keeps its JSON; its plugin statistics come from the new metrics. `MetricsCollector` (`infrastructure/metrics.py`) is replaced by `Telemetry` (`infrastructure/telemetry/`).
+
+### Perf: Plugin Parsers on selectolax
+- Every plugin parser (28 plugins and the XenForo base of dataload and myboerse) reads pages with selectolax (lexbor, C) and CSS selectors instead of `html.parser` state machines in Python, which held the GIL for every page (34% of the GIL samples of a Stremio request on the Raspberry Pi, 0.43 s per first request).
+- Results stay the same: every parser input of the test suite and of live searches of all plugins was recorded on the base commit, and 2,989 of the 2,990 unique inputs give identical results (the other keeps a description's line breaks as `\n`, as HTML5 does). The recorded big pages (from 20 KB) parse in 1.6 instead of 17.4 s on x86.
+- Every page goes through `parse_page(parser, html)` (`infrastructure/plugins/dom.py`), which parses pages from 32 KiB in a worker thread; `HttpxPluginBase._feed()` is gone, and 17 plugins (5 on Playwright) no longer parse on the event loop. `docs/features/python-plugins.md` ("Parsing Pages") has the pattern and selectolax's pitfalls.
+- The migration found the bugs fixed under "Plugin Selectors That Missed the Live Theme".
+
+### Fix: hdfilme Films Without Streams
+- hdfilme.cafe moved to hdfilme.ceo (a permanent redirect, which the plugin follows), and its film pages now embed devideosrc's newer player under `/custom/movie/<imdb>`, lazily from `data-src`. `find_player` knew only `/movie/<imdb>`, so every film page had "no player" and hdfilme gave no film streams (live smoke test, 2026-10-05). The classic `/movie/<imdb>` page still carries the token, so the IMDb id is now read from either path. Series pages still embed `/serial/`.
+- hdfilme is the first member of its mirror group (hdfilme, streamcloud, streamkiste), which a Stremio request asks alone while its breaker is closed; empty answers do not count as failures, so the group's film streams were missing altogether.
+
+### Fix: Plugin Selectors That Missed the Live Theme
+- Found while moving the parsers to selectolax (their results stay identical otherwise). aniworld: the current theme names the plot in `<p class="seri_des" data-full-description>`, the parser read `div.seri_des` only, so every result had the short search-API description instead of the full plot.
+- streamkiste: search cards name year and genres in `span.movie-release` (the parser read `div.movie-release`), so hits had neither, and series were not told from films before their detail page; the IMDb rating sits in `span.average` inside the IMDb link (the parser read `div.average span`), so it was always empty.
+- kinox: a detail page's year came from the page's last Year span, which belongs to a related entry further down; a film whose related entries had another year got theirs. The year now comes from the title's heading.
+- byte: every film, series, book and XXX request returned nothing. It searched the site group's id (`c=1`, `c=2`, ...), and the site lists only entries filed directly under a group, not its subgroups (`c=1` and `c=2` answered with the empty search form). Category requests now search every group and keep the category's rows.
+- warezomen: the live site's pagination is a row of the results table, which the parser read as a result ("Downloads | Page 2", a relative link) while looking for the next page outside the table only: every search stopped at page 1.
+- hdsource: older posts list their filecrypt containers after `<strong>Download:</strong>` / `Mirror #N:` labels instead of `hosterlnk` links; the parser dropped them (78 of 304 articles in live searches, all 50 of one page). They are read now, named by their link text (`Rapidgator.net` → `rapidgator`).
+- scnsrc: film posts bold an awards line ("Top rated movie #47; Awards: 2 wins & 2 nominations.") before the release name, and the parser took the first bold text with a period: 9 of 11 Oppenheimer results carried that line as their title. A release name now has no spaces.
+- jjs: the size was the first one on the page, the part size ("Partgröße: max. 1020 MB") on all 44 checked live pages. It is the total size ("Gesamtgröße") now; season packs, which name no total, have no size instead of their part size.
+- movieblog: with several "Nächste Seite" links the pagination took the last one, unless an earlier link's URL contained "Seite" (a check meant for a match that tested the URL). The first link wins now; live pages have one, so nothing changes there.
+
+### Fix: 1080p HLS Streams Stutter in Stremio Web
+- Stremio Web has its streaming server probe every stream before it plays it. An HLS source (format `hls`) then always goes through the server's converter, which re-encodes the video with libx264: it repackages MP4 and Matroska only, because only their keyframes are indexed (`requiresTranscoding` in the server's `hls-converter`). On the maintainer's Raspberry Pi 4 (no usable hardware encoder) a 1480×620 stream took 1–2 cores, and 1080p, 2.3 times the pixels, stuttered. Each segment was also fetched twice, by one ffmpeg for the video and one for the audio.
+- The HLS proxy refuses the streaming server's ffmpeg (User-Agent `Lavf/`) the stream's playlist (`403`, `hls_proxy_converter_refused`). The failed probe makes Stremio Web read the content type with `HEAD` and play the playlist itself (hls.js): no transcoding, the original quality, each segment fetched once.
+- `stremio.allow_hls_transcoding: true` lets a server transcode again, for players that cannot decode a stream's codecs (HEVC in Firefox, AC3); hosters' HLS was H.264 and AAC in every probe.
+
+### Changed: Stream Links Resolve Again (Autoplay, Continue Watching)
+- Stremio plays a kept stream object later: autoplay plays the next episode's stream about an hour after it was fetched, "Continue Watching" days later. Every resolved stream now points at Scavengarr: a file at `/play/{id}` (a redirect to the current video URL), HLS at `/proxy/{id}/scavengarr.m3u8`, under which the proxy serves the current playlist.
+- A video URL older than an hour resolves again at playback (`stremio_link_resolved_again`); a playlist the CDN refuses (403, 404, 410) resolves once more past the resolver's cache. Concurrent requests for one link share one resolution.
+- When the hoster gives no video at that point, the stale video URL is still tried: in the dev-server end-to-end run, 3 FireStream links resolved no more after an hour while their stored playlists still played (they answered 502 before). A CDN refusal then resolves once more past the cache as above.
+- Links are kept 7 days (`stremio.stream_link_ttl_seconds`, was 2 h; `data/config.yaml` too) under an id from the hoster URL, one per stream. In the link-lifetime measurement every proxied HLS link answered 404 after 2 h because of the old TTL, while the CDN streams still played after 92 minutes.
+- `/play` answers `HEAD` (streaming servers ask with HEAD first).
+- HLS streams without headers go through the proxy too (a redirect to a playlist fails on Android).
+
+### Changed: Stremio Answers at 5 Streams, Links Resolve While Plugins Search
+- The answer goes out once `stremio.resolve_target_count` hosters (default 5) have a video, or when the search and every resolution are done, at the latest `stremio.stream_deadline_seconds` (default 60) after the request (`stremio_resolve_complete` with `reason`). The fifth end-to-end round's first answers waited for the soft deadline (7 s) and the grace (4 s): titles with many streams had 5 after about 5 s, titles with few got fewer because slow plugins were not waited for.
+- Links resolve while the plugins search: each plugin's results pass the title filter when they arrive (`SearchProgress`), each request ranks them and resolves each hoster's best link (`HosterResolution`: rank order per hoster, a better link that arrives later too, each URL once).
+- The search runs until every plugin is done, at most `stremio.plugin_timeout_seconds` (default 30, was 10); plugins still running at the answer fill the search cache. Requests on one search read its results while it runs.
+- Removed: `stremio.search_soft_deadline_seconds`, `stremio.resolve_grace_seconds` (old values are ignored) and the late plugins. `data/config.yaml` follows the new defaults (it had 10 s, 15 s and `resolve_target_count: 0`).
+- Trade-off: a search holds its share of the concurrency pool until it ends, so a concurrent request gets half the plugin slots meanwhile. Behind AIOStreams the per-addon timeout must now exceed 60 s.
+
+### Perf: Stremio Searches Skip Plugins Whose Site Is Down
+- A plugin whose site is down ran in every search until the deadline: its fetch errors end as empty answers, which the circuit breaker does not count. megakino_to and movie4k held every first answer of the fifth end-to-end round to the soft deadline.
+- `PluginHealthMonitor` checks every Stremio plugin's site (HEAD on its domains) every `stremio.plugin_health_interval_seconds` (default 1800, `0` = off) and the unreachable ones every 5 minutes; searches skip those (`stremio_plugins_unreachable`), and a mirror group picks a reachable member.
+- Unreachable: no answer or a server error without a challenge page (522). A Cloudflare challenge counts as up. One answer from any of the plugin's domains brings it back; a check in which no site answers changes nothing (the own network is down then).
+
+### Perf: Cached Answers Go Out at Once
+- An answer from the search cache waited for the resolve grace (4.1–4.4 s in the fifth end-to-end round) when one of its links had no cached resolution. It now goes out at once with the resolutions in the resolver's cache when one of them is a stream (`stremio_resolve_from_cache`); a hoster whose best link is cached as dead or not resolved yet contributes its next cached one. A late plugin's new link of a hoster, ranked first, dropped that hoster's stream from the cached answer (3 of 17 titles in the dev-server end-to-end run, 2026-10-05).
+- The links without a cached resolution resolve in the background, one run per title at a time, and fill the resolver's cache for the next request. Without a cached stream the answer resolves as before.
+- The resolver registry reads its cache without resolving (`cached(url)`).
+- A cancelled request (shutdown) now cancels its unfinished resolutions instead of leaving them running untracked.
+
+### Perf: TLS Runs in the Event Loop, Not in Python
+- httpx's default network backend on asyncio is anyio, which runs TLS in Python. The shared client now connects through `AsyncioNetworkBackend` (asyncio streams; TLS in the event loop, uvloop in production), underneath the SSRF guard's `GuardedNetworkBackend`. Measured on the Raspberry Pi with 1 MB HLS segments through the proxy: 103–112 ms of CPU per MB before, 75–88 ms after.
+- An idle connection the server closed or sent something on (a 408) is retired before reuse: asyncio reads ahead into the stream's buffer, so the backend checks the buffer instead of polling the socket.
+- The HLS proxy sends segments in 64 KiB pieces and decodes an encoded body. Passing the CDN's chunks through, as decided first, cost more CPU: VOE's CDN sends 4 KiB TLS records, and each became a response write. Dev-server end-to-end run (x86, 2026-10-05), CPU per relayed MB of one VOE stream: 34 ms before both changes, 41 ms with the asyncio backend and the chunks passed through, 25 ms with 64 KiB pieces.
+- ChaCha20 instead of AES-GCM for TLS, decided first for the proxy's CPU, was dropped: production's OpenSSL 3.5.7 decrypts both at the same speed on the Pi (0.66 against 0.68 s of CPU for 20 MB).
+
+### Fix: SuperVideo Pauses While Its CDN Refuses Players
+- SuperVideo's CDN answers a player with a "Loading..." page whose script leads to a parked ad page, and a HEAD with a redirect to an ad domain. The resolver's own HEAD check marked each link dead, which the hoster circuit breaker ignores: 13 of 13 links failed in the fifth end-to-end round, every request tried again.
+- The resolver no longer checks the URL itself. The registry's playback check reads the page, counts the stream as unplayable, and the breaker pauses SuperVideo (60 s, doubling up to 1 h) until a probe finds a playlist again.
+
+### Fix: Half-Open Hoster Probes Report Their Outcome
+- The hoster circuit breaker lets one probe through after its cooldown. Filemoon's browser captures take longer than the resolve grace on the Raspberry Pi, so the grace cut every probe before half of `http.timeout_resolve_seconds`, the probe reported nothing, and the breaker probed again after every cooldown without doubling it: about 6 s of Chromium CPU per probe, and the cached answer that carried it waited for the grace (fifth end-to-end round, 2026-10-05).
+- The probe now runs to its end in the background when its request is cut (`HosterResolverRegistry._resolve_with`, ended by `aclose()` at shutdown): a stream closes the breaker and stays in the resolution cache for the next request; a timeout or an unplayable stream reopens it with twice the cooldown (up to 1 h).
+
+### Measured: Fifth End-to-End Round
+- Production with the fixes below, the 17 titles of `stremio_measure.py` (`docs/plans/stremio-latency.md`, fifth round): median 11.1 s while the plugins search (was 12.4 s) with 102 streams (48) and none of the titles without a stream (5 of 17); 1.0 s from the search cache (4.6 s) with 110 streams, 107 of them playable from the VPN address.
+- CPU per stream request (3 titles, the plugins searching again): Chromium 6.7 s instead of 11.3 s, Python unchanged at 2.5 s for 6.7 streams instead of 4.7; from the search cache Chromium 2.6 s instead of 10.1 s.
+- Still open (`docs/plans/optimization-options.md`): every first answer waits for the soft deadline (megakino_to, whose site is down, still ran in all 17 requests), Filemoon's half-open probes repeat without a longer cooldown, and SuperVideo's CDN answers with a script redirect (13 of 13 links failed).
+
+### Perf: moflix Fetches Relevant Titles Only
+- moflix's search lists people next to titles (19 of 20 hits for "Oppenheimer"), and the plugin asked the title API for every hit: 46 answers 404 in the end-to-end test of 2026-10-04, and a person's id can be another title's ("Alan Oppenheimer" fetched a children's film).
+- It now fetches titles only, and only the relevant ones (`relevant_hits()`, at most 3 for a season or episode request), as the other plugins do.
+
+### Fix: VEEV Links That Redirect
+- veev redirects some embed links to another file code (it changes per request), and the page's token belongs to that code. The resolver asked the player API for the old code, which answered "malformed request" (`hashcheck: 1`; 6 links in the end-to-end test of 2026-10-04). It now asks for the code of the page it was redirected to; the 3 failed links of the test resolve.
+
+### Fix: Playmate Player-Frame Links
+- Links to Playmate's player frame (`playmate.to/embed/<id>`) were dropped as invalid (`playmate_invalid_url`); the resolver only needs the file code for its API, so `/embed/` is accepted next to `/watch/` and `/e/`.
+
+### Fix: FireStream Links With "-" in the Id
+- FireStream ids use the URL-safe base64 alphabet (`777zhD-W`), and the resolver only accepted letters and digits (as JDownloader's pattern does), so such filmpalast and moflix links were dropped as invalid (`firestream_invalid_url`, 3 in the end-to-end test of 2026-10-04; their pages play). `-` and `_` are accepted now.
+
+### Fix: moflix's Own Players Resolve Again
+- moflix hands out two players under one name, and the end-to-end test of 2026-10-04 found all 15 of their links of an hour failing:
+  - moflix-stream.click is VidHide (EarnVids) without the `/e/<id>` route the XFS resolver builds (404). Its player is under the `/embed/<id>` and `/v/<id>` links moflix hands out. An XFS video hoster whose `/e/` page answers 404 is now asked for the link's own URL.
+  - Its player keeps the stream URLs in a packed `links={"hls2":…}` object; the shared extraction now reads `"hls2"` in unpacked code too (as JDownloader does), and "File is no longer available" marks a deleted file.
+  - moflix-stream.link runs Filemoon's Byse player ("Byse Frontend"), which the VidHide resolver cannot read. The Filemoon resolver claims that host (`supported_hosts`); in production it resolved two links in 4.7 s (warm browser) and 15 s (cold).
+
+### Perf: Hosters That Never Deliver Are Skipped
+- Production's stream requests started a browser capture for every DoodStream and Dropload link. From the VPN address DoodStream's Turnstile is not solved (31–34 s, 4 attempts) and Dropload's captcha player gives no stream (19 s). In an hour that was 50 captures, no stream, and about 10 s of Chromium CPU per stream request, a cached search included.
+- `HosterResolverRegistry` now has a circuit breaker per resolver (`PluginCircuitBreaker`: 5 failures, 60 s cooldown doubling up to 1 h). A timeout, a cut after half of `http.timeout_resolve_seconds` and an unplayable stream count; a stream resets it; a dead link neither counts nor resets it. While open, the hoster is skipped (`hoster_resolve_circuit_open`).
+
+### Measured: The Performance Plan on the Raspberry Pi
+- Production, 3 titles, the plugins searching again (`docs/plans/pi-performance.md`):
+  - a stream request took 11.3 s instead of 13.9 s;
+  - it used 2.55 s of Python CPU instead of 4.1 s (−55% of the CPU on the GIL);
+  - the event loop's lag p99 fell from ~130 ms to 40 ms.
+- From the search cache an answer takes 4.2 s.
+- Release-name parsing no longer shows up in the profile; `html.parser` fell from 0.67 s to 0.20 s per request.
+- End-to-end test with the 17 titles of `stremio_measure.py` (`docs/plans/stremio-latency.md`, fourth round): median 12.4 s while the plugins search, 4.6 s from the search cache; 64 streams, 61 of them playable from the VPN address.
+
+### Security: Connections Go to the Addresses the SSRF Guard Checked
+- The address guard of the shared HTTP client resolved a hostname to check that it is public, and httpcore resolved it again to connect. A hostile DNS server could answer the check with a public address and the connection with a LAN one (DNS rebinding).
+- The client now connects to the addresses of the guard's lookup (`GuardedNetworkBackend`, IPv4 first, the next address when one refuses). TLS still verifies the hostname. A lookup answers checks and connections for 60 s (was 5 min for checks only).
+
+### Perf: Lighter Chromium
+- On the Raspberry Pi Chromium held 1.7 GB in 15 processes.
+- Main frames share at most 2 renderer processes (`--renderer-process-limit=2`). Frames of other sites keep their own (site isolation): turning it off cut the renderers from 7 to 2 with 5 open pages, but made s.to's Turnstile gate fail in 2 of 2 tries.
+- Browser contexts block service workers, and Playwright plugins abort heavy resources by type (image, font, stylesheet, media, text track) like the stealth context, instead of by file extension.
+- The shared Chromium restarts after 200 stealth pages once no page is open, since its memory grows with the pages it rendered.
+- Checked in production: kinoger's and moflix's challenges and s.to's gate (Turnstile with ALTCHA) pass with these settings; ddlvalley and scnsrc return the same results as before.
+
+### Perf: Plugins Searched With the Titles of Their Languages
+- A stream request searched every plugin with the localised title, its base before a colon, and the TMDB original title and its base: "Matrix" and "The Matrix" doubled the fan-out (205 requests against 105 for Interstellar).
+- A recall check in production (12 titles, 13 plugins, `docs/plans/pi-performance.md`) measured the original-title queries at 23% of the search requests for 2 of 58 streams, both on one title. A plugin is now searched with the titles of its languages and their base titles only; the title matching still accepts results under the original title.
+- The same check found no effect of a lower result cap (no plugin returned more than 24 results for an exact title), so `max_results_per_plugin` stays at 50.
+
+### Perf: Big Pages Parsed Off the Event Loop or in C
+- html.parser took 21–27% of the Python CPU of a stream request on the Raspberry Pi (py-spy in production). It runs in Python on the event loop: a 300 KB detail page took 20 ms on x86 and several times as long on the Pi, and every timeout and request waited for it.
+- `HttpxPluginBase._feed(parser, html)` parses pages from 32 KB in a worker thread, where the loop gets the GIL back every few ms. sto, kinoger, kinoking, kinox, megakino, movie2k and hdfilme's detail pages use it.
+- The two hottest parsers on the Pi use selectolax (lexbor, a C parser; new dependency): filmpalast's detail pages (8.4% of the Python CPU; 20 ms → 2.3 ms per page on x86) and search pages, and hdfilme's search pages (5.9% with its detail pages; 8.3 ms → 1.4 ms). They return the same results on the captured real pages of hdfilme, streamcloud, streamkiste and filmpalast.
+
+### Perf: s.to Seasons Stop Requesting Gated Link-outs
+- A Torznab search for "Dark" on s.to took 83 s and sent about 950 link-out requests: every episode and hoster of every matching series. Behind the VPN the gate let 3 of them through per pass, so 97 of 100 results kept the s.to link-out anyway.
+- Whole seasons (Torznab) no longer pass the gate, since a pass unlocks 3 link-outs. Once an episode's link-outs stay gated, the next episodes return theirs unresolved for 5 min, without requests (JDownloader can still follow them). Stream requests (one episode) still pass the gate in the browser as before.
+
+### Perf: Plugins Follow a Moved Site
+- hdfilme answered every search with a 301 from `hdfilme.cafe` to `hdfilme.ceo`, one more round trip per request.
+- `HttpxPluginBase` now adopts the new host as `base_url` when a request to the base host ends on another host after only permanent redirects (301/308) and with a status below 400 (`{name}_site_moved`). Temporary redirects and moves to an error page change nothing. Every httpx plugin gets this without a code change.
+
+### Perf: Stremio Search Cache, Late Plugins and an Early Answer
+- Stream requests were not cached. Production searched the same title twice within 18 s, each time a full fan-out of about 15 s and 50–270 requests. A plugin cut by the search deadline lost all its results, and every answer waited for the slowest plugin up to the 10 s search budget.
+- **Search cache:** the title-matching search results of a request are cached per title, season and episode for `cache.search_ttl_seconds` (diskcache or Redis). Hoster resolution still runs on every request, since stream URLs expire and some are bound to the resolving IP.
+  - **Stale-while-revalidate:** an expired entry still answers for 6 h while a background search refreshes it.
+  - **Single-flight:** requests for one title share one running search.
+- **Late plugins:** a plugin cut by the deadline runs on for up to `plugin_timeout_seconds` more, and its results are added to the cache entry for the next request (`stremio_late_plugins_done`).
+- **Early answer:** the search answers at `stremio.search_soft_deadline_seconds` (new, default 7 s) when it has results; without results it waits for the late plugins until `plugin_timeout_seconds`, as before.
+- **Circuit breaker:** a late plugin is not blamed for the cut. It counts as a failure only when it is still running at the end of its extra time; its answer reports like any other. Counting the 7 s cut opened the breaker for plugins that answered a few seconds later without hits (kinox for movies in the end-to-end test of 2026-10-04).
+- `cache.search_ttl_seconds: 0` turns off all three and restores the previous behavior. App shutdown cancels background searches.
+
+### Perf: uvloop, httptools, Eager Tasks and Python 3.14
+- On the Raspberry Pi the event loop took 13–16% of the Python CPU (py-spy in production, `docs/plans/pi-performance.md`).
+- **uvloop and httptools** are dependencies now, and uvicorn uses both when they are installed (`loop="auto"`, `http="auto"`): the event loop and the server's HTTP parser run in C. Of uvicorn's `standard` extra only these two are installed; websockets and watchfiles are not used.
+- **Eager tasks:** new tasks start eagerly (`asyncio.eager_task_factory`, set in the lifespan). A task runs until its first await when it is created, so a task that never suspends (cache hit, guard) skips a trip through the loop. The whole suite also passes with every test loop eager. The startup log `event_loop_configured` names the loop (`uvloop` or `asyncio`).
+- **Python 3.14:** the Docker image runs Python 3.14 (`python:3.14-slim`), whose interpreter and asyncio are faster.
+  - `pyproject.toml` allows 3.12–3.14 (it was `<3.14`).
+  - CI tests 3.12 (the dev container's version) and 3.14.
+  - The suite passes on 3.14.8.
+  - Images built from their own Dockerfile change `python:3.12-slim` to `python:3.14-slim`.
+
+### Perf: Each Release Name Parsed Once
+- On the Raspberry Pi guessit, which parses release names, took 25–33% of the Python CPU of a stream request (py-spy in production, `docs/plans/pi-performance.md`).
+- The title matcher (title candidates, year), the release parser (quality, language) and the episode filter each parsed the same names, and the next request for the same title parsed them all again.
+- `infrastructure/stremio/release_guess.py` parses a name once and caches the result: read-only, the last 4096 names.
+- Measured on x86 with 120 results: 3.5 s → 1.0 s for the first request, 3 ms for the same titles again.
+
+### Perf: Connections Stay Open Between Stream Requests
+- The shared HTTP client used httpx's defaults: idle connections closed after 5 s, at most 20 kept. One stream request talks to 18–42 hosts, so every pause between two requests closed them all, and the next request paid the TCP and TLS handshakes again, one or two round trips through the VPN each. TLS handshakes were 21% of the Python CPU (`docs/plans/pi-performance.md`).
+- Idle connections now stay open for 60 s, at most 20 of them (httpx's default count). With 100 kept, production showed httpcore's pool scan, which runs for every request and finished response and is quadratic in the idle connections, holding the GIL 10–20% of the time during stream requests (2% before). A connect may take at most 5 s, so a host that does not answer no longer costs the full read timeout (`http.timeout_seconds`).
+- `http.http2` (`SCAVENGARR_HTTP_HTTP2`, off by default) offers HTTP/2, so the requests to one host share a connection. It needs `httpx[http2]` (h2). Measured both ways in production: the plugin searches used 22% more CPU with HTTP/2 (its framing runs in Python) and were not faster, so it stays off.
+
+### Feat: Event-Loop Lag in the Metrics
+- On the Raspberry Pi the Python process was busy for 34–82% of a stream request's wall time (`docs/plans/pi-performance.md`). CPU work on the event loop (parsing, TLS handshakes, logging) delays every callback, and with them the timeouts and deadlines.
+- A timer every 0.5 s records how late it fires. `/api/v1/stats/metrics` shows the lag's p50, p99 and maximum over the last 5 min (`event_loop`), and a stall of 250 ms or more is logged as `event_loop_lag`. This is the yardstick for the performance plan.
+
+### Chore: Profile Script for Stream Requests
+- `scripts/stremio_profile.py` measures stream requests against a running container. Per request it reports:
+  - wall time;
+  - CPU seconds of the Python and Chromium processes;
+  - httpx requests per host, counted from the JSON log.
+
+  At the end it reports the event-loop lag.
+- `--py-spy` adds a CPU profile per category, taken in the container: py-spy runs as root and the container needs `cap_add: [SYS_PTRACE]`.
+- `--repeat` adds cold and warm passes.
+- Access goes through the Portainer API or the docker CLI. Usage: `docs/plans/pi-performance.md`.
+
 ## v0.2.3 - 2026-10-04
 
 Production fixes from a Raspberry Pi behind a VPN: kinoger and moflix pass their challenges once and go on over httpx, s.to's link-out gate is passed (ad layers, Turnstile and ALTCHA), and HLS-proxy streams play in Stremio Web. Each fix was verified on the production instance before the release.
@@ -1175,6 +1558,9 @@ Foundation of the project: FastAPI server, Scrapy scraping engine, plugin loader
 
 Current known issues:
 
+- **kinoger times out in production** (2026-10-06, sixth round): 13 of 13 Stremio searches hit the 30 s plugin timeout, its breakers opened, and titles with few streams waited 30 s for it. Every kinoger page goes through the stealth browser (Cloudflare binds the clearance to the browser), whose 2 pages hoster captures share while plugins search; alone in the container the same searches took 7.9–17.3 s. Since 0.3.0 pages go to the earliest due work (plugin pages before captures), and their count follows waits, CPU and memory; the seventh round has to confirm it (`docs/plans/browser-page-budget.md`).
+- **FireStream stutters in Stremio Web** (2026-10-06, Toy Story 5): the CDN throttles each connection to 1.5–3.9 Mbit/s, the stream needs about 2.9, and the browser player loads the segments one after another over one connection. Through the HLS proxy and directly alike (2.3 and 1.9 Mbit/s, measured alternately; the VPN carries 67 Mbit/s). Fetching segments ahead or in parallel byte ranges would help; not built.
+- **FSST 1080p: "Error occurred when decoding"** (2026-10-06, One Battle After Another, Stremio Web on Firefox/Linux): the stream (H.264 1080p, AAC 5.1) is bound to the resolving IP, so it plays through the streaming server only. Cause not confirmed.
 - **s.to link-out quota for VPN IPs** (2026-10-04): for a VPN IP s.to's gate is the tier `turnstile_altcha`, and one pass (about 20 s in the browser on a Raspberry Pi 4) unlocks 3 link-outs. Stremio episode requests get s.to for about three requests per pass; a Torznab search resolves the link-outs of every matching episode (about 950 requests and 83 s for "Dark"), and most results keep the s.to link-out.
 - **Playmate in tsaridas/stremio-docker's web player** (2026-10-04): the image's nginx answers Playmate's disguised HLS segments (`…_000.css`, `…_001.js`) as web player files, with 404, so Playmate streams fail there (error 81).
 

@@ -17,8 +17,9 @@ from __future__ import annotations
 
 import asyncio
 import re
-from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
+
+from selectolax.lexbor import LexborHTMLParser, LexborNode
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.categories import (
@@ -27,6 +28,7 @@ from scavengarr.infrastructure.plugins.categories import (
     served_category,
     stream_category,
 )
+from scavengarr.infrastructure.plugins.dom import classes, parse_page
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.relevance import (
     SINGLE_TITLE_HITS,
@@ -138,8 +140,66 @@ def _parse_runtime(text: str) -> str:
     return m.group(1) if m else ""
 
 
-class _SearchResultParser(HTMLParser):
-    """Parse megakino.me search result page.
+def _last_text(node: LexborNode, selector: str) -> str:
+    """The text of the last match of *selector* in *node*, "" without one."""
+    matches = node.css(selector)
+    return matches[-1].text() if matches else ""
+
+
+def _description(tree: LexborHTMLParser) -> str:
+    """The plot: the first ``<div class="... full-text ...">`` with text.
+
+    User comments below the plot are "full-text" divs too.
+    """
+    for div in tree.css("div.full-text"):
+        if "comment-item__main" in classes(div):
+            continue
+        text = div.text().strip()
+        if text:
+            return text
+    return ""
+
+
+def _poster_url(tree: LexborHTMLParser, base_url: str) -> str:
+    """The first poster image of ``<div class="pmovie__poster ...">``."""
+    for img in tree.css("div.pmovie__poster img"):
+        src = img.attributes.get("data-src") or img.attributes.get("src") or ""
+        if src and "/no-img" not in src:
+            return urljoin(base_url, src)
+    return ""
+
+
+def _rating(node: LexborNode) -> str:
+    """The number of a rating element, "" without one.
+
+    Only the text before the first closing div or span counts: the site
+    rating's vote count follows in a span of its own::
+
+        <div class="pmovie__subrating pmovie__subrating--site"><img ...>
+          <div><span><span>+963</span></span><span>1317</span></div>
+        </div>
+    """
+    parts: list[str] = []
+    _text_until_closed(node, parts)
+    m = re.search(r"(\d+[.,]?\d*)", "".join(parts))
+    return m.group(1).replace(",", ".") if m else ""
+
+
+def _text_until_closed(node: LexborNode, parts: list[str]) -> bool:
+    """Add the text of *node* to *parts* until a div or span in it closes.
+
+    Returns whether one closed.
+    """
+    for child in node.iter(include_text=True):
+        if child.is_text_node:
+            parts.append(child.text_content or "")
+        elif _text_until_closed(child, parts) or child.tag in ("div", "span"):
+            return True
+    return False
+
+
+class _SearchResultParser:
+    """Parse megakino.me search result page (selectolax).
 
     Each result card::
 
@@ -157,157 +217,61 @@ class _SearchResultParser(HTMLParser):
             <div class="poster__text ...">Description</div>
           </div>
         </a>
+
+    A card needs a title and a link. Of several titles, labels or texts in
+    a card the last one counts; the poster is the first image with a
+    ``data-src``.
     """
 
     def __init__(self, base_url: str) -> None:
-        super().__init__()
         self.results: list[dict[str, str | list[str] | bool]] = []
         self._base_url = base_url
 
-        self._in_card = False
-        self._current_url = ""
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for card in tree.css("a.poster.grid-item"):
+            self._add_card(card)
 
-        self._in_title = False
-        self._title_text = ""
-
-        self._in_label = False
-        self._label_text = ""
-
-        self._in_subtitle = False
-        self._in_subtitle_li = False
-        self._subtitle_li_text = ""
-        self._subtitle_items: list[str] = []
-
-        self._in_desc = False
-        self._desc_text = ""
-
-        self._poster_url = ""
-
-    def _reset_card(self) -> None:
-        self._current_url = ""
-        self._title_text = ""
-        self._label_text = ""
-        self._subtitle_items = []
-        self._desc_text = ""
-        self._poster_url = ""
-
-    def _emit_card(self) -> None:
-        if not self._title_text or not self._current_url:
+    def _add_card(self, card: LexborNode) -> None:
+        href = card.attributes.get("href") or ""
+        title = _last_text(card, "h3.poster__title")
+        if not title or not href:
             return
 
-        categories_text = (
-            self._subtitle_items[1] if len(self._subtitle_items) > 1 else ""
+        subtitle = [
+            text
+            for li in card.css("ul.poster__subtitle li")
+            if (text := li.text().strip())
+        ]
+        categories_text = subtitle[1] if len(subtitle) > 1 else ""
+        label = _last_text(card, "div.poster__label").strip()
+        poster = next(
+            (
+                src
+                for img in card.css("img")
+                if (src := img.attributes.get("data-src") or "")
+            ),
+            "",
         )
-        genres = _parse_genres(categories_text)
-        is_series = _detect_series(categories_text, self._title_text)
-
-        year = ""
-        if self._subtitle_items:
-            year = _parse_year(self._subtitle_items[0])
-
-        quality = ""
-        if self._label_text.strip().lower() in _QUALITY_LABELS:
-            quality = self._label_text.strip()
 
         self.results.append(
             {
-                "title": _clean_title(self._title_text),
-                "url": self._current_url,
-                "genres": genres,
-                "quality": quality,
-                "label": self._label_text.strip(),
-                "is_series": is_series,
-                "year": year,
-                "description": self._desc_text.strip(),
-                "poster_url": self._poster_url,
+                "title": _clean_title(title),
+                "url": urljoin(self._base_url, href),
+                "genres": _parse_genres(categories_text),
+                "quality": label if label.lower() in _QUALITY_LABELS else "",
+                "label": label,
+                "is_series": _detect_series(categories_text, title),
+                "year": _parse_year(subtitle[0]) if subtitle else "",
+                "description": _last_text(card, "div.poster__text").strip(),
+                "poster_url": urljoin(self._base_url, poster) if poster else "",
                 "categories_text": categories_text,
             }
         )
 
-    def handle_starttag(  # noqa: C901
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
-        attr_dict = dict(attrs)
-        classes = (attr_dict.get("class") or "").split()
 
-        # Card boundary: <a class="poster grid-item ..." href="...">
-        if tag == "a" and "poster" in classes and "grid-item" in classes:
-            self._in_card = True
-            self._reset_card()
-            href = attr_dict.get("href", "") or ""
-            if href:
-                self._current_url = urljoin(self._base_url, href)
-            return
-
-        if not self._in_card:
-            return
-
-        # Title: <h3 class="poster__title ...">
-        if tag == "h3" and "poster__title" in classes:
-            self._in_title = True
-            self._title_text = ""
-
-        # Label: <div class="poster__label">
-        if tag == "div" and "poster__label" in classes:
-            self._in_label = True
-            self._label_text = ""
-
-        # Subtitle list: <ul class="poster__subtitle ...">
-        if tag == "ul" and "poster__subtitle" in classes:
-            self._in_subtitle = True
-
-        if tag == "li" and self._in_subtitle:
-            self._in_subtitle_li = True
-            self._subtitle_li_text = ""
-
-        # Description: <div class="poster__text ...">
-        if tag == "div" and "poster__text" in classes:
-            self._in_desc = True
-            self._desc_text = ""
-
-        # Poster image: <img data-src="...">
-        if tag == "img" and not self._poster_url:
-            data_src = attr_dict.get("data-src", "") or ""
-            if data_src:
-                self._poster_url = urljoin(self._base_url, data_src)
-
-    def handle_data(self, data: str) -> None:
-        if self._in_title:
-            self._title_text += data
-        if self._in_label:
-            self._label_text += data
-        if self._in_subtitle_li:
-            self._subtitle_li_text += data
-        if self._in_desc:
-            self._desc_text += data
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "h3" and self._in_title:
-            self._in_title = False
-
-        if tag == "div" and self._in_label:
-            self._in_label = False
-
-        if tag == "li" and self._in_subtitle_li:
-            self._in_subtitle_li = False
-            text = self._subtitle_li_text.strip()
-            if text:
-                self._subtitle_items.append(text)
-
-        if tag == "ul" and self._in_subtitle:
-            self._in_subtitle = False
-
-        if tag == "div" and self._in_desc:
-            self._in_desc = False
-
-        # Card closes when the wrapping <a> tag ends
-        if tag == "a" and self._in_card:
-            self._in_card = False
-            self._emit_card()
-
-
-class _DetailPageParser(HTMLParser):
-    """Parse megakino.me detail page for stream links and metadata.
+class _DetailPageParser:
+    """Parse megakino.me detail page for stream links and metadata (selectolax).
 
     Film hosters use tabs::
 
@@ -327,287 +291,116 @@ class _DetailPageParser(HTMLParser):
     """
 
     def __init__(self, base_url: str) -> None:
-        super().__init__()
         self._base_url = base_url
 
         # Stream links (final output)
         self.stream_links: list[dict[str, str]] = []
 
-        # Film tabs tracking
-        self._in_tabs_select = False
-        self._tabs_select_div_depth = 0
-        self._in_tab_span = False
-        self._tab_span_text = ""
-        self._tab_names: list[str] = []
-
-        self._in_tabs_content = False
-        self._tabs_content_div_depth = 0
-        self._content_dl_href = ""
-        self._content_index = 0
-
-        # Series select tracking
-        self._in_mr_select = False
-        self._mr_select_episode = 0  # Current episode number (from id="epN")
-        self._in_mr_option = False
-        self._mr_option_value = ""
-        self._mr_option_text = ""
-
-        # Title
-        self._in_h1 = False
-        self._h1_text = ""
         self.title = ""
-
-        # Year/runtime
-        self._in_year_div = False
-        self._year_text = ""
         self.year = ""
         self.runtime = ""
-
-        # Genres
-        self._in_genres_div = False
-        self._genres_text = ""
         self.genres: list[str] = []
         self.categories_text = ""
-
-        # Description
-        self._in_desc = False
-        self._desc_div_depth = 0
-        self._desc_text = ""
         self.description = ""
-
-        # Ratings
-        self._in_kp_rating = False
-        self._kp_text = ""
         self.kp_rating = ""
-
-        self._in_site_rating = False
-        self._site_rating_text = ""
         self.site_rating = ""
-
-        # Poster
-        self._in_poster_div = False
         self.poster_url = ""
 
         # Series flag
         self.is_series = False
 
-    def handle_starttag(  # noqa: C901
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
-        attr_dict = dict(attrs)
-        classes = (attr_dict.get("class") or "").split()
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        self._read_metadata(tree)
+        self._read_hosters(tree)
 
-        # h1 title
-        if tag == "h1" and not self.title:
-            self._in_h1 = True
-            self._h1_text = ""
+    def _read_metadata(self, tree: LexborHTMLParser) -> None:
+        # Title: the first h1 with text
+        for h1 in tree.css("h1"):
+            self.title = _clean_title(h1.text())
+            if self.title:
+                break
 
         # Year/runtime: <div class="pmovie__year">
-        if tag == "div" and "pmovie__year" in classes:
-            self._in_year_div = True
-            self._year_text = ""
+        for div in tree.css("div.pmovie__year"):
+            text = div.text()
+            self.year = _parse_year(text)
+            self.runtime = _parse_runtime(text)
 
         # Genres: <div class="pmovie__genres">
-        if tag == "div" and "pmovie__genres" in classes:
-            self._in_genres_div = True
-            self._genres_text = ""
-
-        # Description: <div class="... full-text ...">; user comments below
-        # the plot are "full-text" divs too
-        if tag == "div":
-            if self._in_desc:
-                self._desc_div_depth += 1
-            elif (
-                "full-text" in classes
-                and "comment-item__main" not in classes
-                and not self.description
-            ):
-                self._in_desc = True
-                self._desc_div_depth = 0
-                self._desc_text = ""
-
-        # KP rating
-        if "pmovie__subrating--kp" in classes:
-            self._in_kp_rating = True
-            self._kp_text = ""
-
-        # Site rating
-        if "pmovie__subrating--site" in classes:
-            self._in_site_rating = True
-            self._site_rating_text = ""
-
-        # Poster: <div class="pmovie__poster ...">
-        if tag == "div" and "pmovie__poster" in classes:
-            self._in_poster_div = True
-
-        if tag == "img" and self._in_poster_div and not self.poster_url:
-            data_src = attr_dict.get("data-src", "") or attr_dict.get("src", "") or ""
-            if data_src and "/no-img" not in data_src:
-                self.poster_url = urljoin(self._base_url, data_src)
-
-        # --- Film hosters: tabs-block ---
-        if tag == "div" and "tabs-block__select" in classes:
-            self._in_tabs_select = True
-            self._tabs_select_div_depth = 0
-        elif tag == "div" and self._in_tabs_select:
-            self._tabs_select_div_depth += 1
-
-        if tag == "span" and self._in_tabs_select:
-            self._in_tab_span = True
-            self._tab_span_text = ""
-
-        if tag == "div" and "tabs-block__content" in classes:
-            self._in_tabs_content = True
-            self._tabs_content_div_depth = 0
-            self._content_dl_href = ""
-        elif tag == "div" and self._in_tabs_content:
-            self._tabs_content_div_depth += 1
-
-        # <iframe data-src="https://voe.sx/e/..." /> inside tabs-block__content
-        if tag == "iframe" and self._in_tabs_content:
-            src = attr_dict.get("data-src", "") or attr_dict.get("src", "") or ""
-            if src and src.startswith("http"):
-                self._content_dl_href = src
-
-        # Legacy: <a href="/dl/..."> inside tabs-block__content
-        if tag == "a" and self._in_tabs_content:
-            href = attr_dict.get("href", "") or ""
-            if href and "/dl/" in href:
-                self._content_dl_href = urljoin(self._base_url, href)
-
-        # --- Series hosters: mr-select ---
-        if tag == "select" and "mr-select" in classes:
-            self._in_mr_select = True
-            # Extract episode number from id="ep1", "ep2", etc.
-            select_id = attr_dict.get("id", "") or ""
-            m = re.match(r"ep(\d+)", select_id)
-            self._mr_select_episode = int(m.group(1)) if m else 0
-
-        if tag == "option" and self._in_mr_select:
-            value = attr_dict.get("value", "") or ""
-            if value and value.startswith("http"):
-                self._in_mr_option = True
-                self._mr_option_value = value
-                self._mr_option_text = ""
-
-    def handle_data(self, data: str) -> None:
-        if self._in_h1:
-            self._h1_text += data
-        if self._in_year_div:
-            self._year_text += data
-        if self._in_genres_div:
-            self._genres_text += data
-        if self._in_desc:
-            self._desc_text += data
-        if self._in_kp_rating:
-            self._kp_text += data
-        if self._in_site_rating:
-            self._site_rating_text += data
-        if self._in_tab_span:
-            self._tab_span_text += data
-        if self._in_mr_option:
-            self._mr_option_text += data
-
-    def handle_endtag(self, tag: str) -> None:  # noqa: C901
-        # h1
-        if tag == "h1" and self._in_h1:
-            self._in_h1 = False
-            self.title = _clean_title(self._h1_text)
-
-        # Year div
-        if tag == "div" and self._in_year_div:
-            self._in_year_div = False
-            self.year = _parse_year(self._year_text)
-            self.runtime = _parse_runtime(self._year_text)
-
-        # Genres div
-        if tag == "div" and self._in_genres_div:
-            self._in_genres_div = False
-            self.categories_text = self._genres_text.strip()
+        for div in tree.css("div.pmovie__genres"):
+            self.categories_text = div.text().strip()
             self.genres = _parse_genres(self.categories_text)
 
-        # Description
-        if tag == "div" and self._in_desc:
-            if self._desc_div_depth > 0:
-                self._desc_div_depth -= 1
+        self.description = _description(tree)
+
+        # Ratings: the last one with a number
+        for node in tree.css(".pmovie__subrating--kp"):
+            self.kp_rating = _rating(node) or self.kp_rating
+        for node in tree.css(".pmovie__subrating--site"):
+            self.site_rating = _rating(node) or self.site_rating
+
+        self.poster_url = _poster_url(tree, self._base_url)
+
+    def _read_hosters(self, tree: LexborHTMLParser) -> None:
+        # The n-th tabs-block__content plays the n-th tab name listed before it
+        names: list[str] = []
+        tabs = 0
+        for node in tree.css(
+            "div.tabs-block__select span, div.tabs-block__content, select.mr-select"
+        ):
+            if node.tag == "span":
+                name = node.text().strip()
+                if name:
+                    names.append(name)
+            elif node.tag == "div":
+                self._add_tab(node, names[tabs] if tabs < len(names) else "")
+                tabs += 1
             else:
-                self._in_desc = False
-                self.description = self._desc_text.strip()
+                self._add_episode(node)
 
-        # KP rating
-        if self._in_kp_rating and tag in ("div", "span"):
-            self._in_kp_rating = False
-            m = re.search(r"(\d+[.,]?\d*)", self._kp_text)
-            if m:
-                self.kp_rating = m.group(1).replace(",", ".")
-
-        # Site rating
-        if self._in_site_rating and tag in ("div", "span"):
-            self._in_site_rating = False
-            m = re.search(r"(\d+[.,]?\d*)", self._site_rating_text)
-            if m:
-                self.site_rating = m.group(1).replace(",", ".")
-
-        # Poster div
-        if tag == "div" and self._in_poster_div:
-            self._in_poster_div = False
-
-        # Tab select span
-        if tag == "span" and self._in_tab_span:
-            self._in_tab_span = False
-            name = self._tab_span_text.strip()
-            if name:
-                self._tab_names.append(name)
-
-        # Tabs select div
-        if tag == "div" and self._in_tabs_select:
-            if self._tabs_select_div_depth > 0:
-                self._tabs_select_div_depth -= 1
+    def _add_tab(self, content: LexborNode, label: str) -> None:
+        """Add the stream of a film tab: the last link in its content."""
+        link = ""
+        for node in content.css("iframe, a"):
+            if node.tag == "iframe":
+                # <iframe data-src="https://voe.sx/e/..." />
+                src = node.attributes.get("data-src") or node.attributes.get("src")
+                if src and src.startswith("http"):
+                    link = src
             else:
-                self._in_tabs_select = False
+                # Legacy: <a href="/dl/...">
+                href = node.attributes.get("href") or ""
+                if "/dl/" in href:
+                    link = urljoin(self._base_url, href)
+        if link:
+            self.stream_links.append(
+                {
+                    "hoster": label.lower() if label else _domain_from_url(link),
+                    "link": link,
+                    "label": label,
+                }
+            )
 
-        # Tabs content div
-        if tag == "div" and self._in_tabs_content:
-            if self._tabs_content_div_depth > 0:
-                self._tabs_content_div_depth -= 1
-            else:
-                self._in_tabs_content = False
-                if self._content_dl_href:
-                    label = ""
-                    if self._content_index < len(self._tab_names):
-                        label = self._tab_names[self._content_index]
-                    hoster = _domain_from_url(self._content_dl_href)
-                    if label:
-                        hoster = label.lower()
-                    self.stream_links.append(
-                        {
-                            "hoster": hoster,
-                            "link": self._content_dl_href,
-                            "label": label,
-                        }
-                    )
-                self._content_index += 1
-
-        # mr-select option
-        if tag == "option" and self._in_mr_option:
-            self._in_mr_option = False
-            name = self._mr_option_text.strip()
-            if self._mr_option_value:
-                domain = _domain_from_url(self._mr_option_value)
-                hoster = name.lower() if name else domain
-                ep_num = self._mr_select_episode
-                label = f"1x{ep_num} {name or domain}" if ep_num else name or domain
-                self.stream_links.append(
-                    {
-                        "hoster": hoster,
-                        "link": self._mr_option_value,
-                        "label": label,
-                    }
-                )
-
-        # mr-select close
-        if tag == "select" and self._in_mr_select:
-            self._in_mr_select = False
+    def _add_episode(self, select: LexborNode) -> None:
+        """Add the hosters of an episode's ``<select class="mr-select">``."""
+        # Episode number from id="ep1", "ep2", etc.
+        m = re.match(r"ep(\d+)", select.attributes.get("id") or "")
+        episode = int(m.group(1)) if m else 0
+        for option in select.css("option"):
+            link = option.attributes.get("value") or ""
+            if not link.startswith("http"):
+                continue
+            name = option.text().strip()
+            domain = _domain_from_url(link)
+            label = f"1x{episode} {name or domain}" if episode else name or domain
+            self.stream_links.append(
+                {
+                    "hoster": name.lower() if name else domain,
+                    "link": link,
+                    "label": label,
+                }
+            )
 
     def finalize(self) -> None:
         """Post-processing: detect series from genres."""
@@ -666,8 +459,7 @@ class MegakinoPlugin(HttpxPluginBase):
         if resp is None:
             return []
 
-        parser = _SearchResultParser(self.base_url)
-        parser.feed(resp.text)
+        parser = await parse_page(_SearchResultParser(self.base_url), resp.text)
 
         self._log.info(
             "megakino_search_page",
@@ -710,8 +502,7 @@ class MegakinoPlugin(HttpxPluginBase):
         if html is None:
             return None
 
-        parser = _DetailPageParser(self.base_url)
-        parser.feed(html)
+        parser = await parse_page(_DetailPageParser(self.base_url), html)
         parser.finalize()
 
         # Filter series links by episode (ep1, ep2, ... labels)

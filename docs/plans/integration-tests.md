@@ -2,7 +2,7 @@
 
 # Plan: Integration Test Suite
 
-**Status:** Partially implemented (2026-09-28) — config, CrawlJob and link-validation integration tests plus Torznab/Stremio E2E tests exist; plugin-pipeline tests, CI, HTTP download-endpoint and TTL-expiry tests are open
+**Status:** Partially implemented (2026-09-28) — config, CrawlJob and link-validation integration tests plus Torznab/Stremio E2E tests exist; plugin-pipeline tests, HTTP download-endpoint and TTL-expiry tests are open; CI runs the suite since 2026-09-30
 **Priority:** High
 **Related:** `tests/`, `AGENTS.md` section 6 (Testing)
 
@@ -102,7 +102,7 @@ YAML file + ENV vars + CLI args → AppConfig (merged)
 
 - Use `tmp_path` for YAML files, `monkeypatch` for env vars
 - Verify precedence: CLI > ENV > YAML > defaults
-- Secret masking in log output: not applicable yet (no redaction helper exists)
+- Secret masking in log output: `_redact_secrets` in the logging setup, covered by unit tests (`tests/unit/infrastructure/test_logging_setup.py`)
 
 ### Fixture Strategy
 
@@ -113,7 +113,7 @@ tests/
   fixtures/
     html/
       hdfilme/, kinoger/, megakino/, streamcloud/, streamkiste/,
-      filmpalast/, movie2k/, aniworld/, sto/, kinoking/
+      filmpalast/, movie2k/, aniworld/, sto/, kinoking/, warezomen/
         search-oppenheimer.html.gz, detail-oppenheimer.html.gz, ...
                                 # real pages, parsed in tests/unit/infrastructure/test_real_pages.py
       testsite/
@@ -174,7 +174,7 @@ markers = [
 - [ ] Create `tests/fixtures/` with initial HTML fixtures (files exist in `tests/fixtures/html/testsite/` but no test uses them)
 - [x] Add integration conftest with fixture loader (`fixtures_dir`; no app client — router tests use `TestClient` in `tests/e2e/`)
 - [x] Add `integration` pytest marker
-- [ ] Verify integration tests run in CI (separate from unit tests) — no CI configuration exists
+- [x] Integration tests run in CI (`.github/workflows/ci.yml`, in the same pytest run as the unit tests)
 
 ### Phase 2: Core Integration Tests
 

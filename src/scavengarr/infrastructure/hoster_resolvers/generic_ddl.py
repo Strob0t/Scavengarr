@@ -184,7 +184,7 @@ class GenericDDLResolver:
 ALFAFILE = GenericDDLConfig(
     name="alfafile",
     domains=frozenset({"alfafile"}),
-    file_id_re=re.compile(r"^/file/([A-Za-z0-9]+)$"),
+    file_id_re=re.compile(r"^/file/([A-Za-z0-9]+)(?:/|$)"),
     offline_markers=(
         "File Not Found",
         "file was removed",

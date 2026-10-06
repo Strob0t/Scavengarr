@@ -8,7 +8,7 @@
 
 ## Overview
 
-Every plugin is a Python file in `plugins/` that inherits from one of two base classes: `HttpxPluginBase` (33 plugins) or `PlaywrightPluginBase` (9 plugins). The base classes provide client/browser lifecycle, domain fallback, bounded concurrency and error handling; the plugin implements `search()`.
+Every plugin is a Python file in `plugins/` that inherits from one of two base classes, `HttpxPluginBase` or `PlaywrightPluginBase` (the generated [plugin list](../plugins.md) gives each plugin's engine). The base classes provide client/browser lifecycle, domain fallback, bounded concurrency and error handling; the plugin implements `search()`.
 
 How plugins are discovered, loaded, configured and called is documented in [Plugin System](./plugin-system.md):
 
@@ -20,10 +20,10 @@ How plugins are discovered, loaded, configured and called is documented in [Plug
 **When to use `HttpxPluginBase`:**
 - The site is static HTML with server-rendered pages
 - JSON APIs or standard HTTP requests are sufficient
-- No JavaScript execution or Cloudflare challenge bypass is needed
+- No JavaScript execution is needed. A Cloudflare challenge is fine: `_fetch_text()` passes it in the browser, and httpx goes on with the browser's session
 
 **When to use `PlaywrightPluginBase`:**
-- The site requires JavaScript execution (Cloudflare challenge, SPA, DDoS-Guard)
+- The site requires JavaScript execution (SPA, DDoS-Guard)
 - Authentication is non-standard (MD5-hashed passwords, multi-step login)
 - Dynamic content loading or browser interaction is required
 
@@ -51,7 +51,7 @@ class SearchResult:
     published_date: str | None = None
 
     # Multi-stage specific
-    download_links: list[dict[str, str]] | None = None  # All links, e.g. {"hoster": ..., "link": ...}
+    download_links: list[dict[str, str]] | None = None  # All links: {"hoster": ..., "link": ...}, optional "label" (episode)
     source_url: str | None = None                       # Detail page the result was scraped from
     scraped_from_stage: str | None = None               # Currently not set by any plugin
 
@@ -93,11 +93,11 @@ Both base classes live in `src/scavengarr/infrastructure/plugins/` and share the
 
 Shared helpers in both classes:
 
-- `base_url` — instance attribute, initially `https://{_domains[0]}`, updated by `_verify_domain()`
+- `base_url` — instance attribute, initially `https://{_domains[0]}`, updated by `_verify_domain()`, and in httpx plugins by a permanent site move (see [Mirror URL Fallback](./mirror-url-fallback.md))
 - `effective_max_results` — `min(search_max_results, _max_results)`; lower during Stremio searches, use it as the pagination limit
 - `_category_matches(requested, accepted)` — Torznab parent/child match: `None` matches everything, `5000` matches `5000-5999`, `5070` matches only `5070` (`category_matches()` of `categories.py`, see step 3)
 - `_new_semaphore()` — `asyncio.Semaphore(self._max_concurrent)`
-- `_verify_domain()` — domain fallback (see [Mirror URL Fallback](./mirror-url-fallback.md)); no-op with one domain; the verified domain stays until `cleanup()`
+- `_verify_domain()` — domain fallback (see [Mirror URL Fallback](./mirror-url-fallback.md)); no-op with one domain; the verified domain stays until a restart (httpx plugins still follow a permanent site move, and undo it when the new host stops answering)
 - `isolated_search(query, category, *, season, episode)` — entry point used by Stremio (see [How Plugins Are Called](./plugin-system.md#how-plugins-are-called))
 - `cleanup()` — releases resources and resets `_domain_verified`
 
@@ -151,19 +151,20 @@ plugin = MySitePlugin()
 
 **Provided by `HttpxPluginBase`:**
 - `_timeout` — per-plugin request timeout (default `15.0` seconds)
+- `mirror_group` (default `None`) — when several sites front the same database (same ids, titles and links, other themes), set the same `mirror_group` on their plugins (hdfilme, streamcloud and streamkiste: `"hdfilme"`): a Stremio request then asks one of them, the reachable one with the best plugin score, the next when its circuit breaker opens or for a query it gives nothing for; Torznab keeps each as an indexer ([Mirror Groups](stremio-addon.md#mirror-groups)).
 - `set_shared_http_client(client)` (classmethod) — the composition root injects one app-wide `httpx.AsyncClient` with per-domain rate limiting and 429/503 retry (`RetryTransport`); all httpx plugins reuse it
 - `_ensure_client()` — returns the shared client, or creates a private client (timeout, redirects, user agent) when none was injected
 - `_verify_domain()` — sends `HEAD https://{domain}/` (5 s timeout) for each domain; the first status `< 400` wins and `base_url` is taken from the final URL after redirects (e.g. a `www.` prefix); if all fail, `_domains[0]` is kept and a warning is logged
-- `_fetch_text(url, *, params=None, context="", headers=None) -> str | None` — GET returning the body text (`headers` go with the httpx request, e.g. an API's `Accept`/`Referer`/`X-XSRF-TOKEN`: moflix); when the site answers with a Cloudflare challenge (`is_cloudflare_challenge`) and a browser fetcher is injected (`HttpxPluginBase.set_browser_fetcher()`, wired to the `StealthPool` when `playwright.browser_fallback` is on), the same URL (query string included) is loaded through the browser instead. JSON comes back as raw text: parse it with `json.loads`. A URL that answers the browser's page load with an error and no challenge is asked once more by in-page `fetch()`, which sends the site's Referer: an API behind Laravel Sanctum (moflix) answers a page load without one with 401, and once the browser holds a clearance no challenge reload sends it. Use it for every request of a Cloudflare-protected site
+- `_fetch_text(url, *, params=None, context="", headers=None) -> str | None` — GET returning the body text (`headers` go with the httpx request, e.g. an API's `Accept`/`Referer`/`X-XSRF-TOKEN`: moflix); when the site answers with a Cloudflare challenge (`is_cloudflare_challenge`) and a browser fetcher is injected (`HttpxPluginBase.set_browser_fetcher()`, wired to the `StealthPool` (`playwright.browser_fallback`), to a Byparr/FlareSolverr sidecar (`playwright.solver_url`), or to both in turn, own browser first; see [Configuration](./configuration.md)), the same URL (query string included) is loaded through the browser instead. JSON comes back as raw text: parse it with `json.loads`. A URL that answers the browser's page load with an error and no challenge is asked once more by in-page `fetch()`, which sends the site's Referer: an API behind Laravel Sanctum (moflix) answers a page load without one with 401, and once the browser holds a clearance no challenge reload sends it. Use it for every request of a Cloudflare-protected site
 - `_parse_json_text(body, context="") -> dict | None` — decodes a JSON object from `_fetch_text()` (logs `{name}_invalid_json`)
 - `_resolve_redirect(url, *, context="", referer="") -> str | None` — first off-site `Location` of a link-out URL (follows same-host hops); behind Cloudflare the browser fetcher resolves it. `referer` is sent as `Referer`: some sites redirect a link-out only when it is opened from the page that lists it (sto)
 - `_use_browser_session(url, cookies)` — sends a browser's session cookies (e.g. from `click_through()` below) with later requests to `url`'s site, replacing that site's cookies in the client
 - `self._browser_fetcher.click_through(page_url, selector, *, timeout) -> ClickThrough | None` (`BrowserFetcherPort`, `StealthPool` only; `None` without a browser) — opens a page in the browser, clicks the first element matching `selector` and returns where a same-site link-out redirected off-site (`ClickThrough.url`) plus the site's cookies (`ClickThrough.cookies`). Until the page closes only the target and the form of a Turnstile gate (`WIDGET_FORM`) take pointer events (a stylesheet, `_TARGET_ONLY_CSS`): s.to's ad script lays layers over the page, under random class names and after a delay, that would take the click on the link box and then on the gate's checkbox ("… subtree intercepts pointer events"). A Turnstile widget the click brings up is passed (`pass_turnstile_widget`: ticked when it does not clear, then its form is submitted with `form.submit()`); an ALTCHA widget in the same form (s.to's gate for a VPN IP) is solved first: the page fetches its challenge from the widget's `challengeurl`, `solve_altcha` solves it in a thread and the payload goes into the form under the widget's name (its checkbox does not verify on a click in our browser; `altcha_widget_unsolved` when this fails); the form's redirect then gets up to 10 s (`_SUBMIT_REDIRECT_S`) even past `timeout`, since the widget may have used it up (a Raspberry Pi behind a VPN: 28 of 30 s; s.to's `_GATE_TIMEOUT_S` is 60 s, the pass runs in the background). For sites that gate link-outs per session: pass the gate once in the browser, then continue in httpx with `_use_browser_session()` (sto)
 - `_resolve_own_links(links, sem=None)` — the same for one result's `download_links` (a list of `{"hoster", "link"}` dicts): links on the plugin's own host are replaced by their redirect target, links that do not leave the host are dropped (kinox `/redirect/<hash>`, byte)
 - `_resolve_result_links(results)` — replaces link-out URLs on the plugin's own host (e.g. `/external/<hash>`) by their targets in the final results and drops results left without links; call it on the capped result list only (each link costs a round trip). At most `_max_concurrent` redirects run at once, across all results (one shared semaphore)
-- After the browser passed a site's challenge, httpx goes on with the browser's session: `_fetch_text()` asks the fetcher for it (`BrowserFetcherPort.session(url)` → `BrowserSession(cookies, user_agent)`) and sends the site's cookies and the browser's User-Agent with every later request to that host (`_adopt_browser_session()`, logged as `{name}_browser_session_adopted`; `_request_kwargs(client, url)` picks the User-Agent). One browser solve then costs seconds once instead of per page: measured 2026-10-04 from production's VPN IP on a Raspberry Pi 4, kinoger (HostAdmin WAF) and moflix (Cloudflare) answered httpx with the browser's cookies in 0.3–0.4 s after a 3–4 s solve
+- After the browser passed a site's challenge, httpx goes on with the browser's session: `_fetch_text()` asks the fetcher for it (`BrowserFetcherPort.session(url)` → `BrowserSession(cookies, user_agent)`) and sends the site's cookies and the browser's User-Agent with every later request to that host (`_adopt_browser_session()`, logged as `{name}_browser_session_adopted`; `_fetch_text()`, `_resolve_redirect()` and `_safe_fetch()` let `_request_kwargs(client, url)` pick the User-Agent). One browser solve then costs seconds once instead of per page: measured 2026-10-04 from production's VPN IP on a Raspberry Pi 4, kinoger (HostAdmin WAF) and moflix (Cloudflare) answered httpx with the browser's cookies in 0.3–0.4 s after a 3–4 s solve
 - While the browser works on a host, the host skips plain httpx (parallel requests do not hit the challenge again). A challenge less than 5 min after httpx took over a session (`_SESSION_TRUST_S`) means the site binds its clearance to the browser: the host then goes straight to the browser for 30 min (`{name}_browser_session_rejected`; a doomed request still counts against the site's rate limit). A later challenge (expired clearance) is solved again. The browser's solve runs on when the Stremio deadline cuts the request that started it (a shielded task; a failure is logged as `{name}_browser_solve_failed`), so the next request gets the session: on the Raspberry Pi under load a solve took 20 s, longer than the plugin's budget
-- `_safe_fetch(url, *, method="GET", context="", **kwargs)` — request with `raise_for_status()`; returns `None` (and logs `{name}_timeout` / `{name}_http_error` / `{name}_fetch_error`) on timeout, non-2xx status or any other error; applies the plugin's `_timeout` and `_user_agent` per request when using the shared client
+- `_safe_fetch(url, *, method="GET", context="", **kwargs)` — request with `raise_for_status()`; returns `None` (and logs `{name}_timeout` / `{name}_http_error` / `{name}_fetch_error`) on timeout, non-2xx status or any other error; sends the plugin's `_timeout` and `_user_agent` like `_fetch_text()` (the browser's User-Agent to a site whose session httpx took over), extra `headers` on top
 - `_safe_parse_json(response, context="")` — returns parsed JSON or `None`
 - `isolated_search()` — plain passthrough to `search()`
 - `cleanup()` — closes a private client (never the shared one)
@@ -173,13 +174,11 @@ plugin = MySitePlugin()
 - `scavengarr.infrastructure.captcha.detect.detect_challenge(status, html, headers=None)` — classifies a response as `cloudflare_page`, `ddos_guard`, `turnstile`, `hcaptcha`, `recaptcha` or `altcha` (`None` otherwise); `is_cloudflare_challenge()` is `detect_challenge(...) == "cloudflare_page"`. `_fetch_text()` logs the kind on errors
 - `scavengarr.infrastructure.plugins.clicknload.decrypt_cnl(jk, crypted) -> list[str]` — decrypts a Click'n'Load (CNL2) package (AES-128-CBC, key = IV = `jk`, zero padding; also tries the hex-swapped key); `[]` when unreadable (animeloads)
 
-**devideosrc.co player** (`scavengarr.infrastructure.plugins.devideosrc`): DLE streaming sites such as streamcloud embed a devideosrc player (`devideosrc.co/movie/<imdb>`, `devideosrc.co/serial/<imdb>`) instead of listing hoster links. `find_player(html)` detects it on a detail page, `fetch_links(client, player, **request_kwargs)` returns a `PlayerLinks(kind, links)`: the hoster embeds (movie: best rank first; series: every episode, labelled `<season>x<episode> <hoster>`) and the player kind that answered — sites like streamkiste embed the series player for movies too, so a series page without token falls back to the movie player. Used by streamcloud, streamkiste and hdfilme.
+**devideosrc.co player** (`scavengarr.infrastructure.plugins.devideosrc`): DLE streaming sites such as streamcloud embed a devideosrc player (`devideosrc.co/movie/<imdb>`, `devideosrc.co/serial/<imdb>`) instead of listing hoster links. `find_player(html)` detects it on a detail page, `fetch_links(client, player, **request_kwargs)` returns a `PlayerLinks(kind, links)`: the hoster embeds (movie: best rank first; series: every episode, labelled `<season>x<episode> <hoster>`) and the player kind that answered — sites like streamkiste embed the series player for movies too, so a series page without token falls back to the movie player. Used by streamcloud, streamkiste and hdfilme. The player page is always loaded past Cloudflare's cache (cached copies carry expired tokens and even cached 429s); a 429 there is retried with a fresh URL. Only the separate download embed (`/embed/download/<imdb>`) sits behind Turnstile. hdfilme, streamcloud and streamkiste front one database (same news ids, same players): concurrent `fetch_links` calls for one player share one fetch, so a Stremio request loads each player once instead of three times.
 
-**Episode labels** (`scavengarr.infrastructure.plugins.episodes`): a series page that carries every episode labels each link `<season>x<episode> <label>` (`episode_label(season, episode, label)`), and `filter_episodes(links, season, episode)` keeps the links of a requested season/episode (unlabelled links drop). The Stremio episode filter reads the same labels. Used by devideosrc, kinoger and movie2k. The player page is always loaded past Cloudflare's cache (cached copies carry expired tokens and even cached 429s); a 429 there is retried with a fresh URL. Only the separate download embed (`/embed/download/<imdb>`) sits behind Turnstile. hdfilme, streamcloud and streamkiste front one database (same news ids, same players): concurrent `fetch_links` calls for one player share one fetch, so a Stremio request loads each player once instead of three times.
+**Episode labels** (`scavengarr.infrastructure.plugins.episodes`): a series page that carries every episode labels each link in its `"label"` key as `<season>x<episode> <label>` (`episode_label(season, episode, label)`: devideosrc, kinoger, movie2k), and `filter_episodes(links, season, episode)` keeps the links of a requested season/episode (unlabelled links drop; hdfilme, kinoger, movie2k, serienfans, streamcloud, streamkiste). The Stremio episode filter reads the same labels.
 
 ### DataApiPluginBase (shared site backends)
-
-When several sites front the same database (same ids, titles and links, other themes), set the same `mirror_group` on their plugins (hdfilme, streamcloud and streamkiste: `"hdfilme"`): a Stremio request then asks one of them, the next when its circuit breaker opens; Torznab keeps each as an indexer ([Mirror Groups](stremio-addon.md#mirror-groups)).
 
 When several sites run the same backend, the site logic lives once in `src/scavengarr/infrastructure/plugins/` and the plugins only set `name`, `provides` and `_domains`. `DataApiPluginBase` (`data_api.py`, subclass of `HttpxPluginBase`) serves the "/data" JSON API of `megakino_to` and `movie4k`: browse/search with pagination, `/data/watch` details, season (detail `s`) and episode (stream `e`) filtering, skipping `deleted` streams and tolerant TMDB parsing. The two plugins used to be copies; the movie4k copy had lost the episode filter, the deleted-stream check and the TMDB handling (and mapped Torznab quality subcategories to genres).
 
@@ -190,14 +189,14 @@ When several sites run the same backend, the site logic lives once in `src/scave
 - **Login and session**: form POST with the login page's `_xfToken`. The login only counts with an `xf_user` cookie of the forum's own host (the shared HTTP client may hold another forum's cookie). The page after the login carries the session's CSRF token (`data-csrf`), which every XenForo POST needs (HTTP 400 without it). A search answered as for a guest (`data-logged-in="false"`) or rejected logs in again and retries once.
 - **Search**: `POST /search/search` with `search_type=post` (XenForo ignores the forum filter `c[nodes][]` otherwise), titles only, newest first. The `pageNav-jump--next` link (`?page=N`) leads to further pages, up to 1000 results.
 - **Categories**: a request searches the nodes whose category it covers (a parent covers its children). A child category the forum does not tell apart (2040 where all films are 2000) uses its parent's nodes; a category without a section returns `[]` without a request. Results carry the category of their forum node (8000 for a node missing in the map).
-- **Links**: only link-container hosts (hide.cx, filecrypt, keeplinks, tolink, share-links, ...) in post bodies count. myboerse's `/xtra/` links are an affiliate placeholder (always the same Rapidgator file).
+- **Links**: only link-container hosts (hide.cx, filecrypt, keeplinks, tolink, share-links, ...; `forum_links.py`, shared with the vBulletin forums) in post bodies count. myboerse's `/xtra/` links are an affiliate placeholder (always the same Rapidgator file).
 - Requests use `_safe_fetch()` without the Cloudflare browser fallback, because the session lives in the HTTP client's cookie jar.
 
 The two plugins used to be copies: the myboerse copy had none of the dataload fixes (every search failed with HTTP 400), and on both the category filter was a no-op.
 
 ### PlaywrightPluginBase
 
-For sites requiring JavaScript execution or Cloudflare bypass:
+For sites that need JavaScript (SPA, DDoS-Guard) or a login in the browser:
 
 ```python
 # plugins/my_js_site.py
@@ -243,26 +242,28 @@ class MyJsSitePlugin(PlaywrightPluginBase):
 plugin = MyJsSitePlugin()
 ```
 
-Always obtain pages via `_new_page()` / `_ensure_page()` (or the context from `_ensure_context()`), never via `self._context` directly: under `isolated_search()` the active context is a per-request one and `self._context` may be `None`.
+Obtain pages via `_new_page()` and close them (or use the context from `_ensure_context()`), never via `self._context` directly: under `isolated_search()` the active context is a per-request one and `self._context` may be `None`. `_ensure_page()` is one page cached on the plugin and shared by concurrent searches; the base uses it for the domain check.
 
 **Provided by `PlaywrightPluginBase`:**
 - `_headless` (default `False` = headful when `DISPLAY` exists, else headless fallback via `resolve_headless()`; standalone launches only, the shared pool follows `playwright.headless`), `_cf_timeout_ms` (default `30_000`, covers a Turnstile click; only spent while a challenge shows), `_networkidle_timeout_ms` (default `10_000`)
-- `_block_resources` (default `True`) — aborts image, font and CSS requests in each new context. Anti-bot evasion comes from Patchright itself (imports use `patchright.async_api`); its Console domain is disabled, so `page.on("console")` never fires
-- `set_shared_pool(pool)` — the composition root injects the `SharedBrowserPool`; `_ensure_browser()` then reuses the shared Chromium instead of launching its own
+- `_block_resources` (default `True`) — aborts image, font, stylesheet, media and text-track requests in each new context, by resource type (`browser/hardening.py`, the same rule as the stealth context; it used to go by file extension and missed URLs without one). DDoS-Guard's check images pass (`ddos-guard` in the URL): its check sets the `__ddg*` cookies through image beacons, and blocked, the challenge reloaded until it timed out (animeloads, 0 of 3; code review, 2026-10-06). A plugin that needs other images adds a route of its own after the blocker in `_configure_context()` (the route added last runs first; animeloads lets its captcha images through). Contexts also block service workers (`service_workers="block"`). Anti-bot evasion comes from Patchright itself (imports use `patchright.async_api`); its Console domain is disabled, so `page.on("console")` never fires
+- `set_shared_pool(pool)` — the composition root injects the `SharedBrowserPool`; `_ensure_browser()` then reuses the shared Chromium instead of launching its own. The shared Chromium runs with `--renderer-process-limit=2` (`CHROMIUM_ARGS`) and restarts after 200 stealth pages (`shared_browser_recycled`): its memory grows with the pages it rendered. An operation holds the browser with `SharedBrowserPool.lease()` (the stealth pool's fetches and captures, `isolated_search()`); the last one to end after 200 pages starts the restart in a task of its own, and new operations wait until it is done. The restart is skipped while a page is open (one opened without a lease). Before, the browser closed when no context listed a page, which killed a page another slot was still opening, and the close ran inside the finishing request (code review, 2026-10-06). Contexts on the old browser notice the closed browser and start over (`_ensure_context()` also drops a plugin's kept context: boerse, mygully and animeloads failed every search after a restart); stored clearances come back from the `ClearanceStore`
 - `_ensure_browser()` — shared browser, or a standalone Chromium launch with one retry; reconnects if the browser disconnected (a standalone browser's Playwright driver is stopped first, the shared one belongs to the pool)
 - `_browser_user_agent` (default `None`) — browser contexts keep Patchright's real User-Agent; a forced UA disagrees with the client hints (`sec-ch-ua`) and gets flagged. Set it only when a site needs a specific UA
-- `_context_options()` — keyword arguments for `browser.new_context()` (1280x720 viewport, `_browser_user_agent` if set); use it for extra contexts such as login contexts
+- `_context_options()` — keyword arguments for `browser.new_context()` (1280x720 viewport, `_browser_user_agent` if set); use it for extra contexts such as login contexts; such a context gets stored clearances and resource blocking only through `await self._configure_context(ctx)`
+- `_configure_context(ctx)` — applies the stored clearances (`ClearanceStore`) and resource blocking; `_ensure_context()` and `isolated_search()` call it for their contexts
+- `_cookie_params(cookies)` (static) — a context's cookies as `add_cookies()` parameters (nameless ones dropped), for plugins that log in once in a context of their own and add the session to later contexts (boerse, mygully)
 - `_ensure_context()` — returns the per-request context from `isolated_search()` if set, otherwise a persistent context built from `_context_options()` plus resource blocking
-- `_ensure_page()` — persistent page in the current context; `_new_page()` — fresh page, caller closes it
+- `_ensure_page()` — one page cached on the plugin (made in the context current at the time, shared by concurrent searches; the base's domain check uses it); `_new_page()` — fresh page in the current context, caller closes it
 - `_wait_for_cloudflare(page) -> bool` — solves a Cloudflare challenge via `browser/turnstile.solve_cloudflare()`: returns at once without a challenge title (Cloudflare's "Just a moment", and the HostAdmin WAF's "Verification..." and "Loading <url>" that kinoger shows since 2026-10-03), otherwise waits ~3 s for an auto-clear, then clicks the Turnstile checkbox in the `challenges.cloudflare.com` iframe (re-click every 8 s); `False` on timeout. Needs a headful browser to pass. A solved challenge's clearance cookie is stored via `_remember_clearance(page)`
 - `set_clearance_store(store)` (static, wired in composition) — the `ClearanceStore` that restores `cf_clearance`/`__ddg*`/`ha-waf-*` cookies into every new context (`_configure_context`) and keeps them across restarts; `_remember_clearance(page)` stores them, for gates other than Cloudflare call it yourself
 - `page.evaluate(js, arg, isolated_context=False)` — Patchright runs `evaluate` in an isolated world by default, where the site's own scripts (e.g. jQuery `$`) are invisible; pass `isolated_context=False` to use them (animeloads)
 - `_passes_cloudflare(page, resp) -> bool` — accepts a navigation: status `< 400`, or a 403/503 Cloudflare challenge page that gets solved
 - `_navigate_and_wait(page, url, *, wait_for_cf=True, wait_for_idle=True) -> bool` — `goto` (`domcontentloaded`), `_passes_cloudflare()`, `networkidle`; `False` on an error status that is not a solvable challenge
-- `_fetch_page_html(url, *, wait_until="domcontentloaded", timeout=30_000) -> str` — fresh page, navigate, wait, return HTML (`""` on failure)
-- `_verify_domain()` — navigates the persistent page to each domain (5 s timeout); status `< 400` and a resolved Cloudflare challenge are required; otherwise the next domain is tried
-- `isolated_search()` — creates a fresh `BrowserContext` per call (stealth applied), calls `_prepare_context(ctx)`, runs `search()` with the context set in a `ContextVar`, then closes all pages and the context
-- `_prepare_context(ctx)` — hook for authenticated plugins to inject session cookies (`ctx.add_cookies()`) into the per-request context
+- `_fetch_page_html(url, *, wait_until="domcontentloaded", timeout=30_000, wait_for_idle=True, retry_backoff_s=()) -> str` — fresh page, navigate, pass a Cloudflare challenge (`_passes_cloudflare()`), wait for `networkidle` unless `wait_for_idle=False`, return HTML (`""` on failure). A 429/502/503/504 or no response is retried once per `retry_backoff_s` entry, after sleeping that long (ddlvalley, scnsrc)
+- `_verify_domain()` — navigates the persistent page to each domain (5 s timeout); it needs status `< 400` or a Cloudflare challenge that gets solved (`_passes_cloudflare()`); otherwise the next domain is tried
+- `isolated_search()` — creates a fresh `BrowserContext` per call (`_context_options()`, then `_configure_context()`), calls `_prepare_context(ctx)`, runs `search()` with the context set in a `ContextVar` while it holds the shared browser (`lease()`), then closes all pages and the context
+- `_prepare_context(ctx)` — hook for authenticated plugins to inject session cookies (`ctx.add_cookies()`) into the per-request context. `isolated_search()` calls it before `search()` runs: a plugin that logs in inside `search()` hands the session over after the login, `await self._prepare_context(await self._ensure_context())` (boerse, mygully)
 - `_serialize_search` (default `False`) — when `True`, `isolated_search()` runs `search()` behind a lock on the persistent context instead (for plugins that depend on page state; moflix used it until it moved to httpx in 1.2.0)
 - `cleanup()` — closes page and context; closes browser and Playwright only when the plugin launched them itself (not with the shared pool)
 
@@ -289,6 +290,50 @@ Names such as `_MAX_PAGES`, `_PER_PAGE`, `_CATEGORY_MAP` or `_LANG_LABELS` are c
 
 ---
 
+## Parsing Pages
+
+Plugin parsers read pages with selectolax (lexbor, a C HTML5 parser): `LexborHTMLParser(html)` builds the tree, CSS selectors find the nodes. A parser is a small class with `feed(html)` and public result attributes; the plugin feeds every page through `await parse_page(parser, html)` (`infrastructure/plugins/dom.py`), which parses pages from 32 KiB in a worker thread (lexbor builds the tree without the GIL; selectolax took 0.3 ms for 32–64 KiB on x86, a thread hop 0.06 ms).
+
+```python
+from selectolax.lexbor import LexborHTMLParser
+
+from scavengarr.infrastructure.plugins.dom import parse_page
+
+
+class _SearchResultParser:
+    """Parse the result cards of a search page (selectolax)."""
+
+    def __init__(self, base_url: str) -> None:
+        self.results: list[dict[str, str]] = []
+        self._base_url = base_url
+
+    def feed(self, html: str) -> None:
+        for card in LexborHTMLParser(html).css("div.card"):
+            links = card.css("h2 a[href]")
+            if links:
+                href = links[-1].attributes.get("href") or ""
+                self.results.append(
+                    {"title": links[-1].text().strip(), "url": urljoin(self._base_url, href)}
+                )
+
+
+# in the plugin
+parser = await parse_page(_SearchResultParser(self.base_url), html)
+```
+
+Pitfalls (selectolax 1.0; also noted in `dom.py`):
+- `node.css(selector)` searches the subtree including the node itself; `node.css_matches(selector)` tests the whole subtree, not the node. Ancestor checks walk `ancestors(node)` and test `node.tag`, `classes(node)` and `node.attributes`.
+- Sites nest their cards (a `div.entry` inside a `div.entry`): `outermost(tree.css(selector))` keeps the matches not nested in another match.
+- A group selector returns a node once per part it matches (`a, a.x` gives `<a class="x">` twice): parts that can match one node go into `:is()` (`a:is(.x, [href])`).
+- `LexborNode.__eq__` compares the nodes' HTML: compare `node.mem_id` for identity, never `==`, `in` or `list.index()` on nodes.
+- Without a doctype (most test HTML) class and `#id` selectors ignore case; `[id='x']` and other attribute selectors stay exact.
+- `node.text()` is the deep text: entities decoded, `<script>`/`<style>` content included, comments excluded, `\r\n` turned into `\n`.
+- lexbor builds the HTML5 tree like a browser: it closes unclosed elements, repairs misnesting and inserts an implied `<tbody>`.
+
+Until 2026-10 the plugins parsed with `html.parser` state machines in Python, which held the GIL for every page (34% of the GIL samples of a Stremio request on the Raspberry Pi). All of them moved to selectolax with identical results on every recorded input (the test suite and live searches of every plugin), 6–15 times faster on big pages.
+
+---
+
 ## Adding a New Plugin
 
 **Step 1: Site analysis (mandatory before writing code).** Use the `playwright-mcp` server to inspect all relevant pages (search, categories, detail, download). Document selectors, link patterns and pagination, check for JS dependencies (Cloudflare, dynamic loading, SPAs), auth (login, cookies, tokens) and URL patterns.
@@ -296,14 +341,14 @@ Names such as `_MAX_PAGES`, `_PER_PAGE`, `_CATEGORY_MAP` or `_LANG_LABELS` are c
 **Step 2: Choose the base class.** Every plugin inherits from `HttpxPluginBase` (static HTML/JSON) or `PlaywrightPluginBase` (JS-heavy sites); see [Plugin Base Classes](#plugin-base-classes). Never duplicate base-class boilerplate (client setup, domain fallback, cleanup, semaphore, user agent).
 
 - `HttpxPluginBase` class attributes: `_domains`, `_max_concurrent` (default 5), `_max_results` (default 1000), `_timeout` (default 15), `_user_agent`, `languages` (default `["de"]`, e.g. `["en"]` for English sites).
-- Playwright plugins: add `from playwright.async_api import Page` when using `Page` type hints.
+- Playwright plugins: add `from patchright.async_api import Page` when using `Page` type hints (the browser library is Patchright; `playwright` is not a dependency).
 
 **Step 3: Mandatory search standards (all plugins).**
 
 1. **Category filtering**: map Torznab categories to the site's filter system (dropdown IDs, URL path segments, forum IDs) and pass them in the search request, and label each result with the category the site gives it (never with the requested one). `scavengarr.infrastructure.plugins.categories` answers the request: `served_category(requested, offered)` gives the category to match (*offered* = the labels the site can give; a child the site does not tell apart, such as 2040 where every film is 2000, becomes its parent; `None` when the site has nothing of the family, then return `[]` without a request), `filter_by_category(results, category)` keeps the matching results. Film and series sites label with `stream_category(genres, is_series=...)`: films 2000 whatever the genre (animated films and documentaries included, they used to drop out of movie searches as 5070/5080), series 5000, anime and animation series 5070 (`STREAM_CATEGORIES`). `is_series_title(title)` tells episode and season-pack names (`S01E02`, `S03`, "Staffel") from films for sites without their own series label.
 2. **Pagination up to 1000 items**: parse pagination links/hit counts from the first page, then fetch further pages until `self.effective_max_results` items or no more results. Set `_MAX_PAGES` from the site's page size (200/page → 5, 50/page → 20, 10/page → 100).
 3. **Bounded concurrency** for detail pages: `self._new_semaphore()` (default 5 parallel requests).
-4. **Scrape relevant hits only** when each hit costs detail pages: site searches also list loose matches ("Batman" finds "Justice League", "Breaking Bad" finds "Better Call Saul"). `relevant_hits(hits, query, hit_title)` from `scavengarr.infrastructure.plugins.relevance` keeps the hits whose title contains every query word (case, accents and punctuation folded), closest first (fewest extra words), else the site's first 3 (titles in another language), and every hit for an empty query. Pass `limit=SINGLE_TITLE_HITS if season is not None else None`: a season or episode request is for one title, and a short query ("Dark") matches many; with a limit, an exact hit is scraped alone ("Dark Matter" and "Dark Winds" are other series the title matcher drops anyway). Filter the hits by kind first where the site tells films from series (kinoking), so a film named like the series takes no slot. Used by sto, kinoking and the DataLife Engine sites (hdfilme, kinoger, megakino, streamcloud, streamkiste), where loose matches made a search take 8–45 s.
+4. **Scrape relevant hits only** when each hit costs detail pages: site searches also list loose matches ("Batman" finds "Justice League", "Breaking Bad" finds "Better Call Saul"). `relevant_hits(hits, query, hit_title)` from `scavengarr.infrastructure.plugins.relevance` keeps the hits whose title contains every query word (case, accents and punctuation folded), closest first (fewest extra words), else the site's first 3 (titles in another language), and every hit for an empty query. Pass `limit=SINGLE_TITLE_HITS if season is not None else None`: a season or episode request is for one title, and a short query ("Dark") matches many; with a limit, an exact hit is scraped alone ("Dark Matter" and "Dark Winds" are other series the title matcher drops anyway). Filter the hits by kind first where the site tells films from series (kinoking), so a film named like the series takes no slot. Used by aniworld, cine, filmpalast_to, hdfilme, kinoger, kinoking, kinox, megakino, moflix, movie2k, sto, streamcloud and streamkiste; on the DataLife Engine sites (hdfilme, kinoger, megakino, streamcloud, streamkiste) loose matches made a search take 8–45 s.
 
 ```python
 # (simplified) pagination
@@ -323,7 +368,7 @@ for page_num in range(1, _MAX_PAGES + 1):
 **Step 4: Implement and test.**
 
 1. Create `plugins/<sitename>.py`, set `name`, `provides` and `_domains`, optionally override `_max_results`, `_max_concurrent`, `languages`, `cache_ttl`. `_domains` lists genuine domains only: popular sites have look-alike clones that swap the player for ad or scam redirects (`burning-series.io`, `aniworld.info`). Check the site's JDownloader plugin in `.devdata/JDownloader2/` (`getPluginDomains()`, `getDeadDomains()` and its fake/scam notes).
-2. Implement `async def search(self, query, category, season, episode) -> list[SearchResult]` using `self._safe_fetch()` (httpx) or `self._new_page()` / `self._ensure_page()` (Playwright), and `self._log` for logging.
+2. Implement `async def search(self, query, category, season, episode) -> list[SearchResult]` using `self._fetch_text()` (GET, passes Cloudflare challenges) or `self._safe_fetch()` (httpx) or `self._new_page()` (Playwright), and `self._log` for logging.
 3. Add unit tests in `tests/unit/infrastructure/test_<sitename>_plugin.py` (see [Testing Plugins](#testing-plugins)), and test the parsers on the site's own pages: `poetry run python scripts/capture_pages.py <name> "<query>" [--category N --season S --episode E]` records every page a live search fetches (`.cache/pages/<name>/`, Cloudflare pages through the stealth browser), `--fixture <page> <fixture-name>` stores one scrubbed and gzipped under `tests/fixtures/html/<name>/`, and `tests/unit/infrastructure/test_real_pages.py` asserts values read off those pages. Hand-written HTML only shows the parser what it expects; the real pages of the DLE sites showed a series handing out its first episode for every request.
 4. Restart the server and query `http://localhost:7979/api/v1/torznab/<name>?t=search&q=test`.
 5. Regenerate the public plugin list [`docs/plugins.md`](../plugins.md) with `poetry run python scripts/generate_plugin_list.py` (also after renaming a plugin or changing `provides`, `_domains`, `languages` or the base class); `tests/unit/infrastructure/test_plugin_list_doc.py` fails while it is outdated.
@@ -352,6 +397,9 @@ BoersePlugin (PlaywrightPluginBase)
   +-- _prepare_context(ctx)    Inject _session_cookies into per-request context
   |
   +-- search(query, category)  Main entry point
+        |
+        +-- _ensure_session(), then _prepare_context(await _ensure_context()):
+        |                      the session goes into the context this search uses
         |
         +-- _search_threads()  Submit #searchform (query, forum, title-only)
         |                      and extract thread URLs (_ThreadLinkParser)
@@ -406,7 +454,7 @@ async with page.expect_navigation(wait_until="domcontentloaded", timeout=15_000)
 cookies = await login_ctx.cookies()
 if any(c["name"] == "bbsessionhash" for c in cookies):
     self.base_url = domain_url
-    self._session_cookies = cookies
+    self._session_cookies = self._cookie_params(cookies)
     self._logged_in = True
 ```
 
@@ -439,7 +487,7 @@ async def _wait_for_cloudflare(self, page: Page) -> bool:
     return solved
 ```
 
-A solved challenge's clearance cookie (`cf_clearance`, DDoS-Guard `__ddg*`, HostAdmin WAF `ha-waf-*`) goes into the `ClearanceStore` and is restored into every new browser context, so restarts do not repeat the challenge while the cookie is valid. Plugins behind another gate (animeloads: DDoS-Guard) call `self._remember_clearance(page)` once the real page shows.
+A solved challenge's clearance cookie (`cf_clearance`, DDoS-Guard `__ddg*`, HostAdmin WAF `ha-waf-*`) goes into the `ClearanceStore` and is restored into every context made by `_ensure_context()` or `isolated_search()`, so restarts do not repeat the challenge while the cookie is valid. Plugins behind another gate (animeloads: DDoS-Guard) call `self._remember_clearance(page)` once the real page shows.
 
 ### Bounded Concurrency
 
@@ -451,18 +499,21 @@ sem = self._new_semaphore()  # _max_concurrent, default 5
 
 async def _bounded_scrape(url: str) -> SearchResult | None:
     async with sem:
-        return await self._scrape_thread(url)
+        return await self._scrape_thread(url, forum_id)  # the forum gives the category
 
-results = await asyncio.gather(
+gathered = await asyncio.gather(
     *[_bounded_scrape(url) for url in thread_urls],
     return_exceptions=True,
 )
-return [r for r in results if isinstance(r, SearchResult)]
+results = [r for r in gathered if isinstance(r, SearchResult)]
+if category is not None:
+    results = filter_by_category(results, category)
+return results
 ```
 
 ### Custom HTML Parsers
 
-The plugin uses stdlib `HTMLParser` subclasses instead of CSS selectors for robustness against varied vBulletin markup:
+The plugin's parsers read the lexbor tree with CSS selectors (see [Parsing Pages](#parsing-pages)):
 
 | Parser | Purpose |
 |---|---|
@@ -472,23 +523,20 @@ The plugin uses stdlib `HTMLParser` subclasses instead of CSS selectors for robu
 
 ### Link Container Filtering
 
-Only links from recognized link-protection services are accepted as download links:
+Only links to recognized link-protection services (or their subdomains) are accepted as download links. The forum plugins (boerse, mygully, dataload, myboerse) share the list and the anchor-text parsing in `src/scavengarr/infrastructure/plugins/forum_links.py`:
 
 ```python
-# plugins/boerse.py
-_LINK_CONTAINER_HOSTS = {
-    "keeplinks.org", "keeplinks.eu",
-    "share-links.biz", "share-links.org",
-    "filecrypt.cc", "filecrypt.co",
-    "safelinks.to", "protectlinks.com",
-}
+is_link_container("https://www.filecrypt.cc/Container/ABC.html")  # True
+is_link_container("https://notfilecrypt.cc/Container/ABC.html")   # False
+hoster_from_text("download via ddownload.com")  # "ddownload"
+hoster_from_text("Online rapidgator.net")       # "rapidgator"
 ```
 
 This prevents internal forum links, images and other non-download URLs from being returned as results.
 
 ### Category Mapping
 
-Torznab categories are mapped to vBulletin forum IDs (default `"30"`):
+Torznab categories are mapped to vBulletin forum IDs (default `"30"`), and each forum gives its threads a category:
 
 ```python
 # plugins/boerse.py
@@ -497,10 +545,13 @@ _CATEGORY_FORUM_MAP: dict[int, str] = {
     5000: "30",  # TV      -> Videoboerse
     3000: "25",  # Audio   -> Audioboerse
     7000: "21",  # Books   -> Dokumente
-    1000: "16",  # Console -> Spiele Boerse
-    4000: "16",  # PC      -> Spiele Boerse
+    4000: "16",  # PC      -> Spiele Boerse (console games too, not told apart)
 }
+# Forum -> category of its threads (Video: series by their title)
+_FORUM_CATEGORIES: dict[str, int] = {"30": 2000, "25": 3000, "21": 7000, "16": 4050}
 ```
+
+A request is answered with `served_category()` over the forum labels: a category no forum has (console, 1000) returns `[]` without a request. Each thread gets its forum's category (Video threads with a series title: 5000), and `filter_by_category()` keeps the matching ones.
 
 ---
 
@@ -582,7 +633,7 @@ await asyncio.sleep(5)  # DO NOT DO THIS
 ### Domain Fallback
 
 - List domains in `_domains` in order of preference and call `await self._verify_domain()` at the start of `search()`
-- The base class keeps the verified domain until `cleanup()`; it does not re-probe after later request errors
+- The base class keeps the verified domain until a restart; it does not re-probe after later request errors. httpx plugins still follow a permanent site move (301/308 to another host) and undo it when the new host stops answering
 - See [Mirror URL Fallback](./mirror-url-fallback.md)
 
 ---
@@ -640,10 +691,10 @@ For Playwright plugins, patch `scavengarr.infrastructure.plugins.playwright_base
 | Aspect | HttpxPluginBase | PlaywrightPluginBase |
 |---|---|---|
 | HTTP client | Shared app-wide httpx client (rate-limited, retrying) | Chromium via the shared browser pool |
-| Use case | Static HTML, JSON APIs | JS-heavy sites, SPAs, Cloudflare |
+| Use case | Static HTML, JSON APIs, sites behind Cloudflare | JS-heavy sites, SPAs, DDoS-Guard, browser logins |
 | Resource usage | Low (no browser) | Higher (browser context per request) |
 | Domain fallback | `_verify_domain()` with HTTP `HEAD` | `_verify_domain()` with browser navigation + Cloudflare wait |
-| Cloudflare bypass | Not supported | `_wait_for_cloudflare()`, stealth mode |
+| Cloudflare challenges | Browser fallback in `_fetch_text()` / `_resolve_redirect()`, then the browser's session | `_wait_for_cloudflare()`, Patchright |
 | Request isolation | Not needed (`isolated_search()` passthrough) | Per-request `BrowserContext` or `_serialize_search` lock |
 | Concurrency | `_new_semaphore()` for parallel requests | `_new_semaphore()` for parallel pages |
 | Cleanup | Close private httpx client | Close page/context; browser only if not shared |

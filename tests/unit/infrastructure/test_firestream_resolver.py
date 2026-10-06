@@ -52,6 +52,13 @@ class TestExtractFileId:
     def test_invalid(self, url: str) -> None:
         assert _extract_file_id(url) is None
 
+    @pytest.mark.parametrize("fid", ["777zhD-W", "OXIURmQ-", "jWcN-2XU", "a_b-c1D2"])
+    def test_url_safe_base64_ids(self, fid: str) -> None:
+        """IDs use the URL-safe base64 alphabet: filmpalast and moflix links
+        with "-" were rejected as invalid (end-to-end test 2026-10-04), their
+        pages play (encoding completed, token present)."""
+        assert _extract_file_id(f"https://firestream.to/e/{fid}") == fid
+
 
 class TestFirestreamResolver:
     def test_name_and_domains(self) -> None:

@@ -48,3 +48,11 @@ def test_cli_flags_beat_dotenv(run_mock: MagicMock, tmp_path: Path) -> None:
 
     assert run_mock.call_args.kwargs["host"] == "10.0.0.1"
     assert run_mock.call_args.kwargs["port"] == 8000
+
+
+def test_uvicorn_access_log_is_off(run_mock: MagicMock) -> None:
+    # The app's http_request line is the access log, its query masked;
+    # uvicorn's own line repeated the request with the CDN's tokens
+    cli.start([])
+
+    assert run_mock.call_args.kwargs["access_log"] is False

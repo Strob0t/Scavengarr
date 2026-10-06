@@ -33,7 +33,7 @@ def _make_plugin() -> object:
 
 
 def _mock_response(html: str, url: str = "https://warezomen.com/test") -> MagicMock:
-    resp = MagicMock(spec=httpx.Response)
+    resp = MagicMock(spec=httpx.Response, history=[])
     resp.status_code = 200
     resp.text = html
     resp.url = url
@@ -103,11 +103,52 @@ _PAGINATION_HTML = """
     <td class="t2">Movie</td>
     <td>01-Jan-2025</td>
   </tr>
+  <tr><td colspan="4" id="pages">[ 1 ] &nbsp; <a href="/download/test/2/"
+      title="Downloads | Page 2">Next Page &gt;</a></td></tr>
 </tbody>
 </table>
-<td id="pages">
-  <a href="/download/test/2/">Next Page &gt;</a>
-</td>
+</body></html>
+"""
+
+# The last page links back only; a result's short title reads "Next Page"
+_LAST_PAGE_HTML = """
+<!DOCTYPE html>
+<html><body>
+<table class="download">
+<tbody>
+  <tr>
+    <td class="n"><a rel="nofollow" title="Next.Page.Pro.2.0"
+       href="https://example.com/np">Next Page Pro 2.0</a></td>
+    <td class="n">example</td>
+    <td class="t1">Software</td>
+    <td>01-Jan-2025</td>
+  </tr>
+  <tr><td colspan="4" id="pages"><a href="/download/test/1/"
+      title="Downloads | Page 1">&lt; Previous Page</a> &nbsp; [ 2 ]</td></tr>
+</tbody>
+</table>
+<p><a href="/next-page-tips/">Next page tips</a></p>
+</body></html>
+"""
+
+# The live site's pagination is a row of the results table (2026-10-05)
+_LIVE_PAGINATION_HTML = """
+<!DOCTYPE html>
+<html><body>
+<table class="download">
+<tbody>
+  <tr>
+    <td class="n"><a rel="nofollow" title="Result.One"
+       href="https://example.com/1">Result.One</a></td>
+    <td class="n">example</td>
+    <td class="t2">Movie</td>
+    <td>01-Jan-2025</td>
+  </tr>
+  <tr><td colspan="4" id="pages">[ 1 ] &nbsp; <a href="/download/windows/2/"
+      title="Downloads | Page 2">Next Page &gt;</a></td></tr>
+  <tr><td class="d" colspan="4"></td></tr>
+</tbody>
+</table>
 </body></html>
 """
 
@@ -183,9 +224,23 @@ class TestSearchResultParser:
         parser.feed(_PAGINATION_HTML)
         assert parser.next_page_url == "/download/test/2/"
 
+    def test_pagination_row_of_the_results_table(self) -> None:
+        """The live pagination row is no result, and its link the next page."""
+        parser = _SearchResultParser()
+        parser.feed(_LIVE_PAGINATION_HTML)
+        assert [r["title"] for r in parser.results] == ["Result.One"]
+        assert parser.next_page_url == "/download/windows/2/"
+
     def test_no_pagination(self) -> None:
         parser = _SearchResultParser()
         parser.feed(_RESULT_TABLE_HTML)
+        assert parser.next_page_url == ""
+
+    def test_only_the_pagination_link_is_the_next_page(self) -> None:
+        """A result or page link reading "Next Page" is no further page."""
+        parser = _SearchResultParser()
+        parser.feed(_LAST_PAGE_HTML)
+        assert [r["title"] for r in parser.results] == ["Next.Page.Pro.2.0"]
         assert parser.next_page_url == ""
 
     def test_separator_rows_skipped(self) -> None:

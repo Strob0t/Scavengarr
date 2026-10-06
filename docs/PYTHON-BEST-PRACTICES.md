@@ -4,7 +4,7 @@
 
 > Performance rules for high-throughput async Python backends and scrapers (FastAPI, httpx, diskcache, structlog, Playwright).
 
-**Note:** This document is mainly for agents and LLMs to follow when maintaining, generating, or refactoring Python codebases with async I/O (FastAPI, httpx, scraping pipelines). Humans may also find it useful, but guidance here is optimized for automation and consistency by AI-assisted workflows. Notes marked **Scavengarr** describe how the project actually implements a rule; the code is the source of truth.
+**Note:** This document is mainly for agents and LLMs to follow when maintaining, generating, or refactoring Python codebases with async I/O (FastAPI, httpx, scraping pipelines). Humans may also find it useful, but guidance here is optimized for automation and consistency by AI-assisted workflows. Notes marked **Scavengarr** describe how the project actually implements a rule; the code is the source of truth. Where a generic example differs from `AGENTS.md` or a Scavengarr note, `AGENTS.md` and the note apply. The typing and coding rules are in `AGENTS.md` section 5; the examples follow them (`from __future__ import annotations`, `collections.abc`).
 
 ---
 
@@ -43,7 +43,8 @@ Use this as a checklist when creating or modifying code. For non-trivial changes
 3. [Scraping & Multi-Stage Pipelines](#3-scraping--multi-stage-pipelines) — **HIGH**
    - 3.1 [Deduplicate URLs and Short-Circuit Early](#31-deduplicate-urls-and-short-circuit-early)
    - 3.2 [Use Bounded Parallelism per Target Site](#32-use-bounded-parallelism-per-target-site)
-   - 3.3 [Prefer Streaming and Incremental Parsing](#33-prefer-streaming-and-incremental-parsing)
+   - 3.3 [Parse Once, Off the Event Loop](#33-parse-once-off-the-event-loop)
+   - 3.4 [Bound and Close Browser Pages](#34-bound-and-close-browser-pages)
 4. [Caching Strategies (diskcache & In-Memory)](#4-caching-strategies-diskcache--in-memory) — **HIGH**
    - 4.1 [Cache Expensive but Stable Responses](#41-cache-expensive-but-stable-responses)
    - 4.2 [Use diskcache for Cross-Process and Long-Lived Caches](#42-use-diskcache-for-cross-process-and-long-lived-caches)
@@ -101,28 +102,22 @@ async def list_items():
     return {"items": [1, 2, 3]}
 ```
 
-For **CPU-bound** work, offload to a thread/process pool:
+For **CPU-bound** work, offload to a worker thread:
 
 ```python
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
-
-executor = ThreadPoolExecutor(max_workers=4)
 
 def compute_something_heavy(x: int) -> int:
     # CPU-heavy logic here
     return x * x
 
-async def compute_endpoint(x: int):
-    loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(executor, compute_something_heavy, x)
+async def compute_endpoint(x: int) -> dict[str, int]:
+    result = await asyncio.to_thread(compute_something_heavy, x)
     return {"result": result}
 ```
 
 > **Scavengarr hint**
-> Any HTML parsing or RSS serialization that is CPU-heavy should either be:
-> - fast enough to stay in the event loop, **or**
-> - moved into `run_in_executor` if profiling shows it dominates request time.
+> Never use `loop.run_in_executor`: its worker thread loses the log context. `asyncio.to_thread` copies the context variables, so the thread's log lines keep structlog's `request_id`. Plugin parsers parse every page through `await parse_page(parser, html)` (`src/scavengarr/infrastructure/plugins/dom.py`), which parses pages from 32 KiB in a worker thread; that is a fixed rule, not a profiling decision.
 
 ---
 
@@ -147,20 +142,25 @@ async def fetch_page(url: str) -> str:
 **Correct: shared client with connection pooling**
 
 ```python
-# lifespan module — generic example (Scavengarr: src/scavengarr/interfaces/composition.py)
+# app factory and lifespan — generic example
+# (Scavengarr: src/scavengarr/interfaces/app.py, src/scavengarr/interfaces/composition.py)
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import cast
 
 import httpx
 from fastapi import FastAPI
+from starlette.datastructures import State
 
-class AppState:
+class AppState(State):
     http_client: httpx.AsyncClient
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    app.state = AppState()  # for type checkers
-    app.state.http_client = httpx.AsyncClient(
+    state = cast(AppState, app.state)  # create_app() set it
+    state.http_client = httpx.AsyncClient(
         timeout=httpx.Timeout(30.0),
         follow_redirects=True,
         limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
@@ -169,18 +169,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        await app.state.http_client.aclose()
+        await state.http_client.aclose()
 
-app = FastAPI(lifespan=lifespan)
+def create_app() -> FastAPI:
+    app = FastAPI(lifespan=lifespan)
+    app.state = AppState()
+    return app
 ```
 
 ```python
-# usage in endpoints or use cases
-import httpx
-from fastapi import Depends, Request
+# usage in endpoints
+from __future__ import annotations
+
+from typing import cast
+
+from fastapi import Request
 
 async def fetch_page(request: Request, url: str) -> str:
-    client: httpx.AsyncClient = request.app.state.http_client
+    client = cast(AppState, request.app.state).http_client
     resp = await client.get(url)
     resp.raise_for_status()
     return resp.text
@@ -213,25 +219,31 @@ async def fetch_many(urls: list[str], client: httpx.AsyncClient) -> list[str]:
 
 ```python
 import asyncio
-import httpx
 
-async def fetch_one(url: str, client: httpx.AsyncClient, sem: asyncio.Semaphore) -> str:
+import httpx
+import structlog
+
+log = structlog.get_logger(__name__)
+
+async def fetch_one(url: str, client: httpx.AsyncClient, sem: asyncio.Semaphore) -> str | None:
     async with sem:
-        resp = await client.get(url)
-        resp.raise_for_status()
+        try:
+            resp = await client.get(url)
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            # One failed page leaves a partial result, not an aborted stage
+            log.warning("fetch_failed", url=url, error=str(exc))
+            return None
         return resp.text
 
 async def fetch_many(urls: list[str], client: httpx.AsyncClient, max_concurrency: int = 10) -> list[str]:
     sem = asyncio.Semaphore(max_concurrency)
-    tasks = [
-        asyncio.create_task(fetch_one(url, client, sem))
-        for url in urls
-    ]
-    return await asyncio.gather(*tasks)
+    pages = await asyncio.gather(*(fetch_one(url, client, sem) for url in urls))
+    return [page for page in pages if page is not None]
 ```
 
 > **Scavengarr hint**
-> Apply **per-site** concurrency limits and per-process global limits. This is especially important in multi-stage scraping. Scavengarr: the shared client uses `RetryTransport` + `DomainRateLimiter` for per-domain rate limiting and 429/503 retries (`src/scavengarr/infrastructure/common/`); each plugin bounds its own parallelism via `_new_semaphore()` (`_max_concurrent`, default `5`); `ConcurrencyPool` (`src/scavengarr/infrastructure/concurrency.py`) shares httpx and Playwright slots fairly across requests. No explicit `httpx.Limits` is set.
+> Apply **per-site** concurrency limits and per-process global limits. This is especially important in multi-stage scraping. Scavengarr: the shared client uses `RetryTransport` + `DomainRateLimiter` for per-domain rate limiting and 429/503 retries (`src/scavengarr/infrastructure/common/`); each plugin bounds its own parallelism via `_new_semaphore()` (`_max_concurrent`, default `5`) and fetches through `_safe_fetch()`, which logs a failure and returns `None`; `ConcurrencyPool` (`src/scavengarr/infrastructure/concurrency.py`) shares httpx and Playwright slots fairly across concurrent Stremio stream requests (Torznab searches take no slots).
 
 ---
 
@@ -245,8 +257,11 @@ Even with a shared client, patterns that **prevent connection reuse** are costly
 
 - Prefer **one base URL per target site**, reuse across calls.
 - Keep `follow_redirects=True` for scraping workflows that expect redirects.
-- Set `httpx.Limits(max_connections=..., max_keepalive_connections=...)` according to expected concurrency.
+- Set `httpx.Limits(max_connections=..., max_keepalive_connections=...)` according to expected concurrency. Keep idle connections open across the pauses between requests (`keepalive_expiry`), but keep `max_keepalive_connections` small: httpcore scans its whole pool on every request.
 - Avoid using query parameters that **defeat HTTP caching/CDN** if you rely on upstream caching.
+
+> **Scavengarr hint**
+> `build_http_client()` (`src/scavengarr/interfaces/composition.py`) sets `httpx.Limits(max_connections=100, max_keepalive_connections=20, keepalive_expiry=60)` and a 5 s connect timeout. One stream request talks to 18-42 hosts, and with httpx's default 5 s keep-alive every pause between two requests closed them all (TLS handshakes were 21% of the Python CPU on a Raspberry Pi). With 100 idle connections kept, httpcore's pool scan held the GIL 10-20% of the time on the Pi.
 
 ---
 
@@ -281,34 +296,38 @@ async def healthz():
 **Correct: initialize in lifespan and reuse**
 
 ```python
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import cast
 
-from diskcache import Cache
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from starlette.datastructures import State
 
-class AppState:
-    cache: Cache
+from myservice.cache import CachePort, create_cache  # async port: diskcache or Redis
+
+class AppState(State):
+    cache: CachePort
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    app.state = AppState()
-    app.state.cache = Cache(".cache/my-service", size_limit=1e9)
-    try:
+    state = cast(AppState, app.state)
+    state.cache = create_cache(directory=".cache/my-service")
+    async with state.cache:  # opens the store once, closes it at shutdown
         yield
-    finally:
-        app.state.cache.close()
 
 app = FastAPI(lifespan=lifespan)
+app.state = AppState()
 
 @app.get("/healthz")
-async def healthz():
-    cache: Cache = app.state.cache
-    return {"ok": True, "cached": bool(cache.get("health"))}
+async def healthz(request: Request) -> dict[str, bool]:
+    cache = cast(AppState, request.app.state).cache
+    return {"ok": True, "cached": bool(await cache.get("health"))}
 ```
 
 > **Scavengarr hint**
-> Your composition root should create shared resources once and attach them to `AppState`. Endpoints should only read `request.app.state`. Scavengarr: `lifespan()` in `src/scavengarr/interfaces/composition.py` creates the `CachePort` via `create_cache()` (diskcache or Redis), the shared `httpx.AsyncClient`, `PluginRegistry`, `HttpxSearchEngine`, repositories, `HosterResolverRegistry`, browser/concurrency pools and the Stremio use cases. `AppConfig` is loaded by the CLI (`load_config()`) and stored in `create_app()`.
+> Your composition root should create shared resources once and attach them to `AppState`. Endpoints should only read `request.app.state`. Scavengarr: `lifespan()` in `src/scavengarr/interfaces/composition.py` creates the `CachePort` via `create_cache()` (diskcache or Redis), the shared `httpx.AsyncClient`, `PluginRegistry`, `HttpxSearchEngine`, repositories, `HosterResolverRegistry`, browser/concurrency pools and the Stremio use cases. `AppConfig` is loaded by the CLI (`load_config()`) and stored in `create_app()`. Code never opens `diskcache.Cache` itself: diskcache does synchronous SQLite I/O, and the `CachePort` adapter runs every call in a worker thread.
 
 ---
 
@@ -338,24 +357,35 @@ async def search(q: str):
 **Correct: delegate to a dedicated use-case**
 
 ```python
+from __future__ import annotations
+
+from typing import cast
+
 from fastapi import APIRouter, Request
 
 router = APIRouter()
 
 class SearchUseCase:
-    async def execute(self, query: str, app_state) -> list[dict]:
-        # heavy logic here, using app_state.http_client, app_state.cache, etc.
+    def __init__(self, *, plugins: PluginRegistryPort, engine: SearchEnginePort, cache: CachePort) -> None:
+        self._plugins = plugins
+        self._engine = engine
+        self._cache = cache
+
+    async def execute(self, query: str) -> list[SearchResult]:
+        # heavy logic here: parallel plugin searches, caching
         ...
 
 @router.get("/search")
-async def search(request: Request, q: str):
-    state = request.app.state
-    use_case = SearchUseCase()
-    results = await use_case.execute(q, state)
-    return {"results": results}
+async def search(request: Request, q: str) -> dict[str, list[SearchResult]]:
+    state = cast(AppState, request.app.state)
+    use_case = SearchUseCase(plugins=state.plugins, engine=state.search_engine, cache=state.cache)
+    return {"results": await use_case.execute(q)}
 ```
 
 This separation makes it much easier for an LLM or human to optimize the inner logic (e.g. parallelization, caching) without touching the HTTP surface.
+
+> **Scavengarr hint**
+> Use cases know ports, not adapters: they get their dependencies through the constructor and never see `app.state`, a `Request` or the httpx client. The Torznab router builds `TorznabSearchUseCase` per request; `lifespan()` builds the Stremio use cases once.
 
 ---
 
@@ -372,13 +402,10 @@ Avoid unnecessary overhead in response serialization:
 **Incorrect: unnecessary double serialization**
 
 ```python
-from fastapi import Response
-
 @app.get("/rss")
 async def rss():
-    xml = build_xml()            # returns str
-    data = {"xml": xml}
-    return Response(content=data)  # FastAPI will JSON-encode this wrapper
+    xml = build_xml()  # returns str
+    return {"xml": xml}  # FastAPI JSON-encodes the wrapper: the client gets JSON with escaped XML
 ```
 
 **Correct: return final serialized payload**
@@ -404,39 +431,20 @@ When scraping, repeatedly visiting the same URL wastes network, CPU, and target-
 
 **Pattern**
 
-- Maintain a **visited URL cache** (e.g. `diskcache.Cache` with a TTL).
-- Before fetching, check whether the URL is marked visited.
-- On success, mark it visited with TTL (e.g. 1h).
+- Deduplicate URLs **within one run** (a `set`, or `dict.fromkeys` to keep the order) before fetching.
+- Answer a repeated run from a **result cache** with a TTL (see [4.1](#41-cache-expensive-but-stable-responses)), not from a visited-URL marker: a marker makes a later run skip the page and lose its results.
 
 **Example**
 
 ```python
-from diskcache import Cache
-import httpx
-import structlog
-
-log = structlog.get_logger(__name__)
-
-class Scraper:
-    def __init__(self, client: httpx.AsyncClient, cache: Cache):
-        self.client = client
-        self.cache = cache
-
-    async def fetch_page(self, url: str) -> str | None:
-        cache_key = f"visited:{url}"
-        if self.cache.get(cache_key):
-            log.debug("url_already_visited", url=url)
-            return None
-
-        resp = await self.client.get(url)
-        resp.raise_for_status()
-
-        self.cache.set(cache_key, True, expire=3600)  # 1 hour
-        return resp.text
+async def fetch_details(urls: list[str], client: httpx.AsyncClient, sem: asyncio.Semaphore) -> list[str]:
+    unique = list(dict.fromkeys(urls))  # a page listed twice is fetched once
+    pages = await asyncio.gather(*(fetch_one(url, client, sem) for url in unique))
+    return [page for page in pages if page is not None]
 ```
 
 > **Scavengarr hint**
-> Apply this pattern in **list pages** and **detail pages** to avoid refetching the same release pages. Scavengarr: there is no central multi-stage engine — each plugin implements its own search → detail → links stages; there is currently no shared visited-URL cache.
+> There is no central multi-stage engine: each plugin implements its own search → detail → links stages and deduplicates URLs within one search. Repeated searches are answered from the search caches (Torznab and Stremio); there is no shared visited-URL cache, which would drop results.
 
 ---
 
@@ -446,10 +454,10 @@ class Scraper:
 
 Multi-stage scraping (list → detail → mirrors) can explode into many requests. Use **stage-specific** and **global** limits:
 
-- e.g. per-stage max links: process first 10–20 links, log if truncated.
+- Bound the **work**, not the results: fetch detail pages only for the hits that match the query; cutting the list to its first links drops results.
 - global concurrency via semaphores as in [1.3](#13-use-asynciogather-with-concurrency-limits). [pythonprograming](https://pythonprograming.com/blog/using-pythons-asyncio-for-concurrency-best-practices-and-real-world-applications)
 
-**Incorrect: unbounded recursion**
+**Incorrect: unbounded fan-out**
 
 ```python
 async def crawl(urls: list[str], client: httpx.AsyncClient):
@@ -458,36 +466,52 @@ async def crawl(urls: list[str], client: httpx.AsyncClient):
     ...
 ```
 
-**Correct: integrate stage limits and truncation**
+**Correct: relevant hits only, bounded fetches**
 
 ```python
-MAX_LINKS_PER_STAGE = 10
-
-async def crawl_stage(urls: list[str], client: httpx.AsyncClient, sem: asyncio.Semaphore):
-    limited_urls = urls[:MAX_LINKS_PER_STAGE]
-    tasks = [
-        asyncio.create_task(fetch_one(url, client, sem))
-        for url in limited_urls
-    ]
-    return await asyncio.gather(*tasks)
+async def crawl_stage(hits: list[Hit], query: str, client: httpx.AsyncClient, sem: asyncio.Semaphore) -> list[str]:
+    wanted = [hit.url for hit in hits if matches(hit.title, query)]  # skip loose matches
+    pages = await asyncio.gather(*(fetch_one(url, client, sem) for url in wanted))
+    return [page for page in pages if page is not None]
 ```
+
+> **Scavengarr hint**
+> Plugins collect up to 1000 results over the site's pages (`effective_max_results`), scrape detail pages only for relevant hits (`relevant_hits()` in `src/scavengarr/infrastructure/plugins/relevance.py`) and bound the fetches with `self._new_semaphore()`.
 
 ---
 
-### 3.3 Prefer Streaming and Incremental Parsing
+### 3.3 Parse Once, Off the Event Loop
 
 **Impact: MEDIUM-HIGH**
 
-For large HTML pages or RSS feeds, prefer **incremental** parsing where feasible:
+Parsing a large HTML page is CPU work that blocks the event loop:
 
 - Avoid building huge intermediate Python objects if only a few fields are needed.
-- Use efficient parsers (`lxml`, `parsel`, `BeautifulSoup` with appropriate parser) and only extract required fields. [fyld](https://www.fyld.pt/blog/python-performance-guide-writing-code-25/)
+- Use a fast parser and only extract required fields. [fyld](https://www.fyld.pt/blog/python-performance-guide-writing-code-25/)
 
 **Guidelines**
 
-- Limit CSS/XPath selectors to only necessary nodes.
+- Limit selectors to only necessary nodes.
 - Normalize text as early as possible (strip, convert to int) to avoid repeated work downstream.
 - Avoid re-parsing the same HTML string multiple times; reuse the parsed object.
+
+> **Scavengarr hint**
+> Plugin parsers use selectolax (lexbor, CSS selectors only; helpers and pitfalls in `src/scavengarr/infrastructure/plugins/dom.py`). Every page goes through `await parse_page(parser, html)`: pages from 32 KiB parse in a worker thread.
+
+---
+
+### 3.4 Bound and Close Browser Pages
+
+**Impact: HIGH**
+
+A browser page costs far more RAM and CPU than an HTTP request:
+
+- Wait for conditions or locators, never with `sleep()`.
+- Close contexts and pages deterministically (`try`/`finally` or `async with`).
+- Limit browser parallelism with a semaphore.
+
+> **Scavengarr hint**
+> Plugins and hoster resolvers share one Chromium process (`SharedBrowserPool`, `src/scavengarr/infrastructure/browser/shared_browser.py`), driven through patchright, a Playwright fork. Playwright plugins bound their pages with `_new_semaphore()`; challenge fallbacks and hoster captures share the page limit of `StealthPool` (`src/scavengarr/infrastructure/browser/stealth_pool.py`: 2 pages at the start, adapted by `PageBudget` between 1 and `stremio.max_concurrent_playwright`).
 
 ---
 
@@ -505,18 +529,19 @@ Cache responses that are:
 **Example: cache tracker capabilities**
 
 ```python
-from functools import lru_cache
-
-@lru_cache(maxsize=256)
-def get_tracker_caps(tracker_id: str) -> dict:
-    # This might internally call plugin definitions or hit the network once
-    ...
+async def get_tracker_caps(tracker_id: str, cache: CachePort) -> dict[str, str]:
+    key = f"caps:{tracker_id}"
+    if (caps := await cache.get(key)) is not None:
+        return caps
+    caps = await fetch_caps(tracker_id)  # network
+    await cache.set(key, caps, ttl=60)
+    return caps
 ```
 
 **Scavengarr hint**
 
-- Candidates: per-plugin **caps** responses (Torznab `t=caps`) and health-check reachability results for a short TTL (e.g. 30–60 seconds). Scavengarr currently caches neither — both are cheap.
-- Scavengarr caches Torznab search results (`cache.search_ttl_seconds`, default 900 s; a plugin's `cache_ttl` overrides it) and link-validation outcomes in memory (valid 6 h, invalid 15 min). Keep search TTLs short so results reflect current site state.
+- Candidates: per-plugin **caps** responses (Torznab `t=caps`) and health-check reachability results for a short TTL (e.g. 30–60 seconds). Scavengarr does not cache caps or the Torznab health probes (both are cheap). Stremio searches skip sites that failed the periodic reachability check (`PluginHealthMonitor`).
+- Scavengarr caches Torznab search results (`cache.search_ttl_seconds`, default 900 s; a plugin's `cache_ttl` overrides it) and link-validation outcomes in memory (valid 6 h, invalid 15 min). Stremio search results are cached per title with the same TTL (`src/scavengarr/application/stremio/search_cache.py`; a stale entry answers for up to 6 h while one background search refreshes it), and hoster resolutions in memory (1 h, dead links 15 min). Keep search TTLs short so results reflect current site state.
 
 ---
 
@@ -524,25 +549,29 @@ def get_tracker_caps(tracker_id: str) -> dict:
 
 **Impact: HIGH**
 
-`diskcache` stores data on disk with an LRU eviction policy, suitable for:
+`diskcache` stores data on disk and by default evicts the least recently stored entries (size limit 1 GiB), suitable for:
 
 - Shared caches across worker processes
-- Large numbers of visited URLs
+- Large numbers of entries
 - Longer-lived caches that would exceed RAM if kept in memory only [fyld](https://www.fyld.pt/blog/python-performance-guide-writing-code-25/)
 
 **Pattern**
 
 - Instantiate one `Cache` per service (directory such as `.cache/my-service`).
 - Control `size_limit` to avoid unbounded growth.
-- Use **TTL (`expire`)** aggressively for visited URLs and temporary results.
+- Use **TTL (`expire`)** aggressively for temporary results.
+- diskcache calls do synchronous SQLite I/O: in async code, run them in a worker thread.
 
 ```python
 from diskcache import Cache
 
 cache = Cache(".cache/my-service", size_limit=1e9)  # ~1GB
 
-cache.set("visited:https://example.org/page/1", True, expire=3600)
+cache.set("search:dune", results, expire=900)  # sync: from async code, via asyncio.to_thread
 ```
+
+> **Scavengarr hint**
+> Code never opens `diskcache.Cache` itself. It uses the `CachePort` on `AppState` (`create_cache()`: diskcache or Redis); the diskcache adapter runs every call in a worker thread, bounds parallel calls and runs writes one at a time.
 
 ---
 
@@ -554,12 +583,12 @@ For CPU-only, deterministic functions (e.g., small template rendering, config lo
 
 ```python
 from functools import lru_cache
+from urllib.parse import quote_plus, urljoin
 
 @lru_cache(maxsize=128)
-def build_search_url(base_url: str, path_template: str, query: str) -> str:
-    from urllib.parse import quote_plus, urljoin
-    path = path_template.format(query=quote_plus(query))
-    return urljoin(base_url, path)
+def build_search_url(base_url: str, query: str) -> str:
+    # quote_plus in a query string; a path segment takes quote(query, safe="")
+    return urljoin(base_url, f"/search?q={quote_plus(query)}")
 ```
 
 > Do **not** use `lru_cache` for functions that depend on time, random input, or external I/O side effects.
@@ -591,8 +620,7 @@ def parse_and_enrich_sync(data: str) -> dict:
     return enrich_sync(result)
 
 async def parse_and_enrich(data: str) -> dict:
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, parse_and_enrich_sync, data)
+    return await asyncio.to_thread(parse_and_enrich_sync, data)
 ```
 
 Use this only if profiling shows that CPU cost justifies the overhead of the executor.
@@ -607,7 +635,11 @@ Network calls will fail. Robust pipelines:
 
 - Apply **per-request timeouts** at the HTTP client level
 - Use **retries with exponential backoff** for **transient** errors (5xx, network errors)
-- **Do not** retry on 4xx client errors (e.g. 404, 401) [blog.poespas](https://blog.poespas.me/posts/2024/04/27-optimizing-python-asyncio-for-high-performance/)
+- **Do not** retry on 4xx client errors (e.g. 404, 401), except 429 [blog.poespas](https://blog.poespas.me/posts/2024/04/27-optimizing-python-asyncio-for-high-performance/)
+- Retry in **one** layer: a retry loop on top of a retrying client multiplies the requests.
+
+> **Scavengarr hint**
+> The shared client already retries 429 and 503 (`RetryTransport`: `Retry-After`, exponential backoff with jitter, capped; a 429/503 that Cloudflare served from its cache is not retried). Other 5xx and network errors are not retried. Plugins and resolvers add no generic retry loop on top (the sketch below would turn one 503 into up to 12 requests); site-specific retries stay the exception.
 
 **Sketch**
 
@@ -684,33 +716,43 @@ Structured logging (e.g. `structlog` + stdlib logging) is essential for diagnosi
 **Example: request logging middleware**
 
 ```python
+from __future__ import annotations
+
+import secrets
 import time
+from collections.abc import Awaitable, Callable
+
 import structlog
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 
 log = structlog.get_logger("http")
 
 app = FastAPI()
 
 @app.middleware("http")
-async def log_requests(request: Request, call_next):
+async def log_requests(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
     start = time.perf_counter()
+    # Every log line of the request carries its id
+    tokens = structlog.contextvars.bind_contextvars(request_id=secrets.token_hex(6))
+    status = 500
     try:
         response = await call_next(request)
         status = response.status_code
         return response
     finally:
-        duration_ms = (time.perf_counter() - start) * 1000.0
         log.info(
             "http_request",
             method=request.method,
             path=request.url.path,
-            query=str(request.url.query),
-            status=status if "status" in locals() else 500,
-            duration_ms=round(duration_ms, 2),
-            client_ip=request.client.host if request.client else None,
+            query=masked_query(request.url.query),  # values can hold API keys and tokens
+            status=status,
+            duration_ms=round((time.perf_counter() - start) * 1000.0, 2),
         )
+        structlog.contextvars.reset_contextvars(**tokens)
 ```
+
+> **Scavengarr hint**
+> `log_requests` in `src/scavengarr/interfaces/app.py` writes one `http_request` line per request, with `request_id` and masked query values (`loggable_query()`: only the Torznab parameters keep their values). It does not sample.
 
 ---
 
@@ -758,6 +800,9 @@ Do not guess performance problems. Use profiling tools:
   - result normalization
 - Record metrics such as `duration_ms`, counts, and error rates in logs.
 
+> **Scavengarr hint**
+> The core times its steps with `TelemetryPort.stage()` (served at `GET /metrics`), never plugins or resolvers; label values come only from fixed sets. Profile a running instance with `scripts/stremio_profile.py` (wall time, CPU, outbound requests per host, optional py-spy sampling); benchmarks live in `tests/benchmark/`. See `docs/features/observability.md`.
+
 ---
 
 ### 7.2 Automate Style and Type Checks
@@ -768,12 +813,11 @@ While not directly a performance booster, consistent style and type safety reduc
 
 Recommended tools:
 
-- **Black** or **Ruff** for formatting
-- **Ruff**, **Flake8**, or similar for linting
-- **mypy** for type checking (especially across `AppState`, async boundaries, and DI)
+- **Ruff** for formatting and linting
+- A type checker (basedpyright, pyright or mypy), especially across `AppState`, async boundaries, and DI
 
 > **Scavengarr hint**
-> Scavengarr uses **Ruff** only (lint + format, configured in `pyproject.toml`, run via `pre-commit`). No type checker is configured.
+> Scavengarr runs **Ruff** (lint and format) and **basedpyright** (`standard` mode, `[tool.basedpyright]` in `pyproject.toml`, `src/` and `plugins/`) through `pre-commit`; CI runs the same.
 
 These make it safer for LLMs and humans to apply aggressive optimizations.
 
@@ -848,8 +892,8 @@ For any performance work on a FastAPI + httpx + diskcache + structlog service:
    - Move heavy initialization to lifespan or composition root.
 
 2. **For scraping pipelines**, apply Section 3 and 4:
-   - Deduplicate URLs, bound concurrency, and implement retries/backoff.
-   - Use diskcache and targeted caching for expensive but stable operations.
+   - Deduplicate URLs and bound concurrency; retries belong to the shared client (5.2).
+   - Cache expensive but stable results with a TTL, through an async cache port.
 
 3. **Instrument and profile** before micro-optimizing:
    - Add structured logs with timings.

@@ -1039,3 +1039,41 @@ class TestXFSResolverCaptchaGate:
 
         assert await resolver.resolve(url) is None
         pool.capture_media.assert_not_awaited()
+
+
+class TestPlayerPageFallback:
+    """moflix-stream.click (VidHide) answers /e/<id> with 404 and serves the
+    player under the /embed/<id> and /v/<id> links moflix hands out (end-to-end
+    test 2026-10-04: all 15 moflix-stream links of an hour failed)."""
+
+    _ID = "kulz2q4qc0fl"
+
+    @staticmethod
+    def _config() -> XFSConfig:
+        return next(c for c in ALL_XFS_CONFIGS if c.name == "vidhide")
+
+    @respx.mock
+    async def test_the_link_page_when_the_embed_route_is_missing(self) -> None:
+        link = f"https://moflix-stream.click/embed/{self._ID}"
+        respx.get(f"https://moflix-stream.click/e/{self._ID}").respond(404)
+        respx.get(link).respond(200, text=_video_html_packed_js())
+        respx.head(_VIDEO_HLS_URL).respond(200)
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=self._config(), http_client=client)
+            result = await resolver.resolve(link)
+
+        assert result is not None
+        assert result.video_url == _VIDEO_HLS_URL
+        assert result.headers["Referer"] == link
+
+    @respx.mock
+    async def test_an_embed_link_answering_404_is_asked_once(self) -> None:
+        link = f"https://moflix-stream.click/e/{self._ID}"
+        route = respx.get(link).respond(404)
+
+        async with httpx.AsyncClient() as client:
+            resolver = XFSResolver(config=self._config(), http_client=client)
+            assert await resolver.resolve(link) is None
+
+        assert route.call_count == 1

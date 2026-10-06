@@ -2,13 +2,13 @@
 
 # Link Validation
 
-> Before Torznab results are returned, their download links are checked in parallel (HEAD first, GET fallback) and dead links and results with no valid link are dropped.
+> Before Torznab results are returned, and as each plugin's results arrive in a Stremio search, their download links are checked in parallel (HEAD first, GET fallback) and dead links and results with no valid link are dropped.
 
 ---
 
 ## Overview
 
-Indexer sites frequently reference dead, expired or blocked download URLs. Link validation runs after the plugin search and before CrawlJob creation. Every Torznab search passes the plugin's results through `HttpxSearchEngine.validate_results()` automatically — plugins do not call it themselves.
+Indexer sites frequently reference dead, expired or blocked download URLs. Link validation runs after the plugin search and before CrawlJob creation. Torznab and Stremio searches pass each plugin's results through `HttpxSearchEngine.validate_results()` automatically — plugins do not call it themselves.
 
 ```text
 Plugin results
@@ -53,9 +53,10 @@ Streaming hosters behave inconsistently:
 | Standard hosters | 200 | 200 | HEAD succeeds — fast path |
 | HEAD blocked (e.g. veev.to, savefiles.com) | 403 | 200 | GET fallback marks the link valid |
 | Dead/expired links | 404 | 404 | Both fail — link invalid |
-| Timeout (slow/offline) | timeout | timeout | Both fail — link invalid |
+| Timeout (slow) | read timeout | timeout | Both fail — link invalid |
+| Host down (connection refused or connect timeout) | fails | not sent | Link invalid; the host is skipped for a while (Unreachable hosts below) |
 
-HEAD is tried first because it does not download the response body. Any HEAD failure (status ≥ 400 or an exception) triggers the GET fallback, which is streamed: only the status is read, the body (possibly the whole file) is never downloaded. Validation only checks the HTTP status; it does not detect hoster-specific "file not found" pages served with 200.
+HEAD is tried first because it does not download the response body. A HEAD status of 400 or more, a read timeout or another error triggers the GET fallback (a failed connection does not, see Unreachable hosts below), which is streamed: only the status is read, the body (possibly the whole file) is never downloaded. Validation only checks the HTTP status; it does not detect hoster-specific "file not found" pages served with 200.
 
 ---
 
@@ -72,7 +73,7 @@ class SearchEnginePort(Protocol):
     ) -> list[SearchResult]: ...
 ```
 
-`TorznabSearchUseCase` calls `validate_results()` on the raw plugin results; any exception is re-raised as `TorznabExternalError` (HTTP 502 in dev/test, empty feed with 200 in prod).
+`TorznabSearchUseCase` validates the results in order, `limit` at a time, until `offset + limit` valid ones exist (a later page checks the links of the cached results again; the validator's result cache answers the ones checked before); any exception is re-raised as `TorznabExternalError` (HTTP 502 in dev/test, empty feed with 200 in prod).
 
 ---
 
@@ -162,7 +163,7 @@ async def validate_batch(self, urls: list[str]) -> dict[str, bool]:
 - Strings that do not start with `http://` or `https://` are not requested and are marked invalid.
 - All unique URLs run concurrently via `asyncio.gather`; the semaphore limits real parallelism.
 
-For N uncached URLs with concurrency C and timeout T, wall time ranges from about `ceil(N/C)` × HEAD latency (all HEAD succeed) to about `ceil(N/C)` × 2T (every URL needs GET and times out).
+For N uncached URLs with concurrency C and timeout T, wall time ranges from about `ceil(N/C)` × HEAD latency (all HEAD succeed) to about `ceil(N/C)` × 2T (every URL needs GET and times out). At most 4 checks run per host at once, and the shared client's per-domain rate limit and 429/503 retries add to this, so many links on one hoster take longer. In Torznab, N is the links of one chunk of `limit` results.
 
 ---
 
@@ -261,12 +262,16 @@ With `stremio.auto_tune_all: true` (the default), startup overwrites `validation
 
 | Event | Level | Fields |
 |---|---|---|
-| `batch_validation_started` | INFO | `total`, `unique`, `duplicates_skipped` |
+| `search_engine_initialized` | INFO | `validate_links`, `validation_timeout`, `validation_concurrency` |
+| `batch_validation_started` | INFO | `total`, `unique`, `duplicates_skipped` (non-http(s) strings included) |
 | `batch_validation_completed` | INFO | `total`, `unique`, `valid`, `invalid` |
 | `link_head_result` | DEBUG | `url`, `status_code`, `valid` |
 | `link_head_timeout` | DEBUG | `url` |
 | `link_head_http_error` | DEBUG | `url`, `error` |
 | `link_head_failed` | DEBUG | `url`, `error` |
+| `link_head_connect_failed` | DEBUG | `url`, `error` |
+| `link_host_unreachable` | INFO | `host`, `url`, `skip_s` |
+| `link_host_unreachable_skipped` | DEBUG | `url`, `host` |
 | `link_get_fallback_result` | DEBUG | `url`, `status_code`, `valid` |
 | `link_validation_timeout` | WARNING | `url`, `timeout` |
 | `link_validation_http_error` | WARNING | `url`, `error` |
@@ -285,6 +290,7 @@ With `stremio.auto_tune_all: true` (the default), startup overwrites `validation
 | `HttpLinkValidator` | `src/scavengarr/infrastructure/validation/http_link_validator.py` |
 | `HttpxSearchEngine` | `src/scavengarr/infrastructure/torznab/search_engine.py` |
 | Caller (`TorznabSearchUseCase`) | `src/scavengarr/application/use_cases/torznab_search.py` |
+| Caller (Stremio, `PluginSearchRunner`) | `src/scavengarr/application/stremio/plugin_search.py` |
 | Wiring and auto-tuning | `src/scavengarr/interfaces/composition.py` |
 | Unit tests (validator) | `tests/unit/infrastructure/test_link_validator.py` |
 | Unit tests (search engine) | `tests/unit/infrastructure/test_search_engine.py` |

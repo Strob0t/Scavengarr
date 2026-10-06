@@ -1,8 +1,7 @@
 """Dynamic query pool builder for search probes.
 
-Generates probe queries from the free IMDB Suggest API + Wikidata.
-No API key required.  Titles are German-localised (via Wikidata) and
-rotated deterministically per ISO week.
+Generates probe queries from the free IMDB Suggest API (no API key
+required), rotated deterministically per ISO week.
 """
 
 from __future__ import annotations
@@ -22,7 +21,6 @@ from scavengarr.domain.ports.cache import CachePort
 log = structlog.get_logger(__name__)
 
 _SUGGEST_URL = "https://v2.sg.media-imdb.com/suggestion/{letter}/{query}.json"
-_WIKIDATA_API = "https://www.wikidata.org/w/api.php"
 _CACHE_TTL = 86_400  # 24 hours
 _TIMEOUT = 10.0
 
@@ -107,7 +105,6 @@ class QueryPoolBuilder:
     """Builds probe query lists from the free IMDB Suggest API.
 
     Queries are cached for 24h and rotated deterministically per ISO week.
-    German titles are resolved via Wikidata (free, no API key).
     Falls back to a bundled list if IMDB is unreachable.
     """
 

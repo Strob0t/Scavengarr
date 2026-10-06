@@ -529,7 +529,7 @@ class TestDomainVerification:
     async def test_first_domain_works(self) -> None:
         plugin = _make_plugin()
         mock_client = AsyncMock(spec=httpx.AsyncClient)
-        resp = MagicMock(spec=httpx.Response)
+        resp = MagicMock(spec=httpx.Response, history=[])
         resp.status_code = 200
         resp.url = httpx.URL("https://aniworld.to/")
         mock_client.head = AsyncMock(return_value=resp)

@@ -19,11 +19,9 @@ from .torznab import (
     TorznabExternalError,
     TorznabIndexInfo,
     TorznabItem,
-    TorznabNoPluginsAvailable,
     TorznabPluginNotFound,
     TorznabQuery,
     TorznabUnsupportedAction,
-    TorznabUnsupportedPlugin,
 )
 
 __all__ = [
@@ -43,9 +41,7 @@ __all__ = [
     "TorznabExternalError",
     "TorznabIndexInfo",
     "TorznabItem",
-    "TorznabNoPluginsAvailable",
     "TorznabPluginNotFound",
     "TorznabQuery",
     "TorznabUnsupportedAction",
-    "TorznabUnsupportedPlugin",
 ]

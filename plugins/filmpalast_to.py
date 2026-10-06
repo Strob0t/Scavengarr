@@ -15,14 +15,16 @@ from __future__ import annotations
 
 import asyncio
 import re
-from html.parser import HTMLParser
 from urllib.parse import quote, urljoin
+
+from selectolax.lexbor import LexborHTMLParser, LexborNode
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.categories import (
     category_matches,
     served_category,
 )
+from scavengarr.infrastructure.plugins.dom import classes, parse_page
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.relevance import (
     SINGLE_TITLE_HITS,
@@ -71,8 +73,8 @@ def _is_episode(title: str, season: int, episode: int | None) -> bool:
 # ---------------------------------------------------------------------------
 # HTML parsers
 # ---------------------------------------------------------------------------
-class _SearchResultParser(HTMLParser):
-    """Parse filmpalast.to search results page.
+class _SearchResultParser:
+    """Parse filmpalast.to search results page (selectolax).
 
     Each result has structure::
 
@@ -86,62 +88,29 @@ class _SearchResultParser(HTMLParser):
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self.results: list[dict[str, str]] = []
         self.has_next_page = False
-        self._in_pageing_a = False
 
-        # State tracking
-        self._in_article = False
-        self._in_h2 = False
-        self._in_a = False
-        self._current_title = ""
-        self._current_href = ""
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag == "article":
-            self._in_article = True
-            self._current_title = ""
-            self._current_href = ""
-
-        if tag == "h2" and self._in_article:
-            self._in_h2 = True
-
-        if tag == "a" and self._in_h2:
-            attr_dict = dict(attrs)
-            self._in_a = True
-            self._current_href = attr_dict.get("href", "") or ""
-            self._current_title = ""
-
-        if tag == "a" and "pageing" in (dict(attrs).get("class") or ""):
-            self._in_pageing_a = True
-
-    def handle_data(self, data: str) -> None:
-        if self._in_a and self._in_h2:
-            self._current_title += data
-        if self._in_pageing_a and data.strip().startswith("vorw"):
-            self.has_next_page = True
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "a":
-            self._in_pageing_a = False
-
-        if tag == "a" and self._in_a:
-            self._in_a = False
-
-        if tag == "h2" and self._in_h2:
-            self._in_h2 = False
-
-        if tag == "article" and self._in_article:
-            self._in_article = False
-            title = self._current_title.strip()
-            href = self._current_href.strip()
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        for article in tree.css("article"):
+            links = article.css("h2 a")
+            if not links:
+                continue
+            title = links[-1].text().strip()
+            href = (links[-1].attributes.get("href") or "").strip()
             if title and href:
                 self.results.append({"title": title, "detail_url": href})
+        self.has_next_page = self.has_next_page or any(
+            a.text().strip().startswith("vorw") for a in tree.css("a.pageing")
+        )
 
 
-class _DetailPageParser(HTMLParser):
-    """Parse filmpalast.to detail page for streaming links.
+class _DetailPageParser:
+    """Parse filmpalast.to detail page for streaming links (selectolax).
+
+    The detail pages are ~300 KB: html.parser took 20 ms per page on x86
+    and the largest share of the parsing CPU on a Raspberry Pi.
 
     Structure::
 
@@ -157,107 +126,46 @@ class _DetailPageParser(HTMLParser):
           </ul>
         </div>
 
-    Extracts title, release_name, and streaming links with hoster names.
+    Extracts title, release_name, and streaming links with hoster names
+    (the last heading and release span of the page; per list item the
+    text of its ``hostName`` or class-less paragraphs and its last
+    ``button`` link).
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self.title: str = ""
         self.release_name: str = ""
         self.links: list[dict[str, str]] = []
 
-        # State tracking
-        self._in_title_h2 = False
-        self._in_release_span = False
-        self._in_stream_list = False
-        self._stream_div_depth = 0
-        self._in_li = False
-        self._in_hoster_p = False
-        self._in_link_a = False
-        self._current_hoster = ""
-        self._current_link = ""
-
-    def handle_starttag(  # noqa: C901
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
-        attr_dict = dict(attrs)
-        classes = (attr_dict.get("class", "") or "").split()
-
-        # Title: <h2 class="bgDark">
-        if tag == "h2" and "bgDark" in classes:
-            self._in_title_h2 = True
-            self.title = ""
-
-        # Release name: <span id="release_text">
-        if tag == "span" and attr_dict.get("id") == "release_text":
-            self._in_release_span = True
-            self.release_name = ""
-
-        # Stream list container: <div id="grap-stream-list">
-        if tag == "div":
-            if attr_dict.get("id") == "grap-stream-list":
-                self._in_stream_list = True
-                self._stream_div_depth = 0
-            elif self._in_stream_list:
-                self._stream_div_depth += 1
-
-        # List item in stream list
-        if tag == "li" and self._in_stream_list:
-            self._in_li = True
-            self._current_hoster = ""
-            self._current_link = ""
-
-        # Hoster name: <p class="hostName"> or just <p> inside <li>
-        if tag == "p" and self._in_li:
-            if "hostName" in classes or not classes:
-                self._in_hoster_p = True
-
-        # Link: <a class="button iconPlay"> or <a class="button">
-        if tag == "a" and self._in_li and "button" in classes:
-            self._in_link_a = True
-            # Try data-player-url first, then href, then onclick
-            link = attr_dict.get("data-player-url", "")
-            if not link:
-                link = attr_dict.get("href", "") or ""
-            if not link:
-                onclick = attr_dict.get("onclick", "") or ""
-                m = _ONCLICK_RE.search(onclick)
-                if m:
-                    link = m.group(1)
-            self._current_link = link
-
-    def handle_data(self, data: str) -> None:
-        if self._in_title_h2:
-            self.title += data
-        if self._in_release_span:
-            self.release_name += data
-        if self._in_hoster_p:
-            self._current_hoster += data
-
-    def _handle_li_end(self) -> None:
-        self._in_li = False
-        hoster = self._current_hoster.strip()
-        link = self._current_link.strip()
-        # the site links some hosters to their login page instead of a video
-        if link and not _ACCOUNT_PAGE_RE.search(link):
+    def feed(self, html: str) -> None:
+        tree = LexborHTMLParser(html)
+        if titles := tree.css("h2.bgDark"):
+            self.title = titles[-1].text()
+        if names := tree.css("span#release_text"):
+            self.release_name = names[-1].text()
+        for item in tree.css("div#grap-stream-list li"):
+            buttons = item.css("a.button")
+            link = _player_link(buttons[-1]).strip() if buttons else ""
+            # the site links some hosters to their login page instead of a video
+            if not link or _ACCOUNT_PAGE_RE.search(link):
+                continue
+            hoster = "".join(
+                p.text()
+                for p in item.css("p")
+                if "hostName" in classes(p) or not classes(p)
+            ).strip()
             self.links.append({"hoster": hoster or "unknown", "link": link})
 
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "h2" and self._in_title_h2:
-            self._in_title_h2 = False
-        elif tag == "span" and self._in_release_span:
-            self._in_release_span = False
-        elif tag == "p" and self._in_hoster_p:
-            self._in_hoster_p = False
-        elif tag == "a" and self._in_link_a:
-            self._in_link_a = False
-        elif tag == "li" and self._in_li:
-            self._handle_li_end()
-        elif tag == "div" and self._in_stream_list:
-            if self._stream_div_depth > 0:
-                self._stream_div_depth -= 1
-            else:
-                self._in_stream_list = False
+
+def _player_link(button: LexborNode) -> str:
+    """data-player-url, else href, else the URL of an onclick window.open()."""
+    attrs = button.attributes
+    link = attrs.get("data-player-url") or attrs.get("href") or ""
+    if not link:
+        m = _ONCLICK_RE.search(attrs.get("onclick") or "")
+        if m:
+            link = m.group(1)
+    return link
 
 
 # ---------------------------------------------------------------------------
@@ -284,8 +192,7 @@ class FilmpalastPlugin(HttpxPluginBase):
         if resp is None:
             return [], False
 
-        parser = _SearchResultParser()
-        parser.feed(resp.text)
+        parser = await parse_page(_SearchResultParser(), resp.text)
 
         self._log.info(
             "filmpalast_search_page",
@@ -318,8 +225,7 @@ class FilmpalastPlugin(HttpxPluginBase):
         if resp is None:
             return "", "", []
 
-        parser = _DetailPageParser()
-        parser.feed(resp.text)
+        parser = await parse_page(_DetailPageParser(), resp.text)
         return parser.title.strip(), parser.release_name.strip(), parser.links
 
     async def search(

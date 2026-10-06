@@ -25,6 +25,10 @@ from urllib.parse import quote, unquote, urlparse
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
+from scavengarr.infrastructure.plugins.relevance import (
+    SINGLE_TITLE_HITS,
+    relevant_hits,
+)
 
 # ---------------------------------------------------------------------------
 # Configurable settings
@@ -47,6 +51,11 @@ def _is_premium(video: dict) -> bool:
     session, so no player can play it.
     """
     return "premium" in str(video.get("name") or "").lower()
+
+
+def _hit_name(hit: dict) -> str:
+    """The title of a search hit."""
+    return str(hit.get("name") or "")
 
 
 def _pre_filter_by_category(results: list[dict], category: int | None) -> list[dict]:
@@ -274,6 +283,14 @@ class MoflixPlugin(HttpxPluginBase):
             effective_category = 5000
 
         search_results = _pre_filter_by_category(search_results, effective_category)
+        # The search lists people next to titles, and loose matches; each hit
+        # costs a detail request (a person's id is no title id)
+        search_results = relevant_hits(
+            [r for r in search_results if r.get("model_type", "title") == "title"],
+            query,
+            _hit_name,
+            limit=SINGLE_TITLE_HITS if season is not None else None,
+        )
         if not search_results:
             return []
 

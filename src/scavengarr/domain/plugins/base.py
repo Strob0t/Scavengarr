@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, runtime_checkable
 
@@ -41,6 +42,28 @@ class SearchResult:
     grabs: int = 0
     download_volume_factor: float = 0.0  # Direct Download = no upload required
     upload_volume_factor: float = 0.0
+
+
+def link_url(link: Mapping[str, str]) -> str:
+    """The URL of one of a result's ``download_links``: plugins store it
+    under ``link``, older ones under ``url``."""
+    return (link.get("link") or link.get("url") or "").strip()
+
+
+# Plugin, title, release, link, links
+ResultKey = tuple[str, str, str | None, str, tuple[str, ...]]
+
+
+def result_key(result: SearchResult) -> ResultKey:
+    """What makes a result the same one found again: plugin, release, links."""
+    links = tuple(map(link_url, result.download_links or ()))
+    return (
+        result.metadata.get("source_plugin", ""),
+        result.title,
+        result.release_name,
+        result.download_link,
+        links,
+    )
 
 
 class PluginProtocol(Protocol):

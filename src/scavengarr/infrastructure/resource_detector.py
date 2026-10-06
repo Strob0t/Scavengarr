@@ -7,12 +7,16 @@ Detection order (mirrors JVM ``UseContainerSupport`` and Go 1.25):
     1. cgroup v2:  ``/sys/fs/cgroup/cpu.max``, ``/sys/fs/cgroup/memory.max``
     2. cgroup v1:  ``cpu.cfs_quota_us``/``cpu.cfs_period_us``, ``memory.limit_in_bytes``
     3. Fallback:   ``os.cpu_count()`` + ``psutil`` (optional) or conservative defaults
+
+``ResourceSampler`` reads how busy the CPU is and how much memory is free,
+for the stealth browser's page budget.
 """
 
 from __future__ import annotations
 
 import math
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -57,13 +61,12 @@ def _read_file(path: Path) -> str | None:
         return None
 
 
-def _detect_cpu_v2() -> int | None:
-    """Detect CPU cores from cgroup v2 ``cpu.max``.
+def _cpu_limit(content: str | None) -> float | None:
+    """The cores of a cgroup v2 ``cpu.max``, None when unlimited.
 
-    Format: ``"QUOTA PERIOD"`` (e.g. ``"200000 100000"`` = 2 cores).
+    Format: ``"QUOTA PERIOD"`` (e.g. ``"150000 100000"`` = 1.5 cores).
     ``"max PERIOD"`` means unlimited.
     """
-    content = _read_file(_CGROUP_V2_CPU)
     if content is None:
         return None
 
@@ -84,7 +87,29 @@ def _detect_cpu_v2() -> int | None:
     if quota <= 0 or period <= 0:
         return None
 
-    return max(1, math.ceil(quota / period))
+    return quota / period
+
+
+def _memory_limit(content: str | None) -> int | None:
+    """The bytes of a cgroup memory limit, None when unlimited."""
+    if content is None or content == "max":
+        return None
+
+    try:
+        limit = int(content)
+    except ValueError:
+        return None
+
+    if limit <= 0 or limit >= _MEM_UNLIMITED_THRESHOLD:
+        return None  # unlimited or host value leaked
+
+    return limit
+
+
+def _detect_cpu_v2() -> int | None:
+    """Detect CPU cores from cgroup v2 ``cpu.max`` (whole cores, at least 1)."""
+    cores = _cpu_limit(_read_file(_CGROUP_V2_CPU))
+    return None if cores is None else max(1, math.ceil(cores))
 
 
 def _detect_cpu_v1() -> int | None:
@@ -115,36 +140,12 @@ def _detect_mem_v2() -> int | None:
 
     Value is bytes, or ``"max"`` for unlimited.
     """
-    content = _read_file(_CGROUP_V2_MEM)
-    if content is None or content == "max":
-        return None
-
-    try:
-        limit = int(content)
-    except ValueError:
-        return None
-
-    if limit <= 0 or limit >= _MEM_UNLIMITED_THRESHOLD:
-        return None  # unlimited or host value leaked
-
-    return limit
+    return _memory_limit(_read_file(_CGROUP_V2_MEM))
 
 
 def _detect_mem_v1() -> int | None:
     """Detect memory limit from cgroup v1 ``memory.limit_in_bytes``."""
-    content = _read_file(_CGROUP_V1_MEM)
-    if content is None:
-        return None
-
-    try:
-        limit = int(content)
-    except ValueError:
-        return None
-
-    if limit <= 0 or limit >= _MEM_UNLIMITED_THRESHOLD:
-        return None  # unlimited or host value leaked
-
-    return limit
+    return _memory_limit(_read_file(_CGROUP_V1_MEM))
 
 
 def _fallback_cpu() -> int:
@@ -226,3 +227,137 @@ def detect_resources() -> DetectedResources:
     )
 
     return result
+
+
+def own_cgroup(root: Path, proc_cgroup: Path) -> Path | None:
+    """The cgroup v2 directory of this process (``0::<path>``), if any."""
+    try:
+        lines = proc_cgroup.read_text().splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        if line.startswith("0::"):
+            directory = root / line[3:].strip().lstrip("/")
+            return directory if (directory / "cpu.stat").is_file() else None
+    return None
+
+
+def read_cgroup_value(path: Path, key: str | None = None) -> int | None:
+    """The number in *path*, or the one after *key* (``cpu.stat``)."""
+    try:
+        text = path.read_text()
+    except OSError as exc:
+        log.debug("cgroup_read_failed", path=str(path), error=str(exc))
+        return None
+    try:
+        if key is None:
+            return int(text.strip())
+        for line in text.splitlines():
+            name, _, value = line.partition(" ")
+            if name == key:
+                return int(value)
+    except ValueError:
+        log.debug("cgroup_value_invalid", path=str(path), key=key)
+    return None
+
+
+def _host_jiffies(path: Path) -> tuple[int, int] | None:
+    """Busy and all CPU time of the host since boot (``/proc/stat``)."""
+    content = _read_file(path)
+    if content is None:
+        return None
+    fields = content.split("\n", 1)[0].split()
+    if len(fields) < 9 or fields[0] != "cpu":
+        return None
+    try:
+        user, nice, system, idle, iowait, irq, softirq, steal = (
+            int(value) for value in fields[1:9]
+        )
+    except ValueError:
+        return None
+    busy = user + nice + system + irq + softirq + steal
+    return busy, busy + idle + iowait
+
+
+def _available_memory(path: Path) -> int | None:
+    """``MemAvailable`` of ``/proc/meminfo`` in bytes."""
+    content = _read_file(path)
+    if content is None:
+        return None
+    for line in content.splitlines():
+        name, _, value = line.partition(":")
+        if name == "MemAvailable":
+            try:
+                return int(value.split()[0]) * 1024
+            except (IndexError, ValueError):
+                return None
+    return None
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceUsage:
+    """How busy the CPU is and how much memory is free; None when unknown."""
+
+    cpu_busy: float | None  # busy share since the last sample, 0-1
+    memory_free: int | None  # bytes
+
+
+class ResourceSampler:
+    """CPU load and free memory as the container sees them.
+
+    The CPU's busy share since the last sample is the host's
+    (``/proc/stat``) or, under a CPU limit, the container's share of it
+    (cgroup v2), whichever is higher. Free memory is the host's
+    ``MemAvailable`` or, under a memory limit, what the limit leaves
+    (inactive page cache counts as free), whichever is lower.
+    """
+
+    def __init__(
+        self,
+        *,
+        proc: Path = Path("/proc"),
+        cgroup_root: Path = Path("/sys/fs/cgroup"),
+    ) -> None:
+        self._proc = proc
+        self._cgroup = own_cgroup(cgroup_root, proc / "self" / "cgroup")
+        self._host_last: tuple[int, int] | None = None  # busy, all jiffies
+        self._container_last: tuple[float, int] | None = None  # time, usage_usec
+
+    def sample(self) -> ResourceUsage:
+        busy = [b for b in (self._host_busy(), self._container_busy()) if b is not None]
+        free = [f for f in (self._host_free(), self._container_free()) if f is not None]
+        return ResourceUsage(
+            cpu_busy=max(busy, default=None), memory_free=min(free, default=None)
+        )
+
+    def _host_busy(self) -> float | None:
+        jiffies = _host_jiffies(self._proc / "stat")
+        last, self._host_last = self._host_last, jiffies
+        if jiffies is None or last is None or jiffies[1] <= last[1]:
+            return None
+        return (jiffies[0] - last[0]) / (jiffies[1] - last[1])
+
+    def _container_busy(self) -> float | None:
+        if self._cgroup is None:
+            return None
+        cores = _cpu_limit(_read_file(self._cgroup / "cpu.max"))
+        usage = read_cgroup_value(self._cgroup / "cpu.stat", "usage_usec")
+        now = time.monotonic()
+        last = self._container_last
+        self._container_last = None if usage is None else (now, usage)
+        if cores is None or usage is None or last is None or now <= last[0]:
+            return None
+        return (usage - last[1]) / 1_000_000 / ((now - last[0]) * cores)
+
+    def _host_free(self) -> int | None:
+        return _available_memory(self._proc / "meminfo")
+
+    def _container_free(self) -> int | None:
+        if self._cgroup is None:
+            return None
+        limit = _memory_limit(_read_file(self._cgroup / "memory.max"))
+        current = read_cgroup_value(self._cgroup / "memory.current")
+        if limit is None or current is None:
+            return None
+        inactive = read_cgroup_value(self._cgroup / "memory.stat", "inactive_file")
+        return max(0, limit - current + (inactive or 0))

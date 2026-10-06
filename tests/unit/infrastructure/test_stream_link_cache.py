@@ -27,6 +27,61 @@ def _make_link(
     )
 
 
+class TestWhileTheCacheFails:
+    """diskcache raised on every write (locked, disk full), and every
+    answer came back empty; Redis lost the writes, and every /play and HLS
+    proxy request answered 404 (code review, 2026-10-06). The links of the
+    latest answers stay in memory and play while the cache fails."""
+
+    async def test_a_failed_save_raises_nothing_and_the_link_plays(
+        self, mock_cache: AsyncMock
+    ) -> None:
+        mock_cache.set = AsyncMock(side_effect=OSError("database is locked"))
+        mock_cache.get = AsyncMock(side_effect=OSError("database is locked"))
+        repo = CacheStreamLinkRepository(cache=mock_cache)
+
+        await repo.save(_make_link())
+
+        assert await repo.get("abc123") == _make_link()
+
+    async def test_a_lost_write_still_plays(self, mock_cache: AsyncMock) -> None:
+        mock_cache.get = AsyncMock(return_value=None)
+        repo = CacheStreamLinkRepository(cache=mock_cache)
+
+        await repo.save(_make_link())
+
+        assert await repo.get("abc123") == _make_link()
+
+    async def test_a_newer_save_replaces_the_memory_copy(
+        self, mock_cache: AsyncMock
+    ) -> None:
+        repo = CacheStreamLinkRepository(cache=mock_cache)
+        await repo.save(_make_link(title="old"))
+
+        await repo.save(_make_link(title="new"))
+
+        stored = await repo.get("abc123")
+        assert stored is not None and stored.title == "new"
+
+    async def test_memory_keeps_the_latest_links(self, mock_cache: AsyncMock) -> None:
+        mock_cache.get = AsyncMock(return_value=None)
+        repo = CacheStreamLinkRepository(cache=mock_cache, recent=2)
+
+        for stream_id in ("a", "b", "c"):
+            await repo.save(_make_link(stream_id=stream_id))
+
+        assert await repo.get("a") is None
+        assert await repo.get("c") is not None
+
+    async def test_a_failed_load_of_another_link_gives_none(
+        self, mock_cache: AsyncMock
+    ) -> None:
+        mock_cache.get = AsyncMock(side_effect=OSError("down"))
+        repo = CacheStreamLinkRepository(cache=mock_cache)
+
+        assert await repo.get("unknown") is None
+
+
 class TestCacheStreamLinkRepository:
     async def test_save_stores_json_link(self, mock_cache: AsyncMock) -> None:
         link = _make_link()
@@ -73,12 +128,14 @@ class TestCacheStreamLinkRepository:
         result = await repo.get("corrupt")
         assert result is None
 
-    async def test_default_ttl_is_7200(self, mock_cache: AsyncMock) -> None:
+    async def test_default_ttl_is_a_week(self, mock_cache: AsyncMock) -> None:
+        """Links resolve again when stale, so Continue Watching days later
+        still plays."""
         link = _make_link()
         repo = CacheStreamLinkRepository(cache=mock_cache)
         await repo.save(link)
         call_kwargs = mock_cache.set.call_args[1]
-        assert call_kwargs["ttl"] == 7200
+        assert call_kwargs["ttl"] == 7 * 24 * 3600
 
     async def test_save_includes_hls_proxy_fields(self, mock_cache: AsyncMock) -> None:
         link = CachedStreamLink(
@@ -110,6 +167,7 @@ class TestCacheStreamLinkRepository:
             video_url="https://cdn.dropcdn.io/hls2/master.m3u8",
             video_headers='{"Referer": "https://dropload.io/"}',
             is_hls=True,
+            resolved_at=1791200000.5,
         )
         serialized = _serialize_link(link)
         mock_cache.get = AsyncMock(return_value=serialized)
@@ -120,6 +178,7 @@ class TestCacheStreamLinkRepository:
         assert result.video_url == "https://cdn.dropcdn.io/hls2/master.m3u8"
         assert result.video_headers == '{"Referer": "https://dropload.io/"}'
         assert result.is_hls is True
+        assert result.resolved_at == 1791200000.5
 
     async def test_backward_compat_missing_hls_fields(
         self, mock_cache: AsyncMock
@@ -141,3 +200,4 @@ class TestCacheStreamLinkRepository:
         assert result.video_url == ""
         assert result.video_headers == ""
         assert result.is_hls is False
+        assert result.resolved_at == 0.0

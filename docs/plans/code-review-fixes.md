@@ -129,7 +129,7 @@ Found during the fixes, not changed (design questions or outside the review's sc
 - **Not checked live**: mygully and boerse (credentials), scnsrc, ddlvalley and ddlspot (Cloudflare Turnstile), the XenForo thread links (hidden from guests). Their category changes rest on the tests and the site data seen in fixtures.
 - **Console requests** return `[]` on sites whose game sections mix PC and console games (mygully, boerse, scnlog, crawli).
 - **DDL links in Stremio**: validate-only DDL resolvers cannot pass the playback check, so DDL hosters never become Stremio streams (design question).
-- **fsst `/embed/` URLs** do not match the generic DDL URL pattern.
+- **fsst `/embed/` URLs**: resolved by the fsst resolver since 2026-10-02 (fsst left the generic DDL configs).
 - **GoFile** refuses guest lookups for many files (`error-notPremium`); logged as `gofile_guest_access_refused`.
 - **Crawljob `text` with CRLF** line endings was not verified against JDownloader.
 - **crawli's `erotik` section** lives on another host (connection refused here) and is not mapped.

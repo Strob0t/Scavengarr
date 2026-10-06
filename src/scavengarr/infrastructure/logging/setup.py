@@ -30,12 +30,6 @@ BASE_LOGGING_CONFIG: dict[str, Any] = {
             "fmt": "%(levelprefix)s %(message)s",
             "use_colors": None,
         },
-        "access": {
-            "()": "uvicorn.logging.AccessFormatter",
-            "fmt": (
-                '%(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s'
-            ),
-        },
     },
     "handlers": {
         "default": {
@@ -43,16 +37,12 @@ BASE_LOGGING_CONFIG: dict[str, Any] = {
             "class": "logging.StreamHandler",
             "stream": "ext://sys.stderr",
         },
-        "access": {
-            "formatter": "access",
-            "class": "logging.StreamHandler",
-            "stream": "ext://sys.stdout",
-        },
     },
+    # No uvicorn.access: uvicorn runs with access_log=False, the app's
+    # http_request line replaces it
     "loggers": {
         "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
         "uvicorn.error": {"level": "INFO"},
-        "uvicorn.access": {"handlers": ["access"], "level": "INFO", "propagate": False},
     },
 }
 
@@ -89,6 +79,7 @@ def _foreign_pre_chain() -> list[structlog.typing.Processor]:
         structlog.stdlib.add_log_level,
         # Traceback as text: the JSON renderer cannot serialize exc_info
         structlog.processors.format_exc_info,
+        _shorten_urls,
         _redact_secrets,
     ]
 
@@ -134,6 +125,23 @@ def _redact_secrets(_: Any, __: Any, event_dict: EventDict) -> EventDict:
         if isinstance(value, str) and ("=" in value or "@" in value):
             value = _SECRET_PARAM_RE.sub(r"\1=***", value)
             event_dict[key] = _URL_PASSWORD_RE.sub(r"\1***@", value)
+    return event_dict
+
+
+# A URL up to its origin, and the rest of it (path, query, fragment)
+_URL_RE = re.compile(r"\b(https?://[^/\s'\"?#]+)[^\s'\"]*")
+
+
+def _shorten_urls(_: Any, __: Any, event_dict: EventDict) -> EventDict:
+    """URLs in a third-party record's text keep only their origin.
+
+    httpx logs each request's full URL, and exceptions quote it: the path
+    and query of a video URL carry the CDN's tokens and the client's address
+    (``i=``). The app's own events name a CDN by its domain instead.
+    """
+    for key, value in event_dict.items():
+        if isinstance(value, str) and "://" in value:
+            event_dict[key] = _URL_RE.sub(r"\1", value)
     return event_dict
 
 
@@ -187,7 +195,6 @@ def build_logging_config(config: AppConfig) -> dict[str, Any]:
 
     cfg.setdefault("handlers", {})
     cfg["handlers"]["default"]["formatter"] = "structlog"
-    cfg["handlers"]["access"]["formatter"] = "structlog"
 
     level = config.log_level
 

@@ -4,7 +4,7 @@ description: Run the Scavengarr test suite (or a subset) and report a compact re
 argument-hint: "[path | -k pattern | -m marker]"
 ---
 
-- No argument: `poetry run pytest`.
+- No argument: `poetry run pytest -n auto` (full suite on parallel workers).
 - Argument that is a path or starts with `-`: `poetry run pytest $ARGUMENTS`.
 - Otherwise treat it as a name pattern: `poetry run pytest -k "$ARGUMENTS"`.
 

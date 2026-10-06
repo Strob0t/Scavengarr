@@ -490,6 +490,27 @@ class TestPostPageParser:
         assert parser.release_name == "Iron.Man.2011.S01E12.720p.HDTV.x264-MOMENTUM"
         assert [link["hoster"] for link in parser.links] == ["torrent", "usenet"]
 
+    def test_release_name_is_no_awards_line(self) -> None:
+        """Film posts (9 of 11 live Oppenheimer posts) bold an awards line with a
+        period before the release name; a scene name has no spaces."""
+        html = """
+        <div class="storycontent">
+          <p>The group <strong>GAZPROM</strong> released 2160p UHD BluRay REMUX of
+            2023's movie <strong>Oppenheimer</strong>.</p>
+          <blockquote><p><strong>Top rated movie #47; Awards: 2 wins &amp; 2
+            nominations.</strong></p></blockquote>
+          <p><strong>Genre:</strong> Biography, Drama<br>
+             <strong>Ratings:</strong> <a href="https://www.imdb.com/x">IMDB</a>:
+             <strong>8.5</strong></p>
+          <p><strong>Oppenheimer.2023.2160p.UHD.BluRay.H265-GAZPROM</strong><br>
+            1 Disc | 82 GiB</p>
+        </div>
+        """
+        parser = _mod._PostPageParser()
+        parser.feed(html)
+
+        assert parser.release_name == "Oppenheimer.2023.2160p.UHD.BluRay.H265-GAZPROM"
+
     def test_ignores_links_outside_storycontent(self) -> None:
         parser = _mod._PostPageParser()
         parser.feed('<div class="sidebar"><a href="https://x/t">Torrent</a></div>')
