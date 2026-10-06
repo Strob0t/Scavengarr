@@ -5,13 +5,11 @@ from .base import (
     SearchResult,
 )
 from .exceptions import (
-    DuplicatePluginError,
     PluginLoadError,
     PluginNotFoundError,
 )
 
 __all__ = [
-    "DuplicatePluginError",
     "GrabResolvingPlugin",
     "PluginLoadError",
     "PluginNotFoundError",

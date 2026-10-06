@@ -1,6 +1,6 @@
 # Change: Add Plugin Loader
 
-> **Status (2026-09-28):** Python part implemented under `src/scavengarr/domain/plugins/` (`base.py`, `exceptions.py`) and `src/scavengarr/infrastructure/plugins/` (`loader.py`, `registry.py`). YAML part superseded: it was implemented and then removed together with the Scrapy adapter in `42fced9`. `get_by_mode()` never existed (the registry offers `get_mode(name)` and `get_by_provides(provides)`), `load_all()` and `PluginValidationError` were removed later, and `DuplicatePluginError` is defined but never raised (duplicate names are skipped, first wins).
+> **Status (2026-09-28):** Python part implemented under `src/scavengarr/domain/plugins/` (`base.py`, `exceptions.py`) and `src/scavengarr/infrastructure/plugins/` (`loader.py`, `registry.py`). YAML part superseded: it was implemented and then removed together with the Scrapy adapter in `42fced9`. `get_by_mode()` never existed (the registry offers `get_mode(name)` and `get_by_provides(provides)`), `load_all()` and `PluginValidationError` were removed later, and `DuplicatePluginError`, never raised, was removed on 2026-10-06 (duplicate names are logged and skipped, first wins).
 
 ## Why
 

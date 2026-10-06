@@ -157,7 +157,6 @@ During Stremio searches, the `search_max_results` context variable lowers the pa
 class PluginError(Exception): ...            # Base class
 class PluginLoadError(PluginError): ...      # Import or protocol failure
 class PluginNotFoundError(PluginError): ...  # Name not in registry
-class DuplicatePluginError(PluginError): ... # Defined, currently not raised
 ```
 
 | Exception | Trigger |

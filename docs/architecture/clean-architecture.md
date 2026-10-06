@@ -146,8 +146,7 @@ TorznabError (base)
 
 PluginError (base)
 ├── PluginLoadError           Python plugin import/contract failure
-├── PluginNotFoundError       Plugin name not in registry
-└── DuplicatePluginError      Two plugins share the same name (defined, currently not raised)
+└── PluginNotFoundError       Plugin name not in registry
 
 CrawlJobResolveError          Grab-time link resolution failed → HTTP 502 (download router)
 ```
