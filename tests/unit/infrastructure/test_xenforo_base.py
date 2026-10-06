@@ -305,24 +305,6 @@ class TestThreadPostParser:
 
 
 class TestHelpers:
-    def test_is_container_host(self) -> None:
-        assert xenforo._is_container_host("hide.cx")
-        assert xenforo._is_container_host("www.hide.cx")
-        assert xenforo._is_container_host("keeplinks.org")
-        assert not xenforo._is_container_host("nothide.cx")
-        assert not xenforo._is_container_host("imdb.com")
-
-    def test_hoster_from_text(self) -> None:
-        assert xenforo._hoster_from_text("Online rapidgator.net") == "rapidgator"
-        assert xenforo._hoster_from_text("DDownload") == "ddownload"
-        assert xenforo._hoster_from_text("") == ""
-
-    def test_hoster_from_url(self) -> None:
-        assert xenforo._hoster_from_url("https://hide.cx/container/abc") == "hide"
-        assert (
-            xenforo._hoster_from_url("https://www.keeplinks.org/p53/a") == "keeplinks"
-        )
-
     def test_node_id_from_url(self) -> None:
         assert xenforo._node_id_from_url("/forums/hd.8/") == 8
         assert xenforo._node_id_from_url("/forums/uhd-4k.75/") == 75

@@ -29,6 +29,11 @@ from scavengarr.infrastructure.plugins.categories import (
     served_category,
 )
 from scavengarr.infrastructure.plugins.dom import parse_page
+from scavengarr.infrastructure.plugins.forum_links import (
+    hoster_from_text,
+    hoster_from_url,
+    is_link_container,
+)
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
 if TYPE_CHECKING:
@@ -82,19 +87,6 @@ _INTERNAL_HOSTS = {
     "boerse.kz",
 }
 
-# Known link-protection / container services.
-# Only links from these domains are treated as download links.
-_LINK_CONTAINER_HOSTS = {
-    "keeplinks.org",
-    "keeplinks.eu",
-    "share-links.biz",
-    "share-links.org",
-    "filecrypt.cc",
-    "filecrypt.co",
-    "safelinks.to",
-    "protectlinks.com",
-}
-
 
 class _PostLinkParser:
     """Extract download links from vBulletin post content (selectolax).
@@ -115,12 +107,11 @@ class _PostLinkParser:
             href = link.attributes.get("href") or ""
 
             # Only accept links from known container services
-            host = (urlparse(href).hostname or "").replace("www.", "")
-            if not _is_container_host(host):
+            if not is_link_container(href):
                 continue
 
             # Derive hoster name from anchor text
-            hoster = _hoster_from_text(link.text().strip()) or _hoster_from_url(href)
+            hoster = hoster_from_text(link.text().strip()) or hoster_from_url(href)
 
             if href not in [entry["link"] for entry in self.links]:
                 self.links.append({"hoster": hoster, "link": href})
@@ -531,40 +522,6 @@ class BoersePlugin(PlaywrightPluginBase):
         if category is not None:
             results = filter_by_category(results, category)
         return results
-
-
-def _is_container_host(host: str) -> bool:
-    """Check if a hostname belongs to a known link container."""
-    return any(host.endswith(c) for c in _LINK_CONTAINER_HOSTS)
-
-
-def _hoster_from_text(text: str) -> str:
-    """Derive hoster name from anchor text.
-
-    Handles patterns like 'RapidGator' or 'download via ddownload.com'.
-    """
-    if not text:
-        return ""
-    # "download via rapidgator.net" → "rapidgator"
-    m = re.search(r"via\s+(\S+)", text, re.IGNORECASE)
-    if m:
-        host = m.group(1).rstrip(".")
-        parts = host.replace("www.", "").split(".")
-        return parts[0].lower() if parts else ""
-    # Plain hoster name like "RapidGator", "DDownload"
-    if not text.startswith("http") and len(text.split()) <= 2:
-        return text.strip().lower()
-    return ""
-
-
-def _hoster_from_url(url: str) -> str:
-    """Extract hoster name from URL domain."""
-    try:
-        host = urlparse(url).hostname or ""
-        parts = host.replace("www.", "").split(".")
-        return parts[0] if parts else "unknown"
-    except Exception:  # noqa: BLE001
-        return "unknown"
 
 
 plugin = BoersePlugin()

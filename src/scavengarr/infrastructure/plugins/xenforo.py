@@ -36,6 +36,11 @@ from scavengarr.infrastructure.plugins.categories import (
     served_category,
 )
 from scavengarr.infrastructure.plugins.dom import ancestors, classes, parse_page
+from scavengarr.infrastructure.plugins.forum_links import (
+    hoster_from_text,
+    hoster_from_url,
+    is_link_container,
+)
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 _MAX_PAGES = 50  # 20-25 results per page → 1000 results
@@ -46,51 +51,9 @@ _CSRF_RE = re.compile(r'data-csrf="([^"]+)"')
 # XenForo marks pages of guests (session expired or never logged in)
 _LOGGED_OUT_MARKER = 'data-logged-in="false"'
 
-# Link-protection / container services the forums post their downloads on
-_LINK_CONTAINER_HOSTS = (
-    "hide.cx",
-    "filecrypt.cc",
-    "filecrypt.co",
-    "keeplinks.org",
-    "keeplinks.eu",
-    "tolink.to",
-    "safelinks.to",
-    "share-links.biz",
-    "share-links.org",
-    "protectlinks.com",
-)
-
 
 class _SessionExpiredError(Exception):
     """The search was answered as for a guest, or the POST was rejected."""
-
-
-def _is_container_host(host: str) -> bool:
-    """Check if a hostname belongs to a known link container."""
-    return any(host == c or host.endswith(f".{c}") for c in _LINK_CONTAINER_HOSTS)
-
-
-def _hoster_from_text(text: str) -> str:
-    """Derive the hoster name from anchor text like 'Online rapidgator.net'."""
-    if not text:
-        return ""
-    m = re.search(r"online\s+(\S+)", text, re.IGNORECASE)
-    if m:
-        domain = m.group(1).rstrip(".").removeprefix("www.")
-        return domain.split(".")[0].lower()
-    # Plain hoster name
-    if not text.startswith("http") and len(text.split()) <= 2:
-        return text.strip().lower()
-    return ""
-
-
-def _hoster_from_url(url: str) -> str:
-    """Name of the URL's domain (``https://hide.cx/...`` → ``hide``)."""
-    try:
-        host = urlparse(url).hostname or ""
-    except ValueError:
-        return "unknown"
-    return host.removeprefix("www.").split(".")[0] or "unknown"
 
 
 def _node_id_from_url(url: str) -> int | None:
@@ -218,10 +181,10 @@ class _ThreadPostParser:
             href = link.attributes.get("href") or ""
             if href in self._seen_urls:
                 continue
-            if not _is_container_host(urlparse(href).hostname or ""):
+            if not is_link_container(href):
                 continue
             text = link.text().strip()
-            hoster = _hoster_from_text(text) or _hoster_from_url(href)
+            hoster = hoster_from_text(text) or hoster_from_url(href)
             self._seen_urls.add(href)
             self.links.append({"hoster": hoster, "link": href})
 

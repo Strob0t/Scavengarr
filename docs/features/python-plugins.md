@@ -190,7 +190,7 @@ When several sites run the same backend, the site logic lives once in `src/scave
 - **Login and session**: form POST with the login page's `_xfToken`. The login only counts with an `xf_user` cookie of the forum's own host (the shared HTTP client may hold another forum's cookie). The page after the login carries the session's CSRF token (`data-csrf`), which every XenForo POST needs (HTTP 400 without it). A search answered as for a guest (`data-logged-in="false"`) or rejected logs in again and retries once.
 - **Search**: `POST /search/search` with `search_type=post` (XenForo ignores the forum filter `c[nodes][]` otherwise), titles only, newest first. The `pageNav-jump--next` link (`?page=N`) leads to further pages, up to 1000 results.
 - **Categories**: a request searches the nodes whose category it covers (a parent covers its children). A child category the forum does not tell apart (2040 where all films are 2000) uses its parent's nodes; a category without a section returns `[]` without a request. Results carry the category of their forum node (8000 for a node missing in the map).
-- **Links**: only link-container hosts (hide.cx, filecrypt, keeplinks, tolink, share-links, ...) in post bodies count. myboerse's `/xtra/` links are an affiliate placeholder (always the same Rapidgator file).
+- **Links**: only link-container hosts (hide.cx, filecrypt, keeplinks, tolink, share-links, ...; `forum_links.py`, shared with the vBulletin forums) in post bodies count. myboerse's `/xtra/` links are an affiliate placeholder (always the same Rapidgator file).
 - Requests use `_safe_fetch()` without the Cloudflare browser fallback, because the session lives in the HTTP client's cookie jar.
 
 The two plugins used to be copies: the myboerse copy had none of the dataload fixes (every search failed with HTTP 400), and on both the category filter was a no-op.
@@ -515,16 +515,13 @@ The plugin's parsers read the lexbor tree with CSS selectors (see [Parsing Pages
 
 ### Link Container Filtering
 
-Only links from recognized link-protection services are accepted as download links:
+Only links to recognized link-protection services (or their subdomains) are accepted as download links. The forum plugins (boerse, mygully, dataload, myboerse) share the list and the anchor-text parsing in `src/scavengarr/infrastructure/plugins/forum_links.py`:
 
 ```python
-# plugins/boerse.py
-_LINK_CONTAINER_HOSTS = {
-    "keeplinks.org", "keeplinks.eu",
-    "share-links.biz", "share-links.org",
-    "filecrypt.cc", "filecrypt.co",
-    "safelinks.to", "protectlinks.com",
-}
+is_link_container("https://www.filecrypt.cc/Container/ABC.html")  # True
+is_link_container("https://notfilecrypt.cc/Container/ABC.html")   # False
+hoster_from_text("download via ddownload.com")  # "ddownload"
+hoster_from_text("Online rapidgator.net")       # "rapidgator"
 ```
 
 This prevents internal forum links, images and other non-download URLs from being returned as results.

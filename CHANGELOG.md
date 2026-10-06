@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: Forum Plugins Share One Link-Container Check
+- boerse and mygully took any host ending in a container's domain for a link container (`notfilecrypt.cc` counted as `filecrypt.cc`), and the three forum parsers kept their own container lists and anchor-text helpers. They now share `infrastructure/plugins/forum_links.py` (`is_link_container`, `hoster_from_text`, `hoster_from_url`): a container's host or one of its subdomains counts, and every forum knows every container of the lists (boerse gains hide.cx, keeplinks.co, linkcrypt.ws and tolink.to; mygully tolink.to; dataload and myboerse keeplinks.co and linkcrypt.ws). Found by the code review (2026-10-06).
+
 ### Fix: A Failing Score Store No Longer Fails a Stremio Request
 - The scored plugin selection (`stremio.scoring_enabled`) read the plugin scores without catching errors: a score store that failed to read one snapshot failed the whole stream request. A snapshot that cannot be read now counts as none, as the mirror-group ranking already handled it; both read through one helper (`current_snapshots`), which logs `plugin_scores_unreadable` (replaces `stremio_mirror_scores_failed`). Found by the code review (2026-10-06).
 
