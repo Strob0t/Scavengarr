@@ -175,6 +175,25 @@ class TestBounds:
         assert sorted(resolver.calls) == [_DOOD.url, _VOE.url]
         assert resolution.ranked == [_VOE, _DOOD]
 
+    async def test_a_stream_pushed_out_of_the_top_stops_resolving(self) -> None:
+        """Better streams arrived: its resolution can no longer be part of
+        the answer, which waited for it all the same, and it held a slot
+        (code review, 2026-10-06). New results only push streams down."""
+
+        async def resolve(url: str, hoster: str) -> ResolvedStream | None:
+            if url == _DOOD.url:
+                await asyncio.sleep(10)
+            return _video(url)
+
+        resolution, _ = _resolution(resolve, concurrency=1, limit=1)
+        resolution.update([_DOOD])
+        await asyncio.sleep(0.01)
+
+        resolution.update([_VOE, _DOOD])
+        await asyncio.wait_for(_settle(resolution), 1)
+
+        assert list(_urls(resolution)) == [_VOE.url]
+
 
 class TestProgress:
     async def test_videos_counts_hosters_with_a_video(self) -> None:

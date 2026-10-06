@@ -69,8 +69,17 @@ class HosterResolution:
         return sum(not task.done() for task in self._tasks.values())
 
     def update(self, ranked: list[RankedStream]) -> None:
-        """Take a new ranking (more results) and start what is due."""
+        """Take a new ranking (more results) and start what is due.
+
+        New results only push streams down: a resolution whose stream left
+        the top *limit* can no longer be part of the answer and is
+        cancelled, so the answer does not wait for it and its slot frees.
+        """
         self._ranked = ranked[: self._limit]
+        considered = {stream.url for stream in self._ranked}
+        for url, task in self._tasks.items():
+            if url not in considered:
+                task.cancel()
         groups: dict[object, list[int]] = {}
         for i, stream in enumerate(self._ranked):
             groups.setdefault(hoster_key(stream) or stream.url, []).append(i)

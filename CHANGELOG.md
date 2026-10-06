@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: The Answer Waits for No Link Pushed Out of the Top
+- A Stremio request resolves links among its top `max_probe_count` streams while results arrive. A link that better results pushed out of the top kept resolving: the answer waited for it once the search was done, although its outcome could no longer be part of it, and it held one of the `probe_concurrency` slots. Such a resolution is now cancelled. Found by the code review (2026-10-06).
+
 ### Fix: A Mirror Group Fails Over When Its Member Gives Nothing
 - A Stremio request asks one member of a mirror group (hdfilme, streamcloud, streamkiste). Empty answers trip no breaker, so a member whose parser broke after a theme change kept being asked while the others still delivered. A member that gives nothing for a query (no hits, an error, a timeout) now hands it to the next member with a closed breaker, within the search deadline; when that one delivers, the member ranks behind the others until it delivers again. A title the database lacks costs two searches instead of one, never three. Found by the code review (2026-10-06).
 
