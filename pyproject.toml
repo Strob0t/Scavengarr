@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "scavengarr"
-version = "0.2.3"
+version = "0.3.0"
 description = "Self-hosted Stremio addon and Torznab indexer for Prowlarr, Sonarr and Radarr"
 packages = [{include = "scavengarr", from = "src"}]
 

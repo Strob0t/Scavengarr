@@ -4,7 +4,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ---
 
-## Unreleased (staging)
+## v0.3.0 - 2026-10-06
+
+Stremio latency and playback on a Raspberry Pi behind a VPN: answers go out at 5 streams while links resolve during the plugin search, cached answers at once, and plugins whose site is down are skipped; the stealth browser's pages go to the most urgent work, and their count follows waits, CPU and memory. HLS plays in Stremio Web again (1080p stutter, VEEV, the proxy's 500s under Python 3.13 with anyio). Prometheus metrics, request ids and on-demand tracing, plugin parsers on selectolax, read-only production diagnostics (`scripts/prodctl.py`), and the fixes of two code reviews.
 
 ### Fix: CDN Tokens No Longer Reach the Logs Through httpx and uvicorn
 - The app's `http_request` line masks query values, but two third-party lines repeated every URL whole: uvicorn's access log (each proxied HLS request with the CDN's tokens) and httpx's `HTTP Request: GET <url>` line for every outgoing request (video URLs with tokens and the client's address, `i=`). Production logs carried both (2026-10-06). uvicorn now runs with `access_log=False` (`http_request` is the access log), and third-party records show URLs by their origin only (`HTTP Request: GET https://cdn.example.net "HTTP/1.1 200 OK"`), tracebacks included.
@@ -1556,7 +1558,9 @@ Foundation of the project: FastAPI server, Scrapy scraping engine, plugin loader
 
 Current known issues:
 
-- **kinoger times out in production** (2026-10-06, sixth round): 13 of 13 Stremio searches hit the 30 s plugin timeout, its breakers opened, and titles with few streams waited 30 s for it. Every kinoger page goes through the stealth browser (Cloudflare binds the clearance to the browser), whose 2 pages hoster captures share while plugins search; alone in the container the same searches took 7.9–17.3 s. Pages now go to the earliest due work (plugin pages before captures) on staging; the seventh round has to confirm it (`docs/plans/browser-page-budget.md`).
+- **kinoger times out in production** (2026-10-06, sixth round): 13 of 13 Stremio searches hit the 30 s plugin timeout, its breakers opened, and titles with few streams waited 30 s for it. Every kinoger page goes through the stealth browser (Cloudflare binds the clearance to the browser), whose 2 pages hoster captures share while plugins search; alone in the container the same searches took 7.9–17.3 s. Since 0.3.0 pages go to the earliest due work (plugin pages before captures), and their count follows waits, CPU and memory; the seventh round has to confirm it (`docs/plans/browser-page-budget.md`).
+- **FireStream stutters in Stremio Web** (2026-10-06, Toy Story 5): the CDN throttles each connection to 1.5–3.9 Mbit/s, the stream needs about 2.9, and the browser player loads the segments one after another over one connection. Through the HLS proxy and directly alike (2.3 and 1.9 Mbit/s, measured alternately; the VPN carries 67 Mbit/s). Fetching segments ahead or in parallel byte ranges would help; not built.
+- **FSST 1080p: "Error occurred when decoding"** (2026-10-06, One Battle After Another, Stremio Web on Firefox/Linux): the stream (H.264 1080p, AAC 5.1) is bound to the resolving IP, so it plays through the streaming server only. Cause not confirmed.
 - **s.to link-out quota for VPN IPs** (2026-10-04): for a VPN IP s.to's gate is the tier `turnstile_altcha`, and one pass (about 20 s in the browser on a Raspberry Pi 4) unlocks 3 link-outs. Stremio episode requests get s.to for about three requests per pass; a Torznab search resolves the link-outs of every matching episode (about 950 requests and 83 s for "Dark"), and most results keep the s.to link-out.
 - **Playmate in tsaridas/stremio-docker's web player** (2026-10-04): the image's nginx answers Playmate's disguised HLS segments (`…_000.css`, `…_001.js`) as web player files, with 404, so Playmate streams fail there (error 81).
 
