@@ -142,7 +142,7 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 - `t=search` without `q` and `extended=1`: lightweight reachability probe of the plugin's `base_url`; returns one test item if reachable, HTTP 503 if not, HTTP 422 if the plugin has no `base_url`.
 - `t=search` without `q` otherwise: empty RSS with HTTP 200.
 - Only the first value of a comma-separated `cat` is used. Responses carry `X-Cache: HIT|MISS`.
-- `/torznab/{plugin_name}/health` probes `base_url` and, when unreachable and `mirror_urls` are configured, probes the mirrors.
+- `/torznab/{plugin_name}/health` probes the plugin's current `base_url` (the domain in use of its `_domains`).
 - Production error handling: see [Error Mapping](clean-architecture.md#error-mapping).
 
 ### CrawlJob Download

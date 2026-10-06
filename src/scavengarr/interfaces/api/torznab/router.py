@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import cast
 from urllib.parse import urlsplit, urlunsplit
 
@@ -364,40 +363,14 @@ async def torznab_plugin_health(request: Request, plugin_name: str) -> JSONRespo
         state.http_client, base_url=base_url, timeout_seconds=5.0
     )
 
-    content: dict[str, object] = {
-        "plugin": plugin_name,
-        "base_url": base_url,
-        "checked_url": checked_url,
-        "reachable": reachable,
-        "status_code": status_code,
-        "error": error,
-    }
-
-    # Probe mirrors when configured and primary is unreachable
-    mirror_urls: list[str] = list(getattr(plugin, "mirror_urls", None) or [])
-    if mirror_urls:
-        mirror_results: list[dict[str, object]] = []
-        if not reachable:
-            probes = await asyncio.gather(
-                *(
-                    _lightweight_http_probe(
-                        state.http_client, base_url=m_url, timeout_seconds=5.0
-                    )
-                    for m_url in mirror_urls
-                )
-            )
-            for m_url, (m_ok, m_sc, m_err, _m_checked) in zip(
-                mirror_urls, probes, strict=True
-            ):
-                entry: dict[str, object] = {
-                    "url": m_url,
-                    "reachable": m_ok,
-                }
-                if m_ok:
-                    entry["status_code"] = m_sc
-                else:
-                    entry["error"] = m_err
-                mirror_results.append(entry)
-        content["mirrors"] = mirror_results
-
-    return JSONResponse(status_code=200, content=content)
+    return JSONResponse(
+        status_code=200,
+        content={
+            "plugin": plugin_name,
+            "base_url": base_url,
+            "checked_url": checked_url,
+            "reachable": reachable,
+            "status_code": status_code,
+            "error": error,
+        },
+    )

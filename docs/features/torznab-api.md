@@ -205,7 +205,7 @@ Runs the same lightweight probe as the test mode against the plugin's current `b
 }
 ```
 
-The response gains a `mirrors` key only if the plugin sets a `mirror_urls` attribute (mirrors are probed only when the primary is unreachable); no plugin currently does — plugins declare fallback domains via `_domains` instead (see [Mirror URL Fallback](./mirror-url-fallback.md)).
+Plugins declare fallback domains via `_domains`, and `base_url` is the domain in use (see [Mirror URL Fallback](./mirror-url-fallback.md)).
 
 | Status | Condition |
 |---|---|

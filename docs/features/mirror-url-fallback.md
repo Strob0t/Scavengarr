@@ -170,8 +170,6 @@ See [Python Plugins](./python-plugins.md#reference-implementation-boersepy) for 
 
 `GET /api/v1/torznab/{plugin_name}/health` probes the plugin's current `base_url` (`HEAD`, falling back to a ranged `GET` on 405/501, 5 s timeout) and reports `reachable`, `status_code` and `error`. Any HTTP response counts as reachable; only network errors report `false`.
 
-The endpoint also has mirror probing: if a plugin exposes a `mirror_urls` attribute and the primary is unreachable, each mirror is probed and listed under `mirrors`. No plugin currently sets `mirror_urls` (it is separate from `_domains`), so today the health endpoint probes only the primary URL.
-
 ```bash
 curl http://localhost:7979/api/v1/torznab/example-site/health | jq
 ```
