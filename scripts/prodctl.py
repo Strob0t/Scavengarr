@@ -9,7 +9,10 @@ Usage (``poetry run python scripts/prodctl.py ...``):
     ps                                   containers and their state
     stats [-c NAME]                      CPU, memory, processes, network
     logs [-c NAME] [--since 15m] [--grep RE] [--fields a,b] [--limit 60]
-         [--health] [--raw]              log lines, JSON records as key=value
+         [--health] [--raw] [--width 400]
+                                         log lines, JSON records as key=value,
+                                         cut to --width characters (0: whole,
+                                         for tracebacks)
     metrics [--grep RE]                  the app's Prometheus metrics
     state [--keys a,b]                   /api/v1/stats/metrics: breakers, pools,
                                          event-loop lag
@@ -184,7 +187,8 @@ def _logs(args: argparse.Namespace) -> int:
     )
     fields = args.fields.split(",") if args.fields else None
     for line in lines:
-        print(render(line, fields, raw=args.raw)[:400])
+        record = render(line, fields, raw=args.raw)
+        print(record[: args.width] if args.width else record)
     print(f"[{len(lines)} of {matched} matching lines]")
     return 0
 
@@ -246,6 +250,9 @@ def parser() -> argparse.ArgumentParser:
     logs.add_argument("--limit", type=int, default=60, help="last N lines")
     logs.add_argument("--health", action="store_true", help="keep health checks")
     logs.add_argument("--raw", action="store_true", help="masked lines as logged")
+    logs.add_argument(
+        "--width", type=int, default=400, help="cut records to N characters (0: whole)"
+    )
     for sub in (logs, metrics):
         sub.add_argument("--grep", help="regex (case-insensitive)")
     state.add_argument("--keys", help="comma-separated top-level keys")

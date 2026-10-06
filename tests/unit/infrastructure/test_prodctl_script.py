@@ -187,6 +187,23 @@ class TestCommands:
         assert logs.calls.last.request.url.params["timestamps"] == "1"
         assert (portainer / "budget.json").exists()
 
+    def test_logs_cut_records_unless_asked_for_the_whole(
+        self, portainer: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A traceback's last lines name the error."""
+        log = _record(level="error", event="crash", exception="x" * 500 + "KeyError")
+        respx.get(f"{_DOCKER}/containers/scavengarr/logs").respond(
+            content=_frame(log + "\n")
+        )
+
+        _mod.main(["logs", "--since", "5m"])
+        cut = capsys.readouterr().out.splitlines()[0]
+        _mod.main(["logs", "--since", "5m", "--width", "0"])
+        whole = capsys.readouterr().out.splitlines()[0]
+
+        assert len(cut) == 400
+        assert whole.endswith("KeyError")
+
     def test_a_probe_runs_in_the_container_and_passes_its_exit_code(
         self, portainer: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
