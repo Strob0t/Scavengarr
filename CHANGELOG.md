@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: jjs Takes No Size From a Season Pack's NFO
+- A detail page without "Gesamtgröße" (season packs name their part size and episode count only) took the first size anywhere on the page: a bitrate ("19.6 Mb/s" became 20 MB), one episode's size or CSS (`#2b2b2b` became "2b"), on 6 of 7 and 9 of 16 live season packs. Sonarr and Radarr rejected those packs as too small. jjs reports the total size only ("Gesamtgröße", "Total size"), else no size. Live: 10 of 10 film results keep their sizes. Found by the code review (2026-10-06).
+
 ### Fix: animeloads Passes DDoS-Guard and Its Captcha Again
 - Blocking images by resource type (instead of by file extension) also blocked DDoS-Guard's check beacons, which set the `__ddg*` cookies, so the challenge reloaded until it timed out (0 of 3 searches), and the grab's captcha images, so every grab gave nothing. `block_heavy_resources` lets DDoS-Guard's check images through (also for the stealth context), and animeloads lets its captcha images through with a route of its own. A live search passed again in 12 s. Found by the code review (2026-10-06).
 
