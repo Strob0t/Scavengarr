@@ -79,20 +79,6 @@ class TestExecute:
         result = await uc.execute(make_request())
         assert result == []
 
-    async def test_no_stream_plugins_returns_empty(self) -> None:
-        tmdb = AsyncMock()
-        tmdb.get_title_and_year = AsyncMock(
-            return_value=TitleMatchInfo(title="Iron Man", year=2008)
-        )
-
-        plugins = MagicMock()
-        plugins.get_languages.return_value = ["de"]
-        plugins.get_by_provides.return_value = []
-
-        uc = make_use_case(tmdb=tmdb, plugins=plugins)
-        result = await uc.execute(make_request())
-        assert result == []
-
     async def test_happy_path_movie(self) -> None:
         tmdb = AsyncMock()
         tmdb.get_title_and_year = AsyncMock(
@@ -310,68 +296,6 @@ class TestExecute:
 
         # The use case should tag source_plugin in metadata
         assert sr.metadata.get("source_plugin") == "myplugin"
-
-    async def test_both_provides_plugins_included(self) -> None:
-        tmdb = AsyncMock()
-        tmdb.get_title_and_year = AsyncMock(return_value=TitleMatchInfo(title="Movie"))
-
-        sr = make_search_result(
-            title="Movie",
-            download_links=[{"url": "https://voe.sx/e/both"}],
-        )
-
-        mock_plugin = AsyncMock()
-        mock_plugin.search = AsyncMock(return_value=[sr])
-        del mock_plugin.scraping
-        mock_plugin.isolated_search = mock_plugin.search
-
-        engine = AsyncMock()
-        engine.validate_results = AsyncMock(side_effect=lambda r: r)
-
-        plugins = MagicMock()
-        plugins.get_languages.return_value = ["de"]
-        # "stream" returns nothing, but "both" returns one plugin
-        plugins.get_by_provides.side_effect = lambda p: (
-            [] if p == "stream" else ["combo"]
-        )
-        plugins.get.return_value = mock_plugin
-
-        uc = make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
-        result = await uc.execute(make_request())
-
-        assert len(result) == 1
-
-    async def test_deduplication_of_plugin_names(self) -> None:
-        """Plugin in both stream and both is searched once."""
-        tmdb = AsyncMock()
-        tmdb.get_title_and_year = AsyncMock(return_value=TitleMatchInfo(title="Movie"))
-
-        sr = make_search_result(
-            title="Movie",
-            download_links=[{"url": "https://voe.sx/e/abc"}],
-        )
-
-        mock_plugin = AsyncMock()
-        mock_plugin.search = AsyncMock(return_value=[sr])
-        del mock_plugin.scraping
-        mock_plugin.isolated_search = mock_plugin.search
-
-        engine = AsyncMock()
-        engine.validate_results = AsyncMock(side_effect=lambda r: r)
-
-        plugins = MagicMock()
-        plugins.get_languages.return_value = ["de"]
-        # Same plugin name returned by both calls
-        plugins.get_by_provides.side_effect = lambda p: (
-            ["overlap"] if p in ("stream", "both") else []
-        )
-        plugins.get.return_value = mock_plugin
-
-        uc = make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
-        await uc.execute(make_request())
-
-        # Should only search once despite appearing in both lists
-        mock_plugin.search.assert_awaited_once()
 
     async def test_streams_sorted_by_score(self) -> None:
         tmdb = AsyncMock()
@@ -1636,31 +1560,6 @@ class TestMirrorScores:
 
         assert sites["hdfilme"].isolated_search.await_count == 0
         assert sites["streamcloud"].isolated_search.await_count == 1
-
-
-class TestScoredSelection:
-    async def test_a_failing_score_store_searches_every_plugin(self) -> None:
-        """Unreadable scores count as none: the request asks every plugin,
-        as on a cold start, instead of failing."""
-        sites = {
-            "one": fake_site([hit("https://voe.sx/e/a")]),
-            "two": fake_site([hit("https://dood.to/e/b")]),
-        }
-        store = AsyncMock()
-        store.get_snapshot = AsyncMock(side_effect=ConnectionError("redis down"))
-        uc = answering_use_case(
-            sites,
-            memory_cache(),
-            Resolutions(),
-            score_store=store,
-            scoring_enabled=True,
-        )
-
-        streams = await uc.execute(make_request(), base_url="http://localhost:8080")
-
-        assert streams
-        assert sites["one"].isolated_search.await_count == 1
-        assert sites["two"].isolated_search.await_count == 1
 
 
 class TestAnswerPolicy:

@@ -46,6 +46,7 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 | `application/use_cases/stremio_links.py` | Stored stream links behind `/play` and the HLS proxy, resolved again when stale (1 h) or refused by the CDN | `StremioLinks` |
 | `application/use_cases/stremio_catalog.py` | TMDB trending and search catalogs | `StremioCatalogUseCase` |
 | `application/stremio/title_resolution.py` | A request's title per language, plugins grouped by language, the title match of results | `TitleResolver` |
+| `application/stremio/plugin_selection.py` | The stream plugins and the scored selection of them (top N, cold start, exploration slot) | `PluginSelector` |
 | `application/stremio/plugin_search.py` | Plugin fan-out with fair-share budget, shared search deadline, circuit breaker, fallback queries | `PluginSearchRunner` |
 | `application/stremio/queries.py` | Search query normalization and multi-language references | `build_search_query`, `build_search_queries`, `build_multi_lang_reference`, `build_lang_group_queries` |
 | `application/stremio/stream_builder.py` | Stream formatting, hoster dedup, behavior hints, cache/proxy links | `format_stream`, `deduplicate_by_hoster`, `is_direct_video_url`, `build_stream_from_resolved` |

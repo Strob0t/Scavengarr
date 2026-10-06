@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import heapq
-import random
 import time
 from collections.abc import Callable, Coroutine, Mapping
 from contextvars import ContextVar
@@ -25,7 +24,10 @@ from scavengarr.application.stremio.plugin_search import (
     EpisodeFilterFn,
     PluginHealth,
     PluginSearchRunner,
-    current_snapshots,
+)
+from scavengarr.application.stremio.plugin_selection import (
+    PluginSelectionConfig,
+    PluginSelector,
 )
 from scavengarr.application.stremio.queries import (
     build_lang_group_queries,
@@ -84,7 +86,7 @@ from scavengarr.domain.ports.tmdb import TmdbClientPort
 # ---------------------------------------------------------------------------
 
 
-class _StremioConfig(TitleMatchConfig, Protocol):
+class _StremioConfig(TitleMatchConfig, PluginSelectionConfig, Protocol):
     """Configuration values consumed by StremioStreamUseCase."""
 
     plugin_timeout_seconds: float
@@ -93,9 +95,6 @@ class _StremioConfig(TitleMatchConfig, Protocol):
     max_probe_count: int
     probe_concurrency: int
     resolve_target_count: int
-    scoring_enabled: bool
-    max_plugins_scored: int
-    exploration_probability: float
 
 
 class _StreamSorter(Protocol):
@@ -222,10 +221,9 @@ class StremioStreamUseCase:
         self._background_runs = asyncio.Semaphore(_BACKGROUND_RUNS)
         self._tasks: set[asyncio.Task[Any]] = set()
         self._telemetry = telemetry
-        self._score_store = score_store
-        self._scoring_enabled = config.scoring_enabled
-        self._max_plugins_scored = config.max_plugins_scored
-        self._exploration_probability = config.exploration_probability
+        self._selector = PluginSelector(
+            plugins=plugins, score_store=score_store, config=config
+        )
         self._pool = pool
 
     async def execute(
@@ -258,10 +256,7 @@ class StremioStreamUseCase:
         started = time.monotonic()
         category = 2000 if request.content_type == "movie" else 5000
 
-        plugin_names = self._plugins.get_by_provides("stream")
-        both_names = self._plugins.get_by_provides("both")
-        all_names = sorted(set(plugin_names + both_names))
-
+        all_names = self._selector.stream_plugins()
         if not all_names:
             log.warning("stremio_no_stream_plugins")
             stage.outcome = "no_plugins"
@@ -269,7 +264,7 @@ class StremioStreamUseCase:
 
         with self._telemetry.stage("stremio_phase", phase="metadata") as metadata:
             # Scored plugin selection (when enabled and scores are available)
-            selected = await self._select_plugins(all_names, category)
+            selected = await self._selector.select(all_names, category)
 
             # --- Multi-language title resolution ---
             languages = self._titles.languages(selected)
@@ -827,61 +822,3 @@ class StremioStreamUseCase:
         return await asyncio.to_thread(
             lambda: self._convert_fn(results, plugin_languages=plugin_languages)
         )
-
-    async def _select_plugins(
-        self,
-        all_names: list[str],
-        category: int,
-    ) -> list[str]:
-        """Select plugins to search, using scores when available.
-
-        When scoring is disabled or no scores exist yet, returns all
-        plugins (graceful cold-start fallback).
-
-        When scoring is active, selects the top-N plugins by
-        ``final_score`` and optionally adds one random exploration slot.
-        """
-        if not self._scoring_enabled or self._score_store is None:
-            return all_names
-
-        # Collect scores for each plugin (using "current" bucket as proxy)
-        snapshots = await current_snapshots(self._score_store, all_names, category)
-        scored: list[tuple[str, float, float]] = [
-            (name, snap.final_score, snap.confidence)
-            if (snap := snapshots.get(name)) is not None
-            else (name, 0.5, 0.0)
-            for name in all_names
-        ]
-
-        # Cold-start guard: need at least 50% of plugins with confidence > 0.1
-        confident_count = sum(1 for _, _, c in scored if c > 0.1)
-        if confident_count < len(all_names) * 0.5:
-            log.debug(
-                "scored_selection_cold_start",
-                confident=confident_count,
-                total=len(all_names),
-            )
-            return all_names
-
-        # Sort by final_score descending, pick top-N
-        scored.sort(key=lambda x: x[1], reverse=True)
-        top_n = scored[: self._max_plugins_scored]
-        selected_names = [name for name, _, _ in top_n]
-
-        # Exploration slot: with probability, add one mid-score plugin
-        remaining = [
-            (name, score, conf)
-            for name, score, conf in scored[self._max_plugins_scored :]
-            if conf >= 0.1
-        ]
-        if remaining and random.random() < self._exploration_probability:
-            explorer = random.choice(remaining)
-            selected_names.append(explorer[0])
-
-        log.info(
-            "scored_plugin_selection",
-            top_n=[f"{n}:{s:.2f}" for n, s, _ in top_n],
-            exploration=len(selected_names) > self._max_plugins_scored,
-            total_available=len(all_names),
-        )
-        return selected_names

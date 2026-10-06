@@ -261,7 +261,7 @@ Scored selection is active when `stremio.scoring_enabled` is `true` **and** a sc
 | `max_items_total` | `50` | Currently unused (no effect) |
 | `max_items_per_plugin` | `20` | Currently unused (no effect) |
 
-Behavior (`_select_plugins()`):
+Behavior (`PluginSelector.select()`):
 
 1. Load the `"current"`-bucket snapshot of the request category for every `stream`/`both` plugin; a missing snapshot, or one the store fails to read (`plugin_scores_unreadable`), counts as score 0.5, confidence 0.0, so a failing store leads to the cold start below instead of a failed request.
 1. **Cold-start guard:** if fewer than 50% of plugins have `confidence > 0.1`, search all plugins.
@@ -401,7 +401,7 @@ plugins:
 | `tests/unit/infrastructure/test_search_prober.py` | Plugin search + hoster checks |
 | `tests/unit/infrastructure/test_scoring_scheduler.py` | Health/search cycles + tick |
 
-`tests/unit/application/test_stremio_stream.py` covers a failing score store (`TestScoredSelection`: every plugin is searched) and the score-based mirror pick (`TestMirrorScores`). Top-N selection and the exploration slot have no unit test yet.
+`tests/unit/application/test_plugin_selection.py` covers the scored selection (`TestScoredSelection`: top N, the cold-start guard, the exploration slot, a failing score store that leaves every plugin searched); `tests/unit/application/test_stremio_stream.py` covers the score-based mirror pick (`TestMirrorScores`).
 
 ```bash
 poetry run pytest tests/unit/infrastructure/test_ewma.py \
@@ -428,6 +428,6 @@ poetry run pytest tests/unit/infrastructure/test_ewma.py \
 | Cache store | `src/scavengarr/infrastructure/persistence/plugin_score_cache.py` |
 | Config | `src/scavengarr/infrastructure/config/schema.py` (`ScoringConfig`, `StremioConfig`, `PluginOverride`) |
 | Composition | `src/scavengarr/interfaces/composition.py` (`_wire_scoring`, `_apply_plugin_overrides`) |
-| Use case | `src/scavengarr/application/use_cases/stremio_stream.py` (`_select_plugins`) |
+| Plugin selection | `src/scavengarr/application/stremio/plugin_selection.py` (`PluginSelector`) |
 | Mirror pick | `src/scavengarr/application/stremio/plugin_search.py` (`current_snapshots`, `PluginSearchRunner._one_per_mirror_group`) |
 | Debug API | `src/scavengarr/interfaces/api/stats/router.py` |

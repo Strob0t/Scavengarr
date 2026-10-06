@@ -409,6 +409,7 @@ Plugins declare `languages: list[str]` (default `["de"]`). The use case groups p
 |---|---|
 | `tests/unit/application/test_stremio_stream.py` | Stream use case (search, filter, resolve, rank; `TestResolvePhase`: per-hoster resolution, answer deadline) |
 | `tests/unit/application/test_title_resolution.py` | Title match and titles per language (`TitleResolver`, through the use case; factories in `stremio_support.py`) |
+| `tests/unit/application/test_plugin_selection.py` | Stream plugins and scored selection (`PluginSelector`: top N, cold start, exploration slot, failing score store) |
 | `tests/unit/infrastructure/test_check_playable.py` | Playback check of resolved URLs (`verify_streams`) |
 | `tests/unit/application/test_stremio_catalog.py` | Catalog use case |
 | `tests/unit/application/test_plugin_search_runner.py` | `PluginSearchRunner` (fan-out, timeout, search deadline, circuit breaker, mirror groups) |
@@ -450,6 +451,7 @@ Plugins declare `languages: list[str]` (default `["de"]`). The use case groups p
 | Stream use case | `src/scavengarr/application/use_cases/stremio_stream.py` |
 | Catalog use case | `src/scavengarr/application/use_cases/stremio_catalog.py` |
 | Title resolution | `src/scavengarr/application/stremio/title_resolution.py` |
+| Plugin selection | `src/scavengarr/application/stremio/plugin_selection.py` |
 | Plugin search runner | `src/scavengarr/application/stremio/plugin_search.py` |
 | Search progress | `src/scavengarr/application/stremio/search_progress.py` |
 | Search cache | `src/scavengarr/application/stremio/search_cache.py` |
