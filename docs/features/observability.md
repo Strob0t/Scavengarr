@@ -37,6 +37,36 @@ Import `docker/grafana-dashboard.json` (Dashboards, New, Import) and pick the Pr
 
 Range panels count over the selected time range: pick a day or a week to judge a change. Traffic is low (a few requests per hour), so the time series use 1-hour windows for answer times.
 
+## Alerts
+
+`docker/prometheus-alerts.yml` holds six alert rules. Mount the file into the Prometheus container and name it in `prometheus.yml`:
+
+```yaml
+rule_files:
+  - /etc/prometheus/scavengarr-alerts.yml
+```
+
+Prometheus evaluates the rules and lists the firing alerts under Alerts; a notification (mail, push) needs an Alertmanager (`alerting:` in `prometheus.yml`). Only `ScavengarrDown` names the scrape job (`job="scavengarr"` as in [Prometheus](#prometheus)); rename it there when your job is called otherwise. Check the file after a change with promtool, which ships with Prometheus:
+
+```bash
+promtool check rules docker/prometheus-alerts.yml
+# without a local Prometheus:
+docker run --rm --entrypoint promtool -v ./docker:/rules prom/prometheus check rules /rules/prometheus-alerts.yml
+```
+
+`tests/unit/infrastructure/test_alert_rules.py` checks that every family the rules query is one the app exports, so a renamed metric fails the tests instead of silencing its alert.
+
+| Alert | Fires when | Look at |
+|---|---|---|
+| `ScavengarrDown` (critical) | Prometheus has not scraped the target for 5 min, or the target is gone | `prodctl.py ps`, `prodctl.py logs --since 30m` |
+| `ScavengarrPluginWithoutYield` | A plugin was searched in the last 24 h without one hit while at least five plugins had hits (for 1 h): a dead site, a changed layout, a block | the plugin's outcomes (Plugins panels), `prodctl.py logs --grep <plugin>`, its live smoke test |
+| `ScavengarrSlowFirstAnswers` | Half of the last hour's answers that waited for a new search (at least 3) took longer than 20 s (for 15 min) | answer and phase times (Stremio answers panels), the reasons of `stremio_resolve_complete` |
+| `ScavengarrHosterBreakerOpen` | A hoster's breaker has not closed for 6 h (open or half-open) | `prodctl.py logs --grep hoster_resolve`, the resolver's live smoke test |
+| `ScavengarrEventLoopLag` | The event loop's lag p99 is above 100 ms for 15 min: CPU work on the loop delays every timeout | CPU panels, `scripts/stremio_profile.py --py-spy` |
+| `ScavengarrNoStreams` | More than half of the last hour's Stremio requests (at least 3) got no streams (for 15 min) | search state and plugin outcomes |
+
+Limits: the counters restart with the container, and `increase()` sees no growth in a series that appeared with its first count, so a plugin whose only hit in 24 h came right after a restart counts as without yield. A plugin for content the household rarely asks for (an anime site on a day without anime) alerts too; leave it out with a matcher such as `plugin!~"fireani|aniworld"` in both `scavengarr_plugin_search_total` selectors of the rule.
+
 ## How Recording Works
 
 The core records through one port, `TelemetryPort` (`domain/ports/telemetry.py`); `Telemetry` (`infrastructure/telemetry/`) implements it with prometheus-client.
