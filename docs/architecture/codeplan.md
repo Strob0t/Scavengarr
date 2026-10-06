@@ -28,7 +28,7 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 |---|---|---|
 | `domain/entities/torznab.py` | Torznab query/result types and error tree | `TorznabQuery`, `TorznabItem`, `TorznabCaps`, `TorznabIndexInfo`, `TorznabError` and subclasses |
 | `domain/entities/crawljob.py` | JDownloader `.crawljob` entity (frozen) | `CrawlJob` (`is_expired()`, `to_crawljob_format()`), `BooleanStatus`, `Priority`, `CrawlJobResolveError` |
-| `domain/entities/stremio.py` | Stremio types and error tree | `StremioStreamRequest`, `StremioStream`, `StremioMetaPreview`, `RankedStream`, `StreamQuality`, `StreamLanguage`, `TitleMatchInfo`, `CachedStreamLink`, `ResolvedStream`, `StremioError` and subclasses |
+| `domain/entities/stremio.py` | Stremio types | `StremioStreamRequest`, `StremioStream`, `StremioMetaPreview`, `RankedStream`, `StreamQuality`, `StreamLanguage`, `TitleMatchInfo`, `CachedStreamLink`, `ResolvedStream` |
 | `domain/entities/scoring.py` | Plugin-scoring types | `ProbeResult`, `EwmaState`, `PluginScoreSnapshot` |
 | `domain/plugins/base.py` | Plugin contract | `SearchResult`, `PluginProtocol`, `PluginProvides`, `GrabResolvingPlugin` (optional grab-time link resolution) |
 | `domain/plugins/plugin_schema.py` | Plugin value objects | `AuthConfig`, `HttpOverrides` |

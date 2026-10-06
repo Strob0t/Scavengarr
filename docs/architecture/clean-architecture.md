@@ -144,20 +144,13 @@ Key design choice: `PluginRegistryPort` is **synchronous** (plugin files are loa
 TorznabError (base)
 ├── TorznabBadRequest         → HTTP 400
 ├── TorznabUnsupportedAction  → HTTP 422
-├── TorznabNoPluginsAvailable → HTTP 503 (defined, currently not raised)
 ├── TorznabPluginNotFound     → HTTP 404
-├── TorznabUnsupportedPlugin  → HTTP 422 (defined, currently not raised)
 └── TorznabExternalError      → HTTP 502 (dev) / 200 (prod)
 
 PluginError (base)
 ├── PluginLoadError           Python plugin import/contract failure
 ├── PluginNotFoundError       Plugin name not in registry
 └── DuplicatePluginError      Two plugins share the same name (defined, currently not raised)
-
-StremioError (base)
-├── StremioTitleNotFound
-├── StremioNoPluginsAvailable
-└── StremioExternalError
 ```
 
 Domain exceptions carry business meaning. The Interfaces layer maps them to HTTP status codes.
@@ -419,8 +412,6 @@ Domain exceptions are translated to HTTP responses in the Torznab router. Every 
 | `TorznabBadRequest` | 400 | 400 (empty RSS) | Invalid query parameters |
 | `TorznabPluginNotFound` | 404 | 404 (empty RSS) | Plugin not in registry |
 | `TorznabUnsupportedAction` | 422 | 422 (empty RSS) | Action not caps/search |
-| `TorznabUnsupportedPlugin` | 422 | 422 (empty RSS) | Unsupported plugin (currently not raised) |
-| `TorznabNoPluginsAvailable` | 503 | 503 (empty RSS) | No plugins discovered (currently not raised) |
 | `TorznabExternalError` | 502 | 200 (empty RSS) | Upstream/network failure |
 | Unhandled `Exception` | 500 | 200 (empty RSS) | Unexpected error |
 

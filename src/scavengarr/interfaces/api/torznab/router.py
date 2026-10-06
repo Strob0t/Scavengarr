@@ -17,11 +17,9 @@ from scavengarr.application.use_cases.torznab_search import TorznabSearchUseCase
 from scavengarr.domain.entities import (
     TorznabBadRequest,
     TorznabExternalError,
-    TorznabNoPluginsAvailable,
     TorznabPluginNotFound,
     TorznabQuery,
     TorznabUnsupportedAction,
-    TorznabUnsupportedPlugin,
 )
 from scavengarr.domain.entities.torznab import TorznabItem
 from scavengarr.domain.plugins import PluginNotFoundError
@@ -305,14 +303,7 @@ async def torznab_plugin_api(
         desc = "plugin not found" if not _is_prod(state) else None
         return _error_xml(title, desc, base_url, 404)
 
-    except TorznabNoPluginsAvailable:
-        desc = "no plugins available" if not _is_prod(state) else None
-        return _error_xml(title, desc, base_url, 503)
-
-    except (
-        TorznabUnsupportedAction,
-        TorznabUnsupportedPlugin,
-    ) as e:
+    except TorznabUnsupportedAction as e:
         desc = str(e) if not _is_prod(state) else None
         return _error_xml(title, desc, base_url, 422)
 
