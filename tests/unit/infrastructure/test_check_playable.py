@@ -5,6 +5,7 @@ from __future__ import annotations
 import httpx
 import pytest
 import respx
+import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
@@ -76,6 +77,20 @@ class TestCheckPlayable:
     async def test_hls_without_playlist_is_not_playable(self) -> None:
         respx.get(_M3U8).respond(200, content=b"forbidden")
         assert not await _check(ResolvedStream(_M3U8, is_hls=True))
+
+    @respx.mock
+    async def test_a_failed_check_logs_the_cdn_not_its_url(self) -> None:
+        """CDN URLs carry tokens and the client's address (code review,
+        2026-10-06)."""
+        url = "https://cdn.example.com/secure/secret-token/v.mp4?i=1.2.3.4"
+        respx.get(url).respond(403)
+
+        with structlog.testing.capture_logs() as logs:
+            await _check(ResolvedStream(url))
+
+        failed = [e for e in logs if e["event"] == "playback_check_failed"]
+        assert failed and failed[0]["cdn"] == "example"
+        assert not any("secret-token" in str(v) for v in failed[0].values())
 
     @respx.mock
     async def test_a_network_error_is_raised(self) -> None:

@@ -219,7 +219,11 @@ class XFSResolver:
         if not await self._verify_video_url(video_url, cdn_headers, hoster):
             return None
 
-        log.debug(f"{hoster}_video_extracted", file_id=file_id, url=video_url[:80])
+        log.debug(
+            f"{hoster}_video_extracted",
+            file_id=file_id,
+            cdn=extract_domain(video_url),
+        )
         return ResolvedStream(
             video_url=video_url,
             is_hls=is_hls,

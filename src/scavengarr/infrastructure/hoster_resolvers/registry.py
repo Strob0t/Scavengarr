@@ -20,6 +20,7 @@ from scavengarr.domain.ports.hoster_resolver import (
 )
 from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
+from scavengarr.infrastructure.hoster_resolvers._domain import extract_domain
 from scavengarr.infrastructure.hoster_resolvers._verify import check_playable
 
 log = structlog.get_logger(__name__)
@@ -51,24 +52,6 @@ def _stamped(stream: ResolvedStream) -> ResolvedStream:
     """*stream* with the time of its resolution: the cache answers with it
     for an hour, and a stored link is fresh by it."""
     return stream if stream.resolved_at else replace(stream, resolved_at=time.time())
-
-
-def extract_domain(url: str) -> str:
-    """Extract the second-level domain from a URL.
-
-    Returns the second-to-last segment of the hostname (e.g.
-    ``"voe"`` from ``"https://voe.sx/e/abc"``).  Handles ``www.``
-    prefixes automatically since ``parts[-2]`` skips them.
-
-    Returns ``""`` when the URL cannot be parsed or has fewer than
-    two hostname segments.
-    """
-    try:
-        hostname = urlparse(url).hostname or ""
-        parts = hostname.split(".")
-        return parts[-2] if len(parts) >= 2 else ""
-    except Exception:  # noqa: BLE001
-        return ""
 
 
 class _CacheEntry[T]:

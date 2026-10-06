@@ -23,6 +23,7 @@ from scavengarr.domain.entities.stremio import (
     StremioStreamRequest,
 )
 from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
+from scavengarr.infrastructure.hoster_resolvers._domain import extract_domain
 from scavengarr.infrastructure.stremio.hls_proxy import (
     build_cdn_url,
     cdn_base_from_url,
@@ -371,7 +372,7 @@ async def stremio_play(
         "stremio_play_resolved",
         stream_id=stream_id,
         hoster=link.hoster,
-        video_url=current.video_url[:80],
+        cdn=extract_domain(current.video_url),
         is_hls=current.is_hls,
     )
     return RedirectResponse(
@@ -400,13 +401,13 @@ def _cdn_error_response(
             "hls_proxy_cdn_error",
             stream_id=stream_id,
             status=exc.response.status_code,
-            url=target_url[:120],
+            cdn=extract_domain(target_url),
         )
         return _error_json(502, "CDN returned error")
     log.warning(
         "hls_proxy_network_error",
         stream_id=stream_id,
-        url=target_url[:120],
+        cdn=extract_domain(target_url),
     )
     return _error_json(502, "CDN request failed")
 

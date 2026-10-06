@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: Logs Name a CDN, Not Its URL
+- The HLS proxy's CDN errors, `/play`'s redirect, the playback check and several resolvers logged video URLs (up to 120 characters, one in full at debug level), whose path and query carry tokens and the client's address (`i=`, production's VPN exit address). They log the CDN's second-level domain now (`cdn=`); `extract_domain()` moved to `hoster_resolvers/_domain.py`. Found by the code review (2026-10-06).
+
 ### Fix: The Browser Restart Waits for Its Operations
 - The shared Chromium restarted after 200 stealth pages once no context listed a page. A page another slot was still opening was not listed yet, so the restart killed it (10 of 10 trials): the capture failed and its working link was cached as dead for 15 minutes. The restart also ran inside the finishing request, while it held a page slot and its resolve timeout.
 - Operations hold the browser with `SharedBrowserPool.lease()` (the stealth pool's fetches and captures, a plugin's `isolated_search()`). The last one to end after 200 pages starts the restart in a task of its own; new operations wait until it is done.

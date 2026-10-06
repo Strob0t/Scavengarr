@@ -105,7 +105,7 @@ class MixdropResolver:
             return None
 
         video_url = f"https:{wurl}" if wurl.startswith("//") else wurl
-        log.debug("mixdrop_resolved", file_id=file_id, video_url=video_url[:80])
+        log.debug("mixdrop_resolved", file_id=file_id, cdn=extract_domain(video_url))
         return ResolvedStream(
             video_url=video_url,
             headers={"Referer": str(resp.url)},

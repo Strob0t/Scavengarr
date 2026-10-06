@@ -14,6 +14,7 @@ import httpx
 import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
+from scavengarr.infrastructure.hoster_resolvers._domain import extract_domain
 from scavengarr.infrastructure.hoster_resolvers._verify import verify_video_url
 
 log = structlog.get_logger(__name__)
@@ -111,10 +112,10 @@ class StreamtapeResolver:
         playback_headers = {"Referer": f"https://{resp_host}/"}
 
         if not await self._verify_video_url(video_url, playback_headers):
-            log.warning("streamtape_video_unreachable", url=video_url[:120])
+            log.warning("streamtape_video_unreachable", cdn=extract_domain(video_url))
             return None
 
-        log.debug("streamtape_resolved", video_url=video_url)
+        log.debug("streamtape_resolved", cdn=extract_domain(video_url))
         return ResolvedStream(
             video_url=video_url,
             quality=StreamQuality.UNKNOWN,

@@ -26,6 +26,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+import structlog
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -1540,6 +1541,43 @@ class TestProxyHlsEndpoint:
 
         assert resp.status_code == 502
         assert "CDN" in resp.json()["error"]
+
+    @patch(f"{_PROXY_MODULE}.stream_hls_segment", new_callable=AsyncMock)
+    def test_a_cdn_error_logs_no_url(self, mock_stream: AsyncMock) -> None:
+        """CDN URLs carry tokens and the client's address (``i=``) in path
+        and query (code review, 2026-10-06): the log names the CDN only."""
+        mock_stream.side_effect = _refused("https://cdn.dropcdn.io/x")
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=_make_hls_link())
+        client = TestClient(_make_app(stream_link_repo=repo))
+
+        with structlog.testing.capture_logs() as logs:
+            client.get(f"{_PREFIX}/stremio/proxy/hls-abc/seg-1.ts?t=secret&i=1.2.3.4")
+
+        errors = [e for e in logs if e["event"] == "hls_proxy_cdn_error"]
+        assert errors and errors[0]["cdn"] == "dropcdn"
+        assert not any(
+            "secret" in str(v) or "seg-1" in str(v) for v in errors[0].values()
+        )
+
+    def test_a_redirect_logs_no_video_url(self) -> None:
+        link = CachedStreamLink(
+            stream_id="abc123",
+            hoster_url="https://voe.sx/e/abc123",
+            hoster="voe",
+            video_url="https://delivery.voe.sx/engine/secret-token/video.mp4?i=1.2.3.4",
+            resolved_at=time.time(),
+        )
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=link)
+        client = TestClient(_make_app(stream_link_repo=repo), follow_redirects=False)
+
+        with structlog.testing.capture_logs() as logs:
+            client.get(f"{_PREFIX}/stremio/play/abc123")
+
+        played = [e for e in logs if e["event"] == "stremio_play_resolved"]
+        assert played and played[0]["cdn"] == "voe"
+        assert not any("secret-token" in str(v) for v in played[0].values())
 
     @patch(f"{_PROXY_MODULE}.fetch_hls_resource", new_callable=AsyncMock)
     def test_query_string_fallback_to_video_url(self, mock_fetch: AsyncMock) -> None:

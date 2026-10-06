@@ -8,6 +8,7 @@ import httpx
 import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream
+from scavengarr.infrastructure.hoster_resolvers._domain import extract_domain
 from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 
 log = structlog.get_logger(__name__)
@@ -125,5 +126,9 @@ async def check_playable(
         reason = "no playlist"
     else:
         return True
-    log.info("playback_check_failed", url=stream.video_url[:120], reason=reason)
+    log.info(
+        "playback_check_failed",
+        cdn=extract_domain(stream.video_url),
+        reason=reason,
+    )
     return False
