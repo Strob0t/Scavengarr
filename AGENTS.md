@@ -94,7 +94,7 @@ Invariants:
 - Link validation: `HEAD` with redirects first, `GET` fallback only when needed; short timeouts, semaphore-limited.
 - Stremio search results are cached per title (`cache.search_ttl_seconds`, stale-while-revalidate with one refresh at a time, single-flight; `application/stremio/search_cache.py`); hoster resolution runs on every request. Background searches end in `StremioStreamUseCase.aclose()` at shutdown.
 - CrawlJobs contain only validated links, in deterministic order; job IDs are stable, TTL configurable.
-- Config precedence (high → low): CLI args → `SCAVENGARR_*` env → YAML → `.env` → defaults. See `docs/features/configuration.md`.
+- Config precedence (high → low): CLI args → `SCAVENGARR_*` env (a `--dotenv` file's values included; the real environment wins) → YAML → defaults. See `docs/features/configuration.md`.
 - Logging: `structlog`, structured, with context fields (`plugin`, `stage`, `duration_ms`, `results_count`; every HTTP request binds `request_id`); never log secrets.
 - Metrics: the core records its steps through `TelemetryPort` (`stage()`: duration and outcome; plugin search runner, hoster resolver registry, Stremio use case, HLS proxy), never plugins or resolvers; label values only from fixed sets (no titles, ids, URLs, domains). With `telemetry.tracing_endpoint` the stages are also OpenTelemetry spans (no URLs or titles in attributes). See `docs/features/observability.md`.
 

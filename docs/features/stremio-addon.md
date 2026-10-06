@@ -353,7 +353,7 @@ Defaults, with production's values (`data/config.yaml`) where they differ:
 | Resolution cache (fixed) | streams 1 h, dead links 15 min, redirects 1 h | The resolver registry's results | A cached search answers at once with them, the rest resolves in the background |
 | `http_timeout_resolve_seconds` | 15 s (10 s) | One hoster resolution | Timeouts and cut resolutions are not cached; a timeout counts for the hoster breaker, a cut neither counts nor resets it |
 | `stremio.probe_stealth_timeout_seconds` | 15 s (10 s) | A page of the stealth browser (browser hosters, Cloudflare fallback) | |
-| `http_timeout_seconds` | 30 s (15 s), connect 5 s | Each request of the shared HTTP client | Plugins' fetches, resolvers' requests |
+| `http_timeout_seconds` | 30 s (15 s), connect 5 s | Requests of the shared HTTP client without a timeout of their own (TMDB lookups) | httpx plugins use `_timeout` (15 s, connect included), most resolvers 15 s |
 | `http_retry_*` | 3 retries, backoff from 1 s to 30 s (2, 0.5 s, 10 s) | Retries of 429 and 503 answers | |
 | Keep-alive (fixed) | 60 s, 20 connections | Idle connections of the shared client | Saves TLS handshakes between requests |
 | Circuit breakers (fixed) | 5 failures, then 60 s doubling to 1 h | A plugin per category, a hoster resolver | Skipped while open; one half-open probe |

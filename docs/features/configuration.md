@@ -37,7 +37,7 @@ The configuration loader (`load_config()` in `src/scavengarr/infrastructure/conf
 1. Deep-merge CLI argument overrides.
 1. Validate the merged result with Pydantic (`AppConfig`).
 
-This means you can have a base YAML config and override individual fields via environment variables without repeating the entire configuration. `data/config.yaml` is a complete, commented example of every YAML key.
+This means you can have a base YAML config and override individual fields via environment variables without repeating the entire configuration. `data/config.yaml` is a commented example of every YAML key.
 
 ---
 
@@ -167,7 +167,7 @@ plugins:
   overrides: {}                 # per-plugin overrides, see Plugins below
 
 http:
-  timeout_seconds: 15.0         # scraping timeout (default: 30)
+  timeout_seconds: 15.0         # default timeout of the shared HTTP client (default: 30)
   timeout_resolve_seconds: 10.0 # hoster resolution timeout (default: 15)
   follow_redirects: true
   http2: false                  # offer HTTP/2 (default: false)
@@ -219,7 +219,7 @@ cache:
 
 ### Canonical Section Keys
 
-The loader recognizes the sections `plugins`, `http`, `playwright`, `logging`, `cache`, `stremio`, `scoring`, and `telemetry`, plus the top-level keys `app_name`, `environment`, `tmdb_api_key`, `validate_download_links`, `validation_timeout_seconds`, and `validation_max_concurrent`. Flat keys (from env/CLI) are mapped to their sectioned equivalents:
+The loader recognizes the sections `plugins`, `http`, `playwright`, `logging`, `cache`, `stremio`, `scoring`, and `telemetry`, plus the top-level keys `app_name`, `environment`, `tmdb_api_key`, `validate_download_links`, `validation_timeout_seconds`, and `validation_max_concurrent`. Flat keys are mapped to their sectioned equivalents in every layer, YAML included (the `scoring_*` keys only from the environment):
 
 | Flat key (env/CLI) | Sectioned key (YAML) |
 |---|---|
@@ -245,13 +245,13 @@ The loader recognizes the sections `plugins`, `http`, `playwright`, `logging`, `
 | `scoring_enabled`, `scoring_w_health`, `scoring_w_search` | `scoring.enabled`, `scoring.w_health`, `scoring.w_search` |
 | `telemetry_tracing_endpoint` | `telemetry.tracing_endpoint` |
 
-Other flat keys are dropped.
+Other flat keys are dropped. Unknown keys are ignored without a warning, so a misspelled key keeps its default; only the `cache` section rejects unknown keys, and the app does not start.
 
 ---
 
 ## Configuration Sections
 
-Defaults are defined in `defaults.py` and mirrored by the Pydantic field defaults in `schema.py`; a test keeps both in sync.
+`defaults.py` seeds the merge with a subset of the defaults; every other default is the field default in `schema.py`. The tables below give the effective defaults.
 
 ### General
 
@@ -259,7 +259,7 @@ Defaults are defined in `defaults.py` and mirrored by the Pydantic field default
 |---|---|---|---|
 | `app_name` | string | `scavengarr` | Application name (used in Torznab XML titles) |
 | `environment` | string | `dev` | Runtime environment: `dev`, `test`, or `prod` |
-| `tmdb_api_key` | string | — | TMDB API key for Stremio catalog and title lookup. Without it, the IMDB Suggest API fallback is used. |
+| `tmdb_api_key` | string | — | TMDB API key for Stremio catalog and title lookup. Without it, title lookups use the IMDB Suggest API plus Wikidata (localized titles), and the Stremio catalogs offer search only (no trending lists). |
 
 The `environment` setting controls several behavioral defaults (see [Environment-Specific Behavior](#environment-specific-behavior) below).
 
@@ -268,7 +268,7 @@ The `environment` setting controls several behavioral defaults (see [Environment
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `plugins.plugin_dir` | path | `./plugins` | Directory containing Python plugin files |
-| `plugins.overrides.<name>.timeout` | float | — | Override the plugin timeout (seconds) |
+| `plugins.overrides.<name>.timeout` | float | — | Override the per-request timeout of an httpx plugin (seconds, default 15). Playwright plugins ignore it (warning `plugin_timeout_override_unsupported`) |
 | `plugins.overrides.<name>.max_concurrent` | int | — | Override the plugin's max concurrent requests |
 | `plugins.overrides.<name>.max_results` | int | — | Override the plugin's max results |
 | `plugins.overrides.<name>.enabled` | bool | `true` | `false` removes the plugin from the registry |
@@ -291,12 +291,12 @@ Controls the shared HTTP client used by httpx plugins, hoster resolvers, and API
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `http.timeout_seconds` | float | `30.0` | Request timeout for scraping operations |
+| `http.timeout_seconds` | float | `30.0` | Default timeout of the shared HTTP client, for requests that set none (TMDB lookups, for example). httpx plugins use their own per-request timeout (`_timeout`, 15 s by default; `plugins.overrides.<name>.timeout`), most hoster resolvers 15 s, link checks `validation_timeout_seconds` |
 | `http.timeout_resolve_seconds` | float | `15.0` | Time bound for one hoster resolution (the resolver's whole `resolve()`), and timeout of the registry's redirect and content-type requests |
 | `http.follow_redirects` | bool | `true` | Whether the HTTP client follows redirects |
-| `http.http2` | bool | `false` | Offer HTTP/2 on outgoing connections: requests to one host share a connection. Off by default: on a Raspberry Pi 4 the plugin searches used 22% more CPU with it (h2 runs in Python) and were not faster (`docs/plans/pi-performance.md`). The shared client keeps idle connections for 60 s (httpx: 5 s), at most 20, and gives a connect 5 s at most (`timeout_seconds` covers the read) |
-| `http.user_agent` | string | `Scavengarr/<version> (+https://github.com/Strob0t/Scavengarr)` | User-Agent header sent with every request |
-| `http.rate_limit_rps` | float | `5.0` | Per-domain rate limit (requests/second). 0 = unlimited |
+| `http.http2` | bool | `false` | Offer HTTP/2 on outgoing connections: requests to one host share a connection. Off by default: on a Raspberry Pi 4 the plugin searches used 22% more CPU with it (h2 runs in Python) and were not faster (`docs/plans/pi-performance.md`). The shared client keeps idle connections for 60 s (httpx: 5 s), at most 20, and gives a connect 5 s at most to requests without a timeout of their own (`timeout_seconds` covers the read) |
+| `http.user_agent` | string | `Scavengarr/<version> (+https://github.com/Strob0t/Scavengarr)` | Default User-Agent of the shared HTTP client, sent by requests that set none (TMDB, IMDB and Wikidata lookups). httpx plugins send their own browser User-Agent (`_user_agent`), and so do several hoster resolvers. Keep a contact URL in your own value: Wikidata's robot policy asks for one and answers 403 without it |
+| `http.rate_limit_rps` | float | `5.0` | Starting request rate per site (requests/second). With `rate_limit_adaptive` it rises 10% with each answer up to `rate_limit_max_rps` and halves on 429/503 (not below `rate_limit_min_rps`); without it, it is a fixed limit. One limit per second-level label: `www.example.com` and `example.org` share one. 0 = unlimited |
 | `http.rate_limit_adaptive` | bool | `true` | Enable AIMD adaptive rate limiting per domain (`SCAVENGARR_RATE_LIMIT_ADAPTIVE`) |
 | `http.rate_limit_min_rps` | float | `0.5` | Adaptive lower bound per domain (`SCAVENGARR_RATE_LIMIT_MIN_RPS`) |
 | `http.rate_limit_max_rps` | float | `50.0` | Adaptive upper bound per domain (`SCAVENGARR_RATE_LIMIT_MAX_RPS`) |
@@ -350,6 +350,8 @@ Controls the Stremio addon behavior: stream ranking, plugin concurrency, title m
 | `stremio.auto_tune_all` | bool | `true` | Container-aware auto-tune of all concurrency params (cgroup v2/v1) |
 | `stremio.max_concurrent_plugins_auto` | bool | `true` | Legacy auto-tune of `max_concurrent_plugins` only; used only when `auto_tune_all` is `false` |
 | `stremio.max_results_per_plugin` | int | `100` | Max results per plugin in Stremio search |
+
+A dict you set (`language_scores`, `hoster_scores`) replaces the default dict; list every entry you want to keep.
 | `stremio.plugin_timeout_seconds` | float | `30.0` | Plugin search budget per stream request, counted from the request start (slot queueing included; a stale search-cache entry's refresh: from its own start); running plugins are cut, queued ones skipped. The answer does not wait for the search |
 | `stremio.plugin_health_interval_seconds` | float | `1800.0` | How often every Stremio plugin's site is checked (HEAD on its domains); searches skip plugins whose site did not answer (twice, 30 s apart), and those are checked again every 5 minutes (`0` = off) |
 | `stremio.stream_deadline_seconds` | float | `60.0` | Latest answer of a stream request, from the request start: hoster resolution stops and the answer has what is resolved. Earlier at `resolve_target_count` streams or when the search and every resolution are done |
@@ -385,7 +387,7 @@ See [Stremio Addon](./stremio-addon.md) for the full feature description and [Pl
 
 ### Concurrency Pool
 
-The global concurrency pool distributes httpx and Playwright slots across concurrent requests using fair-share scheduling.
+The global concurrency pool distributes httpx and Playwright slots across concurrent Stremio stream requests using fair-share scheduling (Torznab searches do not use it).
 
 | Key | Type | Default | Description |
 |---|---|---|---|
@@ -471,16 +473,18 @@ Prometheus metrics (`/metrics`) need no setting. See [Observability](./observabi
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `cache.backend` | string | `diskcache` | Backend: `diskcache` (SQLite-based) or `redis` (`SCAVENGARR_CACHE_BACKEND`) |
-| `cache.dir` | path | `./.cache/scavengarr` | SQLite database path (diskcache only) |
+| `cache.dir` | path | `./.cache/scavengarr` | Directory of the diskcache store (diskcache only) |
 | `cache.redis_url` | string | `redis://localhost:6379/0` | Redis connection URL (redis only, `SCAVENGARR_CACHE_REDIS_URL`) |
-| `cache.ttl_seconds` | int | `3600` | Default time-to-live for cache entries (seconds) |
+| `cache.ttl_seconds` | int | `3600` | Fallback TTL for cache writes that set none (seconds). Every current writer sets its own TTL, so it has no effect today |
 | `cache.search_ttl_seconds` | int | `900` | TTL for cached search results (seconds), Torznab and Stremio; Stremio entries answer 6 h longer while a background search refreshes them (one title at a time). 0 = disabled (YAML-only) |
 | `cache.crawljob_ttl_seconds` | int | `3600` | How long a Torznab result's CrawlJob stays downloadable (seconds, > 0); the grab answers 404 afterwards (YAML-only) |
 | `cache.max_concurrent` | int | `10` | Semaphore limit for parallel cache operations, both backends (`SCAVENGARR_CACHE_MAX_CONCURRENT`); Redis handles more, e.g. `50`. diskcache writes run one at a time regardless (SQLite has one writer) |
 
-The top-level key `cache_dir` also exists in the schema but is currently unused (no effect); only `cache.dir` is used.
+A top-level `cache_dir` or `cache_ttl_seconds`, like every flat key in the table above, is read as `cache.dir` or `cache.ttl_seconds`.
 
-**Validation:** `ttl_seconds` must be >= 0 (0 disables expiration).
+**Validation:** `ttl_seconds` must be >= 0.
+
+With `backend: redis`, give Scavengarr a Redis database of its own: its keys carry no prefix, and a `dev` startup empties the whole database of `redis_url` (FLUSHDB), keys of other applications included.
 
 The cache stores CrawlJobs, search results, stream links, plugin scores, and other intermediate data. Diskcache is the default and requires no external services. Redis can be used for shared state across multiple instances.
 
@@ -522,7 +526,7 @@ In production, Torznab endpoints return empty RSS feeds with HTTP 200 for upstre
 
 ### Development Mode
 
-In development, actual HTTP status codes are returned and error descriptions are included in the RSS `<description>` element. The cache is cleared on startup to avoid stale data during development.
+In development, actual HTTP status codes are returned and error descriptions are included in the RSS `<description>` element. The cache is cleared on startup to avoid stale data during development; with Redis that is the whole database of `cache.redis_url` (FLUSHDB). `dev` is the default environment.
 
 ---
 
@@ -539,6 +543,11 @@ The configuration model enforces these validation rules:
 | `logging.level` | Must be one of: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `logging.format` | Must be one of: `json`, `console` (or unset for auto) |
 | `cache.backend` | Must be one of: `diskcache`, `redis` |
+| `cache.crawljob_ttl_seconds` | Must be > 0 |
+| `cache` section | No unknown keys (other sections ignore them) |
+| `stremio.plugin_timeout_seconds`, `stremio.stream_deadline_seconds` | Must be > 0 |
+| `stremio.plugin_health_interval_seconds` | Must be >= 0 |
+| `telemetry.tracing_endpoint` | Must start with `http://` or `https://` (empty = off) |
 | Path fields | `~` is expanded to the home directory |
 
 Invalid configuration causes the application to fail at startup with a descriptive Pydantic validation error.
@@ -574,7 +583,7 @@ SCAVENGARR_TMDB_API_KEY=your-tmdb-key
 
 ## Docker Configuration
 
-The production image (`Dockerfile.prod`) sets these defaults:
+The production image (`Dockerfile.prod`) sets these defaults. They are environment variables, so they beat the same keys in a mounted `config.yaml` (`environment`, `logging.level`, `logging.format`, `plugins.plugin_dir`, `cache.dir`, `playwright.headless`); change those in the container's environment:
 
 | Variable | Value |
 |---|---|

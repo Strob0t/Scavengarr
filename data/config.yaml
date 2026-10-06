@@ -59,6 +59,7 @@ validation_max_concurrent: 30 # was 20 — more parallel validations
 playwright:
   headless: false # headful under Xvfb (Cloudflare Turnstile), headless fallback without DISPLAY; env: SCAVENGARR_PLAYWRIGHT_HEADLESS
   browser_fallback: true # httpx plugins load Cloudflare-challenged pages via the browser; env: SCAVENGARR_PLAYWRIGHT_BROWSER_FALLBACK
+  # solver_url: "http://byparr:8191" # optional Byparr/FlareSolverr sidecar (compose profile solver)
   timeout_ms: 20000 # was 30000 — 20s is plenty for page load
 
 # -- Logging ----------------------------------------------------------
@@ -124,6 +125,8 @@ stremio:
   plugin_timeout_seconds: 30.0 # plugin search ends 30 s after the request
   stream_deadline_seconds: 60.0 # latest answer
   verify_streams: true # drop resolved URLs that do not return video bytes
+  plugin_health_interval_seconds: 1800.0 # check every plugin's site; searches skip sites that did not answer (0 = off)
+  allow_hls_transcoding: false # let Stremio's streaming server transcode HLS (too slow for 1080p on a Pi 4)
 
   # Title matching
   title_match_threshold: 0.7
@@ -156,3 +159,7 @@ stremio:
   max_items_total: 50
   max_items_per_plugin: 20
   exploration_probability: 0.15
+
+# -- Telemetry --------------------------------------------------------
+# telemetry:
+#   tracing_endpoint: "http://tempo:4318" # OTLP/HTTP; the core's stages as OpenTelemetry spans (compose profile tracing); off when unset

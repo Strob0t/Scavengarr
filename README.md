@@ -217,7 +217,7 @@ Download plugins deliver direct-download links; send them to JDownloader (e.g. v
 
 ## Configuration
 
-Scavengarr works out of the box with [`data/config.yaml`](data/config.yaml). Settings are read in this order (first wins): CLI flags → `SCAVENGARR_*` environment variables → YAML file → `.env` → defaults.
+Scavengarr works out of the box with [`data/config.yaml`](data/config.yaml). Settings are read in this order (first wins): CLI flags → `SCAVENGARR_*` environment variables (a `--dotenv` file's values included) → YAML file → defaults.
 
 The settings you are most likely to change:
 
