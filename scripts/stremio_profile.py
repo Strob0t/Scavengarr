@@ -3,7 +3,7 @@
 Usage (against a running container):
     poetry run python scripts/stremio_profile.py --base https://scavengarr.lan \\
         (--portainer | --docker) [--container scavengarr] [--insecure] \\
-        [--connect-to scavengarr.lan:192.168.88.2] [--py-spy] [IDS]
+        [--connect-to scavengarr.lan:192.168.1.10] [--py-spy] [IDS]
 
 IDS are Stremio ids (``movie/tt0816692``, ``series/tt0903747:1:2``); without
 them the baseline set of ``docs/plans/pi-performance.md`` is measured. Per id
@@ -276,7 +276,7 @@ def main() -> None:
     parser.add_argument("--container", default="scavengarr")
     parser.add_argument("--insecure", action="store_true", help="skip TLS checks")
     parser.add_argument(
-        "--connect-to", help="HOST:IP, e.g. scavengarr.lan:192.168.88.2"
+        "--connect-to", help="HOST:IP, e.g. scavengarr.lan:192.168.1.10"
     )
     parser.add_argument(
         "--py-spy", action="store_true", help="CPU profile (SYS_PTRACE)"

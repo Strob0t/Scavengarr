@@ -7,7 +7,7 @@ The CUII (Clearingstelle Urheberrecht im Internet) list of domains that German I
 - **Source:** https://cuiiliste.de/domains, read through its API (`https://api.cuiiliste.de/blocked_domains`). It lists 292 domains, grouped here by their second-level name into 87 sites.
 - **Liveness:** every domain was resolved through Cloudflare's DNS-over-HTTPS and its homepage fetched (status, final host after redirects, title).
   - 266 domains resolve and 226 answer.
-  - The dev container's resolver (192.168.88.2) answers like Cloudflare for every listed domain, so the network Scavengarr runs in does not apply the CUII block.
+  - The dev container's resolver (the home network's DNS server) answers like Cloudflare for every listed domain, so the network Scavengarr runs in does not apply the CUII block.
   - Deployments behind an ISP resolver would lose most German plugins.
 - **Matching:** each group was matched against the plugins' `_domains`, then by redirect target.
 - **Content:** sites without a match were classified from their homepage. Streaming candidates were examined further: search, detail pages and players, through the stealth browser where Cloudflare challenges.

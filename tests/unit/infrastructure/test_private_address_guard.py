@@ -28,7 +28,7 @@ class TestLiteralAddresses:
     @pytest.mark.parametrize(
         "url",
         [
-            "http://192.168.88.1/cgi-bin/reboot",
+            "http://192.168.1.10/cgi-bin/reboot",
             "http://10.0.0.5/",
             "http://172.16.0.1/",
             "http://127.0.0.1:7979/api/v1/healthz",
@@ -182,7 +182,7 @@ class TestGuardedConnections:
     async def test_rebinding_to_the_lan_is_refused_at_connect(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        _resolver(monkeypatch, [["93.184.215.14"], ["192.168.88.1"]])
+        _resolver(monkeypatch, [["93.184.215.14"], ["192.168.1.10"]])
         guard = PrivateAddressGuard()
         inner = _RecordingBackend()
         await guard(_request("https://evil.example/x"))
@@ -200,7 +200,7 @@ class TestGuardedConnections:
 
         with pytest.raises(PrivateAddressError):
             await GuardedNetworkBackend(PrivateAddressGuard(), inner).connect_tcp(
-                "192.168.88.1", 80
+                "192.168.1.10", 80
             )
 
         assert inner.connected == []

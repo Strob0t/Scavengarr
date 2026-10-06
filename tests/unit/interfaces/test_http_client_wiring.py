@@ -74,7 +74,7 @@ async def test_shared_client_refuses_the_lan_but_reaches_the_solver() -> None:
         assert len(guards) == 1
         await guards[0](httpx.Request("POST", "http://byparr:8191/v1"))
         with pytest.raises(PrivateAddressError):
-            await guards[0](httpx.Request("GET", "http://192.168.88.1/"))
+            await guards[0](httpx.Request("GET", "http://192.168.1.10/"))
     finally:
         await client.aclose()
 

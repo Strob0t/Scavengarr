@@ -50,7 +50,7 @@ From the dev container, `poetry run pytest -m live`: 24 passed, 10 failed, 7 ski
 
 ## 1. Bring `staging` to production (maintainer)
 
-- **Start production again** with the current code: `docker compose up -d --build` in the checkout on the host (192.168.88.2). Check that `/api/v1/healthz` answers 200 and that a Stremio stream request returns streams.
+- **Start production again** with the current code: `docker compose up -d --build` in the checkout on the host. Check that `/api/v1/healthz` answers 200 and that a Stremio stream request returns streams.
 - **Release v0.2.0** (**2026-10-02:** released on request: version 0.2.0, CHANGELOG, `staging` merged into `main` by pull request; production runs `staging` since then, v0.2.3's fixes verified on the production instance on 2026-10-04) (merge only on explicit request, AGENTS.md §1): version `0.1.0` → `0.2.0` (minor: new features since February), "Unreleased (staging)" becomes "v0.2.0 - <date>", the `2025-XX-XX` placeholder of v0.1.0 gets filled in, PR `staging` → `main`, merge, sync back. The public `main` then no longer shows the February state.
 
 ## 2. Safety net
@@ -111,7 +111,7 @@ Done on 2026-10-03 (item 3, end-to-end test with Stremio Web); the later rounds,
 Goal: run the Stremio use case against the maintainer's Stremio Web instance (`https://stremio.lan`) with a Scavengarr started in the dev container.
 
 - The dev container publishes port 7979 on all host interfaces (AGENTS.md §9); start the server with `--host 0.0.0.0 --port 7979`. The manifest is at `/api/v1/stremio/manifest.json`.
-- `https://stremio.lan` is an HTTPS page, so the browser blocks plain-HTTP addon and stream URLs (mixed content). The instance needs an HTTPS route, for example a Caddy site on 192.168.88.2 that proxies to `<workstation>:7979`.
+- `https://stremio.lan` is an HTTPS page, so the browser blocks plain-HTTP addon and stream URLs (mixed content). The instance needs an HTTPS route, for example a Caddy site on the host that proxies to `<workstation>:7979`.
 - Stream and proxy URLs are built from `request.base_url`. uvicorn trusts `X-Forwarded-*` headers only from `127.0.0.1` by default, so behind Caddy on another host start the server with `FORWARDED_ALLOW_IPS=<caddy-ip>`; otherwise the URLs come out as `http://`.
 - Measure against the budget in [stremio-latency.md](stremio-latency.md): time until the streams show and the share of streams that play, for German films, series, new releases and anime.
 - Claude Code's memory is not part of the repository: after the rebuild restore it from the gitignored copy with `mkdir -p ~/.claude/projects/-workspaces-scavengarr/memory && cp .claude/memory-backup/* ~/.claude/projects/-workspaces-scavengarr/memory/`.

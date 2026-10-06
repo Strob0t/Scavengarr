@@ -244,10 +244,10 @@ The moflix noise was people in its search answer (fixed in e9b1ba1). What could 
 At the end it reports the event-loop lag from `/api/v1/stats/metrics`. `--repeat 2` runs a cold and a warm pass. `--py-spy` samples the app process on the Pi and prints the CPU share per category; it needs `cap_add: [SYS_PTRACE]` on the container, and py-spy is installed into `/tmp` and run as root.
 
 ```bash
-PORTAINER_URL=http://192.168.88.2:9000 PORTAINER_API_KEY=… \
+PORTAINER_URL=http://<pi-address>:9000 PORTAINER_API_KEY=… \
   poetry run python scripts/stremio_profile.py --portainer \
   --base https://scavengarr.lan --insecure \
-  --connect-to scavengarr.lan:192.168.88.2 --repeat 2 --py-spy
+  --connect-to scavengarr.lan:<pi-address> --repeat 2 --py-spy
 ```
 
 On the Docker host, `--docker` uses the docker CLI instead of Portainer. A local server can be profiled with `py-spy record -r 100 -f raw -- python -m scavengarr.interfaces.cli …`. Compare runs only when they use the same titles and the same pass (cold or warm).

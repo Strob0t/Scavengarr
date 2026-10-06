@@ -38,7 +38,7 @@ def test_compose_trusts_a_reverse_proxy_on_private_networks() -> None:
 
     trusted = _TrustedHosts(value)
 
-    for host in ("127.0.0.1", "172.17.0.1", "172.20.0.1", "192.168.88.2", "10.1.2.3"):
+    for host in ("127.0.0.1", "172.17.0.1", "172.20.0.1", "192.168.1.10", "10.1.2.3"):
         assert host in trusted, host
     assert "8.8.8.8" not in trusted
 
