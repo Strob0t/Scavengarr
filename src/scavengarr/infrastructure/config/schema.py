@@ -38,7 +38,11 @@ class TelemetryConfig(BaseModel):
     @field_validator("tracing_endpoint")
     @classmethod
     def _http_url(cls, value: str | None) -> str | None:
-        if value is not None and not value.startswith(("http://", "https://")):
+        # An empty value is off: compose files keep tracing optional with
+        # ${TRACING_ENDPOINT:-}, and "" stopped the app at start
+        if value is None or not value.strip():
+            return None
+        if not value.startswith(("http://", "https://")):
             raise ValueError("tracing_endpoint must start with http:// or https://")
         return value
 

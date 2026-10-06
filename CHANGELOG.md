@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: An Empty Tracing Endpoint Turns Tracing Off
+- `SCAVENGARR_TELEMETRY_TRACING_ENDPOINT=` (a compose file keeping tracing optional with `${TRACING_ENDPOINT:-}`) failed the config's URL check, and the app did not start. An empty or blank value means off now, as the telemetry factory already treated it. Found by the code review (2026-10-06).
+
 ### Fix: burningseries Gives Nothing for a Season the Series Lacks
 - bs.to redirects a season it lacks to another season, and the plugin read that season's episode table: Sonarr's search for Breaking Bad S09E02 got an episode of season 1, in English, and a season search a non-existent "S09". The episode links name their season now (`episode_seasons`); a page of another season gives no result. Live: S02E02 and S05 link their pages, S09E02 and S09 give nothing. The logic predates this release; found by the code review (2026-10-06).
 

@@ -215,6 +215,17 @@ class TestTelemetrySettings:
 
         assert load_config().telemetry.tracing_endpoint == "http://192.168.1.2:4318"
 
+    @pytest.mark.parametrize("empty", ["", "  "])
+    def test_an_empty_endpoint_turns_tracing_off(
+        self, monkeypatch: pytest.MonkeyPatch, empty: str
+    ) -> None:
+        """A compose file keeps tracing optional with
+        ``${TRACING_ENDPOINT:-}``; the empty value stopped the app at start
+        (code review, 2026-10-06)."""
+        monkeypatch.setenv("SCAVENGARR_TELEMETRY_TRACING_ENDPOINT", empty)
+
+        assert load_config().telemetry.tracing_endpoint is None
+
     def test_endpoint_must_be_http(self, tmp_path: Path) -> None:
         path = tmp_path / "config.yaml"
         path.write_text(

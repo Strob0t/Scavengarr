@@ -121,7 +121,7 @@ These variables are read by the `EnvOverrides` Pydantic Settings model (case-ins
 | `SCAVENGARR_SCORING_ENABLED` | bool | `true` | `scoring.enabled` |
 | `SCAVENGARR_SCORING_W_HEALTH` | float | `0.4` | `scoring.w_health` |
 | `SCAVENGARR_SCORING_W_SEARCH` | float | `0.6` | `scoring.w_search` |
-| `SCAVENGARR_TELEMETRY_TRACING_ENDPOINT` | string | (unset) | `telemetry.tracing_endpoint` (OTLP/HTTP base URL; set, it turns tracing on) |
+| `SCAVENGARR_TELEMETRY_TRACING_ENDPOINT` | string | (unset) | `telemetry.tracing_endpoint` (OTLP/HTTP base URL; set, it turns tracing on; empty is off, so `${TRACING_ENDPOINT:-}` in a compose file keeps it optional) |
 
 All other settings (including the whole `stremio:` section and the link validation keys) are YAML-only. Unprefixed `CACHE_*` variables are not read; use the `SCAVENGARR_CACHE_*` names above.
 
