@@ -135,7 +135,8 @@ class PluginSearchRunner:
         # Plugin scores pick a mirror group's member
         self._score_store = score_store
         # Breaker keys of mirror members that gave nothing while their
-        # standby delivered: they rank behind the other members
+        # standby delivered: they rank behind the other members until they
+        # deliver again
         self._mirror_misses: set[str] = set()
 
     async def search_with_fallback(
@@ -355,7 +356,8 @@ class PluginSearchRunner:
                 if results:
                     self._mirror_misses.add(_breaker_key(name, category))
                     self._mirror_misses.discard(_breaker_key(standby, category))
-            elif standby is not None:
+            elif results:
+                # Delivering, with or without a standby behind it
                 self._mirror_misses.discard(_breaker_key(name, category))
             if results and on_results is not None:
                 await on_results(results)

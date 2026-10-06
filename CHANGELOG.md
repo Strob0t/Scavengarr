@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: A Mirror Member That Delivers Alone Ranks First Again
+- A mirror group member that gave nothing while its standby delivered ranks behind the other members until it delivers again. It cleared that mark only when it delivered with a standby behind it; delivering alone, while the other members' breakers were open, left it behind once they were back. Any delivery clears it now. Found by the doc review (2026-10-06).
+
 ### Performance: The Title Filter Scores Each Search Result Once
 - The full and the base title of a Stremio search find many results of a plugin twice, and the title filter scored both copies (about 24 ms of CPU per search); only the answer dropped the second. `PluginSearchRunner` now hands each result on once, by the key the search progress uses (plugin, title, release, links: the old `download_link` check of its unused return value would have merged another plugin's result). Found by the code review (2026-10-06).
 

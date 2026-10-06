@@ -507,6 +507,24 @@ class TestMirrorStandby:
         ]
         assert await self._searched(runner, plugins) == ["hdfilme", "streamkiste"]
 
+    async def test_a_member_that_delivers_alone_ranks_first_again(self) -> None:
+        """hdfilme misses, then delivers while streamcloud's breaker is
+        open (no standby): once streamcloud is back, hdfilme ranks first."""
+        plugins = self._plugins("hdfilme")
+        breaker = PluginCircuitBreaker(failure_threshold=1, cooldown_seconds=60)
+        runner = _runner(
+            _registry(plugins),
+            mirror_groups={"hdfilme": "g", "streamcloud": "g"},
+            circuit_breaker=breaker,
+        )
+        await self._searched(runner, plugins)
+        plugins["hdfilme"].search.return_value = [_sr("https://dood/1")]
+        breaker.record_failure("streamcloud:2000")
+        assert await self._searched(runner, plugins) == ["hdfilme", "streamkiste"]
+        breaker.reset("streamcloud:2000")
+
+        assert await self._searched(runner, plugins) == ["hdfilme", "streamkiste"]
+
     async def test_an_absent_title_costs_two_searches(self) -> None:
         """Two empty answers agree: the title is not in the database, and
         the ranking stays."""
