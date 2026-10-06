@@ -86,8 +86,8 @@ or in YAML as `plugins.plugin_dir` (a top-level `plugin_dir` key is also accepte
 ```yaml
 plugins:
   overrides:
-    boerse:
-      timeout: 30          # seconds, sets _timeout
+    kinoking:
+      timeout: 30          # seconds, sets _timeout (httpx plugins only)
       max_concurrent: 2    # sets _max_concurrent (semaphore size)
       max_results: 500     # sets _max_results
     kinox:

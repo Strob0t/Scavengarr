@@ -97,7 +97,7 @@ Shared helpers in both classes:
 - `effective_max_results` — `min(search_max_results, _max_results)`; lower during Stremio searches, use it as the pagination limit
 - `_category_matches(requested, accepted)` — Torznab parent/child match: `None` matches everything, `5000` matches `5000-5999`, `5070` matches only `5070` (`category_matches()` of `categories.py`, see step 3)
 - `_new_semaphore()` — `asyncio.Semaphore(self._max_concurrent)`
-- `_verify_domain()` — domain fallback (see [Mirror URL Fallback](./mirror-url-fallback.md)); no-op with one domain; the verified domain stays until `cleanup()`
+- `_verify_domain()` — domain fallback (see [Mirror URL Fallback](./mirror-url-fallback.md)); no-op with one domain; the verified domain stays until a restart
 - `isolated_search(query, category, *, season, episode)` — entry point used by Stremio (see [How Plugins Are Called](./plugin-system.md#how-plugins-are-called))
 - `cleanup()` — releases resources and resets `_domain_verified`
 
@@ -260,7 +260,7 @@ Always obtain pages via `_new_page()` / `_ensure_page()` (or the context from `_
 - `_passes_cloudflare(page, resp) -> bool` — accepts a navigation: status `< 400`, or a 403/503 Cloudflare challenge page that gets solved
 - `_navigate_and_wait(page, url, *, wait_for_cf=True, wait_for_idle=True) -> bool` — `goto` (`domcontentloaded`), `_passes_cloudflare()`, `networkidle`; `False` on an error status that is not a solvable challenge
 - `_fetch_page_html(url, *, wait_until="domcontentloaded", timeout=30_000) -> str` — fresh page, navigate, wait, return HTML (`""` on failure)
-- `_verify_domain()` — navigates the persistent page to each domain (5 s timeout); status `< 400` and a resolved Cloudflare challenge are required; otherwise the next domain is tried
+- `_verify_domain()` — navigates the persistent page to each domain (5 s timeout); it needs status `< 400` or a Cloudflare challenge that gets solved (`_passes_cloudflare()`); otherwise the next domain is tried
 - `isolated_search()` — creates a fresh `BrowserContext` per call (stealth applied), calls `_prepare_context(ctx)`, runs `search()` with the context set in a `ContextVar`, then closes all pages and the context
 - `_prepare_context(ctx)` — hook for authenticated plugins to inject session cookies (`ctx.add_cookies()`) into the per-request context
 - `_serialize_search` (default `False`) — when `True`, `isolated_search()` runs `search()` behind a lock on the persistent context instead (for plugins that depend on page state; moflix used it until it moved to httpx in 1.2.0)
@@ -623,7 +623,7 @@ await asyncio.sleep(5)  # DO NOT DO THIS
 ### Domain Fallback
 
 - List domains in `_domains` in order of preference and call `await self._verify_domain()` at the start of `search()`
-- The base class keeps the verified domain until `cleanup()`; it does not re-probe after later request errors
+- The base class keeps the verified domain until a restart; it does not re-probe after later request errors
 - See [Mirror URL Fallback](./mirror-url-fallback.md)
 
 ---

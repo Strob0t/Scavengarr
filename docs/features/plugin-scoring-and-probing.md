@@ -8,7 +8,7 @@
 
 ## Overview
 
-Without scoring, Scavengarr searches all streaming plugins for every Stremio request. Many plugins are slow, unreliable, or return few playable results for a given content category.
+Without scoring, a Stremio request searches every streaming plugin whose site answers the periodic health check, one member per mirror group. Many plugins are slow, unreliable, or return few playable results for a given content category.
 
 The **Plugin Scoring & Probing** system ranks plugins by measured performance. Background probes assess plugin health and search quality and feed an EWMA-based scoring model; when scored selection is enabled, the Stremio stream use case queries only the top-ranked plugins (plus an occasional exploration pick).
 
@@ -45,7 +45,7 @@ Raw output from a single probe run.
 | `started_at` | `datetime` | Probe start timestamp |
 | `duration_ms` | `float` | Wall-clock duration |
 | `ok` | `bool` | Whether the probe succeeded |
-| `error_kind` | `str \| None` | `timeout`, `captcha`, `http_error` (health); `timeout`, `search_error`, `plugin_not_found` (search) |
+| `error_kind` | `str \| None` | `timeout`, `captcha`, `http_error` (no answer: connect, DNS, TLS or read error; an error status without a challenge has none) (health); `timeout`, `search_error`, `plugin_not_found` (search) |
 | `http_status` | `int \| None` | HTTP response status |
 | `captcha_detected` | `bool` | Page block detected (Cloudflare challenge or DDoS-Guard) |
 | `items_found` | `int` | Raw search result count |
@@ -115,6 +115,8 @@ recency_conf = exp(-age_seconds / tau)         # tau = 4 weeks
 confidence   = clamp(sample_conf * recency_conf, 0, 1)
 ```
 
+The scheduler computes confidence when a probe updates the snapshot. `age_seconds` is 0 then, so the stored confidence reflects the sample count only; nothing recomputes it on read. Old scores end through `score_ttl_days`, not through lower confidence.
+
 ### Final Score Composition
 
 All sub-scores are normalized to 0.0–1.0:
@@ -155,9 +157,11 @@ Lightweight availability check for each plugin's `base_url`.
 | Target | The plugin's `base_url` as-is |
 | Timeout | `health_timeout_seconds` (default 5 s) |
 | Concurrency | Semaphore, `health_concurrency` (default 5) |
-| Cloudflare detection | HEAD: `cf-ray` header + `403`/`503`; GET fallback: body-based `is_cloudflare_challenge()` |
-| Success | Status `< 400` and no Cloudflare challenge |
+| Challenge detection | HEAD: `cf-ray` header with `403`/`503` (Cloudflare), `Server: ddos-guard` with `403`/`503` (DDoS-Guard); GET fallback: `detect_challenge()` on the body |
+| Success | Status `< 400` and no page block (Cloudflare challenge or DDoS-Guard) |
 | Output | `ok`, `http_status`, `duration_ms`, `error_kind`, `captcha_detected` |
+
+`PluginHealthMonitor` reuses `HealthProber` (without scores) for the periodic reachability check of the Stremio plugins (`stremio.plugin_health_interval_seconds`).
 
 When the prober encounters a page block (Cloudflare challenge or DDoS-Guard, classified by `infrastructure/captcha/detect.py`; a login captcha widget on a working homepage does not count), `captcha_detected` is `True`, `ok` is `False`, and `error_kind` is `"captcha"`; `compute_health_observation()` then returns `0.0`.
 
@@ -191,7 +195,7 @@ Shallow search probe per (plugin, category, age bucket).
 
 `QueryPoolBuilder` builds query pools from the free IMDB Suggest API (no API key needed):
 
-- Queries `https://v2.sg.media-imdb.com/suggestion/{letter}/{query}.json` for the letters `a`–`z` plus a fixed keyword list (e.g. `the`, `das`, `star`, `dark`), in a weekly shuffled order.
+- Queries `https://v2.sg.media-imdb.com/suggestion/{letter}/{query}.json` for 10 prefixes per pool build: a weekly shuffled pick from the letters `a`–`z` and 14 keywords (e.g. `the`, `das`, `star`, `dark`).
 - Keeps entries of type `movie` (category `2000`) or `tvSeries`/`tvMiniSeries` (category `5000`) whose year falls into the bucket range.
 - Pools are cached for 24 h under `querypool:{media}:{bucket}`. The query picked per probe is chosen by a shuffle seeded with the ISO week number, so rotation is deterministic within a week.
 
@@ -228,7 +232,7 @@ Score entries use `score_ttl_days` (default 30 days), so scores expire if probes
 
 ## Background Scheduler
 
-`ScoringScheduler.run_forever()` runs as an asyncio task during the app lifespan (only when `scoring.enabled` is `true`):
+`ScoringScheduler.run_forever()` runs as an asyncio task during the app lifespan (`scoring.enabled`, on by default):
 
 | Probe | Due condition |
 |---|---|
@@ -263,7 +267,9 @@ Behavior (`_select_plugins()`):
 1. **Cold-start guard:** if fewer than 50% of plugins have `confidence > 0.1`, search all plugins.
 1. Select the top `max_plugins_scored` plugins by `final_score` (descending).
 1. **Exploration slot:** with probability `exploration_probability`, add one random plugin from the rest that has `confidence >= 0.1`.
-1. Search the selected plugins and continue with title matching, ranking, and resolution as usual (see [Stremio Addon](./stremio-addon.md)).
+1. Search the selected plugins, minus those that failed the periodic health check and all but one member per mirror group, and continue with title matching, ranking, and resolution as usual (see [Stremio Addon](./stremio-addon.md)).
+
+**Mirror groups.** Whenever the score store exists, the scores also choose which member of a mirror group a Stremio request asks: the best `final_score` of the `current` snapshot; a score with confidence up to 0.1 counts as none (0.5). This also applies with `stremio.scoring_enabled: false`, so with the default config it is the scores' only live use. See [Mirror Groups](./stremio-addon.md#mirror-groups).
 
 ---
 
@@ -293,7 +299,7 @@ plugins:
 | Max results | `max_results` | `_max_results` | 1000 |
 | Enabled | `enabled` | (plugin removed from the registry) | `true` |
 
-Overrides are applied right after `plugins.discover()` in the composition root. Unknown plugin names are logged as warnings. `PlaywrightPluginBase` defines no `_timeout` attribute, so a `timeout` override most likely has no effect on Playwright plugins.
+Overrides are applied right after `plugins.discover()` in the composition root. Unknown plugin names are logged as `plugin_override_unknown` warnings; with `enabled: false` an unknown name only logs `plugin_disabled_by_config`. A `timeout` override applies to httpx plugins only; on a Playwright plugin it is skipped with the warning `plugin_timeout_override_unsupported`.
 
 ---
 
@@ -333,7 +339,7 @@ Returns `503` with `{"error": "scoring_not_enabled"}` when scoring is not enable
 
 | Setting | YAML key | Env override | Default | Description |
 |---|---|---|---|---|
-| Enable scoring | `enabled` | `SCAVENGARR_SCORING_ENABLED` | `false` | Enable background probing and the score store |
+| Enable scoring | `enabled` | `SCAVENGARR_SCORING_ENABLED` | `true` | Enable background probing and the score store |
 | Health half-life | `health_halflife_days` | — | `2.0` | Health EWMA half-life (days) |
 | Search half-life | `search_halflife_weeks` | — | `2.0` | Search EWMA half-life (weeks) |
 | Health interval | `health_interval_hours` | — | `24.0` | Hours between health probes |
@@ -395,7 +401,7 @@ plugins:
 | `tests/unit/infrastructure/test_search_prober.py` | Plugin search + hoster checks |
 | `tests/unit/infrastructure/test_scoring_scheduler.py` | Health/search cycles + tick |
 
-Scored plugin selection (`_select_plugins()`) currently has no dedicated unit test.
+`tests/unit/application/test_stremio_stream.py` covers a failing score store (`TestScoredSelection`: every plugin is searched) and the score-based mirror pick (`TestMirrorScores`). Top-N selection and the exploration slot have no unit test yet.
 
 ```bash
 poetry run pytest tests/unit/infrastructure/test_ewma.py \
@@ -423,4 +429,5 @@ poetry run pytest tests/unit/infrastructure/test_ewma.py \
 | Config | `src/scavengarr/infrastructure/config/schema.py` (`ScoringConfig`, `StremioConfig`, `PluginOverride`) |
 | Composition | `src/scavengarr/interfaces/composition.py` (`_wire_scoring`, `_apply_plugin_overrides`) |
 | Use case | `src/scavengarr/application/use_cases/stremio_stream.py` (`_select_plugins`) |
+| Mirror pick | `src/scavengarr/application/stremio/plugin_search.py` (`current_snapshots`, `PluginSearchRunner._one_per_mirror_group`) |
 | Debug API | `src/scavengarr/interfaces/api/stats/router.py` |

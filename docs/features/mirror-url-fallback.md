@@ -2,7 +2,7 @@
 
 # Mirror URL Fallback
 
-> Plugins list their mirror domains in `_domains`; `_verify_domain()` picks the first reachable one as `base_url` and keeps it until `cleanup()`.
+> Plugins list their mirror domains in `_domains`; `_verify_domain()` picks the first reachable one as `base_url` and keeps it until a restart.
 
 ---
 
@@ -48,7 +48,7 @@ class ExampleSitePlugin(HttpxPluginBase):
 - Domains are bare host names; the base classes build `https://{domain}`
 - Order is the fallback priority — list the most reliable mirror first
 - Before verification, `base_url` is `https://{_domains[0]}`
-- The verified domain is kept (`_domain_verified`) until `cleanup()`; the base classes do not re-probe after later request errors
+- The verified domain is kept (`_domain_verified`) for the life of the process (`cleanup()` resets it, but the app does not call it); the base classes do not re-probe after later request errors
 
 ---
 
@@ -81,7 +81,7 @@ async def _verify_domain(self) -> None:
 Key behaviors:
 - `HEAD` request per domain with a 5 s timeout (`DEFAULT_DOMAIN_CHECK_TIMEOUT`)
 - The first status `< 400` wins; errors and timeouts move on to the next domain
-- `base_url` uses the final URL after redirects, so `aniworld.info` → `www.aniworld.info` produces a correct base
+- `base_url` uses the final URL after redirects, so a bare domain that redirects to `www.` produces a correct base
 - If all domains fail, the first domain is used and `{name}_no_domain_reachable` is logged
 
 ---
@@ -101,7 +101,7 @@ async def _verify_domain(self) -> None:
             resp = await page.goto(
                 f"https://{domain}/", timeout=5_000, wait_until="domcontentloaded"
             )
-            if resp and resp.status < 400 and await self._wait_for_cloudflare(page):
+            if resp and await self._passes_cloudflare(page, resp):
                 self.base_url = f"https://{domain}"
                 self._domain_verified = True
                 return
@@ -115,7 +115,7 @@ async def _verify_domain(self) -> None:
 
 Differences from the httpx fallback:
 - **Browser-based:** navigates the plugin's persistent page instead of sending HTTP requests
-- **Cloudflare-aware:** a domain only counts as reachable if the Cloudflare challenge resolves within `_cf_timeout_ms`
+- **Cloudflare-aware:** a domain counts when it answers below 400, or with a Cloudflare challenge page that is solved within `_cf_timeout_ms` (`_passes_cloudflare()`); an error status without a challenge fails
 - **No redirect tracking:** `base_url` is set to `https://{domain}`, not the final URL
 
 Plugins can override `_verify_domain()`. An override of `_wait_for_cloudflare()` must call the base implementation (Turnstile solver, clearance memo) and add its own condition after it (e.g. `page.wait_for_function()` for a cookie the site's app sets).
