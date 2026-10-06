@@ -92,6 +92,37 @@ def format_stream(
     )
 
 
+_MIB = 2**20
+_GIB = 2**30
+
+
+def format_size(size_bytes: int) -> str:
+    """A file size as the sites write it: ``1.4 GB``, ``700 MB`` (binary
+    units, as ``parse_size_to_bytes`` reads them)."""
+    if size_bytes >= _GIB:
+        return f"{size_bytes / _GIB:.1f} GB"
+    return f"{max(1, round(size_bytes / _MIB))} MB"
+
+
+def apply_resolution(ranked: RankedStream, resolved: ResolvedStream) -> RankedStream:
+    """*ranked* with what its resolution measured, *ranked* itself when that
+    changes nothing.
+
+    A measured quality replaces the site's badge: sites label a release once,
+    a hoster may serve another copy. A measured size shows only where the
+    site gave none.
+    """
+    quality = ranked.quality
+    if resolved.quality is not StreamQuality.UNKNOWN:
+        quality = resolved.quality
+    size = ranked.size
+    if not size and resolved.size_bytes:
+        size = format_size(resolved.size_bytes)
+    if quality is ranked.quality and size == ranked.size:
+        return ranked
+    return replace(ranked, quality=quality, size=size)
+
+
 def hoster_key(stream: RankedStream) -> tuple[str, str] | None:
     """Dedup key: one stream per hoster and language.
 

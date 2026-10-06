@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock
 from urllib.parse import urlparse
 
@@ -2718,3 +2719,83 @@ class TestWorkerThreads:
             await uc._convert([_make_search_result()], {})  # noqa: SLF001
 
         assert seen["request_id"] == "r1"
+
+
+class TestMeasuredQuality:
+    """The playback check's measurement replaces the badge in the answer."""
+
+    _PLAIN = "Iron.Man.2008.German"  # no quality in the release name
+    _VOE_LINK = {"url": "https://voe.sx/e/voe1", "hoster": "VOE"}
+    _TAPE_LINK = {"url": "https://streamtape.com/e/tape1", "hoster": "Streamtape"}
+
+    @pytest.mark.parametrize(
+        ("measured", "names", "first"),
+        [
+            (True, ["Scavengarr\n1080p", "Scavengarr"], "STREAMTAPE"),
+            # Without it the hoster score decides (voe above streamtape)
+            (False, ["Scavengarr", "Scavengarr"], "VOE"),
+        ],
+    )
+    async def test_a_measured_1080p_ranks_first(
+        self, measured: bool, names: list[str], first: str
+    ) -> None:
+        async def _resolve(url: str, hoster: str = "") -> ResolvedStream:
+            if measured and "streamtape" in url:
+                return replace(_resolved(url), quality=StreamQuality.HD_1080P)
+            return _resolved(url)
+
+        links = [
+            dict(self._VOE_LINK, release=self._PLAIN),
+            dict(self._TAPE_LINK, release=self._PLAIN),
+        ]
+        uc = _resolving_use_case(links, _resolve)
+
+        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        assert [s.name for s in result] == names
+        assert first in result[0].description
+        # The saved links follow their streams to the new places
+        assert [_video(uc, s) for s in result][0].endswith(
+            "tape1.mp4" if measured else "voe1.mp4"
+        )
+
+    async def test_a_badge_stays_without_a_measurement(self) -> None:
+        async def _resolve(url: str, hoster: str = "") -> ResolvedStream:
+            return _resolved(url)
+
+        link = dict(self._VOE_LINK, release="Iron.Man.2008.German.720p.WEB")
+        uc = _resolving_use_case([link], _resolve)
+
+        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        assert [s.name for s in result] == ["Scavengarr\n720p"]
+
+    async def test_the_measured_size_shows_when_the_plugin_gave_none(self) -> None:
+        async def _resolve(url: str, hoster: str = "") -> ResolvedStream:
+            return replace(_resolved(url), size_bytes=1_500_000_000)
+
+        links = [
+            dict(self._VOE_LINK, release=self._PLAIN),
+            dict(self._TAPE_LINK, release=self._PLAIN, size="1.5 GB"),
+        ]
+        uc = _resolving_use_case(links, _resolve)
+
+        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        voe, tape = sorted(
+            (s.description for s in result), key=lambda d: "STREAMTAPE" in d
+        )
+        assert "1.4 GB" in voe
+        assert "1.5 GB" in tape
+        assert "1.4 GB" not in tape
+
+    async def test_a_cached_answer_carries_the_measurement(self) -> None:
+        resolutions = _Resolutions(alive=(_VOE,))
+        resolutions.store[_VOE] = replace(
+            _resolved(_VOE), quality=StreamQuality.HD_1080P
+        )
+        uc = _from_cache([_link(_VOE, self._PLAIN)], resolutions)
+
+        streams = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        assert [s.name for s in streams] == ["Scavengarr\n1080p"]

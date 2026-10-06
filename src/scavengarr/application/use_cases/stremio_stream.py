@@ -42,6 +42,7 @@ from scavengarr.application.stremio.search_cache import (
 )
 from scavengarr.application.stremio.search_progress import SearchProgress
 from scavengarr.application.stremio.stream_builder import (
+    apply_resolution,
     build_cache_link,
     build_stream_from_resolved,
     deduplicate_by_hoster,
@@ -101,6 +102,8 @@ class _StremioConfig(Protocol):
 
 class _StreamSorter(Protocol):
     """Sorts RankedStreams by language, quality, and hoster scores."""
+
+    def rank(self, stream: RankedStream) -> int: ...
 
     def sort(self, streams: list[RankedStream]) -> list[RankedStream]: ...
 
@@ -324,6 +327,7 @@ class StremioStreamUseCase:
                 key=key,
                 from_cache=source in ("cache", "stale"),
             )
+            ranked, resolved = self._with_measurements(ranked, resolved)
         else:
             await progress.wait(deadline)
             ranked = await self._rank(progress.results, plugin_languages)
@@ -636,6 +640,28 @@ class StremioStreamUseCase:
                 skipped_unsaved=skipped_unsaved,
             )
         return proxied
+
+    def _with_measurements(
+        self, ranked: list[RankedStream], resolved: dict[int, ResolvedStream]
+    ) -> tuple[list[RankedStream], dict[int, ResolvedStream]]:
+        """The streams with what their resolutions measured (quality, size;
+        ``apply_resolution``) and the resolutions by index.
+
+        A changed quality changes the rank: the streams are sorted again
+        (stable, like the sorter), the resolutions follow their streams.
+        """
+        merged = [
+            apply_resolution(s, resolved[i]) if i in resolved else s
+            for i, s in enumerate(ranked)
+        ]
+        if all(m.quality is s.quality for m, s in zip(merged, ranked, strict=True)):
+            return merged, resolved
+        scores = [self._sorter.rank(s) for s in merged]
+        order = sorted(range(len(merged)), key=scores.__getitem__, reverse=True)
+        return (
+            [replace(merged[old], rank_score=scores[old]) for old in order],
+            {new: resolved[old] for new, old in enumerate(order) if old in resolved},
+        )
 
     async def _save_links(self, links: list[CachedStreamLink]) -> set[str]:
         """Save the links in parallel; return the stream ids not saved."""

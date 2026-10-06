@@ -7,9 +7,13 @@ import pytest
 import respx
 import structlog
 
-from scavengarr.domain.entities.stremio import ResolvedStream
+from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
-from scavengarr.infrastructure.hoster_resolvers._verify import check_playable
+from scavengarr.infrastructure.hoster_resolvers._verify import (
+    _SNIFF_BYTES,
+    PlaybackCheck,
+    check_playable,
+)
 from scavengarr.infrastructure.hoster_resolvers.registry import (
     HosterResolverRegistry,
 )
@@ -19,9 +23,22 @@ _MP4 = "https://cdn.example.com/v.mp4"
 _M3U8 = "https://cdn.example.com/master.m3u8"
 
 
-async def _check(stream: ResolvedStream) -> bool:
+async def _measure(stream: ResolvedStream) -> PlaybackCheck:
     async with httpx.AsyncClient() as client:
         return await check_playable(client, stream)
+
+
+async def _check(stream: ResolvedStream) -> bool:
+    return (await _measure(stream)).playable
+
+
+_MASTER = (
+    b"#EXTM3U\n"
+    b"#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=854x480\nlow/index.m3u8\n"
+    b'#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080,CODECS="avc1"\n'
+    b"high/index.m3u8\n"
+    b"#EXT-X-STREAM-INF:BANDWIDTH=2500000,RESOLUTION=1280x720\nmid/index.m3u8\n"
+)
 
 
 class TestCheckPlayable:
@@ -164,3 +181,138 @@ class TestRegistryVerifiesPlayback:
             )
             # respx is not active: a real request would fail the check
             assert await registry.resolve("https://voe.sx/e/1") is not None
+
+    @respx.mock
+    async def test_the_result_carries_the_measurement(self) -> None:
+        """A resolver result without a quality gets the master playlist's,
+        and the cache answers with it."""
+
+        class _Hls:
+            name = "voe"
+
+            async def resolve(self, url: str) -> ResolvedStream | None:
+                return ResolvedStream(_M3U8, is_hls=True)
+
+        respx.get(_M3U8).respond(200, content=_MASTER)
+        async with httpx.AsyncClient() as client:
+            registry = HosterResolverRegistry(
+                resolvers=[_Hls()], http_client=client, verify_playback=True
+            )
+            result = await registry.resolve("https://voe.sx/e/1")
+
+        assert result is not None
+        assert result.quality is StreamQuality.HD_1080P
+        assert registry.cached("https://voe.sx/e/1") == (True, result)
+
+    @respx.mock
+    async def test_the_result_carries_the_file_size(self) -> None:
+        respx.get(_MP4).respond(
+            206,
+            content=b"\x1aE\xdf\xa3",
+            headers={"Content-Range": "bytes 0-4095/1500000000"},
+        )
+        async with httpx.AsyncClient() as client:
+            registry = HosterResolverRegistry(
+                resolvers=[_StubResolver()], http_client=client, verify_playback=True
+            )
+            result = await registry.resolve("https://voe.sx/e/1")
+
+        assert result is not None
+        assert result.size_bytes == 1_500_000_000
+        assert result.quality is StreamQuality.UNKNOWN
+
+    @respx.mock
+    async def test_a_better_quality_of_the_resolver_stays(self) -> None:
+        class _Uhd:
+            name = "voe"
+
+            async def resolve(self, url: str) -> ResolvedStream | None:
+                return ResolvedStream(_M3U8, is_hls=True, quality=StreamQuality.UHD_4K)
+
+        respx.get(_M3U8).respond(200, content=_MASTER)
+        async with httpx.AsyncClient() as client:
+            registry = HosterResolverRegistry(
+                resolvers=[_Uhd()], http_client=client, verify_playback=True
+            )
+            result = await registry.resolve("https://voe.sx/e/1")
+
+        assert result is not None
+        assert result.quality is StreamQuality.UHD_4K
+
+
+class TestMeasurement:
+    """What the check reads from the bytes it fetches anyway."""
+
+    @respx.mock
+    async def test_a_master_playlist_gives_its_largest_variant(self) -> None:
+        respx.get(_M3U8).respond(200, content=_MASTER)
+
+        check = await _measure(ResolvedStream(_M3U8, is_hls=True))
+
+        assert check == PlaybackCheck(playable=True, width=1920, height=1080)
+
+    @respx.mock
+    async def test_a_media_playlist_has_no_resolution(self) -> None:
+        respx.get(_M3U8).respond(
+            200, content=b"#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXTINF:6.0,\nseg0.ts\n"
+        )
+
+        check = await _measure(ResolvedStream(_M3U8, is_hls=True))
+
+        assert check == PlaybackCheck(playable=True)
+
+    @respx.mock
+    async def test_a_variant_cut_off_by_the_sniff_is_not_read(self) -> None:
+        # The check reads 4 KiB: a 4K variant whose height is cut must not
+        # count as 3840x21
+        head = b"#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1,RESOLUTION=1280x720\na\n"
+        cut = b"#EXT-X-STREAM-INF:BANDWIDTH=9,RESOLUTION=3840x21"
+        padding = b"#" * (_SNIFF_BYTES - len(head) - len(cut) - 1) + b"\n"
+        respx.get(_M3U8).respond(200, content=head + padding + cut + b"60\nb\n")
+
+        check = await _measure(ResolvedStream(_M3U8, is_hls=True))
+
+        assert (check.width, check.height) == (1280, 720)
+
+    @respx.mock
+    async def test_a_file_gives_its_size(self) -> None:
+        respx.get(_MP4).respond(
+            206,
+            content=b"\x00\x00\x00\x18ftypmp42",
+            headers={"Content-Range": "bytes 0-4095/1500000000"},
+        )
+
+        check = await _measure(ResolvedStream(_MP4))
+
+        assert check == PlaybackCheck(playable=True, size_bytes=1_500_000_000)
+
+    @respx.mock
+    @pytest.mark.parametrize("content_range", ["bytes 0-4095/*", None])
+    async def test_an_unknown_total_gives_no_size(
+        self, content_range: str | None
+    ) -> None:
+        headers = {"Content-Range": content_range} if content_range else {}
+        respx.get(_MP4).respond(206, content=b"\x00\x00\x00\x18", headers=headers)
+
+        check = await _measure(ResolvedStream(_MP4))
+
+        assert check.size_bytes is None
+
+    @respx.mock
+    async def test_a_refused_stream_has_no_measurement(self) -> None:
+        respx.get(_MP4).respond(
+            403, headers={"Content-Range": "bytes 0-4095/1500000000"}
+        )
+
+        assert await _measure(ResolvedStream(_MP4)) == PlaybackCheck(playable=False)
+
+    @respx.mock
+    async def test_the_check_asks_for_the_sniff(self) -> None:
+        route = respx.get(_MP4).respond(206, content=b"\x00\x00\x00\x18")
+
+        await _measure(ResolvedStream(_MP4))
+
+        assert route.calls.last.request.headers["Range"] == (
+            f"bytes=0-{_SNIFF_BYTES - 1}"
+        )
+        assert _SNIFF_BYTES == 4096

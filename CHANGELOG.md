@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: Stream Quality and Size From the Stream Itself
+- Most streaming sites name no quality, so most Stremio streams had no quality line and ranked by language and hoster alone. The playback check every resolution passes now reads 4 KiB instead of 1 KiB and takes from them, without another request, the largest `RESOLUTION` of an HLS master playlist and the total size of a file (`Content-Range`). A measured quality replaces the release name's or badge's (a letterboxed 1920x800 encode counts as 1080p), a measured size shows where the site gave none, and the answer is sorted again with them: a stream measured at 1080p ranks above an unmeasured one of the same language. The resolver's cache keeps the measurement, so cached answers carry it too ([stremio-addon.md](docs/features/stremio-addon.md#quality-and-size)).
+
 ### Added: Hosters Without a Resolver Are Counted
 - A link no resolver claims was probed with `HEAD` and logged at DEBUG only, so nobody saw which hosters the plugins deliver without a resolver (in 6 h of production all 81 such probes were dead: embed pages). The registry now logs `hoster_without_resolver` (INFO; the hoster name, never the URL, and in a Stremio request the plugin) and counts the probes per hoster; `GET /api/v1/stats/metrics` lists the 20 most frequent under `unresolved_hosters`, the most frequent first (JSON only: the set of names is open). Streaming playlists, which need no resolver, are not counted. Every resolution of a Stremio request now logs with its plugin's name ([hoster-resolvers.md](docs/features/hoster-resolvers.md#adding-a-new-resolver)).
 

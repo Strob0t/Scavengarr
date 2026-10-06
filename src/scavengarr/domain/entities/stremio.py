@@ -24,6 +24,28 @@ class StreamQuality(IntEnum):
     UHD_4K = 60
 
 
+# The lowest width and height of each class, best first
+_RESOLUTION_CLASSES = (
+    (3840, 2160, StreamQuality.UHD_4K),
+    (1920, 1080, StreamQuality.HD_1080P),
+    (1280, 720, StreamQuality.HD_720P),
+)
+
+
+def quality_from_resolution(width: int | None, height: int | None) -> StreamQuality:
+    """The quality class of a video resolution, ``UNKNOWN`` without one.
+
+    By width or by height, whichever gives the higher class: a letterboxed
+    1080p encode (1920x800) is 720p by its height alone.
+    """
+    if width is None or height is None:
+        return StreamQuality.UNKNOWN
+    for min_width, min_height, quality in _RESOLUTION_CLASSES:
+        if width >= min_width or height >= min_height:
+            return quality
+    return StreamQuality.SD
+
+
 @dataclass(frozen=True)
 class StreamLanguage:
     """Language metadata for a stream link."""
@@ -124,6 +146,8 @@ class ResolvedStream:
     # time.time() of the resolution, stamped by the resolver registry (its
     # cache answers for an hour); 0.0: unknown
     resolved_at: float = 0.0
+    # The file's total size, as the playback check read it (Content-Range)
+    size_bytes: int | None = None
 
 
 @dataclass(frozen=True)

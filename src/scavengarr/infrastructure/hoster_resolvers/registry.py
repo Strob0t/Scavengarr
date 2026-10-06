@@ -14,7 +14,11 @@ from urllib.parse import urlparse
 import httpx
 import structlog
 
-from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
+from scavengarr.domain.entities.stremio import (
+    ResolvedStream,
+    StreamQuality,
+    quality_from_resolution,
+)
 from scavengarr.domain.ports.hoster_resolver import (
     ClientBoundResolverPort,
     HosterResolverPort,
@@ -23,7 +27,10 @@ from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
 from scavengarr.infrastructure.browser.page_gate import PageBusy, work_clock
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.hoster_resolvers._domain import extract_domain
-from scavengarr.infrastructure.hoster_resolvers._verify import check_playable
+from scavengarr.infrastructure.hoster_resolvers._verify import (
+    PlaybackCheck,
+    check_playable,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -51,6 +58,17 @@ _PLAYLIST_SUFFIXES = (".m3u8", ".mpd")
 
 def _is_playlist_url(url: str) -> bool:
     return urlparse(url).path.lower().endswith(_PLAYLIST_SUFFIXES)
+
+
+def _measured(stream: ResolvedStream, check: PlaybackCheck) -> ResolvedStream:
+    """*stream* with what its playback check read: the resolution's quality
+    when the resolver named none or a lower one, and the file's size."""
+    measured = quality_from_resolution(check.width, check.height)
+    return replace(
+        stream,
+        quality=max(stream.quality, measured),
+        size_bytes=check.size_bytes or stream.size_bytes,
+    )
 
 
 def _stamped(stream: ResolvedStream) -> ResolvedStream:
@@ -358,7 +376,7 @@ class HosterResolverRegistry:
         unchecked = getattr(resolver, "needs_playback_check", False) is True
         if (self._verify_playback or unchecked) and self._http_client is not None:
             try:
-                playable = await check_playable(self._http_client, result)
+                check = await check_playable(self._http_client, result)
             except httpx.HTTPError as exc:
                 log.info(
                     "hoster_resolve_check_error",
@@ -366,10 +384,11 @@ class HosterResolverRegistry:
                     error=type(exc).__name__,
                 )
                 return "check_error", None, False
-            if not playable:
+            if not check.playable:
                 log.warning("hoster_resolve_unplayable", hoster=hoster_name, url=url)
                 self._record(resolver, failed=True)
                 return "unplayable", None, True
+            result = _measured(result, check)
         log.info("hoster_resolve_success", hoster=hoster_name, is_hls=result.is_hls)
         self._record(resolver, failed=False)
         return "stream", _stamped(result), True

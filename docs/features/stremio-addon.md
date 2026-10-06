@@ -94,8 +94,8 @@ GET /api/v1/stremio/stream/{content_type}/{stream_id}.json
 
 Each stream contains:
 
-- `name` — `Scavengarr` and the quality on a second line (`4K`, `1080p`, `720p`, `SD`, `TS`, `CAM`; no line for unknown quality). Stremio shows `name` in a narrow column, like other addons' `Torrentio\n1080p`.
-- `description` — one short line per fact, since Stremio cuts long lines: the site's own title (release name, else the site's title, else the reference title with the year; series titles get ` SxxEyy` unless they are release names), then `language · size`, then `HOSTER · plugin`. The site's title shows a wrong match that the reference title would hide.
+- `name` — `Scavengarr` and the quality on a second line (`4K`, `1080p`, `720p`, `SD`, `TS`, `CAM`; no line for unknown quality; see [Quality and Size](#quality-and-size)). Stremio shows `name` in a narrow column, like other addons' `Torrentio\n1080p`.
+- `description` — one short line per fact, since Stremio cuts long lines: the site's own title (release name, else the site's title, else the reference title with the year; series titles get ` SxxEyy` unless they are release names), then `language · size` (the site's size, else the measured one), then `HOSTER · plugin`. The site's title shows a wrong match that the reference title would hide.
 - `url` — `/api/v1/stremio/play/{stream_id}` for a file, `/api/v1/stremio/proxy/{stream_id}/scavengarr.m3u8` for every HLS stream
 - `behaviorHints` — `bingeGroup` on every stream, `filename` when the site gives a release name, plus the playback hints (see below)
 
@@ -255,6 +255,10 @@ A stream's language comes from its release name (guessit), else from the plugin'
 | `filemoon` | 3 |
 | `streamtape` | 2 |
 | `doodstream` | 1 |
+
+### Quality and Size
+
+A stream's quality comes from its release name (guessit) or the site's quality badge, its size from the site. The playback check every resolution passes ([hoster-resolvers.md](hoster-resolvers.md#playback-check)) also reads them from the stream itself, in the 4 KiB it fetches anyway: the largest `RESOLUTION` of an HLS master playlist and the total size of a file. A measured quality replaces the site's (`apply_resolution` in `application/stremio/stream_builder.py`): sites label a release once, a hoster can serve another copy. A measured size shows only where the site gave none (`1.4 GB`, `700 MB`; binary units, as the sites write them). When a measurement changes a quality, the answer is sorted again with the same weights, so a stream measured at 1080p ranks above an unmeasured one of the same language, and the name carries `1080p`. A media playlist (segments only), variants past the first 4 KiB and a server that answers without `Content-Range` measure nothing: the site's values stay. Cached answers take the measurement from the resolver's cache. With `stremio.verify_streams` off there is no check, so no measurement either, except for resolvers that check anyway (`needs_playback_check`).
 
 ---
 
