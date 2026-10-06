@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: The Startup Log Names the Configuration
+- `config_effective` (INFO) lists every setting that differs from its default after all layers, with the YAML file read; secrets show as `***`, dict-typed settings (`plugins.overrides`) their keys. `config_unknown_keys` (WARNING) names the YAML keys no setting accepts, which loading ignored silently: a misspelled key, or one a release removed (a `config.yaml` seeded months earlier ran unnoticed). `scripts/prodctl.py logs --since 7d --grep config_` answers what production runs with ([configuration.md](docs/features/configuration.md#what-the-server-logs-at-startup)).
+
 ### Added: Production Reports Which Build Runs
 - `scavengarr_build_info` carries `commit` and `built` beside `version`; `/api/v1/healthz`, `/api/v1/stremio/health` and the startup line `app_startup_complete` report the same three. They come from `SCAVENGARR_COMMIT` and `SCAVENGARR_BUILT`, which `Dockerfile.prod` takes as build arguments and `docker-compose.yml` passes through (`unknown` without them; README → Docker Compose shows the build command). The family keeps its one series, so the telemetry rule's fixed label sets still hold.
 

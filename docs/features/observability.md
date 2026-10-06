@@ -117,6 +117,7 @@ Log lines name a CDN by its second-level domain (`cdn=dropcdn`, `extract_domain(
 poetry run python scripts/prodctl.py ps                       # containers and their state
 poetry run python scripts/prodctl.py stats                    # CPU cores, memory, processes, network
 poetry run python scripts/prodctl.py logs --since 30m --grep kinoger --fields plugin,duration_ms
+poetry run python scripts/prodctl.py logs --since 7d --grep config_ --width 0  # the config it runs with
 poetry run python scripts/prodctl.py metrics --grep plugin_search_seconds_count
 poetry run python scripts/prodctl.py state --keys circuit_breaker,event_loop
 poetry run python scripts/prodctl.py probe tasks              # where the asyncio tasks wait

@@ -6,13 +6,20 @@ variables, and CLI overrides to verify precedence: defaults < YAML < ENV < CLI.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
 
-from scavengarr.infrastructure.config.load import load_config
-from scavengarr.infrastructure.config.schema import AppConfig
+from scavengarr.infrastructure.config.load import (
+    _FLAT_KEYS,
+    _unknown_keys,
+    changed_values,
+    load_config,
+)
+from scavengarr.infrastructure.config.schema import AppConfig, ConfigSource
 
 pytestmark = pytest.mark.integration
 
@@ -79,6 +86,10 @@ class TestShippedConfig:
         """Its API host (db.videasy.net) is gone; enabled: true brings it back."""
         overrides = load_config(config_path=self._PATH).plugins.overrides
         assert overrides["cineby"].enabled is False
+
+    def test_every_key_is_known(self) -> None:
+        """The image's config raises no config_unknown_keys warning."""
+        assert load_config(config_path=self._PATH).source.unknown_keys == ()
 
 
 class TestYamlOverrides:
@@ -308,3 +319,94 @@ class TestPlaywrightBrowserSettings:
     def test_env_sets_solver_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("SCAVENGARR_PLAYWRIGHT_SOLVER_URL", "http://byparr:8191")
         assert load_config().playwright_solver_url == "http://byparr:8191"
+
+
+@pytest.fixture()
+def no_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    """SCAVENGARR_* values of the shell would count as changed values."""
+    for name in list(os.environ):
+        if name.upper().startswith("SCAVENGARR_"):
+            monkeypatch.delenv(name)
+
+
+@pytest.mark.usefixtures("no_env_overrides")
+class TestStartupReport:
+    """What the startup log tells about the configuration: the values away
+    from the defaults (config_effective) and the YAML keys no field accepts
+    (config_unknown_keys)."""
+
+    @staticmethod
+    def _load(tmp_path: Path, data: dict[str, Any]) -> AppConfig:
+        path = tmp_path / "config.yaml"
+        path.write_text(yaml.dump(data), encoding="utf-8")
+        return load_config(config_path=path)
+
+    def test_defaults_change_nothing(self) -> None:
+        config = load_config()
+
+        assert changed_values(config) == {}
+        assert config.source == ConfigSource()
+
+    def test_changed_values_are_the_non_defaults(self, tmp_path: Path) -> None:
+        config = self._load(
+            tmp_path,
+            {
+                "http": {"timeout_seconds": 15.0},
+                "stremio": {"max_concurrent_plugins": 15},
+                "plugins": {"overrides": {"cineby": {"enabled": False}}},
+            },
+        )
+
+        # A dict-typed field shows its keys only
+        assert changed_values(config) == {
+            "http_timeout_seconds": 15.0,
+            "stremio.max_concurrent_plugins": 15,
+            "plugins.overrides": ["cineby"],
+        }
+
+    def test_secrets_are_masked(self, tmp_path: Path) -> None:
+        config = self._load(tmp_path, {"tmdb_api_key": "0123456789abcdef"})
+
+        assert changed_values(config) == {"tmdb_api_key": "***"}
+
+    def test_paths_are_strings(self, tmp_path: Path) -> None:
+        config = self._load(tmp_path, {"cache": {"dir": "/srv/cache"}})
+
+        assert changed_values(config) == {
+            "cache.directory": "/srv/cache",
+            "cache_dir": "/srv/cache",
+        }
+
+    def test_source_names_the_file(self, tmp_path: Path) -> None:
+        config = self._load(tmp_path, {})
+
+        assert config.source == ConfigSource(file=tmp_path / "config.yaml")
+
+    def test_unknown_keys_are_collected(self, tmp_path: Path) -> None:
+        config = self._load(
+            tmp_path,
+            {
+                "htttp": {"timeout_seconds": 1.0},  # misspelled section
+                "http": {"timeout_secs": 1.0, "rate_limit_rps": 2.0},
+                "stremio": {"probe_at_stream_time": True, "max_probe_count": 80},
+                "plugins": {"overrides": {"anything": {"whatever": 1}}},
+                "cache": {"dir": "/srv/cache"},  # CacheConfig.directory
+                "log_level": "INFO",  # flat key, mapped to logging.level
+                "scoring_enabled": False,  # flat scoring keys: env only
+            },
+        )
+
+        assert config.source.unknown_keys == (
+            "http.timeout_secs",
+            "htttp",
+            "scoring_enabled",
+            "stremio.probe_at_stream_time",
+        )
+
+    def test_every_flat_key_lands_on_a_known_key(self) -> None:
+        """The loader's flat-key map and the schema agree."""
+        sectioned: dict[str, dict[str, Any]] = {}
+        for section, key in _FLAT_KEYS.values():
+            sectioned.setdefault(section, {})[key] = 1
+
+        assert _unknown_keys(sectioned) == ()

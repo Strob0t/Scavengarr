@@ -245,7 +245,14 @@ The loader recognizes the sections `plugins`, `http`, `playwright`, `logging`, `
 | `scoring_enabled`, `scoring_w_health`, `scoring_w_search` | `scoring.enabled`, `scoring.w_health`, `scoring.w_search` |
 | `telemetry_tracing_endpoint` | `telemetry.tracing_endpoint` |
 
-Other flat keys are dropped. Unknown keys are ignored without a warning, so a misspelled key keeps its default; only the `cache` section rejects unknown keys, and the app does not start.
+Other flat keys are dropped. Unknown keys are ignored, so a misspelled key keeps its default, but the startup log names them (`config_unknown_keys`, [below](#what-the-server-logs-at-startup)); only the `cache` section rejects unknown keys, and the app does not start.
+
+### What the Server Logs at Startup
+
+Two lines tell what configuration a running server uses; in production `poetry run python scripts/prodctl.py logs --since 7d --grep config_ --width 0` reads them:
+
+- `config_effective` (INFO): `config_file`, the YAML file read (`null`: none, so the defaults and the environment only), and one field per setting that differs from its default after all layers, named by its dotted path in the configuration model: `stremio.max_concurrent_plugins`, `cache.search_ttl_seconds`; the keys of `http`, `playwright` and `logging` under their flat names from the table above (`http_timeout_seconds`, `log_level`), `cache.dir` as `cache.directory` and `cache_dir`. Secrets show as `***` (fields whose name contains `password`, `token`, `key` or `secret`, such as `tmdb_api_key`, and passwords in URLs); dict-typed fields (`plugins.overrides`, `stremio.language_scores`, `stremio.hoster_scores`) show their keys only. With `stremio.auto_tune_all` the next lines' `auto_tune_complete` replaces four concurrency values.
+- `config_unknown_keys` (WARNING): the dotted YAML paths that no setting accepts, such as a misspelled key or one a release removed; loading ignores them. Keys inside dict-typed fields are not checked, environment variables are not either (plugin credentials share the `SCAVENGARR_` prefix).
 
 ---
 
@@ -544,7 +551,7 @@ The configuration model enforces these validation rules:
 | `logging.format` | Must be one of: `json`, `console` (or unset for auto) |
 | `cache.backend` | Must be one of: `diskcache`, `redis` |
 | `cache.crawljob_ttl_seconds` | Must be > 0 |
-| `cache` section | No unknown keys (other sections ignore them) |
+| `cache` section | No unknown keys (other sections ignore them, `config_unknown_keys` names them) |
 | `stremio.plugin_timeout_seconds`, `stremio.stream_deadline_seconds` | Must be > 0 |
 | `stremio.plugin_health_interval_seconds` | Must be >= 0 |
 | `telemetry.tracing_endpoint` | Must start with `http://` or `https://` (empty = off) |

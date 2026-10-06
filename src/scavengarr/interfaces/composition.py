@@ -39,6 +39,7 @@ from scavengarr.infrastructure.common.private_address_guard import (
 from scavengarr.infrastructure.common.rate_limiter import DomainRateLimiter
 from scavengarr.infrastructure.common.retry_transport import RetryTransport
 from scavengarr.infrastructure.concurrency import ConcurrencyPool
+from scavengarr.infrastructure.config.load import changed_values
 from scavengarr.infrastructure.config.schema import AppConfig
 from scavengarr.infrastructure.hoster_resolvers import HosterResolverRegistry
 from scavengarr.infrastructure.hoster_resolvers.ddownload import DDownloadResolver
@@ -118,6 +119,21 @@ _CONNECT_TIMEOUT_S = 5.0
 # in the idle connections: with 100 kept, the scan held the GIL 10-20% of
 # the time during stream requests on the Pi, 2% with httpx's defaults
 _KEEPALIVE_CONNECTIONS = 20
+
+
+def _log_config(config: AppConfig) -> None:
+    """What the server runs with: the values away from the defaults, secrets
+    masked, and the YAML keys that loading ignored."""
+    source = config.source
+    config_file = str(source.file) if source.file else None
+    # One field per changed value, so the processors mask URL passwords in them
+    log.info("config_effective", config_file=config_file, **changed_values(config))
+    if source.unknown_keys:
+        log.warning(
+            "config_unknown_keys",
+            config_file=config_file,
+            keys=list(source.unknown_keys),
+        )
 
 
 def _auto_tune_concurrency(config: AppConfig) -> None:
@@ -409,6 +425,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     state = cast(AppState, app.state)
     config = state.config
+    _log_config(config)
     configure_event_loop()
 
     # 0) Telemetry (must exist before the components that record); tracing

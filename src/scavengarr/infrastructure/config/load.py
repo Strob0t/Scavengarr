@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
 import yaml
 from dotenv import load_dotenv
+from pydantic import AliasChoices, AliasPath, BaseModel, SecretStr
 
 from .defaults import DEFAULT_CONFIG
-from .schema import AppConfig, EnvOverrides
+from .schema import AppConfig, ConfigSource, EnvOverrides
 
 _SECTION_KEYS: set[str] = {
     "plugins",
@@ -23,6 +24,49 @@ _SECTION_KEYS: set[str] = {
     "scoring",
     "telemetry",
 }
+
+# Top-level scalar keys passed through as they are
+_TOP_LEVEL_KEYS: set[str] = {
+    "app_name",
+    "environment",
+    "tmdb_api_key",
+    "validate_download_links",
+    "validation_timeout_seconds",
+    "validation_max_concurrent",
+}
+
+# Flat keys (env/CLI style, YAML too) and the sectioned key each one sets
+_FLAT_KEYS: dict[str, tuple[str, str]] = {
+    "plugin_dir": ("plugins", "plugin_dir"),
+    "http_timeout_seconds": ("http", "timeout_seconds"),
+    "http_timeout_resolve_seconds": ("http", "timeout_resolve_seconds"),
+    "http_follow_redirects": ("http", "follow_redirects"),
+    "http_user_agent": ("http", "user_agent"),
+    "http_http2": ("http", "http2"),
+    "rate_limit_requests_per_second": ("http", "rate_limit_rps"),
+    "rate_limit_adaptive": ("http", "rate_limit_adaptive"),
+    "rate_limit_min_rps": ("http", "rate_limit_min_rps"),
+    "rate_limit_max_rps": ("http", "rate_limit_max_rps"),
+    "http_retry_max_attempts": ("http", "retry_max_attempts"),
+    "http_retry_backoff_base": ("http", "retry_backoff_base"),
+    "http_retry_max_backoff": ("http", "retry_max_backoff"),
+    "api_rate_limit_rpm": ("http", "api_rate_limit_rpm"),
+    "playwright_headless": ("playwright", "headless"),
+    "playwright_browser_fallback": ("playwright", "browser_fallback"),
+    "playwright_solver_url": ("playwright", "solver_url"),
+    "playwright_timeout_ms": ("playwright", "timeout_ms"),
+    "log_level": ("logging", "level"),
+    "log_format": ("logging", "format"),
+    "cache_dir": ("cache", "dir"),
+    "cache_ttl_seconds": ("cache", "ttl_seconds"),
+    "cache_backend": ("cache", "backend"),
+    "cache_redis_url": ("cache", "redis_url"),
+    "cache_max_concurrent": ("cache", "max_concurrent"),
+    "telemetry_tracing_endpoint": ("telemetry", "tracing_endpoint"),
+}
+
+# Field names whose values the startup log masks
+_SECRET_WORDS = ("password", "token", "key", "secret")
 
 
 def _deep_merge(base: dict[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
@@ -60,54 +104,101 @@ def _normalize_layer(data: Mapping[str, Any]) -> dict[str, Any]:
         if section in data and isinstance(data[section], Mapping):
             out[section] = dict(data[section])
 
-    # Pass through known top-level scalar keys.
-    _TOP_LEVEL_KEYS = {
-        "app_name",
-        "environment",
-        "tmdb_api_key",
-        "validate_download_links",
-        "validation_timeout_seconds",
-        "validation_max_concurrent",
-    }
     for key in _TOP_LEVEL_KEYS:
         if key in data:
             out[key] = data[key]
 
-    flat_map: dict[str, tuple[str, str]] = {
-        "plugin_dir": ("plugins", "plugin_dir"),
-        "http_timeout_seconds": ("http", "timeout_seconds"),
-        "http_timeout_resolve_seconds": ("http", "timeout_resolve_seconds"),
-        "http_follow_redirects": ("http", "follow_redirects"),
-        "http_user_agent": ("http", "user_agent"),
-        "http_http2": ("http", "http2"),
-        "rate_limit_requests_per_second": ("http", "rate_limit_rps"),
-        "rate_limit_adaptive": ("http", "rate_limit_adaptive"),
-        "rate_limit_min_rps": ("http", "rate_limit_min_rps"),
-        "rate_limit_max_rps": ("http", "rate_limit_max_rps"),
-        "http_retry_max_attempts": ("http", "retry_max_attempts"),
-        "http_retry_backoff_base": ("http", "retry_backoff_base"),
-        "http_retry_max_backoff": ("http", "retry_max_backoff"),
-        "api_rate_limit_rpm": ("http", "api_rate_limit_rpm"),
-        "playwright_headless": ("playwright", "headless"),
-        "playwright_browser_fallback": ("playwright", "browser_fallback"),
-        "playwright_solver_url": ("playwright", "solver_url"),
-        "playwright_timeout_ms": ("playwright", "timeout_ms"),
-        "log_level": ("logging", "level"),
-        "log_format": ("logging", "format"),
-        "cache_dir": ("cache", "dir"),
-        "cache_ttl_seconds": ("cache", "ttl_seconds"),
-        "cache_backend": ("cache", "backend"),
-        "cache_redis_url": ("cache", "redis_url"),
-        "cache_max_concurrent": ("cache", "max_concurrent"),
-        "telemetry_tracing_endpoint": ("telemetry", "tracing_endpoint"),
-    }
-
-    for flat_key, (section, section_key) in flat_map.items():
+    for flat_key, (section, section_key) in _FLAT_KEYS.items():
         if flat_key in data:
             out.setdefault(section, {})
             out[section][section_key] = data[flat_key]
 
     return out
+
+
+# The keys a layer may hold: a section's or nested model's own keys, ``None``
+# for a value (a dict-typed field takes any keys)
+type _Keys = dict[str, _Keys | None]
+
+
+def _model_keys(model: type[BaseModel]) -> _Keys:
+    """The input keys of a model (an alias replaces the field name)."""
+    keys: _Keys = {}
+    for name, field in model.model_fields.items():
+        nested = field.annotation
+        if isinstance(nested, type) and issubclass(nested, BaseModel):
+            keys[field.alias or name] = _model_keys(nested)
+        else:
+            keys[field.alias or name] = None
+    return keys
+
+
+def _accepted_keys() -> _Keys:
+    """The keys ``_normalize_layer`` passes on and a field then accepts."""
+    fields = _model_keys(AppConfig)
+    sections: dict[str, _Keys] = {s: dict(fields.get(s) or {}) for s in _SECTION_KEYS}
+    # http, playwright and logging have no model: flat AppConfig fields
+    # read their keys through an AliasPath (cache.dir is read twice)
+    for field in AppConfig.model_fields.values():
+        if isinstance(field.validation_alias, AliasChoices):
+            for choice in field.validation_alias.choices:
+                if isinstance(choice, AliasPath):
+                    section, key = choice.path
+                    sections[str(section)][str(key)] = None
+    return {**dict.fromkeys(_TOP_LEVEL_KEYS | _FLAT_KEYS.keys()), **sections}
+
+
+_ACCEPTED_KEYS = _accepted_keys()
+
+
+def _unknown_keys(data: Mapping[str, Any]) -> tuple[str, ...]:
+    """Dotted paths of a YAML layer that no field accepts, sorted.
+
+    Loading ignores them: ``_normalize_layer`` drops unknown top-level keys,
+    pydantic unknown nested ones (the ``cache`` section rejects them).
+    """
+    return tuple(sorted(_unknown_paths(data, _ACCEPTED_KEYS, "")))
+
+
+def _unknown_paths(
+    data: Mapping[str, Any], accepted: _Keys, prefix: str
+) -> Iterator[str]:
+    for key, value in data.items():
+        path = f"{prefix}{key}"
+        if key not in accepted:
+            yield path
+        elif (keys := accepted[key]) is not None and isinstance(value, Mapping):
+            yield from _unknown_paths(value, keys, f"{path}.")
+
+
+def changed_values(config: AppConfig) -> dict[str, Any]:
+    """Dotted paths and values of the fields that differ from the defaults.
+
+    For the startup log: a secret shows as ``***``, a dict-typed field
+    (``plugins.overrides``) as its keys.
+    """
+    return dict(_changes(config, AppConfig(), ""))
+
+
+def _changes(
+    model: BaseModel, default: BaseModel, prefix: str
+) -> Iterator[tuple[str, Any]]:
+    for name in type(model).model_fields:
+        value, base = getattr(model, name), getattr(default, name)
+        if isinstance(value, BaseModel) and isinstance(base, BaseModel):
+            yield from _changes(value, base, f"{prefix}{name}.")
+        elif value != base:
+            yield f"{prefix}{name}", _shown(name, value)
+
+
+def _shown(name: str, value: Any) -> Any:
+    if isinstance(value, SecretStr) or any(word in name for word in _SECRET_WORDS):
+        return "***"
+    if isinstance(value, dict):
+        return sorted(value)
+    if isinstance(value, Path):
+        return str(value)
+    return value
 
 
 def _read_yaml_config(config_path: Path) -> dict[str, Any]:
@@ -130,6 +221,7 @@ def load_config(
     Load configuration with strict precedence:
     defaults < YAML file < env vars < cli overrides
 
+    The config records its file and the file's unknown keys (``source``).
     This function MUST NOT create files or directories (no filesystem side-effects).
     """
     cli_overrides = cli_overrides or {}
@@ -141,11 +233,13 @@ def load_config(
 
     base = _normalize_layer(deepcopy(DEFAULT_CONFIG))
 
+    unknown_keys: tuple[str, ...] = ()
     if config_path is not None:
         if not config_path.exists():
             raise FileNotFoundError(config_path)
-        yaml_layer = _normalize_layer(_read_yaml_config(config_path))
-        _deep_merge(base, yaml_layer)
+        yaml_data = _read_yaml_config(config_path)
+        unknown_keys = _unknown_keys(yaml_data)
+        _deep_merge(base, _normalize_layer(yaml_data))
 
     env_layer_flat = EnvOverrides().to_update_dict()
     env_layer = _normalize_layer(env_layer_flat)
@@ -154,4 +248,6 @@ def load_config(
     cli_layer = _normalize_layer(cli_overrides)
     _deep_merge(base, cli_layer)
 
-    return AppConfig.model_validate(base)
+    config = AppConfig.model_validate(base)
+    config._source = ConfigSource(file=config_path, unknown_keys=unknown_keys)
+    return config

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
@@ -10,6 +11,7 @@ from pydantic import (
     AliasPath,
     BaseModel,
     Field,
+    PrivateAttr,
     field_validator,
     model_validator,
 )
@@ -434,6 +436,15 @@ class StremioConfig(BaseModel):
     )
 
 
+@dataclass(frozen=True)
+class ConfigSource:
+    """Where ``load_config`` took a configuration from, for the startup log."""
+
+    file: Path | None = None
+    # Dotted YAML paths no field accepts (sorted); loading ignored them
+    unknown_keys: tuple[str, ...] = ()
+
+
 class AppConfig(BaseModel):
     """
     Canonical application configuration (validated, final).
@@ -443,6 +454,14 @@ class AppConfig(BaseModel):
     - Environment variables are handled by EnvOverrides(BaseSettings) to allow strict
       precedence control (defaults < YAML < ENV < CLI) in load.py.
     """
+
+    # Set by load_config(); not a setting, so no layer can change it
+    _source: ConfigSource = PrivateAttr(default_factory=ConfigSource)
+
+    @property
+    def source(self) -> ConfigSource:
+        """Where ``load_config`` took this configuration from."""
+        return self._source
 
     # General
     app_name: str = Field(default="scavengarr", description="Application name.")
