@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
+from dataclasses import replace
 from functools import partial
 from typing import Any
 from urllib.parse import urlparse
@@ -44,6 +45,12 @@ _PLAYLIST_SUFFIXES = (".m3u8", ".mpd")
 
 def _is_playlist_url(url: str) -> bool:
     return urlparse(url).path.lower().endswith(_PLAYLIST_SUFFIXES)
+
+
+def _stamped(stream: ResolvedStream) -> ResolvedStream:
+    """*stream* with the time of its resolution: the cache answers with it
+    for an hour, and a stored link is fresh by it."""
+    return stream if stream.resolved_at else replace(stream, resolved_at=time.time())
 
 
 def extract_domain(url: str) -> str:
@@ -286,6 +293,8 @@ class HosterResolverRegistry:
         with self._telemetry.stage("hoster_resolve", resolver=_DIRECT) as stage:
             result = await self._probe_content_type(url, hoster_name)
             stage.outcome = "dead" if result is None else "stream"
+        if result is not None:
+            result = _stamped(result)
         self._cache_result(url, result, _DIRECT)
         return result
 
@@ -357,7 +366,7 @@ class HosterResolverRegistry:
                 return "unplayable", None, True
         log.info("hoster_resolve_success", hoster=hoster_name, is_hls=result.is_hls)
         self._record(resolver, failed=False)
-        return "stream", result, True
+        return "stream", _stamped(result), True
 
     def _record(self, resolver: HosterResolverPort, *, failed: bool) -> None:
         """Report a resolution's outcome to the circuit breaker."""

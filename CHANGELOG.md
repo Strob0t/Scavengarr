@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: A Stored Link Is as Old as Its Resolution
+- A stored link took the time its answer was built as `resolved_at`, also for a stream from the resolver registry's cache, which answers for an hour. `/play` and the HLS proxy therefore counted video URLs up to two hours old as fresh (fresh: one hour) and redirected to expired tokens.
+- `ResolvedStream.resolved_at` carries the time of the resolution: the registry stamps it once, its cache answers with it, and `build_cache_link` and `StremioLinks` store it. Found by the code review (2026-10-06).
+
 ### Fix: Only Verdicts Count Against a Hoster's Breaker
 - A resolution cut after half of `http.timeout_resolve_seconds` counted as a failure. Most cuts come from the answer going out once enough other hosters have a video, and the timed window includes the wait for the stealth browser's pages, so five cuts opened the breakers of healthy hosters (Filemoon, SuperVideo, DoodStream). Cuts count no more.
 - A half-open probe that ended without a verdict (a dead link, a failed request) kept the probe slot, and the alive links after it were refused for a whole cooldown, up to an hour. `PluginCircuitBreaker.release()` frees the slot, so the next link probes.

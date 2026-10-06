@@ -182,7 +182,8 @@ class StremioLinks:
             video_url=resolved.video_url,
             video_headers=json.dumps(resolved.headers) if resolved.headers else "",
             is_hls=resolved.is_hls,
-            resolved_at=time.time(),
+            # A resolution from the registry's cache can be an hour old
+            resolved_at=resolved.resolved_at or time.time(),
         )
         try:
             await self._repo.save(fresh)

@@ -96,6 +96,19 @@ class TestCurrent:
         assert registry.calls == [("https://voe.sx/e/abc", "voe", False)]
         repo.save.assert_awaited_once_with(current)
 
+    async def test_a_resolution_from_the_cache_keeps_its_time(self) -> None:
+        """The registry's cache answers for an hour: stamped "now", its
+        video URL counted as fresh for another hour (code review,
+        2026-10-06)."""
+        half_an_hour_ago = time.time() - 1800
+        links, _ = _links(
+            _Registry(ResolvedStream(video_url=_NEW, resolved_at=half_an_hour_ago))
+        )
+
+        current = await links.current(_link(age=2 * 3600))
+
+        assert current is not None and current.resolved_at == half_an_hour_ago
+
     async def test_a_link_without_a_video_url_resolves(self) -> None:
         links, _ = _links(_Registry(ResolvedStream(video_url=_NEW)))
 

@@ -500,6 +500,15 @@ class TestStreamLinks:
         assert link.is_hls is False
         assert link.resolved_at > 0
 
+    def test_the_link_keeps_the_time_of_the_resolution(self) -> None:
+        """A resolution from the registry's cache can be an hour old."""
+        ranked = RankedStream(url="https://voe.sx/e/a", hoster="voe")
+        resolved = ResolvedStream(
+            video_url="https://cdn.example/a.mp4", resolved_at=1_000.0
+        )
+
+        assert build_cache_link("sid", ranked, resolved).resolved_at == 1_000.0
+
     def test_without_a_resolution_only_the_hoster_url(self) -> None:
         ranked = RankedStream(url="https://voe.sx/e/a", hoster="voe")
 

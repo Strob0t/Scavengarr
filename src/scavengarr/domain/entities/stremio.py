@@ -142,6 +142,9 @@ class ResolvedStream:
     headers: dict[str, str] = field(default_factory=dict)  # Required request headers
     is_hls: bool = False  # True for .m3u8 playlists
     quality: StreamQuality = StreamQuality.UNKNOWN
+    # time.time() of the resolution, stamped by the resolver registry (its
+    # cache answers for an hour); 0.0: unknown
+    resolved_at: float = 0.0
 
 
 @dataclass(frozen=True)

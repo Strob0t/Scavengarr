@@ -486,6 +486,25 @@ class TestHosterResolverRegistry:
         await registry.cleanup()
 
     @pytest.mark.asyncio
+    async def test_a_cached_stream_keeps_the_time_of_its_resolution(self) -> None:
+        """Links stamped the time an answer was built treated video URLs up
+        to two hours old as fresh (code review, 2026-10-06)."""
+        resolver = MagicMock()
+        resolver.name = "voe"
+        resolver.resolve = AsyncMock(
+            return_value=ResolvedStream(video_url="https://cdn.example.com/v.mp4")
+        )
+        registry = HosterResolverRegistry(resolvers=[resolver])
+
+        before = time.time()
+        first = await registry.resolve("https://voe.sx/e/abc123")
+        await asyncio.sleep(0.02)
+        cached = await registry.resolve("https://voe.sx/e/abc123")
+
+        assert first is not None and cached is not None
+        assert before <= first.resolved_at <= time.time()
+        assert cached.resolved_at == first.resolved_at
+
     async def test_result_cache_prevents_repeated_resolution(self) -> None:
         """Successful resolution is cached — second call doesn't invoke resolver."""
         expected = ResolvedStream(video_url="https://cdn.example.com/video.mp4")
@@ -524,7 +543,10 @@ class TestHosterResolverRegistry:
 
     async def test_cached_tells_alive_dead_and_unknown_apart(self) -> None:
         """A cached search answers from the cache without resolving."""
-        stream = ResolvedStream(video_url="https://cdn.example.com/video.mp4")
+        # Already stamped, so the registry keeps it as it is
+        stream = ResolvedStream(
+            video_url="https://cdn.example.com/video.mp4", resolved_at=1.0
+        )
         resolver = MagicMock()
         resolver.name = "voe"
         resolver.resolve = AsyncMock(
@@ -541,8 +563,12 @@ class TestHosterResolverRegistry:
 
     async def test_refresh_resolves_past_the_cache(self) -> None:
         """A CDN refused the cached stream: the next resolution is new."""
-        old = ResolvedStream(video_url="https://cdn.example.com/old.mp4")
-        new = ResolvedStream(video_url="https://cdn.example.com/new.mp4")
+        old = ResolvedStream(
+            video_url="https://cdn.example.com/old.mp4", resolved_at=1.0
+        )
+        new = ResolvedStream(
+            video_url="https://cdn.example.com/new.mp4", resolved_at=2.0
+        )
         resolver = MagicMock()
         resolver.name = "voe"
         resolver.resolve = AsyncMock(side_effect=[old, new])
