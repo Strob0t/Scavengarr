@@ -83,13 +83,34 @@ https://ds7.dropcdn.io/hls2/01/00017/yw6c47u0v5nb_h/seg-2-v1-a1.ts?t=abc
 
 
 class TestRewriteManifest:
-    def test_master_manifest_relative_urls_unchanged(self) -> None:
+    def test_relative_uris_point_at_the_playlists_link(self) -> None:
+        """Resolved against the playlist's proxy URL, a relative URI went to
+        the shared link of the stream, which a later resolution can move to
+        another CDN node (code review, 2026-10-06)."""
         cdn_base = "https://ds7.dropcdn.io/hls2/01/00017/yw6c47u0v5nb_h/"
-        proxy_base = "http://localhost:7979/api/v1/stremio/proxy/abc123/"
+        proxy_base = "http://localhost:7979/api/v1/stremio/proxy/abc123.pinned/"
+
         result = rewrite_manifest(_MASTER_MANIFEST, cdn_base, proxy_base)
-        # Relative URLs should remain untouched
-        assert "index-v1-a1.m3u8?t=abc123" in result
-        assert cdn_base not in result or result == _MASTER_MANIFEST
+
+        assert f"\n{proxy_base}index-v1-a1.m3u8?t=abc123\n" in result
+        assert f"\n{proxy_base}index-v2-a1.m3u8?t=abc123\n" in result
+
+    def test_relative_uris_of_a_variant_resolve_in_its_directory(self) -> None:
+        cdn_base = "https://cdn.example.com/hls/a/"
+        proxy_base = "http://proxy/p/sid.pinned/"
+        content = "#EXTM3U\n#EXTINF:4.0,\nseg-1.ts\n"
+
+        result = rewrite_manifest(content, cdn_base, proxy_base, playlist_dir="720p/")
+
+        assert result.splitlines()[2] == "http://proxy/p/sid.pinned/720p/seg-1.ts"
+
+    @pytest.mark.parametrize("uri", ["data:text/plain;base64,AAAA", "skd://key-id"])
+    def test_uris_of_other_schemes_stay(self, uri: str) -> None:
+        content = f'#EXTM3U\n#EXT-X-KEY:METHOD=SAMPLE-AES,URI="{uri}"\n'
+
+        result = rewrite_manifest(content, "https://cdn.example.com/a/", "http://p/s/")
+
+        assert f'URI="{uri}"' in result
 
     def test_variant_manifest_absolute_urls_rewritten(self) -> None:
         cdn_base = "https://ds7.dropcdn.io/hls2/01/00017/yw6c47u0v5nb_h/"
@@ -199,7 +220,7 @@ class TestRewriteManifest:
 
         assert lines[1].endswith('URI="http://proxy/p/sid//aud/de/index.m3u8"')
         assert lines[2].endswith('URI="http://proxy/p/sid/key.bin"')
-        assert lines[3] == '#EXT-X-MAP:URI="init.mp4"'  # relative: resolves itself
+        assert lines[3] == '#EXT-X-MAP:URI="http://proxy/p/sid/init.mp4"'
         assert lines[4].endswith('URI="https://subs.example.net/de.m3u8"')
 
     def test_keeps_line_endings(self) -> None:

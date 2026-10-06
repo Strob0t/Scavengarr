@@ -531,13 +531,17 @@ async def _proxy_hls(
         return fetched
     body, link = fetched
 
+    # What the playlist lists goes to a copy of its link: a later resolution
+    # under the stream's id leaves a running playback alone
+    link = await links.pinned(link)
     proxy_base = (
-        f"{str(request.base_url).rstrip('/')}/api/v1/stremio/proxy/{stream_id}/"
+        f"{str(request.base_url).rstrip('/')}/api/v1/stremio/proxy/{link.stream_id}/"
     )
     rewritten = rewrite_manifest(
         body.decode("utf-8", errors="replace"),
         cdn_base_from_url(link.video_url),
         proxy_base,
+        playlist_dir="" if master else path[: path.rfind("/") + 1],
     )
     return Response(
         content=rewritten,

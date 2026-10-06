@@ -1375,9 +1375,10 @@ class TestProxyHlsEndpoint:
         assert resp.status_code == 200
         assert "mpegurl" in resp.headers["content-type"]
         body = resp.text
-        # CDN URLs should be rewritten to proxy URLs
+        # CDN URLs should be rewritten to proxy URLs, at a copy of the link
         assert "cdn.dropcdn.io" not in body
-        assert "/api/v1/stremio/proxy/hls-abc/seg-1.ts" in body
+        assert "/api/v1/stremio/proxy/hls-abc." in body
+        assert "/seg-1.ts" in body
         assert resp.headers.get("access-control-allow-origin") == "*"
 
     @patch(f"{_PROXY_MODULE}.fetch_hls_resource", new_callable=AsyncMock)
@@ -1418,9 +1419,8 @@ class TestProxyHlsEndpoint:
 
         body = client.get(f"{_PREFIX}/stremio/proxy/hls-abc/master.m3u8?t=abc").text
         variant_url = body.splitlines()[-1]
-        assert variant_url.endswith(
-            "/api/v1/stremio/proxy/hls-abc//secure/98/r00/video.m3u8?expires=1&md5=ab"
-        )
+        assert "/api/v1/stremio/proxy/hls-abc." in variant_url
+        assert variant_url.endswith("//secure/98/r00/video.m3u8?expires=1&md5=ab")
         resp = client.get(variant_url)
 
         assert resp.status_code == 200
@@ -1629,6 +1629,77 @@ class TestProxyHlsEndpoint:
         forwarded_headers = call_args[0][2]
         assert forwarded_headers["Referer"] == "https://mysite.io/"
         assert forwarded_headers["Origin"] == "https://mysite.io"
+
+
+class TestPinnedPlaylists:
+    """All answers and devices share one stored link per hoster URL: a later
+    resolution under its id moved a running playback's segments to another
+    CDN node with the old token (403, then 502; code review, 2026-10-06). A
+    served playlist points at a copy of the link it came from."""
+
+    _PLAYLIST = b"#EXTM3U\n#EXTINF:10.0,\nseg-1.ts\n#EXT-X-ENDLIST\n"
+
+    @staticmethod
+    def _store() -> tuple[dict[str, CachedStreamLink], AsyncMock]:
+        store: dict[str, CachedStreamLink] = {}
+        repo = AsyncMock()
+        repo.get = AsyncMock(side_effect=store.get)
+        repo.save = AsyncMock(
+            side_effect=lambda link: store.__setitem__(link.stream_id, link)
+        )
+        return store, repo
+
+    @patch(f"{_PROXY_MODULE}.stream_hls_segment", new_callable=AsyncMock)
+    @patch(f"{_PROXY_MODULE}.fetch_hls_resource", new_callable=AsyncMock)
+    def test_a_later_resolution_leaves_a_running_playback_alone(
+        self, mock_fetch: AsyncMock, mock_segment: AsyncMock
+    ) -> None:
+        store, repo = self._store()
+        store["hls-abc"] = replace(_make_hls_link(), resolved_at=time.time())
+        mock_fetch.return_value = (self._PLAYLIST, "application/vnd.apple.mpegurl")
+
+        async def _segment() -> Any:
+            yield b"ts"
+
+        mock_segment.return_value = (_segment(), "video/mp2t")
+        client = TestClient(_make_app(stream_link_repo=repo))
+
+        playlist = client.get(f"{_PREFIX}/stremio/proxy/hls-abc/{HLS_MASTER}").text
+        segment = next(line for line in playlist.splitlines() if "seg-1.ts" in line)
+        # Another device resolves the hoster URL to another CDN node
+        store["hls-abc"] = replace(
+            store["hls-abc"],
+            video_url="https://node-b.dropcdn.io/hls2/09/video/master.m3u8?t=new",
+        )
+
+        resp = client.get(segment)
+
+        assert resp.status_code == 200
+        target = mock_segment.await_args.args[1]
+        assert target.startswith("https://cdn.dropcdn.io/hls2/01/video/seg-1.ts")
+
+    @patch(f"{_PROXY_MODULE}.fetch_hls_resource", new_callable=AsyncMock)
+    def test_one_resolution_makes_one_copy(self, mock_fetch: AsyncMock) -> None:
+        store, repo = self._store()
+        store["hls-abc"] = replace(_make_hls_link(), resolved_at=time.time())
+        mock_fetch.return_value = (self._PLAYLIST, "application/vnd.apple.mpegurl")
+        client = TestClient(_make_app(stream_link_repo=repo))
+
+        first = client.get(f"{_PREFIX}/stremio/proxy/hls-abc/{HLS_MASTER}").text
+        again = client.get(f"{_PREFIX}/stremio/proxy/hls-abc/{HLS_MASTER}").text
+
+        assert first == again
+        assert sorted(store) == sorted({"hls-abc", *_pinned_ids(first)})
+        assert len(_pinned_ids(first)) == 1
+
+
+def _pinned_ids(playlist: str) -> set[str]:
+    """The link ids a rewritten playlist points at."""
+    return {
+        line.split("/stremio/proxy/", 1)[1].split("/", 1)[0]
+        for line in playlist.splitlines()
+        if "/stremio/proxy/" in line
+    }
 
 
 def _refused(url: str, status: int = 403) -> httpx.HTTPStatusError:

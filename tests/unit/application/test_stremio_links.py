@@ -301,6 +301,50 @@ class TestPlayerBoundHosters:
         assert registry.player_calls == []
 
 
+class TestPinned:
+    """A served HLS playlist points at a copy of the link it came from: all
+    answers share one link per hoster URL, and a later resolution under it
+    moved a running playback to another CDN node with the old token (code
+    review, 2026-10-06)."""
+
+    async def test_a_copy_under_an_id_of_its_resolution_is_stored(self) -> None:
+        links, repo = _links(_Registry(None))
+        link = _link(age=60)
+
+        pinned = await links.pinned(link)
+
+        assert pinned.stream_id.startswith("sid.")
+        assert pinned.video_url == link.video_url
+        repo.save.assert_awaited_once_with(pinned)
+
+    async def test_one_resolution_gives_one_copy(self) -> None:
+        links, repo = _links(_Registry(None))
+        link = _link(age=60)
+
+        first = await links.pinned(link)
+        again = await links.pinned(first)
+
+        assert again == first
+        assert (await links.pinned(link)).stream_id == first.stream_id
+        assert repo.save.await_count == 2
+
+    async def test_another_resolution_gives_another_copy(self) -> None:
+        links, _ = _links(_Registry(None))
+
+        old = await links.pinned(_link(age=60))
+        new = await links.pinned(_link(age=60, video_url=_NEW))
+
+        assert old.stream_id != new.stream_id
+        assert old.stream_id.split(".")[0] == new.stream_id.split(".")[0] == "sid"
+
+    async def test_a_failed_save_serves_the_link_itself(self) -> None:
+        links, repo = _links(_Registry(None))
+        repo.save = AsyncMock(side_effect=ConnectionError("redis down"))
+        link = _link(age=60)
+
+        assert await links.pinned(link) == link
+
+
 class TestRefreshed:
     async def test_resolves_past_the_resolver_cache(self) -> None:
         """The CDN refused the stored stream (403, 404, 410)."""

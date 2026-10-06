@@ -97,6 +97,31 @@ class StremioLinks:
             return link
         return fresh
 
+    async def pinned(self, link: CachedStreamLink) -> CachedStreamLink:
+        """*link* under an id of its own resolution, for what a playlist
+        served from it lists (variants, segments).
+
+        All answers and devices share one link per hoster URL: a later
+        resolution under that id moved a running playback's segments to
+        another CDN node with the old token (403, then 502; code review,
+        2026-10-06). The copy stays as it is. When it cannot be saved,
+        *link* itself.
+        """
+        base = link.stream_id.split(".", 1)[0]
+        digest = hashlib.sha256(link.video_url.encode()).hexdigest()[:12]
+        pinned_id = f"{base}.{digest}"
+        if link.stream_id == pinned_id:
+            return link
+        copy = replace(link, stream_id=pinned_id)
+        try:
+            await self._repo.save(copy)
+        except Exception:
+            log.warning(
+                "stremio_link_pin_failed", stream_id=link.stream_id, exc_info=True
+            )
+            return link
+        return copy
+
     async def refreshed(self, link: CachedStreamLink) -> CachedStreamLink | None:
         """*link* resolved again past the resolver's cache (the CDN refused it)."""
         return await self._resolve_again(link, refresh=True)

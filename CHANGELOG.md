@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: A Later Resolution Leaves a Running HLS Playback Alone
+- All answers and devices share one stored link per hoster URL (`stream_link_id`). When a second device, AIOStreams or a reopened stream list resolved the hoster URL again (another CDN node), the next variant and segment requests of a running playback went to the new node with the old path and token: 403, the proxy answered 502, and the playback stopped when its buffer ran dry.
+- A served playlist points at a copy of the link it came from (`StremioLinks.pinned`: `<stream id>.<digest of the video URL>`, one per resolution), which later resolutions leave alone. Relative URIs become absolute URLs of that copy (`rewrite_manifest(..., playlist_dir)`); a playlist under the old URL form still plays. Found by the code review (2026-10-06).
+
 ### Fix: Streams Play While the Cache Fails
 - Every answered stream points at `/play` or the HLS proxy, so a stream whose link could not be saved was dropped: with diskcache raising on every write (locked, disk full) every Stremio answer was empty, and with Redis losing the writes every `/play` and HLS proxy request answered 404.
 - `CacheStreamLinkRepository` keeps the links of the latest answers in memory (4096) and reads them from there first; a failed cache write or read is logged (`stream_link_save_failed`, `stream_link_load_failed`), and the cache keeps the links across restarts. Found by the code review (2026-10-06).
