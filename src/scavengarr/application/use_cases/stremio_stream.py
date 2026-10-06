@@ -13,8 +13,7 @@ import time
 from collections.abc import Callable, Coroutine, Mapping
 from contextvars import ContextVar
 from dataclasses import replace
-from functools import partial
-from typing import Any, Literal, Protocol
+from typing import Any, Protocol
 
 import structlog
 
@@ -29,11 +28,7 @@ from scavengarr.application.stremio.plugin_selection import (
     PluginSelectionConfig,
     PluginSelector,
 )
-from scavengarr.application.stremio.queries import (
-    build_lang_group_queries,
-    build_multi_lang_reference,
-    first_available_title,
-)
+from scavengarr.application.stremio.queries import first_available_title
 from scavengarr.application.stremio.resolution import (
     HosterResolution,
     ResolveCallback,
@@ -58,21 +53,18 @@ from scavengarr.application.stremio.title_resolution import (
     TitleMatchConfig,
     TitleResolver,
 )
+from scavengarr.application.stremio.title_search import TitleSearch
 from scavengarr.domain.entities.stremio import (
     CachedStreamLink,
     RankedStream,
     ResolvedStream,
     StremioStream,
     StremioStreamRequest,
-    TitleMatchInfo,
 )
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.domain.ports.browser_fetcher import PageClaim
 from scavengarr.domain.ports.cache import CachePort
-from scavengarr.domain.ports.concurrency import (
-    ConcurrencyBudgetPort,
-    ConcurrencyPoolPort,
-)
+from scavengarr.domain.ports.concurrency import ConcurrencyPoolPort
 from scavengarr.domain.ports.plugin_registry import PluginRegistryPort
 from scavengarr.domain.ports.plugin_score_store import PluginScoreStorePort
 from scavengarr.domain.ports.search_engine import SearchEnginePort
@@ -105,18 +97,6 @@ class _StreamSorter(Protocol):
     def sort(self, streams: list[RankedStream]) -> list[RankedStream]: ...
 
 
-class _Search(Protocol):
-    """The search for one cache key; the plugins' time counts from *started*."""
-
-    def __call__(
-        self, progress: SearchProgress, *, started: float
-    ) -> Coroutine[Any, Any, None]: ...
-
-
-# Where a request's search results come from: a fresh or stale cache entry,
-# a new search, or a running one it joins
-_Source = Literal["cache", "stale", "search", "joined"]
-
 # Type aliases for injected pure functions.
 _ConvertFn = Callable[..., list[RankedStream]]
 
@@ -127,13 +107,6 @@ log = structlog.get_logger(__name__)
 # Filemoon resolutions queued for the stealth browser's 2 pages until their
 # 10 s timeout, which opened its breaker (dev-server end-to-end run, 2026-10-05)
 _BACKGROUND_RUNS = 1
-
-# Stale search-cache entries refresh one title at a time too: every stale
-# title asked for started its refresh at once, the refreshes split the plugin
-# slots with the requests' own searches (fair share), and a refresh cut short
-# by the plugin time replaced its entry with a thinner one (code review,
-# 2026-10-06)
-_BACKGROUND_SEARCHES = 1
 
 # The cached outcome of resolving a URL, without resolving it: (True, stream),
 # (True, None) for a link cached as dead, (False, None) when not cached.
@@ -187,19 +160,27 @@ class StremioStreamUseCase:
         self._sorter = sorter
         self._convert_fn = convert_fn
         self._user_agent = user_agent
-        self._search_runner = PluginSearchRunner(
-            plugins=plugins,
-            search_engine=search_engine,
-            episode_filter_fn=episode_filter_fn,
-            max_results_var=max_results_var,
-            plugin_timeout=config.plugin_timeout_seconds,
-            max_results_per_plugin=config.max_results_per_plugin,
+        self._title_search = TitleSearch(
+            search_runner=PluginSearchRunner(
+                plugins=plugins,
+                search_engine=search_engine,
+                episode_filter_fn=episode_filter_fn,
+                max_results_var=max_results_var,
+                plugin_timeout=config.plugin_timeout_seconds,
+                max_results_per_plugin=config.max_results_per_plugin,
+                telemetry=telemetry,
+                circuit_breaker=circuit_breaker,
+                browser_warmup_fn=browser_warmup_fn,
+                mirror_groups=mirror_groups,
+                plugin_health=plugin_health,
+                score_store=score_store,
+            ),
+            titles=self._titles,
+            search_cache=SearchCache(cache, ttl_seconds=search_ttl_seconds),
+            pool=pool,
             telemetry=telemetry,
-            circuit_breaker=circuit_breaker,
-            browser_warmup_fn=browser_warmup_fn,
-            mirror_groups=mirror_groups,
-            plugin_health=plugin_health,
-            score_store=score_store,
+            plugin_timeout_s=config.plugin_timeout_seconds,
+            spawn=self._spawn,
         )
         self._stream_link_repo = stream_link_repo
         self._resolve_fn = resolve_fn
@@ -208,23 +189,17 @@ class StremioStreamUseCase:
         self._probe_concurrency = config.probe_concurrency
         self._resolve_target = config.resolve_target_count
         self._deadline_s = config.stream_deadline_seconds
-        self._plugin_timeout_s = config.plugin_timeout_seconds
-        self._search_cache = SearchCache(cache, ttl_seconds=search_ttl_seconds)
-        # Running searches per cache key (single-flight) and every task
-        # that outlives a request (searches, background resolutions), for
-        # aclose()
-        self._searches: dict[str, SearchProgress] = {}
-        self._background_searches = asyncio.Semaphore(_BACKGROUND_SEARCHES)
         # Resolutions of a cached answer's other links, one per cache key,
         # one cache key at a time
         self._background_resolutions: dict[str, asyncio.Task[Any]] = {}
         self._background_runs = asyncio.Semaphore(_BACKGROUND_RUNS)
+        # Every task that outlives a request (searches, background
+        # resolutions), for aclose()
         self._tasks: set[asyncio.Task[Any]] = set()
         self._telemetry = telemetry
         self._selector = PluginSelector(
             plugins=plugins, score_store=score_store, config=config
         )
-        self._pool = pool
 
     async def execute(
         self,
@@ -279,18 +254,14 @@ class StremioStreamUseCase:
 
         # --- Per-language-group search + filter (cached per title) ---
         key = search_cache_key(request)
-        progress, source = await self._search_progress(
+        progress, source = await self._title_search.progress(
             key,
-            partial(
-                self._search,
-                key,
-                self._titles.language_groups(selected),
-                title_infos,
-                request,
-                category,
-                scored=len(selected) < len(all_names),
-            ),
+            request,
+            self._titles.language_groups(selected),
+            title_infos,
+            category,
             started=started,
+            scored=len(selected) < len(all_names),
         )
         stage.label(source=source)
 
@@ -362,60 +333,6 @@ class StremioStreamUseCase:
         stage.outcome = "streams" if streams else "empty"
         return streams
 
-    async def _search_progress(
-        self, key: str, search: _Search, *, started: float
-    ) -> tuple[SearchProgress, _Source]:
-        """The results for *key*: from the cache, or of the running or a new search.
-
-        Requests for one key share one running search (single-flight) and
-        read its results while it runs. A stale entry still answers while a
-        background search refreshes it (stale-while-revalidate, one title at
-        a time). The search runs as its own task, so a request that goes
-        away does not cancel it for the others. Returns the progress and
-        where it came from.
-        """
-        entry = await self._search_cache.get(key)
-        if entry is None:
-            return self._shared_search(key, partial(search, started=started))
-        stale = self._search_cache.is_stale(entry)
-        if stale:
-            self._shared_search(key, partial(self._refresh, search))
-        log.info(
-            "stremio_search_cache_hit",
-            cache_key=key,
-            stale=stale,
-            age_s=round(time.time() - entry.stored_at),
-            result_count=len(entry.results),
-        )
-        return SearchProgress.finished(entry), "stale" if stale else "cache"
-
-    def _shared_search(
-        self, key: str, search: Callable[[SearchProgress], Coroutine[Any, Any, None]]
-    ) -> tuple[SearchProgress, _Source]:
-        """The running search for *key* (``joined``); starts *search* when
-        none runs (``search``)."""
-        progress = self._searches.get(key)
-        if progress is not None:
-            return progress, "joined"
-        progress = SearchProgress()
-        self._searches[key] = progress
-        task = self._spawn(search(progress))
-        task.add_done_callback(partial(self._search_done, key, progress))
-        return progress, "search"
-
-    def _search_done(
-        self, key: str, progress: SearchProgress, _task: asyncio.Task[None]
-    ) -> None:
-        if self._searches.get(key) is progress:
-            del self._searches[key]
-
-    async def _refresh(self, search: _Search, progress: SearchProgress) -> None:
-        """Refresh a stale entry: one title at a time (``_BACKGROUND_SEARCHES``);
-        the plugins' time counts from the refresh's start, so a title that
-        waited keeps its whole time."""
-        async with self._background_searches:
-            await search(progress, started=time.monotonic())
-
     def _spawn[T](self, coro: Coroutine[Any, Any, T]) -> asyncio.Task[T]:
         """Run *coro* as a task that may outlive the request (see aclose)."""
         task = asyncio.create_task(coro)
@@ -434,108 +351,6 @@ class StremioStreamUseCase:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-
-    async def _search(
-        self,
-        key: str,
-        lang_groups: dict[tuple[str, ...], list[str]],
-        title_infos: dict[str, TitleMatchInfo | None],
-        request: StremioStreamRequest,
-        category: int,
-        progress: SearchProgress,
-        *,
-        started: float,
-        scored: bool,
-    ) -> None:
-        """Search the plugins until they are done; store the matching results.
-
-        The plugins get ``plugin_timeout_seconds`` from *started* (the
-        request's start; a refresh's own, see ``_refresh``).
-        Their title-matching results go into *progress* as they arrive: the
-        answers do not wait for the search (``_resolve``), they read it.
-        """
-        with self._telemetry.stage("stremio_phase", phase="search"):
-            try:
-                async with self._pool.request() as budget:
-                    await self._search_lang_groups(
-                        lang_groups,
-                        title_infos,
-                        request,
-                        category,
-                        progress,
-                        scored=scored,
-                        budget=budget,
-                        # Plugins queue for slots; the search ends after the
-                        # request started, not after each plugin's start
-                        deadline=started + self._plugin_timeout_s,
-                    )
-            finally:
-                progress.finish()
-        await self._search_cache.put(key, progress.entry())
-
-    async def _search_lang_groups(
-        self,
-        lang_groups: dict[tuple[str, ...], list[str]],
-        title_infos: dict[str, TitleMatchInfo | None],
-        request: StremioStreamRequest,
-        category: int,
-        progress: SearchProgress,
-        *,
-        scored: bool,
-        budget: ConcurrencyBudgetPort,
-        deadline: float,
-    ) -> None:
-        """Search each language group; title-filter each plugin's results.
-
-        Language groups are searched in parallel so that e.g. German and
-        English plugins start at the same time instead of sequentially.
-        Each plugin's results are filtered with its group's reference title
-        when they arrive and go into *progress*.
-        """
-
-        async def _search_one_group(
-            lang_key: tuple[str, ...],
-            group_plugins: list[str],
-        ) -> None:
-            plugin_langs = list(lang_key)
-            ref = build_multi_lang_reference(title_infos, plugin_langs)
-            if ref is None:
-                return
-
-            queries = build_lang_group_queries(title_infos, plugin_langs)
-            if not queries:
-                return
-
-            log.info(
-                "stremio_search_start",
-                imdb_id=request.imdb_id,
-                title=ref.title,
-                queries=queries,
-                plugin_count=len(group_plugins),
-                languages=plugin_langs,
-                scored=scored,
-            )
-
-            async def _found(results: list[SearchResult]) -> None:
-                progress.add(results, await self._titles.matching(results, ref))
-
-            await self._search_runner.search_with_fallback(
-                group_plugins,
-                queries,
-                category,
-                season=request.season,
-                episode=request.episode,
-                budget=budget,
-                deadline=deadline,
-                on_results=_found,
-            )
-
-        await asyncio.gather(
-            *(
-                _search_one_group(lang_key, group_plugins)
-                for lang_key, group_plugins in lang_groups.items()
-            )
-        )
 
     async def _cache_and_proxy(
         self,
