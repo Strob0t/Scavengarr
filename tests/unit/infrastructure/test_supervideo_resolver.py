@@ -360,31 +360,27 @@ class TestSuperVideoResolver:
         result = await resolver.resolve("https://supervideo.cc/e/abc123def456")
         assert result is None
 
-    @pytest.mark.asyncio
+    @respx.mock
     async def test_leaves_the_playback_check_to_the_registry(self) -> None:
         """No HEAD of its own: SuperVideo's CDN answers a HEAD with a redirect
         to an ad domain and the playlist URL with a script page (2026-10-05).
         The registry's playback check reads the body, counts the page as
         unplayable, and the hoster breaker pauses SuperVideo."""
-        html = """
-        <html><script>
-        sources: [{file:"https://sv1.supervideo.cc/v/abc.mp4"}]
-        </script></html>
-        """
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = html
+        embed = "https://supervideo.cc/e/abc123def456"
+        respx.get(embed).respond(
+            200,
+            text='<html><script>sources: [{file:"https://sv1.supervideo.cc/v/abc.mp4"}]'
+            "</script></html>",
+        )
+        head = respx.head(url__startswith="https://").respond(200)
 
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(return_value=mock_resp)
-
-        resolver = SuperVideoResolver(http_client=client)
-        result = await resolver.resolve("https://supervideo.cc/e/abc123def456")
+        async with httpx.AsyncClient() as client:
+            result = await SuperVideoResolver(http_client=client).resolve(embed)
 
         assert result is not None
         assert result.video_url == "https://sv1.supervideo.cc/v/abc.mp4"
-        assert result.headers == {"Referer": "https://supervideo.cc/e/abc123def456"}
-        client.head.assert_not_awaited()
+        assert result.headers == {"Referer": embed}
+        assert not head.called
 
 
 class TestSuperVideoCdnScriptPage:
