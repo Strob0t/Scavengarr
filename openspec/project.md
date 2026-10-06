@@ -54,7 +54,7 @@ Scavengarr is a **self-hosted, container-ready indexer** that emulates the Torzn
 - **Pre-commit hooks** (`.pre-commit-config.yaml`): `end-of-file-fixer`, `trailing-whitespace`, `check-yaml`, `ruff-check` (import sorting), `ruff-check --fix`, `ruff-format` — **never skip** (`--no-verify`)
 - **Quality gates** (must pass before every commit):
   - ✅ `poetry run pre-commit run --all-files`
-  - ✅ `poetry run pytest` (live tests excluded by default)
+  - ✅ `poetry run pytest -n auto` (parallel; live tests excluded by default)
 
 ### Configuration System
 

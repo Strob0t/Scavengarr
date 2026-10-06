@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Chore: The Test Suite Runs on Parallel Workers
+- New dev dependency pytest-xdist: `poetry run pytest -n auto` runs the full suite in 15 s instead of 47 s (16 threads; at most 8 workers through `--maxprocesses=8` in `addopts`, since 16 took 20 s). CI, `AGENTS.md`, `CONTRIBUTING.md` and the `test`/`commit` skills use `-n auto`; a single test file stays faster without it (1.1 s instead of 2.4 s). Eleven parallel full runs (4 to 16 workers) passed, so the tests share no state between workers.
+
 ### Chore: The ruff Edit Hook Lints Repository Files Only and Keeps New Imports
 - `.claude/hooks/format-and-lint.sh` skips Python files outside the repository (scratch scripts follow no project rules) and leaves unused imports (F401) to pre-commit: `ruff check --fix` deleted an import added before its first use, and the next edit failed with an undefined name (254 of 385 hook blocks in one week were F821).
 

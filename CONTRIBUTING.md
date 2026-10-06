@@ -45,7 +45,8 @@ The repository also contains a dev container (`.devcontainer/`) with Python, Nod
 ## Running tests
 
 ```bash
-poetry run pytest                               # unit, integration and E2E tests (offline)
+poetry run pytest -n auto                       # unit, integration and E2E tests (offline, parallel)
+poetry run pytest tests/unit/test_x.py          # one file: faster without -n
 poetry run pytest -m live                       # live smoke tests against the real sites (opt-in)
 poetry run pytest tests/benchmark/ -s -v        # concurrency benchmarks
 ```
@@ -152,7 +153,7 @@ Resolvers live in `src/scavengarr/infrastructure/hoster_resolvers/`. Hosters bui
 - Work on `staging` (or a branch from it) and open pull requests against **`staging`**. `main` only receives release merges from `staging`.
 - Keep commits small and atomic: one isolated change per commit.
 - Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/): `<type>(<scope>): <subject>`, lower-case subject, no trailing period — e.g. `fix(fireani): read episode links from the new api`.
-- Before every commit: `poetry run pre-commit run --all-files` and `poetry run pytest` must pass.
+- Before every commit: `poetry run pre-commit run --all-files` and `poetry run pytest -n auto` must pass.
 
 ## Documentation
 
