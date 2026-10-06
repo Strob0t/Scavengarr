@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: Streams Play While the Cache Fails
+- Every answered stream points at `/play` or the HLS proxy, so a stream whose link could not be saved was dropped: with diskcache raising on every write (locked, disk full) every Stremio answer was empty, and with Redis losing the writes every `/play` and HLS proxy request answered 404.
+- `CacheStreamLinkRepository` keeps the links of the latest answers in memory (4096) and reads them from there first; a failed cache write or read is logged (`stream_link_save_failed`, `stream_link_load_failed`), and the cache keeps the links across restarts. Found by the code review (2026-10-06).
+
 ### Fix: An Echo Leaves No Hoster Out of a Cached Answer
 - A cached answer took each hoster's first cached outcome in rank order, also an echoed embed URL (a resolver that only validates a link). The answer drops echoes, so the hoster was left out of every cached answer for the hour the echo stayed cached, although a lower-ranked link of it had a video. `_cached_resolutions` passes echoes like dead links now. Found by the code review (2026-10-06).
 
