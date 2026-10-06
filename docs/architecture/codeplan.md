@@ -53,7 +53,7 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 | `application/stremio/stream_builder.py` | Stream formatting, hoster dedup, behavior hints, cache/proxy links | `format_stream`, `deduplicate_by_hoster`, `is_direct_video_url`, `build_stream_from_resolved` |
 | `application/stremio/search_cache.py` | Title-filtered plugin results per title, stale-while-revalidate | `SearchCache`, `CachedSearch` |
 | `application/stremio/search_progress.py` | Results of a running search, shared by the requests waiting on it | `SearchProgress` |
-| `application/stremio/resolution.py` | One request's resolutions: each hoster's best link in rank order | `HosterResolution` |
+| `application/stremio/resolution.py` | One request's resolutions: each hoster's best link in rank order; when the answer is due, cached answers, background resolutions | `HosterResolution`, `ResolveFlow` |
 | `application/factories/crawljob_factory.py` | `SearchResult` → `CrawlJob` | `CrawlJobFactory` |
 
 ### Infrastructure

@@ -183,7 +183,7 @@ Helpers for `StremioStreamUseCase` live in `application/stremio/`:
 - `stream_builder.py` — `format_stream`, `deduplicate_by_hoster` (only without resolver; with one, resolution picks one stream per hoster), `is_direct_video_url`, behavior hints and cache/proxy link building.
 - `search_cache.py` — `SearchCache`: the title-filtered plugin results per title (`cache.search_ttl_seconds`, stale-while-revalidate). Resolved streams are not cached with them: hoster stream URLs expire, and some are bound to the resolving IP.
 - `search_progress.py` — `SearchProgress`: the title-matching results of a running search so far, shared by every request waiting on it (single-flight).
-- `resolution.py` — `HosterResolution`: one request's resolutions; each hoster resolves its best-ranked link, the next only after that one failed.
+- `resolution.py` — `HosterResolution`: one request's resolutions; each hoster resolves its best-ranked link, the next only after that one failed. `ResolveFlow`: when the answer is due (`resolve_target_count` hosters with a video, everything done, or the deadline); a search from the cache answers with the resolver's cached outcomes and resolves its other links in the background, one title at a time.
 
 #### TorznabSearchUseCase — the central orchestrator
 
