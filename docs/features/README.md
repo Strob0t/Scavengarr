@@ -75,7 +75,8 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** and **S
 | [Code Review Fixes](../plans/code-review-fixes.md) | Done: 79 findings of the full `staging` review fixed in four waves (security, results, robustness, plugin categories); open observations listed |
 | [Captcha Solving](../plans/captcha-solving.md) | Done: shared challenge detector, grab-time link resolution (nox ALTCHA, animeloads image captcha), vinovo/DoodStream without captcha, clearance cookies across restarts, optional Byparr sidecar |
 | [Next Steps](../plans/next-steps.md) | Proposed: status snapshot of 2026-09-29 (live run, release, CI) and prioritized next steps, incl. the stremio.lan live test setup |
-| [Ideas Backlog](../plans/ideas-backlog.md) | Proposed 2026-10-06: snapshot of production and repository, six new findings (httpx log noise, discarded stream quality and size, hosters without a resolver, no build identity, kinox without yield, hand-made deployment) and 16 evaluated ideas with a decisions table |
+| [Ideas Backlog](../plans/ideas-backlog.md) | Decided 2026-10-06: snapshot of production and repository, six new findings (httpx log noise, discarded stream quality and size, hosters without a resolver, no build identity, kinox without yield, hand-made deployment), 16 evaluated ideas, the decisions, and the handoff to the implementing agent (order, working rules, task specifications; the larger items as OpenSpec changes `add-anime-ids`, `persist-resolver-state`, `add-container-image`, `add-stream-media-quality`) |
+| [Stremio Stream Split](../plans/stremio-stream-split.md) | Proposed 2026-10-06 (item I14): split the 939-line stream use case into phase collaborators under `application/stremio/` (title resolution, plugin selection, title search, resolve flow, answer assembly) in five behaviour-preserving commits; exclusive-access rule |
 
 ### Refactoring History
 
