@@ -19,11 +19,23 @@ CHROMIUM_ARGS = ("--renderer-process-limit=2",)
 BLOCKED_RESOURCE_TYPES = frozenset(
     {"image", "font", "stylesheet", "media", "texttrack"}
 )
+# Requests that load even as a blocked type: an anti-bot check's beacons
+_ANTI_BOT_BEACON = "ddos-guard"
 
 
 async def block_heavy_resources(route: Route) -> None:
-    """Abort heavy resource types: scraping reads the DOM, not the layout."""
-    if route.request.resource_type in BLOCKED_RESOURCE_TYPES:
+    """Abort heavy resource types: scraping reads the DOM, not the layout.
+
+    DDoS-Guard's check sets its cookies through image beacons
+    (``/.well-known/ddos-guard/``, ``check.ddos-guard.net``): blocked, the
+    challenge reloaded until it timed out (animeloads, 0 of 3; code review,
+    2026-10-06).
+    """
+    request = route.request
+    if (
+        request.resource_type in BLOCKED_RESOURCE_TYPES
+        and _ANTI_BOT_BEACON not in request.url
+    ):
         await route.abort()
     else:
         await route.continue_()

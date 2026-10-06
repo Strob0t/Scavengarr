@@ -71,6 +71,27 @@ class TestBlockResources:
         route.abort.assert_awaited_once()
         route.continue_.assert_not_awaited()
 
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://www.anime-loads.org/.well-known/ddos-guard/mark/?data=x",
+            "https://check.ddos-guard.net/set/id/abc",
+        ],
+    )
+    async def test_lets_ddos_guards_check_images_through(self, url: str) -> None:
+        """DDoS-Guard's check sets its cookies through image beacons:
+        blocked, the challenge reloaded until it timed out (animeloads, 0 of
+        3; code review, 2026-10-06)."""
+        route = AsyncMock()
+        route.request = MagicMock()
+        route.request.resource_type = "image"
+        route.request.url = url
+
+        await block_heavy_resources(route)
+
+        route.continue_.assert_awaited_once()
+        route.abort.assert_not_awaited()
+
     @pytest.mark.parametrize("rtype", ["document", "script", "xhr", "fetch"])
     async def test_allows_essential_resources(self, rtype: str) -> None:
         route = AsyncMock()

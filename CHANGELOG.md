@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: animeloads Passes DDoS-Guard and Its Captcha Again
+- Blocking images by resource type (instead of by file extension) also blocked DDoS-Guard's check beacons, which set the `__ddg*` cookies, so the challenge reloaded until it timed out (0 of 3 searches), and the grab's captcha images, so every grab gave nothing. `block_heavy_resources` lets DDoS-Guard's check images through (also for the stealth context), and animeloads lets its captcha images through with a route of its own. A live search passed again in 12 s. Found by the code review (2026-10-06).
+
 ### Fix: Logs Name a CDN, Not Its URL
 - The HLS proxy's CDN errors, `/play`'s redirect, the playback check and several resolvers logged video URLs (up to 120 characters, one in full at debug level), whose path and query carry tokens and the client's address (`i=`, production's VPN exit address). They log the CDN's second-level domain now (`cdn=`); `extract_domain()` moved to `hoster_resolvers/_domain.py`. Found by the code review (2026-10-06).
 
