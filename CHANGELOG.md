@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: Alfafile Links With a File Name Resolve
+- The Alfafile resolver's file-ID pattern ended right after the id, so a link with the file name after it (`/file/<id>/<name>`) was not recognized; the other generic DDL hosters accept trailing parts. Found by the doc review (2026-10-06).
+
 ### Fix: Search Probes Page Only As Far As They Count
 - The scoring's search probes count the first `scoring.search_max_items` (20) results, but the plugins paged up to their 1000-result limit: extra requests to the sites every probe run, and a long result list could run into the probe's 10 s timeout and count as a failed probe. A probe now sets the plugins' result limit (`search_max_results`) like a Stremio search. Found by the doc review (2026-10-06).
 

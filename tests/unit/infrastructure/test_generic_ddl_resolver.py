@@ -126,6 +126,14 @@ class TestExtractFileId:
 
 
 class TestMinFileIdLen:
+    def test_alfafile_accepts_file_name_after_id(self) -> None:
+        """Like the other hosters' links: `/file/<id>/<name>` (JD2's
+        pattern ends after the id too)."""
+        from scavengarr.infrastructure.hoster_resolvers.generic_ddl import ALFAFILE
+
+        url = "https://alfafile.net/file/A3bx7/Some.Release.rar"
+        assert extract_ddl_file_id(url, ALFAFILE) == "A3bx7"
+
     def test_alphaddl_rejects_short_slug(self) -> None:
         """alphaddl requires min 3 characters."""
         from scavengarr.infrastructure.hoster_resolvers.generic_ddl import ALPHADDL
