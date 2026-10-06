@@ -2306,6 +2306,31 @@ class TestMirrorScores:
         assert sites["streamcloud"].isolated_search.await_count == 1
 
 
+class TestScoredSelection:
+    async def test_a_failing_score_store_searches_every_plugin(self) -> None:
+        """Unreadable scores count as none: the request asks every plugin,
+        as on a cold start, instead of failing."""
+        sites = {
+            "one": _site([_hit("https://voe.sx/e/a")]),
+            "two": _site([_hit("https://dood.to/e/b")]),
+        }
+        store = AsyncMock()
+        store.get_snapshot = AsyncMock(side_effect=ConnectionError("redis down"))
+        uc = _answering_use_case(
+            sites,
+            _memory_cache(),
+            _Resolutions(),
+            score_store=store,
+            scoring_enabled=True,
+        )
+
+        streams = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        assert streams
+        assert sites["one"].isolated_search.await_count == 1
+        assert sites["two"].isolated_search.await_count == 1
+
+
 class TestAnswerPolicy:
     """The answer goes out at 5 streams, when the search and every
     resolution are done, at the latest at the deadline; it no longer waits

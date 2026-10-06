@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: A Failing Score Store No Longer Fails a Stremio Request
+- The scored plugin selection (`stremio.scoring_enabled`) read the plugin scores without catching errors: a score store that failed to read one snapshot failed the whole stream request. A snapshot that cannot be read now counts as none, as the mirror-group ranking already handled it; both read through one helper (`current_snapshots`), which logs `plugin_scores_unreadable` (replaces `stremio_mirror_scores_failed`). Found by the code review (2026-10-06).
+
 ### Fix: A Refused Probe Is No Stream
 - The registry's content-type probe (playlists, URLs without a resolver) took any HEAD answer with a video type as a stream, also a 403 or 404: a CDN that types its error page by the path made a refusal a stream, cached for an hour. Only answers below 400 count now (`hoster_probe_refused`). The probe tests use `respx` instead of mocked responses. Found by the code review (2026-10-06).
 

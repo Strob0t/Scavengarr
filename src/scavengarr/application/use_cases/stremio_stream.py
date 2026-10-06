@@ -25,6 +25,7 @@ from scavengarr.application.stremio.plugin_search import (
     EpisodeFilterFn,
     PluginHealth,
     PluginSearchRunner,
+    current_snapshots,
 )
 from scavengarr.application.stremio.queries import (
     build_lang_group_queries,
@@ -903,17 +904,12 @@ class StremioStreamUseCase:
             return all_names
 
         # Collect scores for each plugin (using "current" bucket as proxy)
-        snapshots = await asyncio.gather(
-            *(
-                self._score_store.get_snapshot(name, category, "current")
-                for name in all_names
-            )
-        )
+        snapshots = await current_snapshots(self._score_store, all_names, category)
         scored: list[tuple[str, float, float]] = [
             (name, snap.final_score, snap.confidence)
-            if snap is not None
+            if (snap := snapshots.get(name)) is not None
             else (name, 0.5, 0.0)
-            for name, snap in zip(all_names, snapshots)
+            for name in all_names
         ]
 
         # Cold-start guard: need at least 50% of plugins with confidence > 0.1

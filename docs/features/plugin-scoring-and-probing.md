@@ -259,7 +259,7 @@ Scored selection is active when `stremio.scoring_enabled` is `true` **and** a sc
 
 Behavior (`_select_plugins()`):
 
-1. Load the `"current"`-bucket snapshot of the request category for every `stream`/`both` plugin; a missing snapshot counts as score 0.5, confidence 0.0.
+1. Load the `"current"`-bucket snapshot of the request category for every `stream`/`both` plugin; a missing snapshot, or one the store fails to read (`plugin_scores_unreadable`), counts as score 0.5, confidence 0.0, so a failing store leads to the cold start below instead of a failed request.
 1. **Cold-start guard:** if fewer than 50% of plugins have `confidence > 0.1`, search all plugins.
 1. Select the top `max_plugins_scored` plugins by `final_score` (descending).
 1. **Exploration slot:** with probability `exploration_probability`, add one random plugin from the rest that has `confidence >= 0.1`.

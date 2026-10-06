@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable, Coroutine, Mapping
+from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from contextvars import ContextVar
 from typing import Any, Protocol
 
 import structlog
 
+from scavengarr.domain.entities.scoring import PluginScoreSnapshot
 from scavengarr.domain.plugins.base import PluginProtocol, SearchResult
 from scavengarr.domain.ports.concurrency import ConcurrencyBudgetPort
 from scavengarr.domain.ports.plugin_registry import PluginRegistryPort
@@ -44,6 +45,33 @@ class PluginHealth(Protocol):
     """Whether a plugin's site answered its last periodic check."""
 
     def is_reachable(self, name: str) -> bool: ...
+
+
+async def current_snapshots(
+    store: PluginScoreStorePort, names: Sequence[str], category: int
+) -> dict[str, PluginScoreSnapshot]:
+    """The ``current`` score snapshots of the plugins that have one.
+
+    A snapshot the store fails to read counts as none
+    (``plugin_scores_unreadable``): scores only rank the plugins, so a
+    failing store must not fail the request.
+    """
+    snapshots = await asyncio.gather(
+        *(store.get_snapshot(name, category, "current") for name in names),
+        return_exceptions=True,
+    )
+    found: dict[str, PluginScoreSnapshot] = {}
+    failed: list[str] = []
+    errors: set[str] = set()
+    for name, snapshot in zip(names, snapshots, strict=True):
+        if isinstance(snapshot, BaseException):
+            failed.append(name)
+            errors.add(repr(snapshot))
+        elif snapshot is not None:
+            found[name] = snapshot
+    if failed:
+        log.warning("plugin_scores_unreadable", plugins=failed, errors=sorted(errors))
+    return found
 
 
 def _breaker_key(name: str, category: int | None) -> str:
@@ -208,20 +236,12 @@ class PluginSearchRunner:
         store = self._score_store
         if store is None or category is None or not members:
             return {}
-        snapshots = await asyncio.gather(
-            *(store.get_snapshot(name, category, "current") for name in members),
-            return_exceptions=True,
-        )
-        scores: dict[str, float] = {}
-        failed: list[str] = []
-        for name, snapshot in zip(members, snapshots, strict=True):
-            if isinstance(snapshot, BaseException):
-                failed.append(name)
-            elif snapshot is not None and snapshot.confidence > _MIN_CONFIDENCE:
-                scores[name] = snapshot.final_score
-        if failed:
-            log.warning("stremio_mirror_scores_failed", plugins=failed)
-        return scores
+        snapshots = await current_snapshots(store, members, category)
+        return {
+            name: snapshot.final_score
+            for name, snapshot in snapshots.items()
+            if snapshot.confidence > _MIN_CONFIDENCE
+        }
 
     def _one_per_mirror_group(
         self,
