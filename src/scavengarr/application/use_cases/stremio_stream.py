@@ -8,13 +8,19 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Callable, Coroutine, Mapping
+from collections.abc import Coroutine, Mapping
 from contextvars import ContextVar
-from dataclasses import replace
+from functools import partial
 from typing import Any, Protocol
 
 import structlog
 
+from scavengarr.application.stremio.answer import (
+    ConvertFn,
+    cache_and_proxy,
+    rank_streams,
+    with_measurements,
+)
 from scavengarr.application.stremio.plugin_search import (
     BrowserWarmupFn,
     CircuitBreaker,
@@ -33,17 +39,10 @@ from scavengarr.application.stremio.resolution import (
     ResolveConfig,
     ResolveFlow,
 )
-from scavengarr.application.stremio.search_cache import (
-    SearchCache,
-    search_cache_key,
-)
+from scavengarr.application.stremio.search_cache import SearchCache, search_cache_key
 from scavengarr.application.stremio.stream_builder import (
-    apply_resolution,
-    build_cache_link,
-    build_stream_from_resolved,
     deduplicate_by_hoster,
     format_stream,
-    stream_link_id,
 )
 from scavengarr.application.stremio.title_resolution import (
     TitleFilterFn,
@@ -52,13 +51,11 @@ from scavengarr.application.stremio.title_resolution import (
 )
 from scavengarr.application.stremio.title_search import TitleSearch
 from scavengarr.domain.entities.stremio import (
-    CachedStreamLink,
     RankedStream,
     ResolvedStream,
     StremioStream,
     StremioStreamRequest,
 )
-from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.domain.ports.cache import CachePort
 from scavengarr.domain.ports.concurrency import ConcurrencyPoolPort
 from scavengarr.domain.ports.plugin_registry import PluginRegistryPort
@@ -89,9 +86,6 @@ class _StreamSorter(Protocol):
     def sort(self, streams: list[RankedStream]) -> list[RankedStream]: ...
 
 
-# Type aliases for injected pure functions.
-_ConvertFn = Callable[..., list[RankedStream]]
-
 log = structlog.get_logger(__name__)
 
 
@@ -117,7 +111,7 @@ class StremioStreamUseCase:
         search_engine: SearchEnginePort,
         config: _StremioConfig,
         sorter: _StreamSorter,
-        convert_fn: _ConvertFn,
+        convert_fn: ConvertFn,
         filter_fn: TitleFilterFn,
         episode_filter_fn: EpisodeFilterFn,
         user_agent: str,
@@ -140,7 +134,7 @@ class StremioStreamUseCase:
             tmdb=tmdb, plugins=plugins, filter_fn=filter_fn, config=config
         )
         self._sorter = sorter
-        self._convert_fn = convert_fn
+        self._rank = partial(rank_streams, convert_fn=convert_fn, sort=sorter.sort)
         self._user_agent = user_agent
         self._title_search = TitleSearch(
             search_runner=PluginSearchRunner(
@@ -255,9 +249,11 @@ class StremioStreamUseCase:
         }
 
         deadline = started + self._deadline_s
-        served_here = self._stream_link_repo is not None and bool(base_url)
+        # Scavengarr serves the streams (/play/, the HLS proxy) when it saves
+        # their links and knows its own URL
+        link_repo = self._stream_link_repo if base_url else None
         resolved: dict[int, ResolvedStream] = {}
-        if served_here and self._resolve_fn is not None:
+        if link_repo is not None and self._resolve_fn is not None:
             ranked, resolved = await self._resolve_flow.resolve(
                 progress,
                 plugin_languages,
@@ -266,7 +262,9 @@ class StremioStreamUseCase:
                 key=key,
                 from_cache=source in ("cache", "stale"),
             )
-            ranked, resolved = self._with_measurements(ranked, resolved)
+            ranked, resolved = with_measurements(
+                ranked, resolved, rank_score=self._sorter.rank
+            )
         else:
             await progress.wait(deadline)
             ranked = await self._rank(progress.results, plugin_languages)
@@ -302,8 +300,16 @@ class StremioStreamUseCase:
             )
             for s in ranked
         ]
-        if served_here:
-            streams = await self._cache_and_proxy(streams, ranked, resolved, base_url)
+        if link_repo is not None:
+            streams = await cache_and_proxy(
+                streams,
+                ranked,
+                resolved,
+                base_url,
+                stream_link_repo=link_repo,
+                has_resolver=self._resolve_fn is not None,
+                user_agent=self._user_agent,
+            )
 
         log.info(
             "stremio_search_complete",
@@ -333,111 +339,3 @@ class StremioStreamUseCase:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-
-    async def _cache_and_proxy(
-        self,
-        streams: list[StremioStream],
-        ranked: list[RankedStream],
-        resolved_map: dict[int, ResolvedStream],
-        base_url: str,
-    ) -> list[StremioStream]:
-        """Point the streams at Scavengarr and save the links it looks up.
-
-        With a resolve callback, the streams in *resolved_map* (by index)
-        go through ``/play/`` or, for HLS, the proxy
-        (``build_stream_from_resolved``); the others are dropped. Without
-        one, every stream goes through ``/play/``. Each answered stream
-        gets its link saved; one save per ranked stream (dozens) delayed
-        the answer by seconds.
-        """
-        answer: list[tuple[StremioStream, CachedStreamLink]] = []
-        skipped_echo = 0
-        skipped_unresolved = 0
-        has_resolver = bool(self._resolve_fn)
-        for i, stream in enumerate(streams):
-            sid = stream_link_id(ranked[i].url)
-            resolved = resolved_map.get(i)
-            if resolved is not None:
-                built = build_stream_from_resolved(
-                    stream, resolved, ranked[i].url, sid, base_url, self._user_agent
-                )
-                if built is None:
-                    skipped_echo += 1
-                    continue
-            elif has_resolver:
-                # Resolver is configured but returned None — skip this stream.
-                # The /play/ proxy would also fail (502).
-                skipped_unresolved += 1
-                continue
-            else:
-                # No resolver configured — proxy through /play/ endpoint
-                built = replace(stream, url=f"{base_url}/api/v1/stremio/play/{sid}")
-            answer.append((built, build_cache_link(sid, ranked[i], resolved)))
-
-        unsaved = await self._save_links([lnk for _, lnk in answer])
-        proxied = [s for s, lnk in answer if lnk.stream_id not in unsaved]
-        skipped_unsaved = len(answer) - len(proxied)
-        if skipped_echo or skipped_unresolved or skipped_unsaved:
-            log.info(
-                "stremio_streams_skipped",
-                skipped_echo=skipped_echo,
-                skipped_unresolved=skipped_unresolved,
-                skipped_unsaved=skipped_unsaved,
-            )
-        return proxied
-
-    def _with_measurements(
-        self, ranked: list[RankedStream], resolved: dict[int, ResolvedStream]
-    ) -> tuple[list[RankedStream], dict[int, ResolvedStream]]:
-        """The streams with what their resolutions measured (quality, size;
-        ``apply_resolution``) and the resolutions by index.
-
-        A changed quality changes the rank: the streams are sorted again
-        (stable, like the sorter), the resolutions follow their streams.
-        """
-        merged = [
-            apply_resolution(s, resolved[i]) if i in resolved else s
-            for i, s in enumerate(ranked)
-        ]
-        if all(m.quality is s.quality for m, s in zip(merged, ranked, strict=True)):
-            return merged, resolved
-        scores = [self._sorter.rank(s) for s in merged]
-        order = sorted(range(len(merged)), key=scores.__getitem__, reverse=True)
-        return (
-            [replace(merged[old], rank_score=scores[old]) for old in order],
-            {new: resolved[old] for new, old in enumerate(order) if old in resolved},
-        )
-
-    async def _save_links(self, links: list[CachedStreamLink]) -> set[str]:
-        """Save the links in parallel; return the stream ids not saved."""
-        assert self._stream_link_repo is not None
-        outcomes = await asyncio.gather(
-            *(self._stream_link_repo.save(lnk) for lnk in links),
-            return_exceptions=True,
-        )
-        errors = [
-            (lnk.stream_id, outcome)
-            for lnk, outcome in zip(links, outcomes, strict=True)
-            if isinstance(outcome, BaseException)
-        ]
-        if errors:
-            log.warning(
-                "stremio_stream_link_save_failed",
-                count=len(errors),
-                error=str(errors[0][1]),
-            )
-        return {sid for sid, _ in errors}
-
-    async def _rank(
-        self, results: list[SearchResult], plugin_languages: dict[str, str]
-    ) -> list[RankedStream]:
-        """The streams of *results*, best first."""
-        return self._sorter.sort(await self._convert(results, plugin_languages))
-
-    async def _convert(
-        self, results: list[SearchResult], plugin_languages: dict[str, str]
-    ) -> list[RankedStream]:
-        """The streams of *results* (in a worker thread: CPU work)."""
-        return await asyncio.to_thread(
-            lambda: self._convert_fn(results, plugin_languages=plugin_languages)
-        )

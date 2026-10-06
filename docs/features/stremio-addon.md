@@ -407,11 +407,12 @@ Plugins declare `languages: list[str]` (default `["de"]`). The use case groups p
 
 | Test file | Coverage |
 |---|---|
-| `tests/unit/application/test_stremio_stream.py` | Stream use case (the request flow, cached answers, mirror scores, telemetry, stream links and proxy URLs) |
+| `tests/unit/application/test_stremio_stream.py` | Stream use case (the request flow, cached answers, mirror scores, telemetry) |
 | `tests/unit/application/test_title_resolution.py` | Title match and titles per language (`TitleResolver`, through the use case; factories in `stremio_support.py`) |
 | `tests/unit/application/test_plugin_selection.py` | Stream plugins and scored selection (`PluginSelector`: top N, cold start, exploration slot, failing score store) |
 | `tests/unit/application/test_title_search.py` | Search per title (`TitleSearch`: search cache, single-flight, one refresh at a time, plugin timeout, `aclose()`; the browser warm-up; through the use case) |
 | `tests/unit/application/test_resolve_flow.py` | When streams resolve and the answer is due (`ResolveFlow`: per-hoster resolution, echoed URLs, answer rule, background resolutions; through the use case) |
+| `tests/unit/application/test_answer.py` | The answer's streams (stream links and proxy URLs, failing link saves, measured quality and size, conversion in a worker thread) |
 | `tests/unit/infrastructure/test_check_playable.py` | Playback check of resolved URLs (`verify_streams`) |
 | `tests/unit/application/test_stremio_catalog.py` | Catalog use case |
 | `tests/unit/application/test_plugin_search_runner.py` | `PluginSearchRunner` (fan-out, timeout, search deadline, circuit breaker, mirror groups) |
@@ -459,6 +460,7 @@ Plugins declare `languages: list[str]` (default `["de"]`). The use case groups p
 | Search progress | `src/scavengarr/application/stremio/search_progress.py` |
 | Search cache | `src/scavengarr/application/stremio/search_cache.py` |
 | Hoster resolution, answer rule | `src/scavengarr/application/stremio/resolution.py` |
+| Answer (ranking, measured quality, stream links, proxy URLs) | `src/scavengarr/application/stremio/answer.py` |
 | Stream links (`/play`, HLS proxy) | `src/scavengarr/application/use_cases/stremio_links.py` |
 | Plugin health monitor | `src/scavengarr/infrastructure/plugins/health_monitor.py` |
 | Query building | `src/scavengarr/application/stremio/queries.py` |

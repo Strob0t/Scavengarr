@@ -8,7 +8,7 @@
 
 - [x] 2.1 `application/stremio/stream_builder.py`: `format_size(size_bytes) -> str` (`1.4 GB`, `700 MB`; GiB-based like the plugins' badges — check two plugins' size strings and match the unit style); `apply_resolution(ranked, resolved) -> RankedStream` merging quality (measured wins when known) and size (only when `ranked.size` is empty); tests.
 - [x] 2.2 `StremioStreamUseCase._answer`: after the resolve step and before `format_stream`, map `apply_resolution` over `ranked` with the `resolved` mapping, re-sort with `self._sorter.sort(...)` when any stream changed (keep order otherwise so the dedupe and probe cap above stay meaningful); the first-answer path and the cached-answer path both go through it. Tests in `tests/unit/application/test_stremio_stream.py`: a 1080p measurement moves a stream above an unmeasured one of the same language; a badge `HD_720P` stays when the measurement is `UNKNOWN`; the formatted name shows `1080p`, the description the size.
-- [x] 2.3 Coordination with item I14 (module split, `docs/plans/stremio-stream-split.md`): land this change first, or put `apply_resolution` into the extracted answer-assembly module — never both in flight in `stremio_stream.py`.
+- [x] 2.3 Coordination with item I14 (module split, `docs/plans/stremio-stream-split.md`): land this change first, or put `apply_resolution` into the extracted answer-assembly module — never both in flight in `stremio_stream.py`. (Landed first; I14 step 5 moved the merge to `application/stremio/answer.py`, `with_measurements`, and its tests to `tests/unit/application/test_answer.py`, `TestMeasuredQuality`.)
 
 ## 3. Docs and check
 
