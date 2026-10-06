@@ -94,8 +94,8 @@ Understanding of German and English streaming and DDL site structures (HTML list
 
 ## External Dependencies
 
-- **GitHub**: Code management and issue tracking (no CI workflows configured)
-- **Container image**: built locally from `Dockerfile.prod`
+- **GitHub**: Code management, issue tracking and CI (`.github/workflows/ci.yml`: pre-commit and pytest)
+- **Container image**: `ghcr.io/strob0t/scavengarr` for `linux/amd64` and `linux/arm64`, built from `Dockerfile.prod` by `.github/workflows/image.yml`
 - **PyPI**: Python package dependencies (managed via Poetry)
 - **Optional services**:
   - Redis (alternative cache backend)

@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: A Published Multi-Arch Image
+- `.github/workflows/image.yml` builds the production image for `linux/amd64` and `linux/arm64`, each natively on its own GitHub runner, and publishes one multi-arch manifest as `ghcr.io/strob0t/scavengarr`: `staging` on every push to `staging`, `vX.Y.Z` and `latest` on release tags (a new step of the release procedure in AGENTS.md), `sha-<commit>` for every build. An image no longer has to be built where it runs: `docker compose pull` (or an updater such as watchtower) updates it, and it names its commit (`SCAVENGARR_COMMIT`, the label `org.opencontainers.image.revision`), which `scavengarr_build_info` and `/api/v1/healthz` report.
+- The image bundles the plugins (a mount over `/app/plugins` still replaces them), and the entrypoint writes the default `config.yaml` into `/app/config/` when that directory holds none: the image's copy sat in the directory a volume hides, so a new volume left the app on its built-in defaults. `docker-compose.yml` runs the published image, with the `build:` block as the commented alternative ([configuration.md](docs/features/configuration.md#image-tags)).
+- The runtime stage sets file ownership with `COPY --chown` instead of a final `chown -R`, which stored the virtualenv and Chromium a second time in a layer of its own.
+
 ### Added: Stream Quality and Size From the Stream Itself
 - Most streaming sites name no quality, so most Stremio streams had no quality line and ranked by language and hoster alone. The playback check every resolution passes now reads 4 KiB instead of 1 KiB and takes from them, without another request, the largest `RESOLUTION` of an HLS master playlist and the total size of a file (`Content-Range`). A measured quality replaces the release name's or badge's (a letterboxed 1920x800 encode counts as 1080p), a measured size shows where the site gave none, and the answer is sorted again with them: a stream measured at 1080p ranks above an unmeasured one of the same language. The resolver's cache keeps the measurement, so cached answers carry it too ([stremio-addon.md](docs/features/stremio-addon.md#quality-and-size)).
 

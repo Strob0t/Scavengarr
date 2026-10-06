@@ -40,7 +40,7 @@ poetry run pre-commit run --all-files
 poetry run pytest -n auto
 ```
 
-pre-commit runs ruff and basedpyright (`standard` mode, `[tool.basedpyright]` in `pyproject.toml`; `src/` and `plugins/` are clean, keep them so). `-n auto` runs the suite on pytest-xdist workers (at most 8, `--maxprocesses` in `addopts`: 15 s instead of 47 s); single test files run faster without `-n`. `poetry run pytest` excludes live tests (`addopts = -m "not live"`) and benchmarks. Live smoke tests hit real websites and run with `poetry run pytest -m live`; their failures signal broken plugins/resolvers, not a commit blocker. CI (`.github/workflows/ci.yml`) runs the same two commands on every push to `staging` and on pull requests; a red run after a push is fixed before the next change.
+pre-commit runs ruff and basedpyright (`standard` mode, `[tool.basedpyright]` in `pyproject.toml`; `src/` and `plugins/` are clean, keep them so). `-n auto` runs the suite on pytest-xdist workers (at most 8, `--maxprocesses` in `addopts`: 15 s instead of 47 s); single test files run faster without `-n`. `poetry run pytest` excludes live tests (`addopts = -m "not live"`) and benchmarks. Live smoke tests hit real websites and run with `poetry run pytest -m live`; their failures signal broken plugins/resolvers, not a commit blocker. CI (`.github/workflows/ci.yml`) runs the same two commands on every push to `staging` and on pull requests; a red run after a push is fixed before the next change. `.github/workflows/image.yml` publishes the production image to `ghcr.io/strob0t/scavengarr` (`linux/amd64` and `linux/arm64`): tag `staging` on every push to `staging`, `vX.Y.Z` and `latest` on release tags (`docs/features/configuration.md` → Image Tags).
 
 Rules:
 - Fix all errors before committing (warnings can be acceptable depending on the check).
@@ -62,7 +62,8 @@ Rules:
 2. Update `CHANGELOG.md` (newest entry on top with version, date, changes; current bugs under `KNOWN_ISSUES`).
 3. Commit & push to `staging`.
 4. `gh pr create --base main --head staging --title "..." --body "..."` then `gh pr merge --merge`. When the merge waits for the maintainer, push the release commit to `release/vX.Y.Z` and open the PR from there instead, so that later pushes to `staging` stay out of the release; delete the branch after the merge.
-5. Sync back: `git fetch origin && git merge origin/main && git push origin staging`.
+5. Tag the release on the merge commit: `git fetch origin && git tag vX.Y.Z origin/main && git push origin vX.Y.Z`; the image workflow publishes `vX.Y.Z` and `latest`.
+6. Sync back: `git fetch origin && git merge origin/main && git push origin staging`.
 
 ---
 

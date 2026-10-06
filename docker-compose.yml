@@ -1,32 +1,38 @@
-# Scavengarr with Docker Compose (image built locally from Dockerfile.prod).
+# Scavengarr with Docker Compose (the published image, see the README).
 #
-#   docker compose up -d --build                    # Scavengarr only
-#   docker compose --profile solver up -d --build   # + Byparr captcha solver
-#   docker compose --profile redis up -d --build    # + Redis cache backend
-#   docker compose --profile tracing up -d --build  # + Tempo for traces
+#   docker compose up -d                          # Scavengarr only
+#   docker compose --profile solver up -d         # + Byparr captcha solver
+#   docker compose --profile redis up -d          # + Redis cache backend
+#   docker compose --profile tracing up -d        # + Tempo for traces
+#   docker compose pull && docker compose up -d   # update
 #
 # Profiles only start the extra service; enable its use in Scavengarr by
 # uncommenting the matching environment line below.
 
 services:
   scavengarr:
-    build:
-      context: .
-      dockerfile: Dockerfile.prod
-      # Which build runs (scavengarr_build_info, /api/v1/healthz), e.g.
-      #   SCAVENGARR_COMMIT=$(git rev-parse --short=12 HEAD) \
-      #   SCAVENGARR_BUILT=$(date -u +%Y-%m-%dT%H:%M:%SZ) docker compose up -d --build
-      args:
-        SCAVENGARR_COMMIT: ${SCAVENGARR_COMMIT:-unknown}
-        SCAVENGARR_BUILT: ${SCAVENGARR_BUILT:-unknown}
-    image: scavengarr:local
+    # latest: the newest release; staging: every push to the staging branch
+    image: ghcr.io/strob0t/scavengarr:latest
+    # Or build this checkout (docker compose up -d --build): replace the image
+    # line with the block below. The build arguments name the build
+    # (scavengarr_build_info, /api/v1/healthz), e.g.
+    #   SCAVENGARR_COMMIT=$(git rev-parse --short=12 HEAD) \
+    #   SCAVENGARR_BUILT=$(date -u +%Y-%m-%dT%H:%M:%SZ) docker compose up -d --build
+    # image: scavengarr:local
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile.prod
+    #   args:
+    #     SCAVENGARR_COMMIT: ${SCAVENGARR_COMMIT:-unknown}
+    #     SCAVENGARR_BUILT: ${SCAVENGARR_BUILT:-unknown}
     container_name: scavengarr
     ports:
       - "7979:7979"
     volumes:
-      - ./data:/app/config # config.yaml (edit, then restart)
-      - ./plugins:/app/plugins # the image does not bundle plugins
+      - ./data:/app/config # config.yaml (edit, then restart); seeded when missing
       - scavengarr-cache:/app/cache # search cache, clearance cookies, scores
+      # The image bundles the plugins; a mount replaces them (plugin work):
+      # - ./plugins:/app/plugins
     environment:
       SCAVENGARR_LOG_LEVEL: INFO
       # Honor X-Forwarded-Proto/-For of a reverse proxy (Caddy, Traefik, nginx)

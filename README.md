@@ -125,7 +125,7 @@ flowchart LR
 
 ### Operations
 
-- Single container with Docker Compose; optional Byparr, Redis and Tempo profiles
+- Single container with Docker Compose from a published `linux/amd64` and `linux/arm64` image; optional Byparr, Redis and Tempo profiles
 - Health, readiness and metrics endpoints (`/api/v1/healthz`, `/api/v1/readyz`, Prometheus `/metrics` with a Grafana dashboard in `docker/`, `/api/v1/stats/metrics`)
 - Structured logs (JSON or console) with per-plugin context
 - Graceful shutdown that drains in-flight requests
@@ -142,23 +142,20 @@ Requirements: Docker with the Compose plugin, about 2 GB of free RAM (the browse
 ```bash
 git clone https://github.com/Strob0t/Scavengarr.git
 cd Scavengarr
-docker compose up -d --build
+docker compose up -d
 ```
 
-The first build takes a few minutes (it installs the browser). Then check that it is running:
+Compose pulls the published image `ghcr.io/strob0t/scavengarr:latest` (`linux/amd64` and `linux/arm64`, e.g. a Raspberry Pi 4; the plugins are part of it). Then check that it is running:
 
 ```bash
 curl http://localhost:7979/api/v1/healthz
 ```
 
-The answer names the version, and the commit and build time when the build was given them; to have them, build with:
+The answer names the version, the commit and the build time.
 
-```bash
-SCAVENGARR_COMMIT=$(git rev-parse --short=12 HEAD) \
-SCAVENGARR_BUILT=$(date -u +%Y-%m-%dT%H:%M:%SZ) docker compose up -d --build
-```
+Image tags: `latest` (the newest release), `vX.Y.Z` (one release), `staging` (every push to the development branch, before its CI result) and `sha-<commit>` (one build). [Configuration → Docker](docs/features/configuration.md#docker-configuration) has the details.
 
-Scavengarr reads `data/config.yaml` (mounted into the container) and the plugins from `plugins/`. Edit the config and run `docker compose restart` to apply changes. In Docker, the log level and format, headless mode and the cache and plugin directories come from environment variables (`Dockerfile.prod`, `docker-compose.yml`), which beat `config.yaml`: change those in `docker-compose.yml`.
+Scavengarr reads `data/config.yaml` (mounted into the container; when the file is missing, the container writes the default there on its first start, if the directory is writable for its user, uid 1000). Edit the config and run `docker compose restart` to apply changes. In Docker, the log level and format, headless mode and the cache and plugin directories come from environment variables (`Dockerfile.prod`, `docker-compose.yml`), which beat `config.yaml`: change those in `docker-compose.yml`.
 
 **Optional services** (see [`docker-compose.yml`](docker-compose.yml)):
 
@@ -169,14 +166,23 @@ Scavengarr reads `data/config.yaml` (mounted into the container) and the plugins
 | `tracing` | [Grafana Tempo](https://grafana.com/oss/tempo/) for traces on demand ([Observability](docs/features/observability.md)) | uncomment `SCAVENGARR_TELEMETRY_TRACING_ENDPOINT` |
 
 ```bash
-docker compose --profile solver --profile redis up -d --build
+docker compose --profile solver --profile redis up -d
 ```
 
 **Updating:**
 
 ```bash
-git pull
-docker compose up -d --build
+docker compose pull
+docker compose up -d
+```
+
+An updater such as watchtower can do this on its own, since nothing is built locally. `git pull` brings changes to `docker-compose.yml` and the default `data/config.yaml`, which the image does not apply to an existing config.
+
+**Building from source:** in `docker-compose.yml`, replace the `image:` line with the commented `build:` block and run `docker compose up -d --build` (the first build takes a few minutes: it installs the browser). For the commit and build time in the health answer, build with:
+
+```bash
+SCAVENGARR_COMMIT=$(git rev-parse --short=12 HEAD) \
+SCAVENGARR_BUILT=$(date -u +%Y-%m-%dT%H:%M:%SZ) docker compose up -d --build
 ```
 
 ### Without Docker (Poetry)

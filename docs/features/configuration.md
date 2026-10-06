@@ -590,29 +590,42 @@ SCAVENGARR_TMDB_API_KEY=your-tmdb-key
 
 ## Docker Configuration
 
-The production image (`Dockerfile.prod`) sets these defaults. They are environment variables, so they beat the same keys in a mounted `config.yaml` (`environment`, `logging.level`, `logging.format`, `plugins.plugin_dir`, `cache.dir`, `playwright.headless`); change those in the container's environment:
+The production image (`Dockerfile.prod`) is published as `ghcr.io/strob0t/scavengarr` (see [Image Tags](#image-tags)). It sets these defaults. They are environment variables, so they beat the same keys in a mounted `config.yaml` (`environment`, `logging.level`, `logging.format`, `plugins.plugin_dir`, `cache.dir`, `playwright.headless`); change those in the container's environment:
 
 | Variable | Value |
 |---|---|
 | `SCAVENGARR_ENVIRONMENT` | `prod` |
-| `SCAVENGARR_CONFIG` | `/app/config/config.yaml` (copied from `data/config.yaml`) |
+| `SCAVENGARR_CONFIG` | `/app/config/config.yaml` (written from the image's default when missing, see below) |
 | `SCAVENGARR_LOG_LEVEL` | `INFO` |
 | `SCAVENGARR_LOG_FORMAT` | `json` |
-| `SCAVENGARR_PLUGIN_DIR` | `/app/plugins` |
+| `SCAVENGARR_PLUGIN_DIR` | `/app/plugins` (the bundled plugins) |
 | `SCAVENGARR_CACHE_DIR` | `/app/cache` |
 | `SCAVENGARR_PLAYWRIGHT_HEADLESS` | `false` |
+| `SCAVENGARR_COMMIT` / `SCAVENGARR_BUILT` | The build's commit and time (build arguments; `unknown` without), reported by `/api/v1/healthz` and `scavengarr_build_info` |
 | `HOST` / `PORT` | `0.0.0.0` / `7979` |
 
-The entrypoint is `docker/entrypoint.sh`: it starts Xvfb on `:99` (unless `DISPLAY` is already set; a stale `/tmp/.X99-lock` from before a container restart is removed first, and it waits up to 5 s for the display socket) and then `exec`s `python -m scavengarr.interfaces.cli`, so the app stays the signal recipient (graceful shutdown) and CLI flags can still be appended to `docker run`. Plugins are not bundled in the image.
+The entrypoint is `docker/entrypoint.sh`. When `SCAVENGARR_CONFIG` names no existing file, it writes the image's default config there (`/app/config.default.yaml`, a copy of `data/config.yaml`) and logs one line: a volume over `/app/config` hides the image's files, and without a file the app would run on its built-in defaults only. A config already there stays as it is, so a new release's default config does not reach it. When the directory is not writable for the container's user (`scavengarr`, uid 1000; for example a bind-mounted directory Docker created as root), it says so and the app starts on its built-in defaults. It then starts Xvfb on `:99` (unless `DISPLAY` is already set; a stale `/tmp/.X99-lock` from before a container restart is removed first, and it waits up to 5 s for the display socket) and `exec`s `python -m scavengarr.interfaces.cli`, so the app stays the signal recipient (graceful shutdown) and CLI flags can still be appended to `docker run`. The image bundles the plugins; a mount over `/app/plugins` replaces them.
+
+### Image Tags
+
+`.github/workflows/image.yml` builds the image for `linux/amd64` and `linux/arm64` (each natively on its own GitHub runner) and pushes one multi-arch manifest, so the same tag runs on a PC and a Raspberry Pi 4:
+
+| Tag | Points at |
+|---|---|
+| `latest` | The newest release |
+| `vX.Y.Z` | One release (the tag `vX.Y.Z` on `main`) |
+| `staging` | The newest push to the development branch, built while its CI runs (not after it passed) |
+| `sha-<commit>` | One build (the first 12 characters of the commit) |
+
+Every image carries its commit (`SCAVENGARR_COMMIT`, the label `org.opencontainers.image.revision`). Update with `docker compose pull && docker compose up -d`; an updater such as [watchtower](https://github.com/containrrr/watchtower) can do it on a schedule.
 
 ### Minimal Production
 
 ```bash
 docker run -d --name scavengarr \
   -p 7979:7979 \
-  -v ./plugins:/app/plugins \
   -v ./cache:/app/cache \
-  scavengarr:latest
+  ghcr.io/strob0t/scavengarr:latest
 ```
 
 ### With Config File
@@ -620,10 +633,9 @@ docker run -d --name scavengarr \
 ```bash
 docker run -d --name scavengarr \
   -p 7979:7979 \
-  -v ./plugins:/app/plugins \
   -v ./cache:/app/cache \
-  -v ./data:/app/config:ro \
-  scavengarr:latest
+  -v ./data:/app/config \
+  ghcr.io/strob0t/scavengarr:latest
 ```
 
 ### With Redis Cache
@@ -639,18 +651,42 @@ cache:
 ```bash
 docker run -d --name scavengarr \
   -p 7979:7979 \
-  -v ./plugins:/app/plugins \
-  -v ./data:/app/config:ro \
-  scavengarr:latest
+  -v ./data:/app/config \
+  ghcr.io/strob0t/scavengarr:latest
 ```
+
+### Behind a VPN Container
+
+When the sites must see a VPN address, run Scavengarr in the network namespace of a VPN container (for example gluetun). Ports are then published on the VPN container, and every request leaves through the tunnel (DNS too, when the VPN container resolves through it, as gluetun does by default):
+
+```yaml
+services:
+  scavengarr:
+    image: ghcr.io/strob0t/scavengarr:latest # or :staging for every push
+    container_name: scavengarr
+    network_mode: service:vpn # publish 7979 on the vpn service instead
+    volumes:
+      - ./scavengarr/config:/app/config # config.yaml, written on the first start
+      - scavengarr-cache:/app/cache
+    shm_size: 1gb
+    init: true
+    labels:
+      - com.centurylinklabs.watchtower.enable=true # updates with --label-enable
+    restart: unless-stopped
+
+volumes:
+  scavengarr-cache:
+```
+
+A container in another one's namespace loses its network when that one is recreated (an update of the VPN image): recreate Scavengarr after it (`docker compose up -d --force-recreate scavengarr`).
 
 ### Volumes
 
 | Container Path | Purpose | Required |
 |---|---|---|
-| `/app/plugins` | Plugin directory (Python files) | Yes |
+| `/app/config` | Directory containing `config.yaml` | Recommended (the default is written there on the first start) |
 | `/app/cache` | Cache storage (diskcache SQLite) | Recommended |
-| `/app/config` | Directory containing `config.yaml` | Optional (image ships a default) |
+| `/app/plugins` | Plugin directory (Python files) | Optional (replaces the bundled plugins) |
 
 See [Prowlarr Integration](./prowlarr-integration.md) for the complete deployment guide.
 

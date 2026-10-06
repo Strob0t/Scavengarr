@@ -1,8 +1,10 @@
 # Production Dockerfile for Scavengarr
 # Multi-stage build: install deps → install Patchright Chromium → slim runtime
 #
+# Built by .github/workflows/image.yml (ghcr.io/strob0t/scavengarr), or:
 # Build:  docker build -f Dockerfile.prod -t scavengarr .
-# Run:    docker run -p 7979:7979 -v ./plugins:/app/plugins -v ./data:/app/config scavengarr
+# Run:    docker run -p 7979:7979 -v ./data:/app/config scavengarr
+# The image bundles the plugins (-v ./plugins:/app/plugins replaces them)
 
 # ── Stage 1: Install Python deps ─────────────────────────────────────────────
 FROM python:3.14-slim AS builder
@@ -51,19 +53,26 @@ RUN apt-get update && \
 RUN useradd --create-home --shell /bin/bash scavengarr
 WORKDIR /app
 
-# Copy venv + app + Playwright browsers
-COPY --from=browsers /app/.venv /app/.venv
-COPY --from=browsers /app/src /app/src
-COPY --from=browsers /root/.cache/ms-playwright /home/scavengarr/.cache/ms-playwright
+# Venv, app and Playwright browsers, owned by the app's user. COPY --chown,
+# not a later `chown -R`: that stores every file again in a layer of its own
+COPY --from=browsers --chown=scavengarr:scavengarr /app/.venv /app/.venv
+COPY --from=browsers --chown=scavengarr:scavengarr /app/src /app/src
+COPY --from=browsers --chown=scavengarr:scavengarr /root/.cache/ms-playwright /home/scavengarr/.cache/ms-playwright
 
-# Default config, plugin and cache directories
-COPY data/config.yaml /app/config/config.yaml
+# The entrypoint seeds /app/config/config.yaml from the default beside it
+# when the directory holds none (a volume over /app/config hides the image's
+# files). /tmp/.X11-unix must exist up front: the non-root Xvfb cannot
+# create it
+COPY data/config.yaml /app/config.default.yaml
 COPY docker/entrypoint.sh /app/entrypoint.sh
-# /tmp/.X11-unix must exist up front: the non-root Xvfb cannot create it
-RUN mkdir -p /app/plugins /app/cache /tmp/.X11-unix && \
+RUN mkdir -p /app/config /app/cache /tmp/.X11-unix && \
     chmod 1777 /tmp/.X11-unix && \
     chmod 755 /app/entrypoint.sh && \
-    chown -R scavengarr:scavengarr /app /home/scavengarr
+    chown scavengarr:scavengarr /app /app/config /app/cache /home/scavengarr/.cache
+
+# The plugins, last: they change most often. A mount over /app/plugins
+# replaces them
+COPY --chown=scavengarr:scavengarr plugins/ /app/plugins/
 
 USER scavengarr
 
@@ -89,6 +98,9 @@ ARG SCAVENGARR_COMMIT=unknown
 ARG SCAVENGARR_BUILT=unknown
 ENV SCAVENGARR_COMMIT=${SCAVENGARR_COMMIT} \
     SCAVENGARR_BUILT=${SCAVENGARR_BUILT}
+LABEL org.opencontainers.image.source="https://github.com/Strob0t/Scavengarr" \
+      org.opencontainers.image.revision="${SCAVENGARR_COMMIT}" \
+      org.opencontainers.image.created="${SCAVENGARR_BUILT}"
 
 EXPOSE 7979
 

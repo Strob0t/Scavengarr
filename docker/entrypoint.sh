@@ -6,6 +6,19 @@
 # wrapper does not forward SIGTERM to the app.
 set -e
 
+# Seed the config on the first start: a volume over /app/config hides the
+# image's files, and without a config file the app runs on built-in defaults.
+# The default ships beside this script; a config already there stays.
+config="${SCAVENGARR_CONFIG:-}"
+default="$(dirname "$0")/config.default.yaml"
+if [ -n "$config" ] && [ ! -e "$config" ] && [ -f "$default" ]; then
+  if mkdir -p "$(dirname "$config")" 2>/dev/null && cp "$default" "$config" 2>/dev/null; then
+    echo "entrypoint: wrote the default config to $config" >&2
+  else
+    echo "entrypoint: cannot write $config (user $(id -u)); the app runs on its defaults" >&2
+  fi
+fi
+
 if [ -z "${DISPLAY:-}" ] && command -v Xvfb >/dev/null 2>&1; then
   # A restarted container keeps /tmp: the lock of the Xvfb killed with the
   # previous app would make the new Xvfb refuse to start ("Server is

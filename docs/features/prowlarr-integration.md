@@ -47,9 +47,9 @@ JDownloader (FolderWatch)
 
 ## Deployment
 
-### Build the Image
+### The Image
 
-No prebuilt image is referenced by the repository; build it locally from `Dockerfile.prod`:
+The image is published as `ghcr.io/strob0t/scavengarr` for `linux/amd64` and `linux/arm64` (tags: `latest`, `vX.Y.Z`, `staging`, `sha-<commit>`; see [Configuration → Docker](configuration.md#docker-configuration)). To build it yourself from `Dockerfile.prod`:
 
 ```bash
 docker build -f Dockerfile.prod -t scavengarr .
@@ -66,7 +66,7 @@ The image's entrypoint starts a virtual display (Xvfb) for the headful browser, 
 | `SCAVENGARR_LOG_LEVEL` / `SCAVENGARR_LOG_FORMAT` | `INFO` / `json` |
 | `HOST` / `PORT` | `0.0.0.0` / `7979` |
 
-It also has a built-in `HEALTHCHECK` against `/api/v1/healthz`. The image ships a default `config.yaml` (a copy of `data/config.yaml`) but **no plugins** — the plugin directory must be mounted.
+It also has a built-in `HEALTHCHECK` against `/api/v1/healthz`. The image ships the plugins and a default `config.yaml` (a copy of `data/config.yaml`), which the entrypoint writes to `/app/config/` when that directory holds none.
 
 ### Docker Run
 
@@ -75,36 +75,34 @@ docker run -d \
   --name scavengarr \
   --init \
   -p 7979:7979 \
-  -v ./plugins:/app/plugins \
   -v ./data:/app/config \
   -v ./cache:/app/cache \
-  scavengarr
+  ghcr.io/strob0t/scavengarr:latest
 ```
 
 `--init` (`init: true` in Compose, as in the shipped `docker-compose.yml`) reaps orphaned Chromium and driver processes, which the app as PID 1 would not.
 
 | Host path | Container path | Purpose |
 |---|---|---|
-| `./plugins` | `/app/plugins` | Python plugin files — required, the image ships none |
-| `./data` | `/app/config` | Must contain `config.yaml` (read via `SCAVENGARR_CONFIG`); replaces the built-in default |
+| `./data` | `/app/config` | `config.yaml` (read via `SCAVENGARR_CONFIG`); the default is written there when missing (the directory must be writable for uid 1000) |
 | `./cache` | `/app/cache` | Diskcache storage (search cache, CrawlJobs, other cached data) |
+| `./plugins` | `/app/plugins` | Optional: replaces the bundled plugins (plugin development) |
 
 Environment variables override values from `config.yaml` (precedence: CLI > ENV > YAML > defaults), so `SCAVENGARR_CACHE_DIR=/app/cache` from the image wins over `cache.dir` in the YAML.
 
 ### Docker Compose
 
-The repository ships a ready [`docker-compose.yml`](../../docker-compose.yml) that builds the image locally and has optional `solver` (Byparr), `redis` and `tracing` (Grafana Tempo) profiles; see the [README Quick Start](../../README.md#quick-start). A minimal hand-written service looks like this:
+The repository ships a ready [`docker-compose.yml`](../../docker-compose.yml) that runs the published image (or builds it from the checkout) and has optional `solver` (Byparr), `redis` and `tracing` (Grafana Tempo) profiles; see the [README Quick Start](../../README.md#quick-start). A minimal hand-written service looks like this:
 
 ```yaml
 services:
   scavengarr:
-    image: scavengarr
+    image: ghcr.io/strob0t/scavengarr:latest
     container_name: scavengarr
     init: true
     ports:
       - "7979:7979"
     volumes:
-      - ./plugins:/app/plugins
       - ./data:/app/config
       - ./cache:/app/cache
     environment:
@@ -132,13 +130,12 @@ cache:
 ```yaml
 services:
   scavengarr:
-    image: scavengarr
+    image: ghcr.io/strob0t/scavengarr:latest
     container_name: scavengarr
     init: true
     ports:
       - "7979:7979"
     volumes:
-      - ./plugins:/app/plugins
       - ./data:/app/config
     environment:
       SCAVENGARR_ENVIRONMENT: prod

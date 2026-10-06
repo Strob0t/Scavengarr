@@ -55,6 +55,25 @@ def test_shipped_config_has_no_container_only_paths() -> None:
         assert not value.startswith("/"), f"{section}.{key} = {value}"
 
 
+def test_the_build_context_holds_what_the_image_copies() -> None:
+    """A `COPY` source in `.dockerignore` fails the build, and only the image
+    workflow builds the image (no Docker in the dev container)."""
+    ignored = {
+        line.strip().rstrip("/")
+        for line in (_ROOT / ".dockerignore").read_text().splitlines()
+        if line.strip() and not line.startswith("#")
+    }
+    sources: list[str] = []
+    for line in (_ROOT / "Dockerfile.prod").read_text().splitlines():
+        words = line.split()
+        if words[:1] == ["COPY"] and not any(w.startswith("--from") for w in words):
+            sources += [w for w in words[1:-1] if not w.startswith("--")]
+
+    assert "plugins/" in sources
+    for source in sources:
+        assert source.strip("/").split("/")[0] not in ignored, source
+
+
 @pytest.mark.skipif(
     shutil.which("git") is None or not (_ROOT / ".git").exists(),
     reason="needs a git checkout",
