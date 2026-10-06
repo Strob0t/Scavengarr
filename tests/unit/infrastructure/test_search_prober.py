@@ -8,6 +8,7 @@ import httpx
 import respx
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.domain.plugins.exceptions import PluginNotFoundError
 from scavengarr.infrastructure.scoring.search_prober import (
     MiniSearchProber,
     _extract_hoster,
@@ -101,7 +102,7 @@ class TestProbe:
     @respx.mock
     async def test_plugin_not_found(self) -> None:
         registry = MagicMock()
-        registry.get.side_effect = KeyError("unknown")
+        registry.get.side_effect = PluginNotFoundError("unknown")
         async with httpx.AsyncClient() as client:
             prober = MiniSearchProber(
                 plugins=registry,

@@ -11,6 +11,7 @@ import httpx
 import structlog
 
 from scavengarr.domain.entities.scoring import ProbeResult
+from scavengarr.domain.plugins.exceptions import PluginNotFoundError
 from scavengarr.domain.ports.plugin_registry import PluginRegistryPort
 
 log = structlog.get_logger(__name__)
@@ -76,7 +77,7 @@ class MiniSearchProber:
 
         try:
             plugin = self._plugins.get(plugin_name)
-        except KeyError:
+        except PluginNotFoundError:
             return ProbeResult(
                 started_at=started_at,
                 duration_ms=0.0,

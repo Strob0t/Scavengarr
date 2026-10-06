@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: A Search Probe of an Unknown Plugin Reports It
+- `MiniSearchProber` caught `KeyError` for an unknown plugin, but the registry raises `PluginNotFoundError`, so the probe raised instead of reporting `plugin_not_found` (its test mocked the `KeyError`). The scheduler probes only registered plugins, so production never hit it. Found by the doc review (2026-10-06).
+
 ### Fix: A Mirror Member That Delivers Alone Ranks First Again
 - A mirror group member that gave nothing while its standby delivered ranks behind the other members until it delivers again. It cleared that mark only when it delivered with a standby behind it; delivering alone, while the other members' breakers were open, left it behind once they were back. Any delivery clears it now. Found by the doc review (2026-10-06).
 
