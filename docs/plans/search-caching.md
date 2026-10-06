@@ -33,7 +33,7 @@ Key files:
 
 **Design**, decided by the maintainer: cache with stale-while-revalidate and single-flight, partial results, and an early answer with the cache.
 
-- **What is cached:** the title-filtered search results of a request (`list[SearchResult]`), not the resolved streams, because hoster stream URLs expire and some are bound to the resolving IP. Resolution and ranking run on every request. Key: `stremio:search:{imdb_id}:{season}:{episode}`. Value: results, the unfiltered count, and the wall-clock time stored (`CachePort`, i.e. diskcache or Redis, so it survives restarts).
+- **What is cached:** the title-filtered search results of a request (`list[SearchResult]`), not the resolved streams, because hoster stream URLs expire and some are bound to the resolving IP. Resolution and ranking run on every request. Key: `stremio:search:{content_type}:{imdb_id}:{season}:{episode}` (the content type since 2026-10-06: TMDB numbers movies and series separately). Value: results, the unfiltered count, and the wall-clock time stored (`CachePort`, i.e. diskcache or Redis, so it survives restarts).
 - **Fresh and stale:**
   - An entry younger than `cache.search_ttl_seconds` is fresh: the request skips the search.
   - An older one stays usable for 6 h more (stale-while-revalidate, RFC 5861): the request answers from it, and a background search refreshes it.

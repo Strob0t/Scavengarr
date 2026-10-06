@@ -32,8 +32,15 @@ class CachedSearch:
 
 
 def search_cache_key(request: StremioStreamRequest) -> str:
-    """One entry per title, season and episode."""
-    return f"stremio:search:{request.imdb_id}:{request.season}:{request.episode}"
+    """One entry per title, season and episode.
+
+    The content type is part of it: TMDB numbers movies and series
+    separately, so ``tmdb:1399`` names a movie and a series.
+    """
+    return (
+        f"stremio:search:{request.content_type}:{request.imdb_id}"
+        f":{request.season}:{request.episode}"
+    )
 
 
 class SearchCache:

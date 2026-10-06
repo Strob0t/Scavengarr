@@ -1681,7 +1681,7 @@ class TestStreamLinkSaveFailures:
 # Search cache, single-flight, late plugins, early answer
 # ---------------------------------------------------------------------------
 
-_KEY = "stremio:search:tt1234567:None:None"
+_KEY = "stremio:search:movie:tt1234567:None:None"
 _TTL = 1800
 
 
@@ -2010,7 +2010,7 @@ def _cached_titles(
             )
             for link in links
         ]
-        cache.data[f"stremio:search:{imdb_id}:None:None"] = CachedSearch(
+        cache.data[f"stremio:search:movie:{imdb_id}:None:None"] = CachedSearch(
             results=results, total=len(results), stored_at=time.time()
         )
     tmdb = AsyncMock()

@@ -34,8 +34,15 @@ class TestSearchCacheKey:
             imdb_id="tt0903747", content_type="series", season=1, episode=2
         )
 
-        assert search_cache_key(movie) == "stremio:search:tt0816692:None:None"
-        assert search_cache_key(episode) == "stremio:search:tt0903747:1:2"
+        assert search_cache_key(movie) == "stremio:search:movie:tt0816692:None:None"
+        assert search_cache_key(episode) == "stremio:search:series:tt0903747:1:2"
+
+    def test_a_tmdb_movie_and_series_with_one_number_are_two_entries(self) -> None:
+        """TMDB numbers movies and series separately: tmdb:1399 is both."""
+        movie = StremioStreamRequest(imdb_id="tmdb:1399", content_type="movie")
+        series = StremioStreamRequest(imdb_id="tmdb:1399", content_type="series")
+
+        assert search_cache_key(movie) != search_cache_key(series)
 
 
 class TestSearchCache:
