@@ -173,7 +173,7 @@ Shallow search probe per (plugin, category, age bucket).
 |---|---|
 | Search | Direct `plugin.search(query, category=...)` call under `asyncio.wait_for`; no search engine or link validation |
 | Timeout | `search_timeout_seconds` (default 10 s) |
-| Items analysed | First `search_max_items` (default 20) results; the plugin's own pagination is not limited |
+| Items analysed | First `search_max_items` (default 20) results; the plugin pages only that far (`search_max_results`) |
 | Hoster classification | The second-level domain of each `download_link` is compared with `HosterResolverRegistry.supported_domains` (resolver names plus alias domains such as `filelions` for Vidhide) |
 | Hoster sampling | HEAD-check (5 s timeout) up to 3 links to supported hosters; status `< 400` = reachable |
 | Concurrency | Semaphore, `search_concurrency` (default 3) |

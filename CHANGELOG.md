@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: Search Probes Page Only As Far As They Count
+- The scoring's search probes count the first `scoring.search_max_items` (20) results, but the plugins paged up to their 1000-result limit: extra requests to the sites every probe run, and a long result list could run into the probe's 10 s timeout and count as a failed probe. A probe now sets the plugins' result limit (`search_max_results`) like a Stremio search. Found by the doc review (2026-10-06).
+
 ### Fix: Plugin Requests Keep Their User-Agent
 - `_safe_fetch()` with extra headers sent the app's own `Scavengarr/<version>` User-Agent instead of the plugin's (aniworld's search), and its requests to a site whose browser session httpx had taken over (the search POSTs of megakino, streamcloud and streamkiste after a Cloudflare challenge) went out without the browser's User-Agent, which the clearance cookie needs. It now sends them like `_fetch_text()`. Found by the doc review (2026-10-06).
 
