@@ -1,6 +1,6 @@
 # Plan: Split `stremio_stream.py` Along Its Phases
 
-Item I14 of `docs/plans/ideas-backlog.md`. Status 2026-10-06: proposed, not started. Behaviour-preserving refactor; no OpenSpec change (no capability changes).
+Item I14 of `docs/plans/ideas-backlog.md`. Status 2026-10-06: in progress (step 1 done). Behaviour-preserving refactor; no OpenSpec change (no capability changes).
 
 ## Problem
 

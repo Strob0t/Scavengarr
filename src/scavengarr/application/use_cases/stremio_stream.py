@@ -51,6 +51,11 @@ from scavengarr.application.stremio.stream_builder import (
     is_direct_video_url,
     stream_link_id,
 )
+from scavengarr.application.stremio.title_resolution import (
+    TitleFilterFn,
+    TitleMatchConfig,
+    TitleResolver,
+)
 from scavengarr.domain.entities.stremio import (
     CachedStreamLink,
     RankedStream,
@@ -79,18 +84,11 @@ from scavengarr.domain.ports.tmdb import TmdbClientPort
 # ---------------------------------------------------------------------------
 
 
-class _StremioConfig(Protocol):
+class _StremioConfig(TitleMatchConfig, Protocol):
     """Configuration values consumed by StremioStreamUseCase."""
 
     plugin_timeout_seconds: float
     stream_deadline_seconds: float
-    title_match_threshold: float
-    title_year_bonus: float
-    title_year_penalty: float
-    title_sequel_penalty: float
-    title_extra_words_penalty: float
-    title_year_tolerance_movie: int
-    title_year_tolerance_series: int
     max_results_per_plugin: int
     max_probe_count: int
     probe_concurrency: int
@@ -122,7 +120,6 @@ _Source = Literal["cache", "stale", "search", "joined"]
 
 # Type aliases for injected pure functions.
 _ConvertFn = Callable[..., list[RankedStream]]
-_TitleFilterFn = Callable[..., list[SearchResult]]
 
 log = structlog.get_logger(__name__)
 
@@ -167,7 +164,7 @@ class StremioStreamUseCase:
         config: _StremioConfig,
         sorter: _StreamSorter,
         convert_fn: _ConvertFn,
-        filter_fn: _TitleFilterFn,
+        filter_fn: TitleFilterFn,
         episode_filter_fn: EpisodeFilterFn,
         user_agent: str,
         max_results_var: ContextVar[int | None],
@@ -184,11 +181,12 @@ class StremioStreamUseCase:
         cache: CachePort | None = None,
         search_ttl_seconds: int = 0,
     ) -> None:
-        self._tmdb = tmdb
         self._plugins = plugins
+        self._titles = TitleResolver(
+            tmdb=tmdb, plugins=plugins, filter_fn=filter_fn, config=config
+        )
         self._sorter = sorter
         self._convert_fn = convert_fn
-        self._filter_fn = filter_fn
         self._user_agent = user_agent
         self._search_runner = PluginSearchRunner(
             plugins=plugins,
@@ -204,13 +202,6 @@ class StremioStreamUseCase:
             plugin_health=plugin_health,
             score_store=score_store,
         )
-        self._title_match_threshold = config.title_match_threshold
-        self._title_year_bonus = config.title_year_bonus
-        self._title_year_penalty = config.title_year_penalty
-        self._title_sequel_penalty = config.title_sequel_penalty
-        self._title_extra_words_penalty = config.title_extra_words_penalty
-        self._title_year_tolerance_movie = config.title_year_tolerance_movie
-        self._title_year_tolerance_series = config.title_year_tolerance_series
         self._stream_link_repo = stream_link_repo
         self._resolve_fn = resolve_fn
         self._cached_resolution_fn = cached_resolution_fn
@@ -281,10 +272,10 @@ class StremioStreamUseCase:
             selected = await self._select_plugins(all_names, category)
 
             # --- Multi-language title resolution ---
-            all_langs = self._collect_languages(selected)
-            title_infos = await self._resolve_title_infos(request, sorted(all_langs))
+            languages = self._titles.languages(selected)
+            title_infos = await self._titles.title_infos(request, languages)
 
-            primary_title_info = first_available_title(title_infos, sorted(all_langs))
+            primary_title_info = first_available_title(title_infos, languages)
             metadata.outcome = "not_found" if primary_title_info is None else "found"
         if primary_title_info is None:
             log.warning("stremio_title_not_found", imdb_id=request.imdb_id)
@@ -298,7 +289,7 @@ class StremioStreamUseCase:
             partial(
                 self._search,
                 key,
-                self._group_by_languages(selected),
+                self._titles.language_groups(selected),
                 title_infos,
                 request,
                 category,
@@ -375,23 +366,6 @@ class StremioStreamUseCase:
         )
         stage.outcome = "streams" if streams else "empty"
         return streams
-
-    def _collect_languages(self, plugin_names: list[str]) -> set[str]:
-        """Collect all unique languages across the given plugins."""
-        all_langs: set[str] = set()
-        for name in plugin_names:
-            all_langs.update(self._plugins.get_languages(name))
-        return all_langs
-
-    def _group_by_languages(
-        self, plugin_names: list[str]
-    ) -> dict[tuple[str, ...], list[str]]:
-        """Group plugin names by their identical language lists."""
-        groups: dict[tuple[str, ...], list[str]] = {}
-        for name in plugin_names:
-            key = tuple(self._plugins.get_languages(name))
-            groups.setdefault(key, []).append(name)
-        return groups
 
     async def _search_progress(
         self, key: str, search: _Search, *, started: float
@@ -548,7 +522,7 @@ class StremioStreamUseCase:
             )
 
             async def _found(results: list[SearchResult]) -> None:
-                progress.add(results, await self._title_filter(results, ref))
+                progress.add(results, await self._titles.matching(results, ref))
 
             await self._search_runner.search_with_fallback(
                 group_plugins,
@@ -566,27 +540,6 @@ class StremioStreamUseCase:
                 _search_one_group(lang_key, group_plugins)
                 for lang_key, group_plugins in lang_groups.items()
             )
-        )
-
-    async def _title_filter(
-        self, results: list[SearchResult], ref: TitleMatchInfo
-    ) -> list[SearchResult]:
-        """The results whose title matches *ref* (in a worker thread: CPU work;
-        ``to_thread`` keeps the log context, unlike ``run_in_executor``)."""
-        if not results:
-            return []
-        return await asyncio.to_thread(
-            lambda: self._filter_fn(
-                results,
-                ref,
-                self._title_match_threshold,
-                year_bonus=self._title_year_bonus,
-                year_penalty=self._title_year_penalty,
-                sequel_penalty=self._title_sequel_penalty,
-                extra_words_penalty=self._title_extra_words_penalty,
-                year_tolerance_movie=self._title_year_tolerance_movie,
-                year_tolerance_series=self._title_year_tolerance_series,
-            ),
         )
 
     async def _cache_and_proxy(
@@ -874,42 +827,6 @@ class StremioStreamUseCase:
         return await asyncio.to_thread(
             lambda: self._convert_fn(results, plugin_languages=plugin_languages)
         )
-
-    async def _resolve_title_info(
-        self,
-        request: StremioStreamRequest,
-        *,
-        language: str = "de",
-    ) -> TitleMatchInfo | None:
-        """Resolve title + year from IMDb or TMDB ID for matching."""
-        if request.imdb_id.startswith("tmdb:"):
-            tmdb_id = request.imdb_id.removeprefix("tmdb:")
-            title = await self._tmdb.get_title_by_tmdb_id(
-                int(tmdb_id), request.content_type
-            )
-            if not title:
-                return None
-            return TitleMatchInfo(title=title, content_type=request.content_type)
-        info = await self._tmdb.get_title_and_year(request.imdb_id, language=language)
-        if info is not None:
-            return replace(info, content_type=request.content_type)
-        return None
-
-    async def _resolve_title_infos(
-        self,
-        request: StremioStreamRequest,
-        languages: list[str],
-    ) -> dict[str, TitleMatchInfo | None]:
-        """Fetch title info for each language in parallel.
-
-        Returns a dict mapping language code to TitleMatchInfo (or None).
-        For ``tmdb:`` prefixed IDs (no language variants), the same
-        result is returned for every language.
-        """
-        infos = await asyncio.gather(
-            *(self._resolve_title_info(request, language=lang) for lang in languages)
-        )
-        return dict(zip(languages, infos))
 
     async def _select_plugins(
         self,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock
 from urllib.parse import urlparse
@@ -27,7 +27,6 @@ from scavengarr.domain.entities.stremio import (
     ResolvedStream,
     StreamQuality,
     StremioStream,
-    StremioStreamRequest,
     TitleMatchInfo,
 )
 from scavengarr.domain.plugins.base import SearchResult
@@ -46,102 +45,12 @@ from scavengarr.infrastructure.stremio.title_matcher import filter_by_title_matc
 from scavengarr.infrastructure.telemetry import Telemetry
 from scavengarr.infrastructure.telemetry.tracing import Tracing
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_config(**overrides: object) -> StremioConfig:
-    defaults = {
-        "max_concurrent_plugins": 5,
-        "language_scores": {"de": 1000, "en": 150},
-        "default_language_score": 100,
-        "quality_multiplier": 10,
-        "hoster_scores": {"voe": 4},
-    }
-    defaults.update(overrides)
-    return StremioConfig(**defaults)
-
-
-def _make_request(
-    *,
-    imdb_id: str = "tt1234567",
-    content_type: str = "movie",
-    season: int | None = None,
-    episode: int | None = None,
-) -> StremioStreamRequest:
-    return StremioStreamRequest(
-        imdb_id=imdb_id,
-        content_type=content_type,
-        season=season,
-        episode=episode,
-    )
-
-
-def _make_search_result(
-    *,
-    title: str = "Test Movie",
-    download_link: str = "https://voe.sx/e/abc",
-    download_links: list[dict[str, str]] | None = None,
-    release_name: str | None = None,
-    metadata: dict | None = None,
-) -> SearchResult:
-    return SearchResult(
-        title=title,
-        download_link=download_link,
-        download_links=download_links,
-        release_name=release_name,
-        metadata=metadata or {},
-    )
-
-
-def _make_use_case(
-    *,
-    tmdb: AsyncMock | None = None,
-    plugins: MagicMock | None = None,
-    search_engine: AsyncMock | None = None,
-    config: StremioConfig | None = None,
-    stream_link_repo: AsyncMock | None = None,
-    resolve_fn: Callable[..., Awaitable[ResolvedStream | None]] | None = None,
-    cached_resolution_fn: Callable[[str], tuple[bool, ResolvedStream | None]]
-    | None = None,
-    cache: AsyncMock | None = None,
-    search_ttl_seconds: int = 0,
-    telemetry: TelemetryPort = NO_TELEMETRY,
-    mirror_groups: dict[str, str] | None = None,
-    score_store: AsyncMock | None = None,
-) -> StremioStreamUseCase:
-    engine = search_engine or AsyncMock()
-    # Default: validate_results returns input unchanged
-    if not search_engine:
-        engine.validate_results = AsyncMock(side_effect=lambda r: r)
-        engine.search = AsyncMock(return_value=[])
-    cfg = config or _make_config()
-    if plugins is None:
-        plugins = MagicMock()
-        plugins.get_languages.return_value = ["de"]
-    return StremioStreamUseCase(
-        tmdb=tmdb or AsyncMock(),
-        plugins=plugins,
-        search_engine=engine,
-        config=cfg,
-        sorter=StreamSorter(cfg),
-        convert_fn=convert_search_results,
-        filter_fn=filter_by_title_match,
-        episode_filter_fn=filter_by_episode,
-        user_agent=DEFAULT_USER_AGENT,
-        max_results_var=search_max_results,
-        stream_link_repo=stream_link_repo,
-        resolve_fn=resolve_fn,
-        cached_resolution_fn=cached_resolution_fn,
-        pool=ConcurrencyPool(httpx_slots=100, pw_slots=100),
-        cache=cache,
-        search_ttl_seconds=search_ttl_seconds,
-        telemetry=telemetry,
-        mirror_groups=mirror_groups,
-        score_store=score_store,
-    )
-
+from .stremio_support import (
+    make_config,
+    make_request,
+    make_search_result,
+    make_use_case,
+)
 
 # ---------------------------------------------------------------------------
 # StremioStreamUseCase.execute
@@ -152,8 +61,8 @@ class TestExecute:
     async def test_title_not_found_returns_empty(self) -> None:
         tmdb = AsyncMock()
         tmdb.get_title_and_year = AsyncMock(return_value=None)
-        uc = _make_use_case(tmdb=tmdb)
-        result = await uc.execute(_make_request())
+        uc = make_use_case(tmdb=tmdb)
+        result = await uc.execute(make_request())
         assert result == []
 
     async def test_no_stream_plugins_returns_empty(self) -> None:
@@ -166,8 +75,8 @@ class TestExecute:
         plugins.get_languages.return_value = ["de"]
         plugins.get_by_provides.return_value = []
 
-        uc = _make_use_case(tmdb=tmdb, plugins=plugins)
-        result = await uc.execute(_make_request())
+        uc = make_use_case(tmdb=tmdb, plugins=plugins)
+        result = await uc.execute(make_request())
         assert result == []
 
     async def test_happy_path_movie(self) -> None:
@@ -176,7 +85,7 @@ class TestExecute:
             return_value=TitleMatchInfo(title="Iron Man", year=2008)
         )
 
-        sr = _make_search_result(
+        sr = make_search_result(
             title="Iron Man",
             download_links=[
                 {"url": "https://voe.sx/e/abc", "quality": "1080p"},
@@ -199,8 +108,8 @@ class TestExecute:
         )
         plugins.get.return_value = mock_plugin
 
-        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
-        result = await uc.execute(_make_request())
+        uc = make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
+        result = await uc.execute(make_request())
 
         assert len(result) >= 1
         assert result[0].url == "https://voe.sx/e/abc"
@@ -235,8 +144,8 @@ class TestExecute:
         )
         plugins.get.return_value = mock_plugin
 
-        req = _make_request(content_type="series", season=1, episode=5)
-        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
+        req = make_request(content_type="series", season=1, episode=5)
+        uc = make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
         await uc.execute(req)
 
         mock_plugin.isolated_search.assert_awaited_once_with(
@@ -247,11 +156,11 @@ class TestExecute:
         tmdb = AsyncMock()
         tmdb.get_title_and_year = AsyncMock(return_value=TitleMatchInfo(title="Movie"))
 
-        sr1 = _make_search_result(
+        sr1 = make_search_result(
             title="Movie",
             download_links=[{"url": "https://voe.sx/e/1"}],
         )
-        sr2 = _make_search_result(
+        sr2 = make_search_result(
             title="Movie",
             download_links=[{"url": "https://filemoon.sx/e/2"}],
         )
@@ -275,8 +184,8 @@ class TestExecute:
         )
         plugins.get.side_effect = lambda name: {"a": plugin_a, "b": plugin_b}[name]
 
-        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
-        result = await uc.execute(_make_request())
+        uc = make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
+        result = await uc.execute(make_request())
 
         assert len(result) == 2
         urls = {s.url for s in result}
@@ -287,7 +196,7 @@ class TestExecute:
         tmdb = AsyncMock()
         tmdb.get_title_and_year = AsyncMock(return_value=TitleMatchInfo(title="Movie"))
 
-        sr = _make_search_result(
+        sr = make_search_result(
             title="Movie",
             download_links=[{"url": "https://voe.sx/e/ok"}],
         )
@@ -313,8 +222,8 @@ class TestExecute:
             name
         ]
 
-        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
-        result = await uc.execute(_make_request())
+        uc = make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
+        result = await uc.execute(make_request())
 
         # Should still return results from the good plugin
         assert len(result) == 1
@@ -331,8 +240,8 @@ class TestExecute:
         )
         plugins.get.side_effect = KeyError("not found")
 
-        uc = _make_use_case(tmdb=tmdb, plugins=plugins)
-        result = await uc.execute(_make_request())
+        uc = make_use_case(tmdb=tmdb, plugins=plugins)
+        result = await uc.execute(make_request())
         assert result == []
 
     async def test_empty_search_results_returns_empty(self) -> None:
@@ -354,15 +263,15 @@ class TestExecute:
         )
         plugins.get.return_value = mock_plugin
 
-        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
-        result = await uc.execute(_make_request())
+        uc = make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
+        result = await uc.execute(make_request())
         assert result == []
 
     async def test_source_plugin_tagged_on_results(self) -> None:
         tmdb = AsyncMock()
         tmdb.get_title_and_year = AsyncMock(return_value=TitleMatchInfo(title="Movie"))
 
-        sr = _make_search_result(
+        sr = make_search_result(
             title="Movie",
             download_links=[{"url": "https://voe.sx/e/abc"}],
         )
@@ -382,8 +291,8 @@ class TestExecute:
         )
         plugins.get.return_value = mock_plugin
 
-        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
-        await uc.execute(_make_request())
+        uc = make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
+        await uc.execute(make_request())
 
         # The use case should tag source_plugin in metadata
         assert sr.metadata.get("source_plugin") == "myplugin"
@@ -392,7 +301,7 @@ class TestExecute:
         tmdb = AsyncMock()
         tmdb.get_title_and_year = AsyncMock(return_value=TitleMatchInfo(title="Movie"))
 
-        sr = _make_search_result(
+        sr = make_search_result(
             title="Movie",
             download_links=[{"url": "https://voe.sx/e/both"}],
         )
@@ -413,8 +322,8 @@ class TestExecute:
         )
         plugins.get.return_value = mock_plugin
 
-        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
-        result = await uc.execute(_make_request())
+        uc = make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
+        result = await uc.execute(make_request())
 
         assert len(result) == 1
 
@@ -423,7 +332,7 @@ class TestExecute:
         tmdb = AsyncMock()
         tmdb.get_title_and_year = AsyncMock(return_value=TitleMatchInfo(title="Movie"))
 
-        sr = _make_search_result(
+        sr = make_search_result(
             title="Movie",
             download_links=[{"url": "https://voe.sx/e/abc"}],
         )
@@ -444,8 +353,8 @@ class TestExecute:
         )
         plugins.get.return_value = mock_plugin
 
-        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
-        await uc.execute(_make_request())
+        uc = make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
+        await uc.execute(make_request())
 
         # Should only search once despite appearing in both lists
         mock_plugin.search.assert_awaited_once()
@@ -454,7 +363,7 @@ class TestExecute:
         tmdb = AsyncMock()
         tmdb.get_title_and_year = AsyncMock(return_value=TitleMatchInfo(title="Movie"))
 
-        sr = _make_search_result(
+        sr = make_search_result(
             title="Movie",
             download_links=[
                 {"url": "https://streamtape.com/v/low", "quality": "SD"},
@@ -477,8 +386,8 @@ class TestExecute:
         )
         plugins.get.return_value = mock_plugin
 
-        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
-        result = await uc.execute(_make_request())
+        uc = make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
+        result = await uc.execute(make_request())
 
         # Should have 2 streams (different hosters, order depends on sorter)
         assert len(result) == 2
@@ -497,8 +406,8 @@ class TestExecute:
         )
         plugins.get.return_value = no_search_plugin
 
-        uc = _make_use_case(tmdb=tmdb, plugins=plugins)
-        result = await uc.execute(_make_request())
+        uc = make_use_case(tmdb=tmdb, plugins=plugins)
+        result = await uc.execute(make_request())
         assert result == []
 
     async def test_concurrency_limited(self) -> None:
@@ -522,13 +431,13 @@ class TestExecute:
         )
         plugins.get.return_value = mock_plugin
 
-        config = _make_config(max_concurrent_plugins=2)
-        uc = _make_use_case(
+        config = make_config(max_concurrent_plugins=2)
+        uc = make_use_case(
             tmdb=tmdb, plugins=plugins, search_engine=engine, config=config
         )
 
         # Should complete without error; semaphore internally limits to 2
-        result = await uc.execute(_make_request())
+        result = await uc.execute(make_request())
         assert result == []
         assert mock_plugin.search.await_count == 10
 
@@ -537,7 +446,7 @@ class TestExecute:
         tmdb = AsyncMock()
         tmdb.get_title_and_year = AsyncMock(return_value=TitleMatchInfo(title="Movie"))
 
-        sr = _make_search_result(
+        sr = make_search_result(
             title="Movie",
             download_links=[{"url": "https://voe.sx/e/fast"}],
         )
@@ -569,134 +478,15 @@ class TestExecute:
             "slow": slow_plugin,
         }[name]
 
-        config = _make_config(plugin_timeout_seconds=0.1)
-        uc = _make_use_case(
+        config = make_config(plugin_timeout_seconds=0.1)
+        uc = make_use_case(
             tmdb=tmdb, plugins=plugins, search_engine=engine, config=config
         )
-        result = await uc.execute(_make_request())
+        result = await uc.execute(make_request())
 
         # Fast plugin result should be present, slow plugin timed out
         assert len(result) == 1
         assert result[0].url == "https://voe.sx/e/fast"
-
-
-# ---------------------------------------------------------------------------
-# Title-match filtering
-# ---------------------------------------------------------------------------
-
-
-class TestTitleMatchFiltering:
-    async def test_wrong_titles_filtered(self) -> None:
-        """Only results matching the reference title pass through."""
-        tmdb = AsyncMock()
-        tmdb.get_title_and_year = AsyncMock(
-            return_value=TitleMatchInfo(title="Iron Man", year=2008)
-        )
-
-        sr_good = _make_search_result(
-            title="Iron Man",
-            download_links=[{"url": "https://voe.sx/e/good"}],
-        )
-        sr_sequel = _make_search_result(
-            title="Iron Man 2",
-            download_links=[{"url": "https://voe.sx/e/sequel"}],
-        )
-        sr_unrelated = _make_search_result(
-            title="Avengers Endgame",
-            download_links=[{"url": "https://voe.sx/e/unrelated"}],
-        )
-
-        mock_plugin = AsyncMock()
-        mock_plugin.search = AsyncMock(return_value=[sr_good, sr_sequel, sr_unrelated])
-        del mock_plugin.scraping
-        mock_plugin.isolated_search = mock_plugin.search
-
-        engine = AsyncMock()
-        engine.validate_results = AsyncMock(side_effect=lambda r: r)
-
-        plugins = MagicMock()
-        plugins.get_languages.return_value = ["de"]
-        plugins.get_by_provides.side_effect = lambda p: (
-            ["test"] if p == "stream" else []
-        )
-        plugins.get.return_value = mock_plugin
-
-        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
-        result = await uc.execute(_make_request())
-
-        urls = {s.url for s in result}
-        assert "https://voe.sx/e/good" in urls
-        assert "https://voe.sx/e/sequel" not in urls
-        assert "https://voe.sx/e/unrelated" not in urls
-
-    async def test_all_filtered_returns_empty(self) -> None:
-        """When all results are below threshold, return empty list."""
-        tmdb = AsyncMock()
-        tmdb.get_title_and_year = AsyncMock(
-            return_value=TitleMatchInfo(title="Iron Man", year=2008)
-        )
-
-        sr = _make_search_result(
-            title="Completely Unrelated Film",
-            download_links=[{"url": "https://voe.sx/e/bad"}],
-        )
-
-        mock_plugin = AsyncMock()
-        mock_plugin.search = AsyncMock(return_value=[sr])
-        del mock_plugin.scraping
-        mock_plugin.isolated_search = mock_plugin.search
-
-        engine = AsyncMock()
-        engine.validate_results = AsyncMock(side_effect=lambda r: r)
-
-        plugins = MagicMock()
-        plugins.get_languages.return_value = ["de"]
-        plugins.get_by_provides.side_effect = lambda p: (
-            ["test"] if p == "stream" else []
-        )
-        plugins.get.return_value = mock_plugin
-
-        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
-        result = await uc.execute(_make_request())
-        assert result == []
-
-    async def test_no_year_still_filters_by_title(self) -> None:
-        """Even without year info, title similarity is applied."""
-        tmdb = AsyncMock()
-        tmdb.get_title_and_year = AsyncMock(
-            return_value=TitleMatchInfo(title="Iron Man")
-        )
-
-        sr_good = _make_search_result(
-            title="Iron Man",
-            download_links=[{"url": "https://voe.sx/e/match"}],
-        )
-        sr_bad = _make_search_result(
-            title="Spider Man",
-            download_links=[{"url": "https://voe.sx/e/nomatch"}],
-        )
-
-        mock_plugin = AsyncMock()
-        mock_plugin.search = AsyncMock(return_value=[sr_good, sr_bad])
-        del mock_plugin.scraping
-        mock_plugin.isolated_search = mock_plugin.search
-
-        engine = AsyncMock()
-        engine.validate_results = AsyncMock(side_effect=lambda r: r)
-
-        plugins = MagicMock()
-        plugins.get_languages.return_value = ["de"]
-        plugins.get_by_provides.side_effect = lambda p: (
-            ["test"] if p == "stream" else []
-        )
-        plugins.get.return_value = mock_plugin
-
-        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
-        result = await uc.execute(_make_request())
-
-        urls = {s.url for s in result}
-        assert "https://voe.sx/e/match" in urls
-        assert "https://voe.sx/e/nomatch" not in urls
 
 
 # ---------------------------------------------------------------------------
@@ -712,7 +502,7 @@ class TestStreamLinkProxy:
             return_value=TitleMatchInfo(title="Iron Man", year=2008)
         )
 
-        sr = _make_search_result(
+        sr = make_search_result(
             title="Iron Man",
             download_links=[{"url": "https://voe.sx/e/abc"}],
         )
@@ -733,13 +523,13 @@ class TestStreamLinkProxy:
         plugins.get.return_value = mock_plugin
 
         repo = AsyncMock()
-        uc = _make_use_case(
+        uc = make_use_case(
             tmdb=tmdb,
             plugins=plugins,
             search_engine=engine,
             stream_link_repo=repo,
         )
-        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+        result = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert len(result) >= 1
         assert result[0].url.startswith("http://localhost:8080/api/v1/stremio/play/")
@@ -756,7 +546,7 @@ class TestStreamLinkProxy:
             return_value=TitleMatchInfo(title="Iron Man", year=2008)
         )
 
-        sr = _make_search_result(
+        sr = make_search_result(
             title="Iron Man",
             download_links=[{"url": "https://voe.sx/e/abc"}],
         )
@@ -777,14 +567,14 @@ class TestStreamLinkProxy:
         plugins.get.return_value = mock_plugin
 
         repo = AsyncMock()
-        uc = _make_use_case(
+        uc = make_use_case(
             tmdb=tmdb,
             plugins=plugins,
             search_engine=engine,
             stream_link_repo=repo,
         )
         # No base_url → no proxying
-        result = await uc.execute(_make_request())
+        result = await uc.execute(make_request())
 
         assert len(result) >= 1
         assert result[0].url == "https://voe.sx/e/abc"
@@ -797,7 +587,7 @@ class TestStreamLinkProxy:
             return_value=TitleMatchInfo(title="Iron Man", year=2008)
         )
 
-        sr = _make_search_result(
+        sr = make_search_result(
             title="Iron Man",
             download_links=[{"url": "https://voe.sx/e/abc"}],
         )
@@ -818,8 +608,8 @@ class TestStreamLinkProxy:
         plugins.get.return_value = mock_plugin
 
         # No repo → no proxying
-        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
-        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+        uc = make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
+        result = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert len(result) >= 1
         assert result[0].url == "https://voe.sx/e/abc"
@@ -841,7 +631,7 @@ class TestResolverEchoFiltering:
         )
 
         # One stream with an XFS embed URL (veev)
-        sr = _make_search_result(
+        sr = make_search_result(
             title="Iron Man",
             download_links=[
                 {"url": "https://veev.to/e/abc123456789", "hoster": "VEEV"},
@@ -868,7 +658,7 @@ class TestResolverEchoFiltering:
             return ResolvedStream(video_url=url, quality=StreamQuality.UNKNOWN)
 
         repo = AsyncMock()
-        uc = _make_use_case(
+        uc = make_use_case(
             tmdb=tmdb,
             plugins=plugins,
             search_engine=engine,
@@ -876,7 +666,7 @@ class TestResolverEchoFiltering:
             resolve_fn=AsyncMock(side_effect=_echo_resolve),
         )
 
-        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+        result = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         # Stream should be skipped — not included in output
         assert len(result) == 0
@@ -888,7 +678,7 @@ class TestResolverEchoFiltering:
             return_value=TitleMatchInfo(title="Iron Man", year=2008)
         )
 
-        sr = _make_search_result(
+        sr = make_search_result(
             title="Iron Man",
             download_links=[
                 {"url": "https://voe.sx/e/abc123", "hoster": "VOE"},
@@ -919,7 +709,7 @@ class TestResolverEchoFiltering:
             )
 
         repo = AsyncMock()
-        uc = _make_use_case(
+        uc = make_use_case(
             tmdb=tmdb,
             plugins=plugins,
             search_engine=engine,
@@ -927,7 +717,7 @@ class TestResolverEchoFiltering:
             resolve_fn=AsyncMock(side_effect=_real_resolve),
         )
 
-        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+        result = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert len(result) >= 1
         assert _video(uc, result[0]) == "https://cdn.voe.sx/hls/master.m3u8"
@@ -939,7 +729,7 @@ class TestResolverEchoFiltering:
             return_value=TitleMatchInfo(title="Iron Man", year=2008)
         )
 
-        sr = _make_search_result(
+        sr = make_search_result(
             title="Iron Man",
             download_links=[
                 {"url": "https://veev.to/e/abc123456789", "hoster": "VEEV"},
@@ -973,7 +763,7 @@ class TestResolverEchoFiltering:
             return ResolvedStream(video_url=url, quality=StreamQuality.UNKNOWN)
 
         repo = AsyncMock()
-        uc = _make_use_case(
+        uc = make_use_case(
             tmdb=tmdb,
             plugins=plugins,
             search_engine=engine,
@@ -981,7 +771,7 @@ class TestResolverEchoFiltering:
             resolve_fn=AsyncMock(side_effect=_mixed_resolve),
         )
 
-        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+        result = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         # Only the VOE stream should remain
         assert len(result) == 1
@@ -994,7 +784,7 @@ class TestResolverEchoFiltering:
             return_value=TitleMatchInfo(title="Iron Man", year=2008)
         )
 
-        sr = _make_search_result(
+        sr = make_search_result(
             title="Iron Man",
             download_links=[
                 {"url": "https://unknown-hoster.com/v/abc", "hoster": "UNKNOWN"},
@@ -1018,7 +808,7 @@ class TestResolverEchoFiltering:
 
         # Resolver returns None (no resolver found for hoster)
         repo = AsyncMock()
-        uc = _make_use_case(
+        uc = make_use_case(
             tmdb=tmdb,
             plugins=plugins,
             search_engine=engine,
@@ -1026,202 +816,10 @@ class TestResolverEchoFiltering:
             resolve_fn=AsyncMock(return_value=None),
         )
 
-        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+        result = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         # Unresolvable streams are dropped — the /play/ proxy would always 502
         assert len(result) == 0
-
-
-# ---------------------------------------------------------------------------
-# Multi-language search dispatch
-# ---------------------------------------------------------------------------
-
-
-class TestMultiLanguageDispatch:
-    """Tests for multi-language search dispatch in execute()."""
-
-    @staticmethod
-    def _make_plugins_mock(
-        names: list[str],
-        plugin_languages: dict[str, list[str]],
-        mock_plugin: AsyncMock,
-    ) -> MagicMock:
-        plugins = MagicMock()
-        plugins.get_by_provides.side_effect = lambda p: names if p == "stream" else []
-        plugins.get.return_value = mock_plugin
-        plugins.get_languages.side_effect = lambda n: plugin_languages.get(n, ["de"])
-        return plugins
-
-    async def test_german_only_plugin_uses_german_queries(self) -> None:
-        """Plugin with languages=["de"] searches with German title."""
-        tmdb = AsyncMock()
-        tmdb.get_title_and_year = AsyncMock(
-            side_effect=lambda imdb_id, language="de": (
-                TitleMatchInfo(title="Der Pate", year=1972)
-                if language == "de"
-                else TitleMatchInfo(title="The Godfather", year=1972)
-            )
-        )
-
-        sr = _make_search_result(
-            title="Der Pate",
-            download_links=[{"url": "https://voe.sx/e/pate"}],
-        )
-        mock_plugin = AsyncMock()
-        mock_plugin.search = AsyncMock(return_value=[sr])
-        del mock_plugin.scraping
-        mock_plugin.isolated_search = mock_plugin.search
-
-        engine = AsyncMock()
-        engine.validate_results = AsyncMock(side_effect=lambda r: r)
-
-        plugins = self._make_plugins_mock(
-            ["de-plugin"], {"de-plugin": ["de"]}, mock_plugin
-        )
-
-        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
-        result = await uc.execute(_make_request())
-
-        assert len(result) >= 1
-        # Should have been called with German language
-        tmdb.get_title_and_year.assert_any_await("tt1234567", language="de")
-        # Should NOT have been called with English
-        en_calls = [
-            c
-            for c in tmdb.get_title_and_year.call_args_list
-            if c.kwargs.get("language") == "en"
-        ]
-        assert len(en_calls) == 0
-
-    async def test_english_plugin_uses_english_queries(self) -> None:
-        """Plugin with languages=["en"] searches with English title."""
-        tmdb = AsyncMock()
-        tmdb.get_title_and_year = AsyncMock(
-            side_effect=lambda imdb_id, language="de": (
-                TitleMatchInfo(title="The Godfather", year=1972)
-                if language == "en"
-                else TitleMatchInfo(title="Der Pate", year=1972)
-            )
-        )
-
-        sr = _make_search_result(
-            title="The Godfather",
-            download_links=[{"url": "https://voe.sx/e/godfather"}],
-        )
-        mock_plugin = AsyncMock()
-        mock_plugin.search = AsyncMock(return_value=[sr])
-        del mock_plugin.scraping
-        mock_plugin.isolated_search = mock_plugin.search
-
-        engine = AsyncMock()
-        engine.validate_results = AsyncMock(side_effect=lambda r: r)
-
-        plugins = self._make_plugins_mock(
-            ["en-plugin"], {"en-plugin": ["en"]}, mock_plugin
-        )
-
-        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
-        result = await uc.execute(_make_request())
-
-        assert len(result) >= 1
-        # Should have fetched English title
-        tmdb.get_title_and_year.assert_any_await("tt1234567", language="en")
-
-    async def test_bilingual_plugin_gets_both_queries(self) -> None:
-        """Plugin with languages=["de", "en"] gets queries in both."""
-        tmdb = AsyncMock()
-        tmdb.get_title_and_year = AsyncMock(
-            side_effect=lambda imdb_id, language="de": (
-                TitleMatchInfo(title="Der Pate", year=1972)
-                if language == "de"
-                else TitleMatchInfo(title="The Godfather", year=1972)
-            )
-        )
-
-        sr = _make_search_result(
-            title="Der Pate",
-            download_links=[{"url": "https://voe.sx/e/pate"}],
-        )
-        mock_plugin = AsyncMock()
-        mock_plugin.search = AsyncMock(return_value=[sr])
-        del mock_plugin.scraping
-        mock_plugin.isolated_search = mock_plugin.search
-
-        engine = AsyncMock()
-        engine.validate_results = AsyncMock(side_effect=lambda r: r)
-
-        plugins = self._make_plugins_mock(
-            ["both-plugin"],
-            {"both-plugin": ["de", "en"]},
-            mock_plugin,
-        )
-
-        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
-        result = await uc.execute(_make_request())
-
-        assert len(result) >= 1
-        # Should have fetched both languages
-        tmdb.get_title_and_year.assert_any_await("tt1234567", language="de")
-        tmdb.get_title_and_year.assert_any_await("tt1234567", language="en")
-        # Plugin should have been searched with queries from both languages
-        search_calls = mock_plugin.search.call_args_list
-        all_queries = {c.args[0] for c in search_calls}
-        assert "Der Pate" in all_queries
-        assert "The Godfather" in all_queries
-
-    async def test_mixed_plugins_grouped_by_language(self) -> None:
-        """Plugins with different languages are searched independently."""
-        tmdb = AsyncMock()
-        tmdb.get_title_and_year = AsyncMock(
-            side_effect=lambda imdb_id, language="de": (
-                TitleMatchInfo(title="Der Pate", year=1972)
-                if language == "de"
-                else TitleMatchInfo(title="The Godfather", year=1972)
-            )
-        )
-
-        sr = _make_search_result(
-            title="Der Pate",
-            download_links=[{"url": "https://voe.sx/e/pate"}],
-        )
-        de_plugin = AsyncMock()
-        de_plugin.search = AsyncMock(return_value=[sr])
-        del de_plugin.scraping
-        de_plugin.isolated_search = de_plugin.search
-
-        sr_en = _make_search_result(
-            title="The Godfather",
-            download_link="https://filemoon.sx/e/godfather",
-            download_links=[{"url": "https://filemoon.sx/e/godfather"}],
-        )
-        en_plugin = AsyncMock()
-        en_plugin.search = AsyncMock(return_value=[sr_en])
-        del en_plugin.scraping
-        en_plugin.isolated_search = en_plugin.search
-
-        engine = AsyncMock()
-        engine.validate_results = AsyncMock(side_effect=lambda r: r)
-
-        plugins = MagicMock()
-        plugins.get_by_provides.side_effect = lambda p: (
-            ["de-site", "en-site"] if p == "stream" else []
-        )
-        plugins.get.side_effect = lambda n: {
-            "de-site": de_plugin,
-            "en-site": en_plugin,
-        }[n]
-        plugins.get_languages.side_effect = lambda n: {
-            "de-site": ["de"],
-            "en-site": ["en"],
-        }[n]
-
-        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
-        result = await uc.execute(_make_request())
-
-        assert len(result) >= 2
-        urls = {s.url for s in result}
-        assert "https://voe.sx/e/pate" in urls
-        assert "https://filemoon.sx/e/godfather" in urls
 
 
 # ---------------------------------------------------------------------------
@@ -1240,7 +838,7 @@ class TestBrowserWarmup:
             return_value=TitleMatchInfo(title="Test", year=2024)
         )
 
-        sr = _make_search_result()
+        sr = make_search_result()
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
         del mock_plugin.scraping
@@ -1262,8 +860,8 @@ class TestBrowserWarmup:
             tmdb=tmdb,
             plugins=plugins,
             search_engine=engine,
-            config=_make_config(),
-            sorter=StreamSorter(_make_config()),
+            config=make_config(),
+            sorter=StreamSorter(make_config()),
             convert_fn=convert_search_results,
             filter_fn=filter_by_title_match,
             episode_filter_fn=filter_by_episode,
@@ -1273,7 +871,7 @@ class TestBrowserWarmup:
             pool=ConcurrencyPool(httpx_slots=100, pw_slots=100),
         )
 
-        await uc.execute(_make_request())
+        await uc.execute(make_request())
 
         warmup_fn.assert_awaited_once()
 
@@ -1285,7 +883,7 @@ class TestBrowserWarmup:
             return_value=TitleMatchInfo(title="Test", year=2024)
         )
 
-        sr = _make_search_result()
+        sr = make_search_result()
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
         del mock_plugin.scraping
@@ -1301,10 +899,10 @@ class TestBrowserWarmup:
         plugins.get.return_value = mock_plugin
         plugins.get_languages.return_value = ["de"]
 
-        uc = _make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
+        uc = make_use_case(tmdb=tmdb, plugins=plugins, search_engine=engine)
 
         # Should not crash when browser_warmup_fn is None
-        result = await uc.execute(_make_request())
+        result = await uc.execute(make_request())
         assert isinstance(result, list)
 
     @pytest.mark.asyncio
@@ -1315,7 +913,7 @@ class TestBrowserWarmup:
             return_value=TitleMatchInfo(title="Test", year=2024)
         )
 
-        sr = _make_search_result()
+        sr = make_search_result()
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
         del mock_plugin.scraping
@@ -1335,7 +933,7 @@ class TestBrowserWarmup:
             "playwright" if n.startswith("pw") else "httpx"
         )
 
-        config = _make_config(max_concurrent_playwright=10)
+        config = make_config(max_concurrent_playwright=10)
         uc = StremioStreamUseCase(
             tmdb=tmdb,
             plugins=plugins,
@@ -1350,7 +948,7 @@ class TestBrowserWarmup:
             pool=ConcurrencyPool(httpx_slots=100, pw_slots=100),
         )
 
-        result = await uc.execute(_make_request())
+        result = await uc.execute(make_request())
         # All 3 plugins searched — dynamic semaphore doesn't block
         assert plugins.get.call_count >= 3
         assert isinstance(result, list)
@@ -1371,7 +969,7 @@ def _resolving_use_case(
         return_value=TitleMatchInfo(title="Iron Man", year=2008)
     )
     srs = [
-        _make_search_result(
+        make_search_result(
             title="Iron Man", release_name=link.pop("release"), download_links=[link]
         )
         for link in links
@@ -1386,7 +984,7 @@ def _resolving_use_case(
     plugins.get_languages.return_value = ["de"]
     plugins.get_by_provides.side_effect = lambda p: ["hdfilme"] if p == "stream" else []
     plugins.get.return_value = mock_plugin
-    return _make_use_case(
+    return make_use_case(
         tmdb=tmdb,
         plugins=plugins,
         search_engine=engine,
@@ -1447,7 +1045,7 @@ class TestResolvePhase:
 
         uc = _resolving_use_case([dict(_BEST), dict(_SECOND)], _resolve)
 
-        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+        result = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert [_video(uc, s) for s in result] == ["https://cdn.example/second.mp4"]
 
@@ -1457,7 +1055,7 @@ class TestResolvePhase:
 
         uc = _resolving_use_case([dict(_BEST), dict(_SECOND)], _resolve)
 
-        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+        result = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert [_video(uc, s) for s in result] == ["https://cdn.example/best.mp4"]
 
@@ -1474,7 +1072,7 @@ class TestResolvePhase:
         }
         uc = _resolving_use_case([dict(_BEST), dict(_SECOND), sub], _resolve)
 
-        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+        result = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert [_video(uc, s) for s in result] == [
             "https://cdn.example/best.mp4",
@@ -1495,7 +1093,7 @@ class TestResolvePhase:
 
         uc = _resolving_use_case([dict(_BEST), dict(_SECOND)], _resolve)
 
-        await uc.execute(_make_request(), base_url="http://localhost:8080")
+        await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert calls == [_BEST["url"]]
 
@@ -1508,12 +1106,12 @@ class TestResolvePhase:
         uc = _resolving_use_case(
             [dict(_SLOW), dict(_FAST)],
             _resolve,
-            config=_make_config(stream_deadline_seconds=0.2),
+            config=make_config(stream_deadline_seconds=0.2),
         )
 
         loop = asyncio.get_running_loop()
         start = loop.time()
-        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+        result = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert loop.time() - start < 2
         assert [_video(uc, s) for s in result] == ["https://cdn.example/fast.mp4"]
@@ -1521,7 +1119,7 @@ class TestResolvePhase:
     def test_answer_policy_defaults(self) -> None:
         """5 streams or everything done, at most 60 s, plugins 30 s
         (maintainer's decision after the fifth round)."""
-        config = _make_config()
+        config = make_config()
         assert config.resolve_target_count == 5
         assert config.stream_deadline_seconds == 60.0
         assert config.plugin_timeout_seconds == 30.0
@@ -1538,12 +1136,12 @@ class TestResolvePhase:
         uc = _resolving_use_case(
             [dict(_SLOW), dict(_FAST)],
             _resolve,
-            config=_make_config(resolve_target_count=1),
+            config=make_config(resolve_target_count=1),
         )
 
         loop = asyncio.get_running_loop()
         start = loop.time()
-        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+        result = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert loop.time() - start < 2
         assert [_video(uc, s) for s in result] == ["https://cdn.example/fast.mp4"]
@@ -1560,7 +1158,7 @@ class TestResolvePhase:
 
         uc = _resolving_use_case([dict(_SLOW), dict(_FAST)], _resolve)
 
-        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+        result = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert sorted(_video(uc, s) for s in result) == [
             "https://cdn.example/fast.mp4",
@@ -1579,7 +1177,7 @@ class TestStreamLinkSaveFailures:
         tmdb.get_title_and_year = AsyncMock(
             return_value=TitleMatchInfo(title="Iron Man", year=2008)
         )
-        sr = _make_search_result(
+        sr = make_search_result(
             title="Iron Man",
             download_links=[
                 {"url": "https://voe.sx/e/abc", "hoster": "VOE"},
@@ -1598,7 +1196,7 @@ class TestStreamLinkSaveFailures:
             ["hdfilme"] if p == "stream" else []
         )
         plugins.get.return_value = mock_plugin
-        return _make_use_case(
+        return make_use_case(
             tmdb=tmdb,
             plugins=plugins,
             search_engine=engine,
@@ -1615,7 +1213,7 @@ class TestStreamLinkSaveFailures:
         repo.save = AsyncMock(side_effect=_save)
 
         result = await self._use_case(repo).execute(
-            _make_request(), base_url="http://localhost:8080"
+            make_request(), base_url="http://localhost:8080"
         )
 
         assert len(result) == 1
@@ -1637,7 +1235,7 @@ class TestStreamLinkSaveFailures:
             return None
 
         result = await self._use_case(repo, AsyncMock(side_effect=_resolve)).execute(
-            _make_request(), base_url="http://localhost:8080"
+            make_request(), base_url="http://localhost:8080"
         )
 
         assert len(result) == 1
@@ -1660,7 +1258,7 @@ class TestStreamLinkSaveFailures:
             )
 
         uc = self._use_case(repo, AsyncMock(side_effect=_resolve))
-        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+        result = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert [_video(uc, s) for s in result] == [
             "https://cdn.streamtape.com/v/xyz.mp4"
@@ -1675,8 +1273,8 @@ class TestStreamLinkSaveFailures:
             return ResolvedStream(video_url=f"{url}.mp4")
 
         uc = self._use_case(repo, AsyncMock(side_effect=_resolve))
-        first = await uc.execute(_make_request(), base_url="http://localhost:8080")
-        second = await uc.execute(_make_request(), base_url="http://localhost:8080")
+        first = await uc.execute(make_request(), base_url="http://localhost:8080")
+        second = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert sorted(s.url for s in first) == sorted(s.url for s in second)
 
@@ -1703,7 +1301,7 @@ def _memory_cache() -> AsyncMock:
 
 def _hit(link: str, title: str = "Iron Man") -> SearchResult:
     """A search result with one hoster link (one stream per hoster)."""
-    return _make_search_result(
+    return make_search_result(
         title=title,
         download_link=link,
         download_links=[{"url": link, "quality": "1080p"}],
@@ -1751,10 +1349,10 @@ def _cached_use_case(
         sorted(sites) if p == "stream" else []
     )
     plugins.get.side_effect = sites.__getitem__
-    return _make_use_case(
+    return make_use_case(
         tmdb=tmdb,
         plugins=plugins,
-        config=_make_config(
+        config=make_config(
             plugin_timeout_seconds=hard,
             stream_deadline_seconds=hard + 1.0,
         ),
@@ -1786,7 +1384,7 @@ class TestSearchCache:
         site = _site([_hit("https://voe.sx/e/1"), _hit("https://x.to/2", "Rugrats")])
         uc = _cached_use_case({"a": site}, cache)
 
-        streams = await uc.execute(_make_request())
+        streams = await uc.execute(make_request())
 
         assert [s.url for s in streams] == ["https://voe.sx/e/1"]
         assert _links(cache) == ["https://voe.sx/e/1"]
@@ -1798,8 +1396,8 @@ class TestSearchCache:
         site = _site([_hit("https://voe.sx/e/1")])
         uc = _cached_use_case({"a": site}, cache)
 
-        first = await uc.execute(_make_request())
-        second = await uc.execute(_make_request())
+        first = await uc.execute(make_request())
+        second = await uc.execute(make_request())
 
         assert [s.url for s in second] == [s.url for s in first]
         assert site.isolated_search.await_count == 1
@@ -1814,7 +1412,7 @@ class TestSearchCache:
         site = _site([_hit("https://voe.sx/e/new")])
         uc = _cached_use_case({"a": site}, cache)
 
-        streams = await uc.execute(_make_request())
+        streams = await uc.execute(make_request())
 
         assert [s.url for s in streams] == ["https://voe.sx/e/old"]
         await _eventually(lambda: _links(cache) == ["https://voe.sx/e/new"])
@@ -1855,8 +1453,8 @@ class TestSearchCache:
         uc = _cached_use_case({"a": site}, cache, hard=0.5)
 
         await asyncio.gather(
-            uc.execute(_make_request()),
-            uc.execute(_make_request(imdb_id="tt7654321")),
+            uc.execute(make_request()),
+            uc.execute(make_request(imdb_id="tt7654321")),
         )
 
         await _eventually(
@@ -1873,7 +1471,7 @@ class TestSearchCache:
         uc = _cached_use_case({"a": site}, cache)
 
         first, second = await asyncio.gather(
-            uc.execute(_make_request()), uc.execute(_make_request())
+            uc.execute(make_request()), uc.execute(make_request())
         )
 
         assert [s.url for s in first] == ["https://voe.sx/e/1"]
@@ -1890,7 +1488,7 @@ class TestSearchCache:
         }
         uc = _cached_use_case(sites, cache)
 
-        streams = await uc.execute(_make_request())
+        streams = await uc.execute(make_request())
 
         assert sorted(s.url for s in streams) == [
             "https://dood.to/e/slow",
@@ -1907,7 +1505,7 @@ class TestSearchCache:
         }
         uc = _cached_use_case(sites, cache, hard=0.2)
 
-        await uc.execute(_make_request())
+        await uc.execute(make_request())
 
         await asyncio.wait_for(cancelled.wait(), 2.0)
         assert _links(cache) == ["https://voe.sx/e/fast"]
@@ -1920,7 +1518,7 @@ class TestSearchCache:
             "stuck": _site([], delay=30, cancelled=cancelled),
         }
         uc = _cached_use_case(sites, _memory_cache(), hard=10.0)
-        request = asyncio.create_task(uc.execute(_make_request()))
+        request = asyncio.create_task(uc.execute(make_request()))
         await asyncio.sleep(0.1)
 
         await uc.aclose()
@@ -1936,7 +1534,7 @@ class TestSearchCache:
         }
         uc = _cached_use_case(sites, cache, ttl=0)
 
-        streams = await uc.execute(_make_request())
+        streams = await uc.execute(make_request())
 
         assert sorted(s.url for s in streams) == [
             "https://dood.to/e/slow",
@@ -2016,7 +1614,7 @@ def _from_cache(
     """Use case whose search for the title is in the cache (or, with
     *cached* False, comes from a plugin)."""
     results = [
-        _make_search_result(
+        make_search_result(
             title="Iron Man", release_name=link.pop("release"), download_links=[link]
         )
         for link in links
@@ -2034,10 +1632,10 @@ def _from_cache(
     plugins.get_languages.return_value = ["de"]
     plugins.get_by_provides.side_effect = lambda p: ["a"] if p == "stream" else []
     plugins.get.return_value = _site(results)
-    return _make_use_case(
+    return make_use_case(
         tmdb=tmdb,
         plugins=plugins,
-        config=_make_config(),
+        config=make_config(),
         stream_link_repo=AsyncMock(),
         resolve_fn=resolutions.resolve,
         cached_resolution_fn=resolutions.cached,
@@ -2065,7 +1663,7 @@ def _cached_titles(
     cache = _memory_cache()
     for imdb_id, links in titles.items():
         results = [
-            _make_search_result(
+            make_search_result(
                 title="Iron Man",
                 release_name=link.pop("release"),
                 download_links=[link],
@@ -2082,10 +1680,10 @@ def _cached_titles(
     plugins = MagicMock()
     plugins.get_languages.return_value = ["de"]
     plugins.get_by_provides.side_effect = lambda p: ["a"] if p == "stream" else []
-    return _make_use_case(
+    return make_use_case(
         tmdb=tmdb,
         plugins=plugins,
-        config=_make_config(**config),
+        config=make_config(**config),
         stream_link_repo=AsyncMock(),
         resolve_fn=resolutions.resolve,
         cached_resolution_fn=resolutions.cached,
@@ -2104,7 +1702,7 @@ class TestCachedAnswers:
         uc = _from_cache([_link(_VOE), _link(_DOOD)], resolutions)
 
         started = time.monotonic()
-        streams = await uc.execute(_make_request(), base_url="http://localhost:8080")
+        streams = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert time.monotonic() - started < 0.3
         assert [_video(uc, s) for s in streams] == ["https://cdn.example/best.mp4"]
@@ -2120,7 +1718,7 @@ class TestCachedAnswers:
             resolutions,
         )
 
-        streams = await uc.execute(_make_request(), base_url="http://localhost:8080")
+        streams = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert [_video(uc, s) for s in streams] == ["https://cdn.example/second.mp4"]
         assert resolutions.calls == []
@@ -2139,7 +1737,7 @@ class TestCachedAnswers:
         )
 
         started = time.monotonic()
-        streams = await uc.execute(_make_request(), base_url="http://localhost:8080")
+        streams = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert time.monotonic() - started < 0.3
         assert [_video(uc, s) for s in streams] == ["https://cdn.example/second.mp4"]
@@ -2160,7 +1758,7 @@ class TestCachedAnswers:
             resolutions,
         )
 
-        streams = await uc.execute(_make_request(), base_url="http://localhost:8080")
+        streams = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert [_video(uc, s) for s in streams] == ["https://cdn.example/second.mp4"]
 
@@ -2168,7 +1766,7 @@ class TestCachedAnswers:
         resolutions = _Resolutions(dead=(_VOE,), delay=0.1)
         uc = _from_cache([_link(_VOE), _link(_DOOD)], resolutions)
 
-        streams = await uc.execute(_make_request(), base_url="http://localhost:8080")
+        streams = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert [_video(uc, s) for s in streams] == ["https://cdn.example/new.mp4"]
         assert resolutions.calls == [_DOOD]
@@ -2178,7 +1776,7 @@ class TestCachedAnswers:
         resolutions = _Resolutions(alive=(_VOE,), delay=0.1)
         uc = _from_cache([_link(_VOE), _link(_DOOD)], resolutions, cached=False)
 
-        streams = await uc.execute(_make_request(), base_url="http://localhost:8080")
+        streams = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert sorted(_video(uc, s) for s in streams) == [
             "https://cdn.example/best.mp4",
@@ -2192,7 +1790,7 @@ class TestCachedAnswers:
         resolutions = _Resolutions(alive=(_VOE,), dead=(_DOOD,))
         uc = _from_cache([_link(_VOE), _link(_DOOD)], resolutions)
 
-        streams = await uc.execute(_make_request(), base_url="http://localhost:8080")
+        streams = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert [_video(uc, s) for s in streams] == ["https://cdn.example/best.mp4"]
         assert not uc._background_resolutions  # noqa: SLF001
@@ -2201,8 +1799,8 @@ class TestCachedAnswers:
         resolutions = _Resolutions(alive=(_VOE,), delay=0.3)
         uc = _from_cache([_link(_VOE), _link(_DOOD)], resolutions)
 
-        await uc.execute(_make_request(), base_url="http://localhost:8080")
-        await uc.execute(_make_request(), base_url="http://localhost:8080")
+        await uc.execute(make_request(), base_url="http://localhost:8080")
+        await uc.execute(make_request(), base_url="http://localhost:8080")
 
         await _eventually(lambda: _DOOD in resolutions.store)
         assert resolutions.calls == [_DOOD]
@@ -2210,7 +1808,7 @@ class TestCachedAnswers:
     async def test_aclose_ends_the_background_resolution(self) -> None:
         resolutions = _Resolutions(alive=(_VOE,), delay=30)
         uc = _from_cache([_link(_VOE), _link(_DOOD)], resolutions)
-        await uc.execute(_make_request(), base_url="http://localhost:8080")
+        await uc.execute(make_request(), base_url="http://localhost:8080")
         await _eventually(lambda: resolutions.calls == [_DOOD])
 
         await uc.aclose()
@@ -2242,7 +1840,7 @@ class TestBackgroundResolutions:
     async def _ask_both(self, uc: StremioStreamUseCase) -> None:
         for imdb_id in self._TITLES:
             await uc.execute(
-                _make_request(imdb_id=imdb_id), base_url="http://localhost:8080"
+                make_request(imdb_id=imdb_id), base_url="http://localhost:8080"
             )
 
     async def test_one_title_resolves_in_the_background_at_a_time(self) -> None:
@@ -2297,10 +1895,10 @@ def _answering_use_case(
         sorted(sites) if p == "stream" else []
     )
     plugins.get.side_effect = sites.__getitem__
-    return _make_use_case(
+    return make_use_case(
         tmdb=tmdb,
         plugins=plugins,
-        config=_make_config(**config),
+        config=make_config(**config),
         stream_link_repo=AsyncMock(),
         resolve_fn=resolutions.resolve,
         cached_resolution_fn=resolutions.cached,
@@ -2337,7 +1935,7 @@ class TestMirrorScores:
             score_store=store,
         )
 
-        await uc.execute(_make_request(), base_url="http://localhost:8080")
+        await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert sites["hdfilme"].isolated_search.await_count == 0
         assert sites["streamcloud"].isolated_search.await_count == 1
@@ -2361,7 +1959,7 @@ class TestScoredSelection:
             scoring_enabled=True,
         )
 
-        streams = await uc.execute(_make_request(), base_url="http://localhost:8080")
+        streams = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert streams
         assert sites["one"].isolated_search.await_count == 1
@@ -2383,7 +1981,7 @@ class TestAnswerPolicy:
         )
         before = time.monotonic()
 
-        await uc.execute(_make_request(), base_url="http://localhost:8080")
+        await uc.execute(make_request(), base_url="http://localhost:8080")
 
         claim = resolutions.claims["https://voe.sx/e/1"]
         assert claim is not None
@@ -2401,7 +1999,7 @@ class TestAnswerPolicy:
         uc = _answering_use_case(sites, cache, _Resolutions(), resolve_target_count=1)
 
         started = time.monotonic()
-        streams = await uc.execute(_make_request(), base_url="http://localhost:8080")
+        streams = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert time.monotonic() - started < 0.4
         assert [_video(uc, s) for s in streams] == ["https://cdn.example/fast.mp4"]
@@ -2423,7 +2021,7 @@ class TestAnswerPolicy:
         sites = {"fast": _site([_hit("https://voe.sx/e/fast")]), "slow": slow}
         uc = _answering_use_case(sites, _memory_cache(), resolutions)
         request = asyncio.create_task(
-            uc.execute(_make_request(), base_url="http://localhost:8080")
+            uc.execute(make_request(), base_url="http://localhost:8080")
         )
 
         await _eventually(lambda: "https://voe.sx/e/fast" in resolutions.store)
@@ -2442,7 +2040,7 @@ class TestAnswerPolicy:
         }
         uc = _answering_use_case(sites, _memory_cache(), _Resolutions())
 
-        streams = await uc.execute(_make_request(), base_url="http://localhost:8080")
+        streams = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert sorted(_video(uc, s) for s in streams) == [
             "https://cdn.example/1.mp4",
@@ -2463,7 +2061,7 @@ class TestAnswerPolicy:
         )
 
         started = time.monotonic()
-        streams = await uc.execute(_make_request(), base_url="http://localhost:8080")
+        streams = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert 0.25 < time.monotonic() - started < 1.5
         assert [_video(uc, s) for s in streams] == ["https://cdn.example/fast.mp4"]
@@ -2477,8 +2075,8 @@ class TestAnswerPolicy:
 
         started = time.monotonic()
         first, second = await asyncio.gather(
-            uc.execute(_make_request(), base_url="http://localhost:8080"),
-            uc.execute(_make_request(), base_url="http://localhost:8080"),
+            uc.execute(make_request(), base_url="http://localhost:8080"),
+            uc.execute(make_request(), base_url="http://localhost:8080"),
         )
 
         assert time.monotonic() - started < 0.4
@@ -2509,7 +2107,7 @@ def _one_stream_plugin(tmdb: AsyncMock, telemetry: Telemetry) -> StremioStreamUs
     plugins = MagicMock()
     plugins.get_languages.return_value = ["de"]
     plugins.get_by_provides.side_effect = lambda p: ["a"] if p == "stream" else []
-    return _make_use_case(tmdb=tmdb, plugins=plugins, telemetry=telemetry)
+    return make_use_case(tmdb=tmdb, plugins=plugins, telemetry=telemetry)
 
 
 class TestTelemetry:
@@ -2526,7 +2124,7 @@ class TestTelemetry:
         }
         uc = _answering_use_case(sites, _memory_cache(), _Resolutions(), telemetry=t)
 
-        streams = await uc.execute(_make_request(), base_url="http://localhost:8080")
+        streams = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert len(streams) == 2
         assert _requests(t, "search", "streams") == 1
@@ -2547,7 +2145,7 @@ class TestTelemetry:
             sites, _memory_cache(), _Resolutions(), telemetry=t, resolve_target_count=1
         )
 
-        await uc.execute(_make_request(), base_url="http://localhost:8080")
+        await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert _phases(t, "resolve", "target") == 1
         await uc.aclose()
@@ -2566,7 +2164,7 @@ class TestTelemetry:
             stream_deadline_seconds=0.3,
         )
 
-        await uc.execute(_make_request(), base_url="http://localhost:8080")
+        await uc.execute(make_request(), base_url="http://localhost:8080")
         await uc.aclose()
 
         assert _phases(t, "resolve", "deadline") == 1
@@ -2579,8 +2177,8 @@ class TestTelemetry:
         site = _site([_hit("https://voe.sx/e/1")])
         uc = _cached_use_case({"a": site}, _memory_cache(), telemetry=t)
 
-        await uc.execute(_make_request())
-        await uc.execute(_make_request())
+        await uc.execute(make_request())
+        await uc.execute(make_request())
 
         assert _requests(t, "search", "streams") == 1
         assert _requests(t, "cache", "streams") == 1
@@ -2595,7 +2193,7 @@ class TestTelemetry:
         site = _site([_hit("https://voe.sx/e/new")])
         uc = _cached_use_case({"a": site}, cache, telemetry=t)
 
-        await uc.execute(_make_request())
+        await uc.execute(make_request())
 
         assert _requests(t, "stale", "streams") == 1
         await _eventually(lambda: _phases(t, "search", "ok") == 1)
@@ -2604,7 +2202,7 @@ class TestTelemetry:
         site = _site([_hit("https://voe.sx/e/1")], delay=0.05)
         uc = _cached_use_case({"a": site}, _memory_cache(), telemetry=t)
 
-        await asyncio.gather(uc.execute(_make_request()), uc.execute(_make_request()))
+        await asyncio.gather(uc.execute(make_request()), uc.execute(make_request()))
 
         assert _requests(t, "search", "streams") == 1
         assert _requests(t, "joined", "streams") == 1
@@ -2618,7 +2216,7 @@ class TestTelemetry:
         resolutions = _Resolutions(alive=(_VOE,), delay=0.05)
         uc = _from_cache([_link(_VOE), _link(_DOOD)], resolutions, telemetry=t)
 
-        await uc.execute(_make_request(), base_url="http://localhost:8080")
+        await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert _requests(t, "cache", "streams") == 1
         assert _phases(t, "resolve", "cached") == 1
@@ -2631,7 +2229,7 @@ class TestTelemetry:
         tmdb.get_title_and_year = AsyncMock(return_value=None)
         uc = _one_stream_plugin(tmdb, t)
 
-        assert await uc.execute(_make_request()) == []
+        assert await uc.execute(make_request()) == []
 
         assert _requests(t, "none", "no_title") == 1
         assert _phases(t, "metadata", "not_found") == 1
@@ -2640,16 +2238,16 @@ class TestTelemetry:
     async def test_no_stream_plugins(self, t: Telemetry) -> None:
         plugins = MagicMock()
         plugins.get_by_provides.return_value = []
-        uc = _make_use_case(plugins=plugins, telemetry=t)
+        uc = make_use_case(plugins=plugins, telemetry=t)
 
-        assert await uc.execute(_make_request()) == []
+        assert await uc.execute(make_request()) == []
 
         assert _requests(t, "none", "no_plugins") == 1
 
     async def test_nothing_found(self, t: Telemetry) -> None:
         uc = _cached_use_case({"a": _site([])}, _memory_cache(), telemetry=t)
 
-        assert await uc.execute(_make_request()) == []
+        assert await uc.execute(make_request()) == []
 
         assert _requests(t, "search", "empty") == 1
 
@@ -2659,7 +2257,7 @@ class TestTelemetry:
         uc = _one_stream_plugin(tmdb, t)
 
         with pytest.raises(RuntimeError):
-            await uc.execute(_make_request())
+            await uc.execute(make_request())
 
         assert _requests(t, "none", "error") == 1
         assert _phases(t, "metadata", "error") == 1
@@ -2670,7 +2268,7 @@ class TestTelemetry:
         sites = {"a": _site([_hit("https://voe.sx/e/1")])}
         uc = _answering_use_case(sites, _memory_cache(), _Resolutions(), telemetry=t)
 
-        await uc.execute(_make_request(), base_url="http://localhost:8080")
+        await uc.execute(make_request(), base_url="http://localhost:8080")
         await uc.aclose()
 
         spans = exporter.get_finished_spans()
@@ -2685,29 +2283,12 @@ class TestTelemetry:
 
 
 class TestWorkerThreads:
-    """The title filter and the stream conversion run in worker threads; their
-    log lines (``title_match_summary``) keep the request's ``request_id``."""
-
-    @pytest.mark.asyncio
-    async def test_the_title_filter_keeps_the_log_context(self) -> None:
-        uc = _make_use_case()
-        seen: dict[str, object] = {}
-
-        def _filter(results: list[SearchResult], *_args: object, **_kw: object):
-            seen.update(structlog.contextvars.get_contextvars())
-            return results
-
-        uc._filter_fn = _filter  # noqa: SLF001
-        with structlog.contextvars.bound_contextvars(request_id="r1"):
-            await uc._title_filter(  # noqa: SLF001
-                [_make_search_result()], TitleMatchInfo(title="Iron Man")
-            )
-
-        assert seen["request_id"] == "r1"
+    """The stream conversion runs in a worker thread; its log lines keep the
+    request's ``request_id``."""
 
     @pytest.mark.asyncio
     async def test_the_conversion_keeps_the_log_context(self) -> None:
-        uc = _make_use_case()
+        uc = make_use_case()
         seen: dict[str, object] = {}
 
         def _convert(results: list[SearchResult], **_kw: object) -> list[RankedStream]:
@@ -2716,7 +2297,7 @@ class TestWorkerThreads:
 
         uc._convert_fn = _convert  # noqa: SLF001
         with structlog.contextvars.bound_contextvars(request_id="r1"):
-            await uc._convert([_make_search_result()], {})  # noqa: SLF001
+            await uc._convert([make_search_result()], {})  # noqa: SLF001
 
         assert seen["request_id"] == "r1"
 
@@ -2750,7 +2331,7 @@ class TestMeasuredQuality:
         ]
         uc = _resolving_use_case(links, _resolve)
 
-        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+        result = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert [s.name for s in result] == names
         assert first in result[0].description
@@ -2766,7 +2347,7 @@ class TestMeasuredQuality:
         link = dict(self._VOE_LINK, release="Iron.Man.2008.German.720p.WEB")
         uc = _resolving_use_case([link], _resolve)
 
-        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+        result = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert [s.name for s in result] == ["Scavengarr\n720p"]
 
@@ -2780,7 +2361,7 @@ class TestMeasuredQuality:
         ]
         uc = _resolving_use_case(links, _resolve)
 
-        result = await uc.execute(_make_request(), base_url="http://localhost:8080")
+        result = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         voe, tape = sorted(
             (s.description for s in result), key=lambda d: "STREAMTAPE" in d
@@ -2796,6 +2377,6 @@ class TestMeasuredQuality:
         )
         uc = _from_cache([_link(_VOE, self._PLAIN)], resolutions)
 
-        streams = await uc.execute(_make_request(), base_url="http://localhost:8080")
+        streams = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert [s.name for s in streams] == ["Scavengarr\n1080p"]
