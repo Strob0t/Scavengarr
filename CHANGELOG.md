@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: Eager Tasks on uvloop Under Python 3.13 and 3.14
+- uvicorn runs on uvloop, and uvloop 0.23 hands the task factory `eager_start=None`. asyncio's `eager_task_factory` refused that keyword on Python 3.13 (the app did not start), and on 3.14, the Docker image's Python, the `None` overrode its eager start: the app logged `eager_tasks=True` while every task started lazily. `use_eager_tasks()` installs its own factory (`eager_task_factory` in the composition root), which starts tasks eagerly unless a caller asks for `eager_start=False`. Checked on uvloop with Python 3.12, 3.13 and 3.14. Found by the code review (2026-10-06).
+
 ### Fix: An Empty Tracing Endpoint Turns Tracing Off
 - `SCAVENGARR_TELEMETRY_TRACING_ENDPOINT=` (a compose file keeping tracing optional with `${TRACING_ENDPOINT:-}`) failed the config's URL check, and the app did not start. An empty or blank value means off now, as the telemetry factory already treated it. Found by the code review (2026-10-06).
 

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Coroutine
 from contextlib import asynccontextmanager, suppress
 from functools import partial
-from typing import cast
+from typing import Any, cast
 from urllib.parse import urlparse
 
 import httpx
@@ -234,6 +234,28 @@ def build_browser_fetcher(
     return ChainedBrowserFetcher(fetchers)
 
 
+def eager_task_factory(
+    loop: asyncio.AbstractEventLoop,
+    coro: Coroutine[Any, Any, Any],
+    *,
+    eager_start: bool | None = None,
+    **kwargs: Any,
+) -> asyncio.Task[Any]:
+    """asyncio's eager task factory, on uvloop as well.
+
+    uvloop 0.23 hands the factory ``eager_start=None``: Python 3.13's
+    factory refused the keyword (the app did not start) and 3.14's let it
+    override the eager start, so every task started lazily (code review,
+    2026-10-06). An explicit ``False`` still starts lazily.
+    """
+    return asyncio.Task(
+        coro,
+        loop=loop,
+        eager_start=True if eager_start is None else eager_start,
+        **kwargs,
+    )
+
+
 def use_eager_tasks() -> None:
     """Start new tasks on the running loop eagerly (Python 3.12+).
 
@@ -242,7 +264,7 @@ def use_eager_tasks() -> None:
     event loop. uvicorn runs on uvloop when it is installed (``loop="auto"``).
     """
     loop = asyncio.get_running_loop()
-    loop.set_task_factory(asyncio.eager_task_factory)
+    loop.set_task_factory(eager_task_factory)
     log.info("event_loop_configured", loop=type(loop).__module__, eager_tasks=True)
 
 
