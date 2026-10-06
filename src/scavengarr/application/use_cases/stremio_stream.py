@@ -1,7 +1,9 @@
-"""Stremio stream resolution use case.
+"""Stremio stream use case: a request's streams, best first.
 
-IMDb ID -> TMDB title -> parallel plugin search
--> convert -> sort -> StremioStream list.
+The phases live in ``application/stremio/`` (plugin selection, the titles
+per language, the shared title search, the resolve flow, the answer's
+streams); the use case runs them in order and owns the tasks that outlive
+a request.
 """
 
 from __future__ import annotations
@@ -92,15 +94,21 @@ log = structlog.get_logger(__name__)
 class StremioStreamUseCase:
     """Resolve Stremio stream requests into sorted stream links.
 
-    Flow:
-        1. Resolve IMDb ID to German title via TMDB.
-        2. Discover plugins that provide streams.
-        3. Search all plugins in parallel (bounded concurrency), one
-           search per title shared by its requests, cached.
-        4. Convert and rank the results as they arrive.
-        5. Resolve each hoster's best link meanwhile; answer once enough
-           hosters resolved, when everything is done, or at the deadline.
-        6. Format into StremioStream objects.
+    Flow (``_answer``):
+        1. Plugins: the stream plugins, all or the best scored
+           (``PluginSelector``).
+        2. Titles: the TMDB title in each language the plugins search in
+           (``TitleResolver``).
+        3. Search: all plugins in parallel (bounded concurrency), one
+           search per title shared by its requests, cached (``TitleSearch``).
+        4. Rank the results as they arrive and resolve each hoster's best
+           link meanwhile; answer once enough hosters resolved, when
+           everything is done, or at the deadline (``ResolveFlow``).
+           Without a resolver: rank once the search is done or at the
+           deadline.
+        5. Format into StremioStream objects.
+        6. Serve them through ``/play/`` or the HLS proxy, their links
+           saved (``cache_and_proxy``).
     """
 
     def __init__(
@@ -129,7 +137,6 @@ class StremioStreamUseCase:
         cache: CachePort | None = None,
         search_ttl_seconds: int = 0,
     ) -> None:
-        self._plugins = plugins
         self._titles = TitleResolver(
             tmdb=tmdb, plugins=plugins, filter_fn=filter_fn, config=config
         )
@@ -207,6 +214,7 @@ class StremioStreamUseCase:
         started = time.monotonic()
         category = 2000 if request.content_type == "movie" else 5000
 
+        # 1. Plugins: all stream plugins, or the best scored ones
         all_names = self._selector.stream_plugins()
         if not all_names:
             log.warning("stremio_no_stream_plugins")
@@ -214,10 +222,9 @@ class StremioStreamUseCase:
             return []
 
         with self._telemetry.stage("stremio_phase", phase="metadata") as metadata:
-            # Scored plugin selection (when enabled and scores are available)
             selected = await self._selector.select(all_names, category)
 
-            # --- Multi-language title resolution ---
+            # 2. Titles: one per language the selected plugins search in
             languages = self._titles.languages(selected)
             title_infos = await self._titles.title_infos(request, languages)
 
@@ -228,7 +235,7 @@ class StremioStreamUseCase:
             stage.outcome = "no_title"
             return []
 
-        # --- Per-language-group search + filter (cached per title) ---
+        # 3. Search: one search per title, shared by its requests, cached
         key = search_cache_key(request)
         progress, source = await self._title_search.progress(
             key,
@@ -241,13 +248,9 @@ class StremioStreamUseCase:
         )
         stage.label(source=source)
 
-        # Cached results can come from plugins this request did not select
-        plugin_languages: dict[str, str] = {
-            name: langs[0]
-            for name in all_names
-            if (langs := self._plugins.get_languages(name))
-        }
-
+        # 4. Rank, and resolve meanwhile. Cached results can come from
+        # plugins this request did not select
+        plugin_languages = self._titles.default_languages(all_names)
         deadline = started + self._deadline_s
         # Scavengarr serves the streams (/play/, the HLS proxy) when it saves
         # their links and knows its own URL
@@ -290,6 +293,7 @@ class StremioStreamUseCase:
             stage.outcome = "empty"
             return []
 
+        # 5. Format
         streams = [
             format_stream(
                 s,
@@ -300,6 +304,7 @@ class StremioStreamUseCase:
             )
             for s in ranked
         ]
+        # 6. Serve: /play/ and HLS proxy URLs, the stream links saved
         if link_repo is not None:
             streams = await cache_and_proxy(
                 streams,

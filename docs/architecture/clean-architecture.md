@@ -175,7 +175,7 @@ The Application layer contains use cases that orchestrate business logic. It kno
 
 Helpers for `StremioStreamUseCase` live in `application/stremio/`:
 
-- `title_resolution.py` — `TitleResolver`: the request's title per language (TMDB), the plugins grouped by their languages, and the title match of the results (in a worker thread).
+- `title_resolution.py` — `TitleResolver`: the request's title per language (TMDB), the plugins' languages (grouped for the search, each plugin's first for the ranking), and the title match of the results (in a worker thread).
 - `plugin_selection.py` — `PluginSelector`: the plugins that provide streams, and with scored selection on the best scored of them plus the exploration slot.
 - `title_search.py` — `TitleSearch`: one plugin search per title, shared by the requests while it runs (single-flight) and cached (`SearchCache`; a stale entry answers while one background search at a time refreshes it).
 - `plugin_search.py` — `PluginSearchRunner`: plugin fan-out with fair-share concurrency budget, a search deadline counted from the request start, circuit breaker, metrics and fallback queries.

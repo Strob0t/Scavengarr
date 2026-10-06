@@ -29,7 +29,7 @@ def _sr(link: str, title: str = "Movie") -> SearchResult:
 
 
 def _plugin(results: list[SearchResult] | Exception) -> MagicMock:
-    """Python plugin mock with search() and no scraping stages."""
+    """Plugin mock with search() only."""
     plugin = MagicMock(spec=["search"])
     if isinstance(results, Exception):
         plugin.search = AsyncMock(side_effect=results)

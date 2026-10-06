@@ -1,8 +1,8 @@
 """Tests for the title resolution of Stremio stream requests.
 
 The title match and the titles per language (``TitleResolver``) are tested
-through the whole use case, as before they left it; the worker-thread test
-drives the resolver itself.
+through the whole use case, as before they left it; the default languages
+and the worker-thread test drive the resolver itself.
 """
 
 from __future__ import annotations
@@ -51,7 +51,6 @@ class TestTitleMatchFiltering:
 
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr_good, sr_sequel, sr_unrelated])
-        del mock_plugin.scraping
         mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
@@ -86,7 +85,6 @@ class TestTitleMatchFiltering:
 
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
-        del mock_plugin.scraping
         mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
@@ -121,7 +119,6 @@ class TestTitleMatchFiltering:
 
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr_good, sr_bad])
-        del mock_plugin.scraping
         mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
@@ -179,7 +176,6 @@ class TestMultiLanguageDispatch:
         )
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
-        del mock_plugin.scraping
         mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
@@ -220,7 +216,6 @@ class TestMultiLanguageDispatch:
         )
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
-        del mock_plugin.scraping
         mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
@@ -254,7 +249,6 @@ class TestMultiLanguageDispatch:
         )
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
-        del mock_plugin.scraping
         mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
@@ -296,7 +290,6 @@ class TestMultiLanguageDispatch:
         )
         de_plugin = AsyncMock()
         de_plugin.search = AsyncMock(return_value=[sr])
-        del de_plugin.scraping
         de_plugin.isolated_search = de_plugin.search
 
         sr_en = make_search_result(
@@ -306,7 +299,6 @@ class TestMultiLanguageDispatch:
         )
         en_plugin = AsyncMock()
         en_plugin.search = AsyncMock(return_value=[sr_en])
-        del en_plugin.scraping
         en_plugin.isolated_search = en_plugin.search
 
         engine = AsyncMock()
@@ -332,6 +324,27 @@ class TestMultiLanguageDispatch:
         urls = {s.url for s in result}
         assert "https://voe.sx/e/pate" in urls
         assert "https://filemoon.sx/e/godfather" in urls
+
+
+class TestDefaultLanguages:
+    """A plugin's first language is the language of its results that name
+    none (the ranking's language score)."""
+
+    def test_each_plugin_gets_its_first_language(self) -> None:
+        plugins = MagicMock()
+        plugins.get_languages.side_effect = {
+            "a": ["de", "en"],
+            "b": [],
+            "c": ["en"],
+        }.__getitem__
+        titles = TitleResolver(
+            tmdb=AsyncMock(),
+            plugins=plugins,
+            filter_fn=MagicMock(),
+            config=make_config(),
+        )
+
+        assert titles.default_languages(["a", "b", "c"]) == {"a": "de", "c": "en"}
 
 
 class TestWorkerThread:

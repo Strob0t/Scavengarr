@@ -82,7 +82,6 @@ class TestResolverEchoFiltering:
 
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
-        del mock_plugin.scraping
         mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
@@ -129,7 +128,6 @@ class TestResolverEchoFiltering:
 
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
-        del mock_plugin.scraping
         mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
@@ -181,7 +179,6 @@ class TestResolverEchoFiltering:
 
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
-        del mock_plugin.scraping
         mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
@@ -235,7 +232,6 @@ class TestResolverEchoFiltering:
 
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
-        del mock_plugin.scraping
         mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()

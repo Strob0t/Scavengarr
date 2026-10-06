@@ -1,6 +1,6 @@
 # Plan: Split `stremio_stream.py` Along Its Phases
 
-Item I14 of `docs/plans/ideas-backlog.md`. Status 2026-10-06: in progress (steps 1 to 5 done; the test factories the phase tests share live in `tests/unit/application/stremio_support.py`). Behaviour-preserving refactor; no OpenSpec change (no capability changes).
+Item I14 of `docs/plans/ideas-backlog.md`. Status 2026-10-06: done (outcome and deviations at the end). Behaviour-preserving refactor; no OpenSpec change (no capability changes).
 
 ## Problem
 
@@ -50,3 +50,14 @@ Expected sizes after step 6: use case ~250 lines; new modules 120–250 lines ea
 - All tests green before and after each step; `poetry run pytest -n auto` and `pre-commit` clean.
 - `grep -c "def " src/scavengarr/application/use_cases/stremio_stream.py` ≤ 10; no collaborator imports `use_cases.stremio_stream`.
 - Composition root diff is empty; the live check `poetry run pytest -m live -k stremio` (if present) and one manual Stremio request on the dev server behave as before.
+
+## Outcome (2026-10-06)
+
+Eight commits: one per step, one after step 1 that moved the factories the phase tests share to `tests/unit/application/stremio_support.py`, and one that hardened a flaky test. Deviations from the plan:
+
+- **Sizes**: the use case has 346 lines and 8 `def`s (expected ~250); its constructor keeps the 24 parameters the composition root passes and builds `PluginSearchRunner` from them. It binds 13 attributes (from 31), five of them collaborators. `resolution.py` has 421 lines, since `ResolveFlow` joined `HosterResolution` there as planned; `title_search.py` 258, `answer.py` 153, `title_resolution.py` 135, `plugin_selection.py` 104. The use-case test file has 754 lines (from 2,679).
+- **Tests**: the moved tests still drive `execute()` through the shared factories in `stremio_support.py` instead of one small factory per collaborator; one module keeps them from drifting. A collaborator itself is tested by four new `PluginSelector` tests (top N, cold start, exploration slot, scoring off), one for `TitleResolver.default_languages`, and the two worker-thread tests, which now call `TitleResolver.matching` and `rank_streams` (so `TestWorkerThreads` left the flow tests, split between `test_title_resolution.py` and `test_answer.py`). `TestMultiLanguageDispatch` moved whole to `test_title_resolution.py`; `TestMeasuredQuality` (`add-stream-media-quality`) went to `test_answer.py` with `with_measurements`.
+- **Test bodies**: compared with the file before step 1 (whitespace, comments and the dropped `del mock_plugin.scraping` lines aside), 87 of the 91 moved tests are unchanged. The four others: the background resolutions' attribute path (`uc._resolve_flow`), the two worker-thread tests, and `test_links_resolve_while_the_search_runs`, whose slow plugin now waits for an event set once the fast link resolved (its fixed 0.3 s sleep raced the fast resolution under host load).
+- **`TitleResolver`** also took the plugins' default languages for the ranking (`default_languages`), so the use case no longer reads the registry.
+- **Logs and metrics**: names and fields unchanged; the `stremio_phase` search and resolve stages are now recorded in `TitleSearch` and `ResolveFlow` (`docs/features/observability.md` names them).
+- **Checks**: 8 `def`s, no collaborator imports the use case, the composition root diff is empty; the live test `tests/live/test_stremio_e2e_live.py` (the real app in process, a Stremio client's path from the stream list to the first media segment, in place of the manual request) played both titles in the second of two runs (in the first one of two: live links vary from run to run).

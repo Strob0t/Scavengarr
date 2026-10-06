@@ -48,7 +48,24 @@ class TitleResolver:
         self._tmdb = tmdb
         self._plugins = plugins
         self._filter_fn = filter_fn
-        self._config = config
+        self._threshold = config.title_match_threshold
+        self._weights: dict[str, float] = {
+            "year_bonus": config.title_year_bonus,
+            "year_penalty": config.title_year_penalty,
+            "sequel_penalty": config.title_sequel_penalty,
+            "extra_words_penalty": config.title_extra_words_penalty,
+            "year_tolerance_movie": config.title_year_tolerance_movie,
+            "year_tolerance_series": config.title_year_tolerance_series,
+        }
+
+    def default_languages(self, plugin_names: list[str]) -> dict[str, str]:
+        """Each of *plugin_names*' first language: the language of its
+        results that name none. Plugins without languages are left out."""
+        return {
+            name: langs[0]
+            for name in plugin_names
+            if (langs := self._plugins.get_languages(name))
+        }
 
     def languages(self, plugin_names: list[str]) -> list[str]:
         """Every language *plugin_names* search in, sorted."""
@@ -113,17 +130,6 @@ class TitleResolver:
         ``to_thread`` keeps the log context, unlike ``run_in_executor``)."""
         if not results:
             return []
-        config = self._config
         return await asyncio.to_thread(
-            lambda: self._filter_fn(
-                results,
-                ref,
-                config.title_match_threshold,
-                year_bonus=config.title_year_bonus,
-                year_penalty=config.title_year_penalty,
-                sequel_penalty=config.title_sequel_penalty,
-                extra_words_penalty=config.title_extra_words_penalty,
-                year_tolerance_movie=config.title_year_tolerance_movie,
-                year_tolerance_series=config.title_year_tolerance_series,
-            ),
+            lambda: self._filter_fn(results, ref, self._threshold, **self._weights)
         )

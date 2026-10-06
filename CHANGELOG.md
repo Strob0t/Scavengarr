@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Refactor: The Stream Use Case Runs Its Phases as Collaborators
+- `StremioStreamUseCase` (942 lines, 26 methods) runs five collaborators in `application/stremio/`: `PluginSelector`, `TitleResolver`, `TitleSearch`, `ResolveFlow` (next to `HosterResolution`) and the `answer.py` functions; it keeps the request flow and the tasks that outlive a request (346 lines), and its tests moved with the phases (`test_plugin_selection.py`, `test_title_resolution.py`, `test_title_search.py`, `test_resolve_flow.py`, `test_answer.py`). No behaviour change: the constructor, log events and metrics stay ([plan](docs/plans/stremio-stream-split.md)).
+
 ### Fix: einschalten, fireani and haschcon Scrape the Relevant Search Hits Only
 - The three JSON-API plugins fetched the details of every search hit, though their sites also list loose matches: einschalten loaded the movie and watch answers of "Jud Süß" (1940) for "Oppenheimer", fireani two RPCs per anime, haschcon a player page per post WordPress matched in its text. They keep the relevant hits now (`relevant_hits()`), as the other plugins do, and fireani at most 3 for a season or episode request: "Attack on Titan" S1E1 no longer loads "Attack on Titan: Junior High". Found by the new real-page tests.
 

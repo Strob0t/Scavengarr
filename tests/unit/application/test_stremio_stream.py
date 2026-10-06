@@ -73,10 +73,9 @@ class TestExecute:
             ],
         )
 
-        # Python plugin (no scraping attribute) that returns search results
+        # A plugin that returns search results
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
-        del mock_plugin.scraping  # Ensure no scraping attr → Python plugin path
         mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
@@ -112,7 +111,6 @@ class TestExecute:
 
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[])
-        del mock_plugin.scraping
         mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
@@ -148,11 +146,9 @@ class TestExecute:
 
         plugin_a = AsyncMock()
         plugin_a.search = AsyncMock(return_value=[sr1])
-        del plugin_a.scraping
         plugin_a.isolated_search = plugin_a.search
         plugin_b = AsyncMock()
         plugin_b.search = AsyncMock(return_value=[sr2])
-        del plugin_b.scraping
         plugin_b.isolated_search = plugin_b.search
 
         engine = AsyncMock()
@@ -184,11 +180,9 @@ class TestExecute:
 
         good_plugin = AsyncMock()
         good_plugin.search = AsyncMock(return_value=[sr])
-        del good_plugin.scraping
         good_plugin.isolated_search = good_plugin.search
         bad_plugin = AsyncMock()
         bad_plugin.search = AsyncMock(side_effect=RuntimeError("boom"))
-        del bad_plugin.scraping
         bad_plugin.isolated_search = bad_plugin.search
 
         engine = AsyncMock()
@@ -231,7 +225,6 @@ class TestExecute:
 
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[])
-        del mock_plugin.scraping
         mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
@@ -259,7 +252,6 @@ class TestExecute:
 
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
-        del mock_plugin.scraping
         mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
@@ -292,7 +284,6 @@ class TestExecute:
 
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[sr])
-        del mock_plugin.scraping
         mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
@@ -336,7 +327,6 @@ class TestExecute:
 
         mock_plugin = AsyncMock()
         mock_plugin.search = AsyncMock(return_value=[])
-        del mock_plugin.scraping
         mock_plugin.isolated_search = mock_plugin.search
 
         engine = AsyncMock()
@@ -372,7 +362,6 @@ class TestExecute:
 
         fast_plugin = AsyncMock()
         fast_plugin.search = AsyncMock(return_value=[sr])
-        del fast_plugin.scraping
         fast_plugin.isolated_search = fast_plugin.search
 
         async def _slow_search(*_a: object, **_kw: object) -> list[SearchResult]:
@@ -381,7 +370,6 @@ class TestExecute:
 
         slow_plugin = AsyncMock()
         slow_plugin.search = AsyncMock(side_effect=_slow_search)
-        del slow_plugin.scraping
         slow_plugin.isolated_search = slow_plugin.search
 
         engine = AsyncMock()

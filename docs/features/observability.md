@@ -75,7 +75,7 @@ The core records through one port, `TelemetryPort` (`domain/ports/telemetry.py`)
 - `count(name, outcome, **labels)` counts an outcome without a run (a plugin skipped by its open breaker, a resolution from the cache): no duration.
 - `record(name, value, **labels)` records a value that is not a duration (streams per answer, bytes).
 
-The composition root builds it with `create_telemetry(config.telemetry.tracing_endpoint)` and closes it at shutdown. Six places record: `StremioStreamUseCase`, `PluginSearchRunner`, `HosterResolverRegistry`, the stealth browser's page gate (`PageGate`), the HLS proxy route and the event-loop monitor. Plugins and resolvers contain no metrics code; a new one is recorded without changes. Components get `NO_TELEMETRY` (records nothing) when none is wired in, as in most tests.
+The composition root builds it with `create_telemetry(config.telemetry.tracing_endpoint)` and closes it at shutdown. Six places record: `StremioStreamUseCase` (its search and resolve phases through `TitleSearch` and `ResolveFlow`), `PluginSearchRunner`, `HosterResolverRegistry`, the stealth browser's page gate (`PageGate`), the HLS proxy route and the event-loop monitor. Plugins and resolvers contain no metrics code; a new one is recorded without changes. Components get `NO_TELEMETRY` (records nothing) when none is wired in, as in most tests.
 
 Durations and outcomes are separate families on purpose: a histogram per outcome would multiply the series. Label values come only from fixed sets (plugin names, resolver names, breaker keys, the outcomes below), never titles, IMDb ids, URLs, domains or stream ids.
 

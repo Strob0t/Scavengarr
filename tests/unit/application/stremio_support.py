@@ -145,7 +145,6 @@ def resolving_use_case(
     ]
     mock_plugin = AsyncMock()
     mock_plugin.search = AsyncMock(return_value=srs)
-    del mock_plugin.scraping
     mock_plugin.isolated_search = mock_plugin.search
     engine = AsyncMock()
     engine.validate_results = AsyncMock(side_effect=lambda r: r)
@@ -230,7 +229,6 @@ def fake_site(
         return results
 
     plugin = AsyncMock()
-    del plugin.scraping
     plugin.isolated_search = AsyncMock(side_effect=_search)
     return plugin
 
