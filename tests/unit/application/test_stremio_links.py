@@ -345,13 +345,14 @@ class TestPinned:
         assert await links.pinned(link) == link
 
 
-class TestRefreshed:
-    async def test_resolves_past_the_resolver_cache(self) -> None:
-        """The CDN refused the stored stream (403, 404, 410)."""
+class TestAfterRefusal:
+    @pytest.mark.parametrize("status", [403, 404, 410])
+    async def test_resolves_past_the_resolver_cache(self, status: int) -> None:
+        """The CDN refused the stored stream: an expired token."""
         registry = _Registry(ResolvedStream(video_url=_NEW))
         links, _ = _links(registry)
 
-        current = await links.refreshed(_link(age=60))
+        current = await links.after_refusal(_link(age=60), status)
 
         assert current is not None and current.video_url == _NEW
         assert registry.calls == [("https://voe.sx/e/abc", "voe", True)]
@@ -360,7 +361,16 @@ class TestRefreshed:
         """The CDN refused the stored URL: there is nothing to fall back to."""
         links, _ = _links(_Registry(None))
 
-        assert await links.refreshed(_link(age=60)) is None
+        assert await links.after_refusal(_link(age=60), 403) is None
+
+    @pytest.mark.parametrize("status", [400, 429, 500, 503])
+    async def test_other_answers_resolve_nothing(self, status: int) -> None:
+        """A new token does not help an overloaded or broken CDN."""
+        registry = _Registry(ResolvedStream(video_url=_NEW))
+        links, _ = _links(registry)
+
+        assert await links.after_refusal(_link(age=60), status) is None
+        assert registry.calls == []
 
     async def test_a_refresh_does_not_join_a_resolution_from_the_cache(
         self,
@@ -372,7 +382,7 @@ class TestRefreshed:
         stale = _link(age=2 * 3600)
 
         _, refreshed = await asyncio.gather(
-            links.current(stale), links.refreshed(stale)
+            links.current(stale), links.after_refusal(stale, 403)
         )
 
         assert refreshed is not None and refreshed.video_url == _NEW
@@ -382,7 +392,9 @@ class TestRefreshed:
         links, _ = _links(registry)
         stale = _link(age=2 * 3600)
 
-        results = await asyncio.gather(links.refreshed(stale), links.current(stale))
+        results = await asyncio.gather(
+            links.after_refusal(stale, 403), links.current(stale)
+        )
 
         assert [r.video_url for r in results if r] == [_NEW, _NEW]
         assert [refresh for *_, refresh in registry.calls] == [True]

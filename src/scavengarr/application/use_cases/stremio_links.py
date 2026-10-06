@@ -33,6 +33,9 @@ log = structlog.get_logger(__name__)
 # played after 92 minutes (2026-10-05)
 _FRESH_S = 3600.0
 
+# CDN answers to a playlist that a new resolution may fix (expired token)
+_REFUSED = frozenset({403, 404, 410})
+
 
 class _Resolver(Protocol):
     async def resolve(
@@ -82,7 +85,8 @@ class StremioLinks:
         When the hoster gives no video, the stale video URL stays: its CDN
         can still serve it (3 FireStream links of the dev-server end-to-end
         run, 2026-10-05), and a refusal resolves again past the resolver's
-        cache (``refreshed``). ``None`` without a video URL to fall back to.
+        cache (``after_refusal``). ``None`` without a video URL to fall back
+        to.
 
         *player* holds the request headers of the player asking. A hoster
         whose CDN binds video URLs to some of them (VEEV) gets a link of its
@@ -125,8 +129,17 @@ class StremioLinks:
             return link
         return copy
 
-    async def refreshed(self, link: CachedStreamLink) -> CachedStreamLink | None:
-        """*link* resolved again past the resolver's cache (the CDN refused it)."""
+    async def after_refusal(
+        self, link: CachedStreamLink, status: int
+    ) -> CachedStreamLink | None:
+        """*link* resolved again past the resolver's cache, when its CDN
+        refused it with a *status* that can mean an expired token (403, 404,
+        410).
+
+        ``None`` for other answers and when the hoster gives no video.
+        """
+        if status not in _REFUSED:
+            return None
         return await self._resolve_again(link, refresh=True)
 
     async def aclose(self) -> None:

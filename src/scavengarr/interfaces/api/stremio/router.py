@@ -45,9 +45,6 @@ _CORS_HEADERS = {
     "Access-Control-Allow-Headers": "*",
 }
 
-# CDN answers to a playlist that a new resolution may fix (expired token)
-_REFUSED = frozenset({403, 404, 410})
-
 # FFmpeg's own User-Agent: Stremio's streaming server probes and converts with it
 _FFMPEG_AGENT = "Lavf/"
 
@@ -606,30 +603,28 @@ async def _fetch_playlist(
 ) -> tuple[bytes, CachedStreamLink] | JSONResponse:
     """A playlist's body, and the link it came with.
 
-    When the CDN refuses the stream's own playlist (403, 404, 410: an
-    expired token), it is fetched once more after a new resolution, past
-    the resolver's cache.
+    When the CDN refuses the stream's own playlist, it is fetched once
+    more from the link ``StremioLinks.after_refusal`` gives (an expired
+    token).
     """
     try:
         body, _ = await fetch_hls_resource(http_client, target_url, _cdn_headers(link))
         return body, link
     except httpx.HTTPStatusError as exc:
-        if not master or exc.response.status_code not in _REFUSED:
+        status = exc.response.status_code
+        fresh = await links.after_refusal(link, status) if master else None
+        if fresh is None or not fresh.is_hls:
             return _cdn_error_response(link.stream_id, target_url, exc)
-        refused = exc
     except httpx.HTTPError as exc:
         return _cdn_error_response(link.stream_id, target_url, exc)
 
-    refreshed = await links.refreshed(link)
-    if refreshed is None or not refreshed.is_hls:
-        return _cdn_error_response(link.stream_id, target_url, refused)
     try:
         body, _ = await fetch_hls_resource(
-            http_client, refreshed.video_url, _cdn_headers(refreshed)
+            http_client, fresh.video_url, _cdn_headers(fresh)
         )
     except httpx.HTTPError as exc:
-        return _cdn_error_response(link.stream_id, refreshed.video_url, exc)
-    return body, refreshed
+        return _cdn_error_response(link.stream_id, fresh.video_url, exc)
+    return body, fresh
 
 
 def _cdn_headers(link: CachedStreamLink) -> dict[str, str]:

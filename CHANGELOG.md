@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Refactor: The HLS Proxy's Refusal Rule Lives in `StremioLinks`
+- Which CDN answers to a stream's playlist resolve the hoster URL again (403, 404, 410: an expired token) was decided in the Stremio router, against the layer rule (interfaces do I/O only). `StremioLinks.after_refusal(link, status)` (application) now decides it and resolves past the resolver's cache; the router fetches and answers. Behavior is unchanged. Found by the code review (2026-10-06).
+
 ### Refactor: One Filter for Nested Matches
 - Eight plugin parsers (ddlvalley, filmfans, hdfilme, kinoger, nima4k, scnsrc, serienfans, streamkiste) each wrote their own filter that drops a selector's matches nested in another match; they now share `outermost()` in `infrastructure/plugins/dom.py`. kinox and kinoger's player check test other conditions and keep theirs. Found by the code review (2026-10-06).
 
