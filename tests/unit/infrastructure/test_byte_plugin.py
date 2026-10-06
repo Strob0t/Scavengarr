@@ -366,6 +366,11 @@ class TestCategoryMapping:
             ("Hörbücher", 3030),
             ("Ebooks", 7000),
             ("Magazine", 7000),
+            # The menu writes "Magazine-Zeitungen", results and detail pages
+            # "Magazine - Zeitungen" (checked 2026-10-06)
+            ("Magazine-Zeitungen", 7000),
+            ("Magazine - Zeitungen", 7000),
+            ("Movie Collections", 2000),
             ("Clips", 6000),
         ],
     )
@@ -379,6 +384,10 @@ class TestCategoryMapping:
     def test_case_insensitive(self) -> None:
         assert _site_category_to_torznab("SERIEN") == 5000
         assert _site_category_to_torznab("serien") == 5000
+
+    def test_every_key_is_reachable(self) -> None:
+        """A key spelled otherwise than the lookup never matches."""
+        assert [k for k in _SITE_CATEGORY_MAP if _mod._category_key(k) != k] == []
 
 
 # ---------------------------------------------------------------------------

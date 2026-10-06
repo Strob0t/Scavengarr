@@ -41,8 +41,8 @@ _WIDGET_PATH = "/widgets/button.php"
 # Constants
 # ---------------------------------------------------------------------------
 
-# Site category name (lowercase) → Torznab category ID; the live menu,
-# checked 2026-09-29
+# Site category name (as ``_category_key`` spells it) → Torznab category
+# ID; the live menu, checked 2026-10-06 (Wallpaper stays Other)
 _SITE_CATEGORY_MAP: dict[str, int] = {
     # Filme
     **dict.fromkeys(
@@ -60,6 +60,7 @@ _SITE_CATEGORY_MAP: dict[str, int] = {
             "hd - 1080p",
             "hd - 1080p x265",
             "uhd - 2160p",
+            "movie collections",
         ),
         2000,
     ),
@@ -107,7 +108,7 @@ _SITE_CATEGORY_MAP: dict[str, int] = {
             "comics",
             "magazine",
             "englische magazine",
-            "magazine-zeitungen",
+            "magazine - zeitungen",
             "tageszeitungen",
         ),
         7000,
@@ -314,9 +315,16 @@ def _inside(node: LexborNode, tag: str, class_attr: str) -> bool:
     )
 
 
+def _category_key(name: str) -> str:
+    """A site category name as the map spells it: lower case, one space
+    around a dash (the menu writes "Magazine-Zeitungen", results and detail
+    pages "Magazine - Zeitungen")."""
+    return " ".join(name.lower().replace("-", " - ").split())
+
+
 def _site_category_to_torznab(category_name: str) -> int:
     """Map site category name to Torznab category ID (8000 if unknown)."""
-    return _SITE_CATEGORY_MAP.get(category_name.lower().strip(), 8000)
+    return _SITE_CATEGORY_MAP.get(_category_key(category_name), 8000)
 
 
 class BytePlugin(HttpxPluginBase):
