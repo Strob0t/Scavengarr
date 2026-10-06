@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: A Plugin Site Counts as Down Only After a Retry
+- The plugin health check marked a site unreachable after one try without an answer within 5 s, and the Stremio search skipped the plugin until the next check 5 minutes later (movie2k in production: no answer at one check, an answer at the next). A reachable site without an answer is now tried again after 30 s before it counts as unreachable; an unreachable one is not retried. Found by the code review (2026-10-06).
+
 ### Fix: Stale Search-Cache Entries Refresh One Title at a Time
 - A stale search-cache entry answers while a background search refreshes it. Every stale title asked for started its refresh at once: the refreshes split the plugin slots with the requests' own searches (fair share), so a burst of stale titles left each search a slot or two, and a refresh cut short by `plugin_timeout_seconds` replaced its entry with a thinner one. Refreshes now run one title at a time, and a refresh's plugin time counts from its own start, so a title that waited keeps its whole time. Found by the code review (2026-10-06).
 

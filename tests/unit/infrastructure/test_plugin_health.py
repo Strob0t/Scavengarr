@@ -19,6 +19,11 @@ _UP = "https://up.test/"
 _SITE = "https://site.test/"
 
 
+@pytest.fixture(autouse=True)
+def _no_retry_pause(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(health_monitor, "_CONFIRM_S", 0.0)
+
+
 def _monitor(
     client: httpx.AsyncClient,
     domains: dict[str, list[str]],
@@ -81,7 +86,11 @@ class TestStates:
     async def test_one_failed_check_marks_and_one_answer_recovers(self) -> None:
         respx.head(_UP).respond(200)
         site = respx.head(_SITE)
-        site.side_effect = [httpx.ConnectError("down"), httpx.Response(200)]
+        site.side_effect = [
+            httpx.ConnectError("down"),
+            httpx.ConnectError("down"),
+            httpx.Response(200),
+        ]
         async with httpx.AsyncClient() as client:
             monitor = _monitor(client, {"up": ["up.test"], "site": ["site.test"]})
 
@@ -94,6 +103,36 @@ class TestStates:
         events = [(e["event"], e.get("plugin")) for e in logs]
         assert ("plugin_unreachable", "site") in events
         assert ("plugin_reachable", "site") in events
+
+    @respx.mock
+    async def test_a_site_answering_the_retry_stays_reachable(self) -> None:
+        """One try without an answer marked a site down until the next check
+        5 minutes later (movie2k in production: no answer within 5 s, an
+        answer at the next check; 2026-10-06)."""
+        respx.head(_UP).respond(200)
+        site = respx.head(_SITE)
+        site.side_effect = [httpx.ReadTimeout("slow"), httpx.Response(200)]
+        async with httpx.AsyncClient() as client:
+            monitor = _monitor(client, {"up": ["up.test"], "site": ["site.test"]})
+
+            await monitor.check(["up", "site"])
+
+        assert monitor.is_reachable("site")
+        assert site.call_count == 2
+
+    @respx.mock
+    async def test_an_unreachable_site_is_not_tried_twice(self) -> None:
+        respx.head(_UP).respond(200)
+        site = respx.head(_SITE).mock(side_effect=httpx.ConnectError("down"))
+        async with httpx.AsyncClient() as client:
+            monitor = _monitor(client, {"up": ["up.test"], "site": ["site.test"]})
+            await monitor.check(["up", "site"])
+            site.reset()
+
+            await monitor.check(["up", "site"])
+
+        assert not monitor.is_reachable("site")
+        assert site.call_count == 1
 
     @respx.mock
     async def test_another_domain_of_the_plugin_counts(self) -> None:

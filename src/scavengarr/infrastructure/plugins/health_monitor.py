@@ -27,6 +27,12 @@ _RETRY_S = 300.0
 _FIRST_CHECK_S = 60.0
 _CONCURRENCY = 5
 
+# A reachable site that fails a check is tried again after this pause
+# before it counts as unreachable: one try without an answer marked it down
+# until the next check 5 minutes later (movie2k in production: no answer
+# within 5 s, an answer at the next check; 2026-10-06)
+_CONFIRM_S = 30.0
+
 
 def _answers(result: ProbeResult) -> bool:
     """Whether the site is up: an answer below 500 or a challenge page.
@@ -43,9 +49,10 @@ class PluginHealthMonitor:
     """Which plugins' sites answer.
 
     Every plugin is checked every *interval_s*, an unreachable one every 5
-    minutes in between. One failed check marks a site unreachable, one
-    answer brings it back. A check in which no site answers changes
-    nothing: then the own network or DNS is down, not every site.
+    minutes in between. A site that fails a check and its retry 30 s
+    later is marked unreachable, one answer brings it back. A check in
+    which no site answers changes nothing: then the own network or DNS is
+    down, not every site.
     """
 
     def __init__(
@@ -88,17 +95,33 @@ class PluginHealthMonitor:
         return sorted(self._unreachable)
 
     async def check(self, names: list[str]) -> None:
-        """Check the sites of *names* and record which ones answer."""
+        """Check the sites of *names* and record which ones answer.
+
+        A reachable site without an answer is tried again after
+        ``_CONFIRM_S``; an unreachable one stays so without a retry.
+        """
         semaphore = asyncio.Semaphore(_CONCURRENCY)
 
         async def _check(name: str) -> bool:
             async with semaphore:
                 return await self._site_answers(name)
 
-        up = dict(zip(names, await asyncio.gather(*map(_check, names)), strict=True))
+        async def _check_all(names: list[str]) -> dict[str, bool]:
+            answers = await asyncio.gather(*map(_check, names))
+            return dict(zip(names, answers, strict=True))
+
+        up = await _check_all(names)
         if not any(up.values()) and any(map(self.is_reachable, names)):
             log.warning("plugin_health_no_answer", plugins=len(names))
             return
+        failed = [
+            name
+            for name, answers in up.items()
+            if not answers and self.is_reachable(name)
+        ]
+        if failed:
+            await asyncio.sleep(_CONFIRM_S)
+            up |= await _check_all(failed)
         for name, answers in up.items():
             if answers and name in self._unreachable:
                 self._unreachable.discard(name)
