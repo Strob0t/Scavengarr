@@ -90,7 +90,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** and **S
 
 | Document | Description |
 |---|---|
-| [Python Best Practices](../PYTHON-BEST-PRACTICES.md) | Coding standards, typing rules, async patterns |
+| [Python Best Practices](../PYTHON-BEST-PRACTICES.md) | Performance rules: non-blocking async I/O, shared HTTP client, caching, scraping limits (typing and coding rules: `AGENTS.md` section 5) |
 
 ---
 
