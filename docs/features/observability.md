@@ -45,7 +45,7 @@ The core records through one port, `TelemetryPort` (`domain/ports/telemetry.py`)
 - `count(name, outcome, **labels)` counts an outcome without a run (a plugin skipped by its open breaker, a resolution from the cache): no duration.
 - `record(name, value, **labels)` records a value that is not a duration (streams per answer, bytes).
 
-The composition root builds it with `create_telemetry(config.telemetry.tracing_endpoint)` and closes it at shutdown. Five places record: `StremioStreamUseCase`, `PluginSearchRunner`, `HosterResolverRegistry`, the HLS proxy route and the event-loop monitor. Plugins and resolvers contain no metrics code; a new one is recorded without changes. Components get `NO_TELEMETRY` (records nothing) when none is wired in, as in most tests.
+The composition root builds it with `create_telemetry(config.telemetry.tracing_endpoint)` and closes it at shutdown. Six places record: `StremioStreamUseCase`, `PluginSearchRunner`, `HosterResolverRegistry`, the stealth browser's page gate (`PageGate`), the HLS proxy route and the event-loop monitor. Plugins and resolvers contain no metrics code; a new one is recorded without changes. Components get `NO_TELEMETRY` (records nothing) when none is wired in, as in most tests.
 
 Durations and outcomes are separate families on purpose: a histogram per outcome would multiply the series. Label values come only from fixed sets (plugin names, resolver names, breaker keys, the outcomes below), never titles, IMDb ids, URLs, domains or stream ids.
 
@@ -63,6 +63,9 @@ All names start with `scavengarr_`. Outcomes in *italics* are counted without a 
 | `hoster_resolve_seconds`, `hoster_resolve_total` | `resolver`, `outcome` | Resolver name, `direct` for content-type probes (playlists, URLs without a resolver). `stream`, `dead`, `unplayable`, `check_error` (the playback check failed), `timeout`, `network_error`, `http_error`, `error`, `cut`, *`cached`*, *`breaker_open`* |
 | `hls_proxy_seconds`, `hls_proxy_total` | `kind`, `outcome` | `master` (the stream's playlist), `playlist`, `segment`; outcome is the answer's HTTP status. The duration ends when the answer starts (time to first byte for the player) |
 | `hls_proxy_bytes_total` | `kind` | Bytes sent (playlists and segments) |
+| `browser_page_wait_seconds`, `browser_page_wait_total` | `kind`, `outcome` | The wait for a stealth browser page, by what it is for (`kind`): `play` (a stream resolved again at play time), `plugin` (a plugin's page, also from Torznab searches and the scoring probes), `capture` (a hoster capture for an answer), `background` (a capture for later requests). `ok` (got the page), `cut` |
+| `browser_page_seconds`, `browser_page_total` | `kind`, `outcome` | The work on a stealth browser page, from the grant to the page's end: `ok`, `cut`, `error` |
+| `browser_pages` | `state` (`limit`, `in_use`, `waiting`) | The stealth browser's page limit, the pages in use and the page requests waiting, read at scrape time |
 | `event_loop_lag_seconds` | | How late a 0.5 s timer fired: CPU work on the event loop delays every timeout and deadline by as much |
 | `circuit_breaker_open` | `breaker` (`plugin`, `hoster`), `name`, `state` (`open`, `half_open`) | 1 per breaker that is not closed, read at scrape time. Plugin breakers are keyed `plugin:category` |
 | `container_cpu_seconds_total`, `container_memory_bytes` | | The container's CPU and memory (cgroup v2 `cpu.stat`, `memory.current`), read at scrape time; absent outside a cgroup v2 container |
@@ -70,7 +73,7 @@ All names start with `scavengarr_`. Outcomes in *italics* are counted without a 
 
 prometheus-client adds `process_*` (the Python process), `python_gc_*` and `python_info`. The container's CPU minus `process_cpu_seconds_total` is Chromium, its driver, Xvfb and the health checks.
 
-Bucket bounds follow the deadlines: requests and phases 0.5, 1, 2, 4, 7, 10, 15, 30, 60 s (answer at the latest after 60 s); plugin searches 1, 2, 4, 7, 10, 15, 30 s (the search ends 30 s after the request); resolutions 0.5, 1, 2, 4, 7, 15 s (resolve timeout 15 s); HLS proxy 0.05 to 4 s; event-loop lag 5 ms to 2.5 s; streams per answer 0, 1, 2, 3, 5, 8, 13, 21, 34.
+Bucket bounds follow the deadlines: requests and phases 0.5, 1, 2, 4, 7, 10, 15, 30, 60 s (answer at the latest after 60 s); plugin searches 1, 2, 4, 7, 10, 15, 30 s (the search ends 30 s after the request); resolutions 0.5, 1, 2, 4, 7, 15 s (resolve timeout 15 s); HLS proxy 0.05 to 4 s; browser page waits 0.1, 0.5, 1, 2, 4, 7, 10, 15, 30, 60 s and work 0.5 to 60 s; event-loop lag 5 ms to 2.5 s; streams per answer 0, 1, 2, 3, 5, 8, 13, 21, 34.
 
 ## Queries
 
@@ -93,6 +96,9 @@ rate(scavengarr_container_cpu_seconds_total[5m]) - rate(process_cpu_seconds_tota
 
 # HLS proxy throughput
 sum(rate(scavengarr_hls_proxy_bytes_total[5m]))
+
+# p90 wait for a stealth browser page, by what it is for
+histogram_quantile(0.9, sum by (le, kind) (rate(scavengarr_browser_page_wait_seconds_bucket[1h])))
 ```
 
 ## Request Id
@@ -128,7 +134,7 @@ Traces show one request as a tree: the request, its phases, each plugin search a
 2. Set `telemetry.tracing_endpoint` (or `SCAVENGARR_TELEMETRY_TRACING_ENDPOINT`) to `http://tempo:4318` and restart Scavengarr. Behind a VPN container, publish Tempo's port 4318 (`- "4318:4318"`) and use the host's IP: name lookups would go through the VPN.
 3. Add Tempo to Grafana as a data source (`http://<host>:3200`) and search with TraceQL, for example `{ name = "stremio_request" && duration > 10s }` or `{ span.request_id = "a1b2c3d4e5f6" }` with the id from a log line.
 
-Every stage but the HLS proxy (a span per segment would bury the requests) is a span named after the stage and its subject: `stremio_request`, `stremio_phase search`, `plugin_search kinoger`, `hoster_resolve voe`. Spans carry the stage's labels, its outcome and a few details (IMDb id, content type); an error sets the span's status to the exception type, not its message. They never carry URLs (stream URLs hold tokens) or titles. The root span carries the `request_id`. Spans go out in batches every 5 s from a background thread; at shutdown the rest gets at most 3 s, also when the endpoint does not answer, and what has not gone out by then is dropped.
+Every stage but the HLS proxy (a span per segment would bury the requests) is a span named after the stage and its subject: `stremio_request`, `stremio_phase search`, `plugin_search kinoger`, `hoster_resolve voe`, `browser_page_wait capture` (a request's queueing for the stealth browser). Spans carry the stage's labels, its outcome and a few details (IMDb id, content type); an error sets the span's status to the exception type, not its message. They never carry URLs (stream URLs hold tokens) or titles. The root span carries the `request_id`. Spans go out in batches every 5 s from a background thread; at shutdown the rest gets at most 3 s, also when the endpoint does not answer, and what has not gone out by then is dropped.
 
 Without an endpoint the trace SDK, the exporter and protobuf are not loaded and no export thread runs. FastAPI's own OpenTelemetry integration (switched on by `OTEL_EXPORTER_OTLP_ENDPOINT`) is separate; Scavengarr does not use it.
 

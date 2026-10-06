@@ -13,6 +13,7 @@ from prometheus_client.metrics_core import (
 )
 from prometheus_client.registry import Collector
 
+from scavengarr.infrastructure.browser.page_gate import PageGate
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 
 log = structlog.get_logger(__name__)
@@ -35,6 +36,24 @@ class BreakerCollector(Collector):
                 state = str(entry["state"])
                 if state != "closed":
                     gauge.add_metric((kind, name, state), 1)
+        yield gauge
+
+
+class BrowserPagesCollector(Collector):
+    """The stealth browser's page limit, pages in use and waiting requests."""
+
+    def __init__(self, gate: PageGate) -> None:
+        self._gate = gate
+
+    def collect(self) -> Iterator[Metric]:
+        gauge = GaugeMetricFamily(
+            "scavengarr_browser_pages",
+            "Stealth browser pages: the limit, in use, requests waiting",
+            labels=("state",),
+        )
+        gauge.add_metric(("limit",), self._gate.limit)
+        gauge.add_metric(("in_use",), self._gate.in_use)
+        gauge.add_metric(("waiting",), self._gate.waiting)
         yield gauge
 
 

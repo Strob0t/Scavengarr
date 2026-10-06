@@ -23,6 +23,7 @@ from scavengarr.domain.plugins.base import (
     SearchResult,
     result_key,
 )
+from scavengarr.domain.ports.browser_fetcher import PageClaim, page_claim
 from scavengarr.domain.ports.concurrency import ConcurrencyBudgetPort
 from scavengarr.domain.ports.plugin_registry import PluginRegistryPort
 from scavengarr.domain.ports.plugin_score_store import PluginScoreStorePort
@@ -399,6 +400,8 @@ class PluginSearchRunner:
             self._telemetry.count("plugin_search", "breaker_open", plugin=name)
             return []
 
+        # The stealth browser serves the plugin's pages by its end
+        claim = page_claim.set(PageClaim("plugin", time.monotonic() + timeout))
         try:
             return await asyncio.wait_for(
                 self._search_single_plugin(
@@ -420,6 +423,8 @@ class PluginSearchRunner:
             if counts and self._circuit_breaker is not None:
                 self._circuit_breaker.record_failure(breaker_key)
             return []
+        finally:
+            page_claim.reset(claim)
 
     @staticmethod
     async def _dispatch_search(

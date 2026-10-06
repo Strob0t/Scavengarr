@@ -22,6 +22,7 @@ from scavengarr.domain.entities.crawljob import Priority
 from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort
 from scavengarr.domain.ports.cache import CachePort
 from scavengarr.infrastructure.browser.clearance_store import ClearanceStore
+from scavengarr.infrastructure.browser.page_gate import PageGate
 from scavengarr.infrastructure.browser.shared_browser import SharedBrowserPool
 from scavengarr.infrastructure.browser.solver_fetcher import (
     ChainedBrowserFetcher,
@@ -95,7 +96,10 @@ from scavengarr.infrastructure.stremio.stream_converter import convert_search_re
 from scavengarr.infrastructure.stremio.stream_sorter import StreamSorter
 from scavengarr.infrastructure.stremio.title_matcher import filter_by_title_match
 from scavengarr.infrastructure.telemetry import create_telemetry, monitor_loop_lag
-from scavengarr.infrastructure.telemetry.collectors import BreakerCollector
+from scavengarr.infrastructure.telemetry.collectors import (
+    BreakerCollector,
+    BrowserPagesCollector,
+)
 from scavengarr.infrastructure.tmdb.client import HttpxTmdbClient
 from scavengarr.infrastructure.tmdb.imdb_fallback import ImdbFallbackClient
 from scavengarr.infrastructure.torznab.search_engine import HttpxSearchEngine
@@ -516,14 +520,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Solved Cloudflare/DDoS-Guard challenges survive restarts
     clearance_store = ClearanceStore(state.cache)
     PlaywrightPluginBase.set_clearance_store(clearance_store)
+    # RAM budget: at most 2 stealth pages at a time
+    pages = PageGate(
+        limit=min(config.stremio.max_concurrent_playwright, 2),
+        telemetry=state.telemetry,
+    )
+    state.telemetry.registry.register(BrowserPagesCollector(pages))
     state.stealth_pool = StealthPool(
         browser_pool=state.shared_browser_pool,
         clearance_store=clearance_store,
         timeout_ms=int(config.stremio.probe_stealth_timeout_seconds * 1000),
-        # RAM budget: at most 2 browser-fetched pages at a time
-        fetch_concurrency=min(config.stremio.max_concurrent_playwright, 2),
+        pages=pages,
     )
-    log.info("stealth_pool_configured")
+    log.info("stealth_pool_configured", pages=pages.limit)
 
     # 8b) httpx plugins fall back to the stealth browser (and/or an external
     #     solver) on CF challenges

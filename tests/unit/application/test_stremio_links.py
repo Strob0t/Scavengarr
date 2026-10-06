@@ -12,6 +12,7 @@ import pytest
 
 from scavengarr.application.use_cases.stremio_links import StremioLinks
 from scavengarr.domain.entities.stremio import CachedStreamLink, ResolvedStream
+from scavengarr.domain.ports.browser_fetcher import PageClaim, page_claim
 
 _OLD = "https://cdn.example/old.mp4"
 _NEW = "https://cdn.example/new.mp4"
@@ -431,3 +432,27 @@ class TestShutdown:
 
         with pytest.raises(asyncio.CancelledError):
             await request
+
+
+class TestPageClaim:
+    async def test_a_resolution_at_play_time_goes_first(self) -> None:
+        """A player waits: its resolution claims browser pages as play."""
+        seen: list[PageClaim | None] = []
+
+        class _Seeing(_Registry):
+            async def resolve(
+                self, url: str, hoster: str = "", *, refresh: bool = False
+            ) -> ResolvedStream | None:
+                seen.append(page_claim.get())
+                return await super().resolve(url, hoster, refresh=refresh)
+
+        links, _ = _links(_Seeing(ResolvedStream(video_url=_NEW)))
+        before = time.monotonic()
+
+        await links.current(_link(age=2 * 3600))
+
+        claim = seen[0]
+        assert claim is not None
+        assert claim.kind == "play"
+        assert before < claim.due <= time.monotonic() + 15.0
+        assert page_claim.get() is None

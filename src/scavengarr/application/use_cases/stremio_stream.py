@@ -59,6 +59,7 @@ from scavengarr.domain.entities.stremio import (
     TitleMatchInfo,
 )
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.domain.ports.browser_fetcher import PageClaim
 from scavengarr.domain.ports.cache import CachePort
 from scavengarr.domain.ports.concurrency import (
     ConcurrencyBudgetPort,
@@ -774,6 +775,7 @@ class StremioStreamUseCase:
             concurrency=self._probe_concurrency,
             limit=self._max_probe_count,
             changed=changed,
+            claim=PageClaim("background" if background else "capture", deadline),
         )
         target = 0 if background else self._resolve_target
         ranked: list[RankedStream] = []

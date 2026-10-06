@@ -30,6 +30,7 @@ from scavengarr.domain.entities.stremio import (
     TitleMatchInfo,
 )
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.domain.ports.browser_fetcher import PageClaim, page_claim
 from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
 from scavengarr.infrastructure.concurrency import ConcurrencyPool
 from scavengarr.infrastructure.config.schema import StremioConfig
@@ -1987,6 +1988,18 @@ class _Resolutions:
         return url in self.store, self.store.get(url)
 
 
+class _ClaimSeeing(_Resolutions):
+    """Notes the page claim each link resolved under."""
+
+    def __init__(self, *, alive: tuple[str, ...] = ()) -> None:
+        super().__init__(alive=alive)
+        self.claims: dict[str, PageClaim | None] = {}
+
+    async def resolve(self, url: str, hoster: str = "") -> ResolvedStream | None:
+        self.claims.setdefault(url, page_claim.get())
+        return await super().resolve(url, hoster)
+
+
 _VOE = "https://voe.sx/e/best"
 _VOE_2 = "https://voe.sx/e/second"
 _DOOD = "https://dood.to/e/new"
@@ -2250,6 +2263,17 @@ class TestBackgroundResolutions:
 
         await _eventually(lambda: _DOOD_B in resolutions.store)
 
+    async def test_they_claim_browser_pages_as_background_work(self) -> None:
+        resolutions = _ClaimSeeing(alive=(_VOE, _VOE_B))
+        uc = self._use_case(resolutions)
+
+        await self._ask_both(uc)
+
+        await _eventually(lambda: _DOOD in resolutions.store)
+        claim = resolutions.claims[_DOOD]
+        assert claim is not None
+        assert claim.kind == "background"
+
 
 def _answering_use_case(
     sites: dict[str, AsyncMock],
@@ -2347,6 +2371,23 @@ class TestAnswerPolicy:
     """The answer goes out at 5 streams, when the search and every
     resolution are done, at the latest at the deadline; it no longer waits
     for the soft deadline (7 s) and the grace (4 s)."""
+
+    async def test_the_answers_resolutions_claim_captures_due_at_the_deadline(
+        self,
+    ) -> None:
+        resolutions = _ClaimSeeing()
+        sites = {"a": _site([_hit("https://voe.sx/e/1")])}
+        uc = _answering_use_case(
+            sites, _memory_cache(), resolutions, stream_deadline_seconds=7.0
+        )
+        before = time.monotonic()
+
+        await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        claim = resolutions.claims["https://voe.sx/e/1"]
+        assert claim is not None
+        assert claim.kind == "capture"
+        assert before + 7.0 <= claim.due <= time.monotonic() + 7.0
 
     async def test_at_the_target_while_a_slow_plugin_still_searches(
         self,

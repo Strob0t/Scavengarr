@@ -92,6 +92,20 @@ _STAGES: dict[StageName, _StageSpec] = {
         "HLS proxy requests until the answer starts",
         traced=False,
     ),
+    # The stealth browser's pages: the wait for one and the work on it, by
+    # what the page is for (play, plugin, capture, background)
+    "browser_page_wait": _StageSpec(
+        ("kind",),
+        (0.1, 0.5, 1.0, 2.0, 4.0, 7.0, 10.0, 15.0, 30.0, 60.0),
+        "Waits for a stealth browser page",
+        span_label="kind",
+    ),
+    "browser_page": _StageSpec(
+        ("kind",),
+        (0.5, 1.0, 2.0, 4.0, 7.0, 10.0, 15.0, 30.0, 60.0),
+        "Work on a stealth browser page",
+        span_label="kind",
+    ),
 }
 
 _SUCCESSES = ("hits", "empty")

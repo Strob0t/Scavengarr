@@ -24,6 +24,7 @@ from scavengarr.application.stremio.stream_builder import (
     with_resolution,
 )
 from scavengarr.domain.entities.stremio import CachedStreamLink, ResolvedStream
+from scavengarr.domain.ports.browser_fetcher import PageClaim, page_claim
 from scavengarr.domain.ports.stream_link_repository import StreamLinkRepository
 
 log = structlog.get_logger(__name__)
@@ -35,6 +36,10 @@ _FRESH_S = 3600.0
 
 # CDN answers to a playlist that a new resolution may fix (expired token)
 _REFUSED = frozenset({403, 404, 410})
+
+# A resolution at play time gets the stealth browser's next page; it waits
+# for one until shortly before this
+_PLAY_DUE_S = 15.0
 
 
 class _Resolver(Protocol):
@@ -53,6 +58,14 @@ def _bound(headers: Mapping[str, str], names: tuple[str, ...]) -> dict[str, str]
     """The non-empty values of *headers* named in *names*, by lower-case name."""
     lowered = {name.lower(): value for name, value in headers.items()}
     return {name: lowered[name] for name in names if lowered.get(name)}
+
+
+async def _as_play(
+    work: Coroutine[Any, Any, CachedStreamLink | None],
+) -> CachedStreamLink | None:
+    """*work* in a task of its own, its browser pages claimed as play."""
+    page_claim.set(PageClaim("play", time.monotonic() + _PLAY_DUE_S))
+    return await work
 
 
 def _player_link_id(stream_id: str, player: dict[str, str]) -> str:
@@ -216,7 +229,7 @@ class StremioLinks:
         """One resolution per *key* for all requests that ask meanwhile."""
         task = self._running.get(key)
         if task is None:
-            task = asyncio.ensure_future(start())
+            task = asyncio.ensure_future(_as_play(start()))
             self._running[key] = task
             task.add_done_callback(lambda _: self._running.pop(key, None))
         # A request that goes away (players cancel many) ends no shared work

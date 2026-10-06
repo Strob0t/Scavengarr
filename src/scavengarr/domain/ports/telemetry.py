@@ -18,6 +18,8 @@ StageName = Literal[
     "plugin_search",
     "hoster_resolve",
     "hls_proxy",
+    "browser_page_wait",
+    "browser_page",
 ]
 
 ValueName = Literal[

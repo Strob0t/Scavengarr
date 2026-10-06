@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 
 from scavengarr.application.stremio.resolution import HosterResolution
 from scavengarr.domain.entities.stremio import RankedStream, ResolvedStream
+from scavengarr.domain.ports.browser_fetcher import PageClaim, page_claim
 
 _VOE = RankedStream(url="https://voe.sx/e/best", hoster="voe")
 _VOE_2 = RankedStream(url="https://voe.sx/e/second", hoster="voe")
@@ -245,3 +246,28 @@ class TestProgress:
         assert resolver.running == 0
         resolution.update([_FILEMOON])
         assert not resolution.pending()
+
+
+class TestPageClaim:
+    async def test_resolutions_run_under_the_claim(self) -> None:
+        """The stealth browser hands its pages out by the claim."""
+        seen: list[PageClaim | None] = []
+
+        async def _resolve(url: str, hoster: str) -> ResolvedStream | None:
+            seen.append(page_claim.get())
+            return _video(url)
+
+        claim = PageClaim("background", 123.0)
+        resolution = HosterResolution(
+            _resolve,
+            concurrency=10,
+            limit=50,
+            changed=asyncio.Event(),
+            claim=claim,
+        )
+
+        resolution.update([_VOE, _DOOD])
+        await _settle(resolution)
+
+        assert seen == [claim, claim]
+        assert page_claim.get() is None

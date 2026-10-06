@@ -1,14 +1,17 @@
-"""Tests for the scrape-time collectors (circuit breakers, container usage)."""
+"""Tests for the scrape-time collectors (breakers, container, browser pages)."""
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from prometheus_client import CollectorRegistry
 
+from scavengarr.infrastructure.browser.page_gate import PageGate
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.telemetry.collectors import (
     BreakerCollector,
+    BrowserPagesCollector,
     ContainerCollector,
 )
 
@@ -102,3 +105,30 @@ class TestContainerCollector:
         registry = self._registry(tmp_path, tmp_path / "missing")
 
         assert registry.get_sample_value("scavengarr_container_memory_bytes") is None
+
+
+class TestBrowserPagesCollector:
+    async def test_limit_pages_in_use_and_waiting(self) -> None:
+        gate = PageGate(limit=1)
+        registry = CollectorRegistry()
+        registry.register(BrowserPagesCollector(gate))
+        release = asyncio.Event()
+
+        async def _hold() -> None:
+            async with gate.page("plugin", timeout=30):
+                await release.wait()
+
+        tasks = [asyncio.create_task(_hold()) for _ in range(3)]
+        for _ in range(5):
+            await asyncio.sleep(0)
+
+        def pages(state: str) -> float | None:
+            return registry.get_sample_value(
+                "scavengarr_browser_pages", {"state": state}
+            )
+
+        assert (pages("limit"), pages("in_use"), pages("waiting")) == (1, 1, 2)
+
+        release.set()
+        await asyncio.gather(*tasks)
+        assert (pages("in_use"), pages("waiting")) == (0, 0)

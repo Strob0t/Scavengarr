@@ -135,7 +135,7 @@ src/scavengarr/
     persistence/             # CrawlJob, stream link, and plugin score repositories
     stremio/                 # Stream converter/sorter, title matcher, release parser, episode filter, HLS proxy
     tmdb/                    # TMDB client + IMDB fallback
-    browser/                 # Shared Chromium pool, stealth context, headful/headless, Cloudflare detection
+    browser/                 # Shared Chromium pool, stealth context and its page gate, headful/headless, Cloudflare detection
     hoster_resolvers/        # Hoster resolvers (individual + generic DDL + XFS), probes
     scoring/                 # EWMA scoring, health/search probers, scheduler
     config/                  # Pydantic schema, loader, defaults

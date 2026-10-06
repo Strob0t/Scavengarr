@@ -14,6 +14,7 @@ from scavengarr.infrastructure.browser.hardening import (
     BLOCKED_RESOURCE_TYPES,
     block_heavy_resources,
 )
+from scavengarr.infrastructure.browser.page_gate import PageGate
 from scavengarr.infrastructure.browser.stealth_pool import StealthPool
 
 # ------------------------------------------------------------------
@@ -385,7 +386,7 @@ class TestStealthPoolFetchText:
             return page
 
         context.new_page = AsyncMock(side_effect=lambda: _new_page())
-        pool = StealthPool(browser_pool=shared_pool, fetch_concurrency=2)
+        pool = StealthPool(browser_pool=shared_pool, pages=PageGate(limit=2))
 
         await asyncio.gather(
             *(pool.fetch_text(f"https://x.org/{i}", timeout=10) for i in range(6))

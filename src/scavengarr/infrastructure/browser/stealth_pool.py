@@ -22,6 +22,7 @@ from patchright.async_api import Browser, BrowserContext, Page, Request, Route
 
 from scavengarr.domain.ports.browser_fetcher import BrowserSession, ClickThrough
 from scavengarr.infrastructure.browser.hardening import block_heavy_resources
+from scavengarr.infrastructure.browser.page_gate import PageGate
 from scavengarr.infrastructure.browser.turnstile import (
     WIDGET_FORM,
     is_challenge_page,
@@ -196,7 +197,8 @@ class StealthPool:
 
     Runs on the Chromium of :class:`SharedBrowserPool` (one browser process
     for plugins and resolvers) in its own persistent context, so Cloudflare
-    clearance cookies survive between fetches.
+    clearance cookies survive between fetches. Every operation holds one
+    page of *pages* (``PageGate``).
 
     Usage::
 
@@ -210,15 +212,15 @@ class StealthPool:
         *,
         browser_pool: SharedBrowserPool,
         timeout_ms: int = 15_000,
-        fetch_concurrency: int = 2,
+        pages: PageGate | None = None,
         clearance_store: ClearanceStore | None = None,
     ) -> None:
         self._browser_pool = browser_pool
         # Solved challenges survive restarts (cf_clearance, __ddg* cookies)
         self._clearance_store = clearance_store
         self._timeout_ms = timeout_ms
-        # Bounds fetch_text() pages (RAM budget: headful pages are heavy)
-        self._fetch_sem = asyncio.Semaphore(fetch_concurrency)
+        # Bounds the pages of all operations (headful pages are heavy)
+        self._pages = pages or PageGate(limit=2)
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
         self._lock = asyncio.Lock()
@@ -306,7 +308,7 @@ class StealthPool:
 
         Returns False on a permanent error status (not a challenge page).
         429/502/503/504 are retried after each backoff in ``_RETRY_BACKOFF_S``;
-        the caller's fetch slot stays taken while waiting, which also throttles
+        the caller's page stays taken while waiting, which also throttles
         the other fetches. *done* short-circuits (and swallows the aborted
         navigation) once the caller has what it needs.
         """
@@ -342,7 +344,10 @@ class StealthPool:
         unless a challenge's reload sends it).
         """
         timeout_ms = int(timeout * 1000)
-        async with self._fetch_sem, self._browser_pool.lease():
+        async with (
+            self._pages.page("plugin", timeout=timeout),
+            self._browser_pool.lease(),
+        ):
             page: Page | None = None
             try:
                 page = await self.new_page()
@@ -401,7 +406,10 @@ class StealthPool:
         *timeout* bounds navigation and the Cloudflare challenge.
         """
         timeout_ms = int(timeout * 1000)
-        async with self._fetch_sem, self._browser_pool.lease():
+        async with (
+            self._pages.page("capture", timeout=timeout),
+            self._browser_pool.lease(),
+        ):
             page: Page | None = None
             try:
                 page = await self.new_page()
@@ -472,7 +480,10 @@ class StealthPool:
                 targets.append(request.url)
 
         timeout_ms = int(timeout * 1000)
-        async with self._fetch_sem, self._browser_pool.lease():
+        async with (
+            self._pages.page("plugin", timeout=timeout),
+            self._browser_pool.lease(),
+        ):
             page: Page | None = None
             try:
                 page = await self.new_page()
@@ -521,7 +532,10 @@ class StealthPool:
 
         deadline = time.monotonic() + timeout
         timeout_ms = int(timeout * 1000)
-        async with self._fetch_sem, self._browser_pool.lease():
+        async with (
+            self._pages.page("plugin", timeout=timeout),
+            self._browser_pool.lease(),
+        ):
             page: Page | None = None
             try:
                 page = await self.new_page()

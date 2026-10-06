@@ -14,6 +14,7 @@ from structlog.testing import capture_logs
 from scavengarr.application.stremio.plugin_search import PluginSearchRunner
 from scavengarr.domain.entities.scoring import PluginScoreSnapshot
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.domain.ports.browser_fetcher import PageClaim, page_claim
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.concurrency import ConcurrencyPool
 from scavengarr.infrastructure.telemetry import Telemetry
@@ -869,3 +870,45 @@ class TestTelemetry:
 
         assert self._sample(t, "unreachable", plugin="down") == 1
         assert self._sample(t, "empty", plugin="up") == 1
+
+
+class TestPageClaim:
+    """A plugin's browser pages are claimed as plugin work, due at its end."""
+
+    @staticmethod
+    def _claiming(seen: list[PageClaim | None]) -> MagicMock:
+        async def _search(_query: str, **_kwargs: object) -> list[SearchResult]:
+            seen.append(page_claim.get())
+            return []
+
+        plugin = _plugin([])
+        plugin.search = AsyncMock(side_effect=_search)
+        return plugin
+
+    async def test_due_at_the_plugin_timeout(self) -> None:
+        seen: list[PageClaim | None] = []
+        runner = _runner(_registry({"a": self._claiming(seen)}), plugin_timeout=5.0)
+        before = time.monotonic()
+
+        await _search(runner, ["a"], ["q"])
+
+        claim = seen[0]
+        assert claim is not None
+        assert claim.kind == "plugin"
+        assert before + 5.0 <= claim.due <= time.monotonic() + 5.0
+        assert page_claim.get() is None
+
+    async def test_due_at_the_search_deadline_when_it_is_earlier(self) -> None:
+        seen: list[PageClaim | None] = []
+        runner = _runner(_registry({"a": self._claiming(seen)}), plugin_timeout=5.0)
+        deadline = time.monotonic() + 1.0
+        pool = ConcurrencyPool(httpx_slots=10, pw_slots=10)
+
+        async with pool.request() as budget:
+            await runner.search_with_fallback(
+                ["a"], ["q"], 2000, budget=budget, deadline=deadline
+            )
+
+        claim = seen[0]
+        assert claim is not None
+        assert claim.due == pytest.approx(deadline, abs=0.05)

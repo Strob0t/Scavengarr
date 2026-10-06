@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: Metrics of the Stealth Browser's Pages
+- Plugin pages behind Cloudflare, hoster captures and link-outs share the stealth browser's 2 pages, and in the sixth production round kinoger's pages queued behind captures until its 30 s timeout. The wait for a page and the work on it are now recorded by what the page is for (`scavengarr_browser_page_wait_*` and `scavengarr_browser_page_*`, `kind`: `play`, `plugin`, `capture`, `background`), the limit, pages in use and waiting requests as the gauge `scavengarr_browser_pages`; with tracing on, a request's trace shows its queueing (`browser_page_wait capture`). The application names what browser work is for and when it is due (`PageClaim`), the groundwork for handing the pages out by urgency ([browser-page-budget.md](docs/plans/browser-page-budget.md)).
+
 ### Fix: Alfafile Links With a File Name Resolve
 - The Alfafile resolver's file-ID pattern ended right after the id, so a link with the file name after it (`/file/<id>/<name>`) was not recognized; the other generic DDL hosters accept trailing parts. Found by the doc review (2026-10-06).
 

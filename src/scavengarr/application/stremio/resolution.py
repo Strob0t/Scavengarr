@@ -18,6 +18,7 @@ from scavengarr.application.stremio.stream_builder import (
     is_direct_video_url,
 )
 from scavengarr.domain.entities.stremio import RankedStream, ResolvedStream
+from scavengarr.domain.ports.browser_fetcher import PageClaim, page_claim
 
 log = structlog.get_logger(__name__)
 
@@ -35,7 +36,8 @@ class HosterResolution:
     router blocked like a port scan. A better-ranked link that arrives later
     resolves too. Each URL resolves once, at most *concurrency* at a time,
     among the top *limit* streams. *changed* is set whenever a resolution
-    ends.
+    ends. The resolutions run under *claim* (the stealth browser hands out
+    its pages by it).
     """
 
     def __init__(
@@ -45,8 +47,10 @@ class HosterResolution:
         concurrency: int,
         limit: int,
         changed: asyncio.Event,
+        claim: PageClaim | None = None,
     ) -> None:
         self._resolve_fn = resolve_fn
+        self._claim = claim
         self._semaphore = asyncio.Semaphore(concurrency)
         self._limit = limit
         self._changed = changed
@@ -142,6 +146,9 @@ class HosterResolution:
         return task
 
     async def _resolve(self, stream: RankedStream) -> ResolvedStream | None:
+        if self._claim is not None:
+            # The task's own context: the claim ends with it
+            page_claim.set(self._claim)
         async with self._semaphore:
             try:
                 return await self._resolve_fn(stream.url, stream.hoster)
