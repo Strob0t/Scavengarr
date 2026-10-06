@@ -401,6 +401,105 @@ class TestMirrorGroups:
         assert plugins["streamcloud"].search.await_count == 1
 
 
+class TestMirrorStandby:
+    """A member whose search gives nothing hands the request to the next
+    member: a parser broken by a theme change answers empty, which trips no
+    breaker, so the group never failed over (code review, 2026-10-06). A
+    member that gave nothing while the next one delivered ranks behind the
+    others from then on."""
+
+    _GROUPS = {  # noqa: RUF012
+        "hdfilme": "hdfilme",
+        "streamcloud": "hdfilme",
+        "streamkiste": "hdfilme",
+    }
+
+    @staticmethod
+    def _plugins(*empty: str) -> dict[str, MagicMock]:
+        return {
+            name: _plugin([] if name in empty else [_sr("https://dood/1")])
+            for name in ("hdfilme", "streamcloud", "streamkiste")
+        }
+
+    @staticmethod
+    async def _searched(
+        runner: PluginSearchRunner, plugins: dict[str, MagicMock]
+    ) -> list[str]:
+        for plugin in plugins.values():
+            plugin.search.reset_mock()
+        await _search(runner, list(plugins), ["q"])
+        return [n for n, p in plugins.items() if p.search.await_count]
+
+    async def test_the_next_member_searches_when_the_first_finds_nothing(
+        self,
+    ) -> None:
+        plugins = self._plugins("hdfilme")
+        runner = _runner(_registry(plugins), mirror_groups=self._GROUPS)
+
+        with capture_logs() as logs:
+            results = await _search(runner, list(plugins), ["q"])
+
+        assert [r.download_link for r in results] == ["https://dood/1"]
+        assert plugins["streamkiste"].search.await_count == 0
+        standby = [e for e in logs if e["event"] == "stremio_mirror_standby"]
+        assert [(e["plugin"], e["standby"]) for e in standby] == [
+            ("hdfilme", "streamcloud")
+        ]
+
+    async def test_the_member_that_missed_ranks_behind(self) -> None:
+        plugins = self._plugins("hdfilme")
+        runner = _runner(_registry(plugins), mirror_groups=self._GROUPS)
+        await self._searched(runner, plugins)
+
+        assert await self._searched(runner, plugins) == ["streamcloud"]
+
+    async def test_the_ranking_follows_the_member_that_delivers(self) -> None:
+        """hdfilme misses, then streamcloud: hdfilme ranks first again."""
+        plugins = self._plugins("hdfilme")
+        runner = _runner(
+            _registry(plugins), mirror_groups={"hdfilme": "g", "streamcloud": "g"}
+        )
+        await self._searched(runner, plugins)
+        plugins["hdfilme"].search.return_value = [_sr("https://dood/1")]
+        plugins["streamcloud"].search.return_value = []
+
+        assert await self._searched(runner, plugins) == [
+            "hdfilme",
+            "streamcloud",
+            "streamkiste",
+        ]
+        assert await self._searched(runner, plugins) == ["hdfilme", "streamkiste"]
+
+    async def test_an_absent_title_costs_two_searches(self) -> None:
+        """Two empty answers agree: the title is not in the database, and
+        the ranking stays."""
+        plugins = self._plugins("hdfilme", "streamcloud", "streamkiste")
+        runner = _runner(_registry(plugins), mirror_groups=self._GROUPS)
+
+        assert await self._searched(runner, plugins) == ["hdfilme", "streamcloud"]
+        assert await self._searched(runner, plugins) == ["hdfilme", "streamcloud"]
+
+    async def test_a_failing_member_hands_over_too(self) -> None:
+        plugins = self._plugins()
+        plugins["hdfilme"].search.side_effect = RuntimeError("theme changed")
+        runner = _runner(_registry(plugins), mirror_groups=self._GROUPS)
+
+        results = await _search(runner, list(plugins), ["q"])
+
+        assert [r.download_link for r in results] == ["https://dood/1"]
+        assert plugins["streamcloud"].search.await_count == 1
+
+    async def test_the_standby_has_a_closed_breaker(self) -> None:
+        plugins = self._plugins("hdfilme")
+        breaker = PluginCircuitBreaker(failure_threshold=1, cooldown_seconds=60)
+        breaker.record_failure("streamcloud:2000")
+        runner = _runner(
+            _registry(plugins), mirror_groups=self._GROUPS, circuit_breaker=breaker
+        )
+
+        assert await self._searched(runner, plugins) == ["hdfilme", "streamkiste"]
+
+
 def _scores(**members: tuple[float, float]) -> AsyncMock:
     """Score store with (final_score, confidence) per plugin."""
 

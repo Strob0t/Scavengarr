@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: A Mirror Group Fails Over When Its Member Gives Nothing
+- A Stremio request asks one member of a mirror group (hdfilme, streamcloud, streamkiste). Empty answers trip no breaker, so a member whose parser broke after a theme change kept being asked while the others still delivered. A member that gives nothing for a query (no hits, an error, a timeout) now hands it to the next member with a closed breaker, within the search deadline; when that one delivers, the member ranks behind the others until it delivers again. A title the database lacks costs two searches instead of one, never three. Found by the code review (2026-10-06).
+
 ### Fix: SuperVideo's Ad Pages Stay Out With `verify_streams` Off
 - SuperVideo has no check of its own and relies on the registry's playback check, which `stremio.verify_streams: false` turned off: its CDN's script and ad pages reached Stremio as streams. A resolver without a check of its own now sets `needs_playback_check`, and the registry checks its results with `verify_streams` off too (the hoster breaker pauses SuperVideo as before). Found by the code review (2026-10-06).
 

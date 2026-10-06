@@ -101,6 +101,9 @@ class PluginSearchRunner:
         self._plugin_health = plugin_health
         # Plugin scores pick a mirror group's member
         self._score_store = score_store
+        # Breaker keys of mirror members that gave nothing while their
+        # standby delivered: they rank behind the other members
+        self._mirror_misses: set[str] = set()
 
     async def search_with_fallback(
         self,
@@ -141,7 +144,9 @@ class PluginSearchRunner:
         """
         plugin_names = self._reachable(plugin_names)
         scores = await self._mirror_scores(plugin_names, category)
-        plugin_names = self._one_per_mirror_group(plugin_names, category, scores)
+        plugin_names, standbys = self._one_per_mirror_group(
+            plugin_names, category, scores
+        )
 
         # --- Fire-and-forget pre-warm for shared Playwright browser ---
         if self._browser_warmup_fn is not None:
@@ -163,6 +168,7 @@ class PluginSearchRunner:
                 budget=budget,
                 deadline=deadline,
                 on_results=on_results,
+                standbys=standbys,
             )
             for q in queries
         ]
@@ -222,28 +228,40 @@ class PluginSearchRunner:
         plugin_names: list[str],
         category: int | None,
         scores: Mapping[str, float],
-    ) -> list[str]:
-        """Keep one plugin per mirror group: the best-scored member with a
-        closed breaker.
+    ) -> tuple[list[str], dict[str, str]]:
+        """Keep one plugin per mirror group: the best-ranked member with a
+        closed breaker; the next one is its standby (member -> standby).
 
         Mirrors front one database (hdfilme, streamcloud, streamkiste):
         asking all of them triples the work for the same streams. The member
         with the best plugin score (the scoring subsystem's health and search
-        probes) is asked, without scores the first one. When no member's
-        breaker is closed, all stay in and their breakers decide, so a
-        half-open probe can bring one back.
+        probes) is asked, without scores the first one; a member that gave
+        nothing while its standby delivered ranks behind the others. When no
+        member's breaker is closed, all stay in and their breakers decide,
+        so a half-open probe can bring one back.
         """
         if not self._mirror_groups:
-            return plugin_names
-        ranked = sorted(plugin_names, key=lambda n: -scores.get(n, _NEUTRAL_SCORE))
+            return plugin_names, {}
+
+        def rank(name: str) -> tuple[bool, float]:
+            missed = _breaker_key(name, category) in self._mirror_misses
+            return missed, -scores.get(name, _NEUTRAL_SCORE)
+
         chosen: dict[str, str] = {}
-        for name in ranked:
+        standbys: dict[str, str] = {}
+        breaker = self._circuit_breaker
+        for name in sorted(plugin_names, key=rank):
             group = self._mirror_groups.get(name)
-            if group is None or group in chosen:
+            if group is None:
                 continue
-            breaker = self._circuit_breaker
-            if breaker is None or breaker.is_closed(_breaker_key(name, category)):
+            if breaker is not None and not breaker.is_closed(
+                _breaker_key(name, category)
+            ):
+                continue
+            if group not in chosen:
                 chosen[group] = name
+            elif chosen[group] not in standbys:
+                standbys[chosen[group]] = name
 
         def keep(name: str) -> bool:
             group = self._mirror_groups.get(name)
@@ -252,7 +270,7 @@ class PluginSearchRunner:
         skipped = [name for name in plugin_names if not keep(name)]
         if skipped:
             log.info("stremio_mirrors_skipped", chosen=chosen, skipped=skipped)
-        return [name for name in plugin_names if keep(name)]
+        return [name for name in plugin_names if keep(name)], standbys
 
     async def search_plugins(
         self,
@@ -265,21 +283,24 @@ class PluginSearchRunner:
         budget: ConcurrencyBudgetPort,
         deadline: float | None = None,
         on_results: OnResultsFn | None = None,
+        standbys: Mapping[str, str] | None = None,
     ) -> list[SearchResult]:
         """Search all plugins in parallel with bounded concurrency.
 
         Uses the global concurrency pool's fair-share budget to manage
         httpx and Playwright slot allocation across requests. Each
         plugin's results go to *on_results* once it has given its slot back.
+        A plugin that gives nothing (no hits, error, timeout) hands the
+        query to its standby in *standbys* (a mirror of its database).
         """
 
-        async def _search_one(name: str) -> list[SearchResult]:
+        async def _run(name: str) -> list[SearchResult]:
             if self._plugins.get_mode(name) == "playwright":
                 slot = budget.acquire_pw()
             else:
                 slot = budget.acquire_httpx()
             async with slot:
-                results = await self._run_plugin_with_timeout(
+                return await self._run_plugin_with_timeout(
                     name,
                     query,
                     category,
@@ -287,6 +308,25 @@ class PluginSearchRunner:
                     episode=episode,
                     deadline=deadline,
                 )
+
+        async def _search_one(name: str) -> list[SearchResult]:
+            results = await _run(name)
+            standby = (standbys or {}).get(name)
+            if standby is not None and not results:
+                results = await _run(standby)
+                log.info(
+                    "stremio_mirror_standby",
+                    plugin=name,
+                    standby=standby,
+                    result_count=len(results),
+                )
+                # Two empty answers agree (the title is not there); a
+                # delivering standby outranks the member from now on
+                if results:
+                    self._mirror_misses.add(_breaker_key(name, category))
+                    self._mirror_misses.discard(_breaker_key(standby, category))
+            elif standby is not None:
+                self._mirror_misses.discard(_breaker_key(name, category))
             if results and on_results is not None:
                 await on_results(results)
             return results
