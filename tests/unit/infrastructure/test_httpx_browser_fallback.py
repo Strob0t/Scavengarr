@@ -362,6 +362,27 @@ class TestBrowserSessionReuse:
         assert route.calls.last.request.headers["user-agent"] == "BrowserUA/1.0"
 
     @respx.mock
+    async def test_posts_use_the_browser_session(self) -> None:
+        """megakino, streamcloud and streamkiste POST their searches to the
+        host whose pages they load: the clearance cookie needs the browser's
+        User-Agent there too."""
+        respx.get("https://cf.example/a").respond(403, text=_CF_CHALLENGE)
+        route = respx.post("https://cf.example/search").respond(200, text="ok")
+        HttpxPluginBase.set_browser_fetcher(_solving_fetcher())
+
+        async with httpx.AsyncClient() as client:
+            plugin = await _plugin_with_client(client)
+            await plugin._fetch_text("https://cf.example/a")
+            resp = await plugin._safe_fetch(
+                "https://cf.example/search", method="POST", data={"story": "x"}
+            )
+
+        assert resp is not None
+        sent = route.calls.last.request
+        assert sent.headers["user-agent"] == "BrowserUA/1.0"
+        assert sent.headers["cookie"] == "cf_clearance=abc"
+
+    @respx.mock
     async def test_rejected_session_sends_the_host_to_the_browser(self) -> None:
         """A challenge despite a fresh session: the site binds it to the browser."""
         route = respx.get(url__startswith="https://cf.example/").respond(

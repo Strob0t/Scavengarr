@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: Plugin Requests Keep Their User-Agent
+- `_safe_fetch()` with extra headers sent the app's own `Scavengarr/<version>` User-Agent instead of the plugin's (aniworld's search), and its requests to a site whose browser session httpx had taken over (the search POSTs of megakino, streamcloud and streamkiste after a Cloudflare challenge) went out without the browser's User-Agent, which the clearance cookie needs. It now sends them like `_fetch_text()`. Found by the doc review (2026-10-06).
+
 ### Fix: A Misspelled Disable Override Is Reported
 - `plugins.overrides.<name>.enabled: false` with a name no plugin has disabled nothing and logged `plugin_disabled_by_config` as if it had; it now logs the `plugin_override_unknown` warning like every other unknown override. Found by the doc review (2026-10-06).
 

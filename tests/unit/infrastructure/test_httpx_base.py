@@ -364,6 +364,28 @@ class TestSharedHttpClient:
         assert call_kwargs["headers"] == {"User-Agent": "CustomAgent/1.0"}
 
     @pytest.mark.asyncio
+    async def test_safe_fetch_extra_headers_keep_the_user_agent(self) -> None:
+        """aniworld's AJAX search adds a header: its request went out with
+        the app's own User-Agent instead of the plugin's."""
+        shared = AsyncMock(spec=httpx.AsyncClient)
+        resp = MagicMock(spec=httpx.Response, history=[])
+        resp.status_code = 200
+        resp.raise_for_status = MagicMock()
+        shared.get = AsyncMock(return_value=resp)
+        HttpxPluginBase.set_shared_http_client(shared)
+
+        plugin = _TestPlugin()
+        plugin._user_agent = "CustomAgent/1.0"
+        await plugin._safe_fetch(
+            "https://example.com/ajax", headers={"X-Requested-With": "XMLHttpRequest"}
+        )
+
+        assert shared.get.call_args[1]["headers"] == {
+            "User-Agent": "CustomAgent/1.0",
+            "X-Requested-With": "XMLHttpRequest",
+        }
+
+    @pytest.mark.asyncio
     async def test_safe_fetch_no_overrides_with_own_client(self) -> None:
         plugin = _TestPlugin()
         resp = MagicMock(spec=httpx.Response, history=[])

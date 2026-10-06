@@ -284,16 +284,18 @@ class HttpxPluginBase:
     ) -> httpx.Response | None:
         """Fetch *url* with structured error logging.
 
-        When using a shared client, per-plugin timeout and headers are
-        applied per-request so each plugin's overrides still work.
+        Sends the plugin's timeout and User-Agent like ``_fetch_text()``
+        (``_request_kwargs()``: the browser's User-Agent to a site whose
+        session httpx took over); the caller's *headers* go on top.
         Returns ``None`` on failure instead of raising.
         """
         client = await self._ensure_client()
 
-        # Apply per-plugin overrides when using the shared client
-        if client is self._shared_http_client:
-            kwargs.setdefault("timeout", httpx.Timeout(self._timeout))
-            kwargs.setdefault("headers", {"User-Agent": self._user_agent})
+        defaults = self._request_kwargs(client, url)
+        if "timeout" in defaults:
+            kwargs.setdefault("timeout", defaults["timeout"])
+        if "headers" in defaults:
+            kwargs["headers"] = {**defaults["headers"], **(kwargs.get("headers") or {})}
 
         try:
             handler = getattr(client, method.lower(), client.get)
