@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Performance: diskcache Writes One at a Time
+- The diskcache adapter let up to `cache.max_concurrent` writes run in parallel, but SQLite has one writer: the parallel writes only waited for its lock. A Stremio answer saves the links of its streams together, and 20 links took 80-100 ms to save; with the writes one after another (an `asyncio.Lock` for `set`, `delete` and `clear`) they take 5-6 ms. Reads stay parallel. This also helps the search cache and the plugin scores; Redis is unchanged. Found by the code review (2026-10-06).
+
 ### Fix: crawli Reads Past Page 8
 - crawli took the last result page from page 1's pagination, but the site links a window of pages (page 1 up to 8, page 8 up to 11): a search stopped after 80 results. Every page now extends the window, up to 100 pages (1000 results). Checked on the live site (2026-10-06). Found by the code review (2026-10-06).
 

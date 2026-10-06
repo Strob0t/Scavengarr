@@ -107,7 +107,7 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 ### Cache
 
 - `create_cache(backend="diskcache" | "redis", *, directory, redis_url, ttl_seconds=3600, max_concurrent=10)` returns a `CachePort`.
-- `DiskcacheAdapter` wraps the synchronous `diskcache.Cache`: all disk I/O runs via `asyncio.to_thread()`, and an `asyncio.Semaphore(max_concurrent)` (default 10) limits SQLite lock contention.
+- `DiskcacheAdapter` wraps the synchronous `diskcache.Cache`: all disk I/O runs via `asyncio.to_thread()`, and an `asyncio.Semaphore(max_concurrent)` (default 10) bounds the parallel operations. Writes (`set`, `delete`, `clear`) run one at a time: SQLite has one writer, and 20 parallel writes waited 80-100 ms for its lock where one after another took 6 ms.
 - `RedisAdapter` uses `redis.asyncio` (no thread offloading), a semaphore (default 50), and pickles values.
 - In `environment == "dev"` the cache is cleared on startup (`composition.py`).
 

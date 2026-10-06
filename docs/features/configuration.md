@@ -476,7 +476,7 @@ Prometheus metrics (`/metrics`) need no setting. See [Observability](./observabi
 | `cache.ttl_seconds` | int | `3600` | Default time-to-live for cache entries (seconds) |
 | `cache.search_ttl_seconds` | int | `900` | TTL for cached search results (seconds), Torznab and Stremio; Stremio entries answer 6 h longer while a background search refreshes them (one title at a time). 0 = disabled (YAML-only) |
 | `cache.crawljob_ttl_seconds` | int | `3600` | How long a Torznab result's CrawlJob stays downloadable (seconds, > 0); the grab answers 404 afterwards (YAML-only) |
-| `cache.max_concurrent` | int | `10` | Semaphore limit for parallel cache operations, both backends (`SCAVENGARR_CACHE_MAX_CONCURRENT`); Redis handles more, e.g. `50` |
+| `cache.max_concurrent` | int | `10` | Semaphore limit for parallel cache operations, both backends (`SCAVENGARR_CACHE_MAX_CONCURRENT`); Redis handles more, e.g. `50`. diskcache writes run one at a time regardless (SQLite has one writer) |
 
 The top-level key `cache_dir` also exists in the schema but is currently unused (no effect); only `cache.dir` is used.
 

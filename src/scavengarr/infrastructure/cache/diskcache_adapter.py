@@ -17,7 +17,9 @@ class DiskcacheAdapter:
     """Async wrapper for diskcache.Cache (sync-only library).
 
     - Uses `asyncio.to_thread` for I/O (no blocking of the event loop).
-    - Semaphore prevents too many parallel disk writes (SQLite lock contention).
+    - Semaphore bounds the parallel disk operations; writes run one at a
+      time (SQLite has one writer: 20 parallel writes waited 80-100 ms
+      for its lock, one after another they took 6 ms).
     - Implements context manager (`async with`).
 
     Args:
@@ -36,6 +38,7 @@ class DiskcacheAdapter:
         self.default_ttl = ttl_seconds
         self._cache: DiskCache | None = None
         self._semaphore = asyncio.Semaphore(max_concurrent)
+        self._write_lock = asyncio.Lock()
 
         log.info(
             "diskcache_adapter_init",
@@ -90,7 +93,7 @@ class DiskcacheAdapter:
 
         expire_time = ttl if ttl is not None else self.default_ttl
 
-        async with self._semaphore:
+        async with self._write_lock, self._semaphore:
             await asyncio.to_thread(
                 self._cache.set,
                 key,
@@ -109,7 +112,7 @@ class DiskcacheAdapter:
         if self._cache is None:
             return False
 
-        async with self._semaphore:
+        async with self._write_lock, self._semaphore:
             deleted = await asyncio.to_thread(self._cache.delete, key)
             log.debug("cache_delete", key=key, deleted=deleted)
             return deleted
@@ -130,6 +133,6 @@ class DiskcacheAdapter:
         if self._cache is None:
             return
 
-        async with self._semaphore:
+        async with self._write_lock, self._semaphore:
             await asyncio.to_thread(self._cache.clear)
             log.warning("cache_cleared", directory=str(self.directory))
