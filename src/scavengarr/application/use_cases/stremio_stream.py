@@ -670,19 +670,22 @@ class StremioStreamUseCase:
 
         Results from the search cache go out at once with the resolutions in
         the resolver's cache when one of them is a video. The links without
-        one resolve in the background for the next request, one run per
-        cache key at a time (such answers waited for the resolve grace,
-        4.1-4.4 s, for one link resolved for the first time). Otherwise the
-        streams resolve as ``_resolve_as_results_arrive`` describes.
+        a cached outcome resolve in the background for the next request,
+        one run per cache key at a time (such answers waited for the resolve
+        grace, 4.1-4.4 s, for one link resolved for the first time); with
+        none, no run starts. Otherwise the streams resolve as
+        ``_resolve_as_results_arrive`` describes.
         """
-        if from_cache and self._cached_resolution_fn is not None:
+        cached_fn = self._cached_resolution_fn
+        if from_cache and cached_fn is not None:
             ranked = await self._rank(progress.results, plugin_languages)
             ranked = ranked[: self._max_probe_count]
-            cached = self._cached_resolutions(ranked, self._cached_resolution_fn)
+            cached = self._cached_resolutions(ranked, cached_fn)
             if any(is_direct_video_url(r, ranked[i].url) for i, r in cached.items()):
                 log.info("stremio_resolve_from_cache", resolved=len(cached))
                 self._telemetry.count("stremio_phase", "cached", phase="resolve")
-                if key not in self._background_resolutions:
+                unresolved = any(not cached_fn(s.url)[0] for s in ranked)
+                if unresolved and key not in self._background_resolutions:
                     task = self._spawn(
                         self._resolve_in_background(
                             progress, plugin_languages, resolve_fn

@@ -2171,6 +2171,18 @@ class TestCachedAnswers:
             "https://cdn.example/new.mp4",
         ]
 
+    async def test_a_fully_cached_answer_resolves_nothing_in_the_background(
+        self,
+    ) -> None:
+        """Every link has a cached outcome (code review, 2026-10-06)."""
+        resolutions = _Resolutions(alive=(_VOE,), dead=(_DOOD,))
+        uc = _from_cache([_link(_VOE), _link(_DOOD)], resolutions)
+
+        streams = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        assert [_video(uc, s) for s in streams] == ["https://cdn.example/best.mp4"]
+        assert not uc._background_resolutions  # noqa: SLF001
+
     async def test_one_background_resolution_per_title(self) -> None:
         resolutions = _Resolutions(alive=(_VOE,), delay=0.3)
         uc = _from_cache([_link(_VOE), _link(_DOOD)], resolutions)

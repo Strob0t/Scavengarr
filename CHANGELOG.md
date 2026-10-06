@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Performance: A Fully Cached Stremio Answer Resolves Nothing in the Background
+- An answer from the search cache started a background resolution for the next request even when every link already had a cached outcome (a video or dead): it ranked the results once more and resolved nothing. It starts only for links without one now. Found by the code review (2026-10-06).
+
 ### Refactor: The HLS Proxy's Refusal Rule Lives in `StremioLinks`
 - Which CDN answers to a stream's playlist resolve the hoster URL again (403, 404, 410: an expired token) was decided in the Stremio router, against the layer rule (interfaces do I/O only). `StremioLinks.after_refusal(link, status)` (application) now decides it and resolves past the resolver's cache; the router fetches and answers. Behavior is unchanged. Found by the code review (2026-10-06).
 
