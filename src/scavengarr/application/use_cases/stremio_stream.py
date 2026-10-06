@@ -591,18 +591,16 @@ class StremioStreamUseCase:
         resolved_map: dict[int, ResolvedStream],
         base_url: str,
     ) -> list[StremioStream]:
-        """Point the streams at their playable URLs.
+        """Point the streams at Scavengarr and save the links it looks up.
 
         With a resolve callback, the streams in *resolved_map* (by index)
-        get their direct video URL or an HLS proxy URL, with
-        ``behaviorHints.proxyHeaders`` so Stremio sends the right HTTP
-        headers (Referer, User-Agent); the others are dropped. Without one,
-        streams go through the ``/play/`` endpoint. Only streams served
-        through our own endpoints (``/play/``, the HLS proxy) get their link
-        saved; one save per ranked stream (dozens) delayed the answer by
-        seconds.
+        go through ``/play/`` or, for HLS, the proxy
+        (``build_stream_from_resolved``); the others are dropped. Without
+        one, every stream goes through ``/play/``. Each answered stream
+        gets its link saved; one save per ranked stream (dozens) delayed
+        the answer by seconds.
         """
-        answer: list[tuple[StremioStream, CachedStreamLink | None]] = []
+        answer: list[tuple[StremioStream, CachedStreamLink]] = []
         skipped_echo = 0
         skipped_unresolved = 0
         has_resolver = bool(self._resolve_fn)
@@ -624,15 +622,10 @@ class StremioStreamUseCase:
             else:
                 # No resolver configured — proxy through /play/ endpoint
                 built = replace(stream, url=f"{base_url}/api/v1/stremio/play/{sid}")
-            served_here = built.url.startswith(base_url)
-            link = build_cache_link(sid, ranked[i], resolved) if served_here else None
-            answer.append((built, link))
+            answer.append((built, build_cache_link(sid, ranked[i], resolved)))
 
-        # --- Cache step (parallel writes) for streams served by us ---
-        unsaved = await self._save_links([lnk for _, lnk in answer if lnk is not None])
-        proxied = [
-            s for s, lnk in answer if lnk is None or lnk.stream_id not in unsaved
-        ]
+        unsaved = await self._save_links([lnk for _, lnk in answer])
+        proxied = [s for s, lnk in answer if lnk.stream_id not in unsaved]
         skipped_unsaved = len(answer) - len(proxied)
         if skipped_echo or skipped_unresolved or skipped_unsaved:
             log.info(
