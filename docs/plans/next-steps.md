@@ -98,7 +98,7 @@ AGENTS.md requires fully typed code, but only the editor checks it.
 | Question | Recommendation |
 |---|---|
 | Keep the repository public? | Private, if it is for personal use: nobody follows it (0 stars, 0 forks), and a takedown notice against the sites named in `docs/plugins.md` would hit the whole repository. |
-| OpenSpec | **Decided 2026-10-06: keep it.** Archive `add-config-system` and `add-plugin-loader` ([ideas-backlog.md](ideas-backlog.md) I16); new changes use it (`add-observability` and the advisor review's changes). |
+| OpenSpec | **Decided 2026-10-06: keep it.** Archive `add-config-system` and `add-plugin-loader` ([ideas-backlog.md](ideas-backlog.md) I16, **done** 2026-10-06); new changes use it (`add-observability` and the advisor review's changes). |
 | Torznab `cat=` with several ids | Pass all ids to the plugins (a port change); today `cat=5070,5000` becomes a strict 5070 request ([open observations](code-review-fixes.md#open-observations)). |
 | DDL hosters in Stremio | Decide whether validate-only DDL hosters may appear as Stremio streams; today the playback check drops them all. |
 | Forum credentials | Provide them as `SCAVENGARR_*` variables if the forum plugins should be checked live. |

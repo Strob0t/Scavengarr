@@ -125,8 +125,16 @@ OpenSpec changes live in `openspec/changes/<change-id>/`:
 
 ### Changes
 
-1. `add-config-system` – Type-safe config loading (Pydantic Settings): implemented except the redaction helper, the effective-config debug print and wrapped YAML errors
-2. `add-plugin-loader` – Plugin discovery and validation: Python part implemented under `domain/plugins` + `infrastructure/plugins`; YAML part superseded (removed in `42fced9`)
+Open (`openspec list`):
+- `add-observability` – Prometheus metrics, request ids, on-demand tracing: complete, shipped in v0.3.0
+- `add-stream-media-quality` – Stream quality and size from the stream itself (approved 2026-10-06)
+- `add-container-image` – A published multi-arch container image (approved 2026-10-06)
+- `persist-resolver-state` – Hoster resolutions and circuit breakers that survive a restart (approved 2026-10-06)
+- `add-anime-ids` – `kitsu:` stream requests (approved 2026-10-06)
+
+Archived unfinished on 2026-10-06, without specs (`changes/archive/`; untouched since January, [ideas-backlog.md](../docs/plans/ideas-backlog.md) I16):
+- `add-config-system` – Type-safe config loading (Pydantic Settings): implemented except wrapped YAML errors; the startup log's `config_effective` (secrets masked) came later without it
+- `add-plugin-loader` – Plugin discovery and validation: Python part implemented under `domain/plugins` + `infrastructure/plugins`; YAML part superseded (removed in `42fced9`)
 
 Features built without an OpenSpec change (see `CHANGELOG.md`): Playwright plugins and shared browser pool, per-plugin authentication, Torznab use cases and presenter, FastAPI endpoints (`/api/v1/torznab/{plugin}?t=search|caps`), Stremio addon, hoster resolvers, search caching, plugin scoring.
 
@@ -144,14 +152,14 @@ These are fixed across all OpenSpec changes and AI implementations:
 | **Cache Backend** | `diskcache` (default), Redis (optional) | `add-config-system` |
 | **Logging Framework** | `structlog` with JSON/console output | `add-config-system` |
 | **Config Precedence** | CLI > ENV (incl. `--dotenv`) > YAML > defaults | `add-config-system` |
-| **Python Version** | `^3.12,<3.14` | `pyproject.toml` |
+| **Python Version** | `>=3.12,<3.15` | `pyproject.toml` |
 | **API Prefix** | `/api/v1` (port 7979 by default) | `src/scavengarr/interfaces/app.py` |
 
 ---
 
-**Last Updated**: 2026-09-28
+**Last Updated**: 2026-10-06
 **Author**: Scavengarr Team
-**OpenSpec Changes**: `add-config-system`, `add-plugin-loader`
+**OpenSpec Changes**: see [Changes](#changes)
 
 ---
 
