@@ -565,3 +565,16 @@ class TestMovie2k:
         assert results[0].category == 5000
         labels = [lk["label"] for lk in results[0].download_links or []]
         assert labels and all(label.startswith("1x1 ") for label in labels)
+
+
+class TestWarezomen:
+    """Page 2 of a search (captured 2026-10-06): previous and next page."""
+
+    def test_search_page_rows_and_next_page(self) -> None:
+        parser = _plugin_module("warezomen")._SearchResultParser()
+        parser.feed(_page("warezomen", "search-windows-page-2"))
+
+        assert len(parser.results) == 60
+        assert parser.results[0]["title"].startswith("Windows Server 2025 LTSC")
+        assert {r["type"] for r in parser.results} == {"Software", "Other"}
+        assert parser.next_page_url == "/download/windows/3/"

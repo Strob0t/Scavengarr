@@ -91,11 +91,12 @@ class _SearchResultParser:
         tree = LexborHTMLParser(html)
         for row in tree.css("table.download tbody tr"):
             self._add_row(row)
-        # The last "Next Page" link (HTML5 parsing drops a <td id="pages">
-        # outside any table, so the link alone counts)
-        for link in tree.css("a"):
-            if "next page" in link.text().strip().lower():
+        # The pagination cell's "Next Page" link; a result's short title can
+        # read "Next Page" too
+        for link in tree.css("#pages a"):
+            if link.text(strip=True).lower().startswith("next page"):
                 self.next_page_url = link.attributes.get("href") or ""
+                break
 
     def _add_row(self, row: LexborNode) -> None:
         cells = row.css("td")

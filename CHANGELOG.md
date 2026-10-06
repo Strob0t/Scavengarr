@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: warezomen Follows Only Its Pagination Link
+- warezomen took the last link reading "next page" anywhere on a search page as the next page: on a result list's last page a result whose short title read "Next Page …" sent the search to that result's download page. Only the pagination cell's "Next Page" link counts now. The parser is also tested on a captured search page (`tests/fixtures/html/warezomen/`). Found by the code review (2026-10-06).
+
 ### Fix: HEAD on an HLS Segment Downloads Nothing
 - The HLS proxy answered `HEAD` on a segment like `GET`: it downloaded the whole segment (2-10 MB) from the CDN, the server dropped the body, and `scavengarr_hls_proxy_bytes_total` counted the bytes as sent. `HEAD` now takes the CDN's status and content type and closes its answer before the bytes. Found by the code review (2026-10-06).
 

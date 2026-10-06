@@ -103,11 +103,31 @@ _PAGINATION_HTML = """
     <td class="t2">Movie</td>
     <td>01-Jan-2025</td>
   </tr>
+  <tr><td colspan="4" id="pages">[ 1 ] &nbsp; <a href="/download/test/2/"
+      title="Downloads | Page 2">Next Page &gt;</a></td></tr>
 </tbody>
 </table>
-<td id="pages">
-  <a href="/download/test/2/">Next Page &gt;</a>
-</td>
+</body></html>
+"""
+
+# The last page links back only; a result's short title reads "Next Page"
+_LAST_PAGE_HTML = """
+<!DOCTYPE html>
+<html><body>
+<table class="download">
+<tbody>
+  <tr>
+    <td class="n"><a rel="nofollow" title="Next.Page.Pro.2.0"
+       href="https://example.com/np">Next Page Pro 2.0</a></td>
+    <td class="n">example</td>
+    <td class="t1">Software</td>
+    <td>01-Jan-2025</td>
+  </tr>
+  <tr><td colspan="4" id="pages"><a href="/download/test/1/"
+      title="Downloads | Page 1">&lt; Previous Page</a> &nbsp; [ 2 ]</td></tr>
+</tbody>
+</table>
+<p><a href="/next-page-tips/">Next page tips</a></p>
 </body></html>
 """
 
@@ -214,6 +234,13 @@ class TestSearchResultParser:
     def test_no_pagination(self) -> None:
         parser = _SearchResultParser()
         parser.feed(_RESULT_TABLE_HTML)
+        assert parser.next_page_url == ""
+
+    def test_only_the_pagination_link_is_the_next_page(self) -> None:
+        """A result or page link reading "Next Page" is no further page."""
+        parser = _SearchResultParser()
+        parser.feed(_LAST_PAGE_HTML)
+        assert [r["title"] for r in parser.results] == ["Next.Page.Pro.2.0"]
         assert parser.next_page_url == ""
 
     def test_separator_rows_skipped(self) -> None:
