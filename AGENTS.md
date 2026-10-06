@@ -50,6 +50,13 @@ Rules:
 - Push after each successful change: `git push origin staging`.
 - Larger refactors: write a brief Markdown plan (problem, design, affected files, tests) first.
 
+### Working efficiently (agents)
+- Find code by symbol, then read only the lines you need: the `LSP` tool (definitions, references; `basedpyright-lsp`, §9) or `grep -n`, then a ranged read. Whole-file reads of large modules cost the most context.
+- Package APIs: the installed source in `.venv` (§4); the Context7 MCP server serves current library docs where it is configured.
+- Keep tool output short: pipe pytest, pre-commit and git output through `tail` or `grep`. Full test runs use `-n auto`; a single test file runs faster without it.
+- Run slow work in the background and wait for its notification instead of polling with `sleep`: after a push `gh run watch <run-id> --exit-status`, likewise live tests and benchmarks.
+- Production only through `scripts/prodctl.py` (§9). A probe needed twice belongs in `scripts/probes/`, not in a throwaway script.
+
 ### Merge to main (only on explicit user request)
 1. Bump the version in `pyproject.toml` (PATCH +1 unless MINOR/MAJOR is warranted). It is the only place: the app, the Stremio manifest, Torznab caps and the default User-Agent read it through `infrastructure/version.py` (package metadata; `poetry install` refreshes it in the dev venv).
 2. Update `CHANGELOG.md` (newest entry on top with version, date, changes; current bugs under `KNOWN_ISSUES`).
@@ -161,6 +168,7 @@ Step-by-step guides:
 - **Editor extensions**: `customizations.vscode.extensions` in `.devcontainer/devcontainer.json` lists only extensions available on Open VSX, so VS Code and VSCodium (DevPod) install the same set; type checking uses `detachhead.basedpyright` in `standard` mode (`[tool.basedpyright]` in `pyproject.toml`, so the editor and `poetry run basedpyright` apply the same rules), not Pylance, formatting uses ruff.
 - **ruff version**: `pyproject.toml` pins ruff to exactly the `rev` of `ruff-pre-commit` in `.pre-commit-config.yaml` (the edit hook uses the venv's ruff, pre-commit its own); bump both together, otherwise the two formatters can undo each other.
 - **Claude Code hooks and skills**: `.claude/hooks/` (`block-dangerous.sh` PreToolUse guard; `format-and-lint.sh` runs ruff on each edited `.py` file inside the repository and reports unfixable errors back to Claude via exit 2; it leaves unused imports (F401) to pre-commit, so an import added before its first use survives) and `.claude/skills/` (`commit`, `test`, `new-plugin`, `new-resolver`; thin checklists pointing to `docs/`) are versioned; the rest of `.claude/` (e.g. `settings.local.json`, which wires the hooks, and `worktrees/`) stays gitignored. After changing a hook, run `bash -n` on it: a syntax error exits 2 and blocks every Bash command.
+- **Production diagnostics**: `scripts/prodctl.py` (`ps`, `stats`, `logs`, `metrics`, `state`, `probe`) reads production through Portainer's Docker API with `PORTAINER_URL` and `PORTAINER_API_KEY` from `.env.devcontainer` (`scripts/portainer.py`, shared with `stremio_profile.py`). Everything it prints passes `portainer.mask()` (URLs shrink to their host; no IP addresses, tokens or credentials), and a budget shared by all processes allows 100 Portainer requests per minute. Probes in `scripts/probes/` (`resources`, `tasks`, `links`, `redis`) run inside the container and must not change state; rebuilds and restarts stay with the user.
 - **Code intelligence**: `.claude/plugins/` is a local plugin marketplace (`scavengarr-dev`) with `basedpyright-lsp`, which runs the venv's `basedpyright-langserver` (the main checkout's venv in a worktree): Claude gets type diagnostics after each edit of a `.py` file and the `LSP` tool (definitions, references, hover) instead of grepping for symbols. Wire it once per machine from the main checkout: `claude plugin marketplace add ./.claude/plugins` and `claude plugin install basedpyright-lsp@scavengarr-dev --scope local`; it loads in the next session. The marketplace loads in place, so edits under `.claude/plugins/` apply without a reinstall.
 
 ---
@@ -175,6 +183,7 @@ Step-by-step guides:
 | Stremio addon | `src/scavengarr/interfaces/api/stremio/` |
 | Plugins | `plugins/` (generated list: `docs/plugins.md`, `scripts/generate_plugin_list.py`) |
 | Contributor guide, Docker Compose | `CONTRIBUTING.md`, `docker-compose.yml` (profiles `solver`, `redis`, `tracing`) |
+| Production diagnostics | `scripts/prodctl.py`, `scripts/probes/`, `scripts/portainer.py` |
 | Feature docs / architecture / plans | `docs/features/`, `docs/architecture/`, `docs/plans/` |
 | Refactor history | `docs/refactor/COMPLETED/` |
 | OpenSpec change specs | `openspec/changes/` |

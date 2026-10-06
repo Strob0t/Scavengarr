@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import subprocess
+import sys
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -18,13 +19,17 @@ _PORTAINER = "http://portainer.test:9000"
 
 
 def _load() -> ModuleType:
-    spec = importlib.util.spec_from_file_location(
-        "stremio_profile", _SCRIPTS / "stremio_profile.py"
-    )
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    sys.path.insert(0, str(_SCRIPTS))  # the script imports portainer
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "stremio_profile", _SCRIPTS / "stremio_profile.py"
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        sys.path.remove(str(_SCRIPTS))
 
 
 _mod = _load()
@@ -37,15 +42,6 @@ def _frame(text: str, stream: int = 1) -> bytes:
 
 def _log(event: str, **fields: Any) -> str:
     return json.dumps({"event": event, "level": "info", **fields})
-
-
-class TestDemux:
-    def test_joins_stdout_and_stderr_frames(self) -> None:
-        raw = _frame("one\n") + _frame("two\n", stream=2)
-        assert _mod.demux(raw) == "one\ntwo\n"
-
-    def test_plain_text_passes_through(self) -> None:
-        assert _mod.demux(b"plain log line\n") == "plain log line\n"
 
 
 class TestCountRequests:
@@ -166,6 +162,9 @@ class TestPortainer:
         respx.post(f"{_PORTAINER}/api/endpoints/3/docker/exec/e1/start").respond(
             content=_frame('{"python": 1.5, "chrome": 2.0}\n')
         )
+        respx.get(f"{_PORTAINER}/api/endpoints/3/docker/exec/e1/json").respond(
+            json={"ExitCode": 0}
+        )
         portainer = _mod.Portainer("scavengarr", _PORTAINER, "key")
 
         cpu = _mod.cpu_seconds(portainer)
@@ -177,25 +176,3 @@ class TestPortainer:
         # listing first: Portainer applies access labels of recreated containers
         assert listing.called
         assert create.calls.last.request.headers["X-API-Key"] == "key"
-
-    @respx.mock
-    def test_logs_are_demultiplexed(self) -> None:
-        respx.get(f"{_PORTAINER}/api/endpoints").respond(json=[{"Id": 3, "Type": 1}])
-        respx.get(f"{_PORTAINER}/api/endpoints/3/docker/containers/json").respond(
-            json=[]
-        )
-        logs = respx.get(
-            f"{_PORTAINER}/api/endpoints/3/docker/containers/scavengarr/logs"
-        ).respond(content=_frame("line one\n") + _frame("line two\n", stream=2))
-
-        text = _mod.Portainer("scavengarr", _PORTAINER, "key").logs(1700000000)
-
-        assert text == "line one\nline two\n"
-        assert logs.calls.last.request.url.params["since"] == "1700000000"
-
-    @respx.mock
-    def test_http_errors_raise(self) -> None:
-        respx.get(f"{_PORTAINER}/api/endpoints").respond(status_code=401)
-
-        with pytest.raises(httpx.HTTPStatusError):
-            _mod.Portainer("scavengarr", _PORTAINER, "bad").logs(0)

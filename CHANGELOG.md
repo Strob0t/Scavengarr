@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Chore: Read-Only Production Diagnostics (`scripts/prodctl.py`)
+- `scripts/prodctl.py` replaces ad-hoc Portainer scripts: `ps`, `stats` (CPU cores, memory without page cache, processes, network), `logs` (JSON records as `key=value`, health checks dropped, `--grep`, `--fields`, `--since`), `metrics`, `state` (`/api/v1/stats/metrics`) and `probe` (a Python file run inside the container). Everything printed passes `portainer.mask()`: URLs keep only scheme and host, IP addresses, tokens and credentials (also `user:password@` in URLs) are replaced. A budget shared by all processes allows 100 Portainer requests per minute; GETs are retried on 429 and 502 to 504, an exec only when Portainer refused it before it ran (429).
+- The Portainer client moved from `stremio_profile.py` into `scripts/portainer.py` (shared, with credentials from `.env.devcontainer`, which wins over a stale key in the environment); it lists containers once per client instead of before every request.
+- Versioned read-only probes in `scripts/probes/`: `resources`, `tasks`, `links`, `redis`. Documented in `docs/features/observability.md` and `AGENTS.md` §9, which also gains the agents' working rules (symbol lookup, short output, background CI watch, production only through `prodctl.py`).
+
 ### Chore: basedpyright Language Server Plugin for Claude Code
 - `.claude/plugins/` holds a local plugin marketplace (`scavengarr-dev`) with `basedpyright-lsp`: Claude Code starts the venv's `basedpyright-langserver` (`scripts/langserver.sh` finds the main checkout's venv from a worktree and resolves imports against the venv's interpreter), so it sees type errors after each edit and looks up definitions and references through the `LSP` tool instead of text search. Wiring per machine: see `AGENTS.md` §9. A stdio smoke test from the worktree and the main checkout reported exactly the planted type error, with `httpx` resolved, within 0.8 s.
 

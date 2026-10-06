@@ -25,9 +25,10 @@ installed into the container's ``/tmp`` and runs as root; the container needs
 
 Container access:
 
-- ``--portainer`` reads ``PORTAINER_URL`` and ``PORTAINER_API_KEY`` from the
-  environment. The Portainer user needs access to the container, e.g. through
-  the label ``io.portainer.accesscontrol.users``.
+- ``--portainer`` reads ``PORTAINER_URL`` and ``PORTAINER_API_KEY`` from
+  ``.env.devcontainer`` or the environment (``portainer.py``). The Portainer
+  user needs access to the container, e.g. through the label
+  ``io.portainer.accesscontrol.users``.
 - ``--docker`` uses the local docker CLI, so run the script on the Docker host.
 """
 
@@ -35,7 +36,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import socket
 import subprocess
@@ -45,6 +45,7 @@ from typing import Any, Protocol
 from urllib.parse import urlparse
 
 import httpx
+from portainer import Portainer, credentials
 
 # The titles of the 2026-10-04 baseline (docs/plans/pi-performance.md)
 BASELINE_IDS = ("movie/tt0816692", "series/tt0903747:1:2", "movie/tt0133093")
@@ -146,65 +147,6 @@ class DockerCli:
         return done.stdout + done.stderr
 
 
-class Portainer:
-    """The Docker API behind Portainer (``PORTAINER_URL``, ``PORTAINER_API_KEY``)."""
-
-    def __init__(self, name: str, url: str, api_key: str) -> None:
-        self._name = name
-        self._http = httpx.Client(
-            base_url=url.rstrip("/"), headers={"X-API-Key": api_key}, timeout=600
-        )
-        self._base = ""
-
-    def _docker(self, path: str) -> str:
-        if not self._base:
-            endpoints = self._http.get("/api/endpoints").raise_for_status().json()
-            docker = [e for e in endpoints if e.get("Type") in (1, 2)] or endpoints
-            self._base = f"/api/endpoints/{docker[0]['Id']}/docker"
-        # Portainer applies the access labels of a recreated container only
-        # when it lists containers; until then exec and logs answer 403
-        self._http.get(f"{self._base}/containers/json").raise_for_status()
-        return f"{self._base}{path}"
-
-    def exec(self, cmd: list[str], *, root: bool = False, detach: bool = False) -> str:
-        body: dict[str, Any] = {
-            "AttachStdout": not detach,
-            "AttachStderr": not detach,
-            "Tty": False,
-            "Cmd": cmd,
-        }
-        if root:
-            body["User"] = "root"
-        created = self._http.post(
-            self._docker(f"/containers/{self._name}/exec"), json=body
-        ).raise_for_status()
-        started = self._http.post(
-            self._docker(f"/exec/{created.json()['Id']}/start"),
-            json={"Detach": detach, "Tty": False},
-        ).raise_for_status()
-        return "" if detach else demux(started.content)
-
-    def logs(self, since: int) -> str:
-        resp = self._http.get(
-            self._docker(f"/containers/{self._name}/logs"),
-            params={"stdout": 1, "stderr": 1, "since": since},
-        ).raise_for_status()
-        return demux(resp.content)
-
-
-def demux(raw: bytes) -> str:
-    """Docker's multiplexed stream (8-byte frame headers) as text."""
-    if len(raw) < 8 or raw[0] not in (0, 1, 2) or raw[1:4] != b"\0\0\0":
-        return raw.decode("utf-8", "replace")
-    chunks: list[bytes] = []
-    pos = 0
-    while pos + 8 <= len(raw):
-        size = int.from_bytes(raw[pos + 4 : pos + 8], "big")
-        chunks.append(raw[pos + 8 : pos + 8 + size])
-        pos += 8 + size
-    return b"".join(chunks).decode("utf-8", "replace")
-
-
 def count_requests(log_text: str) -> Counter[str]:
     """Outbound httpx requests per host in a JSON container log."""
     hosts: Counter[str] = Counter()
@@ -290,9 +232,7 @@ def _connect_to(mapping: str) -> None:
 def _container(args: argparse.Namespace) -> Container:
     if args.docker:
         return DockerCli(args.container)
-    return Portainer(
-        args.container, os.environ["PORTAINER_URL"], os.environ["PORTAINER_API_KEY"]
-    )
+    return Portainer(args.container, *credentials())
 
 
 def measure(
