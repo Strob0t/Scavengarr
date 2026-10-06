@@ -114,6 +114,13 @@ class PluginCircuitBreaker:
             self._states[name] = _State.OPEN
             self._opened_at[name] = time.monotonic()
 
+    def release(self, name: str) -> None:
+        """End a half-open probe that gave no verdict (a deleted file, a
+        failed request): the next call probes instead of waiting out the
+        cooldown. Other states stay as they are."""
+        if self._states.get(name) == _State.HALF_OPEN:
+            self._probe_started.pop(name, None)
+
     def is_closed(self, name: str) -> bool:
         """Whether *name* runs normally (no failure streak); unlike
         :meth:`allow` it never starts a half-open probe."""

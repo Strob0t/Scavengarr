@@ -6,6 +6,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: Only Verdicts Count Against a Hoster's Breaker
+- A resolution cut after half of `http.timeout_resolve_seconds` counted as a failure. Most cuts come from the answer going out once enough other hosters have a video, and the timed window includes the wait for the stealth browser's pages, so five cuts opened the breakers of healthy hosters (Filemoon, SuperVideo, DoodStream). Cuts count no more.
+- A half-open probe that ended without a verdict (a dead link, a failed request) kept the probe slot, and the alive links after it were refused for a whole cooldown, up to an hour. `PluginCircuitBreaker.release()` frees the slot, so the next link probes.
+- A failed playback check request (timeout, reset on a loaded Pi) cached a working link as dead for 15 minutes and counted against the hoster, while the same error from the resolver did neither. `check_playable` raises it now, and the registry treats it like a failed resolver request (`hoster_resolve_check_error`).
+- Found by the code review of `origin/main..staging` (2026-10-06), each reproduced in a test first.
+
 ### Fix: VEEV Plays in Stremio Web
 - veevcdn binds a video URL to the User-Agent and the Accept-Language of its resolution: another value, or an Accept-Language the resolution did not send, gets 403. Stremio's streaming server sets the User-Agent of our `proxyHeaders` but passes the browser's other headers on, so in Stremio Web (Firefox) the probe played (206, ffmpeg sends no Accept-Language) and the playback 6 s later got 403 (production, 2026-10-06).
 - A resolver whose CDN binds the video URL to the player's request headers implements `ClientBoundResolverPort` (`bound_headers`, `resolve_for_client`); VEEV binds `user-agent` and `accept-language`. `/play` resolves such a hoster again for a player that sends other values than the stored link was resolved with, and keeps that link per player (`<stream id>-<digest>`, fresh for an hour); the player sends the CDN the same headers after the redirect. Requests of one player share one resolution (VEEV: 0.5 s); a failed one falls back to the stored link.

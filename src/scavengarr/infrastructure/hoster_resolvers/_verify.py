@@ -91,31 +91,30 @@ async def check_playable(
     such as mixdrop's answer other agents with 403.  An error status, an
     HTML page, or (for HLS) a body that is no playlist means the player
     would fail, so the stream is not playable.
+
+    A failed request (timeout, reset) raises ``httpx.HTTPError``: it says
+    nothing about the stream.
     """
     headers = {
         "User-Agent": DEFAULT_USER_AGENT,
         **stream.headers,
         "Range": f"bytes=0-{_SNIFF_BYTES - 1}",
     }
-    try:
-        async with http_client.stream(
-            "GET",
-            stream.video_url,
-            headers=headers,
-            follow_redirects=True,
-            timeout=_PLAYBACK_CHECK_TIMEOUT_S,
-        ) as resp:
-            head = b""
-            if resp.status_code < 400:
-                async for chunk in resp.aiter_bytes():
-                    head += chunk
-                    if len(head) >= _SNIFF_BYTES:
-                        break
-            content_type = resp.headers.get("content-type", "").lower()
-            status = resp.status_code
-    except httpx.HTTPError as exc:
-        log.info("playback_check_error", url=stream.video_url[:120], error=str(exc))
-        return False
+    async with http_client.stream(
+        "GET",
+        stream.video_url,
+        headers=headers,
+        follow_redirects=True,
+        timeout=_PLAYBACK_CHECK_TIMEOUT_S,
+    ) as resp:
+        head = b""
+        if resp.status_code < 400:
+            async for chunk in resp.aiter_bytes():
+                head += chunk
+                if len(head) >= _SNIFF_BYTES:
+                    break
+        content_type = resp.headers.get("content-type", "").lower()
+        status = resp.status_code
 
     head = head.lstrip()
     if status >= 400:

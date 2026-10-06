@@ -7,6 +7,7 @@ import pytest
 import respx
 
 from scavengarr.domain.entities.stremio import ResolvedStream
+from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.hoster_resolvers._verify import check_playable
 from scavengarr.infrastructure.hoster_resolvers.registry import (
     HosterResolverRegistry,
@@ -77,9 +78,12 @@ class TestCheckPlayable:
         assert not await _check(ResolvedStream(_M3U8, is_hls=True))
 
     @respx.mock
-    async def test_network_error_is_not_playable(self) -> None:
+    async def test_a_network_error_is_raised(self) -> None:
+        """It says nothing about the stream; the registry decides."""
         respx.get(_MP4).mock(side_effect=httpx.ConnectError("down"))
-        assert not await _check(ResolvedStream(_MP4))
+
+        with pytest.raises(httpx.ConnectError):
+            await _check(ResolvedStream(_MP4))
 
 
 class _StubResolver:
@@ -100,6 +104,32 @@ class TestRegistryVerifiesPlayback:
             assert await registry.resolve("https://voe.sx/e/1") is None
             assert await registry.resolve("https://voe.sx/e/1") is None
         assert route.call_count == 1
+
+    @respx.mock
+    async def test_a_network_error_in_the_check_is_neither_cached_nor_counted(
+        self,
+    ) -> None:
+        """A timeout of the first-KiB check on a loaded Pi cached a working
+        link as dead for 900 s and counted against the hoster, while the same
+        error from the resolver did neither (code review, 2026-10-06)."""
+        respx.get(_MP4).mock(
+            side_effect=[
+                httpx.ReadTimeout("slow"),
+                httpx.Response(206, content=b"\x1aE\xdf\xa3"),
+            ]
+        )
+        breaker = PluginCircuitBreaker(failure_threshold=1)
+        async with httpx.AsyncClient() as client:
+            registry = HosterResolverRegistry(
+                resolvers=[_StubResolver()],
+                http_client=client,
+                verify_playback=True,
+                circuit_breaker=breaker,
+            )
+
+            assert await registry.resolve("https://voe.sx/e/1") is None
+            assert breaker.is_closed("voe")
+            assert await registry.resolve("https://voe.sx/e/1") is not None
 
     @respx.mock
     async def test_playable_result_is_returned(self) -> None:

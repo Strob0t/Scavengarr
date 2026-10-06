@@ -227,6 +227,31 @@ class TestSingleProbe:
         with patch.object(time, "monotonic", return_value=1060.0 + 60):
             assert cb.allow("foo") is True  # the new probe
 
+    def test_a_released_probe_lets_the_next_call_probe(self) -> None:
+        """A probe without a verdict (a deleted file, a network error) held
+        its slot for a whole cooldown, up to an hour (code review,
+        2026-10-06)."""
+        cb = PluginCircuitBreaker(failure_threshold=2, cooldown_seconds=60)
+        self._open_at(cb, 1000.0)
+        with patch.object(time, "monotonic", return_value=1060.0):
+            assert cb.allow("foo") is True
+            cb.release("foo")
+
+            assert cb.allow("foo") is True  # the next probe
+            assert cb.allow("foo") is False
+        assert cb.state("foo") == "half_open"
+
+    def test_release_leaves_other_states_alone(self) -> None:
+        cb = PluginCircuitBreaker(failure_threshold=2, cooldown_seconds=60)
+        cb.release("closed")
+        self._open_at(cb, 1000.0)
+        with patch.object(time, "monotonic", return_value=1010.0):
+            cb.release("foo")
+
+            assert cb.allow("foo") is False
+        assert cb.state("closed") == "closed"
+        assert cb.state("foo") == "open"
+
     def test_probe_success_lets_everyone_through(self) -> None:
         cb = PluginCircuitBreaker(failure_threshold=2, cooldown_seconds=60)
         self._open_at(cb, 1000.0)

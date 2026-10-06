@@ -925,14 +925,19 @@ class TestCircuitBreaker:
             for e in logs
         )
 
-    async def test_a_cut_after_half_the_timeout_counts(self) -> None:
-        """The Stremio deadline cuts most resolutions before resolve_timeout."""
-        registry, resolver = self._registry(_hang, resolve_timeout=0.2)
+    async def test_a_late_cut_does_not_count(self) -> None:
+        """A cut says nothing about the hoster: most come from the answer
+        going out once enough other hosters have a video, and the timed
+        window includes the wait for a browser page. Five such cuts opened
+        the breakers of healthy hosters (code review, 2026-10-06)."""
+        registry, resolver = self._registry(
+            self._answers("hang", "stream"), resolve_timeout=0.2
+        )
 
         await _cut(registry.resolve("https://doodstream.com/e/a"), after=0.15)
 
-        assert await registry.resolve("https://doodstream.com/e/b") is None
-        assert resolver.resolve.await_count == 1
+        assert await registry.resolve("https://doodstream.com/e/b") is not None
+        assert resolver.resolve.await_count == 2
 
     async def test_an_early_cut_does_not_count(self) -> None:
         """Cut by the resolve grace or early stop: other hosters were faster."""
@@ -1010,6 +1015,36 @@ class TestCircuitBreaker:
         # The probe's stream is cached for the next request
         assert await registry.resolve("https://doodstream.com/e/a") is not None
         assert resolver.resolve.await_count == 1
+
+    @pytest.mark.parametrize("verdictless", ["dead", "network_error", "http_error"])
+    async def test_a_probe_without_a_verdict_lets_the_next_link_probe(
+        self, verdictless: str
+    ) -> None:
+        """A deleted file or a failed request says nothing about the hoster;
+        the probe kept its slot, and the alive links after it were refused
+        for a whole cooldown, up to an hour (code review, 2026-10-06)."""
+        queue = [verdictless, "stream"]
+
+        async def _resolve(url: str) -> ResolvedStream | None:
+            answer = queue.pop(0)
+            if answer == "network_error":
+                raise httpx.ConnectError("reset")
+            if answer == "http_error":
+                raise httpx.DecodingError("garbled")
+            return ResolvedStream(video_url=self._MP4) if answer == "stream" else None
+
+        registry, resolver = self._registry(
+            _resolve, resolve_timeout=1, cooldown_seconds=0.05
+        )
+        breaker = registry._circuit_breaker
+        assert breaker is not None
+        breaker.record_failure("doodstream")
+        await asyncio.sleep(0.06)
+
+        assert await registry.resolve("https://doodstream.com/e/a") is None
+        assert await registry.resolve("https://doodstream.com/e/b") is not None
+        assert resolver.resolve.await_count == 2
+        assert breaker.is_closed("doodstream")
 
     async def test_a_cut_probe_that_fails_doubles_the_cooldown(self) -> None:
         registry, _ = self._registry(_hang, resolve_timeout=0.1, cooldown_seconds=0.02)

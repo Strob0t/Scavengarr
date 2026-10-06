@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from functools import partial
+from typing import Any
 from urllib.parse import urlparse
 
 import httpx
@@ -329,23 +330,34 @@ class HosterResolverRegistry:
         hoster_name: str,
         url: str,
         result: ResolvedStream | None,
-    ) -> tuple[str, ResolvedStream | None]:
-        """Classify a resolver's answer: ``dead`` link, ``unplayable`` or a
-        ``stream``; the stream only for the last."""
+    ) -> tuple[str, ResolvedStream | None, bool]:
+        """Classify a resolver's answer: ``dead`` link, ``unplayable``,
+        ``check_error`` or a ``stream``; the stream only for the last, and
+        whether the outcome may be cached.
+
+        A failed playback check (timeout, reset) says nothing about the
+        stream, like a failed resolver request: neither cached nor counted.
+        """
         if result is None:
             log.warning("hoster_resolve_failed", hoster=hoster_name, url=url)
-            return "dead", None
-        if (
-            self._verify_playback
-            and self._http_client is not None
-            and not await check_playable(self._http_client, result)
-        ):
-            log.warning("hoster_resolve_unplayable", hoster=hoster_name, url=url)
-            self._record(resolver, failed=True)
-            return "unplayable", None
+            return "dead", None, True
+        if self._verify_playback and self._http_client is not None:
+            try:
+                playable = await check_playable(self._http_client, result)
+            except httpx.HTTPError as exc:
+                log.info(
+                    "hoster_resolve_check_error",
+                    hoster=hoster_name,
+                    error=type(exc).__name__,
+                )
+                return "check_error", None, False
+            if not playable:
+                log.warning("hoster_resolve_unplayable", hoster=hoster_name, url=url)
+                self._record(resolver, failed=True)
+                return "unplayable", None, True
         log.info("hoster_resolve_success", hoster=hoster_name, is_hls=result.is_hls)
         self._record(resolver, failed=False)
-        return "stream", result
+        return "stream", result, True
 
     def _record(self, resolver: HosterResolverPort, *, failed: bool) -> None:
         """Report a resolution's outcome to the circuit breaker."""
@@ -383,24 +395,17 @@ class HosterResolverRegistry:
         resolver = self._resolver_for(url, hoster_name)
         if not isinstance(resolver, ClientBoundResolverPort):
             return None
-        if not self._breaker_allows(resolver, url):
-            return None
-        stream, _ = await self._try_resolver(
-            resolver,
-            hoster_name,
-            url,
-            resolve=partial(resolver.resolve_for_client, url, headers),
-        )
-        return stream
 
-    def _breaker_allows(self, resolver: HosterResolverPort, url: str) -> bool:
-        """Whether the circuit breaker lets *resolver* resolve now."""
-        breaker = self._circuit_breaker
-        if breaker is None or breaker.allow(resolver.name):
-            return True
-        log.info("hoster_resolve_circuit_open", hoster=resolver.name, url=url)
-        self._telemetry.count("hoster_resolve", "breaker_open", resolver=resolver.name)
-        return False
+        async def attempt() -> ResolvedStream | None:
+            stream, _ = await self._try_resolver(
+                resolver,
+                hoster_name,
+                url,
+                resolve=partial(resolver.resolve_for_client, url, headers),
+            )
+            return stream
+
+        return await self._guarded(resolver, url, attempt)
 
     async def _resolve_with(
         self,
@@ -409,24 +414,43 @@ class HosterResolverRegistry:
         url: str,
         cache_key: str,
     ) -> ResolvedStream | None:
-        """Resolve *url* with *resolver*; cache the outcome under *cache_key*.
+        """Resolve *url* with *resolver*; cache the outcome under *cache_key*."""
+        return await self._guarded(
+            resolver, url, partial(self._attempt, resolver, hoster_name, url, cache_key)
+        )
 
-        While the circuit breaker is open the resolver is skipped. Its
-        half-open probe runs to its end even when the request is cut: cut by
-        the resolve grace, Filemoon's probes never reported, so the breaker
-        probed again after every cooldown without doubling it (production,
-        2026-10-05). A probe that finds a stream closes the breaker and
-        leaves the stream in the cache for the next request.
+    async def _guarded(
+        self,
+        resolver: HosterResolverPort,
+        url: str,
+        attempt: Callable[[], Coroutine[Any, Any, ResolvedStream | None]],
+    ) -> ResolvedStream | None:
+        """Run *attempt* unless the circuit breaker skips *resolver*.
+
+        A half-open probe runs to its end even when the request is cut: cut
+        by the resolve grace, Filemoon's probes never reported, so the
+        breaker probed again after every cooldown without doubling it
+        (production, 2026-10-05). A probe that finds a stream closes the
+        breaker and leaves the stream in the cache for the next request; a
+        probe without a verdict (a dead link, a failed request) frees the
+        probe slot, so the next link probes (it held the slot for a whole
+        cooldown, code review 2026-10-06).
         """
-        if not self._breaker_allows(resolver, url):
-            return None
         breaker = self._circuit_breaker
-        attempt = self._attempt(resolver, hoster_name, url, cache_key)
-        if breaker is None or breaker.state(resolver.name) != "half_open":
-            return await attempt
-        probe = asyncio.ensure_future(attempt)
+        if breaker is None:
+            return await attempt()
+        if not breaker.allow(resolver.name):
+            log.info("hoster_resolve_circuit_open", hoster=resolver.name, url=url)
+            self._telemetry.count(
+                "hoster_resolve", "breaker_open", resolver=resolver.name
+            )
+            return None
+        if breaker.state(resolver.name) != "half_open":
+            return await attempt()
+        probe = asyncio.ensure_future(attempt())
         self._probes.add(probe)
         probe.add_done_callback(self._probes.discard)
+        probe.add_done_callback(lambda _: breaker.release(resolver.name))
         return await asyncio.shield(probe)
 
     async def _attempt(
@@ -464,29 +488,26 @@ class HosterResolverRegistry:
         resolvers' own request timeouts add up over several requests).
         *resolve* replaces ``resolver.resolve(url)`` (a player's resolution).
 
-        The circuit breaker counts a timeout, a cut after half the timeout
-        (the Stremio deadline ends most resolutions before the timeout) and
-        an unplayable stream; a stream resets it. A dead link neither
-        counts nor resets it: it says nothing about the hoster.
+        The circuit breaker counts a timeout and an unplayable stream; a
+        stream resets it. A dead link, a failed request and a cut neither
+        count nor reset it: they say nothing about the hoster. Most cuts
+        come from the answer going out once enough other hosters have a
+        video, and five of them opened the breakers of healthy hosters
+        (code review, 2026-10-06).
         """
-        started = time.monotonic()
         with self._telemetry.stage("hoster_resolve", resolver=resolver.name) as stage:
             try:
                 async with asyncio.timeout(self._resolve_timeout):
                     result = await (resolve() if resolve else resolver.resolve(url))
-                stage.outcome, stream = await self._judge(
+                stage.outcome, stream, cacheable = await self._judge(
                     resolver, hoster_name, url, result
                 )
-                return stream, True
+                return stream, cacheable
             except (TimeoutError, httpx.TimeoutException):
                 log.warning("hoster_resolve_timeout", hoster=hoster_name, url=url)
                 self._record(resolver, failed=True)
                 stage.outcome = "timeout"
                 return None, False
-            except asyncio.CancelledError:
-                if time.monotonic() - started >= self._resolve_timeout / 2:
-                    self._record(resolver, failed=True)
-                raise
             except httpx.TransportError as exc:
                 log.warning(
                     "hoster_resolve_network_error",
