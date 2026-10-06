@@ -6,7 +6,7 @@ import asyncio
 import time
 from collections import Counter
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
-from dataclasses import replace
+from dataclasses import fields, replace
 from functools import partial
 from typing import Any
 from urllib.parse import urlparse
@@ -77,13 +77,33 @@ def _stamped(stream: ResolvedStream) -> ResolvedStream:
     return stream if stream.resolved_at else replace(stream, resolved_at=time.time())
 
 
+_STREAM_FIELDS = frozenset(f.name for f in fields(ResolvedStream))
+
+
+def _plain(stream: ResolvedStream) -> dict[str, Any]:
+    """*stream* as builtins only (``export_state``): the snapshot names no
+    class, so moving one cannot make it unreadable. Not ``asdict``: six
+    times slower at the cache's 10,000 entries."""
+    data = {name: getattr(stream, name) for name in _STREAM_FIELDS}
+    data["quality"] = int(stream.quality)
+    return data
+
+
+def _from_plain(data: dict[str, Any]) -> ResolvedStream:
+    """:func:`_plain`'s inverse; a field another version had and this one
+    lacks is dropped, one this version added takes its default."""
+    known = {name: value for name, value in data.items() if name in _STREAM_FIELDS}
+    known["quality"] = StreamQuality(known.get("quality", StreamQuality.UNKNOWN))
+    return ResolvedStream(**known)
+
+
 class _CacheEntry[T]:
     """Time-bounded cache entry (resolver results, redirect targets); a
     result keeps the name of the resolver that produced it."""
 
     __slots__ = ("expires_at", "resolver", "value")
 
-    def __init__(self, value: T, ttl: int, resolver: str = "") -> None:
+    def __init__(self, value: T, ttl: float, resolver: str = "") -> None:
         self.value = value
         self.resolver = resolver
         self.expires_at = time.monotonic() + ttl
@@ -124,6 +144,8 @@ class HosterResolverRegistry:
         self._verify_playback = verify_playback and http_client is not None
         self._result_cache: dict[str, _CacheEntry[ResolvedStream | None]] = {}
         self._redirect_cache: dict[str, _CacheEntry[str]] = {}
+        # Resolutions and redirects cached (export_state's content)
+        self._changes = 0
         self._resolve_count = 0
         # Half-open probes run on when their request is cut (see _resolve_with)
         self._probes: set[asyncio.Task[ResolvedStream | None]] = set()
@@ -218,6 +240,65 @@ class HosterResolverRegistry:
         if cached is None or cached.is_expired:
             return False, None
         return True, cached.value
+
+    @property
+    def changes(self) -> int:
+        """How often a resolution or a redirect was cached: what
+        :meth:`export_state` holds changed (the state store writes then)."""
+        return self._changes
+
+    def export_state(self) -> dict[str, list[dict[str, Any]]]:
+        """The unexpired resolutions and redirects with their lifetime left
+        (``remaining``, seconds), oldest first, in builtins only: a snapshot
+        that outlives the process (``HosterStateStore``)."""
+        now = time.monotonic()
+        results = [
+            {
+                "url": url,
+                "stream": None if entry.value is None else _plain(entry.value),
+                "remaining": entry.expires_at - now,
+                "resolver": entry.resolver,
+            }
+            for url, entry in self._result_cache.items()
+            if entry.expires_at > now
+        ]
+        redirects = [
+            {"url": url, "target": entry.value, "remaining": entry.expires_at - now}
+            for url, entry in self._redirect_cache.items()
+            if entry.expires_at > now
+        ]
+        return {"results": results, "redirects": redirects}
+
+    def import_state(self, state: Mapping[str, Any], age_s: float) -> tuple[int, int]:
+        """Restore :meth:`export_state`'s entries with their lifetime
+        shortened by *age_s* (the time since the export); the ones that ran
+        out meanwhile stay out. Returns the numbers of resolutions and
+        redirects restored.
+
+        Raises ``KeyError``, ``TypeError`` or ``ValueError`` for a malformed
+        entry, before changing anything.
+        """
+        results: dict[str, _CacheEntry[ResolvedStream | None]] = {}
+        for entry in state["results"]:
+            remaining = float(entry["remaining"]) - age_s
+            stream = entry["stream"]
+            value = None if stream is None else _from_plain(stream)
+            if remaining > 0:
+                results[str(entry["url"])] = _CacheEntry(
+                    value, remaining, str(entry["resolver"])
+                )
+        redirects: dict[str, _CacheEntry[str]] = {}
+        for entry in state["redirects"]:
+            remaining = float(entry["remaining"]) - age_s
+            if remaining > 0:
+                redirects[str(entry["url"])] = _CacheEntry(
+                    str(entry["target"]), remaining
+                )
+        self._result_cache.update(results)
+        self._enforce_max_size(self._result_cache)
+        self._redirect_cache.update(redirects)
+        self._enforce_max_size(self._redirect_cache)
+        return len(results), len(redirects)
 
     async def resolve(
         self, url: str, hoster: str = "", *, refresh: bool = False
@@ -330,6 +411,7 @@ class HosterResolverRegistry:
         ttl = _CACHE_TTL_ALIVE if result is not None else _CACHE_TTL_DEAD
         self._result_cache[url] = _CacheEntry(result, ttl, resolver)
         self._enforce_max_size(self._result_cache)
+        self._changes += 1
 
     def _evict_expired(self) -> None:
         """Remove expired entries from result and redirect caches."""
@@ -601,6 +683,7 @@ class HosterResolverRegistry:
                 )
                 self._redirect_cache[url] = _CacheEntry(final_url, _CACHE_TTL_REDIRECT)
                 self._enforce_max_size(self._redirect_cache)
+                self._changes += 1
                 return final_url
         except httpx.TimeoutException:
             log.debug("hoster_redirect_timeout", url=url)

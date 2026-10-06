@@ -272,7 +272,7 @@ Infrastructure implements the ports defined by Domain and provides concrete adap
 - **Configuration** (`config/`): layered config loading (defaults < YAML < ENV < CLI) with Pydantic validation.
 - **Logging** (`logging/`): structured logging via structlog with an async `QueueHandler` for non-blocking emission.
 - **Common** (`common/`): `to_int`, `parse_size_to_bytes`, `DomainRateLimiter`/`TokenBucket` (optionally adaptive), `RetryTransport` (429/503 retry + rate limiting), `PrivateAddressGuard` (the shared client refuses non-public targets, SSRF; its `GuardedNetworkBackend` connects to the checked addresses, so no second DNS lookup can rebind them), `AsyncioNetworkBackend` (the connections underneath: asyncio streams, TLS in the event loop instead of in Python as with httpx's default anyio backend).
-- **Hoster resolvers** (`hoster_resolvers/`): `HosterResolverRegistry`, XFS/generic-DDL/dedicated resolvers; `StealthPool` (in `infrastructure/browser/`) for Cloudflare-protected pages and for capturing the stream request of players that build it at runtime (`capture_media`: manifests/MP4 by URL, extension-less CDN URLs by the video element's request type). See [Hoster Resolvers](../features/hoster-resolvers.md).
+- **Hoster resolvers** (`hoster_resolvers/`): `HosterResolverRegistry` (its state outlives restarts through `HosterStateStore`), XFS/generic-DDL/dedicated resolvers; `StealthPool` (in `infrastructure/browser/`) for Cloudflare-protected pages and for capturing the stream request of players that build it at runtime (`capture_media`: manifests/MP4 by URL, extension-less CDN URLs by the video element's request type). See [Hoster Resolvers](../features/hoster-resolvers.md).
 - **Browser fetchers and anti-bot** (`browser/`, `captcha/`): `BrowserFetcherPort` implementations `StealthPool` and `SolverFetcher` (Byparr/FlareSolverr sidecar), chained by `ChainedBrowserFetcher` (`fetch_text`, `resolve_redirect`, `click_through` for link-out gates, which only the own browser can do, and `session`: the site's cookies and User-Agent after a passed challenge, so plain HTTP requests can go on); `PageGate` hands out the stealth browser's pages by the work's `PageClaim` (the context variable `page_claim` of the browser port, set by the application around searches and resolutions), and `PageBudget` adapts their count to the waits, the CPU and the free memory (`ResourceSampler`); `ClearanceStore` keeps challenge cookies in `CachePort` across restarts; `detect_challenge` classifies challenges and captchas; `solve_altcha` solves ALTCHA proof of work. See [Captcha Solving](../plans/captcha-solving.md).
 - **Stremio** (`stremio/`): stream converter, sorter, title matcher, release parser, episode filter, HLS proxy.
 - **TMDB** (`tmdb/`): `HttpxTmdbClient` and the key-less `ImdbFallbackClient`.
@@ -342,6 +342,7 @@ The composition root is where concrete implementations are wired together. It ru
 12. SharedBrowserPool injected into Playwright plugins
 13. ConcurrencyPool
 14. PluginCircuitBreaker
+14a. HosterStateStore: restore() (resolutions, redirects and open breakers of the run before), then its write task
 14b. PluginHealthMonitor task (unless stremio.plugin_health_interval_seconds is 0)
 15. StremioStreamUseCase + StremioCatalogUseCase
     → GracefulShutdown.mark_ready()
@@ -353,6 +354,7 @@ The composition root is where concrete implementations are wired together. It ru
 1. Drain in-flight requests (GracefulShutdown, 10 s timeout)
 2. StremioStreamUseCase.aclose(), StremioLinks.aclose(), HosterResolverRegistry.aclose()
    (background searches and resolutions, half-open hoster probes)
+   then HosterStateStore.aclose() (the last snapshot, before the cache closes)
 3. Cancel the scoring, plugin-health and loop-lag tasks
 4. StealthPool.cleanup() (its context lives on the shared browser)
 5. SharedBrowserPool.cleanup()

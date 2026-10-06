@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: Resolutions and Circuit Breakers Outlive a Restart
+- A restart forgot every hoster resolution (cached for an hour), every redirect and every open circuit breaker: the first cached answers after a deploy waited for the resolve grace again, and hosters known to be down cost their timeouts until five failures opened their breakers again at 60 s. `HosterStateStore` keeps one snapshot of the unexpired resolutions and redirects and of the plugin and hoster breakers that are not closed in the cache backend (`hoster_state:v1`), written every 30 s when something changed and at shutdown, and restores it before the app reports ready, every lifetime and cooldown shortened by the downtime. A breaker whose cooldown ran out meanwhile comes back with its probe due and keeps its doubled cooldown. A snapshot of another version or one that cannot be read is deleted (`hoster_state_discarded`); `hoster_state_restored` logs the counts, and `/api/v1/stats/metrics` shows them under `hoster_state`. At the cache's cap of 10,000 resolutions (2.9 MiB) a write costs 10 ms of export and 9 ms of pickling on x86, a start 39 ms ([hoster-resolvers.md](docs/features/hoster-resolvers.md#registry-features)).
+
 ### Added: Alert Rules
 - `docker/prometheus-alerts.yml` holds six Prometheus alert rules: the target is down (5 min); a plugin searched for 24 h without one hit while at least five plugins had hits (the next dead site or block, found without a session); half of the first answers above 20 s over an hour; a hoster breaker open for 6 h; event-loop lag p99 above 100 ms; more than half of an hour's requests without streams. `promtool check rules` passes, and a test fails when a rule queries a family the app does not export ([observability.md](docs/features/observability.md#alerts)).
 

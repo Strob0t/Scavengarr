@@ -75,8 +75,8 @@ async def metrics(request: Request) -> JSONResponse:
     """Return in-memory runtime metrics.
 
     Includes plugin search stats (from the Prometheus metrics, ``/metrics``),
-    circuit breaker state, concurrency pool utilisation, and graceful-shutdown
-    status.
+    circuit breaker state, the resolver state restored at the start,
+    concurrency pool utilisation, and graceful-shutdown status.
     """
     state = cast(AppState, request.app.state)
 
@@ -97,6 +97,11 @@ async def metrics(request: Request) -> JSONResponse:
     registry = getattr(state, "hoster_resolver_registry", None)
     if registry is not None:
         data["unresolved_hosters"] = registry.unresolved_hosts()
+
+    # Resolutions and breakers the start restored (HosterStateStore)
+    hoster_state = getattr(state, "hoster_state_store", None)
+    if hoster_state is not None:
+        data["hoster_state"] = hoster_state.restored
 
     # Concurrency pool utilisation
     pool = getattr(state, "concurrency_pool", None)

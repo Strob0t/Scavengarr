@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from contextlib import AbstractContextManager
 from unittest.mock import patch
 
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
@@ -260,3 +261,132 @@ class TestSingleProbe:
             cb.record_success("foo")
             assert cb.allow("foo") is True
             assert cb.allow("foo") is True
+
+
+def _at(now: float) -> AbstractContextManager[object]:
+    return patch.object(time, "monotonic", return_value=now)
+
+
+def _open_with_120s_cooldown() -> PluginCircuitBreaker:
+    """'foo' open since 1060 with its cooldown doubled to 120 s."""
+    cb = PluginCircuitBreaker(failure_threshold=2, cooldown_seconds=60)
+    with _at(1000.0):
+        cb.record_failure("foo")
+        cb.record_failure("foo")
+    with _at(1060.0):
+        assert cb.allow("foo") is True
+        cb.record_failure("foo")
+    return cb
+
+
+class TestStateExport:
+    """Open breakers outlive a restart (HosterStateStore): exported with the
+    cooldown left, restored with it shortened by the downtime."""
+
+    def test_the_cooldown_left_shrinks_by_the_downtime(self) -> None:
+        """40 s of 120 s left, 15 s down: open for 25 s, and a failed probe
+        doubles the cooldown to 240 s (openspec persist-resolver-state)."""
+        with _at(1140.0):
+            entries = _open_with_120s_cooldown().export_state()
+        assert entries == [
+            {"name": "foo", "remaining_cooldown": 40.0, "cooldown": 120.0}
+        ]
+
+        cb = PluginCircuitBreaker(failure_threshold=2, cooldown_seconds=60)
+        with _at(50.0):
+            assert cb.import_state(entries, age_s=15.0) == 1
+        assert cb.state("foo") == "open"
+        assert cb.is_closed("foo") is False
+        with _at(74.0):
+            assert cb.allow("foo") is False
+        with _at(75.0):
+            assert cb.allow("foo") is True  # the probe
+            cb.record_failure("foo")
+        with _at(75.0 + 239):
+            assert cb.allow("foo") is False
+        with _at(75.0 + 240):
+            assert cb.allow("foo") is True
+
+    def test_closed_breakers_are_not_exported(self) -> None:
+        cb = PluginCircuitBreaker(failure_threshold=2)
+        cb.record_failure("below")  # under the threshold
+        cb.record_failure("healed")
+        cb.record_failure("healed")
+        cb.record_success("healed")
+
+        assert cb.export_state() == []
+
+    def test_a_cooldown_that_ran_out_while_down_leaves_the_probe_due(self) -> None:
+        """Not closed: a closed breaker would let every call through and
+        forget the doubled cooldown."""
+        with _at(1140.0):
+            entries = _open_with_120s_cooldown().export_state()
+
+        cb = PluginCircuitBreaker(failure_threshold=2, cooldown_seconds=60)
+        with _at(50.0):
+            cb.import_state(entries, age_s=600.0)
+            assert cb.allow("foo") is True  # the probe
+            assert cb.allow("foo") is False  # one at a time
+            cb.record_failure("foo")
+        with _at(50.0 + 239):
+            assert cb.allow("foo") is False
+
+    def test_a_half_open_probe_ends_with_the_process(self) -> None:
+        """The probe in flight at the export is lost: the next call probes."""
+        cb = _open_with_120s_cooldown()
+        with _at(1180.0):
+            assert cb.allow("foo") is True  # half-open, probe in flight
+            entries = cb.export_state()
+        assert entries == [
+            {"name": "foo", "remaining_cooldown": 0.0, "cooldown": 120.0}
+        ]
+
+        restored = PluginCircuitBreaker(failure_threshold=2, cooldown_seconds=60)
+        with _at(50.0):
+            restored.import_state(entries, age_s=0.0)
+            assert restored.allow("foo") is True
+
+    def test_a_restored_cooldown_keeps_to_the_cap(self) -> None:
+        """A snapshot of a run with a longer maximum cooldown."""
+        entries = [{"name": "foo", "remaining_cooldown": 7000.0, "cooldown": 7200.0}]
+        cb = PluginCircuitBreaker(
+            failure_threshold=2, cooldown_seconds=60, max_cooldown_seconds=3600
+        )
+        with _at(0.0):
+            cb.import_state(entries, age_s=0.0)
+        with _at(3599.0):
+            assert cb.allow("foo") is False
+        with _at(3600.0):
+            assert cb.allow("foo") is True
+
+    def test_a_restored_breaker_reports_its_failure_streak(self) -> None:
+        """Open means at least the threshold of failures (snapshot())."""
+        cb = PluginCircuitBreaker(failure_threshold=5)
+        cb.import_state(
+            [{"name": "foo", "remaining_cooldown": 30.0, "cooldown": 60.0}], age_s=0.0
+        )
+        assert cb.snapshot() == {"foo": {"state": "open", "failures": 5}}
+
+
+class TestChanges:
+    """What a snapshot holds changed: a breaker opened, reopened or closed."""
+
+    def test_opening_reopening_and_closing_count(self) -> None:
+        cb = PluginCircuitBreaker(failure_threshold=2, cooldown_seconds=0)
+        cb.record_failure("foo")
+        assert cb.changes == 0  # below the threshold
+        cb.record_failure("foo")
+        assert cb.changes == 1  # opened
+        assert cb.allow("foo") is True  # half-open: the export says the same
+        assert cb.changes == 1
+        cb.record_failure("foo")
+        assert cb.changes == 2  # reopened
+        cb.allow("foo")
+        cb.record_success("foo")
+        assert cb.changes == 3  # closed
+
+    def test_success_of_a_closed_breaker_changes_nothing(self) -> None:
+        cb = PluginCircuitBreaker(failure_threshold=2)
+        cb.record_failure("foo")
+        cb.record_success("foo")
+        assert cb.changes == 0

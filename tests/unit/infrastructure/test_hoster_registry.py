@@ -13,7 +13,7 @@ import pytest
 import respx
 import structlog
 
-from scavengarr.domain.entities.stremio import ResolvedStream
+from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
 from scavengarr.infrastructure.browser.page_gate import PageBusy, PageGate
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.hoster_resolvers import extract_domain
@@ -1544,3 +1544,178 @@ class TestUnresolvedHosters:
         await registry.resolve("https://a.net/2")
 
         assert registry.unresolved_hosts() == {"a": 2, "b": 1}
+
+
+def _stub_resolver(name: str, result: ResolvedStream | None) -> MagicMock:
+    resolver = MagicMock()
+    resolver.name = name
+    resolver.resolve = AsyncMock(return_value=result)
+    return resolver
+
+
+def _left(registry: HosterResolverRegistry, url: str) -> float:
+    """Seconds until *url*'s cached resolution expires."""
+    return registry._result_cache[url].expires_at - time.monotonic()
+
+
+class TestStateExport:
+    """Resolutions and redirects outlive a restart (HosterStateStore):
+    exported with their lifetime left, restored with it shortened by the
+    downtime."""
+
+    _STREAM = ResolvedStream(
+        video_url="https://cdn.example.com/hls/master.m3u8",
+        headers={"Referer": "https://voe.sx/"},
+        is_hls=True,
+        quality=StreamQuality.HD_1080P,
+        size_bytes=1_500_000_000,
+    )
+
+    async def test_alive_and_dead_entries_round_trip(self) -> None:
+        old = HosterResolverRegistry(
+            resolvers=[
+                _stub_resolver("voe", self._STREAM),
+                _stub_resolver("streamtape", None),
+            ]
+        )
+        await old.resolve("https://voe.sx/e/alive")
+        await old.resolve("https://streamtape.com/e/dead")
+
+        new = HosterResolverRegistry()
+        assert new.import_state(old.export_state(), age_s=600.0) == (2, 0)
+
+        alive = new.cached("https://voe.sx/e/alive")
+        assert alive == old.cached("https://voe.sx/e/alive")
+        assert alive[1] is not None
+        assert alive[1].quality is StreamQuality.HD_1080P
+        assert new.cached("https://streamtape.com/e/dead") == (True, None)
+        assert 2990 < _left(new, "https://voe.sx/e/alive") <= 3000
+        assert 290 < _left(new, "https://streamtape.com/e/dead") <= 300
+        assert new._result_cache["https://voe.sx/e/alive"].resolver == "voe"
+
+    async def test_the_snapshot_holds_builtins_only(self) -> None:
+        """No class in the pickle: moving one cannot make it unreadable."""
+        registry = HosterResolverRegistry(
+            resolvers=[_stub_resolver("voe", self._STREAM)]
+        )
+        await registry.resolve("https://voe.sx/e/alive")
+
+        stream = registry.export_state()["results"][0]["stream"]
+
+        assert type(stream["quality"]) is int
+        assert {type(v) for v in stream.values()} <= {str, bool, int, float, dict}
+
+    async def test_redirects_round_trip(self) -> None:
+        response = MagicMock()
+        response.url = "https://voe.sx/e/abc"
+        old_client = AsyncMock(spec=httpx.AsyncClient)
+        old_client.head = AsyncMock(return_value=response)
+        old = HosterResolverRegistry(
+            resolvers=[_stub_resolver("voe", self._STREAM)], http_client=old_client
+        )
+        await old.resolve("https://out.example.net/go/1")
+
+        new_client = AsyncMock(spec=httpx.AsyncClient)
+        new = HosterResolverRegistry(
+            resolvers=[_stub_resolver("voe", self._STREAM)], http_client=new_client
+        )
+        assert new.import_state(old.export_state(), age_s=0.0) == (1, 1)
+        await new.resolve("https://out.example.net/go/1", refresh=True)
+
+        new_client.head.assert_not_awaited()
+
+    def test_entries_that_ran_out_while_down_stay_out(self) -> None:
+        state = {
+            "results": [
+                {
+                    "url": "https://voe.sx/e/dead",
+                    "stream": None,
+                    "remaining": 120.0,
+                    "resolver": "voe",
+                }
+            ],
+            "redirects": [
+                {
+                    "url": "https://out.example.net/go/1",
+                    "target": "https://voe.sx/e/abc",
+                    "remaining": 30.0,
+                }
+            ],
+        }
+        registry = HosterResolverRegistry()
+
+        assert registry.import_state(state, age_s=600.0) == (0, 0)
+        assert registry.cached("https://voe.sx/e/dead") == (False, None)
+
+    async def test_expired_entries_are_not_exported(self) -> None:
+        registry = HosterResolverRegistry(resolvers=[_stub_resolver("voe", None)])
+        await registry.resolve("https://voe.sx/e/dead")
+        registry._result_cache["https://voe.sx/e/dead"].expires_at = time.monotonic()
+
+        assert registry.export_state() == {"results": [], "redirects": []}
+
+    def test_other_stream_fields_of_another_version(self) -> None:
+        """A field the code no longer has is dropped, a new one takes its
+        default."""
+        state = {
+            "results": [
+                {
+                    "url": "https://voe.sx/e/abc",
+                    "stream": {
+                        "video_url": "https://cdn.example.com/v.mp4",
+                        "codec": 1,
+                    },
+                    "remaining": 60.0,
+                    "resolver": "voe",
+                }
+            ],
+            "redirects": [],
+        }
+        registry = HosterResolverRegistry()
+        registry.import_state(state, age_s=0.0)
+
+        assert registry.cached("https://voe.sx/e/abc") == (
+            True,
+            ResolvedStream(video_url="https://cdn.example.com/v.mp4"),
+        )
+
+    def test_a_malformed_entry_changes_nothing(self) -> None:
+        good = {"url": "https://voe.sx/e/a", "stream": None, "remaining": 60.0}
+        state = {"results": [{**good, "resolver": "voe"}, good], "redirects": []}
+        registry = HosterResolverRegistry()
+
+        with pytest.raises(KeyError):
+            registry.import_state(state, age_s=0.0)
+        assert registry._result_cache == {}
+
+    def test_the_cap_holds_after_an_import(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(registry_module, "_MAX_CACHE_SIZE", 3)
+        state = {
+            "results": [
+                {
+                    "url": f"https://voe.sx/e/{i}",
+                    "stream": None,
+                    "remaining": 600.0,
+                    "resolver": "voe",
+                }
+                for i in range(5)
+            ],
+            "redirects": [],
+        }
+        registry = HosterResolverRegistry()
+        registry.import_state(state, age_s=0.0)
+
+        assert list(registry._result_cache) == [
+            f"https://voe.sx/e/{i}" for i in (2, 3, 4)
+        ]
+
+    async def test_caching_counts_as_a_change(self) -> None:
+        registry = HosterResolverRegistry(resolvers=[_stub_resolver("voe", None)])
+        assert registry.changes == 0
+
+        await registry.resolve("https://voe.sx/e/dead")
+        assert registry.changes == 1
+        await registry.resolve("https://voe.sx/e/dead")  # a cache hit
+        assert registry.changes == 1

@@ -9,7 +9,7 @@ Spec: `openspec/specs/observability/spec.md` (from the change `openspec/changes/
 | Endpoint | Content |
 |---|---|
 | `GET /metrics` | All metrics below, Prometheus text format (0.0.4), rendered in a worker thread |
-| `GET /api/v1/stats/metrics` | JSON for a quick look: plugin statistics (from the same metrics), event-loop lag of the last 5 minutes (p50/p99/max), plugin circuit breakers (hoster breakers only in `/metrics`), the 20 hosters probed most often for want of a resolver (`unresolved_hosters`, an open set of names and so no Prometheus label; [Hoster Resolvers](./hoster-resolvers.md#architecture)), concurrency pool, shutdown state |
+| `GET /api/v1/stats/metrics` | JSON for a quick look: plugin statistics (from the same metrics), event-loop lag of the last 5 minutes (p50/p99/max), plugin circuit breakers (hoster breakers only in `/metrics`), the 20 hosters probed most often for want of a resolver (`unresolved_hosters`, an open set of names and so no Prometheus label; [Hoster Resolvers](./hoster-resolvers.md#architecture)), what the start restored of the run before (`hoster_state`: `restored_at`, the snapshot's `age_s`, `resolutions`, `redirects`, `breakers`), concurrency pool, shutdown state |
 
 ## Prometheus
 
@@ -150,8 +150,11 @@ poetry run python scripts/prodctl.py logs --since 30m --grep kinoger --fields pl
 poetry run python scripts/prodctl.py logs --since 7d --grep config_ --width 0  # the config it runs with
 poetry run python scripts/prodctl.py metrics --grep plugin_search_seconds_count
 poetry run python scripts/prodctl.py state --keys circuit_breaker,event_loop
+poetry run python scripts/prodctl.py logs --since 1h --grep hoster_state_   # what a restart restored
 poetry run python scripts/prodctl.py probe tasks              # where the asyncio tasks wait
 ```
+
+A start logs what it restored of the run before ([State across restarts](hoster-resolvers.md#registry-features)): `hoster_state_restored` with the resolutions, redirects and breakers restored and the snapshot's `age_s` (zeros on the first start), or `hoster_state_discarded` with its `reason` (`version`, `malformed`, `unreadable`); `hoster_state_restore_failed` and `hoster_state_save_failed` report a cache backend that failed the read or a write.
 
 `logs` renders JSON records as `time level event key=value ...` and drops the liveness and readiness checks (`--health` keeps them, `--raw` prints the masked lines as logged). Records are cut to 400 characters; `--width 0` prints them whole, for a traceback's last lines (`--fields exception --width 0`). `metrics` and `state` fetch `GET /metrics` and `GET /api/v1/stats/metrics` inside the container.
 

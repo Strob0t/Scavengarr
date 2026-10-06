@@ -59,6 +59,7 @@ from scavengarr.infrastructure.hoster_resolvers.playmate import PlaymateResolver
 from scavengarr.infrastructure.hoster_resolvers.rapidgator import RapidgatorResolver
 from scavengarr.infrastructure.hoster_resolvers.sendvid import SendVidResolver
 from scavengarr.infrastructure.hoster_resolvers.serienstream import SerienstreamResolver
+from scavengarr.infrastructure.hoster_resolvers.state_store import HosterStateStore
 from scavengarr.infrastructure.hoster_resolvers.stmix import StmixResolver
 from scavengarr.infrastructure.hoster_resolvers.streamtape import StreamtapeResolver
 from scavengarr.infrastructure.hoster_resolvers.strmup import StrmupResolver
@@ -656,9 +657,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         cooldown_seconds=60.0,
     )
     log.info("circuit_breaker_initialized")
-    state.telemetry.registry.register(
-        BreakerCollector({"plugin": state.circuit_breaker, "hoster": hoster_breaker})
+    breakers = {"plugin": state.circuit_breaker, "hoster": hoster_breaker}
+    state.telemetry.registry.register(BreakerCollector(breakers))
+
+    # 14a) Resolutions, redirects and open breakers outlive a restart: a
+    #      snapshot in the cache, written every 30 s when it changed and at
+    #      shutdown, restored before the first request
+    state.hoster_state_store = HosterStateStore(
+        state.cache, state.hoster_resolver_registry, breakers
     )
+    await state.hoster_state_store.restore()
+    state.hoster_state_store.start()
 
     # 14b) Plugin health: Stremio searches skip sites that do not answer
     state.plugin_health = _plugin_health(state, config)
@@ -721,6 +730,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await state.stremio_stream_uc.aclose()
         await state.stremio_links.aclose()
         await state.hoster_resolver_registry.aclose()
+        # The last resolutions and breaker changes, before the cache closes
+        await state.hoster_state_store.aclose()
 
         if state._scoring_task is not None:
             state._scoring_task.cancel()

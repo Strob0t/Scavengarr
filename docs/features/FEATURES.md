@@ -95,6 +95,7 @@ Scavengarr includes a full Stremio addon that provides catalog browsing, search,
 | Stremio search cache | [x] Implemented | Title-matching search results per title (`cache.search_ttl_seconds`), stale-while-revalidate (one refresh at a time), single-flight; requests read a running search's results as they arrive, plugins still running at the answer fill the cache |
 | Playback check | [x] Implemented | `verify_streams`: resolved URLs must return video/playlist bytes |
 | Measured quality and size | [x] Implemented | The playback check reads an HLS master playlist's largest resolution and a file's size; they replace the site's quality and fill a missing size, and the answer ranks by them |
+| Resolver state across restarts | [x] Implemented | Unexpired resolutions, redirects and the circuit breakers that are not closed go into one snapshot in the cache backend (`hoster_state:v1`, every 30 s when changed and at shutdown) and come back at the start, shortened by the downtime ([hoster-resolvers.md](hoster-resolvers.md#registry-features)) |
 | Scored plugin selection | [x] Implemented | Optional top-N plugin selection by score (`stremio.scoring_enabled`) |
 | Early-stop resolve | [x] Implemented | Resolution during the search; the answer goes out once `resolve_target_count` (default 5) hosters have a video |
 
@@ -287,7 +288,7 @@ Configuration follows a strict precedence hierarchy with typed validation.
 | Context fields | [x] Implemented | e.g. `plugin`, `duration_ms`, `results_count` |
 | Health endpoints | [x] Implemented | `/api/v1/healthz` (liveness), `/api/v1/readyz` (readiness) |
 | Prometheus metrics | [x] Implemented | `/metrics` — Stremio requests, phases and answer reasons, plugin searches, hoster resolutions, HLS proxy, event-loop lag, open breakers, container CPU and memory; recorded in the core through `TelemetryPort.stage()` ([Observability](./observability.md)) |
-| Metrics endpoint | [x] Implemented | `/api/v1/stats/metrics` — plugin stats, circuit breaker, hosters without a resolver (`unresolved_hosters`), pool utilisation, event-loop lag (`event_loop`: p50/p99/max of a 0.5 s timer over the last 5 min; a stall of 250 ms or more logs `event_loop_lag`) |
+| Metrics endpoint | [x] Implemented | `/api/v1/stats/metrics` — plugin stats, circuit breaker, hosters without a resolver (`unresolved_hosters`), the resolver state the start restored (`hoster_state`), pool utilisation, event-loop lag (`event_loop`: p50/p99/max of a 0.5 s timer over the last 5 min; a stall of 250 ms or more logs `event_loop_lag`) |
 | Tracing | [x] Implemented | Optional OpenTelemetry spans of the recorded stages: Stremio requests, plugin searches, hoster resolutions, HLS proxy (`telemetry.tracing_endpoint`; the `tracing` profile of `docker-compose.yml` runs Tempo); no URLs or titles |
 | Plugin score endpoint | [x] Implemented | `/api/v1/stats/plugin-scores` — EWMA scores, filterable by `plugin`, `category`, `bucket` |
 

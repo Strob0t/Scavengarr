@@ -31,6 +31,9 @@ if TYPE_CHECKING:
     from scavengarr.infrastructure.browser.stealth_pool import StealthPool
     from scavengarr.infrastructure.concurrency import ConcurrencyPool
     from scavengarr.infrastructure.hoster_resolvers import HosterResolverRegistry
+    from scavengarr.infrastructure.hoster_resolvers.state_store import (
+        HosterStateStore,
+    )
     from scavengarr.infrastructure.plugins.health_monitor import PluginHealthMonitor
     from scavengarr.infrastructure.scoring.scheduler import ScoringScheduler
     from scavengarr.infrastructure.telemetry import Telemetry
@@ -60,6 +63,8 @@ class AppState(State):
 
     # Hoster resolution
     hoster_resolver_registry: HosterResolverRegistry
+    # Its resolutions and the open circuit breakers across restarts
+    hoster_state_store: HosterStateStore
 
     # Playwright shared browser pool (single Chromium for all PW plugins)
     shared_browser_pool: SharedBrowserPool | None

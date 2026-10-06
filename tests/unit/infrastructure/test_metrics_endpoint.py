@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from fastapi.testclient import TestClient
 
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.concurrency import ConcurrencyPool
 from scavengarr.infrastructure.graceful_shutdown import GracefulShutdown
+from scavengarr.infrastructure.hoster_resolvers.registry import (
+    HosterResolverRegistry,
+)
+from scavengarr.infrastructure.hoster_resolvers.state_store import HosterStateStore
 from scavengarr.infrastructure.telemetry import Telemetry
 
 
@@ -103,3 +107,17 @@ class TestMetricsEndpoint:
         data = client.get("/api/v1/stats/metrics").json()
 
         assert list(data["unresolved_hosters"].items()) == [("byse", 7), ("other", 2)]
+
+    async def test_the_restored_resolver_state(self) -> None:
+        """What the start restored (openspec persist-resolver-state)."""
+        cache = MagicMock()
+        cache.get = AsyncMock(return_value=None)
+        store = HosterStateStore(cache, HosterResolverRegistry(), {})
+        await store.restore()
+        client = _build_app()
+        client.app.state.hoster_state_store = store
+
+        data = client.get("/api/v1/stats/metrics").json()
+
+        assert data["hoster_state"]["resolutions"] == 0
+        assert data["hoster_state"]["restored_at"] is not None

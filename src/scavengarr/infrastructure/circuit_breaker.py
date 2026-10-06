@@ -13,7 +13,9 @@ probe that never reports is presumed lost after the cooldown.
 from __future__ import annotations
 
 import time
+from collections.abc import Iterable
 from enum import Enum
+from typing import Any
 
 
 class _State(Enum):
@@ -49,6 +51,8 @@ class PluginCircuitBreaker:
         self._opened_at: dict[str, float] = {}
         # Start of the half-open probe in flight
         self._probe_started: dict[str, float] = {}
+        # Breakers opened, reopened or closed (export_state's content)
+        self._changes = 0
 
     # ------------------------------------------------------------------
     # Public API
@@ -83,7 +87,8 @@ class PluginCircuitBreaker:
     def record_success(self, name: str) -> None:
         """Record a successful execution — resets the breaker to CLOSED."""
         self._failures.pop(name, None)
-        self._states.pop(name, None)
+        if self._states.pop(name, None) is not None:
+            self._changes += 1
         self._opened_at.pop(name, None)
         self._cooldowns.pop(name, None)
         self._probe_started.pop(name, None)
@@ -105,6 +110,7 @@ class PluginCircuitBreaker:
             self._cooldowns[name] = min(
                 self._cooldowns.get(name, self._cooldown) * 2, self._max_cooldown
             )
+            self._changes += 1
             return
 
         count = self._failures.get(name, 0) + 1
@@ -113,6 +119,7 @@ class PluginCircuitBreaker:
         if count >= self._threshold:
             self._states[name] = _State.OPEN
             self._opened_at[name] = time.monotonic()
+            self._changes += 1
 
     def release(self, name: str) -> None:
         """End a half-open probe that gave no verdict (a deleted file, a
@@ -144,3 +151,56 @@ class PluginCircuitBreaker:
                 "failures": self._failures.get(n, 0),
             }
         return result
+
+    # ------------------------------------------------------------------
+    # State across restarts (HosterStateStore)
+    # ------------------------------------------------------------------
+
+    @property
+    def changes(self) -> int:
+        """How often :meth:`export_state`'s content changed: a breaker
+        opened, reopened or closed (the store writes when it moved)."""
+        return self._changes
+
+    def export_state(self) -> list[dict[str, Any]]:
+        """The breakers that are not closed, with the cooldown left.
+
+        A half-open probe ends with the process, so its breaker has no
+        cooldown left: after a restart the next call probes.
+        """
+        now = time.monotonic()
+        entries: list[dict[str, Any]] = []
+        for name, state in self._states.items():
+            cooldown = self._cooldowns.get(name, self._cooldown)
+            remaining = 0.0
+            if state == _State.OPEN:
+                elapsed = now - self._opened_at.get(name, 0.0)
+                remaining = max(0.0, cooldown - elapsed)
+            entries.append(
+                {"name": name, "remaining_cooldown": remaining, "cooldown": cooldown}
+            )
+        return entries
+
+    def import_state(self, entries: Iterable[dict[str, Any]], age_s: float) -> int:
+        """Restore :meth:`export_state`'s breakers as open, with the cooldown
+        left shortened by *age_s* (the time since the export); returns how
+        many.
+
+        A cooldown that ran out meanwhile leaves the probe due instead of
+        closing the breaker: a failed probe still doubles the cooldown.
+        Raises ``KeyError``, ``TypeError`` or ``ValueError`` for a malformed
+        entry, before changing anything.
+        """
+        restored = []
+        for entry in entries:
+            cooldown = min(float(entry["cooldown"]), self._max_cooldown)
+            remaining = float(entry["remaining_cooldown"]) - age_s
+            restored.append((str(entry["name"]), cooldown, min(remaining, cooldown)))
+        now = time.monotonic()
+        for name, cooldown, remaining in restored:
+            self._states[name] = _State.OPEN
+            # Open means a failure streak of at least the threshold
+            self._failures[name] = self._threshold
+            self._cooldowns[name] = cooldown
+            self._opened_at[name] = now - cooldown + max(0.0, remaining)
+        return len(restored)
