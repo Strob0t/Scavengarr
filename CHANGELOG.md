@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: The Browser Restart Waits for Its Operations
+- The shared Chromium restarted after 200 stealth pages once no context listed a page. A page another slot was still opening was not listed yet, so the restart killed it (10 of 10 trials): the capture failed and its working link was cached as dead for 15 minutes. The restart also ran inside the finishing request, while it held a page slot and its resolve timeout.
+- Operations hold the browser with `SharedBrowserPool.lease()` (the stealth pool's fetches and captures, a plugin's `isolated_search()`). The last one to end after 200 pages starts the restart in a task of its own; new operations wait until it is done.
+- A Playwright plugin's kept context died with the restart, and boerse, mygully and animeloads failed every search until the app restarted. `_ensure_context()` makes it again when the browser it belonged to is closed. Found by the code review (2026-10-06).
+
 ### Fix: A Later Resolution Leaves a Running HLS Playback Alone
 - All answers and devices share one stored link per hoster URL (`stream_link_id`). When a second device, AIOStreams or a reopened stream list resolved the hoster URL again (another CDN node), the next variant and segment requests of a running playback went to the new node with the old path and token: 403, the proxy answered 502, and the playback stopped when its buffer ran dry.
 - A served playlist points at a copy of the link it came from (`StremioLinks.pinned`: `<stream id>.<digest of the video URL>`, one per resolution), which later resolutions leave alone. Relative URIs become absolute URLs of that copy (`rewrite_manifest(..., playlist_dir)`); a playlist under the old URL form still plays. Found by the code review (2026-10-06).

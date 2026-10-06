@@ -13,6 +13,8 @@ wait and then receive the same instance.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 import structlog
 from patchright.async_api import Browser, Playwright, async_playwright
@@ -49,6 +51,12 @@ class SharedBrowserPool:
         self._browser: Browser | None = None
         self._lock = asyncio.Lock()
         self._pages = 0
+        # Operations holding the browser (lease()); set while it may be used,
+        # cleared while it restarts
+        self._active = 0
+        self._ready = asyncio.Event()
+        self._ready.set()
+        self._restart: asyncio.Task[None] | None = None
 
     @property
     def is_running(self) -> bool:
@@ -91,28 +99,52 @@ class SharedBrowserPool:
             return self._browser, self._pw
 
     def note_page(self) -> None:
-        """Count a page opened on the browser (see ``recycle_when_idle()``)."""
+        """Count a page opened on the browser (see ``lease()``)."""
         self._pages += 1
 
-    async def recycle_when_idle(self) -> None:
-        """Restart Chromium after ``_RECYCLE_AFTER_PAGES`` pages, once no page is open.
+    @asynccontextmanager
+    async def lease(self) -> AsyncIterator[None]:
+        """Hold the browser for one operation: it does not restart meanwhile.
+
+        Waits while a restart runs. After ``_RECYCLE_AFTER_PAGES`` pages the
+        last operation to end starts the restart in a task of its own. A
+        restart when no context listed a page killed a page another slot was
+        still opening, and it ran inside the finishing request's resolve
+        timeout (code review, 2026-10-06).
+        """
+        while not self._ready.is_set():
+            await self._ready.wait()
+        self._active += 1
+        try:
+            yield
+        finally:
+            self._active -= 1
+            if self._active == 0 and self._pages >= _RECYCLE_AFTER_PAGES:
+                self._ready.clear()
+                self._restart = asyncio.get_running_loop().create_task(self._recycle())
+
+    async def _recycle(self) -> None:
+        """Restart Chromium unless a page is open (one opened without a lease).
 
         The next ``warmup()`` launches a new one. Contexts on the old browser
         notice that it is closed and start over (stored clearance cookies
         are restored into new contexts).
         """
-        if self._pages < _RECYCLE_AFTER_PAGES:
-            return
-        async with self._lock:
-            browser = self._browser
-            if browser is None or any(ctx.pages for ctx in browser.contexts):
-                return
-            pages, self._pages = self._pages, 0
-            await self._close()
-            log.info("shared_browser_recycled", pages=pages)
+        try:
+            async with self._lock:
+                browser = self._browser
+                if browser is None or any(ctx.pages for ctx in browser.contexts):
+                    return
+                pages, self._pages = self._pages, 0
+                await self._close()
+                log.info("shared_browser_recycled", pages=pages)
+        finally:
+            self._ready.set()
 
     async def cleanup(self) -> None:
         """Close the shared browser and Playwright instance."""
+        if self._restart is not None and not self._restart.done():
+            await self._restart
         await self._close()
         log.info("shared_browser_cleaned_up")
 

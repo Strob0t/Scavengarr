@@ -289,10 +289,9 @@ class StealthPool:
         return await ctx.new_page()
 
     async def _close(self, page: Page | None) -> None:
-        """Close *page*; the browser restarts when it is due and idle."""
+        """Close *page* (the operation's lease lets the browser restart)."""
         if page is not None and not page.is_closed():
             await page.close()
-        await self._browser_pool.recycle_when_idle()
 
     async def _navigate(
         self,
@@ -343,7 +342,7 @@ class StealthPool:
         unless a challenge's reload sends it).
         """
         timeout_ms = int(timeout * 1000)
-        async with self._fetch_sem:
+        async with self._fetch_sem, self._browser_pool.lease():
             page: Page | None = None
             try:
                 page = await self.new_page()
@@ -368,17 +367,18 @@ class StealthPool:
         cookies that ``fetch_text()`` collected while passing the site's
         challenge.
         """
-        context = await self._ensure_context()
-        cookies: dict[str, str] = {}
-        for cookie in await context.cookies(url):
-            name, value = cookie.get("name"), cookie.get("value")
-            if name and value is not None:
-                cookies[name] = value
-        if not cookies:
-            return None
-        return BrowserSession(
-            cookies=cookies, user_agent=await self._browser_user_agent()
-        )
+        async with self._browser_pool.lease():
+            context = await self._ensure_context()
+            cookies: dict[str, str] = {}
+            for cookie in await context.cookies(url):
+                name, value = cookie.get("name"), cookie.get("value")
+                if name and value is not None:
+                    cookies[name] = value
+            if not cookies:
+                return None
+            return BrowserSession(
+                cookies=cookies, user_agent=await self._browser_user_agent()
+            )
 
     async def _browser_user_agent(self) -> str:
         """The User-Agent the browser sends (read once from a blank page)."""
@@ -401,7 +401,7 @@ class StealthPool:
         *timeout* bounds navigation and the Cloudflare challenge.
         """
         timeout_ms = int(timeout * 1000)
-        async with self._fetch_sem:
+        async with self._fetch_sem, self._browser_pool.lease():
             page: Page | None = None
             try:
                 page = await self.new_page()
@@ -472,7 +472,7 @@ class StealthPool:
                 targets.append(request.url)
 
         timeout_ms = int(timeout * 1000)
-        async with self._fetch_sem:
+        async with self._fetch_sem, self._browser_pool.lease():
             page: Page | None = None
             try:
                 page = await self.new_page()
@@ -521,7 +521,7 @@ class StealthPool:
 
         deadline = time.monotonic() + timeout
         timeout_ms = int(timeout * 1000)
-        async with self._fetch_sem:
+        async with self._fetch_sem, self._browser_pool.lease():
             page: Page | None = None
             try:
                 page = await self.new_page()

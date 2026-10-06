@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -32,7 +34,6 @@ def _mock_pool_stack() -> tuple[MagicMock, AsyncMock, AsyncMock]:
 
     shared_pool = MagicMock()
     shared_pool.warmup = AsyncMock(return_value=(browser, MagicMock()))
-    shared_pool.recycle_when_idle = AsyncMock()
 
     return shared_pool, browser, context
 
@@ -222,7 +223,6 @@ class TestStealthPoolFetchText:
         page.close.assert_awaited_once()
 
     async def test_pages_count_toward_a_browser_restart(self) -> None:
-        """Every page counts; after it closes the browser may restart."""
         shared_pool, _, context = _mock_pool_stack()
         context.new_page = AsyncMock(return_value=_fetch_page())
 
@@ -231,7 +231,39 @@ class TestStealthPoolFetchText:
         )
 
         shared_pool.note_page.assert_called_once_with()
-        shared_pool.recycle_when_idle.assert_awaited_once_with()
+
+    async def test_the_browser_is_held_from_opening_a_page_to_closing_it(
+        self,
+    ) -> None:
+        """A restart when no context listed a page killed a page the other
+        slot was still opening (code review, 2026-10-06)."""
+        events: list[str] = []
+        shared_pool, _, context = _mock_pool_stack()
+
+        @asynccontextmanager
+        async def _lease() -> AsyncIterator[None]:
+            events.append("held")
+            yield
+            events.append("released")
+
+        shared_pool.lease = _lease
+        page = _fetch_page()
+
+        async def _new_page() -> AsyncMock:
+            events.append("opened")
+            return page
+
+        async def _close() -> None:
+            events.append("closed")
+
+        context.new_page = AsyncMock(side_effect=_new_page)
+        page.close = AsyncMock(side_effect=_close)
+
+        await StealthPool(browser_pool=shared_pool).fetch_text(
+            "https://filmfans.org/x", timeout=10
+        )
+
+        assert events == ["held", "opened", "closed", "released"]
 
     async def test_returns_raw_body_for_non_html(self) -> None:
         """JSON is re-fetched in-page: raw text, not Chrome's JSON viewer."""

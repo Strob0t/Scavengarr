@@ -274,6 +274,15 @@ class PlaywrightPluginBase:
             if req_ctx is not None:
                 return req_ctx
 
+        if (
+            self._context is not None
+            and self._browser is not None
+            and not self._browser.is_connected()
+        ):
+            # The shared browser restarted (or crashed): a context kept from
+            # before is dead, and boerse, mygully and animeloads failed every
+            # search until the app restarted (code review, 2026-10-06)
+            self._context = None
         if self._context is None:
             browser = await self._ensure_browser()
             self._context = await browser.new_context(**self._context_options())
@@ -553,7 +562,22 @@ class PlaywrightPluginBase:
 
         For all other plugins, a fresh BrowserContext is created,
         set into the ContextVar, and torn down after search completes.
+
+        On the shared browser the search holds it (``lease()``): it may
+        restart between operations, not under one.
         """
+        if self._shared_pool is None:
+            return await self._isolated_search(query, category, season, episode)
+        async with self._shared_pool.lease():
+            return await self._isolated_search(query, category, season, episode)
+
+    async def _isolated_search(
+        self,
+        query: str,
+        category: int | None,
+        season: int | None,
+        episode: int | None,
+    ) -> list[SearchResult]:
         if self._serialize_search:
             async with self._search_lock:
                 return await self.search(

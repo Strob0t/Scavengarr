@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -387,6 +390,24 @@ class TestEnsureContext:
 
         assert ctx is mock_context
         assert plugin._context is mock_context
+
+    @pytest.mark.asyncio
+    async def test_a_context_of_a_restarted_browser_is_made_again(self) -> None:
+        """The shared browser restarts after 200 pages: a context kept from
+        before is dead, and boerse, mygully and animeloads failed every
+        search until the app restarted (code review, 2026-10-06)."""
+        plugin = _TestPlugin()
+        new_context = AsyncMock()
+        new_browser = _make_mock_browser()
+        new_browser.new_context = AsyncMock(return_value=new_context)
+        pool = MagicMock()
+        pool.warmup = AsyncMock(return_value=(new_browser, MagicMock()))
+        plugin.set_shared_pool(pool)
+        plugin._browser = _make_mock_browser(connected=False)
+        plugin._context = AsyncMock()
+
+        assert await plugin._ensure_context() is new_context
+        assert plugin._browser is new_browser
 
     @pytest.mark.asyncio
     async def test_reuses_existing_context(self) -> None:
@@ -1386,6 +1407,40 @@ class TestIsolatedSearch:
         mock_page.close.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_holds_the_shared_browser_while_it_searches(self) -> None:
+        """The shared browser may restart between operations, not under
+        one: a search's context died between two of its pages (code review,
+        2026-10-06)."""
+        events: list[str] = []
+        plugin = _ConcretePlugin()
+        mock_ctx = AsyncMock()
+        mock_ctx.pages = []
+        browser = _make_mock_browser()
+        browser.new_context = AsyncMock(return_value=mock_ctx)
+        pool = MagicMock()
+        pool.warmup = AsyncMock(return_value=(browser, MagicMock()))
+
+        @asynccontextmanager
+        async def _lease() -> AsyncIterator[None]:
+            events.append("held")
+            yield
+            events.append("released")
+
+        pool.lease = _lease
+        plugin.set_shared_pool(pool)
+        search = plugin.search
+
+        async def _search(*args: Any, **kwargs: Any) -> list[SearchResult]:
+            events.append("search")
+            return await search(*args, **kwargs)
+
+        plugin.search = _search  # type: ignore[method-assign]
+
+        await plugin.isolated_search("test")
+
+        assert events == ["held", "search", "released"]
+
+    @pytest.mark.asyncio
     async def test_isolated_context_forces_no_user_agent(self) -> None:
         plugin = _ConcretePlugin()
         mock_ctx = AsyncMock()
@@ -1584,12 +1639,22 @@ class TestSerializeSearch:
         assert isinstance(plugin._search_lock, asyncio.Lock)
 
 
+async def _settle() -> None:
+    """Let the tasks the pool started run."""
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+
 class TestSharedBrowserRecycle:
     """Chromium's memory grows with the pages it rendered (1.7 GB on the Pi):
-    it restarts after enough pages, but never under an open page."""
+    it restarts after enough pages, but never while an operation holds it
+    (``lease()``) or a page is open. Closing it when no context listed a
+    page killed a page another slot was still opening, 10 of 10 trials,
+    and the close ran inside the finishing request (code review,
+    2026-10-06)."""
 
     @staticmethod
-    def _pool(*, pages: int, open_pages: int) -> tuple[object, AsyncMock, AsyncMock]:
+    def _pool(*, pages: int, open_pages: int) -> tuple[Any, AsyncMock, AsyncMock]:
         from scavengarr.infrastructure.browser.shared_browser import (
             _RECYCLE_AFTER_PAGES,
             SharedBrowserPool,
@@ -1607,10 +1672,17 @@ class TestSharedBrowserRecycle:
         return pool, browser, pw
 
     @pytest.mark.asyncio
-    async def test_restarts_after_enough_pages_when_idle(self) -> None:
+    async def test_restarts_after_enough_pages_once_the_last_operation_ends(
+        self,
+    ) -> None:
         pool, browser, pw = self._pool(pages=-1, open_pages=0)
 
-        await pool.recycle_when_idle()
+        async with pool.lease():
+            async with pool.lease():
+                pass
+            await _settle()
+            browser.close.assert_not_awaited()
+        await _settle()
 
         browser.close.assert_awaited_once()
         pw.stop.assert_awaited_once()
@@ -1620,7 +1692,9 @@ class TestSharedBrowserRecycle:
     async def test_keeps_the_browser_while_a_page_is_open(self) -> None:
         pool, browser, _ = self._pool(pages=-1, open_pages=1)
 
-        await pool.recycle_when_idle()
+        async with pool.lease():
+            pass
+        await _settle()
 
         browser.close.assert_not_awaited()
 
@@ -1628,6 +1702,46 @@ class TestSharedBrowserRecycle:
     async def test_keeps_the_browser_before_enough_pages(self) -> None:
         pool, browser, _ = self._pool(pages=3, open_pages=0)
 
-        await pool.recycle_when_idle()
+        async with pool.lease():
+            pass
+        await _settle()
 
         browser.close.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_the_restart_does_not_hold_up_the_operation_that_ends(
+        self,
+    ) -> None:
+        pool, browser, _ = self._pool(pages=-1, open_pages=0)
+        release = asyncio.Event()
+        browser.close = AsyncMock(side_effect=release.wait)
+
+        async with pool.lease():
+            pass
+        await _settle()
+
+        browser.close.assert_awaited_once()
+        release.set()
+        await _settle()
+
+    @pytest.mark.asyncio
+    async def test_an_operation_waits_for_a_running_restart(self) -> None:
+        pool, browser, _ = self._pool(pages=-1, open_pages=0)
+        release = asyncio.Event()
+        browser.close = AsyncMock(side_effect=release.wait)
+        async with pool.lease():
+            pass
+        await _settle()
+        entered = asyncio.Event()
+
+        async def _operation() -> None:
+            async with pool.lease():
+                entered.set()
+
+        task = asyncio.create_task(_operation())
+        await _settle()
+        assert not entered.is_set()
+
+        release.set()
+        await task
+        assert entered.is_set()
