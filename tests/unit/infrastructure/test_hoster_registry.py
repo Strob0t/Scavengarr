@@ -149,39 +149,37 @@ class TestHosterResolverRegistry:
         assert result is None
 
     @pytest.mark.asyncio
+    @respx.mock
     async def test_probe_detects_direct_video(self) -> None:
-        mock_response = MagicMock()
-        mock_response.headers = {"content-type": "video/mp4"}
-        mock_response.url = "https://cdn.example.com/video.mp4"
+        respx.head("https://cdn.example.com/video.mp4").respond(
+            200, headers={"content-type": "video/mp4"}
+        )
+        async with httpx.AsyncClient() as client:
+            registry = HosterResolverRegistry(http_client=client)
 
-        http_client = AsyncMock(spec=httpx.AsyncClient)
-        http_client.head = AsyncMock(return_value=mock_response)
-
-        registry = HosterResolverRegistry(http_client=http_client)
-        result = await registry.resolve("https://cdn.example.com/video.mp4")
+            result = await registry.resolve("https://cdn.example.com/video.mp4")
 
         assert result is not None
         assert result.video_url == "https://cdn.example.com/video.mp4"
         assert result.is_hls is False
 
     @pytest.mark.asyncio
+    @respx.mock
     async def test_probe_detects_hls(self) -> None:
-        mock_response = MagicMock()
-        mock_response.headers = {
-            "content-type": "application/vnd.apple.mpegurl; charset=utf-8"
-        }
-        mock_response.url = "https://cdn.example.com/master.m3u8"
+        respx.head("https://cdn.example.com/master.m3u8").respond(
+            200,
+            headers={"content-type": "application/vnd.apple.mpegurl; charset=utf-8"},
+        )
+        async with httpx.AsyncClient() as client:
+            registry = HosterResolverRegistry(http_client=client)
 
-        http_client = AsyncMock(spec=httpx.AsyncClient)
-        http_client.head = AsyncMock(return_value=mock_response)
-
-        registry = HosterResolverRegistry(http_client=http_client)
-        result = await registry.resolve("https://cdn.example.com/master.m3u8")
+            result = await registry.resolve("https://cdn.example.com/master.m3u8")
 
         assert result is not None
         assert result.is_hls is True
 
     @pytest.mark.asyncio
+    @respx.mock
     async def test_media_url_is_probed_not_given_to_the_domain_resolver(
         self,
     ) -> None:
@@ -192,15 +190,14 @@ class TestHosterResolverRegistry:
         vidhide.name = "vidhide"
         vidhide.supported_domains = frozenset({"vidhide", "moflix-stream"})
         vidhide.resolve = AsyncMock(return_value=None)
-        head = MagicMock()
-        head.headers = {"content-type": "application/vnd.apple.mpegurl"}
         url = "https://gandalf.moflix-stream.day/movies/Dune.2021/master.m3u8?md5=x"
-        head.url = url
-        http_client = AsyncMock(spec=httpx.AsyncClient)
-        http_client.head = AsyncMock(return_value=head)
-        registry = HosterResolverRegistry(resolvers=[vidhide], http_client=http_client)
+        respx.head(url).respond(
+            200, headers={"content-type": "application/vnd.apple.mpegurl"}
+        )
+        async with httpx.AsyncClient() as client:
+            registry = HosterResolverRegistry(resolvers=[vidhide], http_client=client)
 
-        result = await registry.resolve(url, "moflix-stream")
+            result = await registry.resolve(url, "moflix-stream")
 
         assert result is not None
         assert result.video_url == url
@@ -218,6 +215,21 @@ class TestHosterResolverRegistry:
 
         registry = HosterResolverRegistry(http_client=http_client)
         result = await registry.resolve("https://example.com/embed")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_probe_ignores_a_refusal_with_a_media_type(self) -> None:
+        """A CDN that types its error page by the path made a refusal a
+        stream, cached for an hour (code review, 2026-10-06)."""
+        respx.head("https://cdn.example.com/master.m3u8").respond(
+            403, headers={"content-type": "application/vnd.apple.mpegurl"}
+        )
+        async with httpx.AsyncClient() as client:
+            registry = HosterResolverRegistry(http_client=client)
+
+            result = await registry.resolve("https://cdn.example.com/master.m3u8")
 
         assert result is None
 
@@ -341,20 +353,19 @@ class TestHosterResolverRegistry:
         voe_resolver.resolve.assert_awaited_once_with("https://voe.sx/e/abc123")
 
     @pytest.mark.asyncio
+    @respx.mock
     async def test_redirect_to_unknown_hoster_falls_through_to_probe(self) -> None:
         """Redirect to unknown domain falls through to content-type probing."""
-        mock_redirect_resp = MagicMock()
-        mock_redirect_resp.url = "https://unknown-hoster.com/v/abc"
+        respx.head("https://redirect.example/out/123").respond(
+            302, headers={"location": "https://unknown-hoster.com/v/abc"}
+        )
+        respx.head("https://unknown-hoster.com/v/abc").respond(
+            200, headers={"content-type": "video/mp4"}
+        )
+        async with httpx.AsyncClient() as client:
+            registry = HosterResolverRegistry(http_client=client)
 
-        mock_probe_resp = MagicMock()
-        mock_probe_resp.headers = {"content-type": "video/mp4"}
-        mock_probe_resp.url = "https://unknown-hoster.com/v/abc"
-
-        http_client = AsyncMock(spec=httpx.AsyncClient)
-        http_client.head = AsyncMock(side_effect=[mock_redirect_resp, mock_probe_resp])
-
-        registry = HosterResolverRegistry(http_client=http_client)
-        result = await registry.resolve("https://redirect.example/out/123")
+            result = await registry.resolve("https://redirect.example/out/123")
 
         assert result is not None
         assert result.video_url == "https://unknown-hoster.com/v/abc"
@@ -1307,19 +1318,19 @@ class TestTelemetry:
         ("content_type", "outcome"),
         [("application/vnd.apple.mpegurl", "stream"), ("text/html", "dead")],
     )
+    @respx.mock
     async def test_a_url_without_resolver_is_probed_as_direct(
         self, content_type: str, outcome: str
     ) -> None:
-        response = MagicMock()
-        response.headers = {"content-type": content_type}
-        response.url = "https://cdn.example.com/master.m3u8"
-        http_client = AsyncMock(spec=httpx.AsyncClient)
-        http_client.head = AsyncMock(return_value=response)
+        respx.head("https://cdn.example.com/master.m3u8").respond(
+            200, headers={"content-type": content_type}
+        )
         telemetry = Telemetry()
-        registry = HosterResolverRegistry(http_client=http_client, telemetry=telemetry)
+        async with httpx.AsyncClient() as client:
+            registry = HosterResolverRegistry(http_client=client, telemetry=telemetry)
 
-        await registry.resolve("https://cdn.example.com/master.m3u8")
-        await registry.resolve("https://cdn.example.com/master.m3u8")
+            await registry.resolve("https://cdn.example.com/master.m3u8")
+            await registry.resolve("https://cdn.example.com/master.m3u8")
 
         assert self._outcome(telemetry, outcome, resolver="direct") == 1
         assert self._outcome(telemetry, "cached", resolver="direct") == 1

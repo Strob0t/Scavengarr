@@ -567,8 +567,10 @@ class HosterResolverRegistry:
     ) -> ResolvedStream | None:
         """Probe URL via HEAD request to check if it's directly playable.
 
-        Returns a ResolvedStream if the URL points directly to a video file
-        (video/*, application/vnd.apple.mpegurl, application/dash+xml).
+        Returns a ResolvedStream if the URL answers (below 400) with a video
+        type (video/*, application/vnd.apple.mpegurl): a CDN that types its
+        error page by the path made a refusal a stream, cached for an hour
+        (code review, 2026-10-06).
         """
         if self._http_client is None:
             return None
@@ -577,6 +579,11 @@ class HosterResolverRegistry:
             resp = await self._http_client.head(
                 url, follow_redirects=True, timeout=self._resolve_timeout
             )
+            if resp.status_code >= 400:
+                log.debug(
+                    "hoster_probe_refused", hoster=hoster_name, status=resp.status_code
+                )
+                return None
             content_type = resp.headers.get("content-type", "").lower()
 
             if content_type.startswith("video/"):

@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: A Refused Probe Is No Stream
+- The registry's content-type probe (playlists, URLs without a resolver) took any HEAD answer with a video type as a stream, also a 403 or 404: a CDN that types its error page by the path made a refusal a stream, cached for an hour. Only answers below 400 count now (`hoster_probe_refused`). The probe tests use `respx` instead of mocked responses. Found by the code review (2026-10-06).
+
 ### Fix: Results With Other Hoster Links Stay Apart in a Running Search
 - A running Stremio search keeps each result once (the full and the base title find many twice), by plugin, title, release, link and the URLs of its `download_links`. The key read those URLs under `url`, but plugins store them under `link`: two results of one plugin with the same title, release and page link but other hoster links collapsed into one. The three readers of a link's URL (search progress, stream converter, episode filter) now share `link_url()` in `domain/plugins/base.py`. Found by the code review (2026-10-06).
 
