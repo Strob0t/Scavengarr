@@ -15,7 +15,7 @@
 
 ## 2. YAML Plugin Schema (superseded)
 
-YAML plugins were implemented and later removed in `42fced9`. `AuthConfig` and `HttpOverrides` survive as plain dataclasses in `src/scavengarr/domain/plugins/plugin_schema.py`.
+YAML plugins were implemented and later removed in `42fced9`. `AuthConfig` and `HttpOverrides` survived as plain dataclasses in `src/scavengarr/domain/plugins/plugin_schema.py` until 2026-10-06, when they were removed unused.
 
 - [ ] 2.1 Create `src/scavengarr/plugins/schema.py` with Pydantic models (superseded):
   - [ ] `ScrapySelectors(BaseModel)`:

@@ -103,12 +103,7 @@ Entities and value types are implemented as `@dataclass` classes.
 
 ### Value Objects
 
-Value objects are immutable configuration types (`frozen=True` dataclasses):
-
-| Value Object | File | Purpose |
-|---|---|---|
-| `AuthConfig` | `plugins/plugin_schema.py` | Authentication settings (`none`/`basic`/`form`/`cookie`) |
-| `HttpOverrides` | `plugins/plugin_schema.py` | Per-plugin HTTP configuration overrides |
+The frozen entities above double as value objects. The domain has no configuration value objects of its own: per-plugin overrides are `PluginOverride` in `infrastructure/config/schema.py`.
 
 ### Enums
 

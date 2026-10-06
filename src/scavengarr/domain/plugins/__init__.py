@@ -9,16 +9,10 @@ from .exceptions import (
     PluginLoadError,
     PluginNotFoundError,
 )
-from .plugin_schema import (
-    AuthConfig,
-    HttpOverrides,
-)
 
 __all__ = [
-    "AuthConfig",
     "DuplicatePluginError",
     "GrabResolvingPlugin",
-    "HttpOverrides",
     "PluginLoadError",
     "PluginNotFoundError",
     "PluginProtocol",

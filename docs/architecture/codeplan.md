@@ -31,7 +31,6 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 | `domain/entities/stremio.py` | Stremio types | `StremioStreamRequest`, `StremioStream`, `StremioMetaPreview`, `RankedStream`, `StreamQuality`, `StreamLanguage`, `TitleMatchInfo`, `CachedStreamLink`, `ResolvedStream` |
 | `domain/entities/scoring.py` | Plugin-scoring types | `ProbeResult`, `EwmaState`, `PluginScoreSnapshot` |
 | `domain/plugins/base.py` | Plugin contract | `SearchResult`, `PluginProtocol`, `PluginProvides`, `GrabResolvingPlugin` (optional grab-time link resolution) |
-| `domain/plugins/plugin_schema.py` | Plugin value objects | `AuthConfig`, `HttpOverrides` |
 | `domain/plugins/exceptions.py` | Plugin errors | `PluginError`, `PluginLoadError`, `PluginNotFoundError`, `DuplicatePluginError` |
 | `domain/ports/` | `Protocol` ports | `CachePort`, `SearchEnginePort`, `PluginRegistryPort` (sync), `CrawlJobRepository`, `StreamLinkRepository`, `HosterResolverPort`, `PluginScoreStorePort`, `TmdbClientPort`, `ConcurrencyPoolPort`, `ConcurrencyBudgetPort` |
 

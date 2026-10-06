@@ -114,7 +114,7 @@ The system SHALL validate Python plugins implement the required protocol. Status
 - **AND** the error message includes the syntax error traceback
 
 ### Requirement: Authentication Configuration (superseded)
-The system SHALL support authentication configuration for YAML plugins via the `auth` section. Status: superseded — Python plugins implement authentication themselves (e.g. boerse, mygully, dataload); a plain `AuthConfig` dataclass remains in `src/scavengarr/domain/plugins/plugin_schema.py`.
+The system SHALL support authentication configuration for YAML plugins via the `auth` section. Status: superseded — Python plugins implement authentication themselves (e.g. boerse, mygully, dataload); the plain `AuthConfig` dataclass that remained in `src/scavengarr/domain/plugins/plugin_schema.py` was removed unused (2026-10-06).
 
 #### Scenario: No authentication
 - **WHEN** a plugin has `auth.type: "none"` or omits the `auth` field
