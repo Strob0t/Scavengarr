@@ -106,7 +106,7 @@ Open and still worth their place, not repeated here: optimization-options.md opt
 | 10 | I10 persist resolver state (**done** 2026-10-06; a breaker whose cooldown ran out while down comes back with its probe due instead of closed; the production check, task 4.2, follows the next deploy) | `openspec/changes/persist-resolver-state/` | `hoster_resolvers/registry.py`, `infrastructure/circuit_breaker.py`, `interfaces/composition.py` | Resolver area: check first |
 | 11 | I15 real-page fixtures (**done** 2026-10-06; kinox's fixtures stop at the detail page, its mirror answers sit behind the verification wall) | below | `scripts/capture_pages.py`, `tests/fixtures/html/`, `tests/unit/infrastructure/test_real_pages.py` | Yes (tests only) |
 | 12 | I14 split `stremio_stream.py` (**done** 2026-10-06; five collaborators in `application/stremio/`, the use case keeps the flow and its tasks in 346 lines; deviations in the plan's outcome section) | [stremio-stream-split.md](stremio-stream-split.md) | `application/use_cases/stremio_stream.py`, `application/stremio/` | **Exclusive**: no other Stremio change in flight |
-| 13 | I11 anime ids | `openspec/changes/add-anime-ids/` (spike first) | router, use case entry, a new infrastructure client, TMDB client | Stremio area: check first; after step 12 |
+| 13 | I11 anime ids (spike done 2026-10-06, [anime-ids-spike.md](anime-ids-spike.md): the approved source order places no season; the revision waits for the maintainer's decision) | `openspec/changes/add-anime-ids/` (spike first) | router, use case entry, a new infrastructure client, TMDB client | Stremio area: check first; after step 12 |
 
 ### Task specifications for the items without an OpenSpec change
 

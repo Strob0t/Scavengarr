@@ -158,7 +158,7 @@ A start logs what it restored of the run before ([State across restarts](hoster-
 
 `logs` renders JSON records as `time level event key=value ...` and drops the liveness and readiness checks (`--health` keeps them, `--raw` prints the masked lines as logged). Records are cut to 400 characters; `--width 0` prints them whole, for a traceback's last lines (`--fields exception --width 0`). `metrics` and `state` fetch `GET /metrics` and `GET /api/v1/stats/metrics` inside the container.
 
-`probe` runs a Python file inside the container (`python -c`, so it sees the app's code, config and cache): `resources` (cgroup limits and pressure, memory, the processes with the most memory), `tasks` (`python -m asyncio pstree` of the app process), `links ID ...` (stored stream links: hoster, title, CDN domain, age) and `redis keys|ttl|get` (read-only Redis commands). Probes live in `scripts/probes/` and change nothing; `probe path/to/file.py` runs an ad-hoc one.
+`probe` runs a Python file inside the container (`python -c`, so it sees the app's code, config and cache): `resources` (cgroup limits and pressure, memory, the processes with the most memory), `tasks` (`python -m asyncio pstree` of the app process), `links ID ...` (stored stream links: hoster, title, CDN domain, age), `redis keys|ttl|get` (read-only Redis commands) and `anime_ids [KITSU_ID[:EPISODE] ...]` (what a `kitsu:` request maps to through Kitsu's API, the public anime id lists and the Anime Kitsu addon, and what aniworld and fireani find for it; the spike in `docs/plans/anime-ids-spike.md`). Probes live in `scripts/probes/` and change nothing; `probe path/to/file.py` runs an ad-hoc one.
 
 ## Tracing on Demand
 

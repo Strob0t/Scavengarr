@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Chore: Anime Ids Spike
+- `scripts/probes/anime_ids.py` shows what a `kitsu:` request maps to through Kitsu's API, the public anime id lists and the Anime Kitsu addon, and what aniworld and fireani find for it; the ten-title spike ([anime-ids-spike.md](docs/plans/anime-ids-spike.md)) found that Kitsu's own mappings place no season, while the addon places every episode the way Cinemeta counts it.
+
 ### Refactor: The Stream Use Case Runs Its Phases as Collaborators
 - `StremioStreamUseCase` (942 lines, 26 methods) runs five collaborators in `application/stremio/`: `PluginSelector`, `TitleResolver`, `TitleSearch`, `ResolveFlow` (next to `HosterResolution`) and the `answer.py` functions; it keeps the request flow and the tasks that outlive a request (346 lines), and its tests moved with the phases (`test_plugin_selection.py`, `test_title_resolution.py`, `test_title_search.py`, `test_resolve_flow.py`, `test_answer.py`). No behaviour change: the constructor, log events and metrics stay ([plan](docs/plans/stremio-stream-split.md)).
 
