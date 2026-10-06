@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: Results With Other Hoster Links Stay Apart in a Running Search
+- A running Stremio search keeps each result once (the full and the base title find many twice), by plugin, title, release, link and the URLs of its `download_links`. The key read those URLs under `url`, but plugins store them under `link`: two results of one plugin with the same title, release and page link but other hoster links collapsed into one. The three readers of a link's URL (search progress, stream converter, episode filter) now share `link_url()` in `domain/plugins/base.py`. Found by the code review (2026-10-06).
+
 ### Fix: A Refused Stream Resolves Past the Cache Even While Another Request Resolves It
 - When the CDN refuses a stored HLS playlist, the hoster URL resolves again past the resolver's cache. Requests for one link shared one resolution, keyed by the link only: a refresh that came while a request resolved the stale link from the cache joined it and got the refused URL again (`502`). A refresh now runs on its own, and requests that come meanwhile join it. Found by the code review (2026-10-06).
 

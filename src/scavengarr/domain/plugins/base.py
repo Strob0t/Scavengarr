@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, runtime_checkable
 
@@ -41,6 +42,12 @@ class SearchResult:
     grabs: int = 0
     download_volume_factor: float = 0.0  # Direct Download = no upload required
     upload_volume_factor: float = 0.0
+
+
+def link_url(link: Mapping[str, str]) -> str:
+    """The URL of one of a result's ``download_links``: plugins store it
+    under ``link``, older ones under ``url``."""
+    return (link.get("link") or link.get("url") or "").strip()
 
 
 class PluginProtocol(Protocol):

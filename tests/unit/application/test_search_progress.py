@@ -45,6 +45,25 @@ class TestSearchProgress:
         assert len(progress.results) == 3
         assert progress.total == 3
 
+    def test_results_with_other_hoster_links_stay(self) -> None:
+        """Plugins store a link's URL under ``link``; the key read ``url``,
+        so such results collapsed into one (code review, 2026-10-06)."""
+        progress = SearchProgress()
+        results = [
+            SearchResult(
+                title="Iron Man",
+                download_link="https://site.example/film",
+                download_links=[{"hoster": "voe", "link": url}],
+                metadata={"source_plugin": "a"},
+            )
+            for url in ("https://voe.sx/e/1", "https://voe.sx/e/2")
+        ]
+
+        progress.add(results, results)
+
+        assert len(progress.results) == 2
+        assert progress.total == 2
+
     def test_a_link_another_group_matches_is_kept(self) -> None:
         """Language groups filter with their own title."""
         progress = SearchProgress()

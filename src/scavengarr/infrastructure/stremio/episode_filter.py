@@ -12,7 +12,7 @@ from dataclasses import replace
 
 import structlog
 
-from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.domain.plugins.base import SearchResult, link_url
 from scavengarr.infrastructure.stremio.release_guess import guess_release
 
 log = structlog.get_logger(__name__)
@@ -103,7 +103,7 @@ def _narrow_links(
         return r
     if not kept:
         return None
-    first_url = kept[0].get("link", "") or kept[0].get("url", "") or r.download_link
+    first_url = link_url(kept[0]) or r.download_link
     return replace(r, download_link=first_url, download_links=kept)
 
 

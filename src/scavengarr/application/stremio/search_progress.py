@@ -12,7 +12,7 @@ import contextlib
 import time
 
 from scavengarr.application.stremio.search_cache import CachedSearch
-from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.domain.plugins.base import SearchResult, link_url
 
 _Key = tuple[str, str, str | None, str, tuple[str, ...]]
 
@@ -84,7 +84,7 @@ class SearchProgress:
 
 def _key(result: SearchResult) -> _Key:
     """What makes a result the same one found again: plugin, release, links."""
-    links = tuple(link.get("url", "") for link in result.download_links or ())
+    links = tuple(map(link_url, result.download_links or ()))
     return (
         result.metadata.get("source_plugin", ""),
         result.title,
