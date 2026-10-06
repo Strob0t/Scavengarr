@@ -531,6 +531,24 @@ class TestPluginSearch:
         )
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("episode", [2, None])
+    async def test_a_missing_season_gives_no_result(
+        self, _plugin, mock_client, episode
+    ):
+        """bs.to redirects a season it lacks to another one: S09E02 of
+        Breaking Bad linked an episode of season 1, in English (live; code
+        review, 2026-10-06)."""
+
+        async def mock_get(url, **kwargs):
+            if "andere-serien" in str(url):
+                return _make_response(LISTING_HTML)
+            return _make_response(SEASON_HTML)  # season 2's page
+
+        mock_client.get = AsyncMock(side_effect=mock_get)
+
+        assert await _plugin.search("breaking bad", season=9, episode=episode) == []
+
+    @pytest.mark.asyncio
     async def test_search_empty_query(self, _plugin):
         results = await _plugin.search("")
         assert results == []

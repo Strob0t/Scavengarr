@@ -61,8 +61,9 @@ _GENRE_CATEGORY: dict[str, int] = {
     "sport": 5060,
 }
 
-# Episode page in the episode table (hoster links add a /<Hoster> segment)
-_EPISODE_HREF_RE = re.compile(r"^serie/[^/]+/\d+/(\d+)-[^/]+/[a-z]+$")
+# Episode page in the episode table (hoster links add a /<Hoster> segment):
+# serie/<slug>/<season>/<episode>-<name>/<language>
+_EPISODE_HREF_RE = re.compile(r"^serie/[^/]+/(\d+)/(\d+)-[^/]+/[a-z]+$")
 
 
 class _SeriesListParser:
@@ -140,6 +141,9 @@ class _SeriesDetailParser:
         self.episode_count = 0
         # Episode page per number; rows without hosters are marked "disabled"
         self.episode_links: dict[int, str] = {}
+        # Seasons the episode table links to: bs.to answers a season it
+        # lacks with another season's page
+        self.episode_seasons: set[int] = set()
 
     def feed(self, html: str) -> None:
         tree = LexborHTMLParser(html)
@@ -191,7 +195,8 @@ class _SeriesDetailParser:
             for link in row.css("a"):
                 match = _EPISODE_HREF_RE.match(link.attributes.get("href") or "")
                 if match:
-                    self.episode_links.setdefault(int(match.group(1)), match.group(0))
+                    self.episode_seasons.add(int(match.group(1)))
+                    self.episode_links.setdefault(int(match.group(2)), match.group(0))
 
 
 def _text_outside(node: LexborNode, tag: str) -> str:
@@ -299,8 +304,16 @@ class BurningSeriesPlugin(HttpxPluginBase):
 
         Links the series page, the German season page, or the episode page
         from the season's episode table (None when the episode has no
-        hosters there).
+        hosters there). None for a season the series lacks: bs.to redirects
+        it to another season, and S09E02 of Breaking Bad linked an episode
+        of season 1 (code review, 2026-10-06).
         """
+        if (
+            season is not None
+            and detail.episode_seasons
+            and season not in detail.episode_seasons
+        ):
+            return None
         title = detail.title or listing_entry["title"]
         year = detail.year
         slug = listing_entry["slug"]
