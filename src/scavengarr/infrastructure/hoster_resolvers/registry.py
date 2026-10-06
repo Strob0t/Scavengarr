@@ -19,6 +19,7 @@ from scavengarr.domain.ports.hoster_resolver import (
     HosterResolverPort,
 )
 from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
+from scavengarr.infrastructure.browser.page_gate import PageBusy, work_clock
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.hoster_resolvers._domain import extract_domain
 from scavengarr.infrastructure.hoster_resolvers._verify import check_playable
@@ -480,24 +481,35 @@ class HosterResolverRegistry:
 
         Returns the stream (None = failed) and whether the outcome may be
         cached. The resolver gets ``resolve_timeout`` in total (the
-        resolvers' own request timeouts add up over several requests).
-        *resolve* replaces ``resolver.resolve(url)`` (a player's resolution).
+        resolvers' own request timeouts add up over several requests); the
+        clock stops while it waits for a stealth browser page
+        (``work_clock``). *resolve* replaces ``resolver.resolve(url)`` (a
+        player's resolution).
 
         The circuit breaker counts a timeout and an unplayable stream; a
         stream resets it. A dead link, a failed request and a cut neither
         count nor reset it: they say nothing about the hoster. Most cuts
         come from the answer going out once enough other hosters have a
         video, and five of them opened the breakers of healthy hosters
-        (code review, 2026-10-06).
+        (code review, 2026-10-06). Neither does a capture that got no
+        browser page before its request was due (``busy``).
         """
         with self._telemetry.stage("hoster_resolve", resolver=resolver.name) as stage:
             try:
-                async with asyncio.timeout(self._resolve_timeout):
-                    result = await (resolve() if resolve else resolver.resolve(url))
+                async with asyncio.timeout(self._resolve_timeout) as clock:
+                    token = work_clock.set(clock)
+                    try:
+                        result = await (resolve() if resolve else resolver.resolve(url))
+                    finally:
+                        work_clock.reset(token)
                 stage.outcome, stream, cacheable = await self._judge(
                     resolver, hoster_name, url, result
                 )
                 return stream, cacheable
+            except PageBusy:
+                log.info("hoster_resolve_busy", hoster=hoster_name, url=url)
+                stage.outcome = "busy"
+                return None, False
             except (TimeoutError, httpx.TimeoutException):
                 log.warning("hoster_resolve_timeout", hoster=hoster_name, url=url)
                 self._record(resolver, failed=True)

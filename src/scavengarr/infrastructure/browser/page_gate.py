@@ -3,9 +3,12 @@
 Plugin pages behind Cloudflare, hoster captures and link-outs share one
 headful browser, and a page costs about 200 MB and much CPU. Pages are
 handed out in the order they were asked for. The work's claim
-(``page_claim``) names what a page is for; the wait for a page and the work
-on it are recorded by that kind (``browser_page_wait``, ``browser_page``).
-See ``docs/plans/browser-page-budget.md``.
+(``page_claim``) names what a page is for and when the work is due: work
+that cannot start ``_MIN_WORK_S`` before then gets no page (``PageBusy``),
+and the timeout of a resolution (``work_clock``) stops while it waits. The
+wait for a page and the work on it are recorded by kind
+(``browser_page_wait``, ``browser_page``). See
+``docs/plans/browser-page-budget.md``.
 """
 
 from __future__ import annotations
@@ -13,12 +16,25 @@ from __future__ import annotations
 import asyncio
 import itertools
 import time
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 
 from scavengarr.domain.ports.browser_fetcher import PageClaim, PageKind, page_claim
 from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
+
+# Work that gets its page later than this before it is due rarely finishes:
+# Filemoon's capture, the shortest browser work, took 1.5-2 s (2026-10-06)
+_MIN_WORK_S = 3.0
+
+# The timeout of the work that asks for a page (the registry's resolve
+# timeout): it measures the work, so it stops while the work waits
+work_clock: ContextVar[asyncio.Timeout | None] = ContextVar("work_clock", default=None)
+
+
+class PageBusy(Exception):
+    """No page came free in time for the work's claim."""
 
 
 @dataclass(order=True)
@@ -27,6 +43,23 @@ class _Waiter:
 
     key: tuple[int, ...]
     granted: asyncio.Future[None] = field(compare=False)
+
+
+@contextmanager
+def _clock_stopped() -> Iterator[None]:
+    """Stop the waiting work's ``work_clock``; it gets its time left back."""
+    clock = work_clock.get()
+    if clock is None or clock.expired() or (when := clock.when()) is None:
+        yield
+        return
+    loop = asyncio.get_running_loop()
+    left = when - loop.time()
+    clock.reschedule(None)
+    try:
+        yield
+    finally:
+        if not clock.expired():
+            clock.reschedule(loop.time() + left)
 
 
 class PageGate:
@@ -55,19 +88,32 @@ class PageGate:
     async def page(self, kind: PageKind, *, timeout: float) -> AsyncIterator[None]:
         """Hold one page for the work of the current claim.
 
-        Without a claim the work counts as *kind*, due after its own
-        *timeout*.
+        Raises ``PageBusy`` when no page comes free ``_MIN_WORK_S`` before
+        the claim is due. Without a claim (Torznab searches, the scoring
+        probes) the work counts as *kind*, due after its own *timeout*, and
+        waits until a page is free.
         """
-        claim = page_claim.get() or PageClaim(kind, time.monotonic() + timeout)
-        with self._telemetry.stage("browser_page_wait", kind=claim.kind):
-            await self._acquire()
+        claim = page_claim.get()
+        latest = None if claim is None else claim.due - _MIN_WORK_S
+        if claim is None:
+            claim = PageClaim(kind, time.monotonic() + timeout)
+        with self._telemetry.stage("browser_page_wait", kind=claim.kind) as wait:
+            try:
+                with _clock_stopped():
+                    await self._acquire(latest)
+            except PageBusy:
+                wait.outcome = "busy"
+                raise
         try:
             with self._telemetry.stage("browser_page", kind=claim.kind):
                 yield
         finally:
             self._release()
 
-    async def _acquire(self) -> None:
+    async def _acquire(self, latest: float | None) -> None:
+        """Take a page, waiting until *latest* at most (``time.monotonic()``)."""
+        if latest is not None and latest <= time.monotonic():
+            raise PageBusy
         if self._in_use < self._limit and not self._waiters:
             self._in_use += 1
             return
@@ -76,13 +122,17 @@ class PageGate:
         )
         self._waiters.append(waiter)
         try:
-            await waiter.granted
-        except asyncio.CancelledError:
+            # The loop's clock is time.monotonic()
+            async with asyncio.timeout_at(latest):
+                await waiter.granted
+        except (asyncio.CancelledError, TimeoutError) as exc:
             if waiter in self._waiters:
                 self._waiters.remove(waiter)
             elif not waiter.granted.cancelled():
                 # Granted, but cut before it ran: the page goes on
                 self._release()
+            if isinstance(exc, TimeoutError):
+                raise PageBusy from None
             raise
 
     def _release(self) -> None:

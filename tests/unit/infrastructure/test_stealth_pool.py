@@ -3,18 +3,24 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from scavengarr.domain.ports.browser_fetcher import BrowserSession, ClickThrough
+from scavengarr.domain.ports.browser_fetcher import (
+    BrowserSession,
+    ClickThrough,
+    PageClaim,
+    page_claim,
+)
 from scavengarr.infrastructure.browser.hardening import (
     BLOCKED_RESOURCE_TYPES,
     block_heavy_resources,
 )
-from scavengarr.infrastructure.browser.page_gate import PageGate
+from scavengarr.infrastructure.browser.page_gate import PageBusy, PageGate
 from scavengarr.infrastructure.browser.stealth_pool import StealthPool
 
 # ------------------------------------------------------------------
@@ -1069,3 +1075,31 @@ class TestStealthPoolCaptureMediaThumbnails:
 
         assert media is not None
         assert media.url.startswith("https://sfy-01-fr.vidsonic.net/")
+
+
+class TestBusyPages:
+    """Work due before a page could do it gets none."""
+
+    @staticmethod
+    def _too_late() -> None:
+        page_claim.set(PageClaim("plugin", time.monotonic() + 1.0))
+
+    async def test_a_plugin_page_answers_none(self) -> None:
+        shared_pool, _, context = _mock_pool_stack()
+        pool = StealthPool(browser_pool=shared_pool)
+        self._too_late()
+
+        assert await pool.fetch_text("https://x.org/a", timeout=30) is None
+        assert await pool.resolve_redirect("https://x.org/b", timeout=30) is None
+        assert await pool.click_through("https://x.org/c", "a", timeout=30) is None
+        context.new_page.assert_not_awaited()
+
+    async def test_a_capture_reports_it(self) -> None:
+        """The registry neither caches nor counts it."""
+        shared_pool, _, context = _mock_pool_stack()
+        pool = StealthPool(browser_pool=shared_pool)
+        self._too_late()
+
+        with pytest.raises(PageBusy):
+            await pool.capture_media("https://filemoon.sx/e/a", timeout=15)
+        context.new_page.assert_not_awaited()

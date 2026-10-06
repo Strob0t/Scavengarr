@@ -22,7 +22,7 @@ from patchright.async_api import Browser, BrowserContext, Page, Request, Route
 
 from scavengarr.domain.ports.browser_fetcher import BrowserSession, ClickThrough
 from scavengarr.infrastructure.browser.hardening import block_heavy_resources
-from scavengarr.infrastructure.browser.page_gate import PageGate
+from scavengarr.infrastructure.browser.page_gate import PageBusy, PageGate
 from scavengarr.infrastructure.browser.turnstile import (
     WIDGET_FORM,
     is_challenge_page,
@@ -344,26 +344,30 @@ class StealthPool:
         unless a challenge's reload sends it).
         """
         timeout_ms = int(timeout * 1000)
-        async with (
-            self._pages.page("plugin", timeout=timeout),
-            self._browser_pool.lease(),
-        ):
-            page: Page | None = None
-            try:
-                page = await self.new_page()
-                if not await self._navigate(
-                    page, url, wait_until="domcontentloaded", timeout_ms=timeout_ms
-                ):
-                    return await page.evaluate(_FETCH_RAW_JS, url)
-                if not await solve_cloudflare(page, timeout_ms=timeout_ms):
+        try:
+            async with (
+                self._pages.page("plugin", timeout=timeout),
+                self._browser_pool.lease(),
+            ):
+                page: Page | None = None
+                try:
+                    page = await self.new_page()
+                    if not await self._navigate(
+                        page, url, wait_until="domcontentloaded", timeout_ms=timeout_ms
+                    ):
+                        return await page.evaluate(_FETCH_RAW_JS, url)
+                    if not await solve_cloudflare(page, timeout_ms=timeout_ms):
+                        return None
+                    await self._remember(page)
+                    return await read_when_settled(page, lambda: _read_body(page, url))
+                except Exception:  # noqa: BLE001
+                    log.debug("stealth_fetch_error", url=url, exc_info=True)
                     return None
-                await self._remember(page)
-                return await read_when_settled(page, lambda: _read_body(page, url))
-            except Exception:  # noqa: BLE001
-                log.debug("stealth_fetch_error", url=url, exc_info=True)
-                return None
-            finally:
-                await self._close(page)
+                finally:
+                    await self._close(page)
+        except PageBusy:
+            log.info("stealth_page_busy", url=url)
+            return None
 
     async def session(self, url: str) -> BrowserSession | None:
         """Return the context's cookies for *url* and the browser's User-Agent.
@@ -480,29 +484,33 @@ class StealthPool:
                 targets.append(request.url)
 
         timeout_ms = int(timeout * 1000)
-        async with (
-            self._pages.page("plugin", timeout=timeout),
-            self._browser_pool.lease(),
-        ):
-            page: Page | None = None
-            try:
-                page = await self.new_page()
-                page.on("request", _on_request)
-                if not await self._navigate(
-                    page,
-                    url,
-                    wait_until="commit",
-                    timeout_ms=timeout_ms,
-                    done=lambda: bool(targets),
-                ):
-                    return None
-                # A challenge page redirects once solved; the listener sees it
-                if not targets and await is_challenge_page(page):
-                    await solve_cloudflare(page, timeout_ms=timeout_ms)
-            except Exception:  # noqa: BLE001
-                log.debug("stealth_redirect_error", url=url, exc_info=True)
-            finally:
-                await self._close(page)
+        try:
+            async with (
+                self._pages.page("plugin", timeout=timeout),
+                self._browser_pool.lease(),
+            ):
+                page: Page | None = None
+                try:
+                    page = await self.new_page()
+                    page.on("request", _on_request)
+                    if not await self._navigate(
+                        page,
+                        url,
+                        wait_until="commit",
+                        timeout_ms=timeout_ms,
+                        done=lambda: bool(targets),
+                    ):
+                        return None
+                    # A challenge page redirects once solved; the listener sees it
+                    if not targets and await is_challenge_page(page):
+                        await solve_cloudflare(page, timeout_ms=timeout_ms)
+                except Exception:  # noqa: BLE001
+                    log.debug("stealth_redirect_error", url=url, exc_info=True)
+                finally:
+                    await self._close(page)
+        except PageBusy:
+            log.info("stealth_page_busy", url=url)
+            return None
         return targets[0] if targets else None
 
     async def click_through(
@@ -532,43 +540,52 @@ class StealthPool:
 
         deadline = time.monotonic() + timeout
         timeout_ms = int(timeout * 1000)
-        async with (
-            self._pages.page("plugin", timeout=timeout),
-            self._browser_pool.lease(),
-        ):
-            page: Page | None = None
-            try:
-                page = await self.new_page()
-                page.on("request", _on_request)
-                page.on("popup", _close_popup)
-                # Full layout: the click must hit the element like a user's
-                await page.route("**/*", _allow_player_resources)
-                if not await self._navigate(
-                    page, page_url, wait_until="domcontentloaded", timeout_ms=timeout_ms
-                ):
+        try:
+            async with (
+                self._pages.page("plugin", timeout=timeout),
+                self._browser_pool.lease(),
+            ):
+                page: Page | None = None
+                try:
+                    page = await self.new_page()
+                    page.on("request", _on_request)
+                    page.on("popup", _close_popup)
+                    # Full layout: the click must hit the element like a user's
+                    await page.route("**/*", _allow_player_resources)
+                    if not await self._navigate(
+                        page,
+                        page_url,
+                        wait_until="domcontentloaded",
+                        timeout_ms=timeout_ms,
+                    ):
+                        return None
+                    if not await solve_cloudflare(page, timeout_ms=timeout_ms):
+                        return None
+                    await _click_clear_of_layers(page, selector)
+                    await _wait_for_target(page, targets, deadline)
+                    if not targets:
+                        log.info("stealth_click_through_no_target", url=page_url)
+                        return None
+                    await self._remember(page)
+                    cookies = await page.context.cookies(page_url)
+                    return ClickThrough(
+                        url=targets[0],
+                        cookies={
+                            name: c.get("value", "")
+                            for c in cookies
+                            if (name := c.get("name"))
+                        },
+                    )
+                except Exception:  # noqa: BLE001
+                    log.debug(
+                        "stealth_click_through_error", url=page_url, exc_info=True
+                    )
                     return None
-                if not await solve_cloudflare(page, timeout_ms=timeout_ms):
-                    return None
-                await _click_clear_of_layers(page, selector)
-                await _wait_for_target(page, targets, deadline)
-                if not targets:
-                    log.info("stealth_click_through_no_target", url=page_url)
-                    return None
-                await self._remember(page)
-                cookies = await page.context.cookies(page_url)
-                return ClickThrough(
-                    url=targets[0],
-                    cookies={
-                        name: c.get("value", "")
-                        for c in cookies
-                        if (name := c.get("name"))
-                    },
-                )
-            except Exception:  # noqa: BLE001
-                log.debug("stealth_click_through_error", url=page_url, exc_info=True)
-                return None
-            finally:
-                await self._close(page)
+                finally:
+                    await self._close(page)
+        except PageBusy:
+            log.info("stealth_page_busy", url=page_url)
+            return None
 
     # ------------------------------------------------------------------
     # Internal

@@ -351,7 +351,7 @@ Defaults, with production's values (`data/config.yaml`) where they differ:
 | `stremio.stream_deadline_seconds` | 60 s | The answer, from the request start | Latest answer: running resolutions are cancelled, the search goes on |
 | `cache.search_ttl_seconds` | 900 s (1800 s), plus 6 h stale | A search cache entry | Fresh: no search; stale: answers while one background search refreshes it (one title at a time) |
 | Resolution cache (fixed) | streams 1 h, dead links 15 min, redirects 1 h | The resolver registry's results | A cached search answers at once with them, the rest resolves in the background |
-| `http_timeout_resolve_seconds` | 15 s (10 s) | One hoster resolution | Timeouts and cut resolutions are not cached; a timeout counts for the hoster breaker, a cut neither counts nor resets it |
+| `http_timeout_resolve_seconds` | 15 s (10 s) | One hoster resolution, without the wait for a stealth browser page | Timeouts and cut resolutions are not cached; a timeout counts for the hoster breaker, a cut neither counts nor resets it, nor does a capture that got no browser page before its request was due (`busy`) |
 | `stremio.probe_stealth_timeout_seconds` | 15 s (10 s) | A page of the stealth browser (browser hosters, Cloudflare fallback) | |
 | `http_timeout_seconds` | 30 s (15 s), connect 5 s | Requests of the shared HTTP client without a timeout of their own (TMDB lookups) | httpx plugins use `_timeout` (15 s, connect included), most resolvers 15 s |
 | `http_retry_*` | 3 retries, backoff from 1 s to 30 s (2, 0.5 s, 10 s) | Retries of 429 and 503 answers | |

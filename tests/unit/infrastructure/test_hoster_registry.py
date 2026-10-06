@@ -14,6 +14,7 @@ import respx
 import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream
+from scavengarr.infrastructure.browser.page_gate import PageBusy, PageGate
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.hoster_resolvers import extract_domain
 from scavengarr.infrastructure.hoster_resolvers.registry import (
@@ -1420,3 +1421,73 @@ class TestClientBoundResolution:
             await registry.resolve_for_client(self._URL, "veev", self._PLAYER) is None
         )
         assert resolver.player_calls == []
+
+
+class TestBusyBrowser:
+    """The stealth browser's pages are shared: a capture that waits for one
+    says nothing about its hoster."""
+
+    _MP4 = "https://cdn.example.com/v.mp4"
+
+    async def test_busy_is_neither_cached_nor_counted(self) -> None:
+        calls = 0
+
+        async def _busy_once(url: str) -> ResolvedStream | None:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise PageBusy
+            return ResolvedStream(video_url=self._MP4)
+
+        resolver = MagicMock()
+        resolver.name = "filemoon"
+        resolver.resolve = AsyncMock(side_effect=_busy_once)
+        telemetry = Telemetry()
+        registry = HosterResolverRegistry(
+            resolvers=[resolver],
+            circuit_breaker=PluginCircuitBreaker(failure_threshold=1),
+            telemetry=telemetry,
+        )
+
+        assert await registry.resolve("https://filemoon.sx/e/a") is None
+        result = await registry.resolve("https://filemoon.sx/e/a")
+
+        assert result is not None
+        assert result.video_url == self._MP4
+        assert (
+            telemetry.registry.get_sample_value(
+                "scavengarr_hoster_resolve_total",
+                {"resolver": "filemoon", "outcome": "busy"},
+            )
+            == 1
+        )
+
+    async def test_the_wait_for_a_page_is_not_part_of_the_resolve_timeout(
+        self,
+    ) -> None:
+        gate = PageGate(limit=1)
+        release = asyncio.Event()
+
+        async def _capture(url: str) -> ResolvedStream | None:
+            async with gate.page("capture", timeout=15):
+                return ResolvedStream(video_url=self._MP4)
+
+        async def _hold() -> None:
+            async with gate.page("plugin", timeout=30):
+                await release.wait()
+
+        resolver = MagicMock()
+        resolver.name = "filemoon"
+        resolver.resolve = AsyncMock(side_effect=_capture)
+        registry = HosterResolverRegistry(resolvers=[resolver], resolve_timeout=0.05)
+        holder = asyncio.create_task(_hold())
+        await asyncio.sleep(0)
+        resolving = asyncio.create_task(registry.resolve("https://filemoon.sx/e/a"))
+
+        await asyncio.sleep(0.2)
+        release.set()
+
+        result = await resolving
+        assert result is not None
+        assert result.video_url == self._MP4
+        await holder

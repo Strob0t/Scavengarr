@@ -5,8 +5,14 @@ from __future__ import annotations
 import asyncio
 import time
 
+import pytest
+
 from scavengarr.domain.ports.browser_fetcher import PageClaim, PageKind, page_claim
-from scavengarr.infrastructure.browser.page_gate import PageGate
+from scavengarr.infrastructure.browser.page_gate import (
+    PageBusy,
+    PageGate,
+    work_clock,
+)
 from scavengarr.infrastructure.telemetry import Telemetry
 
 
@@ -167,3 +173,100 @@ class TestMetrics:
             )
             == 1
         )
+
+
+def _claim(kind: PageKind, due_in: float) -> None:
+    """Claim the current task's pages as *kind*, due in *due_in* seconds."""
+    page_claim.set(PageClaim(kind, time.monotonic() + due_in))
+
+
+class TestDeadlines:
+    """Work that cannot finish before it is due gets no page (it would burn
+    CPU for an answer that has gone out)."""
+
+    async def test_a_waiter_gives_up_shortly_before_its_due_time(self) -> None:
+        gate = PageGate(limit=1)
+        release = asyncio.Event()
+        holder = asyncio.create_task(_hold(gate, release))
+        await _settle()
+        _claim("capture", 3.05)  # 3 s before it is due: the work's minimum
+        started = time.monotonic()
+
+        with pytest.raises(PageBusy):
+            async with gate.page("capture", timeout=15):
+                pass
+
+        assert time.monotonic() - started < 1
+        assert gate.waiting == 0
+        release.set()
+        await holder
+        assert gate.in_use == 0
+
+    async def test_work_due_too_soon_gets_no_free_page(self) -> None:
+        gate = PageGate(limit=1)
+        _claim("plugin", 1.0)
+
+        with pytest.raises(PageBusy):
+            async with gate.page("plugin", timeout=30):
+                pass
+
+        assert gate.in_use == 0
+
+    async def test_a_busy_wait_is_recorded(self) -> None:
+        telemetry = Telemetry()
+        gate = PageGate(limit=1, telemetry=telemetry)
+        _claim("background", 0.5)
+
+        with pytest.raises(PageBusy):
+            async with gate.page("capture", timeout=15):
+                pass
+
+        assert (
+            telemetry.registry.get_sample_value(
+                "scavengarr_browser_page_wait_total",
+                {"kind": "background", "outcome": "busy"},
+            )
+            == 1
+        )
+
+
+class TestWorkClock:
+    """The resolve timeout measures the work, not the wait for a page: a
+    capture that waited 9 of its 10 s timed out and tripped the breaker of
+    a healthy hoster (sixth round, 2026-10-06)."""
+
+    @staticmethod
+    async def _timed_work(gate: PageGate, timeout: float, work: float) -> str:
+        async with asyncio.timeout(timeout) as clock:
+            work_clock.set(clock)
+            async with gate.page("capture", timeout=15):
+                await asyncio.sleep(work)
+                return "done"
+
+    async def test_the_clock_stops_while_waiting(self) -> None:
+        gate = PageGate(limit=1)
+        release = asyncio.Event()
+        holder = asyncio.create_task(_hold(gate, release))
+        await _settle()
+        work = asyncio.create_task(self._timed_work(gate, 0.1, 0.0))
+
+        await asyncio.sleep(0.3)
+        release.set()
+
+        assert await work == "done"
+        await holder
+
+    async def test_the_work_keeps_only_its_remaining_time(self) -> None:
+        gate = PageGate(limit=1)
+        release = asyncio.Event()
+        holder = asyncio.create_task(_hold(gate, release))
+        await _settle()
+        work = asyncio.create_task(self._timed_work(gate, 0.1, 0.5))
+
+        await asyncio.sleep(0.2)
+        release.set()
+
+        with pytest.raises(TimeoutError):
+            await work
+        await holder
+        assert gate.in_use == 0

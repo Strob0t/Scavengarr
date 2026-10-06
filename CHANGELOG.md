@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: Waiting for a Browser Page No Longer Trips a Hoster's Breaker
+- A hoster resolution's time bound (`http.timeout_resolve_seconds`, 10 s in production) included the wait for one of the stealth browser's pages: a Filemoon capture that waited 9 s had 1 s left, timed out, and the timeout counted for the hoster's circuit breaker, which opened for Filemoon, Dropload and SuperVideo in the sixth production round although they were healthy. The clock now stops while a capture waits for a page.
+- Work that gets no page 3 s before its request is due (a Stremio search's end, an answer's deadline) no longer starts a page that would be cut: a capture reports `busy` (`hoster_resolve_busy`), neither cached nor counted by the breaker, a plugin's page load answers nothing as on any failure (the optional solver sidecar can still answer). Work without a due time (Torznab searches, the scoring probes) waits as before.
+
 ### Added: Metrics of the Stealth Browser's Pages
 - Plugin pages behind Cloudflare, hoster captures and link-outs share the stealth browser's 2 pages, and in the sixth production round kinoger's pages queued behind captures until its 30 s timeout. The wait for a page and the work on it are now recorded by what the page is for (`scavengarr_browser_page_wait_*` and `scavengarr_browser_page_*`, `kind`: `play`, `plugin`, `capture`, `background`), the limit, pages in use and waiting requests as the gauge `scavengarr_browser_pages`; with tracing on, a request's trace shows its queueing (`browser_page_wait capture`). The application names what browser work is for and when it is due (`PageClaim`), the groundwork for handing the pages out by urgency ([browser-page-budget.md](docs/plans/browser-page-budget.md)).
 

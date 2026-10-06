@@ -30,7 +30,7 @@ A domain value object `PageClaim(kind, due)` in `domain/ports/browser_fetcher.py
 | `capture` | `HosterResolution` of an answer (`claim=` from `_resolve_as_results_arrive`) | the answer deadline |
 | `background` | `HosterResolution` of a background run | the run's deadline |
 
-Without a claim (Torznab searches, the scoring probes, so their measured times stay comparable) a page request counts as `plugin` (page loads) or `capture` (`capture_media`) due after the operation's own timeout.
+Without a claim (Torznab searches, the scoring probes, so their measured times stay comparable) a page request counts as `plugin` (page loads) or `capture` (`capture_media`) due after the operation's own timeout, and it waits until a page is free (no `PageBusy`).
 
 The variable lives in the domain port module rather than being injected like `search_max_results`: it is part of the browser port's contract, and three use cases set it, so injecting it would add constructor parameters and wiring for nothing else.
 
