@@ -64,7 +64,7 @@ Ordered by measured share and effort.
    - Measure: handshakes per request, Python CPU per request.
 2. **Event loop.** Add uvloop and httptools (`uvicorn[standard]`).
    - Target: the 14% event-loop share and the server's own HTTP parsing.
-3. **HTML parsing.** Use selectolax (lexbor) for the hottest parsers, and move big pages off the event loop (AGENTS.md already asks for `run_in_executor`).
+3. **HTML parsing.** Use selectolax (lexbor) for the hottest parsers, and move big pages off the event loop (AGENTS.md already asks for a worker thread).
    - Target: the 9% parsing share, plus loop stalls.
 4. **Requests per stream request** (47–205 today). Known waste:
    - kinoger fetches 5 search pages for one title;

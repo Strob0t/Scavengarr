@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: Log Lines From Worker Threads Keep the Request ID
+- The title filter, the stream conversion and the episode filter ran in worker threads through `loop.run_in_executor`, which does not copy the context variables: their log lines (`title_match_summary` among them) had no `request_id`. They run through `asyncio.to_thread` now, which copies them. AGENTS.md asks for `to_thread`. Found by the code review (2026-10-06).
+
 ### Fix: A TMDB Movie and Series With the Same Number Share No Cached Search
 - The Stremio search cache key held the id, season and episode, not the content type. TMDB numbers movies and series separately, so `movie/tmdb:1399` and a `series/tmdb:1399` request without season and episode read each other's results. The key is `stremio:search:{content_type}:{imdb_id}:{season}:{episode}` now; entries stored under the old key are not read again and expire. Found by the code review (2026-10-06).
 

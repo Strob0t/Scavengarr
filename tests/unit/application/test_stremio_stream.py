@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 from urllib.parse import urlparse
 
 import pytest
+import structlog
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
@@ -21,6 +22,7 @@ from scavengarr.application.use_cases.stremio_stream import (
 from scavengarr.domain.entities.scoring import PluginScoreSnapshot
 from scavengarr.domain.entities.stremio import (
     CachedStreamLink,
+    RankedStream,
     ResolvedStream,
     StreamQuality,
     StremioStream,
@@ -2555,3 +2557,40 @@ class TestTelemetry:
             "stremio_phase resolve",
         }
         assert len({s.context.trace_id for s in spans if s.context}) == 1
+
+
+class TestWorkerThreads:
+    """The title filter and the stream conversion run in worker threads; their
+    log lines (``title_match_summary``) keep the request's ``request_id``."""
+
+    @pytest.mark.asyncio
+    async def test_the_title_filter_keeps_the_log_context(self) -> None:
+        uc = _make_use_case()
+        seen: dict[str, object] = {}
+
+        def _filter(results: list[SearchResult], *_args: object, **_kw: object):
+            seen.update(structlog.contextvars.get_contextvars())
+            return results
+
+        uc._filter_fn = _filter  # noqa: SLF001
+        with structlog.contextvars.bound_contextvars(request_id="r1"):
+            await uc._title_filter(  # noqa: SLF001
+                [_make_search_result()], TitleMatchInfo(title="Iron Man")
+            )
+
+        assert seen["request_id"] == "r1"
+
+    @pytest.mark.asyncio
+    async def test_the_conversion_keeps_the_log_context(self) -> None:
+        uc = _make_use_case()
+        seen: dict[str, object] = {}
+
+        def _convert(results: list[SearchResult], **_kw: object) -> list[RankedStream]:
+            seen.update(structlog.contextvars.get_contextvars())
+            return []
+
+        uc._convert_fn = _convert  # noqa: SLF001
+        with structlog.contextvars.bound_contextvars(request_id="r1"):
+            await uc._convert([_make_search_result()], {})  # noqa: SLF001
+
+        assert seen["request_id"] == "r1"

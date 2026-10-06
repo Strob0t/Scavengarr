@@ -8,6 +8,7 @@ from contextvars import ContextVar
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import structlog
 from structlog.testing import capture_logs
 
 from scavengarr.application.stremio.plugin_search import PluginSearchRunner
@@ -142,6 +143,27 @@ class TestSinglePlugin:
 
         assert calls == [(2, 3)]
         assert len(results) == 1
+
+    async def test_the_episode_filter_keeps_the_log_context(self) -> None:
+        """It runs in a worker thread; its log lines keep the request_id."""
+        seen: dict[str, object] = {}
+
+        def _filter(
+            results: list[SearchResult], season: int | None, episode: int | None
+        ) -> list[SearchResult]:
+            seen.update(structlog.contextvars.get_contextvars())
+            return results
+
+        registry = _registry({"a": _plugin([_sr("https://a/1")])})
+        runner = _runner(registry, episode_filter_fn=_filter)
+        pool = ConcurrencyPool(httpx_slots=10, pw_slots=10)
+        with structlog.contextvars.bound_contextvars(request_id="r1"):
+            async with pool.request() as budget:
+                await runner.search_plugins(
+                    ["a"], "q", 5000, season=2, episode=3, budget=budget
+                )
+
+        assert seen["request_id"] == "r1"
 
     async def test_plugin_error_returns_empty_and_records_failure(self) -> None:
         breaker = MagicMock()

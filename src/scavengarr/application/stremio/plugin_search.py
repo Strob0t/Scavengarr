@@ -417,9 +417,8 @@ class PluginSearchRunner:
                     )
                 finally:
                     self._max_results_var.reset(token)
-                loop = asyncio.get_running_loop()
-                raw = await loop.run_in_executor(
-                    None, self._episode_filter_fn, raw, season, episode
+                raw = await asyncio.to_thread(
+                    self._episode_filter_fn, raw, season, episode
                 )
                 results = await self._search_engine.validate_results(raw)
                 success = True

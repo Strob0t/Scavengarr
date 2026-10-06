@@ -540,12 +540,11 @@ class StremioStreamUseCase:
     async def _title_filter(
         self, results: list[SearchResult], ref: TitleMatchInfo
     ) -> list[SearchResult]:
-        """The results whose title matches *ref* (in the executor: CPU work)."""
+        """The results whose title matches *ref* (in a worker thread: CPU work;
+        ``to_thread`` keeps the log context, unlike ``run_in_executor``)."""
         if not results:
             return []
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None,
+        return await asyncio.to_thread(
             lambda: self._filter_fn(
                 results,
                 ref,
@@ -821,11 +820,9 @@ class StremioStreamUseCase:
     async def _convert(
         self, results: list[SearchResult], plugin_languages: dict[str, str]
     ) -> list[RankedStream]:
-        """The streams of *results* (in the executor: CPU work)."""
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None,
-            lambda: self._convert_fn(results, plugin_languages=plugin_languages),
+        """The streams of *results* (in a worker thread: CPU work)."""
+        return await asyncio.to_thread(
+            lambda: self._convert_fn(results, plugin_languages=plugin_languages)
         )
 
     async def _resolve_title_info(

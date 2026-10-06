@@ -122,7 +122,7 @@ async def compute_endpoint(x: int):
 > **Scavengarr hint**
 > Any HTML parsing or RSS serialization that is CPU-heavy should either be:
 > - fast enough to stay in the event loop, **or**
-> - moved into `run_in_executor` if profiling shows it dominates request time.
+> - moved into a worker thread with `asyncio.to_thread` if profiling shows it dominates request time. `to_thread` copies the context variables, so the thread's log lines keep structlog's `request_id`; `loop.run_in_executor` does not.
 
 ---
 
@@ -591,8 +591,7 @@ def parse_and_enrich_sync(data: str) -> dict:
     return enrich_sync(result)
 
 async def parse_and_enrich(data: str) -> dict:
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, parse_and_enrich_sync, data)
+    return await asyncio.to_thread(parse_and_enrich_sync, data)
 ```
 
 Use this only if profiling shows that CPU cost justifies the overhead of the executor.
