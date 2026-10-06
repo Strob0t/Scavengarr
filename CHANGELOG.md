@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: A Silent Tracing Endpoint Delays the Shutdown 3 s at Most
+- `Tracing.close()` flushed the queued spans with OpenTelemetry's `force_flush`, whose timeout SDK 1.45 ignores: against an endpoint that took the connection and never answered, every queued batch waited the 5 s export timeout (20 s for 2,000 spans, measured), on top of the 10 s request drain, so `docker stop` could end in a SIGKILL. The shutdown now runs in a daemon thread and the app waits 3 s for it; spans not sent by then are dropped. Found by the code review (2026-10-06).
+
 ### Fix: The Stremio Health Check Reports Its Metrics Again
 - `/api/v1/stremio/health` answered `"metrics": {}` since the Prometheus metrics replaced the old collector: it still read `state.metrics`, which nothing sets any more. It returns the telemetry's statistics now, as `/api/v1/stats/metrics` does (`uptime_seconds`, `plugins`, `event_loop`). Found by the code review (2026-10-06).
 

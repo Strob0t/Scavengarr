@@ -5,20 +5,40 @@ from __future__ import annotations
 import asyncio
 import subprocess
 import sys
+import threading
+import time
+from collections.abc import Sequence
 
 import pytest
 import structlog
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from opentelemetry.sdk.trace import ReadableSpan
-from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor
+from opentelemetry.sdk.trace.export import (
+    BatchSpanProcessor,
+    SimpleSpanProcessor,
+    SpanExporter,
+    SpanExportResult,
+)
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
 from opentelemetry.trace import StatusCode
 
+import scavengarr.infrastructure.telemetry.tracing as tracing_module
 from scavengarr.infrastructure.telemetry import Telemetry, create_telemetry
 from scavengarr.infrastructure.telemetry.tracing import Tracing
+
+
+class _HangingExporter(SpanExporter):
+    """An endpoint that takes every batch and never answers (up to 3 s)."""
+
+    def __init__(self) -> None:
+        self.release = threading.Event()
+
+    def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
+        self.release.wait(3.0)
+        return SpanExportResult.SUCCESS
 
 
 @pytest.fixture
@@ -190,6 +210,26 @@ class TestSpans:
             stage.outcome = "200"
 
         assert exporter.get_finished_spans() == ()
+
+    def test_close_waits_for_a_hanging_endpoint_only_briefly(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The SDK's flush ignores its timeout: each queued batch could take
+        the exporter's 5 s against an endpoint that does not answer."""
+        monkeypatch.setattr(tracing_module, "_CLOSE_S", 0.2, raising=False)
+        exporter = _HangingExporter()
+        telemetry = Telemetry(tracing=Tracing(BatchSpanProcessor(exporter)))
+        with telemetry.stage("stremio_phase", phase="search"):
+            pass
+        started = time.monotonic()
+
+        try:
+            telemetry.close()
+            elapsed = time.monotonic() - started
+        finally:
+            exporter.release.set()
+
+        assert elapsed < 1.0
 
     def test_close_flushes_the_batch(self, exporter: InMemorySpanExporter) -> None:
         telemetry = Telemetry(tracing=Tracing(BatchSpanProcessor(exporter)))

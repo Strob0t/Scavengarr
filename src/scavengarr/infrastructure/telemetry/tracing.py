@@ -13,6 +13,7 @@ its message.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Mapping
 
 import structlog
@@ -27,7 +28,7 @@ from scavengarr.domain.ports.telemetry import AttributeValue
 from scavengarr.infrastructure.version import APP_VERSION
 
 # Spans still queued at shutdown get this long to go out
-_FLUSH_MILLIS = 3000
+_CLOSE_S = 3.0
 # One export (a batch, every 5 s) may take this long
 _EXPORT_TIMEOUT_S = 5.0
 
@@ -74,9 +75,18 @@ class Tracing:
         return TracedStage(self._tracer.start_span(name, attributes=attrs))
 
     def close(self) -> None:
-        """Send the spans still queued and stop (blocks up to a few seconds)."""
-        self._provider.force_flush(_FLUSH_MILLIS)
-        self._provider.shutdown()
+        """Send the spans still queued and stop, waiting at most ``_CLOSE_S``.
+
+        The SDK's flush and shutdown ignore their timeouts (1.45): against an
+        endpoint that does not answer, every queued batch takes the export
+        timeout, 20 s for four. The shutdown runs in a daemon thread, which
+        the process does not wait for at exit.
+        """
+        closing = threading.Thread(
+            target=self._provider.shutdown, name="tracing-shutdown", daemon=True
+        )
+        closing.start()
+        closing.join(_CLOSE_S)
 
 
 def otlp_tracing(endpoint: str) -> Tracing:
