@@ -15,9 +15,11 @@ answer with a LAN address (DNS rebinding).
 from __future__ import annotations
 
 import asyncio
+import functools
 import ipaddress
 import socket
 import time
+from asyncio.staggered import staggered_race
 from collections.abc import Iterable
 
 import httpcore
@@ -32,6 +34,9 @@ log = structlog.get_logger(__name__)
 # change; the gluetun resolver caches as well)
 _DNS_CACHE_TTL_S = 60.0
 _DNS_CACHE_MAX = 4096
+# Happy Eyeballs (RFC 8305): the next address starts when the previous one
+# failed or after this delay; anyio and asyncio use the same value
+_ATTEMPT_DELAY_S = 0.25
 
 _IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 
@@ -109,8 +114,9 @@ class GuardedNetworkBackend(httpcore.AsyncNetworkBackend):
     server could answer the guard with a public address and the connection
     with a LAN one. TLS still checks the hostname: httpcore sends the
     request's host as SNI, whatever address the socket went to. The
-    addresses are tried in turn, IPv4 first, with *backend* (asyncio
-    streams unless given: TLS in the event loop instead of in Python).
+    addresses race under one timeout, IPv4 first (Happy Eyeballs, as with
+    httpcore's anyio backend), with *backend* (asyncio streams unless given:
+    TLS in the event loop instead of in Python).
     """
 
     def __init__(
@@ -136,20 +142,27 @@ class GuardedNetworkBackend(httpcore.AsyncNetworkBackend):
             raise
         except OSError as exc:
             raise httpcore.ConnectError(f"cannot resolve {host}: {exc}") from exc
-        failure: Exception | None = None
-        for address in addresses:
-            try:
-                return await self._backend.connect_tcp(
-                    address,
-                    port,
-                    timeout=timeout,
-                    local_address=local_address,
-                    socket_options=socket_options,
-                )
-            except (httpcore.ConnectError, httpcore.ConnectTimeout) as exc:
-                failure = exc
-        assert failure is not None  # addresses() never returns an empty tuple
-        raise failure
+        options = None if socket_options is None else tuple(socket_options)
+        attempts = (
+            functools.partial(
+                self._backend.connect_tcp,
+                address,
+                port,
+                local_address=local_address,
+                socket_options=options,
+            )
+            for address in addresses
+        )
+        try:
+            async with asyncio.timeout(timeout):
+                stream, _, failures = await staggered_race(attempts, _ATTEMPT_DELAY_S)
+        except TimeoutError as exc:
+            raise httpcore.ConnectTimeout(f"connection to {host} timed out") from exc
+        if stream is None:
+            failure = failures[-1]  # addresses() never returns an empty tuple
+            assert failure is not None
+            raise failure
+        return stream
 
     async def connect_unix_socket(
         self,

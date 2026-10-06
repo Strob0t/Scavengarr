@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: A Silent Address Holds Up a Connection 250 ms, Not the Whole Timeout
+- `GuardedNetworkBackend` tried a host's checked addresses one after another and gave each the full connect timeout. When the first address dropped the SYNs, every new connection waited 5 s (15 s for plugins and resolvers, so the resolver registry cut the resolution before the second address was tried). The addresses now race under one timeout (Happy Eyeballs, RFC 8305, with asyncio's `staggered_race`): the next starts when the previous one failed or after 250 ms, as with httpcore's anyio backend before. Found by the code review (2026-10-06).
+
 ### Chore: Read-Only Production Diagnostics (`scripts/prodctl.py`)
 - `scripts/prodctl.py` replaces ad-hoc Portainer scripts: `ps`, `stats` (CPU cores, memory without page cache, processes, network), `logs` (JSON records as `key=value`, health checks dropped, `--grep`, `--fields`, `--since`), `metrics`, `state` (`/api/v1/stats/metrics`) and `probe` (a Python file run inside the container). Everything printed passes `portainer.mask()`: URLs keep only scheme and host, IP addresses, tokens and credentials (also `user:password@` in URLs) are replaced. A budget shared by all processes allows 100 Portainer requests per minute; GETs are retried on 429 and 502 to 504, an exec only when Portainer refused it before it ran (429).
 - The Portainer client moved from `stremio_profile.py` into `scripts/portainer.py` (shared, with credentials from `.env.devcontainer`, which wins over a stale key in the environment); it lists containers once per client instead of before every request.

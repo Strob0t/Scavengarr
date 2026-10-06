@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import socket
+import time
 
 import httpcore
 import httpx
@@ -104,9 +105,14 @@ class TestRedirects:
 class _RecordingBackend(httpcore.AsyncNetworkBackend):
     """Inner backend that records where it was asked to connect."""
 
-    def __init__(self, refuse: frozenset[str] = frozenset()) -> None:
+    def __init__(
+        self,
+        refuse: frozenset[str] = frozenset(),
+        silent: frozenset[str] = frozenset(),
+    ) -> None:
         self.connected: list[str] = []
         self._refuse = refuse
+        self._silent = silent
 
     async def connect_tcp(
         self,
@@ -119,6 +125,12 @@ class _RecordingBackend(httpcore.AsyncNetworkBackend):
         self.connected.append(host)
         if host in self._refuse:
             raise httpcore.ConnectError(f"refused by {host}")
+        if host in self._silent:  # drops the SYNs
+            try:
+                async with asyncio.timeout(timeout):
+                    await asyncio.Event().wait()
+            except TimeoutError as exc:
+                raise httpcore.ConnectTimeout(f"{host} timed out") from exc
         return httpcore.AsyncMockStream([])
 
     async def sleep(self, seconds: float) -> None:
@@ -205,6 +217,40 @@ class TestGuardedConnections:
         )
 
         assert inner.connected == ["104.16.132.229", "1.1.1.1"]
+
+    @pytest.mark.asyncio
+    async def test_a_silent_address_holds_up_the_next_only_briefly(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The addresses race (Happy Eyeballs, RFC 8305): the next one starts
+        after a short delay, not after the silent one's whole timeout."""
+        _resolver(monkeypatch, [["104.16.132.229", "1.1.1.1"]])
+        inner = _RecordingBackend(silent=frozenset({"104.16.132.229"}))
+        started = time.monotonic()
+
+        await GuardedNetworkBackend(PrivateAddressGuard(), inner).connect_tcp(
+            "cdn.example", 443, timeout=2.0
+        )
+
+        assert time.monotonic() - started < 1.0
+        assert inner.connected == ["104.16.132.229", "1.1.1.1"]
+
+    @pytest.mark.asyncio
+    async def test_one_timeout_covers_every_address(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        silent = ["104.16.132.229", "1.1.1.1"]
+        _resolver(monkeypatch, [silent])
+        inner = _RecordingBackend(silent=frozenset(silent))
+        started = time.monotonic()
+
+        with pytest.raises(httpcore.ConnectTimeout):
+            await GuardedNetworkBackend(PrivateAddressGuard(), inner).connect_tcp(
+                "cdn.example", 443, timeout=0.6
+            )
+
+        assert time.monotonic() - started < 1.0
+        assert inner.connected == silent
 
     @pytest.mark.asyncio
     async def test_unresolvable_name_is_a_connect_error(
