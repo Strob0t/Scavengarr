@@ -8,11 +8,11 @@
 
 ## Endpoints Overview
 
-All routes are mounted under the `/api/v1` prefix. The default base URL is `http://localhost:7979` (`PORT` env var or `--port`).
+All API routes are mounted under the `/api/v1` prefix; only the Prometheus endpoint `/metrics` is at the root. The default base URL is `http://localhost:7979` (`PORT` env var or `--port`).
 
 | Method | Path | Response | Description |
 |---|---|---|---|
-| `GET` | `/api/v1/torznab/indexers` | JSON | List all discovered plugins |
+| `GET` | `/api/v1/torznab/indexers` | JSON | List all loaded plugins |
 | `GET` | `/api/v1/torznab/{plugin_name}?t=caps` | XML | Plugin capabilities |
 | `GET` | `/api/v1/torznab/{plugin_name}?t=search&q={query}` | XML | Search (RSS feed) |
 | `GET` | `/api/v1/torznab/{plugin_name}/health` | JSON | Plugin reachability check |
@@ -21,7 +21,7 @@ All routes are mounted under the `/api/v1` prefix. The default base URL is `http
 | `GET` | `/api/v1/healthz` | JSON | Liveness probe |
 | `GET` | `/api/v1/readyz` | JSON | Readiness probe |
 
-The Stremio addon endpoints (`/api/v1/stremio/...`) are documented in [Stremio Addon](./stremio-addon.md); the stats endpoints (`/api/v1/stats/...`) in [Plugin Scoring & Probing](./plugin-scoring-and-probing.md).
+The Stremio addon endpoints (`/api/v1/stremio/...`) are documented in [Stremio Addon](./stremio-addon.md); `/api/v1/stats/plugin-scores` in [Plugin Scoring & Probing](./plugin-scoring-and-probing.md); `/api/v1/stats/metrics` and `/metrics` in [Observability](./observability.md).
 
 ---
 
@@ -33,15 +33,15 @@ The Stremio addon endpoints (`/api/v1/stremio/...`) are documented in [Stremio A
 GET /api/v1/torznab/indexers
 ```
 
-Returns a JSON object with an `indexers` array containing every plugin the registry discovered (plugins disabled via `plugins.overrides.<name>.enabled: false` are removed at startup). Each plugin is loaded to read its `version` and `mode` class attributes; if loading fails, both fields are `null`.
+Returns a JSON object with an `indexers` array containing every loaded plugin, sorted by name (plugins disabled via `plugins.overrides.<name>.enabled: false` are removed at startup). A plugin file that fails to load is skipped at startup (`plugin_load_failed`) and not listed. `version` and `mode` come from the plugin's class attributes.
 
 **Response (200 OK):** `application/json`
 
 ```json
 {
   "indexers": [
-    {"name": "filmpalast", "version": "1.0.0", "mode": "httpx"},
-    {"name": "animeloads", "version": "1.0.0", "mode": "playwright"}
+    {"name": "animeloads", "version": "1.0.0", "mode": "playwright"},
+    {"name": "filmpalast", "version": "1.0.0", "mode": "httpx"}
   ]
 }
 ```
@@ -70,7 +70,7 @@ Returns Torznab capabilities XML for the plugin. Prowlarr queries this endpoint 
 <?xml version='1.0' encoding='utf-8'?>
 <caps>
   <server title="scavengarr (filmpalast)" version="0.2.0"/>
-  <limits max="100" default="50"/>
+  <limits max="100" default="100"/>
   <searching>
     <search available="yes" supportedParams="q"/>
   </searching>
@@ -107,7 +107,7 @@ Runs the plugin's search and returns the results as a Torznab RSS 2.0 feed.
 | `cat` | query | no | Comma-separated category IDs; only the first ID is passed to the plugin. A non-numeric value returns an empty feed with HTTP 400 |
 | `extended` | query | no | Only evaluated when `q` is missing (`1` = reachability probe) |
 | `offset` | query | no | Result offset (default `0`) |
-| `limit` | query | no | Maximum results returned (default `100`) |
+| `limit` | query | no | Maximum results returned (default `100`; not capped at the caps' `max`) |
 
 **Response (200 OK):** `application/xml`, plus an `X-Cache: HIT|MISS` header indicating whether the plugin results came from the search cache.
 
@@ -142,7 +142,7 @@ Runs the plugin's search and returns the results as a Torznab RSS 2.0 feed.
 
 **Search flow (what happens internally):**
 
-1. `TorznabSearchUseCase` resolves the plugin from the registry and looks up the search cache (key `search:<sha256(plugin:query:category)>`).
+1. `TorznabSearchUseCase` resolves the plugin from the registry and looks up the search cache (key `search:<sha256(plugin:query:category)[:16]>`; the query is lower-cased and trimmed, a missing category counts as `none`).
 1. On a cache miss it calls `plugin.search(query, category=...)`; the plugin performs its own multi-stage scraping (search → detail → links). Non-empty (unvalidated) results are written to the search cache with TTL `cache.search_ttl_seconds` (default `900`, `0` disables caching) or the plugin's `cache_ttl` attribute if set.
 1. Only the requested page is validated: `HttpxSearchEngine.validate_results()` checks the results in order, `limit` at a time, until `offset + limit` valid results exist (see [Link Validation](./link-validation.md)). A 1000-result search with `limit=100` checks ~300 links instead of ~3000; later pages get the already checked links from the validator's cache.
 1. `CrawlJobFactory` turns every result of the page into its own `CrawlJob`; the jobs are saved to the repository in parallel.
@@ -159,7 +159,7 @@ Runs the plugin's search and returns the results as a Torznab RSS 2.0 feed.
 | `<pubDate>` | Time the response was rendered — not the release date |
 | `<enclosure>` | Same URL as `<link>`, `length` = size in bytes, `type="application/x-crawljob"` |
 
-**Pagination:** the use case builds the full item list (and creates CrawlJobs for all results), then applies `items[offset : offset + limit]`. Repeated requests for other pages hit the search cache.
+**Pagination:** only the requested page is built: the use case validates results until `offset + limit` valid ones exist, keeps `valid[offset : offset + limit]` and creates CrawlJobs for those only. Requests for other pages reuse the search cache and the validator's link cache.
 
 ```http
 GET /api/v1/torznab/filmpalast?t=search&q=iron+man&offset=100&limit=100
@@ -169,7 +169,7 @@ GET /api/v1/torznab/filmpalast?t=search&q=iron+man&offset=100&limit=100
 
 A search request with `extended=1` and **no** `q` parameter is handled as a lightweight reachability probe instead of a full search:
 
-1. The plugin's `base_url` attribute is read.
+1. The plugin's current `base_url` is read: the first `_domains` entry until a search has picked a working domain (see [Mirror URL Fallback](./mirror-url-fallback.md)). The other domains are not tried, so a plugin whose first domain is down can fail the test and still find results through a fallback domain.
 1. The origin URL (`scheme://host/`) is probed with `HEAD` (5 s timeout, redirects followed).
 1. If `HEAD` returns 405 or 501, a streamed `GET` with `Range: bytes=0-0` is sent instead.
 
@@ -190,7 +190,7 @@ If `q` is missing and `extended` is not `1`, the API returns an empty RSS feed w
 GET /api/v1/torznab/{plugin_name}/health
 ```
 
-Runs the same lightweight probe as the test mode against the plugin's `base_url` and returns JSON diagnostics. `reachable` is `true` for any HTTP response, regardless of status code.
+Runs the same lightweight probe as the test mode against the plugin's current `base_url` and returns JSON diagnostics. `reachable` is `true` for any HTTP response, regardless of status code.
 
 **Response (200 OK):** `application/json`
 
@@ -233,14 +233,15 @@ Serves the `.crawljob` file referenced by a search result's `<link>`. See [Crawl
 | `Content-Disposition` | `attachment; filename="{package_name}_{job_id[:8]}.crawljob"; filename*=UTF-8''…` (in `filename` everything but ASCII letters, digits, space, `-`, `_` becomes `_`; `filename*` has the real name, RFC 6266) |
 | `X-CrawlJob-ID` | The CrawlJob UUID |
 | `X-CrawlJob-Package` | Package name (display name in JDownloader), percent-encoded |
-| `X-CrawlJob-Links` | Number of links in the job |
+| `X-CrawlJob-Links` | Number of links in the job (after grab-time resolution) |
 
 | Status | Condition |
 |---|---|
 | 404 | CrawlJob not found or expired |
+| 502 | Grab-time link resolution failed (nox, animeloads; see [Grab-Time Resolution](./crawljob-system.md#grab-time-resolution)) |
 | 500 | Repository or serialization failure |
 
-CrawlJobs expire 1 hour after the search that created them; this TTL is fixed in the composition root and not configurable.
+CrawlJobs expire `cache.crawljob_ttl_seconds` (default 3600 s) after the search that created them, not after the grab (see [Configuration](./configuration.md)).
 
 ### CrawlJob Info
 
@@ -300,11 +301,11 @@ GET /api/v1/healthz
 
 Returns 200 as long as the process runs. It does not check plugin or site reachability — use the [plugin health endpoint](#plugin-health-check) for that.
 
-```json
-{"status": "ok", "plugins": 42, "hosters": ["voe", "streamtape", "..."]}
+```text
+{"status": "ok", "plugins": <count>, "hosters": ["voe", "streamtape", "..."]}
 ```
 
-`plugins` is the number of discovered plugins, `hosters` the list of supported hoster resolvers.
+`plugins` is the number of loaded plugins (disabled ones and files that failed to load are not counted), `hosters` the list of supported hoster resolvers.
 
 ### Readiness
 
@@ -312,13 +313,13 @@ Returns 200 as long as the process runs. It does not check plugin or site reacha
 GET /api/v1/readyz
 ```
 
-Returns `{"status": "ready"}` with 200 once application startup has completed, otherwise `{"status": "not_ready"}` with 503.
+Returns `{"status": "ready"}` with 200 once application startup has completed, otherwise `{"status": "not_ready"}` with 503. Under uvicorn the port opens only after startup and closes before shutdown, so a starting app refuses connections and a reachable one answers 200.
 
 ---
 
 ## Rate Limiting
 
-All endpoints are protected by a per-client-IP sliding-window rate limit. The default is `120` requests per minute, configured via `http.api_rate_limit_rpm` (YAML) or `SCAVENGARR_API_RATE_LIMIT_RPM`; `0` disables it.
+Requests are limited per client IP (sliding one-minute window; behind a reverse proxy see `FORWARDED_ALLOW_IPS` in [Configuration](./configuration.md#server-variables)). Not counted: the health probes (`/api/v1/healthz`, `/api/v1/readyz`, `/api/v1/stremio/health`) and stream playback (`/api/v1/stremio/play/…`, `/api/v1/stremio/proxy/…`). The default is `120` requests per minute, configured via `http.api_rate_limit_rpm` (YAML) or `SCAVENGARR_API_RATE_LIMIT_RPM`; `0` disables it.
 
 When the limit is exceeded, the API returns HTTP 429 with a JSON body (also for Torznab endpoints, which otherwise return XML):
 
@@ -326,13 +327,13 @@ When the limit is exceeded, the API returns HTTP 429 with a JSON body (also for 
 {"error": "Rate limit exceeded", "retry_after_seconds": 60}
 ```
 
-The response carries a `Retry-After: 60` header.
+The response carries a `Retry-After: 60` header. Counted responses carry `X-RateLimit-Limit` and `X-RateLimit-Remaining`.
 
 ---
 
 ## Error Handling
 
-Scavengarr maps domain exceptions on the Torznab endpoint (`/api/v1/torznab/{plugin_name}`) to HTTP status codes. Every error response is an RSS feed without items.
+Scavengarr maps domain exceptions on the Torznab endpoint (`/api/v1/torznab/{plugin_name}`) to HTTP status codes. Every error the router maps is an RSS feed without items. A request without `t`, or with a non-integer `offset`, `limit` or `extended`, gets FastAPI's JSON 422 (`{"detail": [...]}`).
 
 ### Exception Mapping
 

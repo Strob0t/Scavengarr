@@ -55,7 +55,7 @@ No prebuilt image is referenced by the repository; build it locally from `Docker
 docker build -f Dockerfile.prod -t scavengarr .
 ```
 
-The image runs `python -m scavengarr.interfaces.cli` as a non-root user and sets these defaults:
+The image's entrypoint starts a virtual display (Xvfb) for the headful browser, then runs `python -m scavengarr.interfaces.cli` as a non-root user. The image sets these defaults:
 
 | Env var | Value |
 |---|---|
@@ -73,12 +73,15 @@ It also has a built-in `HEALTHCHECK` against `/api/v1/healthz`. The image ships 
 ```bash
 docker run -d \
   --name scavengarr \
+  --init \
   -p 7979:7979 \
   -v ./plugins:/app/plugins \
   -v ./data:/app/config \
   -v ./cache:/app/cache \
   scavengarr
 ```
+
+`--init` (`init: true` in Compose, as in the shipped `docker-compose.yml`) reaps orphaned Chromium and driver processes, which the app as PID 1 would not.
 
 | Host path | Container path | Purpose |
 |---|---|---|
@@ -90,13 +93,14 @@ Environment variables override values from `config.yaml` (precedence: CLI > ENV 
 
 ### Docker Compose
 
-The repository ships a ready [`docker-compose.yml`](../../docker-compose.yml) that builds the image locally and has optional `solver` (Byparr) and `redis` profiles; see the [README Quick Start](../../README.md#quick-start). A minimal hand-written service looks like this:
+The repository ships a ready [`docker-compose.yml`](../../docker-compose.yml) that builds the image locally and has optional `solver` (Byparr), `redis` and `tracing` (Grafana Tempo) profiles; see the [README Quick Start](../../README.md#quick-start). A minimal hand-written service looks like this:
 
 ```yaml
 services:
   scavengarr:
     image: scavengarr
     container_name: scavengarr
+    init: true
     ports:
       - "7979:7979"
     volumes:
@@ -130,6 +134,7 @@ services:
   scavengarr:
     image: scavengarr
     container_name: scavengarr
+    init: true
     ports:
       - "7979:7979"
     volumes:
@@ -169,7 +174,7 @@ Available CLI flags: `--host`, `--port`, `--config`, `--dotenv`, `--plugin-dir`,
 curl http://localhost:7979/api/v1/healthz
 # {"status": "ok", "plugins": <count>, "hosters": [...]}
 
-# Readiness (200 once startup has completed, 503 before)
+# Readiness (200; the port opens only after startup has completed)
 curl http://localhost:7979/api/v1/readyz
 
 # List available plugins
@@ -238,10 +243,10 @@ Scavengarr results are `.crawljob` files, not torrents, so a regular torrent cli
 
 1. **Search** — Sonarr/Radarr search through Prowlarr, which calls `GET /api/v1/torznab/{plugin}?t=search&q=...`.
 1. **Scraping** — the plugin performs its own multi-stage scrape (search page → detail pages → links).
-1. **Link validation** — download links are validated in parallel with HEAD/GET (see [Link Validation](./link-validation.md)).
-1. **CrawlJob creation** — every remaining result becomes its own CrawlJob with a fixed 1-hour lifetime (see [CrawlJob System](./crawljob-system.md)).
+1. **Link validation** — download links are validated in parallel with HEAD/GET, only as far as the requested page needs (see [Link Validation](./link-validation.md)).
+1. **CrawlJob creation** — every result of the requested page becomes its own CrawlJob; it lives `cache.crawljob_ttl_seconds` (default 1 hour) after the search (see [CrawlJob System](./crawljob-system.md)).
 1. **RSS response** — each `<item>` has `<link>`/`<enclosure>` pointing to `/api/v1/download/{job_id}` and a `<guid>` with the primary download URL.
-1. **Grab** — the Blackhole download client requests `/api/v1/download/{job_id}` and saves the `.crawljob` file into JDownloader's watch folder.
+1. **Grab** — the Blackhole download client requests `/api/v1/download/{job_id}` and saves the `.crawljob` file into JDownloader's watch folder. For plugins with grab-time resolution (nox, animeloads) the links are resolved during this request; it fails with HTTP 502 when no links come back.
 1. **JDownloader** — FolderWatch processes the file and downloads the links.
 
 JDownloader side: enable the FolderWatch extension in JDownloader's settings and point it to the same directory the Arr download client writes to.
@@ -253,7 +258,7 @@ JDownloader side: enable the FolderWatch extension in JDownloader's settings and
 ### Application Health
 
 - `GET /api/v1/healthz` — liveness; returns `{"status": "ok", "plugins": ..., "hosters": [...]}`.
-- `GET /api/v1/readyz` — readiness; 200 after startup, 503 while starting.
+- `GET /api/v1/readyz` — readiness; 200 (the port opens only after startup has completed).
 
 ### Plugin Health
 
@@ -272,7 +277,7 @@ curl http://scavengarr:7979/api/v1/torznab/filmpalast/health
 }
 ```
 
-`reachable` only means that an HTTP response arrived; check `status_code` for 403/5xx. If a plugin's site is down during a search, prod returns an empty feed with HTTP 200 for that plugin; dev/test return HTTP 502 with the error in the channel description.
+`reachable` only means that an HTTP response arrived; check `status_code` for 403/5xx. A site that is down usually gives an empty feed with HTTP 200 in every environment; the logs show `<plugin>_timeout` or `<plugin>_fetch_error`. Only an error the plugin raises (e.g. a failed browser page load) gives HTTP 502 with the error in the channel description in dev/test (an empty feed with 200 in prod).
 
 ### CrawlJob Inspection
 
@@ -293,20 +298,21 @@ Shows a job's links and expiration status without downloading the file.
 1. Logging (structlog) is configured.
 1. The FastAPI app is created (API rate-limit middleware, routers, health probes).
 1. The lifespan hook initializes resources, in order:
-   - metrics collector and concurrency auto-tuning (`stremio.auto_tune_all`)
+   - telemetry (Prometheus metrics, optional tracing, event-loop lag monitor) and concurrency auto-tuning (`stremio.auto_tune_all`)
    - cache backend (diskcache or Redis); in `dev` the cache is cleared
    - shared HTTP client with per-domain rate limiting and 429/503 retries
    - plugin registry (discovery + per-plugin overrides from `plugins.overrides`)
    - search engine (link validation), CrawlJob repository, CrawlJob factory
-   - TMDB/IMDB client, stealth pool, hoster resolvers, stream link repository, optional plugin scoring, shared browser pool, concurrency pool, circuit breaker, Stremio use cases
-1. The app is marked ready (`/api/v1/readyz` returns 200) and Uvicorn serves on `host:port`.
+   - TMDB/IMDB client, shared browser pool with stealth pool, hoster resolvers, stream link repository, optional plugin scoring, concurrency pool, circuit breaker, plugin health monitor, Stremio use cases
+1. The app is marked ready and Uvicorn opens `host:port`; until then connections are refused.
 
 ### Shutdown
 
-1. In-flight requests get up to 10 seconds to drain.
-1. The scoring task is cancelled; shared browser pool, stealth pool and hoster resolvers are cleaned up.
-1. The HTTP client is closed.
-1. The cache is closed.
+1. Uvicorn stops accepting connections and waits for in-flight requests to finish, without a time limit of its own (`docker stop` kills the container after its grace period, 10 s by default).
+1. Background Stremio searches and resolutions end; the scoring, plugin-health and loop-lag tasks are cancelled.
+1. Stealth pool, shared browser pool and hoster resolvers are cleaned up.
+1. The HTTP client is closed, then the cache.
+1. Telemetry sends its last spans (up to 3 s).
 
 ---
 
@@ -322,21 +328,25 @@ Scavengarr limits requests per client IP with a sliding one-minute window: defau
 
 - **Scavengarr not running** — check `curl http://<host>:7979/api/v1/healthz`.
 - **Wrong URL** — the plugin name is case-sensitive; list names with `/api/v1/torznab/indexers`.
-- **Target site unreachable** — check `/api/v1/torznab/{plugin_name}/health`; the site may be down or blocking requests.
+- **Target site unreachable** — check `/api/v1/torznab/{plugin_name}/health`; the site may be down or blocking requests. The check probes the plugin's current `base_url` only (the first domain until a search has picked a working one).
 - **Network issue** — in Docker, put both containers on the same network and use the container name instead of `localhost`.
 - **HTTP 429** — the [API rate limit](#api-rate-limit) was hit.
 
 ### Empty Search Results
 
 - **Site layout changed** — the plugin's selectors may be outdated; the plugin needs a code update.
-- **All links invalid** — link validation may drop every result; check the logs for `links_filtered`. To test, set `validate_download_links: false` in `config.yaml` (there is no environment variable for it).
-- **Scraping blocked** — the site may block automated requests (Cloudflare, DDoS-Guard). The engine is fixed per plugin by its base class; a site that needs a browser requires the plugin to be built on `PlaywrightPluginBase`.
+- **All links invalid** — link validation may drop every result; check the logs for `links_filtered`. To test, set `validate_download_links: false` in `config.yaml` (there is no environment variable for it). Without validation each CrawlJob holds only the result's primary link.
+- **Scraping blocked** — the site may block automated requests (Cloudflare, DDoS-Guard). httpx plugins load Cloudflare challenge pages through the shared browser (`playwright.browser_fallback`, on by default) or an optional Byparr/FlareSolverr sidecar (`playwright.solver_url`, compose profile `solver`). Other protections (DDoS-Guard) need a plugin built on `PlaywrightPluginBase`.
 
 ### CrawlJob Download Returns 404
 
-- **CrawlJob expired** — jobs live for 1 hour after the search, not after the grab. The lifetime is fixed and not configurable; re-run the search.
+- **CrawlJob expired** — jobs live `cache.crawljob_ttl_seconds` (default 1 hour) after the search, not after the grab. Raise it when the download client grabs late, or re-run the search.
 - **Cache cleared** — in the `dev` environment the cache is cleared on every startup. Use `SCAVENGARR_ENVIRONMENT=prod` (the Docker image default).
 - **Container restart** — with diskcache, mount the cache directory as a volume.
+
+### CrawlJob Download Returns 502
+
+- **Grab-time resolution failed** — nox and animeloads resolve the links when the job is grabbed (captcha, download quota); the logs show `crawljob_resolve_failed`. Retry later or grab another release.
 
 ### No Log Output
 
@@ -370,17 +380,20 @@ Use `http://scavengarr:7979/...` as indexer URL in Prowlarr.
 
 ### Reverse Proxy
 
-Pass the full path through and preserve headers. The feed's channel `<link>` and the download URLs are built from the request's base URL.
+Give Scavengarr its own host name and proxy it at `/`. A path prefix (`/scavengarr/`) is not supported: the feed's `<link>`/`<enclosure>` URLs and the Stremio stream URLs are built from the request without it, so grabs would miss the proxy's location.
+
+The proxy must pass the `Host` header and send `X-Forwarded-Proto` and `X-Forwarded-For`. The app trusts them only from the addresses in `FORWARDED_ALLOW_IPS` (see [Configuration](./configuration.md#server-variables)); otherwise links come out as `http://` and all clients share one rate-limit bucket.
 
 ```nginx
-location /scavengarr/ {
-    proxy_pass http://scavengarr:7979/;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
+location / {
+    proxy_pass http://scavengarr:7979;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 }
 ```
 
-With a path prefix, the Prowlarr indexer URL becomes `http://proxy-host/scavengarr/api/v1/torznab/{plugin_name}`.
+Caddy's `reverse_proxy scavengarr:7979` sends these headers by default.
 
 ---
 
@@ -391,7 +404,7 @@ With a path prefix, the Prowlarr indexer URL becomes `http://proxy-host/scavenga
 | `SCAVENGARR_ENVIRONMENT` | `prod` | Prowlarr-friendly error handling (empty feed with 200), persistent cache |
 | `SCAVENGARR_LOG_LEVEL` | `INFO` | Balanced logging |
 | `SCAVENGARR_API_RATE_LIMIT_RPM` | `120` or `0` | Per-IP API rate limit |
-| `SCAVENGARR_CACHE_TTL_SECONDS` | `3600` | Default cache entry TTL (does not affect the fixed CrawlJob lifetime) |
+| `SCAVENGARR_CACHE_TTL_SECONDS` | `3600` | Default cache entry TTL (CrawlJobs have their own: `cache.crawljob_ttl_seconds`, default 3600) |
 | `HOST` | `0.0.0.0` | Bind address |
 | `PORT` | `7979` | Bind port |
 

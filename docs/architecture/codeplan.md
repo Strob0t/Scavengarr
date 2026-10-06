@@ -129,7 +129,7 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 
 - `TorznabSearchUseCase` caches raw plugin results under `search:<sha256(plugin:query:category)[:16]>` with TTL `cache.search_ttl_seconds` (default 900 s), overridden by a plugin's `cache_ttl`. Cache read/write errors are logged and ignored.
 - A failing `plugin.search()` or `validate_results()` raises `TorznabExternalError`; a single failing CrawlJob conversion is logged and skipped.
-- CrawlJob saves run in parallel via `asyncio.gather`; pagination (`offset`, `limit`) is applied after item building.
+- CrawlJob saves run in parallel via `asyncio.gather`; only the requested page (`offset`, `limit`) is validated and turned into CrawlJobs.
 - `render_rss_xml()`: item `<title>` uses `release_name` when present; `<guid>` is the original `download_url`; `<link>` and `<enclosure>` point to `{base_url}api/v1/download/{job_id}` with enclosure type `application/x-crawljob`; `size` is converted to bytes.
 - `render_caps_xml()` advertises categories `2000` (Movies), `5000` (TV) and `8000` (Other).
 
