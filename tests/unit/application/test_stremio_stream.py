@@ -1605,11 +1605,13 @@ class TestAnswerPolicy:
     async def test_links_resolve_while_the_search_runs(self) -> None:
         """The fast plugin's link is resolved before the slow one answers."""
         resolutions = Resolutions(delay=0.05)
-        slow_done = asyncio.Event()
+        # The slow plugin answers once the fast link resolved, not after a
+        # fixed 0.3 s: on a busy machine (a full parallel run) the fast
+        # resolution took longer than that
+        slow_may_answer = asyncio.Event()
 
         async def _slow(*_args: object, **_kwargs: object) -> list[SearchResult]:
-            await asyncio.sleep(0.3)
-            slow_done.set()
+            await slow_may_answer.wait()
             return [hit("https://dood.to/e/slow")]
 
         slow = fake_site([])
@@ -1621,7 +1623,7 @@ class TestAnswerPolicy:
         )
 
         await eventually(lambda: "https://voe.sx/e/fast" in resolutions.store)
-        assert not slow_done.is_set()
+        slow_may_answer.set()
         streams = await request
 
         assert sorted(video(uc, s) for s in streams) == [
