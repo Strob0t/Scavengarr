@@ -51,7 +51,7 @@ poetry run pytest -m live                       # live smoke tests against the r
 poetry run pytest tests/benchmark/ -s -v        # concurrency benchmarks
 ```
 
-The offline suite has about 4,500 tests and must pass before every commit. CI (`.github/workflows/ci.yml`) runs pre-commit and the offline suite on every push to `staging` and on every pull request. Live tests hit real websites; a failure there means a site or hoster changed, not that your change is wrong. They do not run in CI: GitHub's datacenter IPs get harder Cloudflare challenges than a home network.
+The offline suite has about 5,300 tests and must pass before every commit. CI (`.github/workflows/ci.yml`) runs pre-commit and the offline suite on every push to `staging` and on every pull request. Live tests hit real websites; a failure there means a site or hoster changed, not that your change is wrong. They do not run in CI: GitHub's datacenter IPs get harder Cloudflare challenges than a home network.
 
 Scavengarr is developed **test-first**: write a failing test, make it pass with the smallest change, refactor, commit. Test layout and mock conventions:
 
@@ -81,7 +81,7 @@ The most important Python rules (full list: [AGENTS.md → Python rules](AGENTS.
 
 - `from __future__ import annotations` in every file; modern typing only (`T | None`, `list[T]`); fully typed signatures.
 - Ports are `Protocol`s, entities and value objects are `@dataclass` (frozen where immutable).
-- Never block the event loop: parallel I/O with bounded concurrency, CPU-heavy parsing in an executor.
+- Never block the event loop: parallel I/O with bounded concurrency, CPU-heavy work in a worker thread with `asyncio.to_thread` (not `run_in_executor`, which drops the log context); plugin pages go through `await parse_page(parser, html)`.
 - Never swallow exceptions; log with `structlog` and structured fields, never log secrets.
 - Prefer the standard library and existing dependencies; new dependencies need a justification.
 
@@ -120,6 +120,7 @@ Scavengarr follows Clean Architecture: outer layers depend on inner ones only, a
 | Configuration | pydantic-settings, PyYAML, python-dotenv |
 | Caching | diskcache (SQLite) / Redis |
 | Logging | structlog |
+| Metrics and tracing | prometheus-client, OpenTelemetry (OTLP) |
 | CLI | argparse (stdlib) |
 
 ---
@@ -130,8 +131,10 @@ A plugin is one Python file in `plugins/` that inherits from `HttpxPluginBase` (
 
 Every plugin must:
 
-- filter by category (movies / TV) and paginate up to 1000 results,
-- scrape detail pages with bounded concurrency,
+- filter by category (movies / TV): label results from the site's data, never with the requested category, and answer a category request with `served_category()` / `filter_by_category()` (`infrastructure/plugins/categories.py`; `[]` for categories the site lacks),
+- paginate up to 1000 results,
+- scrape detail pages with bounded concurrency, and only of relevant search hits (`relevant_hits()` in `infrastructure/plugins/relevance.py`),
+- parse pages with `selectolax` through `await parse_page(parser, html)`,
 - declare `name`, `provides` (`stream`, `download` or `both`), `_domains` (primary domain first, then mirrors) and, if not German, `languages`.
 
 Analyse the site in a real browser before writing code. The full guide is [docs/features/python-plugins.md → Adding a New Plugin](docs/features/python-plugins.md).

@@ -89,8 +89,8 @@ flowchart LR
 - Ranking by language (German audio first by default), quality and hoster reliability
 - One working stream per hoster and language (dub and sub both stay): if a hoster's best link is dead, its next link is tried
 - Autoplay of the next episode (Stremio's binge watching keeps the language of the current stream)
-- Answer deadline: search and resolution run on a fixed budget (10 s / 15 s by default), so Stremio always gets an answer in time
-- Catalogs for trending titles and search (with a TMDB API key)
+- Answer deadline: plugins search for up to 30 s from the request start; the answer goes out at 5 resolved streams, when everything is done, or at the latest after 60 s (defaults), so Stremio always gets an answer in time
+- Catalogs: trending titles (needs a TMDB API key) and search (TMDB, or IMDb without a key)
 
 ### Arr indexer (Torznab)
 
@@ -151,7 +151,7 @@ The first build takes a few minutes (it installs the browser). Then check that i
 curl http://localhost:7979/api/v1/healthz
 ```
 
-Scavengarr reads `data/config.yaml` (mounted into the container) and the plugins from `plugins/`. Edit the config and run `docker compose restart` to apply changes.
+Scavengarr reads `data/config.yaml` (mounted into the container) and the plugins from `plugins/`. Edit the config and run `docker compose restart` to apply changes. In Docker, the log level and format, headless mode and the cache and plugin directories come from environment variables (`Dockerfile.prod`, `docker-compose.yml`), which beat `config.yaml`: change those in `docker-compose.yml`.
 
 **Optional services** (see [`docker-compose.yml`](docker-compose.yml)):
 
@@ -184,7 +184,7 @@ poetry run python -m patchright install chromium   # browser for JS-heavy sites
 poetry run start --host 0.0.0.0 --port 7979 --config data/config.yaml
 ```
 
-The browser also needs system libraries: install them once with `sudo poetry run python -m patchright install-deps chromium`. Without Docker the browser runs headful and needs a display; on a server use `xvfb-run -a poetry run start …`.
+The browser also needs system libraries: install them once with `sudo poetry run python -m patchright install-deps chromium`. Without Docker the browser runs headful and needs a display: without one it falls back to headless (`browser_headful_no_display` in the log), which fails Cloudflare Turnstile. On a server use `xvfb-run -a poetry run start …`.
 
 ---
 
@@ -217,23 +217,23 @@ Download plugins deliver direct-download links; send them to JDownloader (e.g. v
 
 ## Configuration
 
-Scavengarr works out of the box with [`data/config.yaml`](data/config.yaml). Settings are read in this order (first wins): CLI flags → `SCAVENGARR_*` environment variables (a `--dotenv` file's values included) → YAML file → defaults.
+Scavengarr works out of the box with [`data/config.yaml`](data/config.yaml). Settings are read in this order (first wins): CLI flags → `SCAVENGARR_*` environment variables (a `--dotenv` file's values included; real variables win over them) → YAML file → defaults.
 
 The settings you are most likely to change:
 
-| Setting (YAML) | Environment variable | Default | What it does |
+| Setting (YAML) | Environment variable | Built-in default | What it does |
 |---|---|---|---|
 | `stremio.plugin_timeout_seconds` | — | `30` | Search budget per Stremio request, counted from the request start |
 | `stremio.stream_deadline_seconds` | — | `60` | Latest answer of a Stremio request; it goes out earlier at `stremio.resolve_target_count` (5) streams or when everything is done |
 | `stremio.verify_streams` | — | `true` | Drop resolved streams that do not return video |
 | `stremio.language_scores` | — | `de` > `de-sub` > `en-sub` > `en` | Language ranking of streams |
-| `stremio.max_results_per_plugin` | — | `100` | Results per plugin and Stremio request |
+| `stremio.max_results_per_plugin` | — | `100` (`data/config.yaml`: `50`) | Results per plugin and Stremio request |
 | `tmdb_api_key` | `SCAVENGARR_TMDB_API_KEY` | unset | TMDB key for catalogs and title lookup (IMDb/Wikidata fallback without it) |
 | `playwright.solver_url` | `SCAVENGARR_PLAYWRIGHT_SOLVER_URL` | unset | Byparr/FlareSolverr sidecar, e.g. `http://byparr:8191` |
 | `playwright.headless` | `SCAVENGARR_PLAYWRIGHT_HEADLESS` | `false` | Headful browser passes Cloudflare Turnstile; needs a display (Xvfb in the image) |
 | `cache.backend` | `SCAVENGARR_CACHE_BACKEND` | `diskcache` | `diskcache` or `redis` |
-| `cache.search_ttl_seconds` | — | `900` | How long search results are cached (`0` = off) |
-| `http.rate_limit_rps` | `SCAVENGARR_RATE_LIMIT_REQUESTS_PER_SECOND` | `5.0` | Starting request rate per site (adaptive) |
+| `cache.search_ttl_seconds` | — | `900` (`data/config.yaml`: `1800`) | How long search results are cached (`0` = off) |
+| `http.rate_limit_rps` | `SCAVENGARR_RATE_LIMIT_REQUESTS_PER_SECOND` | `5.0` (`data/config.yaml`: `10.0`) | Starting request rate per site (adaptive) |
 | `http.api_rate_limit_rpm` | `SCAVENGARR_API_RATE_LIMIT_RPM` | `120` | Requests per minute per client IP on the API |
 | `logging.level` | `SCAVENGARR_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 
@@ -243,9 +243,9 @@ The answer does not wait for the whole search: it goes out once 5 streams resolv
 
 ## Supported sources
 
-Scavengarr ships 41 plugins: streaming sites (used by the Stremio addon), direct-download sites (served via Torznab) and anime sites, most of them German-language. Seven of them use the browser engine, the rest plain HTTP.
+Scavengarr ships 41 plugins: streaming sites (used by the Stremio addon), direct-download sites (served via Torznab) and anime sites, most of them German-language. Six of them use the browser engine, the rest plain HTTP.
 
-The complete, generated list with domains, content type, engine and languages is in **[docs/plugins.md](docs/plugins.md)**. Sites change often; a plugin that stops working is skipped automatically by the circuit breaker until the site is back.
+The complete, generated list with domains, content type, engine and languages is in **[docs/plugins.md](docs/plugins.md)**. Sites change often. In Stremio searches, a plugin that keeps failing is skipped by the circuit breaker, and a site that does not answer by the health check, until it is back; Torznab requests still reach it.
 
 Want a site that is missing? Plugins are single Python files — see [Contributing](#contributing).
 
@@ -273,7 +273,7 @@ An answer goes out once `stremio.resolve_target_count` streams (5) resolve, or w
 <details>
 <summary><b>A stream is listed but does not play</b></summary>
 
-Every stream passed a playback check when it was listed, but hoster links expire. Pick another stream or request the title again. Some hosters bind their video URLs to the IP address that resolved them: the device playing the stream should use the same internet connection as the Scavengarr host.
+Every stream passed a playback check when it was listed, and Scavengarr resolves the hoster link again when an old stream is played, but the hoster may have removed the file meanwhile, and stream links are kept 7 days. Pick another stream or request the title again. Some hosters bind their video URLs to the IP address that resolved them: the device playing the stream should use the same internet connection as the Scavengarr host.
 
 </details>
 
@@ -287,14 +287,14 @@ The built-in headful browser passes most Cloudflare challenges; in Docker it run
 <details>
 <summary><b>A plugin returns nothing or keeps timing out</b></summary>
 
-Sites move, go down or change their layout. After repeated failures the circuit breaker skips a plugin for a while (the pause grows up to one hour while it stays down), so a dead site does not slow down your requests. Check `/api/v1/stats/metrics` for per-plugin errors and timeouts, and search the issues or open one with the plugin name and the log lines.
+Sites move, go down or change their layout. In Stremio searches, the circuit breaker skips a plugin after repeated failures for a while (the pause grows up to one hour while it stays down), and the health check skips a site that does not answer, so a dead site does not slow down your requests; Torznab requests still reach it. Check `/api/v1/stats/metrics` for per-plugin errors and timeouts, and search the issues or open one with the plugin name and the log lines.
 
 </details>
 
 <details>
 <summary><b>My whole network gets slow or connections fail while Scavengarr searches</b></summary>
 
-Some home routers treat many new connections to different hosts in a short time like a port scan and block the machine for a minute or two. Scavengarr already limits this (per-host limits for link checks, one hoster at a time during resolution). If it still happens, lower `stremio.max_concurrent_plugins` and `stremio.probe_concurrency`, or run Scavengarr behind a router without that protection.
+Some home routers treat many new connections to different hosts in a short time like a port scan and block the machine for a minute or two. Scavengarr already limits this (at most 4 link checks per host, one link per hoster at a time during resolution). If it still happens, set `stremio.auto_tune_all` and `stremio.max_concurrent_plugins_auto` to `false` (auto-tuning overwrites the limits at startup), then lower `stremio.max_concurrent_plugins` and `stremio.probe_concurrency`, or run Scavengarr behind a router without that protection.
 
 </details>
 
@@ -339,7 +339,7 @@ In the `scavengarr-cache` Docker volume (search cache, browser clearance cookies
 
 Most of Scavengarr's code was written with AI coding assistants — it is, openly, a largely vibe-coded project. It is not an unreviewed one: every change was directed, reviewed and accepted by an experienced software developer, and the project follows rules that keep the generated code honest:
 
-- **Test-driven development.** Tests come first; the suite has about 4,400 unit, integration and end-to-end tests, plus opt-in live tests against the real sites.
+- **Test-driven development.** Tests come first; the suite has about 5,300 unit, integration and end-to-end tests, plus opt-in live tests against the real sites.
 - **Clean Architecture.** Strict layers (domain, application, infrastructure, interfaces) with a dependency rule, ports as protocols and a single composition root.
 - **Quality gates on every commit.** `ruff` linting and formatting, type-annotated code, pre-commit hooks and the full test suite before anything is committed.
 - **Written plans and measurements.** Larger changes start with a plan in [`docs/plans/`](docs/plans), and performance changes are measured against real requests before and after.

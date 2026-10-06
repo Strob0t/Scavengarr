@@ -2,7 +2,7 @@
 
 # Plan: Repair Broken Plugins
 
-**Status:** Done (2026-09-28): every triaged plugin returns results again; streamworld was removed (site gone). hdfilme's keyword search works again (real-page tests since 2026-10-01).
+**Status:** Done (2026-09-28): every triaged plugin returns results again; streamworld was removed (site gone). hdfilme's keyword search works again (on hdfilme.ceo since 2026-10-05).
 **Priority:** High (11 of 42 plugins return 0 results)
 **Related:** `plugins/`, `tests/live/test_plugin_smoke.py`, `CHANGELOG.md` → `KNOWN_ISSUES`
 

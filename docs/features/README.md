@@ -49,14 +49,14 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** and **S
 | [Plugin Scoring & Probing](./plugin-scoring-and-probing.md) | EWMA-based plugin ranking via background health and search probes |
 | [Mirror URL Fallback](./mirror-url-fallback.md) | Automatic domain fallback when primary mirrors are unreachable |
 | [Prowlarr Integration](./prowlarr-integration.md) | Step-by-step Prowlarr setup, endpoint mapping, category sync |
-| [Observability](./observability.md) | Prometheus metrics of Stremio requests, plugin searches, hoster resolutions and the HLS proxy; scrape job, queries, cost |
+| [Observability](./observability.md) | Prometheus metrics of Stremio requests, plugin searches, hoster resolutions and the HLS proxy, optional OpenTelemetry tracing; scrape job, queries, cost |
 
 ### Architecture
 
 | Document | Description |
 |---|---|
 | [Clean Architecture](../architecture/clean-architecture.md) | Layer diagram, dependency rules, module organization |
-| [Codeplan](../architecture/codeplan.md) | Implementation roadmap and architectural decisions |
+| [Codeplan](../architecture/codeplan.md) | Module map, key design decisions and invariants |
 
 ### Plans & Roadmap
 
@@ -69,14 +69,15 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** and **S
 | [Pi Performance](../plans/pi-performance.md) | Done 2026-10-04: baseline, measures and their effect on a Raspberry Pi 4 (CPU, outbound requests, event-loop lag per stream request) |
 | [Round 5 Measures](../plans/round5-measures.md) | Implemented 2026-10-05, checked on the dev server (A/B against the fifth round's code) and in the sixth round in production (kinoger's stealth-browser contention open): plugin health check, resolution during the search, cached answers without waiting, half-open probes that report, SuperVideo, HLS proxy CPU (asyncio network backend; ChaCha20 measured useless), selectolax for every plugin, answers at 5 streams or 60 s, re-resolvable stream links |
 | [Optimization Options](../plans/optimization-options.md) | Proposed 2026-10-04, updated 2026-10-05 after the fifth end-to-end round: where a stream request's time goes now, research on Stremio clients, other addons, HTTP clients, Chromium and Cloudflare; 19 evaluated options |
-| [Plugin Repair](../plans/plugin-repair.md) | Done: repaired plugins; hdfilme keyword search broken upstream (browsing works); streamworld removed (site gone) |
+| [Plugin Repair](../plans/plugin-repair.md) | Done: repaired plugins; hdfilme's keyword search works again since 2026-10-05; streamworld removed (site gone) |
+| [CUII Coverage](../plans/cuii-coverage.md) | 2026-10-01: the CUII block list against the plugins and hoster resolvers |
 | [Anti-Bot Hardening](../plans/antibot-patchright.md) | Done: Patchright instead of playwright-stealth, Turnstile solver, browser fallback port for httpx plugins |
-| [Stremio Latency](../plans/stremio-latency.md) | Done: answer deadline, per-hoster resolution, playback check, measured 10 s / 15 s budget; end-to-end rounds 1–6 and the dev-server A/B round of the round-5 measures |
+| [Stremio Latency](../plans/stremio-latency.md) | Done: answer deadline, per-hoster resolution, playback check, the 10 s / 15 s budget of then (since round 5: 30 s search, answer at 5 streams or at the latest after 60 s); end-to-end rounds 1–6 and the dev-server A/B round of the round-5 measures |
 | [Code Review Fixes](../plans/code-review-fixes.md) | Done: 79 findings of the full `staging` review fixed in four waves (security, results, robustness, plugin categories); open observations listed |
 | [Captcha Solving](../plans/captcha-solving.md) | Done: shared challenge detector, grab-time link resolution (nox ALTCHA, animeloads image captcha), vinovo/DoodStream without captcha, clearance cookies across restarts, optional Byparr sidecar |
-| [Next Steps](../plans/next-steps.md) | Proposed: status snapshot of 2026-09-29 (live run, release, CI) and prioritized next steps, incl. the stremio.lan live test setup |
+| [Next Steps](../plans/next-steps.md) | In progress: status snapshot of 2026-09-29 (live run, release, CI) and prioritized next steps, incl. the stremio.lan live test setup |
 | [Ideas Backlog](../plans/ideas-backlog.md) | Decided 2026-10-06: snapshot of production and repository, six new findings (httpx log noise, discarded stream quality and size, hosters without a resolver, no build identity, kinox without yield, hand-made deployment), 16 evaluated ideas, the decisions, and the handoff to the implementing agent (order, working rules, task specifications; the larger items as OpenSpec changes `add-anime-ids`, `persist-resolver-state`, `add-container-image`, `add-stream-media-quality`) |
-| [Stremio Stream Split](../plans/stremio-stream-split.md) | Proposed 2026-10-06 (item I14): split the 939-line stream use case into phase collaborators under `application/stremio/` (title resolution, plugin selection, title search, resolve flow, answer assembly) in five behaviour-preserving commits; exclusive-access rule |
+| [Stremio Stream Split](../plans/stremio-stream-split.md) | Proposed 2026-10-06 (item I14): split the 942-line stream use case into phase collaborators under `application/stremio/` (title resolution, plugin selection, title search, resolve flow, answer assembly) in five behaviour-preserving commits; exclusive-access rule |
 
 ### Refactoring History
 
@@ -107,8 +108,9 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** and **S
 | Configuration | pydantic-settings, PyYAML, python-dotenv | Typed config with env/YAML/CLI support |
 | Caching | diskcache (+ optional Redis via YAML) | Search results, CrawlJobs, stream links, plugin scores |
 | Logging | structlog | Structured JSON/console logging |
+| Metrics and tracing | prometheus-client, OpenTelemetry (OTLP) | Prometheus metrics, optional tracing spans |
 | CLI | argparse (stdlib) | Server startup with config overrides |
-| Testing | pytest, respx | 4431 offline tests + 41 live smoke tests |
+| Testing | pytest, respx | About 5,300 offline tests + 41 live smoke tests |
 
 ---
 
@@ -123,9 +125,9 @@ src/scavengarr/
   application/               # Application business rules
     use_cases/               # TorznabSearch/Caps/Indexers, StremioCatalog, StremioStream
     factories/               # CrawlJob factory
-    stremio/                 # Plugin search, query building, stream builder
+    stremio/                 # Plugin search, queries, search cache and progress, resolution, stream builder
   infrastructure/            # Interface adapters
-    plugins/                 # Registry, loader, HttpxPluginBase, PlaywrightPluginBase, shared browser pool
+    plugins/                 # Registry, loader, HttpxPluginBase, PlaywrightPluginBase, DataApi/XenForo bases, dom/categories/relevance helpers
     torznab/                 # HttpxSearchEngine + XML presenter
     validation/              # HttpLinkValidator (HEAD/GET)
     cache/                   # diskcache + Redis adapters, cache factory
@@ -138,11 +140,13 @@ src/scavengarr/
     config/                  # Pydantic schema, loader, defaults
     logging/                 # structlog setup
     common/                  # Parsers, converters, rate limiter, retry transport
-    circuit_breaker.py       # Per-plugin circuit breaker
+    captcha/                 # Challenge detection, ALTCHA solver
+    telemetry/               # Prometheus metrics, OpenTelemetry tracing, event-loop lag
+    circuit_breaker.py       # Circuit breaker (plugins and hosters)
     concurrency.py           # Global concurrency pool
     graceful_shutdown.py     # Drain in-flight requests
-    metrics.py               # Metrics collector
     resource_detector.py     # cgroup v2/v1 CPU/memory detection
+    version.py               # App version from the package metadata
   interfaces/                # Frameworks & drivers
     api/                     # FastAPI routers (torznab, stremio, download, stats) + rate-limit middleware
     cli/                     # argparse CLI (`poetry run start`)
