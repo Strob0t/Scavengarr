@@ -1054,6 +1054,26 @@ class TestHealthEndpoint:
         assert data["supported_hosters"] == ["voe", "streamtape"]
         assert data["stream_link_repo_configured"] is True
 
+    def test_reports_version_commit_and_build_time(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SCAVENGARR_COMMIT", "7eeb50b63a57")
+        monkeypatch.setenv("SCAVENGARR_BUILT", "2026-10-06T18:00:00Z")
+        plugins = MagicMock()
+        plugins.get_by_provides.return_value = []
+
+        data = (
+            TestClient(_make_app(plugins=plugins))
+            .get(f"{_PREFIX}/stremio/health")
+            .json()
+        )
+
+        assert (data["version"], data["commit"], data["built"]) == (
+            APP_VERSION,
+            "7eeb50b63a57",
+            "2026-10-06T18:00:00Z",
+        )
+
     def test_metrics_are_the_telemetry_statistics(self) -> None:
         plugins = MagicMock()
         plugins.get_by_provides.return_value = []

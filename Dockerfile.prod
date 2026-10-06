@@ -80,6 +80,16 @@ ENV PATH="/app/.venv/bin:$PATH" \
     HOST=0.0.0.0 \
     PORT=7979
 
+# Which build runs: scavengarr_build_info, /api/v1/healthz and the startup log
+# report them ("unknown" without), e.g.
+#   --build-arg SCAVENGARR_COMMIT=$(git rev-parse --short=12 HEAD)
+#   --build-arg SCAVENGARR_BUILT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+# Late in the file: a new value rebuilds no layer above.
+ARG SCAVENGARR_COMMIT=unknown
+ARG SCAVENGARR_BUILT=unknown
+ENV SCAVENGARR_COMMIT=${SCAVENGARR_COMMIT} \
+    SCAVENGARR_BUILT=${SCAVENGARR_BUILT}
+
 EXPOSE 7979
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

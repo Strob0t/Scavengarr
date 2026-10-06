@@ -13,6 +13,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.prod
+      # Which build runs (scavengarr_build_info, /api/v1/healthz), e.g.
+      #   SCAVENGARR_COMMIT=$(git rev-parse --short=12 HEAD) \
+      #   SCAVENGARR_BUILT=$(date -u +%Y-%m-%dT%H:%M:%SZ) docker compose up -d --build
+      args:
+        SCAVENGARR_COMMIT: ${SCAVENGARR_COMMIT:-unknown}
+        SCAVENGARR_BUILT: ${SCAVENGARR_BUILT:-unknown}
     image: scavengarr:local
     container_name: scavengarr
     ports:

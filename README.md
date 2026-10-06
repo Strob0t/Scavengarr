@@ -151,6 +151,13 @@ The first build takes a few minutes (it installs the browser). Then check that i
 curl http://localhost:7979/api/v1/healthz
 ```
 
+The answer names the version, and the commit and build time when the build was given them; to have them, build with:
+
+```bash
+SCAVENGARR_COMMIT=$(git rev-parse --short=12 HEAD) \
+SCAVENGARR_BUILT=$(date -u +%Y-%m-%dT%H:%M:%SZ) docker compose up -d --build
+```
+
 Scavengarr reads `data/config.yaml` (mounted into the container) and the plugins from `plugins/`. Edit the config and run `docker compose restart` to apply changes. In Docker, the log level and format, headless mode and the cache and plugin directories come from environment variables (`Dockerfile.prod`, `docker-compose.yml`), which beat `config.yaml`: change those in `docker-compose.yml`.
 
 **Optional services** (see [`docker-compose.yml`](docker-compose.yml)):

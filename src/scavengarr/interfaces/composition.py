@@ -104,6 +104,7 @@ from scavengarr.infrastructure.telemetry.collectors import (
 from scavengarr.infrastructure.tmdb.client import HttpxTmdbClient
 from scavengarr.infrastructure.tmdb.imdb_fallback import ImdbFallbackClient
 from scavengarr.infrastructure.torznab.search_engine import HttpxSearchEngine
+from scavengarr.infrastructure.version import build_identity
 from scavengarr.interfaces.app_state import AppState
 
 log = structlog.get_logger(__name__)
@@ -689,7 +690,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Mark the application as ready for traffic
     state.graceful_shutdown.mark_ready()
-    log.info("app_startup_complete")
+    log.info("app_startup_complete", **build_identity())
 
     try:
         yield

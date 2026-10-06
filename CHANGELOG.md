@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: Production Reports Which Build Runs
+- `scavengarr_build_info` carries `commit` and `built` beside `version`; `/api/v1/healthz`, `/api/v1/stremio/health` and the startup line `app_startup_complete` report the same three. They come from `SCAVENGARR_COMMIT` and `SCAVENGARR_BUILT`, which `Dockerfile.prod` takes as build arguments and `docker-compose.yml` passes through (`unknown` without them; README → Docker Compose shows the build command). The family keeps its one series, so the telemetry rule's fixed label sets still hold.
+
 ### Changed: httpx Logs Its Requests at DEBUG Only
 - httpx wrote one INFO line per outgoing request, 59 % of production's log lines (2026-10-06; on the Pi the log lives on the SD card). With `logging.level: INFO` the `httpx` and `httpcore` loggers now log from `WARNING` up; at `DEBUG` they keep the request trace. `scripts/stremio_profile.py` counts requests per host from these lines, so its counts need a run at `DEBUG`.
 

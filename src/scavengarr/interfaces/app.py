@@ -16,7 +16,7 @@ from starlette.responses import Response
 from scavengarr.infrastructure.config import AppConfig
 from scavengarr.infrastructure.graceful_shutdown import GracefulShutdown
 from scavengarr.infrastructure.telemetry import CONTENT_TYPE, Telemetry
-from scavengarr.infrastructure.version import APP_VERSION
+from scavengarr.infrastructure.version import APP_VERSION, build_identity
 from scavengarr.interfaces.api.middleware import RateLimitMiddleware
 from scavengarr.interfaces.app_state import AppState
 from scavengarr.interfaces.composition import lifespan
@@ -62,12 +62,16 @@ def create_app(config: AppConfig) -> FastAPI:
 
     @app.get("/api/v1/healthz")
     async def healthz() -> dict[str, str | int | list[str]]:
-        """Liveness probe — returns 200 as long as the process is running."""
+        """Liveness probe — returns 200 as long as the process is running.
+
+        Also names the build (version, commit, build time).
+        """
         state = app.state
         plugins = getattr(state, "plugins", None)
         registry = getattr(state, "hoster_resolver_registry", None)
         return {
             "status": "ok",
+            **build_identity(),
             "plugins": len(plugins.list_names()) if plugins else 0,
             "hosters": registry.supported_hosters if registry else [],
         }

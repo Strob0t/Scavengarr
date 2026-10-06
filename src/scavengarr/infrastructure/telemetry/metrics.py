@@ -33,7 +33,7 @@ from prometheus_client.exposition import CONTENT_TYPE_PLAIN_0_0_4
 
 from scavengarr.domain.ports.telemetry import AttributeValue, StageName, ValueName
 from scavengarr.infrastructure.telemetry.collectors import ContainerCollector
-from scavengarr.infrastructure.version import APP_VERSION
+from scavengarr.infrastructure.version import build_identity
 
 if TYPE_CHECKING:
     from scavengarr.infrastructure.telemetry.tracing import TracedStage, Tracing
@@ -223,9 +223,10 @@ class Telemetry:
             registry=self.registry,
         )
         self._loop_lag_ms: deque[float] = deque(maxlen=LAG_WINDOW)
-        Info("scavengarr_build", "Scavengarr version", registry=self.registry).info(
-            {"version": APP_VERSION}
-        )
+        # One series by construction: its labels name the build, not a set
+        Info(
+            "scavengarr_build", "Scavengarr version and build", registry=self.registry
+        ).info(build_identity())
         ProcessCollector(registry=self.registry)
         self.registry.register(ContainerCollector())
         PlatformCollector(registry=self.registry)

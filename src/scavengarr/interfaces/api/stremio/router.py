@@ -31,7 +31,7 @@ from scavengarr.infrastructure.stremio.hls_proxy import (
     rewrite_manifest,
     stream_hls_segment,
 )
-from scavengarr.infrastructure.version import APP_VERSION
+from scavengarr.infrastructure.version import APP_VERSION, build_identity
 from scavengarr.interfaces.app_state import AppState
 
 log = structlog.get_logger(__name__)
@@ -675,6 +675,7 @@ async def stremio_health(request: Request) -> JSONResponse:
 
     content: dict[str, object] = {
         "healthy": healthy,
+        **build_identity(),
         "tmdb_configured": tmdb_configured,
         "stream_plugin_count": len(stream_plugin_names),
         "stream_plugins": stream_plugin_names,
