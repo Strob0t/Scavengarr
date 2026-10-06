@@ -35,7 +35,7 @@ Dependencies flow use case → collaborators → ports; no collaborator imports 
 3. `TitleSearch` (search runner, cache, progress, refresh; the largest step). Tests: the `_cached_use_case` tests (`TestSearchCache`'s docstring still names the soft deadline: correct it on the move), `TestBrowserWarmup` and `TestMultiLanguageDispatch`'s search parts.
 4. `ResolveFlow` in `resolution.py`. Tests: `TestResolvePhase` and `TestResolverEchoFiltering` with `_resolving_use_case`, `TestBackgroundResolutions`, `TestAnswerPolicy` (`_answering_use_case`).
 5. `answer.py` functions (and `apply_resolution` if `add-stream-media-quality` is not already in). Tests: `TestStreamLinkProxy`, `TestStreamLinkSaveFailures`, format assertions.
-6. Final pass: `_answer` reads as the six steps of the class docstring; constructor binds the collaborators instead of 31 attributes; update `docs/architecture/clean-architecture.md` (module list under `application/stremio/`) and `docs/features/stremio-addon.md` (pipeline section names the modules), `CHANGELOG.md` one line.
+6. Final pass: `_answer` reads as the six steps of the class docstring; the test file drops its `del mock_plugin.scraping` lines (no code reads `scraping` since the YAML plugins left); constructor binds the collaborators instead of 31 attributes; update `docs/architecture/clean-architecture.md` (module list under `application/stremio/`) and `docs/features/stremio-addon.md` (pipeline section names the modules), `CHANGELOG.md` one line.
 
 Expected sizes after step 6: use case ~250 lines; new modules 120–250 lines each; the use-case test file under 1,000 lines.
 

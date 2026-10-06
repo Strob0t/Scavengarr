@@ -45,13 +45,12 @@ class TestTorznabIndexersUseCase:
         assert result[0]["version"] is None
         assert result[0]["mode"] is None
 
-    def test_python_plugin_with_direct_mode(self) -> None:
-        """Python plugins expose mode directly, not via scraping."""
+    def test_plugin_mode_attribute(self) -> None:
+        """The plugin's own ``mode`` attribute is reported."""
         plugin = MagicMock()
         plugin.name = "boerse"
         plugin.version = "1.0.0"
         plugin.mode = "playwright"
-        plugin.scraping = None
 
         registry = MagicMock()
         registry.list_names.return_value = ["boerse"]
