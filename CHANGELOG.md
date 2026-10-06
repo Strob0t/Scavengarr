@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: einschalten, fireani and haschcon Scrape the Relevant Search Hits Only
+- The three JSON-API plugins fetched the details of every search hit, though their sites also list loose matches: einschalten loaded the movie and watch answers of "Jud Süß" (1940) for "Oppenheimer", fireani two RPCs per anime, haschcon a player page per post WordPress matched in its text. They keep the relevant hits now (`relevant_hits()`), as the other plugins do, and fireani at most 3 for a season or episode request: "Attack on Titan" S1E1 no longer loads "Attack on Titan: Junior High". Found by the new real-page tests.
+
 ### Chore: Real Pages of the Remaining Stremio Plugins
 - einschalten, fireani, haschcon, kinox and moflix had no tests on their sites' own pages, so a changed site or API showed up in production first. Their search and detail pages and API answers are fixtures now (captured 2026-10-06, 84 KB; 16 plugins in all), and `test_real_pages.py` drives the JSON plugins' own requests against them: einschalten's search, fireani's GetAnime and GetEpisode, haschcon's player page and moflix's whole search. kinox's mirror answers sit behind the site's verification wall; its fixtures stop at the detail page.
 - `scripts/capture_pages.py` records a JSON API's answer as `.json`, and `--fixture` stores it as `.json.gz`.

@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
+from scavengarr.infrastructure.plugins.relevance import hit_title, relevant_hits
 
 # ---------------------------------------------------------------------------
 # Configurable settings
@@ -221,7 +222,9 @@ class EinschaltenPlugin(HttpxPluginBase):
 
         await self._ensure_client()
 
-        search_results = await self._api_search(query)
+        # The search also lists loose matches ("Oppenheimer" finds "Jud Süß");
+        # each hit costs a movie and a watch request
+        search_results = relevant_hits(await self._api_search(query), query, hit_title)
         if not search_results:
             return []
 

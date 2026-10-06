@@ -18,6 +18,7 @@ import re
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
+from scavengarr.infrastructure.plugins.relevance import relevant_hits
 
 # ---------------------------------------------------------------------------
 # Configurable settings
@@ -33,6 +34,11 @@ _MAX_PAGES = 10  # 10 pages x 100 = 1000
 # Regex patterns for extracting video URLs from player embed pages.
 _YT_PATTERN = re.compile(r"youtube\.com/embed/([a-zA-Z0-9_-]+)")
 _DM_PATTERN = re.compile(r"dailymotion\.com/embed/video/([a-zA-Z0-9]+)")
+
+
+def _entry_title(entry: dict) -> str:
+    """The title of a video entry (WordPress sends it HTML-escaped)."""
+    return html_lib.unescape(entry.get("title", {}).get("rendered", ""))
 
 
 class HaschconPlugin(HttpxPluginBase):
@@ -106,7 +112,7 @@ class HaschconPlugin(HttpxPluginBase):
         video_url: str | None,
     ) -> SearchResult:
         """Build a SearchResult from a WP REST API video entry."""
-        title = html_lib.unescape(entry.get("title", {}).get("rendered", ""))
+        title = _entry_title(entry)
         link = entry.get("link", "")
         date = entry.get("date", "")
 
@@ -191,7 +197,10 @@ class HaschconPlugin(HttpxPluginBase):
 
         await self._ensure_client()
 
-        search_results = await self._api_search(query)
+        # WordPress also matches the text of a post; each hit costs a player page
+        search_results = relevant_hits(
+            await self._api_search(query), query, _entry_title
+        )
         if not search_results:
             return []
 

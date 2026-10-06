@@ -348,7 +348,9 @@ class TestPluginSearch:
         return p
 
     @pytest.mark.asyncio
-    async def test_search_returns_results(self, plugin, mock_client):
+    async def test_search_scrapes_the_relevant_hits_only(self, plugin, mock_client):
+        """WordPress also matches the text of a post: "Dracula" is no hit
+        for "fliege", so its player page is not loaded."""
         search_resp = _make_json_response(
             SEARCH_RESULTS,
             headers={"X-WP-TotalPages": "1"},
@@ -368,10 +370,10 @@ class TestPluginSearch:
 
         results = await plugin.search("fliege")
 
-        assert len(results) == 2
-        assert results[0].title == "Die Fliege"
+        assert [r.title for r in results] == ["Die Fliege"]
         assert results[0].download_link == "https://www.youtube.com/watch?v=A7RnUnGoaMk"
-        assert results[1].download_link == "https://www.dailymotion.com/video/x9kk3e0"
+        requested = [str(c.args[0]) for c in mock_client.get.await_args_list]
+        assert not [url for url in requested if "/player-embed/id/67890/" in url]
 
     @pytest.mark.asyncio
     async def test_search_empty_query(self, plugin):
@@ -490,7 +492,8 @@ class TestPluginSearch:
 
         results = await plugin.search("dracula")
 
-        assert len(results) == 2
+        # Page 1's "Die Fliege" is no hit for "dracula"
+        assert [r.source_url for r in results] == [SEARCH_ENTRY_2["link"]]
         assert call_count == 2
 
 

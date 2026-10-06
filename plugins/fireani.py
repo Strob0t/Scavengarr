@@ -26,6 +26,11 @@ from typing import Any
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
+from scavengarr.infrastructure.plugins.relevance import (
+    SINGLE_TITLE_HITS,
+    hit_title,
+    relevant_hits,
+)
 
 # ---------------------------------------------------------------------------
 # Configurable settings
@@ -401,7 +406,14 @@ class FireaniPlugin(HttpxPluginBase):
         if not self._category_matches(category, 5070):
             return []
 
-        all_items = await self._api_search(query)
+        # Each hit costs two RPCs. A season request is for one title:
+        # "Attack on Titan" skips "Attack on Titan: Junior High" then
+        all_items = relevant_hits(
+            await self._api_search(query),
+            query,
+            hit_title,
+            limit=SINGLE_TITLE_HITS if season is not None else None,
+        )
         if not all_items:
             return []
 

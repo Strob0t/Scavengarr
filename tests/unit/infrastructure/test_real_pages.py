@@ -614,6 +614,32 @@ class TestEinschalten:
         ]
         assert search.call_count == 1
 
+    @respx.mock
+    async def test_film_request_scrapes_the_relevant_hit_only(self) -> None:
+        """ "Jud Süß" is no hit for "Oppenheimer": no movie or watch request
+        for it."""
+        plugin = _plugin_module("einschalten").EinschaltenPlugin()
+        base = plugin.base_url
+        respx.post(f"{base}/api/search").respond(
+            200, json=_json("einschalten", "search-oppenheimer")
+        )
+        respx.get(f"{base}/api/movies/872585").respond(
+            200, json=_json("einschalten", "detail-oppenheimer")
+        )
+        respx.get(f"{base}/api/movies/872585/watch").respond(
+            200, json=_json("einschalten", "watch-oppenheimer")
+        )
+        other = respx.get(url__startswith=f"{base}/api/movies/").respond(404)
+        async with httpx.AsyncClient() as client:
+            plugin._client = client
+            results = await plugin.search("Oppenheimer", 2000)
+
+        assert [(r.title, r.category) for r in results] == [
+            ("Oppenheimer (2023)", 2000)
+        ]
+        assert results[0].download_link == "https://vide0.net/e/okvy5f1xez95"
+        assert not other.called
+
     def test_film_result(self) -> None:
         """Genres and IMDb id from the movie answer, the stream and the
         release name from the watch answer."""
@@ -683,6 +709,26 @@ class TestFireani:
         assert result.download_link == "https://voe.sx/e/8qronenyk5ks"
         assert result.metadata["imdb"] == "tt2560140"
         assert result.metadata["year"] == "2013"
+
+    @respx.mock
+    async def test_episode_request_skips_the_spin_off(self) -> None:
+        """ "Attack on Titan: Junior High" is another series: an episode
+        request loads the episode of the exact title only."""
+        mod = _plugin_module("fireani")
+        plugin = mod.FireaniPlugin()
+        respx.get(url__startswith=f"{plugin.base_url}/search").respond(
+            200, text=_page("fireani", "search-attack-on-titan")
+        )
+        episode = respx.post(f"{plugin.base_url}{mod._RPC_PATH}GetEpisode").respond(
+            200, json=_json("fireani", "episode-attack-on-titan-s1e1")
+        )
+        async with httpx.AsyncClient() as client:
+            plugin._client = client
+            results = await plugin.search("Attack on Titan", 5000, season=1, episode=1)
+
+        assert [(r.title, r.category) for r in results] == [("Attack on Titan", 5070)]
+        slugs = [json.loads(c.request.content)["slug"] for c in episode.calls]
+        assert slugs == ["attack-on-titan"]
 
 
 class TestHaschcon:
