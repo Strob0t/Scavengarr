@@ -1376,6 +1376,7 @@ Foundation of the project: FastAPI server, Scrapy scraping engine, plugin loader
 
 Current known issues:
 
+- **kinoger times out in production** (2026-10-06, sixth round): 13 of 13 Stremio searches hit the 30 s plugin timeout, its breakers opened, and titles with few streams waited 30 s for it. Every kinoger page goes through the stealth browser (Cloudflare binds the clearance to the browser), whose 2 pages hoster captures share while plugins search; alone in the container the same searches took 7.9–17.3 s. How the browser's pages are shared is open (`docs/plans/stremio-latency.md`, sixth round).
 - **s.to link-out quota for VPN IPs** (2026-10-04): for a VPN IP s.to's gate is the tier `turnstile_altcha`, and one pass (about 20 s in the browser on a Raspberry Pi 4) unlocks 3 link-outs. Stremio episode requests get s.to for about three requests per pass; a Torznab search resolves the link-outs of every matching episode (about 950 requests and 83 s for "Dark"), and most results keep the s.to link-out.
 - **Playmate in tsaridas/stremio-docker's web player** (2026-10-04): the image's nginx answers Playmate's disguised HLS segments (`…_000.css`, `…_001.js`) as web player files, with 404, so Playmate streams fail there (error 81).
 

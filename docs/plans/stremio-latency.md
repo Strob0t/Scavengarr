@@ -242,6 +242,28 @@ The measures of `round5-measures.md` against the fifth round's code, side by sid
 
 Fixes from the round, each with tests: cached answers keep a hoster's cached stream (fe58559), the HLS proxy sends 64 KiB pieces (bac6583), the access log masks query values (577e7cd), a stale link keeps its video URL when the hoster fails (930f21f).
 
+### Sixth round (2026-10-06, production on `staging` f0b9d18)
+
+The fifth round's harness and 17 titles (none in the search cache) against production with the round-5 measures, the dev-server round's fixes and that commit's `data/config.yaml` (plugin timeout 30 s, deadline 60 s, target 5 streams, links kept 7 days). The mounted config had kept the old values (10 s, 15 s, resolve everything, 2 h) through the first rebuild: the entrypoint seeds `config.yaml` only when the file is missing, so it was deleted and reseeded. Changed environment: other containers on the Pi kept about 1.4 cores busy (load 2.7–5.2 before the round, 0.7–10 during pass 1; Scavengarr idle at 0.7% of a core); the fifth round ran below 1.2. By the maintainer's decision the round was measured under that load. CPU from the app's own `/metrics` (process and container cgroup).
+
+| Pass | Median / max | Streams | Titles without stream / below 5 |
+|---|---|---|---|
+| 1 (plugins search) | 12.1 / 32.5 s (fifth round 11.1 / 14.0 s) | 67 (102) | 0 / 5 of 17 |
+| 2 (from the search cache) | 0.08 / 0.96 s (1.0 / 4.4 s) | 67 (110) | 0 / 5 of 17 |
+
+- **Answers:** 12 at the target of 5 streams (3.9–22.9 s, median 8.9 s), 5 when the search was done, all at 30.1–32.5 s (Good Bye Lenin, Lola rennt, Breaking Bad, Dark, Haus des Geldes with 1–2 streams): they waited for kinoger's plugin timeout.
+- **kinoger** delivered nothing: 13 of 13 searches hit the 30 s plugin timeout, then its breakers for films and series opened (6 searches skipped). Alone in the production container, with a browser of its own, three kinoger searches took 7.9–17.3 s and found results. Every kinoger page goes through the stealth browser (the site binds its Cloudflare clearance to the browser, `kinoger_browser_session_rejected`), and that browser loads 2 pages at a time; since links resolve while plugins search, hoster captures (Dropload, DoodStream's fallback, Filemoon, SuperVideo) take those pages during the search. In the fifth round the resolution started after the search's soft deadline, and kinoger delivered 11 streams in pass 1. Open: how the stealth browser's pages are shared.
+- **CPU and lag:** 3.8 s of Python and 27 s of container CPU (Chromium, Xvfb) per title in pass 1; the search now runs to its end and links resolve while it runs, so a title costs more than before (the fifth round's profile of 3 titles: 2.5 s Python, 6.7 s Chromium per request, measured differently). Event-loop lag p99 / max 194 / 1124 ms under the host load (fifth round's profile: 73 / 224 ms).
+- **Health check:** megakino_to and movie4k (still down) were skipped in 17 of 17 searches.
+- **Hosters:** breakers open for Filemoon (37 links skipped), Dropload (32) and SuperVideo (20; its half-open probes report as designed). DoodStream 13 streams (fifth round 9), VOE 25 resolved and 17 failed, Vidmoly 10.
+- **Mirror groups:** hdfilme was asked in 17 of 17 searches: its plugin score (0.339 films, 0.327 series) is above streamcloud's (0.311) and streamkiste's (0.312), confidence 0.18.
+- **Cached answers** resolved their other links in the background one title at a time (34 runs over 8 minutes) and kept every stream of the first answers.
+- **Play check** inside the container (the VPN address): 89 of 93 streams playable (fifth round 107 of 110); failures FireStream (2) and VidHide (2).
+- **HLS proxy:** ffmpeg (`Lavf/`) was refused the playlist of 48 of 48 proxied HLS streams, a player got it with HEAD and GET for 48 of 48 (the 1080p fix). CPU per relayed MB of one VOE stream: 150–162 ms (app process, idle-corrected; fifth round during playback 259–320 ms, before the asyncio backend and 64 KiB pieces).
+- **Metrics:** `/metrics` answered 44 KB and 574 series for 29 ms of CPU per scrape on the Pi, 0.05% of a core at a 60 s interval.
+
+**Evaluation:** cached answers (0.08 instead of 1.0 s), the HLS proxy (about half the CPU per MB), the 1080p fix, the health check, the breakers and the metrics reached their goals in production. First answers did not get faster under three to four times the host load: titles with many streams answer at the target (median 8.9 s), but titles with few streams wait 30 s for kinoger, which no longer finishes because hoster captures hold the stealth browser's two pages during the search.
+
 ## AIOStreams
 
 Goal was an AIOStreams test user on `aiostreams.lan` with Scavengarr as addon, measured end to end. Not done: AIOStreams validates the addon manifest when a user is created or updated, and it can reach neither the dev instance (Docker NAT on the workstation) nor `scavengarr.lan` (502, backend down). Recommended user settings, from the AIOStreams v2.35.3 source (`packages/core/src/presets/custom.ts`, `packages/core/src/db/schemas.ts`):

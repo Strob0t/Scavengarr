@@ -1,6 +1,6 @@
 # Measures after the fifth end-to-end round
 
-Status: implemented 2026-10-05 and checked on the dev server against the fifth round's code (`stremio-latency.md`, dev-server A/B round, which also brought four fixes); the sixth round in production is open. Evidence: the fifth round in `stremio-latency.md`, the options in `optimization-options.md`, production logs and probes. Metrics and on-demand tracing: `docs/features/observability.md`.
+Status: implemented 2026-10-05 and checked on the dev server against the fifth round's code (`stremio-latency.md`, dev-server A/B round, which also brought four fixes); the sixth round in production (2026-10-06, `stremio-latency.md`) confirmed measures 1 and 3–6 and the cached answers and found that kinoger no longer finishes: the hoster captures that measure 2 starts during the search take the stealth browser's two pages. Evidence: the fifth round in `stremio-latency.md`, the options in `optimization-options.md`, production logs and probes. Metrics and on-demand tracing: `docs/features/observability.md`.
 
 ## Decisions (maintainer, 2026-10-05)
 

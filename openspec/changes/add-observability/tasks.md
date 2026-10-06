@@ -23,4 +23,4 @@
 - [x] 3.1 Benchmark `tests/benchmark/test_telemetry_overhead.py` (stage cost, scrape of 650 series).
 - [x] 3.2 Grafana dashboard JSON and the Prometheus scrape snippet.
 - [x] 3.3 Docs: `docs/features/observability.md`, configuration, architecture, README, CHANGELOG, AGENTS.md.
-- [ ] 3.4 After the deploy: check `/metrics` on the Pi and the scrape cost.
+- [x] 3.4 After the deploy: check `/metrics` on the Pi and the scrape cost. (2026-10-06: 44 KB, 574 series, 29 ms of CPU per scrape, 0.05% of a core at 60 s.)
