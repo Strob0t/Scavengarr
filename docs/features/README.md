@@ -75,6 +75,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** and **S
 | [Code Review Fixes](../plans/code-review-fixes.md) | Done: 79 findings of the full `staging` review fixed in four waves (security, results, robustness, plugin categories); open observations listed |
 | [Captcha Solving](../plans/captcha-solving.md) | Done: shared challenge detector, grab-time link resolution (nox ALTCHA, animeloads image captcha), vinovo/DoodStream without captcha, clearance cookies across restarts, optional Byparr sidecar |
 | [Next Steps](../plans/next-steps.md) | Proposed: status snapshot of 2026-09-29 (live run, release, CI) and prioritized next steps, incl. the stremio.lan live test setup |
+| [Ideas Backlog](../plans/ideas-backlog.md) | Proposed 2026-10-06: snapshot of production and repository, six new findings (httpx log noise, discarded stream quality and size, hosters without a resolver, no build identity, kinox without yield, hand-made deployment) and 16 evaluated ideas with a decisions table |
 
 ### Refactoring History
 
