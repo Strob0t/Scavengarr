@@ -30,7 +30,12 @@ from scavengarr.infrastructure.plugins.categories import (
     served_category,
     stream_category,
 )
-from scavengarr.infrastructure.plugins.dom import ancestors, classes, parse_page
+from scavengarr.infrastructure.plugins.dom import (
+    ancestors,
+    classes,
+    outermost,
+    parse_page,
+)
 from scavengarr.infrastructure.plugins.episodes import episode_label, filter_episodes
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.relevance import (
@@ -299,14 +304,7 @@ class _DetailPageParser:
         ]
         for span in tree.css("span.badge"):
             self._read_badge(span.text().strip())
-        descriptions = [
-            div
-            for div in tree.css("div.full-text")
-            if not any(
-                parent.tag == "div" and "full-text" in classes(parent)
-                for parent in ancestors(div)
-            )
-        ]
+        descriptions = outermost(tree.css("div.full-text"))
         if descriptions:
             self.description = descriptions[-1].text().strip()
         for span in tree.css("span.imdb"):

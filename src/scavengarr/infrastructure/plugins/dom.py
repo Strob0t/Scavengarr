@@ -53,3 +53,17 @@ def ancestors(node: LexborNode) -> Iterator[LexborNode]:
     while parent is not None:
         yield parent
         parent = parent.parent
+
+
+def outermost(nodes: list[LexborNode]) -> list[LexborNode]:
+    """*nodes* without the ones nested in another of them.
+
+    For the matches of one selector, where sites nest their markup: a card
+    inside another card is part of the outer one.
+    """
+    found = {node.mem_id for node in nodes}
+    return [
+        node
+        for node in nodes
+        if not any(parent.mem_id in found for parent in ancestors(node))
+    ]

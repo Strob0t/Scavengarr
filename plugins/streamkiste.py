@@ -34,7 +34,7 @@ from scavengarr.infrastructure.plugins.categories import (
     served_category,
     stream_category,
 )
-from scavengarr.infrastructure.plugins.dom import ancestors, classes, parse_page
+from scavengarr.infrastructure.plugins.dom import classes, outermost, parse_page
 from scavengarr.infrastructure.plugins.episodes import filter_episodes
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.relevance import (
@@ -132,9 +132,8 @@ class _SearchResultParser:
 
     def feed(self, html: str) -> None:
         tree = LexborHTMLParser(html)
-        for card in tree.css("div.movie-preview.res_item"):
-            if not any(_is_card(parent) for parent in ancestors(card)):
-                self._add_card(card)
+        for card in outermost(tree.css("div.movie-preview.res_item")):
+            self._add_card(card)
 
     def _add_card(self, card: LexborNode) -> None:
         title = url = ""
@@ -165,12 +164,6 @@ class _SearchResultParser:
                 "is_series": _detect_series(genres),
             }
         )
-
-
-def _is_card(node: LexborNode) -> bool:
-    """Whether *node* is a search result card."""
-    names = classes(node)
-    return node.tag == "div" and "movie-preview" in names and "res_item" in names
 
 
 class _DetailPageParser:

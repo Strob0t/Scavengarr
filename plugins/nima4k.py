@@ -24,7 +24,12 @@ from scavengarr.infrastructure.plugins.categories import (
     served_category,
     stream_category,
 )
-from scavengarr.infrastructure.plugins.dom import ancestors, classes, parse_page
+from scavengarr.infrastructure.plugins.dom import (
+    ancestors,
+    classes,
+    outermost,
+    parse_page,
+)
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -73,9 +78,8 @@ class _ListingParser:
     def feed(self, html: str) -> None:
         tree = LexborHTMLParser(html)
         # An article div nested in an article is part of the outer one
-        for article in tree.css("div.article"):
-            if not _inside_article(article):
-                self._add_article(article)
+        for article in outermost(tree.css("div.article")):
+            self._add_article(article)
         # Any link of a pagination outside the articles counts as a next page
         if any(
             link.attributes.get("href")

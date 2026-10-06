@@ -25,7 +25,7 @@ from scavengarr.infrastructure.plugins.categories import (
     category_matches,
     served_category,
 )
-from scavengarr.infrastructure.plugins.dom import ancestors, parse_page
+from scavengarr.infrastructure.plugins.dom import outermost, parse_page
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
 # ---------------------------------------------------------------------------
@@ -116,16 +116,6 @@ _CATEGORY_NAME_MAP: dict[str, int] = {
 }
 
 
-def _outermost(nodes: list[LexborNode]) -> list[LexborNode]:
-    """*nodes* without the ones nested in another of them (part of it)."""
-    found = {node.mem_id for node in nodes}
-    return [
-        node
-        for node in nodes
-        if not any(parent.mem_id in found for parent in ancestors(node))
-    ]
-
-
 class _PostParser:
     """Extract posts from scnsrc.me listing/search pages (selectolax).
 
@@ -147,7 +137,7 @@ class _PostParser:
 
     def feed(self, html: str) -> None:
         tree = LexborHTMLParser(html)
-        for post in _outermost(tree.css("div.post[id^='post-']")):
+        for post in outermost(tree.css("div.post[id^='post-']")):
             self._add_post(post)
 
     def _add_post(self, post: LexborNode) -> None:
@@ -183,7 +173,7 @@ class _PostParser:
         """
         release = ""
         links: list[dict[str, str]] = []
-        for box in _outermost(post.css("div[class*='tvshow_info']")):
+        for box in outermost(post.css("div[class*='tvshow_info']")):
             after_download_label = False
             for node in box.css("strong, a"):
                 if node.tag == "strong":
@@ -248,7 +238,7 @@ class _PostPageParser:
 
     def feed(self, html: str) -> None:
         tree = LexborHTMLParser(html)
-        for story in _outermost(tree.css("div.storycontent")):
+        for story in outermost(tree.css("div.storycontent")):
             for strong in story.css("strong"):
                 text = strong.text().strip()
                 if not self.release_name and _is_release_name(text):

@@ -322,6 +322,7 @@ parser = await parse_page(_SearchResultParser(self.base_url), html)
 
 Pitfalls (selectolax 1.0; also noted in `dom.py`):
 - `node.css(selector)` searches the subtree including the node itself; `node.css_matches(selector)` tests the whole subtree, not the node. Ancestor checks walk `ancestors(node)` and test `node.tag`, `classes(node)` and `node.attributes`.
+- Sites nest their cards (a `div.entry` inside a `div.entry`): `outermost(tree.css(selector))` keeps the matches not nested in another match.
 - A group selector returns a node once per part it matches (`a, a.x` gives `<a class="x">` twice): parts that can match one node go into `:is()` (`a:is(.x, [href])`).
 - `LexborNode.__eq__` compares the nodes' HTML: compare `node.mem_id` for identity, never `==`, `in` or `list.index()` on nodes.
 - Without a doctype (most test HTML) class and `#id` selectors ignore case; `[id='x']` and other attribute selectors stay exact.

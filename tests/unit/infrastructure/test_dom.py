@@ -6,7 +6,12 @@ import threading
 
 from selectolax.lexbor import LexborHTMLParser
 
-from scavengarr.infrastructure.plugins.dom import ancestors, classes, parse_page
+from scavengarr.infrastructure.plugins.dom import (
+    ancestors,
+    classes,
+    outermost,
+    parse_page,
+)
 
 
 class _ParagraphCounter:
@@ -62,3 +67,25 @@ class TestAncestors:
             "html",
             "-document",
         ]
+
+
+class TestOutermost:
+    def test_drops_the_matches_nested_in_another(self) -> None:
+        """A card inside another card is part of the outer one."""
+        tree = LexborHTMLParser(
+            '<div class="entry" id="a"><div class="entry" id="b">'
+            '<div class="entry" id="c"></div></div></div>'
+            '<div class="entry" id="d"></div>'
+            '<p><div class="entry" id="e"></div></p>'
+        )
+
+        kept = outermost(tree.css("div.entry"))
+
+        assert [node.attributes["id"] for node in kept] == ["a", "d", "e"]
+
+    def test_other_ancestors_do_not_count(self) -> None:
+        tree = LexborHTMLParser(
+            '<div class="other"><div class="entry" id="a"></div></div>'
+        )
+
+        assert [n.attributes["id"] for n in outermost(tree.css("div.entry"))] == ["a"]

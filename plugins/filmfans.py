@@ -21,7 +21,7 @@ import time
 from selectolax.lexbor import LexborHTMLParser, LexborNode
 
 from scavengarr.domain.plugins.base import SearchResult
-from scavengarr.infrastructure.plugins.dom import ancestors, classes, parse_page
+from scavengarr.infrastructure.plugins.dom import outermost, parse_page
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -49,13 +49,9 @@ class _ReleaseParser:
 
     def feed(self, html: str) -> None:
         tree = LexborHTMLParser(html)
-        for entry in tree.css("div.entry"):
-            # An entry inside another one is part of the outer entry
-            if not any(
-                parent.tag == "div" and "entry" in classes(parent)
-                for parent in ancestors(entry)
-            ):
-                self._add_entry(entry)
+        # An entry inside another one is part of the outer entry
+        for entry in outermost(tree.css("div.entry")):
+            self._add_entry(entry)
 
     def _add_entry(self, entry: LexborNode) -> None:
         """Add the release of *entry* when it has a name and download links."""

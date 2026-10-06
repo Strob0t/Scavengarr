@@ -24,7 +24,7 @@ from scavengarr.infrastructure.plugins.categories import (
     is_series_title,
     served_category,
 )
-from scavengarr.infrastructure.plugins.dom import ancestors, classes, parse_page
+from scavengarr.infrastructure.plugins.dom import ancestors, outermost, parse_page
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
 # ---------------------------------------------------------------------------
@@ -129,10 +129,9 @@ class _DetailPageParser:
         self._seen_urls: set[str] = set()
 
     def feed(self, html: str) -> None:
-        for cont in LexborHTMLParser(html).css("div.cont"):
-            # A cont div inside another one is read with the outer one
-            if not any(_is_cont(parent) for parent in ancestors(cont)):
-                self._read_cont(cont)
+        # A cont div inside another one is read with the outer one
+        for cont in outermost(LexborHTMLParser(html).css("div.cont")):
+            self._read_cont(cont)
 
     def _read_cont(self, cont: LexborNode) -> None:
         # A <strong> names the group at its end: the links inside it still
@@ -163,11 +162,6 @@ class _DetailPageParser:
             self._seen_urls.add(href)
             hoster = self._current_hoster or _hoster_from_domain(host)
             self.links.append({"hoster": hoster, "link": href})
-
-
-def _is_cont(node: LexborNode) -> bool:
-    """Whether *node* is a post body (``<div class="cont ...">``)."""
-    return node.tag == "div" and "cont" in classes(node)
 
 
 def _inside(node: LexborNode, container: LexborNode) -> bool:

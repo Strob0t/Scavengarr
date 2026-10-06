@@ -34,7 +34,7 @@ from scavengarr.infrastructure.plugins.categories import (
     served_category,
     stream_category,
 )
-from scavengarr.infrastructure.plugins.dom import ancestors, classes, parse_page
+from scavengarr.infrastructure.plugins.dom import classes, outermost, parse_page
 from scavengarr.infrastructure.plugins.episodes import filter_episodes
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.relevance import (
@@ -96,9 +96,8 @@ class _SearchResultParser:
         self._base_url = base_url
 
     def feed(self, html: str) -> None:
-        for item in LexborHTMLParser(html).css("div.item"):
-            if not _nested_item(item):
-                self._add_item(item)
+        for item in outermost(LexborHTMLParser(html).css("div.item")):
+            self._add_item(item)
 
     def _add_item(self, item: LexborNode) -> None:
         title = url = ""
@@ -131,13 +130,6 @@ class _SearchResultParser:
                 "quality": quality,
             }
         )
-
-
-def _nested_item(node: LexborNode) -> bool:
-    """Whether *node* lies inside another result card."""
-    return any(
-        parent.tag == "div" and "item" in classes(parent) for parent in ancestors(node)
-    )
 
 
 class _DetailPageParser:
