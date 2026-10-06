@@ -672,9 +672,9 @@ async def stremio_health(request: Request) -> JSONResponse:
     )
 
     metrics_snapshot: dict[str, object] = {}
-    metrics = getattr(state, "metrics", None)
-    if metrics is not None:
-        metrics_snapshot = metrics.snapshot()
+    telemetry = getattr(state, "telemetry", None)
+    if telemetry is not None:
+        metrics_snapshot = telemetry.snapshot()
 
     content: dict[str, object] = {
         "healthy": healthy,

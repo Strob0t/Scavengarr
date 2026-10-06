@@ -1054,6 +1054,16 @@ class TestHealthEndpoint:
         assert data["supported_hosters"] == ["voe", "streamtape"]
         assert data["stream_link_repo_configured"] is True
 
+    def test_metrics_are_the_telemetry_statistics(self) -> None:
+        plugins = MagicMock()
+        plugins.get_by_provides.return_value = []
+        app = _make_app(plugins=plugins)
+        app.state.telemetry = Telemetry()
+
+        data = TestClient(app).get(f"{_PREFIX}/stremio/health").json()
+
+        assert set(data["metrics"]) == {"uptime_seconds", "plugins", "event_loop"}
+
     def test_unhealthy_no_tmdb(self) -> None:
         plugins = MagicMock()
         plugins.get_by_provides.return_value = ["hdfilme"]

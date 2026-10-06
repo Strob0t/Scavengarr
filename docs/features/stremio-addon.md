@@ -194,7 +194,7 @@ The URL of every resolved file stream (and of all streams without a resolver):
 GET /api/v1/stremio/health
 ```
 
-Reports component status (`tmdb_configured`, `stream_plugin_count`, `stream_plugins`, use case/resolver/link-cache flags), `supported_hosters` (resolver names from `HosterResolverRegistry.supported_hosters`), and a metrics snapshot. Returns `200` when healthy and `503` otherwise; healthy requires a title client (`tmdb_configured` is also `true` for the IMDB fallback client), both use cases, the resolver registry, the stream link cache, and at least one `stream` plugin.
+Reports component status (`tmdb_configured`, `stream_plugin_count`, `stream_plugins`, use case/resolver/link-cache flags), `supported_hosters` (resolver names from `HosterResolverRegistry.supported_hosters`), and under `metrics` the plugin and event-loop statistics of `/api/v1/stats/metrics` (`uptime_seconds`, `plugins`, `event_loop`). Returns `200` when healthy and `503` otherwise; healthy requires a title client (`tmdb_configured` is also `true` for the IMDB fallback client), both use cases, the resolver registry, the stream link cache, and at least one `stream` plugin.
 
 ---
 

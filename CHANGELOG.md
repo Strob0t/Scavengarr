@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: The Stremio Health Check Reports Its Metrics Again
+- `/api/v1/stremio/health` answered `"metrics": {}` since the Prometheus metrics replaced the old collector: it still read `state.metrics`, which nothing sets any more. It returns the telemetry's statistics now, as `/api/v1/stats/metrics` does (`uptime_seconds`, `plugins`, `event_loop`). Found by the code review (2026-10-06).
+
 ### Fix: A Silent Address Holds Up a Connection 250 ms, Not the Whole Timeout
 - `GuardedNetworkBackend` tried a host's checked addresses one after another and gave each the full connect timeout. When the first address dropped the SYNs, every new connection waited 5 s (15 s for plugins and resolvers, so the resolver registry cut the resolution before the second address was tried). The addresses now race under one timeout (Happy Eyeballs, RFC 8305, with asyncio's `staggered_race`): the next starts when the previous one failed or after 250 ms, as with httpcore's anyio backend before. Found by the code review (2026-10-06).
 
