@@ -78,6 +78,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** and **S
 | [Next Steps](../plans/next-steps.md) | In progress: status snapshot of 2026-09-29 (live run, release, CI) and prioritized next steps, incl. the stremio.lan live test setup |
 | [Ideas Backlog](../plans/ideas-backlog.md) | Decided 2026-10-06: snapshot of production and repository, six new findings (httpx log noise, discarded stream quality and size, hosters without a resolver, no build identity, kinox without yield, hand-made deployment), 16 evaluated ideas, the decisions, and the handoff to the implementing agent (order, working rules, task specifications; the larger items as OpenSpec changes `add-anime-ids`, `persist-resolver-state`, `add-container-image`, `add-stream-media-quality`) |
 | [Stremio Stream Split](../plans/stremio-stream-split.md) | Proposed 2026-10-06 (item I14): split the 942-line stream use case into phase collaborators under `application/stremio/` (title resolution, plugin selection, title search, resolve flow, answer assembly) in five behaviour-preserving commits; exclusive-access rule |
+| [Browser Page Budget](../plans/browser-page-budget.md) | In progress 2026-10-06: the stealth browser's pages by urgency (play, earliest deadline, background last), the wait kept out of the resolve timeout, and a page count that follows waits, CPU and memory; `browser_page` metrics |
 
 ### Refactoring History
 

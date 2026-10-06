@@ -64,7 +64,7 @@ Effort: XS under an hour, S a few hours, M a day or two, L more. Recommendation:
 
 | # | Idea | Value | Effort | Risk | Rec. |
 |---|---|---|---|---|---|
-| I14 | Split `stremio_stream.py` (928 lines) along its three jobs: the search run (deadline, joins, progress), the resolution (target, cached answers, background), and the answer (assembly, caching); `application/stremio/` already holds the helpers | The adaptive browser budget and option 14 land in a module one can hold in one head; fewer regressions of the kind the review fixed | M | Pure refactor behind 4,500 tests | Do, before the adaptive budget |
+| I14 | Split `stremio_stream.py` (928 lines) along its three jobs: the search run (deadline, joins, progress), the resolution (target, cached answers, background), and the answer (assembly, caching); `application/stremio/` already holds the helpers | Option 14 lands in a module one can hold in one head; fewer regressions of the kind the review fixed | M | Pure refactor behind 4,500 tests | Do; the adaptive browser budget ([browser-page-budget.md](browser-page-budget.md)) goes first and adds one argument to the module |
 | I15 | Real-page fixtures for the Stremio plugins without them: einschalten (the top yielder), fireani, haschcon, kinox, moflix (JSON API) | Site changes show up in the suite, not in production | S each | None | Do |
 | I16 | OpenSpec hygiene: archive `add-config-system` and `add-plugin-loader`; keep OpenSpec (it was used for the observability change), revising next-steps §6's "drop it" | Two stale changes gone from every `openspec list` | XS | None | Do |
 
