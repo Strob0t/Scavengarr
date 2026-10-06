@@ -208,6 +208,19 @@ def build_logging_config(config: AppConfig) -> dict[str, Any]:
     return cfg
 
 
+# httpx logs every request at INFO (59 % of production's lines on
+# 2026-10-06), httpcore its steps at DEBUG. At the app's INFO they log from
+# WARNING up; at DEBUG the request trace stays.
+_REQUEST_LOGGERS = ("httpx", "httpcore")
+
+
+def _logger_level(name: str, level: str) -> str:
+    """The level of the stdlib logger *name* when the app logs at *level*."""
+    if level == "INFO" and name.split(".")[0] in _REQUEST_LOGGERS:
+        return "WARNING"
+    return level
+
+
 def _stop_async_listener() -> None:
     global _QUEUE_LISTENER
     if _QUEUE_LISTENER is not None:
@@ -267,11 +280,11 @@ def _enable_async_logging(config: AppConfig) -> None:
     root.addHandler(queue_handler)
     root.setLevel(config.log_level)
 
-    for name in list(logging.root.manager.loggerDict.keys()):
+    for name in [*logging.root.manager.loggerDict, *_REQUEST_LOGGERS]:
         logger = logging.getLogger(name)
         logger.handlers.clear()
         logger.propagate = True
-        logger.setLevel(config.log_level)
+        logger.setLevel(_logger_level(name, config.log_level))
 
     _QUEUE_LISTENER = QueueListener(
         q, stdout_handler, stderr_handler, respect_handler_level=True

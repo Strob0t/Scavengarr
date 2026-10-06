@@ -4,6 +4,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ---
 
+## Unreleased (staging)
+
+### Changed: httpx Logs Its Requests at DEBUG Only
+- httpx wrote one INFO line per outgoing request, 59 % of production's log lines (2026-10-06; on the Pi the log lives on the SD card). With `logging.level: INFO` the `httpx` and `httpcore` loggers now log from `WARNING` up; at `DEBUG` they keep the request trace. `scripts/stremio_profile.py` counts requests per host from these lines, so its counts need a run at `DEBUG`.
+
 ## v0.3.0 - 2026-10-06
 
 Stremio latency and playback on a Raspberry Pi behind a VPN: answers go out at 5 streams while links resolve during the plugin search, cached answers at once, and plugins whose site is down are skipped; the stealth browser's pages go to the most urgent work, and their count follows waits, CPU and memory. HLS plays in Stremio Web again (1080p stutter, VEEV, the proxy's 500s under Python 3.13 with anyio). Prometheus metrics, request ids and on-demand tracing, plugin parsers on selectolax, read-only production diagnostics (`scripts/prodctl.py`), and the fixes of two code reviews.

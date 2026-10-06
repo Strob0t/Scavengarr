@@ -239,7 +239,7 @@ The moflix noise was people in its search answer (fixed in e9b1ba1). What could 
 
 - wall time;
 - CPU of the Python and Chromium processes, read from `/proc` before and after;
-- httpx requests per host, counted from the `HTTP Request:` lines of the JSON container log.
+- httpx requests per host, counted from the `HTTP Request:` lines of the JSON container log. httpx writes them at `logging.level: DEBUG` only (since I1, 2026-10-06), so the counts need a run at that level.
 
 At the end it reports the event-loop lag from `/api/v1/stats/metrics`. `--repeat 2` runs a cold and a warm pass. `--py-spy` samples the app process on the Pi and prints the CPU share per category; it needs `cap_add: [SYS_PTRACE]` on the container, and py-spy is installed into `/tmp` and run as root.
 

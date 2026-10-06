@@ -445,7 +445,7 @@ Controls the background plugin scoring and probing system. See [Plugin Scoring &
 - `dev` / `test` → `console` (human-readable, colored output)
 - `prod` → `json` (machine-parseable, suitable for log aggregation)
 
-Logs are structured via `structlog` with ISO UTC timestamps and include context fields such as `plugin`, `query`, and result counts. Every line of an HTTP request, and of the tasks it starts, carries the request's `request_id` (also sent as the `X-Request-ID` response header). Secrets are masked in every string field, rendered tracebacks included (`_redact_secrets`): values of `api_key`/`apikey`, `access_token`, `token`, `password`/`passwd` and `secret` parameters (TMDB key in retry and error URLs, the Torznab `apikey` in request logs) and passwords in URLs (`redis://:***@redis:6379/0`).
+Logs are structured via `structlog` with ISO UTC timestamps and include context fields such as `plugin`, `query`, and result counts. Every line of an HTTP request, and of the tasks it starts, carries the request's `request_id` (also sent as the `X-Request-ID` response header). Secrets are masked in every string field, rendered tracebacks included (`_redact_secrets`): values of `api_key`/`apikey`, `access_token`, `token`, `password`/`passwd` and `secret` parameters (TMDB key in retry and error URLs, the Torznab `apikey` in request logs) and passwords in URLs (`redis://:***@redis:6379/0`). httpx and httpcore, which log every outgoing request, log from `WARNING` up unless `logging.level` is `DEBUG` (then their request trace stays, URLs by origin only).
 
 **Console format example (simplified):**
 

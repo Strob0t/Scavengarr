@@ -14,7 +14,8 @@ it prints:
   (``/proc`` before and after);
 - the httpx requests the request caused, per host. These come from the
   container log's ``HTTP Request:`` lines, so they need the JSON log format,
-  the production default.
+  the production default, and ``logging.level: DEBUG``: at ``INFO`` httpx
+  logs from ``WARNING`` up, and the counts are empty.
 
 At the end it prints the event-loop lag from ``/api/v1/stats/metrics``.
 

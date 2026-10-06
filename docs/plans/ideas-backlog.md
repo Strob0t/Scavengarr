@@ -79,6 +79,7 @@ Open and still worth their place, not repeated here: optimization-options.md opt
 | 2026-10-06 | **Build:** I1, I2, I3, I4 (quick wins); I7, I8, I9; I10 in variant B (breakers and resolver results); I14, I11, I15 (the five Stremio plugins), I16. **Release v0.3.0:** yes, version, CHANGELOG, PR and merge. **Not chosen:** I5 (kinox stays as it is for now), I12, I13. |
 | 2026-10-06 | **Anime (I11):** anime must be supported. The maintainer asked which id scheme fits Scavengarr best; the answer is `kitsu:` first (the Anime Kitsu addon is the catalog and meta source almost every anime list addon for Stremio builds on, and Kitsu's API carries titles, TheTVDB mappings and per-episode season numbers), `mal:` and `anilist:` as a cheap second step through the same mapping. Design in `openspec/changes/add-anime-ids/`. |
 | 2026-10-06 | **Division of labour:** this review plans and reviews; the coding agent (another session) implements everything, in the order of the handoff below. Nothing was started here. |
+| 2026-10-06 | **Implementation:** at the maintainer's request the session that ran review phase 3 implements the handoff, in its order, from step 1 on. |
 
 ## Handoff to the implementing agent
 
@@ -93,8 +94,8 @@ Open and still worth their place, not repeated here: optimization-options.md opt
 
 | Step | Item | Where the plan is | Touches | Can run beside other Stremio work? |
 |---|---|---|---|---|
-| 1 | Release v0.3.0 | AGENTS.md §1 "Merge to main"; KNOWN_ISSUES to refresh: kinox verification wall, kinoger contention, s.to link-out quota, Playmate on tsaridas/stremio-docker, SuperVideo CDN script redirect | `pyproject.toml`, `CHANGELOG.md` | Quiet moment only |
-| 2 | I1 third-party loggers | below | `infrastructure/logging/setup.py`, `docs/features/configuration.md` | Yes |
+| 1 | Release v0.3.0 (**done** 2026-10-06, PR #6) | AGENTS.md §1 "Merge to main"; KNOWN_ISSUES to refresh: kinox verification wall, kinoger contention, s.to link-out quota, Playmate on tsaridas/stremio-docker, SuperVideo CDN script redirect | `pyproject.toml`, `CHANGELOG.md` | Quiet moment only |
+| 2 | I1 third-party loggers (**done** 2026-10-06) | below | `infrastructure/logging/setup.py`, `docs/features/configuration.md` | Yes |
 | 3 | I4 build identity | below | `infrastructure/version.py`, `infrastructure/telemetry/` (build info), `/health` routes, `Dockerfile.prod` | Yes |
 | 4 | I9 config drift guard | below | `infrastructure/config/` (loader), `interfaces/composition.py` (startup log) | Yes |
 | 5 | I16 OpenSpec hygiene | below | `openspec/changes/` | Yes |
