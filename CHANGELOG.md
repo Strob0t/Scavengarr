@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Performance: The Title Filter Scores Each Search Result Once
+- The full and the base title of a Stremio search find many results of a plugin twice, and the title filter scored both copies (about 24 ms of CPU per search); only the answer dropped the second. `PluginSearchRunner` now hands each result on once, by the key the search progress uses (plugin, title, release, links: the old `download_link` check of its unused return value would have merged another plugin's result). Found by the code review (2026-10-06).
+
 ### Performance: A Fully Cached Stremio Answer Resolves Nothing in the Background
 - An answer from the search cache started a background resolution for the next request even when every link already had a cached outcome (a video or dead): it ranked the results once more and resolved nothing. It starts only for links without one now. Found by the code review (2026-10-06).
 

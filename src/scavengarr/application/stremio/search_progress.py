@@ -12,9 +12,7 @@ import contextlib
 import time
 
 from scavengarr.application.stremio.search_cache import CachedSearch
-from scavengarr.domain.plugins.base import SearchResult, link_url
-
-_Key = tuple[str, str, str | None, str, tuple[str, ...]]
+from scavengarr.domain.plugins.base import ResultKey, SearchResult, result_key
 
 
 class SearchProgress:
@@ -29,8 +27,8 @@ class SearchProgress:
         self.results: list[SearchResult] = []
         self.total = 0  # results before the title filter
         self.done = False
-        self._matching: set[_Key] = set()
-        self._found: set[_Key] = set()
+        self._matching: set[ResultKey] = set()
+        self._found: set[ResultKey] = set()
         self._listeners: set[asyncio.Event] = set()
         self._finished = asyncio.Event()
 
@@ -45,11 +43,11 @@ class SearchProgress:
 
     def add(self, found: list[SearchResult], matching: list[SearchResult]) -> None:
         """A plugin's results (*found*) and those of them matching the title."""
-        keys = {_key(r) for r in found} - self._found
+        keys = {result_key(r) for r in found} - self._found
         self._found |= keys
         self.total += len(keys)
         for result in matching:
-            if (key := _key(result)) not in self._matching:
+            if (key := result_key(result)) not in self._matching:
                 self._matching.add(key)
                 self.results.append(result)
         self._notify()
@@ -80,15 +78,3 @@ class SearchProgress:
     def _notify(self) -> None:
         for event in self._listeners:
             event.set()
-
-
-def _key(result: SearchResult) -> _Key:
-    """What makes a result the same one found again: plugin, release, links."""
-    links = tuple(map(link_url, result.download_links or ()))
-    return (
-        result.metadata.get("source_plugin", ""),
-        result.title,
-        result.release_name,
-        result.download_link,
-        links,
-    )

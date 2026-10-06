@@ -17,7 +17,12 @@ from typing import Any, Protocol
 import structlog
 
 from scavengarr.domain.entities.scoring import PluginScoreSnapshot
-from scavengarr.domain.plugins.base import PluginProtocol, SearchResult
+from scavengarr.domain.plugins.base import (
+    PluginProtocol,
+    ResultKey,
+    SearchResult,
+    result_key,
+)
 from scavengarr.domain.ports.concurrency import ConcurrencyBudgetPort
 from scavengarr.domain.ports.plugin_registry import PluginRegistryPort
 from scavengarr.domain.ports.plugin_score_store import PluginScoreStorePort
@@ -156,16 +161,16 @@ class PluginSearchRunner:
         shared browser from their injected pool reference (set at
         composition time).
 
-        The first query's results are always kept in full.  Subsequent
-        (fallback) queries only add results whose ``download_link`` was
-        not already seen, to avoid duplicates from the same plugin
-        matching on both the full title and the shorter base title.
+        Each result goes to *on_results* and into the returned list once
+        (``result_key``): the full and the base title find many results
+        of a plugin twice, and the title filter scored them twice (code
+        review, 2026-10-06).
 
         *deadline* (``time.monotonic()`` value) ends the whole search: a
         plugin still waiting for a slot then is skipped, a running one is
         cut at the deadline instead of after its own full timeout.
-        *on_results* gets each plugin's results of each query as soon as
-        they are there (not deduplicated).
+        *on_results* gets each plugin's new results of each query as soon
+        as they are there.
 
         Plugins whose site failed the periodic health check are skipped
         (before a mirror group picks its member).
@@ -186,32 +191,37 @@ class PluginSearchRunner:
                 lambda t: t.exception() if not t.cancelled() else None
             )
 
-        search_tasks = [
-            self.search_plugins(
-                plugin_names,
-                q,
-                category,
-                season=season,
-                episode=episode,
-                budget=budget,
-                deadline=deadline,
-                on_results=on_results,
-                standbys=standbys,
-            )
-            for q in queries
-        ]
-        results_per_query = await asyncio.gather(*search_tasks)
+        found: list[SearchResult] = []
+        seen: set[ResultKey] = set()
 
-        # First query's results are kept unconditionally.
-        all_results: list[SearchResult] = list(results_per_query[0])
-        if len(results_per_query) > 1:
-            seen: set[str] = {r.download_link for r in all_results}
-            for results in results_per_query[1:]:
-                for r in results:
-                    if r.download_link not in seen:
-                        seen.add(r.download_link)
-                        all_results.append(r)
-        return all_results
+        async def _hand_on(results: list[SearchResult]) -> None:
+            new: list[SearchResult] = []
+            for result in results:
+                key = result_key(result)
+                if key not in seen:
+                    seen.add(key)
+                    new.append(result)
+            found.extend(new)
+            if new and on_results is not None:
+                await on_results(new)
+
+        await asyncio.gather(
+            *(
+                self.search_plugins(
+                    plugin_names,
+                    q,
+                    category,
+                    season=season,
+                    episode=episode,
+                    budget=budget,
+                    deadline=deadline,
+                    on_results=_hand_on,
+                    standbys=standbys,
+                )
+                for q in queries
+            )
+        )
+        return found
 
     def _reachable(self, plugin_names: list[str]) -> list[str]:
         """The plugins whose site answered its last health check."""

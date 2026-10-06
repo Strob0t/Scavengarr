@@ -91,6 +91,43 @@ class TestSearchWithFallback:
 
         assert [r.download_link for r in results] == ["https://x/1", "https://x/2"]
 
+    async def test_on_results_gets_each_result_once(self) -> None:
+        """The full and the base title find many results twice; the title
+        filter scored them twice (code review, 2026-10-06)."""
+        plugin = _plugin([])
+        plugin.search = AsyncMock(
+            side_effect=[
+                [_sr("https://x/1")],
+                [_sr("https://x/1"), _sr("https://x/2")],
+            ]
+        )
+        batches: list[list[str]] = []
+
+        async def _on_results(results: list[SearchResult]) -> None:
+            batches.append([r.download_link for r in results])
+
+        pool = ConcurrencyPool(httpx_slots=10, pw_slots=10)
+        async with pool.request() as budget:
+            await _runner(_registry({"a": plugin})).search_with_fallback(
+                ["a"],
+                ["full title", "base"],
+                2000,
+                budget=budget,
+                on_results=_on_results,
+            )
+
+        assert batches == [["https://x/1"], ["https://x/2"]]
+
+    async def test_another_plugins_result_with_the_same_link_stays(self) -> None:
+        """Its list of links can hold other hosters."""
+        registry = _registry(
+            {"a": _plugin([_sr("https://x/1")]), "b": _plugin([_sr("https://x/1")])}
+        )
+
+        results = await _search(_runner(registry), ["a", "b"], ["full title", "base"])
+
+        assert sorted(r.metadata["source_plugin"] for r in results) == ["a", "b"]
+
     async def test_browser_warmup_fired(self) -> None:
         warmup = AsyncMock(return_value=(MagicMock(), MagicMock()))
         registry = _registry({"a": _plugin([_sr("https://a/1")])})

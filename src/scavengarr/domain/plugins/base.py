@@ -50,6 +50,22 @@ def link_url(link: Mapping[str, str]) -> str:
     return (link.get("link") or link.get("url") or "").strip()
 
 
+# Plugin, title, release, link, links
+ResultKey = tuple[str, str, str | None, str, tuple[str, ...]]
+
+
+def result_key(result: SearchResult) -> ResultKey:
+    """What makes a result the same one found again: plugin, release, links."""
+    links = tuple(map(link_url, result.download_links or ()))
+    return (
+        result.metadata.get("source_plugin", ""),
+        result.title,
+        result.release_name,
+        result.download_link,
+        links,
+    )
+
+
 class PluginProtocol(Protocol):
     """
     Protocol for Python plugins.
