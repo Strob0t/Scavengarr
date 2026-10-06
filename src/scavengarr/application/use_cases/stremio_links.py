@@ -180,8 +180,16 @@ class StremioLinks:
     async def _resolve_again(
         self, link: CachedStreamLink, *, refresh: bool
     ) -> CachedStreamLink | None:
+        """One resolution per link; a refresh joins no resolution that can
+        answer from the resolver's cache (with the URL the CDN refused, code
+        review 2026-10-06), but every request joins a running refresh."""
+        refreshing = f"{link.stream_id}#refresh"
+        if refresh or refreshing in self._running:
+            return await self._shared(
+                refreshing, lambda: self._resolve(link, refresh=True)
+            )
         return await self._shared(
-            link.stream_id, lambda: self._resolve(link, refresh=refresh)
+            link.stream_id, lambda: self._resolve(link, refresh=False)
         )
 
     async def _shared(

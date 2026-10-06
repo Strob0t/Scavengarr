@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: A Refused Stream Resolves Past the Cache Even While Another Request Resolves It
+- When the CDN refuses a stored HLS playlist, the hoster URL resolves again past the resolver's cache. Requests for one link shared one resolution, keyed by the link only: a refresh that came while a request resolved the stale link from the cache joined it and got the refused URL again (`502`). A refresh now runs on its own, and requests that come meanwhile join it. Found by the code review (2026-10-06).
+
 ### Fix: A Plugin Leaves a Dead Host Its Site Moved To
 - `HttpxPluginBase` makes a permanent move of a site (301/308 from the base host to another) the base URL, and kept it until a restart. hdfilme moves on every few days, and its old host redirects to the newest one: a new host that died kept every search on it. A request to the new host without an answer (timeout, connect or DNS error) now sends the plugin back to the base URL the site moved from (`{name}_site_move_undone`). Found by the code review (2026-10-06).
 

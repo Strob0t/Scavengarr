@@ -362,6 +362,42 @@ class TestRefreshed:
 
         assert await links.refreshed(_link(age=60)) is None
 
+    async def test_a_refresh_does_not_join_a_resolution_from_the_cache(
+        self,
+    ) -> None:
+        """The refusal joined a running resolution that answered from the
+        resolver's cache: the URL the CDN refused (code review, 2026-10-06)."""
+        registry = _CachingRegistry(None, delay=0.05)
+        links, _ = _links(registry)
+        stale = _link(age=2 * 3600)
+
+        _, refreshed = await asyncio.gather(
+            links.current(stale), links.refreshed(stale)
+        )
+
+        assert refreshed is not None and refreshed.video_url == _NEW
+
+    async def test_a_request_joins_a_running_refresh(self) -> None:
+        registry = _CachingRegistry(None, delay=0.05)
+        links, _ = _links(registry)
+        stale = _link(age=2 * 3600)
+
+        results = await asyncio.gather(links.refreshed(stale), links.current(stale))
+
+        assert [r.video_url for r in results if r] == [_NEW, _NEW]
+        assert [refresh for *_, refresh in registry.calls] == [True]
+
+
+class _CachingRegistry(_Registry):
+    """Answers from its cache (the refused URL) unless asked past it."""
+
+    async def resolve(
+        self, url: str, hoster: str = "", *, refresh: bool = False
+    ) -> ResolvedStream | None:
+        self.calls.append((url, hoster, refresh))
+        await asyncio.sleep(self.delay)
+        return ResolvedStream(video_url=_NEW if refresh else _OLD)
+
 
 class TestGet:
     async def test_looks_up_the_stored_link(self) -> None:
