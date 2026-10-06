@@ -1819,6 +1819,52 @@ class TestSearchCache:
         assert time.time() - cache.data[_KEY].stored_at < _TTL
         assert site.isolated_search.await_count == 1
 
+    async def test_stale_hits_refresh_one_title_at_a_time(self) -> None:
+        """Every stale title asked for started its refresh at once: the
+        searches split the plugin slots (fair share), and a refresh cut
+        short replaced its entry with a thinner one (code review,
+        2026-10-06). A refresh that waited keeps its whole plugin time."""
+        cache = _memory_cache()
+        keys = [
+            f"stremio:search:movie:{imdb_id}:None:None"
+            for imdb_id in ("tt1234567", "tt7654321")
+        ]
+        for key in keys:
+            cache.data[key] = CachedSearch(
+                results=[_hit("https://voe.sx/e/old")],
+                total=1,
+                stored_at=time.time() - _TTL - 1,
+            )
+        running = peak = 0
+
+        async def _search(*_args: object, **_kwargs: object) -> list[SearchResult]:
+            nonlocal running, peak
+            running += 1
+            peak = max(peak, running)
+            try:
+                await asyncio.sleep(0.3)
+            finally:
+                running -= 1
+            return [_hit("https://voe.sx/e/new")]
+
+        site = _site([])
+        site.isolated_search.side_effect = _search
+        # The second refresh starts after 0.3 s and ends after 0.6 s
+        uc = _cached_use_case({"a": site}, cache, hard=0.5)
+
+        await asyncio.gather(
+            uc.execute(_make_request()),
+            uc.execute(_make_request(imdb_id="tt7654321")),
+        )
+
+        await _eventually(
+            lambda: all(
+                cache.data[key].results[0].download_link == "https://voe.sx/e/new"
+                for key in keys
+            )
+        )
+        assert peak == 1
+
     async def test_concurrent_requests_share_one_search(self) -> None:
         cache = _memory_cache()
         site = _site([_hit("https://voe.sx/e/1")], delay=0.05)

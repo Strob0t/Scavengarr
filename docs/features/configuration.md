@@ -350,7 +350,7 @@ Controls the Stremio addon behavior: stream ranking, plugin concurrency, title m
 | `stremio.auto_tune_all` | bool | `true` | Container-aware auto-tune of all concurrency params (cgroup v2/v1) |
 | `stremio.max_concurrent_plugins_auto` | bool | `true` | Legacy auto-tune of `max_concurrent_plugins` only; used only when `auto_tune_all` is `false` |
 | `stremio.max_results_per_plugin` | int | `100` | Max results per plugin in Stremio search |
-| `stremio.plugin_timeout_seconds` | float | `30.0` | Plugin search budget per stream request, counted from the request start (slot queueing included); running plugins are cut, queued ones skipped. The answer does not wait for the search |
+| `stremio.plugin_timeout_seconds` | float | `30.0` | Plugin search budget per stream request, counted from the request start (slot queueing included; a stale search-cache entry's refresh: from its own start); running plugins are cut, queued ones skipped. The answer does not wait for the search |
 | `stremio.plugin_health_interval_seconds` | float | `1800.0` | How often every Stremio plugin's site is checked (HEAD on its domains); searches skip plugins whose site did not answer, and those are checked again every 5 minutes (`0` = off) |
 | `stremio.stream_deadline_seconds` | float | `60.0` | Latest answer of a stream request, from the request start: hoster resolution stops and the answer has what is resolved. Earlier at `resolve_target_count` streams or when the search and every resolution are done |
 | `stremio.allow_hls_transcoding` | bool | `false` | Let Stremio's streaming server transcode HLS streams; off, the HLS proxy refuses its ffmpeg the playlist and Stremio Web plays HLS itself (on a Raspberry Pi 4 the server's software transcoding stuttered at 1080p) |
@@ -474,7 +474,7 @@ Prometheus metrics (`/metrics`) need no setting. See [Observability](./observabi
 | `cache.dir` | path | `./.cache/scavengarr` | SQLite database path (diskcache only) |
 | `cache.redis_url` | string | `redis://localhost:6379/0` | Redis connection URL (redis only, `SCAVENGARR_CACHE_REDIS_URL`) |
 | `cache.ttl_seconds` | int | `3600` | Default time-to-live for cache entries (seconds) |
-| `cache.search_ttl_seconds` | int | `900` | TTL for cached search results (seconds), Torznab and Stremio; Stremio entries answer 6 h longer while a background search refreshes them. 0 = disabled (YAML-only) |
+| `cache.search_ttl_seconds` | int | `900` | TTL for cached search results (seconds), Torznab and Stremio; Stremio entries answer 6 h longer while a background search refreshes them (one title at a time). 0 = disabled (YAML-only) |
 | `cache.crawljob_ttl_seconds` | int | `3600` | How long a Torznab result's CrawlJob stays downloadable (seconds, > 0); the grab answers 404 afterwards (YAML-only) |
 | `cache.max_concurrent` | int | `10` | Semaphore limit for parallel cache operations, both backends (`SCAVENGARR_CACHE_MAX_CONCURRENT`); Redis handles more, e.g. `50` |
 

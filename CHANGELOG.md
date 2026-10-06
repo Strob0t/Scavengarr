@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: Stale Search-Cache Entries Refresh One Title at a Time
+- A stale search-cache entry answers while a background search refreshes it. Every stale title asked for started its refresh at once: the refreshes split the plugin slots with the requests' own searches (fair share), so a burst of stale titles left each search a slot or two, and a refresh cut short by `plugin_timeout_seconds` replaced its entry with a thinner one. Refreshes now run one title at a time, and a refresh's plugin time counts from its own start, so a title that waited keeps its whole time. Found by the code review (2026-10-06).
+
 ### Fix: Playback Requests Count Against No Rate Limit
 - Every stream now points at `/play` (or the HLS proxy), which the per-IP rate limit (`http.api_rate_limit_rpm`, 120) counted like a search, unlike the HLS proxy: a player asks `/play` again for each seek (8 requests within a second at a playback start in production), and clients behind one proxy address share the budget, so a 429 could end a playback. `/play` is exempt like the proxy. Found by the code review (2026-10-06).
 

@@ -103,6 +103,14 @@ class _StreamSorter(Protocol):
     def sort(self, streams: list[RankedStream]) -> list[RankedStream]: ...
 
 
+class _Search(Protocol):
+    """The search for one cache key; the plugins' time counts from *started*."""
+
+    def __call__(
+        self, progress: SearchProgress, *, started: float
+    ) -> Coroutine[Any, Any, None]: ...
+
+
 # Where a request's search results come from: a fresh or stale cache entry,
 # a new search, or a running one it joins
 _Source = Literal["cache", "stale", "search", "joined"]
@@ -118,6 +126,13 @@ log = structlog.get_logger(__name__)
 # Filemoon resolutions queued for the stealth browser's 2 pages until their
 # 10 s timeout, which opened its breaker (dev-server end-to-end run, 2026-10-05)
 _BACKGROUND_RUNS = 1
+
+# Stale search-cache entries refresh one title at a time too: every stale
+# title asked for started its refresh at once, the refreshes split the plugin
+# slots with the requests' own searches (fair share), and a refresh cut short
+# by the plugin time replaced its entry with a thinner one (code review,
+# 2026-10-06)
+_BACKGROUND_SEARCHES = 1
 
 # The cached outcome of resolving a URL, without resolving it: (True, stream),
 # (True, None) for a link cached as dead, (False, None) when not cached.
@@ -204,6 +219,7 @@ class StremioStreamUseCase:
         # that outlives a request (searches, background resolutions), for
         # aclose()
         self._searches: dict[str, SearchProgress] = {}
+        self._background_searches = asyncio.Semaphore(_BACKGROUND_SEARCHES)
         # Resolutions of a cached answer's other links, one per cache key,
         # one cache key at a time
         self._background_resolutions: dict[str, asyncio.Task[Any]] = {}
@@ -281,9 +297,9 @@ class StremioStreamUseCase:
                 title_infos,
                 request,
                 category,
-                started=started,
                 scored=len(selected) < len(all_names),
             ),
+            started=started,
         )
         stage.label(source=source)
 
@@ -372,22 +388,23 @@ class StremioStreamUseCase:
         return groups
 
     async def _search_progress(
-        self, key: str, search: Callable[[SearchProgress], Coroutine[Any, Any, None]]
+        self, key: str, search: _Search, *, started: float
     ) -> tuple[SearchProgress, _Source]:
         """The results for *key*: from the cache, or of the running or a new search.
 
         Requests for one key share one running search (single-flight) and
         read its results while it runs. A stale entry still answers while a
-        background search refreshes it (stale-while-revalidate). The search
-        runs as its own task, so a request that goes away does not cancel it
-        for the others. Returns the progress and where it came from.
+        background search refreshes it (stale-while-revalidate, one title at
+        a time). The search runs as its own task, so a request that goes
+        away does not cancel it for the others. Returns the progress and
+        where it came from.
         """
         entry = await self._search_cache.get(key)
         if entry is None:
-            return self._shared_search(key, search)
+            return self._shared_search(key, partial(search, started=started))
         stale = self._search_cache.is_stale(entry)
         if stale:
-            self._shared_search(key, search)
+            self._shared_search(key, partial(self._refresh, search))
         log.info(
             "stremio_search_cache_hit",
             cache_key=key,
@@ -416,6 +433,13 @@ class StremioStreamUseCase:
     ) -> None:
         if self._searches.get(key) is progress:
             del self._searches[key]
+
+    async def _refresh(self, search: _Search, progress: SearchProgress) -> None:
+        """Refresh a stale entry: one title at a time (``_BACKGROUND_SEARCHES``);
+        the plugins' time counts from the refresh's start, so a title that
+        waited keeps its whole time."""
+        async with self._background_searches:
+            await search(progress, started=time.monotonic())
 
     def _spawn[T](self, coro: Coroutine[Any, Any, T]) -> asyncio.Task[T]:
         """Run *coro* as a task that may outlive the request (see aclose)."""
@@ -450,7 +474,8 @@ class StremioStreamUseCase:
     ) -> None:
         """Search the plugins until they are done; store the matching results.
 
-        The plugins get ``plugin_timeout_seconds`` from the request start.
+        The plugins get ``plugin_timeout_seconds`` from *started* (the
+        request's start; a refresh's own, see ``_refresh``).
         Their title-matching results go into *progress* as they arrive: the
         answers do not wait for the search (``_resolve``), they read it.
         """

@@ -92,7 +92,7 @@ Domain never imports FastAPI, httpx or diskcache.
 Invariants:
 - I/O dominates runtime: nothing may block the event loop. Independent URLs (detail pages, link validation) run in parallel with bounded concurrency.
 - Link validation: `HEAD` with redirects first, `GET` fallback only when needed; short timeouts, semaphore-limited.
-- Stremio search results are cached per title (`cache.search_ttl_seconds`, stale-while-revalidate, single-flight; `application/stremio/search_cache.py`); hoster resolution runs on every request. Background searches end in `StremioStreamUseCase.aclose()` at shutdown.
+- Stremio search results are cached per title (`cache.search_ttl_seconds`, stale-while-revalidate with one refresh at a time, single-flight; `application/stremio/search_cache.py`); hoster resolution runs on every request. Background searches end in `StremioStreamUseCase.aclose()` at shutdown.
 - CrawlJobs contain only validated links, in deterministic order; job IDs are stable, TTL configurable.
 - Config precedence (high → low): CLI args → `SCAVENGARR_*` env → YAML → `.env` → defaults. See `docs/features/configuration.md`.
 - Logging: `structlog`, structured, with context fields (`plugin`, `stage`, `duration_ms`, `results_count`; every HTTP request binds `request_id`); never log secrets.

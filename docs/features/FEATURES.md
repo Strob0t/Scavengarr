@@ -88,7 +88,7 @@ Scavengarr includes a full Stremio addon that provides catalog browsing, search,
 | Multi-language search | [x] Implemented | Per-language TMDB titles, plugins declare `languages` |
 | Stream deduplication | [x] Implemented | Per-hoster dedup keeps the best-ranked stream that resolved |
 | Stream deadline | [x] Implemented | `plugin_timeout_seconds` (search, 30 s) and `stream_deadline_seconds` (latest answer, 60 s) from request start; the answer goes out at `resolve_target_count` (5) streams or when everything is done |
-| Stremio search cache | [x] Implemented | Title-matching search results per title (`cache.search_ttl_seconds`), stale-while-revalidate, single-flight; requests read a running search's results as they arrive, plugins still running at the answer fill the cache |
+| Stremio search cache | [x] Implemented | Title-matching search results per title (`cache.search_ttl_seconds`), stale-while-revalidate (one refresh at a time), single-flight; requests read a running search's results as they arrive, plugins still running at the answer fill the cache |
 | Playback check | [x] Implemented | `verify_streams`: resolved URLs must return video/playlist bytes |
 | Scored plugin selection | [x] Implemented | Optional top-N plugin selection by score (`stremio.scoring_enabled`) |
 | Early-stop resolve | [x] Implemented | Resolution during the search; the answer goes out once `resolve_target_count` (default 5) hosters have a video |

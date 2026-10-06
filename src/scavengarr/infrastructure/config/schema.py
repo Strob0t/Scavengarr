@@ -288,7 +288,8 @@ class StremioConfig(BaseModel):
         description=(
             "Plugin search budget per Stremio search, counted from the "
             "request start (plugins waiting for a concurrency slot use it up "
-            "too); plugins still running then are cut, queued ones skipped. "
+            "too; a stale search-cache entry's refresh: from its own start); "
+            "plugins still running then are cut, queued ones skipped. "
             "The answer does not wait for the search: plugins still running "
             "when it goes out fill the search cache."
         ),
