@@ -1,6 +1,6 @@
 # Plan: Split `stremio_stream.py` Along Its Phases
 
-Item I14 of `docs/plans/ideas-backlog.md`. Status 2026-10-06: in progress (step 1 done). Behaviour-preserving refactor; no OpenSpec change (no capability changes).
+Item I14 of `docs/plans/ideas-backlog.md`. Status 2026-10-06: in progress (step 1 done; the test factories the phase tests share live in `tests/unit/application/stremio_support.py`). Behaviour-preserving refactor; no OpenSpec change (no capability changes).
 
 ## Problem
 
@@ -32,8 +32,8 @@ Dependencies flow use case → collaborators → ports; no collaborator imports 
 
 1. `TitleResolver` (smallest coupling: TMDB port, filter function, thresholds). Tests: move `TestTitleMatchFiltering` and the title-info tests; add none.
 2. `PluginSelector` (registry, score store). Tests: move `TestScoredSelection` and the plugin-selection tests from `TestExecute`/`TestMultiLanguageDispatch`.
-3. `TitleSearch` (search runner, cache, progress, refresh; the largest step). Tests: the `_cached_use_case` tests (`TestSearchCache`'s docstring still names the soft deadline: correct it on the move), `TestBrowserWarmup` and `TestMultiLanguageDispatch`'s search parts.
-4. `ResolveFlow` in `resolution.py`. Tests: `TestResolvePhase` and `TestResolverEchoFiltering` with `_resolving_use_case`, `TestBackgroundResolutions`, `TestAnswerPolicy` (`_answering_use_case`).
+3. `TitleSearch` (search runner, cache, progress, refresh; the largest step). Tests: the `cached_use_case` tests (`TestSearchCache`'s docstring still names the soft deadline: correct it on the move), `TestBrowserWarmup` and `TestMultiLanguageDispatch`'s search parts.
+4. `ResolveFlow` in `resolution.py`. Tests: `TestResolvePhase` and `TestResolverEchoFiltering` with `resolving_use_case`, `TestBackgroundResolutions`, `TestAnswerPolicy` (`answering_use_case`).
 5. `answer.py` functions (and `apply_resolution` if `add-stream-media-quality` is not already in). Tests: `TestStreamLinkProxy`, `TestStreamLinkSaveFailures`, format assertions.
 6. Final pass: `_answer` reads as the six steps of the class docstring; the test file drops its `del mock_plugin.scraping` lines (no code reads `scraping` since the YAML plugins left); constructor binds the collaborators instead of 31 attributes; update `docs/architecture/clean-architecture.md` (module list under `application/stremio/`) and `docs/features/stremio-addon.md` (pipeline section names the modules), `CHANGELOG.md` one line.
 

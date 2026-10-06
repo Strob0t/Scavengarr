@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Callable
 from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock
-from urllib.parse import urlparse
 
 import pytest
 import structlog
@@ -26,14 +24,10 @@ from scavengarr.domain.entities.stremio import (
     RankedStream,
     ResolvedStream,
     StreamQuality,
-    StremioStream,
     TitleMatchInfo,
 )
 from scavengarr.domain.plugins.base import SearchResult
-from scavengarr.domain.ports.browser_fetcher import PageClaim, page_claim
-from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
 from scavengarr.infrastructure.concurrency import ConcurrencyPool
-from scavengarr.infrastructure.config.schema import StremioConfig
 from scavengarr.infrastructure.plugins.constants import (
     DEFAULT_USER_AGENT,
     search_max_results,
@@ -46,10 +40,30 @@ from scavengarr.infrastructure.telemetry import Telemetry
 from scavengarr.infrastructure.telemetry.tracing import Tracing
 
 from .stremio_support import (
+    DOOD,
+    SEARCH_KEY,
+    SEARCH_TTL,
+    VOE,
+    VOE_2,
+    ClaimSeeing,
+    Resolutions,
+    answering_use_case,
+    cached_links,
+    cached_titles,
+    cached_use_case,
+    eventually,
+    fake_site,
+    from_cache,
+    hit,
+    hoster_link,
     make_config,
     make_request,
     make_search_result,
     make_use_case,
+    memory_cache,
+    resolved,
+    resolving_use_case,
+    video,
 )
 
 # ---------------------------------------------------------------------------
@@ -720,7 +734,7 @@ class TestResolverEchoFiltering:
         result = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert len(result) >= 1
-        assert _video(uc, result[0]) == "https://cdn.voe.sx/hls/master.m3u8"
+        assert video(uc, result[0]) == "https://cdn.voe.sx/hls/master.m3u8"
 
     async def test_mixed_streams_only_playable_kept(self) -> None:
         """Mix of echo and real resolvers → only playable streams in output."""
@@ -775,7 +789,7 @@ class TestResolverEchoFiltering:
 
         # Only the VOE stream should remain
         assert len(result) == 1
-        assert _video(uc, result[0]).endswith("master.m3u8")
+        assert video(uc, result[0]).endswith("master.m3u8")
 
     async def test_unresolved_streams_dropped_when_resolver_configured(self) -> None:
         """Streams that fail resolution (None) are dropped to avoid 502 proxy."""
@@ -959,64 +973,6 @@ class TestBrowserWarmup:
 # ---------------------------------------------------------------------------
 
 
-def _resolving_use_case(
-    links: list[dict[str, str]],
-    resolve: object,
-    config: StremioConfig | None = None,
-) -> StremioStreamUseCase:
-    tmdb = AsyncMock()
-    tmdb.get_title_and_year = AsyncMock(
-        return_value=TitleMatchInfo(title="Iron Man", year=2008)
-    )
-    srs = [
-        make_search_result(
-            title="Iron Man", release_name=link.pop("release"), download_links=[link]
-        )
-        for link in links
-    ]
-    mock_plugin = AsyncMock()
-    mock_plugin.search = AsyncMock(return_value=srs)
-    del mock_plugin.scraping
-    mock_plugin.isolated_search = mock_plugin.search
-    engine = AsyncMock()
-    engine.validate_results = AsyncMock(side_effect=lambda r: r)
-    plugins = MagicMock()
-    plugins.get_languages.return_value = ["de"]
-    plugins.get_by_provides.side_effect = lambda p: ["hdfilme"] if p == "stream" else []
-    plugins.get.return_value = mock_plugin
-    return make_use_case(
-        tmdb=tmdb,
-        plugins=plugins,
-        search_engine=engine,
-        config=config,
-        stream_link_repo=AsyncMock(),
-        resolve_fn=AsyncMock(side_effect=resolve),
-    )
-
-
-def _stream_id(url: str) -> str:
-    path = urlparse(url).path
-    if "/play/" in path:
-        return path.rsplit("/play/", 1)[1]
-    return path.split("/proxy/", 1)[1].split("/", 1)[0]
-
-
-def _video(uc: StremioStreamUseCase, stream: StremioStream) -> str:
-    """The video URL behind *stream*: /play and the HLS proxy serve the
-    stored link's."""
-    repo = uc._stream_link_repo
-    assert isinstance(repo, AsyncMock)
-    saved = {c.args[0].stream_id: c.args[0] for c in repo.save.await_args_list}
-    return saved[_stream_id(stream.url)].video_url
-
-
-def _resolved(url: str) -> ResolvedStream:
-    return ResolvedStream(
-        video_url=f"https://cdn.example/{url.rsplit('/', 1)[-1]}.mp4",
-        headers={"Referer": "https://voe.sx/"},
-    )
-
-
 _BEST = {
     "url": "https://voe.sx/e/best",
     "hoster": "VOE",
@@ -1041,40 +997,40 @@ class TestResolvePhase:
         take the working second VOE stream with it."""
 
         async def _resolve(url: str, hoster: str = "") -> ResolvedStream | None:
-            return None if url.endswith("/best") else _resolved(url)
+            return None if url.endswith("/best") else resolved(url)
 
-        uc = _resolving_use_case([dict(_BEST), dict(_SECOND)], _resolve)
+        uc = resolving_use_case([dict(_BEST), dict(_SECOND)], _resolve)
 
         result = await uc.execute(make_request(), base_url="http://localhost:8080")
 
-        assert [_video(uc, s) for s in result] == ["https://cdn.example/second.mp4"]
+        assert [video(uc, s) for s in result] == ["https://cdn.example/second.mp4"]
 
     async def test_one_stream_per_hoster(self) -> None:
         async def _resolve(url: str, hoster: str = "") -> ResolvedStream:
-            return _resolved(url)
+            return resolved(url)
 
-        uc = _resolving_use_case([dict(_BEST), dict(_SECOND)], _resolve)
+        uc = resolving_use_case([dict(_BEST), dict(_SECOND)], _resolve)
 
         result = await uc.execute(make_request(), base_url="http://localhost:8080")
 
-        assert [_video(uc, s) for s in result] == ["https://cdn.example/best.mp4"]
+        assert [video(uc, s) for s in result] == ["https://cdn.example/best.mp4"]
 
     async def test_one_stream_per_hoster_and_language(self) -> None:
         """Dub and sub on the same hoster are different content (anime)."""
 
         async def _resolve(url: str, hoster: str = "") -> ResolvedStream:
-            return _resolved(url)
+            return resolved(url)
 
         sub = {
             "url": "https://voe.sx/e/sub",
             "hoster": "VOE",
             "release": "Iron.Man.2008.GERMAN.SUBBED.720p.WEB",
         }
-        uc = _resolving_use_case([dict(_BEST), dict(_SECOND), sub], _resolve)
+        uc = resolving_use_case([dict(_BEST), dict(_SECOND), sub], _resolve)
 
         result = await uc.execute(make_request(), base_url="http://localhost:8080")
 
-        assert [_video(uc, s) for s in result] == [
+        assert [video(uc, s) for s in result] == [
             "https://cdn.example/best.mp4",
             "https://cdn.example/sub.mp4",
         ]
@@ -1089,9 +1045,9 @@ class TestResolvePhase:
 
         async def _resolve(url: str, hoster: str = "") -> ResolvedStream:
             calls.append(url)
-            return _resolved(url)
+            return resolved(url)
 
-        uc = _resolving_use_case([dict(_BEST), dict(_SECOND)], _resolve)
+        uc = resolving_use_case([dict(_BEST), dict(_SECOND)], _resolve)
 
         await uc.execute(make_request(), base_url="http://localhost:8080")
 
@@ -1101,9 +1057,9 @@ class TestResolvePhase:
         async def _resolve(url: str, hoster: str = "") -> ResolvedStream | None:
             if "slow" in url:
                 await asyncio.sleep(10)
-            return _resolved(url)
+            return resolved(url)
 
-        uc = _resolving_use_case(
+        uc = resolving_use_case(
             [dict(_SLOW), dict(_FAST)],
             _resolve,
             config=make_config(stream_deadline_seconds=0.2),
@@ -1114,7 +1070,7 @@ class TestResolvePhase:
         result = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert loop.time() - start < 2
-        assert [_video(uc, s) for s in result] == ["https://cdn.example/fast.mp4"]
+        assert [video(uc, s) for s in result] == ["https://cdn.example/fast.mp4"]
 
     def test_answer_policy_defaults(self) -> None:
         """5 streams or everything done, at most 60 s, plugins 30 s
@@ -1131,9 +1087,9 @@ class TestResolvePhase:
         async def _resolve(url: str, hoster: str = "") -> ResolvedStream:
             if "slow" in url:
                 await asyncio.sleep(10)
-            return _resolved(url)
+            return resolved(url)
 
-        uc = _resolving_use_case(
+        uc = resolving_use_case(
             [dict(_SLOW), dict(_FAST)],
             _resolve,
             config=make_config(resolve_target_count=1),
@@ -1144,7 +1100,7 @@ class TestResolvePhase:
         result = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert loop.time() - start < 2
-        assert [_video(uc, s) for s in result] == ["https://cdn.example/fast.mp4"]
+        assert [video(uc, s) for s in result] == ["https://cdn.example/fast.mp4"]
 
     async def test_below_the_target_the_answer_waits_for_every_resolution(
         self,
@@ -1154,13 +1110,13 @@ class TestResolvePhase:
         async def _resolve(url: str, hoster: str = "") -> ResolvedStream:
             if "slow" in url:
                 await asyncio.sleep(0.3)
-            return _resolved(url)
+            return resolved(url)
 
-        uc = _resolving_use_case([dict(_SLOW), dict(_FAST)], _resolve)
+        uc = resolving_use_case([dict(_SLOW), dict(_FAST)], _resolve)
 
         result = await uc.execute(make_request(), base_url="http://localhost:8080")
 
-        assert sorted(_video(uc, s) for s in result) == [
+        assert sorted(video(uc, s) for s in result) == [
             "https://cdn.example/fast.mp4",
             "https://cdn.example/slow.mp4",
         ]
@@ -1260,7 +1216,7 @@ class TestStreamLinkSaveFailures:
         uc = self._use_case(repo, AsyncMock(side_effect=_resolve))
         result = await uc.execute(make_request(), base_url="http://localhost:8080")
 
-        assert [_video(uc, s) for s in result] == [
+        assert [video(uc, s) for s in result] == [
             "https://cdn.streamtape.com/v/xyz.mp4"
         ]
 
@@ -1283,96 +1239,6 @@ class TestStreamLinkSaveFailures:
 # Search cache, single-flight, late plugins, early answer
 # ---------------------------------------------------------------------------
 
-_KEY = "stremio:search:movie:tt1234567:None:None"
-_TTL = 1800
-
-
-def _memory_cache() -> AsyncMock:
-    """CachePort keeping its entries in ``cache.data``."""
-    data: dict[str, object] = {}
-    cache = AsyncMock()
-    cache.data = data
-    cache.get = AsyncMock(side_effect=lambda key: data.get(key))
-    cache.set = AsyncMock(
-        side_effect=lambda key, value, *, ttl=None: data.__setitem__(key, value)
-    )
-    return cache
-
-
-def _hit(link: str, title: str = "Iron Man") -> SearchResult:
-    """A search result with one hoster link (one stream per hoster)."""
-    return make_search_result(
-        title=title,
-        download_link=link,
-        download_links=[{"url": link, "quality": "1080p"}],
-    )
-
-
-def _site(
-    results: list[SearchResult],
-    delay: float = 0.0,
-    *,
-    cancelled: asyncio.Event | None = None,
-) -> AsyncMock:
-    """Plugin answering with *results* after *delay* seconds."""
-
-    async def _search(*_args: object, **_kwargs: object) -> list[SearchResult]:
-        try:
-            await asyncio.sleep(delay)
-        except asyncio.CancelledError:
-            if cancelled is not None:
-                cancelled.set()
-            raise
-        return results
-
-    plugin = AsyncMock()
-    del plugin.scraping
-    plugin.isolated_search = AsyncMock(side_effect=_search)
-    return plugin
-
-
-def _cached_use_case(
-    sites: dict[str, AsyncMock],
-    cache: AsyncMock,
-    *,
-    ttl: int = _TTL,
-    hard: float = 1.0,
-    telemetry: TelemetryPort = NO_TELEMETRY,
-) -> StremioStreamUseCase:
-    tmdb = AsyncMock()
-    tmdb.get_title_and_year = AsyncMock(
-        return_value=TitleMatchInfo(title="Iron Man", year=2008)
-    )
-    plugins = MagicMock()
-    plugins.get_languages.return_value = ["de"]
-    plugins.get_by_provides.side_effect = lambda p: (
-        sorted(sites) if p == "stream" else []
-    )
-    plugins.get.side_effect = sites.__getitem__
-    return make_use_case(
-        tmdb=tmdb,
-        plugins=plugins,
-        config=make_config(
-            plugin_timeout_seconds=hard,
-            stream_deadline_seconds=hard + 1.0,
-        ),
-        cache=cache,
-        search_ttl_seconds=ttl,
-        telemetry=telemetry,
-    )
-
-
-async def _eventually(check: Callable[[], bool], timeout: float = 2.0) -> None:
-    end = time.monotonic() + timeout
-    while not check():
-        assert time.monotonic() < end, "condition not met in time"
-        await asyncio.sleep(0.01)
-
-
-def _links(cache: AsyncMock) -> list[str]:
-    entry = cache.data.get(_KEY)
-    return sorted(r.download_link for r in entry.results) if entry else []
-
 
 class TestSearchCache:
     """Stremio search results are cached per title (stale-while-revalidate,
@@ -1380,21 +1246,21 @@ class TestSearchCache:
     out at the soft deadline when there are results."""
 
     async def test_miss_stores_the_matching_results(self) -> None:
-        cache = _memory_cache()
-        site = _site([_hit("https://voe.sx/e/1"), _hit("https://x.to/2", "Rugrats")])
-        uc = _cached_use_case({"a": site}, cache)
+        cache = memory_cache()
+        site = fake_site([hit("https://voe.sx/e/1"), hit("https://x.to/2", "Rugrats")])
+        uc = cached_use_case({"a": site}, cache)
 
         streams = await uc.execute(make_request())
 
         assert [s.url for s in streams] == ["https://voe.sx/e/1"]
-        assert _links(cache) == ["https://voe.sx/e/1"]
-        assert cache.data[_KEY].total == 2
-        assert cache.set.await_args.kwargs["ttl"] == _TTL + STALE_SECONDS
+        assert cached_links(cache) == ["https://voe.sx/e/1"]
+        assert cache.data[SEARCH_KEY].total == 2
+        assert cache.set.await_args.kwargs["ttl"] == SEARCH_TTL + STALE_SECONDS
 
     async def test_fresh_hit_skips_the_search(self) -> None:
-        cache = _memory_cache()
-        site = _site([_hit("https://voe.sx/e/1")])
-        uc = _cached_use_case({"a": site}, cache)
+        cache = memory_cache()
+        site = fake_site([hit("https://voe.sx/e/1")])
+        uc = cached_use_case({"a": site}, cache)
 
         first = await uc.execute(make_request())
         second = await uc.execute(make_request())
@@ -1403,20 +1269,20 @@ class TestSearchCache:
         assert site.isolated_search.await_count == 1
 
     async def test_stale_hit_answers_and_refreshes_in_the_background(self) -> None:
-        cache = _memory_cache()
-        cache.data[_KEY] = CachedSearch(
-            results=[_hit("https://voe.sx/e/old")],
+        cache = memory_cache()
+        cache.data[SEARCH_KEY] = CachedSearch(
+            results=[hit("https://voe.sx/e/old")],
             total=1,
-            stored_at=time.time() - _TTL - 1,
+            stored_at=time.time() - SEARCH_TTL - 1,
         )
-        site = _site([_hit("https://voe.sx/e/new")])
-        uc = _cached_use_case({"a": site}, cache)
+        site = fake_site([hit("https://voe.sx/e/new")])
+        uc = cached_use_case({"a": site}, cache)
 
         streams = await uc.execute(make_request())
 
         assert [s.url for s in streams] == ["https://voe.sx/e/old"]
-        await _eventually(lambda: _links(cache) == ["https://voe.sx/e/new"])
-        assert time.time() - cache.data[_KEY].stored_at < _TTL
+        await eventually(lambda: cached_links(cache) == ["https://voe.sx/e/new"])
+        assert time.time() - cache.data[SEARCH_KEY].stored_at < SEARCH_TTL
         assert site.isolated_search.await_count == 1
 
     async def test_stale_hits_refresh_one_title_at_a_time(self) -> None:
@@ -1424,16 +1290,16 @@ class TestSearchCache:
         searches split the plugin slots (fair share), and a refresh cut
         short replaced its entry with a thinner one (code review,
         2026-10-06). A refresh that waited keeps its whole plugin time."""
-        cache = _memory_cache()
+        cache = memory_cache()
         keys = [
             f"stremio:search:movie:{imdb_id}:None:None"
             for imdb_id in ("tt1234567", "tt7654321")
         ]
         for key in keys:
             cache.data[key] = CachedSearch(
-                results=[_hit("https://voe.sx/e/old")],
+                results=[hit("https://voe.sx/e/old")],
                 total=1,
-                stored_at=time.time() - _TTL - 1,
+                stored_at=time.time() - SEARCH_TTL - 1,
             )
         running = peak = 0
 
@@ -1445,19 +1311,19 @@ class TestSearchCache:
                 await asyncio.sleep(0.3)
             finally:
                 running -= 1
-            return [_hit("https://voe.sx/e/new")]
+            return [hit("https://voe.sx/e/new")]
 
-        site = _site([])
+        site = fake_site([])
         site.isolated_search.side_effect = _search
         # The second refresh starts after 0.3 s and ends after 0.6 s
-        uc = _cached_use_case({"a": site}, cache, hard=0.5)
+        uc = cached_use_case({"a": site}, cache, hard=0.5)
 
         await asyncio.gather(
             uc.execute(make_request()),
             uc.execute(make_request(imdb_id="tt7654321")),
         )
 
-        await _eventually(
+        await eventually(
             lambda: all(
                 cache.data[key].results[0].download_link == "https://voe.sx/e/new"
                 for key in keys
@@ -1466,9 +1332,9 @@ class TestSearchCache:
         assert peak == 1
 
     async def test_concurrent_requests_share_one_search(self) -> None:
-        cache = _memory_cache()
-        site = _site([_hit("https://voe.sx/e/1")], delay=0.05)
-        uc = _cached_use_case({"a": site}, cache)
+        cache = memory_cache()
+        site = fake_site([hit("https://voe.sx/e/1")], delay=0.05)
+        uc = cached_use_case({"a": site}, cache)
 
         first, second = await asyncio.gather(
             uc.execute(make_request()), uc.execute(make_request())
@@ -1481,12 +1347,12 @@ class TestSearchCache:
     async def test_without_a_resolver_the_answer_waits_for_the_search(
         self,
     ) -> None:
-        cache = _memory_cache()
+        cache = memory_cache()
         sites = {
-            "fast": _site([_hit("https://voe.sx/e/fast")]),
-            "slow": _site([_hit("https://dood.to/e/slow")], delay=0.3),
+            "fast": fake_site([hit("https://voe.sx/e/fast")]),
+            "slow": fake_site([hit("https://dood.to/e/slow")], delay=0.3),
         }
-        uc = _cached_use_case(sites, cache)
+        uc = cached_use_case(sites, cache)
 
         streams = await uc.execute(make_request())
 
@@ -1494,30 +1360,33 @@ class TestSearchCache:
             "https://dood.to/e/slow",
             "https://voe.sx/e/fast",
         ]
-        assert _links(cache) == ["https://dood.to/e/slow", "https://voe.sx/e/fast"]
+        assert cached_links(cache) == [
+            "https://dood.to/e/slow",
+            "https://voe.sx/e/fast",
+        ]
 
     async def test_a_plugin_past_the_timeout_is_cancelled(self) -> None:
-        cache = _memory_cache()
+        cache = memory_cache()
         cancelled = asyncio.Event()
         sites = {
-            "fast": _site([_hit("https://voe.sx/e/fast")]),
-            "stuck": _site([], delay=30, cancelled=cancelled),
+            "fast": fake_site([hit("https://voe.sx/e/fast")]),
+            "stuck": fake_site([], delay=30, cancelled=cancelled),
         }
-        uc = _cached_use_case(sites, cache, hard=0.2)
+        uc = cached_use_case(sites, cache, hard=0.2)
 
         await uc.execute(make_request())
 
         await asyncio.wait_for(cancelled.wait(), 2.0)
-        assert _links(cache) == ["https://voe.sx/e/fast"]
+        assert cached_links(cache) == ["https://voe.sx/e/fast"]
 
     async def test_aclose_cancels_a_running_search(self) -> None:
         """The request waiting on it answers with what the search found."""
         cancelled = asyncio.Event()
         sites = {
-            "fast": _site([_hit("https://voe.sx/e/fast")]),
-            "stuck": _site([], delay=30, cancelled=cancelled),
+            "fast": fake_site([hit("https://voe.sx/e/fast")]),
+            "stuck": fake_site([], delay=30, cancelled=cancelled),
         }
-        uc = _cached_use_case(sites, _memory_cache(), hard=10.0)
+        uc = cached_use_case(sites, memory_cache(), hard=10.0)
         request = asyncio.create_task(uc.execute(make_request()))
         await asyncio.sleep(0.1)
 
@@ -1527,12 +1396,12 @@ class TestSearchCache:
         assert [s.url for s in await request] == ["https://voe.sx/e/fast"]
 
     async def test_cache_off_answers_with_every_plugin(self) -> None:
-        cache = _memory_cache()
+        cache = memory_cache()
         sites = {
-            "fast": _site([_hit("https://voe.sx/e/fast")]),
-            "slow": _site([_hit("https://dood.to/e/slow")], delay=0.2),
+            "fast": fake_site([hit("https://voe.sx/e/fast")]),
+            "slow": fake_site([hit("https://dood.to/e/slow")], delay=0.2),
         }
-        uc = _cached_use_case(sites, cache, ttl=0)
+        uc = cached_use_case(sites, cache, ttl=0)
 
         streams = await uc.execute(make_request())
 
@@ -1549,147 +1418,9 @@ class TestSearchCache:
 # ---------------------------------------------------------------------------
 
 
-class _Resolutions:
-    """Resolver registry stand-in: resolve() caches, cached() peeks."""
-
-    def __init__(
-        self,
-        *,
-        alive: tuple[str, ...] = (),
-        dead: tuple[str, ...] = (),
-        delay: float = 0.0,
-    ) -> None:
-        self.store: dict[str, ResolvedStream | None] = {u: _resolved(u) for u in alive}
-        self.store.update(dict.fromkeys(dead))
-        self.delay = delay
-        self.calls: list[str] = []
-        self.cancelled = asyncio.Event()
-        self.running = 0
-        self.most_at_once = 0
-
-    async def resolve(self, url: str, hoster: str = "") -> ResolvedStream | None:
-        if url in self.store:
-            return self.store[url]
-        self.calls.append(url)
-        self.running += 1
-        self.most_at_once = max(self.most_at_once, self.running)
-        try:
-            await asyncio.sleep(self.delay)
-        except asyncio.CancelledError:
-            self.cancelled.set()
-            raise
-        finally:
-            self.running -= 1
-        self.store[url] = _resolved(url)
-        return self.store[url]
-
-    def cached(self, url: str) -> tuple[bool, ResolvedStream | None]:
-        return url in self.store, self.store.get(url)
-
-
-class _ClaimSeeing(_Resolutions):
-    """Notes the page claim each link resolved under."""
-
-    def __init__(self, *, alive: tuple[str, ...] = ()) -> None:
-        super().__init__(alive=alive)
-        self.claims: dict[str, PageClaim | None] = {}
-
-    async def resolve(self, url: str, hoster: str = "") -> ResolvedStream | None:
-        self.claims.setdefault(url, page_claim.get())
-        return await super().resolve(url, hoster)
-
-
-_VOE = "https://voe.sx/e/best"
-_VOE_2 = "https://voe.sx/e/second"
-_DOOD = "https://dood.to/e/new"
-
-
-def _from_cache(
-    links: list[dict[str, str]],
-    resolutions: _Resolutions,
-    *,
-    cached: bool = True,
-    telemetry: TelemetryPort = NO_TELEMETRY,
-) -> StremioStreamUseCase:
-    """Use case whose search for the title is in the cache (or, with
-    *cached* False, comes from a plugin)."""
-    results = [
-        make_search_result(
-            title="Iron Man", release_name=link.pop("release"), download_links=[link]
-        )
-        for link in links
-    ]
-    cache = _memory_cache()
-    if cached:
-        cache.data[_KEY] = CachedSearch(
-            results=results, total=len(results), stored_at=time.time()
-        )
-    tmdb = AsyncMock()
-    tmdb.get_title_and_year = AsyncMock(
-        return_value=TitleMatchInfo(title="Iron Man", year=2008)
-    )
-    plugins = MagicMock()
-    plugins.get_languages.return_value = ["de"]
-    plugins.get_by_provides.side_effect = lambda p: ["a"] if p == "stream" else []
-    plugins.get.return_value = _site(results)
-    return make_use_case(
-        tmdb=tmdb,
-        plugins=plugins,
-        config=make_config(),
-        stream_link_repo=AsyncMock(),
-        resolve_fn=resolutions.resolve,
-        cached_resolution_fn=resolutions.cached,
-        cache=cache,
-        search_ttl_seconds=_TTL,
-        telemetry=telemetry,
-    )
-
-
-def _link(url: str, release: str = "Iron.Man.2008.German.1080p.BluRay") -> dict:
-    return {"url": url, "hoster": url.split("/")[2].split(".")[0], "release": release}
-
-
 _VOE_B = "https://voe.sx/e/other"
 _DOOD_B = "https://dood.to/e/other"
 _OTHER_TITLE = "tt7654321"
-
-
-def _cached_titles(
-    titles: dict[str, list[dict[str, str]]],
-    resolutions: _Resolutions,
-    **config: object,
-) -> StremioStreamUseCase:
-    """Use case with a search-cache entry per title (IMDb id: its links)."""
-    cache = _memory_cache()
-    for imdb_id, links in titles.items():
-        results = [
-            make_search_result(
-                title="Iron Man",
-                release_name=link.pop("release"),
-                download_links=[link],
-            )
-            for link in links
-        ]
-        cache.data[f"stremio:search:movie:{imdb_id}:None:None"] = CachedSearch(
-            results=results, total=len(results), stored_at=time.time()
-        )
-    tmdb = AsyncMock()
-    tmdb.get_title_and_year = AsyncMock(
-        return_value=TitleMatchInfo(title="Iron Man", year=2008)
-    )
-    plugins = MagicMock()
-    plugins.get_languages.return_value = ["de"]
-    plugins.get_by_provides.side_effect = lambda p: ["a"] if p == "stream" else []
-    return make_use_case(
-        tmdb=tmdb,
-        plugins=plugins,
-        config=make_config(**config),
-        stream_link_repo=AsyncMock(),
-        resolve_fn=resolutions.resolve,
-        cached_resolution_fn=resolutions.cached,
-        cache=cache,
-        search_ttl_seconds=_TTL,
-    )
 
 
 class TestCachedAnswers:
@@ -1698,29 +1429,29 @@ class TestCachedAnswers:
     other links resolve in the background for the next request."""
 
     async def test_answers_at_once_with_the_cached_streams(self) -> None:
-        resolutions = _Resolutions(alive=(_VOE,), delay=0.5)
-        uc = _from_cache([_link(_VOE), _link(_DOOD)], resolutions)
+        resolutions = Resolutions(alive=(VOE,), delay=0.5)
+        uc = from_cache([hoster_link(VOE), hoster_link(DOOD)], resolutions)
 
         started = time.monotonic()
         streams = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert time.monotonic() - started < 0.3
-        assert [_video(uc, s) for s in streams] == ["https://cdn.example/best.mp4"]
-        await _eventually(lambda: _DOOD in resolutions.store)
-        assert resolutions.calls == [_DOOD]
+        assert [video(uc, s) for s in streams] == ["https://cdn.example/best.mp4"]
+        await eventually(lambda: DOOD in resolutions.store)
+        assert resolutions.calls == [DOOD]
 
     async def test_a_link_cached_as_dead_gives_way_to_the_hosters_next(
         self,
     ) -> None:
-        resolutions = _Resolutions(alive=(_VOE_2,), dead=(_VOE,))
-        uc = _from_cache(
-            [_link(_VOE), _link(_VOE_2, "Iron.Man.2008.German.720p.WEB")],
+        resolutions = Resolutions(alive=(VOE_2,), dead=(VOE,))
+        uc = from_cache(
+            [hoster_link(VOE), hoster_link(VOE_2, "Iron.Man.2008.German.720p.WEB")],
             resolutions,
         )
 
         streams = await uc.execute(make_request(), base_url="http://localhost:8080")
 
-        assert [_video(uc, s) for s in streams] == ["https://cdn.example/second.mp4"]
+        assert [video(uc, s) for s in streams] == ["https://cdn.example/second.mp4"]
         assert resolutions.calls == []
 
     async def test_an_unresolved_better_link_keeps_the_hosters_cached_stream(
@@ -1730,9 +1461,9 @@ class TestCachedAnswers:
         of a hoster first: the cached answer dropped that hoster's stream
         (3 of 17 titles of the dev-server E2E run, 2026-10-05). It keeps the
         cached stream now; the new link resolves for the next request."""
-        resolutions = _Resolutions(alive=(_VOE_2,), delay=0.5)
-        uc = _from_cache(
-            [_link(_VOE), _link(_VOE_2, "Iron.Man.2008.German.720p.WEB")],
+        resolutions = Resolutions(alive=(VOE_2,), delay=0.5)
+        uc = from_cache(
+            [hoster_link(VOE), hoster_link(VOE_2, "Iron.Man.2008.German.720p.WEB")],
             resolutions,
         )
 
@@ -1740,9 +1471,9 @@ class TestCachedAnswers:
         streams = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert time.monotonic() - started < 0.3
-        assert [_video(uc, s) for s in streams] == ["https://cdn.example/second.mp4"]
-        await _eventually(lambda: _VOE in resolutions.store)
-        assert resolutions.calls == [_VOE]
+        assert [video(uc, s) for s in streams] == ["https://cdn.example/second.mp4"]
+        await eventually(lambda: VOE in resolutions.store)
+        assert resolutions.calls == [VOE]
 
     async def test_an_echoed_better_link_keeps_the_hosters_cached_stream(
         self,
@@ -1751,34 +1482,36 @@ class TestCachedAnswers:
         cached answer took that echo as the hoster's stream, dropped it and
         left the hoster out for the hour the echo stayed cached (code
         review, 2026-10-06)."""
-        resolutions = _Resolutions(alive=(_VOE_2,))
-        resolutions.store[_VOE] = ResolvedStream(video_url=_VOE)
-        uc = _from_cache(
-            [_link(_VOE), _link(_VOE_2, "Iron.Man.2008.German.720p.WEB")],
+        resolutions = Resolutions(alive=(VOE_2,))
+        resolutions.store[VOE] = ResolvedStream(video_url=VOE)
+        uc = from_cache(
+            [hoster_link(VOE), hoster_link(VOE_2, "Iron.Man.2008.German.720p.WEB")],
             resolutions,
         )
 
         streams = await uc.execute(make_request(), base_url="http://localhost:8080")
 
-        assert [_video(uc, s) for s in streams] == ["https://cdn.example/second.mp4"]
+        assert [video(uc, s) for s in streams] == ["https://cdn.example/second.mp4"]
 
     async def test_without_a_cached_stream_the_answer_waits_as_before(self) -> None:
-        resolutions = _Resolutions(dead=(_VOE,), delay=0.1)
-        uc = _from_cache([_link(_VOE), _link(_DOOD)], resolutions)
+        resolutions = Resolutions(dead=(VOE,), delay=0.1)
+        uc = from_cache([hoster_link(VOE), hoster_link(DOOD)], resolutions)
 
         streams = await uc.execute(make_request(), base_url="http://localhost:8080")
 
-        assert [_video(uc, s) for s in streams] == ["https://cdn.example/new.mp4"]
-        assert resolutions.calls == [_DOOD]
+        assert [video(uc, s) for s in streams] == ["https://cdn.example/new.mp4"]
+        assert resolutions.calls == [DOOD]
 
     async def test_a_new_search_waits_for_its_links(self) -> None:
         """Only an answer from the search cache goes out early."""
-        resolutions = _Resolutions(alive=(_VOE,), delay=0.1)
-        uc = _from_cache([_link(_VOE), _link(_DOOD)], resolutions, cached=False)
+        resolutions = Resolutions(alive=(VOE,), delay=0.1)
+        uc = from_cache(
+            [hoster_link(VOE), hoster_link(DOOD)], resolutions, cached=False
+        )
 
         streams = await uc.execute(make_request(), base_url="http://localhost:8080")
 
-        assert sorted(_video(uc, s) for s in streams) == [
+        assert sorted(video(uc, s) for s in streams) == [
             "https://cdn.example/best.mp4",
             "https://cdn.example/new.mp4",
         ]
@@ -1787,29 +1520,29 @@ class TestCachedAnswers:
         self,
     ) -> None:
         """Every link has a cached outcome (code review, 2026-10-06)."""
-        resolutions = _Resolutions(alive=(_VOE,), dead=(_DOOD,))
-        uc = _from_cache([_link(_VOE), _link(_DOOD)], resolutions)
+        resolutions = Resolutions(alive=(VOE,), dead=(DOOD,))
+        uc = from_cache([hoster_link(VOE), hoster_link(DOOD)], resolutions)
 
         streams = await uc.execute(make_request(), base_url="http://localhost:8080")
 
-        assert [_video(uc, s) for s in streams] == ["https://cdn.example/best.mp4"]
+        assert [video(uc, s) for s in streams] == ["https://cdn.example/best.mp4"]
         assert not uc._background_resolutions  # noqa: SLF001
 
     async def test_one_background_resolution_per_title(self) -> None:
-        resolutions = _Resolutions(alive=(_VOE,), delay=0.3)
-        uc = _from_cache([_link(_VOE), _link(_DOOD)], resolutions)
+        resolutions = Resolutions(alive=(VOE,), delay=0.3)
+        uc = from_cache([hoster_link(VOE), hoster_link(DOOD)], resolutions)
 
         await uc.execute(make_request(), base_url="http://localhost:8080")
         await uc.execute(make_request(), base_url="http://localhost:8080")
 
-        await _eventually(lambda: _DOOD in resolutions.store)
-        assert resolutions.calls == [_DOOD]
+        await eventually(lambda: DOOD in resolutions.store)
+        assert resolutions.calls == [DOOD]
 
     async def test_aclose_ends_the_background_resolution(self) -> None:
-        resolutions = _Resolutions(alive=(_VOE,), delay=30)
-        uc = _from_cache([_link(_VOE), _link(_DOOD)], resolutions)
+        resolutions = Resolutions(alive=(VOE,), delay=30)
+        uc = from_cache([hoster_link(VOE), hoster_link(DOOD)], resolutions)
         await uc.execute(make_request(), base_url="http://localhost:8080")
-        await _eventually(lambda: resolutions.calls == [_DOOD])
+        await eventually(lambda: resolutions.calls == [DOOD])
 
         await uc.aclose()
 
@@ -1824,18 +1557,18 @@ class TestBackgroundResolutions:
     end-to-end run, 2026-10-05)."""
 
     _TITLES = {
-        "tt1234567": (_VOE, _DOOD),
+        "tt1234567": (VOE, DOOD),
         _OTHER_TITLE: (_VOE_B, _DOOD_B),
     }
 
     def _use_case(
-        self, resolutions: _Resolutions, **config: object
+        self, resolutions: Resolutions, **config: object
     ) -> StremioStreamUseCase:
         titles = {
-            imdb_id: [_link(url) for url in urls]
+            imdb_id: [hoster_link(url) for url in urls]
             for imdb_id, urls in self._TITLES.items()
         }
-        return _cached_titles(titles, resolutions, **config)
+        return cached_titles(titles, resolutions, **config)
 
     async def _ask_both(self, uc: StremioStreamUseCase) -> None:
         for imdb_id in self._TITLES:
@@ -1844,78 +1577,42 @@ class TestBackgroundResolutions:
             )
 
     async def test_one_title_resolves_in_the_background_at_a_time(self) -> None:
-        resolutions = _Resolutions(alive=(_VOE, _VOE_B), delay=0.2)
+        resolutions = Resolutions(alive=(VOE, _VOE_B), delay=0.2)
         uc = self._use_case(resolutions)
 
         await self._ask_both(uc)
 
-        await _eventually(lambda: {_DOOD, _DOOD_B} <= resolutions.store.keys())
+        await eventually(lambda: {DOOD, _DOOD_B} <= resolutions.store.keys())
         assert resolutions.most_at_once == 1
 
     async def test_a_waiting_title_gets_its_whole_deadline(self) -> None:
         """Counted from its request, the second title's 0.5 s would end 0.2 s
         after the first title's resolution, before its own (0.3 s)."""
-        resolutions = _Resolutions(alive=(_VOE, _VOE_B), delay=0.3)
+        resolutions = Resolutions(alive=(VOE, _VOE_B), delay=0.3)
         uc = self._use_case(resolutions, stream_deadline_seconds=0.5)
 
         await self._ask_both(uc)
 
-        await _eventually(lambda: _DOOD_B in resolutions.store)
+        await eventually(lambda: _DOOD_B in resolutions.store)
 
     async def test_they_claim_browser_pages_as_background_work(self) -> None:
-        resolutions = _ClaimSeeing(alive=(_VOE, _VOE_B))
+        resolutions = ClaimSeeing(alive=(VOE, _VOE_B))
         uc = self._use_case(resolutions)
 
         await self._ask_both(uc)
 
-        await _eventually(lambda: _DOOD in resolutions.store)
-        claim = resolutions.claims[_DOOD]
+        await eventually(lambda: DOOD in resolutions.store)
+        claim = resolutions.claims[DOOD]
         assert claim is not None
         assert claim.kind == "background"
-
-
-def _answering_use_case(
-    sites: dict[str, AsyncMock],
-    cache: AsyncMock,
-    resolutions: _Resolutions,
-    telemetry: TelemetryPort = NO_TELEMETRY,
-    *,
-    mirror_groups: dict[str, str] | None = None,
-    score_store: AsyncMock | None = None,
-    **config: object,
-) -> StremioStreamUseCase:
-    """Use case that searches *sites* and resolves with *resolutions*."""
-    tmdb = AsyncMock()
-    tmdb.get_title_and_year = AsyncMock(
-        return_value=TitleMatchInfo(title="Iron Man", year=2008)
-    )
-    plugins = MagicMock()
-    plugins.get_languages.return_value = ["de"]
-    plugins.get_by_provides.side_effect = lambda p: (
-        sorted(sites) if p == "stream" else []
-    )
-    plugins.get.side_effect = sites.__getitem__
-    return make_use_case(
-        tmdb=tmdb,
-        plugins=plugins,
-        config=make_config(**config),
-        stream_link_repo=AsyncMock(),
-        resolve_fn=resolutions.resolve,
-        cached_resolution_fn=resolutions.cached,
-        cache=cache,
-        search_ttl_seconds=_TTL,
-        telemetry=telemetry,
-        mirror_groups=mirror_groups,
-        score_store=score_store,
-    )
 
 
 class TestMirrorScores:
     async def test_the_best_scored_mirror_member_is_searched(self) -> None:
         """The plugin scores pick a mirror group's member."""
         sites = {
-            "hdfilme": _site([_hit("https://voe.sx/e/a")]),
-            "streamcloud": _site([_hit("https://voe.sx/e/b")]),
+            "hdfilme": fake_site([hit("https://voe.sx/e/a")]),
+            "streamcloud": fake_site([hit("https://voe.sx/e/b")]),
         }
         store = AsyncMock()
         store.get_snapshot = AsyncMock(
@@ -1927,10 +1624,10 @@ class TestMirrorScores:
                 confidence=0.5,
             )
         )
-        uc = _answering_use_case(
+        uc = answering_use_case(
             sites,
-            _memory_cache(),
-            _Resolutions(),
+            memory_cache(),
+            Resolutions(),
             mirror_groups={"hdfilme": "hdfilme", "streamcloud": "hdfilme"},
             score_store=store,
         )
@@ -1946,15 +1643,15 @@ class TestScoredSelection:
         """Unreadable scores count as none: the request asks every plugin,
         as on a cold start, instead of failing."""
         sites = {
-            "one": _site([_hit("https://voe.sx/e/a")]),
-            "two": _site([_hit("https://dood.to/e/b")]),
+            "one": fake_site([hit("https://voe.sx/e/a")]),
+            "two": fake_site([hit("https://dood.to/e/b")]),
         }
         store = AsyncMock()
         store.get_snapshot = AsyncMock(side_effect=ConnectionError("redis down"))
-        uc = _answering_use_case(
+        uc = answering_use_case(
             sites,
-            _memory_cache(),
-            _Resolutions(),
+            memory_cache(),
+            Resolutions(),
             score_store=store,
             scoring_enabled=True,
         )
@@ -1974,10 +1671,10 @@ class TestAnswerPolicy:
     async def test_the_answers_resolutions_claim_captures_due_at_the_deadline(
         self,
     ) -> None:
-        resolutions = _ClaimSeeing()
-        sites = {"a": _site([_hit("https://voe.sx/e/1")])}
-        uc = _answering_use_case(
-            sites, _memory_cache(), resolutions, stream_deadline_seconds=7.0
+        resolutions = ClaimSeeing()
+        sites = {"a": fake_site([hit("https://voe.sx/e/1")])}
+        uc = answering_use_case(
+            sites, memory_cache(), resolutions, stream_deadline_seconds=7.0
         )
         before = time.monotonic()
 
@@ -1991,71 +1688,71 @@ class TestAnswerPolicy:
     async def test_at_the_target_while_a_slow_plugin_still_searches(
         self,
     ) -> None:
-        cache = _memory_cache()
+        cache = memory_cache()
         sites = {
-            "fast": _site([_hit("https://voe.sx/e/fast")]),
-            "slow": _site([_hit("https://dood.to/e/slow")], delay=0.5),
+            "fast": fake_site([hit("https://voe.sx/e/fast")]),
+            "slow": fake_site([hit("https://dood.to/e/slow")], delay=0.5),
         }
-        uc = _answering_use_case(sites, cache, _Resolutions(), resolve_target_count=1)
+        uc = answering_use_case(sites, cache, Resolutions(), resolve_target_count=1)
 
         started = time.monotonic()
         streams = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert time.monotonic() - started < 0.4
-        assert [_video(uc, s) for s in streams] == ["https://cdn.example/fast.mp4"]
+        assert [video(uc, s) for s in streams] == ["https://cdn.example/fast.mp4"]
         # The slow plugin goes on and its results reach the cache
-        await _eventually(lambda: len(_links(cache)) == 2)
+        await eventually(lambda: len(cached_links(cache)) == 2)
 
     async def test_links_resolve_while_the_search_runs(self) -> None:
         """The fast plugin's link is resolved before the slow one answers."""
-        resolutions = _Resolutions(delay=0.05)
+        resolutions = Resolutions(delay=0.05)
         slow_done = asyncio.Event()
 
         async def _slow(*_args: object, **_kwargs: object) -> list[SearchResult]:
             await asyncio.sleep(0.3)
             slow_done.set()
-            return [_hit("https://dood.to/e/slow")]
+            return [hit("https://dood.to/e/slow")]
 
-        slow = _site([])
+        slow = fake_site([])
         slow.isolated_search = AsyncMock(side_effect=_slow)
-        sites = {"fast": _site([_hit("https://voe.sx/e/fast")]), "slow": slow}
-        uc = _answering_use_case(sites, _memory_cache(), resolutions)
+        sites = {"fast": fake_site([hit("https://voe.sx/e/fast")]), "slow": slow}
+        uc = answering_use_case(sites, memory_cache(), resolutions)
         request = asyncio.create_task(
             uc.execute(make_request(), base_url="http://localhost:8080")
         )
 
-        await _eventually(lambda: "https://voe.sx/e/fast" in resolutions.store)
+        await eventually(lambda: "https://voe.sx/e/fast" in resolutions.store)
         assert not slow_done.is_set()
         streams = await request
 
-        assert sorted(_video(uc, s) for s in streams) == [
+        assert sorted(video(uc, s) for s in streams) == [
             "https://cdn.example/fast.mp4",
             "https://cdn.example/slow.mp4",
         ]
 
     async def test_when_everything_is_done_below_the_target(self) -> None:
         sites = {
-            "a": _site([_hit("https://voe.sx/e/1")]),
-            "b": _site([_hit("https://dood.to/e/2")], delay=0.2),
+            "a": fake_site([hit("https://voe.sx/e/1")]),
+            "b": fake_site([hit("https://dood.to/e/2")], delay=0.2),
         }
-        uc = _answering_use_case(sites, _memory_cache(), _Resolutions())
+        uc = answering_use_case(sites, memory_cache(), Resolutions())
 
         streams = await uc.execute(make_request(), base_url="http://localhost:8080")
 
-        assert sorted(_video(uc, s) for s in streams) == [
+        assert sorted(video(uc, s) for s in streams) == [
             "https://cdn.example/1.mp4",
             "https://cdn.example/2.mp4",
         ]
 
     async def test_at_the_deadline_with_what_is_resolved(self) -> None:
         sites = {
-            "fast": _site([_hit("https://voe.sx/e/fast")]),
-            "stuck": _site([], delay=30),
+            "fast": fake_site([hit("https://voe.sx/e/fast")]),
+            "stuck": fake_site([], delay=30),
         }
-        uc = _answering_use_case(
+        uc = answering_use_case(
             sites,
-            _memory_cache(),
-            _Resolutions(),
+            memory_cache(),
+            Resolutions(),
             plugin_timeout_seconds=10.0,
             stream_deadline_seconds=0.3,
         )
@@ -2064,14 +1761,14 @@ class TestAnswerPolicy:
         streams = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert 0.25 < time.monotonic() - started < 1.5
-        assert [_video(uc, s) for s in streams] == ["https://cdn.example/fast.mp4"]
+        assert [video(uc, s) for s in streams] == ["https://cdn.example/fast.mp4"]
         await uc.aclose()
 
     async def test_requests_on_one_search_both_answer_at_the_target(self) -> None:
-        cache = _memory_cache()
-        fast = _site([_hit("https://voe.sx/e/fast")])
-        sites = {"fast": fast, "slow": _site([], delay=0.5)}
-        uc = _answering_use_case(sites, cache, _Resolutions(), resolve_target_count=1)
+        cache = memory_cache()
+        fast = fake_site([hit("https://voe.sx/e/fast")])
+        sites = {"fast": fast, "slow": fake_site([], delay=0.5)}
+        uc = answering_use_case(sites, cache, Resolutions(), resolve_target_count=1)
 
         started = time.monotonic()
         first, second = await asyncio.gather(
@@ -2080,8 +1777,8 @@ class TestAnswerPolicy:
         )
 
         assert time.monotonic() - started < 0.4
-        assert [_video(uc, s) for s in first] == ["https://cdn.example/fast.mp4"]
-        assert [_video(uc, s) for s in second] == ["https://cdn.example/fast.mp4"]
+        assert [video(uc, s) for s in first] == ["https://cdn.example/fast.mp4"]
+        assert [video(uc, s) for s in second] == ["https://cdn.example/fast.mp4"]
         assert fast.isolated_search.await_count == 1
         await uc.aclose()
 
@@ -2119,10 +1816,10 @@ class TestTelemetry:
 
     async def test_a_new_search(self, t: Telemetry) -> None:
         sites = {
-            "a": _site([_hit("https://voe.sx/e/1")]),
-            "b": _site([_hit("https://dood.to/e/2")]),
+            "a": fake_site([hit("https://voe.sx/e/1")]),
+            "b": fake_site([hit("https://dood.to/e/2")]),
         }
-        uc = _answering_use_case(sites, _memory_cache(), _Resolutions(), telemetry=t)
+        uc = answering_use_case(sites, memory_cache(), Resolutions(), telemetry=t)
 
         streams = await uc.execute(make_request(), base_url="http://localhost:8080")
 
@@ -2132,17 +1829,17 @@ class TestTelemetry:
         assert _value(t, seconds, source="search") == 1
         assert _phases(t, "metadata", "found") == 1
         assert _phases(t, "resolve", "done") == 1
-        await _eventually(lambda: _phases(t, "search", "ok") == 1)
+        await eventually(lambda: _phases(t, "search", "ok") == 1)
         assert _value(t, "scavengarr_stremio_streams_bucket", le="2.0") == 1
         assert _value(t, "scavengarr_stremio_streams_bucket", le="1.0") == 0
 
     async def test_answer_at_the_target(self, t: Telemetry) -> None:
         sites = {
-            "fast": _site([_hit("https://voe.sx/e/fast")]),
-            "slow": _site([_hit("https://dood.to/e/slow")], delay=0.5),
+            "fast": fake_site([hit("https://voe.sx/e/fast")]),
+            "slow": fake_site([hit("https://dood.to/e/slow")], delay=0.5),
         }
-        uc = _answering_use_case(
-            sites, _memory_cache(), _Resolutions(), telemetry=t, resolve_target_count=1
+        uc = answering_use_case(
+            sites, memory_cache(), Resolutions(), telemetry=t, resolve_target_count=1
         )
 
         await uc.execute(make_request(), base_url="http://localhost:8080")
@@ -2152,13 +1849,13 @@ class TestTelemetry:
 
     async def test_answer_at_the_deadline(self, t: Telemetry) -> None:
         sites = {
-            "fast": _site([_hit("https://voe.sx/e/fast")]),
-            "stuck": _site([], delay=30),
+            "fast": fake_site([hit("https://voe.sx/e/fast")]),
+            "stuck": fake_site([], delay=30),
         }
-        uc = _answering_use_case(
+        uc = answering_use_case(
             sites,
-            _memory_cache(),
-            _Resolutions(),
+            memory_cache(),
+            Resolutions(),
             telemetry=t,
             plugin_timeout_seconds=10.0,
             stream_deadline_seconds=0.3,
@@ -2174,8 +1871,8 @@ class TestTelemetry:
         assert _value(t, "scavengarr_plugin_search_total", **stuck) == 1
 
     async def test_fresh_cache_entry(self, t: Telemetry) -> None:
-        site = _site([_hit("https://voe.sx/e/1")])
-        uc = _cached_use_case({"a": site}, _memory_cache(), telemetry=t)
+        site = fake_site([hit("https://voe.sx/e/1")])
+        uc = cached_use_case({"a": site}, memory_cache(), telemetry=t)
 
         await uc.execute(make_request())
         await uc.execute(make_request())
@@ -2184,37 +1881,37 @@ class TestTelemetry:
         assert _requests(t, "cache", "streams") == 1
 
     async def test_stale_cache_entry(self, t: Telemetry) -> None:
-        cache = _memory_cache()
-        cache.data[_KEY] = CachedSearch(
-            results=[_hit("https://voe.sx/e/old")],
+        cache = memory_cache()
+        cache.data[SEARCH_KEY] = CachedSearch(
+            results=[hit("https://voe.sx/e/old")],
             total=1,
-            stored_at=time.time() - _TTL - 1,
+            stored_at=time.time() - SEARCH_TTL - 1,
         )
-        site = _site([_hit("https://voe.sx/e/new")])
-        uc = _cached_use_case({"a": site}, cache, telemetry=t)
+        site = fake_site([hit("https://voe.sx/e/new")])
+        uc = cached_use_case({"a": site}, cache, telemetry=t)
 
         await uc.execute(make_request())
 
         assert _requests(t, "stale", "streams") == 1
-        await _eventually(lambda: _phases(t, "search", "ok") == 1)
+        await eventually(lambda: _phases(t, "search", "ok") == 1)
 
     async def test_a_request_joining_a_running_search(self, t: Telemetry) -> None:
-        site = _site([_hit("https://voe.sx/e/1")], delay=0.05)
-        uc = _cached_use_case({"a": site}, _memory_cache(), telemetry=t)
+        site = fake_site([hit("https://voe.sx/e/1")], delay=0.05)
+        uc = cached_use_case({"a": site}, memory_cache(), telemetry=t)
 
         await asyncio.gather(uc.execute(make_request()), uc.execute(make_request()))
 
         assert _requests(t, "search", "streams") == 1
         assert _requests(t, "joined", "streams") == 1
-        await _eventually(lambda: _phases(t, "search", "ok") == 1)
+        await eventually(lambda: _phases(t, "search", "ok") == 1)
         seconds = "scavengarr_stremio_phase_seconds_count"
         assert _value(t, seconds, phase="search") == 1
 
     async def test_a_cached_answer_counts_without_a_duration(
         self, t: Telemetry
     ) -> None:
-        resolutions = _Resolutions(alive=(_VOE,), delay=0.05)
-        uc = _from_cache([_link(_VOE), _link(_DOOD)], resolutions, telemetry=t)
+        resolutions = Resolutions(alive=(VOE,), delay=0.05)
+        uc = from_cache([hoster_link(VOE), hoster_link(DOOD)], resolutions, telemetry=t)
 
         await uc.execute(make_request(), base_url="http://localhost:8080")
 
@@ -2222,7 +1919,7 @@ class TestTelemetry:
         assert _phases(t, "resolve", "cached") == 1
         seconds = "scavengarr_stremio_phase_seconds_count"
         assert _value(t, seconds, phase="resolve") is None
-        await _eventually(lambda: _phases(t, "background_resolve", "done") == 1)
+        await eventually(lambda: _phases(t, "background_resolve", "done") == 1)
 
     async def test_title_not_found(self, t: Telemetry) -> None:
         tmdb = AsyncMock()
@@ -2245,7 +1942,7 @@ class TestTelemetry:
         assert _requests(t, "none", "no_plugins") == 1
 
     async def test_nothing_found(self, t: Telemetry) -> None:
-        uc = _cached_use_case({"a": _site([])}, _memory_cache(), telemetry=t)
+        uc = cached_use_case({"a": fake_site([])}, memory_cache(), telemetry=t)
 
         assert await uc.execute(make_request()) == []
 
@@ -2265,8 +1962,8 @@ class TestTelemetry:
     async def test_with_tracing_a_request_is_one_trace(self) -> None:
         exporter = InMemorySpanExporter()
         t = Telemetry(tracing=Tracing(SimpleSpanProcessor(exporter)))
-        sites = {"a": _site([_hit("https://voe.sx/e/1")])}
-        uc = _answering_use_case(sites, _memory_cache(), _Resolutions(), telemetry=t)
+        sites = {"a": fake_site([hit("https://voe.sx/e/1")])}
+        uc = answering_use_case(sites, memory_cache(), Resolutions(), telemetry=t)
 
         await uc.execute(make_request(), base_url="http://localhost:8080")
         await uc.aclose()
@@ -2322,30 +2019,30 @@ class TestMeasuredQuality:
     ) -> None:
         async def _resolve(url: str, hoster: str = "") -> ResolvedStream:
             if measured and "streamtape" in url:
-                return replace(_resolved(url), quality=StreamQuality.HD_1080P)
-            return _resolved(url)
+                return replace(resolved(url), quality=StreamQuality.HD_1080P)
+            return resolved(url)
 
         links = [
             dict(self._VOE_LINK, release=self._PLAIN),
             dict(self._TAPE_LINK, release=self._PLAIN),
         ]
-        uc = _resolving_use_case(links, _resolve)
+        uc = resolving_use_case(links, _resolve)
 
         result = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert [s.name for s in result] == names
         assert first in result[0].description
         # The saved links follow their streams to the new places
-        assert [_video(uc, s) for s in result][0].endswith(
+        assert [video(uc, s) for s in result][0].endswith(
             "tape1.mp4" if measured else "voe1.mp4"
         )
 
     async def test_a_badge_stays_without_a_measurement(self) -> None:
         async def _resolve(url: str, hoster: str = "") -> ResolvedStream:
-            return _resolved(url)
+            return resolved(url)
 
         link = dict(self._VOE_LINK, release="Iron.Man.2008.German.720p.WEB")
-        uc = _resolving_use_case([link], _resolve)
+        uc = resolving_use_case([link], _resolve)
 
         result = await uc.execute(make_request(), base_url="http://localhost:8080")
 
@@ -2353,13 +2050,13 @@ class TestMeasuredQuality:
 
     async def test_the_measured_size_shows_when_the_plugin_gave_none(self) -> None:
         async def _resolve(url: str, hoster: str = "") -> ResolvedStream:
-            return replace(_resolved(url), size_bytes=1_500_000_000)
+            return replace(resolved(url), size_bytes=1_500_000_000)
 
         links = [
             dict(self._VOE_LINK, release=self._PLAIN),
             dict(self._TAPE_LINK, release=self._PLAIN, size="1.5 GB"),
         ]
-        uc = _resolving_use_case(links, _resolve)
+        uc = resolving_use_case(links, _resolve)
 
         result = await uc.execute(make_request(), base_url="http://localhost:8080")
 
@@ -2371,11 +2068,9 @@ class TestMeasuredQuality:
         assert "1.4 GB" not in tape
 
     async def test_a_cached_answer_carries_the_measurement(self) -> None:
-        resolutions = _Resolutions(alive=(_VOE,))
-        resolutions.store[_VOE] = replace(
-            _resolved(_VOE), quality=StreamQuality.HD_1080P
-        )
-        uc = _from_cache([_link(_VOE, self._PLAIN)], resolutions)
+        resolutions = Resolutions(alive=(VOE,))
+        resolutions.store[VOE] = replace(resolved(VOE), quality=StreamQuality.HD_1080P)
+        uc = from_cache([hoster_link(VOE, self._PLAIN)], resolutions)
 
         streams = await uc.execute(make_request(), base_url="http://localhost:8080")
 
