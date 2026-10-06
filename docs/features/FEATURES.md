@@ -115,6 +115,11 @@ Validates file availability and extracts direct video URLs from streaming hoster
 | FireStream | [x] Implemented | Page token → `/api/videos/<id>/resolve` → signed HLS (JD2 `FirestreamTo`) |
 | Vixeo | [x] Implemented | Browser capture of Vidsonic's player app |
 | Playmate | [x] Implemented | `/api/video-meta` + `/api/s` → HLS master (JD2 `PlaymateTo`) |
+| Mixdrop | [x] Implemented | `MDCore.wurl` from the packed player setup → MP4 |
+| gxplayer | [x] Implemented | Watch page video object → HLS master (JD2 `GxplayerXyz`) |
+| fsst | [x] Implemented | Kernel Video Sharing player → best-quality `get_file` MP4 |
+| Veev | [x] Implemented | LZW-decoded page token → player API → MP4 (JD2 `VeevTo`) |
+| Vinovo | [x] Implemented | Page token → `/api/file/url/{id}` → stream token (JD2 `VinovoTo`) |
 
 ### Validate-only streaming hosters (no video extraction)
 
@@ -125,7 +130,7 @@ These resolvers confirm the embed URL is alive and return it unchanged.
 | VidGuard | [x] Implemented | Multi-domain embed page validation |
 | Vidking | [x] Implemented | Embed page validation |
 | Stmix | [x] Implemented | Embed page validation |
-| SerienStream | [x] Implemented | s.to / serien.sx domain matching |
+| SerienStream | [x] Implemented | `serienstream.*` / `serien.*` domain matching |
 | SendVid | [x] Implemented | Availability check |
 
 ### DDL resolvers (validate only)
@@ -137,7 +142,7 @@ These resolvers confirm the embed URL is alive and return it unchanged.
 | DDownload | [x] Implemented | XFS page check with canonical URL normalization |
 | Mediafire | [x] Implemented | Public file info API, offline via error 110 |
 | GoFile | [x] Implemented | Ephemeral guest token, content availability API |
-| Generic DDL | [x] Implemented | Alfafile, AlphaDDL, Fastpic, Filecrypt, FileFactory, FSST, Go4up, Mixdrop, Nitroflare, 1fichier, Turbobit, Uploaded |
+| Generic DDL | [x] Implemented | Alfafile, AlphaDDL, Fastpic, Filecrypt, FileFactory, Go4up, Nitroflare, 1fichier, Turbobit, Uploaded |
 
 ### XFS consolidated resolvers (generic `XFSResolver`)
 
@@ -145,7 +150,7 @@ These resolvers confirm the embed URL is alive and return it unchanged.
 |---|---|
 | DDL (validate only) | Katfile, Hexupload, Clicknupload, Filestore, Uptobox, Hotlink |
 | Video (extract URL) | Funxd, Bigwarp, Dropload, Goodstream, Savefiles, Streamwish, Vidmoly, Vidoza, Vidhide, Mp4Upload, Uqload, Vidshar, Vidroba, Vidspeed, StreamRuby, Lulustream, Upstream, Vidnest |
-| Captcha-required (return `None`) | Veev, Vinovo, Wolfstream |
+| Captcha-required (return `None`) | Wolfstream |
 
 ### System features
 
@@ -227,7 +232,7 @@ Links are validated in parallel before inclusion in search results and CrawlJobs
 | Feature | Status | Details |
 |---|---|---|
 | HEAD request primary | [x] Implemented | Fast validation without downloading |
-| GET fallback | [x] Implemented | On any HEAD failure (some hosters block HEAD) |
+| GET fallback | [x] Implemented | On a HEAD status of 400 or more, a read timeout or another error, not after a failed connection (some hosters block HEAD) |
 | Parallel execution | [x] Implemented | Semaphore-bounded concurrent checks (`validation_max_concurrent`) |
 | Status-based decisions | [x] Implemented | 2xx/3xx valid; ≥400 or network error invalid |
 | Redirect following | [x] Implemented | Redirects are always followed |
