@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: An Echo Leaves No Hoster Out of a Cached Answer
+- A cached answer took each hoster's first cached outcome in rank order, also an echoed embed URL (a resolver that only validates a link). The answer drops echoes, so the hoster was left out of every cached answer for the hour the echo stayed cached, although a lower-ranked link of it had a video. `_cached_resolutions` passes echoes like dead links now. Found by the code review (2026-10-06).
+
 ### Fix: A Stored Link Is as Old as Its Resolution
 - A stored link took the time its answer was built as `resolved_at`, also for a stream from the resolver registry's cache, which answers for an hour. `/play` and the HLS proxy therefore counted video URLs up to two hours old as fresh (fresh: one hour) and redirected to expired tokens.
 - `ResolvedStream.resolved_at` carries the time of the resolution: the registry stamps it once, its cache answers with it, and `build_cache_link` and `StremioLinks` store it. Found by the code review (2026-10-06).

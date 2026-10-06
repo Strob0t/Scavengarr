@@ -2084,6 +2084,24 @@ class TestCachedAnswers:
         await _eventually(lambda: _VOE in resolutions.store)
         assert resolutions.calls == [_VOE]
 
+    async def test_an_echoed_better_link_keeps_the_hosters_cached_stream(
+        self,
+    ) -> None:
+        """A resolver that only validates a link echoes its embed URL. The
+        cached answer took that echo as the hoster's stream, dropped it and
+        left the hoster out for the hour the echo stayed cached (code
+        review, 2026-10-06)."""
+        resolutions = _Resolutions(alive=(_VOE_2,))
+        resolutions.store[_VOE] = ResolvedStream(video_url=_VOE)
+        uc = _from_cache(
+            [_link(_VOE), _link(_VOE_2, "Iron.Man.2008.German.720p.WEB")],
+            resolutions,
+        )
+
+        streams = await uc.execute(_make_request(), base_url="http://localhost:8080")
+
+        assert [_video(uc, s) for s in streams] == ["https://cdn.example/second.mp4"]
+
     async def test_without_a_cached_stream_the_answer_waits_as_before(self) -> None:
         resolutions = _Resolutions(dead=(_VOE,), delay=0.1)
         uc = _from_cache([_link(_VOE), _link(_DOOD)], resolutions)
