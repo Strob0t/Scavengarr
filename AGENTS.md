@@ -110,8 +110,8 @@ Invariants:
 ## 5. Python rules (MUST READ!)
 
 - `from __future__ import annotations` in every file.
-- Modern typing only: `T | None`, `list[T]`, `dict[K, V]`, `collections.abc.Iterable`; never `Optional`/`List`/`Dict`/`typing.Iterable`. From `typing` import only `Any`, `Protocol`, `Literal`, `TypeVar`, `runtime_checkable`.
-- Fully typed signatures. Ports use `Protocol` (not `ABC`). Entities/value objects are `@dataclass` (`frozen=True` for immutables). `Literal` for fixed values; casts only with runtime checks.
+- Modern typing only: `T | None`, `list[T]`, `dict[K, V]`, `collections.abc.Iterable`; never `Optional`/`List`/`Dict`/`typing.Iterable`. From `typing` import only `Any`, `Protocol`, `Literal`, `TypeVar`, `runtime_checkable`, `cast` and `TYPE_CHECKING` (for imports only annotations need: browser types, or a module that would import back).
+- Fully typed signatures. Ports use `Protocol` (not `ABC`). Entities/value objects are `@dataclass` (`frozen=True` for immutables). `Literal` for fixed values; `cast` only where a runtime check or the program guarantees the type (the app sets `app.state = AppState()`, so routers read `cast(AppState, request.app.state)`).
 - No mutable default arguments (use `None` + create inside). Never swallow exceptions (`except: pass`); log and re-raise or map cleanly.
 - Async: `asyncio.gather` over sequential `await` in loops; CPU-bound work goes off the event loop with `asyncio.to_thread` (`run_in_executor` drops the log context, `request_id` included). Plugin parsers use `selectolax` (lexbor, CSS selectors; helpers and pitfalls in `infrastructure/plugins/dom.py`), and every page goes through `await parse_page(parser, html)`, which parses pages from 32 KiB in a worker thread.
 - Prefer small functions/modules over deep class hierarchies; dependencies injected explicitly via constructors/factories.
