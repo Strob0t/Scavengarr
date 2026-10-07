@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Chore: HLS Throughput Probe
+- Whether the HLS proxy should fetch ahead (read-ahead) or split segments into parallel byte ranges against a CDN's per-connection throttle (FireStream, the stutter of 2026-10-06) was a guess from one playback. `prodctl.py probe hls_throughput` measures it from the Pi: the hoster's newest stored HLS link, its highest variant, four runs of ten segments (one connection, read-ahead 2, 3 byte ranges, both at once), with Mbit/s per run, the title's bitrate, whether the CDN honoured the ranges and the connections a stutter-free playback needs ([Observability](docs/features/observability.md#production-diagnostics)).
+
 ### Added: Every Setting from the Environment
 - Only 30 settings had an environment variable; the `stremio` section, most of `cache` and `scoring` and the link validation keys were YAML-only, so a container could not be configured without a mounted file. Every key of a section now reads `SCAVENGARR_<SECTION>_<KEY>` (`SCAVENGARR_STREMIO_PLUGIN_TIMEOUT_SECONDS`), every top-level key `SCAVENGARR_<KEY>`; the field's type parses the value, JSON for the dict-typed settings. The older flat names stay and win over the sectioned name of the same key; when the two disagree the startup log warns (`config_env_conflict`), and a `SCAVENGARR_<SECTION>_*` name that names no key, such as a misspelled one, is reported (`config_unknown_env`).
 - `config_effective` names the layer of each changed value (`sources`: `yaml`, `env`, `cli` or `defaults`).
