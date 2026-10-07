@@ -121,7 +121,8 @@ class TestVerifyDomain:
     @pytest.mark.asyncio
     async def test_a_challenge_answer_counts_as_reachable(self) -> None:
         """kinoger answers 403 with a Cloudflare challenge: the site is up
-        behind it, the plugin's browser fallback solves it."""
+        behind it, the plugin's browser fallback solves it. The domain is
+        not pinned: the next window checks again."""
         plugin = _TestPlugin()
         challenge = _head_response(
             "example.com", status=403, headers={"cf-mitigated": "challenge"}
@@ -132,7 +133,7 @@ class TestVerifyDomain:
 
         await plugin._verify_domain()
 
-        assert plugin._domain_verified is True
+        assert plugin._domain_verified is False
         assert plugin.base_url == "https://example.com"
 
     @pytest.mark.asyncio
@@ -150,7 +151,8 @@ class TestVerifyDomain:
 
     @pytest.mark.asyncio
     async def test_an_error_page_is_still_the_site(self) -> None:
-        """No domain answers below 400: the first answering one is used."""
+        """No domain answers below 400: the first answering one is used,
+        without pinning it."""
         plugin = _TestPlugin()
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.head = AsyncMock(
@@ -163,8 +165,63 @@ class TestVerifyDomain:
 
         await plugin._verify_domain()
 
-        assert plugin._domain_verified is True
+        assert plugin._domain_verified is False
         assert plugin.base_url == "https://example.com"
+
+    @pytest.mark.asyncio
+    async def test_a_transient_error_does_not_pin_the_domain(self) -> None:
+        """A 429 at check time serves this search; the next window checks
+        again and a 200 then pins the domain (before, a 4xx pinned it for
+        the process lifetime; review of step 21)."""
+        plugin = _TestPlugin()
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.head = AsyncMock(
+            side_effect=[
+                _head_response("example.com", status=429),
+                _head_response("fallback.com", status=429),
+                _head_response("example.com"),
+            ]
+        )
+        plugin._client = mock_client
+
+        await plugin._verify_domain()
+        assert plugin._domain_verified is False
+        assert plugin.base_url == "https://example.com"
+
+        plugin._domain_recheck_at = 0.0  # the window is over
+        await plugin._verify_domain()
+
+        assert mock_client.head.await_count == 3
+        assert plugin._domain_verified is True
+
+    @pytest.mark.asyncio
+    async def test_an_answering_domain_serves_its_window(self) -> None:
+        """Within the window, no new HEAD checks."""
+        plugin = _TestPlugin()
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.head = AsyncMock(
+            return_value=_head_response("example.com", status=404)
+        )
+        plugin._client = mock_client
+
+        await plugin._verify_domain()
+        await plugin._verify_domain()
+
+        assert mock_client.head.await_count == 2  # both domains, once
+        assert plugin._domain_verified is False
+
+    @pytest.mark.asyncio
+    async def test_a_working_domain_is_pinned(self) -> None:
+        plugin = _TestPlugin()
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.head = AsyncMock(return_value=_head_response("example.com"))
+        plugin._client = mock_client
+
+        await plugin._verify_domain()
+        await plugin._verify_domain()
+
+        assert mock_client.head.await_count == 1
+        assert plugin._domain_verified is True
 
     @pytest.mark.asyncio
     async def test_all_domains_fail(self) -> None:

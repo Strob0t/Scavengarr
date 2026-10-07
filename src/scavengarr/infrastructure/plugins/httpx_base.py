@@ -45,6 +45,10 @@ _CF_BLOCK_MEMO_S = 30 * 60
 # A challenge this soon after httpx took over the browser's session means the
 # site does not accept that session from httpx: its pages go to the browser
 _SESSION_TRUST_S = 5 * 60
+# A domain that only answered an error page or a challenge at the domain
+# check serves this long, then the check runs again; a transient 429, 403
+# or 404 at check time must not pin a domain for the process lifetime
+_ANSWERING_DOMAIN_RECHECK_S = 5 * 60
 
 
 def _forget_solve(solve: asyncio.Task[str | None]) -> None:
@@ -157,6 +161,9 @@ class HttpxPluginBase:
     def __init__(self) -> None:
         self._client: httpx.AsyncClient | None = None
         self._domain_verified: bool = False
+        # Until when an answering-only domain (_use_domain, pinned=False)
+        # serves without a new check
+        self._domain_recheck_at: float = 0.0
         self.base_url: str = f"https://{self._domains[0]}" if self._domains else ""
         # The base URL before the site moved (_follow_site_move)
         self._moved_from: str | None = None
@@ -198,14 +205,18 @@ class HttpxPluginBase:
         Uses the *final* URL after redirects so that domains that
         redirect (e.g. ``aniworld.info`` → ``www.aniworld.info``)
         produce a correct ``base_url`` for subsequent requests. The first
-        domain answering below 400 wins; without one, the first that
-        answers at all (``_site_answers``: an error page, or a Cloudflare
-        challenge the plugin's browser fallback solves) is used. Raises
+        domain answering below 400 wins and stays for the process
+        lifetime; without one, the first that answers at all
+        (``_site_answers``: an error page, or a Cloudflare challenge the
+        plugin's browser fallback solves) serves the searches of the next
+        ``_ANSWERING_DOMAIN_RECHECK_S`` and is checked again then. Raises
         ``PluginUnreachableError`` when no domain answers; the next
         search checks again.
         """
         if self._domain_verified or len(self._domains) <= 1:
             self._domain_verified = True
+            return
+        if time.monotonic() < self._domain_recheck_at:
             return
 
         client = await self._ensure_client()
@@ -218,7 +229,7 @@ class HttpxPluginBase:
                 self._log.debug(f"{self.name}_domain_check_failed", domain=domain)
                 continue
             if resp.status_code < 400:
-                self._use_domain(domain, resp)
+                self._use_domain(domain, resp, pinned=True)
                 return
             if answering is None and _site_answers(resp):
                 answering = (domain, resp)
@@ -228,16 +239,21 @@ class HttpxPluginBase:
             self._log.info(
                 f"{self.name}_domain_answers", domain=domain, status=resp.status_code
             )
-            self._use_domain(domain, resp)
+            self._use_domain(domain, resp, pinned=False)
             return
         self._log.warning(f"{self.name}_no_domain_reachable")
         raise PluginUnreachableError(self.name)
 
-    def _use_domain(self, domain: str, resp: httpx.Response) -> None:
+    def _use_domain(self, domain: str, resp: httpx.Response, *, pinned: bool) -> None:
         """Take the domain's final URL after any redirects (e.g. a ``www.``
-        prefix) as ``base_url``."""
+        prefix) as ``base_url``: for the process lifetime when *pinned* (the
+        domain works), else for ``_ANSWERING_DOMAIN_RECHECK_S`` (it only
+        answered an error page or a challenge)."""
         self.base_url = str(resp.url).rstrip("/")
-        self._domain_verified = True
+        self._domain_verified = pinned
+        self._domain_recheck_at = (
+            0.0 if pinned else time.monotonic() + _ANSWERING_DOMAIN_RECHECK_S
+        )
         self._log.info(
             f"{self.name}_domain_found", domain=domain, resolved=resp.url.host
         )
@@ -248,6 +264,7 @@ class HttpxPluginBase:
             await self._client.aclose()
         self._client = None
         self._domain_verified = False
+        self._domain_recheck_at = 0.0
 
     def _follow_site_move(self, resp: httpx.Response) -> None:
         """Make a permanent move of the site to another host the base URL.

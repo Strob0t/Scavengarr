@@ -69,13 +69,13 @@ async def _verify_domain(self) -> None:
         except Exception:
             continue
         if resp.status_code < 400:
-            self._use_domain(domain, resp)  # final URL after redirects
+            self._use_domain(domain, resp, pinned=True)  # final URL, stays
             return
         if answering is None and _site_answers(resp):  # below 500, or a challenge
             answering = (domain, resp)
 
     if answering is not None:  # an error page or a challenge: the site is up
-        self._use_domain(*answering)
+        self._use_domain(*answering, pinned=False)  # checked again after 300 s
         return
     # No domain answers: the next search checks again
     self._log.warning(f"{self.name}_no_domain_reachable")
@@ -84,7 +84,7 @@ async def _verify_domain(self) -> None:
 
 Key behaviors:
 - `HEAD` request per domain with a 5 s timeout (`DEFAULT_DOMAIN_CHECK_TIMEOUT`)
-- The first status `< 400` wins; errors and timeouts move on to the next domain. Without one, the first domain that answers at all is used (`{name}_domain_answers`): a status below 500 (an error page is still the site) or a Cloudflare challenge (403/503 with `cf-mitigated`: kinoger), the health check's rule; the plugin's own requests decide then, and the browser fallback solves a challenge
+- The first status `< 400` wins; errors and timeouts move on to the next domain. Without one, the first domain that answers at all is used (`{name}_domain_answers`): a status below 500 (an error page is still the site) or a Cloudflare challenge (403/503 with `cf-mitigated`: kinoger), the health check's rule; the plugin's own requests decide then, and the browser fallback solves a challenge. Such a domain serves the searches of the next 300 s (`_ANSWERING_DOMAIN_RECHECK_S`) and is checked again then; only a domain answering below 400 stays for the process lifetime, so a transient 429, 403 or 404 at check time does not pin a domain
 - `base_url` uses the final URL after redirects, so a bare domain that redirects to `www.` produces a correct base
 - If all domains fail, `{name}_no_domain_reachable` is logged and `PluginUnreachableError` (`domain/plugins/base.py`) raised: `base_url` and `_domain_verified` stay as they were, so the next search checks again. A Stremio search marks the plugin unreachable in the health monitor at once, until its recheck finds the site answering ([Stremio Addon](./stremio-addon.md#request-flow)); a Torznab search logs the error and answers without the plugin
 
