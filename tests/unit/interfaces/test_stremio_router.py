@@ -5,10 +5,11 @@ from __future__ import annotations
 import time
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from scavengarr.application.stremio.answer import StreamAnswer
+from scavengarr.application.stremio.answer import AnswerSource, StreamAnswer
 from scavengarr.application.use_cases.stremio_links import StremioLinks
 from scavengarr.domain.entities.stremio import (
     CachedStreamLink,
@@ -22,9 +23,11 @@ from scavengarr.interfaces.api.stremio.router import (
 )
 
 
-def _answer(streams: list[StremioStream]) -> StreamAnswer:
-    """The use case's answer: a fresh, complete search."""
-    return StreamAnswer(streams, "search", True, ())
+def _answer(
+    streams: list[StremioStream], source: AnswerSource = "search", complete: bool = True
+) -> StreamAnswer:
+    """The use case's answer: a fresh, complete search unless said otherwise."""
+    return StreamAnswer(streams, source, complete, ())
 
 
 def _make_app(
@@ -428,6 +431,31 @@ class TestStreamEndpoint:
 
         resp = client.get("/api/v1/stremio/stream/movie/tt1234567.json")
 
+        assert resp.headers["access-control-allow-origin"] == "*"
+
+    @pytest.mark.parametrize(
+        ("source", "complete", "x_cache"),
+        [
+            ("search", False, "MISS"),
+            ("cache", True, "HIT"),
+            ("stale", True, "STALE"),
+            ("joined", False, "JOINED"),
+        ],
+    )
+    def test_cache_and_search_complete_headers(
+        self, source: AnswerSource, complete: bool, x_cache: str
+    ) -> None:
+        """Where the answer came from and whether its search still runs
+        (continue-cut-searches): a retry knows what to expect."""
+        stream_uc = AsyncMock()
+        stream_uc.answer = AsyncMock(return_value=_answer([], source, complete))
+        app = _make_app(stremio_stream_uc=stream_uc)
+        client = TestClient(app)
+
+        resp = client.get("/api/v1/stremio/stream/movie/tt0371746.json")
+
+        assert resp.headers["x-cache"] == x_cache
+        assert resp.headers["x-search-complete"] == ("true" if complete else "false")
         assert resp.headers["access-control-allow-origin"] == "*"
 
     def test_returns_streams_for_tmdb_movie(self) -> None:

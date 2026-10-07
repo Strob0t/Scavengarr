@@ -45,6 +45,17 @@ _CORS_HEADERS = {
     "Access-Control-Allow-Headers": "*",
 }
 
+# The stream response's X-Cache header per answer source: a fresh search, a
+# cache entry, a stale entry (refreshed in the background), a shared wait
+# for the title's running search; "none" ended before any search
+_CACHE_STATUS = {
+    "search": "MISS",
+    "cache": "HIT",
+    "stale": "STALE",
+    "joined": "JOINED",
+    "none": "MISS",
+}
+
 # FFmpeg's own User-Agent: Stremio's streaming server probes and converts with it
 _FFMPEG_AGENT = "Lavf/"
 
@@ -346,7 +357,14 @@ async def stremio_stream(
         missing_count=len(answer.missing),
     )
 
-    return JSONResponse(content={"streams": stremio_streams}, headers=_CORS_HEADERS)
+    # Where the answer came from and whether a search still runs for it
+    # (no plugin missing, no continuation): what a retry can expect
+    headers = {
+        **_CORS_HEADERS,
+        "X-Cache": _CACHE_STATUS[answer.source],
+        "X-Search-Complete": "true" if answer.complete else "false",
+    }
+    return JSONResponse(content={"streams": stremio_streams}, headers=headers)
 
 
 @router.api_route("/play/{stream_id}", methods=["GET", "HEAD"], response_model=None)

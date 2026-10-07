@@ -94,6 +94,7 @@ GET /api/v1/stremio/stream/{content_type}/{stream_id}.json
 - Movie: `stream_id` = `tt1234567`, `tmdb:12345` or `kitsu:11614`
 - Series: `stream_id` = `tt1234567:1:5` or `tmdb:12345:1:5` (season 1, episode 5), `kitsu:41982:3` (episode 3 as Kitsu counts, no season; [Anime Ids](#anime-ids))
 - Response: `{"streams": [StremioStream, ...]}`
+- Response headers: `X-Cache` (`MISS` for a fresh search, `HIT` for a cache entry, `STALE` for a stale entry refreshed in the background, `JOINED` for a shared wait for the title's running search) and `X-Search-Complete` (`true` when no plugin is missing from the answer's entry and no search runs for it, else `false`: a retry a minute later finds more). `scripts/stremio_round.py` records both.
 
 Each stream contains:
 

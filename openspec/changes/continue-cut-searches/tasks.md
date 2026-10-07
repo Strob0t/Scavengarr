@@ -50,8 +50,8 @@ audit's baseline (7.1) must run before the filter change (6) ships.
 
 ## 8. Stream response headers
 
-- [ ] 8.1 `interfaces/api/stremio/router.py`: `X-Cache` from the source (`MISS`, `HIT`, `STALE`, `JOINED`) and `X-Search-Complete` (`true`/`false`) on the stream response.
-- [ ] 8.2 Router tests for both headers; `scripts/stremio_round.py` records both (its `X-Cache` column exists).
+- [x] 8.1 `interfaces/api/stremio/router.py`: `X-Cache` from the source (`MISS`, `HIT`, `STALE`, `JOINED`) and `X-Search-Complete` (`true`/`false`) on the stream response.
+- [x] 8.2 Router tests for both headers; `scripts/stremio_round.py` records both (its `X-Cache` column exists).
 
 ## 9. Docs and production check
 
