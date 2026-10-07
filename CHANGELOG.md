@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: The Docs Name Paths That Exist
+- `tests/unit/infrastructure/test_docs_paths.py` fails when `AGENTS.md`, `README.md`, `CONTRIBUTING.md` or a doc under `docs/features/` or `docs/architecture/` names a repository path in backticks that does not exist (plans and OpenSpec changes name future files and are not checked). Paths relative to the package (`infrastructure/plugins/dom.py`) or to a layer, as the architecture tables cite them (`plugins/base.py`, `cache/redis_adapter.py`), count when they exist there; the current docs name no missing path.
+
 ### Fix: The Cache Section Reads No Unprefixed `CACHE_*` Variables
 - `CacheConfig` was a pydantic-settings `BaseSettings` with the prefix `CACHE_`, so validating the merged config read `CACHE_REDIS_URL`, `CACHE_SEARCH_TTL_SECONDS`, `CACHE_CRAWLJOB_TTL_SECONDS` and `CACHE_MAX_CONCURRENT` from the environment as defaults below the YAML, although the docs said they are not read. The section is a plain model like the others now; the environment speaks through `SCAVENGARR_CACHE_*` only ([configuration.md](docs/features/configuration.md)).
 
