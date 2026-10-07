@@ -2375,6 +2375,41 @@ class TestProxyTelemetry:
         assert mock_stream.await_args.kwargs["head"] is True
         assert self._bytes(t, "segment") is None
 
+    @patch(f"{_PROXY_MODULE}.stream_file", new_callable=AsyncMock)
+    def test_file_bytes(self, mock_stream: AsyncMock) -> None:
+        """A proxied file is recorded on the HLS proxy's metrics as ``file``."""
+        mock_stream.return_value = _file_answer(
+            206,
+            headers={
+                "content-type": "video/mp4",
+                "content-range": "bytes 0-3145727/3145728",
+                "content-length": "3145728",
+            },
+            chunks=(b"\x00" * 1048576,) * 3,
+        )
+        client, t = self._client(_make_file_link())
+
+        resp = client.get(
+            f"{_PREFIX}/stremio/proxy/file-abc/{FILE_NAME}",
+            headers={"Range": "bytes=0-"},
+        )
+
+        assert resp.status_code == 206
+        assert len(resp.content) == 3 * 1048576
+        assert self._total(t, "file", "206") == 1
+        assert self._bytes(t, "file") == 3 * 1048576
+
+    @patch(f"{_PROXY_MODULE}.stream_file", new_callable=AsyncMock)
+    def test_a_head_request_counts_no_file_bytes(self, mock_stream: AsyncMock) -> None:
+        mock_stream.return_value = _file_answer(chunks=())
+        client, t = self._client(_make_file_link())
+
+        resp = client.head(f"{_PREFIX}/stremio/proxy/file-abc/{FILE_NAME}")
+
+        assert resp.status_code == 200
+        assert self._total(t, "file", "200") == 1
+        assert self._bytes(t, "file") is None
+
     def test_converter_refused(self) -> None:
         client, t = self._client(_make_hls_link())
 

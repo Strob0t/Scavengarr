@@ -27,9 +27,9 @@ from `origin/staging`, after step 21 is complete and before step 19.
 
 ## 4. Telemetry and docs
 
-- [ ] 4.1 The file route records the `hls_proxy` stage with `kind="file"` and the status string as outcome, and the bytes to `hls_proxy_bytes{kind="file"}` through `_counted`, aborted transfers included; test in `TestProxyTelemetry`; log lines carry the CDN host only.
-- [ ] 4.2 Middleware test pins that `/api/v1/stremio/proxy/<id>/file` is rate-limit exempt and its query masked (`_EXEMPT_PREFIXES` covers `/proxy/`).
-- [ ] 4.3 Docs in the same commit as 4.1: `docs/features/stremio-addon.md` (the file proxy: the four hosters, the route, ranges, refusals, old records keep `/play`), `docs/features/hoster-resolvers.md` (`address_bound` next to `needs_playback_check`), `docs/features/observability.md` (`kind="file"` on the HLS proxy metrics), AGENTS.md §7 one sentence after the `needs_playback_check` sentence, `CHANGELOG.md` one entry for step 26.
+- [x] 4.1 The file route records the `hls_proxy` stage with `kind="file"` and the status string as outcome, and the bytes to `hls_proxy_bytes{kind="file"}` through `_counted`, aborted transfers included; test in `TestProxyTelemetry`; log lines carry the CDN host only.
+- [x] 4.2 Middleware test pins that `/api/v1/stremio/proxy/<id>/file` is rate-limit exempt and its query masked (`_EXEMPT_PREFIXES` covers `/proxy/`).
+- [x] 4.3 Docs in the same commit as 4.1: `docs/features/stremio-addon.md` (the file proxy: the four hosters, the route, ranges, refusals, old records keep `/play`), `docs/features/hoster-resolvers.md` (`address_bound` next to `needs_playback_check`), `docs/features/observability.md` (`kind="file"` on the HLS proxy metrics), AGENTS.md §7 one sentence after the `needs_playback_check` sentence, `CHANGELOG.md` one entry for step 26.
 
 ## 5. The number for files
 

@@ -31,6 +31,14 @@ class TestLoggableQuery:
             == "t=***&q=***&i=***&e=***"
         )
 
+    def test_a_proxied_files_query_is_masked_too(self) -> None:
+        """The file proxy is under the same prefix: a CDN token or expiry in
+        its query is masked like a segment's."""
+        assert (
+            loggable_query("/api/v1/stremio/proxy/abc/file", "s=tok3n&e=1700000000")
+            == "s=***&e=***"
+        )
+
     def test_no_query_stays_empty(self) -> None:
         assert loggable_query("/api/v1/healthz", "") == ""
 
