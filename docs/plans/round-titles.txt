@@ -1,0 +1,23 @@
+# Titles of a Stremio round (scripts/stremio_round.py): the 17 titles of the
+# fourth to sixth rounds (scripts/stremio_measure.py) and the baseline of
+# docs/plans/pi-performance.md (scripts/stremio_profile.py's BASELINE_IDS;
+# Interstellar is in both). One Stremio id per line, the title after "#".
+movie/tt0248408  # Der Schuh des Manitu
+movie/tt0130827  # Lola rennt
+movie/tt0301357  # Good Bye, Lenin!
+movie/tt1016150  # Im Westen nichts Neues
+movie/tt15398776  # Oppenheimer
+movie/tt15239678  # Dune: Part Two
+movie/tt1375666  # Inception
+movie/tt0816692  # Interstellar
+series/tt0903747:1:1  # Breaking Bad S01E01
+series/tt5753856:1:1  # Dark S01E01
+series/tt4574334:4:1  # Stranger Things S04E01
+series/tt6468322:1:1  # Haus des Geldes S01E01
+series/tt3581920:1:1  # The Last of Us S01E01
+series/tt0388629:1:1  # One Piece S01E01
+series/tt2560140:1:1  # Attack on Titan S01E01
+series/tt9335498:1:1  # Demon Slayer S01E01
+series/tt22248376:1:1  # Frieren S01E01
+series/tt0903747:1:2  # Breaking Bad S01E02
+movie/tt0133093  # The Matrix

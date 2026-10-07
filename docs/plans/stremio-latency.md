@@ -264,6 +264,39 @@ The fifth round's harness and 17 titles (none in the search cache) against produ
 
 **Evaluation:** cached answers (0.08 instead of 1.0 s), the HLS proxy (about half the CPU per MB), the 1080p fix, the health check, the breakers and the metrics reached their goals in production. First answers did not get faster under three to four times the host load: titles with many streams answer at the target (median 8.9 s), but titles with few streams wait 30 s for kinoger, which no longer finishes because hoster captures hold the stealth browser's two pages during the search.
 
+### Seventh round (2026-10-07, dev server on `staging` 11ca685)
+
+The first round written with `scripts/stremio_round.py` (one command; the title set `docs/plans/round-titles.txt`: the 17 titles of the earlier rounds and the two other baseline ids of `pi-performance.md`). It ran against a dev server in the dev container (x86, the home connection without the VPN, a fresh cache, production's `data/config.yaml`), so its times are not the Pi's; it is the script's acceptance run. The Stremio stream route sends no `X-Cache` header, hence the dashes; the header is a scheduled follow-up.
+
+| Title | First answer | Streams | X-Cache | Cached answer | Streams | Playable |
+|---|---|---|---|---|---|---|
+| Der Schuh des Manitu (`movie/tt0248408`) | 4.5 s | 5 | – | 0.01 s | 5 | 5 of 5 |
+| Lola rennt (`movie/tt0130827`) | 6.7 s | 5 | – | 0.01 s | 5 | 4 of 5 |
+| Good Bye, Lenin! (`movie/tt0301357`) | 19.6 s | 1 | – | 0.01 s | 1 | 1 of 1 |
+| Im Westen nichts Neues (`movie/tt1016150`) | 5.3 s | 5 | – | 0.66 s | 5 | 5 of 5 |
+| Oppenheimer (`movie/tt15398776`) | 15.8 s | 5 | – | 0.02 s | 5 | 5 of 5 |
+| Dune: Part Two (`movie/tt15239678`) | 12.6 s | 5 | – | 0.02 s | 5 | 4 of 5 |
+| Inception (`movie/tt1375666`) | 3.9 s | 5 | – | 0.02 s | 5 | 5 of 5 |
+| Interstellar (`movie/tt0816692`) | 2.4 s | 5 | – | 0.02 s | 5 | 5 of 5 |
+| Breaking Bad S01E01 (`series/tt0903747:1:1`) | 17.4 s | 3 | – | 0.01 s | 3 | 3 of 3 |
+| Dark S01E01 (`series/tt5753856:1:1`) | 4.4 s | 1 | – | 0.00 s | 1 | 1 of 1 |
+| Stranger Things S04E01 (`series/tt4574334:4:1`) | 5.1 s | 5 | – | 0.01 s | 5 | 5 of 5 |
+| Haus des Geldes S01E01 (`series/tt6468322:1:1`) | 7.4 s | 1 | – | 0.01 s | 1 | 1 of 1 |
+| The Last of Us S01E01 (`series/tt3581920:1:1`) | 2.5 s | 5 | – | 0.01 s | 5 | 5 of 5 |
+| One Piece S01E01 (`series/tt0388629:1:1`) | 3.9 s | 5 | – | 0.03 s | 5 | 5 of 5 |
+| Attack on Titan S01E01 (`series/tt2560140:1:1`) | 3.4 s | 5 | – | 0.02 s | 5 | 5 of 5 |
+| Demon Slayer S01E01 (`series/tt9335498:1:1`) | 3.4 s | 5 | – | 0.02 s | 5 | 5 of 5 |
+| Frieren S01E01 (`series/tt22248376:1:1`) | 8.6 s | 5 | – | 0.93 s | 5 | 5 of 5 |
+| Breaking Bad S01E02 (`series/tt0903747:1:2`) | 10.8 s | 2 | – | 0.01 s | 2 | 2 of 2 |
+| The Matrix (`movie/tt0133093`) | 18.6 s | 2 | – | 0.01 s | 2 | 2 of 2 |
+| **Median / total** (19 titles) | 5.3 s | 75 | – | 0.01 s | 75 | 73 of 75 |
+
+Titles without stream: 0 of 19 (first answer), 0 of 19 (cached answer); max first answer 19.6 s.
+
+- **Answers:** 13 of 19 titles answered at the target of 5 streams; the six with one to three streams (Good Bye Lenin, Breaking Bad twice, Dark, Haus des Geldes, The Matrix) took 4.4–19.6 s, none waited for a 30 s plugin timeout as in the sixth round.
+- **kinoger** delivered on the dev server: the log binds 10 hoster resolutions to it (5 resolved, 4 cut at the resolve timeout). Its confirmation in production, the point of this round, is still open: a production run of the script (`--base https://scavengarr.lan --insecure --portainer`, at most hourly) is the next step.
+- **Play check** from the dev container: 73 of 75 streams playable (Lola rennt and Dune: Part Two one stream each).
+
 ## AIOStreams
 
 Goal was an AIOStreams test user on `aiostreams.lan` with Scavengarr as addon, measured end to end. Not done: AIOStreams validates the addon manifest when a user is created or updated, and it can reach neither the dev instance (Docker NAT on the workstation) nor `scavengarr.lan` (502, backend down). Recommended user settings, from the AIOStreams v2.35.3 source (`packages/core/src/presets/custom.ts`, `packages/core/src/db/schemas.ts`):
