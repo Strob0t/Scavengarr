@@ -327,9 +327,23 @@ The same command against production (`--base https://scavengarr.lan --insecure -
 Titles without stream: 2 of 19 (first answer), 2 of 19 (cached answer); max first answer 30.0 s.
 CPU of the container during the round: Python 100.0 s, Chromium 167.7 s.
 
-- **Answers:** median first answer 8.0 s (dev server 5.3 s), cached 0.06 s. Films answer at the target in 4.9–15.0 s. Four series waited for the 30 s cut (Breaking Bad S01E01, Dark, Stranger Things, Haus des Geldes): the plugins that had not finished by then (kinoking: 11 plugin timeouts in the hour, sto 2, kinox 1) are lost to the cached entry too, which is what step 21 changes. Dark found 4 results, and the title filter dropped all of them (`stremio_all_filtered`); Haus des Geldes found none.
+- **Answers:** median first answer 8.0 s (dev server 5.3 s), cached 0.06 s. Films answer at the target in 4.9–15.0 s. Four series waited for the 30 s cut (Breaking Bad S01E01, Dark, Stranger Things, Haus des Geldes): the plugins that had not finished by then (kinoking: 11 plugin timeouts in the hour, sto 2, kinox 1) are lost to the cached entry too, which is what step 21 changes. Dark found 4 results, and the title filter dropped all of them (`stremio_all_filtered`); Haus des Geldes kept 1 result (sto's), whose 2 links failed to resolve (`serienstream_invalid_url`). Both readings in [title-matching.md](title-matching.md): the queries and the matcher are not the cause.
 - **kinoger** works in production again: in the round's hour 48 search pages (27 with results), 12 saved Cloudflare clearances, 7 hoster resolutions of its links succeeded and 4 were cut at the resolve timeout; one detail page timed out. The sixth round's 13 of 13 timeouts did not recur.
-- **Play check** from the dev container: 43 of 71 streams playable (dev server 73 of 75); not examined; a likely cause, unconfirmed, is CDN URLs bound to the Pi's VPN address that the dev container fetches from the home connection, so the column is not comparable to the dev server's.
+- **Play check** from the dev container: 43 of 71 streams playable (dev server 73 of 75). Examined afterwards (finding 15, below).
+
+**Why streams did not play (finding 15).** The play check alone, re-run the same morning against production's cached answers for the round's ids (the stale refreshes had grown them to 97 streams; one pass that records each stream's hoster, its path and its verdict): 53 of 97 playable. The failures split by how the stream is served:
+
+| Served through | Hoster | Streams | Verdict |
+|---|---|---:|---|
+| `/play/` (302 to the CDN; the player fetches it) | DoodStream | 13 | fail: `error_wrong_ip` instead of media |
+| | FSST | 11 | fail: HTTP 410, HTML |
+| | Vinovo | 7 | fail: HTTP 403, HTML |
+| | MixDrop | 5 | fail: HTTP 403, HTML |
+| | VEEV | 1 | plays (resolved per player) |
+| HLS proxy (`/proxy/`) | VOE 23, StrmUp 14, FireStream 6, VidMoly 5, VidSonic 4, Playmate 2 | 54 | 52 play; StrmUp 1 non-media segment, FireStream 1 segment 502 |
+| | VidHide | 6 | fail: segments HTTP 403 |
+
+36 of the 37 streams served through `/play/` fail; the proxied ones play, except VidHide. DoodStream says why in its answer: the video URL is bound to the IP that resolved it, the Pi's VPN address, and the check comes from the home connection. A Stremio client on the LAN fetches a `/play/` redirect from that same home address, so these streams most likely fail in the players as well, not only in the check; FSST's 410 and the 403s of Vinovo and MixDrop look like the same binding (HTML, unconfirmed). VidHide fails behind the proxy, so its segments are refused to the Pi itself or are not fetched through the proxy. Both classes point at the proxy and resolver decision (which hosters are proxied, VidHide's segments); analysis stops there, no code change.
 
 ## AIOStreams
 
