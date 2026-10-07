@@ -6,7 +6,27 @@ import time
 from contextlib import AbstractContextManager
 from unittest.mock import patch
 
+from structlog.testing import capture_logs
+
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
+
+
+class TestOpeningLog:
+    def test_an_opening_and_a_reopening_are_logged(self) -> None:
+        """One line per opening: the production digest counts them."""
+        cb = PluginCircuitBreaker(failure_threshold=2, cooldown_seconds=0)
+        with capture_logs() as logs:
+            cb.record_failure("foo")
+            cb.record_failure("foo")
+            cb.allow("foo")  # half-open probe
+            cb.record_failure("foo")  # reopened
+
+        assert [
+            (e["event"], e["name"], e["reopened"], e["cooldown_s"]) for e in logs
+        ] == [
+            ("circuit_breaker_opened", "foo", False, 0),
+            ("circuit_breaker_opened", "foo", True, 0),
+        ]
 
 
 class TestInitialState:

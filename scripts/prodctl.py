@@ -18,6 +18,10 @@ Usage (``poetry run python scripts/prodctl.py ...``):
                                          event-loop lag
     probe [-c NAME] [--timeout S] [--env K=V] NAME|FILE [ARGS...]
                                          a Python probe run in the container
+    digest [-c NAME] [--since 24h] [--json]
+                                         one Markdown report of the window:
+                                         requests, plugins, hosters, breakers,
+                                         log noise, errors (``digest.py``)
 
 Probes are Python files run with ``python -c`` inside the container: the
 read-only ones in ``scripts/probes/`` by name (``probe resources``), any other
@@ -34,6 +38,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from digest import digest as build_digest
+from digest import render as render_digest
 from portainer import Portainer, RequestBudget, credentials, mask
 
 PROBES = Path(__file__).resolve().parent / "probes"
@@ -42,12 +48,19 @@ _DURATION = re.compile(r"(\d+(?:\.\d+)?)([smhd]?)")
 _UNITS = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}
 # Liveness and readiness checks: two log lines every 30 s
 _HEALTH = re.compile(r"/api/v1/(?:healthz|readyz)\b")
-# The app's own endpoints, fetched inside the container
+# The app's own endpoints, fetched inside the container in one exec: a JSON
+# object of path -> body, or {"error": ...} for a path that failed
 _FETCH = (
-    "import os, sys, urllib.request\n"
-    "port = os.environ.get('PORT', '7979')\n"
-    "url = f'http://127.0.0.1:{port}' + sys.argv[1]\n"
-    "print(urllib.request.urlopen(url, timeout=30).read().decode())\n"
+    "import json, os, sys, urllib.request\n"
+    "base = 'http://127.0.0.1:' + os.environ.get('PORT', '7979')\n"
+    "out = {}\n"
+    "for path in sys.argv[1:]:\n"
+    "    try:\n"
+    "        answer = urllib.request.urlopen(base + path, timeout=30)\n"
+    "        out[path] = answer.read().decode()\n"
+    "    except Exception as exc:\n"
+    "        out[path] = {'error': str(exc)}\n"
+    "print(json.dumps(out))\n"
 )
 
 
@@ -160,11 +173,22 @@ def _portainer(container: str, timeout: float = 120) -> Portainer:
     )
 
 
-def _fetch(container: str, path: str) -> str:
-    output, code = _portainer(container).run(["python", "-c", _FETCH, path])
+def _fetch(container: str, *paths: str) -> dict[str, Any]:
+    """The bodies of the app's own endpoints *paths*, fetched in one exec;
+    a path that failed maps to ``{"error": ...}``."""
+    output, code = _portainer(container).run(["python", "-c", _FETCH, *paths])
     if code:
-        raise SystemExit(mask(f"{path} failed (exit {code}): {output.strip()[-300:]}"))
-    return output
+        raise SystemExit(
+            mask(f"{' '.join(paths)} failed (exit {code}): {output.strip()[-300:]}")
+        )
+    return json.loads(output)
+
+
+def _fetch_one(container: str, path: str) -> str:
+    body = _fetch(container, path)[path]
+    if not isinstance(body, str):
+        raise SystemExit(mask(f"{path} failed: {body.get('error', body)}"))
+    return body
 
 
 def _ps(args: argparse.Namespace) -> int:
@@ -194,7 +218,7 @@ def _logs(args: argparse.Namespace) -> int:
 
 
 def _metrics(args: argparse.Namespace) -> int:
-    text = _fetch(args.container, "/metrics")
+    text = _fetch_one(args.container, "/metrics")
     lines, _ = select_lines(text, grep=args.grep, health=True, limit=0)
     for line in lines:
         if not line.startswith("#"):
@@ -203,7 +227,7 @@ def _metrics(args: argparse.Namespace) -> int:
 
 
 def _state(args: argparse.Namespace) -> int:
-    data = json.loads(_fetch(args.container, "/api/v1/stats/metrics"))
+    data = json.loads(_fetch_one(args.container, "/api/v1/stats/metrics"))
     if args.keys:
         data = {key: data.get(key) for key in args.keys.split(",")}
     print(mask(json.dumps(data, indent=1, sort_keys=True)))
@@ -222,6 +246,29 @@ def _probe(args: argparse.Namespace) -> int:
     return code or 0
 
 
+def _digest(args: argparse.Namespace) -> int:
+    """One report of the window: the log (one request), the metrics and
+    the plugin record (one exec)."""
+    now = time.time()
+    log_text = _portainer(args.container).logs(int(now - args.since), timestamps=True)
+    fetched = _fetch(args.container, "/metrics", "/api/v1/stats/plugins")
+    metrics_text = fetched["/metrics"]
+    if not isinstance(metrics_text, str):
+        raise SystemExit(mask(f"/metrics failed: {metrics_text.get('error')}"))
+    record = fetched["/api/v1/stats/plugins"]
+    data = build_digest(
+        container=args.container,
+        since_s=args.since,
+        log_text=log_text,
+        metrics_text=metrics_text,
+        # An older image has no record: the section says so
+        plugin_record=json.loads(record) if isinstance(record, str) else None,
+        now=now,
+    )
+    print(mask(json.dumps(data, indent=1) if args.json else render_digest(data)))
+    return 0
+
+
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(
         description=(__doc__ or "").splitlines()[0],
@@ -236,16 +283,22 @@ def parser() -> argparse.ArgumentParser:
     metrics = commands.add_parser("metrics", help="the app's Prometheus metrics")
     state = commands.add_parser("state", help="breakers, pools, event-loop lag")
     probe = commands.add_parser("probe", help="run a Python probe in the container")
+    digest = commands.add_parser(
+        "digest", help="one report: requests, plugins, hosters, breakers, errors"
+    )
     for sub, handler in (
         (stats, _stats),
         (logs, _logs),
         (metrics, _metrics),
         (state, _state),
         (probe, _probe),
+        (digest, _digest),
     ):
         sub.add_argument("-c", "--container", default="scavengarr")
         sub.set_defaults(handler=handler)
     logs.add_argument("--since", type=seconds, default=seconds("15m"))
+    digest.add_argument("--since", type=seconds, default=seconds("24h"))
+    digest.add_argument("--json", action="store_true", help="the data as JSON")
     logs.add_argument("--fields", help="comma-separated JSON keys")
     logs.add_argument("--limit", type=int, default=60, help="last N lines")
     logs.add_argument("--health", action="store_true", help="keep health checks")

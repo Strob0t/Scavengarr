@@ -229,3 +229,52 @@ class TestCommands:
     def test_env_pairs_need_an_equals_sign(self) -> None:
         with pytest.raises(SystemExit, match="KEY=VALUE"):
             _mod.main(["probe", "--env", "oops", "tasks"])
+
+    def test_the_digest_reads_the_log_and_two_endpoints_in_one_exec(
+        self, portainer: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        logs = respx.get(f"{_DOCKER}/containers/scavengarr/logs").respond(
+            content=_frame(
+                _record(
+                    level="error", event="crash", exception="x\nhttps://cdn.x.io/a?t=1"
+                )
+                + "\n"
+            )
+        )
+        create = respx.post(f"{_DOCKER}/containers/scavengarr/exec").respond(
+            json={"Id": "e1"}
+        )
+        bodies = {
+            "/metrics": 'scavengarr_build_info{commit="abc",version="0.3.0"} 1.0\n',
+            "/api/v1/stats/plugins": {"error": "HTTP Error 404: Not Found"},
+        }
+        respx.post(f"{_DOCKER}/exec/e1/start").respond(
+            content=_frame(json.dumps(bodies) + "\n")
+        )
+        respx.get(f"{_DOCKER}/exec/e1/json").respond(json={"ExitCode": 0})
+
+        assert _mod.main(["digest", "--since", "2h"]) == 0
+
+        out = capsys.readouterr().out
+        assert out.startswith("# scavengarr: the last 2.0 h\n")
+        assert "version 0.3.0, commit abc" in out
+        assert "The long-term record is not available" in out
+        assert "| crash: https://cdn.x.io/… | 1 |" in out
+        assert logs.call_count == 1 and create.call_count == 1
+        body = json.loads(create.calls.last.request.content)
+        assert body["Cmd"][3:] == ["/metrics", "/api/v1/stats/plugins"]
+
+        assert _mod.main(["digest", "--json"]) == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data["since_s"] == 86400
+        assert data["errors"]["count"] == 1
+
+    def test_a_failed_endpoint_ends_metrics_and_state(self, portainer: Path) -> None:
+        respx.post(f"{_DOCKER}/containers/scavengarr/exec").respond(json={"Id": "e1"})
+        respx.post(f"{_DOCKER}/exec/e1/start").respond(
+            content=_frame(json.dumps({"/metrics": {"error": "refused"}}) + "\n")
+        )
+        respx.get(f"{_DOCKER}/exec/e1/json").respond(json={"ExitCode": 0})
+
+        with pytest.raises(SystemExit, match="/metrics failed: refused"):
+            _mod.main(["metrics"])

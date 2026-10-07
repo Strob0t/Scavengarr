@@ -17,6 +17,10 @@ from collections.abc import Iterable
 from enum import Enum
 from typing import Any
 
+import structlog
+
+log = structlog.get_logger(__name__)
+
 
 class _State(Enum):
     CLOSED = "closed"
@@ -111,6 +115,7 @@ class PluginCircuitBreaker:
                 self._cooldowns.get(name, self._cooldown) * 2, self._max_cooldown
             )
             self._changes += 1
+            self._log_opened(name, reopened=True)
             return
 
         count = self._failures.get(name, 0) + 1
@@ -120,6 +125,16 @@ class PluginCircuitBreaker:
             self._states[name] = _State.OPEN
             self._opened_at[name] = time.monotonic()
             self._changes += 1
+            self._log_opened(name, reopened=False)
+
+    def _log_opened(self, name: str, *, reopened: bool) -> None:
+        """One line per opening (the production digest counts them)."""
+        log.warning(
+            "circuit_breaker_opened",
+            name=name,
+            reopened=reopened,
+            cooldown_s=round(self._cooldowns.get(name, self._cooldown)),
+        )
 
     def release(self, name: str) -> None:
         """End a half-open probe that gave no verdict (a deleted file, a

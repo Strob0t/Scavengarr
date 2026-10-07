@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: `prodctl.py digest`
+- Every production round was read from `prodctl.py metrics` and `logs` by hand, dozens of Portainer requests each. `scripts/prodctl.py digest [--since 24h] [--json]` prints one Markdown report of the window from one log request and one exec (`/metrics` and `/api/v1/stats/plugins` together): the stream requests by source with p50/p90 and streams per answer, the plugins from the long-term record, the hosters' resolutions and outcomes, the breakers not closed and their openings and skips, the five noisiest log events and the errors with their most frequent messages (`scripts/digest.py`, [Observability](docs/features/observability.md#production-diagnostics)). A breaker now logs each opening (`circuit_breaker_opened`: `name`, `reopened`, `cooldown_s`), which the report counts.
+
 ### Added: Dependabot
 - `.github/dependabot.yml` checks the Poetry dependencies, GitHub Actions and the base images of `Dockerfile.prod` every Monday at 06:00 (Europe/Berlin); minor and patch updates of the Python packages come as one grouped PR, at most three Python PRs are open at a time, and every PR carries the label `dependencies`. CI runs on these PRs; AGENTS.md §4 holds the merge rule.
 
