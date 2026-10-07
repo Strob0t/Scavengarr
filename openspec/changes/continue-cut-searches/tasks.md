@@ -46,7 +46,7 @@ audit's baseline (7.1) must run before the filter change (6) ships.
 - [x] 7.1 `infrastructure/stremio/episode_filter.py`: metadata `season`/`episode` before the guess; no episode → links labelled with the requested episode only, dropped without any labelled link; episode without season → season 1 or metadata only. `domain/plugins/base.py` documents the metadata keys.
 - [x] 7.2 `application/stremio/plugin_search.py`: count dropped results per plugin in the plugin record (`PluginCounter` gains `dropped`); `stremio_search_complete` carries `dropped`.
 - [x] 7.3 Tests in `tests/unit/infrastructure/test_episode_filter.py`: the four spec scenarios; runner test for the count.
-- [ ] 7.4 Audit run after the change ("After" table in `docs/plans/series-episodes.md`): leaks zero, no plugin's right-episode kept count lower than before; plugins with dropped > 0 listed under "Parser follow-ups" with their page evidence (one backlog Order row per plugin, step 22).
+- [x] 7.4 Audit run after the change ("After" table in `docs/plans/series-episodes.md`): leaks zero, no plugin's right-episode kept count lower than before; plugins with dropped > 0 listed under "Parser follow-ups" with their page evidence (one backlog Order row per plugin, step 22).
 
 ## 8. Stream response headers
 

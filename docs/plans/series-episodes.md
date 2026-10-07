@@ -72,3 +72,40 @@ The same 12 requests with the old filter, after the parser follow-ups of step 22
 - **kinoger** (10): all narrowed by their `<season>x<episode>` labels to the requested episode. Before, every series page gave the script's first URL, S01E01, without a label (Stranger Things S04E01 got S01E01 from all four player tabs).
 - **Without episode information:** none left; the 34 results without an episode in the title are all decided by their link labels.
 - **Failed:** movie4k 1 timeout; kinoking had none this time (13 results instead of 10).
+
+## After (2026-10-07, dev container, `worktree-handoff-21` at the filter change and the domain-check fix, on `staging` as 24c8c84 and de6032c)
+
+The same 12 requests with the filter of step 21's group 7 (24c8c84: the numbers in a result's `metadata` first, a result without episode information is not kept, an episode without a season is season 1) and the domain-check fix (de6032c), run before ed41ee0 (sto) joined `staging`. A plugin none of whose domains answers does not search now (`PluginUnreachableError`, counted under "failed"). The first run after the filter change, before de6032c, found kinoger unreachable in all 14 searches; it is the reason for that fix (below).
+
+| plugin | results | season_episode | episode | season | none | kept | narrowed | dropped | right | leaks | failed |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| aniworld | 4 | 4 | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| cineby | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| einschalten | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| filmpalast | 6 | 6 | 0 | 0 | 0 | 6 | 0 | 0 | 6 | 0 | 0 |
+| fireani | 4 | 4 | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| haschcon | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| hdfilme | 7 | 0 | 0 | 0 | 7 | 0 | 7 | 0 | 7 | 0 | 0 |
+| kinoger | 9 | 0 | 0 | 2 | 7 | 0 | 9 | 0 | 9 | 0 | 0 |
+| kinoking | 10 | 10 | 0 | 0 | 0 | 10 | 0 | 0 | 10 | 0 | timeout 3 |
+| kinox | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| megakino | 6 | 0 | 0 | 3 | 3 | 0 | 3 | 3 | 3 | 0 | timeout 1 |
+| megakino_to | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | PluginUnreachableError 13, timeout 1 |
+| moflix | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| movie2k | 2 | 0 | 0 | 0 | 2 | 0 | 2 | 0 | 2 | 0 | 0 |
+| movie4k | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | PluginUnreachableError 14 |
+| sto | 11 | 11 | 0 | 0 | 0 | 11 | 0 | 0 | 11 | 0 | 0 |
+| streamcloud | 7 | 0 | 0 | 0 | 7 | 0 | 7 | 0 | 7 | 0 | 0 |
+| streamkiste | 7 | 0 | 0 | 0 | 7 | 0 | 7 | 0 | 7 | 0 | 0 |
+| **total** | 73 | 35 | 0 | 5 | 33 | 35 | 35 | 3 | 70 | 0 | 32 |
+
+- **Right episode:** 70 of 73 results (before: 76 of 79); every result the filter let through is the right episode. **Leaks:** none. **Dropped:** 3, the same megakino pages of another season (the parser follow-up below).
+- **Fewer results than before, none of them lost to the filter:** kinoking 10 (3 searches timed out), megakino 6 with 3 right (1 timeout: the "Haus des Geldes - Staffel 1" page), filmpalast 6 (its search gave no "The Last of Us" hit this time), kinoger 9 (no "Dark" hit); no record of these results exists, so they never reached the filter. A rerun of the four plugins ten minutes later (`--plugins filmpalast,kinoger,kinoking,megakino`) gave the counts of the table before: filmpalast 7, kinoger 10, kinoking 13, megakino 7 (4 right, 3 dropped), no failures: 34 of 37 right. No plugin keeps fewer right episodes than before.
+- **kinoger** (10 in the rerun): all narrowed by their labels, as before. The first run after the filter change found kinoger unreachable in all 14 searches: kinoger.com and kinoger.to answer HEAD and GET with 403 and `cf-mitigated: challenge`. Until step 21's group 6 the domain check fell back to the primary domain and the search went on through the browser, which solves the challenge; group 6 raised instead. de6032c counts an answer below 500 or a challenge page as reachable, the health monitor's rule, and kinoger searches again.
+- **Unreachable sites:** megakino_to and movie4k answer neither HEAD nor GET on any domain (read timeouts). Their searches end in `PluginUnreachableError` (13 and 14 of 14; one megakino_to domain check timed out as a whole) instead of an empty result or a timeout, and the health monitor keeps them out of the next searches until a recheck finds the site.
+- **Without episode information:** none; the 33 results without an episode in the title are decided by their link labels.
+- **Failed:** kinoking 3 timeouts, megakino 1, megakino_to 13 unreachable and 1 timeout, movie4k 14 unreachable; in the rerun of the four plugins none.
+
+### Parser follow-ups
+
+- **megakino** (dropped 3, all correct): "Stranger Things - 5 Stafffel" for S04E01 and "One Piece - 2 Staffel" for S01E01 are pages of another season, "Severance" for S02E05 carries only the label `1x5 Voe`. The labels show a parser limit: `_add_episode` labels each episode from the page's `<select id="ep<n>">` as `1x<n>`, the season fixed at 1, so a season page of season 2 or later carries season-1 labels (`1x1 Voe` on both pages above). Asked for those pages' own season (`series/tt4574334:5:1`, `series/tt0388629:2:1`, `--plugins megakino`), both pages came back and both were dropped by their labels: 0 of 2 right, a loss, not a leak. Follow-up (backlog row 28, step 22's area, `plugins/megakino.py`): label with the page's season from its title ("N Staffel", "Staffel N"; 1 without one) and the filter narrows them like hdfilme's.
