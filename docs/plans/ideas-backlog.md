@@ -92,6 +92,17 @@ Open and still worth their place, not repeated here: optimization-options.md opt
 - Each item: TDD, pre-commit and the full suite (AGENTS.md §1 and §6), docs in the same commit (CHANGELOG, the feature doc named below), one commit per item.
 - OpenSpec changes (`openspec/changes/<id>/`) follow Stage 2 of `openspec/AGENTS.md`: read proposal, design and tasks, implement in order, tick the tasks, archive after the release that ships them.
 
+### Orchestration (2026-10-07)
+
+The advisor session (Mr. Fable) plans and dispatches; two coding sessions build, chosen by difficulty and scope. **Ultracode**: new capabilities, cross-layer work (use cases, ports, DI wiring), the stream and proxy path, resolvers and plugins with site analysis, anything with an OpenSpec change, defects without a known cause. **Mr. Normal**: fully specified single-area work: scripts and probes, docs, configuration files, tests from a precise spec, mechanical refactors, isolated fixes with a known cause. The rules that keep them apart:
+
+- One step per session at a time, in its own worktree `handoff-<step>` branched from `origin/staging` (EnterWorktree bases on `origin/main`: `git fetch origin && git checkout -B handoff-<step> origin/staging` first), removed after the merge.
+- A step's files are the ones its Order row and task specification name; the two active steps never share a code file. A step that needs another file asks the advisor first (SendMessage to Mr. Fable). Shared docs: `CHANGELOG.md` (one entry per step under the unreleased heading), `AGENTS.md` (only the sentence the step names), this file (only the step's own Order row); rebase before every push, keep both sides on a conflict.
+- Dev servers: Ultracode on port 7979, Mr. Normal on 7981. Production stays read-only through `scripts/prodctl.py`, within its budget.
+- After each push: `gh run watch <id> --exit-status`, a red run is fixed before anything else, then a report to Mr. Fable (shas, files, open points). Never `main`, never a force-push, never a merge.
+
+Assignment of the open steps: 16 Ultracode (in progress); 17 Mr. Normal; 18 Mr. Normal, starting only after 16 is on `staging` (both touch `interfaces/composition.py`); 19 Ultracode, after 16; 20 Mr. Normal, first.
+
 ### Order
 
 | Step | Item | Where the plan is | Touches | Can run beside other Stremio work? |
