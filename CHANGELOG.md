@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Chore: sto Link-out Probe
+- sto's episode links reached the serienstream resolver as sto's own link-outs and failed there (`serienstream_invalid_url`). `scripts/probes/sto_linkout.py` follows two link-outs of an episode the way the plugin does and prints per link the hops, the final host, gate markers and a token-free summary of the page, then the plugin's own resolution; it runs in the production container (`prodctl.py probe`) and in the dev container. Its reading in `docs/plans/sto-linkout.md`: the site gates link-outs for the Pi's VPN address only, the plugin's browser pass solved the gate 3 of 6 times in the window, and the resolver loses nothing it could have resolved.
+
 ### Chore: Title Match Probe
 - Why *Dark* and *Haus des Geldes* answered without a stream in the seventh production round was suspected to be the queries or the title matcher. `scripts/probes/title_match.py` runs every stream plugin's search with the app's queries for one or more Stremio ids and prints per plugin the queries, the raw titles and the matcher's score and verdict. Its reading in `docs/plans/title-matching.md`: both titles find their series on three to four plugins at score 1.00 and the matcher drops only other titles; production's empty answers came from the search deadline cutting sto and kinoking (*Dark*) and from sto's link-outs failing to resolve (*Haus des Geldes*).
 
