@@ -263,7 +263,7 @@ class SerienjunkiesPlugin(HttpxPluginBase):
         ]
 
         # Metadata
-        metadata: dict[str, str] = {
+        metadata: dict[str, str | int] = {
             "release_group": release.get("group", ""),
             "resolution": release.get("resolution", ""),
             "source": release.get("source", ""),
@@ -275,10 +275,11 @@ class SerienjunkiesPlugin(HttpxPluginBase):
 
         rel_season = release.get("season")
         rel_episode = release.get("episode")
-        if rel_season is not None:
-            metadata["season"] = str(rel_season)
-        if rel_episode is not None:
-            metadata["episode"] = str(rel_episode)
+        # ints, as the Stremio episode filter reads them
+        if isinstance(rel_season, int):
+            metadata["season"] = rel_season
+        if isinstance(rel_episode, int):
+            metadata["episode"] = rel_episode
 
         return SearchResult(
             title=f"{title} - {rel_name}",

@@ -355,6 +355,9 @@ def _is_player(node: LexborNode) -> bool:
 def _script_episodes(player: LexborNode) -> list[tuple[int, int, str]]:
     """(season, episode, URL) from the player script's season arrays:
     ``pw.show(5,[['S1E1',' S1E2'],['S2E1', …], …])``."""
+    # Assumes the arrays run from season 1 and each from episode 1 without
+    # gaps, as the data-id lists of the captured pages show (wednesday,
+    # the-last-of-us)
     for script in player.css("script"):
         show = _PLAYER_SEASONS_RE.search(script.text())
         if show:
