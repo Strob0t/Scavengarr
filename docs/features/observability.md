@@ -63,9 +63,9 @@ docker run --rm --entrypoint promtool -v ./docker:/rules prom/prometheus check r
 | `ScavengarrSlowFirstAnswers` | Half of the last hour's answers that waited for a new search (at least 3) took longer than 20 s (for 15 min) | answer and phase times (Stremio answers panels), the reasons of `stremio_resolve_complete` |
 | `ScavengarrHosterBreakerOpen` | A hoster's breaker has not closed for 6 h (open or half-open) | `prodctl.py logs --grep hoster_resolve`, the resolver's live smoke test |
 | `ScavengarrEventLoopLag` | The event loop's lag p99 is above 100 ms for 15 min: CPU work on the loop delays every timeout | CPU panels, `scripts/stremio_profile.py --py-spy` |
-| `ScavengarrNoStreams` | More than half of the last hour's Stremio requests (at least 3) got no streams (for 15 min) | search state and plugin outcomes |
+| `ScavengarrNoStreams` | More than half of the last hour's Stremio requests (at least 3) ended `empty` (for 15 min; requests that ended `no_title`, `no_plugins`, `error` or `cut` count only in the denominator) | search state and plugin outcomes |
 
-Limits: the counters restart with the container, and `increase()` sees no growth in a series that appeared with its first count, so a plugin whose only hit in 24 h came right after a restart counts as without yield. A plugin for content the household rarely asks for (an anime site on a day without anime) alerts too; leave it out with a matcher such as `plugin!~"fireani|aniworld"` in both `scavengarr_plugin_search_total` selectors of the rule.
+Limits: the counters restart with the container, and `increase()` sees no growth in a series that appeared with its first count, so a plugin whose only hit in 24 h came right after a restart counts as without yield. A plugin for content the household rarely asks for (an anime site on a day without anime) alerts too; leave it out with a matcher such as `plugin!~"fireani|aniworld"` in all three `scavengarr_plugin_search_total` selectors of the rule (the first counts every outcome, so a plugin that was only skipped, unreachable or behind an open breaker counts as asked).
 
 ## How Recording Works
 
@@ -154,7 +154,7 @@ poetry run python scripts/prodctl.py logs --since 1h --grep hoster_state_   # wh
 poetry run python scripts/prodctl.py probe tasks              # where the asyncio tasks wait
 ```
 
-A start logs what it restored of the run before ([State across restarts](hoster-resolvers.md#registry-features)): `hoster_state_restored` with the resolutions, redirects and breakers restored and the snapshot's `age_s` (zeros on the first start), or `hoster_state_discarded` with its `reason` (`version`, `malformed`, `unreadable`); `hoster_state_restore_failed` and `hoster_state_save_failed` report a cache backend that failed the read or a write.
+A start logs what it restored of the run before ([State across restarts](hoster-resolvers.md#registry-features)): `hoster_state_restored` with the resolutions, redirects and breakers restored and the snapshot's `age_s` (zeros on the first start), or `hoster_state_discarded` with its `reason` (`version`, `malformed`, `unreadable`); a read that fails ends as `hoster_state_discarded` (`unreadable`) and the snapshot is deleted, `hoster_state_restore_failed` follows only when that delete fails too, and `hoster_state_save_failed` reports a failed write — with the Redis backend, which swallows `RedisError`, look for `redis_get_error`/`redis_set_error` instead (a failed read then logs a zero `hoster_state_restored`).
 
 `logs` renders JSON records as `time level event key=value ...` and drops the liveness and readiness checks (`--health` keeps them, `--raw` prints the masked lines as logged). Records are cut to 400 characters; `--width 0` prints them whole, for a traceback's last lines (`--fields exception --width 0`). `metrics` and `state` fetch `GET /metrics` and `GET /api/v1/stats/metrics` inside the container.
 

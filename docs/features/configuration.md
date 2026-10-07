@@ -15,7 +15,7 @@ CLI arguments         (--plugin-dir, --log-level, --log-format)
         ↓
 Environment variables (SCAVENGARR_*, including values loaded from --dotenv)
         ↓
-YAML config file      (--config or SCAVENGARR_CONFIG)
+YAML config file      (--config, or SCAVENGARR_CONFIG from the real environment: a --dotenv file cannot set it)
         ↓
 Defaults              (src/scavengarr/infrastructure/config/defaults.py + schema.py)
 ```

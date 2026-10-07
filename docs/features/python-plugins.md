@@ -258,10 +258,10 @@ Obtain pages via `_new_page()` and close them (or use the context from `_ensure_
 - `_wait_for_cloudflare(page) -> bool` — solves a Cloudflare challenge via `browser/turnstile.solve_cloudflare()`: returns at once without a challenge title (Cloudflare's "Just a moment", and the HostAdmin WAF's "Verification..." and "Loading <url>" that kinoger shows since 2026-10-03), otherwise waits ~3 s for an auto-clear, then clicks the Turnstile checkbox in the `challenges.cloudflare.com` iframe (re-click every 8 s); `False` on timeout. Needs a headful browser to pass. A solved challenge's clearance cookie is stored via `_remember_clearance(page)`
 - `set_clearance_store(store)` (static, wired in composition) — the `ClearanceStore` that restores `cf_clearance`/`__ddg*`/`ha-waf-*` cookies into every new context (`_configure_context`) and keeps them across restarts; `_remember_clearance(page)` stores them, for gates other than Cloudflare call it yourself
 - `page.evaluate(js, arg, isolated_context=False)` — Patchright runs `evaluate` in an isolated world by default, where the site's own scripts (e.g. jQuery `$`) are invisible; pass `isolated_context=False` to use them (animeloads)
-- `_passes_cloudflare(page, resp) -> bool` — accepts a navigation: status `< 400`, or a 403/503 Cloudflare challenge page that gets solved
+- `_passes_cloudflare(page, resp) -> bool` — accepts a navigation unless it ends on an error status without a challenge page, or on a Cloudflare challenge not solved in time (every navigation goes through `_wait_for_cloudflare()`, a 200 page with an unsolved challenge fails too)
 - `_navigate_and_wait(page, url, *, wait_for_cf=True, wait_for_idle=True) -> bool` — `goto` (`domcontentloaded`), `_passes_cloudflare()`, `networkidle`; `False` on an error status that is not a solvable challenge
 - `_fetch_page_html(url, *, wait_until="domcontentloaded", timeout=30_000, wait_for_idle=True, retry_backoff_s=()) -> str` — fresh page, navigate, pass a Cloudflare challenge (`_passes_cloudflare()`), wait for `networkidle` unless `wait_for_idle=False`, return HTML (`""` on failure). A 429/502/503/504 or no response is retried once per `retry_backoff_s` entry, after sleeping that long (ddlvalley, scnsrc)
-- `_verify_domain()` — navigates the persistent page to each domain (5 s timeout); it needs status `< 400` or a Cloudflare challenge that gets solved (`_passes_cloudflare()`); otherwise the next domain is tried
+- `_verify_domain()` — navigates the persistent page to each domain (5 s timeout); it needs an answer that is not an error status without a challenge page, any challenge solved in time (`_passes_cloudflare()`); otherwise the next domain is tried
 - `isolated_search()` — creates a fresh `BrowserContext` per call (`_context_options()`, then `_configure_context()`), calls `_prepare_context(ctx)`, runs `search()` with the context set in a `ContextVar` while it holds the shared browser (`lease()`), then closes all pages and the context
 - `_prepare_context(ctx)` — hook for authenticated plugins to inject session cookies (`ctx.add_cookies()`) into the per-request context. `isolated_search()` calls it before `search()` runs: a plugin that logs in inside `search()` hands the session over after the login, `await self._prepare_context(await self._ensure_context())` (boerse, mygully)
 - `_serialize_search` (default `False`) — when `True`, `isolated_search()` runs `search()` behind a lock on the persistent context instead (for plugins that depend on page state; moflix used it until it moved to httpx in 1.2.0)
@@ -271,7 +271,7 @@ Obtain pages via `_new_page()` and close them (or use the context from `_ensure_
 
 ## Plugin Settings Organization
 
-Every plugin starts with a "Configurable settings" block followed by constants:
+Standalone plugins start with a "Configurable settings" block followed by constants (plugins on a shared base — dataload, myboerse, megakino_to, movie4k — only set their attributes):
 
 ```python
 # ---------------------------------------------------------------------------
@@ -292,7 +292,7 @@ Names such as `_MAX_PAGES`, `_PER_PAGE`, `_CATEGORY_MAP` or `_LANG_LABELS` are c
 
 ## Parsing Pages
 
-Plugin parsers read pages with selectolax (lexbor, a C HTML5 parser): `LexborHTMLParser(html)` builds the tree, CSS selectors find the nodes. A parser is a small class with `feed(html)` and public result attributes; the plugin feeds every page through `await parse_page(parser, html)` (`infrastructure/plugins/dom.py`), which parses pages from 32 KiB in a worker thread (lexbor builds the tree without the GIL; selectolax took 0.3 ms for 32–64 KiB on x86, a thread hop 0.06 ms).
+Plugin parsers read pages with selectolax (lexbor, a C HTML5 parser): `LexborHTMLParser(html)` builds the tree, CSS selectors find the nodes. A parser is a small class with `feed(html)` and public result attributes; the plugin feeds every HTML page it parses through `await parse_page(parser, html)` (haschcon and hdworld scan small HTML pieces with regexes instead) (`infrastructure/plugins/dom.py`), which parses pages from 32 KiB in a worker thread (lexbor builds the tree without the GIL; selectolax took 0.3 ms for 32–64 KiB on x86, a thread hop 0.06 ms).
 
 ```python
 from selectolax.lexbor import LexborHTMLParser

@@ -58,7 +58,7 @@ The second step turns each detail page into a `SearchResult`:
 - For grouped links (several hosters per release), walk the container/group/item hierarchy and collect every link
 - On missing optional fields, return a partial result; on missing required fields, log and skip the item instead of aborting the whole search
 
-Plugins parse HTML with `selectolax` (lexbor, a C parser, CSS selectors; see [Parsing Pages](python-plugins.md#parsing-pages)), JSON APIs via `_safe_parse_json()`, or Playwright (`page.content()`, `page.evaluate()`). Every page goes through `parse_page(parser, html)` (`infrastructure/plugins/dom.py`), which parses pages from 32 KiB in a worker thread. Until 2026-10 the parsers were `html.parser` state machines in Python: filmpalast's ~300 KB detail pages took 20 ms with html.parser on x86 and 2.3 ms with selectolax, with the same results.
+Plugins parse HTML with `selectolax` (lexbor, a C parser, CSS selectors; see [Parsing Pages](python-plugins.md#parsing-pages)), JSON APIs via `_safe_parse_json()`, or Playwright (`page.content()`, `page.evaluate()`). Every HTML parser goes through `parse_page(parser, html)` (`infrastructure/plugins/dom.py`), which parses pages from 32 KiB in a worker thread; haschcon and hdworld scan small HTML pieces (a player embed, a WordPress API post) with regexes instead. Until 2026-10 the parsers were `html.parser` state machines in Python: filmpalast's ~300 KB detail pages took 20 ms with html.parser on x86 and 2.3 ms with selectolax, with the same results.
 
 ---
 
@@ -106,13 +106,13 @@ for page_num in range(1, _MAX_PAGES + 1):
         break
 ```
 
-Each plugin sets `_MAX_PAGES` from the site's results-per-page (e.g. 200/page = 5 pages, 50/page = 20 pages, 10/page = 100 pages). `effective_max_results` is `_max_results` (default 1000), lowered during Stremio searches.
+Plugins that page through results cap the loop from the site's results-per-page, usually as `_MAX_PAGES` (e.g. 200/page = 5 pages, 50/page = 20 pages, 10/page = 100 pages; nox names it `_MAX_SEARCH_PAGES`, dataload and myboerse inherit it from `xenforo.py`); 15 plugins, aniworld, boerse, hdfilme, kinox and moflix among them, have no such constant. `effective_max_results` is `_max_results` (default 1000), lowered during Stremio searches.
 
 ---
 
 ## Rate Limiting and Errors
 
-- **Rate limiting:** httpx plugins share one app-wide client whose `RetryTransport` applies a per-domain token-bucket rate limiter (`DomainRateLimiter`, optionally adaptive) before every request. Plugins do not add their own delays. Playwright traffic does not go through this client.
+- **Rate limiting:** httpx plugins share one app-wide client whose `RetryTransport` applies a per-domain token-bucket rate limiter (`DomainRateLimiter`, optionally adaptive) before every request. Plugins add no pacing of their own, with three exceptions: devideosrc's player-page 429 retry (2 s per attempt; hdfilme, streamcloud, streamkiste), animeloads' pauses between captcha and episode steps (1–4 s), and the Playwright base's `retry_backoff_s` before a retry (ddlvalley, scnsrc). Playwright traffic does not go through this client.
 - **429 / 503:** retried automatically by `RetryTransport` with exponential backoff, honouring `Retry-After`. A 429/503 served from Cloudflare's cache (`cf-cache-status: HIT/STALE/UPDATING`) is returned at once: it would come back unchanged on retry, and it does not lower the domain's adaptive rate.
 - **Other HTTP errors, timeouts, network errors:** `_safe_fetch()` logs a warning and returns `None`; the plugin skips that page or item.
 - **Unreachable domains:** `_verify_domain()` picks the domain once per plugin lifetime, not per request. httpx plugins follow a permanent site move and undo it when the new host stops answering, and Stremio skips plugins whose site failed the last health check (see [Mirror URL Fallback](./mirror-url-fallback.md)).

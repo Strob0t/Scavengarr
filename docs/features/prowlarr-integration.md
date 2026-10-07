@@ -169,7 +169,7 @@ Available CLI flags: `--host`, `--port`, `--config`, `--dotenv`, `--plugin-dir`,
 ```bash
 # Liveness
 curl http://localhost:7979/api/v1/healthz
-# {"status": "ok", "plugins": <count>, "hosters": [...]}
+# {"status": "ok", "version": "...", "commit": "...", "built": "...", "plugins": <count>, "hosters": [...]}
 
 # Readiness (200; the port opens only after startup has completed)
 curl http://localhost:7979/api/v1/readyz
@@ -254,7 +254,7 @@ JDownloader side: enable the FolderWatch extension in JDownloader's settings and
 
 ### Application Health
 
-- `GET /api/v1/healthz` — liveness; returns `{"status": "ok", "plugins": ..., "hosters": [...]}`.
+- `GET /api/v1/healthz` — liveness; returns `{"status": "ok", "version": ..., "commit": ..., "built": ..., "plugins": ..., "hosters": [...]}` (commit and build time read `unknown` without the image's build arguments).
 - `GET /api/v1/readyz` — readiness; 200 (the port opens only after startup has completed).
 
 ### Plugin Health

@@ -184,7 +184,7 @@ HEAD /api/v1/stremio/play/{stream_id}
 
 The URL of every resolved file stream (and of all streams without a resolver):
 
-1. Look up `stream_id` in the stream link cache (`404` if missing; links are kept `stream_link_ttl_seconds`, 7 days).
+1. Look up `stream_id` in the stream link cache (`404` if missing; links are kept `stream_link_ttl_seconds`, 7 days, in the cache backend; the in-memory copy of the latest 4096 links answers without an age check until a restart clears it).
 1. Take the stored video URL while it is fresh (resolved less than an hour ago: every working link of the measurement still played after 92 minutes), else resolve the hoster URL again (`StremioLinks`: concurrent requests for one link share one resolution, one tap on Android sent 11; the new video URL is saved).
 1. Return a **302 redirect** to the video URL.
 1. When the hoster gives no video (or only echoes the embed page), the stored video URL is still tried: its CDN may still serve it. **502** only without a stored video URL (never a redirect to an embed page).
@@ -364,7 +364,7 @@ Defaults, with production's values (`data/config.yaml`) where they differ:
 | Keep-alive (fixed) | 60 s, 20 connections | Idle connections of the shared client | Saves TLS handshakes between requests |
 | Circuit breakers (fixed) | 5 failures, then 60 s doubling to 1 h | A plugin per category, a hoster resolver | Skipped while open; one half-open probe |
 | `stremio.plugin_health_interval_seconds` | 1800 s; unreachable ones every 5 min, the first check 60 s after the start; a site without an answer is tried again after 30 s | The plugin site checks | Unreachable plugins are skipped |
-| `stremio.stream_link_ttl_seconds` | 7 days | Stored links of `/play` and the HLS proxy | Older links answer 404; a video URL older than 1 h (fixed) resolves again at playback |
+| `stremio.stream_link_ttl_seconds` | 7 days | Stored links of `/play` and the HLS proxy | Older links answer 404 once they have also left the in-memory set of the latest 4096 links (a restart clears it); a video URL older than 1 h (fixed) resolves again at playback |
 | HLS proxy (fixed) | manifests cached 60 s and fetched within 15 s; segments within `http_timeout_seconds` | Manifest and segment requests | |
 | SSRF guard (fixed) | DNS answers cached 60 s | Checked addresses | |
 

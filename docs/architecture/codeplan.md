@@ -183,13 +183,13 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 |---|---|---|
 | `--host` | `$HOST` or `0.0.0.0` | Bind host |
 | `--port` | `$PORT` or `7979` | Bind port |
-| `--config` | none | Path to YAML config file |
+| `--config` | `$SCAVENGARR_CONFIG` if that file exists, else none | Path to YAML config file |
 | `--dotenv` | none | Path to `.env` file |
 | `--plugin-dir` | none | Override plugins directory |
 | `--log-level` | none | Log level override |
 | `--log-format` | none | `json` or `console` |
 
-Startup: parse arguments → resolve host/port → build CLI overrides → `load_config()` → `configure_logging()` → `uvicorn.run(create_app(config), ...)`. Resources are created in `lifespan()`, never in `create_app()`.
+Startup: parse arguments → pick the config path → build CLI overrides → `load_config()` → `configure_logging()` → resolve host/port (after the config, so `HOST`/`PORT` from `--dotenv` take effect) → `uvicorn.run(create_app(config), ...)`. Resources are created in `lifespan()`, never in `create_app()`.
 
 ### Cross-Cutting
 
@@ -197,7 +197,7 @@ Startup: parse arguments → resolve host/port → build CLI overrides → `load
 - All I/O is async; parallel work uses `asyncio.gather()` bounded by semaphores; sync disk I/O uses `asyncio.to_thread()`.
 - Plugins implement multi-stage scraping internally; `HttpxPluginBase._new_semaphore()` bounds their parallelism (`_max_concurrent`, default `DEFAULT_MAX_CONCURRENT = 5`).
 - Outbound HTTP goes through `RetryTransport` + `DomainRateLimiter` on the shared client (`build_http_client()`); inbound API calls are limited by `RateLimitMiddleware` when `api_rate_limit_rpm > 0`.
-- The shared client refuses every request and redirect hop to a non-public address (`PrivateAddressGuard`, a `request` event hook): scraped pages decide most outbound URLs (download links, embeds, CDNs, their redirects), and a hostile page must not reach the LAN, cloud metadata or Scavengarr itself (blind SSRF). IP literals are checked directly, hostnames after a cached DNS lookup (60 s); only the solver sidecar (`playwright.solver_url`) is allowed. Connections go to the addresses of that lookup (`GuardedNetworkBackend` in the client's `GuardedTransport`, IPv4 first, the next address when one refuses): a second lookup at connect time could answer with a LAN address (DNS rebinding). TLS still verifies the hostname, which httpcore sends as SNI. The connections themselves are asyncio streams (`AsyncioNetworkBackend`), whose TLS runs in the event loop (uvloop) instead of in Python (anyio, httpx's default): the HLS proxy needs about a quarter less CPU on the Pi. Browser (Playwright) navigation does not go through this client.
+- The shared client refuses every request and redirect hop to a non-public address (`PrivateAddressGuard`, a `request` event hook): scraped pages decide most outbound URLs (download links, embeds, CDNs, their redirects), and a hostile page must not reach the LAN, cloud metadata or Scavengarr itself (blind SSRF). IP literals are checked directly, hostnames after a cached DNS lookup (60 s); only the solver sidecar (`playwright.solver_url`) is allowed. Connections go to the addresses of that lookup (`GuardedNetworkBackend` in the client's `GuardedTransport`, IPv4 first; the next address starts after 250 ms or as soon as one fails, a staggered race): a second lookup at connect time could answer with a LAN address (DNS rebinding). TLS still verifies the hostname, which httpcore sends as SNI. The connections themselves are asyncio streams (`AsyncioNetworkBackend`), whose TLS runs in the event loop (uvloop) instead of in Python (anyio, httpx's default): the HLS proxy needs about a quarter less CPU on the Pi. Browser (Playwright) navigation does not go through this client.
 
 ---
 

@@ -300,9 +300,8 @@ Scavengarr follows **Clean Architecture** with four layers:
 
 ```text
 Interfaces  -->  Application  -->  Domain
-     |                |
-     v                v
-Infrastructure (implements Domain ports)
+     |                                ^
+     +-------->  Infrastructure  -----+   (implements Domain ports)
 ```
 
 | Layer | Responsibility | Key Modules |
