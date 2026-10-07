@@ -128,17 +128,24 @@ _KEEPALIVE_CONNECTIONS = 20
 
 def _log_config(config: AppConfig) -> None:
     """What the server runs with: the values away from the defaults, secrets
-    masked, and the YAML keys that loading ignored."""
+    masked, with the layer each came from, and the YAML keys and environment
+    names that loading ignored."""
     source = config.source
     config_file = str(source.file) if source.file else None
+    changed = changed_values(config)
+    sources = {path: source.value_sources.get(path, "defaults") for path in changed}
     # One field per changed value, so the processors mask URL passwords in them
-    log.info("config_effective", config_file=config_file, **changed_values(config))
+    log.info("config_effective", config_file=config_file, sources=sources, **changed)
     if source.unknown_keys:
         log.warning(
             "config_unknown_keys",
             config_file=config_file,
             keys=list(source.unknown_keys),
         )
+    if source.unknown_env:
+        log.warning("config_unknown_env", names=list(source.unknown_env))
+    for used, ignored in source.env_conflicts:
+        log.warning("config_env_conflict", used=used, ignored=ignored)
 
 
 def _auto_tune_concurrency(config: AppConfig) -> None:

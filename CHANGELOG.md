@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: Every Setting from the Environment
+- Only 30 settings had an environment variable; the `stremio` section, most of `cache` and `scoring` and the link validation keys were YAML-only, so a container could not be configured without a mounted file. Every key of a section now reads `SCAVENGARR_<SECTION>_<KEY>` (`SCAVENGARR_STREMIO_PLUGIN_TIMEOUT_SECONDS`), every top-level key `SCAVENGARR_<KEY>`; the field's type parses the value, JSON for the dict-typed settings. The older flat names stay and win over the sectioned name of the same key; when the two disagree the startup log warns (`config_env_conflict`), and a `SCAVENGARR_<SECTION>_*` name that names no key, such as a misspelled one, is reported (`config_unknown_env`).
+- `config_effective` names the layer of each changed value (`sources`: `yaml`, `env`, `cli` or `defaults`).
+- `docs/features/configuration.md` lists all 81 variables in a table generated from the schema (`scripts/generate_config_doc.py`, guarded by `tests/unit/infrastructure/test_config_doc.py`) and shows the default config file as `environment:` entries; a test checks that those entries give the same values as the file, and `docker-compose.yml` carries them commented.
+
 ### Added: A Stremio Round in One Command
 - `scripts/stremio_round.py` measures the title set of `docs/plans/round-titles.txt` (the 17 titles of the fourth to sixth rounds and the baseline of `pi-performance.md`, 19 ids) one after another: the first answer (wall time, streams, `X-Cache` when the route sends one), the cached answer right after it and the play check of the first answer's streams (`stremio_playcheck.py`'s check). It prints the round table of `docs/plans/stremio-latency.md` with a summary row (medians, totals, titles without stream), appends it to a Markdown file with `--out` and adds the container's CPU for the round with `--portainer` (`stremio_profile.py`'s reading). Against production at most once an hour.
 

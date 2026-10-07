@@ -425,3 +425,158 @@ class TestStartupReport:
             sectioned.setdefault(section, {})[key] = 1
 
         assert _unknown_keys(sectioned) == ()
+
+
+_REPO = Path(__file__).resolve().parents[2]
+
+
+def _production_env() -> dict[str, str]:
+    """The ``environment:`` entries of the production example in the docs."""
+    doc = (_REPO / "docs/features/configuration.md").read_text(encoding="utf-8")
+    block = doc.split("<!-- production-env:start -->")[1]
+    block = block.split("<!-- production-env:end -->")[0]
+    body = block.split("```yaml")[1].split("```")[0]
+    entries = yaml.safe_load(body)["environment"]
+    return {name: str(value) for name, value in entries.items()}
+
+
+@pytest.mark.usefixtures("no_env_overrides")
+class TestSectionedEnv:
+    """Every setting of a section reads ``SCAVENGARR_<SECTION>_<KEY>``."""
+
+    def test_a_section_key_reaches_its_field(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SCAVENGARR_STREMIO_PLUGIN_TIMEOUT_SECONDS", "20")
+        monkeypatch.setenv("SCAVENGARR_STREMIO_VERIFY_STREAMS", "false")
+        monkeypatch.setenv("SCAVENGARR_CACHE_SEARCH_TTL_SECONDS", "1800")
+        monkeypatch.setenv("SCAVENGARR_LOGGING_LEVEL", "DEBUG")
+
+        config = load_config()
+
+        assert config.stremio.plugin_timeout_seconds == 20.0
+        assert config.stremio.verify_streams is False
+        assert config.cache.search_ttl_seconds == 1800
+        assert config.log_level == "DEBUG"
+
+    def test_names_are_case_insensitive(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("scavengarr_stremio_resolve_target_count", "3")
+
+        assert load_config().stremio.resolve_target_count == 3
+
+    def test_top_level_keys_and_json_values(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SCAVENGARR_VALIDATION_MAX_CONCURRENT", "30")
+        monkeypatch.setenv(
+            "SCAVENGARR_PLUGINS_OVERRIDES", '{"cineby": {"enabled": false}}'
+        )
+        monkeypatch.setenv("SCAVENGARR_STREMIO_HOSTER_SCORES", '{"voe": 9}')
+
+        config = load_config()
+
+        assert config.validation_max_concurrent == 30
+        assert config.plugins.overrides["cineby"].enabled is False
+        assert config.stremio.hoster_scores == {"voe": 9}
+
+    def test_env_overrides_the_yaml_value(
+        self, yaml_config: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SCAVENGARR_HTTP_TIMEOUT_RESOLVE_SECONDS", "7")
+        monkeypatch.setenv("SCAVENGARR_CACHE_TTL_SECONDS", "60")
+
+        config = load_config(config_path=yaml_config)
+
+        assert config.http_timeout_resolve_seconds == 7.0
+        assert config.cache_ttl_seconds == 60  # the YAML said 1800
+
+    def test_the_flat_alias_wins_and_the_conflict_is_kept(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SCAVENGARR_RATE_LIMIT_REQUESTS_PER_SECOND", "10")
+        monkeypatch.setenv("SCAVENGARR_HTTP_RATE_LIMIT_RPS", "3")
+
+        config = load_config()
+
+        assert config.rate_limit_requests_per_second == 10.0
+        assert config.source.env_conflicts == (
+            (
+                "SCAVENGARR_RATE_LIMIT_REQUESTS_PER_SECOND",
+                "SCAVENGARR_HTTP_RATE_LIMIT_RPS",
+            ),
+        )
+
+    def test_agreeing_forms_are_no_conflict(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SCAVENGARR_LOG_LEVEL", "DEBUG")
+        monkeypatch.setenv("SCAVENGARR_LOGGING_LEVEL", "DEBUG")
+
+        assert load_config().source.env_conflicts == ()
+
+    def test_a_misspelled_key_is_reported(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SCAVENGARR_STREMIO_PLUGIN_TIMEOUT_SECOND", "20")
+        # Not settings: plugin credentials, the build identity, the config path
+        monkeypatch.setenv("SCAVENGARR_BOERSE_USERNAME", "user")
+        monkeypatch.setenv("SCAVENGARR_COMMIT", "abc")
+        monkeypatch.setenv("SCAVENGARR_CONFIG", "/nowhere.yaml")
+
+        config = load_config()
+
+        assert config.stremio.plugin_timeout_seconds == 30.0
+        assert config.source.unknown_env == (
+            "SCAVENGARR_STREMIO_PLUGIN_TIMEOUT_SECOND",
+        )
+
+    def test_a_flat_name_read_as_sectioned_is_the_same_setting(self) -> None:
+        """SCAVENGARR_HTTP_HTTP2 is both a flat alias and a sectioned name: both
+        readings must set the same key, or one variable would set two values."""
+        for flat, (section, key) in _FLAT_KEYS.items():
+            if flat.startswith(f"{section}_"):
+                assert flat.removeprefix(f"{section}_") == key, flat
+
+    def test_each_value_names_its_layer(
+        self, yaml_config: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SCAVENGARR_STREMIO_PLUGIN_TIMEOUT_SECONDS", "20")
+        monkeypatch.setenv("SCAVENGARR_HTTP_TIMEOUT_SECONDS", "45")
+
+        config = load_config(
+            config_path=yaml_config, cli_overrides={"log_level": "ERROR"}
+        )
+
+        sources = config.source.value_sources
+        assert sources["app_name"] == "yaml"
+        assert sources["cache_ttl_seconds"] == "yaml"
+        assert sources["stremio.plugin_timeout_seconds"] == "env"
+        assert sources["http_timeout_seconds"] == "env"  # the YAML said 15
+        assert sources["log_level"] == "cli"  # the YAML said DEBUG
+
+    def test_production_example_matches_the_seed_file(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The docs' environment: entries give what the image's seed file gives."""
+        seeded = changed_values(load_config(config_path=_REPO / "data/config.yaml"))
+        for name, value in _production_env().items():
+            monkeypatch.setenv(name, value)
+
+        config = load_config()
+
+        assert changed_values(config) == seeded
+        assert config.source.unknown_env == ()
+        assert config.source.env_conflicts == ()
+
+    def test_compose_file_shows_the_production_example(self) -> None:
+        compose = (_REPO / "docker-compose.yml").read_text(encoding="utf-8")
+        commented = {
+            line.strip().removeprefix("#").strip()
+            for line in compose.splitlines()
+            if line.strip().startswith("#")
+        }
+
+        for name, value in _production_env().items():
+            assert any(
+                line.startswith(f"{name}:") and value in line for line in commented
+            ), name

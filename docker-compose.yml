@@ -48,6 +48,28 @@ services:
       # SCAVENGARR_CACHE_MAX_CONCURRENT: "50" # Redis takes more parallel ops
       # Traces to Tempo (profile "tracing"); Prometheus scrapes /metrics anyway:
       # SCAVENGARR_TELEMETRY_TRACING_ENDPOINT: http://tempo:4318
+      # Every setting reads SCAVENGARR_<SECTION>_<KEY> (docs/features/
+      # configuration.md, "Application Variables"). The values of the default
+      # config file, as environment entries; they win over the seeded file:
+      # SCAVENGARR_ENVIRONMENT: "prod"
+      # SCAVENGARR_TMDB_API_KEY: ""
+      # SCAVENGARR_VALIDATION_TIMEOUT_SECONDS: "3.0"
+      # SCAVENGARR_VALIDATION_MAX_CONCURRENT: "30"
+      # SCAVENGARR_PLUGINS_OVERRIDES: '{"cineby": {"enabled": false}}'
+      # SCAVENGARR_HTTP_TIMEOUT_SECONDS: "15.0"
+      # SCAVENGARR_HTTP_TIMEOUT_RESOLVE_SECONDS: "10.0"
+      # SCAVENGARR_HTTP_RATE_LIMIT_RPS: "10.0"
+      # SCAVENGARR_HTTP_RETRY_MAX_ATTEMPTS: "2"
+      # SCAVENGARR_HTTP_RETRY_BACKOFF_BASE: "0.5"
+      # SCAVENGARR_HTTP_RETRY_MAX_BACKOFF: "10.0"
+      # SCAVENGARR_PLAYWRIGHT_TIMEOUT_MS: "20000"
+      # SCAVENGARR_CACHE_SEARCH_TTL_SECONDS: "1800"
+      # SCAVENGARR_STREMIO_MAX_CONCURRENT_PLUGINS: "15"
+      # SCAVENGARR_STREMIO_MAX_CONCURRENT_PLAYWRIGHT: "7"
+      # SCAVENGARR_STREMIO_MAX_RESULTS_PER_PLUGIN: "50"
+      # SCAVENGARR_STREMIO_PROBE_CONCURRENCY: "20"
+      # SCAVENGARR_STREMIO_MAX_PROBE_COUNT: "80"
+      # SCAVENGARR_STREMIO_PROBE_STEALTH_TIMEOUT_SECONDS: "10.0"
     shm_size: 1gb # Chromium (Playwright plugins, browser capture) needs shared memory
     init: true # reaps orphaned Chromium/driver processes (python would be PID 1)
     # CPU profiles in the container (scripts/stremio_profile.py --py-spy):

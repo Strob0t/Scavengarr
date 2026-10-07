@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import os
 from collections.abc import Iterator, Mapping
 from copy import deepcopy
 from pathlib import Path
@@ -9,7 +11,7 @@ from typing import Any
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import AliasChoices, AliasPath, BaseModel, SecretStr
+from pydantic import AliasChoices, AliasPath, BaseModel, SecretStr, ValidationError
 
 from .defaults import DEFAULT_CONFIG
 from .schema import AppConfig, ConfigSource, EnvOverrides
@@ -64,6 +66,8 @@ _FLAT_KEYS: dict[str, tuple[str, str]] = {
     "cache_max_concurrent": ("cache", "max_concurrent"),
     "telemetry_tracing_endpoint": ("telemetry", "tracing_endpoint"),
 }
+
+_ENV_PREFIX = "SCAVENGARR_"
 
 # Field names whose values the startup log masks
 _SECRET_WORDS = ("password", "token", "key", "secret")
@@ -201,6 +205,97 @@ def _shown(name: str, value: Any) -> Any:
     return value
 
 
+def _env_value(raw: str) -> Any:
+    """A variable's value for the model: JSON for a dict or list (``{...}``,
+    ``[...]``), else the string, which the field's type parses."""
+    if raw.lstrip().startswith(("{", "[")):
+        try:
+            return json.loads(raw)
+        except ValueError:
+            return raw
+    return raw
+
+
+def _env_layer(
+    environ: Mapping[str, str],
+) -> tuple[dict[str, Any], tuple[str, ...], tuple[tuple[str, str], ...]]:
+    """The environment's layer, its unknown names and its alias conflicts.
+
+    Every key of a section reads ``SCAVENGARR_<SECTION>_<KEY>``, every
+    top-level key ``SCAVENGARR_<KEY>`` (case-insensitive). The explicit flat
+    names of ``EnvOverrides`` go on top: where a flat alias and the sectioned
+    name of one key disagree, the alias wins and the pair is returned. A name
+    with a section's prefix but no key of that section is returned as
+    unknown; other ``SCAVENGARR_*`` names (plugin credentials, the build
+    identity, ``SCAVENGARR_CONFIG``) are not settings and stay unreported.
+    """
+    env = {
+        name.upper(): value
+        for name, value in environ.items()
+        if name.upper().startswith(_ENV_PREFIX)
+    }
+    sectioned: dict[str, Any] = {}
+    unknown: list[str] = []
+    for name, raw in sorted(env.items()):
+        rest = name.removeprefix(_ENV_PREFIX).lower()
+        if rest in _TOP_LEVEL_KEYS:
+            sectioned[rest] = _env_value(raw)
+            continue
+        section = next((s for s in _SECTION_KEYS if rest.startswith(f"{s}_")), None)
+        if section is None:
+            continue
+        key, keys = rest.removeprefix(f"{section}_"), _ACCEPTED_KEYS[section]
+        if keys is not None and key in keys and keys[key] is None:
+            sectioned.setdefault(section, {})[key] = _env_value(raw)
+        else:
+            unknown.append(name)
+
+    conflicts: list[tuple[str, str]] = []
+    for flat, (section, key) in _FLAT_KEYS.items():
+        alias, name = (
+            f"{_ENV_PREFIX}{flat}".upper(),
+            f"{_ENV_PREFIX}{section}_{key}".upper(),
+        )
+        if alias != name and alias in env and name in env:
+            if env[alias].strip() != env[name].strip():
+                conflicts.append((alias, name))
+
+    layer = _deep_merge(
+        _normalize_layer(sectioned),
+        _normalize_layer(EnvOverrides().to_update_dict()),
+    )
+    return layer, tuple(unknown), tuple(conflicts)
+
+
+def _validated(data: dict[str, Any]) -> AppConfig | None:
+    """A layer stage as a config, or ``None`` when it is not valid on its own
+    (a later layer completes it; its values then count for that layer)."""
+    try:
+        return AppConfig.model_validate(data)
+    except ValidationError:
+        return None
+
+
+def _value_sources(
+    stages: list[tuple[str, dict[str, Any]]], config: AppConfig
+) -> dict[str, str]:
+    """The layer that set each value of *config* that differs from the defaults.
+
+    *stages* holds the merged data after each layer, the last one being
+    *config*'s; a value counts for the first stage that gave it its final value.
+    """
+    sources: dict[str, str] = {}
+    previous = AppConfig()
+    for index, (layer, data) in enumerate(stages):
+        model = config if index == len(stages) - 1 else _validated(data)
+        if model is None:
+            continue
+        for path, _ in _changes(model, previous, ""):
+            sources[path] = layer
+        previous = model
+    return {path: sources[path] for path in changed_values(config) if path in sources}
+
+
 def _read_yaml_config(config_path: Path) -> dict[str, Any]:
     raw = config_path.read_text(encoding="utf-8")
     parsed = yaml.safe_load(raw)
@@ -221,7 +316,9 @@ def load_config(
     Load configuration with strict precedence:
     defaults < YAML file < env vars < cli overrides
 
-    The config records its file and the file's unknown keys (``source``).
+    The config records its file, the file's unknown keys, the layer of each
+    changed value and the environment's unknown names and alias conflicts
+    (``source``).
     This function MUST NOT create files or directories (no filesystem side-effects).
     """
     cli_overrides = cli_overrides or {}
@@ -232,6 +329,8 @@ def load_config(
         load_dotenv(dotenv_path, override=False)
 
     base = _normalize_layer(deepcopy(DEFAULT_CONFIG))
+    # The merged data after each layer, for the value sources
+    stages: list[tuple[str, dict[str, Any]]] = [("defaults", deepcopy(base))]
 
     unknown_keys: tuple[str, ...] = ()
     if config_path is not None:
@@ -240,14 +339,24 @@ def load_config(
         yaml_data = _read_yaml_config(config_path)
         unknown_keys = _unknown_keys(yaml_data)
         _deep_merge(base, _normalize_layer(yaml_data))
+        stages.append(("yaml", deepcopy(base)))
 
-    env_layer_flat = EnvOverrides().to_update_dict()
-    env_layer = _normalize_layer(env_layer_flat)
-    _deep_merge(base, env_layer)
+    env_layer, unknown_env, env_conflicts = _env_layer(os.environ)
+    if env_layer:
+        _deep_merge(base, env_layer)
+        stages.append(("env", deepcopy(base)))
 
     cli_layer = _normalize_layer(cli_overrides)
-    _deep_merge(base, cli_layer)
+    if cli_layer:
+        _deep_merge(base, cli_layer)
+        stages.append(("cli", deepcopy(base)))
 
     config = AppConfig.model_validate(base)
-    config._source = ConfigSource(file=config_path, unknown_keys=unknown_keys)
+    config._source = ConfigSource(
+        file=config_path,
+        unknown_keys=unknown_keys,
+        value_sources=_value_sources(stages, config),
+        unknown_env=unknown_env,
+        env_conflicts=env_conflicts,
+    )
     return config

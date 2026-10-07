@@ -45,10 +45,52 @@ class TestLogConfig:
                 "event": "config_effective",
                 "log_level": "info",
                 "config_file": str(tmp_path / "config.yaml"),
+                "sources": {
+                    "stremio.max_concurrent_plugins": "yaml",
+                    "tmdb_api_key": "yaml",
+                },
                 "stremio.max_concurrent_plugins": 15,
                 "tmdb_api_key": "***",
             }
         ]
+
+    def test_sources_name_the_environment(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SCAVENGARR_STREMIO_MAX_CONCURRENT_PLUGINS", "9")
+
+        logs = _logs(tmp_path, {"stremio": {"max_concurrent_plugins": 15}})
+
+        assert logs[0]["sources"] == {"stremio.max_concurrent_plugins": "env"}
+        assert logs[0]["stremio.max_concurrent_plugins"] == 9
+
+    def test_unknown_env_names_warn(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SCAVENGARR_STREMIO_PLUGIN_TIMEOUT_SECOND", "20")
+
+        logs = _logs(tmp_path, {})
+
+        assert logs[1] == {
+            "event": "config_unknown_env",
+            "log_level": "warning",
+            "names": ["SCAVENGARR_STREMIO_PLUGIN_TIMEOUT_SECOND"],
+        }
+
+    def test_disagreeing_env_forms_warn(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SCAVENGARR_LOG_LEVEL", "DEBUG")
+        monkeypatch.setenv("SCAVENGARR_LOGGING_LEVEL", "ERROR")
+
+        logs = _logs(tmp_path, {})
+
+        assert logs[1] == {
+            "event": "config_env_conflict",
+            "log_level": "warning",
+            "used": "SCAVENGARR_LOG_LEVEL",
+            "ignored": "SCAVENGARR_LOGGING_LEVEL",
+        }
 
     def test_unknown_keys_warn(self, tmp_path: Path) -> None:
         logs = _logs(tmp_path, {"stremio": {"probe_at_stream_time": True}})
@@ -65,5 +107,10 @@ class TestLogConfig:
             _log_config(load_config())
 
         assert logs == [
-            {"event": "config_effective", "log_level": "info", "config_file": None}
+            {
+                "event": "config_effective",
+                "log_level": "info",
+                "config_file": None,
+                "sources": {},
+            }
         ]

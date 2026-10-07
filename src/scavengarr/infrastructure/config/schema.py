@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
@@ -442,6 +442,13 @@ class ConfigSource:
     file: Path | None = None
     # Dotted YAML paths no field accepts (sorted); loading ignored them
     unknown_keys: tuple[str, ...] = ()
+    # The changed values' dotted paths and the layer that set each one:
+    # "defaults", "yaml", "env" or "cli"
+    value_sources: dict[str, str] = field(default_factory=dict)
+    # SCAVENGARR_<SECTION>_<KEY> names no key of the section has (sorted)
+    unknown_env: tuple[str, ...] = ()
+    # (flat alias, sectioned name) pairs set to different values; the alias won
+    env_conflicts: tuple[tuple[str, str], ...] = ()
 
 
 class AppConfig(BaseModel):
@@ -755,6 +762,9 @@ class EnvOverrides(BaseSettings):
     - load.py creates EnvOverrides() to read SCAVENGARR_* variables,
       converts to dict of set values, merges into YAML/defaults,
       then validates AppConfig.
+    - These are the explicit flat names; every other setting is read as
+      SCAVENGARR_<SECTION>_<KEY> by load.py (``_env_layer``), and a flat
+      name wins over the sectioned name of the same key.
 
     Supported env var examples (flat, explicit):
     - SCAVENGARR_PLUGIN_DIR
