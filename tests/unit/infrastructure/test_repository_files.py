@@ -20,6 +20,8 @@ _ROOT = Path(__file__).resolve().parents[3]
 
 _EXECUTED_DIRECTLY = [
     "docker/entrypoint.sh",
+    "scripts/basedpyright.sh",
+    "scripts/worktree_venv.sh",
     ".claude/hooks/block-dangerous.sh",
     ".claude/hooks/format-and-lint.sh",
     ".claude/plugins/basedpyright-lsp/scripts/langserver.sh",

@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: Checks in Worktrees
+- A git worktree has no `.venv`, so `poetry run pre-commit`, the basedpyright hook and `poetry run pytest` ended there with `Command not found` (Poetry created an empty venv). `scripts/worktree_venv.sh` links the worktree's `.venv` to the main checkout's venv once, and the basedpyright hook runs `scripts/basedpyright.sh`, which finds that venv by itself (the lookup of the LSP plugin's `langserver.sh`); both scripts are stored executable (AGENTS.md §9). pytest puts the checkout's own `src` first (`pythonpath` in `pyproject.toml`), because the linked venv's editable install points at the main checkout.
+
 ### Added: The Docs Name Paths That Exist
 - `tests/unit/infrastructure/test_docs_paths.py` fails when `AGENTS.md`, `README.md`, `CONTRIBUTING.md` or a doc under `docs/features/` or `docs/architecture/` names a repository path in backticks that does not exist (plans and OpenSpec changes name future files and are not checked). Paths relative to the package (`infrastructure/plugins/dom.py`) or to a layer, as the architecture tables cite them (`plugins/base.py`, `cache/redis_adapter.py`), count when they exist there; the current docs name no missing path.
 

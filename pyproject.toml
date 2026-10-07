@@ -48,6 +48,9 @@ pytest-xdist = "^3.8.0"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The checkout's own package first: in a git worktree the venv's editable
+# install points at the main checkout's src
+pythonpath = ["src"]
 asyncio_mode = "auto"
 markers = [
     "integration: Integration tests (real infrastructure, mocked HTTP)",
