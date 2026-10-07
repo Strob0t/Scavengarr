@@ -176,7 +176,7 @@ Some keys also have an older flat name (`SCAVENGARR_LOG_LEVEL` for `logging.leve
 | `SCAVENGARR_STREMIO_MAX_PROBE_COUNT` | int | `50` | Max streams to resolve at stream time (top-ranked first). |
 | `SCAVENGARR_STREMIO_MAX_RESULTS_PER_PLUGIN` | int | `100` | Max results per plugin in Stremio search. Limits pagination to reduce response time. Torznab uses the plugin default (1000). |
 | `SCAVENGARR_STREMIO_PLUGIN_HEALTH_INTERVAL_SECONDS` | float | `1800.0` | How often every Stremio plugin's site is checked (HEAD on its domains); searches skip plugins whose site did not answer (twice, 30 s apart), and those are checked again every 5 minutes. 0 turns the check off. |
-| `SCAVENGARR_STREMIO_PLUGIN_TIMEOUT_SECONDS` | float | `30.0` | Plugin search budget per Stremio search, counted from the request start (plugins waiting for a concurrency slot use it up too; a stale search-cache entry's refresh: from its own start); plugins still running then are cut, queued ones skipped. The answer does not wait for the search: plugins still running when it goes out fill the search cache. |
+| `SCAVENGARR_STREMIO_PLUGIN_TIMEOUT_SECONDS` | float | `30.0` | Each plugin search, from the moment the plugin holds a concurrency slot; also the request's answer budget, counted from the request start (a stale search-cache entry's refresh: from its own start). The request stops waiting for the search then and answers with the results known so far; plugins still running are not cut, their results reach the search cache for the next request. |
 | `SCAVENGARR_STREMIO_PREFERRED_LANGUAGE` | str | `de` | Preferred audio language code for stream ranking. |
 | `SCAVENGARR_STREMIO_PROBE_CONCURRENCY` | int | `10` | Max parallel hoster resolutions at stream time. |
 | `SCAVENGARR_STREMIO_PROBE_STEALTH_TIMEOUT_SECONDS` | float | `15.0` | Page timeout of the stealth browser (Patchright) used by browser-based resolvers and the Cloudflare fallback, in seconds. |
@@ -320,7 +320,7 @@ playwright:
 stremio:
   auto_tune_all: true           # container-aware auto-tune of concurrency params
   max_results_per_plugin: 50    # default: 100
-  plugin_timeout_seconds: 30.0  # search budget from request start (default: 30)
+  plugin_timeout_seconds: 30.0  # plugin timeout and answer budget (default: 30)
   stream_deadline_seconds: 60.0 # latest answer of a stream request (default: 60)
   title_match_threshold: 0.7
   resolve_target_count: 5       # answer once 5 hosters have a video (default: 5)
@@ -488,7 +488,7 @@ Controls the Stremio addon behavior: stream ranking, plugin concurrency, title m
 | `stremio.max_results_per_plugin` | int | `100` | Max results per plugin in Stremio search |
 
 A dict you set (`language_scores`, `hoster_scores`) replaces the default dict; list every entry you want to keep.
-| `stremio.plugin_timeout_seconds` | float | `30.0` | Plugin search budget per stream request, counted from the request start (slot queueing included; a stale search-cache entry's refresh: from its own start); running plugins are cut, queued ones skipped. The answer does not wait for the search |
+| `stremio.plugin_timeout_seconds` | float | `30.0` | Each plugin search, from the moment the plugin holds a slot; also the request's answer budget, from the request start (a stale search-cache entry's refresh: from its own start): the request stops waiting for the search then; plugins still running are not cut, their results reach the search cache |
 | `stremio.plugin_health_interval_seconds` | float | `1800.0` | How often every Stremio plugin's site is checked (HEAD on its domains); searches skip plugins whose site did not answer (twice, 30 s apart), and those are checked again every 5 minutes (`0` = off) |
 | `stremio.stream_deadline_seconds` | float | `60.0` | Latest answer of a stream request, from the request start: hoster resolution stops and the answer has what is resolved. Earlier at `resolve_target_count` streams or when the search and every resolution are done |
 | `stremio.allow_hls_transcoding` | bool | `false` | Let Stremio's streaming server transcode HLS streams; off, the HLS proxy refuses its ffmpeg the playlist and Stremio Web plays HLS itself (on a Raspberry Pi 4 the server's software transcoding stuttered at 1080p) |
