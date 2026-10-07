@@ -619,8 +619,10 @@ class TestSeasonsAndParallelism:
 
         results = await plugin.search("stranger things")
 
+        # ints, as the Stremio episode filter reads them
         seasons = {r.metadata["season"] for r in results}
-        assert seasons == {"1", "2", "3", "4"}
+        assert seasons == {1, 2, 3, 4}
+        assert all(isinstance(r.metadata["episode"], int) for r in results)
 
     @pytest.mark.asyncio
     async def test_season_scrape_resolves_hosters_in_parallel(self) -> None:

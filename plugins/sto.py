@@ -548,18 +548,23 @@ class StoPlugin(HttpxPluginBase):
             first_link["link"] if isinstance(first_link, dict) else str(first_link)
         )
 
+        # ints, as the Stremio episode filter reads them; an episode the URL
+        # does not name stays out
+        metadata: dict[str, str | int] = {
+            "series": detail.title,
+            "season": season,
+            "genres": ", ".join(detail.genres),
+        }
+        if ep_num_match:
+            metadata["episode"] = int(ep_num)
+
         return SearchResult(
             title=full_title,
             download_link=download_link,
             download_links=ep_links,
             source_url=ep_url,
             category=torznab_cat,
-            metadata={
-                "series": detail.title,
-                "season": str(season),
-                "episode": ep_num,
-                "genres": ", ".join(detail.genres),
-            },
+            metadata=metadata,
         )
 
     async def _resolve_season_detail(
