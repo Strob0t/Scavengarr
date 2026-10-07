@@ -16,6 +16,7 @@ import heapq
 import math
 import time
 from collections.abc import Awaitable, Callable, Coroutine
+from functools import partial
 from typing import Any, Protocol
 
 import structlog
@@ -212,6 +213,11 @@ class ResolveConfig(Protocol):
     stream_deadline_seconds: float
 
 
+# A search handed over for the background resolution: its progress, the
+# plugins' languages and the resolver
+_HandOver = tuple[SearchProgress, dict[str, str], ResolveCallback]
+
+
 class ResolveFlow:
     """When a request's streams resolve, and when its answer is due.
 
@@ -242,6 +248,8 @@ class ResolveFlow:
         # Resolutions of a cached answer's other links, one per cache key,
         # one cache key at a time
         self._background_resolutions: dict[str, asyncio.Task[None]] = {}
+        # Per cache key, the hand-overs waiting for the key's run to end
+        self._next_runs: dict[str, list[_HandOver]] = {}
         self._background_runs = asyncio.Semaphore(_BACKGROUND_RUNS)
 
     async def resolve(
@@ -298,17 +306,34 @@ class ResolveFlow:
         as its results arrive: a cached answer's links without a cached
         outcome, or the results of a search that goes on after the answer
         (a continuing search, a refresh, a completion). One run per cache
-        key at a time: a hand-over for *key* while its run runs changes
-        nothing. Returns whether a run started.
+        key at a time: a hand-over while the key's run runs waits for it
+        and starts when it ends, in order; cached answers (all alike) wait
+        once. Returns whether a run started now.
         """
         if key in self._background_resolutions:
+            queue = self._next_runs.setdefault(key, [])
+            if progress.done:
+                queue[:] = [queued for queued in queue if not queued[0].done]
+            queue.append((progress, plugin_languages, resolve_fn))
             return False
         task = self._spawn(
             self._resolve_in_background(progress, plugin_languages, resolve_fn)
         )
         self._background_resolutions[key] = task
-        task.add_done_callback(lambda _: self._background_resolutions.pop(key, None))
+        task.add_done_callback(partial(self._run_done, key))
         return True
+
+    def _run_done(self, key: str, task: asyncio.Task[None]) -> None:
+        """The key's run ended: the next hand-over waiting for it starts (not
+        at shutdown, which cancels the runs)."""
+        self._background_resolutions.pop(key, None)
+        queue = self._next_runs.pop(key, [])
+        if task.cancelled() or not queue:
+            return
+        hand_over, *rest = queue
+        if rest:
+            self._next_runs[key] = rest
+        self.resolve_in_background(key, *hand_over)
 
     async def _resolve_in_background(
         self,

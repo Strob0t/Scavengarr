@@ -511,6 +511,31 @@ class TestLateResults:
 
         await eventually(lambda: "https://voe.sx/e/new" in resolutions.store)
 
+    async def test_a_hand_over_during_the_keys_run_starts_after_it(self) -> None:
+        """The stale answer's background run resolves its other link while
+        the refresh runs; the refresh's new link resolves once it ends."""
+        cache = memory_cache()
+        cache.data[SEARCH_KEY] = CachedSearch(
+            results=[
+                _of("a", "https://voe.sx/e/old"),
+                _of("a", "https://dood.to/e/other"),
+            ],
+            total=2,
+            stored_at=time.time() - SEARCH_TTL - 1,
+        )
+        resolutions = Resolutions(alive=("https://voe.sx/e/old",), delay=0.3)
+        site = fake_site([hit("https://voe.sx/e/new")])
+        uc = answering_use_case({"a": site}, cache, resolutions)
+
+        await uc.execute(make_request(), base_url="http://localhost:8080")
+
+        await eventually(lambda: "https://voe.sx/e/new" in resolutions.store)
+        await eventually(lambda: "https://dood.to/e/other" in resolutions.store)
+        assert sorted(resolutions.calls) == [
+            "https://dood.to/e/other",
+            "https://voe.sx/e/new",
+        ]
+
 
 class TestAnswerPolicy:
     """The answer goes out at 5 streams, when the search and every
