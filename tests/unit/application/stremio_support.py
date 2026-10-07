@@ -97,6 +97,7 @@ def make_use_case(
     mirror_groups: dict[str, str] | None = None,
     score_store: AsyncMock | None = None,
     anime_ids: AnimeIdResolverPort = NO_ANIME_IDS,
+    pool: ConcurrencyPool | None = None,
 ) -> StremioStreamUseCase:
     engine = search_engine or AsyncMock()
     # Default: validate_results returns input unchanged
@@ -121,7 +122,7 @@ def make_use_case(
         stream_link_repo=stream_link_repo,
         resolve_fn=resolve_fn,
         cached_resolution_fn=cached_resolution_fn,
-        pool=ConcurrencyPool(httpx_slots=100, pw_slots=100),
+        pool=pool or ConcurrencyPool(httpx_slots=100, pw_slots=100),
         cache=cache,
         search_ttl_seconds=search_ttl_seconds,
         telemetry=telemetry,
@@ -243,6 +244,7 @@ def cached_use_case(
     ttl: int = SEARCH_TTL,
     hard: float = 1.0,
     telemetry: TelemetryPort = NO_TELEMETRY,
+    pool: ConcurrencyPool | None = None,
 ) -> StremioStreamUseCase:
     tmdb = AsyncMock()
     tmdb.get_title_and_year = AsyncMock(
@@ -264,6 +266,7 @@ def cached_use_case(
         cache=cache,
         search_ttl_seconds=ttl,
         telemetry=telemetry,
+        pool=pool,
     )
 
 

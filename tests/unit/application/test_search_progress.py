@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from unittest.mock import AsyncMock
 
 from scavengarr.application.stremio.search_cache import CachedSearch
 from scavengarr.application.stremio.search_progress import SearchProgress
@@ -101,13 +102,17 @@ class TestSearchProgress:
         assert time.time() - entry.stored_at < 5
 
     def test_finished_from_a_cache_entry(self) -> None:
-        entry = CachedSearch(results=[_sr("a")], total=3, stored_at=1.0)
+        entry = CachedSearch(
+            results=[_sr("a")], total=3, stored_at=1.0, missing=("sto",)
+        )
 
         progress = SearchProgress.finished(entry)
 
         assert progress.done
         assert [r.download_link for r in progress.results] == ["a"]
         assert progress.total == 3
+        assert progress.missing == ("sto",)
+        assert progress.entry().stored_at == 1.0
 
     async def test_wait_ends_with_the_search_or_the_deadline(self) -> None:
         progress = SearchProgress()
@@ -119,3 +124,74 @@ class TestSearchProgress:
         asyncio.get_running_loop().call_later(0.02, progress.finish)
         await progress.wait(time.monotonic() + 5)
         assert progress.done
+
+
+class TestMissingPlugins:
+    """The entry names the plugins the search asked that have not finished
+    (continue-cut-searches)."""
+
+    async def test_expected_plugins_are_missing_until_they_finish(self) -> None:
+        progress = SearchProgress()
+        progress.expect(["sto", "kinoger"])
+
+        assert progress.missing == ("kinoger", "sto")
+        await progress.plugin_done("sto", True)
+        assert progress.missing == ("kinoger",)
+        assert progress.entry().missing == ("kinoger",)
+
+    async def test_a_failed_plugin_stays_missing(self) -> None:
+        progress = SearchProgress()
+        progress.expect(["kinoger"])
+
+        await progress.plugin_done("kinoger", False)
+
+        assert progress.missing == ("kinoger",)
+
+    async def test_the_budget_write_and_the_late_plugins_rewrite(self) -> None:
+        store = AsyncMock()
+        progress = SearchProgress(store=store)
+        progress.expect(["a", "sto"])
+        progress.add([_sr("a")], [_sr("a")])
+        await progress.plugin_done("a", True)
+
+        await progress.write_at(time.monotonic() + 0.02)
+
+        first = store.await_args_list[0].args[0]
+        assert [r.download_link for r in first.results] == ["a"]
+        assert first.missing == ("sto",)
+
+        progress.add([_sr("s", "sto")], [_sr("s", "sto")])
+        await progress.plugin_done("sto", True)
+
+        second = store.await_args_list[1].args[0]
+        assert [r.download_link for r in second.results] == ["a", "s"]
+        assert second.missing == ()
+        assert second.stored_at == first.stored_at == progress.started
+
+    async def test_a_plugin_finishing_before_the_budget_writes_nothing(
+        self,
+    ) -> None:
+        store = AsyncMock()
+        progress = SearchProgress(store=store)
+        progress.expect(["a"])
+
+        await progress.plugin_done("a", True)
+
+        store.assert_not_awaited()
+
+    async def test_the_budget_write_is_skipped_when_the_search_ends_first(
+        self,
+    ) -> None:
+        store = AsyncMock()
+        progress = SearchProgress(store=store)
+        asyncio.get_running_loop().call_later(0.01, progress.finish)
+
+        await progress.write_at(time.monotonic() + 5)
+
+        store.assert_not_awaited()
+
+    def test_the_entry_age_counts_from_the_search_start(self) -> None:
+        progress = SearchProgress()
+        progress.started = 1.0
+
+        assert progress.entry().stored_at == 1.0

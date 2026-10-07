@@ -18,9 +18,9 @@ audit's baseline (7.1) must run before the filter change (6) ships.
 
 ## 3. Entry: missing plugins and per-plugin merge
 
-- [ ] 3.1 `application/stremio/search_cache.py`: `CachedSearch.missing: tuple[str, ...] = ()`; `merge(entry, plugin, results)` replaces that plugin's results (by `source_plugin` metadata) and drops the name from `missing`; `stored_at` is the search's start.
-- [ ] 3.2 `application/stremio/search_progress.py`: the progress knows the selected plugins, which have finished, and writes the entry at the answer budget (with `missing`) and after every late plugin (merge), through the search cache; the first write keeps the "at least one matching result" condition.
-- [ ] 3.3 Tests in `tests/unit/application/test_search_cache.py` and `test_search_progress.py`: write at the budget with `missing`; late merge; failed plugin stays missing; an old entry without the field is complete; age from the search start; a merge never thins an entry.
+- [x] 3.1 `application/stremio/search_cache.py`: `CachedSearch.missing: tuple[str, ...] = ()`; `merge(entry, plugin, results)` replaces that plugin's results (by `source_plugin` metadata) and drops the name from `missing`; `stored_at` is the search's start.
+- [x] 3.2 `application/stremio/search_progress.py`: the progress knows the selected plugins, which have finished, and writes the entry at the answer budget (with `missing`) and after every late plugin (merge), through the search cache; the first write keeps the "at least one matching result" condition.
+- [x] 3.3 Tests in `tests/unit/application/test_search_cache.py` and `test_search_progress.py`: write at the budget with `missing`; late merge; failed plugin stays missing; an old entry without the field is complete; age from the search start; a merge never thins an entry.
 
 ## 4. Title search: budget, completion, merging refresh
 

@@ -1,13 +1,16 @@
 """Search results of Stremio requests, cached with stale-while-revalidate.
 
 Only the title-filtered search results are cached, not resolved streams:
-hoster stream URLs expire and some are bound to the resolving IP.
+hoster stream URLs expire and some are bound to the resolving IP. An entry
+names the plugins whose search had not finished when it was written
+(``missing``); a later request completes it once (``title_search.py``).
 """
 
 from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from typing import Any
 
 import structlog
 
@@ -28,7 +31,40 @@ class CachedSearch:
 
     results: list[SearchResult]
     total: int  # results before the title filter
-    stored_at: float  # time.time() of the search
+    stored_at: float  # time.time() of the search's start
+    # The plugins that had not finished when the entry was written: still
+    # running, timed out, failed or cancelled. Empty: the entry is complete
+    missing: tuple[str, ...] = ()
+
+    @property
+    def complete(self) -> bool:
+        return not self.missing
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        # An entry pickled before ``missing`` existed loads as complete
+        object.__setattr__(self, "missing", ())
+        self.__dict__.update(state)
+
+
+def merge(
+    entry: CachedSearch, plugin: str, results: list[SearchResult]
+) -> CachedSearch:
+    """*entry* with *plugin*'s results replaced by *results* (its finished
+    run) and its name gone from ``missing``.
+
+    The other plugins' results stay, so a merge never thins an entry: a
+    plugin that did not finish keeps its earlier results. ``total`` counts
+    the plugin's new matching results in place of its old ones (an entry
+    keeps no raw count per plugin).
+    """
+    kept = [r for r in entry.results if r.metadata.get("source_plugin") != plugin]
+    replaced = len(entry.results) - len(kept)
+    return CachedSearch(
+        results=kept + list(results),
+        total=max(entry.total - replaced, 0) + len(results),
+        stored_at=entry.stored_at,
+        missing=tuple(name for name in entry.missing if name != plugin),
+    )
 
 
 def search_cache_key(request: StremioStreamRequest) -> str:
@@ -86,4 +122,5 @@ class SearchCache:
             "stremio_search_cache_stored",
             cache_key=key,
             result_count=len(entry.results),
+            missing=list(entry.missing),
         )

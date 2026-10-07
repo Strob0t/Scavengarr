@@ -167,6 +167,26 @@ class TestSearchCache:
             "https://voe.sx/e/fast",
         ]
 
+    async def test_the_entry_at_the_budget_names_the_plugins_to_come(self) -> None:
+        """One slot: the second plugin starts once the first is done, after
+        the answer budget, and finishes within its own timeout. The entry
+        written at the budget names it missing; its end rewrites the entry,
+        and the search's end writes nothing new."""
+        cache = memory_cache()
+        sites = {
+            "first": fake_site([hit("https://voe.sx/e/first")], delay=0.15),
+            "second": fake_site([hit("https://dood.to/e/second")], delay=0.1),
+        }
+        pool = ConcurrencyPool(httpx_slots=1, pw_slots=1)
+        uc = cached_use_case(sites, cache, hard=0.2, pool=pool)
+
+        await uc.execute(make_request())
+
+        entries = [c.args[1] for c in cache.set.await_args_list]
+        assert [e.missing for e in entries] == [("second",), ()]
+        assert [len(e.results) for e in entries] == [1, 2]
+        assert entries[0].stored_at == entries[1].stored_at
+
     async def test_a_plugin_past_the_timeout_is_cancelled(self) -> None:
         cache = memory_cache()
         cancelled = asyncio.Event()

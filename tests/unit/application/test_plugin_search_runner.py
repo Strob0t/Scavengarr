@@ -916,6 +916,92 @@ class TestTelemetry:
         assert self._sample(t, "empty", plugin="up") == 1
 
 
+class TestPluginDone:
+    """Each plugin's end is reported once; finished unless cut or failed,
+    so the search's entry knows what is missing (continue-cut-searches)."""
+
+    @pytest.mark.parametrize(
+        ("answer", "finished"),
+        [
+            ([_sr("https://a/1")], True),
+            ([], True),
+            (RuntimeError("boom"), False),
+        ],
+    )
+    async def test_outcome(
+        self, answer: list[SearchResult] | Exception, finished: bool
+    ) -> None:
+        done = AsyncMock()
+        runner = _runner(_registry({"a": _plugin(answer)}))
+
+        pool = ConcurrencyPool(httpx_slots=10, pw_slots=10)
+        async with pool.request() as budget:
+            await runner.search_with_fallback(
+                ["a"], ["q"], 2000, budget=budget, on_plugin_done=done
+            )
+
+        done.assert_awaited_once_with("a", finished)
+
+    async def test_a_timeout_is_not_finished(self) -> None:
+        plugin = _plugin([])
+        plugin.search = _answer_after(10, [])
+        done = AsyncMock()
+        runner = _runner(_registry({"a": plugin}), plugin_timeout=0.01)
+
+        pool = ConcurrencyPool(httpx_slots=10, pw_slots=10)
+        async with pool.request() as budget:
+            await runner.search_with_fallback(
+                ["a"], ["q"], 2000, budget=budget, on_plugin_done=done
+            )
+
+        done.assert_awaited_once_with("a", False)
+
+    async def test_once_per_plugin_after_every_query(self) -> None:
+        """Two queries: the plugin's second run fails, so it is not finished."""
+        plugin = _plugin([])
+        plugin.search = AsyncMock(
+            side_effect=[[_sr("https://a/1")], RuntimeError("boom")]
+        )
+        done = AsyncMock()
+        runner = _runner(_registry({"a": plugin}))
+
+        pool = ConcurrencyPool(httpx_slots=1, pw_slots=1)
+        async with pool.request() as budget:
+            await runner.search_with_fallback(
+                ["a"], ["q", "q2"], 2000, budget=budget, on_plugin_done=done
+            )
+
+        done.assert_awaited_once_with("a", False)
+
+    async def test_skipped_plugins_are_finished(self) -> None:
+        """A breaker, the health check or a mirror group skip a plugin on
+        purpose: nothing of its is missing."""
+        breaker = MagicMock()
+        breaker.allow.side_effect = lambda key: not key.startswith("open")
+        breaker.is_closed.return_value = True
+        plugins = {name: _plugin([]) for name in ("open", "down", "m1", "m2")}
+        done = AsyncMock()
+        runner = _runner(
+            _registry(plugins),
+            circuit_breaker=breaker,
+            plugin_health=_Health("down"),
+            mirror_groups={"m1": "g", "m2": "g"},
+        )
+
+        pool = ConcurrencyPool(httpx_slots=10, pw_slots=10)
+        async with pool.request() as budget:
+            await runner.search_with_fallback(
+                list(plugins), ["q"], 2000, budget=budget, on_plugin_done=done
+            )
+
+        assert sorted(c.args for c in done.await_args_list) == [
+            ("down", True),
+            ("m1", True),
+            ("m2", True),
+            ("open", True),
+        ]
+
+
 class TestPageClaim:
     """A plugin's browser pages are claimed as plugin work, due at its end."""
 

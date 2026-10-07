@@ -10,7 +10,14 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
+from collections.abc import (
+    Awaitable,
+    Callable,
+    Coroutine,
+    Iterable,
+    Mapping,
+    Sequence,
+)
 from contextvars import ContextVar
 from typing import Any, Protocol
 
@@ -105,6 +112,37 @@ BrowserWarmupFn = Callable[[], Coroutine[Any, Any, tuple[Any, Any]]]
 # Receives one plugin's results (of one query) as soon as they are there
 OnResultsFn = Callable[[list[SearchResult]], Awaitable[None]]
 
+# Hears that a plugin's search for every query ended, and whether it
+# finished: its results are whole (not cut by a timeout, an error or a
+# cancellation); a plugin skipped on purpose (breaker, health check, mirror
+# group) counts as finished
+PluginDoneFn = Callable[[str, bool], Awaitable[None]]
+
+
+class _PluginEnds:
+    """Reports each plugin's end once, after its runs for every query.
+
+    A plugin skipped on purpose (health check, breaker, mirror group) is
+    reported finished before the search: nothing of its is missing.
+    """
+
+    def __init__(self, names: Iterable[str], runs: int, report: PluginDoneFn) -> None:
+        self._pending = dict.fromkeys(names, runs)
+        self._unfinished: set[str] = set()
+        self._report = report
+
+    async def skipped(self, names: Iterable[str]) -> None:
+        for name in names:
+            await self._report(name, True)
+
+    async def __call__(self, name: str, finished: bool) -> None:
+        """One query's run of *name* ended; the last one reports the plugin."""
+        if not finished:
+            self._unfinished.add(name)
+        self._pending[name] -= 1
+        if self._pending[name] == 0:
+            await self._report(name, name not in self._unfinished)
+
 
 class PluginSearchRunner:
     """Search plugins in parallel and collect validated results."""
@@ -158,6 +196,7 @@ class PluginSearchRunner:
         budget: ConcurrencyBudgetPort,
         budget_ends: float | None = None,
         on_results: OnResultsFn | None = None,
+        on_plugin_done: PluginDoneFn | None = None,
     ) -> list[SearchResult]:
         """Search plugins with all query variants, deduplicate results.
 
@@ -181,16 +220,23 @@ class PluginSearchRunner:
         reach *on_results* like any other's. *budget_ends*
         (``time.monotonic()`` value) only labels the plugins that return
         after it (telemetry outcome ``late``). *on_results* gets each
-        plugin's new results of each query as soon as they are there.
+        plugin's new results of each query as soon as they are there;
+        *on_plugin_done* hears of each plugin once its search for every
+        query ended (of a skipped one at once).
 
         Plugins whose site failed the periodic health check are skipped
         (before a mirror group picks its member).
         """
+        asked = list(plugin_names)
         plugin_names = self._reachable(plugin_names)
         scores = await self._mirror_scores(plugin_names, category)
         plugin_names, standbys = self._one_per_mirror_group(
             plugin_names, category, scores
         )
+        ends = None
+        if on_plugin_done is not None:
+            ends = _PluginEnds(plugin_names, len(queries), on_plugin_done)
+            await ends.skipped(name for name in asked if name not in plugin_names)
 
         # --- Fire-and-forget pre-warm for shared Playwright browser ---
         if self._browser_warmup_fn is not None:
@@ -228,6 +274,7 @@ class PluginSearchRunner:
                     budget_ends=budget_ends,
                     on_results=_hand_on,
                     standbys=standbys,
+                    on_plugin_done=ends,
                 )
                 for q in queries
             )
@@ -325,17 +372,20 @@ class PluginSearchRunner:
         budget_ends: float | None = None,
         on_results: OnResultsFn | None = None,
         standbys: Mapping[str, str] | None = None,
+        on_plugin_done: PluginDoneFn | None = None,
     ) -> list[SearchResult]:
         """Search all plugins in parallel with bounded concurrency.
 
         Uses the global concurrency pool's fair-share budget to manage
         httpx and Playwright slot allocation across requests. Each
-        plugin's results go to *on_results* once it has given its slot back.
-        A plugin that gives nothing (no hits, error, timeout) hands the
-        query to its standby in *standbys* (a mirror of its database).
+        plugin's results go to *on_results* once it has given its slot back,
+        then *on_plugin_done* hears whether it finished (a standby's own
+        outcome does not count). A plugin that gives nothing (no hits,
+        error, timeout) hands the query to its standby in *standbys* (a
+        mirror of its database).
         """
 
-        async def _run(name: str) -> list[SearchResult]:
+        async def _run(name: str) -> tuple[list[SearchResult], bool]:
             if self._plugins.get_mode(name) == "playwright":
                 slot = budget.acquire_pw()
             else:
@@ -351,10 +401,10 @@ class PluginSearchRunner:
                 )
 
         async def _search_one(name: str) -> list[SearchResult]:
-            results = await _run(name)
+            results, finished = await _run(name)
             standby = (standbys or {}).get(name)
             if standby is not None and not results:
-                results = await _run(standby)
+                results, _ = await _run(standby)
                 log.info(
                     "stremio_mirror_standby",
                     plugin=name,
@@ -371,6 +421,8 @@ class PluginSearchRunner:
                 self._mirror_misses.discard(_breaker_key(name, category))
             if results and on_results is not None:
                 await on_results(results)
+            if on_plugin_done is not None:
+                await on_plugin_done(name, finished)
             return results
 
         tasks = [_search_one(name) for name in plugin_names]
@@ -390,8 +442,12 @@ class PluginSearchRunner:
         season: int | None = None,
         episode: int | None = None,
         budget_ends: float | None = None,
-    ) -> list[SearchResult]:
-        """Run a single plugin search with its full timeout, catching errors."""
+    ) -> tuple[list[SearchResult], bool]:
+        """Run a single plugin search with its full timeout, catching errors.
+
+        Returns the results and whether the search finished (a timeout or
+        an error leaves the plugin's results missing).
+        """
         timeout = self._plugin_timeout
 
         # Circuit breaker: skip plugins that have been failing consistently
@@ -401,7 +457,7 @@ class PluginSearchRunner:
         ):
             log.info("stremio_plugin_circuit_open", plugin=name, category=category)
             self._telemetry.count("plugin_search", "breaker_open", plugin=name)
-            return []
+            return [], True
 
         # The stealth browser serves the plugin's pages by its end
         claim = page_claim.set(PageClaim("plugin", time.monotonic() + timeout))
@@ -426,7 +482,7 @@ class PluginSearchRunner:
             # breaker
             if self._circuit_breaker is not None:
                 self._circuit_breaker.record_failure(breaker_key)
-            return []
+            return [], False
         finally:
             page_claim.reset(claim)
 
@@ -474,20 +530,21 @@ class PluginSearchRunner:
         season: int | None = None,
         episode: int | None = None,
         budget_ends: float | None = None,
-    ) -> list[SearchResult]:
+    ) -> tuple[list[SearchResult], bool]:
         """Search a single plugin, catching and logging errors.
 
         The plugin is called directly (with the max_results context so it
         limits pagination), then its results are episode-filtered and
         validated via the SearchEngine. A plugin that returns after
         *budget_ends* (the request's answer budget) is ``late``: its results
-        reach the cache and the next request.
+        reach the cache and the next request. Returns the results and
+        whether the search finished (an error leaves them missing).
         """
         try:
             plugin = self._plugins.get(name)
         except Exception:
             log.warning("stremio_plugin_not_found", plugin=name, exc_info=True)
-            return []
+            return [], True
 
         success = False
         cancelled = False
@@ -543,4 +600,4 @@ class PluginSearchRunner:
             result_count=len(results),
             late=late,
         )
-        return results
+        return results, success

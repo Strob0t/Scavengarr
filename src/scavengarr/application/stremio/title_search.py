@@ -136,7 +136,7 @@ class TitleSearch:
         progress = self._searches.get(key)
         if progress is not None:
             return progress, "joined"
-        progress = SearchProgress()
+        progress = SearchProgress(store=partial(self._search_cache.put, key))
         self._searches[key] = progress
         task = self._spawn(search(progress))
         task.add_done_callback(partial(self._search_done, key, progress))
@@ -174,8 +174,12 @@ class TitleSearch:
         request's start; a refresh's own, see ``_refresh``), only labels the
         plugins that return after it.
         Their title-matching results go into *progress* as they arrive: the
-        answers do not wait for the search, they read it.
+        answers do not wait for the search, they read it. The entry goes
+        into the cache at the budget, naming the plugins still to come as
+        missing, again after each of them, and at the end.
         """
+        budget_ends = started + self._plugin_timeout_s
+        self._spawn(progress.write_at(budget_ends))
         with self._telemetry.stage("stremio_phase", phase="search"):
             try:
                 async with self._pool.request() as budget:
@@ -187,13 +191,11 @@ class TitleSearch:
                         progress,
                         scored=scored,
                         budget=budget,
-                        # The answer budget: a plugin returning after it is
-                        # late, not cut
-                        budget_ends=started + self._plugin_timeout_s,
+                        budget_ends=budget_ends,
                     )
             finally:
                 progress.finish()
-        await self._search_cache.put(key, progress.entry())
+        await progress.write()
 
     async def _search_lang_groups(
         self,
@@ -241,6 +243,7 @@ class TitleSearch:
             async def _found(results: list[SearchResult]) -> None:
                 progress.add(results, await self._titles.matching(results, ref))
 
+            progress.expect(group_plugins)
             await self._search_runner.search_with_fallback(
                 group_plugins,
                 queries,
@@ -250,6 +253,7 @@ class TitleSearch:
                 budget=budget,
                 budget_ends=budget_ends,
                 on_results=_found,
+                on_plugin_done=progress.plugin_done,
             )
 
         await asyncio.gather(
