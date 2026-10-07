@@ -527,6 +527,9 @@ class TestSearchIntegration:
         assert meta["tmdb"] == "46260"
         assert meta["imdb"] == "tt4907198"
         assert meta["year"] == "2002"
+        # the anime's first episode: no episode claimed
+        assert "season" not in meta
+        assert "episode" not in meta
 
     @pytest.mark.asyncio
     async def test_search_description(self) -> None:
@@ -708,9 +711,29 @@ class TestScrapeAnime:
         mock_client.post = AsyncMock(side_effect=_side_effect)
         plug._client = mock_client
 
-        await plug._scrape_anime({"slug": "naruto", "title": "Naruto"}, season=3)
+        result = await plug._scrape_anime(
+            {"slug": "naruto", "title": "Naruto"}, season=3
+        )
 
         assert bodies == [{"slug": "naruto", "season": "3", "episode": "1"}]
+        # the episode fetched, for the Stremio episode filter
+        assert result is not None
+        assert (result.metadata["season"], result.metadata["episode"]) == (3, 1)
+
+    @pytest.mark.asyncio
+    async def test_requested_episode_in_metadata(self) -> None:
+        plug = _make_plugin()
+        plug.base_url = "https://fireani.me"
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=_mock_response(_EPISODE_RESPONSE))
+        plug._client = mock_client
+
+        result = await plug._scrape_anime(
+            {"slug": "naruto", "title": "Naruto"}, season=2, episode=5
+        )
+
+        assert result is not None
+        assert (result.metadata["season"], result.metadata["episode"]) == (2, 5)
 
     async def test_detail_fallback_to_s1e1(self) -> None:
         """When detail API fails, falls back to season 1 episode 1."""

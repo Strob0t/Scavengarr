@@ -378,6 +378,12 @@ class FireaniPlugin(HttpxPluginBase):
             self._log.debug("fireani_no_hosters", slug=slug)
             return None
 
+        metadata: dict[str, str | int] = {**_build_metadata(info)}
+        if season is not None:
+            # the episode fetched above, for the Stremio episode filter
+            metadata["season"] = season
+            metadata["episode"] = episode or 1
+
         return SearchResult(
             title=title,
             download_link=hoster_links[0]["link"],
@@ -385,7 +391,7 @@ class FireaniPlugin(HttpxPluginBase):
             source_url=f"{self.base_url}/anime/{slug}",
             category=5070,
             description=_build_description(info),
-            metadata=_build_metadata(info),
+            metadata=metadata,
         )
 
     async def search(
