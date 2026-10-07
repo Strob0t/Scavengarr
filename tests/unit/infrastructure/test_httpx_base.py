@@ -77,11 +77,14 @@ class TestEnsureClient:
 # ---------------------------------------------------------------------------
 
 
-def _head_response(domain: str, status: int = 200) -> MagicMock:
+def _head_response(
+    domain: str, status: int = 200, headers: dict[str, str] | None = None
+) -> MagicMock:
     """Build a mock HEAD response with a realistic ``.url`` attribute."""
     resp = MagicMock()
     resp.status_code = status
     resp.url = httpx.URL(f"https://{domain}/")
+    resp.headers = httpx.Headers(headers or {})
     return resp
 
 
@@ -114,6 +117,54 @@ class TestVerifyDomain:
 
         assert plugin._domain_verified is True
         assert "fallback.com" in plugin.base_url
+
+    @pytest.mark.asyncio
+    async def test_a_challenge_answer_counts_as_reachable(self) -> None:
+        """kinoger answers 403 with a Cloudflare challenge: the site is up
+        behind it, the plugin's browser fallback solves it."""
+        plugin = _TestPlugin()
+        challenge = _head_response(
+            "example.com", status=403, headers={"cf-mitigated": "challenge"}
+        )
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.head = AsyncMock(return_value=challenge)
+        plugin._client = mock_client
+
+        await plugin._verify_domain()
+
+        assert plugin._domain_verified is True
+        assert plugin.base_url == "https://example.com"
+
+    @pytest.mark.asyncio
+    async def test_a_working_domain_outranks_an_answering_one(self) -> None:
+        plugin = _TestPlugin()
+        blocked = _head_response("example.com", status=403)
+        ok_resp = _head_response("fallback.com")
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.head = AsyncMock(side_effect=[blocked, ok_resp])
+        plugin._client = mock_client
+
+        await plugin._verify_domain()
+
+        assert plugin.base_url == "https://fallback.com"
+
+    @pytest.mark.asyncio
+    async def test_an_error_page_is_still_the_site(self) -> None:
+        """No domain answers below 400: the first answering one is used."""
+        plugin = _TestPlugin()
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.head = AsyncMock(
+            side_effect=[
+                _head_response("example.com", status=404),
+                _head_response("fallback.com", status=502),
+            ]
+        )
+        plugin._client = mock_client
+
+        await plugin._verify_domain()
+
+        assert plugin._domain_verified is True
+        assert plugin.base_url == "https://example.com"
 
     @pytest.mark.asyncio
     async def test_all_domains_fail(self) -> None:

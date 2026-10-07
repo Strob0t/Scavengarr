@@ -54,6 +54,16 @@ def _forget_solve(solve: asyncio.Task[str | None]) -> None:
         solve.exception()  # retrieved: a cut request never awaits it
 
 
+def _site_answers(resp: httpx.Response) -> bool:
+    """The domain's site is up: an answer below 500 (an error page is still
+    the site), or a challenge page (up behind Cloudflare: kinoger answers
+    403 with ``cf-mitigated: challenge``); the health check's rule."""
+    return (
+        resp.status_code < 500
+        or detect_challenge(resp.status_code, "", resp.headers) is not None
+    )
+
+
 class HttpxPluginBase:
     """Shared base for httpx-based Python plugins.
 
@@ -187,7 +197,10 @@ class HttpxPluginBase:
 
         Uses the *final* URL after redirects so that domains that
         redirect (e.g. ``aniworld.info`` → ``www.aniworld.info``)
-        produce a correct ``base_url`` for subsequent requests. Raises
+        produce a correct ``base_url`` for subsequent requests. The first
+        domain answering below 400 wins; without one, the first that
+        answers at all (``_site_answers``: an error page, or a Cloudflare
+        challenge the plugin's browser fallback solves) is used. Raises
         ``PluginUnreachableError`` when no domain answers; the next
         search checks again.
         """
@@ -196,28 +209,38 @@ class HttpxPluginBase:
             return
 
         client = await self._ensure_client()
+        answering: tuple[str, httpx.Response] | None = None
         for domain in self._domains:
             url = f"https://{domain}/"
             try:
                 resp = await client.head(url, timeout=DEFAULT_DOMAIN_CHECK_TIMEOUT)
-                if resp.status_code < 400:
-                    # Use the final URL after any redirects (e.g. www. prefix).
-                    final_url = str(resp.url)
-                    final_host = resp.url.host
-                    self.base_url = final_url.rstrip("/")
-                    self._domain_verified = True
-                    self._log.info(
-                        f"{self.name}_domain_found",
-                        domain=domain,
-                        resolved=final_host,
-                    )
-                    return
             except Exception:  # noqa: BLE001
                 self._log.debug(f"{self.name}_domain_check_failed", domain=domain)
                 continue
+            if resp.status_code < 400:
+                self._use_domain(domain, resp)
+                return
+            if answering is None and _site_answers(resp):
+                answering = (domain, resp)
 
+        if answering is not None:
+            domain, resp = answering
+            self._log.info(
+                f"{self.name}_domain_answers", domain=domain, status=resp.status_code
+            )
+            self._use_domain(domain, resp)
+            return
         self._log.warning(f"{self.name}_no_domain_reachable")
         raise PluginUnreachableError(self.name)
+
+    def _use_domain(self, domain: str, resp: httpx.Response) -> None:
+        """Take the domain's final URL after any redirects (e.g. a ``www.``
+        prefix) as ``base_url``."""
+        self.base_url = str(resp.url).rstrip("/")
+        self._domain_verified = True
+        self._log.info(
+            f"{self.name}_domain_found", domain=domain, resolved=resp.url.host
+        )
 
     async def cleanup(self) -> None:
         """Close httpx client (skip if it is the shared instance)."""

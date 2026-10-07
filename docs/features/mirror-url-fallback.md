@@ -62,24 +62,29 @@ async def _verify_domain(self) -> None:
         return
 
     client = await self._ensure_client()
+    answering = None
     for domain in self._domains:
         try:
             resp = await client.head(f"https://{domain}/", timeout=5.0)
-            if resp.status_code < 400:
-                self.base_url = str(resp.url).rstrip("/")  # final URL after redirects
-                self._domain_verified = True
-                return
         except Exception:
             continue
+        if resp.status_code < 400:
+            self._use_domain(domain, resp)  # final URL after redirects
+            return
+        if answering is None and _site_answers(resp):  # below 500, or a challenge
+            answering = (domain, resp)
 
-    # All domains failed: the next search checks again
+    if answering is not None:  # an error page or a challenge: the site is up
+        self._use_domain(*answering)
+        return
+    # No domain answers: the next search checks again
     self._log.warning(f"{self.name}_no_domain_reachable")
     raise PluginUnreachableError(self.name)
 ```
 
 Key behaviors:
 - `HEAD` request per domain with a 5 s timeout (`DEFAULT_DOMAIN_CHECK_TIMEOUT`)
-- The first status `< 400` wins; errors and timeouts move on to the next domain
+- The first status `< 400` wins; errors and timeouts move on to the next domain. Without one, the first domain that answers at all is used (`{name}_domain_answers`): a status below 500 (an error page is still the site) or a Cloudflare challenge (403/503 with `cf-mitigated`: kinoger), the health check's rule; the plugin's own requests decide then, and the browser fallback solves a challenge
 - `base_url` uses the final URL after redirects, so a bare domain that redirects to `www.` produces a correct base
 - If all domains fail, `{name}_no_domain_reachable` is logged and `PluginUnreachableError` (`domain/plugins/base.py`) raised: `base_url` and `_domain_verified` stay as they were, so the next search checks again. A Stremio search marks the plugin unreachable in the health monitor at once, until its recheck finds the site answering ([Stremio Addon](./stremio-addon.md#request-flow)); a Torznab search logs the error and answers without the plugin
 
