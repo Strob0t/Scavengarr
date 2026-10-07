@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import importlib.util
 from pathlib import Path
 from types import ModuleType
@@ -469,6 +470,88 @@ class TestDetailPageParser:
 # ---------------------------------------------------------------------------
 # Plugin integration tests (mocked HTTP)
 # ---------------------------------------------------------------------------
+
+
+_FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "html" / "megakino"
+
+
+def _captured(name: str) -> str:
+    """A megakino page captured with scripts/capture_pages.py (2026-10-07)."""
+    with gzip.open(_FIXTURES / f"{name}.html.gz", "rt", encoding="utf-8") as f:
+        return f.read()
+
+
+class TestSeasonLabels:
+    """megakino has one page per season; its episodes carry the page's season
+    (the Stremio filter dropped S02E01 and S05E01 under ``1x1`` labels,
+    step 28)."""
+
+    @pytest.mark.parametrize(
+        ("page", "season"),
+        [
+            ("detail-one-piece-2-staffel", 2),
+            # the site's own spelling: "Stranger Things - 5 Stafffel"
+            ("detail-stranger-things-5-staffel", 5),
+            ("detail-the-last-of-us-1-staffel", 1),
+        ],
+    )
+    def test_captured_season_pages(self, page: str, season: int) -> None:
+        parser = _DetailPageParser("https://megakino22.com")
+        parser.feed(_captured(page))
+        parser.finalize()
+
+        assert parser.is_series
+        labels = [link["label"] for link in parser.stream_links]
+        assert labels
+        assert all(label.startswith(f"{season}x") for label in labels)
+        assert labels[0].startswith(f"{season}x1 ")
+
+    @pytest.mark.parametrize(
+        ("title", "season"),
+        [
+            ("One Piece - 2 Staffel", 2),
+            ("Stranger Things - 5 Stafffel", 5),
+            ("Dark - Staffel 3", 3),
+            ("Fargo 4. Staffel", 4),
+            ("The Penguin", None),
+            ("Oppenheimer", None),
+        ],
+    )
+    def test_season_of_title(self, title: str, season: int | None) -> None:
+        assert _mod._season_of(title) == season
+
+    def test_page_without_season_word_is_season_one(self) -> None:
+        parser = _DetailPageParser("https://megakino.me")
+        parser.feed(_SERIES_DETAIL_HTML)
+        parser.finalize()
+
+        assert parser.stream_links
+        assert all(lk["label"].startswith("1x") for lk in parser.stream_links)
+
+    def test_other_season_knows_the_number_before_the_word(self) -> None:
+        assert _mod._other_season("Stranger Things - 1 Staffel", 5)
+        assert not _mod._other_season("Stranger Things - 5 Stafffel", 5)
+        assert not _mod._other_season("The Penguin", 2)
+
+    @pytest.mark.asyncio
+    async def test_episode_result_states_page_season_and_episode(self) -> None:
+        plug = _make_plugin()
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(
+            return_value=_mock_response(_captured("detail-one-piece-2-staffel"))
+        )
+        plug._client = mock_client
+        result = {
+            "url": "https://megakino22.com/serials/6094-one-piece-2-staffel.html",
+            "title": "One Piece - 2 Staffel",
+        }
+
+        found = await plug._scrape_detail(result, season=2, episode=1)
+
+        assert found is not None
+        assert found.metadata["season"] == 2
+        assert found.metadata["episode"] == 1
+        assert all(lk["label"].startswith("2x1 ") for lk in found.download_links)
 
 
 class TestMegakinoPluginAttributes:

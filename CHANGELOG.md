@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: megakino Season Pages of Season 2 and Later
+- megakino labelled every episode `1x<n>`, so the Stremio episode filter dropped a season page of season 2 or later for its own episodes ("One Piece - 2 Staffel" for S02E01, "Stranger Things - 5 Stafffel" for S05E01: 0 of 2 kept). The labels carry the season the page's title names ("Staffel N", "N Staffel", "N. Staffel", the site's "Stafffel"; 1 without one), an episode request's result states `season` and `episode` in its metadata, and a page of another season named "N Staffel" is skipped before its detail fetch, as "Staffel N" was. After: 2 of 2 right (`docs/plans/series-episodes.md`).
+
 ### Chore: File Throughput Probe
 - Whether direct files proxied through Scavengarr (step 26) need a read-ahead was unmeasured. `scripts/probes/hls_throughput.py --file [ID]` reads the first 32 MiB of a stored direct link from the Pi in one connection, then as three parallel 1 MiB ranges, and prints Mbit/s and whether the CDN honoured the ranges (`206` with the asked `Content-Range`); without an id it takes the newest stored direct link of `--hoster`. First run: MixDrop 5.4 Mbit/s in one connection, 22.2 in ranges; DoodStream 3.8 and 19.3; both honoured every range (`docs/plans/stremio-latency.md`, seventh round, production).
 
