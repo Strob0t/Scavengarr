@@ -297,9 +297,6 @@ class StremioStreamUseCase:
             scored=len(selected) < len(all_names),
         )
         stage.label(source=source)
-        # Complete: nothing of any plugin is missing, and no search goes on
-        # for the key that a later request would find more from
-        complete = not progress.missing and not self._title_search.running(key)
 
         # 4. Rank, and resolve meanwhile. Cached results can come from
         # plugins this request did not select
@@ -348,7 +345,9 @@ class StremioStreamUseCase:
                     search_done=progress.done,
                 )
             stage.outcome = "empty"
-            return StreamAnswer([], source, complete, progress.missing)
+            return StreamAnswer(
+                [], source, self._complete(key, progress), progress.missing
+            )
 
         # 5. Format
         streams = [
@@ -373,6 +372,7 @@ class StremioStreamUseCase:
                 user_agent=self._user_agent,
             )
 
+        complete = self._complete(key, progress)
         log.info(
             "stremio_search_complete",
             imdb_id=request.imdb_id,
@@ -386,6 +386,14 @@ class StremioStreamUseCase:
         )
         stage.outcome = "streams" if streams else "empty"
         return StreamAnswer(streams, source, complete, progress.missing)
+
+    def _complete(self, key: str, progress: SearchProgress) -> bool:
+        """Whether an answer built now is complete: nothing of any plugin is
+        missing, and no search goes on for *key* that a later request would
+        find more from. Decided after the request's wait: a search that
+        ends within the budget is done by then (decided at the search's
+        start, every fresh answer said incomplete)."""
+        return not progress.missing and not self._title_search.running(key)
 
     def _spawn[T](self, coro: Coroutine[Any, Any, T]) -> asyncio.Task[T]:
         """Run *coro* as a task that may outlive the request (see aclose)."""

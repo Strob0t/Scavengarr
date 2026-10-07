@@ -641,6 +641,21 @@ class TestAnswerState:
             "https://cdn.example/best.mp4"
         ]
 
+    async def test_a_search_that_ends_within_the_budget(self) -> None:
+        """Decided at the search's start, every fresh answer said incomplete
+        (X-Search-Complete false for each MISS; review of step 21)."""
+        uc = answering_use_case(
+            {"a": fake_site([hit(VOE)])},
+            memory_cache(),
+            Resolutions(alive=(VOE,)),
+            plugin_timeout_seconds=2.0,
+            stream_deadline_seconds=3.0,
+        )
+
+        answer = await uc.answer(make_request(), base_url="http://localhost:8080")
+
+        assert (answer.source, answer.complete, answer.missing) == ("search", True, ())
+
     async def test_at_the_budget_with_a_plugin_still_searching(self) -> None:
         cache = memory_cache()
         sites = {
