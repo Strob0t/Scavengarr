@@ -430,6 +430,7 @@ def answering_use_case(
     *,
     mirror_groups: dict[str, str] | None = None,
     score_store: AsyncMock | None = None,
+    pool: ConcurrencyPool | None = None,
     **config: object,
 ) -> StremioStreamUseCase:
     """Use case that searches *sites* and resolves with *resolutions*."""
@@ -455,4 +456,5 @@ def answering_use_case(
         telemetry=telemetry,
         mirror_groups=mirror_groups,
         score_store=score_store,
+        pool=pool,
     )

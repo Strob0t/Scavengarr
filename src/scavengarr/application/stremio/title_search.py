@@ -10,6 +10,7 @@ at a time).
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 from collections.abc import Callable, Coroutine
 from functools import partial
@@ -22,7 +23,7 @@ from scavengarr.application.stremio.queries import (
     build_lang_group_queries,
     build_multi_lang_reference,
 )
-from scavengarr.application.stremio.search_cache import SearchCache
+from scavengarr.application.stremio.search_cache import CachedSearch, SearchCache
 from scavengarr.application.stremio.search_progress import SearchProgress
 from scavengarr.application.stremio.title_resolution import TitleResolver
 from scavengarr.domain.entities.stremio import StremioStreamRequest, TitleMatchInfo
@@ -35,11 +36,10 @@ from scavengarr.domain.ports.telemetry import TelemetryPort
 
 log = structlog.get_logger(__name__)
 
-# Stale search-cache entries refresh one title at a time too: every stale
-# title asked for started its refresh at once, the refreshes split the plugin
-# slots with the requests' own searches (fair share), and a refresh cut short
-# by the plugin time replaced its entry with a thinner one (code review,
-# 2026-10-06)
+# Stale refreshes and completion searches run one title at a time: every
+# stale title asked for started its refresh at once, and the refreshes split
+# the plugin slots with the requests' own searches (fair share). Both merge
+# per plugin: a plugin cut short keeps its earlier results in the entry
 _BACKGROUND_SEARCHES = 1
 
 # Where a request's search results come from: a fresh or stale cache entry,
@@ -98,27 +98,40 @@ class TitleSearch:
         """The results for *key*: from the cache, or of the running or a new search.
 
         Requests for one key share one running search (single-flight) and
-        read its results while it runs. A stale entry still answers while a
-        background search refreshes it (stale-while-revalidate, one title at
-        a time). The search runs as its own task, so a request that goes
-        away does not cancel it for the others. Returns the progress and
-        where it came from.
+        read its results while it runs; one arriving after the search's
+        answer budget does not wait for it (source ``cache``). A stale entry
+        still answers while a background search refreshes it
+        (stale-while-revalidate), an entry with plugins missing while one
+        completes it; both one title at a time. The search runs as its own
+        task, so a request that goes away does not cancel it for the
+        others. Returns the progress and where it came from.
         """
-        search: _Search = partial(
-            self._search,
-            key,
-            lang_groups,
-            title_infos,
-            request,
-            category,
-            scored=scored,
-        )
+
+        def search(groups: dict[tuple[str, ...], list[str]]) -> _Search:
+            return partial(
+                self._search, key, groups, title_infos, request, category, scored=scored
+            )
+
         entry = await self._search_cache.get(key)
         if entry is None:
-            return self._shared_search(key, partial(search, started=started))
+            return self._shared_search(
+                key,
+                partial(search(lang_groups), started=started),
+                budget_ends=started + self._plugin_timeout_s,
+            )
         stale = self._search_cache.is_stale(entry)
         if stale:
-            self._shared_search(key, partial(self._refresh, search))
+            self._shared_search(
+                key, partial(self._refresh, search(lang_groups)), base=entry
+            )
+        elif entry.missing:
+            groups = _only(lang_groups, entry.missing)
+            self._shared_search(
+                key,
+                partial(self._complete, search(groups), entry.missing),
+                base=entry,
+                completes=True,
+            )
         log.info(
             "stremio_search_cache_hit",
             cache_key=key,
@@ -129,14 +142,26 @@ class TitleSearch:
         return SearchProgress.finished(entry), "stale" if stale else "cache"
 
     def _shared_search(
-        self, key: str, search: Callable[[SearchProgress], Coroutine[Any, Any, None]]
+        self,
+        key: str,
+        search: Callable[[SearchProgress], Coroutine[Any, Any, None]],
+        *,
+        budget_ends: float = math.inf,
+        base: CachedSearch | None = None,
+        completes: bool = False,
     ) -> tuple[SearchProgress, SearchSource]:
-        """The running search for *key* (``joined``); starts *search* when
-        none runs (``search``)."""
+        """The running search for *key* (``joined`` within its answer budget,
+        ``cache`` after it: the request answers with what it found so far);
+        starts *search* when none runs (``search``). *base* and
+        *completes* shape the entry (``SearchProgress``)."""
         progress = self._searches.get(key)
         if progress is not None:
-            return progress, "joined"
-        progress = SearchProgress(store=partial(self._search_cache.put, key))
+            past_budget = time.monotonic() >= progress.budget_ends
+            return progress, "cache" if past_budget else "joined"
+        progress = SearchProgress(
+            store=partial(self._search_cache.put, key), base=base, completes=completes
+        )
+        progress.budget_ends = budget_ends
         self._searches[key] = progress
         task = self._spawn(search(progress))
         task.add_done_callback(partial(self._search_done, key, progress))
@@ -150,10 +175,28 @@ class TitleSearch:
 
     async def _refresh(self, search: _Search, progress: SearchProgress) -> None:
         """Refresh a stale entry: one title at a time (``_BACKGROUND_SEARCHES``);
-        its budget counts from the refresh's start, so a title that waited
-        keeps its whole time."""
+        its budget and the entry's age count from the refresh's start, so a
+        title that waited keeps its whole time. A plugin that does not
+        finish keeps its earlier results in the entry and is missing."""
+        async with self._background_searches:
+            progress.started = time.time()
+            await search(progress, started=time.monotonic())
+
+    async def _complete(
+        self, search: _Search, plugins: tuple[str, ...], progress: SearchProgress
+    ) -> None:
+        """Complete an entry: search its missing *plugins* only, one title at
+        a time with the refreshes; the end clears ``missing`` whatever each
+        plugin's outcome, so no entry is completed twice."""
         async with self._background_searches:
             await search(progress, started=time.monotonic())
+        log.info(
+            "stremio_search_completion",
+            plugins=list(plugins),
+            outcome="complete" if not progress.missing else "partial",
+            unfinished=list(progress.missing),
+            result_count=len(progress.results),
+        )
 
     async def _search(
         self,
@@ -179,6 +222,7 @@ class TitleSearch:
         missing, again after each of them, and at the end.
         """
         budget_ends = started + self._plugin_timeout_s
+        progress.budget_ends = budget_ends
         self._spawn(progress.write_at(budget_ends))
         with self._telemetry.stage("stremio_phase", phase="search"):
             try:
@@ -262,3 +306,15 @@ class TitleSearch:
                 for lang_key, group_plugins in lang_groups.items()
             )
         )
+
+
+def _only(
+    lang_groups: dict[tuple[str, ...], list[str]], names: tuple[str, ...]
+) -> dict[tuple[str, ...], list[str]]:
+    """*lang_groups* reduced to the plugins in *names* (a completion search
+    asks the missing ones only); groups without one are dropped."""
+    groups = {
+        lang_key: [name for name in plugins if name in names]
+        for lang_key, plugins in lang_groups.items()
+    }
+    return {lang_key: plugins for lang_key, plugins in groups.items() if plugins}

@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import heapq
+import math
 import time
 from collections.abc import Awaitable, Callable, Coroutine
 from typing import Any, Protocol
@@ -250,6 +251,7 @@ class ResolveFlow:
         resolve_fn: ResolveCallback,
         *,
         deadline: float,
+        budget_ends: float = math.inf,
         key: str,
         from_cache: bool,
     ) -> tuple[list[RankedStream], dict[int, ResolvedStream]]:
@@ -261,7 +263,8 @@ class ResolveFlow:
         one run per cache key at a time (such answers waited for the resolve
         grace, 4.1-4.4 s, for one link resolved for the first time); with
         none, no run starts. Otherwise the streams resolve as
-        ``_resolve_as_results_arrive`` describes.
+        ``_resolve_as_results_arrive`` describes, with the search's results
+        up to *budget_ends* (the answer budget).
         """
         cached_fn = self._cached_resolution_fn
         if from_cache and cached_fn is not None:
@@ -284,7 +287,11 @@ class ResolveFlow:
                     )
                 return ranked, cached
         return await self._resolve_as_results_arrive(
-            progress, plugin_languages, resolve_fn, deadline=deadline
+            progress,
+            plugin_languages,
+            resolve_fn,
+            deadline=deadline,
+            budget_ends=budget_ends,
         )
 
     async def _resolve_in_background(
@@ -342,18 +349,22 @@ class ResolveFlow:
         resolve_fn: ResolveCallback,
         *,
         deadline: float,
+        budget_ends: float = math.inf,
         background: bool = False,
     ) -> tuple[list[RankedStream], dict[int, ResolvedStream]]:
         """Resolve the search's links while it runs; stop when the answer is due.
 
         Each new batch of results is ranked with the ones before and handed
         to a ``HosterResolution`` (one link per hoster at a time, rank
-        order). The answer is due when ``resolve_target_count`` hosters have
-        a video, or when the search is done and no resolution runs or is
-        due, at the latest at *deadline* (``time.monotonic()``); resolutions
-        still running then are cancelled. In the *background* (no answer
-        waits) there is no target: every hoster resolves until done or the
-        deadline, which fills the resolver's cache.
+        order). Results arriving after *budget_ends* (the answer budget,
+        ``time.monotonic()``) are not taken: they go to the cache for the
+        next request. The answer is due when ``resolve_target_count``
+        hosters have a video, or when the search is done (or past the
+        budget) and no resolution runs or is due, at the latest at
+        *deadline*; resolutions still running then are cancelled. In the
+        *background* (no answer waits) there is no target: every hoster
+        resolves until done or the deadline, which fills the resolver's
+        cache.
         """
         changed = asyncio.Event()
         resolution = HosterResolution(
@@ -373,7 +384,9 @@ class ResolveFlow:
             try:
                 while True:
                     changed.clear()
-                    if seen < len(progress.results):
+                    now = time.monotonic()
+                    past_budget = now >= budget_ends
+                    if seen < len(progress.results) and not past_budget:
                         new = progress.results[seen:]
                         seen += len(new)
                         # Score only the new streams: re-sorting all of them
@@ -392,12 +405,15 @@ class ResolveFlow:
                     if target > 0 and resolution.videos() >= target:
                         reason = "target"
                         break
-                    if progress.done and not resolution.pending():
-                        reason = "done"
+                    if (progress.done or past_budget) and not resolution.pending():
+                        reason = "done" if progress.done else "budget"
                         break
-                    remaining = deadline - time.monotonic()
+                    remaining = deadline - now
                     if remaining <= 0:
                         break
+                    if not past_budget:
+                        # Wake at the budget to stop taking results
+                        remaining = min(remaining, budget_ends - now)
                     with contextlib.suppress(TimeoutError):
                         async with asyncio.timeout(remaining):
                             await changed.wait()

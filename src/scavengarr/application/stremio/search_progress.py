@@ -5,17 +5,20 @@ enough streams resolve (``StremioStreamUseCase``), so the requests on a
 search read its results while it runs. The progress also knows which
 plugins the search asks and which of them finished: the entry it writes at
 the answer budget names the rest as missing, and every plugin that
-finishes later rewrites it.
+finishes later rewrites it. A refresh or completion search merges into the
+entry it started from (``base``), plugin by plugin.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import math
 import time
 from collections.abc import Awaitable, Callable, Iterable
+from dataclasses import replace
 
-from scavengarr.application.stremio.search_cache import CachedSearch
+from scavengarr.application.stremio.search_cache import CachedSearch, merge
 from scavengarr.domain.plugins.base import ResultKey, SearchResult, result_key
 
 # Stores the search's entry (the search cache, under the search's key)
@@ -30,14 +33,33 @@ class SearchProgress:
     twice. Listeners (events) are set on every change. The entry's
     ``stored_at`` is the progress's creation, the search's start, so its
     age does not move with late writes.
+
+    *base* is the entry a refresh or completion search merges into: the
+    entry written replaces the results of the plugins that finished and
+    keeps the others', so no merge thins an entry. With *completes* the
+    search completes the base entry: it keeps the entry's age, and its end
+    clears ``missing`` whatever each plugin's outcome (one completion per
+    entry).
     """
 
-    def __init__(self, *, store: StoreFn | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        store: StoreFn | None = None,
+        base: CachedSearch | None = None,
+        completes: bool = False,
+    ) -> None:
         self.results: list[SearchResult] = []
         self.total = 0  # results before the title filter
         self.done = False
-        self.started = time.time()
+        self.started = base.stored_at if completes and base else time.time()
+        # The search's answer budget (``time.monotonic()``) once it runs
+        # (``TitleSearch``): a request arriving after it does not wait for
+        # the search; a finished search has none
+        self.budget_ends = math.inf
         self._store = store
+        self._base = base
+        self._completes = completes
         self._expected: set[str] = set()  # the plugins the search asks
         self._finished: set[str] = set()  # of them, the ones that finished
         self._written = False  # the entry was written at the budget
@@ -97,17 +119,32 @@ class SearchProgress:
 
     def finish(self) -> None:
         self.done = True
+        if self._completes:
+            self._changed = True  # the end clears ``missing``
         self._ended.set()
         self._notify()
 
     def entry(self) -> CachedSearch:
-        """The results as a cache entry."""
-        return CachedSearch(
-            results=list(self.results),
-            total=self.total,
-            stored_at=self.started,
-            missing=self.missing,
-        )
+        """The results as a cache entry: with a base, the base with each
+        finished plugin's results replaced and the unfinished plugins of
+        both missing."""
+        if self._base is None:
+            return CachedSearch(
+                results=list(self.results),
+                total=self.total,
+                stored_at=self.started,
+                missing=self.missing,
+            )
+        entry = self._base
+        for name in sorted(self._finished):
+            entry = merge(entry, name, self._results_of(name))
+        missing: tuple[str, ...] = ()
+        if not (self._completes and self.done):
+            missing = tuple(sorted({*entry.missing, *self.missing}))
+        return replace(entry, stored_at=self.started, missing=missing)
+
+    def _results_of(self, plugin: str) -> list[SearchResult]:
+        return [r for r in self.results if r.metadata.get("source_plugin") == plugin]
 
     async def write(self) -> None:
         """Store the entry through the search's store when it changed since

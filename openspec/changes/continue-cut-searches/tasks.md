@@ -24,10 +24,10 @@ audit's baseline (7.1) must run before the filter change (6) ships.
 
 ## 4. Title search: budget, completion, merging refresh
 
-- [ ] 4.1 `application/stremio/title_search.py`: the request's wait ends at `plugin_timeout_seconds` after the request start (the answer budget), the search task runs on; a request that finds a running search past its budget gets source `cache` with the progress's results (no wait); `joined` only within the budget.
-- [ ] 4.2 Completion search: on a hit of an entry with `missing` and no running search for the key, start a search for the missing plugins only (single-flight per key, the process-wide background slot shared with refreshes); merge per plugin; clear `missing` at its end. Log `stremio_search_completion` with `plugins` and the outcome.
-- [ ] 4.3 Stale refresh merges per plugin (replace finished plugins' results, keep the others'); the comment at `title_search.py:38-42` is replaced by the new rule.
-- [ ] 4.4 Tests in `tests/unit/application/test_title_search.py`: budget without cancellation; retry answers at once; completion starts once and clears `missing`; completion waits for the slot; refresh keeps a cut plugin's old results.
+- [x] 4.1 `application/stremio/title_search.py`: the request's wait ends at `plugin_timeout_seconds` after the request start (the answer budget), the search task runs on; a request that finds a running search past its budget gets source `cache` with the progress's results (no wait); `joined` only within the budget.
+- [x] 4.2 Completion search: on a hit of an entry with `missing` and no running search for the key, start a search for the missing plugins only (single-flight per key, the process-wide background slot shared with refreshes); merge per plugin; clear `missing` at its end. Log `stremio_search_completion` with `plugins` and the outcome.
+- [x] 4.3 Stale refresh merges per plugin (replace finished plugins' results, keep the others'); the comment at `title_search.py:38-42` is replaced by the new rule.
+- [x] 4.4 Tests in `tests/unit/application/test_title_search.py`: budget without cancellation; retry answers at once; completion starts once and clears `missing`; completion waits for the slot; refresh keeps a cut plugin's old results.
 
 ## 5. Resolution: late results in the background, retry at once
 

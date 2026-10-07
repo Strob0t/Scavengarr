@@ -30,7 +30,7 @@ The target is the host or container where Prometheus reaches port 7979. When Sca
 
 Import `docker/grafana-dashboard.json` (Dashboards, New, Import) and pick the Prometheus data source. Its panels:
 
-- **Stremio answers:** answers in the range, version, why answers went out (target, done, deadline, cached), search state (cache, stale, search, joined), streams per answer, answer time by search state (p50, p95) and phase times (p95).
+- **Stremio answers:** answers in the range, version, why answers went out (target, done, budget, deadline, cached), search state (cache, stale, search, joined), streams per answer, answer time by search state (p50, p95) and phase times (p95).
 - **Plugins:** search time per plugin (p95), outcomes per plugin (a table of plugins by outcome), results per plugin.
 - **Hoster resolutions:** outcomes per resolver, resolve time per resolver (p95), the breakers that are open now.
 - **HLS proxy:** throughput, time to first byte (p95), answers by status.
@@ -87,7 +87,7 @@ All names start with `scavengarr_`. Outcomes in *italics* are counted without a 
 | Family | Labels | Values |
 |---|---|---|
 | `stremio_request_seconds`, `stremio_request_total` | `source`, `outcome` | `source`: `cache` (fresh cache entry), `stale` (stale entry, refreshed in the background), `search` (new search), `joined` (the title's search was running), `none` (ended before the search). `outcome`: `streams`, `empty`, `no_title`, `no_plugins`, `error`, `cut` |
-| `stremio_phase_seconds`, `stremio_phase_total` | `phase`, `outcome` | `anime_ids` (a `kitsu:` id translated into the IMDb request): `found`, `not_found`. `metadata` (plugin selection and TMDB titles): `found`, `not_found`. `search` (the shared search, once per search): `ok`, `cut`. `resolve` (resolution while the search runs): `target`, `done`, `deadline`, *`cached`* (a cached answer). `background_resolve` (the other links of a cached answer): `done`, `deadline` |
+| `stremio_phase_seconds`, `stremio_phase_total` | `phase`, `outcome` | `anime_ids` (a `kitsu:` id translated into the IMDb request): `found`, `not_found`. `metadata` (plugin selection and TMDB titles): `found`, `not_found`. `search` (the shared search, once per search): `ok`, `cut`. `resolve` (resolution while the search runs): `target`, `done`, `budget` (the answer budget passed, the resolutions of the results known by then done), `deadline`, *`cached`* (a cached answer). `background_resolve` (the other links of a cached answer): `done`, `deadline` |
 | `stremio_streams` | | Streams per answer (histogram) |
 | `plugin_search_seconds`, `plugin_search_total` | `plugin`, `outcome` | Stremio searches only; Torznab searches are not recorded. `hits`, `empty`, `late` (returned after the request's answer budget: its results reach the cache and the next request), `error`, `cut` (shutdown), *`breaker_open`*, *`unreachable`* (failed the periodic health check) |
 | `plugin_results_total` | `plugin` | Validated results |
@@ -112,7 +112,7 @@ Bucket bounds follow the deadlines: requests and phases 0.5, 1, 2, 4, 7, 10, 15,
 # p95 answer time by search state
 histogram_quantile(0.95, sum by (le, source) (rate(scavengarr_stremio_request_seconds_bucket[1d])))
 
-# Why answers went out (target, done, deadline, cached)
+# Why answers went out (target, done, budget, deadline, cached)
 sum by (outcome) (increase(scavengarr_stremio_phase_total{phase="resolve"}[1d]))
 
 # p95 search time and outcomes per plugin

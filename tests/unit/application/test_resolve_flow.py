@@ -18,6 +18,7 @@ from scavengarr.domain.entities.stremio import (
     TitleMatchInfo,
 )
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.concurrency import ConcurrencyPool
 
 from .stremio_support import (
     DOOD,
@@ -551,6 +552,54 @@ class TestAnswerPolicy:
         assert 0.25 < time.monotonic() - started < 1.5
         assert [video(uc, s) for s in streams] == ["https://cdn.example/fast.mp4"]
         await uc.aclose()
+
+    async def test_at_the_budget_with_the_results_so_far(self) -> None:
+        """One slot: the second plugin starts after the budget. The answer
+        goes out at the budget with the first plugin's stream, the second
+        plugin runs on into the cache (continue-cut-searches)."""
+        cache = memory_cache()
+        sites = {
+            "first": fake_site([hit("https://voe.sx/e/first")], delay=0.3),
+            "second": fake_site([hit("https://dood.to/e/second")], delay=0.2),
+        }
+        uc = answering_use_case(
+            sites,
+            cache,
+            Resolutions(),
+            plugin_timeout_seconds=0.4,
+            stream_deadline_seconds=2.0,
+            pool=ConcurrencyPool(httpx_slots=1, pw_slots=1),
+        )
+
+        started = time.monotonic()
+        streams = await uc.execute(make_request(), base_url="http://localhost:8080")
+
+        assert 0.3 <= time.monotonic() - started < 0.7
+        assert [video(uc, s) for s in streams] == ["https://cdn.example/first.mp4"]
+        await eventually(lambda: len(cached_links(cache)) == 2)
+
+    async def test_a_retry_past_the_budget_answers_at_once(self) -> None:
+        cache = memory_cache()
+        sites = {
+            "first": fake_site([hit("https://voe.sx/e/first")], delay=0.3),
+            "second": fake_site([hit("https://dood.to/e/second")], delay=0.3),
+        }
+        uc = answering_use_case(
+            sites,
+            cache,
+            Resolutions(),
+            plugin_timeout_seconds=0.4,
+            stream_deadline_seconds=2.0,
+            pool=ConcurrencyPool(httpx_slots=1, pw_slots=1),
+        )
+        await uc.execute(make_request(), base_url="http://localhost:8080")
+
+        started = time.monotonic()
+        streams = await uc.execute(make_request(), base_url="http://localhost:8080")
+
+        assert time.monotonic() - started < 0.1
+        assert [video(uc, s) for s in streams] == ["https://cdn.example/first.mp4"]
+        await eventually(lambda: len(cached_links(cache)) == 2)
 
     async def test_requests_on_one_search_both_answer_at_the_target(self) -> None:
         cache = memory_cache()

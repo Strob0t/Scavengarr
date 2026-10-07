@@ -274,6 +274,9 @@ class StremioStreamUseCase:
         # plugins this request did not select
         plugin_languages = self._titles.default_languages(all_names)
         deadline = started + self._deadline_s
+        # The wait for the search ends at its answer budget (a joined request
+        # shares the first request's); the resolutions run on to the deadline
+        budget_ends = progress.budget_ends
         # Scavengarr serves the streams (/play/, the HLS proxy) when it saves
         # their links and knows its own URL
         link_repo = self._stream_link_repo if base_url else None
@@ -284,6 +287,7 @@ class StremioStreamUseCase:
                 plugin_languages,
                 self._resolve_fn,
                 deadline=deadline,
+                budget_ends=budget_ends,
                 key=key,
                 from_cache=source in ("cache", "stale"),
             )
@@ -291,7 +295,7 @@ class StremioStreamUseCase:
                 ranked, resolved, rank_score=self._sorter.rank
             )
         else:
-            await progress.wait(deadline)
+            await progress.wait(min(deadline, budget_ends))
             ranked = await self._rank(progress.results, plugin_languages)
             if self._resolve_fn is None:
                 ranked = deduplicate_by_hoster(ranked)

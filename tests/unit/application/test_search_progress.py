@@ -195,3 +195,66 @@ class TestMissingPlugins:
         progress.started = 1.0
 
         assert progress.entry().stored_at == 1.0
+
+
+def _base() -> CachedSearch:
+    return CachedSearch(
+        results=[_sr("h1", "hdfilme"), _sr("s1", "sto"), _sr("s2", "sto")],
+        total=3,
+        stored_at=1.0,
+        missing=("kinoger",),
+    )
+
+
+class TestMergingIntoABase:
+    """A refresh or completion search merges into the entry it started from:
+    a finished plugin's results replace its earlier ones, an unfinished
+    plugin keeps them and is missing (continue-cut-searches)."""
+
+    async def test_a_finished_plugin_replaces_its_results(self) -> None:
+        progress = SearchProgress(base=_base())
+        progress.expect(["hdfilme", "sto"])
+        progress.add([_sr("h2", "hdfilme")], [_sr("h2", "hdfilme")])
+        await progress.plugin_done("hdfilme", True)
+
+        entry = progress.entry()
+
+        assert [r.download_link for r in entry.results] == ["s1", "s2", "h2"]
+        assert entry.missing == ("kinoger", "sto")
+        assert entry.total == 3
+
+    async def test_an_unfinished_plugin_keeps_its_results(self) -> None:
+        progress = SearchProgress(base=_base())
+        progress.expect(["sto"])
+        progress.add([_sr("s3", "sto")], [_sr("s3", "sto")])
+        await progress.plugin_done("sto", False)
+        progress.finish()
+
+        entry = progress.entry()
+
+        assert [r.download_link for r in entry.results] == ["h1", "s1", "s2"]
+        assert entry.missing == ("kinoger", "sto")
+
+    def test_a_refresh_ages_from_its_own_start(self) -> None:
+        progress = SearchProgress(base=_base())
+
+        assert progress.entry().stored_at == progress.started != 1.0
+
+    async def test_a_completion_keeps_the_entry_age_and_clears_missing(
+        self,
+    ) -> None:
+        """Its end clears ``missing`` whatever each plugin's outcome, so no
+        entry is completed twice; the entry keeps its results."""
+        store = AsyncMock()
+        progress = SearchProgress(store=store, base=_base(), completes=True)
+        progress.expect(["kinoger"])
+        await progress.plugin_done("kinoger", False)
+
+        assert progress.entry().missing == ("kinoger",)
+        progress.finish()
+        await progress.write()
+
+        entry = store.await_args.args[0]
+        assert entry.missing == ()
+        assert entry.stored_at == 1.0
+        assert [r.download_link for r in entry.results] == ["h1", "s1", "s2"]
