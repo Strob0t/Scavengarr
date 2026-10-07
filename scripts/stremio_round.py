@@ -6,10 +6,11 @@ Usage (against a running server):
         [--no-playcheck] [--portainer [--container scavengarr]]
 
 Per id of the ids file (one after another, never in parallel): the stream
-request once (the first answer: wall time, streams and the ``X-Cache`` header
-when the route sends one), again right after it (the cached answer), then the
-play check of the first answer's streams (``stremio_playcheck.py``'s check per
-stream, from the machine the script runs on). Prints the round table of
+request once (the first answer: wall time, streams and the ``X-Cache`` and
+``X-Search-Complete`` headers when the route sends them), again right after
+it (the cached answer), then the play check of the first answer's streams
+(``stremio_playcheck.py``'s check per stream, from the machine the script
+runs on). Prints the round table of
 ``docs/plans/stremio-latency.md``: one row per id and a summary row with
 medians and totals; ``--out`` appends it to a Markdown file.
 
@@ -54,6 +55,7 @@ class Row:
     first_s: float
     first_streams: int
     cache: str
+    complete: str  # X-Search-Complete of the first answer
     cached_s: float
     cached_streams: int
     playable: int | None  # None without the play check
@@ -76,23 +78,29 @@ def read_ids(path: Path) -> list[tuple[str, str]]:
 
 async def _request(
     client: httpx.AsyncClient, base: str, sid: str
-) -> tuple[float, list[dict[str, Any]], str]:
-    """One stream request: wall time, streams, ``X-Cache`` (``–`` without it)."""
+) -> tuple[float, list[dict[str, Any]], str, str]:
+    """One stream request: wall time, streams, ``X-Cache`` and
+    ``X-Search-Complete`` (``–`` without them)."""
     start = time.monotonic()
     resp = await client.get(
         f"{base}/api/v1/stremio/stream/{sid}.json", timeout=_STREAM_TIMEOUT
     )
     wall = time.monotonic() - start
     streams = resp.json().get("streams", []) if resp.is_success else []
-    return wall, streams, resp.headers.get("x-cache", "–")
+    return (
+        wall,
+        streams,
+        resp.headers.get("x-cache", "–"),
+        resp.headers.get("x-search-complete", "–"),
+    )
 
 
 async def measure(
     client: httpx.AsyncClient, base: str, sid: str, title: str, *, playcheck: bool
 ) -> Row:
     """First answer, cached answer and (with *playcheck*) its playable streams."""
-    first_s, streams, cache = await _request(client, base, sid)
-    cached_s, cached, _ = await _request(client, base, sid)
+    first_s, streams, cache, complete = await _request(client, base, sid)
+    cached_s, cached, _, _ = await _request(client, base, sid)
     playable = None
     if playcheck:
         verdicts = [await check_stream(client, stream) for stream in streams]
@@ -103,6 +111,7 @@ async def measure(
         first_s=first_s,
         first_streams=len(streams),
         cache=cache,
+        complete=complete,
         cached_s=cached_s,
         cached_streams=len(cached),
         playable=playable,
@@ -116,14 +125,15 @@ def _playable(playable: int | None, streams: int) -> str:
 def render(rows: list[Row], cpu: dict[str, float] | None = None) -> str:
     """The round table: one row per title, a summary row, titles without stream."""
     lines = [
-        "| Title | First answer | Streams | X-Cache "
+        "| Title | First answer | Streams | X-Cache | Complete "
         "| Cached answer | Streams | Playable |",
-        "|---|---|---|---|---|---|---|",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for r in rows:
         lines.append(
             f"| {r.title} (`{r.sid}`) | {r.first_s:.1f} s | {r.first_streams} "
-            f"| {r.cache} | {r.cached_s:.2f} s | {r.cached_streams} "
+            f"| {r.cache} | {r.complete} | {r.cached_s:.2f} s "
+            f"| {r.cached_streams} "
             f"| {_playable(r.playable, r.first_streams)} |"
         )
     checked = [r for r in rows if r.playable is not None]
@@ -136,11 +146,14 @@ def render(rows: list[Row], cpu: dict[str, float] | None = None) -> str:
         else "–"
     )
     hits = sum(r.cache == "HIT" for r in rows)
+    sent = [r for r in rows if r.complete != "–"]
+    complete = sum(r.complete == "true" for r in sent)
     lines.append(
         f"| **Median / total** ({len(rows)} titles) "
         f"| {statistics.median(r.first_s for r in rows):.1f} s "
         f"| {sum(r.first_streams for r in rows)} "
         f"| {f'{hits} HIT' if any(r.cache != '–' for r in rows) else '–'} "
+        f"| {f'{complete} of {len(sent)} complete' if sent else '–'} "
         f"| {statistics.median(r.cached_s for r in rows):.2f} s "
         f"| {sum(r.cached_streams for r in rows)} | {playable} |"
     )

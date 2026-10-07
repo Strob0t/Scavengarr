@@ -41,6 +41,7 @@ def _row(**kwargs: object) -> object:
         "first_s": 4.0,
         "first_streams": 3,
         "cache": "–",
+        "complete": "–",
         "cached_s": 0.1,
         "cached_streams": 3,
         "playable": 2,
@@ -90,19 +91,26 @@ async def test_measure_requests_twice_and_checks_first_streams(
     assert route.call_count == 2
     assert checked == ["a", "b"]
     assert (row.first_streams, row.cached_streams, row.playable) == (2, 3, 1)
-    assert row.cache == "–"
+    assert (row.cache, row.complete) == ("–", "–")
 
 
 @respx.mock
 async def test_measure_without_playcheck_reads_x_cache() -> None:
     respx.get(f"{_BASE}/api/v1/stremio/stream/movie/tt1.json").mock(
         return_value=httpx.Response(
-            200, json={"streams": []}, headers={"X-Cache": "MISS"}
+            200,
+            json={"streams": []},
+            headers={"X-Cache": "MISS", "X-Search-Complete": "false"},
         )
     )
     async with httpx.AsyncClient() as client:
         row = await _mod.measure(client, _BASE, "movie/tt1", "One", playcheck=False)
-    assert (row.first_streams, row.cache, row.playable) == (0, "MISS", None)
+    assert (row.first_streams, row.cache, row.complete, row.playable) == (
+        0,
+        "MISS",
+        "false",
+        None,
+    )
 
 
 def test_render_has_a_row_per_title_and_a_summary() -> None:
@@ -130,9 +138,12 @@ def test_render_has_a_row_per_title_and_a_summary() -> None:
     table = _mod.render(rows, {"python": 12.5, "chrome": 40.0})
     lines = table.splitlines()
     assert lines[0].startswith("| Title | First answer |")
-    assert "| One (`movie/tt1`) | 4.0 s | 3 | – | 0.10 s | 3 | 2 of 3 |" in lines
+    assert lines[0].startswith(
+        "| Title | First answer | Streams | X-Cache | Complete |"
+    )
+    assert "| One (`movie/tt1`) | 4.0 s | 3 | – | – | 0.10 s | 3 | 2 of 3 |" in lines
     assert (
-        "| **Median / total** (3 titles) | 6.0 s | 8 | – | 0.20 s | 9 | 7 of 8 |"
+        "| **Median / total** (3 titles) | 6.0 s | 8 | – | – | 0.20 s | 9 | 7 of 8 |"
         in lines
     )
     assert "1 of 3 (first answer), 0 of 3 (cached answer)" in table
@@ -141,8 +152,14 @@ def test_render_has_a_row_per_title_and_a_summary() -> None:
 
 
 def test_render_without_playcheck_or_cpu() -> None:
-    table = _mod.render([_row(playable=None, cache="HIT")])
-    assert "| 4.0 s | 3 | 1 HIT | 0.10 s | 3 | – |" in table
+    table = _mod.render(
+        [
+            _row(playable=None, cache="HIT", complete="true"),
+            _row(playable=None, cache="MISS", complete="false"),
+        ]
+    )
+    assert "| 4.0 s | 3 | HIT | true | 0.10 s | 3 | – |" in table
+    assert "| 4.0 s | 6 | 1 HIT | 1 of 2 complete | 0.10 s | 6 | – |" in table
     assert "CPU" not in table
 
 
