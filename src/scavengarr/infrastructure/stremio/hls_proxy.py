@@ -15,7 +15,7 @@ import asyncio
 import re
 import time
 from collections.abc import AsyncGenerator
-from urllib.parse import urljoin, urlparse, urlsplit
+from urllib.parse import ParseResult, SplitResult, urljoin, urlparse, urlsplit
 
 import httpx
 import structlog
@@ -59,6 +59,16 @@ def cdn_base_from_url(video_url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}{base_path}"
 
 
+def _same_origin(a: SplitResult | ParseResult, b: SplitResult | ParseResult) -> bool:
+    """Whether two URLs name the same scheme and host; the host without case.
+
+    VidHide names its CDN host in mixed case in the stream URL and in lower
+    case in its playlists: compared as written, its segments stayed
+    unproxied and failed in the player (403, a token bound to the server).
+    """
+    return (a.scheme, a.netloc.lower()) == (b.scheme, b.netloc.lower())
+
+
 def _proxy_uri(uri: str, cdn_base: str, proxy_base: str, playlist_dir: str) -> str:
     """*uri* as a proxy URL when it points at the stream's CDN, else as is.
 
@@ -85,7 +95,7 @@ def _proxy_uri(uri: str, cdn_base: str, proxy_base: str, playlist_dir: str) -> s
             return f"{proxy_base}{playlist_dir}{uri}"
         if target.scheme not in ("http", "https"):
             return uri
-    if (target.scheme, target.netloc) != (base.scheme, base.netloc):
+    if not _same_origin(target, base):
         return uri
     query = f"?{target.query}" if target.query else ""
     return f"{proxy_base}{target.path}{query}"
@@ -244,7 +254,7 @@ def build_cdn_url(cdn_base: str, path: str, query_string: str = "") -> str:
     """
     url = urljoin(cdn_base, path)
     base, target = urlparse(cdn_base), urlparse(url)
-    if (target.scheme, target.netloc) != (base.scheme, base.netloc):
+    if not _same_origin(target, base):
         raise ValueError(f"path leaves the stream's CDN: {path[:80]}")
     if query_string:
         url = f"{url}?{query_string}"

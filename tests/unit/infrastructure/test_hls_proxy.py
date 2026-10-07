@@ -143,6 +143,24 @@ class TestRewriteManifest:
         result = rewrite_manifest(content, "https://cdn.example.com/", "http://proxy/")
         assert result == content
 
+    def test_host_in_other_case_goes_through_the_proxy(self) -> None:
+        """VidHide's stream URL names its CDN host in mixed case and its
+        playlists list the segments under the lower-case host: compared
+        as written, every segment stayed unproxied and the player got 403
+        for a token bound to the Pi (step 27, 2026-10-07)."""
+        cdn_base = "https://2ZO6sb3MYz7fapc.acek-cdn.com/hls2/01/abc_h/"
+        proxy_base = "https://scavengarr.lan/api/v1/stremio/proxy/sid/"
+        content = (
+            "#EXTM3U\n#EXTINF:6.0,\n"
+            "https://2zo6sb3myz7fapc.acek-cdn.com/hls2/01/abc_h/seg-1-v1-a1.ts?t=x\n"
+        )
+
+        result = rewrite_manifest(content, cdn_base, proxy_base, "index/")
+
+        assert result.splitlines()[-1] == (
+            proxy_base + "/hls2/01/abc_h/seg-1-v1-a1.ts?t=x"
+        )
+
     def test_root_relative_uri_goes_through_the_proxy(self) -> None:
         """Vidsonic's master lists its variant from the CDN root
         (``/secure/98/<id>/video.m3u8``): left as is, the player resolves
@@ -382,6 +400,11 @@ class TestBuildCdnUrl:
     def test_absolute_path(self) -> None:
         base = "https://cdn.example.com/hls/video/"
         result = build_cdn_url(base, "/other/seg-1.ts")
+        assert result == "https://cdn.example.com/other/seg-1.ts"
+
+    def test_host_in_other_case_stays_on_the_cdn(self) -> None:
+        base = "https://CDN.Example.com/hls/video/"
+        result = build_cdn_url(base, "//cdn.example.com/other/seg-1.ts")
         assert result == "https://cdn.example.com/other/seg-1.ts"
 
     def test_nested_relative_path(self) -> None:

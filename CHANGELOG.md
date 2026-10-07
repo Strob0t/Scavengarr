@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: VidHide Segments Bypassed the HLS Proxy
+- VidHide streams failed behind the HLS proxy with 403 on every segment (6 of 6 in the seventh round). Not the headers: from the Pi every header set, none included, gets the playlists and segments (`scripts/probes/vidhide_segments.py`, `docs/plans/vidhide-segments.md`). VidHide names its CDN host in mixed case in the stream URL and in lower case in its playlists; the proxy compared hosts as written, left the absolute segment URLs alone, and the player fetched them from its own address, where the token bound to the Pi's address answered 403. The manifest rewrite and the CDN URL guard now compare the host without case (`hls_proxy._same_origin`).
+
 ### Fixed: sto Stream Results with Gated Link-outs
 - A stream request to sto answered with the site's own link-outs (`/r?t=`) when its link gate held them, and the serienstream resolver failed on each (`serienstream_invalid_url`, the Pi's VPN address). A request for one episode, which only Stremio makes, now keeps only the links that resolved to a hoster and drops a result left without one; the info event `sto_gated_links_dropped` (plugin, dropped and kept count) marks each. Torznab searches pass no season or episode and keep the link-outs, which JDownloader can follow from its own address.
 
