@@ -82,6 +82,7 @@ Open and still worth their place, not repeated here: optimization-options.md opt
 | 2026-10-06 | **Implementation:** at the maintainer's request the session that ran review phase 3 implements the handoff, in its order, from step 1 on. |
 | 2026-10-07 | **Round 2** (section below): build N3, N4, N6, N7 and N9; N8 is the advisor's; N2 reframed — the maintainer wants a long observation, not a 30-day rule ("sowas muss über eine Langzeitbeobachtung getroffen werden"), so N2 is the plugin long-term record and the lifecycle decision comes later from it; N1 after the streaming discussion (options in its task specification); N5 pending the maintainer's answer. |
 | 2026-10-07 | **Round 2, open items:** N1 measure first (the throughput probe), then A or B by its numbers; N5 Dependabot yes; N2 the long-term record as specified (180 days). |
+| 2026-10-07 | **Continue cut searches** (`openspec/changes/continue-cut-searches/`, step 21, the maintainer's answers to four questions): plugins run to their own timeout in the background and their results merge into the entry; what is still missing, the next request completes once; a retry answers at once instead of waiting; dead domains are marked unreachable at search time; the episode filter gets strict in the same change on the condition that the plugins' hit rate rises, not falls (series audit before and after, parser follow-ups per plugin). Evidence: Severance S01E05 in production, sto cut at the 30 s deadline, 2 results cached as complete for 30 minutes; S01E03 two minutes later found 4 in 2 s. |
 
 ## Handoff to the implementing agent
 
@@ -101,7 +102,7 @@ The advisor session (Mr. Fable) plans and dispatches; two coding sessions build,
 - Dev servers: Ultracode on port 7979, Mr. Normal on 7981. Production stays read-only through `scripts/prodctl.py`, within its budget.
 - After each push: `gh run watch <id> --exit-status`, a red run is fixed before anything else, then a report to Mr. Fable (shas, files, open points). Never `main`, never a force-push, never a merge.
 
-Assignment of the open steps: 16 Ultracode (in progress); 17 Mr. Normal; 18 Mr. Normal, starting only after 16 is on `staging` (both touch `interfaces/composition.py`); 19 Ultracode, after 16; 20 Mr. Normal, first.
+Assignment of the open steps (2026-10-07, evening): 16, 17 and 20 done; 18 Mr. Normal (in progress); 19 Ultracode: the throughput probe now, the proxy code after 21; 21 Ultracode, after the probe, the maintainer's priority; 22 per plugin once the audit names them: Mr. Normal for metadata from a page the captured tests already hold, Ultracode where the site needs a new analysis. Mr. Normal runs the production round of `scripts/stremio_round.py` once the probe is done, as the baseline before 21.
 
 ### Order
 
@@ -127,6 +128,8 @@ Assignment of the open steps: 16 Ultracode (in progress); 17 Mr. Normal; 18 Mr. 
 | 18 | N9 configuration by environment (**done** 2026-10-07; top-level keys read `SCAVENGARR_<KEY>` too, since the default config's link validation values are top-level; the env table is generated, `scripts/generate_config_doc.py`) | round 2 below | `infrastructure/config/load.py`, `schema.py` (`EnvOverrides`), `docs/features/configuration.md`, `docker-compose.yml` | Yes |
 | 19 | N1 HLS read-ahead: the throughput probe first, then A, B or both by its numbers | round 2 below | `scripts/probes/hls_throughput.py`, `infrastructure/stremio/hls_proxy.py`, the HLS routes | HLS area: check first |
 | 20 | N5 Dependabot (**done** 2026-10-07; the label `dependencies` was created in the repository, Dependabot ignores labels that do not exist) | round 2 below | `.github/dependabot.yml`, AGENTS.md §4 | Yes |
+| 21 | Continue cut searches: plugins to their own timeout, partial entries completed once, retry at once, unreachable at search time, strict episode filter with the series audit, stream headers `X-Cache` and `X-Search-Complete` | `openspec/changes/continue-cut-searches/` | `application/stremio/*`, `use_cases/stremio_stream.py`, `infrastructure/plugins/{health_monitor,httpx_base,playwright_base}.py`, `infrastructure/stremio/episode_filter.py`, `interfaces/api/stremio/router.py`, `interfaces/composition.py`, `scripts/probes/series_episodes.py` | Stremio area; the composition root is shared with step 18: rebase with care |
+| 22 | Parser follow-ups from the series audit, one row per plugin once task 7.4 of step 21 names them: season and episode into the result metadata from the page | step 21, task 7.4 | `plugins/<name>.py` and its test | Yes, one plugin per step |
 
 ### Task specifications for the items without an OpenSpec change
 
