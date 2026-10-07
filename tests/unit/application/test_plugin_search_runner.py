@@ -38,6 +38,16 @@ def _plugin(results: list[SearchResult] | Exception) -> MagicMock:
     return plugin
 
 
+def _answer_after(delay: float, results: list[SearchResult]) -> AsyncMock:
+    """search() answering *results* after *delay* seconds."""
+
+    async def _search(*_args: object, **_kwargs: object) -> list[SearchResult]:
+        await asyncio.sleep(delay)
+        return results
+
+    return AsyncMock(side_effect=_search)
+
+
 def _registry(plugins: dict[str, MagicMock], mode: str = "httpx") -> MagicMock:
     registry = MagicMock()
     registry.get.side_effect = lambda name: plugins[name]
@@ -306,64 +316,24 @@ class TestCircuitBreakerAndTimeout:
         assert await _search(runner, ["a"], ["q"]) == []
         breaker.record_failure.assert_called_once_with("a:2000")
 
-    async def test_deadline_cuts_queued_plugins_without_failure(self) -> None:
-        async def _slow(*_args: object, **_kwargs: object) -> list[SearchResult]:
-            await asyncio.sleep(10)
-            return []
-
-        plugins = {name: _plugin([]) for name in ("a", "b", "c")}
-        for plugin in plugins.values():
-            plugin.search = AsyncMock(side_effect=_slow)
-        breaker = MagicMock()
-        breaker.allow.return_value = True
-        runner = _runner(_registry(plugins), circuit_breaker=breaker)
-
-        pool = ConcurrencyPool(httpx_slots=1, pw_slots=1)
-        started = time.monotonic()
-        async with pool.request() as budget:
-            results = await runner.search_with_fallback(
-                list(plugins), ["q"], 2000, budget=budget, deadline=started + 0.2
-            )
-
-        assert results == []
-        assert time.monotonic() - started < 1.0
-        breaker.record_failure.assert_not_called()
-
-    async def test_deadline_timeout_counts_when_plugin_had_half_its_time(
-        self,
-    ) -> None:
-        async def _slow(*_args: object, **_kwargs: object) -> list[SearchResult]:
-            await asyncio.sleep(10)
-            return []
-
+    async def test_a_timeout_past_the_budget_counts_as_a_failure(self) -> None:
+        """The plugin had its whole timeout, so a dead host trips the breaker
+        whether or not the request's budget passed meanwhile."""
         plugin = _plugin([])
-        plugin.search = AsyncMock(side_effect=_slow)
+        plugin.search = _answer_after(10, [])
         breaker = MagicMock()
         breaker.allow.return_value = True
         runner = _runner(
-            _registry({"a": plugin}), circuit_breaker=breaker, plugin_timeout=0.3
+            _registry({"a": plugin}), circuit_breaker=breaker, plugin_timeout=0.05
         )
 
         pool = ConcurrencyPool(httpx_slots=1, pw_slots=1)
         async with pool.request() as budget:
             await runner.search_with_fallback(
-                ["a"], ["q"], 2000, budget=budget, deadline=time.monotonic() + 0.2
+                ["a"], ["q"], 2000, budget=budget, budget_ends=time.monotonic() - 1
             )
 
         breaker.record_failure.assert_called_once_with("a:2000")
-
-    async def test_plugin_is_skipped_after_deadline(self) -> None:
-        plugin = _plugin([_sr("https://a/1")])
-        runner = _runner(_registry({"a": plugin}))
-
-        pool = ConcurrencyPool(httpx_slots=1, pw_slots=1)
-        async with pool.request() as budget:
-            results = await runner.search_with_fallback(
-                ["a"], ["q"], 2000, budget=budget, deadline=time.monotonic() - 1
-            )
-
-        assert results == []
-        plugin.search.assert_not_awaited()
 
 
 class TestPluginRecord:
@@ -809,21 +779,59 @@ class TestOnResults:
         on_results.assert_not_awaited()
 
 
-class TestDeadlineCut:
-    async def test_a_plugin_the_deadline_cuts_is_cancelled(self) -> None:
+class TestBudget:
+    """The request's answer budget cuts no plugin (continue-cut-searches):
+    a plugin's work past it reaches the cache and the next request."""
+
+    async def test_a_plugin_holding_its_slot_past_the_budget_returns(self) -> None:
+        plugin = _plugin([])
+        plugin.search = _answer_after(0.1, [_sr("https://a/1")])
+        runner = _runner(_registry({"a": plugin}))
+
+        pool = ConcurrencyPool(httpx_slots=1, pw_slots=1)
+        async with pool.request() as budget:
+            results = await runner.search_with_fallback(
+                ["a"], ["q"], 2000, budget=budget, budget_ends=time.monotonic() + 0.02
+            )
+
+        assert [r.download_link for r in results] == ["https://a/1"]
+
+    async def test_a_plugin_queued_at_the_budget_runs(self) -> None:
+        """One slot: b waits for a's 0.1 s, the budget ends before it has
+        the slot, and it runs with its full timeout nevertheless."""
+        a = _plugin([])
+        a.search = _answer_after(0.1, [])
+        b = _plugin([_sr("https://b/1")])
+        runner = _runner(_registry({"a": a, "b": b}))
+
+        pool = ConcurrencyPool(httpx_slots=1, pw_slots=1)
+        async with pool.request() as budget:
+            results = await runner.search_with_fallback(
+                ["a", "b"],
+                ["q"],
+                2000,
+                budget=budget,
+                budget_ends=time.monotonic() + 0.02,
+            )
+
+        assert [r.download_link for r in results] == ["https://b/1"]
+
+    async def test_a_plugin_is_cut_at_its_own_timeout_not_at_the_budget(self) -> None:
         cancelled = asyncio.Event()
         plugin = _plugin([])
         plugin.search = _endless_search(cancelled)
-        runner = _runner(_registry({"a": plugin}))
+        runner = _runner(_registry({"a": plugin}), plugin_timeout=0.2)
+        started = time.monotonic()
 
         pool = ConcurrencyPool(httpx_slots=10, pw_slots=10)
         async with pool.request() as budget:
             results = await runner.search_with_fallback(
-                ["a"], ["q"], 2000, budget=budget, deadline=time.monotonic() + 0.05
+                ["a"], ["q"], 2000, budget=budget, budget_ends=started + 0.05
             )
 
         assert results == []
         assert cancelled.is_set()
+        assert time.monotonic() - started >= 0.2
 
 
 class TestTelemetry:
@@ -870,19 +878,18 @@ class TestTelemetry:
         )
         assert results == 2
 
-    async def test_a_plugin_the_deadline_cuts_is_cut(self) -> None:
+    async def test_a_plugin_returning_after_the_budget_is_late(self) -> None:
         t = Telemetry()
-        plugin = _plugin([])
-        plugin.search = _endless_search(asyncio.Event())
-        runner = _runner(_registry({"a": plugin}), telemetry=t)
+        runner = _runner(_registry({"a": _plugin([_sr("https://a/1")])}), telemetry=t)
 
         pool = ConcurrencyPool(httpx_slots=10, pw_slots=10)
         async with pool.request() as budget:
             await runner.search_with_fallback(
-                ["a"], ["q"], 2000, budget=budget, deadline=time.monotonic() + 0.05
+                ["a"], ["q"], 2000, budget=budget, budget_ends=time.monotonic() - 1
             )
 
-        assert self._sample(t, "cut") == 1
+        assert self._sample(t, "late") == 1
+        assert self._sample(t, "hits") is None
         assert self._timed(t) == 1
 
     async def test_open_breaker_counts_without_duration(self) -> None:
@@ -896,19 +903,6 @@ class TestTelemetry:
         await _search(runner, ["a"], ["q"])
 
         assert self._sample(t, "breaker_open") == 1
-        assert self._timed(t) is None
-
-    async def test_plugin_without_slot_before_the_deadline_is_skipped(self) -> None:
-        t = Telemetry()
-        runner = _runner(_registry({"a": _plugin([])}), telemetry=t)
-
-        pool = ConcurrencyPool(httpx_slots=1, pw_slots=1)
-        async with pool.request() as budget:
-            await runner.search_with_fallback(
-                ["a"], ["q"], 2000, budget=budget, deadline=time.monotonic() - 1
-            )
-
-        assert self._sample(t, "skipped") == 1
         assert self._timed(t) is None
 
     async def test_unreachable_plugin_is_counted(self) -> None:
@@ -948,17 +942,17 @@ class TestPageClaim:
         assert before + 5.0 <= claim.due <= time.monotonic() + 5.0
         assert page_claim.get() is None
 
-    async def test_due_at_the_search_deadline_when_it_is_earlier(self) -> None:
+    async def test_due_at_the_plugin_timeout_past_the_budget_too(self) -> None:
         seen: list[PageClaim | None] = []
         runner = _runner(_registry({"a": self._claiming(seen)}), plugin_timeout=5.0)
-        deadline = time.monotonic() + 1.0
+        before = time.monotonic()
         pool = ConcurrencyPool(httpx_slots=10, pw_slots=10)
 
         async with pool.request() as budget:
             await runner.search_with_fallback(
-                ["a"], ["q"], 2000, budget=budget, deadline=deadline
+                ["a"], ["q"], 2000, budget=budget, budget_ends=before - 1
             )
 
         claim = seen[0]
         assert claim is not None
-        assert claim.due == pytest.approx(deadline, abs=0.05)
+        assert before + 5.0 <= claim.due <= time.monotonic() + 5.0

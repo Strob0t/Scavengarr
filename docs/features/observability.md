@@ -89,7 +89,7 @@ All names start with `scavengarr_`. Outcomes in *italics* are counted without a 
 | `stremio_request_seconds`, `stremio_request_total` | `source`, `outcome` | `source`: `cache` (fresh cache entry), `stale` (stale entry, refreshed in the background), `search` (new search), `joined` (the title's search was running), `none` (ended before the search). `outcome`: `streams`, `empty`, `no_title`, `no_plugins`, `error`, `cut` |
 | `stremio_phase_seconds`, `stremio_phase_total` | `phase`, `outcome` | `anime_ids` (a `kitsu:` id translated into the IMDb request): `found`, `not_found`. `metadata` (plugin selection and TMDB titles): `found`, `not_found`. `search` (the shared search, once per search): `ok`, `cut`. `resolve` (resolution while the search runs): `target`, `done`, `deadline`, *`cached`* (a cached answer). `background_resolve` (the other links of a cached answer): `done`, `deadline` |
 | `stremio_streams` | | Streams per answer (histogram) |
-| `plugin_search_seconds`, `plugin_search_total` | `plugin`, `outcome` | Stremio searches only; Torznab searches are not recorded. `hits`, `empty`, `error`, `cut` (search deadline or shutdown), *`breaker_open`*, *`skipped`* (no slot before the search deadline), *`unreachable`* (failed the periodic health check) |
+| `plugin_search_seconds`, `plugin_search_total` | `plugin`, `outcome` | Stremio searches only; Torznab searches are not recorded. `hits`, `empty`, `late` (returned after the request's answer budget: its results reach the cache and the next request), `error`, `cut` (shutdown), *`breaker_open`*, *`unreachable`* (failed the periodic health check) |
 | `plugin_results_total` | `plugin` | Validated results |
 | `hoster_resolve_seconds`, `hoster_resolve_total` | `resolver`, `outcome` | Resolver name, `direct` for content-type probes (playlists, URLs without a resolver). `stream`, `dead`, `unplayable`, `check_error` (the playback check failed), `timeout`, `network_error`, `http_error`, `error`, `cut`, `busy` (a capture got no stealth browser page before its request was due), *`cached`*, *`breaker_open`* |
 | `hls_proxy_seconds`, `hls_proxy_total` | `kind`, `outcome` | `master` (the stream's playlist), `playlist`, `segment`; outcome is the answer's HTTP status. The duration ends when the answer starts (time to first byte for the player) |
@@ -146,9 +146,9 @@ The metrics restart with the process, and the scoring snapshots age out in weeks
 
 | Counter | Counted by | When |
 |---|---|---|
-| `searches` | `PluginSearchRunner` | Every plugin search of a Stremio request that ran (a plugin skipped by its breaker, the deadline or the health check is not counted) |
+| `searches` | `PluginSearchRunner` | Every plugin search of a Stremio request that ran (a plugin skipped by its breaker or the health check is not counted) |
 | `results` | `PluginSearchRunner` | The validated results a search gave |
-| `timeouts` | `PluginSearchRunner` | A search cut by the plugin timeout or the request's deadline |
+| `timeouts` | `PluginSearchRunner` | A search cut by the plugin timeout (its full `plugin_timeout_seconds` from the moment it held a slot) |
 | `checks` | `PluginHealthMonitor` | Every check of the plugin's site with a verdict (a check in which no site answered counts nothing: the own network was down) |
 | `unreachable` | `PluginHealthMonitor` | The checks that found the site down (after the 30 s retry) |
 

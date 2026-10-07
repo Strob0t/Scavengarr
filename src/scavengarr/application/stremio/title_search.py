@@ -52,7 +52,7 @@ Spawn = Callable[[Coroutine[Any, Any, None]], asyncio.Task[None]]
 
 
 class _Search(Protocol):
-    """The search for one cache key; the plugins' time counts from *started*."""
+    """The search for one cache key; its answer budget counts from *started*."""
 
     def __call__(
         self, progress: SearchProgress, *, started: float
@@ -150,8 +150,8 @@ class TitleSearch:
 
     async def _refresh(self, search: _Search, progress: SearchProgress) -> None:
         """Refresh a stale entry: one title at a time (``_BACKGROUND_SEARCHES``);
-        the plugins' time counts from the refresh's start, so a title that
-        waited keeps its whole time."""
+        its budget counts from the refresh's start, so a title that waited
+        keeps its whole time."""
         async with self._background_searches:
             await search(progress, started=time.monotonic())
 
@@ -169,8 +169,10 @@ class TitleSearch:
     ) -> None:
         """Search the plugins until they are done; store the matching results.
 
-        The plugins get ``plugin_timeout_seconds`` from *started* (the
-        request's start; a refresh's own, see ``_refresh``).
+        Each plugin gets ``plugin_timeout_seconds`` from its own start; the
+        answer budget, ``plugin_timeout_seconds`` from *started* (the
+        request's start; a refresh's own, see ``_refresh``), only labels the
+        plugins that return after it.
         Their title-matching results go into *progress* as they arrive: the
         answers do not wait for the search, they read it.
         """
@@ -185,9 +187,9 @@ class TitleSearch:
                         progress,
                         scored=scored,
                         budget=budget,
-                        # Plugins queue for slots; the search ends after the
-                        # request started, not after each plugin's start
-                        deadline=started + self._plugin_timeout_s,
+                        # The answer budget: a plugin returning after it is
+                        # late, not cut
+                        budget_ends=started + self._plugin_timeout_s,
                     )
             finally:
                 progress.finish()
@@ -203,7 +205,7 @@ class TitleSearch:
         *,
         scored: bool,
         budget: ConcurrencyBudgetPort,
-        deadline: float,
+        budget_ends: float,
     ) -> None:
         """Search each language group; title-filter each plugin's results.
 
@@ -246,7 +248,7 @@ class TitleSearch:
                 season=request.season,
                 episode=request.episode,
                 budget=budget,
-                deadline=deadline,
+                budget_ends=budget_ends,
                 on_results=_found,
             )
 

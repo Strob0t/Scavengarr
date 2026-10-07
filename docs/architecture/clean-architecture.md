@@ -180,7 +180,7 @@ Helpers for `StremioStreamUseCase` live in `application/stremio/`:
 - `title_resolution.py` — `TitleResolver`: the request's title per language (TMDB), the plugins' languages (grouped for the search, each plugin's first for the ranking), and the title match of the results (in a worker thread).
 - `plugin_selection.py` — `PluginSelector`: the plugins that provide streams, and with scored selection on the best scored of them plus the exploration slot.
 - `title_search.py` — `TitleSearch`: one plugin search per title, shared by the requests while it runs (single-flight) and cached (`SearchCache`; a stale entry answers while one background search at a time refreshes it).
-- `plugin_search.py` — `PluginSearchRunner`: plugin fan-out with fair-share concurrency budget, a search deadline counted from the request start, circuit breaker, metrics and fallback queries.
+- `plugin_search.py` — `PluginSearchRunner`: plugin fan-out with fair-share concurrency budget, each plugin's full timeout from its slot (the request's answer budget cuts none; a plugin returning after it is `late`), circuit breaker, metrics and fallback queries.
 - `answer.py` — the answer's streams: `rank_streams` (conversion in a worker thread, then the sorter), `with_measurements` (what the resolutions measured, re-ranked), `cache_and_proxy` (`/play/` and HLS proxy URLs, the stream links saved in parallel).
 - `queries.py` — search query normalization (`build_search_query`, `build_search_queries`) and multi-language title references.
 - `stream_builder.py` — `format_stream`, `deduplicate_by_hoster` (only without resolver; with one, resolution picks one stream per hoster), `is_direct_video_url`, behavior hints and cache/proxy link building.

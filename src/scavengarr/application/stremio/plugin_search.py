@@ -1,9 +1,9 @@
 """Run plugin searches for Stremio requests.
 
 Fans a set of queries out over a set of plugins within the global
-concurrency budget, with per-plugin timeout, an optional shared deadline,
-circuit breaker, metrics,
-episode filtering and result validation.
+concurrency budget, with per-plugin timeout, circuit breaker, metrics,
+episode filtering and result validation. The request's answer budget cuts
+no plugin: one that returns after it counts as ``late``.
 """
 
 from __future__ import annotations
@@ -156,7 +156,7 @@ class PluginSearchRunner:
         season: int | None = None,
         episode: int | None = None,
         budget: ConcurrencyBudgetPort,
-        deadline: float | None = None,
+        budget_ends: float | None = None,
         on_results: OnResultsFn | None = None,
     ) -> list[SearchResult]:
         """Search plugins with all query variants, deduplicate results.
@@ -175,11 +175,13 @@ class PluginSearchRunner:
         of a plugin twice, and the title filter scored them twice (code
         review, 2026-10-06).
 
-        *deadline* (``time.monotonic()`` value) ends the whole search: a
-        plugin still waiting for a slot then is skipped, a running one is
-        cut at the deadline instead of after its own full timeout.
-        *on_results* gets each plugin's new results of each query as soon
-        as they are there.
+        No plugin is cut for the request's answer: each gets its full
+        timeout from the moment it holds a slot, one waiting for a slot when
+        the answer budget passes runs when it gets one, and its results
+        reach *on_results* like any other's. *budget_ends*
+        (``time.monotonic()`` value) only labels the plugins that return
+        after it (telemetry outcome ``late``). *on_results* gets each
+        plugin's new results of each query as soon as they are there.
 
         Plugins whose site failed the periodic health check are skipped
         (before a mirror group picks its member).
@@ -223,7 +225,7 @@ class PluginSearchRunner:
                     season=season,
                     episode=episode,
                     budget=budget,
-                    deadline=deadline,
+                    budget_ends=budget_ends,
                     on_results=_hand_on,
                     standbys=standbys,
                 )
@@ -320,7 +322,7 @@ class PluginSearchRunner:
         season: int | None = None,
         episode: int | None = None,
         budget: ConcurrencyBudgetPort,
-        deadline: float | None = None,
+        budget_ends: float | None = None,
         on_results: OnResultsFn | None = None,
         standbys: Mapping[str, str] | None = None,
     ) -> list[SearchResult]:
@@ -345,7 +347,7 @@ class PluginSearchRunner:
                     category,
                     season=season,
                     episode=episode,
-                    deadline=deadline,
+                    budget_ends=budget_ends,
                 )
 
         async def _search_one(name: str) -> list[SearchResult]:
@@ -387,16 +389,10 @@ class PluginSearchRunner:
         *,
         season: int | None = None,
         episode: int | None = None,
-        deadline: float | None = None,
+        budget_ends: float | None = None,
     ) -> list[SearchResult]:
-        """Run a single plugin search with timeout, catching errors."""
+        """Run a single plugin search with its full timeout, catching errors."""
         timeout = self._plugin_timeout
-        if deadline is not None:
-            timeout = min(timeout, deadline - time.monotonic())
-            if timeout <= 0:
-                log.info("stremio_plugin_skipped_deadline", plugin=name)
-                self._telemetry.count("plugin_search", "skipped", plugin=name)
-                return []
 
         # Circuit breaker: skip plugins that have been failing consistently
         breaker_key = _breaker_key(name, category)
@@ -412,23 +408,23 @@ class PluginSearchRunner:
         try:
             return await asyncio.wait_for(
                 self._search_single_plugin(
-                    name, query, category, season=season, episode=episode
+                    name,
+                    query,
+                    category,
+                    season=season,
+                    episode=episode,
+                    budget_ends=budget_ends,
                 ),
                 timeout=timeout,
             )
         except TimeoutError:
             log.warning(
-                "stremio_plugin_timeout",
-                plugin=name,
-                timeout=round(timeout, 2),
-                cut_by_deadline=timeout < self._plugin_timeout,
+                "stremio_plugin_timeout", plugin=name, timeout=round(timeout, 2)
             )
             self._history.count(name, "timeouts")
-            # A plugin that had at least half its timeout counts as failing
-            # (dead hosts always run into the deadline and must still trip
-            # the breaker); one that queued for most of the budget does not
-            counts = timeout >= self._plugin_timeout / 2
-            if counts and self._circuit_breaker is not None:
+            # The plugin had its whole timeout: a dead host must trip the
+            # breaker
+            if self._circuit_breaker is not None:
                 self._circuit_breaker.record_failure(breaker_key)
             return []
         finally:
@@ -477,12 +473,15 @@ class PluginSearchRunner:
         *,
         season: int | None = None,
         episode: int | None = None,
+        budget_ends: float | None = None,
     ) -> list[SearchResult]:
         """Search a single plugin, catching and logging errors.
 
         The plugin is called directly (with the max_results context so it
         limits pagination), then its results are episode-filtered and
-        validated via the SearchEngine.
+        validated via the SearchEngine. A plugin that returns after
+        *budget_ends* (the request's answer budget) is ``late``: its results
+        reach the cache and the next request.
         """
         try:
             plugin = self._plugins.get(name)
@@ -492,6 +491,7 @@ class PluginSearchRunner:
 
         success = False
         cancelled = False
+        late = False
         results: list[SearchResult] = []
         self._history.count(name, "searches")
         with self._telemetry.stage("plugin_search", plugin=name) as stage:
@@ -508,7 +508,8 @@ class PluginSearchRunner:
                 )
                 results = await self._search_engine.validate_results(raw)
                 success = True
-                stage.outcome = "hits" if results else "empty"
+                late = budget_ends is not None and time.monotonic() > budget_ends
+                stage.outcome = "late" if late else "hits" if results else "empty"
             except Exception:
                 log.warning("stremio_plugin_search_error", plugin=name, exc_info=True)
                 stage.outcome = "error"
@@ -540,5 +541,6 @@ class PluginSearchRunner:
             "stremio_plugin_search_done",
             plugin=name,
             result_count=len(results),
+            late=late,
         )
         return results

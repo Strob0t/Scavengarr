@@ -13,8 +13,8 @@ audit's baseline (7.1) must run before the filter change (6) ships.
 
 ## 2. Runner: no cut at the deadline
 
-- [ ] 2.1 `application/stremio/plugin_search.py`: `_run_plugin_with_timeout` gives every plugin `self._plugin_timeout` from its own start; the `deadline` parameter and `stremio_plugin_skipped_deadline` go; a plugin waiting for a slot runs when it gets one. Telemetry outcome `late` for a plugin that returns after the answer budget (the runner gets the budget's monotonic time to label it). The `stremio_plugin_timeout` log loses `cut_by_deadline`.
-- [ ] 2.2 Tests in `tests/unit/application/test_plugin_search_runner.py`: a plugin that holds its slot past the budget returns its results; a plugin queued at the budget runs; outcome `late`.
+- [x] 2.1 `application/stremio/plugin_search.py`: `_run_plugin_with_timeout` gives every plugin `self._plugin_timeout` from its own start; the `deadline` parameter and `stremio_plugin_skipped_deadline` go; a plugin waiting for a slot runs when it gets one. Telemetry outcome `late` for a plugin that returns after the answer budget (the runner gets the budget's monotonic time to label it). The `stremio_plugin_timeout` log loses `cut_by_deadline`.
+- [x] 2.2 Tests in `tests/unit/application/test_plugin_search_runner.py`: a plugin that holds its slot past the budget returns its results; a plugin queued at the budget runs; outcome `late`.
 
 ## 3. Entry: missing plugins and per-plugin merge
 
