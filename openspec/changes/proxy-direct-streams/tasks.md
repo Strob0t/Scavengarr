@@ -33,8 +33,8 @@ from `origin/staging`, after step 21 is complete and before step 19.
 
 ## 5. The number for files
 
-- [ ] 5.1 `scripts/probes/hls_throughput.py --file <stream id>`: the first 32 MiB of the stored direct file in one connection, then as three parallel byte ranges in 1 MiB steps, with the stored headers over the default browser User-Agent; prints Mbit/s for both and whether the CDN honoured the ranges (206 with the asked `Content-Range`); host only, no URL or token; runs in the production container through `scripts/prodctl.py probe`.
-- [ ] 5.2 Run on the Pi for one MixDrop and one DoodStream id after the deploy; the numbers into the backlog's row 26 and `docs/plans/stremio-latency.md`; a read-ahead for files is a change of its own if the ranges are faster.
+- [x] 5.1 `scripts/probes/hls_throughput.py --file <stream id>`: the first 32 MiB of the stored direct file in one connection, then as three parallel byte ranges in 1 MiB steps, with the stored headers over the default browser User-Agent; prints Mbit/s for both and whether the CDN honoured the ranges (206 with the asked `Content-Range`); host only, no URL or token; runs in the production container through `scripts/prodctl.py probe`.
+- [x] 5.2 Run on the Pi for one MixDrop and one DoodStream id (no deploy needed: the probe reads the stored links and fetches their CDNs itself; run 2026-10-07 on links resolved before this change); the numbers into the backlog's row 26 and `docs/plans/stremio-latency.md`; a read-ahead for files is a change of its own if the ranges are faster.
 
 ## 6. Acceptance
 

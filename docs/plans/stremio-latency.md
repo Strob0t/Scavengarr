@@ -345,6 +345,15 @@ CPU of the container during the round: Python 100.0 s, Chromium 167.7 s.
 
 36 of the 37 streams served through `/play/` fail; the proxied ones play, except VidHide. DoodStream says why in its answer: the video URL is bound to the IP that resolved it, the Pi's VPN address, and the check comes from the home connection. A Stremio client on the LAN fetches a `/play/` redirect from that same home address, so these streams most likely fail in the players as well, not only in the check; FSST's 410 and the 403s of Vinovo and MixDrop look like the same binding (HTML, unconfirmed). VidHide fails behind the proxy, so its segments are refused to the Pi itself or are not fetched through the proxy. Both classes point at the proxy and resolver decision (which hosters are proxied, VidHide's segments); analysis stops there, no code change.
 
+**File throughput from the Pi** (step 26, task 5.2, 2026-10-07): `prodctl.py probe hls_throughput -- --file --hoster <hoster>`, the hoster's newest stored direct link (43 and 44 min old), its first 32 MiB in one connection, then as three parallel 1 MiB ranges.
+
+| Hoster (CDN) | File | One connection | 3 ranges | Ranges honoured |
+|---|---:|---:|---:|---|
+| MixDrop (mxcontent.net) | 1491.7 MiB | 5.4 and 5.3 Mbit/s (2 runs) | 22.2 and 21.1 Mbit/s | 32 of 32, `206` with the asked range |
+| DoodStream (cloudatacdn.com) | 1801.1 MiB | 3.8 Mbit/s | 19.3 Mbit/s | 32 of 32 |
+
+Both CDNs throttle per connection (ranges 4 to 5 times faster; the second MixDrop run read bytes the first had fetched, and one connection stayed at 5.3 Mbit/s). Size over runtime gives an average bitrate of about 1.4 Mbit/s for the MixDrop film (147 min) and 2.1 Mbit/s for the DoodStream one (121 min), an estimate: one connection carries 3.8 and 1.8 times that. Proxying these files on one connection plays them; a range read-ahead for files is not needed by these two and stays a change of its own (design decision 6).
+
 ## AIOStreams
 
 Goal was an AIOStreams test user on `aiostreams.lan` with Scavengarr as addon, measured end to end. Not done: AIOStreams validates the addon manifest when a user is created or updated, and it can reach neither the dev instance (Docker NAT on the workstation) nor `scavengarr.lan` (502, backend down). Recommended user settings, from the AIOStreams v2.35.3 source (`packages/core/src/presets/custom.ts`, `packages/core/src/db/schemas.ts`):

@@ -7,7 +7,9 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
+import httpx
 import pytest
+import respx
 
 _PROBES = Path(__file__).resolve().parents[3] / "scripts" / "probes"
 
@@ -100,3 +102,93 @@ class TestReport:
         # 15 MB over 40 s of video: 3.0 Mbit/s; 1.5 × 3.0 / 2.0 = 2.25 → 3
         assert "Bitrate 3.0 Mbit/s" in out
         assert "= 3 connections." in out
+
+
+_FILE = "https://cdn.example/v/file.mp4"
+_MIB = 1048576
+
+
+def _ranged_file(size: int):  # noqa: ANN202 - a respx side effect
+    def answer(request: httpx.Request) -> httpx.Response:
+        asked = request.headers.get("range")
+        if not asked:
+            return httpx.Response(200, content=b"x" * size)
+        lo, hi = (int(n) for n in asked.removeprefix("bytes=").split("-"))
+        hi = min(hi, size - 1)
+        return httpx.Response(
+            206,
+            content=b"x" * (hi - lo + 1),
+            headers={"content-range": f"bytes {lo}-{hi}/{size}"},
+        )
+
+    return answer
+
+
+class TestFileMode:
+    def test_headers_put_the_stored_ones_over_the_defaults(self) -> None:
+        link = _mod.CachedStreamLink(
+            stream_id="s", hoster_url="h", video_headers='{"Referer": "https://m/"}'
+        )
+
+        headers = _mod.file_headers(link)
+
+        assert headers == {
+            "User-Agent": _mod.DEFAULT_USER_AGENT,
+            "Accept-Encoding": "identity",
+            "Referer": "https://m/",
+        }
+
+    def test_range_bounds_step_through_the_limit(self) -> None:
+        assert _mod.range_bounds(2 * _MIB + 10, _MIB) == [
+            (0, _MIB - 1),
+            (_MIB, 2 * _MIB - 1),
+            (2 * _MIB, 2 * _MIB + 9),
+        ]
+
+    def test_honoured_needs_206_with_the_asked_range(self) -> None:
+        assert _mod.honoured(206, "bytes 0-99/500", 0, 99)
+        assert not _mod.honoured(206, "bytes 0-499/500", 0, 99)
+        assert not _mod.honoured(200, "", 0, 99)
+
+    @respx.mock
+    async def test_runs_read_the_limit_once_and_in_ranges(self) -> None:
+        respx.get(_FILE).mock(side_effect=_ranged_file(5 * _MIB))
+
+        async with httpx.AsyncClient() as http:
+            one, ranged, _ = await _mod.file_runs(http, _FILE, {}, 3 * _MIB + 5)
+
+        assert one.bytes == 3 * _MIB + 5
+        assert ranged.bytes == 3 * _MIB + 5
+        assert (ranged.ranges, ranged.honoured, ranged.ignored) == (4, 4, False)
+        assert ranged.connections == 3
+
+    @respx.mock
+    async def test_a_cdn_without_ranges_stops_the_range_run(self) -> None:
+        respx.get(_FILE).respond(200, content=b"x" * (4 * _MIB))
+
+        async with httpx.AsyncClient() as http:
+            _, ranged, _ = await _mod.file_runs(http, _FILE, {}, 4 * _MIB)
+
+        assert ranged.ignored
+        assert ranged.honoured == 0
+        assert ranged.ranges <= 3
+
+    def test_report_names_rates_and_ranges(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        one = _mod.Run("one connection", 1)
+        one.bytes, one.seconds = 32 * _MIB, 10.0
+        ranged = _mod.Run("3 ranges", 1, ranged=True)
+        ranged.bytes, ranged.seconds, ranged.ranges, ranged.honoured = (
+            32 * _MIB,
+            5.0,
+            32,
+            32,
+        )
+
+        _mod.report_file([one, ranged], size=900 * _MIB)
+
+        out = capsys.readouterr().out
+        assert "26.8" in out and "53.7" in out
+        assert "32 of 32 answered 206 with the asked range" in out
+        assert "900.0 MiB" in out

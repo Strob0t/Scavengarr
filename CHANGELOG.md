@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Chore: File Throughput Probe
+- Whether direct files proxied through Scavengarr (step 26) need a read-ahead was unmeasured. `scripts/probes/hls_throughput.py --file [ID]` reads the first 32 MiB of a stored direct link from the Pi in one connection, then as three parallel 1 MiB ranges, and prints Mbit/s and whether the CDN honoured the ranges (`206` with the asked `Content-Range`); without an id it takes the newest stored direct link of `--hoster`. First run: MixDrop 5.4 Mbit/s in one connection, 22.2 in ranges; DoodStream 3.8 and 19.3; both honoured every range (`docs/plans/stremio-latency.md`, seventh round, production).
+
 ### Fixed: VidHide Segments Bypassed the HLS Proxy
 - VidHide streams failed behind the HLS proxy with 403 on every segment (6 of 6 in the seventh round). Not the headers: from the Pi every header set, none included, gets the playlists and segments (`scripts/probes/vidhide_segments.py`, `docs/plans/vidhide-segments.md`). VidHide names its CDN host in mixed case in the stream URL and in lower case in its playlists; the proxy compared hosts as written, left the absolute segment URLs alone, and the player fetched them from its own address, where the token bound to the Pi's address answered 403. The manifest rewrite and the CDN URL guard now compare the host without case (`hls_proxy._same_origin`).
 

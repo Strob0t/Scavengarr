@@ -2,6 +2,7 @@
 
     probe hls_throughput [--hoster firestream] [--segments 10]
                          [--stream-id ID | --imdb [movie/|series/]ID]
+    probe hls_throughput --file [ID] [--hoster mixdrop]
 
 The newest stored HLS link of the hoster (the Redis backend: the probe scans
 the stream link keys; ``--stream-id`` names one) is fetched from its CDN
@@ -20,6 +21,14 @@ for the title's streams so that fresh links exist; that fills the app's
 caches like any Stremio request. Otherwise the probe changes nothing. Run
 it while nothing plays: the runs share the Pi's connection with the app.
 Prints no URLs, only the CDN's domain.
+
+``--file`` measures a direct file instead (a stream behind ``/play/``): the
+stored link ``ID``, else the hoster's newest stored direct link. Its first
+32 MiB are read in one connection, as a player reads a file, then as three
+parallel byte ranges in 1 MiB steps; the stored headers go over the
+browser's User-Agent and ``Accept-Encoding: identity``. The probe prints
+Mbit/s for both and whether the CDN honoured the ranges (``206`` with the
+asked ``Content-Range``; a range answered otherwise ends the range run).
 """
 
 from __future__ import annotations
@@ -49,6 +58,8 @@ from scavengarr.infrastructure.persistence.stream_link_cache import (
 from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 
 RANGES = 3
+FILE_LIMIT = 32 * 1048576  # bytes of a file per run
+FILE_STEP = 1048576  # bytes per range of a file
 READ_AHEAD = 2
 CHUNK = 65536
 _STREAM_ID_RE = re.compile(r"/(?:proxy|play)/([^/?#]+)")
@@ -227,6 +238,100 @@ async def execute(fetcher: Fetcher, segments: list[Segment], run: Run) -> None:
     run.seconds = time.monotonic() - started
 
 
+def file_headers(link: CachedStreamLink) -> dict[str, str]:
+    """A file's headers: the stored ones over a browser's, no compression."""
+    stored = json.loads(link.video_headers) if link.video_headers else {}
+    return {"User-Agent": DEFAULT_USER_AGENT, "Accept-Encoding": "identity", **stored}
+
+
+def range_bounds(limit: int, step: int) -> list[tuple[int, int]]:
+    """Inclusive byte ranges of *step* bytes covering ``0..limit-1``."""
+    return [(lo, min(lo + step, limit) - 1) for lo in range(0, limit, step)]
+
+
+def honoured(status: int, content_range: str, lo: int, hi: int) -> bool:
+    """Whether a range answer is the asked range: ``206 bytes lo-hi/…``."""
+    return status == 206 and content_range.startswith(f"bytes {lo}-{hi}/")
+
+
+async def _file_once(
+    http: httpx.AsyncClient, url: str, headers: dict[str, str], limit: int
+) -> tuple[int, int]:
+    """Read *limit* bytes of *url* in one GET; the count and the file size."""
+    count = 0
+    async with http.stream("GET", url, headers=headers) as resp:
+        resp.raise_for_status()
+        size = int(resp.headers.get("content-length") or 0)
+        async for chunk in resp.aiter_bytes(CHUNK):
+            count += len(chunk)
+            if count >= limit:
+                break
+    return min(count, limit), size
+
+
+async def _file_ranges(
+    http: httpx.AsyncClient, url: str, headers: dict[str, str], run: Run, limit: int
+) -> None:
+    """Read ``0..limit-1`` as FILE_STEP ranges, RANGES of them at once."""
+    pending = iter(range_bounds(limit, FILE_STEP))
+
+    async def worker() -> None:
+        for lo, hi in pending:
+            if run.ignored:
+                return
+            asked = {**headers, "Range": f"bytes={lo}-{hi}"}
+            async with http.stream("GET", url, headers=asked) as resp:
+                resp.raise_for_status()
+                run.ranges += 1
+                if not honoured(
+                    resp.status_code, resp.headers.get("content-range", ""), lo, hi
+                ):
+                    run.ignored = True
+                    return
+                run.honoured += 1
+                async for chunk in resp.aiter_bytes(CHUNK):
+                    run.bytes += len(chunk)
+
+    await asyncio.gather(*(worker() for _ in range(RANGES)))
+
+
+async def file_runs(
+    http: httpx.AsyncClient, url: str, headers: dict[str, str], limit: int
+) -> tuple[Run, Run, int]:
+    """One connection, then RANGES parallel ranges, and the file size (0: none)."""
+    one = Run("one connection", 1)
+    started = time.monotonic()
+    one.bytes, size = await _file_once(http, url, headers, limit)
+    one.seconds = time.monotonic() - started
+    ranged = Run(f"{RANGES} ranges of {_mib(FILE_STEP)}", 1, ranged=True)
+    started = time.monotonic()
+    try:
+        await _file_ranges(http, url, headers, ranged, min(limit, one.bytes))
+    except httpx.HTTPError as exc:
+        ranged.failed += 1
+        print(f"  {ranged.name}: a range failed: {type(exc).__name__}")
+    ranged.seconds = time.monotonic() - started
+    return one, ranged, size
+
+
+def report_file(runs: list[Run], size: int) -> None:
+    """The file runs as a table; *size* is the file's length (0: unknown)."""
+    print("| run | connections | bytes | time | Mbit/s | ranges |")
+    print("|---|---|---|---|---|---|")
+    for run in runs:
+        ranges = "–"
+        if run.ranged:
+            ranges = f"{run.honoured} of {run.ranges} answered 206 with the asked range"
+            if run.ignored:
+                ranges += "; the CDN ignores ranges, the run stopped"
+        failed = f", {run.failed} failed" if run.failed else ""
+        print(
+            f"| {run.name} | {run.connections} | {_mib(run.bytes)}"
+            f" | {run.seconds:.1f} s{failed} | {run.mbit:.1f} | {ranges} |"
+        )
+    print(f"File size {_mib(size) if size else 'unknown'} (Content-Length).")
+
+
 async def _stored_ids(redis_url: str) -> list[str]:
     import redis.asyncio as aioredis
 
@@ -266,7 +371,10 @@ async def _pick_link(
     redis_url: str,
     args: argparse.Namespace,
 ) -> CachedStreamLink:
-    if args.stream_id:
+    want_hls = args.file is None
+    if args.file:
+        ids = [args.file]
+    elif args.stream_id:
         ids = [args.stream_id]
     elif args.imdb:
         ids = await _request_streams(args.imdb)
@@ -278,11 +386,17 @@ async def _pick_link(
     candidates: list[CachedStreamLink] = []
     for stream_id in ids:
         link = await repo.get(stream_id)
-        if link and link.is_hls and link.video_url and wanted in link.hoster.lower():
+        if (
+            link
+            and link.is_hls == want_hls
+            and link.video_url
+            and wanted in link.hoster.lower()
+        ):
             candidates.append(link)
     if not candidates:
         sys.exit(
-            f"no stored HLS link of {args.hoster} among {len(ids)} links;"
+            f"no stored {'HLS' if want_hls else 'direct'} link of {args.hoster}"
+            f" among {len(ids)} links;"
             " pass --imdb ID of a title with one"
         )
     return max(candidates, key=lambda link: link.resolved_at)
@@ -350,6 +464,13 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--segments", type=int, default=10, help="per run")
     parser.add_argument("--stream-id", help="a stored stream link's id")
     parser.add_argument(
+        "--file",
+        nargs="?",
+        const="",
+        metavar="ID",
+        help="measure a direct file: the stored link ID, else the newest one",
+    )
+    parser.add_argument(
         "--imdb", help="[movie/|series/]ID: ask the app for the title's streams first"
     )
     return parser
@@ -373,7 +494,7 @@ async def main(argv: list[str]) -> None:
         link = await _pick_link(
             repo, config.cache.backend, config.cache.redis_url, args
         )
-    headers = _cdn_headers(link)
+    headers = file_headers(link) if args.file is not None else _cdn_headers(link)
     age = (time.time() - link.resolved_at) / 60 if link.resolved_at else 0
     print(
         f"# hls_throughput: {link.hoster} · {link.title[:60]} · cdn"
@@ -385,6 +506,12 @@ async def main(argv: list[str]) -> None:
         timeout=httpx.Timeout(60.0, connect=15.0),
         limits=httpx.Limits(max_connections=16, max_keepalive_connections=16),
     ) as http:
+        if args.file is not None:
+            one, ranged, size = await file_runs(
+                http, link.video_url, headers, FILE_LIMIT
+            )
+            report_file([one, ranged], size=size)
+            return
         segments, variant = await _segments_of(http, link, headers)
         per_run = min(args.segments, len(segments) // 4)
         if per_run == 0:
