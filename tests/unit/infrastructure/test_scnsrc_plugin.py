@@ -7,6 +7,10 @@ from pathlib import Path
 from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
+from scavengarr.domain.plugins.base import PluginUnreachableError
+
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "scnsrc.py"
 
 
@@ -772,10 +776,10 @@ class TestVerifyDomain:
         plugin._browser = _make_mock_browser(context)
         plugin._context = context
 
-        await plugin._verify_domain()
+        with pytest.raises(PluginUnreachableError):
+            await plugin._verify_domain()
 
-        assert plugin._domain_verified is True
-        assert plugin.base_url == f"https://{_DOMAINS[0]}"
+        assert plugin._domain_verified is False
 
     async def test_domain_error_skips_to_next(self) -> None:
         plugin = _make_plugin()

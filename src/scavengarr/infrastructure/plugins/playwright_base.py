@@ -25,7 +25,7 @@ from patchright.async_api import (
 if TYPE_CHECKING:
     from patchright._impl._api_structures import SetCookieParam
 
-from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.domain.plugins.base import PluginUnreachableError, SearchResult
 from scavengarr.infrastructure.browser.clearance_store import ClearanceStore
 from scavengarr.infrastructure.browser.display import resolve_headless
 from scavengarr.infrastructure.browser.hardening import (
@@ -412,7 +412,8 @@ class PlaywrightPluginBase:
 
         A domain counts as reachable when it answers with status < 400 or
         with a Cloudflare challenge that gets solved.  Otherwise the next
-        candidate is tried.
+        candidate is tried; none left raises ``PluginUnreachableError``,
+        and the next search checks again.
         """
         if self._domain_verified or len(self._domains) <= 1:
             self._domain_verified = True
@@ -436,12 +437,8 @@ class PlaywrightPluginBase:
                 self._log.debug(f"{self.name}_domain_check_failed", domain=domain)
                 continue
 
-        self.base_url = f"https://{self._domains[0]}"
-        self._domain_verified = True
-        self._log.warning(
-            f"{self.name}_no_domain_reachable",
-            fallback=self._domains[0],
-        )
+        self._log.warning(f"{self.name}_no_domain_reachable")
+        raise PluginUnreachableError(self.name)
 
     # ------------------------------------------------------------------
     # Convenience helpers

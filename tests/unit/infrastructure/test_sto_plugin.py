@@ -13,6 +13,7 @@ import httpx
 import pytest
 import respx
 
+from scavengarr.domain.plugins.base import PluginUnreachableError
 from scavengarr.domain.ports.browser_fetcher import ClickThrough
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "sto.py"
@@ -274,10 +275,10 @@ class TestDomainVerification:
         mock_client.head = AsyncMock(side_effect=httpx.ConnectError("timeout"))
         plugin._client = mock_client
 
-        await plugin._verify_domain()
+        with pytest.raises(PluginUnreachableError):
+            await plugin._verify_domain()
 
-        assert plugin._domain_verified is True
-        assert "serienstream.to" in plugin.base_url  # Fallback to primary
+        assert plugin._domain_verified is False
 
     @pytest.mark.asyncio
     async def test_skips_if_already_verified(self) -> None:

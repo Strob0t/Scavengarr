@@ -8,7 +8,10 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 
-from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.domain.plugins.base import (
+    PluginUnreachableError,
+    SearchResult,
+)
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -119,10 +122,10 @@ class TestVerifyDomain:
         mock_client.head = AsyncMock(side_effect=httpx.ConnectError("timeout"))
         plugin._client = mock_client
 
-        await plugin._verify_domain()
+        with pytest.raises(PluginUnreachableError):
+            await plugin._verify_domain()
 
-        assert plugin._domain_verified is True
-        assert "example.com" in plugin.base_url  # falls back to primary
+        assert plugin._domain_verified is False
 
     @pytest.mark.asyncio
     async def test_skips_if_already_verified(self) -> None:

@@ -82,6 +82,14 @@ class PluginHealthMonitor:
     def is_reachable(self, name: str) -> bool:
         return name not in self._unreachable
 
+    def mark_unreachable(self, name: str) -> None:
+        """A search found none of the plugin's domains answering: skip the
+        plugin until the recheck finds its site answering."""
+        if name in self._unreachable:
+            return
+        self._unreachable.add(name)
+        log.warning("plugin_unreachable", plugin=name, source="search")
+
     async def run_forever(self) -> None:
         """Check the sites until cancelled (an app lifespan task)."""
         await asyncio.sleep(_FIRST_CHECK_S)

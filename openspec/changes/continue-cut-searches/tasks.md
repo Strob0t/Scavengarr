@@ -37,9 +37,9 @@ audit's baseline (7.1) must run before the filter change (6) ships.
 
 ## 6. Unreachable at search time
 
-- [ ] 6.1 `domain/plugins/base.py`: `PluginUnreachableError`. `infrastructure/plugins/httpx_base.py` `_verify_domain` and the Playwright base's domain check raise it when no domain answers (the `<name>_no_domain_reachable` warning stays).
-- [ ] 6.2 `infrastructure/plugins/health_monitor.py`: `mark_unreachable(name)` adds to the monitor's set (the recheck clears it as today); the runner gets the monitor (`interfaces/composition.py`) and maps the error: mark, plugin record `unreachable`, telemetry outcome `unreachable`.
-- [ ] 6.3 Tests: `test_plugin_health.py` (mark and recheck), the runner test (error → mark and count), a base-class test (no domain → error).
+- [x] 6.1 `domain/plugins/base.py`: `PluginUnreachableError`. `infrastructure/plugins/httpx_base.py` `_verify_domain` and the Playwright base's domain check raise it when no domain answers (the `<name>_no_domain_reachable` warning stays).
+- [x] 6.2 `infrastructure/plugins/health_monitor.py`: `mark_unreachable(name)` adds to the monitor's set (the recheck clears it as today); the runner gets the monitor (`interfaces/composition.py`) and maps the error: mark, plugin record `unreachable`, telemetry outcome `unreachable`.
+- [x] 6.3 Tests: `test_plugin_health.py` (mark and recheck), the runner test (error → mark and count), a base-class test (no domain → error).
 
 ## 7. Episode filter
 

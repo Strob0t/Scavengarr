@@ -66,6 +66,15 @@ def result_key(result: SearchResult) -> ResultKey:
     )
 
 
+class PluginUnreachableError(Exception):
+    """None of the plugin's domains answered its domain check: the search
+    cannot start. The next search checks the domains again."""
+
+    def __init__(self, plugin: str) -> None:
+        super().__init__(f"{plugin}: no domain reachable")
+        self.plugin = plugin
+
+
 class PluginProtocol(Protocol):
     """
     Protocol for Python plugins.

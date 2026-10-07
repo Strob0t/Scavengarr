@@ -206,6 +206,29 @@ class TestStates:
         assert "plugin_unreachable" not in events
 
 
+class TestMarkedBySearch:
+    """A search whose domain check found no domain marks the plugin itself
+    (ideas backlog step 21, group 6)."""
+
+    @respx.mock
+    async def test_a_mark_skips_the_plugin_until_the_recheck(self) -> None:
+        respx.head(_SITE).respond(200)
+        async with httpx.AsyncClient() as client:
+            monitor = _monitor(client, {"site": ["site.test"]})
+            with capture_logs() as logs:
+                monitor.mark_unreachable("site")
+                monitor.mark_unreachable("site")
+                assert not monitor.is_reachable("site")
+                await monitor.check(["site"])
+
+        assert monitor.is_reachable("site")
+        marks = [e for e in logs if e["event"] == "plugin_unreachable"]
+        assert [(e["plugin"], e["source"]) for e in marks] == [("site", "search")]
+        assert [e["plugin"] for e in logs if e["event"] == "plugin_reachable"] == [
+            "site"
+        ]
+
+
 class TestSchedule:
     @respx.mock
     async def test_all_every_interval_the_unreachable_in_between(self) -> None:

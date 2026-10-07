@@ -13,7 +13,7 @@ from structlog.testing import capture_logs
 
 from scavengarr.application.stremio.plugin_search import PluginSearchRunner
 from scavengarr.domain.entities.scoring import PluginScoreSnapshot
-from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.domain.plugins.base import PluginUnreachableError, SearchResult
 from scavengarr.domain.ports.browser_fetcher import PageClaim, page_claim
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.concurrency import ConcurrencyPool
@@ -686,9 +686,13 @@ class TestScoredMirrorGroups:
 class _Health:
     def __init__(self, *down: str) -> None:
         self._down = set(down)
+        self.marked: list[str] = []
 
     def is_reachable(self, name: str) -> bool:
         return name not in self._down
+
+    def mark_unreachable(self, name: str) -> None:
+        self.marked.append(name)
 
 
 class TestPluginHealth:
@@ -709,6 +713,27 @@ class TestPluginHealth:
         assert plugins["down"].search.await_count == 0
         skipped = [e for e in logs if e["event"] == "stremio_plugins_unreachable"]
         assert [e["plugins"] for e in skipped] == [["down"]]
+
+    async def test_a_plugin_without_a_reachable_domain_is_marked(self) -> None:
+        """Its own domain check found no domain: the monitor skips it until
+        the recheck, and the record counts it (ideas backlog step 21)."""
+        plugins = {
+            "up": _plugin([_sr("https://a/1")]),
+            "down": _plugin(PluginUnreachableError("down")),
+        }
+        health = _Health()
+        history = MagicMock(spec=["count"])
+        runner = _runner(_registry(plugins), plugin_health=health, history=history)
+
+        with capture_logs() as logs:
+            results = await _search(runner, ["up", "down"], ["q"])
+
+        assert [r.download_link for r in results] == ["https://a/1"]
+        assert health.marked == ["down"]
+        counted = [c.args for c in history.count.call_args_list]
+        assert ("down", "unreachable") in counted
+        events = [e for e in logs if e["event"] == "stremio_plugin_unreachable"]
+        assert [e["plugin"] for e in events] == ["down"]
 
     async def test_a_mirror_group_picks_a_reachable_member(self) -> None:
         plugins = TestMirrorGroups()._plugins()
@@ -853,6 +878,7 @@ class TestTelemetry:
             ([_sr("https://a/1"), _sr("https://a/2")], "hits"),
             ([], "empty"),
             (RuntimeError("boom"), "error"),
+            (PluginUnreachableError("a"), "unreachable"),
         ],
     )
     async def test_outcome_and_duration(

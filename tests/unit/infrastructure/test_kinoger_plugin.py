@@ -10,6 +10,8 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 
+from scavengarr.domain.plugins.base import PluginUnreachableError
+
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "kinoger.py"
 
 
@@ -745,7 +747,7 @@ class TestKinogerDomainFallback:
         assert plug._domain_verified is True
 
     @pytest.mark.asyncio
-    async def test_falls_back_to_first_domain(self) -> None:
+    async def test_no_domain_reachable(self) -> None:
         plug = _KinogerPlugin()
         mock_client = AsyncMock()
 
@@ -753,10 +755,11 @@ class TestKinogerDomainFallback:
         mock_client.head = AsyncMock(side_effect=httpx.ConnectError("all down"))
 
         plug._client = mock_client
-        await plug._verify_domain()
+        with pytest.raises(PluginUnreachableError):
+            await plug._verify_domain()
 
         assert plug.base_url == "https://kinoger.com"
-        assert plug._domain_verified is True
+        assert plug._domain_verified is False
 
     @pytest.mark.asyncio
     async def test_skips_verification_if_done(self) -> None:

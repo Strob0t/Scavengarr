@@ -551,7 +551,7 @@ class TestDomainVerification:
         # SerienStreamTo, 2026-09-09)
         assert "aniworld.info" not in _AniworldPlugin._domains
 
-    async def test_all_domains_fail(self) -> None:
+    async def test_a_single_domain_is_not_checked(self) -> None:
         plugin = _make_plugin()
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.head = AsyncMock(
@@ -562,7 +562,7 @@ class TestDomainVerification:
         await plugin._verify_domain()
 
         assert plugin._domain_verified is True
-        assert _AniworldPlugin._domains[0] in plugin.base_url
+        mock_client.head.assert_not_called()
 
     async def test_skips_if_already_verified(self) -> None:
         plugin = _make_plugin()

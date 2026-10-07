@@ -2,7 +2,7 @@
 
 # Mirror URL Fallback
 
-> Plugins list their mirror domains in `_domains`; `_verify_domain()` picks the first reachable one as `base_url` and keeps it until a restart.
+> Plugins list their mirror domains in `_domains`; `_verify_domain()` picks the first reachable one as `base_url` and keeps it until a restart. None reachable raises `PluginUnreachableError`.
 
 ---
 
@@ -26,8 +26,8 @@ _verify_domain()  (no-op if already verified or only one domain)
   First success   All failed
        |             |
        v             v
-  base_url =      base_url = _domains[0]
-  that domain     (log warning, search continues)
+  base_url =      PluginUnreachableError
+  that domain     (log warning; the next search checks again)
 ```
 
 Fallback only happens when the plugin calls `await self._verify_domain()` (usually at the start of `search()`). Most plugins have a single domain, where the call is a no-op. Some plugins implement their own loop instead — e.g. `plugins/boerse.py` tries each domain during login.
@@ -72,17 +72,16 @@ async def _verify_domain(self) -> None:
         except Exception:
             continue
 
-    # All domains failed: keep the primary
-    self.base_url = f"https://{self._domains[0]}"
-    self._domain_verified = True
-    self._log.warning(f"{self.name}_no_domain_reachable", fallback=self._domains[0])
+    # All domains failed: the next search checks again
+    self._log.warning(f"{self.name}_no_domain_reachable")
+    raise PluginUnreachableError(self.name)
 ```
 
 Key behaviors:
 - `HEAD` request per domain with a 5 s timeout (`DEFAULT_DOMAIN_CHECK_TIMEOUT`)
 - The first status `< 400` wins; errors and timeouts move on to the next domain
 - `base_url` uses the final URL after redirects, so a bare domain that redirects to `www.` produces a correct base
-- If all domains fail, the first domain is used and `{name}_no_domain_reachable` is logged
+- If all domains fail, `{name}_no_domain_reachable` is logged and `PluginUnreachableError` (`domain/plugins/base.py`) raised: `base_url` and `_domain_verified` stay as they were, so the next search checks again. A Stremio search marks the plugin unreachable in the health monitor at once, until its recheck finds the site answering ([Stremio Addon](./stremio-addon.md#request-flow)); a Torznab search logs the error and answers without the plugin
 
 ---
 
@@ -108,9 +107,8 @@ async def _verify_domain(self) -> None:
         except Exception:
             continue
 
-    self.base_url = f"https://{self._domains[0]}"
-    self._domain_verified = True
-    self._log.warning(f"{self.name}_no_domain_reachable", fallback=self._domains[0])
+    self._log.warning(f"{self.name}_no_domain_reachable")
+    raise PluginUnreachableError(self.name)
 ```
 
 Differences from the httpx fallback:
@@ -160,7 +158,7 @@ async def _ensure_session(self) -> None:
 Key aspects:
 - **Login-aware:** each domain attempt includes full authentication
 - **Cookie hand-off:** session cookies are injected into per-request contexts via `_prepare_context()`
-- **Fails loudly:** unlike the base classes, it raises when no domain works
+- **Fails loudly:** it raises `RuntimeError` when no domain works (the base classes raise `PluginUnreachableError`)
 
 See [Python Plugins](./python-plugins.md#reference-implementation-boersepy) for the full walkthrough.
 

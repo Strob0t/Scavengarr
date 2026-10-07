@@ -21,7 +21,7 @@ from urllib.parse import urljoin, urlparse
 import httpx
 import structlog
 
-from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.domain.plugins.base import PluginUnreachableError, SearchResult
 from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort, BrowserSession
 from scavengarr.infrastructure.browser.cloudflare import is_cloudflare_challenge
 from scavengarr.infrastructure.captcha.detect import detect_challenge
@@ -187,7 +187,9 @@ class HttpxPluginBase:
 
         Uses the *final* URL after redirects so that domains that
         redirect (e.g. ``aniworld.info`` → ``www.aniworld.info``)
-        produce a correct ``base_url`` for subsequent requests.
+        produce a correct ``base_url`` for subsequent requests. Raises
+        ``PluginUnreachableError`` when no domain answers; the next
+        search checks again.
         """
         if self._domain_verified or len(self._domains) <= 1:
             self._domain_verified = True
@@ -214,13 +216,8 @@ class HttpxPluginBase:
                 self._log.debug(f"{self.name}_domain_check_failed", domain=domain)
                 continue
 
-        # All failed — keep primary
-        self.base_url = f"https://{self._domains[0]}"
-        self._domain_verified = True
-        self._log.warning(
-            f"{self.name}_no_domain_reachable",
-            fallback=self._domains[0],
-        )
+        self._log.warning(f"{self.name}_no_domain_reachable")
+        raise PluginUnreachableError(self.name)
 
     async def cleanup(self) -> None:
         """Close httpx client (skip if it is the shared instance)."""

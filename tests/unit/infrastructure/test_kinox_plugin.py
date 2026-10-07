@@ -11,6 +11,8 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 
+from scavengarr.domain.plugins.base import PluginUnreachableError
+
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "kinox.py"
 
 
@@ -658,10 +660,10 @@ class TestDomainVerification:
         )
         p._client = mock_client
 
-        await p._verify_domain()
+        with pytest.raises(PluginUnreachableError):
+            await p._verify_domain()
 
-        assert p._domain_verified is True
-        assert kinox_mod.KinoxPlugin._domains[0] in p.base_url
+        assert p._domain_verified is False
 
     @pytest.mark.asyncio
     async def test_skips_if_already_verified(self, kinox_mod):

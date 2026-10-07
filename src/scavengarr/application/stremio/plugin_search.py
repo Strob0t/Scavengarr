@@ -26,6 +26,7 @@ import structlog
 from scavengarr.domain.entities.scoring import PluginScoreSnapshot
 from scavengarr.domain.plugins.base import (
     PluginProtocol,
+    PluginUnreachableError,
     ResultKey,
     SearchResult,
     result_key,
@@ -59,9 +60,11 @@ class CircuitBreaker(Protocol):
 
 
 class PluginHealth(Protocol):
-    """Whether a plugin's site answered its last periodic check."""
+    """Whether a plugin's site answered its last periodic check, and the
+    plugins a search found without a reachable domain."""
 
     def is_reachable(self, name: str) -> bool: ...
+    def mark_unreachable(self, name: str) -> None: ...
 
 
 async def current_snapshots(
@@ -567,6 +570,15 @@ class PluginSearchRunner:
                 success = True
                 late = budget_ends is not None and time.monotonic() > budget_ends
                 stage.outcome = "late" if late else "hits" if results else "empty"
+            except PluginUnreachableError:
+                # No domain answered: skipped until the health recheck
+                # finds the site answering (the search's own record of it)
+                log.warning("stremio_plugin_unreachable", plugin=name)
+                if self._plugin_health is not None:
+                    self._plugin_health.mark_unreachable(name)
+                self._history.count(name, "unreachable")
+                stage.outcome = "unreachable"
+                results = []
             except Exception:
                 log.warning("stremio_plugin_search_error", plugin=name, exc_info=True)
                 stage.outcome = "error"

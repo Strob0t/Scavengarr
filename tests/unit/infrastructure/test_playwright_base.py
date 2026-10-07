@@ -10,7 +10,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.domain.plugins.base import (
+    PluginUnreachableError,
+    SearchResult,
+)
 from scavengarr.infrastructure.browser.hardening import (
     CHROMIUM_ARGS,
     block_heavy_resources,
@@ -572,10 +575,10 @@ class TestVerifyDomain:
         plugin._page = mock_page
         plugin._context = AsyncMock()
 
-        await plugin._verify_domain()
+        with pytest.raises(PluginUnreachableError):
+            await plugin._verify_domain()
 
-        assert plugin._domain_verified is True
-        assert "example.com" in plugin.base_url  # falls back to primary
+        assert plugin._domain_verified is False
 
     @pytest.mark.asyncio
     async def test_skips_if_already_verified(self) -> None:
