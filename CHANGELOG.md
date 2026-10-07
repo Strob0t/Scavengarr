@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: sto Stream Results with Gated Link-outs
+- A stream request to sto answered with the site's own link-outs (`/r?t=`) when its link gate held them, and the serienstream resolver failed on each (`serienstream_invalid_url`, the Pi's VPN address). A request for one episode, which only Stremio makes, now keeps only the links that resolved to a hoster and drops a result left without one; the info event `sto_gated_links_dropped` (plugin, dropped and kept count) marks each. Torznab searches pass no season or episode and keep the link-outs, which JDownloader can follow from its own address.
+
 ### Chore: sto Link-out Probe
 - sto's episode links reached the serienstream resolver as sto's own link-outs and failed there (`serienstream_invalid_url`). `scripts/probes/sto_linkout.py` follows two link-outs of an episode the way the plugin does and prints per link the hops, the final host, gate markers and a token-free summary of the page, then the plugin's own resolution; it runs in the production container (`prodctl.py probe`) and in the dev container. Its reading in `docs/plans/sto-linkout.md`: the site gates link-outs for the Pi's VPN address only, the plugin's browser pass solved the gate 3 of 6 times in the window, and the resolver loses nothing it could have resolved.
 

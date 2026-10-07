@@ -612,10 +612,22 @@ class StoPlugin(HttpxPluginBase):
                 break
 
         links = await self._episode_links(ep_url)
-        if not links:
+        # Only stream requests ask for one episode (Torznab passes no season
+        # or episode): a link-out the gate kept on the site fails in the
+        # serienstream resolver from this address, so only hoster links go.
+        site = urlparse(self.base_url).hostname
+        resolved = [link for link in links if urlparse(link["link"]).hostname != site]
+        if len(resolved) < len(links):
+            self._log.info(
+                "sto_gated_links_dropped",
+                plugin=self.name,
+                count=len(links) - len(resolved),
+                kept=len(resolved),
+            )
+        if not resolved:
             return []
 
-        return [{"title": ep_title, "url": ep_url, "links": links}]
+        return [{"title": ep_title, "url": ep_url, "links": resolved}]
 
     async def _process_series(
         self,

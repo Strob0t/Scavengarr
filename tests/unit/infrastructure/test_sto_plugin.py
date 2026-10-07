@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 import respx
+import structlog.testing
 
 from scavengarr.domain.plugins.base import PluginUnreachableError
 from scavengarr.domain.ports.browser_fetcher import ClickThrough
@@ -986,6 +987,63 @@ class TestCloudflareFallback:
 
         assert results
         fetcher.fetch_text.assert_awaited_once()
+
+
+class TestGatedStreamRequest:
+    """A stream request (season and episode) answers with resolved hoster
+    links only: a link-out that stayed on the site reaches the serienstream
+    resolver, which cannot follow it (``serienstream_invalid_url``, the Pi's
+    VPN address, 2026-10-07). Torznab never asks for one episode."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_fetcher(self) -> Iterator[None]:
+        yield
+        _StoPlugin.set_browser_fetcher(None)
+
+    async def _scrape(self, client: httpx.AsyncClient) -> list[dict[str, object]]:
+        plugin = _make_plugin()
+        plugin._client = client
+        plugin.base_url = "https://s.to"
+        detail = _SeriesDetailParser("https://s.to")
+        return await plugin._scrape_single_episode("stranger-things", 1, 1, detail)
+
+    @respx.mock
+    async def test_all_gated_drops_the_result(self) -> None:
+        _gated_site(respx.mock, trusted="laravel_session=passed")
+        _StoPlugin.set_browser_fetcher(_gate_fetcher(None))
+
+        async with httpx.AsyncClient() as client:
+            with structlog.testing.capture_logs() as logs:
+                episodes = await self._scrape(client)
+
+        assert episodes == []
+        dropped = [e for e in logs if e["event"] == "sto_gated_links_dropped"]
+        assert len(dropped) == 1
+        assert dropped[0]["count"] == 3
+        assert dropped[0]["log_level"] == "info"
+        assert "url" not in dropped[0]
+
+    @respx.mock
+    async def test_mixed_keeps_the_resolved_links(self) -> None:
+        def _link_out(request: httpx.Request) -> httpx.Response:
+            token = request.url.params["t"]
+            if token == "def456":
+                return httpx.Response(302, headers={"location": "https://vidoza.net/x"})
+            return httpx.Response(200, text=_GATE_PAGE)
+
+        respx.mock.get(_EPISODE_URL).respond(200, text=_EPISODE_HTML)
+        respx.mock.get(url__startswith="https://s.to/r").mock(side_effect=_link_out)
+
+        async with httpx.AsyncClient() as client:
+            with structlog.testing.capture_logs() as logs:
+                episodes = await self._scrape(client)
+
+        assert len(episodes) == 1
+        links = episodes[0]["links"]
+        assert isinstance(links, list)
+        assert [link["link"] for link in links] == ["https://vidoza.net/x"]
+        dropped = [e for e in logs if e["event"] == "sto_gated_links_dropped"]
+        assert [e["count"] for e in dropped] == [2]
 
 
 class TestGatedSeasons:
