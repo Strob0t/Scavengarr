@@ -1,0 +1,20 @@
+{
+ "meta": {
+  "id": "kitsu:11614",
+  "type": "movie",
+  "name": "Kimi no Na wa.",
+  "imdb_id": "tt5311514",
+  "kitsu_id": "11614",
+  "year": "2016",
+  "videos": [
+   {
+    "id": "kitsu:11614",
+    "title": "Episode 1",
+    "season": 1,
+    "episode": 1,
+    "imdbSeason": 1,
+    "imdbEpisode": 1
+   }
+  ]
+ }
+}

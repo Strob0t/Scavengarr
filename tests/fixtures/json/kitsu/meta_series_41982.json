@@ -1,0 +1,28 @@
+{
+ "meta": {
+  "id": "kitsu:41982",
+  "type": "series",
+  "name": "Attack on Titan Season 3 Part 2",
+  "imdb_id": "tt2560140",
+  "kitsu_id": "41982",
+  "year": "2019",
+  "videos": [
+   {
+    "id": "kitsu:41982:1",
+    "title": "The Town Where Everything Began",
+    "season": 1,
+    "episode": 1,
+    "imdbSeason": 3,
+    "imdbEpisode": 13
+   },
+   {
+    "id": "kitsu:41982:3",
+    "title": "Descent",
+    "season": 1,
+    "episode": 3,
+    "imdbSeason": 3,
+    "imdbEpisode": 15
+   }
+  ]
+ }
+}

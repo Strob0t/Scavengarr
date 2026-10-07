@@ -1,0 +1,28 @@
+{
+ "meta": {
+  "id": "kitsu:12",
+  "type": "series",
+  "name": "One Piece",
+  "imdb_id": "tt0388629",
+  "kitsu_id": "12",
+  "year": "1999-",
+  "videos": [
+   {
+    "id": "kitsu:12:1",
+    "title": "I'm Luffy! The Man Who's Gonna Be King of the Pirates!",
+    "season": 1,
+    "episode": 1,
+    "imdbSeason": 1,
+    "imdbEpisode": 1
+   },
+   {
+    "id": "kitsu:12:1000",
+    "title": "Overwhelming Strength! The Straw Hats Come Together!",
+    "season": 1,
+    "episode": 1000,
+    "imdbSeason": 21,
+    "imdbEpisode": 109
+   }
+  ]
+ }
+}
