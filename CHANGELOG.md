@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: Anime from the Kitsu Catalogs
+- Stremio's anime catalogs (the Anime Kitsu addon) open titles as `kitsu:<id>` and episodes as `kitsu:<id>:<episode>` with absolute numbers; the manifest accepted `tt` and `tmdb:` only, so an anime opened there never reached Scavengarr although four anime plugins exist. The manifest announces `kitsu:`, and the stream use case translates such a request first: the Anime Kitsu addon's meta gives the IMDb id and the episode as IMDb counts it (a split cour's episode 3 is S3E15, One Piece's 1000 is S21E109; a title's record cached 30 days), Fribb's anime-lists place the rest by TheTVDB season and episode offset (a week), and the translated request runs the existing path, sharing its search cache with the same episode asked by its IMDb id. An untranslatable id answers no streams (`anime_id_lookup_failed`); `/health` reports `anime_ids_configured`, and the phase `anime_ids` times the translation ([stremio-addon.md](docs/features/stremio-addon.md) → Anime Ids; `openspec/changes/add-anime-ids/`).
+- `scripts/probes/anime_ids.py` also runs the resolver as in production and prints the request the app searches.
+
 ### Chore: Anime Ids Spike
 - `scripts/probes/anime_ids.py` shows what a `kitsu:` request maps to through Kitsu's API, the public anime id lists and the Anime Kitsu addon, and what aniworld and fireani find for it; the ten-title spike ([anime-ids-spike.md](docs/plans/anime-ids-spike.md)) found that Kitsu's own mappings place no season, while the addon places every episode the way Cinemeta counts it.
 

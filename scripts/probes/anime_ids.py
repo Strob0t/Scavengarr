@@ -12,6 +12,9 @@
 - the Anime Kitsu addon's meta (the addon that hands out ``kitsu:`` ids):
   the IMDb id, and the episode's ``imdbSeason``/``imdbEpisode``;
 - TMDB's ``/find`` by TheTVDB id, when a TMDB key is configured;
+- the request the app searches: ``KitsuAnimeIdResolver`` (the addon's record,
+  the list as the fallback) run as in production, and the list adapter's
+  entry on its own;
 - the title the IMDb fallback client gives for the mapped IMDb id;
 - how many results aniworld and fireani return for the romaji title and for
   that title, at the addon's season and episode (else the lists').
@@ -30,6 +33,10 @@ from typing import Any
 import httpx
 import structlog
 
+from scavengarr.domain.entities.stremio import StremioStreamRequest
+from scavengarr.infrastructure.anime.id_lists import AnimeIdLists
+from scavengarr.infrastructure.anime.kitsu_addon import KitsuAddonClient
+from scavengarr.infrastructure.anime.resolver import KitsuAnimeIdResolver
 from scavengarr.infrastructure.config import load_config
 from scavengarr.infrastructure.plugins.registry import PluginRegistry
 from scavengarr.infrastructure.tmdb.imdb_fallback import ImdbFallbackClient
@@ -82,9 +89,20 @@ class Lookups:
     client: httpx.AsyncClient
     plugins: PluginRegistry
     fallback: ImdbFallbackClient
+    resolver: KitsuAnimeIdResolver
+    lists: AnimeIdLists
     fribb: dict[int, dict[str, Any]]
     kometa: dict[str, dict[str, Any]]
     tmdb_key: str | None
+
+
+def translation(translated: StremioStreamRequest | None) -> str:
+    if translated is None:
+        return "nothing (the request answers no streams)"
+    return (
+        f"{translated.imdb_id} {translated.content_type}, "
+        f"season {translated.season}, episode {translated.episode}"
+    )
 
 
 async def json_of(
@@ -259,6 +277,13 @@ async def report(
     print(f"  addon: imdb {addon_imdb}, season {addon_season}, episode {addon_episode}")
     if addon_season is not None:
         season, number = addon_season, addon_episode
+    request = StremioStreamRequest(
+        imdb_id=f"kitsu:{kitsu_id}",
+        content_type="movie" if movie else "series",
+        episode=episode,
+    )
+    print(f"  resolver: {translation(await lookups.resolver.translate(request))}")
+    print(f"  list adapter: {await lookups.lists.entry(int(kitsu_id))}")
     if lookups.tmdb_key and listed.get("tvdb_id"):
         found = await tmdb_find(lookups.client, lookups.tmdb_key, listed["tvdb_id"])
         print(f"  tmdb find: {found}")
@@ -293,13 +318,26 @@ async def main(args: list[str]) -> None:
         timeout=60, follow_redirects=True, headers={"User-Agent": APP_USER_AGENT}
     ) as client:
         fribb = await json_of(client, FRIBB) or []
+        cache = MemoryCache()
+        lists = AnimeIdLists(
+            http_client=client,
+            cache=cache,  # pyright: ignore[reportArgumentType]
+        )
         lookups = Lookups(
             client=client,
             plugins=plugins,
             fallback=ImdbFallbackClient(
                 http_client=client,
-                cache=MemoryCache(),  # pyright: ignore[reportArgumentType]
+                cache=cache,  # pyright: ignore[reportArgumentType]
             ),
+            resolver=KitsuAnimeIdResolver(
+                addon=KitsuAddonClient(
+                    http_client=client,
+                    cache=cache,  # pyright: ignore[reportArgumentType]
+                ),
+                lists=lists,
+            ),
+            lists=lists,
             fribb={e["kitsu_id"]: e for e in fribb if e.get("kitsu_id")},
             kometa=await json_of(client, KOMETA) or {},
             tmdb_key=config.tmdb_api_key,

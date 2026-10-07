@@ -32,7 +32,7 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 | `domain/entities/scoring.py` | Plugin-scoring types | `ProbeResult`, `EwmaState`, `PluginScoreSnapshot` |
 | `domain/plugins/base.py` | Plugin contract | `SearchResult`, `PluginProtocol`, `PluginProvides`, `GrabResolvingPlugin` (optional grab-time link resolution) |
 | `domain/plugins/exceptions.py` | Plugin errors | `PluginError`, `PluginLoadError`, `PluginNotFoundError` |
-| `domain/ports/` | `Protocol` ports | `CachePort`, `SearchEnginePort`, `PluginRegistryPort` (sync), `CrawlJobRepository`, `StreamLinkRepository`, `HosterResolverPort`, `PluginScoreStorePort`, `TmdbClientPort`, `ConcurrencyPoolPort`, `ConcurrencyBudgetPort`, `ClientBoundResolverPort`, `BrowserFetcherPort`, `TelemetryPort` (sync; `NO_TELEMETRY` records nothing) |
+| `domain/ports/` | `Protocol` ports | `CachePort`, `SearchEnginePort`, `PluginRegistryPort` (sync), `CrawlJobRepository`, `StreamLinkRepository`, `HosterResolverPort`, `PluginScoreStorePort`, `TmdbClientPort`, `AnimeIdResolverPort`, `ConcurrencyPoolPort`, `ConcurrencyBudgetPort`, `ClientBoundResolverPort`, `BrowserFetcherPort`, `TelemetryPort` (sync; `NO_TELEMETRY` records nothing) |
 
 ### Application
 
@@ -42,7 +42,7 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 | `application/use_cases/torznab_caps.py` | Capabilities for one plugin | `TorznabCapsUseCase` |
 | `application/use_cases/torznab_indexers.py` | Indexer listing | `TorznabIndexersUseCase` |
 | `application/use_cases/crawljob_resolve.py` | Grab time: resolve a CrawlJob's page URLs through its `GrabResolvingPlugin` | `CrawlJobResolveUseCase` |
-| `application/use_cases/stremio_stream.py` | IMDb ID → title(s) → cached or shared plugin search → filter/rank → resolve per hoster → play/proxy links | `StremioStreamUseCase` |
+| `application/use_cases/stremio_stream.py` | A `kitsu:` id translated → IMDb ID → title(s) → cached or shared plugin search → filter/rank → resolve per hoster → play/proxy links | `StremioStreamUseCase` |
 | `application/use_cases/stremio_links.py` | Stored stream links behind `/play` and the HLS proxy, resolved again when stale (1 h) or refused by the CDN | `StremioLinks` |
 | `application/use_cases/stremio_catalog.py` | TMDB trending and search catalogs | `StremioCatalogUseCase` |
 | `application/stremio/title_resolution.py` | A request's title per language, the plugins' languages (groups, default language), the title match of results | `TitleResolver` |
@@ -61,6 +61,7 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 
 | Path | Responsibility | Key classes/functions |
 |---|---|---|
+| `infrastructure/anime/` | The anime catalogs' `kitsu:` ids translated into IMDb requests (the Anime Kitsu addon's meta, Fribb's anime-lists as the fallback) | `KitsuAddonClient`, `AnimeIdLists`, `KitsuAnimeIdResolver` |
 | `infrastructure/cache/` | `CachePort` backends | `create_cache()`, `DiskcacheAdapter`, `RedisAdapter` |
 | `infrastructure/common/` | Converters, parsers, outbound rate limiting, retry and the SSRF guard | `to_int`, `parse_size_to_bytes`, `TokenBucket`, `DomainRateLimiter`, `RetryTransport`, `PrivateAddressGuard` |
 | `infrastructure/config/` | Layered configuration | `DEFAULT_CONFIG`, `AppConfig`, `CacheConfig`, `StremioConfig`, `ScoringConfig`, `PluginsConfig`, `PluginOverride`, `EnvOverrides`, `load_config()` |

@@ -128,6 +128,7 @@ Ports define the boundaries between Application and Infrastructure. All are `Pro
 | `ClientBoundResolverPort` | `ports/hoster_resolver.py` | async | extends `HosterResolverPort`: `bound_headers` (property), `resolve_for_client` (a link for one player's headers) |
 | `PluginScoreStorePort` | `ports/plugin_score_store.py` | async | `get_snapshot`, `put_snapshot`, `list_snapshots`, `get_last_run`, `set_last_run` |
 | `TmdbClientPort` | `ports/tmdb.py` | async | `find_by_imdb_id`, `get_title_and_year`, `get_title_by_tmdb_id`, `trending_movies`, `trending_tv`, `search_movies`, `search_tv` |
+| `AnimeIdResolverPort` | `ports/anime_ids.py` | async | `translate` (a `kitsu:` request → the IMDb request, or `None`); `NO_ANIME_IDS` translates nothing |
 | `ConcurrencyPoolPort` | `ports/concurrency.py` | async context manager | `request()` → `ConcurrencyBudgetPort` |
 | `ConcurrencyBudgetPort` | `ports/concurrency.py` | async context manager | `acquire_httpx()`, `acquire_pw()` |
 | `BrowserFetcherPort` | `ports/browser_fetcher.py` | async | `fetch_text`, `resolve_redirect`, `click_through`, `session` |
@@ -169,7 +170,7 @@ The Application layer contains use cases that orchestrate business logic. It kno
 | `CrawlJobResolveUseCase` | `use_cases/crawljob_resolve.py` | async | Grab time: resolve a job's page URLs via its `GrabResolvingPlugin`, store and return the resolved job; `CrawlJobResolveError` → HTTP 502 |
 | `TorznabCapsUseCase` | `use_cases/torznab_caps.py` | sync | Build `TorznabCaps` for a named plugin (XML is rendered by the presenter) |
 | `TorznabIndexersUseCase` | `use_cases/torznab_indexers.py` | sync | List the loaded plugins (sorted by name; files that failed to load are left out) with version/mode (returns `list[dict]`) |
-| `StremioStreamUseCase` | `use_cases/stremio_stream.py` | async | IMDb ID → title(s) → cached or shared plugin search per title (fan-out with search deadline) → title/episode filter → convert, sort → resolve one working stream per hoster (answer deadline) → cached play/proxy links; returns `list[StremioStream]` |
+| `StremioStreamUseCase` | `use_cases/stremio_stream.py` | async | IMDb ID (a `kitsu:` id translated first, `AnimeIdResolverPort`) → title(s) → cached or shared plugin search per title (fan-out with search deadline) → title/episode filter → convert, sort → resolve one working stream per hoster (answer deadline) → cached play/proxy links; returns `list[StremioStream]` |
 | `StremioLinks` | `use_cases/stremio_links.py` | async | Stored stream links behind `/play` and the HLS proxy: the video URL while under 1 h old, else resolved again (one resolution per link for all requests; per player for hosters whose CDN binds the URL to the player's headers, VEEV; past the resolver cache after a CDN refusal) |
 | `StremioCatalogUseCase` | `use_cases/stremio_catalog.py` | async | TMDB trending and search catalogs (`list[StremioMetaPreview]`) |
 
@@ -259,6 +260,7 @@ Infrastructure implements the ports defined by Domain and provides concrete adap
 | `StreamLinkRepository` | `CacheStreamLinkRepository` | `persistence/stream_link_cache.py` |
 | `PluginScoreStorePort` | `CachePluginScoreStore` | `persistence/plugin_score_cache.py` |
 | `TmdbClientPort` | `HttpxTmdbClient` / `ImdbFallbackClient` | `tmdb/client.py` / `tmdb/imdb_fallback.py` |
+| `AnimeIdResolverPort` | `KitsuAnimeIdResolver` (`KitsuAddonClient`, `AnimeIdLists`) | `anime/` |
 | `HosterResolverPort` | `XFSResolver`, `GenericDDLResolver`, dedicated `*Resolver` classes | `hoster_resolvers/` |
 | `ClientBoundResolverPort` | `VeevResolver` | `hoster_resolvers/veev.py` |
 | `ConcurrencyPoolPort` | `ConcurrencyPool` (budget: `RequestBudget`) | `concurrency.py` |
@@ -280,6 +282,7 @@ Infrastructure implements the ports defined by Domain and provides concrete adap
 - **Browser fetchers and anti-bot** (`browser/`, `captcha/`): `BrowserFetcherPort` implementations `StealthPool` and `SolverFetcher` (Byparr/FlareSolverr sidecar), chained by `ChainedBrowserFetcher` (`fetch_text`, `resolve_redirect`, `click_through` for link-out gates, which only the own browser can do, and `session`: the site's cookies and User-Agent after a passed challenge, so plain HTTP requests can go on); `PageGate` hands out the stealth browser's pages by the work's `PageClaim` (the context variable `page_claim` of the browser port, set by the application around searches and resolutions), and `PageBudget` adapts their count to the waits, the CPU and the free memory (`ResourceSampler`); `ClearanceStore` keeps challenge cookies in `CachePort` across restarts; `detect_challenge` classifies challenges and captchas; `solve_altcha` solves ALTCHA proof of work. See [Captcha Solving](../plans/captcha-solving.md).
 - **Stremio** (`stremio/`): stream converter, sorter, title matcher, release parser, episode filter, HLS proxy.
 - **TMDB** (`tmdb/`): `HttpxTmdbClient` and the key-less `ImdbFallbackClient`.
+- **Anime ids** (`anime/`): `KitsuAnimeIdResolver` translates the anime catalogs' `kitsu:` requests into IMDb requests with the Anime Kitsu addon's meta (`KitsuAddonClient`, a title's record cached 30 days) and Fribb's anime-lists as the fallback (`AnimeIdLists`, a week).
 - **Scoring** (`scoring/`): EWMA plugin scoring, health/search probers, query pool, background `ScoringScheduler`.
 - **Runtime services** (top-level modules): `PluginCircuitBreaker`, `ConcurrencyPool`, `GracefulShutdown`, `detect_resources()` (cgroup-aware).
 - **Telemetry** (`telemetry/`): `Telemetry` implements `TelemetryPort` with prometheus-client (stage durations and outcomes, values, the JSON statistics) and, with `telemetry.tracing_endpoint`, OpenTelemetry spans (`tracing.py`, loaded only then), scrape-time collectors for circuit breakers and the container's cgroup, the event-loop lag monitor. See [Observability](../features/observability.md).

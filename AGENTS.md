@@ -71,7 +71,7 @@ Rules:
 
 Scavengarr is a self-hosted Torznab/Newznab indexer for Prowlarr and other Arr apps, plus a Stremio addon. Plugins scrape sites with httpx (static HTML) or Playwright (JS-heavy sites); results are served via Torznab endpoints (`caps`, `search`) and Stremio streams.
 
-Torznab request flow: HTTP request → use case loads plugin from registry (lazy) → plugin runs multi-stage search (search page → detail pages → links; results cached) → links validated in parallel until the requested page is full → one `.crawljob` per item → presenter renders Torznab XML. Stremio stream flow: IMDb id → title(s) → cached or shared plugin search per title → title/episode filter, rank → each hoster's best link resolved (resolver cache) → play/proxy links.
+Torznab request flow: HTTP request → use case loads plugin from registry (lazy) → plugin runs multi-stage search (search page → detail pages → links; results cached) → links validated in parallel until the requested page is full → one `.crawljob` per item → presenter renders Torznab XML. Stremio stream flow: IMDb id (a `kitsu:` id of the anime catalogs is translated first: the Anime Kitsu addon's meta, Fribb's id list as the fallback; `infrastructure/anime/`) → title(s) → cached or shared plugin search per title → title/episode filter, rank → each hoster's best link resolved (resolver cache) → play/proxy links.
 
 Feature docs: `docs/features/README.md` (index). Architecture: `docs/architecture/clean-architecture.md`.
 

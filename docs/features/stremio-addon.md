@@ -10,7 +10,7 @@
 
 Scavengarr includes a **Stremio addon** that provides catalog browsing, catalog search, and stream resolution. It bridges plugin search results with Stremio's stream protocol and resolves hoster embed URLs into direct video playback links via the [Hoster Resolver System](./hoster-resolvers.md).
 
-The addon accepts IMDb (`tt*`) and TMDB (`tmdb:*`) identifiers and ranks streams by language, quality, and hoster reliability.
+The addon accepts IMDb (`tt*`), TMDB (`tmdb:*`) and Kitsu (`kitsu:*`, the anime catalogs; see [Anime Ids](#anime-ids)) identifiers and ranks streams by language, quality, and hoster reliability.
 
 ---
 
@@ -39,6 +39,7 @@ IMDb/TMDB ID → title lookup per plugin language → search cache, or plugin se
 
 `StremioStreamUseCase` (`application/use_cases/stremio_stream.py`) runs the steps in this order; the modules named in parentheses live in `src/scavengarr/application/stremio/`.
 
+1. **Anime ids** (`AnimeIdResolverPort`, `infrastructure/anime/`) — a `kitsu:` request (the Anime Kitsu addon's catalogs) becomes the IMDb request with the episode as IMDb counts it, from the addon's meta or the public id list ([Anime Ids](#anime-ids)); an untranslatable id answers no streams.
 1. **Plugin selection** (`plugin_selection.py`) — all plugins with `provides` = `stream` or `both`, or the scored top-N when scored selection is active (see [Plugin Scoring & Probing](./plugin-scoring-and-probing.md)).
 1. **Title resolution** (`title_resolution.py`) — per plugin language, look up title + year via TMDB `/find` (or the IMDB Suggest/Wikidata fallback); `tmdb:` IDs are resolved via the TMDB ID.
 1. **Search cache** (`title_search.py`, `search_cache.py`) — the title-matching search results of a request are cached per title, season and episode (`stremio:search:{content_type}:{imdb_id}:{season}:{episode}`; the content type keeps a TMDB movie and series with the same number apart, `CachePort`: diskcache or Redis) for `cache.search_ttl_seconds`; resolution and ranking run on every request, since hoster stream URLs expire and some are bound to the resolving IP. A fresh entry skips the plugin search. An older one still answers for 6 h while one background search refreshes it (stale-while-revalidate). Refreshes run one title at a time, each with the whole plugin time from its own start: a burst of stale titles would split the plugin slots with the requests' own searches, and a refresh cut short replaces its entry with a thinner one. Requests for the same title share one running search (single-flight), and a search goes on when the request that started it goes away. Entries without results are not stored. `cache.search_ttl_seconds: 0` turns the cache off; the search and the answer work the same without it.
@@ -69,7 +70,7 @@ Returns the Stremio addon manifest with:
 - Addon ID: `community.scavengarr`
 - Supported types: `movie`, `series`
 - Catalogs: `scavengarr-trending-movies`, `scavengarr-trending-series` (trending rows with optional `search` extra; without a TMDB key they are search-only, `"isRequired": true`, named "Scavengarr Movies"/"Scavengarr Series", since the IMDB fallback has no trending lists and Stremio showed empty rows on its board)
-- ID prefixes: `tt` (IMDb), `tmdb:` (TMDB)
+- ID prefixes: `tt` (IMDb), `tmdb:` (TMDB), `kitsu:` (Kitsu, the Anime Kitsu addon's catalogs)
 - Resources: `catalog`, `stream` (only `stream` without a catalog use case)
 
 ### Catalog
@@ -90,8 +91,8 @@ GET /api/v1/stremio/catalog/{content_type}/{catalog_id}/search={query}.json
 GET /api/v1/stremio/stream/{content_type}/{stream_id}.json
 ```
 
-- Movie: `stream_id` = `tt1234567` or `tmdb:12345`
-- Series: `stream_id` = `tt1234567:1:5` or `tmdb:12345:1:5` (season 1, episode 5)
+- Movie: `stream_id` = `tt1234567`, `tmdb:12345` or `kitsu:11614`
+- Series: `stream_id` = `tt1234567:1:5` or `tmdb:12345:1:5` (season 1, episode 5), `kitsu:41982:3` (episode 3 as Kitsu counts, no season; [Anime Ids](#anime-ids))
 - Response: `{"streams": [StremioStream, ...]}`
 
 Each stream contains:
@@ -196,7 +197,7 @@ The URL of every resolved file stream (and of all streams without a resolver):
 GET /api/v1/stremio/health
 ```
 
-Reports component status (`tmdb_configured`, `stream_plugin_count`, `stream_plugins`, use case/resolver/link-cache flags), `supported_hosters` (resolver names from `HosterResolverRegistry.supported_hosters`), and under `metrics` the plugin and event-loop statistics of `/api/v1/stats/metrics` (`uptime_seconds`, `plugins`, `event_loop`). Returns `200` when healthy and `503` otherwise; healthy requires a title client (`tmdb_configured` is also `true` for the IMDB fallback client), both use cases, the resolver registry, the stream link cache, and at least one `stream` plugin.
+Reports component status (`tmdb_configured`, `anime_ids_configured`, `stream_plugin_count`, `stream_plugins`, use case/resolver/link-cache flags), `supported_hosters` (resolver names from `HosterResolverRegistry.supported_hosters`), and under `metrics` the plugin and event-loop statistics of `/api/v1/stats/metrics` (`uptime_seconds`, `plugins`, `event_loop`). Returns `200` when healthy and `503` otherwise; healthy requires a title client (`tmdb_configured` is also `true` for the IMDB fallback client), both use cases, the resolver registry, the stream link cache, and at least one `stream` plugin.
 
 ---
 
@@ -290,6 +291,22 @@ Without a TMDB API key, `ImdbFallbackClient` is used:
 | Wikidata API | Localised title lookup via the IMDb property (`P345`) |
 
 Limitations: no trending catalogs (the manifest declares the catalogs search-only) and no resolution of `tmdb:` IDs.
+
+---
+
+## Anime Ids
+
+Stremio's anime catalogs open a title as `kitsu:<id>` and an episode as `kitsu:<id>:<episode>`, the episode counted absolutely (One Piece's episode 1000), so an anime opened there never reached Scavengarr although four anime plugins exist. The manifest announces the `kitsu:` prefix (the MyAnimeList and AniList catalogs' `mal:` and `anilist:` ids are not accepted), and the stream use case translates such a request before anything else (`AnimeIdResolverPort`, implemented in `infrastructure/anime/`); the translated IMDb request then runs the usual path: titles, plugins, the search cache (shared with the same episode asked by its IMDb id), links.
+
+| Step | Source | What it gives | Cache |
+|---|---|---|---|
+| 1 | The Anime Kitsu addon's meta (`/meta/<type>/kitsu:<id>.json`; `KitsuAddonClient`) | The title's IMDb id and, per episode, `imdbSeason` and `imdbEpisode`: the numbering Cinemeta and Torrentio use (a split cour's episode 3 is S3E15, One Piece's 1000 is S21E109); a video without them keeps its own season and number | 30 days per title (`anime_ids:addon:v1:<type>:<id>`); an episode newer than the cached record fetches once more |
+| 2 | Fribb's anime-lists (`anime-list-full.json`; `AnimeIdLists`) | The IMDb id, TheTVDB season and episode offset: season = `season.tvdb` (else 1), episode = the Kitsu number + `episode_offset.tvdb`; no long-runners | 7 days (`anime_ids:lists:v1`, in memory and in the cache backend; reduced off the event loop); a failed download is tried again after an hour |
+| 3 | nothing | `{"streams": []}`, no plugin searched | |
+
+The content type comes from the source, because the catalogs list a movie as a series too: a `kitsu:` movie is searched as a movie (category 2000). The lookups cost one addon request per title (5 s timeout, one attempt) and one list download a week (60 s), nothing per episode. Log events: `anime_id_translated` (Kitsu id and episode, IMDb id, content type, season, episode, `source`: `addon` for IMDb's numbering, `kitsu` for the video's own, `lists`), `anime_id_lookup_failed` (`reason` `malformed` or `unmapped`, `addon_answered`), `anime_id_addon_failed` (`status` or `reason`), `anime_id_lists_failed` (`reason`) and `anime_id_lists_loaded` (`entries`). The phase `anime_ids` of `stremio_phase_seconds` times the translation (`found`, `not_found`), and `/health` reports `anime_ids_configured`.
+
+Limits: the addon is a community service behind Cloudflare (it refuses httpx's default User-Agent and accepts Scavengarr's); while it is down, titles not in the cache fall back to the list, which places no long-runner. The German sites split some titles differently from TheTVDB (split cours as separate seasons, recap seasons): the episode filter drops the other seasons as for any series, so such an episode may answer nothing. `scripts/probes/anime_ids.py` shows what a `kitsu:` request maps to through every source, the resolver's translation and what aniworld and fireani find for it ([anime-ids-spike.md](../plans/anime-ids-spike.md)).
 
 ---
 
@@ -433,12 +450,16 @@ Plugins declare `languages: list[str]` (default `["de"]`). The use case groups p
 | `tests/unit/infrastructure/test_release_parser.py` | Quality/language parsing from release names |
 | `tests/unit/infrastructure/test_tmdb_client.py` | TMDB client with caching |
 | `tests/unit/infrastructure/test_imdb_fallback.py` | IMDB Suggest + Wikidata fallback |
+| `tests/unit/domain/test_anime_ids_port.py` | `AnimeIdResolverPort`, `NO_ANIME_IDS` |
+| `tests/unit/infrastructure/test_kitsu_addon_client.py` | `KitsuAddonClient` (the addon's meta reduced to a record and cached; refusals, timeouts) |
+| `tests/unit/infrastructure/test_anime_id_lists.py` | `AnimeIdLists` (download, reduction, cache, hold-off after a failure) |
+| `tests/unit/infrastructure/test_anime_id_resolver.py` | `KitsuAnimeIdResolver` (addon record, refetch, list fallback, nothing) |
 | `tests/unit/infrastructure/test_stream_link_cache.py` | Stream link cache repository (incl. HLS proxy fields) |
 | `tests/unit/infrastructure/test_hls_proxy.py` | HLS manifest rewriting, CDN fetch, query resolution |
 | `tests/unit/infrastructure/test_circuit_breaker.py` | `PluginCircuitBreaker` |
 | `tests/unit/infrastructure/test_concurrency.py` | `ConcurrencyPool` + budgets |
 | `tests/unit/interfaces/test_stremio_router.py` | Router endpoints |
-| `tests/e2e/test_stremio_endpoint.py` | Full HTTP flow (manifest, catalog, stream, play, HLS proxy, health) |
+| `tests/e2e/test_stremio_endpoint.py` | Full HTTP flow (manifest, catalog, stream, play, HLS proxy, health; `kitsu:` ids through the addon's meta, respx) |
 | `tests/e2e/test_stremio_series_e2e.py` | Series season/episode filtering |
 | `tests/e2e/test_stremio_streamable_e2e.py` | Streamable link verification |
 | `tests/unit/infrastructure/test_stremio_playcheck_script.py` | `scripts/stremio_playcheck.py`, which fetches every stream of a running instance like a player (HLS to the first segments, files with a seek) |
@@ -451,6 +472,8 @@ Plugins declare `languages: list[str]` (default `["de"]`). The use case groups p
 |---|---|
 | Domain entities | `src/scavengarr/domain/entities/stremio.py` |
 | TMDB port | `src/scavengarr/domain/ports/tmdb.py` |
+| Anime id port | `src/scavengarr/domain/ports/anime_ids.py` |
+| Anime ids (Kitsu addon client, id list, resolver) | `src/scavengarr/infrastructure/anime/` |
 | Stream link port | `src/scavengarr/domain/ports/stream_link_repository.py` |
 | Concurrency port | `src/scavengarr/domain/ports/concurrency.py` |
 | Stream use case | `src/scavengarr/application/use_cases/stremio_stream.py` |
