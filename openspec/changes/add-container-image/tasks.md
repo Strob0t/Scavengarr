@@ -8,7 +8,7 @@
 
 - [x] 2.1 `.github/workflows/image.yml`: triggers (`push` to `staging`, `push` tags `v*`, `workflow_dispatch`), `permissions: contents: read, packages: write`, jobs `build-amd64` (`ubuntu-latest`) and `build-arm64` (`ubuntu-24.04-arm`) with `docker/login-action` (GHCR, `GITHUB_TOKEN`), `docker/metadata-action` (tags: branch `staging`, semver from `v*`, `latest` on tags, `sha-`), `docker/build-push-action` (push by digest, `cache-from/to: type=gha`, build args commit and build time), then a `merge` job that creates the multi-arch manifest with `docker buildx imagetools create` and the metadata tags.
 - [x] 2.2 First run on `staging`: record build times per architecture and the image size in the CHANGELOG entry; if `ubuntu-24.04-arm` is unavailable, switch arm64 to QEMU in one job and note it. (Done, 2026-10-06: `ubuntu-24.04-arm` ran; without a cache amd64 4.6 min and arm64 4.3 min in parallel, with it 26 s each; 481 MiB amd64, 484 MiB arm64 compressed.)
-- [ ] 2.3 Pull check from the dev container is impossible (no Docker); the maintainer pulls `ghcr.io/<owner>/scavengarr:staging` on the Pi and `prodctl.py metrics | grep build_info` shows the commit (acceptance).
+- [ ] 2.3 (Decided 2026-10-07: the Pi keeps building its own image for now, the package stays private; this check waits for the switch to the published image.) Pull check from the dev container is impossible (no Docker); the maintainer pulls `ghcr.io/<owner>/scavengarr:staging` on the Pi and `prodctl.py metrics | grep build_info` shows the commit (acceptance).
 
 ## 3. Compose and docs
 

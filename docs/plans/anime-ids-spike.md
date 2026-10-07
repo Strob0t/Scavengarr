@@ -1,6 +1,6 @@
 # Anime Ids Spike (I11, `add-anime-ids` task 1.1)
 
-Status 2026-10-06: spike done; the design revision it suggests waits for the maintainer's decision (see [Decision](#decision)).
+Status 2026-10-07: spike done; the maintainer chose option 2 (the addon, the public list as the fallback; `openspec/changes/add-anime-ids/` revised). One list suffices for the fallback: Fribb's records carry `imdb_id`, `season.tvdb` and `episode_offset.tvdb` (Attack on Titan Season 3 Part 2: season 3, offset 12), so Kometa's list is not needed.
 
 ## Setup
 
