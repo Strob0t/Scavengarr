@@ -1,6 +1,7 @@
 #!/bin/bash
-# basedpyright from the project venv, in a git worktree without its own .venv
-# from the main checkout's venv (the lookup of
+# basedpyright from the active venv (`poetry run pre-commit` activates Poetry's,
+# which in CI is not .venv), else from the project's .venv, else, in a git
+# worktree without its own .venv, from the main checkout's venv (the lookup of
 # .claude/plugins/basedpyright-lsp/scripts/langserver.sh). pre-commit's
 # basedpyright hook runs this instead of `poetry run basedpyright`, which in a
 # worktree creates an empty venv and ends with "Command not found".
@@ -8,7 +9,10 @@
 
 set -euo pipefail
 
-VENV=.venv
+VENV=${VIRTUAL_ENV:-.venv}
+if [[ ! -x $VENV/bin/basedpyright ]]; then
+  VENV=.venv
+fi
 if [[ ! -x $VENV/bin/basedpyright ]]; then
   VENV="$(git rev-parse --path-format=absolute --git-common-dir)/../.venv"
 fi
