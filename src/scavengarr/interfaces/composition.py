@@ -21,6 +21,9 @@ from scavengarr.application.use_cases.stremio_stream import StremioStreamUseCase
 from scavengarr.domain.entities.crawljob import Priority
 from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort
 from scavengarr.domain.ports.cache import CachePort
+from scavengarr.infrastructure.anime.id_lists import AnimeIdLists
+from scavengarr.infrastructure.anime.kitsu_addon import KitsuAddonClient
+from scavengarr.infrastructure.anime.resolver import KitsuAnimeIdResolver
 from scavengarr.infrastructure.browser.clearance_store import ClearanceStore
 from scavengarr.infrastructure.browser.page_budget import PageBudget
 from scavengarr.infrastructure.browser.page_gate import PageGate
@@ -677,9 +680,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         else None
     )
 
-    # 15) Stremio use cases (always initialized — fallback handles missing key)
+    # 15) Anime: the Kitsu addon's ids become IMDb requests (the addon's
+    # meta, the public id list as the fallback), both cached in the backend
+    state.anime_ids = KitsuAnimeIdResolver(
+        addon=KitsuAddonClient(http_client=state.http_client, cache=state.cache),
+        lists=AnimeIdLists(http_client=state.http_client, cache=state.cache),
+    )
+
+    # 16) Stremio use cases (always initialized — fallback handles missing key)
     state.stremio_stream_uc = StremioStreamUseCase(
         tmdb=state.tmdb_client,
+        anime_ids=state.anime_ids,
         plugins=state.plugins,
         search_engine=state.search_engine,
         config=config.stremio,

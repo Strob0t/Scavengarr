@@ -21,11 +21,13 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+import respx
 import structlog
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -41,7 +43,11 @@ from scavengarr.domain.entities.stremio import (
     TitleMatchInfo,
 )
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.domain.ports.anime_ids import NO_ANIME_IDS
 from scavengarr.domain.ports.telemetry import NO_TELEMETRY
+from scavengarr.infrastructure.anime.id_lists import LIST_URL, AnimeIdLists
+from scavengarr.infrastructure.anime.kitsu_addon import ADDON_URL, KitsuAddonClient
+from scavengarr.infrastructure.anime.resolver import KitsuAnimeIdResolver
 from scavengarr.infrastructure.concurrency import ConcurrencyPool
 from scavengarr.infrastructure.config.schema import StremioConfig
 from scavengarr.infrastructure.hoster_resolvers import HosterResolverRegistry
@@ -65,6 +71,14 @@ _PREFIX = "/api/v1"
 # ---------------------------------------------------------------------------
 
 
+_KITSU_FIXTURES = Path(__file__).parents[1] / "fixtures" / "json" / "kitsu"
+
+
+def _kitsu_meta(name: str) -> dict[str, Any]:
+    """One of the Anime Kitsu addon's meta answers, trimmed."""
+    return json.loads((_KITSU_FIXTURES / name).read_text())
+
+
 class _FakePythonPlugin:
     """Minimal Python plugin (has search(), no scraping)."""
 
@@ -79,6 +93,7 @@ class _FakePythonPlugin:
         self.provides = "stream"
         self.default_language = default_language
         self._results: list[SearchResult] = []
+        self.calls: list[dict[str, Any]] = []
 
     async def search(
         self,
@@ -87,6 +102,9 @@ class _FakePythonPlugin:
         season: int | None = None,
         episode: int | None = None,
     ) -> list[SearchResult]:
+        self.calls.append(
+            {"query": query, "category": category, "season": season, "episode": episode}
+        )
         return self._results
 
 
@@ -247,6 +265,7 @@ class TestManifestEndpoint:
 
         assert "tt" in data["idPrefixes"]
         assert "tmdb:" in data["idPrefixes"]
+        assert "kitsu:" in data["idPrefixes"]
 
     def test_manifest_cors_headers(self) -> None:
         plugins = MagicMock()
@@ -1038,6 +1057,7 @@ class TestHealthEndpoint:
             hoster_resolver_registry=resolver,
         )
         app.state.tmdb_client = MagicMock()
+        app.state.anime_ids = MagicMock()
 
         client = TestClient(app)
         resp = client.get(f"{_PREFIX}/stremio/health")
@@ -1046,6 +1066,7 @@ class TestHealthEndpoint:
         data = resp.json()
         assert data["healthy"] is True
         assert data["tmdb_configured"] is True
+        assert data["anime_ids_configured"] is True
         assert data["stream_plugin_count"] == 2
         assert data["stream_plugins"] == ["hdfilme", "aniworld"]
         assert data["stream_uc_initialized"] is True
@@ -1179,6 +1200,7 @@ class TestStreamFullFlow:
         plugin: _FakePythonPlugin | None = None,
         search_results: list[SearchResult] | None = None,
         telemetry: Telemetry | None = None,
+        anime_ids: Any = None,
     ) -> FastAPI:
         """Build app with a real StremioStreamUseCase."""
         from scavengarr.application.use_cases.stremio_stream import (
@@ -1221,6 +1243,7 @@ class TestStreamFullFlow:
             stream_link_repo=stream_link_repo,
             pool=ConcurrencyPool(),
             telemetry=telemetry or NO_TELEMETRY,
+            anime_ids=anime_ids or NO_ANIME_IDS,
         )
 
         app = FastAPI()
@@ -1328,6 +1351,99 @@ class TestStreamFullFlow:
             # Every URL should be a proxy play URL
             for s in streams:
                 assert "/api/v1/stremio/play/" in s["url"]
+
+    # kitsu: ids (the Anime Kitsu addon's catalogs) are translated with the
+    # addon's meta before the search; the public id list is the fallback
+
+    @staticmethod
+    def _anime_ids() -> KitsuAnimeIdResolver:
+        cache = AsyncMock()
+        cache.get.return_value = None
+        http = httpx.AsyncClient()
+        return KitsuAnimeIdResolver(
+            addon=KitsuAddonClient(http_client=http, cache=cache),
+            lists=AnimeIdLists(http_client=http, cache=cache),
+        )
+
+    @respx.mock
+    def test_a_kitsu_episode_is_searched_as_imdb_counts_it(self) -> None:
+        respx.get(f"{ADDON_URL}/meta/series/kitsu:41982.json").respond(
+            json=_kitsu_meta("meta_series_41982.json")
+        )
+        plugin = _FakePythonPlugin(name="aniworld")
+        result = _make_search_result(
+            title="Haikyu S03E15",
+            download_link="https://voe.sx/e/haikyu",
+            category=5000,
+            download_links=[
+                {
+                    "hoster": "voe",
+                    "link": "https://voe.sx/e/haikyu",
+                    "language": "German Dub",
+                },
+            ],
+        )
+        plugin._results = [result]
+        app = self._make_full_flow_app(
+            title_info=TitleMatchInfo(title="Haikyu", year=2014),
+            plugin=plugin,
+            search_results=[result],
+            anime_ids=self._anime_ids(),
+        )
+
+        with structlog.testing.capture_logs() as logs:
+            resp = TestClient(app).get(
+                f"{_PREFIX}/stremio/stream/series/kitsu:41982:3.json"
+            )
+
+        assert resp.status_code == 200
+        assert len(resp.json()["streams"]) >= 1
+        assert plugin.calls == [
+            {"query": "Haikyu", "category": 5000, "season": 3, "episode": 15}
+        ]
+        translated = [e for e in logs if e["event"] == "anime_id_translated"]
+        assert translated[0]["source"] == "addon"
+
+    @respx.mock
+    def test_a_kitsu_movie_is_searched_as_a_movie(self) -> None:
+        respx.get(f"{ADDON_URL}/meta/movie/kitsu:11614.json").respond(
+            json=_kitsu_meta("meta_movie_11614.json")
+        )
+        plugin = _FakePythonPlugin(name="aniworld")
+        app = self._make_full_flow_app(
+            title_info=TitleMatchInfo(title="Your Name", year=2016),
+            plugin=plugin,
+            anime_ids=self._anime_ids(),
+        )
+
+        resp = TestClient(app).get(f"{_PREFIX}/stremio/stream/movie/kitsu:11614.json")
+
+        assert resp.json() == {"streams": []}
+        assert plugin.calls == [
+            {"query": "Your Name", "category": 2000, "season": None, "episode": None}
+        ]
+
+    @respx.mock
+    def test_an_unknown_kitsu_id_answers_nothing(self) -> None:
+        respx.get(f"{ADDON_URL}/meta/series/kitsu:99999999.json").respond(404)
+        respx.get(LIST_URL).respond(500)
+        plugin = _FakePythonPlugin(name="aniworld")
+        app = self._make_full_flow_app(
+            title_info=TitleMatchInfo(title="Haikyu", year=2014),
+            plugin=plugin,
+            anime_ids=self._anime_ids(),
+        )
+
+        with structlog.testing.capture_logs() as logs:
+            resp = TestClient(app).get(
+                f"{_PREFIX}/stremio/stream/series/kitsu:99999999:1.json"
+            )
+
+        assert resp.json() == {"streams": []}
+        assert plugin.calls == []
+        events = [e["event"] for e in logs]
+        assert "anime_id_lists_failed" in events
+        assert "anime_id_lookup_failed" in events
 
     def test_the_request_is_in_the_metrics(self) -> None:
         plugin = _FakePythonPlugin(name="hdfilme")

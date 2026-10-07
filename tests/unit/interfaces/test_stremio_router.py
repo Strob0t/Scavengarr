@@ -120,6 +120,35 @@ class TestParseStreamId:
         result = _parse_stream_id("series", "tmdb:12345:abc:5")
         assert result is None
 
+    def test_kitsu_movie_id(self) -> None:
+        result = _parse_stream_id("movie", "kitsu:11614")
+        assert result is not None
+        assert result.imdb_id == "kitsu:11614"
+        assert result.content_type == "movie"
+        assert result.season is None
+        assert result.episode is None
+
+    def test_kitsu_series_id_with_episode(self) -> None:
+        # The anime catalog counts episodes absolutely: no season part
+        result = _parse_stream_id("series", "kitsu:41982:3")
+        assert result is not None
+        assert result.imdb_id == "kitsu:41982"
+        assert result.content_type == "series"
+        assert result.season is None
+        assert result.episode == 3
+
+    def test_kitsu_series_without_episode(self) -> None:
+        result = _parse_stream_id("series", "kitsu:41982")
+        assert result is not None
+        assert result.imdb_id == "kitsu:41982"
+        assert result.episode is None
+
+    def test_kitsu_non_numeric_episode(self) -> None:
+        assert _parse_stream_id("series", "kitsu:41982:abc") is None
+
+    def test_kitsu_with_season_and_episode(self) -> None:
+        assert _parse_stream_id("series", "kitsu:41982:1:3") is None
+
 
 class TestManifestEndpoint:
     def test_lists_no_catalogs_without_catalog_use_case(self) -> None:
@@ -168,6 +197,7 @@ class TestManifestEndpoint:
         assert "catalog" in data["resources"]
         assert "tt" in data["idPrefixes"]
         assert "tmdb:" in data["idPrefixes"]
+        assert "kitsu:" in data["idPrefixes"]
 
     def test_cors_headers(self) -> None:
         app = _make_app()

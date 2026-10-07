@@ -401,6 +401,94 @@ class TestExecute:
 # ---------------------------------------------------------------------------
 
 
+class TestAnimeIds:
+    """A kitsu: request (the Anime Kitsu addon's catalogs) is translated
+    first; the translated request drives the titles, the search and its
+    cache key."""
+
+    @staticmethod
+    def _plugins(plugin: AsyncMock) -> MagicMock:
+        plugins = MagicMock()
+        plugins.get_languages.return_value = ["de"]
+        plugins.get_by_provides.side_effect = lambda p: (
+            ["aniworld"] if p == "stream" else []
+        )
+        plugins.get.return_value = plugin
+        return plugins
+
+    @staticmethod
+    def _plugin() -> AsyncMock:
+        plugin = AsyncMock()
+        plugin.search = AsyncMock(return_value=[])
+        plugin.isolated_search = plugin.search
+        return plugin
+
+    async def test_the_translated_request_is_searched(self) -> None:
+        tmdb = AsyncMock()
+        tmdb.get_title_and_year = AsyncMock(
+            return_value=TitleMatchInfo(title="Haikyu", year=2014)
+        )
+        plugin = self._plugin()
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(return_value=[])
+        translated = make_request(
+            imdb_id="tt2560140", content_type="series", season=3, episode=15
+        )
+        anime_ids = AsyncMock()
+        anime_ids.translate = AsyncMock(return_value=translated)
+        cache = AsyncMock()
+        cache.get.return_value = None
+        uc = make_use_case(
+            tmdb=tmdb,
+            plugins=self._plugins(plugin),
+            search_engine=engine,
+            anime_ids=anime_ids,
+            cache=cache,
+            search_ttl_seconds=60,
+        )
+
+        request = make_request(imdb_id="kitsu:41982", content_type="series", episode=3)
+        assert await uc.execute(request) == []
+
+        anime_ids.translate.assert_awaited_once_with(request)
+        assert tmdb.get_title_and_year.await_args.args == ("tt2560140",)
+        plugin.isolated_search.assert_awaited_once_with(
+            "Haikyu", 5000, season=3, episode=15
+        )
+        # The search is shared with the same episode asked by its IMDb id
+        assert cache.get.await_args_list[0].args == (
+            "stremio:search:series:tt2560140:3:15",
+        )
+
+    async def test_an_untranslatable_id_answers_nothing(self) -> None:
+        tmdb = AsyncMock()
+        tmdb.get_title_and_year = AsyncMock(
+            return_value=TitleMatchInfo(title="Haikyu", year=2014)
+        )
+        plugin = self._plugin()
+        anime_ids = AsyncMock()
+        anime_ids.translate = AsyncMock(return_value=None)
+        uc = make_use_case(
+            tmdb=tmdb, plugins=self._plugins(plugin), anime_ids=anime_ids
+        )
+
+        request = make_request(imdb_id="kitsu:41982", content_type="series", episode=3)
+        assert await uc.execute(request) == []
+
+        tmdb.get_title_and_year.assert_not_awaited()
+        plugin.isolated_search.assert_not_awaited()
+
+    async def test_an_imdb_id_is_not_translated(self) -> None:
+        tmdb = AsyncMock()
+        tmdb.get_title_and_year = AsyncMock(return_value=None)
+        anime_ids = AsyncMock()
+        uc = make_use_case(tmdb=tmdb, anime_ids=anime_ids)
+
+        assert await uc.execute(make_request()) == []
+
+        anime_ids.translate.assert_not_awaited()
+
+
 class TestCachedAnswers:
     """A cached answer waited for the resolve grace (4.1-4.4 s) when one of
     its links had no cached resolution; it goes out at once now, and the

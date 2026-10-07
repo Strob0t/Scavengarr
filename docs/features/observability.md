@@ -86,7 +86,7 @@ All names start with `scavengarr_`. Outcomes in *italics* are counted without a 
 | Family | Labels | Values |
 |---|---|---|
 | `stremio_request_seconds`, `stremio_request_total` | `source`, `outcome` | `source`: `cache` (fresh cache entry), `stale` (stale entry, refreshed in the background), `search` (new search), `joined` (the title's search was running), `none` (ended before the search). `outcome`: `streams`, `empty`, `no_title`, `no_plugins`, `error`, `cut` |
-| `stremio_phase_seconds`, `stremio_phase_total` | `phase`, `outcome` | `metadata` (plugin selection and TMDB titles): `found`, `not_found`. `search` (the shared search, once per search): `ok`, `cut`. `resolve` (resolution while the search runs): `target`, `done`, `deadline`, *`cached`* (a cached answer). `background_resolve` (the other links of a cached answer): `done`, `deadline` |
+| `stremio_phase_seconds`, `stremio_phase_total` | `phase`, `outcome` | `anime_ids` (a `kitsu:` id translated into the IMDb request): `found`, `not_found`. `metadata` (plugin selection and TMDB titles): `found`, `not_found`. `search` (the shared search, once per search): `ok`, `cut`. `resolve` (resolution while the search runs): `target`, `done`, `deadline`, *`cached`* (a cached answer). `background_resolve` (the other links of a cached answer): `done`, `deadline` |
 | `stremio_streams` | | Streams per answer (histogram) |
 | `plugin_search_seconds`, `plugin_search_total` | `plugin`, `outcome` | Stremio searches only; Torznab searches are not recorded. `hits`, `empty`, `error`, `cut` (search deadline or shutdown), *`breaker_open`*, *`skipped`* (no slot before the search deadline), *`unreachable`* (failed the periodic health check) |
 | `plugin_results_total` | `plugin` | Validated results |

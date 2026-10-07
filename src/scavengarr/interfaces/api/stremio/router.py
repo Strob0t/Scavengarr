@@ -84,7 +84,7 @@ def _build_manifest(catalogs: list[dict[str, Any]]) -> dict[str, Any]:
         "types": ["movie", "series"],
         "catalogs": catalogs,
         "resources": ["catalog", "stream"] if catalogs else ["stream"],
-        "idPrefixes": ["tt", "tmdb:"],
+        "idPrefixes": ["tt", "tmdb:", "kitsu:"],
         "behaviorHints": {
             "adult": False,
             "configurable": False,
@@ -95,13 +95,18 @@ def _build_manifest(catalogs: list[dict[str, Any]]) -> dict[str, Any]:
 def _parse_stream_id(content_type: str, raw_id: str) -> StremioStreamRequest | None:
     """Parse Stremio stream ID into a StremioStreamRequest.
 
-    Movies: "tt1234567" or "tmdb:12345"
-    Series: "tt1234567:1:5" or "tmdb:12345:1:5" (season 1, episode 5)
+    Movies: "tt1234567", "tmdb:12345" or "kitsu:11614"
+    Series: "tt1234567:1:5" or "tmdb:12345:1:5" (season 1, episode 5),
+    "kitsu:41982:3" (episode 3 as Kitsu counts, no season)
     """
     if content_type not in ("movie", "series"):
         return None
 
     ct: StremioContentType = cast(StremioContentType, content_type)
+
+    # Handle kitsu:{id} format (the Anime Kitsu addon's catalogs)
+    if raw_id.startswith("kitsu:"):
+        return _parse_kitsu_id(ct, raw_id)
 
     # Handle tmdb:{id} format (from our own catalog)
     if raw_id.startswith("tmdb:"):
@@ -143,6 +148,23 @@ def _parse_stream_id(content_type: str, raw_id: str) -> StremioStreamRequest | N
         )
 
     return StremioStreamRequest(imdb_id=imdb_id, content_type=ct)
+
+
+def _parse_kitsu_id(ct: StremioContentType, raw_id: str) -> StremioStreamRequest | None:
+    """``kitsu:41982`` or ``kitsu:41982:3``: the episode is Kitsu's count
+    (no season); the stream use case translates the request."""
+    parts = raw_id.split(":")
+    episode: int | None = None
+    if len(parts) == 3:
+        try:
+            episode = int(parts[2])
+        except ValueError:
+            return None
+    elif len(parts) != 2:
+        return None
+    return StremioStreamRequest(
+        imdb_id=f"kitsu:{parts[1]}", content_type=ct, episode=episode
+    )
 
 
 def _format_stremio_stream(stream: StremioStream) -> dict[str, Any]:
@@ -644,6 +666,7 @@ async def stremio_health(request: Request) -> JSONResponse:
     state = cast(AppState, request.app.state)
 
     tmdb_configured = getattr(state, "tmdb_client", None) is not None
+    anime_ids_configured = getattr(state, "anime_ids", None) is not None
     stream_uc = getattr(state, "stremio_stream_uc", None)
     catalog_uc = getattr(state, "stremio_catalog_uc", None)
     resolver_registry = getattr(state, "hoster_resolver_registry", None)
@@ -677,6 +700,7 @@ async def stremio_health(request: Request) -> JSONResponse:
         "healthy": healthy,
         **build_identity(),
         "tmdb_configured": tmdb_configured,
+        "anime_ids_configured": anime_ids_configured,
         "stream_plugin_count": len(stream_plugin_names),
         "stream_plugins": stream_plugin_names,
         "stream_uc_initialized": stream_uc is not None,

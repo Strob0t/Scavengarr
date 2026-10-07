@@ -22,6 +22,7 @@ from scavengarr.domain.entities.stremio import (
     TitleMatchInfo,
 )
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.domain.ports.anime_ids import NO_ANIME_IDS, AnimeIdResolverPort
 from scavengarr.domain.ports.browser_fetcher import PageClaim, page_claim
 from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
 from scavengarr.infrastructure.concurrency import ConcurrencyPool
@@ -95,6 +96,7 @@ def make_use_case(
     telemetry: TelemetryPort = NO_TELEMETRY,
     mirror_groups: dict[str, str] | None = None,
     score_store: AsyncMock | None = None,
+    anime_ids: AnimeIdResolverPort = NO_ANIME_IDS,
 ) -> StremioStreamUseCase:
     engine = search_engine or AsyncMock()
     # Default: validate_results returns input unchanged
@@ -125,6 +127,7 @@ def make_use_case(
         telemetry=telemetry,
         mirror_groups=mirror_groups,
         score_store=score_store,
+        anime_ids=anime_ids,
     )
 
 

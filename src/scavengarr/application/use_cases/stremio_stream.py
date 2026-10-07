@@ -58,6 +58,7 @@ from scavengarr.domain.entities.stremio import (
     StremioStream,
     StremioStreamRequest,
 )
+from scavengarr.domain.ports.anime_ids import NO_ANIME_IDS, AnimeIdResolverPort
 from scavengarr.domain.ports.cache import CachePort
 from scavengarr.domain.ports.concurrency import ConcurrencyPoolPort
 from scavengarr.domain.ports.plugin_registry import PluginRegistryPort
@@ -95,6 +96,8 @@ class StremioStreamUseCase:
     """Resolve Stremio stream requests into sorted stream links.
 
     Flow (``_answer``):
+        0. Anime: a ``kitsu:`` id (the Anime Kitsu addon's catalogs)
+           becomes the IMDb request (``AnimeIdResolverPort``).
         1. Plugins: the stream plugins, all or the best scored
            (``PluginSelector``).
         2. Titles: the TMDB title in each language the plugins search in
@@ -136,7 +139,9 @@ class StremioStreamUseCase:
         plugin_health: PluginHealth | None = None,
         cache: CachePort | None = None,
         search_ttl_seconds: int = 0,
+        anime_ids: AnimeIdResolverPort = NO_ANIME_IDS,
     ) -> None:
+        self._anime_ids = anime_ids
         self._titles = TitleResolver(
             tmdb=tmdb, plugins=plugins, filter_fn=filter_fn, config=config
         )
@@ -212,6 +217,17 @@ class StremioStreamUseCase:
         """The streams for *request*; sets the request *stage*'s source and
         outcome."""
         started = time.monotonic()
+
+        # 0. Anime: a kitsu: id becomes the IMDb request, its episode placed
+        # as IMDb counts it; the sources log what they found
+        if request.imdb_id.startswith("kitsu:"):
+            with self._telemetry.stage("stremio_phase", phase="anime_ids") as anime:
+                translated = await self._anime_ids.translate(request)
+                anime.outcome = "not_found" if translated is None else "found"
+            if translated is None:
+                stage.outcome = "no_title"
+                return []
+            request = translated
         category = 2000 if request.content_type == "movie" else 5000
 
         # 1. Plugins: all stream plugins, or the best scored ones
