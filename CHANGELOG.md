@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fix: The Cache Section Reads No Unprefixed `CACHE_*` Variables
+- `CacheConfig` was a pydantic-settings `BaseSettings` with the prefix `CACHE_`, so validating the merged config read `CACHE_REDIS_URL`, `CACHE_SEARCH_TTL_SECONDS`, `CACHE_CRAWLJOB_TTL_SECONDS` and `CACHE_MAX_CONCURRENT` from the environment as defaults below the YAML, although the docs said they are not read. The section is a plain model like the others now; the environment speaks through `SCAVENGARR_CACHE_*` only ([configuration.md](docs/features/configuration.md)).
+
 ### Fix: An HLS Playlist's Range Answer Is No File Size
 - The playback check read the `Content-Range` total of every playable answer, playlists included: a CDN answering a playlist with 206 gave the playlist's own length (53 bytes) as the stream's size, which Stremio showed as "1 MB" when the site gave none. The size now comes from files only; HLS streams show the site's size or none ([hoster-resolvers.md](docs/features/hoster-resolvers.md) → the playback check).
 

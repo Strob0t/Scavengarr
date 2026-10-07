@@ -153,8 +153,14 @@ def _normalize_path(value: Any) -> Path:
     raise TypeError(f"Expected path-like value, got: {type(value)!r}")
 
 
-class CacheConfig(BaseSettings):
-    """Cache configuration (backend-agnostic)."""
+class CacheConfig(BaseModel):
+    """Cache configuration (backend-agnostic).
+
+    A plain model like the other sections: validated from the merged config
+    dict, never from the environment (as a ``BaseSettings`` it read
+    unprefixed ``CACHE_*`` variables below the YAML; the environment speaks
+    through ``EnvOverrides``, ``SCAVENGARR_CACHE_*``).
+    """
 
     backend: Literal["diskcache", "redis"] = Field(
         default="diskcache",
@@ -194,13 +200,6 @@ class CacheConfig(BaseSettings):
     max_concurrent: int = Field(
         default=10,
         description="Max parallel cache ops (semaphore limit)",
-    )
-
-    model_config = SettingsConfigDict(
-        # Not read: this section is validated from the merged config dict.
-        # Env overrides are SCAVENGARR_CACHE_* (see EnvOverrides).
-        env_prefix="CACHE_",
-        case_sensitive=False,
     )
 
 

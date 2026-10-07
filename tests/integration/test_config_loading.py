@@ -201,6 +201,21 @@ class TestEnvOverrides:
         assert config.cache.redis_url == "redis://redis:6379/1"
         assert config.cache.max_concurrent == 25
 
+    def test_unprefixed_cache_vars_are_not_read(
+        self, yaml_config: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The cache section used to be a BaseSettings with env_prefix CACHE_
+        # and read these below the YAML (the docs said it did not)
+        monkeypatch.setenv("CACHE_MAX_CONCURRENT", "42")
+        monkeypatch.setenv("CACHE_SEARCH_TTL_SECONDS", "11")
+        monkeypatch.setenv("CACHE_REDIS_URL", "redis://elsewhere:6379/9")
+
+        config = load_config(config_path=yaml_config)
+
+        assert config.cache.max_concurrent == 10
+        assert config.cache.search_ttl_seconds == 900
+        assert config.cache.redis_url == "redis://localhost:6379/0"
+
 
 class TestTelemetrySettings:
     """Tracing is off unless an OTLP/HTTP endpoint is set."""
