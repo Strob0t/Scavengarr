@@ -126,7 +126,7 @@ Assignment of the open steps: 16 Ultracode (in progress); 17 Mr. Normal; 18 Mr. 
 | 17 | N4 round runner | round 2 below | `scripts/stremio_round.py` | Yes (scripts only) |
 | 18 | N9 configuration by environment | round 2 below | `infrastructure/config/load.py`, `schema.py` (`EnvOverrides`), `docs/features/configuration.md`, `docker-compose.yml` | Yes |
 | 19 | N1 HLS read-ahead: the throughput probe first, then A, B or both by its numbers | round 2 below | `scripts/probes/hls_throughput.py`, `infrastructure/stremio/hls_proxy.py`, the HLS routes | HLS area: check first |
-| 20 | N5 Dependabot | round 2 below | `.github/dependabot.yml`, AGENTS.md §4 | Yes |
+| 20 | N5 Dependabot (**done** 2026-10-07; the label `dependencies` was created in the repository, Dependabot ignores labels that do not exist) | round 2 below | `.github/dependabot.yml`, AGENTS.md §4 | Yes |
 
 ### Task specifications for the items without an OpenSpec change
 

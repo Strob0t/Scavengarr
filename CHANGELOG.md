@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: Dependabot
+- `.github/dependabot.yml` checks the Poetry dependencies, GitHub Actions and the base images of `Dockerfile.prod` every Monday at 06:00 (Europe/Berlin); minor and patch updates of the Python packages come as one grouped PR, at most three Python PRs are open at a time, and every PR carries the label `dependencies`. CI runs on these PRs; AGENTS.md §4 holds the merge rule.
+
 ### Added: The Plugins' Long-Term Record
 - Whether a plugin whose site died stays, is disabled by default or is removed was a guess from one round's numbers. `PluginHistory` (`infrastructure/plugins/history.py`) now counts per plugin and UTC day how often it was searched, how many results it gave, how often it ran into its timeout (`PluginSearchRunner`), how often its site was checked and found unreachable (`PluginHealthMonitor`), 180 days in the cache backend (`plugin_history:v1`, written every minute when it changed and at shutdown, restored at the start). `GET /api/v1/stats/plugins` reports it with each plugin's last day with a result and its unreachable share over 30, 90 and 180 days; the production digest reads it. The decision stays the maintainer's, from months of this record.
 

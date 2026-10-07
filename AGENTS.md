@@ -105,6 +105,7 @@ Invariants:
 
 - Source of truth: `pyproject.toml`. For package APIs, read the installed source in `.venv` or the official docs.
 - Prefer stdlib, then established libraries, then custom code. No internal mini-frameworks. New dependencies need explicit justification.
+- Dependabot (`.github/dependabot.yml`) opens weekly update PRs for Poetry, GitHub Actions and the base images of `Dockerfile.prod`; they are merged after a green CI run, and a major update gets a look at the package's changelog first.
 
 ---
 
