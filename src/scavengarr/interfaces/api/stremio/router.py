@@ -13,7 +13,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from starlette.responses import StreamingResponse
 
-from scavengarr.application.stremio.stream_builder import HLS_MASTER
+from scavengarr.application.stremio.stream_builder import FILE_NAME, HLS_MASTER
 from scavengarr.application.use_cases.stremio_links import StremioLinks
 from scavengarr.domain.entities.stremio import (
     CachedStreamLink,
@@ -29,6 +29,7 @@ from scavengarr.infrastructure.stremio.hls_proxy import (
     cdn_base_from_url,
     fetch_hls_resource,
     rewrite_manifest,
+    stream_file,
     stream_hls_segment,
 )
 from scavengarr.infrastructure.version import APP_VERSION, build_identity
@@ -477,6 +478,10 @@ async def proxy_hls(
     the stream's content type with a HEAD request before it plays. A
     segment is not downloaded for HEAD.
 
+    An address-bound file (``FILE_NAME``; its CDN plays it only for the
+    address that resolved it) is streamed with the player's byte range
+    (``_proxy_file``).
+
     The playlist is not served to a streaming server's converter unless
     ``stremio.allow_hls_transcoding`` is on (``_converter_refused``).
 
@@ -499,17 +504,23 @@ async def proxy_hls(
 
 
 def _hls_kind(path: str) -> str:
-    """The stream's own playlist (``master``), another ``playlist`` or a
-    ``segment``."""
+    """The stream's own playlist (``master``), an address-bound ``file``,
+    another ``playlist`` or a ``segment``."""
     if path == HLS_MASTER:
         return "master"
+    if path == FILE_NAME:
+        return "file"
     return "playlist" if path.endswith(".m3u8") else "segment"
 
 
 async def _counted(
-    chunks: AsyncGenerator[bytes], telemetry: TelemetryPort
+    chunks: AsyncGenerator[bytes],
+    telemetry: TelemetryPort,
+    *,
+    kind: str = "segment",
 ) -> AsyncGenerator[bytes]:
-    """A segment's chunks; the bytes sent are recorded when it ends."""
+    """A segment's or file's chunks; the bytes sent are recorded as *kind*
+    when it ends, an aborted transfer's included."""
     sent = 0
     try:
         async for chunk in chunks:
@@ -517,7 +528,7 @@ async def _counted(
             yield chunk
     finally:
         await chunks.aclose()
-        telemetry.record("hls_proxy_bytes", sent, kind="segment")
+        telemetry.record("hls_proxy_bytes", sent, kind=kind)
 
 
 async def _proxy_hls(
@@ -530,6 +541,8 @@ async def _proxy_hls(
     links = getattr(state, "stremio_links", None)
     if links is None:
         return _error_json(503, "stream links not configured")
+    if path == FILE_NAME:
+        return await _proxy_file(state, telemetry, links, stream_id, request)
     master = path == HLS_MASTER
     if master and _converter_refused(state, request):
         log.info("hls_proxy_converter_refused", stream_id=stream_id)
@@ -610,29 +623,105 @@ def _converter_refused(state: AppState, request: Request) -> bool:
     )
 
 
-async def _proxy_link(
-    links: StremioLinks, stream_id: str, *, master: bool
-) -> CachedStreamLink | JSONResponse:
-    """The stream's link for a proxy request; for its playlist the current one.
+async def _proxy_file(
+    state: AppState,
+    telemetry: TelemetryPort,
+    links: StremioLinks,
+    stream_id: str,
+    request: Request,
+) -> Response | JSONResponse:
+    """An address-bound file (``FILE_NAME``): the current video URL streamed
+    with the player's byte range, the CDN's status and headers passed on.
 
-    Other paths (variants, segments) follow a playlist fetched moments
-    before and keep its link.
+    When the CDN refuses the file (403, 404, 410: an expired URL), it is
+    fetched once more from the link ``StremioLinks.after_refusal`` gives,
+    then 502, as for the stream's playlist.
     """
+    link = await _file_link(links, stream_id)
+    if isinstance(link, JSONResponse):
+        return link
+    head = request.method == "HEAD"
+    try:
+        answer = await stream_file(
+            state.http_client,
+            link.video_url,
+            _cdn_headers(link),
+            player=request.headers,
+            head=head,
+        )
+    except httpx.HTTPStatusError as exc:
+        fresh = await links.after_refusal(link, exc.response.status_code)
+        if fresh is None or fresh.is_hls:
+            return _cdn_error_response(stream_id, link.video_url, exc)
+        try:
+            answer = await stream_file(
+                state.http_client,
+                fresh.video_url,
+                _cdn_headers(fresh),
+                player=request.headers,
+                head=head,
+            )
+        except httpx.HTTPError as again:
+            return _cdn_error_response(stream_id, fresh.video_url, again)
+    except httpx.HTTPError as exc:
+        return _cdn_error_response(stream_id, link.video_url, exc)
+    return StreamingResponse(
+        content=answer.chunks
+        if head
+        else _counted(answer.chunks, telemetry, kind="file"),
+        status_code=answer.status,
+        headers={**_CORS_HEADERS, **answer.headers},
+    )
+
+
+async def _stored_link(
+    links: StremioLinks, stream_id: str, *, current: bool
+) -> CachedStreamLink | JSONResponse:
+    """The stream's stored link; the *current* one (resolved again when
+    stale) for the stream's playlist and for a file."""
     link = await links.get(stream_id)
     if link is None:
         log.warning("hls_proxy_not_found", stream_id=stream_id)
         return _error_json(404, "stream expired or not found")
+    if not current:
+        return link
+    fresh = await links.current(link)
+    if fresh is None:
+        log.warning("hls_proxy_resolution_failed", stream_id=stream_id)
+        return _error_json(502, "could not extract video URL from hoster")
+    return fresh
 
-    if master:
-        current = await links.current(link)
-        if current is None:
-            log.warning("hls_proxy_resolution_failed", stream_id=stream_id)
-            return _error_json(502, "could not extract video URL from hoster")
-        link = current
 
+async def _proxy_link(
+    links: StremioLinks, stream_id: str, *, master: bool
+) -> CachedStreamLink | JSONResponse:
+    """The stream's link for a playlist or segment request; for the stream's
+    playlist the current one.
+
+    Other paths (variants, segments) follow a playlist fetched moments
+    before and keep its link.
+    """
+    link = await _stored_link(links, stream_id, current=master)
+    if isinstance(link, JSONResponse):
+        return link
     if not link.video_url or not link.is_hls:
         log.warning("hls_proxy_not_hls", stream_id=stream_id)
         return _error_json(400, "stream is not an HLS proxy stream")
+    return link
+
+
+async def _file_link(
+    links: StremioLinks, stream_id: str
+) -> CachedStreamLink | JSONResponse:
+    """The current link of an address-bound file; 400 for an HLS stream or
+    a file the builder sends through ``/play`` (a record from before the
+    flag among them)."""
+    link = await _stored_link(links, stream_id, current=True)
+    if isinstance(link, JSONResponse):
+        return link
+    if not link.video_url or link.is_hls or not link.address_bound:
+        log.warning("hls_proxy_not_a_file", stream_id=stream_id)
+        return _error_json(400, "stream is not a proxied file")
     return link
 
 

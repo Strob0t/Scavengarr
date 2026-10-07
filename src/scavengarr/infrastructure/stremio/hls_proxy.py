@@ -14,7 +14,8 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Mapping
+from dataclasses import dataclass
 from urllib.parse import ParseResult, SplitResult, urljoin, urlparse, urlsplit
 
 import httpx
@@ -35,8 +36,16 @@ _manifest_cache: dict[str, tuple[bytes, str, float]] = {}
 # Global semaphore for CDN proxy fetches (prevents stampede).
 _CDN_SEMAPHORE = asyncio.Semaphore(50)
 
-# Segments go out in pieces of this size (``stream_hls_segment``)
+# Segments and files go out in pieces of this size (``_body``)
 _SEGMENT_CHUNK = 65536
+
+# The first byte of a direct file can take a while (Vinovo: about 30 s):
+# the read timeout of a file request (``stream_file``)
+_FILE_READ_TIMEOUT_S = 60.0
+# The CDN's answer headers a proxied file passes to the player
+_FILE_HEADERS = ("content-type", "content-length", "content-range", "accept-ranges")
+# The player's request headers a proxied file forwards to the CDN
+_RANGE_HEADERS = ("Range", "If-Range")
 
 # URI attribute of an HLS tag (EXT-X-MEDIA, EXT-X-KEY, EXT-X-MAP, …)
 _URI_ATTR_RE = re.compile(r'URI="([^"]*)"')
@@ -228,17 +237,81 @@ async def stream_hls_segment(
         resp.raise_for_status()
 
     ct = resp.headers.get("content-type", "application/octet-stream")
+    return _body(resp, head=head), ct
 
-    async def _iter() -> AsyncGenerator[bytes]:
-        try:
-            if head:
-                return
-            async for chunk in resp.aiter_bytes(chunk_size=_SEGMENT_CHUNK):
-                yield chunk
-        finally:
+
+async def _body(resp: httpx.Response, *, head: bool) -> AsyncGenerator[bytes]:
+    """*resp*'s body in ``_SEGMENT_CHUNK`` pieces, the answer closed at the
+    end; empty for HEAD (*head*), the answer closed before its bytes."""
+    try:
+        if head:
+            return
+        async for chunk in resp.aiter_bytes(chunk_size=_SEGMENT_CHUNK):
+            yield chunk
+    finally:
+        await resp.aclose()
+
+
+@dataclass(frozen=True)
+class FileAnswer:
+    """A direct file's answer from its CDN: the status (200, 206, or 416 for
+    a range it cannot serve), the headers of ``_FILE_HEADERS`` it carried
+    and its body in pieces."""
+
+    status: int
+    headers: dict[str, str]
+    chunks: AsyncGenerator[bytes]
+
+
+async def stream_file(
+    http_client: httpx.AsyncClient,
+    url: str,
+    headers: dict[str, str],
+    *,
+    player: Mapping[str, str] | None = None,
+    head: bool = False,
+) -> FileAnswer:
+    """A direct file streamed from its CDN for the player, byte range included.
+
+    The request carries the stored *headers* over the player's User-Agent,
+    ``Accept-Encoding: identity`` (the byte offsets must hold, so nothing
+    is decoded) and the ``Range`` and ``If-Range`` headers of *player*'s
+    request when it sent them, and reads with ``_FILE_READ_TIMEOUT_S``.
+    The CDN's status passes through with the headers of ``_FILE_HEADERS``;
+    the body goes out in ``_SEGMENT_CHUNK`` pieces without buffering the
+    file. For HEAD (*head*) the body is empty and the CDN's answer is
+    closed after its headers.
+
+    Raises ``httpx.HTTPStatusError`` for an error answer other than 416
+    (closed first) and ``httpx.HTTPError`` when the CDN cannot be reached.
+    """
+    request_headers = {**_player_headers(headers), "Accept-Encoding": "identity"}
+    for name in _RANGE_HEADERS:
+        value = player.get(name) if player is not None else None
+        if value:
+            request_headers[name] = value
+    client_timeout = http_client.timeout
+    timeout = httpx.Timeout(
+        connect=client_timeout.connect,
+        read=_FILE_READ_TIMEOUT_S,
+        write=client_timeout.write,
+        pool=client_timeout.pool,
+    )
+    async with _CDN_SEMAPHORE:
+        resp = await http_client.send(
+            http_client.build_request(
+                "GET", url, headers=request_headers, timeout=timeout
+            ),
+            stream=True,
+            follow_redirects=True,
+        )
+        if resp.is_error and resp.status_code != 416:
             await resp.aclose()
-
-    return _iter(), ct
+            resp.raise_for_status()
+    passed = {
+        name: resp.headers[name] for name in _FILE_HEADERS if name in resp.headers
+    }
+    return FileAnswer(resp.status_code, passed, _body(resp, head=head))
 
 
 def build_cdn_url(cdn_base: str, path: str, query_string: str = "") -> str:

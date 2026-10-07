@@ -17,6 +17,7 @@ from scavengarr.infrastructure.stremio.hls_proxy import (
     cdn_base_from_url,
     fetch_hls_resource,
     rewrite_manifest,
+    stream_file,
     stream_hls_segment,
 )
 from scavengarr.interfaces.api.stremio.router import _resolve_query_string
@@ -497,6 +498,156 @@ class TestStreamHlsSegment:
             received = b"".join([chunk async for chunk in chunks])
 
         assert received == data
+
+
+class TestStreamFile:
+    """A direct file passes through with the player's byte range."""
+
+    _URL = "https://s-delivery.mxdcontent.example/v/abc.mp4?s=tok"
+
+    async def test_a_whole_file_passes_with_its_headers(self) -> None:
+        seen: list[httpx.Request] = []
+
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(
+                200,
+                headers={
+                    "Content-Type": "video/mp4",
+                    "Content-Length": "70000",
+                    "Accept-Ranges": "bytes",
+                    "X-Cache": "HIT",
+                },
+                stream=_Chunks([b"\x00" * 70000]),
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
+            answer = await stream_file(
+                client, self._URL, {"Referer": "https://mixdrop.ag/"}
+            )
+            received = [chunk async for chunk in answer.chunks]
+
+        assert answer.status == 200
+        assert answer.headers == {
+            "content-type": "video/mp4",
+            "content-length": "70000",
+            "accept-ranges": "bytes",
+        }
+        assert [len(chunk) for chunk in received] == [65536, 4464]
+        request = seen[0]
+        assert request.headers["Accept-Encoding"] == "identity"
+        assert request.headers["Referer"] == "https://mixdrop.ag/"
+        assert request.headers["User-Agent"] == DEFAULT_USER_AGENT
+        assert "Range" not in request.headers
+
+    async def test_the_players_range_passes_through(self) -> None:
+        seen: list[httpx.Request] = []
+
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(
+                206,
+                headers={
+                    "Content-Type": "video/mp4",
+                    "Content-Range": "bytes 1000-1999/5000",
+                    "Content-Length": "1000",
+                },
+                content=b"\x01" * 1000,
+            )
+
+        player = {
+            "Range": "bytes=1000-1999",
+            "If-Range": '"etag"',
+            "Cookie": "session=1",
+        }
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
+            answer = await stream_file(client, self._URL, {}, player=player)
+            body = b"".join([chunk async for chunk in answer.chunks])
+
+        assert answer.status == 206
+        assert answer.headers["content-range"] == "bytes 1000-1999/5000"
+        assert answer.headers["content-length"] == "1000"
+        assert len(body) == 1000
+        assert seen[0].headers["Range"] == "bytes=1000-1999"
+        assert seen[0].headers["If-Range"] == '"etag"'
+        assert "Cookie" not in seen[0].headers
+
+    async def test_a_head_request_reads_no_bytes(self) -> None:
+        body = _Chunks([b"\x00" * 1000])
+
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                headers={"Content-Type": "video/mp4", "Content-Length": "1000"},
+                stream=body,
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
+            answer = await stream_file(client, self._URL, {}, head=True)
+            received = [chunk async for chunk in answer.chunks]
+
+        assert received == []
+        assert answer.headers["content-length"] == "1000"
+        assert not body.read
+        assert body.closed
+
+    async def test_an_unsatisfiable_range_passes_through(self) -> None:
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                416, headers={"Content-Range": "bytes */5000"}, content=b""
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
+            answer = await stream_file(
+                client, self._URL, {}, player={"Range": "bytes=9000-"}
+            )
+            received = [chunk async for chunk in answer.chunks]
+
+        assert answer.status == 416
+        assert answer.headers["content-range"] == "bytes */5000"
+        assert received == []
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_a_refusal_raises_and_is_closed(self) -> None:
+        respx.get(self._URL).respond(403)
+        seen: list[httpx.Response] = []
+
+        async def _keep(resp: httpx.Response) -> None:
+            seen.append(resp)
+
+        async with httpx.AsyncClient(event_hooks={"response": [_keep]}) as client:
+            with pytest.raises(httpx.HTTPStatusError):
+                await stream_file(client, self._URL, {})
+
+        assert seen and seen[0].is_closed
+
+    async def test_a_network_error_raises(self) -> None:
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("down", request=request)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
+            with pytest.raises(httpx.ConnectError):
+                await stream_file(client, self._URL, {})
+
+    async def test_the_read_timeout_waits_for_the_first_byte(self) -> None:
+        """Vinovo's first byte takes about 30 s; the connect timeout stays
+        the client's."""
+        seen: list[httpx.Request] = []
+
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, content=b"")
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(_cdn), timeout=httpx.Timeout(5.0)
+        ) as client:
+            answer = await stream_file(client, self._URL, {})
+            [chunk async for chunk in answer.chunks]
+
+        timeout = seen[0].extensions["timeout"]
+        assert timeout["read"] == 60.0
+        assert timeout["connect"] == 5.0
 
 
 class _Chunks(httpx.AsyncByteStream):

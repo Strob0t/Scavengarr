@@ -33,7 +33,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from scavengarr.application.stremio.answer import StreamAnswer
-from scavengarr.application.stremio.stream_builder import HLS_MASTER
+from scavengarr.application.stremio.stream_builder import FILE_NAME, HLS_MASTER
 from scavengarr.application.use_cases.stremio_links import StremioLinks
 from scavengarr.domain.entities.stremio import (
     CachedStreamLink,
@@ -57,6 +57,7 @@ from scavengarr.infrastructure.plugins.constants import (
     search_max_results,
 )
 from scavengarr.infrastructure.stremio.episode_filter import filter_by_episode
+from scavengarr.infrastructure.stremio.hls_proxy import FileAnswer
 from scavengarr.infrastructure.stremio.stream_converter import convert_search_results
 from scavengarr.infrastructure.stremio.stream_sorter import StreamSorter
 from scavengarr.infrastructure.stremio.title_matcher import filter_by_title_match
@@ -2013,6 +2014,223 @@ class TestProxyResolvesAgain:
 
         assert resp.status_code == 502
         mock_fetch.assert_awaited_once()
+
+
+def _make_file_link(
+    *,
+    stream_id: str = "file-abc",
+    video_url: str = "https://s-delivery.mxdcontent.example/v/abc.mp4?s=tok&e=1",
+    address_bound: bool = True,
+    resolved_at: float | None = None,
+) -> CachedStreamLink:
+    """A stored MixDrop file, fresh unless *resolved_at* says otherwise."""
+    return CachedStreamLink(
+        stream_id=stream_id,
+        hoster_url="https://mixdrop.ag/e/xyz",
+        title="Test File",
+        hoster="mixdrop",
+        video_url=video_url,
+        video_headers=json.dumps({"Referer": "https://mixdrop.ag/"}),
+        resolved_at=time.time() if resolved_at is None else resolved_at,
+        address_bound=address_bound,
+    )
+
+
+def _file_answer(
+    status: int = 200,
+    headers: dict[str, str] | None = None,
+    chunks: tuple[bytes, ...] = (b"\x00" * 1000, b"\x01" * 500),
+) -> FileAnswer:
+    """What ``stream_file`` returns: the CDN's answer with the body in pieces."""
+
+    async def _iter() -> Any:
+        for chunk in chunks:
+            yield chunk
+
+    passed = headers or {
+        "content-type": "video/mp4",
+        "content-length": str(sum(len(chunk) for chunk in chunks)),
+        "accept-ranges": "bytes",
+    }
+    return FileAnswer(status, passed, _iter())
+
+
+class TestProxyFileEndpoint:
+    """GET and HEAD /api/v1/stremio/proxy/{stream_id}/file: an address-bound
+    direct file streamed with the player's byte range."""
+
+    _FILE = f"{_PREFIX}/stremio/proxy/file-abc/{FILE_NAME}"
+
+    def _app(
+        self, link: CachedStreamLink | None, resolved: ResolvedStream | None = None
+    ) -> FastAPI:
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=link)
+        registry = AsyncMock()
+        registry.resolve = AsyncMock(return_value=resolved)
+        return _make_app(stream_link_repo=repo, hoster_resolver_registry=registry)
+
+    @patch(f"{_PROXY_MODULE}.stream_file", new_callable=AsyncMock)
+    def test_a_whole_file(self, mock_stream: AsyncMock) -> None:
+        mock_stream.return_value = _file_answer(
+            headers={
+                "content-type": "video/mp4",
+                "content-length": "1500000000",
+                "accept-ranges": "bytes",
+            }
+        )
+        link = _make_file_link()
+
+        resp = TestClient(self._app(link)).get(self._FILE)
+
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "video/mp4"
+        assert resp.headers["content-length"] == "1500000000"
+        assert resp.headers["accept-ranges"] == "bytes"
+        assert resp.headers.get("access-control-allow-origin") == "*"
+        assert resp.content == b"\x00" * 1000 + b"\x01" * 500
+        args, kwargs = mock_stream.await_args.args, mock_stream.await_args.kwargs
+        assert args[1] == link.video_url
+        assert args[2] == {"Referer": "https://mixdrop.ag/"}
+        assert kwargs["player"].get("range") is None
+        assert kwargs["head"] is False
+
+    @patch(f"{_PROXY_MODULE}.stream_file", new_callable=AsyncMock)
+    def test_a_range(self, mock_stream: AsyncMock) -> None:
+        mock_stream.return_value = _file_answer(
+            206,
+            headers={
+                "content-type": "video/mp4",
+                "content-range": "bytes 1000000-1499999999/1500000000",
+                "content-length": "1499000000",
+            },
+        )
+
+        resp = TestClient(self._app(_make_file_link())).get(
+            self._FILE, headers={"Range": "bytes=1000000-"}
+        )
+
+        assert resp.status_code == 206
+        assert resp.headers["content-range"] == "bytes 1000000-1499999999/1500000000"
+        assert resp.headers["content-length"] == "1499000000"
+        assert mock_stream.await_args.kwargs["player"]["range"] == "bytes=1000000-"
+
+    @patch(f"{_PROXY_MODULE}.stream_file", new_callable=AsyncMock)
+    def test_head(self, mock_stream: AsyncMock) -> None:
+        mock_stream.return_value = _file_answer(chunks=())
+
+        resp = TestClient(self._app(_make_file_link())).head(self._FILE)
+
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "video/mp4"
+        assert resp.content == b""
+        assert mock_stream.await_args.kwargs["head"] is True
+
+    @patch(f"{_PROXY_MODULE}.stream_file", new_callable=AsyncMock)
+    def test_a_stale_link_resolves_again_first(self, mock_stream: AsyncMock) -> None:
+        mock_stream.return_value = _file_answer()
+        link = _make_file_link(resolved_at=time.time() - 2 * 3600)
+        new = ResolvedStream(
+            video_url="https://s-delivery.mxdcontent.example/v/abc.mp4?s=new",
+            address_bound=True,
+        )
+        app = self._app(link, new)
+
+        resp = TestClient(app).get(self._FILE)
+
+        assert resp.status_code == 200
+        assert mock_stream.await_args.args[1] == new.video_url
+        saved = app.state.stream_link_repo.save.await_args.args[0]
+        assert saved.video_url == new.video_url
+
+    @patch(f"{_PROXY_MODULE}.stream_file", new_callable=AsyncMock)
+    def test_an_expired_url_is_resolved_again_once(
+        self, mock_stream: AsyncMock
+    ) -> None:
+        """FSST answers 410 for an expired URL: one resolution past the
+        resolver's cache, then the file from the new URL."""
+        link = _make_file_link()
+        new = ResolvedStream(
+            video_url="https://s-delivery.mxdcontent.example/v/abc.mp4?s=new",
+            address_bound=True,
+        )
+        mock_stream.side_effect = [
+            _refused(link.video_url, 410),
+            _file_answer(
+                206,
+                headers={
+                    "content-type": "video/mp4",
+                    "content-range": "bytes 0-1499/1500",
+                    "content-length": "1500",
+                },
+            ),
+        ]
+        app = self._app(link, new)
+
+        resp = TestClient(app).get(self._FILE, headers={"Range": "bytes=0-"})
+
+        assert resp.status_code == 206
+        assert mock_stream.await_args.args[1] == new.video_url
+        app.state.hoster_resolver_registry.resolve.assert_awaited_once_with(
+            link.hoster_url, link.hoster, refresh=True
+        )
+
+    @patch(f"{_PROXY_MODULE}.stream_file", new_callable=AsyncMock)
+    def test_a_refusal_that_persists_is_502(self, mock_stream: AsyncMock) -> None:
+        link = _make_file_link()
+        new = ResolvedStream(video_url=link.video_url, address_bound=True)
+        mock_stream.side_effect = [_refused(link.video_url), _refused(link.video_url)]
+
+        resp = TestClient(self._app(link, new)).get(self._FILE)
+
+        assert resp.status_code == 502
+        assert mock_stream.await_count == 2
+
+    @patch(f"{_PROXY_MODULE}.stream_file", new_callable=AsyncMock)
+    def test_a_refusal_without_a_new_resolution_is_502(
+        self, mock_stream: AsyncMock
+    ) -> None:
+        link = _make_file_link()
+        mock_stream.side_effect = _refused(link.video_url, 404)
+
+        resp = TestClient(self._app(link, None)).get(self._FILE)
+
+        assert resp.status_code == 502
+        mock_stream.assert_awaited_once()
+
+    @patch(f"{_PROXY_MODULE}.stream_file", new_callable=AsyncMock)
+    def test_a_cdn_that_cannot_be_reached_is_502(self, mock_stream: AsyncMock) -> None:
+        mock_stream.side_effect = httpx.ConnectError("down")
+
+        resp = TestClient(self._app(_make_file_link())).get(self._FILE)
+
+        assert resp.status_code == 502
+
+    @patch(f"{_PROXY_MODULE}.stream_file", new_callable=AsyncMock)
+    def test_an_hls_link_is_refused(self, mock_stream: AsyncMock) -> None:
+        resp = TestClient(self._app(_make_hls_link(stream_id="file-abc"))).get(
+            self._FILE
+        )
+
+        assert resp.status_code == 400
+        mock_stream.assert_not_awaited()
+
+    @patch(f"{_PROXY_MODULE}.stream_file", new_callable=AsyncMock)
+    def test_a_record_from_before_the_flag_is_refused(
+        self, mock_stream: AsyncMock
+    ) -> None:
+        """Such a link plays through /play, as before."""
+        resp = TestClient(self._app(_make_file_link(address_bound=False))).get(
+            self._FILE
+        )
+
+        assert resp.status_code == 400
+        mock_stream.assert_not_awaited()
+
+    def test_not_found(self) -> None:
+        resp = TestClient(self._app(None)).get(self._FILE)
+
+        assert resp.status_code == 404
 
 
 class TestProxyLeavesHlsToThePlayer:

@@ -697,3 +697,42 @@ class TestPlayEndpoint:
 
         assert resp.status_code == 502
         assert resp.headers["access-control-allow-origin"] == "*"
+
+
+class TestProxyFileLink:
+    """The file route serves address-bound files only; the other links keep
+    their routes."""
+
+    _FILE = "/api/v1/stremio/proxy/abc123/file"
+
+    @staticmethod
+    def _client(link: CachedStreamLink | None) -> TestClient:
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=link)
+        return TestClient(_make_app(stream_link_repo=repo))
+
+    @pytest.mark.parametrize(
+        ("is_hls", "address_bound"),
+        [(True, True), (True, False), (False, False)],
+        ids=["hls", "hls-without-flag", "file-without-flag"],
+    )
+    def test_other_links_are_refused(self, is_hls: bool, address_bound: bool) -> None:
+        link = CachedStreamLink(
+            stream_id="abc123",
+            hoster_url="https://mixdrop.ag/e/test",
+            hoster="mixdrop",
+            video_url="https://s-delivery.mxdcontent.example/v/abc.mp4",
+            is_hls=is_hls,
+            resolved_at=time.time(),
+            address_bound=address_bound,
+        )
+
+        resp = self._client(link).get(self._FILE)
+
+        assert resp.status_code == 400
+
+    def test_without_a_link(self) -> None:
+        assert self._client(None).get(self._FILE).status_code == 404
+
+    def test_without_the_repository(self) -> None:
+        assert TestClient(_make_app()).get(self._FILE).status_code == 503
