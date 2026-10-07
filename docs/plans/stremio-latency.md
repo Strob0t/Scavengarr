@@ -294,8 +294,42 @@ The first round written with `scripts/stremio_round.py` (one command; the title 
 Titles without stream: 0 of 19 (first answer), 0 of 19 (cached answer); max first answer 19.6 s.
 
 - **Answers:** 13 of 19 titles answered at the target of 5 streams; the six with one to three streams (Good Bye Lenin, Breaking Bad twice, Dark, Haus des Geldes, The Matrix) took 4.4–19.6 s, none waited for a 30 s plugin timeout as in the sixth round.
-- **kinoger** delivered on the dev server: the log binds 10 hoster resolutions to it (5 resolved, 4 cut at the resolve timeout). Its confirmation in production, the point of this round, is still open: a production run of the script (`--base https://scavengarr.lan --insecure --portainer`, at most hourly) is the next step.
+- **kinoger** delivered on the dev server: the log binds 10 hoster resolutions to it (5 resolved, 4 cut at the resolve timeout). Its confirmation in production followed the same day (below).
 - **Play check** from the dev container: 73 of 75 streams playable (Lola rennt and Dune: Part Two one stream each).
+
+### Seventh round, production (2026-10-07, production on `staging` before step 21)
+
+The same command against production (`--base https://scavengarr.lan --insecure --portainer`; the Pi with its VPN, the search cache warm for none of the titles): the baseline before the deploy of the continued searches (OpenSpec `continue-cut-searches`).
+
+| Title | First answer | Streams | X-Cache | Cached answer | Streams | Playable |
+|---|---|---|---|---|---|---|
+| Der Schuh des Manitu (`movie/tt0248408`) | 10.2 s | 5 | – | 0.09 s | 5 | 3 of 5 |
+| Lola rennt (`movie/tt0130827`) | 5.3 s | 5 | – | 0.05 s | 5 | 1 of 5 |
+| Good Bye, Lenin! (`movie/tt0301357`) | 15.0 s | 1 | – | 0.04 s | 1 | 0 of 1 |
+| Im Westen nichts Neues (`movie/tt1016150`) | 4.9 s | 5 | – | 0.07 s | 5 | 3 of 5 |
+| Oppenheimer (`movie/tt15398776`) | 9.2 s | 5 | – | 0.06 s | 5 | 1 of 5 |
+| Dune: Part Two (`movie/tt15239678`) | 6.8 s | 5 | – | 1.13 s | 5 | 3 of 5 |
+| Inception (`movie/tt1375666`) | 8.0 s | 5 | – | 0.05 s | 5 | 3 of 5 |
+| Interstellar (`movie/tt0816692`) | 5.5 s | 5 | – | 0.10 s | 5 | 2 of 5 |
+| Breaking Bad S01E01 (`series/tt0903747:1:1`) | 30.0 s | 1 | – | 0.03 s | 1 | 0 of 1 |
+| Dark S01E01 (`series/tt5753856:1:1`) | 30.0 s | 0 | – | 30.03 s | 0 | 0 of 0 |
+| Stranger Things S04E01 (`series/tt4574334:4:1`) | 30.0 s | 3 | – | 0.04 s | 3 | 2 of 3 |
+| Haus des Geldes S01E01 (`series/tt6468322:1:1`) | 30.0 s | 0 | – | 0.02 s | 0 | 0 of 0 |
+| The Last of Us S01E01 (`series/tt3581920:1:1`) | 9.0 s | 5 | – | 0.02 s | 5 | 3 of 5 |
+| One Piece S01E01 (`series/tt0388629:1:1`) | 3.4 s | 5 | – | 0.10 s | 5 | 3 of 5 |
+| Attack on Titan S01E01 (`series/tt2560140:1:1`) | 4.8 s | 5 | – | 0.14 s | 5 | 5 of 5 |
+| Demon Slayer S01E01 (`series/tt9335498:1:1`) | 5.0 s | 5 | – | 0.09 s | 5 | 5 of 5 |
+| Frieren S01E01 (`series/tt22248376:1:1`) | 4.7 s | 5 | – | 0.58 s | 5 | 5 of 5 |
+| Breaking Bad S01E02 (`series/tt0903747:1:2`) | 11.5 s | 1 | – | 0.03 s | 1 | 0 of 1 |
+| The Matrix (`movie/tt0133093`) | 6.7 s | 5 | – | 0.05 s | 5 | 4 of 5 |
+| **Median / total** (19 titles) | 8.0 s | 71 | – | 0.06 s | 71 | 43 of 71 |
+
+Titles without stream: 2 of 19 (first answer), 2 of 19 (cached answer); max first answer 30.0 s.
+CPU of the container during the round: Python 100.0 s, Chromium 167.7 s.
+
+- **Answers:** median first answer 8.0 s (dev server 5.3 s), cached 0.06 s. Films answer at the target in 4.9–15.0 s. Four series waited for the 30 s cut (Breaking Bad S01E01, Dark, Stranger Things, Haus des Geldes): the plugins that had not finished by then (kinoking: 11 plugin timeouts in the hour, sto 2, kinox 1) are lost to the cached entry too, which is what step 21 changes. Dark found 4 results, and the title filter dropped all of them (`stremio_all_filtered`); Haus des Geldes found none.
+- **kinoger** works in production again: in the round's hour 48 search pages (27 with results), 12 saved Cloudflare clearances, 7 hoster resolutions of its links succeeded and 4 were cut at the resolve timeout; one detail page timed out. The sixth round's 13 of 13 timeouts did not recur.
+- **Play check** from the dev container: 43 of 71 streams playable (dev server 73 of 75); not examined; a likely cause, unconfirmed, is CDN URLs bound to the Pi's VPN address that the dev container fetches from the home connection, so the column is not comparable to the dev server's.
 
 ## AIOStreams
 
