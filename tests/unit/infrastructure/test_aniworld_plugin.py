@@ -322,6 +322,9 @@ class TestSearch:
         assert results[0].download_links[0]["hoster"] == "voe"
         expected_desc = "Naruto is a young ninja who seeks recognition."
         assert results[0].description == expected_desc
+        # the detail page's first episode: no episode claimed
+        assert "season" not in results[0].metadata
+        assert "episode" not in results[0].metadata
 
     @pytest.mark.parametrize(
         ("season", "episode", "expected"),
@@ -350,10 +353,13 @@ class TestSearch:
         mock_client.get = AsyncMock(side_effect=_route_get)
         plugin._client = mock_client
 
-        await plugin.search("naruto", season=season, episode=episode)
+        results = await plugin.search("naruto", season=season, episode=episode)
 
         requested = [str(c.args[0]) for c in mock_client.get.call_args_list]
         assert expected in requested
+        # the episode fetched, for the Stremio episode filter
+        assert results[0].metadata["season"] == season
+        assert results[0].metadata["episode"] == (episode or 1)
 
     async def test_search_empty_query_returns_empty(self) -> None:
         plugin = _make_plugin()

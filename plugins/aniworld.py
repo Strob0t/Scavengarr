@@ -228,10 +228,14 @@ class AniworldPlugin(HttpxPluginBase):
         genres = ", ".join(detail_parser.genres) if detail_parser.genres else ""
         description = detail_parser.description or item.get("description", "")
 
-        metadata: dict[str, str] = {
+        metadata: dict[str, str | int] = {
             "genres": genres,
             "cover_url": detail_parser.cover_url,
         }
+        if season is not None:
+            # the episode page fetched above, for the Stremio episode filter
+            metadata["season"] = season
+            metadata["episode"] = episode or 1
 
         return SearchResult(
             title=title,
