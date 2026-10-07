@@ -1,6 +1,6 @@
 # Anime Ids Spike (I11, `add-anime-ids` task 1.1)
 
-Status 2026-10-07: spike done; the maintainer chose option 2 (the addon, the public list as the fallback; `openspec/changes/add-anime-ids/` revised). One list suffices for the fallback: Fribb's records carry `imdb_id`, `season.tvdb` and `episode_offset.tvdb` (Attack on Titan Season 3 Part 2: season 3, offset 12), so Kometa's list is not needed.
+Status 2026-10-07: implemented (`openspec/changes/add-anime-ids/`, all tasks done; live check of the resolver at the end of this file); spike done; the maintainer chose option 2 (the addon, the public list as the fallback; `openspec/changes/add-anime-ids/` revised). One list suffices for the fallback: Fribb's records carry `imdb_id`, `season.tvdb` and `episode_offset.tvdb` (Attack on Titan Season 3 Part 2: season 3, offset 12), so Kometa's list is not needed.
 
 ## Setup
 
@@ -48,3 +48,22 @@ The spike falsifies the approved design's source order: Kitsu's mappings place n
 4. **The approved design unchanged, with a TMDB key.** Con: places none of the ten in the spike; needs a TMDB key in production.
 
 With option 1 the OpenSpec change shrinks: `AnimeIdResolverPort.translate(request)` returns the translated request (no titles, no `season_source`), the adapter is `infrastructure/anime/kitsu_addon.py`, and the spec's lookups are bounded per title (one meta request, cached; a requested episode beyond the cached list refetches once).
+
+## Live check of the resolver (2026-10-07)
+
+`scripts/probes/anime_ids.py` run from the home network after the implementation (`KitsuAnimeIdResolver` with `KitsuAddonClient` and `AnimeIdLists`, an in-memory cache, Scavengarr's User-Agent): the resolver translated 10 of 10 titles, all from the addon's record (`source` `addon`), and the list adapter had entries for 9 of 10.
+
+| Kitsu | Title | Resolver (searched as) | List adapter |
+|---|---|---|---|
+| 12:1000 | One Piece | tt0388629 S21E109 | season None, offset 0 |
+| 41982:3 | Attack on Titan Season 3 Part 2 | tt2560140 S3E15 | season 3, offset 12 |
+| 49240:2 | Frieren 2nd Season | tt22248376 S2E2 | season 2, offset 0 |
+| 11614 | Your Name (movie) | tt5311514 movie | movie |
+| 43247:2 | Re:Zero 2nd Season Part 2 | tt5607616 S2E15 | season 2, offset 13 |
+| 695:1 | Hellsing Ultimate | tt0495212 S1E1 | season 1, offset 0 |
+| 48105:1 | Frieren: Marumaru no Mahou (ONA) | tt22248376 S0E1 | none |
+| 44081:2 | Demon Slayer: Entertainment District Arc | tt9335498 S3E2 | season 3, offset 0 |
+| 210:1000 | Detective Conan | tt0131179 S29E8 | season None, offset 0 |
+| 48671:2 | Solo Leveling Season 2 | tt21209876 S2E2 | season 2, offset 0 |
+
+The list alone would place the two long-runners at season 1 (no season in their entries) and the ONA nowhere; with the addon up, none of that is used. Earlier the same day the container had no DNS: the probe then reported `ConnectError` for every source and the resolver answered nothing for every title, which is the designed outage behaviour (no streams, `anime_id_lookup_failed`).

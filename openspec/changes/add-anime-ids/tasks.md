@@ -18,6 +18,6 @@
 
 ## 4. Verification and docs
 
-- [ ] 4.1 Live check from the home network: `scripts/probes/anime_ids.py` also runs the real resolver (addon, list) for its ten titles and prints the translated request; record the result in `docs/plans/anime-ids-spike.md`.
+- [x] 4.1 Live check from the home network: `scripts/probes/anime_ids.py` also runs the real resolver (addon, list) for its ten titles and prints the translated request; record the result in `docs/plans/anime-ids-spike.md`.
 - [x] 4.2 `docs/features/stremio-addon.md`: section "Anime ids" (what is accepted, how the translation works, the sources and their caches, the log events, limits); `docs/architecture/clean-architecture.md` and `codeplan.md` (the new modules); `CHANGELOG.md`.
 - [x] 4.3 Follow-up noted in `docs/plans/ideas-backlog.md`: `mal:`/`anilist:` through the same list if the maintainer's catalogs emit them.
