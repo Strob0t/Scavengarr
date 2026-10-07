@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Chore: Title Match Probe
+- Why *Dark* and *Haus des Geldes* answered without a stream in the seventh production round was suspected to be the queries or the title matcher. `scripts/probes/title_match.py` runs every stream plugin's search with the app's queries for one or more Stremio ids and prints per plugin the queries, the raw titles and the matcher's score and verdict. Its reading in `docs/plans/title-matching.md`: both titles find their series on three to four plugins at score 1.00 and the matcher drops only other titles; production's empty answers came from the search deadline cutting sto and kinoking (*Dark*) and from sto's link-outs failing to resolve (*Haus des Geldes*).
+
 ### Fixed: Series Episodes from kinoger, aniworld, fireani and sto
 - kinoger served the first episode for every series episode request: its live theme lists no episode tabs (`span[data-id]`), so the parser kept the player script's first URL, S01E01, without an episode label, and the episode filter let it through (Stranger Things S04E01, 2026-10-07). The player script holds the episodes as one array per season (`pw.show(5,[[S1E1, …],[S2E1, …], …])`); the parser now reads them, labels each link `<season>x<episode>`, and a request keeps the links of its episode.
 - aniworld and fireani fetch the requested episode themselves but said so nowhere in the result; they now set `metadata["season"]` and `metadata["episode"]` (ints) for the episode they fetched, which the stricter episode filter of `continue-cut-searches` reads. sto and serienjunkies store both as ints too (they were strings).
