@@ -292,7 +292,7 @@ class TestRender:
         ):
             assert f"\n## {heading}\n" in text
         assert "| search | 1 | 13.40 s | 13.40 s | 5.0 | 0 |" in text
-        assert "| kinoger | 15 | 3 | 2 | 3 | 1 | 1 d ago | 10%/–/– |" in text
+        assert "| kinoger | 15 | 3 | 2 | 0 | 3 | 1 | 1 d ago | 10%/–/– |" in text
         assert "| voe | 93 | 1.2 s | stream 93 |" in text
         assert "Not closed now: filemoon (hoster, open)" in text
         assert "Opened in the window: filemoon ×1" in text

@@ -4,12 +4,13 @@ A site that died shows as months of searches without a result and checks
 that found it unreachable (megakino_to and movie4k: 30 unreachable marks
 each in the sixth end-to-end round); whether such a plugin stays, is
 disabled by default or is removed is the maintainer's decision from this
-record. ``PluginSearchRunner`` counts searches, results and timeouts,
-``PluginHealthMonitor`` checks and unreachable marks, per plugin and UTC
-day. The record is one value ``plugin_history:v1`` in the cache backend
-(diskcache or Redis), written every minute when it changed and at
-shutdown with the days older than 180 dropped, restored at the start, like
-``HosterStateStore``; ``GET /api/v1/stats/plugins`` reports it.
+record. ``PluginSearchRunner`` counts searches, results, timeouts and the
+results the episode filter dropped, ``PluginHealthMonitor`` checks and
+unreachable marks, per plugin and UTC day. The record is one value
+``plugin_history:v1`` in the cache backend (diskcache or Redis), written
+every minute when it changed and at shutdown with the days older than 180
+dropped, restored at the start, like ``HosterStateStore``;
+``GET /api/v1/stats/plugins`` reports it.
 """
 
 from __future__ import annotations

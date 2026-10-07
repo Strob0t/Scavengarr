@@ -91,16 +91,34 @@ def _ints(value: object) -> set[int]:
     return {v for v in items if isinstance(v, int)}
 
 
+def _numbers(r: SearchResult) -> tuple[set[int] | None, set[int] | None]:
+    """The result's season and episode numbers: the metadata's (``season``,
+    ``episode``, ints from plugins that know the episode from the page),
+    else guessit's from the title (a set: a multi-episode release such as
+    S01E01-E03 names several)."""
+    info = guess_release(r.title)
+    numbers: list[set[int] | None] = []
+    for key in ("season", "episode"):
+        value = r.metadata.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            numbers.append({value})
+        else:
+            guessed = info.get(key)
+            numbers.append(None if guessed is None else _ints(guessed))
+    return numbers[0], numbers[1]
+
+
 def _narrow_links(
     r: SearchResult, season: int | None, episode: int | None
 ) -> SearchResult | None:
-    """Keep the links whose episode labels match; ``r`` unchanged when no
-    link has an episode label, ``None`` when every labelled link is wrong."""
-    if not r.download_links:
-        return r
-    kept = filter_links_by_episode(r.download_links, season, episode)
+    """Keep the links whose episode labels match. With an episode requested
+    a result without a labelled link is dropped (``None``): a show page
+    would pass with every episode otherwise; so is one whose labelled links
+    all name another episode. Without one (a season request) a result
+    without labelled links passes unchanged."""
+    kept = filter_links_by_episode(r.download_links or [], season, episode)
     if kept is None:
-        return r
+        return None if episode is not None else r
     if not kept:
         return None
     first_url = link_url(kept[0]) or r.download_link
@@ -114,42 +132,38 @@ def filter_by_episode(
 ) -> list[SearchResult]:
     """Filter results to match the requested season/episode.
 
-    Uses guessit to parse the titles. A title of another season or
-    episode drops the result. A title without an episode (a show or
-    season page, a season pack) falls back to filtering its
-    download_links by their labels (e.g. ``1x5`` from episode tabs).
-
-    Results whose title and links carry no episode info are kept -- they
-    might be different hosters for a single content page.
+    A result's season and episode come from its metadata (``season``,
+    ``episode``), else from guessit on its title (``_numbers``). A result
+    of another season or episode is dropped. A result without an episode
+    number (a show page, a season page, a season pack) passes only through
+    the links labelled with the requested episode (``1x5``, ``S01E05``);
+    with an episode requested and no such link it is dropped, so a show
+    page cannot leak other episodes. A result with an episode but no
+    season passes for season 1 only. For a season request results without
+    episode information pass unchanged.
     """
     if season is None and episode is None:
         return results
 
     filtered: list[SearchResult] = []
     for r in results:
-        info = guess_release(r.title)
-        r_season = info.get("season")
-        r_episode = info.get("episode")
+        r_season, r_episode = _numbers(r)
 
         # Season/episode mismatch -> skip (multi-season/-episode releases
         # such as S01E01-E03 give lists and match any of their numbers)
-        if (
-            season is not None
-            and r_season is not None
-            and season not in _ints(r_season)
-        ):
+        if season is not None and r_season is not None and season not in r_season:
             continue
-        if (
-            episode is not None
-            and r_episode is not None
-            and episode not in _ints(r_episode)
-        ):
+        if episode is not None and r_episode is not None and episode not in r_episode:
             continue
 
         if r_episode is None:
             narrowed = _narrow_links(r, season, episode)
             if narrowed is not None:
                 filtered.append(narrowed)
+            continue
+
+        if r_season is None and episode is not None and season not in (None, 1):
+            # An episode number without a season names season 1
             continue
 
         filtered.append(r)

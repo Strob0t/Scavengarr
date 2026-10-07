@@ -10,7 +10,7 @@ Spec: `openspec/specs/observability/spec.md` (from the change `openspec/changes/
 |---|---|
 | `GET /metrics` | All metrics below, Prometheus text format (0.0.4), rendered in a worker thread |
 | `GET /api/v1/stats/metrics` | JSON for a quick look: plugin statistics (from the same metrics), event-loop lag of the last 5 minutes (p50/p99/max), plugin circuit breakers (hoster breakers only in `/metrics`), the 20 hosters probed most often for want of a resolver (`unresolved_hosters`, an open set of names and so no Prometheus label; [Hoster Resolvers](./hoster-resolvers.md#architecture)), what the start restored of the run before (`hoster_state`: `restored_at`, the snapshot's `age_s`, `resolutions`, `redirects`, `breakers`), concurrency pool, shutdown state |
-| `GET /api/v1/stats/plugins` | The plugins' long-term record ([Plugin Record](#plugin-record)): per plugin and UTC day `searches`, `results`, `timeouts`, `checks` and `unreachable` marks of the last 180 days, with `last_result_day` and the `unreachable_share` over 30, 90 and 180 days |
+| `GET /api/v1/stats/plugins` | The plugins' long-term record ([Plugin Record](#plugin-record)): per plugin and UTC day `searches`, `results`, `timeouts`, `dropped`, `checks` and `unreachable` marks of the last 180 days, with `last_result_day` and the `unreachable_share` over 30, 90 and 180 days |
 
 ## Prometheus
 
@@ -149,6 +149,7 @@ The metrics restart with the process, and the scoring snapshots age out in weeks
 | `searches` | `PluginSearchRunner` | Every plugin search of a Stremio request that ran (a plugin skipped by its breaker or the health check is not counted) |
 | `results` | `PluginSearchRunner` | The validated results a search gave |
 | `timeouts` | `PluginSearchRunner` | A search cut by the plugin timeout (its full `plugin_timeout_seconds` from the moment it held a slot) |
+| `dropped` | `PluginSearchRunner` | The results of a series request the episode filter dropped: another season or episode, or no episode number and no link labelled with the requested episode (a show page) |
 | `checks` | `PluginHealthMonitor` | Every check of the plugin's site with a verdict (a check in which no site answered counts nothing: the own network was down) |
 | `unreachable` | `PluginHealthMonitor`, `PluginSearchRunner` | The checks that found the site down (after the 30 s retry), and the Stremio searches in which the plugin's domain check found no domain |
 

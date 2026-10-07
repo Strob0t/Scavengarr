@@ -385,6 +385,20 @@ class TestPluginRecord:
 
         history.count.assert_not_called()
 
+    async def test_dropped_results_are_counted(self) -> None:
+        """The results the episode filter dropped, per plugin."""
+        history = MagicMock(spec=["count"])
+        registry = _registry({"a": _plugin([_sr("https://a/1"), _sr("https://a/2")])})
+        runner = _runner(
+            registry,
+            history=history,
+            episode_filter_fn=lambda results, _season, _episode: results[:1],
+        )
+
+        await _search(runner, ["a"], ["q"])
+
+        assert ("a", "dropped", 1) in [c.args for c in history.count.call_args_list]
+
 
 class TestDispatch:
     async def test_prefers_isolated_search(self) -> None:
@@ -966,7 +980,7 @@ class TestPluginDone:
                 ["a"], ["q"], 2000, budget=budget, on_plugin_done=done
             )
 
-        done.assert_awaited_once_with("a", finished)
+        done.assert_awaited_once_with("a", finished, 0)
 
     async def test_a_timeout_is_not_finished(self) -> None:
         plugin = _plugin([])
@@ -980,7 +994,7 @@ class TestPluginDone:
                 ["a"], ["q"], 2000, budget=budget, on_plugin_done=done
             )
 
-        done.assert_awaited_once_with("a", False)
+        done.assert_awaited_once_with("a", False, 0)
 
     async def test_once_per_plugin_after_every_query(self) -> None:
         """Two queries: the plugin's second run fails, so it is not finished."""
@@ -997,7 +1011,24 @@ class TestPluginDone:
                 ["a"], ["q", "q2"], 2000, budget=budget, on_plugin_done=done
             )
 
-        done.assert_awaited_once_with("a", False)
+        done.assert_awaited_once_with("a", False, 0)
+
+    async def test_the_report_carries_the_dropped_count(self) -> None:
+        """Two queries, the filter drops one result in each run."""
+        plugin = _plugin([_sr("https://a/1"), _sr("https://a/2")])
+        done = AsyncMock()
+        runner = _runner(
+            _registry({"a": plugin}),
+            episode_filter_fn=lambda results, _season, _episode: results[1:],
+        )
+
+        pool = ConcurrencyPool(httpx_slots=1, pw_slots=1)
+        async with pool.request() as budget:
+            await runner.search_with_fallback(
+                ["a"], ["q", "q2"], 2000, budget=budget, on_plugin_done=done
+            )
+
+        done.assert_awaited_once_with("a", True, 2)
 
     async def test_skipped_plugins_are_finished(self) -> None:
         """A breaker, the health check or a mirror group skip a plugin on
@@ -1021,10 +1052,10 @@ class TestPluginDone:
             )
 
         assert sorted(c.args for c in done.await_args_list) == [
-            ("down", True),
-            ("m1", True),
-            ("m2", True),
-            ("open", True),
+            ("down", True, 0),
+            ("m1", True, 0),
+            ("m2", True, 0),
+            ("open", True, 0),
         ]
 
 

@@ -129,7 +129,7 @@ Ports define the boundaries between Application and Infrastructure. All are `Pro
 | `PluginScoreStorePort` | `ports/plugin_score_store.py` | async | `get_snapshot`, `put_snapshot`, `list_snapshots`, `get_last_run`, `set_last_run` |
 | `TmdbClientPort` | `ports/tmdb.py` | async | `find_by_imdb_id`, `get_title_and_year`, `get_title_by_tmdb_id`, `trending_movies`, `trending_tv`, `search_movies`, `search_tv` |
 | `AnimeIdResolverPort` | `ports/anime_ids.py` | async | `translate` (a `kitsu:` request → the IMDb request, or `None`); `NO_ANIME_IDS` translates nothing |
-| `PluginHistoryPort` | `ports/plugin_history.py` | sync | `count` (a plugin's `searches`, `results`, `timeouts`, `checks` or `unreachable` of today); `NO_PLUGIN_HISTORY` counts nothing |
+| `PluginHistoryPort` | `ports/plugin_history.py` | sync | `count` (a plugin's `searches`, `results`, `timeouts`, `dropped`, `checks` or `unreachable` of today); `NO_PLUGIN_HISTORY` counts nothing |
 | `ConcurrencyPoolPort` | `ports/concurrency.py` | async context manager | `request()` → `ConcurrencyBudgetPort` |
 | `ConcurrencyBudgetPort` | `ports/concurrency.py` | async context manager | `acquire_httpx()`, `acquire_pw()` |
 | `BrowserFetcherPort` | `ports/browser_fetcher.py` | async | `fetch_text`, `resolve_redirect`, `click_through`, `session` |

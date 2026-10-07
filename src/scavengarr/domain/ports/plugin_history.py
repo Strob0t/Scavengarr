@@ -11,7 +11,9 @@ from __future__ import annotations
 
 from typing import Literal, Protocol, runtime_checkable
 
-PluginCounter = Literal["searches", "results", "timeouts", "checks", "unreachable"]
+PluginCounter = Literal[
+    "searches", "results", "timeouts", "dropped", "checks", "unreachable"
+]
 
 
 @runtime_checkable

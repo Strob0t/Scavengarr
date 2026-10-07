@@ -115,11 +115,15 @@ BrowserWarmupFn = Callable[[], Coroutine[Any, Any, tuple[Any, Any]]]
 # Receives one plugin's results (of one query) as soon as they are there
 OnResultsFn = Callable[[list[SearchResult]], Awaitable[None]]
 
-# Hears that a plugin's search for every query ended, and whether it
-# finished: its results are whole (not cut by a timeout, an error or a
-# cancellation); a plugin skipped on purpose (breaker, health check, mirror
-# group) counts as finished
-PluginDoneFn = Callable[[str, bool], Awaitable[None]]
+# Hears that a plugin's search for every query ended, whether it finished
+# (its results are whole: not cut by a timeout, an error or a cancellation;
+# a plugin skipped on purpose (breaker, health check, mirror group) counts
+# as finished) and how many results the episode filter dropped in its runs
+PluginDoneFn = Callable[[str, bool, int], Awaitable[None]]
+
+# One plugin's run for one query: its results, whether it finished and the
+# results the episode filter dropped
+_PluginRun = tuple[list[SearchResult], bool, int]
 
 
 class _PluginEnds:
@@ -132,19 +136,21 @@ class _PluginEnds:
     def __init__(self, names: Iterable[str], runs: int, report: PluginDoneFn) -> None:
         self._pending = dict.fromkeys(names, runs)
         self._unfinished: set[str] = set()
+        self._dropped = dict.fromkeys(names, 0)
         self._report = report
 
     async def skipped(self, names: Iterable[str]) -> None:
         for name in names:
-            await self._report(name, True)
+            await self._report(name, True, 0)
 
-    async def __call__(self, name: str, finished: bool) -> None:
+    async def __call__(self, name: str, finished: bool, dropped: int) -> None:
         """One query's run of *name* ended; the last one reports the plugin."""
         if not finished:
             self._unfinished.add(name)
+        self._dropped[name] += dropped
         self._pending[name] -= 1
         if self._pending[name] == 0:
-            await self._report(name, name not in self._unfinished)
+            await self._report(name, name not in self._unfinished, self._dropped[name])
 
 
 class PluginSearchRunner:
@@ -383,12 +389,13 @@ class PluginSearchRunner:
         httpx and Playwright slot allocation across requests. Each
         plugin's results go to *on_results* once it has given its slot back,
         then *on_plugin_done* hears whether it finished (a standby's own
-        outcome does not count). A plugin that gives nothing (no hits,
-        error, timeout) hands the query to its standby in *standbys* (a
-        mirror of its database).
+        outcome does not count) and how many results the episode filter
+        dropped in its runs (the standby's included). A plugin that gives
+        nothing (no hits, error, timeout) hands the query to its standby in
+        *standbys* (a mirror of its database).
         """
 
-        async def _run(name: str) -> tuple[list[SearchResult], bool]:
+        async def _run(name: str) -> _PluginRun:
             if self._plugins.get_mode(name) == "playwright":
                 slot = budget.acquire_pw()
             else:
@@ -404,10 +411,11 @@ class PluginSearchRunner:
                 )
 
         async def _search_one(name: str) -> list[SearchResult]:
-            results, finished = await _run(name)
+            results, finished, dropped = await _run(name)
             standby = (standbys or {}).get(name)
             if standby is not None and not results:
-                results, _ = await _run(standby)
+                results, _, standby_dropped = await _run(standby)
+                dropped += standby_dropped
                 log.info(
                     "stremio_mirror_standby",
                     plugin=name,
@@ -425,7 +433,7 @@ class PluginSearchRunner:
             if results and on_results is not None:
                 await on_results(results)
             if on_plugin_done is not None:
-                await on_plugin_done(name, finished)
+                await on_plugin_done(name, finished, dropped)
             return results
 
         tasks = [_search_one(name) for name in plugin_names]
@@ -445,11 +453,12 @@ class PluginSearchRunner:
         season: int | None = None,
         episode: int | None = None,
         budget_ends: float | None = None,
-    ) -> tuple[list[SearchResult], bool]:
+    ) -> _PluginRun:
         """Run a single plugin search with its full timeout, catching errors.
 
-        Returns the results and whether the search finished (a timeout or
-        an error leaves the plugin's results missing).
+        Returns the results, whether the search finished (a timeout or an
+        error leaves the plugin's results missing) and the results the
+        episode filter dropped.
         """
         timeout = self._plugin_timeout
 
@@ -460,7 +469,7 @@ class PluginSearchRunner:
         ):
             log.info("stremio_plugin_circuit_open", plugin=name, category=category)
             self._telemetry.count("plugin_search", "breaker_open", plugin=name)
-            return [], True
+            return [], True, 0
 
         # The stealth browser serves the plugin's pages by its end
         claim = page_claim.set(PageClaim("plugin", time.monotonic() + timeout))
@@ -485,7 +494,7 @@ class PluginSearchRunner:
             # breaker
             if self._circuit_breaker is not None:
                 self._circuit_breaker.record_failure(breaker_key)
-            return [], False
+            return [], False, 0
         finally:
             page_claim.reset(claim)
 
@@ -533,25 +542,27 @@ class PluginSearchRunner:
         season: int | None = None,
         episode: int | None = None,
         budget_ends: float | None = None,
-    ) -> tuple[list[SearchResult], bool]:
+    ) -> _PluginRun:
         """Search a single plugin, catching and logging errors.
 
         The plugin is called directly (with the max_results context so it
         limits pagination), then its results are episode-filtered and
         validated via the SearchEngine. A plugin that returns after
         *budget_ends* (the request's answer budget) is ``late``: its results
-        reach the cache and the next request. Returns the results and
-        whether the search finished (an error leaves them missing).
+        reach the cache and the next request. Returns the results,
+        whether the search finished (an error leaves them missing) and the
+        results the episode filter dropped.
         """
         try:
             plugin = self._plugins.get(name)
         except Exception:
             log.warning("stremio_plugin_not_found", plugin=name, exc_info=True)
-            return [], True
+            return [], True, 0
 
         success = False
         cancelled = False
         late = False
+        dropped = 0
         results: list[SearchResult] = []
         self._history.count(name, "searches")
         with self._telemetry.stage("plugin_search", plugin=name) as stage:
@@ -563,9 +574,7 @@ class PluginSearchRunner:
                     )
                 finally:
                     self._max_results_var.reset(token)
-                raw = await asyncio.to_thread(
-                    self._episode_filter_fn, raw, season, episode
-                )
+                raw, dropped = await self._filter_episodes(name, raw, season, episode)
                 results = await self._search_engine.validate_results(raw)
                 success = True
                 late = budget_ends is not None and time.monotonic() > budget_ends
@@ -610,6 +619,22 @@ class PluginSearchRunner:
             "stremio_plugin_search_done",
             plugin=name,
             result_count=len(results),
+            dropped=dropped,
             late=late,
         )
-        return results, success
+        return results, success, dropped
+
+    async def _filter_episodes(
+        self,
+        name: str,
+        raw: list[SearchResult],
+        season: int | None,
+        episode: int | None,
+    ) -> tuple[list[SearchResult], int]:
+        """The results of a series request that match its episode, and the
+        number the filter dropped (counted in the plugin's record)."""
+        kept = await asyncio.to_thread(self._episode_filter_fn, raw, season, episode)
+        dropped = len(raw) - len(kept)
+        if dropped:
+            self._history.count(name, "dropped", dropped)
+        return kept, dropped

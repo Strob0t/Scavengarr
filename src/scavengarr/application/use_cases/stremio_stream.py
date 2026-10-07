@@ -378,6 +378,7 @@ class StremioStreamUseCase:
             imdb_id=request.imdb_id,
             result_count=progress.total,
             filtered_count=len(progress.results),
+            dropped=progress.dropped,
             stream_count=len(streams),
             source=source,
             complete=complete,

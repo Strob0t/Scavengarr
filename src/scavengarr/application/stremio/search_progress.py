@@ -60,6 +60,7 @@ class SearchProgress:
         self._store = store
         self._base = base
         self._completes = completes
+        self.dropped = 0  # the results the episode filter dropped
         self._expected: set[str] = set()  # the plugins the search asks
         self._finished: set[str] = set()  # of them, the ones that finished
         self._written = False  # the entry was written at the budget
@@ -91,13 +92,15 @@ class SearchProgress:
         """The plugins the search asks: each is missing until it finishes."""
         self._expected.update(names)
 
-    async def plugin_done(self, name: str, finished: bool) -> None:
+    async def plugin_done(self, name: str, finished: bool, dropped: int = 0) -> None:
         """A plugin's search ended, *finished* when its results are whole
-        (not cut by a timeout, an error or a cancellation).
+        (not cut by a timeout, an error or a cancellation), with the number
+        of results the episode filter *dropped* in its runs.
 
         A plugin that finishes after the budget's write rewrites the entry:
         its results replace its earlier ones, its name leaves ``missing``.
         """
+        self.dropped += dropped
         if not finished:
             return
         self._finished.add(name)

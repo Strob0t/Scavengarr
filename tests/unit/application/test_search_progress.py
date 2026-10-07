@@ -206,6 +206,15 @@ def _base() -> CachedSearch:
     )
 
 
+class TestDroppedResults:
+    async def test_the_plugins_dropped_counts_add_up(self) -> None:
+        progress = SearchProgress()
+        await progress.plugin_done("a", True, 2)
+        await progress.plugin_done("b", False, 1)
+        await progress.plugin_done("c", True)
+        assert progress.dropped == 3
+
+
 class TestMergingIntoABase:
     """A refresh or completion search merges into the entry it started from:
     a finished plugin's results replace its earlier ones, an unfinished

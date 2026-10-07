@@ -388,7 +388,9 @@ class TestExecute:
             "slow": slow_plugin,
         }[name]
 
-        config = make_config(plugin_timeout_seconds=0.1)
+        # The answer waits for the budget only: under a loaded test run the
+        # fast plugin's result must still make it within the timeout
+        config = make_config(plugin_timeout_seconds=0.5)
         uc = make_use_case(
             tmdb=tmdb, plugins=plugins, search_engine=engine, config=config
         )

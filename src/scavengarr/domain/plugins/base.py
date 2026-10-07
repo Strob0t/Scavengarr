@@ -11,7 +11,14 @@ PluginProvides = Literal["stream", "download", "both"]
 
 @dataclass
 class SearchResult:
-    """Normalized search result."""
+    """Normalized search result.
+
+    ``metadata`` keys with a meaning beyond the plugin: ``season`` and
+    ``episode`` (ints) name the episode a series result is for, set by
+    plugins that know it from the page; the Stremio episode filter reads
+    them before guessing from the title. ``source_plugin`` is set by the
+    search runner.
+    """
 
     title: str
     download_link: str

@@ -119,23 +119,35 @@ def test_filter_outcome_kept_narrowed_dropped() -> None:
     ]
 
 
-def test_classify_unlabelled_page_is_kept_without_the_episode() -> None:
+def test_classify_unlabelled_page_is_dropped() -> None:
+    """A page without an episode number and without labelled links would
+    pass with every episode: the filter drops it (continue-cut-searches)."""
     rec = probe.classify("series/tt1:1:1", "p", _result("Dark", ["VOE"]), 1, 1)
     assert (rec.numbering, rec.outcome, rec.right, rec.leaks) == (
         "none",
-        "kept",
+        "dropped",
         False,
         [],
     )
 
 
 def test_classify_leak_from_labels_the_filter_does_not_read() -> None:
-    page = _result("Dark Staffel 1", ["Folge 1", "Folge 2"])
+    """The title names the episode, so the links stay as they are; the
+    probe reads the loose labels the filter does not."""
+    page = _result("Dark.S01E01", ["Folge 1", "Folge 2"])
     rec = probe.classify("series/tt1:1:1", "p", page, 1, 1)
     assert rec.outcome == "kept"
     assert rec.right
     assert rec.leaks == ["label 'Folge 2'"]
     assert rec.labels == ["Folge 1", "Folge 2"]
+
+
+def test_classify_season_page_with_unread_labels_is_dropped() -> None:
+    """The filter reads ``1x2`` and ``S01E02`` labels only: a season page
+    with other labels has no link it can trust."""
+    page = _result("Dark Staffel 1", ["Folge 1", "Folge 2"])
+    rec = probe.classify("series/tt1:1:1", "p", page, 1, 1)
+    assert (rec.outcome, rec.right, rec.leaks) == ("dropped", False, [])
 
 
 def test_classify_right_episode_from_title() -> None:
@@ -155,13 +167,17 @@ def test_render_counts_per_plugin_and_lists_leaks() -> None:
         probe.classify("series/tt1:1:1", "a", _result("Dark.S01E01"), 1, 1),
         probe.classify("series/tt1:1:1", "a", _result("Dark.S01E02"), 1, 1),
         probe.classify(
-            "series/tt1:1:1", "b", _result("Dark", ["Folge 1", "Folge 2"]), 1, 1
+            "series/tt1:1:1",
+            "b",
+            _result("Dark.S01E01", ["Folge 1", "Folge 2"]),
+            1,
+            1,
         ),
     ]
     failures = {"c": probe.Counter(timeout=2)}
     text = probe.render(records, failures, ["a", "b", "c"])
     assert "| a | 2 | 2 | 0 | 0 | 0 | 1 | 0 | 1 | 1 | 0 | 0 |" in text
-    assert "| b | 1 | 0 | 0 | 0 | 1 | 1 | 0 | 0 | 1 | 1 | 0 |" in text
+    assert "| b | 1 | 1 | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 1 | 0 |" in text
     assert "| c | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | timeout 2 |" in text
     assert "| **total** | 3 |" in text
-    assert "- b, series/tt1:1:1: 'Dark' (label 'Folge 2')" in text
+    assert "- b, series/tt1:1:1: 'Dark.S01E01' (label 'Folge 2')" in text

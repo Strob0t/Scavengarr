@@ -390,8 +390,10 @@ class TestNarutoShippudenE2E:
             assert call["season"] == 3
             assert call["episode"] == 12
 
-    def test_unparseable_titles_kept(self) -> None:
-        """Results with non-standard titles (no SxxExx) pass through the filter."""
+    def test_a_pack_without_episode_labels_is_dropped(self) -> None:
+        """A title without an episode number and links without episode
+        labels is dropped (it would pass with every episode); the S01E05
+        result answers alone."""
         results = [
             SearchResult(
                 title="Naruto Shippuden - Komplettbox",
@@ -418,8 +420,7 @@ class TestNarutoShippudenE2E:
         resp = client.get(f"{_PREFIX}/stremio/stream/series/{self._IMDB}:1:5.json")
 
         streams = resp.json()["streams"]
-        # Both kept: pack title (unparseable) + S01E05
-        assert len(streams) == 2
+        assert len(streams) == 1
 
     def test_title_mismatch_filtered(self) -> None:
         """Results for a different anime are dropped by title-match filter."""
