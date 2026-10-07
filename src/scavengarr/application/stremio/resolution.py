@@ -274,16 +274,9 @@ class ResolveFlow:
             if any(is_direct_video_url(r, ranked[i].url) for i, r in cached.items()):
                 log.info("stremio_resolve_from_cache", resolved=len(cached))
                 self._telemetry.count("stremio_phase", "cached", phase="resolve")
-                unresolved = any(not cached_fn(s.url)[0] for s in ranked)
-                if unresolved and key not in self._background_resolutions:
-                    task = self._spawn(
-                        self._resolve_in_background(
-                            progress, plugin_languages, resolve_fn
-                        )
-                    )
-                    self._background_resolutions[key] = task
-                    task.add_done_callback(
-                        lambda _: self._background_resolutions.pop(key, None)
+                if any(not cached_fn(s.url)[0] for s in ranked):
+                    self.resolve_in_background(
+                        key, progress, plugin_languages, resolve_fn
                     )
                 return ranked, cached
         return await self._resolve_as_results_arrive(
@@ -294,13 +287,36 @@ class ResolveFlow:
             budget_ends=budget_ends,
         )
 
+    def resolve_in_background(
+        self,
+        key: str,
+        progress: SearchProgress,
+        plugin_languages: dict[str, str],
+        resolve_fn: ResolveCallback,
+    ) -> bool:
+        """Resolve *progress*'s links in the background for the next request,
+        as its results arrive: a cached answer's links without a cached
+        outcome, or the results of a search that goes on after the answer
+        (a continuing search, a refresh, a completion). One run per cache
+        key at a time: a hand-over for *key* while its run runs changes
+        nothing. Returns whether a run started.
+        """
+        if key in self._background_resolutions:
+            return False
+        task = self._spawn(
+            self._resolve_in_background(progress, plugin_languages, resolve_fn)
+        )
+        self._background_resolutions[key] = task
+        task.add_done_callback(lambda _: self._background_resolutions.pop(key, None))
+        return True
+
     async def _resolve_in_background(
         self,
         progress: SearchProgress,
         plugin_languages: dict[str, str],
         resolve_fn: ResolveCallback,
     ) -> None:
-        """Resolve a cached answer's other links for the next request.
+        """Resolve a search's links for the next request, as they arrive.
 
         One title at a time (``_BACKGROUND_RUNS``); the deadline counts
         from the run's start, so a title that waited keeps its whole time.
@@ -357,8 +373,10 @@ class ResolveFlow:
         Each new batch of results is ranked with the ones before and handed
         to a ``HosterResolution`` (one link per hoster at a time, rank
         order). Results arriving after *budget_ends* (the answer budget,
-        ``time.monotonic()``) are not taken: they go to the cache for the
-        next request. The answer is due when ``resolve_target_count``
+        ``time.monotonic()``) are not taken, they go to the cache for the
+        next request; a request past the budget from the start (a retry)
+        takes the results known then. The answer is due when
+        ``resolve_target_count``
         hosters have a video, or when the search is done (or past the
         budget) and no resolution runs or is due, at the latest at
         *deadline*; resolutions still running then are cancelled. In the
@@ -386,7 +404,7 @@ class ResolveFlow:
                     changed.clear()
                     now = time.monotonic()
                     past_budget = now >= budget_ends
-                    if seen < len(progress.results) and not past_budget:
+                    if seen < len(progress.results) and not (past_budget and seen):
                         new = progress.results[seen:]
                         seen += len(new)
                         # Score only the new streams: re-sorting all of them

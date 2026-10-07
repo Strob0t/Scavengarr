@@ -31,9 +31,9 @@ audit's baseline (7.1) must run before the filter change (6) ships.
 
 ## 5. Resolution: late results in the background, retry at once
 
-- [ ] 5.1 `application/stremio/resolution.py`: the search task hands late, title-filtered results to the background resolution (one per key, one process-wide, under the stream deadline from the hand-over); a request answering from a partial entry or a running search past its budget takes the cached outcomes and starts the background resolution of the uncached links, like a cached request today.
-- [ ] 5.2 `application/use_cases/stremio_stream.py`: the answer carries `complete` (no missing plugin and no running search for the key) and the source; `stremio_stream_response` logs `complete` and `missing_count`.
-- [ ] 5.3 Tests in `tests/unit/application/test_stremio_resolution.py` and the use-case tests: late results resolved in the background appear on the next request; the retry does not wait.
+- [x] 5.1 `application/stremio/resolution.py`: the search task hands late, title-filtered results to the background resolution (one per key, one process-wide, under the stream deadline from the hand-over); a request answering from a partial entry or a running search past its budget takes the cached outcomes and starts the background resolution of the uncached links, like a cached request today.
+- [x] 5.2 `application/use_cases/stremio_stream.py`: the answer carries `complete` (no missing plugin and no running search for the key) and the source; `stremio_stream_response` logs `complete` and `missing_count`.
+- [x] 5.3 Tests in `tests/unit/application/test_stremio_resolution.py` and the use-case tests: late results resolved in the background appear on the next request; the retry does not wait.
 
 ## 6. Unreachable at search time
 

@@ -19,6 +19,7 @@ import structlog
 
 from scavengarr.application.stremio.answer import (
     ConvertFn,
+    StreamAnswer,
     cache_and_proxy,
     rank_streams,
     with_measurements,
@@ -42,6 +43,7 @@ from scavengarr.application.stremio.resolution import (
     ResolveFlow,
 )
 from scavengarr.application.stremio.search_cache import SearchCache, search_cache_key
+from scavengarr.application.stremio.search_progress import SearchProgress
 from scavengarr.application.stremio.stream_builder import (
     deduplicate_by_hoster,
     format_stream,
@@ -94,6 +96,9 @@ class _StreamSorter(Protocol):
 
 
 log = structlog.get_logger(__name__)
+
+# The answer without a search: no title, no plugins
+_NO_ANSWER = StreamAnswer([], "none", True, ())
 
 
 class StremioStreamUseCase:
@@ -175,6 +180,7 @@ class StremioStreamUseCase:
             telemetry=telemetry,
             plugin_timeout_s=config.plugin_timeout_seconds,
             spawn=self._spawn,
+            resolve_late=self._resolve_late,
         )
         self._stream_link_repo = stream_link_repo
         self._resolve_fn = resolve_fn
@@ -201,6 +207,15 @@ class StremioStreamUseCase:
         *,
         base_url: str = "",
     ) -> list[StremioStream]:
+        """The streams of ``answer()``."""
+        return (await self.answer(request, base_url=base_url)).streams
+
+    async def answer(
+        self,
+        request: StremioStreamRequest,
+        *,
+        base_url: str = "",
+    ) -> StreamAnswer:
         """Resolve streams for a Stremio request.
 
         Args:
@@ -208,19 +223,32 @@ class StremioStreamUseCase:
             base_url: Service base URL for generating proxy play links.
 
         Returns:
-            Sorted list of StremioStream objects, best first.
-            Empty list if title not found or no plugins match.
+            The streams, best first (none when the title is not found or no
+            plugin matches), where their search results came from and
+            whether the answer is complete (``StreamAnswer``).
         """
         with self._telemetry.stage("stremio_request", source="none") as stage:
             stage.annotate(imdb_id=request.imdb_id, content_type=request.content_type)
-            streams = await self._answer(request, base_url, stage)
-            self._telemetry.record("stremio_streams", len(streams))
-            return streams
+            answer = await self._answer(request, base_url, stage)
+            self._telemetry.record("stremio_streams", len(answer.streams))
+            return answer
+
+    def _resolve_late(self, key: str, progress: SearchProgress) -> None:
+        """Results arriving after the answer (a continuing search, a refresh,
+        a completion) resolve in the background for the next request."""
+        if self._resolve_fn is None:
+            return
+        plugin_languages = self._titles.default_languages(
+            self._selector.stream_plugins()
+        )
+        self._resolve_flow.resolve_in_background(
+            key, progress, plugin_languages, self._resolve_fn
+        )
 
     async def _answer(
         self, request: StremioStreamRequest, base_url: str, stage: Stage
-    ) -> list[StremioStream]:
-        """The streams for *request*; sets the request *stage*'s source and
+    ) -> StreamAnswer:
+        """The answer for *request*; sets the request *stage*'s source and
         outcome."""
         started = time.monotonic()
 
@@ -232,7 +260,7 @@ class StremioStreamUseCase:
                 anime.outcome = "not_found" if translated is None else "found"
             if translated is None:
                 stage.outcome = "no_title"
-                return []
+                return _NO_ANSWER
             request = translated
         category = 2000 if request.content_type == "movie" else 5000
 
@@ -241,7 +269,7 @@ class StremioStreamUseCase:
         if not all_names:
             log.warning("stremio_no_stream_plugins")
             stage.outcome = "no_plugins"
-            return []
+            return _NO_ANSWER
 
         with self._telemetry.stage("stremio_phase", phase="metadata") as metadata:
             selected = await self._selector.select(all_names, category)
@@ -255,7 +283,7 @@ class StremioStreamUseCase:
         if primary_title_info is None:
             log.warning("stremio_title_not_found", imdb_id=request.imdb_id)
             stage.outcome = "no_title"
-            return []
+            return _NO_ANSWER
 
         # 3. Search: one search per title, shared by its requests, cached
         key = search_cache_key(request)
@@ -269,6 +297,9 @@ class StremioStreamUseCase:
             scored=len(selected) < len(all_names),
         )
         stage.label(source=source)
+        # Complete: nothing of any plugin is missing, and no search goes on
+        # for the key that a later request would find more from
+        complete = not progress.missing and not self._title_search.running(key)
 
         # 4. Rank, and resolve meanwhile. Cached results can come from
         # plugins this request did not select
@@ -317,7 +348,7 @@ class StremioStreamUseCase:
                     search_done=progress.done,
                 )
             stage.outcome = "empty"
-            return []
+            return StreamAnswer([], source, complete, progress.missing)
 
         # 5. Format
         streams = [
@@ -348,9 +379,12 @@ class StremioStreamUseCase:
             result_count=progress.total,
             filtered_count=len(progress.results),
             stream_count=len(streams),
+            source=source,
+            complete=complete,
+            missing=list(progress.missing),
         )
         stage.outcome = "streams" if streams else "empty"
-        return streams
+        return StreamAnswer(streams, source, complete, progress.missing)
 
     def _spawn[T](self, coro: Coroutine[Any, Any, T]) -> asyncio.Task[T]:
         """Run *coro* as a task that may outlive the request (see aclose)."""

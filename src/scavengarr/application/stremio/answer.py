@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
+from typing import Literal
 
 import structlog
 
@@ -33,6 +34,25 @@ log = structlog.get_logger(__name__)
 
 # Converts search results into streams: (results, plugin_languages=...)
 ConvertFn = Callable[..., list[RankedStream]]
+
+# Where an answer's search results came from (``title_search.SearchSource``),
+# or ``none`` for an answer without a search (no title, no plugins)
+AnswerSource = Literal["cache", "stale", "search", "joined", "none"]
+
+
+@dataclass(frozen=True)
+class StreamAnswer:
+    """A request's streams, and the state of the search behind them.
+
+    The answer is *complete* when no plugin's results are missing from it
+    and no search (a continuing one, a refresh or a completion) runs for
+    its cache key: a later request would find nothing more.
+    """
+
+    streams: list[StremioStream]
+    source: AnswerSource
+    complete: bool
+    missing: tuple[str, ...]  # the plugins whose results the answer lacks
 
 
 async def rank_streams(

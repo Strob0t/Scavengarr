@@ -50,6 +50,10 @@ SearchSource = Literal["cache", "stale", "search", "joined"]
 # registry, which its aclose() cancels
 Spawn = Callable[[Coroutine[Any, Any, None]], asyncio.Task[None]]
 
+# Resolves the results a search delivers after the answer (its cache key
+# and progress) in the background, for the next request
+ResolveLate = Callable[[str, SearchProgress], None]
+
 
 class _Search(Protocol):
     """The search for one cache key; its answer budget counts from *started*."""
@@ -72,6 +76,7 @@ class TitleSearch:
         telemetry: TelemetryPort,
         plugin_timeout_s: float,
         spawn: Spawn,
+        resolve_late: ResolveLate,
     ) -> None:
         self._search_runner = search_runner
         self._titles = titles
@@ -80,6 +85,7 @@ class TitleSearch:
         self._telemetry = telemetry
         self._plugin_timeout_s = plugin_timeout_s
         self._spawn = spawn
+        self._resolve_late = resolve_late
         # Running searches per cache key (single-flight)
         self._searches: dict[str, SearchProgress] = {}
         self._background_searches = asyncio.Semaphore(_BACKGROUND_SEARCHES)
@@ -122,13 +128,13 @@ class TitleSearch:
         stale = self._search_cache.is_stale(entry)
         if stale:
             self._shared_search(
-                key, partial(self._refresh, search(lang_groups)), base=entry
+                key, partial(self._refresh, key, search(lang_groups)), base=entry
             )
         elif entry.missing:
             groups = _only(lang_groups, entry.missing)
             self._shared_search(
                 key,
-                partial(self._complete, search(groups), entry.missing),
+                partial(self._complete, key, search(groups), entry.missing),
                 base=entry,
                 completes=True,
             )
@@ -173,22 +179,38 @@ class TitleSearch:
         if self._searches.get(key) is progress:
             del self._searches[key]
 
-    async def _refresh(self, search: _Search, progress: SearchProgress) -> None:
+    def running(self, key: str) -> bool:
+        """Whether a search (a request's, a refresh or a completion) runs
+        for *key*: a later request may find more than the answer has."""
+        progress = self._searches.get(key)
+        return progress is not None and not progress.done
+
+    async def _refresh(
+        self, key: str, search: _Search, progress: SearchProgress
+    ) -> None:
         """Refresh a stale entry: one title at a time (``_BACKGROUND_SEARCHES``);
         its budget and the entry's age count from the refresh's start, so a
         title that waited keeps its whole time. A plugin that does not
-        finish keeps its earlier results in the entry and is missing."""
+        finish keeps its earlier results in the entry and is missing. The
+        results resolve in the background as they arrive."""
         async with self._background_searches:
             progress.started = time.time()
+            self._resolve_late(key, progress)
             await search(progress, started=time.monotonic())
 
     async def _complete(
-        self, search: _Search, plugins: tuple[str, ...], progress: SearchProgress
+        self,
+        key: str,
+        search: _Search,
+        plugins: tuple[str, ...],
+        progress: SearchProgress,
     ) -> None:
         """Complete an entry: search its missing *plugins* only, one title at
         a time with the refreshes; the end clears ``missing`` whatever each
-        plugin's outcome, so no entry is completed twice."""
+        plugin's outcome, so no entry is completed twice. The results
+        resolve in the background as they arrive."""
         async with self._background_searches:
+            self._resolve_late(key, progress)
             await search(progress, started=time.monotonic())
         log.info(
             "stremio_search_completion",
@@ -219,11 +241,12 @@ class TitleSearch:
         Their title-matching results go into *progress* as they arrive: the
         answers do not wait for the search, they read it. The entry goes
         into the cache at the budget, naming the plugins still to come as
-        missing, again after each of them, and at the end.
+        missing, again after each of them, and at the end; the results
+        arriving after the budget resolve in the background.
         """
         budget_ends = started + self._plugin_timeout_s
         progress.budget_ends = budget_ends
-        self._spawn(progress.write_at(budget_ends))
+        self._spawn(self._at_budget(key, progress, budget_ends))
         with self._telemetry.stage("stremio_phase", phase="search"):
             try:
                 async with self._pool.request() as budget:
@@ -240,6 +263,15 @@ class TitleSearch:
             finally:
                 progress.finish()
         await progress.write()
+
+    async def _at_budget(
+        self, key: str, progress: SearchProgress, budget_ends: float
+    ) -> None:
+        """At the answer budget with the search still running: the entry goes
+        into the cache, and the results from then on resolve in the
+        background for the next request."""
+        if await progress.write_at(budget_ends):
+            self._resolve_late(key, progress)
 
     async def _search_lang_groups(
         self,

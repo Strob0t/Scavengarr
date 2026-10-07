@@ -155,15 +155,18 @@ class SearchProgress:
                 self._changed = False
                 await self._store(self.entry())
 
-    async def write_at(self, when: float) -> None:
+    async def write_at(self, when: float) -> bool:
         """Write the entry at *when* (monotonic), the answer budget, unless
-        the search ends first: its end writes the entry."""
+        the search ends first: its end writes the entry. Returns whether
+        the search was still running at *when*."""
         with contextlib.suppress(TimeoutError):
             async with asyncio.timeout(max(when - time.monotonic(), 0.0)):
                 await self._ended.wait()
-                return
-        if not self.done:
-            await self.write()
+                return False
+        if self.done:
+            return False
+        await self.write()
+        return True
 
     async def wait(self, deadline: float) -> None:
         """Until the search is done, at the latest at *deadline* (monotonic)."""

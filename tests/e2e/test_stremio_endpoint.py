@@ -32,6 +32,7 @@ import structlog
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from scavengarr.application.stremio.answer import StreamAnswer
 from scavengarr.application.stremio.stream_builder import HLS_MASTER
 from scavengarr.application.use_cases.stremio_links import StremioLinks
 from scavengarr.domain.entities.stremio import (
@@ -72,6 +73,11 @@ _PREFIX = "/api/v1"
 
 
 _KITSU_FIXTURES = Path(__file__).parents[1] / "fixtures" / "json" / "kitsu"
+
+
+def _answer(streams: list[StremioStream]) -> StreamAnswer:
+    """The use case's answer: a fresh, complete search."""
+    return StreamAnswer(streams, "search", True, ())
 
 
 def _kitsu_meta(name: str) -> dict[str, Any]:
@@ -522,7 +528,7 @@ class TestStreamEndpoint:
             url="https://voe.sx/e/abc123",
         )
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(return_value=[stream])
+        stream_uc.answer = AsyncMock(return_value=_answer([stream]))
 
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
@@ -542,7 +548,7 @@ class TestStreamEndpoint:
             url="https://voe.sx/e/episode5",
         )
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(return_value=[stream])
+        stream_uc.answer = AsyncMock(return_value=_answer([stream]))
 
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
@@ -554,7 +560,7 @@ class TestStreamEndpoint:
         assert len(data["streams"]) == 1
 
         # Verify the use case received correct parsed request
-        call_args = stream_uc.execute.call_args
+        call_args = stream_uc.answer.call_args
         request: StremioStreamRequest = call_args[0][0]
         assert request.imdb_id == "tt0903747"
         assert request.content_type == "series"
@@ -566,7 +572,7 @@ class TestStreamEndpoint:
             name="Test Movie", description="plugin", url="https://example.com/v"
         )
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(return_value=[stream])
+        stream_uc.answer = AsyncMock(return_value=_answer([stream]))
 
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
@@ -574,14 +580,14 @@ class TestStreamEndpoint:
         resp = client.get(f"{_PREFIX}/stremio/stream/movie/tmdb:12345.json")
 
         assert resp.status_code == 200
-        call_args = stream_uc.execute.call_args
+        call_args = stream_uc.answer.call_args
         request: StremioStreamRequest = call_args[0][0]
         assert request.imdb_id == "tmdb:12345"
         assert request.content_type == "movie"
 
     def test_tmdb_id_series_with_season_episode(self) -> None:
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(return_value=[])
+        stream_uc.answer = AsyncMock(return_value=_answer([]))
 
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
@@ -589,7 +595,7 @@ class TestStreamEndpoint:
         resp = client.get(f"{_PREFIX}/stremio/stream/series/tmdb:67890:2:10.json")
 
         assert resp.status_code == 200
-        call_args = stream_uc.execute.call_args
+        call_args = stream_uc.answer.call_args
         request: StremioStreamRequest = call_args[0][0]
         assert request.imdb_id == "tmdb:67890"
         assert request.season == 2
@@ -606,7 +612,7 @@ class TestStreamEndpoint:
         assert resp.status_code == 200
         assert resp.json()["streams"] == []
         # Use case should NOT have been called
-        stream_uc.execute.assert_not_awaited()
+        stream_uc.answer.assert_not_awaited()
 
     def test_invalid_id_format_returns_empty(self) -> None:
         stream_uc = AsyncMock()
@@ -618,7 +624,7 @@ class TestStreamEndpoint:
 
         assert resp.status_code == 200
         assert resp.json()["streams"] == []
-        stream_uc.execute.assert_not_awaited()
+        stream_uc.answer.assert_not_awaited()
 
     def test_no_stream_uc_returns_empty(self) -> None:
         """When stremio_stream_uc is None, return empty streams."""
@@ -632,7 +638,7 @@ class TestStreamEndpoint:
 
     def test_empty_streams(self) -> None:
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(return_value=[])
+        stream_uc.answer = AsyncMock(return_value=_answer([]))
 
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
@@ -652,7 +658,7 @@ class TestStreamEndpoint:
             for i in range(4)
         ]
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(return_value=streams)
+        stream_uc.answer = AsyncMock(return_value=_answer(streams))
 
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
@@ -669,7 +675,7 @@ class TestStreamEndpoint:
             url="https://voe.sx/e/xyz",
         )
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(return_value=[stream])
+        stream_uc.answer = AsyncMock(return_value=_answer([stream]))
 
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
@@ -683,7 +689,7 @@ class TestStreamEndpoint:
 
     def test_stream_cors_headers(self) -> None:
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(return_value=[])
+        stream_uc.answer = AsyncMock(return_value=_answer([]))
 
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
@@ -695,7 +701,7 @@ class TestStreamEndpoint:
     def test_series_without_season_episode_parsed_as_movie_style(self) -> None:
         """Series ID without :S:E still creates a request (no season/episode)."""
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(return_value=[])
+        stream_uc.answer = AsyncMock(return_value=_answer([]))
 
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
@@ -703,7 +709,7 @@ class TestStreamEndpoint:
         resp = client.get(f"{_PREFIX}/stremio/stream/series/tt0903747.json")
 
         assert resp.status_code == 200
-        call_args = stream_uc.execute.call_args
+        call_args = stream_uc.answer.call_args
         request: StremioStreamRequest = call_args[0][0]
         assert request.imdb_id == "tt0903747"
         assert request.content_type == "series"
@@ -721,7 +727,7 @@ class TestStreamIdParsing:
 
     def _get_streams(self, content_type: str, stream_id: str) -> dict:
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(return_value=[])
+        stream_uc.answer = AsyncMock(return_value=_answer([]))
 
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
@@ -1012,7 +1018,7 @@ class TestErrorHandling:
 
     def test_stream_error_returns_empty_streams(self) -> None:
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(side_effect=RuntimeError("plugin timeout"))
+        stream_uc.answer = AsyncMock(side_effect=RuntimeError("plugin timeout"))
 
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
@@ -1024,7 +1030,7 @@ class TestErrorHandling:
 
     def test_stream_error_has_cors_headers(self) -> None:
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(side_effect=RuntimeError("boom"))
+        stream_uc.answer = AsyncMock(side_effect=RuntimeError("boom"))
 
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)

@@ -324,7 +324,7 @@ async def stremio_stream(
         return _empty_streams()
 
     try:
-        streams = await uc.execute(parsed, base_url=str(request.base_url).rstrip("/"))
+        answer = await uc.answer(parsed, base_url=str(request.base_url).rstrip("/"))
     except Exception:
         log.exception(
             "stremio_stream_error",
@@ -335,12 +335,15 @@ async def stremio_stream(
         )
         return _empty_streams()
 
-    stremio_streams = [_format_stremio_stream(s) for s in streams]
+    stremio_streams = [_format_stremio_stream(s) for s in answer.streams]
 
     log.info(
         "stremio_stream_response",
         imdb_id=parsed.imdb_id,
         streams_returned=len(stremio_streams),
+        source=answer.source,
+        complete=answer.complete,
+        missing_count=len(answer.missing),
     )
 
     return JSONResponse(content={"streams": stremio_streams}, headers=_CORS_HEADERS)

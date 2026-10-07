@@ -154,7 +154,7 @@ class TestMissingPlugins:
         progress.add([_sr("a")], [_sr("a")])
         await progress.plugin_done("a", True)
 
-        await progress.write_at(time.monotonic() + 0.02)
+        assert await progress.write_at(time.monotonic() + 0.02)
 
         first = store.await_args_list[0].args[0]
         assert [r.download_link for r in first.results] == ["a"]
@@ -186,7 +186,7 @@ class TestMissingPlugins:
         progress = SearchProgress(store=store)
         asyncio.get_running_loop().call_later(0.01, progress.finish)
 
-        await progress.write_at(time.monotonic() + 5)
+        assert not await progress.write_at(time.monotonic() + 5)
 
         store.assert_not_awaited()
 

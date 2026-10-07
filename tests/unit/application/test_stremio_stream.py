@@ -12,6 +12,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
 
+from scavengarr.application.stremio.answer import StreamAnswer
 from scavengarr.application.stremio.search_cache import CachedSearch
 from scavengarr.application.use_cases.stremio_stream import (
     StremioStreamUseCase,
@@ -22,6 +23,7 @@ from scavengarr.domain.entities.stremio import (
     TitleMatchInfo,
 )
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.concurrency import ConcurrencyPool
 from scavengarr.infrastructure.telemetry import Telemetry
 from scavengarr.infrastructure.telemetry.tracing import Tracing
 
@@ -33,6 +35,7 @@ from .stremio_support import (
     VOE_2,
     Resolutions,
     answering_use_case,
+    cached_links,
     cached_use_case,
     eventually,
     fake_site,
@@ -613,6 +616,78 @@ class TestCachedAnswers:
         await uc.aclose()
 
         assert resolutions.cancelled.is_set()
+
+
+def _of(plugin: str, link: str) -> SearchResult:
+    result = hit(link)
+    result.metadata["source_plugin"] = plugin
+    return result
+
+
+class TestAnswerState:
+    """The answer says where its results came from and whether it is
+    complete: no plugin missing from it, no search running for its key
+    (continue-cut-searches)."""
+
+    async def test_a_complete_cached_entry(self) -> None:
+        uc = from_cache([hoster_link(VOE)], Resolutions(alive=(VOE,)))
+
+        answer = await uc.answer(make_request(), base_url="http://localhost:8080")
+
+        assert (answer.source, answer.complete, answer.missing) == ("cache", True, ())
+        assert [video(uc, s) for s in answer.streams] == [
+            "https://cdn.example/best.mp4"
+        ]
+
+    async def test_at_the_budget_with_a_plugin_still_searching(self) -> None:
+        cache = memory_cache()
+        sites = {
+            "first": fake_site([hit("https://voe.sx/e/first")], delay=0.3),
+            "second": fake_site([hit("https://dood.to/e/second")], delay=0.2),
+        }
+        uc = answering_use_case(
+            sites,
+            cache,
+            Resolutions(),
+            plugin_timeout_seconds=0.4,
+            stream_deadline_seconds=2.0,
+            pool=ConcurrencyPool(httpx_slots=1, pw_slots=1),
+        )
+
+        answer = await uc.answer(make_request(), base_url="http://localhost:8080")
+
+        assert (answer.source, answer.complete) == ("search", False)
+        assert answer.missing == ("second",)
+        await eventually(lambda: len(cached_links(cache)) == 2)
+
+    async def test_a_partial_entry_until_its_completion(self) -> None:
+        cache = memory_cache()
+        cache.data[SEARCH_KEY] = CachedSearch(
+            results=[_of("a", VOE)], total=1, stored_at=time.time(), missing=("b",)
+        )
+        sites = {"a": fake_site([]), "b": fake_site([hit(DOOD)])}
+        uc = answering_use_case(sites, cache, Resolutions(alive=(VOE,)))
+
+        answer = await uc.answer(make_request(), base_url="http://localhost:8080")
+        assert (answer.source, answer.complete) == ("cache", False)
+        assert answer.missing == ("b",)
+
+        await eventually(lambda: cache.data[SEARCH_KEY].missing == ())
+        later = await uc.answer(make_request(), base_url="http://localhost:8080")
+        assert later.complete
+        assert later.missing == ()
+
+    async def test_without_a_title(self) -> None:
+        tmdb = AsyncMock()
+        tmdb.get_title_and_year = AsyncMock(return_value=None)
+        plugins = MagicMock()
+        plugins.get_languages.return_value = ["de"]
+        plugins.get_by_provides.side_effect = lambda p: ["a"] if p == "stream" else []
+        uc = make_use_case(tmdb=tmdb, plugins=plugins)
+
+        answer = await uc.answer(make_request())
+
+        assert answer == StreamAnswer([], "none", True, ())
 
 
 class TestMirrorScores:

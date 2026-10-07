@@ -11,6 +11,7 @@ import asyncio
 import time
 from unittest.mock import AsyncMock, MagicMock
 
+from scavengarr.application.stremio.search_cache import CachedSearch
 from scavengarr.application.use_cases.stremio_stream import StremioStreamUseCase
 from scavengarr.domain.entities.stremio import (
     ResolvedStream,
@@ -22,6 +23,8 @@ from scavengarr.infrastructure.concurrency import ConcurrencyPool
 
 from .stremio_support import (
     DOOD,
+    SEARCH_KEY,
+    SEARCH_TTL,
     VOE,
     ClaimSeeing,
     Resolutions,
@@ -448,6 +451,65 @@ class TestBackgroundResolutions:
         claim = resolutions.claims[DOOD]
         assert claim is not None
         assert claim.kind == "background"
+
+
+def _of(plugin: str, link: str) -> SearchResult:
+    result = hit(link)
+    result.metadata["source_plugin"] = plugin
+    return result
+
+
+class TestLateResults:
+    """Results arriving after the answer resolve in the background, so the
+    next request finds their outcomes cached (continue-cut-searches)."""
+
+    async def test_the_continuing_searchs_results(self) -> None:
+        """One slot: the second plugin answers after the budget. Its link
+        resolves in the background; the next request answers at once with
+        both streams, resolving nothing again."""
+        cache = memory_cache()
+        resolutions = Resolutions()
+        sites = {
+            "first": fake_site([hit("https://voe.sx/e/first")], delay=0.3),
+            "second": fake_site([hit("https://dood.to/e/second")], delay=0.2),
+        }
+        uc = answering_use_case(
+            sites,
+            cache,
+            resolutions,
+            plugin_timeout_seconds=0.4,
+            stream_deadline_seconds=2.0,
+            pool=ConcurrencyPool(httpx_slots=1, pw_slots=1),
+        )
+
+        first = await uc.execute(make_request(), base_url="http://localhost:8080")
+        await eventually(lambda: "https://dood.to/e/second" in resolutions.store)
+        await eventually(lambda: len(cached_links(cache)) == 2)
+        started = time.monotonic()
+        streams = await uc.execute(make_request(), base_url="http://localhost:8080")
+
+        assert [video(uc, s) for s in first] == ["https://cdn.example/first.mp4"]
+        assert time.monotonic() - started < 0.1
+        assert sorted(video(uc, s) for s in streams) == [
+            "https://cdn.example/first.mp4",
+            "https://cdn.example/second.mp4",
+        ]
+        assert resolutions.calls.count("https://dood.to/e/second") == 1
+
+    async def test_a_refreshs_results(self) -> None:
+        cache = memory_cache()
+        cache.data[SEARCH_KEY] = CachedSearch(
+            results=[_of("a", "https://voe.sx/e/old")],
+            total=1,
+            stored_at=time.time() - SEARCH_TTL - 1,
+        )
+        resolutions = Resolutions(alive=("https://voe.sx/e/old",))
+        site = fake_site([hit("https://voe.sx/e/new")])
+        uc = answering_use_case({"a": site}, cache, resolutions)
+
+        await uc.execute(make_request(), base_url="http://localhost:8080")
+
+        await eventually(lambda: "https://voe.sx/e/new" in resolutions.store)
 
 
 class TestAnswerPolicy:

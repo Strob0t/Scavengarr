@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from scavengarr.application.stremio.answer import StreamAnswer
 from scavengarr.application.use_cases.stremio_links import StremioLinks
 from scavengarr.domain.entities.stremio import (
     CachedStreamLink,
@@ -19,6 +20,11 @@ from scavengarr.interfaces.api.stremio.router import (
     _parse_stream_id,
     router,
 )
+
+
+def _answer(streams: list[StremioStream]) -> StreamAnswer:
+    """The use case's answer: a fresh, complete search."""
+    return StreamAnswer(streams, "search", True, ())
 
 
 def _make_app(
@@ -392,14 +398,16 @@ class TestStreamEndpoint:
 
     def test_returns_streams_for_movie(self) -> None:
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(
-            return_value=[
-                StremioStream(
-                    name="hdfilme HD 1080P",
-                    description="German Dub | VOE | 4.5 GB",
-                    url="https://voe.sx/e/abc123",
-                ),
-            ]
+        stream_uc.answer = AsyncMock(
+            return_value=_answer(
+                [
+                    StremioStream(
+                        name="hdfilme HD 1080P",
+                        description="German Dub | VOE | 4.5 GB",
+                        url="https://voe.sx/e/abc123",
+                    ),
+                ]
+            )
         )
 
         app = _make_app(stremio_stream_uc=stream_uc)
@@ -424,14 +432,16 @@ class TestStreamEndpoint:
 
     def test_returns_streams_for_tmdb_movie(self) -> None:
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(
-            return_value=[
-                StremioStream(
-                    name="hdfilme HD 1080P",
-                    description="German Dub | VOE | 5.0 GB",
-                    url="https://voe.sx/e/xyz789",
-                ),
-            ]
+        stream_uc.answer = AsyncMock(
+            return_value=_answer(
+                [
+                    StremioStream(
+                        name="hdfilme HD 1080P",
+                        description="German Dub | VOE | 5.0 GB",
+                        url="https://voe.sx/e/xyz789",
+                    ),
+                ]
+            )
         )
 
         app = _make_app(stremio_stream_uc=stream_uc)
@@ -444,14 +454,14 @@ class TestStreamEndpoint:
         assert len(streams) >= 1
         assert "url" in streams[0]
         # Verify the parsed request was passed to use case
-        stream_uc.execute.assert_awaited_once()
-        call_arg = stream_uc.execute.call_args[0][0]
+        stream_uc.answer.assert_awaited_once()
+        call_arg = stream_uc.answer.call_args[0][0]
         assert call_arg.imdb_id == "tmdb:238"
         assert call_arg.content_type == "movie"
 
     def test_tmdb_series_resolves_with_season_episode(self) -> None:
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(return_value=[])
+        stream_uc.answer = AsyncMock(return_value=_answer([]))
 
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
@@ -459,15 +469,15 @@ class TestStreamEndpoint:
         resp = client.get("/api/v1/stremio/stream/series/tmdb:1396:3:7.json")
 
         assert resp.status_code == 200
-        stream_uc.execute.assert_awaited_once()
-        call_arg = stream_uc.execute.call_args[0][0]
+        stream_uc.answer.assert_awaited_once()
+        call_arg = stream_uc.answer.call_args[0][0]
         assert call_arg.imdb_id == "tmdb:1396"
         assert call_arg.season == 3
         assert call_arg.episode == 7
 
     def test_series_search_includes_season_episode(self) -> None:
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(return_value=[])
+        stream_uc.answer = AsyncMock(return_value=_answer([]))
 
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
@@ -475,15 +485,15 @@ class TestStreamEndpoint:
         resp = client.get("/api/v1/stremio/stream/series/tt0903747:1:1.json")
 
         assert resp.status_code == 200
-        stream_uc.execute.assert_awaited_once()
-        call_arg = stream_uc.execute.call_args[0][0]
+        stream_uc.answer.assert_awaited_once()
+        call_arg = stream_uc.answer.call_args[0][0]
         assert call_arg.imdb_id == "tt0903747"
         assert call_arg.season == 1
         assert call_arg.episode == 1
 
     def test_returns_empty_when_no_plugins(self) -> None:
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(return_value=[])
+        stream_uc.answer = AsyncMock(return_value=_answer([]))
 
         app = _make_app(stremio_stream_uc=stream_uc, plugin_names=[])
         client = TestClient(app)
