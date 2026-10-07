@@ -287,6 +287,21 @@ class TestMeasurement:
         assert check == PlaybackCheck(playable=True, size_bytes=1_500_000_000)
 
     @respx.mock
+    async def test_a_playlists_range_answer_is_no_file_size(self) -> None:
+        # A CDN answering the playlist with 206 sizes the playlist (53
+        # bytes), which Stremio showed as "1 MB"
+        playlist = b"#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXTINF:6.0,\nseg0.ts\n"
+        respx.get(_M3U8).respond(
+            206,
+            content=playlist,
+            headers={"Content-Range": f"bytes 0-{len(playlist) - 1}/{len(playlist)}"},
+        )
+
+        check = await _measure(ResolvedStream(_M3U8, is_hls=True))
+
+        assert check == PlaybackCheck(playable=True)
+
+    @respx.mock
     @pytest.mark.parametrize("content_range", ["bytes 0-4095/*", None])
     async def test_an_unknown_total_gives_no_size(
         self, content_range: str | None

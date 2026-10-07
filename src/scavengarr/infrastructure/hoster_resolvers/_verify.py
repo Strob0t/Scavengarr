@@ -125,7 +125,7 @@ async def check_playable(
     HTML page, or (for HLS) a body that is no playlist means the player
     would fail, so the stream is not playable. A playable stream comes with
     what the bytes tell without another request: the largest variant of a
-    master playlist and the total size of a range answer.
+    master playlist and the total size of a file's range answer.
 
     A failed request (timeout, reset) raises ``httpx.HTTPError``: it says
     nothing about the stream.
@@ -162,7 +162,9 @@ async def check_playable(
     else:
         variant = _largest_variant(head) if stream.is_hls else None
         width, height = variant or (None, None)
-        return PlaybackCheck(True, width, height, _total_size(content_range))
+        # A playlist's range answer sizes the playlist, not the video
+        size = None if stream.is_hls else _total_size(content_range)
+        return PlaybackCheck(True, width, height, size)
     log.info(
         "playback_check_failed",
         cdn=extract_domain(stream.video_url),
