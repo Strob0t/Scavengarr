@@ -16,8 +16,8 @@ from `origin/staging`, after step 21 is complete and before step 19.
 
 ## 2. The stored link and the URL
 
-- [ ] 2.1 `CachedStreamLink.address_bound: bool = False`; `with_resolution` (`application/stremio/stream_builder.py`) copies it from the resolved stream; `infrastructure/persistence/stream_link_cache.py` stores and reads it, a record from before the change reads `False` (test with such a record).
-- [ ] 2.2 `FILE_NAME = "file"` next to `HLS_MASTER`; `build_stream_from_resolved`: `is_hls` unchanged; `address_bound` and not HLS → `/api/v1/stremio/proxy/<id>/file` with the HLS proxy stream's behaviour hints and no `proxyHeaders`; else unchanged. Tests in `tests/unit/application/test_stream_builder.py`: bound file, unbound file, HLS, VEEV stays on `/play`.
+- [x] 2.1 `CachedStreamLink.address_bound: bool = False`; `with_resolution` (`application/stremio/stream_builder.py`) copies it from the resolved stream; `infrastructure/persistence/stream_link_cache.py` stores and reads it, a record from before the change reads `False` (test with such a record).
+- [x] 2.2 `FILE_NAME = "file"` next to `HLS_MASTER`; `build_stream_from_resolved`: `is_hls` unchanged; `address_bound` and not HLS → `/api/v1/stremio/proxy/<id>/file` with the HLS proxy stream's behaviour hints and no `proxyHeaders`; else unchanged. Tests in `tests/unit/application/test_stream_builder.py`: bound file, unbound file, HLS, VEEV stays on `/play`.
 
 ## 3. The pass-through
 

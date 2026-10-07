@@ -29,6 +29,7 @@ def _serialize_link(link: CachedStreamLink) -> str:
             "video_headers": link.video_headers,
             "is_hls": link.is_hls,
             "resolved_at": link.resolved_at,
+            "address_bound": link.address_bound,
         }
     )
 
@@ -45,6 +46,7 @@ def _deserialize_link(data: str) -> CachedStreamLink:
         video_headers=d.get("video_headers", ""),
         is_hls=d.get("is_hls", False),
         resolved_at=d.get("resolved_at", 0.0),
+        address_bound=d.get("address_bound", False),
     )
 
 

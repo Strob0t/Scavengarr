@@ -7,6 +7,7 @@ from dataclasses import replace
 import pytest
 
 from scavengarr.application.stremio.stream_builder import (
+    FILE_NAME,
     HLS_MASTER,
     apply_resolution,
     build_cache_link,
@@ -449,6 +450,48 @@ class TestBuildStreamFromResolved:
         assert result.behavior_hints["bingeGroup"] == "scavengarr|de"
         assert result.behavior_hints["notWebReady"] is True
 
+    def test_an_address_bound_file_goes_through_the_file_proxy(self) -> None:
+        """Its CDN plays the file only for the address that resolved it
+        (finding 17): the proxy fetches it, so the player needs no
+        headers."""
+        result = self._build(
+            ResolvedStream(
+                video_url="https://cdn.mixdrop.example/v.mp4?s=abc",
+                headers={"Referer": "https://mixdrop.ag/"},
+                address_bound=True,
+            )
+        )
+        assert result.url == (
+            f"{self._BASE_URL}/api/v1/stremio/proxy/{self._SID}/{FILE_NAME}"
+        )
+        assert result.behavior_hints == {
+            "bingeGroup": "scavengarr|de",
+            "notWebReady": True,
+        }
+
+    def test_an_address_bound_hls_stream_keeps_its_playlist_proxy(self) -> None:
+        result = self._build(
+            ResolvedStream(
+                video_url="https://cdn.example.com/video/master.m3u8",
+                is_hls=True,
+                address_bound=True,
+            )
+        )
+        assert result.url.endswith(f"/proxy/{self._SID}/{HLS_MASTER}")
+
+    def test_a_client_bound_file_stays_on_play(self) -> None:
+        """VEEV binds the URL to the player's headers, not to the address:
+        /play resolves it for the player, which then fetches the CDN
+        itself."""
+        result = self._build(
+            ResolvedStream(
+                video_url="https://cdn.veev.example/v.mp4",
+                headers={"User-Agent": "Stremio/1.0", "Accept-Language": "de"},
+            )
+        )
+        assert result.url == f"{self._BASE_URL}/api/v1/stremio/play/{self._SID}"
+        assert "proxyHeaders" in result.behavior_hints
+
     def test_echo_url_returns_none(self) -> None:
         """When resolver echoes back the embed page URL, skip it."""
         original = "https://voe.sx/e/abc123"
@@ -503,6 +546,20 @@ class TestStreamLinks:
         assert link.video_headers == '{"Referer": "https://voe.sx/"}'
         assert link.is_hls is False
         assert link.resolved_at > 0
+
+    def test_the_link_carries_the_address_binding(self) -> None:
+        ranked = RankedStream(url="https://dood.to/e/a", hoster="doodstream")
+        resolved = ResolvedStream(
+            video_url="https://cdn.dood.example/a.mp4", address_bound=True
+        )
+
+        assert build_cache_link("sid", ranked, resolved).address_bound is True
+        assert (
+            build_cache_link(
+                "sid", ranked, ResolvedStream(video_url="https://cdn.example/a.mp4")
+            ).address_bound
+            is False
+        )
 
     def test_the_link_keeps_the_time_of_the_resolution(self) -> None:
         """A resolution from the registry's cache can be an hour old."""

@@ -137,6 +137,44 @@ class TestCacheStreamLinkRepository:
         call_kwargs = mock_cache.set.call_args[1]
         assert call_kwargs["ttl"] == 7 * 24 * 3600
 
+    async def test_the_address_binding_round_trips(self, mock_cache: AsyncMock) -> None:
+        link = CachedStreamLink(
+            stream_id="file1",
+            hoster_url="https://mixdrop.ag/e/abc",
+            hoster="mixdrop",
+            video_url="https://cdn.mixdrop.example/v.mp4",
+            address_bound=True,
+        )
+        mock_cache.get = AsyncMock(return_value=_serialize_link(link))
+        repo = CacheStreamLinkRepository(cache=mock_cache)
+
+        result = await repo.get("file1")
+
+        assert result is not None
+        assert result.address_bound is True
+
+    async def test_a_record_from_before_the_binding_reads_unbound(
+        self, mock_cache: AsyncMock
+    ) -> None:
+        """A stored link from before the change keeps /play."""
+        old_data = json.dumps(
+            {
+                "stream_id": "old2",
+                "hoster_url": "https://mixdrop.ag/e/abc",
+                "hoster": "mixdrop",
+                "video_url": "https://cdn.mixdrop.example/v.mp4",
+                "is_hls": False,
+                "resolved_at": 1791200000.5,
+            }
+        )
+        mock_cache.get = AsyncMock(return_value=old_data)
+        repo = CacheStreamLinkRepository(cache=mock_cache)
+
+        result = await repo.get("old2")
+
+        assert result is not None
+        assert result.address_bound is False
+
     async def test_save_includes_hls_proxy_fields(self, mock_cache: AsyncMock) -> None:
         link = CachedStreamLink(
             stream_id="hls1",

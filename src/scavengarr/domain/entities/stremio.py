@@ -119,7 +119,8 @@ class CachedStreamLink:
     The hoster URL stays so the stream can be resolved again: ``/play``
     redirects to ``video_url`` and the HLS proxy fetches it (with
     ``video_headers``) while it is fresh (``resolved_at``), else they
-    resolve the hoster URL again.
+    resolve the hoster URL again. An address-bound file (``address_bound``)
+    is fetched by the proxy as well.
     """
 
     stream_id: str
@@ -130,6 +131,7 @@ class CachedStreamLink:
     video_headers: str = ""  # JSON-encoded headers dict for the CDN
     is_hls: bool = False  # whether the stream is HLS
     resolved_at: float = 0.0  # time.time() of video_url's resolution; 0: none
+    address_bound: bool = False  # the file plays through /proxy/<id>/file
 
 
 @dataclass(frozen=True)

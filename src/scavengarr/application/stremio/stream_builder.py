@@ -26,6 +26,9 @@ _ADDON_NAME = "Scavengarr"
 # playlist under it, whatever the CDN names it (a new resolution may change
 # the name and its tokens)
 HLS_MASTER = "scavengarr.m3u8"
+# The proxy path of an address-bound file (``ResolvedStream.address_bound``):
+# a byte-range pass-through of the current video URL
+FILE_NAME = "file"
 
 _QUALITY_LABELS: dict[StreamQuality, str] = {
     StreamQuality.UHD_4K: "4K",
@@ -264,6 +267,7 @@ def with_resolution(
         video_url=resolved.video_url,
         video_headers=json.dumps(resolved.headers) if resolved.headers else "",
         is_hls=resolved.is_hls,
+        address_bound=resolved.address_bound,
         # A resolution from the registry's cache can be an hour old
         resolved_at=resolved.resolved_at or time.time(),
     )
@@ -288,14 +292,18 @@ def build_stream_from_resolved(
     next episode, "Continue Watching"): HLS through the proxy (a redirect
     to a playlist fails on Android, stremio-bugs #1574; the proxy also
     sends the CDN's headers on every sub-request), a file through
-    ``/play/`` (a redirect to the current video URL).
+    ``/play/`` (a redirect to the current video URL), unless its CDN plays
+    it only for the address that resolved it (``address_bound``): such a
+    file goes through the proxy's ``FILE_NAME`` path, a byte-range
+    pass-through, so the player needs no headers of its own.
     """
     if not is_direct_video_url(resolved, original_url):
         return None
 
     playback: dict[str, Any]
-    if resolved.is_hls:
-        url = f"{base_url}/api/v1/stremio/proxy/{sid}/{HLS_MASTER}"
+    if resolved.is_hls or resolved.address_bound:
+        name = HLS_MASTER if resolved.is_hls else FILE_NAME
+        url = f"{base_url}/api/v1/stremio/proxy/{sid}/{name}"
         playback = {"notWebReady": True}
     else:
         url = f"{base_url}/api/v1/stremio/play/{sid}"
