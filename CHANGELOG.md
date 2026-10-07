@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Chore: Series Episode Audit
+- Whether the Stremio episode filter keeps wrong episodes, and which plugins' series hits a stricter filter would lose, was unmeasured. `scripts/probes/series_episodes.py` (run in the dev container with `python -P`) starts the app's composition and runs every stream plugin's search for the round's series and Severance S01E05/S02E05, as a Stremio request would, and classifies each title-matching result: numbering (plugin metadata, else the release name), the filter's outcome (kept, narrowed, dropped), right episode, and leaks (kept results whose title or link labels name another episode). The baseline in `docs/plans/series-episodes.md`: no leaks in 76 results; aniworld, fireani and kinoger return their series hits without any episode information (aniworld and fireani do fetch the requested episode), so the stricter filter of step 21 needs their `metadata` season and episode first.
+
 ### Changed: Cut Searches Continue
 - A Stremio request's plugin search was cut at `plugin_timeout_seconds` after the request start: every plugin still running was cancelled and contributed nothing, a plugin waiting for a slot was skipped, and the results of the plugins that had finished were cached as the whole answer for `search_ttl_seconds` (Severance S01E05 in production, 2026-10-07: sto cancelled at the 30 s mark, 2 results served for 30 minutes). Every plugin now gets its full `plugin_timeout_seconds` from the moment it holds a slot and runs when it gets one; the same number is the request's answer budget, which cuts no plugin: one that returns after it is `late` in the metrics, and its results reach the cache and the next request. A timeout always counts for the plugin's breaker, since the plugin had its whole time ([Stremio addon](docs/features/stremio-addon.md), `openspec/changes/continue-cut-searches/`).
 

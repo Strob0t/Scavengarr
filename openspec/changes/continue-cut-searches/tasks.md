@@ -8,8 +8,8 @@ audit's baseline (7.1) must run before the filter change (6) ships.
 
 ## 1. Audit baseline
 
-- [ ] 1.1 `scripts/probes/series_episodes.py`: runs the plugin searches for the series ids of `docs/plans/round-titles.txt` plus Severance (`tt11280740`) S01E05 and S02E05 against a dev server or through the plugin registry; per plugin: results, with season and episode, with episode only, without either, kept, narrowed, dropped, leaks. Markdown table; `--json`.
-- [ ] 1.2 Baseline run on the dev server with today's filter, table into `docs/plans/series-episodes.md` ("Before").
+- [x] 1.1 `scripts/probes/series_episodes.py`: runs the plugin searches for the series ids of `docs/plans/round-titles.txt` plus Severance (`tt11280740`) S01E05 and S02E05 against a dev server or through the plugin registry; per plugin: results, with season and episode, with episode only, without either, kept, narrowed, dropped, leaks. Markdown table; `--json`.
+- [x] 1.2 Baseline run on the dev server with today's filter, table into `docs/plans/series-episodes.md` ("Before").
 
 ## 2. Runner: no cut at the deadline
 
