@@ -118,3 +118,22 @@ async def metrics(request: Request) -> JSONResponse:
         }
 
     return JSONResponse(content=data)
+
+
+@router.get("/plugins")
+async def plugins(request: Request) -> JSONResponse:
+    """The plugins' long-term record.
+
+    Per plugin and UTC day: searches, results, timeouts, checks of its site
+    and the checks that found it unreachable (``days``), with the last day
+    that gave a result and the unreachable share over the last 30, 90 and
+    180 days. Evidence for keeping or dropping a plugin; 503 before the
+    record is wired in.
+    """
+    state = cast(AppState, request.app.state)
+    history = getattr(state, "plugin_history", None)
+    if history is None:
+        return JSONResponse(
+            status_code=503, content={"error": "plugin_history_not_enabled"}
+        )
+    return JSONResponse(content=history.report())

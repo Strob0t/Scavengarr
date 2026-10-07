@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: The Plugins' Long-Term Record
+- Whether a plugin whose site died stays, is disabled by default or is removed was a guess from one round's numbers. `PluginHistory` (`infrastructure/plugins/history.py`) now counts per plugin and UTC day how often it was searched, how many results it gave, how often it ran into its timeout (`PluginSearchRunner`), how often its site was checked and found unreachable (`PluginHealthMonitor`), 180 days in the cache backend (`plugin_history:v1`, written every minute when it changed and at shutdown, restored at the start). `GET /api/v1/stats/plugins` reports it with each plugin's last day with a result and its unreachable share over 30, 90 and 180 days; the production digest reads it. The decision stays the maintainer's, from months of this record.
+
 ### Added: Checks in Worktrees
 - A git worktree has no `.venv`, so `poetry run pre-commit`, the basedpyright hook and `poetry run pytest` ended there with `Command not found` (Poetry created an empty venv). `scripts/worktree_venv.sh` links the worktree's `.venv` to the main checkout's venv once, and the basedpyright hook runs `scripts/basedpyright.sh`, which finds that venv by itself (the active venv first, so CI's Poetry venv counts; then `.venv`; then the lookup of the LSP plugin's `langserver.sh`); both scripts are stored executable (AGENTS.md §9). pytest puts the checkout's own `src` first (`pythonpath` in `pyproject.toml`), because the linked venv's editable install points at the main checkout.
 

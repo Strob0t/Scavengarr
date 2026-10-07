@@ -440,6 +440,7 @@ Plugins declare `languages: list[str]` (default `["de"]`). The use case groups p
 | `tests/unit/application/test_hoster_resolution.py` | `HosterResolution` (resolution while the search runs) |
 | `tests/unit/application/test_stremio_links.py` | `StremioLinks` (resolving again, refused playlists, pinned copies, per-player links) |
 | `tests/unit/infrastructure/test_plugin_health.py` | `PluginHealthMonitor` |
+| `tests/unit/infrastructure/test_plugin_history.py` | `PluginHistory` (the plugins' long-term record: counters, day boundary, the 180-day window, restarts) |
 | `tests/unit/interfaces/test_mirror_groups.py` | The mirror groups the plugins declare |
 | `tests/unit/application/test_stremio_queries.py` | Search queries and multi-language references |
 | `tests/unit/application/test_stremio_stream_builder.py` | Stream formatting, dedup, direct-video detection, proxy URLs |
@@ -488,6 +489,7 @@ Plugins declare `languages: list[str]` (default `["de"]`). The use case groups p
 | Answer (ranking, measured quality, stream links, proxy URLs) | `src/scavengarr/application/stremio/answer.py` |
 | Stream links (`/play`, HLS proxy) | `src/scavengarr/application/use_cases/stremio_links.py` |
 | Plugin health monitor | `src/scavengarr/infrastructure/plugins/health_monitor.py` |
+| Plugin long-term record | `src/scavengarr/infrastructure/plugins/history.py` ([Observability](./observability.md#plugin-record)) |
 | Query building | `src/scavengarr/application/stremio/queries.py` |
 | Stream building | `src/scavengarr/application/stremio/stream_builder.py` |
 | Stream converter | `src/scavengarr/infrastructure/stremio/stream_converter.py` |

@@ -129,6 +129,7 @@ Ports define the boundaries between Application and Infrastructure. All are `Pro
 | `PluginScoreStorePort` | `ports/plugin_score_store.py` | async | `get_snapshot`, `put_snapshot`, `list_snapshots`, `get_last_run`, `set_last_run` |
 | `TmdbClientPort` | `ports/tmdb.py` | async | `find_by_imdb_id`, `get_title_and_year`, `get_title_by_tmdb_id`, `trending_movies`, `trending_tv`, `search_movies`, `search_tv` |
 | `AnimeIdResolverPort` | `ports/anime_ids.py` | async | `translate` (a `kitsu:` request → the IMDb request, or `None`); `NO_ANIME_IDS` translates nothing |
+| `PluginHistoryPort` | `ports/plugin_history.py` | sync | `count` (a plugin's `searches`, `results`, `timeouts`, `checks` or `unreachable` of today); `NO_PLUGIN_HISTORY` counts nothing |
 | `ConcurrencyPoolPort` | `ports/concurrency.py` | async context manager | `request()` → `ConcurrencyBudgetPort` |
 | `ConcurrencyBudgetPort` | `ports/concurrency.py` | async context manager | `acquire_httpx()`, `acquire_pw()` |
 | `BrowserFetcherPort` | `ports/browser_fetcher.py` | async | `fetch_text`, `resolve_redirect`, `click_through`, `session` |
@@ -261,6 +262,7 @@ Infrastructure implements the ports defined by Domain and provides concrete adap
 | `PluginScoreStorePort` | `CachePluginScoreStore` | `persistence/plugin_score_cache.py` |
 | `TmdbClientPort` | `HttpxTmdbClient` / `ImdbFallbackClient` | `tmdb/client.py` / `tmdb/imdb_fallback.py` |
 | `AnimeIdResolverPort` | `KitsuAnimeIdResolver` (`KitsuAddonClient`, `AnimeIdLists`) | `anime/` |
+| `PluginHistoryPort` | `PluginHistory` (the record in `CachePort`, 180 days) | `plugins/history.py` |
 | `HosterResolverPort` | `XFSResolver`, `GenericDDLResolver`, dedicated `*Resolver` classes | `hoster_resolvers/` |
 | `ClientBoundResolverPort` | `VeevResolver` | `hoster_resolvers/veev.py` |
 | `ConcurrencyPoolPort` | `ConcurrencyPool` (budget: `RequestBudget`) | `concurrency.py` |
@@ -270,7 +272,7 @@ Infrastructure implements the ports defined by Domain and provides concrete adap
 ### Subsystems
 
 - **Cache** (`cache/`): two interchangeable adapters behind `CachePort`. A factory function (`create_cache()`) selects the backend based on configuration.
-- **Plugins** (`plugins/`): discovery, loading and caching of Python plugins. `PluginRegistry` indexes `.py` files lazily and caches loaded plugins in memory. All plugins inherit from `HttpxPluginBase` or `PlaywrightPluginBase`; Playwright plugins share one Chromium via `SharedBrowserPool`.
+- **Plugins** (`plugins/`): discovery, loading and caching of Python plugins. `PluginRegistry` indexes `.py` files lazily and caches loaded plugins in memory. All plugins inherit from `HttpxPluginBase` or `PlaywrightPluginBase`; Playwright plugins share one Chromium via `SharedBrowserPool`. `PluginHealthMonitor` checks the Stremio plugins' sites periodically; `PluginHistory` keeps the plugins' long-term record (searches, results, timeouts, checks and unreachable marks per day, 180 days) in `CachePort` across restarts, for `GET /api/v1/stats/plugins` and the production digest.
 - **Search Engine** (`torznab/search_engine.py`): `HttpxSearchEngine` validates links on plugin results — batch HEAD/GET via `HttpLinkValidator`, promotes alternative links when the primary is dead, drops results with no valid link; results with `validated_links` already set pass through unchanged.
 - **Presenter** (`torznab/presenter.py`): renders Domain entities (`TorznabCaps`, `TorznabItem`) to Torznab-compliant RSS 2.0 XML.
 - **Validation** (`validation/`): HTTP link validation with HEAD-first, GET-fallback strategy, bounded concurrency (global and per host), an in-memory TTL result cache and a skip list for hosts that refuse connections (60 s, doubling up to 15 min).
@@ -306,7 +308,7 @@ The Interfaces layer handles input/output exclusively. It contains no business l
 | `api/torznab/router.py` | `GET /api/v1/torznab/indexers`, `GET /api/v1/torznab/{plugin_name}` (caps/search), `GET /api/v1/torznab/{plugin_name}/health` |
 | `api/download/router.py` | `GET /api/v1/download/{job_id}` (serves `.crawljob` files), `GET /api/v1/download/{job_id}/info` |
 | `api/stremio/router.py` | Stremio addon: `manifest.json`, catalog, catalog search, stream, `play/{stream_id}` (302), HLS `proxy/{stream_id}/{path}`, `health` |
-| `api/stats/router.py` | `GET /api/v1/stats/plugin-scores`, `GET /api/v1/stats/metrics` |
+| `api/stats/router.py` | `GET /api/v1/stats/plugin-scores`, `GET /api/v1/stats/metrics`, `GET /api/v1/stats/plugins` (the plugins' long-term record) |
 | `app.py` | `GET /api/v1/healthz`, `GET /api/v1/readyz`, `GET /metrics` (Prometheus) |
 
 ### CLI (argparse + Uvicorn)
@@ -350,8 +352,10 @@ The composition root is where concrete implementations are wired together. It ru
 13. ConcurrencyPool
 14. PluginCircuitBreaker
 14a. HosterStateStore: restore() (resolutions, redirects and open breakers of the run before), then its write task
-14b. PluginHealthMonitor task (unless stremio.plugin_health_interval_seconds is 0)
-15. StremioStreamUseCase + StremioCatalogUseCase
+14b. PluginHistory: restore() (the plugins' record of the last 180 days), then its write task
+14c. PluginHealthMonitor task (unless stremio.plugin_health_interval_seconds is 0)
+15. KitsuAnimeIdResolver (the anime catalogs' ids)
+16. StremioStreamUseCase + StremioCatalogUseCase
     → GracefulShutdown.mark_ready()
 ```
 
@@ -361,7 +365,7 @@ The composition root is where concrete implementations are wired together. It ru
 1. Drain in-flight requests (GracefulShutdown, 10 s timeout)
 2. StremioStreamUseCase.aclose(), StremioLinks.aclose(), HosterResolverRegistry.aclose()
    (background searches and resolutions, half-open hoster probes)
-   then HosterStateStore.aclose() (the last snapshot, before the cache closes)
+   then HosterStateStore.aclose() and PluginHistory.aclose() (the last snapshot and counts, before the cache closes)
 3. Cancel the scoring, plugin-health and loop-lag tasks
 4. StealthPool.cleanup() (its context lives on the shared browser)
 5. SharedBrowserPool.cleanup()

@@ -366,6 +366,56 @@ class TestCircuitBreakerAndTimeout:
         plugin.search.assert_not_awaited()
 
 
+class TestPluginRecord:
+    """The long-term record counts what the runner did (ideas backlog, N2)."""
+
+    async def test_searches_and_results_are_counted(self) -> None:
+        history = MagicMock(spec=["count"])
+        registry = _registry(
+            {
+                "a": _plugin([_sr("https://a/1"), _sr("https://a/2")]),
+                "b": _plugin([]),
+            }
+        )
+
+        await _search(_runner(registry, history=history), ["a", "b"], ["q"])
+
+        assert sorted(c.args for c in history.count.call_args_list) == [
+            ("a", "results", 2),
+            ("a", "searches"),
+            ("b", "searches"),
+        ]
+
+    async def test_a_timeout_counts_as_a_search_and_a_timeout(self) -> None:
+        async def _slow(*_args: object, **_kwargs: object) -> list[SearchResult]:
+            await asyncio.sleep(10)
+            return []
+
+        plugin = _plugin([])
+        plugin.search = AsyncMock(side_effect=_slow)
+        history = MagicMock(spec=["count"])
+        runner = _runner(_registry({"a": plugin}), plugin_timeout=0.01, history=history)
+
+        await _search(runner, ["a"], ["q"])
+
+        assert [c.args for c in history.count.call_args_list] == [
+            ("a", "searches"),
+            ("a", "timeouts"),
+        ]
+
+    async def test_a_skipped_plugin_is_not_counted(self) -> None:
+        breaker = MagicMock()
+        breaker.allow.return_value = False
+        history = MagicMock(spec=["count"])
+        runner = _runner(
+            _registry({"a": _plugin([])}), circuit_breaker=breaker, history=history
+        )
+
+        await _search(runner, ["a"], ["q"])
+
+        history.count.assert_not_called()
+
+
 class TestDispatch:
     async def test_prefers_isolated_search(self) -> None:
         plugin = MagicMock(spec=["search", "isolated_search"])

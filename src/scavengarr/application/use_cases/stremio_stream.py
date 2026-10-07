@@ -61,6 +61,10 @@ from scavengarr.domain.entities.stremio import (
 from scavengarr.domain.ports.anime_ids import NO_ANIME_IDS, AnimeIdResolverPort
 from scavengarr.domain.ports.cache import CachePort
 from scavengarr.domain.ports.concurrency import ConcurrencyPoolPort
+from scavengarr.domain.ports.plugin_history import (
+    NO_PLUGIN_HISTORY,
+    PluginHistoryPort,
+)
 from scavengarr.domain.ports.plugin_registry import PluginRegistryPort
 from scavengarr.domain.ports.plugin_score_store import PluginScoreStorePort
 from scavengarr.domain.ports.search_engine import SearchEnginePort
@@ -137,6 +141,7 @@ class StremioStreamUseCase:
         circuit_breaker: CircuitBreaker | None = None,
         mirror_groups: Mapping[str, str] | None = None,
         plugin_health: PluginHealth | None = None,
+        plugin_history: PluginHistoryPort = NO_PLUGIN_HISTORY,
         cache: CachePort | None = None,
         search_ttl_seconds: int = 0,
         anime_ids: AnimeIdResolverPort = NO_ANIME_IDS,
@@ -162,6 +167,7 @@ class StremioStreamUseCase:
                 mirror_groups=mirror_groups,
                 plugin_health=plugin_health,
                 score_store=score_store,
+                history=plugin_history,
             ),
             titles=self._titles,
             search_cache=SearchCache(cache, ttl_seconds=search_ttl_seconds),

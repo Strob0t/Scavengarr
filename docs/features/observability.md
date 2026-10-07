@@ -10,6 +10,7 @@ Spec: `openspec/specs/observability/spec.md` (from the change `openspec/changes/
 |---|---|
 | `GET /metrics` | All metrics below, Prometheus text format (0.0.4), rendered in a worker thread |
 | `GET /api/v1/stats/metrics` | JSON for a quick look: plugin statistics (from the same metrics), event-loop lag of the last 5 minutes (p50/p99/max), plugin circuit breakers (hoster breakers only in `/metrics`), the 20 hosters probed most often for want of a resolver (`unresolved_hosters`, an open set of names and so no Prometheus label; [Hoster Resolvers](./hoster-resolvers.md#architecture)), what the start restored of the run before (`hoster_state`: `restored_at`, the snapshot's `age_s`, `resolutions`, `redirects`, `breakers`), concurrency pool, shutdown state |
+| `GET /api/v1/stats/plugins` | The plugins' long-term record ([Plugin Record](#plugin-record)): per plugin and UTC day `searches`, `results`, `timeouts`, `checks` and `unreachable` marks of the last 180 days, with `last_result_day` and the `unreachable_share` over 30, 90 and 180 days |
 
 ## Prometheus
 
@@ -138,6 +139,20 @@ Every HTTP request gets a 12-hex-digit `request_id` in the structlog context: al
 Each request ends with one `http_request` line: method, path, query, status, duration and client address. The query keeps its values only for Torznab's own parameters on Torznab paths (`t`, `q`, `cat`, `extended`, `offset`, `limit`); every other value is logged as `***`. Prowlarr sends its `apikey`, and proxied HLS paths carry the CDN's tokens and the client's address (`i=`, the VPN's exit address in production), also under the names `t` and `q`.
 
 Log lines name a CDN by its second-level domain (`cdn=dropcdn`, `extract_domain()`), never by its URL: the path and the query of a video URL carry tokens and the client's address. That holds for the HLS proxy's CDN errors (`hls_proxy_cdn_error`, `hls_proxy_network_error`), `/play`'s redirect (`stremio_play_resolved`), the playback check (`playback_check_failed`) and the resolvers' results (code review, 2026-10-06). Third-party records show URLs by their origin only (`_shorten_urls` in `infrastructure/logging/setup.py`): httpx's line for each outgoing request, written at `logging.level: DEBUG` only, reads `HTTP Request: GET https://cdn.example.net "HTTP/1.1 200 OK"`, and the same holds for URLs in their tracebacks. uvicorn's own access log is off (`access_log=False`): it repeated each request with its query unmasked.
+
+## Plugin Record
+
+The metrics restart with the process, and the scoring snapshots age out in weeks; whether a plugin whose site died stays, is disabled by default or is removed needs months. `PluginHistory` (`infrastructure/plugins/history.py`) counts per plugin and UTC day:
+
+| Counter | Counted by | When |
+|---|---|---|
+| `searches` | `PluginSearchRunner` | Every plugin search of a Stremio request that ran (a plugin skipped by its breaker, the deadline or the health check is not counted) |
+| `results` | `PluginSearchRunner` | The validated results a search gave |
+| `timeouts` | `PluginSearchRunner` | A search cut by the plugin timeout or the request's deadline |
+| `checks` | `PluginHealthMonitor` | Every check of the plugin's site with a verdict (a check in which no site answered counts nothing: the own network was down) |
+| `unreachable` | `PluginHealthMonitor` | The checks that found the site down (after the 30 s retry) |
+
+The record is one value `plugin_history:v1` in the cache backend (diskcache or Redis; a year's TTL renewed with every write), written every minute when it changed and at shutdown, with the days older than 180 dropped; the start restores it (`plugin_history_restored` with the plugins and days, `plugin_history_discarded` with a `reason` for another version or an unreadable record, `plugin_history_restore_failed`, `plugin_history_save_failed`). `GET /api/v1/stats/plugins` reports `today`, `window_days` and per plugin `last_result_day`, `unreachable_share` over `30`, `90` and `180` days (`null` without a check) and the `days` with their counters; the production digest (`prodctl.py digest`, below) prints the same per plugin. The record is evidence, not a rule: the lifecycle decision for a dead site stays the maintainer's.
 
 ## Production Diagnostics
 

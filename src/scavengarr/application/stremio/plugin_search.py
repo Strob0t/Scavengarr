@@ -25,6 +25,10 @@ from scavengarr.domain.plugins.base import (
 )
 from scavengarr.domain.ports.browser_fetcher import PageClaim, page_claim
 from scavengarr.domain.ports.concurrency import ConcurrencyBudgetPort
+from scavengarr.domain.ports.plugin_history import (
+    NO_PLUGIN_HISTORY,
+    PluginHistoryPort,
+)
 from scavengarr.domain.ports.plugin_registry import PluginRegistryPort
 from scavengarr.domain.ports.plugin_score_store import PluginScoreStorePort
 from scavengarr.domain.ports.search_engine import SearchEnginePort
@@ -120,6 +124,7 @@ class PluginSearchRunner:
         mirror_groups: Mapping[str, str] | None = None,
         plugin_health: PluginHealth | None = None,
         score_store: PluginScoreStorePort | None = None,
+        history: PluginHistoryPort = NO_PLUGIN_HISTORY,
     ) -> None:
         self._plugins = plugins
         self._search_engine = search_engine
@@ -135,6 +140,8 @@ class PluginSearchRunner:
         self._plugin_health = plugin_health
         # Plugin scores pick a mirror group's member
         self._score_store = score_store
+        # The plugins' long-term record: searches, results and timeouts per day
+        self._history = history
         # Breaker keys of mirror members that gave nothing while their
         # standby delivered: they rank behind the other members until they
         # deliver again
@@ -416,6 +423,7 @@ class PluginSearchRunner:
                 timeout=round(timeout, 2),
                 cut_by_deadline=timeout < self._plugin_timeout,
             )
+            self._history.count(name, "timeouts")
             # A plugin that had at least half its timeout counts as failing
             # (dead hosts always run into the deadline and must still trip
             # the breaker); one that queued for most of the budget does not
@@ -485,6 +493,7 @@ class PluginSearchRunner:
         success = False
         cancelled = False
         results: list[SearchResult] = []
+        self._history.count(name, "searches")
         with self._telemetry.stage("plugin_search", plugin=name) as stage:
             try:
                 token = self._max_results_var.set(self._max_results_per_plugin)
@@ -520,6 +529,7 @@ class PluginSearchRunner:
                     )
         if results:
             self._telemetry.record("plugin_results", len(results), plugin=name)
+            self._history.count(name, "results", len(results))
 
         # Tag results with source plugin for downstream use
         for r in results:

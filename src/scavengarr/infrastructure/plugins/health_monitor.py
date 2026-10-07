@@ -16,6 +16,10 @@ import time
 import structlog
 
 from scavengarr.domain.entities.scoring import ProbeResult
+from scavengarr.domain.ports.plugin_history import (
+    NO_PLUGIN_HISTORY,
+    PluginHistoryPort,
+)
 from scavengarr.domain.ports.plugin_registry import PluginRegistryPort
 from scavengarr.infrastructure.scoring.health_prober import HealthProber
 
@@ -52,7 +56,8 @@ class PluginHealthMonitor:
     minutes in between. A site that fails a check and its retry 30 s
     later is marked unreachable, one answer brings it back. A check in
     which no site answers changes nothing: then the own network or DNS is
-    down, not every site.
+    down, not every site. Every other check's verdict goes into the
+    plugins' long-term record (``checks``, ``unreachable``).
     """
 
     def __init__(
@@ -62,11 +67,14 @@ class PluginHealthMonitor:
         plugins: PluginRegistryPort,
         names: list[str],
         interval_s: float,
+        history: PluginHistoryPort = NO_PLUGIN_HISTORY,
     ) -> None:
         self._prober = prober
         self._plugins = plugins
         self._names = names
         self._interval_s = interval_s
+        # The plugins' long-term record: every check's verdict, per day
+        self._history = history
         self._tick_s = min(_RETRY_S, interval_s)
         self._next_full = 0.0
         self._unreachable: set[str] = set()
@@ -123,6 +131,9 @@ class PluginHealthMonitor:
             await asyncio.sleep(_CONFIRM_S)
             up |= await _check_all(failed)
         for name, answers in up.items():
+            self._history.count(name, "checks")
+            if not answers:
+                self._history.count(name, "unreachable")
             if answers and name in self._unreachable:
                 self._unreachable.discard(name)
                 log.info("plugin_reachable", plugin=name)

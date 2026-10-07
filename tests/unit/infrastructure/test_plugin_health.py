@@ -11,6 +11,10 @@ import pytest
 import respx
 from structlog.testing import capture_logs
 
+from scavengarr.domain.ports.plugin_history import (
+    NO_PLUGIN_HISTORY,
+    PluginHistoryPort,
+)
 from scavengarr.infrastructure.plugins import health_monitor
 from scavengarr.infrastructure.plugins.health_monitor import PluginHealthMonitor
 from scavengarr.infrastructure.scoring.health_prober import HealthProber
@@ -28,6 +32,7 @@ def _monitor(
     client: httpx.AsyncClient,
     domains: dict[str, list[str]],
     interval_s: float = 1800.0,
+    history: PluginHistoryPort = NO_PLUGIN_HISTORY,
 ) -> PluginHealthMonitor:
     """Monitor of plugins named after their first domain."""
     plugins = {
@@ -41,6 +46,7 @@ def _monitor(
         plugins=registry,
         names=sorted(plugins),
         interval_s=interval_s,
+        history=history,
     )
 
 
@@ -79,6 +85,42 @@ class TestClassification:
 
         assert monitor.is_reachable("site") is reachable
         assert monitor.is_reachable("up")
+
+
+class TestRecord:
+    """Every check's verdict goes into the plugins' long-term record."""
+
+    @respx.mock
+    async def test_checks_and_unreachable_marks_are_counted(self) -> None:
+        respx.head(_UP).respond(200)
+        respx.head(_SITE).mock(side_effect=httpx.ConnectError("down"))
+        history = MagicMock(spec=["count"])
+        async with httpx.AsyncClient() as client:
+            monitor = _monitor(
+                client, {"up": ["up.test"], "site": ["site.test"]}, history=history
+            )
+
+            await monitor.check(["up", "site"])
+
+        assert sorted(c.args for c in history.count.call_args_list) == [
+            ("site", "checks"),
+            ("site", "unreachable"),
+            ("up", "checks"),
+        ]
+
+    @respx.mock
+    async def test_a_check_without_any_answer_counts_nothing(self) -> None:
+        respx.head(_UP).mock(side_effect=httpx.ConnectError("down"))
+        respx.head(_SITE).mock(side_effect=httpx.ConnectError("down"))
+        history = MagicMock(spec=["count"])
+        async with httpx.AsyncClient() as client:
+            monitor = _monitor(
+                client, {"up": ["up.test"], "site": ["site.test"]}, history=history
+            )
+
+            await monitor.check(["up", "site"])
+
+        history.count.assert_not_called()
 
 
 class TestStates:

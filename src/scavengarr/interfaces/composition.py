@@ -90,6 +90,7 @@ from scavengarr.infrastructure.plugins.constants import (
     search_max_results,
 )
 from scavengarr.infrastructure.plugins.health_monitor import PluginHealthMonitor
+from scavengarr.infrastructure.plugins.history import PluginHistory
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 from scavengarr.infrastructure.resource_detector import detect_resources
@@ -412,6 +413,7 @@ def _plugin_health(state: AppState, config: AppConfig) -> PluginHealthMonitor | 
         plugins=state.plugins,
         names=names,
         interval_s=interval,
+        history=state.plugin_history,
     )
 
 
@@ -672,7 +674,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await state.hoster_state_store.restore()
     state.hoster_state_store.start()
 
-    # 14b) Plugin health: Stremio searches skip sites that do not answer
+    # 14b) The plugins' long-term record (searches, results, timeouts, checks
+    #      and unreachable marks per day, 180 days): in the cache, written
+    #      every minute when it changed and at shutdown, restored at the start
+    state.plugin_history = PluginHistory(state.cache)
+    await state.plugin_history.restore()
+    state.plugin_history.start()
+
+    # 14c) Plugin health: Stremio searches skip sites that do not answer
     state.plugin_health = _plugin_health(state, config)
     state._plugin_health_task = (
         asyncio.create_task(state.plugin_health.run_forever())
@@ -716,6 +725,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # hdfilme, streamcloud, streamkiste: one database, one asked per request
         mirror_groups=_mirror_groups(state.plugins),
         plugin_health=state.plugin_health,
+        plugin_history=state.plugin_history,
         # Search results per title, shared with Torznab's TTL (0 = off)
         cache=state.cache,
         search_ttl_seconds=config.cache.search_ttl_seconds,
@@ -743,6 +753,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await state.hoster_resolver_registry.aclose()
         # The last resolutions and breaker changes, before the cache closes
         await state.hoster_state_store.aclose()
+        # The plugin record's last counts (the health task is cancelled
+        # below: a check it still runs is not worth a write)
+        await state.plugin_history.aclose()
 
         if state._scoring_task is not None:
             state._scoring_task.cancel()

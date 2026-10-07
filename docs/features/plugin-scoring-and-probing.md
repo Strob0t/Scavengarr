@@ -161,7 +161,7 @@ Lightweight availability check for each plugin's `base_url`.
 | Success | Status `< 400` and no page block (Cloudflare challenge or DDoS-Guard) |
 | Output | `ok`, `http_status`, `duration_ms`, `error_kind`, `captcha_detected` |
 
-`PluginHealthMonitor` reuses `HealthProber` (without scores) for the periodic reachability check of the Stremio plugins (`stremio.plugin_health_interval_seconds`).
+`PluginHealthMonitor` reuses `HealthProber` (without scores) for the periodic reachability check of the Stremio plugins (`stremio.plugin_health_interval_seconds`); every check's verdict also goes into the plugins' long-term record ([Observability](./observability.md#plugin-record)).
 
 When the prober encounters a page block (Cloudflare challenge or DDoS-Guard, classified by `infrastructure/captcha/detect.py`; a login captcha widget on a working homepage does not count), `captcha_detected` is `True`, `ok` is `False`, and `error_kind` is `"captcha"`; `compute_health_observation()` then returns `0.0`.
 

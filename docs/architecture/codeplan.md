@@ -32,7 +32,7 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 | `domain/entities/scoring.py` | Plugin-scoring types | `ProbeResult`, `EwmaState`, `PluginScoreSnapshot` |
 | `domain/plugins/base.py` | Plugin contract | `SearchResult`, `PluginProtocol`, `PluginProvides`, `GrabResolvingPlugin` (optional grab-time link resolution) |
 | `domain/plugins/exceptions.py` | Plugin errors | `PluginError`, `PluginLoadError`, `PluginNotFoundError` |
-| `domain/ports/` | `Protocol` ports | `CachePort`, `SearchEnginePort`, `PluginRegistryPort` (sync), `CrawlJobRepository`, `StreamLinkRepository`, `HosterResolverPort`, `PluginScoreStorePort`, `TmdbClientPort`, `AnimeIdResolverPort`, `ConcurrencyPoolPort`, `ConcurrencyBudgetPort`, `ClientBoundResolverPort`, `BrowserFetcherPort`, `TelemetryPort` (sync; `NO_TELEMETRY` records nothing) |
+| `domain/ports/` | `Protocol` ports | `CachePort`, `SearchEnginePort`, `PluginRegistryPort` (sync), `CrawlJobRepository`, `StreamLinkRepository`, `HosterResolverPort`, `PluginScoreStorePort`, `TmdbClientPort`, `AnimeIdResolverPort`, `PluginHistoryPort` (sync; `NO_PLUGIN_HISTORY` counts nothing), `ConcurrencyPoolPort`, `ConcurrencyBudgetPort`, `ClientBoundResolverPort`, `BrowserFetcherPort`, `TelemetryPort` (sync; `NO_TELEMETRY` records nothing) |
 
 ### Application
 
@@ -70,7 +70,7 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 | `infrastructure/captcha/` | In-process captcha handling | `detect_challenge` (challenge/captcha classification), `solve_altcha` (ALTCHA proof of work) |
 | `infrastructure/logging/` | structlog + stdlib setup with async emission | `configure_logging()` |
 | `infrastructure/persistence/` | `CachePort`-backed repositories (JSON) | `CacheCrawlJobRepository`, `CacheStreamLinkRepository`, `CachePluginScoreStore` |
-| `infrastructure/plugins/` | Plugin discovery, loading and base classes | `PluginRegistry`, `load_python_plugin()`, `HttpxPluginBase`, `PlaywrightPluginBase`, `DataApiPluginBase` (shared "/data" API backend of megakino_to and movie4k), `XenForoPluginBase` (XenForo forums dataload and myboerse), category helpers (`categories.py`: `category_matches`, `served_category`, `filter_by_category`, `stream_category`), `parse_page` (`dom.py`: parses pages from 32 KiB in a worker thread), `relevant_hits` (`relevance.py`: the search hits worth scraping), `PluginHealthMonitor` (periodic checks of the Stremio plugins' sites; searches skip the unreachable ones), `decrypt_cnl` (Click'n'Load), devideosrc player helpers, `request_browser_context`, `search_max_results`, `DEFAULT_*` constants |
+| `infrastructure/plugins/` | Plugin discovery, loading and base classes | `PluginRegistry`, `load_python_plugin()`, `HttpxPluginBase`, `PlaywrightPluginBase`, `DataApiPluginBase` (shared "/data" API backend of megakino_to and movie4k), `XenForoPluginBase` (XenForo forums dataload and myboerse), category helpers (`categories.py`: `category_matches`, `served_category`, `filter_by_category`, `stream_category`), `parse_page` (`dom.py`: parses pages from 32 KiB in a worker thread), `relevant_hits` (`relevance.py`: the search hits worth scraping), `PluginHealthMonitor` (periodic checks of the Stremio plugins' sites; searches skip the unreachable ones), `PluginHistory` (the plugins' long-term record per day in the cache backend, 180 days), `decrypt_cnl` (Click'n'Load), devideosrc player helpers, `request_browser_context`, `search_max_results`, `DEFAULT_*` constants |
 | `infrastructure/scoring/` | Background plugin scoring | EWMA functions (`ewma.py`), `HealthProber`, `MiniSearchProber`, `QueryPoolBuilder`, `ScoringScheduler` |
 | `infrastructure/stremio/` | Stremio result processing | `convert_search_results`, `StreamSorter`, `score_title_match`, `filter_by_title_match`, `parse_quality`, `parse_language`, `filter_by_episode`, HLS proxy (`rewrite_manifest`, `fetch_hls_resource`, `stream_hls_segment`) |
 | `infrastructure/tmdb/` | Title/metadata lookup | `HttpxTmdbClient`, `ImdbFallbackClient` (IMDb Suggest API + Wikidata) |
@@ -93,7 +93,7 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 | `interfaces/api/torznab/router.py` | Torznab endpoints | `/torznab/indexers`, `/torznab/{plugin_name}`, `/torznab/{plugin_name}/health` |
 | `interfaces/api/download/router.py` | CrawlJob download (resolves grab-time links first, `502` on failure) | `/download/{job_id}`, `/download/{job_id}/info` |
 | `interfaces/api/stremio/router.py` | Stremio addon | `/stremio/manifest.json`, catalog, catalog search, stream, `/stremio/play/{stream_id}`, `/stremio/proxy/{stream_id}/{path}`, `/stremio/health` |
-| `interfaces/api/stats/router.py` | Stats endpoints | `/stats/plugin-scores`, `/stats/metrics` |
+| `interfaces/api/stats/router.py` | Stats endpoints | `/stats/plugin-scores`, `/stats/metrics`, `/stats/plugins` |
 | `interfaces/api/middleware.py` | Inbound API rate limiting | `RateLimitMiddleware` |
 | `interfaces/cli/__main__.py` | Process entry point | `start()` |
 

@@ -36,6 +36,7 @@ if TYPE_CHECKING:
         HosterStateStore,
     )
     from scavengarr.infrastructure.plugins.health_monitor import PluginHealthMonitor
+    from scavengarr.infrastructure.plugins.history import PluginHistory
     from scavengarr.infrastructure.scoring.scheduler import ScoringScheduler
     from scavengarr.infrastructure.telemetry import Telemetry
 
@@ -103,6 +104,9 @@ class AppState(State):
     # stremio.plugin_health_interval_seconds is 0)
     plugin_health: PluginHealthMonitor | None
     _plugin_health_task: asyncio.Task[None] | None
+    # The plugins' long-term record (searches, results, timeouts, checks,
+    # unreachable marks per day), in the cache across restarts
+    plugin_history: PluginHistory
 
     # Event-loop lag monitor (feeds telemetry)
     _loop_lag_task: asyncio.Task[None]
