@@ -65,7 +65,11 @@ class DoodStreamResolver:
 
     Supports dood.re, doodstream.com and many domain variants.
     Returns None if captcha is required (no automated captcha solving).
+    The video URL plays only from the address that resolved it (finding
+    17: ``error_wrong_ip`` from another address), so it is proxied.
     """
+
+    address_bound = True
 
     def __init__(
         self,

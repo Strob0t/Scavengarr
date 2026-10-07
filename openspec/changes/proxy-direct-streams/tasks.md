@@ -10,9 +10,9 @@ from `origin/staging`, after step 21 is complete and before step 19.
 
 ## 1. The flag
 
-- [ ] 1.1 `ResolvedStream.address_bound: bool = False` (`domain/entities/stremio.py`) after `size_bytes`, one docstring line: the CDN binds the URL to the address that resolved it.
-- [ ] 1.2 Registry (`infrastructure/hoster_resolvers/registry.py`): read `address_bound` from the resolver where `needs_playback_check` is read, default `False`, and stamp it on the stream it returns as `resolved_at` is stamped; unit tests with a fake resolver that declares it and one that does not.
-- [ ] 1.3 `address_bound = True` on `DoodStreamResolver`, `MixdropResolver`, `VinovoResolver` and `FsstResolver`, one docstring line each naming the evidence (finding 17: `error_wrong_ip`, 403, 403, 410); each resolver's test asserts the attribute.
+- [x] 1.1 `ResolvedStream.address_bound: bool = False` (`domain/entities/stremio.py`) after `size_bytes`, one docstring line: the CDN binds the URL to the address that resolved it.
+- [x] 1.2 Registry (`infrastructure/hoster_resolvers/registry.py`): read `address_bound` from the resolver where `needs_playback_check` is read, default `False`, and stamp it on the stream it returns as `resolved_at` is stamped; unit tests with a fake resolver that declares it and one that does not.
+- [x] 1.3 `address_bound = True` on `DoodStreamResolver`, `MixdropResolver`, `VinovoResolver` and `FsstResolver`, one docstring line each naming the evidence (finding 17: `error_wrong_ip`, 403, 403, 410); each resolver's test asserts the attribute.
 
 ## 2. The stored link and the URL
 

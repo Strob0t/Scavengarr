@@ -48,7 +48,13 @@ def _extract_file_id(url: str) -> str | None:
 
 
 class VinovoResolver:
-    """Resolves vinovo.to embeds to a CDN stream URL via the player API."""
+    """Resolves vinovo.to embeds to a CDN stream URL via the player API.
+
+    The stream URL plays only from the address that resolved it (finding
+    17: 403 from another address), so it is proxied.
+    """
+
+    address_bound = True
 
     def __init__(self, http_client: httpx.AsyncClient) -> None:
         self._http = http_client

@@ -450,7 +450,9 @@ class HosterResolverRegistry:
         A failed playback check (timeout, reset) says nothing about the
         stream, like a failed resolver request: neither cached nor counted.
         A resolver without a check of its own (``needs_playback_check``) is
-        checked with *verify_playback* off too.
+        checked with *verify_playback* off too. A resolver whose CDN binds
+        the URL to the resolving address (``address_bound``) marks its
+        stream, so the player fetches it through Scavengarr.
         """
         if result is None:
             log.warning("hoster_resolve_failed", hoster=hoster_name, url=url)
@@ -473,6 +475,8 @@ class HosterResolverRegistry:
             result = _measured(result, check)
         log.info("hoster_resolve_success", hoster=hoster_name, is_hls=result.is_hls)
         self._record(resolver, failed=False)
+        if getattr(resolver, "address_bound", False) is True:
+            result = replace(result, address_bound=True)
         return "stream", _stamped(result), True
 
     def _record(self, resolver: HosterResolverPort, *, failed: bool) -> None:

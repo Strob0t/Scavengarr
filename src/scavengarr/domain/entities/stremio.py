@@ -148,6 +148,9 @@ class ResolvedStream:
     resolved_at: float = 0.0
     # The file's total size, as the playback check read it (Content-Range)
     size_bytes: int | None = None
+    # The CDN binds the URL to the address that resolved it (the resolver's
+    # ``address_bound``): a player fetches the file through Scavengarr
+    address_bound: bool = False
 
 
 @dataclass(frozen=True)

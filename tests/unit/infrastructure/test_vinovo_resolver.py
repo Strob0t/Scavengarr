@@ -50,6 +50,9 @@ class TestVinovoResolver:
     def test_name(self) -> None:
         assert VinovoResolver(http_client=httpx.AsyncClient()).name == "vinovo"
 
+    def test_declares_its_cdn_address_bound(self) -> None:
+        assert VinovoResolver.address_bound is True
+
     @respx.mock
     async def test_resolves_stream_url(self) -> None:
         respx.get(_EMBED).respond(200, text=_EMBED_HTML)

@@ -46,6 +46,9 @@ class TestDoodStreamResolver:
         resolver = DoodStreamResolver(http_client=client)
         assert resolver.name == "doodstream"
 
+    def test_declares_its_cdn_address_bound(self) -> None:
+        assert DoodStreamResolver.address_bound is True
+
     @pytest.mark.asyncio
     async def test_successful_extraction(self) -> None:
         html = _make_embed_html()

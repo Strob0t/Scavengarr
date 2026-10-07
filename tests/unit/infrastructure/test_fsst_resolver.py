@@ -75,6 +75,9 @@ class TestFsstResolver:
     def test_name(self) -> None:
         assert FsstResolver(http_client=httpx.AsyncClient()).name == "fsst"
 
+    def test_declares_its_cdn_address_bound(self) -> None:
+        assert FsstResolver.address_bound is True
+
     @respx.mock
     async def test_resolves_the_best_quality(self) -> None:
         respx.get(_EMBED).respond(302, headers={"Location": _PLAYER})

@@ -54,6 +54,9 @@ class TestResolver:
         assert resolver.name == "mixdrop"
         assert {"mixdrop", "mxdrop", "m1xdrop"} <= resolver.supported_domains
 
+    def test_declares_its_cdn_address_bound(self) -> None:
+        assert MixdropResolver.address_bound is True
+
     @respx.mock
     @pytest.mark.asyncio()
     async def test_resolves_the_mp4_of_the_player(self) -> None:
