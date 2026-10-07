@@ -208,6 +208,49 @@ class TestKinoger:
         assert detail.stream_links[8]["link"] == "https://fsst.online/embed/991372/"
         assert detail.stream_links[8]["label"] == "2x1 "
 
+    def test_series_episodes_from_the_player_script(self) -> None:
+        """The live theme (2026-10-07) lists no ``span[data-id]``: the
+        player script holds the episodes, one array per season
+        (``pw.show(5,[[S1E1, …], [S2E1, …], …])``). Its first URL alone
+        served S01E01 for every request."""
+        detail = _detail("kinoger", self._BASE, "detail-stranger-things")
+        assert detail.episodes_listed
+        # 4 player tabs, 8 + 9 + 8 + 9 + 8 episodes each
+        assert len(detail.stream_links) == 4 * 42
+        labels = [lk["label"] for lk in detail.stream_links[:42]]
+        assert (labels[0], labels[8], labels[-1]) == (
+            "1x1 Stream HD+",
+            "2x1 Stream HD+",
+            "5x8 Stream HD+",
+        )
+        assert detail.stream_links[0]["link"] == "https://fsst.online/embed/1029126/"
+
+    async def test_series_request_gets_its_episode(self) -> None:
+        plugin = _plugin_module("kinoger").KinogerPlugin()
+        plugin._domain_verified = True
+
+        async def get(url: str, **kwargs: Any) -> httpx.Response:
+            text = _page("kinoger", "detail-stranger-things")
+            return httpx.Response(200, text=text, request=httpx.Request("GET", url))
+
+        client = AsyncMock()
+        client.get = AsyncMock(side_effect=get)
+        plugin._client = client
+
+        result = await plugin._scrape_detail(
+            {"url": f"{self._BASE}/stream/4040-stranger-things-staffel-1-2016.html"},
+            season=4,
+            episode=1,
+        )
+
+        assert result is not None
+        assert [lk["label"] for lk in result.download_links or ()] == [
+            "4x1 Stream HD+",
+            "4x1 Stream HD+",
+            "4x1 Stream HD",
+            "4x1 Stream HD",
+        ]
+
     async def test_film_request_gets_the_film(self) -> None:
         """The search also lists a series ("J. Robert Oppenheimer -
         Atomphysiker"); its detail page loads concurrently and is empty."""

@@ -66,6 +66,9 @@ _TITLE_YEAR_RE = re.compile(r"\(((?:19|20)\d{2})\)")
 #   fsst.show(1,[['https://fsst.online/embed/905450/']],0.2)
 #   ollhd.show(1,[['https://voe.sx/e/6qprs3ixu8el']],0.2)
 _PLAYER_SHOW_RE = re.compile(r"""\.show\(\d+,\s*\[\[['"]?(https?://[^'"\]]+)""")
+# The script's episode arrays, one per season: .show(5,[[...],[...]],0.2)
+_PLAYER_SEASONS_RE = re.compile(r"\.show\(\s*\d+\s*,\s*(\[\[.*?\]\])", re.DOTALL)
+_SCRIPT_URL_RE = re.compile(r"""https?://[^'"\s,\]]+""")
 _IMDB_RATING_RE = re.compile(r"(\d+\.?\d*)")
 # Badges that name a quality
 _QUALITY_BADGES = frozenset(
@@ -271,6 +274,11 @@ class _DetailPageParser:
         lists = player.css("ul[id$='-serial']")
         style = (lists[-1].attributes.get("style") or "") if lists else ""
         film = "display:none" in style.replace(" ", "").lower()
+        if not episodes:
+            # The live theme draws the list from the player script only;
+            # a single URL there is a film's stream
+            episodes = _script_episodes(player)
+            film = film or len(episodes) < 2
         if episodes and not film:
             self.episodes_listed = True
             for season, episode, url in episodes:
@@ -342,6 +350,22 @@ def _is_player(node: LexborNode) -> bool:
     if node.tag == "section":
         return node_id.startswith("content")
     return node.tag == "div" and node_id.startswith("container-video")
+
+
+def _script_episodes(player: LexborNode) -> list[tuple[int, int, str]]:
+    """(season, episode, URL) from the player script's season arrays:
+    ``pw.show(5,[['S1E1',' S1E2'],['S2E1', …], …])``."""
+    for script in player.css("script"):
+        show = _PLAYER_SEASONS_RE.search(script.text())
+        if show:
+            return [
+                (season, episode, url)
+                for season, block in enumerate(
+                    re.findall(r"\[([^\[\]]*)\]", show.group(1)), start=1
+                )
+                for episode, url in enumerate(_SCRIPT_URL_RE.findall(block), start=1)
+            ]
+    return []
 
 
 def _player_url(player: LexborNode) -> str:
