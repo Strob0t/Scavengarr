@@ -119,14 +119,25 @@ class TestVerifyDomain:
         assert "fallback.com" in plugin.base_url
 
     @pytest.mark.asyncio
-    async def test_a_challenge_answer_counts_as_reachable(self) -> None:
+    @pytest.mark.parametrize(
+        ("status", "headers"),
+        [
+            (403, {"cf-mitigated": "challenge"}),
+            (503, {"cf-mitigated": "challenge"}),
+            (503, {"cf-ray": "abc123"}),
+        ],
+        ids=["403-mitigated", "503-mitigated", "503-cf-ray"],
+    )
+    async def test_a_challenge_answer_counts_as_reachable(
+        self, status: int, headers: dict[str, str]
+    ) -> None:
         """kinoger answers 403 with a Cloudflare challenge: the site is up
-        behind it, the plugin's browser fallback solves it. The domain is
-        not pinned: the next window checks again."""
+        behind it, the plugin's browser fallback solves it. A 503 challenge
+        counts too (the check read the body-less answer without its
+        Cloudflare headers before, review of step 21). The domain is not
+        pinned: the next window checks again."""
         plugin = _TestPlugin()
-        challenge = _head_response(
-            "example.com", status=403, headers={"cf-mitigated": "challenge"}
-        )
+        challenge = _head_response("example.com", status=status, headers=headers)
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.head = AsyncMock(return_value=challenge)
         plugin._client = mock_client

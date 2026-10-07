@@ -24,7 +24,10 @@ import structlog
 from scavengarr.domain.plugins.base import PluginUnreachableError, SearchResult
 from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort, BrowserSession
 from scavengarr.infrastructure.browser.cloudflare import is_cloudflare_challenge
-from scavengarr.infrastructure.captcha.detect import detect_challenge
+from scavengarr.infrastructure.captcha.detect import (
+    detect_challenge,
+    detect_challenge_headers,
+)
 
 from .categories import category_matches
 from .constants import (
@@ -60,11 +63,12 @@ def _forget_solve(solve: asyncio.Task[str | None]) -> None:
 
 def _site_answers(resp: httpx.Response) -> bool:
     """The domain's site is up: an answer below 500 (an error page is still
-    the site), or a challenge page (up behind Cloudflare: kinoger answers
-    403 with ``cf-mitigated: challenge``); the health check's rule."""
+    the site), or a challenge (up behind Cloudflare: kinoger answers 403
+    with ``cf-mitigated: challenge``), read from the HEAD answer's headers
+    by the health prober's rule (``detect_challenge_headers``)."""
     return (
         resp.status_code < 500
-        or detect_challenge(resp.status_code, "", resp.headers) is not None
+        or detect_challenge_headers(resp.status_code, resp.headers) is not None
     )
 
 

@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import httpx
 import pytest
 
 from scavengarr.infrastructure.browser.cloudflare import is_cloudflare_challenge
-from scavengarr.infrastructure.captcha.detect import detect_challenge
+from scavengarr.infrastructure.captcha.detect import (
+    detect_challenge,
+    detect_challenge_headers,
+)
 
 _CF_JS = (
     "<html><head><title>Just a moment...</title></head><body>"
@@ -66,6 +70,45 @@ class TestDetectChallenge:
         # a normal page served through Cloudflare mentions cdn-cgi scripts
         html = "<script src='/cdn-cgi/scripts/rocket-loader.min.js'></script>"
         assert detect_challenge(200, html, {"server": "cloudflare"}) is None
+
+
+class TestDetectChallengeHeaders:
+    """A HEAD answer has no body: the headers decide (the health prober's
+    rule, shared with the httpx domain check since the review of step 21:
+    the domain check read neither cf-mitigated nor cf-ray before, so a
+    Cloudflare 503 challenge counted as unreachable)."""
+
+    @pytest.mark.parametrize(
+        ("status", "headers", "expected"),
+        [
+            (503, {"cf-mitigated": "challenge"}, "cloudflare_page"),
+            (403, {"cf-mitigated": "challenge"}, "cloudflare_page"),
+            (403, {"cf-ray": "abc123"}, "cloudflare_page"),
+            (503, {"cf-ray": "abc123"}, "cloudflare_page"),
+            (503, {"server": "ddos-guard"}, "ddos_guard"),
+            (200, {"cf-ray": "abc123"}, None),
+            (403, {"server": "cloudflare"}, None),
+            (503, {}, None),
+        ],
+        ids=[
+            "503-mitigated",
+            "403-mitigated",
+            "403-cf-ray",
+            "503-cf-ray",
+            "503-ddos-guard",
+            "200-cf-ray",
+            "403-plain",
+            "503-plain",
+        ],
+    )
+    def test_kinds(
+        self, status: int, headers: dict[str, str], expected: str | None
+    ) -> None:
+        assert detect_challenge_headers(status, headers) == expected
+
+    def test_reads_httpx_headers_case_insensitively(self) -> None:
+        headers = httpx.Headers({"CF-Mitigated": "Challenge"})
+        assert detect_challenge_headers(503, headers) == "cloudflare_page"
 
 
 class TestIsCloudflareChallenge:

@@ -157,7 +157,7 @@ Lightweight availability check for each plugin's `base_url`.
 | Target | The plugin's `base_url` as-is |
 | Timeout | `health_timeout_seconds` (default 5 s) |
 | Concurrency | Semaphore, `health_concurrency` (default 5) |
-| Challenge detection | HEAD: `cf-ray` header with `403`/`503` (Cloudflare), `Server: ddos-guard` with `403`/`503` (DDoS-Guard); GET fallback: `detect_challenge()` on the body |
+| Challenge detection | HEAD: `detect_challenge_headers()`: `cf-mitigated: challenge` or a `cf-ray` header with `403`/`503` (Cloudflare), `Server: ddos-guard` with `403`/`503` (DDoS-Guard), the rule the httpx domain check shares; GET fallback: `detect_challenge()` on the body |
 | Success | Status `< 400` and no page block (Cloudflare challenge or DDoS-Guard) |
 | Output | `ok`, `http_status`, `duration_ms`, `error_kind`, `captcha_detected` |
 
