@@ -24,7 +24,8 @@ from scavengarr.domain.plugins.base import SearchResult
 # The labels ``stream_category()`` gives
 STREAM_CATEGORIES = (2000, 5000, 5070)
 
-_ANIME_GENRES = frozenset({"anime", "animation"})
+# "Zeichentrick": the German word on sto, filmpalast and kinoger
+_ANIME_GENRES = frozenset({"anime", "animation", "zeichentrick"})
 # "S01E02", "S03" (season pack) as a token; "Staffel 3"
 _SERIES_TITLE_RE = re.compile(
     r"(?:^|[\s._\-(\[])S\d{1,2}(?:E\d{1,4})?(?=$|[\s._\-)\]])|\bStaffel\b",

@@ -165,7 +165,15 @@ _SERIES_HTML = f"""<html><head>
 </script></body></html>"""
 
 
-def _mock_site(search_html: str = _SEARCH_HTML) -> respx.Route:
+# TMDB's German genre name, the way the site writes its keywords
+_ANIME_SERIES_HTML = _SERIES_HTML.replace(
+    "Science-Fiction serien kostenlos", "Animation serien kostenlos"
+)
+
+
+def _mock_site(
+    search_html: str = _SEARCH_HTML, series_html: str = _SERIES_HTML
+) -> respx.Route:
     search = respx.get(_BASE + "/index.php").mock(
         side_effect=lambda request: httpx.Response(
             200,
@@ -173,7 +181,7 @@ def _mock_site(search_html: str = _SEARCH_HTML) -> respx.Route:
         )
     )
     respx.get(_BASE + "/movie.php").respond(200, text=_MOVIE_HTML)
-    respx.get(_BASE + "/series.php").respond(200, text=_SERIES_HTML)
+    respx.get(_BASE + "/series.php").respond(200, text=series_html)
     return search
 
 
@@ -246,6 +254,13 @@ class TestPageMeta:
     def test_genres_from_the_keywords(self) -> None:
         assert _mod._page_genres(_MOVIE_HTML) == ["Action", "Abenteuer"]
         assert _mod._page_genres(_SERIES_HTML) == ["Science-Fiction"]
+
+    def test_genres_with_an_html_entity(self) -> None:
+        html = (
+            '<meta name="keywords" '
+            'content="Dune, Sci-Fi &amp; Fantasy serien kostenlos">'
+        )
+        assert _mod._page_genres(html) == ["Sci-Fi & Fantasy"]
 
     def test_no_genres(self) -> None:
         assert _mod._page_genres("<html></html>") == []
@@ -395,15 +410,39 @@ class TestSearch:
 
     @respx.mock
     @pytest.mark.asyncio
-    async def test_anime_request_gets_the_series(self) -> None:
-        """kinoking does not tell anime apart; results keep the site's label."""
+    async def test_animation_series_is_anime(self) -> None:
+        """A series whose keywords name Animation is 5070; a 5000 request
+        still gets it (the parent covers the child)."""
+        plug = _make_plugin()
+        _mock_site(series_html=_ANIME_SERIES_HTML)
+
+        results = await plug.search("Iron Man", category=5000)
+        await plug.cleanup()
+
+        assert [r.category for r in results] == [5070, 5070]
+        assert results[0].metadata["genres"] == "Animation"
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_anime_request_gets_only_anime(self) -> None:
+        plug = _make_plugin()
+        _mock_site(series_html=_ANIME_SERIES_HTML)
+
+        results = await plug.search("Iron Man", category=5070)
+        await plug.cleanup()
+
+        assert [r.category for r in results] == [5070, 5070]
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_anime_request_skips_other_series(self) -> None:
         plug = _make_plugin()
         _mock_site()
 
         results = await plug.search("Iron Man", category=5070)
         await plug.cleanup()
 
-        assert [r.category for r in results] == [5000, 5000]
+        assert results == []
 
     @pytest.mark.asyncio
     async def test_category_the_site_does_not_serve(self) -> None:
