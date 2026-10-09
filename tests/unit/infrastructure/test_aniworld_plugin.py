@@ -610,8 +610,10 @@ def _season_table(season: int, rows: list[tuple[str, str]]) -> str:
     """A season page's episode table as the site renders it."""
     body = "".join(
         f'<tr data-episode-id="{season}{n}" itemprop="episode">'
-        f'<td class="season{season}EpisodeID"><meta itemprop="episodeNumber" content="{n}" />'
-        f'<a href="/anime/stream/one-piece/staffel-{season}/episode-{n}">Folge {n}</a></td>'
+        f'<td class="season{season}EpisodeID">'
+        f'<meta itemprop="episodeNumber" content="{n}" />'
+        f'<a href="/anime/stream/one-piece/staffel-{season}/episode-{n}">'
+        f"Folge {n}</a></td>"
         '<td class="seasonEpisodeTitle">'
         f'<a href="/anime/stream/one-piece/staffel-{season}/episode-{n}">'
         f"<strong>{german}</strong> - <span>{english}</span></a></td></tr>"

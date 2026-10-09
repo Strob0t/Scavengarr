@@ -119,12 +119,17 @@ class _DetailPageParser:
             if "/staffel-" in href and "/episode-" in href:
                 self.first_episode_url = urljoin(self._base_url, href)
                 break
-        seasons: set[int] = set()
-        for link in tree.css("a[href*='/staffel-']"):
-            found = _SEASON_HREF_RE.search(link.attributes.get("href") or "")
-            if found:
-                seasons.add(int(found.group(1)))
-        self.seasons = sorted(seasons)
+        self.seasons = _season_numbers(tree)
+
+
+def _season_numbers(tree: LexborHTMLParser) -> list[int]:
+    """The seasons the page's navigation links (``/staffel-N``), sorted."""
+    seasons: set[int] = set()
+    for link in tree.css("a[href*='/staffel-']"):
+        found = _SEASON_HREF_RE.search(link.attributes.get("href") or "")
+        if found:
+            seasons.add(int(found.group(1)))
+    return sorted(seasons)
 
 
 class _EpisodePageParser:
