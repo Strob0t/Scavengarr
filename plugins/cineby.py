@@ -19,6 +19,7 @@ cineby.today, cineby.bond, cineby.site, cineby.watch, cineby.digital.
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 from urllib.parse import quote_plus
 
 from scavengarr.domain.plugins.base import SearchResult
@@ -74,6 +75,27 @@ _GENRE_MAP: dict[int, str] = {
     10767: "Talk",
     10768: "War & Politics",
 }
+
+
+def _detail_fields(
+    detail: dict | None, genres: list[str]
+) -> tuple[str, str, list[str]]:
+    """IMDb id, runtime and genres of a TMDB detail answer; the search's
+    genres stay when the detail names none."""
+    if not detail:
+        return "", "", genres
+    imdb_id = detail.get("imdb_id") or ""
+    runtime = ""
+    runtime_val = detail.get("runtime") or detail.get("episode_run_time")
+    if isinstance(runtime_val, int) and runtime_val > 0:
+        runtime = str(runtime_val)
+    elif isinstance(runtime_val, list) and runtime_val:
+        runtime = str(runtime_val[0])
+    # Prefer full genre names from detail
+    detail_genres = detail.get("genres") or []
+    if detail_genres:
+        genres = [g.get("name", "") for g in detail_genres if g.get("name")]
+    return imdb_id, runtime, genres
 
 
 class CinebyPlugin(HttpxPluginBase):
@@ -210,20 +232,20 @@ class CinebyPlugin(HttpxPluginBase):
         if poster:
             poster = f"https://image.tmdb.org/t/p/w185{poster}"
 
-        # Detail enrichment
-        imdb_id = ""
-        runtime = ""
-        if detail:
-            imdb_id = detail.get("imdb_id") or ""
-            runtime_val = detail.get("runtime") or detail.get("episode_run_time")
-            if isinstance(runtime_val, int) and runtime_val > 0:
-                runtime = str(runtime_val)
-            elif isinstance(runtime_val, list) and runtime_val:
-                runtime = str(runtime_val[0])
-            # Prefer full genre names from detail
-            detail_genres = detail.get("genres") or []
-            if detail_genres:
-                genres = [g.get("name", "") for g in detail_genres if g.get("name")]
+        imdb_id, runtime, genres = _detail_fields(detail, genres)
+
+        metadata: dict[str, Any] = {
+            "genres": ", ".join(genres) if genres else "",
+            "rating": rating_str,
+            "imdb_id": imdb_id,
+            "tmdb_id": str(tmdb_id),
+            "quality": "",
+            "runtime": runtime,
+            "poster": poster,
+        }
+        # The film's release year or the series' first air year (TMDB)
+        if year.isdigit():
+            metadata["year"] = int(year)
 
         return SearchResult(
             title=display_title,
@@ -232,15 +254,7 @@ class CinebyPlugin(HttpxPluginBase):
             published_date=date_str or None,
             category=category,
             description=description or None,
-            metadata={
-                "genres": ", ".join(genres) if genres else "",
-                "rating": rating_str,
-                "imdb_id": imdb_id,
-                "tmdb_id": str(tmdb_id),
-                "quality": "",
-                "runtime": runtime,
-                "poster": poster,
-            },
+            metadata=metadata,
         )
 
     async def _process_entry(

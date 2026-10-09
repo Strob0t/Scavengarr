@@ -227,6 +227,7 @@ class TestBuildSearchResult:
         assert sr.download_link == "https://www.vidking.net/embed/movie/414906"
         assert sr.category == 2000
         assert sr.published_date == "2022-03-01"
+        assert sr.metadata["year"] == 2022
 
     def test_tv_result(self, cineby_mod):
         p = cineby_mod.CinebyPlugin()
@@ -239,6 +240,17 @@ class TestBuildSearchResult:
         assert sr.download_link == "https://www.vidking.net/embed/tv/2098"
         assert sr.category == 5000
         assert sr.published_date == "1992-09-05"
+        # first_air_date: the series' start year, not the latest season's
+        assert sr.metadata["year"] == 1992
+
+    def test_no_year_without_a_date(self, cineby_mod):
+        p = cineby_mod.CinebyPlugin()
+        entry = {**SEARCH_MULTI_RESPONSE["results"][0], "release_date": ""}
+
+        sr = p._build_search_result(entry, None)
+
+        assert sr.title == "The Batman"
+        assert "year" not in sr.metadata
 
     def test_tv_with_season_episode(self, cineby_mod):
         p = cineby_mod.CinebyPlugin()
