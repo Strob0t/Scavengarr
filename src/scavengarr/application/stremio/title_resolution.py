@@ -154,13 +154,19 @@ class TitleResolver:
         number, *absolute* when given (a ``kitsu:`` request's episode
         number) else the entry's position among the regular seasons
         (season 1 and up) ordered by season and episode. ``None`` without a
-        record or for a request without an episode."""
+        record, for a request without an episode, and for an episode the
+        list lacks unless *absolute* names it: a reference with neither a
+        title nor a number has nothing a plugin can locate by, and such an
+        episode (the newest of a running series, listed with a delay) is
+        better served by the plugin's own URL from the numbers."""
         if meta is None or request.season is None or request.episode is None:
             return None
         wanted = (request.season, request.episode)
         entry = next(
             (e for e in meta.episodes if (e.season, e.episode) == wanted), None
         )
+        if entry is None and absolute is None:
+            return None
         if absolute is None and entry is not None and entry.season >= 1:
             regular = sorted(
                 (e for e in meta.episodes if e.season >= 1),

@@ -571,14 +571,23 @@ class TestEpisodeRef:
             0, 1, "One Piece: Defeat the Pirate Ganzack! (OVA 1)", "1998-07-26", None
         )
 
-    def test_an_episode_the_list_lacks(self) -> None:
+    def test_an_episode_the_list_lacks_has_no_reference(self) -> None:
+        """The newest episode of a running series, which the catalog lists
+        with a delay: nothing to locate by, so the plugins answer as today."""
         request = make_request(
-            imdb_id="tt0388629", content_type="series", season=99, episode=1
+            imdb_id="tt0388629", content_type="series", season=22, episode=90
         )
 
-        ref = TitleResolver.episode_ref(request, _one_piece(), absolute=1500)
+        assert TitleResolver.episode_ref(request, _one_piece()) is None
 
-        assert ref == EpisodeRef(99, 1, None, None, absolute=1500)
+    def test_a_kitsu_number_names_an_episode_the_list_lacks(self) -> None:
+        request = make_request(
+            imdb_id="tt0388629", content_type="series", season=22, episode=90
+        )
+
+        ref = TitleResolver.episode_ref(request, _one_piece(), absolute=1090)
+
+        assert ref == EpisodeRef(22, 90, None, None, absolute=1090)
 
     def test_without_a_record(self) -> None:
         assert TitleResolver.episode_ref(_series(), None) is None
