@@ -172,7 +172,10 @@ index for 7 days under `aniworld:episodes:v1:<slug>` in the plugin's cache
 1. `absolute` given and the index has numbers: the row with that number and
    its neighbours within 5; of those, the best title match
    (`token_set_ratio` on the normalised English titles) at or above 0.6; the
-   numbered row itself when the reference has no title.
+   numbered row itself when there is no title to compare: the reference has
+   none, or the row shows the number in place of a title (s.to's anime rows
+   read "Episode 062" where aniworld's read the English title), so a
+   number-only site is placed by the number alone.
 2. The row whose normalised English title equals the reference's.
 3. The best fuzzy title at or above 0.85 over the whole index.
 4. Nothing: the plugin logs `aniworld_episode_not_located` (slug, season,
@@ -211,6 +214,10 @@ answer shows the episode fields (number, title).
 - Title variants (One Piece S1E1: "...Who Will Become the Pirate King!" against
   Cinemeta's "...Who's Gonna Be King of the Pirates!") are why rule 1 confirms
   by a low bar (0.6) and rule 3 demands a high one (0.85).
+- A number-only site (s.to's anime rows) is placed by the catalog's position
+  alone, which can differ from the site's count by one for a long-runner (One
+  Piece: 1088 where the site reads 1089); `site_episode` and
+  `episode_located_by="number"` make it visible, and the 7.2 probe reports it.
 - The matcher's category rules depend on the sites' genre labels; a site that
   calls the live action "Anime" by mistake is dropped for the live action and
   kept for the anime. The probe shows it; the plugin's genre map is the fix.
