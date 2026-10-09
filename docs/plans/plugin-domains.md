@@ -187,3 +187,32 @@ Nothing in `_domains` or the plugins was changed. The decision is the maintainer
 **Done in the plugin** (`fix(plugins): boerse names the dead origin`): the login reads the page after the Cloudflare wait and treats Cloudflare's error page as no answer (`boerse_origin_error status=522` instead of `no login form`); no answering domain raises `PluginUnreachableError` like every other Playwright plugin, so the Stremio search marks boerse unreachable and the plugins' record counts it under `unreachable`, the evidence for the keep-or-disable decision; a real page without a form keeps the `All boerse domains failed during login` error. boerse.ai left `_domains` (parked). The 522 page is a fixture (`tests/fixtures/html/boerse/home-522.html.gz`, Ray ID and visitor IP scrubbed by `scripts/capture_pages.py`). The live boerse test still fails while the origin is down (`PluginUnreachableError` is not a skip in `tests/live/test_plugin_smoke.py`, as for animeloads); the row above should read *unreachable*, not *parser miss*.
 
 **Open.** When the origin returns, capture the login page the same way (home page after the solve: the vBulletin form with `vb_login_username`, `vb_login_password`, `vb_login_md5password`, `securitytoken`, `do=login`, `s`, `cookieuser`) and check the parser's selectors against it; nothing says they changed.
+
+## Live resolver cases (2026-10-09, step 40)
+
+**Setup.** `scripts/probes/resolver_urls.py` (dev container, `python -P`, 19:52 to 19:58 UTC) searched the 19 titles of `docs/plans/round-titles.txt` through the stream plugins the way `title_match.py` does and mapped every result link to its resolver with the registry's `canonical_hoster`: 227 results, 562 claimed links, **18 resolvers** with a link, written to the untracked `.cache/live/resolver-urls.json`. Searches that failed: megakino_to and movie4k unreachable (22 each, the dead domains of the live suite), kinoking 12 and kinox 10 timeouts. Links no resolver claims (second-level domain, count): aniworld 92 (the plugin's own redirect links, resolved through its site, not a hoster), upns 15 and rpmplay 15 (moflix's hosters without a resolver), gupload 13, kinoger 7, odysseusa 7, vids 4, flyfile 2, anonstream 1, youtube 1, hxfile 1, flyf 1. No DDL resolver got a link: the round titles are stream titles and the download plugins are not searched (as in `title_match.py`), so the 10 DDL hosters and most XFS configs stay untested by this file; vidhide and vidoza are the two XFS configs with a link.
+
+**Run.** `xvfb-run -a poetry run pytest -m live tests/live/test_resolver_live.py` from the dev container, four runs between 19:59 and 20:10 UTC, the last one 48 s: **31 passed, 5 failed** of 36 (18 live, 18 dead). The dead case is the live URL with the id of its last path segment altered (last four characters reversed; zeros for an all-digit id; a trailing slash or extension kept), and it held for every resolver once the rule handled fsst's shape (an id of digits only: the reversed id was another existing video; a trailing slash: the first rule left the id untouched).
+
+| Resolver | Links found | Live | Dead | Reason |
+|---|---|---|---|---|
+| doodstream | 95 | passed | passed | |
+| dropload | 82 | **failed** | passed | resolves through the browser fallback (captcha), then the playback check of its CDN fails with `ConnectError` from the dev container (the live suite's Breaking Bad run saw the same); not a resolver bug |
+| filemoon | 12 | passed | passed | |
+| firestream | 16 | passed | passed | |
+| fsst | 19 | passed | passed | dead case needed the all-digit rule |
+| gxplayer | 8 | passed | passed | |
+| mixdrop | 68 | passed | passed | |
+| playmate | 6 | **failed** | passed | resolves, then the playback check answers 404: the HLS URL the resolver builds is refused by the CDN (`hoster_resolve_unplayable`) |
+| streamtape | 1 | **failed** | passed | resolves, then the playback check gets HTML instead of media (`hoster_resolve_unplayable`): the video URL is a page, the resolver's extraction is stale |
+| strmup | 33 | passed | passed | |
+| supervideo | 56 | **failed** | passed | Cloudflare 403, the browser fallback captures a stream, its CDN answers HTML to the playback check (`hoster_resolve_unplayable`) |
+| veev | 22 | passed | passed | |
+| vidhide | 21 | passed | passed | XFS config |
+| vidoza | 2 | **failed** | passed | `private_address_refused`: the host resolves to a private address from the dev container's resolver, so the SSRF guard refuses the request; both verdicts say nothing about the resolver (the dead case passes for the same reason) |
+| vidsonic | 8 | passed | passed | |
+| vinovo | 14 | passed | passed | |
+| vixeo | 5 | intermittent | passed | passed in two of four runs; the other two: the stealth capture got a 404 from the player |
+| voe | 94 | passed | passed | |
+
+**Reading.** 12 of 18 resolvers resolve a link the plugins found today and report an altered id dead. The five failures are two kinds: a stream that resolves but whose CDN fails the registry's playback check (dropload: connection refused from here; playmate: 404; streamtape and supervideo: HTML), and vidoza's host refused by the private-address guard. The playback check is the server's own verdict (`verify_streams`), so these resolvers would hand Stremio no stream from this network either; whether the CDNs refuse the dev container's address or every address is the next question, and the Pi's view (`prodctl.py logs`, `hoster_resolve_unplayable` per hoster) answers it without a probe. A resolver with no link in the file (the DDL hosters, 23 of the 25 XFS configs, kinoger's own player, upns and rpmplay without a resolver) is not tested, and a hoster whose resolver finds nothing live is recorded here, not removed. The file is per machine and day: a new probe run before a live run keeps the cases current, and the test module says what it found in its ids only (resolver names; no URL reaches the output, the app's log is raised to errors for the module).
