@@ -122,7 +122,7 @@ class PluginProtocol(Protocol):
     ) -> list[SearchResult]: ...
 ```
 
-Optional capability: a plugin that places a series episode by the request's `EpisodeRef` (the episode's English title, air date and absolute number from the Cinemeta list, or the Kitsu number of a `kitsu:` request) sets `locates_episodes = True` and takes `episode_ref: EpisodeRef | None = None` as a keyword of `search()`; the Stremio plugin search passes the reference to such plugins only (`locates_episodes()` in `domain/plugins/base.py`), every other plugin is called with query, category, season and episode alone.
+Optional capability: a plugin that places a series episode by the request's `EpisodeRef` (the episode's English title, air date and absolute number from the Cinemeta list, or the Kitsu number of a `kitsu:` request when it lies within 5 of that position or the list lacks the episode) sets `locates_episodes = True` and takes `episode_ref: EpisodeRef | None = None` as a keyword of `search()`; the Stremio plugin search passes the reference to such plugins only (`locates_episodes()` in `domain/plugins/base.py`), every other plugin is called with query, category, season and episode alone.
 
 Optional capability: a plugin whose links sit behind a captcha or a download quota also implements `GrabResolvingPlugin` (`async def resolve_download(self, url: str) -> list[str]`). Its search results keep page URLs; the links are resolved only when an Arr app grabs the result (see [Grab-Time Resolution](./crawljob-system.md#grab-time-resolution); example: `plugins/nox.py`).
 

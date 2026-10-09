@@ -72,7 +72,7 @@ Only `title` and `download_link` are required. Link validation reads `download_l
 
 Links behind a captcha or a download quota are resolved when a result is grabbed, not while searching: implement `GrabResolvingPlugin.resolve_download(url) -> list[str]` and return page URLs from `search()`, see [Grab-Time Resolution](./crawljob-system.md#grab-time-resolution) (nox, animeloads).
 
-A plugin that places a series episode by the request's `EpisodeRef` (`domain/entities/stremio.py`: the episode's English title, air date and absolute number from the Cinemeta list, or the Kitsu number of a `kitsu:` request) sets `locates_episodes = True` and takes `episode_ref: EpisodeRef | None = None` as a keyword of `search()`; the Stremio plugin search passes the reference to such plugins only, see [PluginProtocol](./plugin-system.md#pluginprotocol).
+A plugin that places a series episode by the request's `EpisodeRef` (`domain/entities/stremio.py`: the episode's English title, air date and absolute number from the Cinemeta list, or the Kitsu number of a `kitsu:` request when it lies within 5 of that position or the list lacks the episode) sets `locates_episodes = True` and takes `episode_ref: EpisodeRef | None = None` as a keyword of `search()`; the Stremio plugin search passes the reference to such plugins only, see [PluginProtocol](./plugin-system.md#pluginprotocol).
 
 ---
 

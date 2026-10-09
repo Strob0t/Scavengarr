@@ -554,11 +554,21 @@ class TestEpisodeRef:
         assert ref is not None
         assert ref.absolute == 62
 
-    def test_a_given_absolute_number_wins(self) -> None:
-        # A kitsu: request names the episode as the sites count it
-        ref = TitleResolver.episode_ref(_series(), _one_piece(), absolute=1089)
+    @pytest.mark.parametrize("given", [57, 61, 63, 67])
+    def test_a_kitsu_number_near_the_position_wins(self, given: int) -> None:
+        # A Kitsu entry that spans the series counts as the sites do, one
+        # off at times (One Piece: 1089 where the list says 1088)
+        ref = TitleResolver.episode_ref(_series(), _one_piece(), absolute=given)
 
-        assert ref == EpisodeRef(5, 2, _LABOON, "2001-03-21", absolute=1089)
+        assert ref == EpisodeRef(5, 2, _LABOON, "2001-03-21", absolute=given)
+
+    @pytest.mark.parametrize("given", [2, 56, 68, 1089])
+    def test_a_season_entrys_number_gives_way_to_the_position(self, given: int) -> None:
+        # Kitsu has an entry per season for most anime: its episode 2 of
+        # the fifth season is no absolute number
+        ref = TitleResolver.episode_ref(_series(), _one_piece(), absolute=given)
+
+        assert ref == EpisodeRef(5, 2, _LABOON, "2001-03-21", absolute=62)
 
     def test_a_special_has_no_absolute_number(self) -> None:
         request = make_request(

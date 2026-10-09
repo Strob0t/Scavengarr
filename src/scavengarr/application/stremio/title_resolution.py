@@ -31,6 +31,11 @@ from scavengarr.domain.ports.tmdb import TmdbClientPort
 # The title matcher: (results, reference, threshold, **weights) -> matches
 TitleFilterFn = Callable[..., list[SearchResult]]
 
+# A Kitsu number this far from the Cinemeta position still counts as absolute
+# (One Piece: 1089 where the list says 1088); farther off it is a season entry's
+# own count and gives way to the position.
+_KITSU_SLACK = 5
+
 
 class TitleMatchConfig(Protocol):
     """The title matcher's threshold and weights."""
@@ -151,14 +156,20 @@ class TitleResolver:
         """The episode *request* means, for plugins that locate episodes on
         the site's own numbering: the request's season and episode, the
         catalog entry's English title and release date, and the absolute
-        number, *absolute* when given (a ``kitsu:`` request's episode
-        number) else the entry's position among the regular seasons
-        (season 1 and up) ordered by season and episode. ``None`` without a
-        record, for a request without an episode, and for an episode the
-        list lacks unless *absolute* names it: a reference with neither a
-        title nor a number has nothing a plugin can locate by, and such an
-        episode (the newest of a running series, listed with a delay) is
-        better served by the plugin's own URL from the numbers."""
+        number: the entry's position among the regular seasons (season 1
+        and up) ordered by season and episode, or *absolute* (a ``kitsu:``
+        request's episode number) when it lies within ``_KITSU_SLACK`` of
+        that position or the list lacks the episode. A Kitsu entry that
+        spans the series counts as the sites do and may be one off (One
+        Piece: 1089 where the list says 1088); Kitsu has an entry per
+        season for most anime, whose number counts that season alone and
+        would place the episode in season 1, so a number far from the
+        position gives way to it. ``None`` without a record, for a request
+        without an episode, and for an episode the list lacks unless
+        *absolute* names it: a reference with neither a title nor a number
+        has nothing a plugin can locate by, and such an episode (the newest
+        of a running series, listed with a delay) is better served by the
+        plugin's own URL from the numbers."""
         if meta is None or request.season is None or request.episode is None:
             return None
         wanted = (request.season, request.episode)
@@ -167,12 +178,14 @@ class TitleResolver:
         )
         if entry is None and absolute is None:
             return None
-        if absolute is None and entry is not None and entry.season >= 1:
+        if entry is not None and entry.season >= 1:
             regular = sorted(
                 (e for e in meta.episodes if e.season >= 1),
                 key=lambda e: (e.season, e.episode),
             )
-            absolute = regular.index(entry) + 1
+            position = regular.index(entry) + 1
+            if absolute is None or abs(absolute - position) > _KITSU_SLACK:
+                absolute = position
         return EpisodeRef(
             season=request.season,
             episode=request.episode,
