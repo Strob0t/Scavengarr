@@ -354,6 +354,73 @@ CPU of the container during the round: Python 100.0 s, Chromium 167.7 s.
 
 Both CDNs throttle per connection (ranges 4 to 5 times faster; the second MixDrop run read bytes the first had fetched, and one connection stayed at 5.3 Mbit/s). Size over runtime gives an average bitrate of about 1.4 Mbit/s for the MixDrop film (147 min) and 2.1 Mbit/s for the DoodStream one (121 min), an estimate: one connection carries 3.8 and 1.8 times that. Proxying these files on one connection plays them; a range read-ahead for files is not needed by these two and stays a change of its own (design decision 6).
 
+### Eighth round (2026-10-09, production on `staging` 0d7d833): invalid
+
+`scripts/stremio_round.py --base https://scavengarr.lan --insecure` from the dev
+container, 17:31 to 19:06 UTC, play checks on. The first two titles answered
+(Der Schuh des Manitu 5.0 s, 5 streams, 2 of 5 playable; Lola rennt 30.1 s, 4
+streams, 0 of 4 playable); from the third title on every request answered in
+0.0 s with 0 streams and no `X-Cache`, which is how the runner records a
+non-2xx answer (`_request`: `resp.is_success` false). Production's container
+was alive then (its hoster snapshot was written at 18:34 UTC; the maintainer
+rebuilt at 19:00 UTC, the new container started 19:06:30), so the front or the
+app answered errors for about 80 minutes; the old container's logs went with
+the recreate, and the cause is not known. Row 26's acceptance (group 6, the
+four address-bound hosters play from the dev container) is not answered by
+this round; the full round runs again after step 35's deploy.
+
+### Ninth round, quick (2026-10-09, production on `staging` 11d1b46, no play checks)
+
+Right after the deploy (container up at 19:06:30 UTC), `--no-playcheck`, 19:08
+to 19:13 UTC, the search cache empty for everything but the two titles the
+eighth round had reached (`STALE`):
+
+| Title | First answer | Streams | X-Cache | Complete | Cached answer | Streams | Playable |
+|---|---|---|---|---|---|---|---|
+| Der Schuh des Manitu (`movie/tt0248408`) | 1.4 s | 2 | STALE | false | 0.03 s | 2 | – |
+| Lola rennt (`movie/tt0130827`) | 0.3 s | 4 | STALE | false | 0.04 s | 4 | – |
+| Good Bye, Lenin! (`movie/tt0301357`) | 30.1 s | 1 | MISS | false | 0.10 s | 1 | – |
+| Im Westen nichts Neues (`movie/tt1016150`) | 13.4 s | 5 | MISS | false | 0.12 s | 5 | – |
+| Oppenheimer (`movie/tt15398776`) | 26.3 s | 5 | MISS | false | 0.05 s | 5 | – |
+| Dune: Part Two (`movie/tt15239678`) | 16.0 s | 5 | MISS | false | 0.34 s | 5 | – |
+| Inception (`movie/tt1375666`) | 4.6 s | 5 | MISS | true | 0.04 s | 5 | – |
+| Interstellar (`movie/tt0816692`) | 5.3 s | 5 | MISS | true | 0.03 s | 5 | – |
+| Breaking Bad S01E01 (`series/tt0903747:1:1`) | 30.0 s | 0 | MISS | false | 0.08 s | 0 | – |
+| Dark S01E01 (`series/tt5753856:1:1`) | 30.0 s | 0 | MISS | false | 0.07 s | 0 | – |
+| Stranger Things S04E01 (`series/tt4574334:4:1`) | 16.2 s | 1 | MISS | true | 0.08 s | 1 | – |
+| Haus des Geldes S01E01 (`series/tt6468322:1:1`) | 8.6 s | 1 | MISS | true | 0.06 s | 1 | – |
+| The Last of Us S01E01 (`series/tt3581920:1:1`) | 21.3 s | 4 | MISS | true | 0.11 s | 4 | – |
+| One Piece S01E01 (`series/tt0388629:1:1`) | 8.2 s | 5 | MISS | true | 0.09 s | 5 | – |
+| Attack on Titan S01E01 (`series/tt2560140:1:1`) | 7.3 s | 5 | MISS | true | 0.06 s | 5 | – |
+| Demon Slayer S01E01 (`series/tt9335498:1:1`) | 6.2 s | 5 | MISS | false | 0.07 s | 5 | – |
+| Frieren S01E01 (`series/tt22248376:1:1`) | 9.5 s | 5 | MISS | true | 1.25 s | 5 | – |
+| Breaking Bad S01E02 (`series/tt0903747:1:2`) | 5.0 s | 0 | MISS | true | 0.02 s | 0 | – |
+| The Matrix (`movie/tt0133093`) | 9.3 s | 5 | MISS | true | 0.07 s | 5 | – |
+| **Median / total** (19 titles) | 9.3 s | 63 | 0 HIT | 10 of 19 complete | 0.07 s | 63 | – |
+
+Reading: 16 of 19 titles answer with streams (the seventh round, production:
+15 of 19); the median first answer 9.3 s; 10 of 19 answers complete within
+the 30 s budget, the rest answer partial and complete in the background (step
+21). Without streams: Breaking Bad S01E01 and S01E02 (the matcher kept the
+results, the episode filter or the resolution gave nothing; finding 14, row
+30) and Dark S01E01, where the matcher's new identity gates (step 35, group 3,
+live in this build) dropped all four results: one batch by score and year,
+one by category (`stremio_all_filtered`). The dev-container probe
+(`title_match.py series/tt5753856:1:1`, 19:13 UTC, same matcher) shows the
+gates right: aniworld's "Dark Gathering" and "Bastard!!" dropped by category,
+filmpalast's "Dark Matter", "The Terminal List: Dark Wolf" by score and "Dark
+Matter 2024" by year, while kinoger's "Dark" is kept by its IMDb id (1.20) and
+sto's "Dark - S01E01" at 1.00; production lacks exactly those two (sto refuses
+the Pi, finding 16; kinoger timed out), so Dark's zero is the Pi's reach, as
+before the gates. The same probe for One Piece (1999) keeps aniworld and sto's
+anime pages only and drops aniworld's "One Piece (2025)" and movie2k by year,
+filmpalast's 2023 release, kinoger and sto's "One Piece (2023)" by category,
+streamcloud and streamkiste by IMDb id. Step 35's year gate otherwise does what
+it was built for: Im Westen
+nichts Neues (2022) dropped the 1930 and 1979 films, Dune: Part Two dropped
+Dune 2021 and 1984, One Piece (1999) dropped one result by year and one by
+IMDb id and kept 5 streams.
+
 ## AIOStreams
 
 Goal was an AIOStreams test user on `aiostreams.lan` with Scavengarr as addon, measured end to end. Not done: AIOStreams validates the addon manifest when a user is created or updated, and it can reach neither the dev instance (Docker NAT on the workstation) nor `scavengarr.lan` (502, backend down). Recommended user settings, from the AIOStreams v2.35.3 source (`packages/core/src/presets/custom.ts`, `packages/core/src/db/schemas.ts`):
