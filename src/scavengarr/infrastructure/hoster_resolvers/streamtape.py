@@ -1,8 +1,12 @@
 """Streamtape hoster resolver — extracts video URLs from streamtape.com.
 
-Simple regex extraction: parse id/expires/ip/token parameters from the
-embed page, build get_video URL. No JavaScript deobfuscation needed.
-Based on JD2 StreamtapeCom.java.
+The embed page carries the ``get_video`` parameters (id, expires, ip,
+token) in hidden elements whose HTML texts are decoys; the page's script
+assigns the real value to the element the player reads (``botlink``) as
+string pieces joined with ``substring`` chains, and the player appends
+``&stream=1``. ``video_params`` evaluates that assignment; a page without
+it falls back to the first literal with the token the script names (the
+JD2 StreamtapeCom.java approach). Tokens are mixed case.
 """
 
 from __future__ import annotations
@@ -18,6 +22,59 @@ from scavengarr.infrastructure.hoster_resolvers._domain import extract_domain
 from scavengarr.infrastructure.hoster_resolvers._verify import verify_video_url
 
 log = structlog.get_logger(__name__)
+
+# The element the player reads: $('#botlink').text() + '&stream=1'
+_PLAYER_ELEMENT_RE = re.compile(r"\$\('#(\w+)'\)\.text\(\)")
+# getElementById('botlink').innerHTML = '//host/get_video' + ('xyza?id=…').substring(4);
+_ASSIGNMENT_RE = re.compile(r"getElementById\('(\w+)'\)\.innerHTML\s*=\s*([^;]+);")
+_STRING_RE = re.compile(r"'([^']*)'|\"([^\"]*)\"")
+_SUBSTRING_RE = re.compile(r"\.substring\((\d+)\)")
+_QUERY_RE = re.compile(r"id=[^&\s\"'<]+&expires=\d+&ip=[^&\s\"'<]+&token=[^&\s\"'<]+")
+# Legacy pages: the literal, and the token the script names
+_PARAMS_RE = re.compile(
+    r"(id=[^\"'&]*&expires=\d+&ip=[^\"'&]*&token=[^\"'&]*?)([\"'<])"
+)
+_SCRIPT_TOKEN_RE = re.compile(r"document\.getElementById[^<]*&token=([A-Za-z0-9\-_]+)")
+
+
+def _js_string(expr: str) -> str:
+    """The value of a script expression joining string literals with ``+``,
+    each cut by its ``.substring(n)`` chain."""
+    pieces = []
+    for piece in expr.split("+"):
+        match = _STRING_RE.search(piece)
+        if match is None:
+            continue
+        value = match.group(1) if match.group(1) is not None else match.group(2)
+        for start in _SUBSTRING_RE.findall(piece):
+            value = value[int(start) :]
+        pieces.append(value)
+    return "".join(pieces)
+
+
+def video_params(html: str) -> str | None:
+    """The ``get_video`` query (``id=…&expires=…&ip=…&token=…``) of an embed
+    page: what the script assigns to the element the player reads (the
+    last assignment, as in the browser), else the first literal with its
+    token corrected from the script."""
+    player = _PLAYER_ELEMENT_RE.search(html)
+    if player is not None:
+        for match in reversed(list(_ASSIGNMENT_RE.finditer(html))):
+            if match.group(1) != player.group(1):
+                continue
+            value = _js_string(match.group(2))
+            query = _QUERY_RE.search(value.partition("?")[2])
+            if query is not None:
+                return query.group(0)
+    legacy = _PARAMS_RE.search(html)
+    if legacy is None:
+        return None
+    params = legacy.group(1)
+    token = _SCRIPT_TOKEN_RE.search(html)
+    if token is not None:
+        params = re.sub(r"token=[^&]*", f"token={token.group(1)}", params)
+    return params
+
 
 # Mirror domains (JD2 StreamtapeCom.java + mirrors seen on plugin sites)
 _DOMAINS = frozenset(
@@ -80,30 +137,10 @@ class StreamtapeResolver:
             log.info("streamtape_video_not_found", url=url)
             return None
 
-        # Extract parameters: id=...&expires=...&ip=...&token=...
-        match = re.search(
-            r"(id=[^\"'&]*&expires=\d+&ip=[^\"'&]*&token=[^\"'&]*?)([\"'<])",
-            html,
-        )
-        if not match:
+        params_str = video_params(html)
+        if params_str is None:
             log.warning("streamtape_no_params", url=url)
             return None
-
-        params_str = match.group(1)
-
-        # Try to get corrected token from JavaScript
-        token_match = re.search(
-            r"document\.getElementById[^<]*&token=([A-Z0-9\-_]+)",
-            html,
-        )
-        if token_match:
-            corrected_token = token_match.group(1)
-            # Replace the token in params
-            params_str = re.sub(
-                r"token=[^&]*",
-                f"token={corrected_token}",
-                params_str,
-            )
 
         # Determine base domain from the response URL
         resp_host = urlparse(str(resp.url)).hostname or "streamtape.com"

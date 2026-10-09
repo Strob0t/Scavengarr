@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import gzip
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -220,3 +222,44 @@ class TestStreamtapeResolver:
         resolver = StreamtapeResolver(http_client=client)
         result = await resolver.resolve("https://streamtape.com/v/abc")
         assert result is None
+
+
+_PAGES = Path(__file__).resolve().parents[2] / "fixtures" / "html" / "streamtape"
+
+
+def _page(name: str) -> str:
+    return gzip.decompress((_PAGES / name).read_bytes()).decode()
+
+
+class TestDecoyPage:
+    """The embed page of 2026-10-09: three hidden elements carry the
+    get_video parameters, the HTML texts with decoy tokens, and the
+    player reads ``botlink`` after the page's script assigned it the
+    real parameters (string pieces joined with ``substring`` chains).
+    The tokens are mixed case."""
+
+    async def _resolve(self) -> str:
+        page = MagicMock()
+        page.status_code = 200
+        page.text = _page("embed-decoys.html.gz")
+        page.url = "https://streamtape.com/e/qvLKX6YG4jtzqJm/"
+        head = MagicMock()
+        head.status_code = 206
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(return_value=page)
+        client.head = AsyncMock(return_value=head)
+        result = await StreamtapeResolver(http_client=client).resolve(str(page.url))
+        assert result is not None
+        return result.video_url
+
+    @pytest.mark.asyncio
+    async def test_the_players_token(self) -> None:
+        url = await self._resolve()
+        assert url.startswith("https://streamtape.com/get_video?id=qvLKX6YG4jtzqJm&")
+        assert url.endswith("&token=AB03cdEf03gH&stream=1")
+
+    @pytest.mark.asyncio
+    async def test_the_decoys_are_not_taken(self) -> None:
+        url = await self._resolve()
+        assert "AB01" not in url
+        assert "AB02" not in url
