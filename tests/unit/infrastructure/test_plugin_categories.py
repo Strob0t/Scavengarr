@@ -16,6 +16,7 @@ from scavengarr.infrastructure.plugins.categories import (
     category_matches,
     filter_by_category,
     is_series_title,
+    names_anime,
     served_category,
     stream_category,
 )
@@ -82,6 +83,19 @@ class TestStreamCategory:
 
     def test_stream_categories_are_the_possible_labels(self) -> None:
         assert set(STREAM_CATEGORIES) == {2000, 5000, 5070}
+
+
+class TestNamesAnime:
+    """The genre words the plugins label 5070 by, shared with the title
+    matcher."""
+
+    def test_anime_and_animation(self) -> None:
+        assert names_anime(["Action", "Anime"])
+        assert names_anime([" animation "])
+
+    def test_other_genres(self) -> None:
+        assert not names_anime(["Action", "Abenteuer"])
+        assert not names_anime([])
 
 
 class TestIsSeriesTitle:

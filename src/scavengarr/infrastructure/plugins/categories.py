@@ -72,6 +72,13 @@ def is_series_title(title: str) -> bool:
     return _SERIES_TITLE_RE.search(title) is not None
 
 
+def names_anime(genres: Iterable[str]) -> bool:
+    """Whether a genre list calls the title anime or animation: the words
+    the streaming plugins label 5070 by, and the words the Stremio title
+    matcher reads a result's genres with."""
+    return bool(_ANIME_GENRES & {g.strip().lower() for g in genres})
+
+
 def stream_category(genres: Iterable[str], *, is_series: bool) -> int:
     """Category of a streaming-site title.
 
@@ -80,6 +87,6 @@ def stream_category(genres: Iterable[str], *, is_series: bool) -> int:
     """
     if not is_series:
         return 2000
-    if _ANIME_GENRES & {g.strip().lower() for g in genres}:
+    if names_anime(genres):
         return 5070
     return 5000

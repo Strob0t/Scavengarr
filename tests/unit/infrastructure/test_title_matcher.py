@@ -785,6 +785,38 @@ class TestCategoryDecides:
 
         assert score_title(sr, _ANIME) == TitleScore(1.0, "score")
 
+    def test_a_series_page_whose_genres_name_animation_is_the_anime(self) -> None:
+        """kinoking labels every series 5000 and stores the page's genres
+        (TMDB's): its One Piece anime page is the anime for the 1999
+        request and the wrong kind for the 2023 one (title probe
+        2026-10-09)."""
+        sr = _sr(
+            "One Piece S01E01",
+            category=5000,
+            metadata={"genres": "Action & Adventure, Animation, Comedy", "year": 1999},
+        )
+
+        assert score_title(sr, _ANIME) == TitleScore(1.2, "score")
+        assert score_title(sr, _LIVE_ACTION) == TitleScore(0.0, "category")
+
+    @pytest.mark.parametrize(
+        "genres", ["Anime", "Action, anime", ["Animation"], ("Fantasy", "Anime")]
+    )
+    def test_the_genre_words_are_the_plugins_own(self, genres: object) -> None:
+        """The words the plugins label 5070 by (``stream_category``), in a
+        comma-joined string or a list."""
+        sr = _sr("One Piece", category=5000, metadata={"genres": genres})
+
+        assert score_title(sr, _ANIME) == TitleScore(1.0, "score")
+        assert score_title(sr, _LIVE_ACTION) == TitleScore(0.0, "category")
+
+    @pytest.mark.parametrize("genres", ["", " , ", [], None, 0])
+    def test_empty_genres_say_nothing(self, genres: object) -> None:
+        sr = _sr("One Piece", category=5000, metadata={"genres": genres})
+
+        assert score_title(sr, _ANIME) == TitleScore(1.0, "score")
+        assert score_title(sr, _LIVE_ACTION) == TitleScore(1.0, "score")
+
     def test_an_unknown_kind_compares_no_category(self) -> None:
         ref = TitleMatchInfo(title="One Piece", content_type="series")
 

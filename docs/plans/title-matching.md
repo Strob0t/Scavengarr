@@ -66,3 +66,139 @@ What the eight stream plugins that stored no `year` keep since step 36, from the
 | megakino_to, movie4k | yes (before) | yes (before) | `DataApiPluginBase` stores `year` (a string of digits from the browse entry, which the matcher accepts), `genres` and `imdb_id` already; no change. Both sites are dead right now, so no live check |
 
 For "One Piece": kinoking's and kinox's series results now carry the year, kinoking's, kinox's and filmpalast's the genres, so the 1999 anime and the 2023 live action part by year where the page has one and by a genre such as Animation where it has not. Without a year on the page, the result stays as ambiguous as before; nothing is guessed.
+
+## Probe run (2026-10-09, series identity: before `01492ad`, after `11d1b46`)
+
+Task 7.2 of the series-identity change: the title probe over the series set above plus the three One Piece ids, run from the dev container (home connection, fresh cache) twice within three minutes, on `staging` before the matcher's identity rules (`01492ad`: Cinemeta meta, no year gate, no IMDb or category rule) and after them (`11d1b46`). The reference line names what the matcher knew after: the year, the IMDb id and the kind (`animation` from the Cinemeta genres). Each table counts a plugin's raw results and the kept ones in both runs (a failure in brackets); the lines below list every result of the after run with its score and the rule that dropped it, and the results only the before run saw. kinoking's search timed out in one run per id (its pages take 12 to 17 s); megakino_to and movie4k had no reachable domain in either run. Every drop was checked against the plugin's stored metadata (category, year, genres, IMDb id; a dump script that calls the plugins' `search()` directly, not kept).
+
+### `series/tt5753856:1:1` (Dark)
+
+Reference after: Dark (2017; tt5753856; not animation).
+
+| plugin | before: raw / kept | after: raw / kept |
+|---|---|---|
+| aniworld | 2 / 0 | 2 / 0 |
+| filmpalast | 3 / 0 | 3 / 0 |
+| kinoger | 1 / 1 | 1 / 1 |
+| kinoking | 1 / 1 | 0 / 0 (Dark: timeout) |
+| megakino_to | 0 / 0 (Dark: PluginUnreachableError) | 0 / 0 (Dark: PluginUnreachableError) |
+| movie4k | 0 / 0 (Dark: PluginUnreachableError) | 0 / 0 (Dark: PluginUnreachableError) |
+| sto | 1 / 1 | 1 / 1 |
+
+No results in either run: cineby, einschalten, fireani, haschcon, hdfilme, kinox, megakino, moflix, movie2k, streamcloud, streamkiste.
+
+- after, aniworld: 'Dark Gathering' 0.00 dropped by category
+- after, aniworld: 'Bastard!! Heavy Metal, Dark Fantasy' 0.00 dropped by category
+- after, filmpalast: 'Dark Matter S01E01' [Dark.Matter.S01E01.Episode.Eins.GERMAN.AAC.1080p.BluRay.x265-w00t] 0.65 dropped by score
+- after, filmpalast: 'The Terminal List: Dark Wolf S01E01' [The.Terminal.List.Dark.Wolf.S01E01.GERMAN.DL.1080p.WEB.h264-SAUERKRAUT] 0.65 dropped by score
+- after, filmpalast: 'Dark Matter - Der Zeitenläufer S01E01' [Dark.Matter.2024.S01E01.German.DL.Atmos.1080p.ATVP.WEB.H265-ZeroTwo] 0.00 dropped by year
+- after, kinoger: 'Dark' 1.20 kept
+- after, sto: 'Dark - S01E01 - Geheimnisse' 1.00 kept
+- before only, kinoking: 'Dark S01E01' 1.00 kept
+
+### `series/tt6468322:1:1` (Haus des Geldes)
+
+Reference after: Haus des Geldes (2017; alt: Money Heist; tt6468322; not animation) / Money Heist (2017; tt6468322; not animation).
+
+| plugin | before: raw / kept | after: raw / kept |
+|---|---|---|
+| kinoger | 1 / 1 | 1 / 1 |
+| kinoking | 1 / 1 | 1 / 1 |
+| megakino | 1 / 1 | 1 / 1 |
+| megakino_to | 0 / 0 (Haus des Geldes: PluginUnreachableError) | 0 / 0 (Haus des Geldes: PluginUnreachableError) |
+| movie4k | 0 / 0 (Haus des Geldes: PluginUnreachableError) | 0 / 0 (Haus des Geldes: PluginUnreachableError) |
+| sto | 1 / 1 | 1 / 1 |
+
+No results in either run: aniworld, cineby, einschalten, filmpalast, fireani, haschcon, hdfilme, kinox, moflix, movie2k, streamcloud, streamkiste.
+
+- after, kinoger: 'Haus des Geldes' 1.20 kept
+- after, kinoking: 'Haus des Geldes S01E01' 1.20 kept
+- after, megakino: 'Haus des Geldes - Staffel 1' 1.00 kept
+- after, sto: 'Haus des Geldes - S01E01 - Folge 1' 1.00 kept
+
+### `series/tt0388629:1:1` (One Piece, the 1999 anime)
+
+Reference after: One Piece (1999; tt0388629; animation).
+
+| plugin | before: raw / kept | after: raw / kept |
+|---|---|---|
+| aniworld | 1 / 1 | 2 / 1 |
+| filmpalast | 1 / 1 | 1 / 0 |
+| kinoger | 1 / 1 | 1 / 0 |
+| kinoking | 0 / 0 (One Piece: timeout) | 2 / 0 |
+| megakino_to | 0 / 0 (One Piece: PluginUnreachableError) | 0 / 0 (One Piece: PluginUnreachableError) |
+| movie2k | 1 / 1 | 1 / 0 |
+| movie4k | 0 / 0 (One Piece: PluginUnreachableError) | 0 / 0 (One Piece: PluginUnreachableError) |
+| sto | 1 / 1 | 2 / 1 |
+| streamcloud | 1 / 1 | 1 / 0 |
+| streamkiste | 1 / 1 | 1 / 0 |
+
+No results in either run: cineby, einschalten, fireani, haschcon, hdfilme, kinox, megakino, moflix.
+
+- after, aniworld: 'One Piece' 1.00 kept
+- after, aniworld: 'One Piece (2025)' 0.00 dropped by year
+- after, filmpalast: 'One Piece S01E01' [One.Piece.2023.S01E01.GERMAN.DL.720p.WEB.h264-SAUERKRAUT] 0.00 dropped by category
+- after, kinoger: 'One Piece' 0.00 dropped by category
+- after, kinoking: 'One Piece S01E01' 0.00 dropped by category
+- after, kinoking: 'ONE PIECE S01E01' 0.00 dropped by category
+- after, movie2k: 'ONE PIECE' 0.00 dropped by year
+- after, sto: 'One Piece - S01E01 - Hier kommt Ruffy, der künftige König der Piraten!' 1.00 kept
+- after, sto: 'One Piece (2023) - S01E01 - Das Abenteuer beginnt' 0.00 dropped by category
+- after, streamcloud: 'ONE PIECE' 0.00 dropped by imdb
+- after, streamkiste: 'ONE PIECE' 0.00 dropped by imdb
+
+### `series/tt11737520:1:1` (One Piece, the 2023 live action)
+
+Reference after: One Piece (2023; tt11737520; not animation).
+
+| plugin | before: raw / kept | after: raw / kept |
+|---|---|---|
+| aniworld | 1 / 1 | 2 / 0 |
+| filmpalast | 1 / 1 | 1 / 1 |
+| kinoger | 1 / 1 | 1 / 1 |
+| kinoking | 0 / 0 (One Piece: timeout) | 2 / 1 |
+| megakino_to | 0 / 0 (One Piece: PluginUnreachableError) | 0 / 0 (One Piece: PluginUnreachableError) |
+| movie2k | 1 / 1 | 1 / 1 |
+| movie4k | 0 / 0 (One Piece: PluginUnreachableError) | 0 / 0 (One Piece: PluginUnreachableError) |
+| sto | 1 / 1 | 2 / 1 |
+| streamcloud | 1 / 1 | 1 / 1 |
+| streamkiste | 1 / 1 | 1 / 1 |
+
+No results in either run: cineby, einschalten, fireani, haschcon, hdfilme, kinox, megakino, moflix.
+
+- after, aniworld: 'One Piece' 0.00 dropped by category
+- after, aniworld: 'One Piece (2025)' 0.00 dropped by category
+- after, filmpalast: 'One Piece S01E01' [One.Piece.2023.S01E01.GERMAN.DL.720p.WEB.h264-SAUERKRAUT] 1.20 kept
+- after, kinoger: 'One Piece' 1.20 kept
+- after, kinoking: 'ONE PIECE S01E01' 1.20 kept
+- after, kinoking: 'One Piece S01E01' 0.00 dropped by year
+- after, movie2k: 'ONE PIECE' 1.20 kept
+- after, sto: 'One Piece (2023) - S01E01 - Das Abenteuer beginnt' 1.20 kept
+- after, sto: 'One Piece - S01E01 - Hier kommt Ruffy, der künftige König der Piraten!' 0.00 dropped by category
+- after, streamcloud: 'ONE PIECE' 1.20 kept
+- after, streamkiste: 'ONE PIECE' 1.20 kept
+
+### `series/tt30476502:1:1` (The One Piece, the 2027 remake)
+
+Reference after: The One Piece (2027; tt30476502; animation).
+
+| plugin | before: raw / kept | after: raw / kept |
+|---|---|---|
+| megakino_to | 0 / 0 (The One Piece: PluginUnreachableError) | 0 / 0 (The One Piece: PluginUnreachableError) |
+| movie4k | 0 / 0 (The One Piece: PluginUnreachableError) | 0 / 0 (The One Piece: PluginUnreachableError) |
+
+No results in either run: aniworld, cineby, einschalten, filmpalast, fireani, haschcon, hdfilme, kinoger, kinoking, kinox, megakino, moflix, movie2k, sto, streamcloud, streamkiste.
+
+
+
+### Reading (7.2)
+
+**The two acceptance lines hold.** The 1999 request keeps no 2023 result: filmpalast's `One.Piece.2023` release (5000 with genres), kinoger's page (year "2023", genres "Action, Abenteuer, Fantasy, Serie") and kinoking's "ONE PIECE S01E01" go by category, movie2k's "ONE PIECE" (year "2023", no genres) by year, streamcloud's and streamkiste's pages (`imdb_id` tt11737520) by the id, sto's "One Piece (2023)" entry by category (3.6 scrapes it next to the anime now). The 2023 request keeps no 5070 result: aniworld's two entries and sto's anime page (genre "Anime") go by category. Before, the 1999 request kept all seven (filmpalast's 2023 release at 0.70, the rest at 1.00) and the 2023 request kept aniworld's and sto's anime pages.
+
+**Dark and Haus des Geldes are unchanged**, kinoger's and kinoking's pages now score 1.20 (the year bonus for 2017), filmpalast's "Dark Matter - Der Zeitenläufer" (2024) goes by year instead of 0.35. Production's empty answer for Dark after the deploy of `11d1b46` (19:06 UTC) is reach, not the gate: sto refuses the Pi and kinoger timed out there, so only the loose hits reached the filter (the same picture as the 2026-10-07 round above). The One Piece (2027) has no results on any plugin in either run.
+
+**One wrong drop: kinoking's anime page.** For the 1999 request kinoking's "One Piece S01E01" went by category (for the 2023 request the same result goes by year, so its stored year is the anime's). kinoking labels every series 5000 and, since step 36, stores the page's genres from its keywords meta; the category rule of `11d1b46` read "5000 with genres" as "a site that lists genres and did not call the title anime", which was written when kinoking carried no genres. That the result is the anime and not the 2027 remake: kinoking's cards carry TMDB ids and mirror TMDB's names, which tell the three apart by case alone ("One Piece" the anime, "ONE PIECE" the live action, "THE ONE PIECE" the remake), and the result's year lies outside the live action's tolerance. That its genres name "Animation": kinoking's genres are TMDB's German genre names (Dark: "Krimi, Drama, Sci-Fi &amp; Fantasy"), and TMDB's for the anime are Action & Adventure, Animation, Komödie; a direct read of the page was not possible after the probe (the plugin's search timed out three times from 19:16 UTC on, and a plain fetch got the challenge page twice and then a 524). Fix (this commit): the result's kind comes from its label and genres, symmetric. 5070 means animation; 5000 with genres means what the genres say, with the genre words the plugins label 5070 by (`names_anime` of `infrastructure/plugins/categories.py`, shared with `stream_category`: "anime", "animation"); no genres means unknown. A known kind that differs from the reference's kind drops the result with the reason `category`; an unknown one leaves it to the year and text rules. kinoking's anime page is then kept for the 1999 request (1.20 with the year bonus) and dropped by category instead of year for the 2023 one; every other verdict above stays.
+
+**No year exclusion.** No plugin in the set stores a latest-season year: kinoking's `seriesYear` is 2017 for Dark (int), kinoger's "2017" (string), and the years of the One Piece results are the live action's 2023 where the page is the live action.
+
+**Open:** kinoking's genres keep the page's HTML entities ("Sci-Fi &amp; Fantasy" for Dark), which the matcher does not mind but a reader of the metadata will (step 36's file).

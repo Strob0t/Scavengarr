@@ -24,6 +24,7 @@ from unidecode import unidecode as _unidecode
 
 from scavengarr.domain.entities.stremio import TitleMatchInfo
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.categories import names_anime
 from scavengarr.infrastructure.stremio.release_guess import guess_release
 
 log = structlog.get_logger(__name__)
@@ -251,17 +252,42 @@ def _result_imdb(result: SearchResult) -> str | None:
     return None
 
 
+def _genre_words(value: object) -> list[str]:
+    """The genres of a result: the comma-joined string the plugins store,
+    or a list of names."""
+    if isinstance(value, str):
+        return [g for g in value.split(",") if g.strip()]
+    if isinstance(value, (list, tuple)):
+        return [str(g) for g in value if str(g).strip()]
+    return []
+
+
+def _result_kind(result: SearchResult) -> bool | None:
+    """What the result's label and genres say about its kind: an anime
+    label (5070) means animation; a series label (5000) with genres of its
+    own means what the genres say (``names_anime``: the words the plugins
+    label 5070 by, so a site that lists genres and did not call the title
+    anime means another series); a series label without genres, or any
+    other label, says nothing (``None``). kinoking labels every series
+    5000 and stores the page's genres (TMDB's, "Animation" for an anime):
+    its One Piece anime page was dropped for the anime while any genres
+    meant another series (title probe 2026-10-09, series/tt0388629:1:1:
+    "kinoking: 'One Piece S01E01' 0.00 dropped by category")."""
+    if result.category == _CATEGORY_ANIME:
+        return True
+    if result.category != _CATEGORY_SERIES:
+        return None
+    genres = _genre_words(result.metadata.get("genres"))
+    return names_anime(genres) if genres else None
+
+
 def _wrong_kind(result: SearchResult, animation: bool | None) -> bool:
-    """Whether the result's label contradicts the reference's kind: an anime
-    label (5070) for a reference that is not animation, or a plain series
-    label (5000) with genres of its own for an animation reference (a site
-    that lists genres and did not call the title anime means another
-    series). Nothing is contradicted while the kind is unknown."""
+    """Whether the result's kind (``_result_kind``) contradicts the
+    reference's. Nothing is contradicted while either is unknown."""
     if animation is None:
         return False
-    if not animation:
-        return result.category == _CATEGORY_ANIME
-    return result.category == _CATEGORY_SERIES and bool(result.metadata.get("genres"))
+    kind = _result_kind(result)
+    return kind is not None and kind != animation
 
 
 def _identity_verdict(

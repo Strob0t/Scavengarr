@@ -238,7 +238,7 @@ Title matching prevents false positives when plugin results include sequels, spi
 | Title candidates | Up to 4 deduplicated candidates: raw title, guessit title of `title`, guessit title of `release_name`, raw `release_name` |
 | Reference titles | Primary (localised) title plus `alt_titles` (TMDB original title when it differs). Original titles are no search queries: a plugin is searched with the titles of its languages only (recall check in `docs/plans/pi-performance.md`) |
 | IMDb id | A result whose metadata names `imdb` or `imdb_id` (`tt` plus digits, the zeros ignored) is kept (1.2) or dropped by the id alone (reason `imdb`), before any text is compared |
-| Category | With the reference's kind known (`animation`: the Cinemeta genres name "Animation"), an anime label (5070) is dropped for a live-action reference and a series label (5000) with genres of its own for an animation reference (reason `category`); a result without genres, or an unknown kind, is decided by the text and year rules |
+| Category | With the reference's kind known (`animation`: the Cinemeta genres name "Animation"), a result whose kind contradicts it is dropped (reason `category`): an anime label (5070) means animation, a series label (5000) with genres of its own means what the genres say (`names_anime` of `infrastructure/plugins/categories.py`, the words the plugins label 5070 by, so kinoking's One Piece anime page, 5000 with TMDB's genres, is the anime), and a result without genres, or an unknown kind, is decided by the text and year rules |
 | Drop reasons | `title_match_filtered` logs `reason` (`score`, `year`, `imdb`, `category`); `title_match_summary` counts the drops per reason (`reasons`) |
 
 ---
