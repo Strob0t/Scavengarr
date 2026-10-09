@@ -289,6 +289,7 @@ class TestBuildSearchResult:
         assert sr.metadata["tmdb_id"] == "268"
         assert sr.metadata["rating"] == "7.2"
         assert sr.metadata["runtime"] == "126"
+        assert sr.metadata["year"] == 1989
 
     def test_no_detail_fallback(self, einschalten_mod):
         p = einschalten_mod.EinschaltenPlugin()
@@ -381,6 +382,17 @@ class TestBuildSearchResult:
 # ---------------------------------------------------------------------------
 # Search pagination tests
 # ---------------------------------------------------------------------------
+
+
+class TestYearMetadata:
+    def test_no_year_without_a_release_date(self, einschalten_mod):
+        p = einschalten_mod.EinschaltenPlugin()
+        entry = {**SEARCH_RESPONSE["data"][0], "releaseDate": ""}
+
+        sr = p._build_search_result(entry, None, None)
+
+        assert sr.title == "Batman"
+        assert "year" not in sr.metadata
 
 
 class TestApiSearch:

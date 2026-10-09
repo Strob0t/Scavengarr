@@ -13,6 +13,7 @@ No authentication required.
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 from urllib.parse import urlparse
 
 from scavengarr.domain.plugins.base import SearchResult
@@ -164,6 +165,17 @@ class EinschaltenPlugin(HttpxPluginBase):
         if len(overview) > 300:
             overview = overview[:297] + "..."
 
+        metadata: dict[str, Any] = {
+            "genres": ", ".join(genres) if genres else "",
+            "rating": rating,
+            "imdb_id": imdb_id,
+            "tmdb_id": str(movie_id) if movie_id else "",
+            "runtime": runtime,
+            "poster": poster,
+        }
+        if year:
+            metadata["year"] = int(year)  # the film's release year
+
         return SearchResult(
             title=display_title,
             download_link=download_link,
@@ -173,14 +185,7 @@ class EinschaltenPlugin(HttpxPluginBase):
             published_date=year,
             category=2000,  # Movies only
             description=overview or None,
-            metadata={
-                "genres": ", ".join(genres) if genres else "",
-                "rating": rating,
-                "imdb_id": imdb_id,
-                "tmdb_id": str(movie_id) if movie_id else "",
-                "runtime": runtime,
-                "poster": poster,
-            },
+            metadata=metadata,
         )
 
     async def _process_entry(
