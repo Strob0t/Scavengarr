@@ -104,12 +104,66 @@ class TitleMatchInfo:
 
     *content_type* controls year tolerance: series span multiple years
     so a wider tolerance (±3) is used versus movies (±1).
+
+    *imdb_id* is the request's IMDb id: a result whose metadata names
+    one is kept or dropped by the id alone.
+
+    *animation* says whether the catalog's genres name "Animation";
+    ``None`` without a catalog meta, and then a result's category is
+    not compared.
     """
 
     title: str
     year: int | None = None
     alt_titles: list[str] = field(default_factory=list)
     content_type: StremioContentType | None = None
+    imdb_id: str | None = None
+    animation: bool | None = None
+
+
+@dataclass(frozen=True)
+class EpisodeMeta:
+    """One episode as the catalog (Cinemeta) lists it: IMDb's season and
+    episode, the English name and the release date (``YYYY-MM-DD``)."""
+
+    season: int
+    episode: int
+    name: str
+    released: str | None = None
+
+
+@dataclass(frozen=True)
+class SeriesMeta:
+    """A title as the catalog (Cinemeta) knows it: name, start year, genres
+    and, for a series, its episodes in the catalog's order (a movie has
+    none)."""
+
+    name: str
+    year: int | None
+    genres: tuple[str, ...]
+    episodes: tuple[EpisodeMeta, ...]
+
+
+@dataclass(frozen=True)
+class EpisodeRef:
+    """Which episode a series request means, for a plugin that locates
+    episodes on the site's own numbering (``locates_episodes``).
+
+    *season* and *episode* are the request's: IMDb's numbering, which
+    Cinemeta counts in. *title* is the episode's English name and *aired*
+    its release date (``YYYY-MM-DD``), both from the Cinemeta list's entry
+    for that season and episode (``None`` when the list lacks it).
+    *absolute* is the episode's number in the series' own count: the
+    Kitsu episode number for a request that came as a ``kitsu:`` id, else
+    the entry's position among the list's regular seasons (season 1 and
+    up) ordered by season and episode, an estimate the title confirms.
+    """
+
+    season: int
+    episode: int
+    title: str | None = None
+    aired: str | None = None
+    absolute: int | None = None
 
 
 @dataclass(frozen=True)

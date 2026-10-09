@@ -476,6 +476,7 @@ Plugins declare `languages: list[str]` (default `["de"]`). The use case groups p
 | `tests/unit/infrastructure/test_kitsu_addon_client.py` | `KitsuAddonClient` (the addon's meta reduced to a record and cached; refusals, timeouts) |
 | `tests/unit/infrastructure/test_anime_id_lists.py` | `AnimeIdLists` (download, reduction, cache, hold-off after a failure) |
 | `tests/unit/infrastructure/test_anime_id_resolver.py` | `KitsuAnimeIdResolver` (addon record, refetch, list fallback, nothing) |
+| `tests/unit/infrastructure/test_cinemeta.py` | `CinemetaClient` (the catalog's meta reduced to a record and cached; unknown ids, failures) |
 | `tests/unit/infrastructure/test_stream_link_cache.py` | Stream link cache repository (incl. HLS proxy fields) |
 | `tests/unit/infrastructure/test_hls_proxy.py` | HLS manifest rewriting, CDN fetch, query resolution |
 | `tests/unit/infrastructure/test_circuit_breaker.py` | `PluginCircuitBreaker` |
@@ -496,6 +497,7 @@ Plugins declare `languages: list[str]` (default `["de"]`). The use case groups p
 | TMDB port | `src/scavengarr/domain/ports/tmdb.py` |
 | Anime id port | `src/scavengarr/domain/ports/anime_ids.py` |
 | Anime ids (Kitsu addon client, id list, resolver) | `src/scavengarr/infrastructure/anime/` |
+| Series meta (Cinemeta client) | `src/scavengarr/infrastructure/stremio/cinemeta.py` |
 | Stream link port | `src/scavengarr/domain/ports/stream_link_repository.py` |
 | Concurrency port | `src/scavengarr/domain/ports/concurrency.py` |
 | Stream use case | `src/scavengarr/application/use_cases/stremio_stream.py` |
