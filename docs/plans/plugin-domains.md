@@ -104,3 +104,65 @@ The question of the verdict: did the two sites move to domains outside `_domains
 - **kinoking: alive, slow from the VPN exit.** From home the domain check answers in 0.3 to 1.2 s; from the Pi the same `HEAD` takes 5.1 to 5.2 s and fails the 5 s check in two of three runs, the `GET` 4 to 8.5 s. The 22 % unreachable marks are those timeouts, spread evenly over three days, and the plugin returns results when it gets through (2 on 10-08, 2 on 10-09). Not a block (every answer is a 200), not a challenge: Cloudflare's path from the Pi's exit to kinoking's origin is slow, right at the check's timeout.
 
 Nothing in `_domains` or the plugins was changed. The decision is the maintainer's: fireani and kinox are candidates for disabling until the record shows a return (kinox's wall was already a reason); kinoking is a question of the domain check's 5 s timeout from the VPN exit, not of the site.
+
+## Live suite (2026-10-09)
+
+`PYTHONPATH=src xvfb-run -a poetry run pytest -m live -q -p no:cacheprovider -rA --tb=line` from the dev container (the home connection, not the Pi's VPN exit), 18:57 to 19:08 UTC, 10.5 min: **30 passed, 7 failed, 4 skipped** of 41. The failures are site failures, not test failures: every failed plugin failed before its parser ran (no domain answered, or the search request timed out), except boerse, which passed Cloudflare and then found no login form. The report decides the follow-up steps; nothing was changed.
+
+**Plugins** (`tests/live/test_plugin_smoke.py`: one search per plugin, passes with at least one result that has a title and an http link; skipped on network errors and missing credentials):
+
+| Plugin | Base | Result | Reason |
+|---|---|---|---|
+| aniworld | httpx | passed | |
+| burningseries | httpx | passed | |
+| byte | httpx | passed | |
+| cine | httpx | passed | |
+| dataload | httpx | passed | |
+| einschalten | httpx | passed | |
+| filmfans | httpx | passed | |
+| filmpalast | httpx | passed | |
+| fireani | httpx | **failed** | unreachable: the search request to fireani.me timed out (`fireani_timeout context=search`), 0 results; the dead host of the section above |
+| haschcon | httpx | passed | |
+| hdfilme | httpx | passed | |
+| hdworld | httpx | passed | |
+| kinoger | httpx | passed | |
+| kinoking | httpx | **failed** | unreachable: the search request to kinoking.cc timed out after 30 s (`kinoking_timeout context=search`), 0 results; the domain check answered, so this is the slow site of the section above, now slow from home too |
+| kinox | httpx | **failed** | unreachable: `no domain reachable`, all 9 domains failed the check (Cloudflare 522 in the section above) |
+| megakino | httpx | passed | |
+| megakino_to | httpx | **failed** | unreachable: `no domain reachable` (megakino.org, megakino.to) |
+| moflix | httpx | passed | |
+| movie2k | httpx | passed | |
+| movie4k | httpx | **failed** | unreachable: `no domain reachable` (movie4k.sx, movie4k.ag, movie4k.stream) |
+| myboerse | httpx | skipped | no credentials in the dev container |
+| nima4k | httpx | passed | |
+| nox | httpx | passed | |
+| scnlog | httpx | passed | |
+| serienfans | httpx | passed | |
+| sto | httpx | passed | |
+| streamcloud | httpx | passed | |
+| streamkiste | httpx | passed | |
+| warezomen | httpx | passed | |
+| animeloads | Playwright | **failed** | unreachable in this test: the domain check of anime-loads.org failed at 19:03, six minutes after the grab test below found the same domain and 7 results on it; a flaky check, not a dead site |
+| boerse | Playwright | **failed** | parser miss at the login: Cloudflare solved on boerse.am and boerse.tw (`cloudflare_solved clicked=True`), then `no login form` on boerse.am, .tw, .sx, .im and .ai; boerse.kz timed out after 30 s (`RuntimeError: All boerse domains failed during login`). The login page or its form changed; the credentials were never sent |
+| ddlspot | Playwright | passed | |
+| ddlvalley | Playwright | passed | |
+| mygully | Playwright | skipped | no credentials in the dev container |
+| scnsrc | Playwright | passed | |
+
+**Resolvers and grabs:**
+
+| Test | Result | Reason |
+|---|---|---|
+| `test_resolver_live.py` XFS live URLs | skipped | `_LIVE_URLS` is empty: no resolver has a live case, so the suite says nothing about the 25 XFS and 10 DDL hosters |
+| `test_resolver_live.py` XFS dead URLs | skipped | `_DEAD_URLS` is empty, same |
+| `test_grab_resolve_live.py` nox, Iron Man | passed | |
+| `test_grab_resolve_live.py` animeloads, One Punch Man | passed | 7 results, 30 releases; one `animeloads_captcha_rejected` on the way, the grab still returned hoster links |
+
+**Stremio end to end** (`test_stremio_e2e_live.py`: the app with all plugins, one stream request, at least one stream must play):
+
+| Title | Result | Streams | Resolved |
+|---|---|---|---|
+| Oppenheimer (2023) | passed | 5 returned of 13 links (8 unresolved at the budget, 5 plugins missing: kinoger, kinoking, kinox, megakino_to, movie4k) | voe (filmpalast, HLS), mixdrop (hdfilme), vinovo (movie2k), gxplayer (megakino, HLS), veev (moflix). Not resolved: supervideo (hdfilme) failed its check with `PrivateAddressError`; moflix's upns and rpmplay have no resolver (`hoster_without_resolver`); two dood links were swapped for their dr0pstream alternative |
+| Breaking Bad S01E01 | passed | 4 returned of 6 links (2 unresolved, 3 plugins missing) | kinoger's own player (HLS) and fsst (kinoger), voe (sto, after the Turnstile gate `sto_link_gate_passed`), voe (filmpalast). Not resolved: dr0pstream (hdfilme) `ConnectError` at the check |
+
+**What this adds to the record.** fireani, kinox and kinoking fail from home the way the section above saw them from the Pi (kinoking got worse: the search itself times out now). megakino_to and movie4k are new on the unreachable list: both share `DataApiPluginBase`, and none of their five domains answered the check. boerse is the one plugin whose failure is in our code's reach: the login form is not where `boerse.py` looks for it after the Cloudflare page. animeloads needs a second look at its domain check only. The resolver suite has no cases, so the hoster picture comes from the end-to-end runs alone: 9 resolutions over 2 titles, supervideo's `PrivateAddressError` and dr0pstream's `ConnectError` are the two resolver-side failures, and moflix's upns and rpmplay are hosters without a resolver.
