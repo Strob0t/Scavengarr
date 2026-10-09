@@ -38,6 +38,11 @@ SEARCH_ENTRY_1 = {
     "excerpt": {"rendered": "<p>Ein Wissenschaftler verwandelt sich...</p>"},
     "content": {"rendered": "<div>Review text</div>"},
     "featured_media": 999,
+    # The SEO title carries the film's year; the post date is the upload date
+    "yoast_head_json": {
+        "title": "Die Fliege (1986) – Horror-Klassiker",
+        "og_title": "Die Fliege (1986) – Horror-Klassiker",
+    },
     "_embedded": {
         "wp:term": [
             [
@@ -211,6 +216,30 @@ class TestBuildSearchResult:
         assert sr.metadata["genres"] == (
             "Horror und Mystery, Science Fiction und Fantasy"
         )
+
+    def test_year_from_the_seo_title(self, haschcon_mod):
+        p = haschcon_mod.HaschconPlugin()
+        sr = p._build_search_result(SEARCH_ENTRY_1, None)
+
+        assert sr.metadata["year"] == 1986
+        assert sr.published_date == "2025"  # the upload date, as before
+
+    def test_no_year_without_one_in_the_seo_title(self, haschcon_mod):
+        p = haschcon_mod.HaschconPlugin()
+        entry = {
+            **SEARCH_ENTRY_1,
+            "yoast_head_json": {"title": "Die Fliege – Horror-Klassiker"},
+        }
+        sr = p._build_search_result(entry, None)
+
+        assert "year" not in sr.metadata
+
+    def test_upload_year_is_not_the_film_year(self, haschcon_mod):
+        p = haschcon_mod.HaschconPlugin()
+        sr = p._build_search_result(SEARCH_ENTRY_2, None)
+
+        assert sr.published_date == "2024"
+        assert "year" not in sr.metadata
 
     def test_tags_as_actors(self, haschcon_mod):
         p = haschcon_mod.HaschconPlugin()

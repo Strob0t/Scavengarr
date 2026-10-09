@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import html as html_lib
 import re
+from typing import Any
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
@@ -39,6 +40,22 @@ _DM_PATTERN = re.compile(r"dailymotion\.com/embed/video/([a-zA-Z0-9]+)")
 def _entry_title(entry: dict) -> str:
     """The title of a video entry (WordPress sends it HTML-escaped)."""
     return html_lib.unescape(entry.get("title", {}).get("rendered", ""))
+
+
+_TITLE_YEAR_RE = re.compile(r"\((19\d{2}|20\d{2})\)")
+
+
+def _release_year(entry: dict) -> int | None:
+    """The film's year from the entry's SEO title ("Dracula – Tot aber
+    glücklich (1995) – Vampir-Komödie"); the post date is the upload date."""
+    seo = entry.get("yoast_head_json") or {}
+    if not isinstance(seo, dict):
+        return None
+    for key in ("title", "og_title"):
+        m = _TITLE_YEAR_RE.search(str(seo.get(key) or ""))
+        if m:
+            return int(m.group(1))
+    return None
 
 
 class HaschconPlugin(HttpxPluginBase):
@@ -147,6 +164,15 @@ class HaschconPlugin(HttpxPluginBase):
         if len(desc) > 300:
             desc = desc[:297] + "..."
 
+        metadata: dict[str, Any] = {
+            "genres": ", ".join(categories) if categories else "",
+            "actors": ", ".join(tags) if tags else "",
+            "poster": poster,
+        }
+        release_year = _release_year(entry)
+        if release_year is not None:
+            metadata["year"] = release_year
+
         return SearchResult(
             title=title,
             download_link=download_link,
@@ -154,11 +180,7 @@ class HaschconPlugin(HttpxPluginBase):
             published_date=year,
             category=2000,  # Movies only
             description=desc or None,
-            metadata={
-                "genres": ", ".join(categories) if categories else "",
-                "actors": ", ".join(tags) if tags else "",
-                "poster": poster,
-            },
+            metadata=metadata,
         )
 
     async def _process_entry(
