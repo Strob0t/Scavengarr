@@ -133,3 +133,46 @@ Captured from the dev container (s.to refuses the Pi) with `scripts/capture_page
 **Answer for 6.2.** Yes on both counts. For an anime the English span carries the absolute number the way aniworld does (`Episode 062`, without aniworld's brackets): the 16 rows of One Piece season 2 run `Episode 062` to `Episode 077`, and the series page lists 24 `staffel-N` links. For a series the span carries the English title: *The Last of Us* S02E02 has `Durch das Tal` in the `strong` and `Through the Valley` in the span. So `sto.py` can share aniworld's index and locate code with its own selectors (`span.episode-title-eng` for the number or English title, `strong.episode-title-ger` for the German one). Today's `_SeriesDetailParser` reads the `strong` only and leaves `en_title` empty.
 
 **Applied (6.2).** `sto.py` declares `locates_episodes` and locates its anime results (5070) on the shared module with the selectors above (`sto:episodes:v1:<slug>`, 7 days). An anime row has no English title, so the number must match exactly (rule 1's number-only case); a series (5000, 5080) keeps the request's numbers, since IMDb's seasons are the site's for them. The two captured season pages are the fixtures of `test_real_pages.py`.
+
+## After, series identity (2026-10-09, dev container, `worktree-handoff-35` after 026fca2 with the `isolated_search` fix)
+
+Task 7.1 of step 35. `xvfb-run -a poetry run python -P scripts/probes/series_episodes.py --plugins aniworld,sto series/tt0388629:1:1 series/tt0388629:5:2 series/tt0388629:22:4 series/tt9335498:2:1 series/tt9335498:4:1 series/kitsu:12:1089` (One Piece and Demon Slayer: Kimetsu no Yaiba; the `kitsu:` id is translated first, as the use case does). The probe builds each request's episode reference from the Cinemeta meta and hands it to the two plugins, which declare `locates_episodes`; `located` counts the results whose metadata names the site's page.
+
+The first run failed every search with `TypeError 8` per plugin: `HttpxPluginBase.isolated_search`, the search runner's entry, did not take the `episode_ref` keyword the runner passes (the Playwright base did), so no httpx plugin had ever received a reference outside the unit tests, which call `search()` directly. Fixed in this step with tests on the base and through both plugins' `isolated_search`.
+
+| plugin | results | season_episode | episode | season | none | kept | narrowed | dropped | right | leaks | located | failed |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| aniworld | 6 | 6 | 0 | 0 | 0 | 6 | 0 | 0 | 6 | 0 | 6 | 0 |
+| sto | 5 | 5 | 0 | 0 | 0 | 5 | 0 | 0 | 5 | 0 | 5 | 0 |
+| **total** | 11 | 11 | 0 | 0 | 0 | 11 | 0 | 0 | 11 | 0 | 11 | 0 |
+
+References:
+
+- series/tt0388629:1:1: S1E1 absolute 1 title "I'm Luffy! The Man Who's Gonna Be King of the Pirates!" aired 1999-10-20
+- series/tt0388629:5:2: S5E2 absolute 62 title 'The First Line of Defense? The Giant Whale Laboon Appears!' aired 2001-03-21
+- series/tt0388629:22:4: S22E4 absolute 1088 title "Entering a New Chapter! Luffy and Sabo's Paths!" aired 2024-01-07
+- series/tt9335498:2:1: S2E1 absolute 27 title 'Flame Hashira Kyojuro Rengoku' aired 2021-10-10
+- series/tt9335498:4:1: S4E1 absolute 45 title "Someone's Dream" aired 2023-04-09
+- series/kitsu:12:1089: S22E4 absolute 1089 title "Entering a New Chapter! Luffy and Sabo's Paths!" aired 2024-01-07
+
+Placements:
+
+- aniworld, series/tt0388629:1:1: 'One Piece' -> staffel-1/episode-1 by number
+- sto, series/tt0388629:1:1: 'One Piece - S01E01 - Hier kommt Ruffy, der künftige König der Piraten!' -> staffel-1/episode-1 by number
+- aniworld, series/tt0388629:5:2: 'One Piece' -> staffel-2/episode-1 by number
+- sto, series/tt0388629:5:2: 'One Piece - S05E02 - Ein Bad in Magensäure' -> staffel-2/episode-1 by number
+- aniworld, series/tt0388629:22:4: 'One Piece' -> staffel-22/episode-1 by number
+- sto, series/tt0388629:22:4: 'One Piece - S22E04 - Ruffys Traum' -> staffel-21/episode-197 by number
+- sto, series/tt9335498:2:1: 'Kimetsu no Yaiba - S02E01 - Flammensäule Rengoku Kyojurou' -> staffel-2/episode-1 by title
+- aniworld, series/tt9335498:2:1: 'Demon Slayer: Kimetsu no Yaiba' -> staffel-2/episode-1 by title
+- aniworld, series/tt9335498:4:1: 'Demon Slayer: Kimetsu no Yaiba' -> staffel-3/episode-1 by title
+- aniworld, series/kitsu:12:1089: 'One Piece' -> staffel-22/episode-1 by number
+- sto, series/kitsu:12:1089: 'One Piece - S22E04 - Der Beginn eines neuen Kapitels! Ruffys und Sabos Pfade!' -> staffel-22/episode-1 by number
+
+**Reading.** 11 of the 12 answers (6 requests, 2 plugins) are located, and every located result is kept and right by the episode filter; before step 35 the plugins built the page from the request's numbers in the sites' own Staffel numbering (One Piece S5E2: the site's staffel-5, episode 2). Three cases carry the findings:
+
+- **One Piece S22E4 on s.to is one episode off.** Cinemeta's regular list puts the entry at position 1088; the sites number the episode 1089 (Kitsu agrees: `kitsu:12:1089` carries the same title and air date). aniworld's rows show the English title, so rule 1 picks the right row among the five neighbours (staffel-22/episode-1); s.to's anime rows show `Episode 1088` in place of the English title, so the number alone decides and the row is "Ruffys Traum" (staffel-21/episode-197, the episode before). The Kitsu number places it right on both sites. Where IMDb's list lacks an episode the sites count, every later IMDb request is off by that gap on s.to; a request from the anime catalogs is not.
+- **Demon Slayer S4E1 on s.to finds no row.** The site's "Kimetsu no Yaiba" has 63 rows in five Staffeln. Its staffel-3 (the Swordsmith Village arc) shows the German titles of that arc ("Jemandes Traum" is "Someone's Dream") but the English titles of the Entertainment District arc ("Sound Hashira Tengen Uzui", "Infiltrating the Entertainment District", ...), a mistake in the site's data; the rows carry no numbers. The reference's English title matches no row, so sto answers nothing for the series, as the spec wants (never the request's numbers: staffel-4/episode-1 would have been the Hashira Training arc). aniworld's staffel-3 names the episode and is placed by the title.
+- **Demon Slayer S2E1** is placed by the title on both sites (Cinemeta's S2E1 is the Mugen Train arc's first episode, the sites' staffel-2/episode-1 too), and the `kitsu:` path answers the One Piece episode on both sites in 7 s with the translation.
+
+**Open.** The reference carries Cinemeta's English title only. Both sites' rows carry the German title, which is right where s.to's English column is wrong, and s.to's anime rows carry no English title at all; a German title in the reference (TMDB names episodes in German) would let the title rules place both s.to cases above. Not in this change; for the maintainer to decide.

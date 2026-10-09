@@ -12,6 +12,12 @@ release name (guessit), the episode filter's outcome (kept, narrowed,
 dropped), whether it shows the requested episode, and leaks: kept results
 whose title or link labels name another episode.
 
+A request's episode reference (the Cinemeta entry's title and the
+absolute number; ``series/kitsu:12:1089`` names the episode as Kitsu
+counts and is translated first) goes to the plugins that locate episodes
+on their own season pages; the placement they answer (``site_season``,
+``site_episode``, ``episode_located_by``) is listed per result.
+
 Without ids: the series of ``docs/plans/round-titles.txt`` plus Severance
 S01E05 and S02E05. Mirror groups are not collapsed: every member is asked.
 Read-only: it searches the sites and writes nothing but a temporary cache.
@@ -41,8 +47,8 @@ from scavengarr.application.stremio.queries import (
     build_multi_lang_reference,
 )
 from scavengarr.application.stremio.title_resolution import TitleResolver
-from scavengarr.domain.entities.stremio import StremioStreamRequest
-from scavengarr.domain.plugins.base import SearchResult, result_key
+from scavengarr.domain.entities.stremio import EpisodeRef, StremioStreamRequest
+from scavengarr.domain.plugins.base import SearchResult, locates_episodes, result_key
 from scavengarr.infrastructure.config.load import load_config
 from scavengarr.infrastructure.plugins.constants import search_max_results
 from scavengarr.infrastructure.stremio.episode_filter import (
@@ -76,8 +82,15 @@ def series_ids(lines: Iterable[str]) -> list[str]:
 
 
 def parse_id(sid: str) -> StremioStreamRequest:
-    """``series/tt0903747:1:2`` -> the Stremio request."""
-    imdb_id, season, episode = sid.removeprefix("series/").split(":")
+    """``series/tt0903747:1:2`` -> the Stremio request; ``series/kitsu:12:1089``
+    names the episode as Kitsu counts it (no season)."""
+    raw = sid.removeprefix("series/")
+    if raw.startswith("kitsu:"):
+        _, kitsu_id, episode = raw.split(":")
+        return StremioStreamRequest(
+            imdb_id=f"kitsu:{kitsu_id}", content_type="series", episode=int(episode)
+        )
+    imdb_id, season, episode = raw.split(":")
     return StremioStreamRequest(
         imdb_id=imdb_id,
         content_type="series",
@@ -193,6 +206,19 @@ class Record:
     right: bool
     leaks: list[str] = field(default_factory=list)
     labels: list[str] = field(default_factory=list)
+    # the site's page a locating plugin answered: "staffel-2/episode-1 by number"
+    placement: str = ""
+
+
+def placement(result: SearchResult) -> str:
+    """The page a locating plugin took the links from, and its evidence."""
+    meta = result.metadata
+    if "site_season" not in meta:
+        return ""
+    return (
+        f"staffel-{meta.get('site_season')}/episode-{meta.get('site_episode')}"
+        f" by {meta.get('episode_located_by')}"
+    )
 
 
 def classify(
@@ -210,6 +236,7 @@ def classify(
         right=kept is not None and shows_episode(kept, season, episode),
         leaks=leak_reasons(kept, season, episode) if kept else [],
         labels=[link.get("label", "") for link in result.download_links or ()],
+        placement=placement(result),
     )
 
 
@@ -224,6 +251,7 @@ COLUMNS = (
     "dropped",
     "right",
     "leaks",
+    "located",
 )
 
 
@@ -237,13 +265,18 @@ def tally(records: Iterable[Record]) -> dict[str, Counter[str]]:
         row[rec.outcome] += 1
         row["right"] += rec.right
         row["leaks"] += bool(rec.leaks)
+        row["located"] += bool(rec.placement)
     return table
 
 
 def render(
-    records: list[Record], failures: dict[str, Counter[str]], plugins: list[str]
+    records: list[Record],
+    failures: dict[str, Counter[str]],
+    plugins: list[str],
+    references: dict[str, str] | None = None,
 ) -> str:
-    """The per-plugin table, totals, and every leak."""
+    """The per-plugin table, totals, every leak, the references and the
+    placements the locating plugins answered."""
     table = tally(records)
     head = ("plugin", *COLUMNS, "failed")
     lines = [
@@ -268,6 +301,15 @@ def render(
             f"- {r.plugin}, {r.request}: {r.title!r} ({'; '.join(r.leaks[:3])})"
             for r in leaks
         ]
+    if references:
+        lines += ["", "References:", ""]
+        lines += [f"- {sid}: {ref}" for sid, ref in references.items()]
+    placed = [r for r in records if r.placement]
+    if placed:
+        lines += ["", "Placements:", ""]
+        lines += [
+            f"- {r.plugin}, {r.request}: {r.title!r} -> {r.placement}" for r in placed
+        ]
     return "\n".join(lines)
 
 
@@ -276,16 +318,53 @@ async def _search(
     query: str,
     req: StremioStreamRequest,
     timeout: float,
+    episode_ref: EpisodeRef | None,
 ) -> list[SearchResult]:
     search = getattr(plugin, "isolated_search", None) or plugin.search
+    extra: dict[str, Any] = {}
+    if episode_ref is not None and locates_episodes(plugin):
+        extra["episode_ref"] = episode_ref
     return await asyncio.wait_for(
-        search(query, SERIES, season=req.season, episode=req.episode), timeout
+        search(query, SERIES, season=req.season, episode=req.episode, **extra),
+        timeout,
     )
+
+
+def _reference(req: StremioStreamRequest, ref: EpisodeRef | None) -> str:
+    """The request as IMDb counts it and what the catalog says of it."""
+    line = f"S{req.season}E{req.episode}"
+    if ref is None:
+        return line + " (no reference)"
+    return f"{line} absolute {ref.absolute} title {ref.title!r} aired {ref.aired}"
+
+
+def _plugin_names(state: AppState, only: set[str] | None) -> list[str]:
+    """The stream plugins the probe asks; *only* those when given."""
+    names = sorted(
+        set(state.plugins.get_by_provides("stream"))
+        | set(state.plugins.get_by_provides("both"))
+    )
+    return [n for n in names if not only or n in only]
+
+
+async def _request(
+    state: AppState, sid: str
+) -> tuple[StremioStreamRequest, int | None] | None:
+    """The request *sid* means, as the use case handles it: a ``kitsu:`` id
+    is translated first and its episode number kept for the reference;
+    ``None`` when it has no translation."""
+    req = parse_id(sid)
+    if not req.imdb_id.startswith("kitsu:"):
+        return req, None
+    translated = await state.anime_ids.translate(req)
+    if translated is None:
+        return None
+    return translated, req.episode
 
 
 async def probe(
     state: AppState, sids: list[str], only: set[str] | None
-) -> tuple[list[Record], dict[str, Counter[str]], list[str]]:
+) -> tuple[list[Record], dict[str, Counter[str]], list[str], dict[str, str]]:
     config = state.config.stremio
     assert state.tmdb_client is not None
     titles = TitleResolver(
@@ -295,19 +374,20 @@ async def probe(
         config=config,
         series_meta=state.series_meta,
     )
-    names = sorted(
-        set(state.plugins.get_by_provides("stream"))
-        | set(state.plugins.get_by_provides("both"))
-    )
-    if only:
-        names = [n for n in names if n in only]
+    names = _plugin_names(state, only)
     slots = asyncio.Semaphore(config.max_concurrent_plugins)
     search_max_results.set(config.max_results_per_plugin)
     records: list[Record] = []
     failures: dict[str, Counter[str]] = {}
+    references: dict[str, str] = {}
 
     async def one_plugin(
-        sid: str, req: StremioStreamRequest, name: str, queries: list[str], ref: Any
+        sid: str,
+        req: StremioStreamRequest,
+        name: str,
+        queries: list[str],
+        ref: Any,
+        episode_ref: EpisodeRef | None,
     ) -> None:
         plugin = state.plugins.get(name)
         found: dict[Any, SearchResult] = {}
@@ -315,7 +395,7 @@ async def probe(
             async with slots:
                 try:
                     results = await _search(
-                        plugin, query, req, config.plugin_timeout_seconds
+                        plugin, query, req, config.plugin_timeout_seconds, episode_ref
                     )
                 except TimeoutError:
                     failures.setdefault(name, Counter())["timeout"] += 1
@@ -330,23 +410,30 @@ async def probe(
         records.extend(classify(sid, name, r, req.season, req.episode) for r in matched)
 
     for sid in sids:
-        req = parse_id(sid)
         started = time.monotonic()
-        infos, _meta = await titles.title_infos(req, titles.languages(names))
+        request = await _request(state, sid)
+        if request is None:
+            references[sid] = "no translation"
+            print(f"{sid}: no translation", file=sys.stderr)
+            continue
+        req, absolute = request
+        infos, meta = await titles.title_infos(req, titles.languages(names))
+        episode_ref = titles.episode_ref(req, meta, absolute=absolute)
+        references[sid] = _reference(req, episode_ref)
         tasks = []
         for langs, group in titles.language_groups(names).items():
             ref = build_multi_lang_reference(infos, list(langs))
             queries = build_lang_group_queries(infos, list(langs))
             if ref is None or not queries:
                 continue
-            tasks += [one_plugin(sid, req, n, queries, ref) for n in group]
+            tasks += [one_plugin(sid, req, n, queries, ref, episode_ref) for n in group]
         await asyncio.gather(*tasks)
         print(
             f"{sid}: {sum(r.request == sid for r in records)} results,"
             f" {time.monotonic() - started:.0f} s",
             file=sys.stderr,
         )
-    return records, failures, names
+    return records, failures, names, references
 
 
 async def run(sids: list[str], only: set[str] | None) -> tuple[Any, ...]:
@@ -381,16 +468,17 @@ def main(argv: list[str] | None = None) -> int:
     only = set(args.plugins.split(",")) if args.plugins else None
     # the app logs to stdout; the table or JSON is the probe's only output
     with contextlib.redirect_stdout(sys.stderr):
-        records, failures, names = asyncio.run(run(sids, only))
+        records, failures, names, references = asyncio.run(run(sids, only))
     if args.json:
         out = {
             "requests": sids,
+            "references": references,
             "plugins": {n: dict(c) for n, c in tally(records).items()},
             "failures": {n: dict(c) for n, c in failures.items()},
             "records": [asdict(r) for r in records],
         }
         args.json.write_text(json.dumps(out, indent=1, ensure_ascii=False))
-    print(render(records, failures, names))
+    print(render(records, failures, names, references))
     return 0
 
 

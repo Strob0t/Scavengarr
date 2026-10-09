@@ -5,10 +5,12 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
+from scavengarr.domain.entities.stremio import EpisodeRef
 from scavengarr.domain.plugins.base import SearchResult
 
 _PROBE = Path(__file__).resolve().parents[3] / "scripts/probes/series_episodes.py"
@@ -176,8 +178,136 @@ def test_render_counts_per_plugin_and_lists_leaks() -> None:
     ]
     failures = {"c": probe.Counter(timeout=2)}
     text = probe.render(records, failures, ["a", "b", "c"])
-    assert "| a | 2 | 2 | 0 | 0 | 0 | 1 | 0 | 1 | 1 | 0 | 0 |" in text
-    assert "| b | 1 | 1 | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 1 | 0 |" in text
-    assert "| c | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | timeout 2 |" in text
+    assert "| a | 2 | 2 | 0 | 0 | 0 | 1 | 0 | 1 | 1 | 0 | 0 | 0 |" in text
+    assert "| b | 1 | 1 | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 1 | 0 | 0 |" in text
+    assert "| c | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | timeout 2 |" in text
     assert "| **total** | 3 |" in text
     assert "- b, series/tt1:1:1: 'Dark.S01E01' (label 'Folge 2')" in text
+
+
+# ---------------------------------------------------------------------------
+# The episode reference and the placements of locating plugins
+# ---------------------------------------------------------------------------
+
+
+_LABOON_REF = EpisodeRef(5, 2, "Laboon", "2001-03-21", absolute=62)
+
+
+def test_parse_id_of_a_kitsu_episode() -> None:
+    req = probe.parse_id("series/kitsu:12:1089")
+    assert (req.imdb_id, req.content_type, req.season, req.episode) == (
+        "kitsu:12",
+        "series",
+        None,
+        1089,
+    )
+
+
+async def test_request_translates_a_kitsu_id_first() -> None:
+    one_piece = probe.parse_id("series/tt0388629:1:1")
+    translate = AsyncMock(return_value=one_piece)
+    state = SimpleNamespace(anime_ids=SimpleNamespace(translate=translate))
+
+    assert await probe._request(state, "series/kitsu:12:1089") == (one_piece, 1089)
+    assert translate.await_args.args == (probe.parse_id("series/kitsu:12:1089"),)
+
+    laboon = probe.parse_id("series/tt0388629:5:2")
+    assert await probe._request(state, "series/tt0388629:5:2") == (laboon, None)
+
+    translate.return_value = None
+    assert await probe._request(state, "series/kitsu:12:1089") is None
+
+
+def test_reference_line_names_the_catalog_entry() -> None:
+    req = probe.parse_id("series/tt0388629:5:2")
+    assert probe._reference(req, None) == "S5E2 (no reference)"
+    assert (
+        probe._reference(req, _LABOON_REF)
+        == "S5E2 absolute 62 title 'Laboon' aired 2001-03-21"
+    )
+
+
+def test_placement_names_the_located_page() -> None:
+    located = _result(
+        "One Piece - S05E02",
+        metadata={"site_season": 2, "site_episode": 1, "episode_located_by": "number"},
+    )
+    assert probe.placement(located) == "staffel-2/episode-1 by number"
+    assert probe.placement(_result("Dark.S01E01")) == ""
+
+
+class _RecordingPlugin:
+    """A plugin recording its search calls."""
+
+    locates_episodes = False
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def search(
+        self,
+        query: str,
+        category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
+        **kw: object,
+    ) -> list[SearchResult]:
+        self.calls.append({"query": query, "season": season, "episode": episode, **kw})
+        return []
+
+
+class _LocatingPlugin(_RecordingPlugin):
+    locates_episodes = True
+
+
+async def test_search_hands_the_reference_to_locating_plugins_only() -> None:
+    req = probe.parse_id("series/tt0388629:5:2")
+    plain, locating = _RecordingPlugin(), _LocatingPlugin()
+
+    await probe._search(plain, "one piece", req, 5, _LABOON_REF)
+    await probe._search(locating, "one piece", req, 5, _LABOON_REF)
+    await probe._search(locating, "one piece", req, 5, None)
+
+    assert plain.calls == [{"query": "one piece", "season": 5, "episode": 2}]
+    assert locating.calls == [
+        {"query": "one piece", "season": 5, "episode": 2, "episode_ref": _LABOON_REF},
+        {"query": "one piece", "season": 5, "episode": 2},
+    ]
+
+
+def test_render_lists_the_references_and_placements() -> None:
+    located = _result(
+        "One Piece - S05E02 - Ein Bad in Magensäure",
+        ["VOE"],
+        metadata={
+            "season": 5,
+            "episode": 2,
+            "site_season": 2,
+            "site_episode": 1,
+            "episode_located_by": "number",
+        },
+    )
+    records = [
+        probe.classify("series/tt0388629:5:2", "sto", located, 5, 2),
+        probe.classify("series/tt0388629:5:2", "a", _result("One.Piece.S05E02"), 5, 2),
+    ]
+    reference = "S5E2 absolute 62 title 'Laboon' aired 2001-03-21"
+    references = {"series/tt0388629:5:2": reference}
+
+    text = probe.render(records, {}, ["a", "sto"], references)
+
+    lines = text.splitlines()
+    assert lines[0].endswith("| leaks | located | failed |")
+    assert lines[2].startswith("| a | 1 |") and lines[2].endswith("| 0 | 0 |")
+    assert lines[3].startswith("| sto | 1 |") and lines[3].endswith("| 1 | 0 |")
+    assert lines[4].startswith("| **total** | 2 |") and lines[4].endswith("| 1 | 0 |")
+    assert f"- series/tt0388629:5:2: {reference}" in text
+    assert (
+        "- sto, series/tt0388629:5:2: 'One Piece - S05E02 - Ein Bad in Magensäure'"
+        " -> staffel-2/episode-1 by number"
+    ) in text
+
+
+def test_render_without_references_or_placements_lists_none() -> None:
+    text = probe.render([], {}, ["a"])
+    assert "References:" not in text and "Placements:" not in text
