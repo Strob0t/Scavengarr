@@ -116,7 +116,15 @@ _SERVERS = [
     },
 ]
 
-_MOVIE_HTML = f"""<html><body><h1>Iron Man</h1>
+_MOVIE_HTML = f"""<html><head>
+<meta name="keywords" content="Iron Man, Iron Man kostenlos, Iron Man 2008,
+ Action filme kostenlos, Action stream, Abenteuer filme kostenlos,
+ kinofilm kostenlos">
+<script type="application/ld+json">
+{{"@context":"https://schema.org","@type":"Movie",
+ "name":"Iron Man","dateCreated":"2008-04-30"}}
+</script>
+</head><body><h1>Iron Man</h1>
 <script>
     const SERVERS = {json.dumps(_SERVERS)};
     const other = 1;
@@ -146,9 +154,13 @@ _EPISODES = [
     },
 ]
 
-_SERIES_HTML = f"""<html><body><h1>KINOKING</h1>
+_SERIES_HTML = f"""<html><head>
+<meta name="keywords" content="Iron Man - die Zukunft beginnt,
+ Science-Fiction serien kostenlos, serie kostenlos">
+</head><body><h1>KINOKING</h1>
 <script>
     const seriesTitle = "Iron Man - die Zukunft beginnt";
+    const seriesYear = '2010';
     const allEpisodesData = {json.dumps(_EPISODES)};
 </script></body></html>"""
 
@@ -219,6 +231,27 @@ class TestMovieLinks:
         assert _mod._movie_links("const SERVERS = [not json];\n") == []
 
 
+class TestPageMeta:
+    """Year and genres of a movie or series page."""
+
+    def test_movie_year_from_the_schema_block(self) -> None:
+        assert _mod._page_year(_MOVIE_HTML) == 2008
+
+    def test_series_year_from_the_script_constant(self) -> None:
+        assert _mod._page_year(_SERIES_HTML) == 2010
+
+    def test_no_year(self) -> None:
+        assert _mod._page_year("<html></html>") is None
+
+    def test_genres_from_the_keywords(self) -> None:
+        assert _mod._page_genres(_MOVIE_HTML) == ["Action", "Abenteuer"]
+        assert _mod._page_genres(_SERIES_HTML) == ["Science-Fiction"]
+
+    def test_no_genres(self) -> None:
+        assert _mod._page_genres("<html></html>") == []
+        assert _mod._page_genres('<meta name="keywords" content="Iron Man">') == []
+
+
 class TestEpisodes:
     def test_first_season_sorted_by_default(self) -> None:
         eps = _mod._pick_episodes(_EPISODES, None, None)
@@ -284,6 +317,10 @@ class TestSearch:
         episode = next(r for r in results if r.title.endswith("S01E01"))
         assert episode.category == 5000
         assert episode.source_url == f"{_BASE}/series.php?id=10767"
+        assert movie.metadata["year"] == 2008
+        assert movie.metadata["genres"] == "Action, Abenteuer"
+        assert episode.metadata["year"] == 2010
+        assert episode.metadata["genres"] == "Science-Fiction"
 
     @respx.mock
     @pytest.mark.asyncio
