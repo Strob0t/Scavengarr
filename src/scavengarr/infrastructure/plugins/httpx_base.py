@@ -15,12 +15,14 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import Awaitable, Callable
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import httpx
 import structlog
 
+from scavengarr.domain.entities.stremio import EpisodeRef
 from scavengarr.domain.plugins.base import PluginUnreachableError, SearchResult
 from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort, BrowserSession
 from scavengarr.domain.ports.cache import CachePort
@@ -709,9 +711,22 @@ class HttpxPluginBase:
         *,
         season: int | None = None,
         episode: int | None = None,
+        episode_ref: EpisodeRef | None = None,
     ) -> list[SearchResult]:
-        """Run search — httpx plugins need no context isolation."""
-        return await self.search(query, category, season=season, episode=episode)
+        """Run search — httpx plugins need no context isolation.
+
+        *episode_ref* (the runner gives it to a plugin that locates
+        episodes only, see ``PluginProtocol``) reaches ``search()`` as a
+        keyword; without one ``search()`` is called as before the
+        reference existed, so a plugin without the keyword keeps working.
+        """
+        # A plugin that locates episodes takes the reference as a keyword
+        # of its search(); the base signature has none
+        search: Callable[..., Awaitable[list[SearchResult]]] = self.search
+        extra: dict[str, EpisodeRef] = {}
+        if episode_ref is not None:
+            extra["episode_ref"] = episode_ref
+        return await search(query, category, season=season, episode=episode, **extra)
 
     # ------------------------------------------------------------------
     # Abstract search (subclass must implement)

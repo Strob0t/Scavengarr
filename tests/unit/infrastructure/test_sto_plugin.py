@@ -1267,6 +1267,17 @@ class TestLocatesEpisodes:
             }.items()
         )
 
+    async def test_the_runners_entry_reaches_the_reference(self) -> None:
+        plugin, paths = _anime_plugin()
+
+        results = await plugin.isolated_search(
+            "one piece", 5000, season=5, episode=2, episode_ref=_LABOON_REF
+        )
+
+        assert [r.source_url for r in results if r.category == 5070] == [
+            "https://s.to/serie/one-piece/staffel-2/episode-1"
+        ]
+
     async def test_a_series_keeps_the_requests_numbers(self) -> None:
         # Stranger Things is no anime: the reference does not apply
         plugin, paths = _anime_plugin()

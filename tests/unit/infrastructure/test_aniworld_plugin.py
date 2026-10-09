@@ -734,6 +734,19 @@ class TestLocatesEpisodes:
             }.items()
         )
 
+    async def test_the_runners_entry_reaches_the_reference(self) -> None:
+        """The runner calls ``isolated_search``: the reference arrives there too
+        (the probe of 2026-10-09 found it did not)."""
+        plugin, paths = _locating_plugin()
+
+        results = await plugin.isolated_search(
+            "one piece", 5000, season=5, episode=2, episode_ref=self._LABOON_REF
+        )
+
+        assert len(results) == 1
+        assert results[0].metadata["site_episode"] == 1
+        assert "/anime/stream/one-piece/staffel-2/episode-1" in paths
+
     async def test_an_episode_not_located_gives_no_result(self) -> None:
         plugin, paths = _locating_plugin()
         ref = EpisodeRef(9, 9, "Nothing Like It", absolute=999)

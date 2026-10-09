@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 
+from scavengarr.domain.entities.stremio import EpisodeRef
 from scavengarr.domain.plugins.base import (
     PluginUnreachableError,
     SearchResult,
@@ -29,6 +30,57 @@ class _SingleDomainPlugin(HttpxPluginBase):
     name = "single"
     provides = "download"
     _domains = ["only.com"]
+
+
+class _RecordingPlugin(HttpxPluginBase):
+    """A plugin whose search takes the four arguments only."""
+
+    name = "recording"
+    provides = "stream"
+    _domains = ["example.com"]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[dict[str, object]] = []
+
+    async def search(
+        self,
+        query: str,
+        category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
+    ) -> list[SearchResult]:
+        self.calls.append(
+            {"query": query, "category": category, "season": season, "episode": episode}
+        )
+        return []
+
+
+class _LocatingPlugin(_RecordingPlugin):
+    """A plugin that locates episodes: its search takes the reference."""
+
+    name = "locating"
+    locates_episodes = True
+
+    async def search(  # type: ignore[override]
+        self,
+        query: str,
+        category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
+        *,
+        episode_ref: EpisodeRef | None = None,
+    ) -> list[SearchResult]:
+        self.calls.append(
+            {
+                "query": query,
+                "category": category,
+                "season": season,
+                "episode": episode,
+                "episode_ref": episode_ref,
+            }
+        )
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -424,6 +476,38 @@ class TestCache:
 
     def test_without_a_cache(self) -> None:
         assert _TestPlugin()._cache is None
+
+
+class TestIsolatedSearch:
+    """The runner's entry: ``isolated_search`` hands the reference on."""
+
+    async def test_the_reference_reaches_search(self) -> None:
+        plugin = _LocatingPlugin()
+        ref = EpisodeRef(5, 2, "Laboon", "2001-03-21", absolute=62)
+
+        await plugin.isolated_search(
+            "one piece", 5000, season=5, episode=2, episode_ref=ref
+        )
+
+        assert plugin.calls == [
+            {
+                "query": "one piece",
+                "category": 5000,
+                "season": 5,
+                "episode": 2,
+                "episode_ref": ref,
+            }
+        ]
+
+    async def test_without_a_reference_search_is_called_as_before(self) -> None:
+        # a plugin without the keyword: the call carries no episode_ref
+        plugin = _RecordingPlugin()
+
+        await plugin.isolated_search("dark", 5000, season=1, episode=1)
+
+        assert plugin.calls == [
+            {"query": "dark", "category": 5000, "season": 1, "episode": 1}
+        ]
 
 
 class TestNewSemaphore:
