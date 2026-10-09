@@ -49,7 +49,7 @@ With a reference, aniworld SHALL read the series' season pages into an index of 
 - **THEN** it holds 11 rows with titles and no absolute numbers
 
 ### Requirement: aniworld Locates The Episode
-aniworld SHALL locate the row by the absolute number and its neighbours within 5 confirmed by a title match of at least 0.6, else by the exact normalised English title, else by the best fuzzy title of at least 0.85; without a row it SHALL answer no result for that series and SHALL never build the page from the request's numbers; without a reference it SHALL answer as today.
+aniworld SHALL locate the row by the absolute number and its neighbours within 5, confirmed by a title match of at least 0.6, or the numbered row alone when there is no title to compare (none in the reference, or the row shows the number in place of a title); else by the exact normalised English title; else by the best fuzzy title of at least 0.85. Without a row it SHALL answer no result for that series and never build the page from the request's numbers; without a reference it SHALL answer as today.
 
 #### Scenario: Located by number
 - **WHEN** the reference is S5E2 with the absolute number 62 and the index's row 62 is `staffel-2/episode-1` "The First Line of Defense? The Giant Whale Laboon Appears!"
@@ -70,6 +70,10 @@ aniworld SHALL locate the row by the absolute number and its neighbours within 5
 #### Scenario: No reference
 - **WHEN** the search carries no reference
 - **THEN** aniworld fetches `/staffel-<season>/episode-<episode>` as today
+
+#### Scenario: A row that shows the number in place of a title
+- **WHEN** the reference is S22E4 with the absolute number 1088 and a site's rows read "Episode 1088" and "Episode 1089" without English titles
+- **THEN** the row numbered 1088 is located by number; the catalog's position may differ from the site's count by one, and the result's placements show it
 
 ### Requirement: A Located Result Names Both Placements
 A located result's `metadata["season"]` and `["episode"]` SHALL be the request's, and the result SHALL carry `site_season`, `site_episode` and `episode_located_by` (`number` or `title`).
