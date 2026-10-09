@@ -89,6 +89,12 @@ DETAIL_MOVIE_HTML = """\
     </h1>
   </div>
 </div>
+<table><tbody>
+  <tr><td class="Label" nowrap>IMDb Wertung:</td><td class="Value">8.2 / 10</td></tr>
+  <tr><td class="Label" nowrap>Genre:</td>
+      <td class="Value"><a href="/Genre/Action">Action</a>
+          <a href="/Genre/Crime">Crime</a> </td></tr>
+</tbody></table>
 <ul id="HosterList" class="Sortable">
   <li id="Hoster_92" class="MirBtn" rel="Batman_Begins&amp;Hoster=92">
     <div class="Named">Voe.SX</div>
@@ -222,6 +228,50 @@ class TestDetailPageParser:
         assert len(parser.hosters) == 2
         assert parser.hosters[0] == {"name": "Voe.SX", "id": "92"}
         assert parser.hosters[1] == {"name": "Vinovo.to", "id": "104"}
+
+    def test_movie_genres(self, kinox_mod):
+        parser = kinox_mod._DetailPageParser()
+        parser.feed(DETAIL_MOVIE_HTML)
+
+        assert parser.genres == ["Action", "Crime"]
+
+    def test_genres_from_the_detail_list_without_the_table(self, kinox_mod):
+        parser = kinox_mod._DetailPageParser()
+        parser.feed(
+            '<li class="DetailDat" title="Genre"><span class="Genre"></span>'
+            "Drama, Thriller</li>"
+        )
+
+        assert parser.genres == ["Drama", "Thriller"]
+
+    def test_no_genres_on_the_page(self, kinox_mod):
+        parser = kinox_mod._DetailPageParser()
+        parser.feed(DETAIL_SERIES_HTML)
+
+        assert parser.genres == []
+
+    def test_result_metadata_year_and_genres(self, kinox_mod):
+        parser = kinox_mod._DetailPageParser()
+        parser.feed(DETAIL_MOVIE_HTML)
+        plugin = kinox_mod.KinoxPlugin()
+
+        sr = plugin._build_search_result(
+            {"title": "Batman Begins", "url": "/Stream/Batman_Begins.html"},
+            parser,
+            [{"hoster": "Voe.SX", "link": "https://voe.sx/e/abc123"}],
+        )
+
+        assert sr.title == "Batman Begins (2005)"
+        assert sr.metadata == {"year": 2005, "genres": "Action, Crime"}
+
+    def test_result_metadata_without_year_and_genres(self, kinox_mod):
+        parser = kinox_mod._DetailPageParser()
+        parser.feed("<h1><span>Unknown</span></h1>")
+        plugin = kinox_mod.KinoxPlugin()
+
+        sr = plugin._build_search_result({"title": "Unknown", "url": "/x"}, parser)
+
+        assert sr.metadata == {"genres": ""}
 
     def test_series_detected(self, kinox_mod):
         parser = kinox_mod._DetailPageParser()

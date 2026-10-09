@@ -16,6 +16,7 @@ import asyncio
 import json
 import re
 from collections.abc import Iterator
+from typing import Any
 from urllib.parse import urljoin
 
 from selectolax.lexbor import LexborHTMLParser, LexborNode
@@ -147,11 +148,13 @@ class _DetailPageParser:
         self.title = ""
         self.year = ""
         self.hosters: list[dict[str, str]] = []
+        self.genres: list[str] = []
         self.is_series = False
 
     def feed(self, html: str) -> None:
         tree = LexborHTMLParser(html)
         self._read_title(tree)
+        self._read_genres(tree)
         for item in tree.css("ul#HosterList li[id^='Hoster_']"):
             name = "".join(div.text() for div in item.css("div.Named")).strip()
             if name:
@@ -168,6 +171,15 @@ class _DetailPageParser:
                 self.title = title
                 self.year = years[-1]
                 return
+
+    def _read_genres(self, tree: LexborHTMLParser) -> None:
+        # The detail table's "Genre:" row links each genre; the "DetailDat"
+        # list above it names them in one entry
+        genres = [a.text().strip() for a in tree.css("td.Value a[href^='/Genre/']")]
+        if not genres:
+            for item in tree.css("li.DetailDat[title='Genre']"):
+                genres.extend(part.strip() for part in item.text().split(","))
+        self.genres = [genre for genre in genres if genre]
 
 
 class KinoxPlugin(HttpxPluginBase):
@@ -247,6 +259,10 @@ class KinoxPlugin(HttpxPluginBase):
         display_title = f"{title} ({year})" if year else title
         category = 5000 if detail.is_series else 2000
 
+        metadata: dict[str, Any] = {"genres": ", ".join(detail.genres)}
+        if year.isdigit():
+            metadata["year"] = int(year)  # a series is listed by its first year
+
         return SearchResult(
             title=display_title,
             download_link=download_links[0]["link"] if download_links else source_url,
@@ -254,6 +270,7 @@ class KinoxPlugin(HttpxPluginBase):
             source_url=source_url,
             published_date=year or None,
             category=category,
+            metadata=metadata,
         )
 
     async def _process_entry(
