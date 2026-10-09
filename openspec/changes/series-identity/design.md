@@ -218,6 +218,10 @@ answer shows the episode fields (number, title).
   alone, which can differ from the site's count by one for a long-runner (One
   Piece: 1088 where the site reads 1089); `site_episode` and
   `episode_located_by="number"` make it visible, and the 7.2 probe reports it.
+- A specials request (season 0) builds a reference without an absolute number
+  (the position counts regular seasons only), so a number-only site cannot
+  locate it and answers nothing for it; aniworld locates it by title when its
+  rows name the episode.
 - The matcher's category rules depend on the sites' genre labels; a site that
   calls the live action "Anime" by mistake is dropped for the live action and
   kept for the anime. The probe shows it; the plugin's genre map is the fix.
