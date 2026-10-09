@@ -90,6 +90,14 @@ class PluginProtocol(Protocol):
     - has a `name: str` attribute
     - implements: async def search(query, category, season,
       episode) returning list[SearchResult]
+
+    Optional capability: a plugin that places a series episode by the
+    request's `EpisodeRef` (the episode's title, air date and absolute
+    number) sets `locates_episodes = True` and takes
+    `episode_ref: EpisodeRef | None = None` as a keyword of `search()`.
+    The Stremio plugin search passes the reference to such plugins only
+    (`locates_episodes()`); every other plugin is called with query,
+    category, season and episode alone.
     """
 
     name: str
@@ -102,6 +110,13 @@ class PluginProtocol(Protocol):
         season: int | None = None,
         episode: int | None = None,
     ) -> list[SearchResult]: ...
+
+
+def locates_episodes(plugin: object) -> bool:
+    """Whether *plugin* declares the episode-location capability. The
+    attribute must be ``True`` itself: a mock's attribute is an object,
+    and a truthy object declares nothing."""
+    return getattr(plugin, "locates_episodes", False) is True
 
 
 @runtime_checkable

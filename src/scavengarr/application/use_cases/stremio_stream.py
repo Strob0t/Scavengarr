@@ -55,8 +55,10 @@ from scavengarr.application.stremio.title_resolution import (
 )
 from scavengarr.application.stremio.title_search import TitleSearch
 from scavengarr.domain.entities.stremio import (
+    EpisodeRef,
     RankedStream,
     ResolvedStream,
+    SeriesMeta,
     StremioStream,
     StremioStreamRequest,
 )
@@ -260,8 +262,12 @@ class StremioStreamUseCase:
         started = time.monotonic()
 
         # 0. Anime: a kitsu: id becomes the IMDb request, its episode placed
-        # as IMDb counts it; the sources log what they found
+        # as IMDb counts it; the sources log what they found. The Kitsu
+        # number counts the entry's episodes through its seasons: it places
+        # the episode on the anime sites (the episode reference below)
+        absolute = None
         if request.imdb_id.startswith("kitsu:"):
+            absolute = request.episode
             with self._telemetry.stage("stremio_phase", phase="anime_ids") as anime:
                 translated = await self._anime_ids.translate(request)
                 anime.outcome = "not_found" if translated is None else "found"
@@ -283,7 +289,8 @@ class StremioStreamUseCase:
 
             # 2. Titles: one per language the selected plugins search in
             languages = self._titles.languages(selected)
-            title_infos, _meta = await self._titles.title_infos(request, languages)
+            title_infos, meta = await self._titles.title_infos(request, languages)
+            episode_ref = self._episode_ref(request, meta, absolute)
 
             primary_title_info = first_available_title(title_infos, languages)
             metadata.outcome = "not_found" if primary_title_info is None else "found"
@@ -302,6 +309,7 @@ class StremioStreamUseCase:
             category,
             started=started,
             scored=len(selected) < len(all_names),
+            episode_ref=episode_ref,
         )
         stage.label(source=source)
 
@@ -393,6 +401,26 @@ class StremioStreamUseCase:
         )
         stage.outcome = "streams" if streams else "empty"
         return StreamAnswer(streams, source, complete, progress.missing)
+
+    def _episode_ref(
+        self,
+        request: StremioStreamRequest,
+        meta: SeriesMeta | None,
+        absolute: int | None,
+    ) -> EpisodeRef | None:
+        """The episode's placement for the plugins that locate episodes (the
+        title and air date from the Cinemeta list, the absolute number),
+        logged when there is one."""
+        ref = self._titles.episode_ref(request, meta, absolute=absolute)
+        if ref is not None:
+            log.debug(
+                "stremio_episode_ref",
+                season=ref.season,
+                episode=ref.episode,
+                absolute=ref.absolute,
+                has_title=ref.title is not None,
+            )
+        return ref
 
     def _complete(self, key: str, progress: SearchProgress) -> bool:
         """Whether an answer built now is complete: nothing of any plugin is

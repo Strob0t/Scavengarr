@@ -192,7 +192,7 @@ def resolved(url: str) -> ResolvedStream:
     )
 
 
-SEARCH_KEY = "stremio:search:movie:tt1234567:None:None"
+SEARCH_KEY = "stremio:search:v2:movie:tt1234567:None:None"
 
 SEARCH_TTL = 1800
 
@@ -403,7 +403,7 @@ def cached_titles(
             )
             for link in links
         ]
-        cache.data[f"stremio:search:movie:{imdb_id}:None:None"] = CachedSearch(
+        cache.data[f"stremio:search:v2:movie:{imdb_id}:None:None"] = CachedSearch(
             results=results, total=len(results), stored_at=time.time()
         )
     tmdb = AsyncMock()

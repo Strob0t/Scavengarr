@@ -122,6 +122,8 @@ class PluginProtocol(Protocol):
     ) -> list[SearchResult]: ...
 ```
 
+Optional capability: a plugin that places a series episode by the request's `EpisodeRef` (the episode's English title, air date and absolute number from the Cinemeta list, or the Kitsu number of a `kitsu:` request) sets `locates_episodes = True` and takes `episode_ref: EpisodeRef | None = None` as a keyword of `search()`; the Stremio plugin search passes the reference to such plugins only (`locates_episodes()` in `domain/plugins/base.py`), every other plugin is called with query, category, season and episode alone.
+
 Optional capability: a plugin whose links sit behind a captcha or a download quota also implements `GrabResolvingPlugin` (`async def resolve_download(self, url: str) -> list[str]`). Its search results keep page URLs; the links are resolved only when an Arr app grabs the result (see [Grab-Time Resolution](./crawljob-system.md#grab-time-resolution); example: `plugins/nox.py`).
 
 ### Contract Requirements
@@ -144,7 +146,7 @@ Optional capability: a plugin whose links sit behind a captcha or a download quo
 | Path | Plugins | Call |
 |---|---|---|
 | Torznab search (`TorznabSearchUseCase`) | the plugin named in the URL | `plugin.search(query, category=category)`; results are cached per query (`cache_ttl` on the plugin overrides the default TTL) and then link-validated |
-| Stremio streams (`PluginSearchRunner`) | the plugins with `provides` `"stream"` or `"both"` whose site answered its last health check, one per mirror group (with `stremio.scoring_enabled`: the top `max_plugins_scored` by score plus an exploration slot) | `plugin.isolated_search(query, category, season=..., episode=...)` under the global concurrency pool, with per-plugin timeout and circuit breaker |
+| Stremio streams (`PluginSearchRunner`) | the plugins with `provides` `"stream"` or `"both"` whose site answered its last health check, one per mirror group (with `stremio.scoring_enabled`: the top `max_plugins_scored` by score plus an exploration slot) | `plugin.isolated_search(query, category, season=..., episode=...)` (plus `episode_ref=` for a plugin with `locates_episodes`) under the global concurrency pool, with per-plugin timeout and circuit breaker |
 | Scoring probes (`MiniSearchProber`) | the stream plugins, in the background (`scoring.enabled`) | `plugin.search(query, category=category)` with `search_max_results` at `scoring.search_max_items` (20) and a `scoring.search_timeout_seconds` (10 s) timeout |
 
 `isolated_search()` is a passthrough for httpx plugins. Playwright plugins run it in a per-request `BrowserContext` (or serialized behind a lock when `_serialize_search = True`), so concurrent Stremio requests do not share page state. Torznab requests and scoring probes call `search()` directly and share the plugin's persistent context.

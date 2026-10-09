@@ -26,7 +26,11 @@ from scavengarr.application.stremio.queries import (
 from scavengarr.application.stremio.search_cache import CachedSearch, SearchCache
 from scavengarr.application.stremio.search_progress import SearchProgress
 from scavengarr.application.stremio.title_resolution import TitleResolver
-from scavengarr.domain.entities.stremio import StremioStreamRequest, TitleMatchInfo
+from scavengarr.domain.entities.stremio import (
+    EpisodeRef,
+    StremioStreamRequest,
+    TitleMatchInfo,
+)
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.domain.ports.concurrency import (
     ConcurrencyBudgetPort,
@@ -100,6 +104,7 @@ class TitleSearch:
         *,
         started: float,
         scored: bool,
+        episode_ref: EpisodeRef | None = None,
     ) -> tuple[SearchProgress, SearchSource]:
         """The results for *key*: from the cache, or of the running or a new search.
 
@@ -110,12 +115,21 @@ class TitleSearch:
         (stale-while-revalidate), an entry with plugins missing while one
         completes it; both one title at a time. The search runs as its own
         task, so a request that goes away does not cancel it for the
-        others. Returns the progress and where it came from.
+        others. *episode_ref* (the episode's placement for the plugins
+        that locate episodes) goes with every search for the key.
+        Returns the progress and where it came from.
         """
 
         def search(groups: dict[tuple[str, ...], list[str]]) -> _Search:
             return partial(
-                self._search, key, groups, title_infos, request, category, scored=scored
+                self._search,
+                key,
+                groups,
+                title_infos,
+                request,
+                category,
+                scored=scored,
+                episode_ref=episode_ref,
             )
 
         entry = await self._search_cache.get(key)
@@ -231,6 +245,7 @@ class TitleSearch:
         *,
         started: float,
         scored: bool,
+        episode_ref: EpisodeRef | None = None,
     ) -> None:
         """Search the plugins until they are done; store the matching results.
 
@@ -257,6 +272,7 @@ class TitleSearch:
                         category,
                         progress,
                         scored=scored,
+                        episode_ref=episode_ref,
                         budget=budget,
                         budget_ends=budget_ends,
                     )
@@ -282,6 +298,7 @@ class TitleSearch:
         progress: SearchProgress,
         *,
         scored: bool,
+        episode_ref: EpisodeRef | None = None,
         budget: ConcurrencyBudgetPort,
         budget_ends: float,
     ) -> None:
@@ -326,6 +343,7 @@ class TitleSearch:
                 category,
                 season=request.season,
                 episode=request.episode,
+                episode_ref=episode_ref,
                 budget=budget,
                 budget_ends=budget_ends,
                 on_results=_found,

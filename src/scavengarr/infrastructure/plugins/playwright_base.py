@@ -8,6 +8,7 @@ domain verification, and cleanup.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from contextvars import Token
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -25,6 +26,7 @@ from patchright.async_api import (
 if TYPE_CHECKING:
     from patchright._impl._api_structures import SetCookieParam
 
+from scavengarr.domain.entities.stremio import EpisodeRef
 from scavengarr.domain.plugins.base import PluginUnreachableError, SearchResult
 from scavengarr.infrastructure.browser.clearance_store import ClearanceStore
 from scavengarr.infrastructure.browser.display import resolve_headless
@@ -551,6 +553,7 @@ class PlaywrightPluginBase:
         *,
         season: int | None = None,
         episode: int | None = None,
+        episode_ref: EpisodeRef | None = None,
     ) -> list[SearchResult]:
         """Run *search()* with a per-request BrowserContext.
 
@@ -562,11 +565,18 @@ class PlaywrightPluginBase:
 
         On the shared browser the search holds it (``lease()``): it may
         restart between operations, not under one.
+
+        *episode_ref* (given to a plugin that locates episodes only, see
+        ``PluginProtocol``) reaches ``search()`` as a keyword.
         """
         if self._shared_pool is None:
-            return await self._isolated_search(query, category, season, episode)
+            return await self._isolated_search(
+                query, category, season, episode, episode_ref
+            )
         async with self._shared_pool.lease():
-            return await self._isolated_search(query, category, season, episode)
+            return await self._isolated_search(
+                query, category, season, episode, episode_ref
+            )
 
     async def _isolated_search(
         self,
@@ -574,11 +584,18 @@ class PlaywrightPluginBase:
         category: int | None,
         season: int | None,
         episode: int | None,
+        episode_ref: EpisodeRef | None,
     ) -> list[SearchResult]:
+        # A plugin that locates episodes takes the reference as a keyword
+        # of its search(); the base signature has none
+        search: Callable[..., Awaitable[list[SearchResult]]] = self.search
+        extra: dict[str, EpisodeRef] = {}
+        if episode_ref is not None:
+            extra["episode_ref"] = episode_ref
         if self._serialize_search:
             async with self._search_lock:
-                return await self.search(
-                    query, category, season=season, episode=episode
+                return await search(
+                    query, category, season=season, episode=episode, **extra
                 )
 
         from .context_vars import request_browser_context
@@ -590,7 +607,9 @@ class PlaywrightPluginBase:
             await self._configure_context(ctx)
             await self._prepare_context(ctx)
             token = request_browser_context.set(ctx)
-            return await self.search(query, category, season=season, episode=episode)
+            return await search(
+                query, category, season=season, episode=episode, **extra
+            )
         finally:
             if token is not None:
                 request_browser_context.reset(token)

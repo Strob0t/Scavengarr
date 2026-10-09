@@ -71,10 +71,12 @@ def search_cache_key(request: StremioStreamRequest) -> str:
     """One entry per title, season and episode.
 
     The content type is part of it: TMDB numbers movies and series
-    separately, so ``tmdb:1399`` names a movie and a series.
+    separately, so ``tmdb:1399`` names a movie and a series. ``v2``:
+    the entries from before the episode reference (an anime episode
+    placed by its title or number) are not answered.
     """
     return (
-        f"stremio:search:{request.content_type}:{request.imdb_id}"
+        f"stremio:search:v2:{request.content_type}:{request.imdb_id}"
         f":{request.season}:{request.episode}"
     )
 

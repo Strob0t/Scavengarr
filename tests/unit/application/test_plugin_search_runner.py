@@ -13,6 +13,7 @@ from structlog.testing import capture_logs
 
 from scavengarr.application.stremio.plugin_search import PluginSearchRunner
 from scavengarr.domain.entities.scoring import PluginScoreSnapshot
+from scavengarr.domain.entities.stremio import EpisodeRef
 from scavengarr.domain.plugins.base import PluginUnreachableError, SearchResult
 from scavengarr.domain.ports.browser_fetcher import PageClaim, page_claim
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
@@ -71,11 +72,16 @@ def _runner(registry: MagicMock, **overrides: object) -> PluginSearchRunner:
 
 
 async def _search(
-    runner: PluginSearchRunner, names: list[str], queries: list[str]
+    runner: PluginSearchRunner,
+    names: list[str],
+    queries: list[str],
+    episode_ref: EpisodeRef | None = None,
 ) -> list[SearchResult]:
     pool = ConcurrencyPool(httpx_slots=10, pw_slots=10)
     async with pool.request() as budget:
-        return await runner.search_with_fallback(names, queries, 2000, budget=budget)
+        return await runner.search_with_fallback(
+            names, queries, 2000, episode_ref=episode_ref, budget=budget
+        )
 
 
 class TestSearchWithFallback:
@@ -418,6 +424,67 @@ class TestDispatch:
         results = await _search(_runner(registry), ["a"], ["q"])
 
         assert len(results) == 1
+
+
+class TestEpisodeReference:
+    """The episode reference (series identity) reaches the plugins that
+    declare ``locates_episodes = True``; every other plugin is called as
+    before it existed."""
+
+    _REF = EpisodeRef(season=5, episode=2, title="Laboon", absolute=62)
+
+    async def test_a_plugin_without_the_capability_is_called_as_today(self) -> None:
+        plugin = _plugin([_sr("https://a/1")])
+
+        await _search(_runner(_registry({"a": plugin})), ["a"], ["q"], self._REF)
+
+        plugin.search.assert_awaited_once_with(
+            "q", category=2000, season=None, episode=None
+        )
+
+    async def test_a_locating_plugin_receives_the_reference(self) -> None:
+        plugin = _plugin([_sr("https://a/1")])
+        plugin.locates_episodes = True
+
+        await _search(_runner(_registry({"a": plugin})), ["a"], ["q"], self._REF)
+
+        plugin.search.assert_awaited_once_with(
+            "q", category=2000, season=None, episode=None, episode_ref=self._REF
+        )
+
+    async def test_a_locating_plugin_without_a_reference_is_called_as_today(
+        self,
+    ) -> None:
+        plugin = _plugin([_sr("https://a/1")])
+        plugin.locates_episodes = True
+
+        await _search(_runner(_registry({"a": plugin})), ["a"], ["q"])
+
+        plugin.search.assert_awaited_once_with(
+            "q", category=2000, season=None, episode=None
+        )
+
+    async def test_a_truthy_attribute_is_no_capability(self) -> None:
+        """Only ``True`` declares it: a mock's attribute is an object."""
+        plugin = MagicMock(spec=["search", "locates_episodes"])
+        plugin.search = AsyncMock(return_value=[])
+
+        await _search(_runner(_registry({"a": plugin})), ["a"], ["q"], self._REF)
+
+        plugin.search.assert_awaited_once_with(
+            "q", category=2000, season=None, episode=None
+        )
+
+    async def test_isolated_search_receives_the_reference(self) -> None:
+        plugin = MagicMock(spec=["search", "isolated_search"])
+        plugin.locates_episodes = True
+        plugin.isolated_search = AsyncMock(return_value=[])
+
+        await _search(_runner(_registry({"a": plugin})), ["a"], ["q"], self._REF)
+
+        plugin.isolated_search.assert_awaited_once_with(
+            "q", 2000, season=None, episode=None, episode_ref=self._REF
+        )
 
 
 class TestMirrorGroups:

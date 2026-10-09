@@ -11,6 +11,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
+from structlog.testing import capture_logs
 
 from scavengarr.application.stremio.answer import StreamAnswer
 from scavengarr.application.stremio.search_cache import CachedSearch
@@ -19,7 +20,11 @@ from scavengarr.application.use_cases.stremio_stream import (
 )
 from scavengarr.domain.entities.scoring import PluginScoreSnapshot
 from scavengarr.domain.entities.stremio import (
+    EpisodeMeta,
+    EpisodeRef,
     ResolvedStream,
+    SeriesMeta,
+    StremioStreamRequest,
     TitleMatchInfo,
 )
 from scavengarr.domain.plugins.base import SearchResult
@@ -462,7 +467,7 @@ class TestAnimeIds:
         )
         # The search is shared with the same episode asked by its IMDb id
         assert cache.get.await_args_list[0].args == (
-            "stremio:search:series:tt2560140:3:15",
+            "stremio:search:v2:series:tt2560140:3:15",
         )
 
     async def test_an_untranslatable_id_answers_nothing(self) -> None:
@@ -492,6 +497,143 @@ class TestAnimeIds:
         assert await uc.execute(make_request()) == []
 
         anime_ids.translate.assert_not_awaited()
+
+
+class TestEpisodeReference:
+    """A series request whose Cinemeta list places the episode carries an
+    EpisodeRef (title, air date, absolute number) to the plugins that
+    locate episodes; a kitsu: request keeps its Kitsu number."""
+
+    _META = SeriesMeta(
+        name="One Piece",
+        year=1999,
+        genres=("Animation",),
+        episodes=tuple(
+            EpisodeMeta(season=s, episode=e, name=f"S{s}E{e}", released=None)
+            for s, count in ((1, 8), (2, 22), (3, 17), (4, 13), (5, 9))
+            for e in range(1, count + 1)
+        ),
+    )
+
+    @staticmethod
+    def _plugin(*, locates: bool) -> AsyncMock:
+        plugin = AsyncMock()
+        plugin.search = AsyncMock(return_value=[])
+        plugin.isolated_search = plugin.search
+        if locates:
+            plugin.locates_episodes = True
+        return plugin
+
+    @staticmethod
+    def _use_case(
+        plugin: AsyncMock,
+        *,
+        meta: SeriesMeta | None,
+        translated: StremioStreamRequest | None = None,
+    ) -> StremioStreamUseCase:
+        tmdb = AsyncMock()
+        tmdb.get_title_and_year = AsyncMock(
+            return_value=TitleMatchInfo(title="One Piece", year=1999)
+        )
+        plugins = MagicMock()
+        plugins.get_languages.return_value = ["de"]
+        plugins.get_by_provides.side_effect = lambda p: (
+            ["aniworld"] if p == "stream" else []
+        )
+        plugins.get.return_value = plugin
+        series_meta = AsyncMock()
+        series_meta.lookup = AsyncMock(
+            return_value=(meta, "found" if meta is not None else "not_found")
+        )
+        anime_ids = AsyncMock()
+        anime_ids.translate = AsyncMock(return_value=translated)
+        return make_use_case(
+            tmdb=tmdb,
+            plugins=plugins,
+            series_meta=series_meta,
+            anime_ids=anime_ids,
+        )
+
+    async def test_a_locating_plugin_gets_the_reference(self) -> None:
+        plugin = self._plugin(locates=True)
+        uc = self._use_case(plugin, meta=self._META)
+
+        await uc.execute(
+            make_request(
+                imdb_id="tt0388629", content_type="series", season=5, episode=2
+            )
+        )
+
+        plugin.search.assert_awaited_once_with(
+            "One Piece",
+            5000,
+            season=5,
+            episode=2,
+            episode_ref=EpisodeRef(season=5, episode=2, title="S5E2", absolute=62),
+        )
+
+    async def test_a_plugin_without_the_capability_is_called_as_today(self) -> None:
+        plugin = self._plugin(locates=False)
+        uc = self._use_case(plugin, meta=self._META)
+
+        await uc.execute(
+            make_request(
+                imdb_id="tt0388629", content_type="series", season=5, episode=2
+            )
+        )
+
+        plugin.search.assert_awaited_once_with("One Piece", 5000, season=5, episode=2)
+
+    async def test_without_a_meta_there_is_no_reference(self) -> None:
+        plugin = self._plugin(locates=True)
+        uc = self._use_case(plugin, meta=None)
+
+        await uc.execute(
+            make_request(
+                imdb_id="tt0388629", content_type="series", season=5, episode=2
+            )
+        )
+
+        plugin.search.assert_awaited_once_with("One Piece", 5000, season=5, episode=2)
+
+    async def test_a_kitsu_request_keeps_its_number(self) -> None:
+        """The Kitsu number places an episode the list lacks."""
+        plugin = self._plugin(locates=True)
+        translated = make_request(
+            imdb_id="tt0388629", content_type="series", season=22, episode=4
+        )
+        uc = self._use_case(plugin, meta=self._META, translated=translated)
+
+        await uc.execute(
+            make_request(
+                imdb_id="kitsu:12", content_type="series", season=1, episode=1089
+            )
+        )
+
+        plugin.search.assert_awaited_once_with(
+            "One Piece",
+            5000,
+            season=22,
+            episode=4,
+            episode_ref=EpisodeRef(season=22, episode=4, absolute=1089),
+        )
+
+    async def test_the_reference_is_logged(self) -> None:
+        plugin = self._plugin(locates=True)
+        uc = self._use_case(plugin, meta=self._META)
+        request = make_request(
+            imdb_id="tt0388629", content_type="series", season=5, episode=2
+        )
+
+        with capture_logs() as logs:
+            await uc.execute(request)
+
+        refs = [e for e in logs if e["event"] == "stremio_episode_ref"]
+        assert len(refs) == 1
+        assert refs[0]["season"] == 5
+        assert refs[0]["episode"] == 2
+        assert refs[0]["absolute"] == 62
+        assert refs[0]["has_title"] is True
 
 
 class TestCachedAnswers:

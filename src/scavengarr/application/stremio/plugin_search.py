@@ -24,11 +24,13 @@ from typing import Any, Protocol
 import structlog
 
 from scavengarr.domain.entities.scoring import PluginScoreSnapshot
+from scavengarr.domain.entities.stremio import EpisodeRef
 from scavengarr.domain.plugins.base import (
     PluginProtocol,
     PluginUnreachableError,
     ResultKey,
     SearchResult,
+    locates_episodes,
     result_key,
 )
 from scavengarr.domain.ports.browser_fetcher import PageClaim, page_claim
@@ -202,6 +204,7 @@ class PluginSearchRunner:
         *,
         season: int | None = None,
         episode: int | None = None,
+        episode_ref: EpisodeRef | None = None,
         budget: ConcurrencyBudgetPort,
         budget_ends: float | None = None,
         on_results: OnResultsFn | None = None,
@@ -234,7 +237,8 @@ class PluginSearchRunner:
         query ended (of a skipped one at once).
 
         Plugins whose site failed the periodic health check are skipped
-        (before a mirror group picks its member).
+        (before a mirror group picks its member). *episode_ref* (the
+        episode's placement) reaches the plugins that locate episodes.
         """
         asked = list(plugin_names)
         plugin_names = self._reachable(plugin_names)
@@ -279,6 +283,7 @@ class PluginSearchRunner:
                     category,
                     season=season,
                     episode=episode,
+                    episode_ref=episode_ref,
                     budget=budget,
                     budget_ends=budget_ends,
                     on_results=_hand_on,
@@ -377,6 +382,7 @@ class PluginSearchRunner:
         *,
         season: int | None = None,
         episode: int | None = None,
+        episode_ref: EpisodeRef | None = None,
         budget: ConcurrencyBudgetPort,
         budget_ends: float | None = None,
         on_results: OnResultsFn | None = None,
@@ -407,6 +413,7 @@ class PluginSearchRunner:
                     category,
                     season=season,
                     episode=episode,
+                    episode_ref=episode_ref,
                     budget_ends=budget_ends,
                 )
 
@@ -452,6 +459,7 @@ class PluginSearchRunner:
         *,
         season: int | None = None,
         episode: int | None = None,
+        episode_ref: EpisodeRef | None = None,
         budget_ends: float | None = None,
     ) -> _PluginRun:
         """Run a single plugin search with its full timeout, catching errors.
@@ -481,6 +489,7 @@ class PluginSearchRunner:
                     category,
                     season=season,
                     episode=episode,
+                    episode_ref=episode_ref,
                     budget_ends=budget_ends,
                 ),
                 timeout=timeout,
@@ -506,17 +515,27 @@ class PluginSearchRunner:
         *,
         season: int | None = None,
         episode: int | None = None,
+        episode_ref: EpisodeRef | None = None,
     ) -> list[SearchResult]:
-        """Dispatch to isolated_search() when available, else search()."""
+        """Dispatch to isolated_search() when available, else search().
+
+        *episode_ref* goes to a plugin that locates episodes
+        (``locates_episodes``) and only when there is one; every other
+        plugin is called as before the reference existed.
+        """
+        extra: dict[str, EpisodeRef] = {}
+        if episode_ref is not None and locates_episodes(plugin):
+            extra["episode_ref"] = episode_ref
         isolated_search: Callable[..., Awaitable[list[SearchResult]]] | None = getattr(
             plugin, "isolated_search", None
         )
         if isolated_search is not None:
             return await isolated_search(
-                query, category, season=season, episode=episode
+                query, category, season=season, episode=episode, **extra
             )
-        return await plugin.search(
-            query, category=category, season=season, episode=episode
+        search: Callable[..., Awaitable[list[SearchResult]]] = plugin.search
+        return await search(
+            query, category=category, season=season, episode=episode, **extra
         )
 
     def _record_outcome(self, key: str, *, success: bool, found: bool) -> None:
@@ -541,6 +560,7 @@ class PluginSearchRunner:
         *,
         season: int | None = None,
         episode: int | None = None,
+        episode_ref: EpisodeRef | None = None,
         budget_ends: float | None = None,
     ) -> _PluginRun:
         """Search a single plugin, catching and logging errors.
@@ -570,7 +590,12 @@ class PluginSearchRunner:
                 token = self._max_results_var.set(self._max_results_per_plugin)
                 try:
                     raw = await self._dispatch_search(
-                        plugin, query, category, season=season, episode=episode
+                        plugin,
+                        query,
+                        category,
+                        season=season,
+                        episode=episode,
+                        episode_ref=episode_ref,
                     )
                 finally:
                     self._max_results_var.reset(token)

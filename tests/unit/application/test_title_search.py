@@ -100,7 +100,7 @@ class TestSearchCache:
         2026-10-06). A refresh that waited keeps its whole plugin time."""
         cache = memory_cache()
         keys = [
-            f"stremio:search:movie:{imdb_id}:None:None"
+            f"stremio:search:v2:movie:{imdb_id}:None:None"
             for imdb_id in ("tt1234567", "tt7654321")
         ]
         for key in keys:
@@ -338,7 +338,7 @@ class TestCompletion:
         """A stale refresh for another title holds the one background slot."""
         cache = memory_cache()
         self._partial(cache)
-        other = "stremio:search:movie:tt7654321:None:None"
+        other = "stremio:search:v2:movie:tt7654321:None:None"
         cache.data[other] = CachedSearch(
             results=[hit("https://voe.sx/e/other")],
             total=1,

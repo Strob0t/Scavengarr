@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from scavengarr.domain.entities.stremio import EpisodeRef
 from scavengarr.domain.plugins.base import (
     PluginUnreachableError,
     SearchResult,
@@ -72,6 +73,34 @@ class _SerializedPlugin(PlaywrightPluginBase):
         episode: int | None = None,
     ) -> list[SearchResult]:
         return [SearchResult(title="serial-result", download_link="https://x")]
+
+
+class _LocatingPlugin(PlaywrightPluginBase):
+    """Serialized plugin that locates episodes: search() takes the reference."""
+
+    name = "locating-pw"
+    provides = "stream"
+    _domains = ["example.com"]
+    _serialize_search = True
+    locates_episodes = True
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[dict[str, Any]] = []
+
+    async def search(
+        self,
+        query: str,
+        category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
+        *,
+        episode_ref: EpisodeRef | None = None,
+    ) -> list[SearchResult]:
+        self.calls.append(
+            {"query": query, "season": season, "episode": episode, "ref": episode_ref}
+        )
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -1508,6 +1537,20 @@ class TestIsolatedSearch:
 
         assert len(results) == 1
         assert results[0].title == "serial-result"
+
+    async def test_the_reference_reaches_a_locating_search(self) -> None:
+        """The episode reference goes to search() as a keyword, and only
+        when there is one."""
+        plugin = _LocatingPlugin()
+        ref = EpisodeRef(season=5, episode=2, title="Laboon", absolute=62)
+
+        await plugin.isolated_search("q", 5070, season=5, episode=2, episode_ref=ref)
+        await plugin.isolated_search("q", 5070, season=5, episode=2)
+
+        assert plugin.calls == [
+            {"query": "q", "season": 5, "episode": 2, "ref": ref},
+            {"query": "q", "season": 5, "episode": 2, "ref": None},
+        ]
 
     @pytest.mark.asyncio
     async def test_prepare_context_called(self) -> None:
