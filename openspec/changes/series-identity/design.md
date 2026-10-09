@@ -81,7 +81,11 @@ The probe showed why a penalty cannot work: an exact title with a wrong year
 scores exactly the threshold, and any smaller penalty keeps it, any larger one
 also drops near-exact titles with the right year's bonus missing. The
 tolerances stay (series 3 years, movies 1 year), so a site's start year off by
-one or two passes. The result's year comes from the title, the release name,
+one or two passes. A year that is a token of the reference title itself
+("Blade Runner 2049" for the 2017 film, "2001: A Space Odyssey") is no release
+year and is not compared; today's penalty kept such results at exactly the
+threshold, and the gate would drop them. The result's year comes from the
+title, the release name,
 guessit, and now `metadata["year"]` (int, or a string of digits), which
 kinoger, megakino, streamkiste, hdfilme, streamcloud, movie2k, moflix, cine,
 serienfans, filmfans, animeloads and fireani already store. Rollout is

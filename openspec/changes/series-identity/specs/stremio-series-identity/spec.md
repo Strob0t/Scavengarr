@@ -34,6 +34,10 @@ The title matcher SHALL drop a result whose year is known and differs from the r
 - **WHEN** a result carries no year anywhere
 - **THEN** the text rules alone decide
 
+#### Scenario: A year that is part of the title
+- **WHEN** the reference is "Blade Runner 2049" (2017, movie) and a result's title is "Blade Runner 2049"
+- **THEN** 2049 is not compared as a release year and the result is kept
+
 ### Requirement: An IMDb Id In The Result Decides
 When a result's `metadata` carries `imdb` or `imdb_id` that normalises to `tt` plus digits, the matcher SHALL keep the result if it equals the reference's `imdb_id` and drop it if it differs, without regard to the title score.
 
