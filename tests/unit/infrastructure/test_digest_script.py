@@ -34,7 +34,11 @@ def _line(**fields: Any) -> str:
 
 
 def _stream_request(
-    rid: str, *events: dict[str, Any], streams: int | None, duration_ms: float
+    rid: str,
+    *events: dict[str, Any],
+    streams: int | None,
+    duration_ms: float,
+    stream_id: str = "movie/tt1",
 ) -> list[str]:
     lines = [_line(event="stremio_stream_request", request_id=rid, imdb_id="tt1")]
     lines.extend(_line(request_id=rid, **event) for event in events)
@@ -50,7 +54,7 @@ def _stream_request(
         _line(
             event="http_request",
             request_id=rid,
-            path="/api/v1/stremio/stream/movie/tt1.json",
+            path=f"/api/v1/stremio/stream/{stream_id}.json",
             duration_ms=duration_ms,
         )
     )
@@ -79,6 +83,11 @@ _LOG = "\n".join(
             "r5", {"event": "stremio_title_not_found"}, streams=0, duration_ms=50
         ),
         _line(event="stremio_stream_request", request_id="r6"),
+        # The anime catalogs' ids and a TMDB id, told apart by the path
+        *_stream_request(
+            "r7", streams=1, duration_ms=200, stream_id="series/kitsu:12345:2"
+        ),
+        *_stream_request("r8", streams=0, duration_ms=300, stream_id="movie/tmdb:603"),
         _line(event="http_request", path="/api/v1/healthz", duration_ms=1.1),
         _line(event="http_request", path="/api/v1/readyz", duration_ms=1.2),
         _line(event="hoster_resolve_timeout", hoster="dropload", level="warning"),
@@ -167,7 +176,7 @@ class TestParsing:
         assert all(
             r.get("path") not in ("/api/v1/healthz", "/api/v1/readyz") for r in records
         )
-        assert events.count("http_request") == 5
+        assert events.count("http_request") == 7
 
     def test_metrics_samples_with_labels(self) -> None:
         samples = _mod.parse_metrics(_METRICS)
@@ -185,7 +194,7 @@ class TestSections:
     def test_requests_by_source(self) -> None:
         req = _digest()["requests"]
 
-        assert (req["answered"], req["unanswered"]) == (5, 1)
+        assert (req["answered"], req["unanswered"]) == (7, 1)
         assert list(req["by_source"]) == ["search", "joined", "stale", "cache", "none"]
         assert req["by_source"]["search"] == {
             "count": 1,
@@ -196,6 +205,21 @@ class TestSections:
         }
         assert req["by_source"]["stale"]["without_streams"] == 1
         assert req["by_source"]["cache"]["p50_ms"] == 70.0
+
+    def test_requests_by_id_scheme(self) -> None:
+        """Which catalogs the players use: the id scheme of the request path
+        (r6 has no access record in the window, so no scheme)."""
+        req = _digest()["requests"]
+
+        assert req["by_scheme"] == {"tt": 5, "kitsu": 1, "tmdb": 1}
+
+    def test_id_scheme_of_a_path(self) -> None:
+        scheme = _mod._id_scheme
+        assert scheme("/api/v1/stremio/stream/movie/tt0133093.json") == "tt"
+        assert scheme("/api/v1/stremio/stream/series/kitsu:12345:2.json") == "kitsu"
+        assert scheme("/api/v1/stremio/stream/movie/tmdb:603.json") == "tmdb"
+        assert scheme("/api/v1/stremio/stream/movie/abc.json") == "other"
+        assert scheme("/api/v1/stremio/stream/movie/") == "other"
 
     def test_percentiles_by_nearest_rank(self) -> None:
         values = [float(v) for v in range(1, 11)]
@@ -253,7 +277,7 @@ class TestSections:
         data = _digest()
 
         assert data["noise"][0]["event"] == "stremio_stream_request"
-        assert data["noise"][0]["count"] == 6
+        assert data["noise"][0]["count"] == 8
         assert data["errors"] == {
             "count": 2,
             "top": [
@@ -273,7 +297,7 @@ class TestSections:
             "commit": "abc1234",
             "uptime_s": 74400,
         }
-        assert data["log_records"] == 27
+        assert data["log_records"] == 33
         json.dumps(data)
 
 
@@ -292,6 +316,7 @@ class TestRender:
         ):
             assert f"\n## {heading}\n" in text
         assert "| search | 1 | 13.40 s | 13.40 s | 5.0 | 0 |" in text
+        assert "\nBy id scheme: tt 5, kitsu 1, tmdb 1\n" in text
         assert "| kinoger | 15 | 3 | 2 | 0 | 3 | 1 | 1 d ago | 10%/–/– |" in text
         assert "| voe | 93 | 1.2 s | stream 93 |" in text
         assert "Not closed now: filemoon (hoster, open)" in text

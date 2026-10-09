@@ -24,6 +24,9 @@ _LABEL = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)="((?:[^"\\]|\\.)*)"')
 # Liveness and readiness checks: two records every 30 s
 _HEALTH_PATHS = ("/api/v1/healthz", "/api/v1/readyz")
 _STREAM_PATH = "/stremio/stream/"
+# The id schemes of a stream request (the catalogs the players use):
+# /stremio/stream/<type>/tt123.json, kitsu:123:2.json, tmdb:603.json
+_ID_SCHEMES = ("tt", "kitsu", "tmdb")
 # Searches a request did not run itself end the request as ``joined``;
 # these events decide the source before that (the first one wins)
 _SOURCE_EVENTS = {
@@ -88,6 +91,16 @@ def _percentile(values: Sequence[float], share: float) -> float | None:
     return ordered[max(0, math.ceil(share * len(ordered)) - 1)]
 
 
+def _id_scheme(path: str) -> str:
+    """The id scheme of a stream request path: ``tt``, ``kitsu``, ``tmdb``
+    or ``other``."""
+    stream_id = path.rpartition("/")[2].removesuffix(".json")
+    if stream_id.startswith("tt"):
+        return "tt"
+    scheme = stream_id.partition(":")[0]
+    return scheme if scheme in _ID_SCHEMES else "other"
+
+
 def _stream_requests(records: Iterable[Record]) -> dict[str, dict[str, Any]]:
     """The stream requests of the window by ``request_id``: their source,
     answer time (the access record) and streams (the response record)."""
@@ -111,6 +124,7 @@ def _stream_requests(records: Iterable[Record]) -> dict[str, dict[str, Any]]:
             request.setdefault("source", _SOURCE_EVENTS[event])
         elif event == "http_request" and _STREAM_PATH in str(record.get("path", "")):
             request["duration_ms"] = record.get("duration_ms")
+            request["scheme"] = _id_scheme(str(record.get("path", "")))
     return by_id
 
 
@@ -140,9 +154,12 @@ def requests(records: Iterable[Record]) -> dict[str, Any]:
     """
     by_id = _stream_requests(records)
     by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    schemes: Counter[str] = Counter()
     for request in by_id.values():
         if "streams" in request:
             by_source[request.get("source", "joined")].append(request)
+        if "scheme" in request:
+            schemes[request["scheme"]] += 1
     return {
         "answered": sum(len(v) for v in by_source.values()),
         # Still running at the end of the window, or an error
@@ -150,6 +167,13 @@ def requests(records: Iterable[Record]) -> dict[str, Any]:
         "by_source": {
             source: _source_stats(by_source[source])
             for source in sorted(by_source, key=_SOURCE_ORDER.index)
+        },
+        # Every request with an access record, answered or not; the known
+        # schemes always, "other" only when seen
+        "by_scheme": {
+            scheme: schemes[scheme]
+            for scheme in (*_ID_SCHEMES, "other")
+            if scheme in _ID_SCHEMES or schemes[scheme]
         },
     }
 
@@ -400,6 +424,10 @@ def render(data: dict[str, Any]) -> str:
             if req["unanswered"]
             else ""
         )
+    )
+    lines.append(
+        "By id scheme: "
+        + ", ".join(f"{scheme} {count}" for scheme, count in req["by_scheme"].items())
     )
     lines.append("")
     lines.extend(

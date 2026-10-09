@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: Digest Counts Stream Requests per Id Scheme
+- `scripts/digest.py` (`prodctl.py digest`) counts the window's stream requests per id scheme of the request path (`tt`, `kitsu`, `tmdb`) and prints them as one line under *Requests*, so the maintainer sees which catalogs the players use instead of inferring the anime catalogs' use from a grep; no new log field.
+
 ### Fixed: The Right Series and the Right Episode
 - The maintainer reported One Piece streams mixing the 1999 anime, the 2023 live-action series and the 2027 remake, and anime requests playing the wrong episode (2026-10-09). The reference a request is matched against knew only a title, a year and alternative titles, and the anime sites' pages were built from IMDb's season numbers, which aniworld does not count in. OpenSpec `series-identity`, in steps:
 - `CinemetaClient` (`infrastructure/stremio/cinemeta.py`) reads the request's Cinemeta meta (`v3-cinemeta.strem.io/meta/<type>/<imdb>.json`, the catalog the player reads the ids from; 5 s timeout) and reduces it to `SeriesMeta` (name, start year, genres) with `EpisodeMeta` per listed episode (IMDb's season and episode, English name, release date), cached 7 days (`cinemeta:v1:<type>:<imdb>`); an id the catalog does not know is remembered for a day; a failure logs `cinemeta_failed` (reason, no URL) and answers nothing. `TitleMatchInfo` gains `imdb_id` and `animation`, and `EpisodeRef` names the episode a request means (season, episode, English title, release date, absolute number).
