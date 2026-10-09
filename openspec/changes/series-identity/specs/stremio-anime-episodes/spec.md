@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: The Request Carries An Episode Reference
-For a series request with a season and an episode, the use case SHALL build an `EpisodeRef` with the request's season and episode, the English title and release date of that episode from the Cinemeta list, and an absolute number: the Kitsu episode number when the request came as a `kitsu:` id, else the episode's position among the list's regular seasons ordered by season and episode. Without a Cinemeta meta there SHALL be no reference.
+For a series request with a season and an episode, the use case SHALL build an `EpisodeRef` with the request's season and episode, the English title and release date of that episode from the Cinemeta list, and an absolute number: the Kitsu episode number when the request came as a `kitsu:` id, else the episode's position among the list's regular seasons ordered by season and episode.
 
 #### Scenario: An IMDb request for One Piece S5E2
 - **WHEN** the request is `tt0388629:5:2` and Cinemeta lists 8, 22, 17 and 13 episodes for seasons 1 to 4
@@ -11,9 +11,20 @@ For a series request with a season and an episode, the use case SHALL build an `
 - **WHEN** the request came as `kitsu:12` episode 1089 and was translated to `tt0388629:22:4`
 - **THEN** the reference's absolute number is 1089
 
+### Requirement: A Reference Needs A Title Or A Number
+A reference SHALL carry a title or an absolute number; without a Cinemeta meta, and for an episode the list lacks when no Kitsu number is given, there SHALL be no reference and the plugins SHALL be searched as today.
+
 #### Scenario: No meta
 - **WHEN** Cinemeta does not answer
 - **THEN** the plugins are searched without a reference, as today
+
+#### Scenario: An episode the list lacks
+- **WHEN** the request is `tt0388629:23:30` and Cinemeta's list ends before it, and the request did not come as a `kitsu:` id
+- **THEN** the plugins are searched without a reference, as today
+
+#### Scenario: An episode the list lacks with a Kitsu number
+- **WHEN** the same request came as `kitsu:12` episode 1180
+- **THEN** the reference has the absolute number 1180 and no title
 
 ### Requirement: Plugins Declare Episode Location
 A plugin that locates episodes by the reference SHALL declare `locates_episodes = True`; the plugin search SHALL pass `episode_ref` to such plugins only, and every other plugin SHALL be called as today.

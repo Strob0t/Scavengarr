@@ -139,8 +139,10 @@ request came as `kitsu:` (the addon's numbering is the sites' absolute
 numbering: 62 → S5E2, 1089 → S22E4), else the entry's position in the list's
 regular seasons ordered by season and episode (One Piece S5E2 → 62, exact;
 S22E4 → 1088 where aniworld reads 1089, so the number is an estimate the title
-confirms). Without a Cinemeta meta there is no reference and the plugins
-answer as today. The reference travels next to `season` and `episode`
+confirms). A reference needs a title or an absolute number: without a
+Cinemeta meta, and for an episode the list lacks (the newest episode of a
+running anime, which the catalog adds with a delay) when no Kitsu number is
+given, there is no reference and the plugins answer as today. The reference travels next to `season` and `episode`
 through `TitleSearch.progress` and `PluginSearch`; `_dispatch_search` passes
 `episode_ref=` only to a plugin with `locates_episodes = True` (a duck-typed
 class attribute like `address_bound` and `needs_playback_check`), so the 38
