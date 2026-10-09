@@ -293,6 +293,7 @@ async def probe(
         plugins=state.plugins,
         filter_fn=filter_by_title_match,
         config=config,
+        series_meta=state.series_meta,
     )
     names = sorted(
         set(state.plugins.get_by_provides("stream"))
@@ -331,7 +332,7 @@ async def probe(
     for sid in sids:
         req = parse_id(sid)
         started = time.monotonic()
-        infos = await titles.title_infos(req, titles.languages(names))
+        infos, _meta = await titles.title_infos(req, titles.languages(names))
         tasks = []
         for langs, group in titles.language_groups(names).items():
             ref = build_multi_lang_reference(infos, list(langs))

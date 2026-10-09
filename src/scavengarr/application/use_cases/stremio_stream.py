@@ -70,6 +70,7 @@ from scavengarr.domain.ports.plugin_history import (
 from scavengarr.domain.ports.plugin_registry import PluginRegistryPort
 from scavengarr.domain.ports.plugin_score_store import PluginScoreStorePort
 from scavengarr.domain.ports.search_engine import SearchEnginePort
+from scavengarr.domain.ports.series_meta import NO_SERIES_META, SeriesMetaPort
 from scavengarr.domain.ports.stream_link_repository import StreamLinkRepository
 from scavengarr.domain.ports.telemetry import NO_TELEMETRY, Stage, TelemetryPort
 from scavengarr.domain.ports.tmdb import TmdbClientPort
@@ -150,10 +151,16 @@ class StremioStreamUseCase:
         cache: CachePort | None = None,
         search_ttl_seconds: int = 0,
         anime_ids: AnimeIdResolverPort = NO_ANIME_IDS,
+        series_meta: SeriesMetaPort = NO_SERIES_META,
     ) -> None:
         self._anime_ids = anime_ids
         self._titles = TitleResolver(
-            tmdb=tmdb, plugins=plugins, filter_fn=filter_fn, config=config
+            tmdb=tmdb,
+            plugins=plugins,
+            filter_fn=filter_fn,
+            config=config,
+            series_meta=series_meta,
+            telemetry=telemetry,
         )
         self._sorter = sorter
         self._rank = partial(rank_streams, convert_fn=convert_fn, sort=sorter.sort)
@@ -276,7 +283,7 @@ class StremioStreamUseCase:
 
             # 2. Titles: one per language the selected plugins search in
             languages = self._titles.languages(selected)
-            title_infos = await self._titles.title_infos(request, languages)
+            title_infos, _meta = await self._titles.title_infos(request, languages)
 
             primary_title_info = first_available_title(title_infos, languages)
             metadata.outcome = "not_found" if primary_title_info is None else "found"

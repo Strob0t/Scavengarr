@@ -15,7 +15,7 @@ User-Agent.
 from __future__ import annotations
 
 import re
-from typing import Any, Literal
+from typing import Any
 
 import httpx
 import structlog
@@ -26,6 +26,7 @@ from scavengarr.domain.entities.stremio import (
     StremioContentType,
 )
 from scavengarr.domain.ports.cache import CachePort
+from scavengarr.domain.ports.series_meta import MetaOutcome
 
 log = structlog.get_logger(__name__)
 
@@ -35,8 +36,6 @@ _TTL_RECORD = 7 * 86_400
 _TTL_NONE = 86_400
 _NONE = "none"
 _YEAR_RE = re.compile(r"\d{4}")
-
-MetaOutcome = Literal["found", "not_found", "error"]
 
 
 class CinemetaClient:
@@ -65,8 +64,10 @@ class CinemetaClient:
         self, content_type: StremioContentType, imdb_id: str
     ) -> tuple[SeriesMeta | None, MetaOutcome]:
         """The title's record with the lookup's outcome: ``found``,
-        ``not_found`` (the catalog does not know the id; remembered for a
-        day) or ``error`` (no answer, logged; nothing cached)."""
+        ``not_found`` (the catalog does not know the id under that type: a
+        404, or the ``{}`` the live catalog answers for a movie id asked as
+        a series; remembered for a day) or ``error`` (no answer, logged;
+        nothing cached)."""
         key = _key(content_type, imdb_id)
         cached = await self._cache.get(key)
         if cached == _NONE:

@@ -231,7 +231,7 @@ Title matching prevents false positives when plugin results include sequels, spi
 | Scoring | `max(token_sort_ratio, token_set_ratio) / 100` via `rapidfuzz` on normalised strings (lowercase, Unicode → ASCII, punctuation stripped) |
 | Extra-words penalty | `-title_extra_words_penalty` (0.35) on the `token_set_ratio` when the result adds words to the reference: the set ratio rates "Dark Matter", "Dark Gathering" or "Naruto Shippuden" 1.0 against "Dark" or "Naruto". A result that only drops words ("Dune" for "Dune: Part One") is not penalised; one that adds words passes with a matching year (0.85) and fails without one (0.65) or with a wrong one (0.35). Release tags are no extra words: the guessit candidate carries the clean title |
 | Year bonus | `+title_year_bonus` (0.2) if the result year is within tolerance |
-| Year penalty | `-title_year_penalty` (0.3) if a year is present but outside tolerance |
+| Year penalty | 0.3 if a year is present but outside tolerance |
 | Sequel penalty | `-title_sequel_penalty` (0.35) if the trailing sequel numbers differ (either side) |
 | Threshold | `title_match_threshold` (0.7) minimum score |
 | Year tolerance | Movies ±1 year, series ±3 years |
@@ -364,7 +364,6 @@ Stremio settings live in `StremioConfig` (YAML section `stremio:`). See [Configu
 |---|---|---|
 | `title_match_threshold` | 0.7 | Minimum score to keep a result |
 | `title_year_bonus` | 0.2 | Added when the year matches |
-| `title_year_penalty` | 0.3 | Subtracted when the year does not match |
 | `title_sequel_penalty` | 0.35 | Subtracted when sequel numbers differ |
 | `title_extra_words_penalty` | 0.35 | Subtracted from the subset score when the result adds words |
 | `title_year_tolerance_movie` | 1 | Allowed year difference for movies |

@@ -185,7 +185,6 @@ class FakeStremioConfig:
     stream_deadline_seconds: float = 45.0
     title_match_threshold: float = 0.5
     title_year_bonus: float = 0.1
-    title_year_penalty: float = 0.15
     title_sequel_penalty: float = 0.2
     title_extra_words_penalty: float = 0.2
     title_year_tolerance_movie: int = 1

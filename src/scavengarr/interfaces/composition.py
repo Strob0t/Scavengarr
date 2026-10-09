@@ -98,6 +98,7 @@ from scavengarr.infrastructure.scoring.health_prober import HealthProber
 from scavengarr.infrastructure.scoring.query_pool import QueryPoolBuilder
 from scavengarr.infrastructure.scoring.scheduler import ScoringScheduler
 from scavengarr.infrastructure.scoring.search_prober import MiniSearchProber
+from scavengarr.infrastructure.stremio.cinemeta import CinemetaClient
 from scavengarr.infrastructure.stremio.episode_filter import filter_by_episode
 from scavengarr.infrastructure.stremio.stream_converter import convert_search_results
 from scavengarr.infrastructure.stremio.stream_sorter import StreamSorter
@@ -702,11 +703,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         addon=KitsuAddonClient(http_client=state.http_client, cache=state.cache),
         lists=AnimeIdLists(http_client=state.http_client, cache=state.cache),
     )
+    # 15b) The catalog's record of a title (kind, episodes), cached 7 days
+    state.series_meta = CinemetaClient(http_client=state.http_client, cache=state.cache)
 
     # 16) Stremio use cases (always initialized — fallback handles missing key)
     state.stremio_stream_uc = StremioStreamUseCase(
         tmdb=state.tmdb_client,
         anime_ids=state.anime_ids,
+        series_meta=state.series_meta,
         plugins=state.plugins,
         search_engine=state.search_engine,
         config=config.stremio,

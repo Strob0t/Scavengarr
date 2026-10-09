@@ -39,7 +39,7 @@ def test_every_setting_has_a_row() -> None:
     assert "SCAVENGARR_VALIDATION_MAX_CONCURRENT" in names
     assert "SCAVENGARR_LOGGING_LEVEL" in names
     # 75 section keys and 6 top-level keys
-    assert len(names) == 81
+    assert len(names) == 80
 
 
 def test_flat_aliases_are_named() -> None:

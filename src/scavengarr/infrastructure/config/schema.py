@@ -326,10 +326,6 @@ class StremioConfig(BaseModel):
         default=0.2,
         description="Score bonus when result year matches reference year.",
     )
-    title_year_penalty: float = Field(
-        default=0.3,
-        description="Score penalty when result year does not match reference year.",
-    )
     title_sequel_penalty: float = Field(
         default=0.35,
         description="Score penalty when result has sequel number that reference lacks.",

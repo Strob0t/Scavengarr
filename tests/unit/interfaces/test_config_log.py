@@ -102,6 +102,14 @@ class TestLogConfig:
             "keys": ["stremio.probe_at_stream_time"],
         }
 
+    def test_the_removed_year_penalty_loads(self, tmp_path: Path) -> None:
+        """``stremio.title_year_penalty`` is gone (the year decides, series
+        identity); a YAML that still sets it loads, the key reported."""
+        logs = _logs(tmp_path, {"stremio": {"title_year_penalty": 0.3}})
+
+        assert logs[1]["event"] == "config_unknown_keys"
+        assert logs[1]["keys"] == ["stremio.title_year_penalty"]
+
     def test_without_a_file(self) -> None:
         with capture_logs() as logs:
             _log_config(load_config())

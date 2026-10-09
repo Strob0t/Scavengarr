@@ -13,8 +13,16 @@ import pytest
 import structlog
 
 from scavengarr.application.stremio.title_resolution import TitleResolver
-from scavengarr.domain.entities.stremio import TitleMatchInfo
+from scavengarr.domain.entities.stremio import (
+    EpisodeMeta,
+    EpisodeRef,
+    SeriesMeta,
+    StremioStreamRequest,
+    TitleMatchInfo,
+)
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
+from scavengarr.infrastructure.telemetry import Telemetry
 
 from .stremio_support import (
     make_config,
@@ -371,3 +379,211 @@ class TestWorkerThread:
             )
 
         assert seen["request_id"] == "r1"
+
+
+# ---------------------------------------------------------------------------
+# Series identity: the catalog record gives every reference its imdb_id
+# and whether it is animation; the stage records the lookup's outcome
+# ---------------------------------------------------------------------------
+
+_LABOON = "The First Line of Defense? The Giant Whale Laboon Appears!"
+
+
+def _meta(
+    genres: tuple[str, ...] = (), episodes: tuple[EpisodeMeta, ...] = ()
+) -> SeriesMeta:
+    return SeriesMeta(name="One Piece", year=1999, genres=genres, episodes=episodes)
+
+
+def _resolver(
+    lookup: tuple[SeriesMeta | None, str], telemetry: TelemetryPort = NO_TELEMETRY
+) -> tuple[TitleResolver, AsyncMock]:
+    tmdb = AsyncMock()
+    tmdb.get_title_and_year = AsyncMock(
+        side_effect=lambda imdb_id, *, language: TitleMatchInfo(
+            title="One Piece" if language == "en" else "One Piece DE", year=1999
+        )
+    )
+    tmdb.get_title_by_tmdb_id = AsyncMock(return_value="Some Show")
+    series_meta = AsyncMock()
+    series_meta.lookup = AsyncMock(return_value=lookup)
+    titles = TitleResolver(
+        tmdb=tmdb,
+        plugins=MagicMock(),
+        filter_fn=MagicMock(),
+        config=make_config(),
+        series_meta=series_meta,
+        telemetry=telemetry,
+    )
+    return titles, series_meta
+
+
+def _series(imdb_id: str = "tt0388629") -> StremioStreamRequest:
+    return make_request(imdb_id=imdb_id, content_type="series", season=5, episode=2)
+
+
+class TestSeriesIdentity:
+    @pytest.mark.asyncio
+    async def test_an_animated_series(self) -> None:
+        titles, series_meta = _resolver(
+            (_meta(("Animation", "Action", "Adventure")), "found")
+        )
+
+        infos, meta = await titles.title_infos(_series(), ["de", "en"])
+
+        assert meta is not None
+        assert infos["de"] == TitleMatchInfo(
+            title="One Piece DE",
+            year=1999,
+            content_type="series",
+            imdb_id="tt0388629",
+            animation=True,
+        )
+        assert infos["en"] is not None
+        assert infos["en"].title == "One Piece"
+        assert infos["en"].animation is True
+        # One catalog lookup, shared by the languages
+        series_meta.lookup.assert_awaited_once_with("series", "tt0388629")
+
+    @pytest.mark.asyncio
+    async def test_a_live_action_series(self) -> None:
+        titles, _ = _resolver((_meta(("Action", "Adventure", "Comedy")), "found"))
+
+        infos, _record = await titles.title_infos(_series("tt11737520"), ["de"])
+
+        assert infos["de"] is not None
+        assert infos["de"].animation is False
+        assert infos["de"].imdb_id == "tt11737520"
+
+    @pytest.mark.asyncio
+    async def test_without_a_record_the_kind_is_unknown(self) -> None:
+        titles, _ = _resolver((None, "not_found"))
+
+        infos, meta = await titles.title_infos(_series(), ["de"])
+
+        assert meta is None
+        assert infos["de"] is not None
+        assert infos["de"].animation is None
+        assert infos["de"].imdb_id == "tt0388629"
+
+    @pytest.mark.asyncio
+    async def test_an_unknown_title_stays_unknown(self) -> None:
+        titles, _ = _resolver((_meta(("Animation",)), "found"))
+        titles._tmdb.get_title_and_year = AsyncMock(return_value=None)
+
+        infos, meta = await titles.title_infos(_series(), ["de"])
+
+        assert meta is not None
+        assert infos == {"de": None}
+
+    @pytest.mark.asyncio
+    async def test_a_tmdb_id_asks_the_catalog_nothing(self) -> None:
+        titles, series_meta = _resolver((_meta(("Animation",)), "found"))
+
+        infos, meta = await titles.title_infos(_series("tmdb:37854"), ["de"])
+
+        assert meta is None
+        assert infos["de"] == TitleMatchInfo(title="Some Show", content_type="series")
+        series_meta.lookup.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("lookup", "outcome"),
+        [
+            ((_meta(("Animation",)), "found"), "found"),
+            ((None, "not_found"), "not_found"),
+            ((None, "error"), "error"),
+        ],
+    )
+    async def test_the_stage_records_the_outcome(
+        self, lookup: tuple[SeriesMeta | None, str], outcome: str
+    ) -> None:
+        telemetry = Telemetry()
+        titles, _ = _resolver(lookup, telemetry)
+
+        infos, _record = await titles.title_infos(_series(), ["de"])
+
+        # An error leaves the kind unknown and the request goes on
+        assert infos["de"] is not None
+        assert (
+            telemetry.registry.get_sample_value(
+                "scavengarr_stremio_phase_total",
+                {"phase": "series_meta", "outcome": outcome},
+            )
+            == 1
+        )
+
+
+# ---------------------------------------------------------------------------
+# The episode reference: the catalog entry's title and date, and the
+# absolute number as the position among the regular seasons
+# ---------------------------------------------------------------------------
+
+
+def _one_piece() -> SeriesMeta:
+    """Cinemeta's One Piece shape (2026-10-09): seasons 1 to 4 list 8, 22,
+    17 and 13 episodes, so S5E2 is the 62nd regular episode."""
+    episodes = [
+        EpisodeMeta(0, 1, "One Piece: Defeat the Pirate Ganzack! (OVA 1)", "1998-07-26")
+    ]
+    for season, count in ((1, 8), (2, 22), (3, 17), (4, 13), (5, 9)):
+        episodes.extend(
+            EpisodeMeta(season, number, f"S{season}E{number}", None)
+            for number in range(1, count + 1)
+        )
+    episodes[-8] = EpisodeMeta(5, 2, _LABOON, "2001-03-21")
+    return _meta(("Animation",), tuple(episodes))
+
+
+class TestEpisodeRef:
+    def test_s5e2_is_the_62nd_regular_episode(self) -> None:
+        ref = TitleResolver.episode_ref(_series(), _one_piece())
+
+        assert ref == EpisodeRef(
+            season=5, episode=2, title=_LABOON, aired="2001-03-21", absolute=62
+        )
+
+    def test_the_order_of_the_list_does_not_count(self) -> None:
+        meta = _one_piece()
+        shuffled = SeriesMeta(
+            meta.name, meta.year, meta.genres, tuple(reversed(meta.episodes))
+        )
+
+        ref = TitleResolver.episode_ref(_series(), shuffled)
+
+        assert ref is not None
+        assert ref.absolute == 62
+
+    def test_a_given_absolute_number_wins(self) -> None:
+        # A kitsu: request names the episode as the sites count it
+        ref = TitleResolver.episode_ref(_series(), _one_piece(), absolute=1089)
+
+        assert ref == EpisodeRef(5, 2, _LABOON, "2001-03-21", absolute=1089)
+
+    def test_a_special_has_no_absolute_number(self) -> None:
+        request = make_request(
+            imdb_id="tt0388629", content_type="series", season=0, episode=1
+        )
+
+        ref = TitleResolver.episode_ref(request, _one_piece())
+
+        assert ref == EpisodeRef(
+            0, 1, "One Piece: Defeat the Pirate Ganzack! (OVA 1)", "1998-07-26", None
+        )
+
+    def test_an_episode_the_list_lacks(self) -> None:
+        request = make_request(
+            imdb_id="tt0388629", content_type="series", season=99, episode=1
+        )
+
+        ref = TitleResolver.episode_ref(request, _one_piece(), absolute=1500)
+
+        assert ref == EpisodeRef(99, 1, None, None, absolute=1500)
+
+    def test_without_a_record(self) -> None:
+        assert TitleResolver.episode_ref(_series(), None) is None
+
+    def test_a_movie_request(self) -> None:
+        request = make_request(imdb_id="tt1375666", content_type="movie")
+
+        assert TitleResolver.episode_ref(request, _meta()) is None

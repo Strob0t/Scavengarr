@@ -173,10 +173,10 @@ async def probe(state: AppState, sid: str, only: set[str] | None) -> list[Plugin
         plugins=state.plugins,
         filter_fn=filter_by_title_match,
         config=config,
+        series_meta=state.series_meta,
     )
     weights: dict[str, Any] = {
         "year_bonus": config.title_year_bonus,
-        "year_penalty": config.title_year_penalty,
         "sequel_penalty": config.title_sequel_penalty,
         "extra_words_penalty": config.title_extra_words_penalty,
         "year_tolerance_movie": config.title_year_tolerance_movie,
@@ -191,7 +191,7 @@ async def probe(state: AppState, sid: str, only: set[str] | None) -> list[Plugin
     slots = asyncio.Semaphore(config.max_concurrent_plugins)
     search_max_results.set(config.max_results_per_plugin)
     req, category = parse_id(sid)
-    infos = await titles.title_infos(req, titles.languages(names))
+    infos, _meta = await titles.title_infos(req, titles.languages(names))
 
     async def one_plugin(
         name: str, langs: list[str], queries: list[str], ref: TitleMatchInfo

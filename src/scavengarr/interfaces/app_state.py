@@ -27,6 +27,7 @@ if TYPE_CHECKING:
         StreamLinkRepository,
     )
     from scavengarr.domain.ports.anime_ids import AnimeIdResolverPort
+    from scavengarr.domain.ports.series_meta import SeriesMetaPort
     from scavengarr.domain.ports.tmdb import TmdbClientPort
     from scavengarr.infrastructure.browser.shared_browser import SharedBrowserPool
     from scavengarr.infrastructure.browser.stealth_pool import StealthPool
@@ -81,6 +82,8 @@ class AppState(State):
     tmdb_client: TmdbClientPort | None
     # The Anime Kitsu addon's ids translated into IMDb requests
     anime_ids: AnimeIdResolverPort
+    # The catalog's record of a title (Cinemeta): its kind and episodes
+    series_meta: SeriesMetaPort
     stremio_stream_uc: StremioStreamUseCase | None
     stremio_catalog_uc: StremioCatalogUseCase | None
     # The stored links behind /play and the HLS proxy

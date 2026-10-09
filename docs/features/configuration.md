@@ -190,7 +190,6 @@ Some keys also have an older flat name (`SCAVENGARR_LOG_LEVEL` for `logging.leve
 | `SCAVENGARR_STREMIO_TITLE_MATCH_THRESHOLD` | float | `0.7` | Minimum title similarity score to keep a stream result. |
 | `SCAVENGARR_STREMIO_TITLE_SEQUEL_PENALTY` | float | `0.35` | Score penalty when result has sequel number that reference lacks. |
 | `SCAVENGARR_STREMIO_TITLE_YEAR_BONUS` | float | `0.2` | Score bonus when result year matches reference year. |
-| `SCAVENGARR_STREMIO_TITLE_YEAR_PENALTY` | float | `0.3` | Score penalty when result year does not match reference year. |
 | `SCAVENGARR_STREMIO_TITLE_YEAR_TOLERANCE_MOVIE` | int | `1` | Allowed year difference for movies (±N years). |
 | `SCAVENGARR_STREMIO_TITLE_YEAR_TOLERANCE_SERIES` | int | `3` | Allowed year difference for series (±N years). |
 | `SCAVENGARR_STREMIO_VERIFY_STREAMS` | bool | `true` | Check every resolved video URL before returning it (first bytes with the playback headers); error pages, HTML and broken HLS playlists are dropped instead of shown in Stremio. Off, only resolvers without a check of their own (SuperVideo) are checked. |
@@ -495,7 +494,6 @@ A dict you set (`language_scores`, `hoster_scores`) replaces the default dict; l
 | `stremio.verify_streams` | bool | `true` | Playback check of every resolved video URL (first bytes with playback headers); unplayable streams are dropped. Off, only resolvers without a check of their own (SuperVideo) are checked |
 | `stremio.title_match_threshold` | float | `0.7` | Minimum title similarity score |
 | `stremio.title_year_bonus` | float | `0.2` | Score bonus for matching year |
-| `stremio.title_year_penalty` | float | `0.3` | Score penalty for non-matching year |
 | `stremio.title_sequel_penalty` | float | `0.35` | Score penalty for sequel number mismatch |
 | `stremio.title_extra_words_penalty` | float | `0.35` | Score penalty when the result adds words to the reference title ("Dark Matter" for "Dark"); such a result needs a matching year to pass |
 | `stremio.title_year_tolerance_movie` | int | `1` | Allowed year difference for movies (±N) |
