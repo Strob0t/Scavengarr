@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: The Request Carries An Episode Reference
-For a series request with a season and an episode, the use case SHALL build an `EpisodeRef` with the request's season and episode, the English title and release date of that episode from the Cinemeta list, and an absolute number: the Kitsu episode number when the request came as a `kitsu:` id, else the episode's position among the list's regular seasons ordered by season and episode.
+For a series request with a season and an episode, the use case SHALL build an `EpisodeRef` with the request's season and episode, the English title and release date of that episode from the Cinemeta list, and an absolute number: the episode's position among the list's regular seasons ordered by season and episode, or the Kitsu episode number of a `kitsu:` request when it lies within 5 of that position or the list lacks the episode.
 
 #### Scenario: An IMDb request for One Piece S5E2
 - **WHEN** the request is `tt0388629:5:2` and Cinemeta lists 8, 22, 17 and 13 episodes for seasons 1 to 4
@@ -9,7 +9,11 @@ For a series request with a season and an episode, the use case SHALL build an `
 
 #### Scenario: A Kitsu request
 - **WHEN** the request came as `kitsu:12` episode 1089 and was translated to `tt0388629:22:4`
-- **THEN** the reference's absolute number is 1089
+- **THEN** the reference's absolute number is 1089 (the position is 1088)
+
+#### Scenario: A Kitsu entry that spans one season
+- **WHEN** the request came as the Kitsu entry of a second season, episode 3, and was translated to S2E3 of a series whose first season lists 25 episodes
+- **THEN** the reference's absolute number is 28, the position, not 3
 
 ### Requirement: A Reference Needs A Title Or A Number
 A reference SHALL carry a title or an absolute number; without a Cinemeta meta, and for an episode the list lacks when no Kitsu number is given, there SHALL be no reference and the plugins SHALL be searched as today.

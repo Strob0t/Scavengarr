@@ -142,12 +142,15 @@ plugin keeps the suffix in the result title (sto does), so
 `title: str | None` (Cinemeta's English `name`), `aired: str | None`
 (`released[:10]`), `absolute: int | None`. The use case builds it after the
 title lookup: `title` and `aired` from the Cinemeta list's entry for the
-request's season and episode; `absolute` from the Kitsu number when the
-request came as `kitsu:` (the addon's numbering is the sites' absolute
-numbering: 62 → S5E2, 1089 → S22E4), else the entry's position in the list's
-regular seasons ordered by season and episode (One Piece S5E2 → 62, exact;
-S22E4 → 1088 where aniworld reads 1089, so the number is an estimate the title
-confirms). A reference needs a title or an absolute number: without a
+request's season and episode; `absolute` is the entry's position in the
+list's regular seasons ordered by season and episode (One Piece S5E2 → 62,
+exact; S22E4 → 1088 where aniworld reads 1089, so the number is an estimate
+the title confirms); a `kitsu:` request's episode number replaces it when it
+lies within 5 of the position, or when the list lacks the episode. A Kitsu
+entry that spans the whole series counts as the sites do (One Piece,
+`kitsu:12`: 1089 → S22E4), but Kitsu has an entry per season for most anime
+(Attack on Titan), whose numbers count from that season's first episode and
+would place the episode in season 1; the position check tells the two apart. A reference needs a title or an absolute number: without a
 Cinemeta meta, and for an episode the list lacks (the newest episode of a
 running anime, which the catalog adds with a delay) when no Kitsu number is
 given, there is no reference and the plugins answer as today. The reference travels next to `season` and `episode`
