@@ -111,3 +111,23 @@ The same 12 requests with the filter of step 21's group 7 (24c8c84: the numbers 
 - **megakino** (dropped 3, all correct): "Stranger Things - 5 Stafffel" for S04E01 and "One Piece - 2 Staffel" for S01E01 are pages of another season, "Severance" for S02E05 carries only the label `1x5 Voe`. The labels show a parser limit: `_add_episode` labels each episode from the page's `<select id="ep<n>">` as `1x<n>`, the season fixed at 1, so a season page of season 2 or later carries season-1 labels (`1x1 Voe` on both pages above). Asked for those pages' own season (`series/tt4574334:5:1`, `series/tt0388629:2:1`, `--plugins megakino`), both pages came back and both were dropped by their labels: 0 of 2 right, a loss, not a leak. Follow-up (backlog row 28, step 22's area, `plugins/megakino.py`): label with the page's season from its title ("N Staffel", "Staffel N"; 1 without one) and the filter narrows them like hdfilme's.
 
 **After step 28** (2026-10-07, dev container, `handoff-28` on `staging` 2ba88c5): megakino labels a page's episodes with the season its title names (`2x1 Voe` on "One Piece - 2 Staffel", `5x1 Voe` on "Stranger Things - 5 Stafffel"; 1 without one) and states season and episode in the metadata of an episode request. `series/tt4574334:5:1` and `series/tt0388629:2:1` with `--plugins megakino`: 2 results, both season_episode from the metadata, both kept and right (before: 0 of 2). Asked for another season (`series/tt4574334:4:1`, `series/tt0388629:1:1`), megakino gives no result: `_other_season` now also reads the number before the word ("5 Stafffel"), so the search skips those pages before their detail fetch instead of the filter dropping them.
+
+## s.to season rows (task 6.1 of step 35, 2026-10-09)
+
+Captured from the dev container (s.to refuses the Pi) with `scripts/capture_pages.py sto "One Piece" --season 2 --episode 1` and the same for *The Last of Us*: `serienstream.to` answered every page (search, series page, season page, episode page) with 200 and the real markup (`<title>One Piece Staffel 2 | SerienStream (S.to)</title>`), no challenge page. The two season pages are fixtures: `tests/fixtures/html/sto/season-one-piece-2.html.gz` and `season-the-last-of-us-2.html.gz`.
+
+**Rows.** An episode is `tr.episode-row` (the header row is `tr.text-uppercase` and has no number); `th.episode-number-cell` holds the season-relative number, `td.episode-title-cell` holds `strong.episode-title-ger` (the German title) and `span.episode-title-eng` (the English title). There is no `td.seasonEpisodeTitle` on s.to; that is aniworld's markup, so the empty answer for that selector on 2026-10-09 was the markup, not a challenge. One Piece, season 2, episode 1 (whitespace collapsed):
+
+```html
+<tr class="episode-row " onclick="window.location='/serie/one-piece/staffel-2/episode-1'">
+  <th scope="row" class="text-center fw-semibold episode-number-cell">1</th>
+  <td class="fw-medium episode-title-cell">
+    <strong class="d-block episode-title-ger" title="Ein Bad in Magensäure">Ein Bad in Magensäure</strong>
+    <span class="text-white-50 episode-title-eng" title="Episode 062"> Episode 062 </span>
+  </td>
+  <td class="episode-watch-cell"> ... <img src="/storage/providers/voe.svg" alt="VOE" ...> ... </td>
+  <td class="text-end episode-language-cell"> ... svg-flag-german ... svg-flag-english-german ... </td>
+</tr>
+```
+
+**Answer for 6.2.** Yes on both counts. For an anime the English span carries the absolute number the way aniworld does (`Episode 062`, without aniworld's brackets): the 16 rows of One Piece season 2 run `Episode 062` to `Episode 077`, and the series page lists 24 `staffel-N` links. For a series the span carries the English title: *The Last of Us* S02E02 has `Durch das Tal` in the `strong` and `Through the Valley` in the span. So `sto.py` can share aniworld's index and locate code with its own selectors (`span.episode-title-eng` for the number or English title, `strong.episode-title-ger` for the German one). Today's `_SeriesDetailParser` reads the `strong` only and leaves `en_title` empty.
