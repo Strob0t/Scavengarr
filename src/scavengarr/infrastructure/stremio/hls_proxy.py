@@ -21,6 +21,7 @@ from urllib.parse import ParseResult, SplitResult, urljoin, urlparse, urlsplit
 import httpx
 import structlog
 
+from scavengarr.infrastructure.hoster_resolvers._domain import extract_domain
 from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 
 log = structlog.get_logger(__name__)
@@ -43,7 +44,16 @@ _SEGMENT_CHUNK = 65536
 # the read timeout of a file request (``stream_file``)
 _FILE_READ_TIMEOUT_S = 60.0
 # The CDN's answer headers a proxied file passes to the player
-_FILE_HEADERS = ("content-type", "content-length", "content-range", "accept-ranges")
+# (``_file_headers``: Content-Length only when it frames the body)
+_FILE_HEADERS = (
+    "content-type",
+    "content-length",
+    "content-range",
+    "accept-ranges",
+    "content-encoding",
+)
+# A 206 answer's span: ``bytes <first>-<last>/<size or *>``
+_CONTENT_RANGE_RE = re.compile(r"bytes (\d+)-(\d+)/(?:\d+|\*)")
 # The player's request headers a proxied file forwards to the CDN
 _RANGE_HEADERS = ("Range", "If-Range")
 
@@ -299,9 +309,11 @@ async def stream_file(
     ``Accept-Encoding: identity`` (the byte offsets must hold, so nothing
     is decoded) and the ``Range`` and ``If-Range`` headers of *player*'s
     request when it sent them, and reads with ``_FILE_READ_TIMEOUT_S``.
-    The CDN's status passes through with the headers of ``_FILE_HEADERS``;
-    the body goes out in ``_SEGMENT_CHUNK`` pieces without buffering the
-    file. For HEAD (*head*) the body is empty and the CDN's answer is
+    The CDN's status passes through with the headers of ``_FILE_HEADERS``
+    (``_file_headers``: Content-Length only when it frames the body); the
+    body goes out undecoded in ``_SEGMENT_CHUNK`` pieces without buffering
+    the file, resumed once when the CDN ends it before the promised length
+    (``_file_body``). For HEAD (*head*) the body is empty and the CDN's answer is
     closed after its headers. *on_sent* is told the bytes that went out
     when the body ends, an aborted transfer's included.
 
@@ -331,10 +343,197 @@ async def stream_file(
         if resp.is_error and resp.status_code != 416:
             await resp.aclose()
             resp.raise_for_status()
+    body = _file_body(
+        http_client, url, request_headers, timeout, resp, head=head, on_sent=on_sent
+    )
+    return FileAnswer(resp.status_code, _file_headers(resp), body)
+
+
+class FileCut(Exception):
+    """The CDN ended a file's body before the promised length, the one
+    resume included. Raised out of the body: the player's connection
+    aborts instead of ending as if the file were complete, and the player
+    asks again with a range of its own."""
+
+
+def _file_headers(resp: httpx.Response) -> dict[str, str]:
+    """The headers of ``_FILE_HEADERS`` the CDN's answer carried,
+    Content-Length only when it frames the body: with ``Transfer-Encoding``
+    the body is chunked and the header is not its length (RFC 9112 section
+    6.3 has an intermediary drop it), and uvicorn refuses a body shorter
+    than the header."""
     passed = {
         name: resp.headers[name] for name in _FILE_HEADERS if name in resp.headers
     }
-    return FileAnswer(resp.status_code, passed, _body(resp, head=head, on_sent=on_sent))
+    if "transfer-encoding" in resp.headers:
+        passed.pop("content-length", None)
+    return passed
+
+
+def _file_span(resp: httpx.Response) -> tuple[int, int | None]:
+    """The first byte's offset in the file and the bytes the answer promises:
+    from ``Content-Range`` for a 206, from a framing ``Content-Length`` for
+    a 200; ``(0, None)`` when the answer promises no length (chunked, 416)."""
+    match = _CONTENT_RANGE_RE.fullmatch(resp.headers.get("content-range", ""))
+    if resp.status_code == 206 and match is not None:
+        first, last = int(match.group(1)), int(match.group(2))
+        return first, last - first + 1
+    length = resp.headers.get("content-length", "")
+    if (
+        resp.status_code == 200
+        and "transfer-encoding" not in resp.headers
+        and length.isdigit()
+    ):
+        return 0, int(length)
+    return 0, None
+
+
+@dataclass
+class _FileTransfer:
+    """A proxied file's progress: the first byte's offset in the file, the
+    bytes the answer promised (``None``: no length) and the bytes sent."""
+
+    url: str
+    first: int
+    expected: int | None
+    sent: int = 0
+    resumed: bool = False
+
+    @property
+    def done(self) -> bool:
+        return self.expected is not None and self.sent >= self.expected
+
+    def take(self, chunk: bytes) -> bytes:
+        """The part of *chunk* within the promised length, counted as sent."""
+        if self.expected is not None:
+            chunk = chunk[: self.expected - self.sent]
+        self.sent += len(chunk)
+        return chunk
+
+    def cut(self) -> FileCut:
+        """The transfer's end short of the promise, logged once."""
+        log.warning(
+            "hls_proxy_file_cut",
+            cdn=extract_domain(self.url),
+            sent=self.sent,
+            expected=self.expected,
+            resumed=self.resumed,
+        )
+        return FileCut(
+            f"{self.sent} of {self.expected} bytes sent, resumed: {self.resumed}"
+        )
+
+
+async def _range_answer(
+    http_client: httpx.AsyncClient,
+    url: str,
+    request_headers: dict[str, str],
+    timeout: httpx.Timeout,
+    *,
+    first: int,
+    last: int,
+) -> httpx.Response | None:
+    """The file asked for again from byte *first* to *last*, the request's
+    other headers kept (``If-Range`` included: a changed file answers 200):
+    the CDN's answer when it is a 206 from *first*, else ``None`` (closed)."""
+    headers = {**request_headers, "Range": f"bytes={first}-{last}"}
+    async with _CDN_SEMAPHORE:
+        resp = await http_client.send(
+            http_client.build_request("GET", url, headers=headers, timeout=timeout),
+            stream=True,
+            follow_redirects=True,
+        )
+    if resp.status_code != 206 or _file_span(resp)[0] != first:
+        await resp.aclose()
+        return None
+    return resp
+
+
+async def _resume(
+    http_client: httpx.AsyncClient,
+    request_headers: dict[str, str],
+    timeout: httpx.Timeout,
+    resp: httpx.Response,
+    transfer: _FileTransfer,
+    error: httpx.TransportError | None,
+) -> httpx.Response:
+    """The CDN's answer for the rest of the file after *resp* ended short
+    of the promise (*error*: the transport error that ended it, if any),
+    once per transfer; ``FileCut`` when the transfer cannot go on."""
+    if transfer.expected is None or transfer.resumed:
+        raise transfer.cut() from error
+    await resp.aclose()
+    try:
+        fresh = await _range_answer(
+            http_client,
+            transfer.url,
+            request_headers,
+            timeout,
+            first=transfer.first + transfer.sent,
+            last=transfer.first + transfer.expected - 1,
+        )
+    except httpx.HTTPError as exc:
+        raise transfer.cut() from exc
+    if fresh is None:
+        raise transfer.cut() from error
+    transfer.resumed = True
+    log.info(
+        "hls_proxy_file_resumed",
+        cdn=extract_domain(transfer.url),
+        at=transfer.sent,
+        expected=transfer.expected,
+    )
+    return fresh
+
+
+async def _file_body(
+    http_client: httpx.AsyncClient,
+    url: str,
+    request_headers: dict[str, str],
+    timeout: httpx.Timeout,
+    resp: httpx.Response,
+    *,
+    head: bool,
+    on_sent: Callable[[int], None] | None,
+) -> AsyncGenerator[bytes]:
+    """A file's body in ``_SEGMENT_CHUNK`` pieces, undecoded (the byte
+    offsets must hold), the CDN's answer closed at the end; empty for HEAD
+    (*head*). *on_sent* is told the bytes that went out when the body ends.
+
+    A body the CDN ends before the promised length (``_file_span``; a
+    transport error mid-body, or a clean end short of it, which ended the
+    player's answer early: uvicorn's "Response content shorter than
+    Content-Length", 9 times in 48 h of production, 2026-10-07) is resumed
+    once with a ``Range`` request from the next byte, continuing the same
+    answer (``_resume``, ``hls_proxy_file_resumed``). When the resume fails
+    or ends short too, ``FileCut`` goes out of the body with one
+    ``hls_proxy_file_cut`` warning. An answer without a promised length
+    (chunked) ends where the CDN ends it; a transport error cuts it.
+    """
+    transfer = _FileTransfer(url, *_file_span(resp))
+    try:
+        if head:
+            return
+        while not transfer.done:
+            error: httpx.TransportError | None = None
+            try:
+                async for chunk in resp.aiter_raw(chunk_size=_SEGMENT_CHUNK):
+                    piece = transfer.take(chunk)
+                    if piece:
+                        yield piece
+                    if transfer.done:
+                        break
+            except httpx.TransportError as exc:
+                error = exc
+            if transfer.done or (transfer.expected is None and error is None):
+                return
+            resp = await _resume(
+                http_client, request_headers, timeout, resp, transfer, error
+            )
+    finally:
+        await resp.aclose()
+        if on_sent is not None:
+            on_sent(transfer.sent)
 
 
 def build_cdn_url(cdn_base: str, path: str, query_string: str = "") -> str:

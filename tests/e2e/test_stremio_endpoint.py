@@ -2396,7 +2396,9 @@ class TestProxyTelemetry:
                     "Content-Range": "bytes 0-3145727/3145728",
                     "Content-Length": "3145728",
                 },
-                content=b"\x00" * 3145728,
+                # A stream: httpx marks an answer built from inline content
+                # as consumed, and the file body reads it undecoded (aiter_raw)
+                stream=httpx.ByteStream(b"\x00" * 3145728),
             )
 
         client, t = self._client(
