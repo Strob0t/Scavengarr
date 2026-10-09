@@ -552,6 +552,45 @@ class TestSto:
         ]
         assert parser.hosters[0]["play_url"] == "/r?t=scrubbed"
 
+    @staticmethod
+    def _rows(season: int, name: str) -> list[EpisodeRow]:
+        parser = SeasonPageParser(season, _plugin_module("sto")._ROW_SELECTORS)
+        parser.feed(_page("sto", name))
+        return parser.rows
+
+    def test_an_anime_season_page_numbers_its_rows(self) -> None:
+        """One Piece's staffel-2 (captured 2026-10-09): the English cell holds
+        the absolute number in place of a title."""
+        rows = self._rows(2, "season-one-piece-2")
+
+        assert len(rows) == 16
+        assert [row.absolute for row in rows] == list(range(62, 78))
+        assert rows[0] == EpisodeRow(2, 1, "Ein Bad in Magensäure", "", 62)
+        laboon = locate(
+            rows,
+            EpisodeRef(
+                5,
+                2,
+                "The First Line of Defense? The Giant Whale Laboon Appears!",
+                "2001-03-21",
+                absolute=62,
+            ),
+        )
+        assert laboon is not None
+        assert (laboon.row.episode, laboon.by) == (1, "number")
+
+    def test_a_series_season_page_names_its_episodes(self) -> None:
+        """The Last of Us' staffel-2 (captured 2026-10-09): English titles, no
+        numbers."""
+        rows = self._rows(2, "season-the-last-of-us-2")
+
+        assert len(rows) == 7
+        assert all(row.absolute is None for row in rows)
+        assert rows[1] == EpisodeRow(2, 2, "Durch das Tal", "Through the Valley", None)
+        valley = locate(rows, EpisodeRef(2, 2, "Through the Valley", "2025-04-20"))
+        assert valley is not None
+        assert (valley.row.episode, valley.by) == (2, "title")
+
 
 class TestKinoking:
     def test_search_card(self) -> None:
