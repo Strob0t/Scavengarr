@@ -66,3 +66,41 @@ The question of the verdict: did the two sites move to domains outside `_domains
 - **movie4k (movie4k.sx, .ag, .stream): no trace.** The site was up through July 2026 and named its own alternates; those are dead too, and the one movie4k clone found (movie4k.com.de) is down. Nothing names a successor.
 
 **For the decision.** Nothing found points at a successor domain for either site, both were alive this summer, and a site analysis (Ultracode) has no domain to analyse: the choice is between keeping the two plugins switched on while `PluginHistory` records their unreachable marks (they cost one domain check per search until the health monitor parks them) and disabling them now; the record after the next deploy shows a return if there is one.
+
+## fireani, kinox, kinoking (2026-10-09)
+
+**Question.** Production's 48 h digest since the 10-07 deploy shows fireani unreachable in 220 of 283 domain checks (78 %), kinox in 104 of 186 (56 %, never a result) and kinoking in 28 of 128 (22 %, 8 timeouts, its breaker opened once), beside 91 `health_probe_challenge` records. Which class is each: dead, blocked from the VPN exit only, a challenge wall the health prober counts but the plugin cannot pass, a slow backend, or alive?
+
+**Probe.** `scripts/probes/domains.py --plugins fireani,kinox,kinoking --get-timeout 30` in the dev container (the home connection) and on the Pi (`prodctl.py probe --timeout 600 domains -- … --history`, the VPN exit), both within one sitting on 2026-10-09; kinoking and fireani repeated twice more on each side. The `HEAD` column is the domain check itself (5 s). The record is the app's own (`GET /api/v1/stats/plugins`, step 16 is deployed).
+
+| Plugin | Domain | Where | DNS | TCP 443 | HEAD (5 s) | GET (30 s) | Answers |
+|---|---|---|---|---|---|---|---|
+| fireani | fireani.me | dev | 1 v4 | **TimeoutError** 5 s | ConnectTimeout | ConnectTimeout | no |
+| | | Pi | 1 v4 | **TimeoutError** 5 s | ConnectTimeout | ConnectTimeout | no |
+| kinox | www22.kinox.to, ww22.kinox.to, www22.kinos.to, ww22.kinos.to, www22.kinoz.to, ww22.kinoz.to, www20.kinox.to, www15.kinox.to, www.kinox.to (all 9) | dev | 2 v4 / 2 v6 | ok, 25–52 ms | ReadTimeout | **522** `[cloudflare]` after 19.6–19.9 s | no |
+| | | Pi | 2 v4 / 2 v6 | ok, 33–57 ms | ReadTimeout | **522** `[cloudflare]` after 19.6–20.0 s | no |
+| kinoking | kinoking.cc | dev (3 runs) | 2 v4 / 2 v6 | ok, 25–36 ms | 200 in 0.34, 0.35, 1.2 s | 200 in 0.2–0.7 s | yes |
+| | | Pi (3 runs) | 2 v4 / 2 v6 | ok, 30–34 ms | **ReadTimeout (5.1 s), 200 in 5.08 s, ReadTimeout (5.2 s)** | 200 in 4.1, 4.7, 8.5 s | yes |
+
+**The record** (per UTC day: checks, unreachable, searches, results):
+
+| Plugin | 10-07 | 10-08 | 10-09 (to ~17:30) |
+|---|---|---|---|
+| fireani | 25 checks, 1 unreachable, 11 searches, 2 results | 72 checks, 33 unreachable, 12 searches, 3 results | 189 checks, **189 unreachable**, no search |
+| kinox | 24 checks, 0 unreachable, 15 searches, 0 results | 45 checks, 0 unreachable, 12 searches, 0 results | 120 checks, **107 unreachable**, no search |
+| kinoking | 43 checks, 19 unreachable, 8 searches, 7 timeouts | 52 checks, 7 unreachable, 9 searches, 1 timeout, 2 results | 33 checks, 2 unreachable, 4 searches, 2 results |
+
+(An unreachable plugin is rechecked every 5 min instead of every interval, hence the 189 and 120 checks of 10-09.)
+
+**The log** (`prodctl logs --since 48h`, UTC):
+
+- The 91 `health_probe_challenge` records are **all kinoger.com** (`cloudflare_page`), 3 to 4 per hour through the whole window (13 on 10-07, 46 on 10-08, 32 on 10-09): the health prober's cycle meeting kinoger's known Cloudflare page. None belongs to fireani, kinox or kinoking.
+- The plugins' own domain checks log no `<name>_domain_answers` or `<name>_no_domain_reachable` in the window (the health monitor marks instead); the marks: **fireani** `plugin_reachable` 10-08 13 h, `plugin_unreachable` 10-08 13 h and 21 h, then no return. **kinox** `plugin_unreachable` 10-09 07 h; before that `kinox_search` and `kinox_detail` 11 each, `kinox_no_hoster_links` 5 and two `kinox_http_error status=503` from www22.kinox.to at 10-08 21:07: the site answered its pages but no mirror gave a hoster link, the verification wall of KNOWN_ISSUES. **kinoking** alternates `plugin_unreachable` / `plugin_reachable` every 30 to 60 min on all three days (10-07 18–21 h, 10-08 11 h, 20–21 h, 10-09 10 h, 14 h); the breaker `kinoking:2000` opened once, 10-08 09:44. No cluster, no block window: the kinoking marks are continuous.
+
+**Verdicts.**
+
+- **fireani: dead host, not a blocked exit.** fireani.me resolves to one address that accepts no TCP connection from home or from the VPN exit (5 s timeout, three runs each side). Alive until 10-08 (results on 10-07 and 10-08, the last `plugin_reachable` 10-08 13 h); every one of the 189 checks of 10-09 failed. Whether the host is down or drops everyone at its firewall, the probe cannot tell; it is not the VPN exit.
+- **kinox: dead origin behind Cloudflare since 10-09; the verification wall is not the whole story.** Until 10-08 the nine domains answered and the plugin found pages whose mirrors led to the wall (no hoster link, the KNOWN_ISSUES picture, plus two 503s on the evening of 10-08). Since 10-09 all nine domains answer Cloudflare's 522 from home and from the VPN exit alike, after the edge's ~19.7 s origin timeout: the origin is gone, the wall behind it unreachable. The 56 % is the wall days (0 unreachable) averaged with 10-09 (107 of 120).
+- **kinoking: alive, slow from the VPN exit.** From home the domain check answers in 0.3 to 1.2 s; from the Pi the same `HEAD` takes 5.1 to 5.2 s and fails the 5 s check in two of three runs, the `GET` 4 to 8.5 s. The 22 % unreachable marks are those timeouts, spread evenly over three days, and the plugin returns results when it gets through (2 on 10-08, 2 on 10-09). Not a block (every answer is a 200), not a challenge: Cloudflare's path from the Pi's exit to kinoking's origin is slow, right at the check's timeout.
+
+Nothing in `_domains` or the plugins was changed. The decision is the maintainer's: fireani and kinox are candidates for disabling until the record shows a return (kinox's wall was already a reason); kinoking is a question of the domain check's 5 s timeout from the VPN exit, not of the site.
