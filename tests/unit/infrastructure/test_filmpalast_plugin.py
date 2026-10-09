@@ -93,6 +93,14 @@ _DETAIL_HTML = """
 <h2 class="bgDark">Batman Begins (2005)</h2>
 <span id="release_text">Batman.Begins.2005.German.DL.1080p.BluRay</span>
 <span itemprop="description">A superhero movie</span>
+<ul class="clearfix" id="detail-content-list">
+  <li><p>Shortinfos</p><strong>499322</strong> Nutzer haben den Stream gesehen
+    <br />Ver&ouml;ffentlicht: 2005 <br />Spielzeit: <em>140 min</em></li>
+  <li><p>Kategorien, Genre</p><span>
+    <a class="rb" href="https://filmpalast.to/search/genre/Action">Action</a>
+    <a class="rb" href="https://filmpalast.to/search/genre/Abenteuer">Abenteuer</a>
+  </span></li>
+</ul>
 <div id="grap-stream-list">
   <ul class="currentStreamLinks">
     <li>
@@ -189,6 +197,20 @@ class TestDetailPageParser:
 
         assert parser.title == "Batman Begins (2005)"
         assert parser.release_name == "Batman.Begins.2005.German.DL.1080p.BluRay"
+
+    def test_extracts_year_and_genres(self) -> None:
+        parser = _DetailPageParser()
+        parser.feed(_DETAIL_HTML)
+
+        assert parser.year == 2005
+        assert parser.genres == ["Action", "Abenteuer"]
+
+    def test_no_year_and_genres_without_the_info_list(self) -> None:
+        parser = _DetailPageParser()
+        parser.feed(_DETAIL_NO_LINKS_HTML)
+
+        assert parser.year is None
+        assert parser.genres == []
 
     def test_extracts_data_player_url(self) -> None:
         parser = _DetailPageParser()
@@ -379,6 +401,29 @@ class TestSearch:
         assert results[0].download_link == "https://voe.sx/e/abc123"
         assert len(results[0].download_links) == 2
         assert results[0].release_name == "Batman.Begins.2005.German.DL.1080p.BluRay"
+        assert results[0].metadata == {"genres": "Action, Abenteuer", "year": 2005}
+
+    @pytest.mark.asyncio
+    async def test_episode_pages_store_genres_but_no_year(self) -> None:
+        """An episode page's "Veröffentlicht" is its season's year (The Last
+        of Us S02E01: 2025 against the series' 2023), not the start year."""
+        plugin = _make_plugin()
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.get = AsyncMock(
+            side_effect=[
+                _mock_response(
+                    '<article><h2><a href="/stream/dark-s01e01">Dark S01E01</a>'
+                    "</h2></article>"
+                ),
+                _mock_response(_DETAIL_HTML),
+            ]
+        )
+        plugin._client = mock_client
+
+        results = await plugin.search("dark", season=1, episode=1)
+
+        assert [r.category for r in results] == [5000]
+        assert results[0].metadata == {"genres": "Action, Abenteuer"}
 
     @pytest.mark.asyncio
     async def test_empty_search(self) -> None:

@@ -466,6 +466,18 @@ class TestKinoking:
             "link": "https://filemoon.to/e/fwzwu9ny19jk",
         }
 
+    def test_movie_year_and_genres(self) -> None:
+        mod = _plugin_module("kinoking")
+        page = _page("kinoking", "movie-oppenheimer")
+        assert mod._page_year(page) == 2023
+        assert mod._page_genres(page) == ["Drama"]
+
+    def test_series_year_and_genres(self) -> None:
+        mod = _plugin_module("kinoking")
+        page = _page("kinoking", "series-the-last-of-us")
+        assert mod._page_year(page) == 2023
+        assert mod._page_genres(page) == ["Drama"]
+
     def test_series_episodes(self) -> None:
         mod = _plugin_module("kinoking")
         episodes = mod._load_json_array(
@@ -500,7 +512,7 @@ class TestFilmpalast:
         plugin._domain_verified = True
         plugin._client = AsyncMock()
         plugin._search_all = AsyncMock(return_value=self._hits("search-oppenheimer"))
-        plugin._scrape_detail = AsyncMock(return_value=("", "", []))
+        plugin._scrape_detail = AsyncMock(return_value=None)
 
         await plugin.search("Oppenheimer", 2000)
 
@@ -523,7 +535,7 @@ class TestFilmpalast:
                 )
             ]
         )
-        plugin._scrape_detail = AsyncMock(return_value=("", "", []))
+        plugin._scrape_detail = AsyncMock(return_value=None)
 
         await plugin.search("Dark", 5000, season=1, episode=1)
 
@@ -537,18 +549,31 @@ class TestFilmpalast:
             "Oppenheimer.2023.German.DL.1080p.BluRay.x264.RERiP-DETAiLS"
         )
         assert [lk["link"] for lk in detail.links] == ["https://voe.sx/xhoyeqr1jx6s"]
+        assert detail.year == 2023
+        assert detail.genres == ["Drama", "Biographie"]
 
     def test_episode_detail(self) -> None:
         detail = _detail(
             "filmpalast", "https://filmpalast.to", "detail-the-last-of-us-s01e01"
         )
         assert detail.title.strip() == "The Last of Us S01E01"
+        assert detail.year == 2023
+        assert detail.genres == ["Horror", "Thriller", "Drama", "Abenteuer"]
         assert [lk["link"] for lk in detail.links] == [
             "https://firestream.to/e/OXIURmQ-",
             "https://vidaraa.cc/e/ezpjajrJ48BF2",
             "https://voe.sx/laxed19ikr7i",
             "https://vidsonic.net/e/r00nm90ihj96",
         ]
+
+    def test_episode_detail_shows_its_seasons_year(self) -> None:
+        """Why the plugin stores no year for episodes: the second season's
+        page says 2025 for a series that started in 2023 (captured 2026-10-09)."""
+        detail = _detail(
+            "filmpalast", "https://filmpalast.to", "detail-the-last-of-us-s02e01"
+        )
+        assert detail.title.strip() == "The Last of Us S02E01"
+        assert detail.year == 2025
 
 
 class TestMovie2k:
@@ -836,6 +861,7 @@ class TestKinox:
             False,
         )
         assert detail.hosters == [{"name": "Dood.to", "id": "95"}]
+        assert detail.genres == ["Drama"]
 
 
 class TestMoflix:
