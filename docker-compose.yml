@@ -14,8 +14,9 @@ services:
     # latest: the newest release; staging: every push to the staging branch
     image: ghcr.io/strob0t/scavengarr:latest
     # Or build this checkout (docker compose up -d --build): replace the image
-    # line with the block below. The build arguments name the build
-    # (scavengarr_build_info, /api/v1/healthz), e.g.
+    # line with the block below. The build records the checkout's commit and
+    # the build time (scavengarr_build_info, /api/v1/healthz); the build
+    # arguments set them explicitly, e.g.
     #   SCAVENGARR_COMMIT=$(git rev-parse --short=12 HEAD) \
     #   SCAVENGARR_BUILT=$(date -u +%Y-%m-%dT%H:%M:%SZ) docker compose up -d --build
     # image: scavengarr:local
@@ -23,8 +24,8 @@ services:
     #   context: .
     #   dockerfile: Dockerfile.prod
     #   args:
-    #     SCAVENGARR_COMMIT: ${SCAVENGARR_COMMIT:-unknown}
-    #     SCAVENGARR_BUILT: ${SCAVENGARR_BUILT:-unknown}
+    #     SCAVENGARR_COMMIT: ${SCAVENGARR_COMMIT:-}
+    #     SCAVENGARR_BUILT: ${SCAVENGARR_BUILT:-}
     container_name: scavengarr
     ports:
       - "7979:7979"

@@ -36,7 +36,25 @@ RUN apt-get update && \
     /app/.venv/bin/python -m patchright install chromium && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# ── Stage 3: Production runtime ──────────────────────────────────────────────
+# ── Stage 3: Which build runs ────────────────────────────────────────────────
+# docker/build_info.py records the commit and the build time in
+# src/scavengarr/build_info.json (scavengarr_build_info, /api/v1/healthz and
+# the startup log report them). The commit: the build argument (the image
+# workflow passes it; --build-arg SCAVENGARR_COMMIT=$(git rev-parse HEAD)),
+# else the checkout's .git/HEAD and refs, which .dockerignore lets through
+# (.git* matches them when present and .gitignore anyway, so the COPY has a
+# source either way). The time: SCAVENGARR_BUILT or the clock. A stage of
+# its own keeps the git files out of the runtime image. A rebuild of the
+# same commit without arguments reuses this stage's cache, time included.
+FROM python:3.14-slim AS buildinfo
+
+ARG SCAVENGARR_COMMIT=
+ARG SCAVENGARR_BUILT=
+WORKDIR /ctx
+COPY docker/build_info.py pyproject.toml .git* ./
+RUN python build_info.py --git /ctx --out /build_info.json
+
+# ── Stage 4: Production runtime ──────────────────────────────────────────────
 FROM python:3.14-slim
 
 # Runtime deps for Playwright Chromium
@@ -74,6 +92,9 @@ RUN mkdir -p /app/config /app/cache /tmp/.X11-unix && \
 # replaces them
 COPY --chown=scavengarr:scavengarr plugins/ /app/plugins/
 
+# The build's commit and time, where build_identity() reads them
+COPY --from=buildinfo --chown=scavengarr:scavengarr /build_info.json /app/src/scavengarr/build_info.json
+
 USER scavengarr
 
 # Environment defaults
@@ -89,15 +110,10 @@ ENV PATH="/app/.venv/bin:$PATH" \
     HOST=0.0.0.0 \
     PORT=7979
 
-# Which build runs: scavengarr_build_info, /api/v1/healthz and the startup log
-# report them ("unknown" without), e.g.
-#   --build-arg SCAVENGARR_COMMIT=$(git rev-parse --short=12 HEAD)
-#   --build-arg SCAVENGARR_BUILT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-# Late in the file: a new value rebuilds no layer above.
-ARG SCAVENGARR_COMMIT=unknown
-ARG SCAVENGARR_BUILT=unknown
-ENV SCAVENGARR_COMMIT=${SCAVENGARR_COMMIT} \
-    SCAVENGARR_BUILT=${SCAVENGARR_BUILT}
+# The build arguments as image labels (empty without them; the app reads
+# build_info.json). Late in the file: a new value rebuilds no layer above.
+ARG SCAVENGARR_COMMIT=
+ARG SCAVENGARR_BUILT=
 LABEL org.opencontainers.image.source="https://github.com/Strob0t/Scavengarr" \
       org.opencontainers.image.revision="${SCAVENGARR_COMMIT}" \
       org.opencontainers.image.created="${SCAVENGARR_BUILT}"

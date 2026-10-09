@@ -1,8 +1,13 @@
 # Build context for Dockerfile.prod: it only copies pyproject.toml,
-# poetry.lock, src/, plugins/, data/config.yaml and docker/entrypoint.sh.
-# Everything else stays out, above all secrets and large local data
-# (the legacy builder and podman upload the whole context).
+# poetry.lock, src/, plugins/, data/config.yaml, docker/ and, for the build
+# identity, the checkout's .git/HEAD with the refs it may point at (no
+# objects). Everything else stays out, above all secrets and large local
+# data (the legacy builder and podman upload the whole context).
 .git
+!.git/HEAD
+!.git/refs
+!.git/packed-refs
+.github
 .env
 .env.*
 .venv

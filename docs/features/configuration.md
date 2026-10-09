@@ -730,7 +730,7 @@ The production image (`Dockerfile.prod`) is published as `ghcr.io/strob0t/scaven
 | `SCAVENGARR_PLUGIN_DIR` | `/app/plugins` (the bundled plugins) |
 | `SCAVENGARR_CACHE_DIR` | `/app/cache` |
 | `SCAVENGARR_PLAYWRIGHT_HEADLESS` | `false` |
-| `SCAVENGARR_COMMIT` / `SCAVENGARR_BUILT` | The build's commit and time (build arguments; `unknown` without), reported by `/api/v1/healthz` and `scavengarr_build_info` |
+| `SCAVENGARR_COMMIT` / `SCAVENGARR_BUILT` | Not set: the image carries its build in `build_info.json` beside the package (see [Build Identity](#build-identity)); set in the container's environment they override it |
 | `HOST` / `PORT` | `0.0.0.0` / `7979` |
 
 The entrypoint is `docker/entrypoint.sh`. When `SCAVENGARR_CONFIG` names no existing file, it writes the image's default config there (`/app/config.default.yaml`, a copy of `data/config.yaml`) and logs one line: a volume over `/app/config` hides the image's files, and without a file the app would run on its built-in defaults only. A config already there stays as it is, so a new release's default config does not reach it. When the directory is not writable for the container's user (`scavengarr`, uid 1000; for example a bind-mounted directory Docker created as root), it says so and the app starts on its built-in defaults. It then starts Xvfb on `:99` (unless `DISPLAY` is already set; a stale `/tmp/.X99-lock` from before a container restart is removed first, and it waits up to 5 s for the display socket) and `exec`s `python -m scavengarr.interfaces.cli`, so the app stays the signal recipient (graceful shutdown) and CLI flags can still be appended to `docker run`. The image bundles the plugins; a mount over `/app/plugins` replaces them.
@@ -746,7 +746,25 @@ The entrypoint is `docker/entrypoint.sh`. When `SCAVENGARR_CONFIG` names no exis
 | `staging` | The newest push to the development branch, built while its CI runs (not after it passed) |
 | `sha-<commit>` | One build (the first 12 characters of the commit) |
 
-Every image carries its commit (`SCAVENGARR_COMMIT`, the label `org.opencontainers.image.revision`). Update with `docker compose pull && docker compose up -d`; an updater such as [watchtower](https://github.com/containrrr/watchtower) can do it on a schedule.
+Every image carries its commit (the label `org.opencontainers.image.revision` and the build identity below). Update with `docker compose pull && docker compose up -d`; an updater such as [watchtower](https://github.com/containrrr/watchtower) can do it on a schedule.
+
+### Build Identity
+
+The startup line `app_startup_complete version=0.3.0 commit=a0cf586d1e2f built=2026-10-09T10:00:00Z` names the build that runs; `/api/v1/healthz`, the Stremio manifest and the `scavengarr_build_info` metric report the same three (`infrastructure/version.py` → `build_identity()`). The version is the installed package's. The commit and the time come from `build_info.json` beside the package's modules (`/app/src/scavengarr/build_info.json` in the image), which `docker/build_info.py` writes at image build time: the commit from the build argument `SCAVENGARR_COMMIT` or, without one, from the checkout's `.git/HEAD` and the ref it points at (`.dockerignore` lets those files through, no git binary needed); the time from `SCAVENGARR_BUILT` or the clock. `Dockerfile.prod` runs the script in a stage of its own (`buildinfo`), so the git files stay out of the runtime image; `.github/workflows/image.yml` passes the commit's first 12 characters and the date as the build arguments, a local `docker compose up -d --build` from a checkout needs none (a rebuild of the same commit without them keeps the cached stage, the first build's time included). The environment variables of the same names, set in the container, beat the file; a source checkout has neither and reports `unknown`. A Dockerfile that fetches the source itself with BuildKit's git `ADD` (the maintainer's production build on the Pi, `ADD ${SCAVENGARR_REPO}#${SCAVENGARR_REF} /`) gets no `.git` and no build arguments, so it reports `commit=unknown built=unknown` until it keeps the git directory and runs the script the same way before the app's source is copied in:
+
+```dockerfile
+FROM scratch AS src
+ADD --keep-git-dir=true ${SCAVENGARR_REPO}#${SCAVENGARR_REF} /
+
+FROM python:3.12-slim AS buildinfo
+COPY --from=src / /ctx
+RUN python /ctx/docker/build_info.py --git /ctx/.git --out /build_info.json
+
+# in the runtime stage, after COPY --from=src / ./
+COPY --from=buildinfo /build_info.json src/scavengarr/build_info.json
+```
+
+The final copy may also stay out and the runtime stage run the script itself (`RUN python docker/build_info.py` after the source copy, with `--keep-git-dir=true` on the `ADD`); that keeps the whole `.git` in the image. Passing `SCAVENGARR_COMMIT` and `SCAVENGARR_BUILT` as build arguments from the compose file works too, when something on the host computes them.
 
 ### Minimal Production
 

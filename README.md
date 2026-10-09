@@ -178,7 +178,7 @@ docker compose up -d
 
 An updater such as watchtower can do this on its own, since nothing is built locally. `git pull` brings changes to `docker-compose.yml` and the default `data/config.yaml`, which the image does not apply to an existing config.
 
-**Building from source:** in `docker-compose.yml`, replace the `image:` line with the commented `build:` block and run `docker compose up -d --build` (the first build takes a few minutes: it installs the browser). For the commit and build time in the health answer, build with:
+**Building from source:** in `docker-compose.yml`, replace the `image:` line with the commented `build:` block and run `docker compose up -d --build` (the first build takes a few minutes: it installs the browser). The build records the checkout's commit and the build time for the health answer and the startup log; a rebuild of the same commit keeps the first build's time unless the build arguments set them:
 
 ```bash
 SCAVENGARR_COMMIT=$(git rev-parse --short=12 HEAD) \

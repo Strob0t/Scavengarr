@@ -80,3 +80,6 @@ coverage.xml
 # ── Project-specific ──────────────────────────────
 .devdata/
 .tools/
+
+# Written by docker/build_info.py at image build time
+src/scavengarr/build_info.json
