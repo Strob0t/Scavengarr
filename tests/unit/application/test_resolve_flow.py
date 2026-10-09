@@ -65,6 +65,20 @@ _VOE_B = "https://voe.sx/e/other"
 _DOOD_B = "https://dood.to/e/other"
 _OTHER_TITLE = "tt7654321"
 
+# The one-slot budget scenario (three tests): the first plugin answers well
+# before the request's budget, the second starts after it (one slot) and
+# ends after the budget but before its own timeout, which starts with its
+# slot. 0.3 and 0.2 s delays against a 0.4 s budget left 0.1 s at each
+# edge, and a loaded machine (CI running the suite on every core) moved the
+# first answer past the budget. These windows leave 0.4 s or more at every
+# edge: first done at 0.8 s (0.8 s before the budget), second runs 0.8 to
+# 2.0 s (0.4 s after the budget, 0.4 s before its timeout at 2.4 s).
+_BUDGET = 1.6
+_FIRST_DELAY = 0.8
+_SECOND_DELAY = 1.2
+# An answer from the cache does not wait for a budget: well below it
+_AT_ONCE = _BUDGET / 2
+
 
 class TestResolverEchoFiltering:
     """Streams whose resolver only validates (echoes the URL) must be skipped."""
@@ -470,15 +484,15 @@ class TestLateResults:
         cache = memory_cache()
         resolutions = Resolutions()
         sites = {
-            "first": fake_site([hit("https://voe.sx/e/first")], delay=0.3),
-            "second": fake_site([hit("https://dood.to/e/second")], delay=0.2),
+            "first": fake_site([hit("https://voe.sx/e/first")], delay=_FIRST_DELAY),
+            "second": fake_site([hit("https://dood.to/e/second")], delay=_SECOND_DELAY),
         }
         uc = answering_use_case(
             sites,
             cache,
             resolutions,
-            plugin_timeout_seconds=0.4,
-            stream_deadline_seconds=2.0,
+            plugin_timeout_seconds=_BUDGET,
+            stream_deadline_seconds=2 * _BUDGET,
             pool=ConcurrencyPool(httpx_slots=1, pw_slots=1),
         )
 
@@ -489,7 +503,7 @@ class TestLateResults:
         streams = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert [video(uc, s) for s in first] == ["https://cdn.example/first.mp4"]
-        assert time.monotonic() - started < 0.1
+        assert time.monotonic() - started < _AT_ONCE
         assert sorted(video(uc, s) for s in streams) == [
             "https://cdn.example/first.mp4",
             "https://cdn.example/second.mp4",
@@ -646,37 +660,38 @@ class TestAnswerPolicy:
         plugin runs on into the cache (continue-cut-searches)."""
         cache = memory_cache()
         sites = {
-            "first": fake_site([hit("https://voe.sx/e/first")], delay=0.3),
-            "second": fake_site([hit("https://dood.to/e/second")], delay=0.2),
+            "first": fake_site([hit("https://voe.sx/e/first")], delay=_FIRST_DELAY),
+            "second": fake_site([hit("https://dood.to/e/second")], delay=_SECOND_DELAY),
         }
         uc = answering_use_case(
             sites,
             cache,
             Resolutions(),
-            plugin_timeout_seconds=0.4,
-            stream_deadline_seconds=2.0,
+            plugin_timeout_seconds=_BUDGET,
+            stream_deadline_seconds=2 * _BUDGET,
             pool=ConcurrencyPool(httpx_slots=1, pw_slots=1),
         )
 
         started = time.monotonic()
         streams = await uc.execute(make_request(), base_url="http://localhost:8080")
 
-        assert 0.3 <= time.monotonic() - started < 0.7
+        # At the budget: after the first plugin, before the second ends
+        assert _FIRST_DELAY <= time.monotonic() - started < _FIRST_DELAY + _SECOND_DELAY
         assert [video(uc, s) for s in streams] == ["https://cdn.example/first.mp4"]
         await eventually(lambda: len(cached_links(cache)) == 2)
 
     async def test_a_retry_past_the_budget_answers_at_once(self) -> None:
         cache = memory_cache()
         sites = {
-            "first": fake_site([hit("https://voe.sx/e/first")], delay=0.3),
-            "second": fake_site([hit("https://dood.to/e/second")], delay=0.3),
+            "first": fake_site([hit("https://voe.sx/e/first")], delay=_FIRST_DELAY),
+            "second": fake_site([hit("https://dood.to/e/second")], delay=_SECOND_DELAY),
         }
         uc = answering_use_case(
             sites,
             cache,
             Resolutions(),
-            plugin_timeout_seconds=0.4,
-            stream_deadline_seconds=2.0,
+            plugin_timeout_seconds=_BUDGET,
+            stream_deadline_seconds=2 * _BUDGET,
             pool=ConcurrencyPool(httpx_slots=1, pw_slots=1),
         )
         await uc.execute(make_request(), base_url="http://localhost:8080")
@@ -684,7 +699,7 @@ class TestAnswerPolicy:
         started = time.monotonic()
         streams = await uc.execute(make_request(), base_url="http://localhost:8080")
 
-        assert time.monotonic() - started < 0.1
+        assert time.monotonic() - started < _AT_ONCE
         assert [video(uc, s) for s in streams] == ["https://cdn.example/first.mp4"]
         await eventually(lambda: len(cached_links(cache)) == 2)
 
