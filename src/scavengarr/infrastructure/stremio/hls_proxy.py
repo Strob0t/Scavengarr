@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from collections.abc import AsyncGenerator, Mapping
+from collections.abc import AsyncGenerator, Callable, Mapping
 from dataclasses import dataclass
 from urllib.parse import ParseResult, SplitResult, urljoin, urlparse, urlsplit
 
@@ -204,6 +204,7 @@ async def stream_hls_segment(
     headers: dict[str, str],
     *,
     head: bool = False,
+    on_sent: Callable[[int], None] | None = None,
 ) -> tuple[AsyncGenerator[bytes], str]:
     """Stream an HLS segment from CDN without buffering full body.
 
@@ -219,7 +220,9 @@ async def stream_hls_segment(
     (``Content-Encoding``, which the proxy does not forward) is decoded.
 
     For a HEAD request (*head*) the iterator is empty: the CDN's answer
-    is closed after its status and headers, before its bytes.
+    is closed after its status and headers, before its bytes. *on_sent*
+    is told the bytes that went out when the body ends, an aborted
+    transfer's included.
     """
     async with _CDN_SEMAPHORE:
         resp = await http_client.send(
@@ -237,19 +240,37 @@ async def stream_hls_segment(
         resp.raise_for_status()
 
     ct = resp.headers.get("content-type", "application/octet-stream")
-    return _body(resp, head=head), ct
+    return _body(resp, head=head, on_sent=on_sent), ct
 
 
-async def _body(resp: httpx.Response, *, head: bool) -> AsyncGenerator[bytes]:
+async def _body(
+    resp: httpx.Response,
+    *,
+    head: bool,
+    on_sent: Callable[[int], None] | None = None,
+) -> AsyncGenerator[bytes]:
     """*resp*'s body in ``_SEGMENT_CHUNK`` pieces, the answer closed at the
-    end; empty for HEAD (*head*), the answer closed before its bytes."""
+    end; empty for HEAD (*head*), the answer closed before its bytes.
+    *on_sent* is told the bytes that went out when the body ends, an
+    aborted transfer's included.
+
+    The one generator of a proxied body, closing the CDN's answer itself.
+    A counting wrapper that closed it from its own ``finally`` raced the
+    event loop's finalizer: a body the player dropped was collected with
+    its wrapper, both closed in one pass ("aclose(): asynchronous
+    generator is already running", production 2026-10-07).
+    """
+    sent = 0
     try:
         if head:
             return
         async for chunk in resp.aiter_bytes(chunk_size=_SEGMENT_CHUNK):
+            sent += len(chunk)
             yield chunk
     finally:
         await resp.aclose()
+        if on_sent is not None:
+            on_sent(sent)
 
 
 @dataclass(frozen=True)
@@ -270,6 +291,7 @@ async def stream_file(
     *,
     player: Mapping[str, str] | None = None,
     head: bool = False,
+    on_sent: Callable[[int], None] | None = None,
 ) -> FileAnswer:
     """A direct file streamed from its CDN for the player, byte range included.
 
@@ -280,7 +302,8 @@ async def stream_file(
     The CDN's status passes through with the headers of ``_FILE_HEADERS``;
     the body goes out in ``_SEGMENT_CHUNK`` pieces without buffering the
     file. For HEAD (*head*) the body is empty and the CDN's answer is
-    closed after its headers.
+    closed after its headers. *on_sent* is told the bytes that went out
+    when the body ends, an aborted transfer's included.
 
     Raises ``httpx.HTTPStatusError`` for an error answer other than 416
     (closed first) and ``httpx.HTTPError`` when the CDN cannot be reached.
@@ -311,7 +334,7 @@ async def stream_file(
     passed = {
         name: resp.headers[name] for name in _FILE_HEADERS if name in resp.headers
     }
-    return FileAnswer(resp.status_code, passed, _body(resp, head=head))
+    return FileAnswer(resp.status_code, passed, _body(resp, head=head, on_sent=on_sent))
 
 
 def build_cdn_url(cdn_base: str, path: str, query_string: str = "") -> str:

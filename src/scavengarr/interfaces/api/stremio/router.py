@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
+from contextlib import aclosing
 from typing import Any, cast
 from urllib.parse import urlparse
 
@@ -12,6 +13,7 @@ import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from starlette.responses import StreamingResponse
+from starlette.types import Send
 
 from scavengarr.application.stremio.stream_builder import FILE_NAME, HLS_MASTER
 from scavengarr.application.use_cases.stremio_links import StremioLinks
@@ -513,22 +515,32 @@ def _hls_kind(path: str) -> str:
     return "playlist" if path.endswith(".m3u8") else "segment"
 
 
-async def _counted(
-    chunks: AsyncGenerator[bytes],
-    telemetry: TelemetryPort,
-    *,
-    kind: str = "segment",
-) -> AsyncGenerator[bytes]:
-    """A segment's or file's chunks; the bytes sent are recorded as *kind*
-    when it ends, an aborted transfer's included."""
-    sent = 0
-    try:
-        async for chunk in chunks:
-            sent += len(chunk)
-            yield chunk
-    finally:
-        await chunks.aclose()
+def _bytes_counter(telemetry: TelemetryPort, kind: str) -> Callable[[int], None]:
+    """What a proxied body reports its bytes to when it ends: the
+    ``hls_proxy_bytes`` counter as *kind*, an aborted transfer's included."""
+
+    def record(sent: int) -> None:
         telemetry.record("hls_proxy_bytes", sent, kind=kind)
+
+    return record
+
+
+class _BodyResponse(StreamingResponse):
+    """A proxied body, closed when its transfer ends, the player's
+    disconnect included.
+
+    Starlette leaves the body generator of a cancelled transfer suspended
+    at its ``yield``, to the garbage collector; the event loop's finalizer
+    closed it later, and closed a counting wrapper and the CDN body it
+    wrapped in the same pass, so the two raced (``aclose(): asynchronous
+    generator is already running``, production 2026-10-07). Closing the
+    one generator here, in the transfer's own task, releases the CDN's
+    answer at once.
+    """
+
+    async def stream_response(self, send: Send) -> None:
+        async with aclosing(cast(AsyncGenerator[bytes], self.body_iterator)):
+            await super().stream_response(send)
 
 
 async def _proxy_hls(
@@ -569,14 +581,16 @@ async def _proxy_hls(
         head = request.method == "HEAD"
         try:
             chunk_iter, content_type = await stream_hls_segment(
-                state.http_client, target_url, _cdn_headers(link), head=head
+                state.http_client,
+                target_url,
+                _cdn_headers(link),
+                head=head,
+                on_sent=None if head else _bytes_counter(telemetry, "segment"),
             )
         except httpx.HTTPError as exc:
             return _cdn_error_response(stream_id, target_url, exc)
-        return StreamingResponse(
-            content=chunk_iter if head else _counted(chunk_iter, telemetry),
-            media_type=content_type,
-            headers=_CORS_HEADERS,
+        return _BodyResponse(
+            content=chunk_iter, media_type=content_type, headers=_CORS_HEADERS
         )
 
     # Manifests (.m3u8) — fetch, rewrite URLs, return
@@ -641,6 +655,7 @@ async def _proxy_file(
     if isinstance(link, JSONResponse):
         return link
     head = request.method == "HEAD"
+    on_sent = None if head else _bytes_counter(telemetry, "file")
     try:
         answer = await stream_file(
             state.http_client,
@@ -648,6 +663,7 @@ async def _proxy_file(
             _cdn_headers(link),
             player=request.headers,
             head=head,
+            on_sent=on_sent,
         )
     except httpx.HTTPStatusError as exc:
         fresh = await links.after_refusal(link, exc.response.status_code)
@@ -660,15 +676,14 @@ async def _proxy_file(
                 _cdn_headers(fresh),
                 player=request.headers,
                 head=head,
+                on_sent=on_sent,
             )
         except httpx.HTTPError as again:
             return _cdn_error_response(stream_id, fresh.video_url, again)
     except httpx.HTTPError as exc:
         return _cdn_error_response(stream_id, link.video_url, exc)
-    return StreamingResponse(
-        content=answer.chunks
-        if head
-        else _counted(answer.chunks, telemetry, kind="file"),
+    return _BodyResponse(
+        content=answer.chunks,
         status_code=answer.status,
         headers={**_CORS_HEADERS, **answer.headers},
     )

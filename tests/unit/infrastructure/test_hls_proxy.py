@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import gc
 import gzip
 import time
 from collections.abc import AsyncIterator
@@ -499,6 +501,92 @@ class TestStreamHlsSegment:
 
         assert received == data
 
+    async def test_the_bytes_sent_are_reported_when_the_body_ends(self) -> None:
+        sent: list[int] = []
+
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, stream=_Chunks([b"\x47" * 70000]))
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
+            chunks, _ = await stream_hls_segment(
+                client, "https://cdn.test/1.ts", {}, on_sent=sent.append
+            )
+            [chunk async for chunk in chunks]
+
+        assert sent == [70000]
+
+    async def test_a_body_closed_early_reports_the_bytes_so_far(self) -> None:
+        sent: list[int] = []
+        body = _Chunks([b"\x47" * 65536, b"\x47" * 1000])
+
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, stream=body)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
+            chunks, _ = await stream_hls_segment(
+                client, "https://cdn.test/1.ts", {}, on_sent=sent.append
+            )
+            first = await chunks.__anext__()
+            await chunks.aclose()
+
+        assert len(first) == 65536
+        assert sent == [65536]
+        assert body.closed
+
+    async def test_a_body_dropped_mid_transfer_is_closed_once_by_the_loop(
+        self,
+    ) -> None:
+        """A player's disconnect leaves the body suspended at its ``yield``;
+        the event loop's finalizer closes it once it is garbage-collected.
+        With a counting wrapper around it, the collection finalized both
+        and the two closes raced ("aclose(): asynchronous generator is
+        already running", 16 times in 48 h of production, 2026-10-07):
+        one generator, one close, the bytes reported once, no task left
+        with an exception."""
+        sent: list[int] = []
+        # Two pieces: the body is suspended with the CDN's answer still open
+        body = _Chunks([b"\x47" * 65536, b"\x47" * 65536])
+
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, stream=body)
+
+        loop = asyncio.get_running_loop()
+        complaints: list[str] = []
+        loop.set_exception_handler(
+            lambda _loop, context: complaints.append(context.get("message", ""))
+        )
+        try:
+            async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
+
+                async def _play() -> None:
+                    chunks, _ = await stream_hls_segment(
+                        client, "https://cdn.test/1.ts", {}, on_sent=sent.append
+                    )
+                    await chunks.__anext__()
+                    try:
+                        raise RuntimeError("the player went away")
+                    except RuntimeError as exc:
+                        # The frame keeps its own traceback: the suspended
+                        # body goes down with the cycle, in a collection
+                        kept = exc  # noqa: F841
+
+                await _play()
+                gc.collect()
+                for _ in range(3):
+                    await asyncio.sleep(0)
+                others = [
+                    t for t in asyncio.all_tasks() if t is not asyncio.current_task()
+                ]
+                results = await asyncio.gather(*others, return_exceptions=True)
+                gc.collect()
+        finally:
+            loop.set_exception_handler(None)
+
+        assert body.closed
+        assert sent == [65536]
+        assert [r for r in results if isinstance(r, BaseException)] == []
+        assert complaints == []
+
 
 class TestStreamFile:
     """A direct file passes through with the player's byte range."""
@@ -664,6 +752,9 @@ class _Chunks(httpx.AsyncByteStream):
             yield chunk
 
     async def aclose(self) -> None:
+        # Closing a CDN answer yields to the loop (httpcore returns the
+        # connection): the window in which a second close can arrive
+        await asyncio.sleep(0)
         self.closed = True
 
 

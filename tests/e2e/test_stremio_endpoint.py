@@ -2307,10 +2307,12 @@ class TestProxyTelemetry:
 
     _PLAYLIST = b"#EXTM3U\n#EXTINF:10.0,\nseg-1.ts\n#EXT-X-ENDLIST\n"
 
-    def _client(self, link: Any) -> tuple[TestClient, Telemetry]:
+    def _client(
+        self, link: Any, http_client: httpx.AsyncClient | None = None
+    ) -> tuple[TestClient, Telemetry]:
         repo = AsyncMock()
         repo.get = AsyncMock(return_value=link)
-        app = _make_app(stream_link_repo=repo)
+        app = _make_app(stream_link_repo=repo, http_client=http_client)
         app.state.config.stremio = StremioConfig()
         app.state.telemetry = Telemetry()
         return TestClient(app), app.state.telemetry
@@ -2343,14 +2345,20 @@ class TestProxyTelemetry:
         )
         assert seconds == 1
 
-    @patch(f"{_PROXY_MODULE}.stream_hls_segment", new_callable=AsyncMock)
-    def test_segment_bytes(self, mock_stream: AsyncMock) -> None:
-        async def _chunks() -> Any:
-            yield b"\x00" * 1000
-            yield b"\x01" * 500
+    def test_segment_bytes(self) -> None:
+        """The bytes come from the CDN through the real segment body."""
 
-        mock_stream.return_value = (_chunks(), "video/mp2t")
-        client, t = self._client(_make_hls_link())
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            assert request.url.path.endswith("/seg-1.ts")
+            return httpx.Response(
+                200,
+                headers={"Content-Type": "video/mp2t"},
+                content=b"\x00" * 1000 + b"\x01" * 500,
+            )
+
+        client, t = self._client(
+            _make_hls_link(), httpx.AsyncClient(transport=httpx.MockTransport(_cdn))
+        )
 
         resp = client.get(f"{_PREFIX}/stremio/proxy/hls-abc/seg-1.ts?t=abc")
 
@@ -2375,19 +2383,25 @@ class TestProxyTelemetry:
         assert mock_stream.await_args.kwargs["head"] is True
         assert self._bytes(t, "segment") is None
 
-    @patch(f"{_PROXY_MODULE}.stream_file", new_callable=AsyncMock)
-    def test_file_bytes(self, mock_stream: AsyncMock) -> None:
-        """A proxied file is recorded on the HLS proxy's metrics as ``file``."""
-        mock_stream.return_value = _file_answer(
-            206,
-            headers={
-                "content-type": "video/mp4",
-                "content-range": "bytes 0-3145727/3145728",
-                "content-length": "3145728",
-            },
-            chunks=(b"\x00" * 1048576,) * 3,
+    def test_file_bytes(self) -> None:
+        """A proxied file is recorded on the HLS proxy's metrics as ``file``,
+        its bytes from the CDN through the real file body."""
+
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            assert request.headers["Range"] == "bytes=0-"
+            return httpx.Response(
+                206,
+                headers={
+                    "Content-Type": "video/mp4",
+                    "Content-Range": "bytes 0-3145727/3145728",
+                    "Content-Length": "3145728",
+                },
+                content=b"\x00" * 3145728,
+            )
+
+        client, t = self._client(
+            _make_file_link(), httpx.AsyncClient(transport=httpx.MockTransport(_cdn))
         )
-        client, t = self._client(_make_file_link())
 
         resp = client.get(
             f"{_PREFIX}/stremio/proxy/file-abc/{FILE_NAME}",

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -18,6 +20,7 @@ from scavengarr.domain.entities.stremio import (
     StremioStream,
 )
 from scavengarr.interfaces.api.stremio.router import (
+    _BodyResponse,
     _parse_stream_id,
     router,
 )
@@ -736,3 +739,35 @@ class TestProxyFileLink:
 
     def test_without_the_repository(self) -> None:
         assert TestClient(_make_app()).get(self._FILE).status_code == 503
+
+
+class TestBodyResponse:
+    """A proxied body is closed when its transfer ends, the player's
+    disconnect included: Starlette leaves a cancelled body to the garbage
+    collector."""
+
+    @pytest.mark.asyncio
+    async def test_a_disconnect_mid_body_closes_the_generator(self) -> None:
+        closed = asyncio.Event()
+        gone = asyncio.Event()
+
+        async def _body() -> Any:
+            try:
+                yield b"first"
+                yield b"second"
+            finally:
+                closed.set()
+
+        async def receive() -> dict[str, Any]:
+            await gone.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message: dict[str, Any]) -> None:
+            if message["type"] == "http.response.body" and message["body"]:
+                gone.set()  # the player goes away after the first piece
+                await asyncio.sleep(1)
+
+        response = _BodyResponse(content=_body(), media_type="video/mp2t")
+        await response({"type": "http", "asgi": {"spec_version": "2.3"}}, receive, send)
+
+        assert closed.is_set()

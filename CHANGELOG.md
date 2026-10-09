@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: Proxy Bodies Dropped by the Player
+- A player's disconnect mid-segment or mid-file left the proxy's body generator to the garbage collector, whose finalizer closed the byte-counting wrapper and the CDN body it wrapped in the same pass; the two closes raced and asyncio logged `Task exception was never retrieved: RuntimeError: aclose(): asynchronous generator is already running` (16 times in 48 h of production, 2026-10-07; that transfer's bytes went uncounted). The body is one generator now, counting its own bytes (`on_sent` of `stream_hls_segment` and `stream_file`), and the response closes it when the transfer ends, the disconnect included (`_BodyResponse` in the Stremio router), so the CDN's answer is released at once instead of at the next collection.
+
 ### Chore: Domain Probe for fireani, kinox and kinoking
 - Production's 48 h digest showed fireani 78 %, kinox 56 % and kinoking 22 % unreachable beside 91 challenge records. `scripts/probes/domains.py` from the dev container and the Pi plus the record and the log (`docs/plans/plugin-domains.md`): fireani's one address accepts no connection from either side since 10-08 (dead host); kinox's nine domains answer Cloudflare's 522 from both since 10-09 (dead origin; the verification wall was the picture before); kinoking answers 200 but its domain check takes 5.1 s from the VPN exit against 0.3 s from home, so it trips the 5 s timeout (slow path, not a block); the 91 challenge records are all kinoger's known Cloudflare page. No change to plugins or domains.
 
