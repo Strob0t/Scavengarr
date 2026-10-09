@@ -26,7 +26,13 @@ import httpx
 import pytest
 import respx
 
+from scavengarr.domain.entities.stremio import EpisodeRef
 from scavengarr.infrastructure.plugins import devideosrc
+from scavengarr.infrastructure.plugins.episode_index import (
+    EpisodeRow,
+    SeasonPageParser,
+    locate,
+)
 
 _ROOT = Path(__file__).resolve().parents[3]
 _PAGES = _ROOT / "tests" / "fixtures" / "html"
@@ -405,6 +411,91 @@ class TestAniworld:
             ("voe", "English Sub"),
         ]
         assert parser.hoster_links[0]["link"] == "https://aniworld.to/redirect/3540458"
+
+    def test_series_page_names_its_seasons(self) -> None:
+        """The navigation of One Piece and Demon Slayer (captured 2026-10-09)."""
+        assert _detail("aniworld", self._BASE, "detail-one-piece").seasons == list(
+            range(1, 24)
+        )
+        assert _detail("aniworld", self._BASE, "detail-demon-slayer").seasons == [
+            1,
+            2,
+            3,
+            4,
+        ]
+
+    @staticmethod
+    def _rows(season: int, name: str) -> list[EpisodeRow]:
+        parser = SeasonPageParser(season, _plugin_module("aniworld")._ROW_SELECTORS)
+        parser.feed(_page("aniworld", name))
+        return parser.rows
+
+    def test_a_long_runners_season_page_numbers_its_rows(self) -> None:
+        """One Piece's staffel-2 (captured 2026-10-09): 16 rows numbered 62 to 77."""
+        rows = self._rows(2, "season-one-piece-staffel-2")
+
+        assert len(rows) == 16
+        assert [row.absolute for row in rows] == list(range(62, 78))
+        assert rows[0] == EpisodeRow(
+            2,
+            1,
+            "Ein Bad in Magensäure",
+            "The First Line of Defense? The Giant Whale Laboon Appears!",
+            62,
+        )
+        assert rows[-1].episode == 16
+
+    def test_a_season_page_without_numbers(self) -> None:
+        """Demon Slayer's staffel-3 (captured 2026-10-09): 11 rows with titles
+        only; the site escapes its titles twice."""
+        rows = self._rows(3, "season-demon-slayer-staffel-3")
+
+        assert len(rows) == 11
+        assert all(row.absolute is None for row in rows)
+        assert rows[0].english == "Someone&#039;s Dream"
+        assert rows[1] == EpisodeRow(3, 2, "Yoriichi Typ 0", "Yoriichi Type Zero", None)
+
+    def test_locates_on_the_captured_pages(self) -> None:
+        """The series page lists staffel-1; with staffel-2 the index places
+        S5E2 (absolute 62) by number, S1E1 by number despite the catalog's
+        other translation, and Demon Slayer S4E1 by title."""
+        one_piece = self._rows(1, "detail-one-piece") + self._rows(
+            2, "season-one-piece-staffel-2"
+        )
+        assert len(one_piece) == 77
+        laboon = locate(
+            one_piece,
+            EpisodeRef(
+                5,
+                2,
+                "The First Line of Defense? The Giant Whale Laboon Appears!",
+                "2001-03-21",
+                absolute=62,
+            ),
+        )
+        assert laboon is not None
+        assert (laboon.row.season, laboon.row.episode, laboon.by) == (2, 1, "number")
+        luffy = locate(
+            one_piece,
+            EpisodeRef(
+                1,
+                1,
+                "I'm Luffy! The Man Who's Gonna Be King of the Pirates!",
+                "1999-10-20",
+                absolute=1,
+            ),
+        )
+        assert luffy is not None
+        assert (luffy.row.season, luffy.row.episode, luffy.by) == (1, 1, "number")
+
+        demon_slayer = self._rows(1, "detail-demon-slayer") + self._rows(
+            3, "season-demon-slayer-staffel-3"
+        )
+        dream = locate(
+            demon_slayer, EpisodeRef(4, 1, "Someone's Dream", "2023-04-09", absolute=45)
+        )
+        assert dream is not None
+        assert (dream.row.season, dream.row.episode, dream.by) == (3, 1, "title")
 
 
 class TestSto:

@@ -23,6 +23,7 @@ import structlog
 
 from scavengarr.domain.plugins.base import PluginUnreachableError, SearchResult
 from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort, BrowserSession
+from scavengarr.domain.ports.cache import CachePort
 from scavengarr.infrastructure.browser.cloudflare import is_cloudflare_challenge
 from scavengarr.infrastructure.captcha.detect import (
     detect_challenge,
@@ -93,6 +94,9 @@ class HttpxPluginBase:
     _shared_http_client: httpx.AsyncClient | None = None
     # --- Browser fallback for Cloudflare challenges (set once, optional) ---
     _browser_fetcher: BrowserFetcherPort | None = None
+    # --- The app's cache (set once, optional): what a plugin keeps across
+    # requests, e.g. the episode index of a series (episode_index.py) ---
+    _cache: CachePort | None = None
     # host -> monotonic deadline: hosts that answered with a challenge go
     # straight to the browser (a doomed httpx request still counts against
     # the site's rate limit)
@@ -149,6 +153,16 @@ class HttpxPluginBase:
         HttpxPluginBase._cf_blocked_until.clear()
         HttpxPluginBase._browser_user_agents.clear()
         HttpxPluginBase._session_adopted_at.clear()
+
+    @staticmethod
+    def set_cache(cache: CachePort | None) -> None:
+        """Inject the app's cache for every httpx plugin.
+
+        A plugin keeps what it reads once for many requests under a key
+        of its own (``aniworld:episodes:v1:<slug>``); ``None`` (tests,
+        no cache) makes it read anew every time.
+        """
+        HttpxPluginBase._cache = cache
 
     def _cf_fetcher_for(self, url: str) -> BrowserFetcherPort | None:
         """The browser fetcher if *url*'s host recently showed a challenge."""

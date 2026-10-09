@@ -154,9 +154,10 @@ class EpisodeRef:
     its release date (``YYYY-MM-DD``), both from the Cinemeta list's entry
     for that season and episode (``None`` when the list lacks it).
     *absolute* is the episode's number in the series' own count: the
-    Kitsu episode number for a request that came as a ``kitsu:`` id, else
-    the entry's position among the list's regular seasons (season 1 and
-    up) ordered by season and episode, an estimate the title confirms.
+    entry's position among the list's regular seasons (season 1 and up)
+    ordered by season and episode, or the Kitsu episode number of a
+    request that came as a ``kitsu:`` id when it lies near that position
+    or the list lacks the episode; an estimate the title confirms.
     """
 
     season: int

@@ -480,8 +480,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         retry_max_attempts=config.http_retry_max_attempts,
     )
 
-    # 2b) Share HTTP client with httpx-based plugins
+    # 2b) Share HTTP client and cache with httpx-based plugins
     HttpxPluginBase.set_shared_http_client(state.http_client)
+    HttpxPluginBase.set_cache(state.cache)
 
     # 3) Plugin registry
     state.plugins = PluginRegistry(plugin_dir=config.plugin_dir)

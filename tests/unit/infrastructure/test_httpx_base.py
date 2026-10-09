@@ -409,6 +409,23 @@ class TestSafeParseJson:
 # ---------------------------------------------------------------------------
 
 
+class TestCache:
+    @pytest.fixture(autouse=True)
+    def _reset_cache(self) -> None:
+        HttpxPluginBase.set_cache(None)
+        yield
+        HttpxPluginBase.set_cache(None)
+
+    def test_the_injected_cache_reaches_every_plugin(self) -> None:
+        cache = AsyncMock()
+        HttpxPluginBase.set_cache(cache)
+
+        assert _TestPlugin()._cache is cache
+
+    def test_without_a_cache(self) -> None:
+        assert _TestPlugin()._cache is None
+
+
 class TestNewSemaphore:
     def test_returns_semaphore_with_default_limit(self) -> None:
         plugin = _TestPlugin()

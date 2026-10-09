@@ -125,7 +125,7 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 - `PluginRegistry.discover()` only indexes `.py` file paths (no Python execution) and runs once.
 - The first call of `list_names()`, `get()`, `get_by_provides()`, `get_languages()`, `get_mode()` or `remove()` imports every discovered file once and caches instances and metadata; files that fail to import are logged and skipped. Unknown names raise `PluginNotFoundError` (mapped to `TorznabPluginNotFound` by the use cases).
 - `load_python_plugin(path)` imports the module dynamically and requires a module-level `plugin` with a `search` attribute and a non-empty string `name`; otherwise it raises `PluginLoadError`.
-- `HttpxPluginBase.set_shared_http_client()` injects the app-wide `httpx.AsyncClient` into httpx plugins and `set_browser_fetcher()` their browser fallback for challenged pages; Playwright plugins get the shared `SharedBrowserPool`.
+- `HttpxPluginBase.set_shared_http_client()` injects the app-wide `httpx.AsyncClient` into httpx plugins, `set_cache()` the app's cache (what a plugin keeps across requests, e.g. aniworld's episode index) and `set_browser_fetcher()` their browser fallback for challenged pages; Playwright plugins get the shared `SharedBrowserPool`.
 
 ### Link Validation Pipeline
 

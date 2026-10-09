@@ -5,6 +5,8 @@ Scrapes aniworld.to (German anime streaming site) with:
 - POST /ajax/search with keyword={query} -> JSON array of matches
 - Detail page scraping for metadata (description, genres, cover image)
 - Episode page scraping for hoster redirect links (VOE, Filemoon, etc.)
+- A Stremio request's episode located on the site's own season pages
+  (``locates_episodes``: the index of ``episode_index.py``, cached 7 days)
 - Category: always 5070 (Anime) since site is anime-only
 - Bounded concurrency for detail page scraping
 
@@ -20,8 +22,15 @@ from urllib.parse import urljoin
 
 from selectolax.lexbor import LexborHTMLParser
 
+from scavengarr.domain.entities.stremio import EpisodeRef
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.dom import parse_page
+from scavengarr.infrastructure.plugins.episode_index import (
+    Located,
+    RowSelectors,
+    episode_index,
+    locate,
+)
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.relevance import (
     SINGLE_TITLE_HITS,
@@ -42,6 +51,21 @@ _DOMAINS = ["aniworld.to"]
 # A series' page; the ajax search also links FAQ pages and episodes
 _SERIES_LINK_RE = re.compile(r"^/anime/stream/[^/]+/?$")
 
+# A season's page in the series page's navigation (the episode links of
+# the navigation end in /episode-M)
+_SEASON_HREF_RE = re.compile(r"/staffel-(\d+)/?$")
+
+# A season page's episode rows: the number in the first cell's meta tag,
+# the German title in <strong>, the English one in <span> (One Piece's
+# end in "[Episode 062]", the absolute number)
+_ROW_SELECTORS = RowSelectors(
+    row="table.seasonEpisodesList tbody tr[data-episode-id]",
+    number="meta[itemprop=episodeNumber]",
+    number_attr="content",
+    german="td.seasonEpisodeTitle strong",
+    english="td.seasonEpisodeTitle span",
+)
+
 # Language key mapping from aniworld.to data-lang-key attributes.
 _LANG_MAP: dict[str, str] = {
     "1": "German Dub",
@@ -59,6 +83,7 @@ class _DetailPageParser:
     - Genres from ``.genres ul li a`` elements
     - Cover image URL from the first ``img[data-src]`` (``.seriesCoverBox``)
     - First episode URL from ``table.seasonEpisodesList tbody tr td a``
+    - The season numbers from the navigation's ``/staffel-N`` links
     """
 
     def __init__(self, base_url: str) -> None:
@@ -68,6 +93,7 @@ class _DetailPageParser:
         self.genres: list[str] = []
         self.cover_url = ""
         self.first_episode_url = ""
+        self.seasons: list[int] = []
 
     def feed(self, html: str) -> None:
         tree = LexborHTMLParser(html)
@@ -93,6 +119,12 @@ class _DetailPageParser:
             if "/staffel-" in href and "/episode-" in href:
                 self.first_episode_url = urljoin(self._base_url, href)
                 break
+        seasons: set[int] = set()
+        for link in tree.css("a[href*='/staffel-']"):
+            found = _SEASON_HREF_RE.search(link.attributes.get("href") or "")
+            if found:
+                seasons.add(int(found.group(1)))
+        self.seasons = sorted(seasons)
 
 
 class _EpisodePageParser:
@@ -141,6 +173,10 @@ class AniworldPlugin(HttpxPluginBase):
     provides = "stream"
 
     _domains = _DOMAINS
+
+    # A Stremio request's episode is located on the site's season pages
+    # (the Staffeln are the site's own, not IMDb's seasons)
+    locates_episodes = True
 
     async def _ajax_search(self, query: str) -> list[dict[str, str]]:
         """Search via POST /ajax/search endpoint.
@@ -191,10 +227,13 @@ class AniworldPlugin(HttpxPluginBase):
         item: dict[str, str],
         season: int | None = None,
         episode: int | None = None,
+        episode_ref: EpisodeRef | None = None,
     ) -> SearchResult | None:
         """Scrape anime detail page and episode for hoster links.
 
-        When *season* is given the plugin navigates directly to
+        With *episode_ref* the episode page is the row the reference
+        locates on the site's season pages (none located: no result).
+        When *season* alone is given the plugin navigates directly to
         ``/anime/stream/{slug}/staffel-{season}/episode-{episode or 1}``
         instead of scraping the first episode on the detail page.
         """
@@ -209,17 +248,13 @@ class AniworldPlugin(HttpxPluginBase):
 
         detail_parser = await parse_page(_DetailPageParser(self.base_url), resp.text)
 
-        # Determine which episode page to scrape
-        hoster_links: list[dict[str, str]] = []
-        if season is not None:
-            # Episode pages live below the detail page
-            # (/anime/stream/<slug>/staffel-N/episode-M); a season without
-            # episode starts at that season's first episode
-            ep_url = f"{detail_url.rstrip('/')}/staffel-{season}/episode-{episode or 1}"
-            hoster_links = await self._scrape_episode(ep_url)
-        elif detail_parser.first_episode_url:
-            hoster_links = await self._scrape_episode(detail_parser.first_episode_url)
-
+        page = await self._episode_page(
+            detail_url, detail_parser, season, episode, episode_ref
+        )
+        if page is None:
+            return None
+        ep_url, placement = page
+        hoster_links = await self._scrape_episode(ep_url)
         if not hoster_links:
             self._log.debug("aniworld_no_hosters", url=detail_url)
             return None
@@ -231,11 +266,8 @@ class AniworldPlugin(HttpxPluginBase):
         metadata: dict[str, str | int] = {
             "genres": genres,
             "cover_url": detail_parser.cover_url,
+            **placement,
         }
-        if season is not None:
-            # the episode page fetched above, for the Stremio episode filter
-            metadata["season"] = season
-            metadata["episode"] = episode or 1
 
         return SearchResult(
             title=title,
@@ -246,6 +278,92 @@ class AniworldPlugin(HttpxPluginBase):
             description=description,
             metadata=metadata,
         )
+
+    async def _episode_page(
+        self,
+        detail_url: str,
+        detail: _DetailPageParser,
+        season: int | None,
+        episode: int | None,
+        episode_ref: EpisodeRef | None,
+    ) -> tuple[str, dict[str, str | int]] | None:
+        """The episode page to scrape and the placement its result claims
+        (``season`` and ``episode`` for the Stremio episode filter).
+
+        A reference: the located row's page, the request's season and
+        episode, the site's as ``site_season`` and ``site_episode`` and the
+        evidence as ``episode_located_by``. A season: the page built from
+        the numbers (a season without episode starts at its first episode).
+        Else the series page's first episode, no placement claimed.
+        """
+        series = detail_url.rstrip("/")
+        if episode_ref is not None:
+            located = await self._locate_episode(series, detail.seasons, episode_ref)
+            if located is None:
+                return None
+            return (
+                f"{series}/staffel-{located.row.season}/episode-{located.row.episode}",
+                {
+                    "season": episode_ref.season,
+                    "episode": episode_ref.episode,
+                    "site_season": located.row.season,
+                    "site_episode": located.row.episode,
+                    "episode_located_by": located.by,
+                },
+            )
+        if season is not None:
+            # Episode pages live below the detail page
+            # (/anime/stream/<slug>/staffel-N/episode-M)
+            return (
+                f"{series}/staffel-{season}/episode-{episode or 1}",
+                {"season": season, "episode": episode or 1},
+            )
+        if detail.first_episode_url:
+            return detail.first_episode_url, {}
+        self._log.debug("aniworld_no_hosters", url=detail_url)
+        return None
+
+    async def _locate_episode(
+        self, series_url: str, seasons: list[int], ref: EpisodeRef
+    ) -> Located | None:
+        """The row of the series' season pages *ref* means (the index is
+        cached per series); ``None``, logged, when no row matches.
+
+        A series page without season links is a single season: its
+        episode table is ``/staffel-1``.
+        """
+        slug = series_url.rsplit("/", 1)[-1]
+        index = await episode_index(
+            cache=self._cache,
+            key=f"aniworld:episodes:v1:{slug}",
+            seasons=seasons or [1],
+            season_url=lambda number: f"{series_url}/staffel-{number}",
+            fetch_html=self._season_html,
+            selectors=_ROW_SELECTORS,
+            semaphore=self._new_semaphore(),
+        )
+        located = locate(index, ref)
+        reference = {
+            "slug": slug,
+            "season": ref.season,
+            "episode": ref.episode,
+            "absolute": ref.absolute,
+        }
+        if located is None:
+            self._log.info("aniworld_episode_not_located", rows=len(index), **reference)
+            return None
+        self._log.info(
+            "aniworld_episode_located",
+            site_season=located.row.season,
+            site_episode=located.row.episode,
+            located_by=located.by,
+            **reference,
+        )
+        return located
+
+    async def _season_html(self, url: str) -> str | None:
+        resp = await self._safe_fetch(url, context="season_page")
+        return resp.text if resp is not None else None
 
     async def _scrape_episode(self, url: str) -> list[dict[str, str]]:
         """Scrape an episode page for hoster redirect links."""
@@ -261,13 +379,16 @@ class AniworldPlugin(HttpxPluginBase):
         items: list[dict[str, str]],
         season: int | None = None,
         episode: int | None = None,
+        episode_ref: EpisodeRef | None = None,
     ) -> list[SearchResult]:
         """Scrape detail pages with bounded concurrency."""
         sem = self._new_semaphore()
 
         async def _bounded(item: dict[str, str]) -> SearchResult | None:
             async with sem:
-                return await self._scrape_detail(item, season=season, episode=episode)
+                return await self._scrape_detail(
+                    item, season=season, episode=episode, episode_ref=episode_ref
+                )
 
         gathered = await asyncio.gather(
             *[_bounded(item) for item in items],
@@ -286,8 +407,15 @@ class AniworldPlugin(HttpxPluginBase):
         category: int | None = None,
         season: int | None = None,
         episode: int | None = None,
+        *,
+        episode_ref: EpisodeRef | None = None,
     ) -> list[SearchResult]:
-        """Search aniworld.to and return results with hoster links."""
+        """Search aniworld.to and return results with hoster links.
+
+        With *episode_ref* (a Stremio request whose catalog entry is known)
+        each series' episode is located on its season pages; without it
+        the page is built from *season* and *episode* as the site counts.
+        """
         if not query:
             return []
 
@@ -308,7 +436,9 @@ class AniworldPlugin(HttpxPluginBase):
         if not all_items:
             return []
 
-        return await self._scrape_all_details(all_items, season=season, episode=episode)
+        return await self._scrape_all_details(
+            all_items, season=season, episode=episode, episode_ref=episode_ref
+        )
 
 
 def _strip_html_tags(text: str) -> str:

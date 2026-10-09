@@ -337,7 +337,7 @@ The composition root is where concrete implementations are wired together. It ru
 ```text
 0.  create_telemetry() (tracing only with telemetry.tracing_endpoint) + event-loop lag monitor, auto-tune concurrency (_auto_tune / _auto_tune_concurrency)
 1.  Cache via create_cache() (cleared on startup when environment == "dev")
-2.  httpx.AsyncClient with RetryTransport + DomainRateLimiter + PrivateAddressGuard; shared with HttpxPluginBase
+2.  httpx.AsyncClient with RetryTransport + DomainRateLimiter + PrivateAddressGuard; shared with HttpxPluginBase, as is the cache (set_cache: aniworld's episode index)
 3.  PluginRegistry + discover() + per-plugin config overrides
 4.  HttpxSearchEngine (HTTP client + cache)
 5.  CacheCrawlJobRepository
