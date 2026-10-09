@@ -114,10 +114,14 @@ and `metadata["genres"]`. Rules, applied before the text score:
 - Reference not animation (`False`) and result category 5070 → dropped
   (`reason="category"`). aniworld and fireani label everything 5070; sto,
   kinoger, megakino and streamkiste label 5070 by the site's genres.
-- Reference animation (`True`), result category 5000 and `metadata["genres"]`
-  non-empty → dropped. A site that lists genres and did not call the title
-  anime says it is another series; a result without genres (filmpalast,
-  kinoking) says nothing, and the text and year rules decide.
+- Result category 5000 with genres: the genres say the kind, with the words
+  `stream_category` (`infrastructure/plugins/categories.py`) maps to 5070
+  (anime, animation, zeichentrick) meaning animation and any other genres
+  meaning not animation; a kind that differs from the reference's → dropped.
+  A result without genres says nothing, and the text and year rules decide.
+  (The first cut read "5000 with any genres" as not animation; the 7.2 probe
+  found kinoking's anime page, labelled 5000 with its genres since step 36,
+  dropped for the 1999 request, hence the symmetric reading.)
 - Reference unknown (`None`, no meta) → the category is ignored.
 
 Per-plugin knowledge ("this plugin labels anime") was the alternative; the

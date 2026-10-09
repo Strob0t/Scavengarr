@@ -50,7 +50,7 @@ When a result's `metadata` carries `imdb` or `imdb_id` that normalises to `tt` p
 - **THEN** the result is dropped with the reason `imdb`
 
 ### Requirement: Category Against The Reference's Kind
-The matcher SHALL drop a result labelled 5070 when the reference's `animation` is `False`, SHALL drop a result labelled 5000 with a non-empty `metadata["genres"]` when `animation` is `True`, and SHALL ignore the category when `animation` is `None` or when the result carries no genres.
+The matcher SHALL read a result's kind from its label and genres: 5070 means animation; 5000 with genres means what the genres say (a genre naming anime, animation or zeichentrick, the words `stream_category` maps to 5070, means animation, any other genres mean not animation); 5000 without genres means unknown. A known kind that differs from the reference's `animation` SHALL drop the result; an unknown kind, or a reference whose `animation` is `None`, SHALL leave the category out of the score.
 
 #### Scenario: The anime site answers the live action
 - **WHEN** the reference is the 2023 series (`animation` `False`) and aniworld's result is labelled 5070
@@ -59,6 +59,10 @@ The matcher SHALL drop a result labelled 5070 when the reference's `animation` i
 #### Scenario: A movie site's series page for the anime
 - **WHEN** the reference is the 1999 anime (`animation` `True`) and a result is labelled 5000 with `metadata["genres"]` "Action, Abenteuer"
 - **THEN** the result is dropped with the reason `category`
+
+#### Scenario: A series page whose genres name animation
+- **WHEN** the reference is the 1999 anime (`animation` `True`) and a result is labelled 5000 with `metadata["genres"]` "Animation, Abenteuer"
+- **THEN** the result is kept by the category rule, and the same result is dropped with the reason `category` for the 2023 series
 
 #### Scenario: A result without genres
 - **WHEN** the reference's `animation` is `True` and a result is labelled 5000 without genres
