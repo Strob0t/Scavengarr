@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from scavengarr.infrastructure.plugins.health_monitor import PluginHealthMonitor
     from scavengarr.infrastructure.plugins.history import PluginHistory
     from scavengarr.infrastructure.scoring.scheduler import ScoringScheduler
+    from scavengarr.infrastructure.stremio.hls_proxy import SegmentReadAhead
     from scavengarr.infrastructure.telemetry import Telemetry
 
 
@@ -88,6 +89,8 @@ class AppState(State):
     stremio_catalog_uc: StremioCatalogUseCase | None
     # The stored links behind /play and the HLS proxy
     stremio_links: StremioLinks
+    # The HLS proxy's segments fetched ahead of the player
+    hls_read_ahead: SegmentReadAhead
 
     # Global concurrency pool (fair-share httpx + PW slots)
     concurrency_pool: ConcurrencyPool | None

@@ -100,6 +100,7 @@ from scavengarr.infrastructure.scoring.scheduler import ScoringScheduler
 from scavengarr.infrastructure.scoring.search_prober import MiniSearchProber
 from scavengarr.infrastructure.stremio.cinemeta import CinemetaClient
 from scavengarr.infrastructure.stremio.episode_filter import filter_by_episode
+from scavengarr.infrastructure.stremio.hls_proxy import SegmentReadAhead
 from scavengarr.infrastructure.stremio.stream_converter import convert_search_results
 from scavengarr.infrastructure.stremio.stream_sorter import StreamSorter
 from scavengarr.infrastructure.stremio.title_matcher import filter_by_title_match
@@ -642,6 +643,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     state.stremio_links = StremioLinks(
         repo=state.stream_link_repo, resolver=state.hoster_resolver_registry
     )
+    # The HLS proxy fetches the next segments ahead of the player
+    state.hls_read_ahead = SegmentReadAhead(telemetry=state.telemetry)
 
     # 11) Plugin scoring (optional — background health + search probes)
     state.plugin_score_store = None
@@ -762,6 +765,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # closed below
         await state.stremio_stream_uc.aclose()
         await state.stremio_links.aclose()
+        await state.hls_read_ahead.aclose()
         await state.hoster_resolver_registry.aclose()
         # The last resolutions and breaker changes, before the cache closes
         await state.hoster_state_store.aclose()

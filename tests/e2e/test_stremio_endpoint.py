@@ -57,7 +57,7 @@ from scavengarr.infrastructure.plugins.constants import (
     search_max_results,
 )
 from scavengarr.infrastructure.stremio.episode_filter import filter_by_episode
-from scavengarr.infrastructure.stremio.hls_proxy import FileAnswer
+from scavengarr.infrastructure.stremio.hls_proxy import FileAnswer, SegmentReadAhead
 from scavengarr.infrastructure.stremio.stream_converter import convert_search_results
 from scavengarr.infrastructure.stremio.stream_sorter import StreamSorter
 from scavengarr.infrastructure.stremio.title_matcher import filter_by_title_match
@@ -151,6 +151,7 @@ def _make_app(
             resolver.bound_headers = MagicMock(return_value=())
         app.state.stremio_links = StremioLinks(repo=stream_link_repo, resolver=resolver)
     app.state.http_client = http_client or MagicMock()
+    app.state.hls_read_ahead = SegmentReadAhead()
 
     return app
 
@@ -1503,6 +1504,57 @@ def _make_hls_link(
 
 class TestProxyHlsEndpoint:
     """GET /api/v1/stremio/proxy/{stream_id}/{path}"""
+
+    def test_the_segments_after_the_requested_one_are_fetched_ahead(self) -> None:
+        """The player asks for seg-1: the proxy fetches seg-2 and seg-3
+        meanwhile and answers seg-2 from memory."""
+        link = _make_hls_link(video_url="https://cdn.test/v/index.m3u8?t=abc")
+        playlist = (
+            b"#EXTM3U\n#EXTINF:4,\nseg-1.ts\n#EXTINF:4,\nseg-2.ts\n"
+            b"#EXTINF:4,\nseg-3.ts\n#EXT-X-ENDLIST\n"
+        )
+        requests: list[str] = []
+
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            requests.append(f"{request.url.path}?{request.url.query.decode()}")
+            if request.url.path.endswith(".m3u8"):
+                return httpx.Response(
+                    200,
+                    content=playlist,
+                    headers={"content-type": "application/vnd.apple.mpegurl"},
+                )
+            return httpx.Response(
+                200,
+                content=request.url.path.encode() * 100,
+                headers={"content-type": "video/mp2t"},
+            )
+
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=link)
+        app = _make_app(
+            stream_link_repo=repo,
+            http_client=httpx.AsyncClient(transport=httpx.MockTransport(_cdn)),
+        )
+        # one event loop for the client's requests: the fetches ahead run on it
+        with TestClient(app) as client:
+            answer = client.get(f"{_PREFIX}/stremio/proxy/hls-abc/index.m3u8")
+            assert answer.status_code == 200
+            line = next(x for x in answer.text.splitlines() if x.endswith("seg-1.ts"))
+            base = line[: -len("seg-1.ts")]
+            first = client.get(f"{base}seg-1.ts")
+            second = client.get(f"{base}seg-2.ts")
+
+        assert (first.status_code, second.status_code) == (200, 200)
+        assert first.content == b"/v/seg-1.ts" * 100
+        assert second.content == b"/v/seg-2.ts" * 100
+        assert second.headers["content-type"] == "video/mp2t"
+        # the stream URL's query goes with every fetch; seg-2 and seg-3 once
+        assert requests == [
+            "/v/index.m3u8?t=abc",
+            "/v/seg-1.ts?t=abc",
+            "/v/seg-2.ts?t=abc",
+            "/v/seg-3.ts?t=abc",
+        ]
 
     @patch(f"{_PROXY_MODULE}.fetch_hls_resource", new_callable=AsyncMock)
     def test_manifest_fetch_and_rewrite(self, mock_fetch: AsyncMock) -> None:

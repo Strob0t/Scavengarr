@@ -7,6 +7,14 @@ the initial manifest fetch.  The HLS proxy endpoint solves this by
 fetching each resource server-side with the correct headers and
 rewriting absolute CDN URLs in manifests so the HLS player fetches
 subsequent resources through the proxy as well.
+
+Read-ahead (``SegmentReadAhead``): a player loads the segments one after
+another over one connection, and a CDN that throttles each connection
+(FireStream: 1.5 to 3.9 Mbit/s for a 2.9 Mbit/s title) starves it. When
+the player asks for segment *n*, the proxy fetches *n+1* and *n+2* into
+memory and serves them from there when asked: two to three connections
+in flight instead of one (7.3 against 1.8 Mbit/s for that title from the
+Pi, ``scripts/probes/hls_throughput.py``, 2026-10-07).
 """
 
 from __future__ import annotations
@@ -15,12 +23,13 @@ import asyncio
 import re
 import time
 from collections.abc import AsyncGenerator, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import ParseResult, SplitResult, urljoin, urlparse, urlsplit
 
 import httpx
 import structlog
 
+from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
 from scavengarr.infrastructure.hoster_resolvers._domain import extract_domain
 from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 
@@ -208,6 +217,14 @@ async def fetch_hls_resource(
     return body, ct
 
 
+def resolve_query_string(request_query: str, video_url: str) -> str:
+    """The query of a CDN request: the player's, else the stream URL's
+    (auth tokens)."""
+    if request_query:
+        return request_query
+    return urlparse(video_url).query
+
+
 async def stream_hls_segment(
     http_client: httpx.AsyncClient,
     url: str,
@@ -215,6 +232,7 @@ async def stream_hls_segment(
     *,
     head: bool = False,
     on_sent: Callable[[int], None] | None = None,
+    read_ahead: SegmentReadAhead | None = None,
 ) -> tuple[AsyncGenerator[bytes], str]:
     """Stream an HLS segment from CDN without buffering full body.
 
@@ -232,8 +250,15 @@ async def stream_hls_segment(
     For a HEAD request (*head*) the iterator is empty: the CDN's answer
     is closed after its status and headers, before its bytes. *on_sent*
     is told the bytes that went out when the body ends, an aborted
-    transfer's included.
+    transfer's included. With *read_ahead* a GET starts the fetches of
+    the next segments and is answered from memory when its own was
+    fetched ahead.
     """
+    if read_ahead is not None and not head:
+        read_ahead.schedule(url, http_client, headers)
+        ahead = await read_ahead.take(url)
+        if ahead is not None:
+            return _pieces(ahead.body, on_sent=on_sent), ahead.content_type
     async with _CDN_SEMAPHORE:
         resp = await http_client.send(
             http_client.build_request(
@@ -281,6 +306,275 @@ async def _body(
         await resp.aclose()
         if on_sent is not None:
             on_sent(sent)
+
+
+async def _pieces(
+    body: bytes, *, on_sent: Callable[[int], None] | None = None
+) -> AsyncGenerator[bytes]:
+    """A body from memory in ``_SEGMENT_CHUNK`` pieces; *on_sent* as in
+    ``_body``."""
+    sent = 0
+    try:
+        for start in range(0, len(body), _SEGMENT_CHUNK):
+            piece = body[start : start + _SEGMENT_CHUNK]
+            sent += len(piece)
+            yield piece
+    finally:
+        if on_sent is not None:
+            on_sent(sent)
+
+
+# ---------------------------------------------------------------------------
+# Read-ahead: the segments after the one the player asks for
+# ---------------------------------------------------------------------------
+
+# Segments fetched ahead of the player per playback
+_AHEAD = 2
+# Playbacks (media playlists the proxy rewrote) followed at once
+_MAX_PLAYBACKS = 8
+# A segment larger than this is left to the player's own request
+_MAX_AHEAD_BYTES = 16 * 1024 * 1024
+# A playback without a request for this long is dropped
+_IDLE_SECONDS = 60.0
+# A CDN that answered a fetch ahead with 429 gets none for this long
+_THROTTLE_SECONDS = 600.0
+
+
+@dataclass(frozen=True)
+class AheadSegment:
+    """A segment fetched ahead: its bytes and content type."""
+
+    body: bytes
+    content_type: str
+
+
+@dataclass
+class _Playback:
+    """A media playlist's segments in order and the fetches ahead."""
+
+    urls: list[str]
+    index: dict[str, int]
+    last_request: float
+    ahead: dict[str, asyncio.Task[AheadSegment | None]] = field(default_factory=dict)
+    # No more fetches ahead: an undeclared body grew past the cap
+    stopped: bool = False
+
+
+def listed_segments(
+    rewritten: str, proxy_base: str, cdn_base: str, video_url: str
+) -> list[str]:
+    """The CDN URLs of the segments a rewritten media playlist lists, in
+    order: what the proxy fetches when the player asks for a line
+    (``build_cdn_url`` of the proxied path with the line's query, else the
+    stream URL's). Playlists and lines of other origins are left out."""
+    urls: list[str] = []
+    for line in rewritten.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or not stripped.startswith(proxy_base):
+            continue
+        path, _, query = stripped[len(proxy_base) :].partition("?")
+        if path.endswith(".m3u8"):
+            continue
+        try:
+            urls.append(
+                build_cdn_url(cdn_base, path, resolve_query_string(query, video_url))
+            )
+        except ValueError:
+            continue
+    return urls
+
+
+class SegmentReadAhead:
+    """The segments after the one the player asks for, fetched into memory.
+
+    ``remember()`` takes a rewritten media playlist's segment URLs in order
+    (a playlist fetched again keeps the fetches of segments it still
+    lists). ``schedule()`` starts the fetches of the ``_AHEAD`` segments
+    after the requested one and drops the ones the player passed or
+    jumped away from (``dropped``); ``take()`` answers the requested
+    segment from memory when it was fetched ahead, a fetch in flight
+    awaited (``hit``), else ``None`` (``miss``). Each fetch is an
+    ``hls_readahead`` stage under ``_CDN_SEMAPHORE``: ``ok``, ``failed``,
+    ``too_large`` (over ``_MAX_AHEAD_BYTES``: left to the player; a declared
+    length costs the headers only, a body without one that grows past the
+    cap is cut and ends the playback's fetches ahead) or ``throttled`` (the
+    CDN answered 429: no fetches ahead for its host for
+    ``_THROTTLE_SECONDS``).
+    A playback is dropped ``_IDLE_SECONDS`` after its last request, and
+    the least recently used one when ``_MAX_PLAYBACKS`` are followed.
+    """
+
+    def __init__(
+        self,
+        *,
+        telemetry: TelemetryPort = NO_TELEMETRY,
+        max_bytes: int = _MAX_AHEAD_BYTES,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._telemetry = telemetry
+        self._max_bytes = max_bytes
+        self._clock = clock
+        # media playlist URL -> playback
+        self._playbacks: dict[str, _Playback] = {}
+        # segment URL -> media playlist URL
+        self._playlist_of: dict[str, str] = {}
+        # CDN host -> no fetches ahead until (monotonic)
+        self._throttled: dict[str, float] = {}
+
+    def remember(self, playlist_url: str, segment_urls: list[str]) -> None:
+        """*playlist_url* lists *segment_urls* in this order."""
+        if not segment_urls:
+            return
+        now = self._clock()
+        self._sweep(now)
+        playback = _Playback(
+            urls=list(segment_urls),
+            index={url: i for i, url in enumerate(segment_urls)},
+            last_request=now,
+        )
+        old = self._playbacks.pop(playlist_url, None)
+        if old is not None:
+            for url, task in old.ahead.items():
+                if url in playback.index:
+                    playback.ahead[url] = task
+                else:
+                    self._drop(task)
+            self._unlist(old)
+        while len(self._playbacks) >= _MAX_PLAYBACKS:
+            oldest = min(self._playbacks, key=lambda k: self._playbacks[k].last_request)
+            self._forget(self._playbacks.pop(oldest))
+        self._playbacks[playlist_url] = playback
+        for url in segment_urls:
+            self._playlist_of[url] = playlist_url
+
+    def schedule(
+        self, url: str, http_client: httpx.AsyncClient, headers: dict[str, str]
+    ) -> None:
+        """The player asks for *url*: fetch the segments after it."""
+        playback = self._playback(url)
+        if playback is None:
+            return
+        now = self._clock()
+        playback.last_request = now
+        self._sweep(now)
+        position = playback.index[url]
+        wanted = playback.urls[position : position + 1 + _AHEAD]
+        for other in [u for u in playback.ahead if u not in wanted]:
+            self._drop(playback.ahead.pop(other))
+        if playback.stopped or self._throttled.get(urlsplit(url).netloc, 0.0) > now:
+            return
+        for next_url in wanted[1:]:
+            if next_url not in playback.ahead:
+                playback.ahead[next_url] = asyncio.create_task(
+                    self._fetch(playback, next_url, http_client, headers)
+                )
+
+    async def take(self, url: str) -> AheadSegment | None:
+        """*url* from memory when it was fetched ahead, else ``None``."""
+        playback = self._playback(url)
+        if playback is None:
+            return None
+        task = playback.ahead.pop(url, None)
+        if task is None:
+            self._telemetry.count("hls_readahead", "miss")
+            return None
+        await asyncio.wait([task])
+        segment = None if task.cancelled() else task.result()
+        self._telemetry.count("hls_readahead", "miss" if segment is None else "hit")
+        return segment
+
+    async def aclose(self) -> None:
+        """Cancel the fetches in flight and forget every playback."""
+        for playback in list(self._playbacks.values()):
+            self._forget(playback)
+        self._playbacks.clear()
+
+    def _playback(self, url: str) -> _Playback | None:
+        key = self._playlist_of.get(url)
+        return None if key is None else self._playbacks.get(key)
+
+    def _sweep(self, now: float) -> None:
+        for key, playback in list(self._playbacks.items()):
+            if playback.last_request + _IDLE_SECONDS <= now:
+                self._forget(self._playbacks.pop(key))
+
+    def _forget(self, playback: _Playback) -> None:
+        for task in playback.ahead.values():
+            self._drop(task)
+        playback.ahead.clear()
+        self._unlist(playback)
+
+    def _unlist(self, playback: _Playback) -> None:
+        for url in playback.urls:
+            self._playlist_of.pop(url, None)
+
+    def _drop(self, task: asyncio.Task[AheadSegment | None]) -> None:
+        """A fetch (done or in flight) the player will not ask for."""
+        task.cancel()
+        self._telemetry.count("hls_readahead", "dropped")
+
+    async def _fetch(
+        self,
+        playback: _Playback,
+        url: str,
+        http_client: httpx.AsyncClient,
+        headers: dict[str, str],
+    ) -> AheadSegment | None:
+        with self._telemetry.stage("hls_readahead") as stage:
+            try:
+                async with _CDN_SEMAPHORE:
+                    resp = await http_client.send(
+                        http_client.build_request(
+                            "GET", url, headers=_player_headers(headers)
+                        ),
+                        stream=True,
+                        follow_redirects=True,
+                    )
+                try:
+                    if resp.status_code == 429:
+                        self._throttle(url)
+                        stage.outcome = "throttled"
+                        return None
+                    resp.raise_for_status()
+                    declared = resp.headers.get("content-length", "")
+                    if declared.isdigit() and int(declared) > self._max_bytes:
+                        # left to the player: the headers cost one round trip
+                        stage.outcome = "too_large"
+                        return None
+                    content_type = resp.headers.get(
+                        "content-type", "application/octet-stream"
+                    )
+                    chunks: list[bytes] = []
+                    size = 0
+                    async for chunk in resp.aiter_bytes(chunk_size=_SEGMENT_CHUNK):
+                        size += len(chunk)
+                        if size > self._max_bytes:
+                            # the cap's bytes were read for nothing: no
+                            # more fetches ahead for this playback
+                            stage.outcome = "too_large"
+                            playback.stopped = True
+                            return None
+                        chunks.append(chunk)
+                finally:
+                    await resp.aclose()
+            except httpx.HTTPError as exc:
+                stage.outcome = "failed"
+                log.info(
+                    "hls_readahead_failed",
+                    cdn=extract_domain(url),
+                    error=type(exc).__name__,
+                )
+                return None
+            return AheadSegment(b"".join(chunks), content_type)
+
+    def _throttle(self, url: str) -> None:
+        host = urlsplit(url).netloc
+        self._throttled[host] = self._clock() + _THROTTLE_SECONDS
+        log.warning(
+            "hls_readahead_throttled",
+            cdn=extract_domain(url),
+            seconds=int(_THROTTLE_SECONDS),
+        )
 
 
 @dataclass(frozen=True)

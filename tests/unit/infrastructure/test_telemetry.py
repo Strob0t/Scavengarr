@@ -42,6 +42,14 @@ class TestStage:
         )
         assert total == 1
 
+    def test_a_stage_without_labels(self) -> None:
+        t = Telemetry()
+        with t.stage("hls_readahead") as stage:
+            stage.outcome = "too_large"
+
+        assert _sample(t, "scavengarr_hls_readahead_seconds_count") == 1
+        assert _sample(t, "scavengarr_hls_readahead_total", outcome="too_large") == 1
+
     def test_outcome_defaults_to_ok(self) -> None:
         t = Telemetry()
         with t.stage("stremio_phase", phase="search"):

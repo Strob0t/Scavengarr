@@ -6,7 +6,6 @@ import json
 from collections.abc import AsyncGenerator, Callable
 from contextlib import aclosing
 from typing import Any, cast
-from urllib.parse import urlparse
 
 import httpx
 import structlog
@@ -30,6 +29,8 @@ from scavengarr.infrastructure.stremio.hls_proxy import (
     build_cdn_url,
     cdn_base_from_url,
     fetch_hls_resource,
+    listed_segments,
+    resolve_query_string,
     rewrite_manifest,
     stream_file,
     stream_hls_segment,
@@ -425,16 +426,6 @@ async def stremio_play(
     )
 
 
-def _resolve_query_string(request_query: str, video_url: str) -> str:
-    """Return query string for CDN request, falling back to original URL."""
-    qs = request_query or ""
-    if not qs:
-        original_qs = urlparse(video_url).query
-        if original_qs:
-            return original_qs
-    return qs
-
-
 def _cdn_error_response(
     stream_id: str, target_url: str, exc: httpx.HTTPError
 ) -> JSONResponse:
@@ -567,7 +558,7 @@ async def _proxy_hls(
     if master:
         target_url = link.video_url
     else:
-        query_string = _resolve_query_string(request.url.query or "", link.video_url)
+        query_string = resolve_query_string(request.url.query or "", link.video_url)
         try:
             target_url = build_cdn_url(
                 cdn_base_from_url(link.video_url), path, query_string
@@ -586,6 +577,7 @@ async def _proxy_hls(
                 _cdn_headers(link),
                 head=head,
                 on_sent=None if head else _bytes_counter(telemetry, "segment"),
+                read_ahead=getattr(state, "hls_read_ahead", None),
             )
         except httpx.HTTPError as exc:
             return _cdn_error_response(stream_id, target_url, exc)
@@ -604,15 +596,43 @@ async def _proxy_hls(
     # What the playlist lists goes to a copy of its link: a later resolution
     # under the stream's id leaves a running playback alone
     link = await links.pinned(link)
-    proxy_base = (
-        f"{str(request.base_url).rstrip('/')}/api/v1/stremio/proxy/{link.stream_id}/"
-    )
-    rewritten = rewrite_manifest(
-        body.decode("utf-8", errors="replace"),
-        cdn_base_from_url(link.video_url),
-        proxy_base,
+    return _playlist_response(
+        state,
+        link,
+        body,
+        target_url=target_url,
+        proxy_base=(
+            f"{str(request.base_url).rstrip('/')}/api/v1/stremio/proxy/{link.stream_id}/"
+        ),
         playlist_dir="" if master else path[: path.rfind("/") + 1],
     )
+
+
+def _playlist_response(
+    state: AppState,
+    link: CachedStreamLink,
+    body: bytes,
+    *,
+    target_url: str,
+    proxy_base: str,
+    playlist_dir: str,
+) -> Response:
+    """The playlist *body* with its URIs pointed at the proxy; a media
+    playlist's segments are remembered for the fetches ahead of the
+    player."""
+    cdn_base = cdn_base_from_url(link.video_url)
+    rewritten = rewrite_manifest(
+        body.decode("utf-8", errors="replace"),
+        cdn_base,
+        proxy_base,
+        playlist_dir=playlist_dir,
+    )
+    read_ahead = getattr(state, "hls_read_ahead", None)
+    if read_ahead is not None:
+        read_ahead.remember(
+            target_url,
+            listed_segments(rewritten, proxy_base, cdn_base, link.video_url),
+        )
     return Response(
         content=rewritten,
         media_type="application/vnd.apple.mpegurl",
