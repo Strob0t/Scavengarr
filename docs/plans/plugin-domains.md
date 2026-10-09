@@ -166,3 +166,24 @@ Nothing in `_domains` or the plugins was changed. The decision is the maintainer
 | Breaking Bad S01E01 | passed | 4 returned of 6 links (2 unresolved, 3 plugins missing) | kinoger's own player (HLS) and fsst (kinoger), voe (sto, after the Turnstile gate `sto_link_gate_passed`), voe (filmpalast). Not resolved: dr0pstream (hdfilme) `ConnectError` at the check |
 
 **What this adds to the record.** fireani, kinox and kinoking fail from home the way the section above saw them from the Pi (kinoking got worse: the search itself times out now). megakino_to and movie4k are new on the unreachable list: both share `DataApiPluginBase`, and none of their five domains answered the check. boerse is the one plugin whose failure is in our code's reach: the login form is not where `boerse.py` looks for it after the Cloudflare page. animeloads needs a second look at its domain check only. The resolver suite has no cases, so the hoster picture comes from the end-to-end runs alone: 9 resolutions over 2 titles, supervideo's `PrivateAddressError` and dr0pstream's `ConnectError` are the two resolver-side failures, and moflix's upns and rpmplay are hosters without a resolver.
+
+## boerse (2026-10-09, step 38)
+
+**Question.** The live suite above called boerse a parser miss: Cloudflare solved, then `no login form` on five domains. Step 38 asked for the login page the plugin sees after the solve, compared with the parser's selectors.
+
+**Capture.** Through the plugin's own browser and context (`_ensure_browser()`, `_context_options()`, `_wait_for_cloudflare()`, then `page.content()`; `scripts/capture_pages.py` records only httpx fetches), home page and `/login.php` per domain, from the dev container, 19:30 to 19:45 UTC; and `scripts/probes/domains.py --plugins boerse --get-timeout 30` (run with `python -P`, the probe directory shadows the redis package otherwise):
+
+| Domain | DNS | TCP 443 | HEAD (5 s) | GET (30 s) | After the Cloudflare solve (browser) |
+|---|---|---|---|---|---|
+| boerse.am | 2 v4 / 2 v6 | ok | 403 `[cloudflare]` | 403 challenge page | challenge solved, then **`boerse.am \| 522: Connection timed out`**, home and `/login.php` |
+| boerse.tw | 2 v4 / 2 v6 | ok | 403 `[cloudflare]` | 403 challenge page | same: solved, then **522** |
+| boerse.sx | 2 v4 / 2 v6 | ok | ReadTimeout 5.1 s | **522** after 19.7 s | **522** at once, no challenge |
+| boerse.im | 2 v4 / 2 v6 | ok | ReadTimeout 5.1 s | **522** after 19.7 s | **522** at once |
+| boerse.ai | 2 v4 | ok | 200 | 200 | redirect to a registrar's **for-sale page** for the domain (title "Trustpilot", 260 KiB, no form) |
+| boerse.kz | 1 v4 | **TimeoutError** 5 s | ConnectTimeout | ConnectTimeout | `Page.goto` timeout after 30 s |
+
+**Verdict: the forum's origin is down behind Cloudflare, the markup did not change.** All four domains that reach Cloudflare get the edge's own 522 page (`cf-error-details`, 6.9 KiB), which has no form, so the parser's `form[action*="login"]` was right to find nothing; the fifth domain is parked; the sixth accepts no connection. A web search found no announcement of a new domain: the forum's own announcement thread lists exactly these six (boerse.sh and boerse.bz retired), and third-party monitors show the site down intermittently through 2026. The login form cannot be captured until the origin answers again.
+
+**Done in the plugin** (`fix(plugins): boerse names the dead origin`): the login reads the page after the Cloudflare wait and treats Cloudflare's error page as no answer (`boerse_origin_error status=522` instead of `no login form`); no answering domain raises `PluginUnreachableError` like every other Playwright plugin, so the Stremio search marks boerse unreachable and the plugins' record counts it under `unreachable`, the evidence for the keep-or-disable decision; a real page without a form keeps the `All boerse domains failed during login` error. boerse.ai left `_domains` (parked). The 522 page is a fixture (`tests/fixtures/html/boerse/home-522.html.gz`, Ray ID and visitor IP scrubbed by `scripts/capture_pages.py`). The live boerse test still fails while the origin is down (`PluginUnreachableError` is not a skip in `tests/live/test_plugin_smoke.py`, as for animeloads); the row above should read *unreachable*, not *parser miss*.
+
+**Open.** When the origin returns, capture the login page the same way (home page after the solve: the vBulletin form with `vb_login_username`, `vb_login_password`, `vb_login_md5password`, `securitytoken`, `do=login`, `s`, `cookieuser`) and check the parser's selectors against it; nothing says they changed.

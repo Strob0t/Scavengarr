@@ -25,7 +25,7 @@ is unreachable.
 |---|---|---|---|---|---|
 | `animeloads` | www.anime-loads.org | 1 | Downloads | Playwright | de |
 | `aniworld` | aniworld.to | 0 | Streams | httpx | de |
-| `boerse` | boerse.am | 5 | Downloads | Playwright | de |
+| `boerse` | boerse.am | 4 | Downloads | Playwright | de |
 | `burningseries` | burningseries.ac | 2 | Downloads | httpx | de |
 | `byte` | byte.to | 0 | Downloads | httpx | de |
 | `cine` | cine.to | 0 | Downloads | httpx | de |

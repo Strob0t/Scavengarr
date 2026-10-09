@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import gzip
 import importlib.util
 import os
+from collections.abc import Coroutine
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from scavengarr.domain.plugins.base import PluginUnreachableError
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "boerse.py"
 _PW_PATCH = "scavengarr.infrastructure.plugins.playwright_base.async_playwright"
@@ -180,7 +185,8 @@ class TestLogin:
             patch(_PW_PATCH) as mock_ap,
         ):
             mock_ap.return_value.start = mock_start
-            with pytest.raises(RuntimeError, match="All boerse domains failed"):
+            # No domain answered: unreachable, like the other Playwright plugins
+            with pytest.raises(PluginUnreachableError):
                 await plugin._ensure_session()
 
     async def test_missing_credentials_raises(self) -> None:
@@ -734,3 +740,73 @@ class TestCategoryRequests:
         assert [(r.title, r.category) for r in results] == [
             ("The.Batman.2022.German.DL.1080p", 2000)
         ]
+
+
+_FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "html" / "boerse"
+
+
+def _fixture(name: str) -> str:
+    return gzip.decompress((_FIXTURES / name).read_bytes()).decode()
+
+
+def _login(
+    plugin: Any, pages: list[AsyncMock], cookies: list[dict[str, str]]
+) -> Coroutine[Any, Any, None]:
+    """Run ``_ensure_session`` against mock *pages*, one per domain."""
+    context = _make_mock_context(pages=pages, cookies=cookies)
+    pw = _make_mock_playwright(_make_mock_browser(context))
+
+    async def run() -> None:
+        with patch.dict(os.environ, _TEST_CREDENTIALS), patch(_PW_PATCH) as mock_ap:
+            mock_ap.return_value.start = AsyncMock(return_value=pw)
+            await plugin._ensure_session()
+
+    return run()
+
+
+class TestDeadOrigin:
+    """2026-10-09: every boerse domain answered with Cloudflare's 522 page
+    (the origin behind the edge is gone), so there was no form to find."""
+
+    def test_cloudflare_error_page_is_recognized(self) -> None:
+        assert _boerse._cloudflare_error(_fixture("home-522.html.gz")) == 522
+
+    def test_a_forum_page_is_no_error(self) -> None:
+        html = (
+            "<html><title>boerse.am</title>"
+            '<form action="login.php?do=login"></form></html>'
+        )
+        assert _boerse._cloudflare_error(html) is None
+
+    async def test_login_skips_a_domain_whose_origin_is_gone(self) -> None:
+        plugin = _make_plugin()
+        dead_page = _make_mock_page(content=_fixture("home-522.html.gz"))
+        ok_page = _make_mock_page(body_text="Danke testuser")
+
+        await _login(plugin, [dead_page, ok_page], _SESSION_COOKIES)
+
+        dead_page.evaluate.assert_not_awaited()
+        assert plugin.base_url == "https://boerse.tw"
+
+    async def test_no_answering_domain_is_unreachable(self) -> None:
+        plugin = _make_plugin()
+        pages = [
+            _make_mock_page(content=_fixture("home-522.html.gz")) for _ in range(5)
+        ]
+
+        with pytest.raises(PluginUnreachableError):
+            await _login(plugin, pages, [])
+
+    async def test_a_page_without_login_form_is_not_unreachable(self) -> None:
+        plugin = _make_plugin()
+        pages = [_make_mock_page() for _ in range(5)]
+        for page in pages:
+            page.evaluate = AsyncMock(side_effect=Exception("no login form"))
+
+        with pytest.raises(RuntimeError, match="All boerse domains failed"):
+            await _login(plugin, pages, [])
+
+    def test_the_parked_domain_is_gone(self) -> None:
+        # boerse.ai redirects to a registrar's for-sale page since 2026-10-09
+        assert "boerse.ai" not in _BoersePlugin._domains
+        assert len(_BoersePlugin._domains) == 5

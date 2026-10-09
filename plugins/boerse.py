@@ -22,7 +22,7 @@ from urllib.parse import urlparse
 
 from selectolax.lexbor import LexborHTMLParser
 
-from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.domain.plugins.base import PluginUnreachableError, SearchResult
 from scavengarr.infrastructure.plugins.categories import (
     filter_by_category,
     is_series_title,
@@ -48,9 +48,22 @@ _DOMAINS = [
     "boerse.tw",
     "boerse.sx",
     "boerse.im",
-    "boerse.ai",
     "boerse.kz",
 ]
+# boerse.ai redirects to a registrar's for-sale page (2026-10-09): not the forum.
+
+# Cloudflare's own error page for an origin that does not answer
+# (``<title>boerse.sx | 522: Connection timed out</title>``).
+_CF_ERROR_TITLE_RE = re.compile(r"<title>[^<]*\|\s*(5\d\d):")
+
+
+def _cloudflare_error(html: str) -> int | None:
+    """The status of Cloudflare's error page in *html*, ``None`` for any other page."""
+    if "cf-error-details" not in html:
+        return None
+    match = _CF_ERROR_TITLE_RE.search(html)
+    return int(match.group(1)) if match else None
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -251,71 +264,24 @@ class BoersePlugin(PlaywrightPluginBase):
                 password.encode(),
             ).hexdigest()
 
+            answered = False
             for domain in self._domains:
-                domain_url = f"https://{domain}"
                 login_ctx = await browser.new_context(**self._context_options())
                 try:
-                    page = await login_ctx.new_page()
-                    try:
-                        # Load homepage to get the real login form
-                        await page.goto(
-                            domain_url,
-                            wait_until="domcontentloaded",
+                    logged_in = await self._login_at(
+                        login_ctx, domain, username, md5_pass
+                    )
+                    if logged_in is None:
+                        continue
+                    answered = True
+                    if logged_in:
+                        self.base_url = f"https://{domain}"
+                        self._session_cookies = self._cookie_params(
+                            await login_ctx.cookies()
                         )
-                        await self._wait_for_cloudflare(page)
-
-                        # Fill and submit the existing login form
-                        async with page.expect_navigation(
-                            wait_until="domcontentloaded",
-                            timeout=15_000,
-                        ):
-                            await page.evaluate(
-                                """([user, md5]) => {
-                                    const f = document.querySelector(
-                                        'form[action*="login"]'
-                                    );
-                                    if (!f) throw new Error('no login form');
-                                    const u = f.querySelector(
-                                        'input[name="vb_login_username"]'
-                                    );
-                                    const p = f.querySelector(
-                                        'input[name="vb_login_password"]'
-                                    );
-                                    const m = f.querySelector(
-                                        'input[name="vb_login_md5password"]'
-                                    );
-                                    if (u) u.value = user;
-                                    if (p) p.value = '';
-                                    if (m) m.value = md5;
-                                    f.submit();
-                                }""",
-                                [username, md5_pass],
-                            )
-
-                        # Wait for redirect to complete
-                        try:
-                            await page.wait_for_load_state(
-                                "networkidle", timeout=10_000
-                            )
-                        except Exception:  # noqa: BLE001
-                            pass
-
-                        # Verify login: check for session cookie
-                        cookies = await login_ctx.cookies()
-                        has_session = any(
-                            c.get("name") == "bbsessionhash" for c in cookies
-                        )
-                        if has_session:
-                            self.base_url = domain_url
-                            self._session_cookies = self._cookie_params(cookies)
-                            self._logged_in = True
-                            self._log.info("boerse_login_success", domain=domain)
-                            return
-
-                    finally:
-                        if not page.is_closed():
-                            await page.close()
-
+                        self._logged_in = True
+                        self._log.info("boerse_login_success", domain=domain)
+                        return
                 except Exception as exc:  # noqa: BLE001
                     self._log.warning(
                         "boerse_domain_unreachable",
@@ -326,7 +292,75 @@ class BoersePlugin(PlaywrightPluginBase):
                 finally:
                     await login_ctx.close()
 
+            if not answered:
+                self._log.warning("boerse_no_domain_reachable")
+                raise PluginUnreachableError(self.name)
             raise RuntimeError("All boerse domains failed during login")
+
+    async def _login_at(
+        self, login_ctx: BrowserContext, domain: str, username: str, md5_pass: str
+    ) -> bool | None:
+        """Log in on *domain* in *login_ctx*: ``True`` with the session cookie
+        set, ``False`` without, ``None`` when the domain answered no page
+        (Cloudflare's error page for a dead origin); ``False`` also for a page
+        without the form (``no login form``). Raises when the page does not load."""
+        page = await login_ctx.new_page()
+        try:
+            # Load homepage to get the real login form
+            await page.goto(f"https://{domain}", wait_until="domcontentloaded")
+            await self._wait_for_cloudflare(page)
+
+            # Cloudflare answering for a dead origin has no form
+            status = _cloudflare_error(await page.content())
+            if status is not None:
+                self._log.warning("boerse_origin_error", domain=domain, status=status)
+                return None
+
+            try:
+                # Fill and submit the existing login form
+                async with page.expect_navigation(
+                    wait_until="domcontentloaded",
+                    timeout=15_000,
+                ):
+                    await page.evaluate(
+                        """([user, md5]) => {
+                            const f = document.querySelector(
+                                'form[action*="login"]'
+                            );
+                            if (!f) throw new Error('no login form');
+                            const u = f.querySelector(
+                                'input[name="vb_login_username"]'
+                            );
+                            const p = f.querySelector(
+                                'input[name="vb_login_password"]'
+                            );
+                            const m = f.querySelector(
+                                'input[name="vb_login_md5password"]'
+                            );
+                            if (u) u.value = user;
+                            if (p) p.value = '';
+                            if (m) m.value = md5;
+                            f.submit();
+                        }""",
+                        [username, md5_pass],
+                    )
+
+                # Wait for redirect to complete
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=10_000)
+                except Exception:  # noqa: BLE001
+                    pass
+
+                # Verify login: check for session cookie
+                cookies = await login_ctx.cookies()
+                return any(c.get("name") == "bbsessionhash" for c in cookies)
+            except Exception as exc:  # noqa: BLE001
+                # The page answered but the login did not go through
+                self._log.warning("boerse_login_failed", domain=domain, error=str(exc))
+                return False
+        finally:
+            if not page.is_closed():
+                await page.close()
 
     async def _submit_search_form(self, query: str, forum_id: str) -> str:
         """Submit the vBulletin search form and return results HTML."""

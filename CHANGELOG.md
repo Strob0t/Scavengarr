@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: boerse Names the Dead Origin
+- The live suite of 2026-10-09 reported boerse as a parser miss (`no login form` after a solved Cloudflare page). Captured through the plugin's own browser, every domain answered with Cloudflare's 522 page for an origin that is gone (boerse.am, .tw, .sx, .im), a registrar's for-sale page (boerse.ai) or no connection (boerse.kz): there was no markup to find a form in. `plugins/boerse.py` now reads the page after the Cloudflare wait and treats Cloudflare's error page (`cf-error-details`, title `… | 522: …`) as no answer (`boerse_origin_error` with the status), raises `PluginUnreachableError` like the other Playwright plugins when no domain answered (the Stremio search marks it unreachable and counts it in the plugins' record instead of a search error), and keeps the `All boerse domains failed during login` error for a page that has no form; boerse.ai left `_domains`. Fixture `tests/fixtures/html/boerse/home-522.html.gz` (`scripts/capture_pages.py` scrubs Cloudflare's Ray ID and the visitor's IP from error pages). The findings: `docs/plans/plugin-domains.md` → boerse.
+
 ### Added: Digest Counts Stream Requests per Id Scheme
 - `scripts/digest.py` (`prodctl.py digest`) counts the window's stream requests per id scheme of the request path (`tt`, `kitsu`, `tmdb`) and prints them as one line under *Requests*, so the maintainer sees which catalogs the players use instead of inferring the anime catalogs' use from a grep; no new log field.
 
