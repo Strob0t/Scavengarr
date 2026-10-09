@@ -60,8 +60,16 @@ def test_parse_id_series_and_movie() -> None:
 
 
 def test_describe_reference() -> None:
-    assert probe.describe(_REF) == "Haus des Geldes (2017; alt: Money Heist)"
-    assert probe.describe(TitleMatchInfo(title="Dark")) == "Dark"
+    assert (
+        probe.describe(_REF) == "Haus des Geldes (2017; alt: Money Heist; kind unknown)"
+    )
+    assert probe.describe(TitleMatchInfo(title="Dark")) == "Dark (kind unknown)"
+    anime = TitleMatchInfo(
+        title="One Piece", year=1999, imdb_id="tt0388629", animation=True
+    )
+    assert probe.describe(anime) == "One Piece (1999; tt0388629; animation)"
+    live = TitleMatchInfo(title="One Piece", imdb_id="tt11737520", animation=False)
+    assert probe.describe(live) == "One Piece (tt11737520; not animation)"
 
 
 def test_verdicts_score_against_the_threshold_best_first() -> None:
@@ -84,8 +92,9 @@ def test_render_lists_plugins_queries_and_results() -> None:
             reference="Dark (2017)",
             queries={"Dark": 2},
             hits=[
-                probe.Hit("Dark", None, 1.0, True),
-                probe.Hit("Dark Matter", "Dark.Matter.S01E01", 0.4, False),
+                probe.Hit("Dark", None, 1.0, True, "score"),
+                probe.Hit("Dark Matter", "Dark.Matter.S01E01", 0.4, False, "score"),
+                probe.Hit("Dark (2025)", None, 0.0, False, "year"),
             ],
         ),
         probe.PluginRun(
@@ -100,8 +109,9 @@ def test_render_lists_plugins_queries_and_results() -> None:
     ]
     text = probe.render("series/tt5753856:1:1", runs, 0.7)
     assert "Reference: Dark (2017); threshold 0.7." in text
-    assert "| a | de | 'Dark' (2) | 2 | 1 | – |" in text
+    assert "| a | de | 'Dark' (2) | 3 | 1 | – |" in text
     assert "| b | de | – | 0 | 0 | 'Dark': timeout |" in text
     assert "No results: c." in text
     assert "- a: 'Dark' 1.00 kept" in text
-    assert "- a: 'Dark Matter' [Dark.Matter.S01E01] 0.40 dropped" in text
+    assert "- a: 'Dark Matter' [Dark.Matter.S01E01] 0.40 dropped\n" in text
+    assert "- a: 'Dark (2025)' 0.00 dropped by year" in text

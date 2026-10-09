@@ -9,8 +9,11 @@ lookup) and runs every stream plugin's search directly, once per query its
 language group gets (``application/stremio/queries.py``), with the request's
 category, season and episode, under the plugin timeout and the runner's
 plugin concurrency. Every raw result gets the title matcher's score against
-the group's reference (``score_title_match``, the configured weights) and
-its verdict at the configured threshold. The episode filter is not applied.
+the group's reference (``score_title``, the configured weights), its
+verdict at the configured threshold and the rule that decided it (``year``,
+``imdb``, ``category``, else the text score); the reference line names the
+IMDb id and the kind (animation or not) the catalog gave it. The episode
+filter is not applied.
 
 Mirror groups are not collapsed: every member is asked. Read-only: it
 searches the sites and writes nothing but a temporary cache.
@@ -43,7 +46,7 @@ from scavengarr.infrastructure.config.load import load_config
 from scavengarr.infrastructure.plugins.constants import search_max_results
 from scavengarr.infrastructure.stremio.title_matcher import (
     filter_by_title_match,
-    score_title_match,
+    score_title,
 )
 from scavengarr.interfaces.app import create_app
 from scavengarr.interfaces.app_state import AppState
@@ -76,6 +79,7 @@ class Hit:
     release_name: str | None
     score: float
     kept: bool
+    reason: str  # the rule that decided: score, year, imdb, category
 
 
 @dataclass
@@ -91,10 +95,14 @@ class PluginRun:
 
 
 def describe(ref: TitleMatchInfo) -> str:
-    """``Haus des Geldes (2017; alt: Money Heist, La casa de papel)``."""
+    """``Haus des Geldes (2017; alt: Money Heist; tt6468322; not animation)``."""
     extra = [str(ref.year)] if ref.year else []
     if ref.alt_titles:
         extra.append("alt: " + ", ".join(ref.alt_titles))
+    if ref.imdb_id:
+        extra.append(ref.imdb_id)
+    kinds = {True: "animation", False: "not animation", None: "kind unknown"}
+    extra.append(kinds[ref.animation])
     return f"{ref.title} ({'; '.join(extra)})" if extra else ref.title
 
 
@@ -104,11 +112,20 @@ def verdicts(
     threshold: float,
     weights: dict[str, Any],
 ) -> list[Hit]:
-    """Each result's score and whether it reaches *threshold*, best first."""
+    """Each result's score, whether it reaches *threshold* and the rule that
+    decided, best first."""
     hits = []
     for r in results:
-        score = score_title_match(r, ref, **weights)
-        hits.append(Hit(r.title, r.release_name, round(score, 3), score >= threshold))
+        verdict = score_title(r, ref, **weights)
+        hits.append(
+            Hit(
+                r.title,
+                r.release_name,
+                round(verdict.score, 3),
+                verdict.score >= threshold,
+                verdict.reason,
+            )
+        )
     return sorted(hits, key=lambda h: -h.score)
 
 
@@ -146,6 +163,8 @@ def render(sid: str, runs: list[PluginRun], threshold: float) -> str:
                 else ""
             )
             verdict = "kept" if hit.kept else "dropped"
+            if hit.reason != "score":
+                verdict += f" by {hit.reason}"
             lines.append(
                 f"- {plugin}: {hit.title!r}{release} {hit.score:.2f} {verdict}"
             )

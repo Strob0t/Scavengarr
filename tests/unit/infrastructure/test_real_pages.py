@@ -421,6 +421,26 @@ class TestSto:
             }
         ]
 
+    def test_search_lists_both_one_piece_series(self) -> None:
+        """The anime and the 2023 live action are two series on the site;
+        the hit keeps the year suffix, and both are scraped for the one-title
+        request (the title matcher decides by the year)."""
+        module = _plugin_module("sto")
+        parser = module._SearchSeriesParser(self._BASE)
+        parser.feed(_page("sto", "search-one-piece"))
+        titles = sorted(hit["title"] for hit in parser.results)
+        assert titles == [
+            "LEGO One Piece",
+            "One Piece",
+            "One Piece (2023)",
+            "One Piece Log: Fish-Man Island Saga",
+        ]
+        kept = module._relevant_series(parser.results, "One Piece", limit=3)
+        assert sorted(hit["title"] for hit in kept) == [
+            "One Piece",
+            "One Piece (2023)",
+        ]
+
     def test_series_page_lists_seasons_and_episodes(self) -> None:
         parser = _plugin_module("sto")._SeriesDetailParser(self._BASE)
         parser.feed(_page("sto", "detail-the-last-of-us"))

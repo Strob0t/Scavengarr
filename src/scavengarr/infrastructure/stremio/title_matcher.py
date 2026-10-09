@@ -2,7 +2,11 @@
 
 Pure transformation logic — no I/O, no framework dependencies.
 Compares plugin SearchResult titles against a reference TitleMatchInfo
-to filter out wrong titles (sequels, spin-offs, unrelated results).
+to filter out wrong titles (sequels, spin-offs, unrelated results), and
+decides by identity where a result shows one: an IMDb id in its
+metadata, a year outside the tolerance, or a category against the
+reference's kind (``TitleMatchInfo.animation``). Every verdict names the
+rule that decided it (``TitleScore.reason``).
 
 Uses **rapidfuzz** for fast, robust fuzzy matching (C++ backend).
 """
@@ -10,6 +14,9 @@ Uses **rapidfuzz** for fast, robust fuzzy matching (C++ backend).
 from __future__ import annotations
 
 import re
+from collections import Counter
+from dataclasses import dataclass
+from typing import Literal
 
 import structlog
 from rapidfuzz import fuzz
@@ -32,6 +39,27 @@ _SEQUEL_RE = re.compile(r"\s+(\d{1,2})\s*$")
 # Used to strip punctuation (colons, hyphens, apostrophes, etc.) so that
 # token matching is not broken by e.g. "dune:" vs "dune".
 _PUNCT_RE = re.compile(r"[^\w\s]")
+
+# An IMDb title id: "tt0388629", or the digits alone (a site's API may store
+# the number, which loses the leading zeros)
+_IMDB_RE = re.compile(r"(?:tt)?(\d+)")
+
+# The labels the category rule reads: a plain series and an anime
+_CATEGORY_SERIES = 5000
+_CATEGORY_ANIME = 5070
+
+TitleReason = Literal["score", "year", "imdb", "category"]
+
+
+@dataclass(frozen=True)
+class TitleScore:
+    """A result's score and the rule that decided it: ``imdb`` (the ids
+    agree, 1.2, or differ, 0.0), ``category`` (the result's label against
+    the reference's kind, 0.0), ``year`` (the result's year outside the
+    tolerance, 0.0) or ``score`` (the text rules)."""
+
+    score: float
+    reason: TitleReason
 
 
 def _normalize(text: str) -> str:
@@ -69,7 +97,6 @@ def _score_single_title(
     result_year: int | None,
     year_tolerance: int = 1,
     year_bonus: float = 0.2,
-    year_penalty: float = 0.3,
     sequel_penalty: float = 0.35,
     extra_words_penalty: float = 0.35,
 ) -> float:
@@ -81,7 +108,9 @@ def _score_single_title(
     The subset score loses *extra_words_penalty* when the result adds
     words to the reference: token_set_ratio rates "Dark Matter" 100
     against "Dark", while a result that only drops words ("Dune" for
-    "Dune: Part One") keeps it.
+    "Dune: Part One") keeps it. A result year within the tolerance adds
+    *year_bonus*; one outside it never gets here (``score_title`` drops
+    the result).
     """
     if not norm_ref or not norm_res:
         return 0.0
@@ -108,12 +137,13 @@ def _score_single_title(
         set_score -= extra_words_penalty
     score = max(sort_score, set_score)
 
-    # --- year handling ---
-    if reference_year is not None and result_year is not None:
-        if abs(reference_year - result_year) <= year_tolerance:
-            score += year_bonus
-        else:
-            score -= year_penalty
+    # --- year bonus ---
+    if (
+        reference_year is not None
+        and result_year is not None
+        and abs(reference_year - result_year) <= year_tolerance
+    ):
+        score += year_bonus
 
     # --- sequel detection ---
     # Penalise ANY mismatch: "Iron Man" vs "Iron Man 2",
@@ -161,63 +191,143 @@ def _extract_title_candidates(result: SearchResult) -> list[str]:
     return candidates
 
 
-def _extract_result_year(result: SearchResult) -> int | None:
-    """Extract a year from title, release_name, or guessit parsing."""
-    year = _extract_year(result.title)
-    if year is not None:
-        return year
+def _extract_result_year(
+    result: SearchResult, *, ignore: frozenset[int] = frozenset()
+) -> int | None:
+    """The result's year: from its title, its release name, guessit on
+    either, or ``metadata["year"]`` (an int, or a string of digits), in
+    that order. A year in *ignore* (one the reference title itself carries:
+    "Blade Runner 2049" is the 2017 film) is a title word, not a year."""
+    for text in (result.title, result.release_name):
+        years = [int(y) for y in _YEAR_RE.findall(text or "") if int(y) not in ignore]
+        if years:
+            return years[-1]
 
-    if result.release_name:
-        year = _extract_year(result.release_name)
-        if year is not None:
-            return year
-
-    for src in (result.title, result.release_name):
-        if src:
-            guess_year = guess_release(src).get("year")
-            if guess_year:
+    for text in (result.title, result.release_name):
+        if text:
+            guess_year = guess_release(text).get("year")
+            if guess_year and int(guess_year) not in ignore:
                 return int(guess_year)
 
+    return _metadata_year(result.metadata.get("year"), ignore)
+
+
+def _metadata_year(value: object, ignore: frozenset[int]) -> int | None:
+    """``metadata["year"]`` as a year: an int, or a string of digits, in
+    the years the title regex accepts; anything else counts as none."""
+    if isinstance(value, bool) or not isinstance(value, int | str):
+        return None
+    text = str(value).strip()
+    if not text.isdigit():
+        return None
+    year = int(text)
+    if not 1900 <= year <= 2099 or year in ignore:
+        return None
+    return year
+
+
+def _title_years(reference: TitleMatchInfo) -> frozenset[int]:
+    """The years that are words of the reference's titles."""
+    titles = [reference.title, *reference.alt_titles]
+    return frozenset(int(y) for title in titles for y in _YEAR_RE.findall(title))
+
+
+def _imdb_key(value: object) -> str | None:
+    """``tt`` plus the digits of an IMDb title id, the leading zeros dropped
+    ("tt0388629", "0388629" and 388629 give "tt388629"); ``None`` for
+    anything else."""
+    if isinstance(value, bool) or not isinstance(value, int | str):
+        return None
+    found = _IMDB_RE.fullmatch(str(value).strip().lower())
+    return f"tt{int(found.group(1))}" if found else None
+
+
+def _result_imdb(result: SearchResult) -> str | None:
+    """The IMDb id the result's metadata names (``imdb`` or ``imdb_id``)."""
+    for key in ("imdb", "imdb_id"):
+        found = _imdb_key(result.metadata.get(key))
+        if found is not None:
+            return found
     return None
 
 
-def score_title_match(
+def _wrong_kind(result: SearchResult, animation: bool | None) -> bool:
+    """Whether the result's label contradicts the reference's kind: an anime
+    label (5070) for a reference that is not animation, or a plain series
+    label (5000) with genres of its own for an animation reference (a site
+    that lists genres and did not call the title anime means another
+    series). Nothing is contradicted while the kind is unknown."""
+    if animation is None:
+        return False
+    if not animation:
+        return result.category == _CATEGORY_ANIME
+    return result.category == _CATEGORY_SERIES and bool(result.metadata.get("genres"))
+
+
+def _identity_verdict(
+    result: SearchResult, reference: TitleMatchInfo
+) -> TitleScore | None:
+    """The verdict the result's identity gives before any text is compared,
+    or ``None`` when the text rules decide: the IMDb id alone when both
+    sides name one, else the category against the reference's kind."""
+    wanted = _imdb_key(reference.imdb_id)
+    found = _result_imdb(result)
+    if wanted is not None and found is not None:
+        return TitleScore(1.2 if found == wanted else 0.0, "imdb")
+    if _wrong_kind(result, reference.animation):
+        return TitleScore(0.0, "category")
+    return None
+
+
+def score_title(
     result: SearchResult,
     reference: TitleMatchInfo,
     *,
     year_bonus: float = 0.2,
-    year_penalty: float = 0.3,
     sequel_penalty: float = 0.35,
     extra_words_penalty: float = 0.35,
     year_tolerance_movie: int = 1,
     year_tolerance_series: int = 3,
-) -> float:
-    """Score how well *result* matches *reference* (0.0–~1.2).
+) -> TitleScore:
+    """Score how well *result* matches *reference* (0.0–~1.2), with the
+    rule that decided it.
 
-    Generates multiple title candidates from ``result.title`` and
-    ``result.release_name`` (including ``guessit``-parsed clean titles)
-    and scores each against all reference titles (primary + alt_titles).
-    The best score across all combinations is returned.
+    The identity rules come first: a result that names an IMDb id is kept
+    (1.2) or dropped by the id alone; a label that contradicts the
+    reference's kind drops it; a known year outside the tolerance (by type:
+    1 year for a movie, 3 for a series) drops it. Then the text rules:
+    multiple title candidates from ``result.title`` and
+    ``result.release_name`` (including ``guessit``-parsed clean titles),
+    each scored against all reference titles (primary + alt_titles); the
+    best score across all combinations is returned.
 
     Components per title variant:
 
     - Base: ``max(token_sort_ratio, token_set_ratio)`` via rapidfuzz,
       the set ratio minus *extra_words_penalty* if the result adds words
-    - Year bonus: +*year_bonus* if year matches (tolerance by type)
-    - Year penalty: −*year_penalty* if year present but wrong
+    - Year bonus: +*year_bonus* if the year matches (tolerance by type)
     - Sequel penalty: −*sequel_penalty* if sequel numbers differ
     """
-    candidates = _extract_title_candidates(result)
-    if not candidates:
-        return 0.0
-
-    result_year = _extract_result_year(result)
+    verdict = _identity_verdict(result, reference)
+    if verdict is not None:
+        return verdict
 
     year_tolerance = (
         year_tolerance_series
         if reference.content_type == "series"
         else year_tolerance_movie
     )
+    result_year = _extract_result_year(result, ignore=_title_years(reference))
+    if (
+        reference.year is not None
+        and result_year is not None
+        and abs(reference.year - result_year) > year_tolerance
+    ):
+        return TitleScore(0.0, "year")
+
+    candidates = _extract_title_candidates(result)
+    if not candidates:
+        return TitleScore(0.0, "score")
 
     all_ref_titles = [reference.title] + list(reference.alt_titles)
     best = 0.0
@@ -231,14 +341,35 @@ def score_title_match(
                 result_year=result_year,
                 year_tolerance=year_tolerance,
                 year_bonus=year_bonus,
-                year_penalty=year_penalty,
                 sequel_penalty=sequel_penalty,
                 extra_words_penalty=extra_words_penalty,
             )
             if s > best:
                 best = s
 
-    return best
+    return TitleScore(best, "score")
+
+
+def score_title_match(
+    result: SearchResult,
+    reference: TitleMatchInfo,
+    *,
+    year_bonus: float = 0.2,
+    sequel_penalty: float = 0.35,
+    extra_words_penalty: float = 0.35,
+    year_tolerance_movie: int = 1,
+    year_tolerance_series: int = 3,
+) -> float:
+    """The score of ``score_title`` alone."""
+    return score_title(
+        result,
+        reference,
+        year_bonus=year_bonus,
+        sequel_penalty=sequel_penalty,
+        extra_words_penalty=extra_words_penalty,
+        year_tolerance_movie=year_tolerance_movie,
+        year_tolerance_series=year_tolerance_series,
+    ).score
 
 
 def filter_by_title_match(
@@ -247,7 +378,6 @@ def filter_by_title_match(
     threshold: float = 0.7,
     *,
     year_bonus: float = 0.2,
-    year_penalty: float = 0.3,
     sequel_penalty: float = 0.35,
     extra_words_penalty: float = 0.35,
     year_tolerance_movie: int = 1,
@@ -256,34 +386,36 @@ def filter_by_title_match(
     """Keep only results whose title score meets *threshold*.
 
     If *reference* is ``None`` (title lookup failed), all results pass
-    through unchanged — better to return unfiltered than nothing.
+    through unchanged — better to return unfiltered than nothing. Every
+    drop logs ``title_match_filtered`` with its ``reason``, and the
+    summary counts the drops per reason.
     """
     if reference is None:
         return results
 
     kept: list[SearchResult] = []
-    dropped = 0
+    reasons: Counter[str] = Counter()
 
     for r in results:
-        s = score_title_match(
+        verdict = score_title(
             r,
             reference,
             year_bonus=year_bonus,
-            year_penalty=year_penalty,
             sequel_penalty=sequel_penalty,
             extra_words_penalty=extra_words_penalty,
             year_tolerance_movie=year_tolerance_movie,
             year_tolerance_series=year_tolerance_series,
         )
-        if s >= threshold:
+        if verdict.score >= threshold:
             kept.append(r)
         else:
-            dropped += 1
+            reasons[verdict.reason] += 1
             log.debug(
                 "title_match_filtered",
                 result_title=r.title,
-                score=round(s, 3),
+                score=round(verdict.score, 3),
                 threshold=threshold,
+                reason=verdict.reason,
             )
 
     log.info(
@@ -291,7 +423,8 @@ def filter_by_title_match(
         reference=reference.title,
         total=len(results),
         kept=len(kept),
-        dropped=dropped,
+        dropped=sum(reasons.values()),
+        reasons=dict(reasons),
         threshold=threshold,
     )
     return kept

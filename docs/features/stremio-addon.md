@@ -231,12 +231,15 @@ Title matching prevents false positives when plugin results include sequels, spi
 | Scoring | `max(token_sort_ratio, token_set_ratio) / 100` via `rapidfuzz` on normalised strings (lowercase, Unicode → ASCII, punctuation stripped) |
 | Extra-words penalty | `-title_extra_words_penalty` (0.35) on the `token_set_ratio` when the result adds words to the reference: the set ratio rates "Dark Matter", "Dark Gathering" or "Naruto Shippuden" 1.0 against "Dark" or "Naruto". A result that only drops words ("Dune" for "Dune: Part One") is not penalised; one that adds words passes with a matching year (0.85) and fails without one (0.65) or with a wrong one (0.35). Release tags are no extra words: the guessit candidate carries the clean title |
 | Year bonus | `+title_year_bonus` (0.2) if the result year is within tolerance |
-| Year penalty | 0.3 if a year is present but outside tolerance |
+| Year gate | A known result year outside the tolerance drops the result (reason `year`), whatever the text score; the year comes from the title, the release name, guessit or `metadata["year"]` (an int or a string of digits), and a year the reference title itself carries ("Blade Runner 2049") is a title word |
 | Sequel penalty | `-title_sequel_penalty` (0.35) if the trailing sequel numbers differ (either side) |
 | Threshold | `title_match_threshold` (0.7) minimum score |
 | Year tolerance | Movies ±1 year, series ±3 years |
 | Title candidates | Up to 4 deduplicated candidates: raw title, guessit title of `title`, guessit title of `release_name`, raw `release_name` |
 | Reference titles | Primary (localised) title plus `alt_titles` (TMDB original title when it differs). Original titles are no search queries: a plugin is searched with the titles of its languages only (recall check in `docs/plans/pi-performance.md`) |
+| IMDb id | A result whose metadata names `imdb` or `imdb_id` (`tt` plus digits, the zeros ignored) is kept (1.2) or dropped by the id alone (reason `imdb`), before any text is compared |
+| Category | With the reference's kind known (`animation`: the Cinemeta genres name "Animation"), an anime label (5070) is dropped for a live-action reference and a series label (5000) with genres of its own for an animation reference (reason `category`); a result without genres, or an unknown kind, is decided by the text and year rules |
+| Drop reasons | `title_match_filtered` logs `reason` (`score`, `year`, `imdb`, `category`); `title_match_summary` counts the drops per reason (`reasons`) |
 
 ---
 

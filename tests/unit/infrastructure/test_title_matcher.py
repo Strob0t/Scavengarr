@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+from typing import Any
+
 import pytest
+import structlog
 
 from scavengarr.domain.entities.stremio import TitleMatchInfo
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.stremio.title_matcher import (
+    TitleScore,
     _extract_result_year,
     _extract_title_candidates,
     _extract_year,
@@ -14,6 +19,7 @@ from scavengarr.infrastructure.stremio.title_matcher import (
     _sequel_number,
     _strip_year,
     filter_by_title_match,
+    score_title,
     score_title_match,
 )
 
@@ -22,13 +28,25 @@ from scavengarr.infrastructure.stremio.title_matcher import (
 # ---------------------------------------------------------------------------
 
 
-def _sr(title: str, release_name: str | None = None) -> SearchResult:
+def _sr(
+    title: str,
+    release_name: str | None = None,
+    *,
+    metadata: dict[str, Any] | None = None,
+    category: int = 2000,
+) -> SearchResult:
     """Build a minimal SearchResult for scoring tests."""
     return SearchResult(
         title=title,
         download_link="https://example.com/dl",
         release_name=release_name,
+        metadata=metadata or {},
+        category=category,
     )
+
+
+def _events(logs: Sequence[Mapping[str, Any]], event: str) -> list[Mapping[str, Any]]:
+    return [entry for entry in logs if entry["event"] == event]
 
 
 # ---------------------------------------------------------------------------
@@ -150,11 +168,11 @@ class TestScoreTitleMatch:
         # base high (~0.89) but sequel penalty -0.3 → well below 0.7
         assert score < 0.7
 
-    def test_wrong_year_penalty(self) -> None:
+    def test_wrong_year_drops(self) -> None:
         ref = TitleMatchInfo(title="Iron Man", year=2008)
         score = score_title_match(_sr("Iron Man 2013"), ref)
-        # year penalty -0.3
-        assert score < 0.9
+        # a known year outside the tolerance is another title
+        assert score == 0.0
 
     def test_year_tolerance_plus_one(self) -> None:
         ref = TitleMatchInfo(title="Iron Man", year=2008)
@@ -314,6 +332,43 @@ class TestFilterByTitleMatch:
         assert len(kept) == 1
         assert kept[0].title == "Iron Man"
 
+    def test_drops_log_their_reason(self) -> None:
+        """Every drop names the rule that decided it, and the summary counts
+        the drops per reason."""
+        ref = TitleMatchInfo(
+            title="One Piece",
+            year=1999,
+            content_type="series",
+            imdb_id="tt0388629",
+            animation=True,
+        )
+        results = [
+            _sr("One Piece", category=5070),
+            _sr("One Piece (2023)", category=5000),
+            _sr("One Piece", metadata={"imdb_id": "tt11737520"}),
+            _sr("One Piece", category=5000, metadata={"genres": "Action, Abenteuer"}),
+            _sr("Naruto", category=5070),
+        ]
+
+        with structlog.testing.capture_logs() as logs:
+            kept = filter_by_title_match(results, ref, threshold=0.7)
+
+        assert kept == results[:1]
+        assert [e["reason"] for e in _events(logs, "title_match_filtered")] == [
+            "year",
+            "imdb",
+            "category",
+            "score",
+        ]
+        [summary] = _events(logs, "title_match_summary")
+        assert summary["dropped"] == 4
+        assert summary["reasons"] == {
+            "year": 1,
+            "imdb": 1,
+            "category": 1,
+            "score": 1,
+        }
+
     def test_alt_titles_keeps_cross_language_results(self) -> None:
         """German primary + English alt: both language results kept."""
         ref = TitleMatchInfo(
@@ -390,6 +445,33 @@ class TestExtractResultYear:
     def test_no_year(self) -> None:
         sr = _sr("Iron Man")
         assert _extract_result_year(sr) is None
+
+    def test_year_from_metadata_int(self) -> None:
+        sr = _sr("Iron Man", metadata={"year": 2008})
+        assert _extract_result_year(sr) == 2008
+
+    def test_year_from_metadata_string(self) -> None:
+        sr = _sr("Iron Man", metadata={"year": "2008"})
+        assert _extract_result_year(sr) == 2008
+
+    @pytest.mark.parametrize("value", ["n/a", "", 0, "20", None, 2008.0])
+    def test_metadata_garbage_is_no_year(self, value: object) -> None:
+        sr = _sr("Iron Man", metadata={"year": value})
+        assert _extract_result_year(sr) is None
+
+    def test_the_title_beats_the_metadata(self) -> None:
+        sr = _sr("Iron Man (2008)", metadata={"year": 2013})
+        assert _extract_result_year(sr) == 2008
+
+    def test_a_year_of_the_reference_title_is_no_release_year(self) -> None:
+        """ "Blade Runner 2049" is the 2017 film: its title's year is a word."""
+        ignore = frozenset({2049})
+        assert _extract_result_year(_sr("Blade Runner 2049"), ignore=ignore) is None
+        sr = _sr(
+            "Blade Runner 2049",
+            release_name="Blade.Runner.2049.2017.German.DL.1080p.BluRay.x264",
+        )
+        assert _extract_result_year(sr, ignore=ignore) == 2017
 
 
 # ---------------------------------------------------------------------------
@@ -557,12 +639,6 @@ class TestConfigurablePenalties:
         # base 1.0 + bonus 0.5 = 1.5
         assert score == pytest.approx(1.5)
 
-    def test_custom_year_penalty(self) -> None:
-        ref = TitleMatchInfo(title="Iron Man", year=2008)
-        score = score_title_match(_sr("Iron Man 2015"), ref, year_penalty=0.1)
-        # base 1.0 - penalty 0.1 = 0.9
-        assert score == pytest.approx(0.9)
-
     def test_custom_sequel_penalty(self) -> None:
         ref = TitleMatchInfo(title="Iron Man")
         score_default = score_title_match(_sr("Iron Man 2"), ref)
@@ -578,6 +654,155 @@ class TestConfigurablePenalties:
             _sr("Iron Man 2011"), ref, year_tolerance_movie=5
         )
         assert score_lenient > score_strict
+
+
+# ---------------------------------------------------------------------------
+# score_title — the identity rules: year, IMDb id, category
+# ---------------------------------------------------------------------------
+
+_ANIME = TitleMatchInfo(
+    title="One Piece",
+    year=1999,
+    content_type="series",
+    imdb_id="tt0388629",
+    animation=True,
+)
+_LIVE_ACTION = TitleMatchInfo(
+    title="One Piece",
+    year=2023,
+    content_type="series",
+    imdb_id="tt11737520",
+    animation=False,
+)
+
+
+class TestYearDecides:
+    """A known year outside the tolerance is another title, not a weaker
+    match: the live action's exact title scored the threshold with the
+    old penalty and was kept."""
+
+    def test_the_live_action_release_against_the_anime(self) -> None:
+        sr = _sr(
+            "One Piece",
+            release_name="One.Piece.2023.S01E01.GERMAN.DL.720p.WEB.h264-SAUERKRAUT",
+        )
+
+        assert score_title(sr, _ANIME) == TitleScore(0.0, "year")
+
+    def test_the_anime_page_against_the_live_action(self) -> None:
+        verdict = score_title(_sr("One Piece (1999)"), _LIVE_ACTION)
+
+        assert verdict == TitleScore(0.0, "year")
+
+    def test_the_year_in_the_metadata(self) -> None:
+        dropped = score_title(_sr("One Piece", metadata={"year": "2023"}), _ANIME)
+        kept = score_title(_sr("One Piece", metadata={"year": 1999}), _ANIME)
+
+        assert dropped == TitleScore(0.0, "year")
+        assert kept.reason == "score"
+        assert kept.score == pytest.approx(1.2)
+
+    def test_a_remake_of_a_film(self) -> None:
+        ref = TitleMatchInfo(title="Dune", year=2021, content_type="movie")
+
+        assert score_title(_sr("Dune (1984)"), ref) == TitleScore(0.0, "year")
+
+    def test_within_the_tolerance_the_bonus_stays(self) -> None:
+        verdict = score_title(_sr("One Piece (2001)"), _ANIME)
+
+        assert verdict.reason == "score"
+        assert verdict.score == pytest.approx(1.2)
+
+    def test_no_year_on_either_side(self) -> None:
+        ref = TitleMatchInfo(title="One Piece", content_type="series")
+
+        assert score_title(_sr("One Piece"), ref) == TitleScore(1.0, "score")
+
+    def test_the_reference_titles_own_year_is_a_word(self) -> None:
+        ref = TitleMatchInfo(title="Blade Runner 2049", year=2017, content_type="movie")
+
+        assert score_title(_sr("Blade Runner 2049"), ref) == TitleScore(1.0, "score")
+        assert score_title(_sr("Blade Runner 2049 (2017)"), ref).score == pytest.approx(
+            1.2
+        )
+        assert score_title(_sr("Blade Runner 2049 (1982)"), ref) == TitleScore(
+            0.0, "year"
+        )
+
+
+class TestImdbIdDecides:
+    """A result that names an IMDb id is kept or dropped by the id alone."""
+
+    def test_the_same_id_keeps_a_strange_title(self) -> None:
+        sr = _sr("Wan Pisu", metadata={"imdb": "tt0388629"})
+
+        assert score_title(sr, _ANIME) == TitleScore(1.2, "imdb")
+
+    def test_another_id_drops_the_exact_title(self) -> None:
+        sr = _sr("One Piece", metadata={"imdb_id": "tt11737520"})
+
+        assert score_title(sr, _ANIME) == TitleScore(0.0, "imdb")
+
+    @pytest.mark.parametrize("value", ["tt0388629", " TT0388629 ", "0388629", 388629])
+    def test_the_id_is_normalised(self, value: object) -> None:
+        sr = _sr("One Piece", metadata={"imdb": value})
+
+        assert score_title(sr, _ANIME) == TitleScore(1.2, "imdb")
+
+    @pytest.mark.parametrize("value", ["n/a", "", None, "tt", "nm0000001"])
+    def test_a_malformed_id_counts_as_none(self, value: object) -> None:
+        sr = _sr("One Piece", metadata={"imdb_id": value})
+
+        assert score_title(sr, _ANIME) == TitleScore(1.0, "score")
+
+    def test_without_a_reference_id_the_text_rules_decide(self) -> None:
+        ref = TitleMatchInfo(title="One Piece", content_type="series")
+        sr = _sr("One Piece", metadata={"imdb": "tt11737520"})
+
+        assert score_title(sr, ref) == TitleScore(1.0, "score")
+
+    def test_the_id_beats_the_category_and_the_year(self) -> None:
+        sr = _sr("One Piece (2023)", category=5070, metadata={"imdb": "tt0388629"})
+
+        assert score_title(sr, _ANIME) == TitleScore(1.2, "imdb")
+
+
+class TestCategoryDecides:
+    """The result's label against the reference's kind."""
+
+    def test_the_anime_site_answers_the_live_action(self) -> None:
+        assert score_title(_sr("One Piece", category=5070), _LIVE_ACTION) == TitleScore(
+            0.0, "category"
+        )
+
+    def test_a_series_page_with_genres_for_the_anime(self) -> None:
+        sr = _sr("One Piece", category=5000, metadata={"genres": "Action, Abenteuer"})
+
+        assert score_title(sr, _ANIME) == TitleScore(0.0, "category")
+
+    def test_a_series_page_without_genres_says_nothing(self) -> None:
+        sr = _sr("One Piece", category=5000)
+
+        assert score_title(sr, _ANIME) == TitleScore(1.0, "score")
+
+    def test_an_unknown_kind_compares_no_category(self) -> None:
+        ref = TitleMatchInfo(title="One Piece", content_type="series")
+
+        assert score_title(_sr("One Piece", category=5070), ref) == TitleScore(
+            1.0, "score"
+        )
+
+    def test_the_fitting_label_passes(self) -> None:
+        anime = _sr("One Piece", category=5070)
+        series = _sr("One Piece", category=5000, metadata={"genres": "Abenteuer"})
+
+        assert score_title(anime, _ANIME) == TitleScore(1.0, "score")
+        assert score_title(series, _LIVE_ACTION) == TitleScore(1.0, "score")
+
+    def test_a_movie_label_is_not_compared(self) -> None:
+        assert score_title(_sr("One Piece", category=2000), _LIVE_ACTION) == TitleScore(
+            1.0, "score"
+        )
 
 
 # ---------------------------------------------------------------------------

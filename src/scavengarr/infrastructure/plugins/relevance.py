@@ -19,6 +19,9 @@ T = TypeVar("T")
 
 _WORD_RE = re.compile(r"[a-z0-9]+")
 
+# A trailing year names a title's edition ("One Piece (2023)"), no word of it
+_YEAR_SUFFIX_RE = re.compile(r"\s*\((?:19|20)\d{2}\)\s*$")
+
 # Hits scraped when none contains every query word: titles in another
 # language ("Money Heist" is "Haus des Geldes" on German sites)
 _FALLBACK_HITS = 3
@@ -53,14 +56,16 @@ def relevant_hits(
     hits when none matches, keeps every hit for an empty query, and returns
     at most *limit* hits (e.g. ``SINGLE_TITLE_HITS`` for a season request).
     With a *limit* (a request for one title), an exact hit drops the longer
-    ones: "Dark Matter" is another series than "Dark".
+    ones: "Dark Matter" is another series than "Dark". A trailing ``(YYYY)``
+    is no word of a title: "One Piece (2023)" is as exact as "One Piece",
+    and the title matcher decides by the year.
     """
     wanted = query_words(query)
     if not wanted:
         return hits[:limit]
     scored: list[tuple[int, T]] = []
     for hit in hits:
-        words = query_words(title(hit))
+        words = query_words(_YEAR_SUFFIX_RE.sub("", title(hit)))
         if wanted <= words:
             scored.append((len(words - wanted), hit))
     scored.sort(key=lambda pair: pair[0])

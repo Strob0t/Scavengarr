@@ -79,6 +79,25 @@ class TestRelevantHits:
             "Dark Matter",
         ]
 
+    def test_a_year_suffix_is_no_title_word(self) -> None:
+        """ "One Piece (2023)" next to "One Piece": both are exact hits for the
+        one-title request, and the title matcher decides by the year."""
+        hits = [
+            {"title": "One Piece (2023)"},
+            {"title": "LEGO One Piece"},
+            {"title": "One Piece"},
+        ]
+        result = relevant_hits(hits, "One Piece", hit_title, limit=SINGLE_TITLE_HITS)
+        assert _titles(result) == ["One Piece (2023)", "One Piece"]
+
+    def test_a_year_inside_the_title_stays_a_word(self) -> None:
+        hits = [{"title": "Blade Runner 2049"}, {"title": "Blade Runner"}]
+        result = relevant_hits(hits, "Blade Runner", hit_title, limit=SINGLE_TITLE_HITS)
+        assert _titles(result) == ["Blade Runner"]
+        assert _titles(relevant_hits(hits, "Blade Runner 2049", hit_title)) == [
+            "Blade Runner 2049"
+        ]
+
     def test_hit_title_of_parsed_hits(self) -> None:
         hits = [{"title": "Iron Man", "url": "u1"}, {"url": "u2"}]
         assert relevant_hits(hits, "iron man", hit_title) == hits[:1]
