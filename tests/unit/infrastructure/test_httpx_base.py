@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+import respx
+import structlog
 
 from scavengarr.domain.entities.stremio import EpisodeRef
 from scavengarr.domain.plugins.base import (
@@ -403,6 +405,8 @@ class TestSafeFetch:
         plugin = _TestPlugin()
         resp = MagicMock(spec=httpx.Response, history=[])
         resp.status_code = 403
+        resp.text = "<html>Forbidden</html>"
+        resp.headers = httpx.Headers()
         resp.raise_for_status = MagicMock(
             side_effect=httpx.HTTPStatusError(
                 "forbidden", request=MagicMock(), response=resp
@@ -427,6 +431,73 @@ class TestSafeFetch:
         result = await plugin._safe_fetch("https://example.com/api")
 
         assert result is None
+
+
+class TestSafeFetchChallenge:
+    """A challenge answer to ``_safe_fetch`` is told apart from an error
+    page: logged as ``<plugin>_challenge`` with the class and the host, the
+    host goes into the browser memo (so ``_fetch_text`` of the same plugin
+    goes straight to the browser), and the caller gets ``None``. The
+    browser fallback itself stays with ``_fetch_text``."""
+
+    _CHALLENGE = "<html><title>Just a moment...</title>challenge-platform</html>"
+
+    @respx.mock
+    async def test_a_challenge_is_logged_and_remembered(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(HttpxPluginBase, "_cf_blocked_until", {})
+        respx.get("https://example.com/api").respond(
+            403, headers={"cf-mitigated": "challenge"}, html=self._CHALLENGE
+        )
+        plugin = _TestPlugin()
+        async with httpx.AsyncClient() as client:
+            plugin._client = client
+            with structlog.testing.capture_logs() as logs:
+                result = await plugin._safe_fetch("https://example.com/api")
+
+        assert result is None
+        events = {log["event"]: log for log in logs}
+        assert "test-plugin_challenge" in events
+        assert events["test-plugin_challenge"]["challenge"] == "cloudflare_page"
+        assert events["test-plugin_challenge"]["host"] == "example.com"
+        assert "test-plugin_http_error" not in events
+        assert "example.com" in HttpxPluginBase._cf_blocked_until
+
+    @respx.mock
+    async def test_the_memo_sends_fetch_text_to_the_browser(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(HttpxPluginBase, "_cf_blocked_until", {})
+        fetcher = AsyncMock()
+        fetcher.fetch_text = AsyncMock(return_value="<html>solved</html>")
+        monkeypatch.setattr(HttpxPluginBase, "_browser_fetcher", fetcher)
+        respx.get("https://example.com/api").respond(503, html=self._CHALLENGE)
+        plugin = _TestPlugin()
+        async with httpx.AsyncClient() as client:
+            plugin._client = client
+            assert await plugin._safe_fetch("https://example.com/api") is None
+            html = await plugin._fetch_text("https://example.com/page")
+
+        assert html == "<html>solved</html>"
+        fetcher.fetch_text.assert_awaited_once()
+
+    @respx.mock
+    async def test_an_error_page_is_an_http_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(HttpxPluginBase, "_cf_blocked_until", {})
+        respx.get("https://example.com/api").respond(403, html="<html>Forbidden</html>")
+        plugin = _TestPlugin()
+        async with httpx.AsyncClient() as client:
+            plugin._client = client
+            with structlog.testing.capture_logs() as logs:
+                result = await plugin._safe_fetch("https://example.com/api")
+
+        assert result is None
+        events = [log["event"] for log in logs]
+        assert events == ["test-plugin_http_error"]
+        assert HttpxPluginBase._cf_blocked_until == {}
 
 
 # ---------------------------------------------------------------------------

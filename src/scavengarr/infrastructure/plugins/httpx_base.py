@@ -344,7 +344,12 @@ class HttpxPluginBase:
         Sends the plugin's timeout and User-Agent like ``_fetch_text()``
         (``_request_kwargs()``: the browser's User-Agent to a site whose
         session httpx took over); the caller's *headers* go on top.
-        Returns ``None`` on failure instead of raising.
+        Returns ``None`` on failure instead of raising. A challenge answer
+        is told apart from an error page (``detect_challenge``, as in
+        ``_fetch_text()``): logged as ``<plugin>_challenge``, the host put
+        into the browser memo, so the plugin's ``_fetch_text()`` calls go
+        to the browser; the fallback itself stays with ``_fetch_text()``,
+        a plugin behind a challenge fetches its pages with it.
         """
         client = await self._ensure_client()
 
@@ -368,12 +373,7 @@ class HttpxPluginBase:
                 context=context,
             )
         except httpx.HTTPStatusError as exc:
-            self._log.warning(
-                f"{self.name}_http_error",
-                url=url,
-                status=exc.response.status_code,
-                context=context,
-            )
+            self._log_http_error(url, exc.response, context)
         except Exception as exc:  # noqa: BLE001
             if isinstance(exc, httpx.TransportError):
                 self._undo_site_move(url)
@@ -384,6 +384,29 @@ class HttpxPluginBase:
                 context=context,
             )
         return None
+
+    def _log_http_error(self, url: str, resp: httpx.Response, context: str) -> None:
+        """Log an error answer to ``_safe_fetch()``: a challenge as
+        ``<plugin>_challenge`` with the host put into the browser memo, else
+        ``<plugin>_http_error``."""
+        challenge = detect_challenge(resp.status_code, resp.text, resp.headers)
+        if challenge is not None:
+            self._mark_cf_blocked(url)
+            self._log.warning(
+                f"{self.name}_challenge",
+                url=url,
+                host=urlparse(url).hostname or "",
+                status=resp.status_code,
+                challenge=challenge,
+                context=context,
+            )
+            return
+        self._log.warning(
+            f"{self.name}_http_error",
+            url=url,
+            status=resp.status_code,
+            context=context,
+        )
 
     async def _fetch_text(
         self,
