@@ -10,9 +10,13 @@ request once (the first answer: wall time, streams and the ``X-Cache`` and
 ``X-Search-Complete`` headers when the route sends them), again right after
 it (the cached answer), then the play check of the first answer's streams
 (``stremio_playcheck.py``'s check per stream, from the machine the script
-runs on). Prints the round table of
-``docs/plans/stremio-latency.md``: one row per id and a summary row with
-medians and totals; ``--out`` appends it to a Markdown file.
+runs on). Under each title's line it prints the failing streams as
+``hoster: verdict`` (the hoster from the stream's description, never a URL;
+the verdict's first 60 characters) and the number of Range requests the
+check saw answered with 200 instead of 206. Prints the round table of
+``docs/plans/stremio-latency.md``: one row per id (its ``Findings`` column
+names the failing hosters and that count) and a summary row with medians
+and totals; ``--out`` appends it to a Markdown file.
 
 ``--portainer`` adds the CPU seconds the container's Python and Chromium
 processes used during the round (``stremio_profile.py``'s reading;
@@ -35,6 +39,7 @@ from typing import Any
 
 import httpx
 from portainer import Portainer, credentials
+from stremio_measure import _source
 from stremio_playcheck import check_stream
 from stremio_profile import cpu_seconds
 
@@ -60,6 +65,28 @@ class Row:
     cached_s: float
     cached_streams: int
     playable: int | None  # None without the play check
+    findings: tuple[str, ...] = ()  # the failing streams, "hoster: verdict"
+    full_bodies: int = 0  # Range requests answered 200 (the whole file)
+
+
+# Of a finding's verdict; the hoster's name comes first
+_VERDICT_CHARS = 60
+_FULL_BODY = "200 instead of 206"
+
+
+def _hoster(stream: dict[str, Any]) -> str:
+    """The hoster's name from the stream's description (``HOSTER · plugin``
+    is its last line); never the URL."""
+    return _source(stream).split(" · ", 1)[0]
+
+
+def _findings(row: Row) -> str:
+    """The Findings cell: the failing hosters, then the 200 count."""
+    hosters = list(dict.fromkeys(f.split(":", 1)[0] for f in row.findings))
+    parts = [", ".join(hosters)] if hosters else []
+    if row.full_bodies:
+        parts.append(f"{row.full_bodies}× {_FULL_BODY}")
+    return "; ".join(parts) or "–"
 
 
 def read_ids(path: Path) -> list[tuple[str, str]]:
@@ -103,9 +130,17 @@ async def measure(
     first_s, streams, cache, complete = await _request(client, base, sid)
     cached_s, cached, _, _ = await _request(client, base, sid)
     playable = None
+    findings: list[str] = []
+    full_bodies = 0
     if playcheck:
         verdicts = [await check_stream(client, stream) for stream in streams]
         playable = sum(v.startswith("OK") for v in verdicts)
+        findings = [
+            f"{_hoster(stream)}: {verdict[:_VERDICT_CHARS]}"
+            for stream, verdict in zip(streams, verdicts, strict=True)
+            if not verdict.startswith("OK")
+        ]
+        full_bodies = sum(_FULL_BODY in v for v in verdicts)
     return Row(
         sid=sid,
         title=title,
@@ -116,6 +151,8 @@ async def measure(
         cached_s=cached_s,
         cached_streams=len(cached),
         playable=playable,
+        findings=tuple(findings),
+        full_bodies=full_bodies,
     )
 
 
@@ -127,15 +164,15 @@ def render(rows: list[Row], cpu: dict[str, float] | None = None) -> str:
     """The round table: one row per title, a summary row, titles without stream."""
     lines = [
         "| Title | First answer | Streams | X-Cache | Complete "
-        "| Cached answer | Streams | Playable |",
-        "|---|---|---|---|---|---|---|---|",
+        "| Cached answer | Streams | Playable | Findings |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for r in rows:
         lines.append(
             f"| {r.title} (`{r.sid}`) | {r.first_s:.1f} s | {r.first_streams} "
             f"| {r.cache} | {r.complete} | {r.cached_s:.2f} s "
             f"| {r.cached_streams} "
-            f"| {_playable(r.playable, r.first_streams)} |"
+            f"| {_playable(r.playable, r.first_streams)} | {_findings(r)} |"
         )
     checked = [r for r in rows if r.playable is not None]
     playable = (
@@ -156,7 +193,7 @@ def render(rows: list[Row], cpu: dict[str, float] | None = None) -> str:
         f"| {f'{hits} HIT' if any(r.cache != '–' for r in rows) else '–'} "
         f"| {f'{complete} of {len(sent)} complete' if sent else '–'} "
         f"| {statistics.median(r.cached_s for r in rows):.2f} s "
-        f"| {sum(r.cached_streams for r in rows)} | {playable} |"
+        f"| {sum(r.cached_streams for r in rows)} | {playable} | – |"
     )
     lines.append("")
     lines.append(
@@ -193,6 +230,10 @@ async def run(args: argparse.Namespace) -> str:
                 f"cached {row.cached_s:.2f} s, {row.cached_streams} streams; "
                 f"playable {_playable(row.playable, row.first_streams)}"
             )
+            for finding in row.findings:
+                print(f"   {finding}")
+            if row.full_bodies:
+                print(f"   {row.full_bodies}× {_FULL_BODY}")
             rows.append(row)
     cpu = None
     if container and before:

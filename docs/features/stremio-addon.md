@@ -96,7 +96,7 @@ GET /api/v1/stremio/stream/{content_type}/{stream_id}.json
 - Movie: `stream_id` = `tt1234567`, `tmdb:12345` or `kitsu:11614`
 - Series: `stream_id` = `tt1234567:1:5` or `tmdb:12345:1:5` (season 1, episode 5), `kitsu:41982:3` (episode 3 as Kitsu counts, no season; [Anime Ids](#anime-ids))
 - Response: `{"streams": [StremioStream, ...]}`
-- Response headers: `X-Cache` (`MISS` for a fresh search, `HIT` for a cache entry, `STALE` for a stale entry refreshed in the background, `JOINED` for a shared wait for the title's running search) and `X-Search-Complete` (`true` when no plugin is missing from the answer's entry and no search runs for it, else `false`: a retry a minute later finds more). `scripts/stremio_round.py` records both.
+- Response headers: `X-Cache` (`MISS` for a fresh search, `HIT` for a cache entry, `STALE` for a stale entry refreshed in the background, `JOINED` for a shared wait for the title's running search) and `X-Search-Complete` (`true` when no plugin is missing from the answer's entry and no search runs for it, else `false`: a retry a minute later finds more). `scripts/stremio_round.py` records both, and with play checks it prints under each title the failing streams as `hoster: verdict` (the hoster from the stream's description, never a URL; the verdict's first 60 characters) and the number of Range requests answered with 200 instead of 206; the round table's `Findings` column names those hosters and that count, so a round names the hosters to look at.
 
 Each stream contains:
 

@@ -94,6 +94,62 @@ async def test_measure_requests_twice_and_checks_first_streams(
     assert (row.cache, row.complete) == ("–", "–")
 
 
+def _stream(url: str, hoster: str) -> dict[str, str]:
+    return {"url": url, "description": f"Title 1080p\nGerman\n{hoster} · site"}
+
+
+@respx.mock
+async def test_measure_collects_the_failing_verdicts_and_the_200_findings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failing stream is a finding ``hoster: verdict`` (the verdict cut to
+    60 characters, the hoster from the description, never the URL); a Range
+    request answered 200 counts even on a playable stream."""
+    streams = [
+        _stream("https://cdn.a/v.mp4", "VOE"),
+        _stream("https://cdn.b/v.mp4", "DOOD"),
+        _stream("https://cdn.c/v.m3u8", "FSST"),
+    ]
+    respx.get(f"{_BASE}/api/v1/stremio/stream/movie/tt1.json").mock(
+        return_value=httpx.Response(200, json={"streams": streams})
+    )
+    verdicts = {
+        "https://cdn.a/v.mp4": "OK mp4 3.00 GB, head 200 instead of 206, seek 206",
+        "https://cdn.b/v.mp4": "FAIL html b'<html><body>403</body></html>'",
+        "https://cdn.c/v.m3u8": "FAIL hls 3 segments: " + "502, " * 20,
+    }
+
+    async def fake_check(client: httpx.AsyncClient, stream: dict) -> str:
+        return verdicts[stream["url"]]
+
+    monkeypatch.setattr(_mod, "check_stream", fake_check)
+    async with httpx.AsyncClient() as client:
+        row = await _mod.measure(client, _BASE, "movie/tt1", "One", playcheck=True)
+
+    assert row.playable == 1
+    assert row.findings == (
+        "DOOD: FAIL html b'<html><body>403</body></html>'",
+        "FSST: " + ("FAIL hls 3 segments: " + "502, " * 20)[:60],
+    )
+    assert row.full_bodies == 1
+    assert all("https://" not in f for f in row.findings)
+
+
+def test_findings_cell_names_the_hosters_and_the_200_count() -> None:
+    assert _mod._findings(_row()) == "–"
+    assert _mod._findings(_row(full_bodies=2)) == "2× 200 instead of 206"
+    assert (
+        _mod._findings(
+            _row(findings=("DOOD: FAIL html", "DOOD: FAIL html", "FSST: FAIL 502"))
+        )
+        == "DOOD, FSST"
+    )
+    assert (
+        _mod._findings(_row(findings=("DOOD: FAIL html",), full_bodies=1))
+        == "DOOD; 1× 200 instead of 206"
+    )
+
+
 @respx.mock
 async def test_measure_without_playcheck_reads_x_cache() -> None:
     respx.get(f"{_BASE}/api/v1/stremio/stream/movie/tt1.json").mock(
@@ -135,17 +191,24 @@ def test_render_has_a_row_per_title_and_a_summary() -> None:
             playable=5,
         ),
     ]
+    rows[0] = _row(findings=("DOOD: FAIL html",), full_bodies=1)
     table = _mod.render(rows, {"python": 12.5, "chrome": 40.0})
     lines = table.splitlines()
-    assert lines[0].startswith("| Title | First answer |")
-    assert lines[0].startswith(
-        "| Title | First answer | Streams | X-Cache | Complete |"
+    assert lines[0] == (
+        "| Title | First answer | Streams | X-Cache | Complete "
+        "| Cached answer | Streams | Playable | Findings |"
     )
-    assert "| One (`movie/tt1`) | 4.0 s | 3 | – | – | 0.10 s | 3 | 2 of 3 |" in lines
     assert (
-        "| **Median / total** (3 titles) | 6.0 s | 8 | – | – | 0.20 s | 9 | 7 of 8 |"
-        in lines
+        "| One (`movie/tt1`) | 4.0 s | 3 | – | – | 0.10 s | 3 | 2 of 3 "
+        "| DOOD; 1× 200 instead of 206 |"
+    ) in lines
+    assert (
+        "| Three (`movie/tt3`) | 6.0 s | 5 | – | – | 0.20 s | 5 | 5 of 5 | – |" in lines
     )
+    assert (
+        "| **Median / total** (3 titles) | 6.0 s | 8 | – | – | 0.20 s | 9 "
+        "| 7 of 8 | – |"
+    ) in lines
     assert "1 of 3 (first answer), 0 of 3 (cached answer)" in table
     assert "max first answer 10.0 s" in table
     assert "Python 12.5 s, Chromium 40.0 s" in table
@@ -158,9 +221,43 @@ def test_render_without_playcheck_or_cpu() -> None:
             _row(playable=None, cache="MISS", complete="false"),
         ]
     )
-    assert "| 4.0 s | 3 | HIT | true | 0.10 s | 3 | – |" in table
-    assert "| 4.0 s | 6 | 1 HIT | 1 of 2 complete | 0.10 s | 6 | – |" in table
+    assert "| 4.0 s | 3 | HIT | true | 0.10 s | 3 | – | – |" in table
+    assert "| 4.0 s | 6 | 1 HIT | 1 of 2 complete | 0.10 s | 6 | – | – |" in table
     assert "CPU" not in table
+
+
+@respx.mock
+def test_main_prints_the_findings_under_the_title(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    respx.get(f"{_BASE}/api/v1/stremio/stream/movie/tt1.json").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "streams": [
+                    _stream("https://cdn.a/v.mp4", "VOE"),
+                    _stream("https://cdn.b/v.mp4", "DOOD"),
+                ]
+            },
+        )
+    )
+
+    async def fake_check(client: httpx.AsyncClient, stream: dict) -> str:
+        if stream["url"].startswith("https://cdn.a/"):
+            return "OK mp4 1.00 GB, head 200 instead of 206, seek 206"
+        return "FAIL html b'<html>'"
+
+    monkeypatch.setattr(_mod, "check_stream", fake_check)
+    ids = tmp_path / "ids.txt"
+    ids.write_text("movie/tt1  # One\n")
+
+    _mod.main(["--base", _BASE, "--ids-file", str(ids)])
+
+    out = capsys.readouterr().out.splitlines()
+    assert out[0].startswith("movie/tt1: first ")
+    assert out[0].endswith("playable 1 of 2")
+    assert out[1:3] == ["   DOOD: FAIL html b'<html>'", "   1× 200 instead of 206"]
+    assert "https://" not in "\n".join(out[:3])
 
 
 @respx.mock
