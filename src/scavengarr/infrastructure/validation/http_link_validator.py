@@ -11,10 +11,15 @@ from urllib.parse import urlparse
 import structlog
 from httpx import ConnectError, ConnectTimeout, HTTPError, TimeoutException
 
+from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
+
 if TYPE_CHECKING:
     from httpx import AsyncClient
 
 log = structlog.get_logger(__name__)
+# A browser's User-Agent: hosters behind Cloudflare answer the shared
+# client's bot UA with a challenge, which would mark a live link dead
+_HEADERS = {"User-Agent": DEFAULT_USER_AGENT}
 
 # Cache TTLs for validation results
 _CACHE_TTL_VALID = 21600  # 6 hours for valid links
@@ -166,6 +171,7 @@ class HttpLinkValidator:
                 url,
                 timeout=self.timeout,
                 follow_redirects=True,
+                headers=_HEADERS,
             )
             is_valid = response.status_code < 400
 
@@ -202,6 +208,7 @@ class HttpLinkValidator:
                 url,
                 timeout=self.timeout,
                 follow_redirects=True,
+                headers=_HEADERS,
             ) as response:
                 is_valid = response.status_code < 400
 

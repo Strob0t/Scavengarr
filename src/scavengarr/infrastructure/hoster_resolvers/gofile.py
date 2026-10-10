@@ -29,6 +29,7 @@ import httpx
 import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
+from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 
 log = structlog.get_logger(__name__)
 
@@ -109,6 +110,7 @@ class GoFileResolver:
                 f"{_API_BASE}/accounts",
                 json={},
                 headers={
+                    "User-Agent": DEFAULT_USER_AGENT,
                     "Origin": "https://gofile.io",
                     "Referer": "https://gofile.io/",
                 },
@@ -151,6 +153,7 @@ class GoFileResolver:
                 resp = await self._http.get(
                     f"{_API_BASE}/contents/{content_id}",
                     headers={
+                        "User-Agent": DEFAULT_USER_AGENT,
                         "Authorization": f"Bearer {token}",
                         "Origin": "https://gofile.io",
                         "Referer": "https://gofile.io/",

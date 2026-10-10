@@ -15,6 +15,7 @@ from scavengarr.domain.plugins.base import (
     PluginUnreachableError,
     SearchResult,
 )
+from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -143,6 +144,21 @@ def _head_response(
 
 
 class TestVerifyDomain:
+    @pytest.mark.asyncio
+    async def test_the_check_sends_the_browser_user_agent(self) -> None:
+        """A site behind Cloudflare answers the bot User-Agent of the shared
+        client with a challenge or a block; the check sends what a browser
+        sends, like the plugin's own requests."""
+        plugin = _TestPlugin()
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.head = AsyncMock(return_value=_head_response("example.com"))
+        plugin._client = mock_client
+
+        await plugin._verify_domain()
+
+        headers = mock_client.head.await_args.kwargs["headers"]
+        assert headers["User-Agent"] == DEFAULT_USER_AGENT
+
     @pytest.mark.asyncio
     async def test_first_domain_reachable(self) -> None:
         plugin = _TestPlugin()

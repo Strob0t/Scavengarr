@@ -26,6 +26,7 @@ from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
 from scavengarr.infrastructure.browser.cloudflare import is_cloudflare_challenge
 from scavengarr.infrastructure.hoster_resolvers._browser import capture_stream
 from scavengarr.infrastructure.hoster_resolvers._domain import extract_domain
+from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 
 if TYPE_CHECKING:
     from scavengarr.infrastructure.browser.stealth_pool import StealthPool
@@ -99,11 +100,7 @@ class DoodStreamResolver:
                 embed_url,
                 follow_redirects=True,
                 timeout=15,
-                headers={
-                    "User-Agent": (
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                    ),
-                },
+                headers={"User-Agent": DEFAULT_USER_AGENT},
             )
             if is_cloudflare_challenge(resp.status_code, resp.text):
                 log.info("doodstream_cloudflare_browser_fallback", url=embed_url)

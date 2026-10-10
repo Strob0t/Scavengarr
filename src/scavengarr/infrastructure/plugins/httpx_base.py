@@ -244,7 +244,13 @@ class HttpxPluginBase:
         for domain in self._domains:
             url = f"https://{domain}/"
             try:
-                resp = await client.head(url, timeout=DEFAULT_DOMAIN_CHECK_TIMEOUT)
+                # The browser's User-Agent, as the plugin's requests send it: a
+                # site behind Cloudflare blocks the shared client's bot UA
+                resp = await client.head(
+                    url,
+                    timeout=DEFAULT_DOMAIN_CHECK_TIMEOUT,
+                    headers={"User-Agent": self._user_agent},
+                )
             except Exception:  # noqa: BLE001
                 self._log.debug(f"{self.name}_domain_check_failed", domain=domain)
                 continue

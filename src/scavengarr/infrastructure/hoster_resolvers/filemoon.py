@@ -26,13 +26,13 @@ from scavengarr.infrastructure.hoster_resolvers._video_extract import (
     extract_hls_from_unpacked,
     unpack_p_a_c_k,
 )
+from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 
 if TYPE_CHECKING:
     from scavengarr.infrastructure.browser.stealth_pool import StealthPool
 
 log = structlog.get_logger(__name__)
 
-_BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
 # Mirror domains (JD2 FilemoonSxCrawler.java): filemoon.*, the rotating Byse
 # player domains and a few odd aliases
@@ -110,7 +110,7 @@ class FilemoonResolver:
                 embed_url,
                 follow_redirects=True,
                 timeout=15,
-                headers={"User-Agent": _BROWSER_UA},
+                headers={"User-Agent": DEFAULT_USER_AGENT},
             )
         except httpx.HTTPError:
             log.warning("filemoon_request_failed", url=embed_url)
@@ -151,7 +151,7 @@ class FilemoonResolver:
         api_url = f"{base}/api/videos/{video_id}/embed/details"
         try:
             resp = await self._http.get(
-                api_url, timeout=10, headers={"User-Agent": _BROWSER_UA}
+                api_url, timeout=10, headers={"User-Agent": DEFAULT_USER_AGENT}
             )
         except httpx.HTTPError:
             log.debug("filemoon_details_failed", url=api_url)

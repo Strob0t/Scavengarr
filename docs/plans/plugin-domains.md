@@ -227,3 +227,14 @@ Step 40's live run left two resolvers failing the registry's playback check. Bot
 | playmate | The probe's link (an `/embed/` form) is a removed file: the embed page says "This video is no longer available", the meta API still answers `success: true` with a title, and the stream API hands out a placeholder `sx`: a one-segment `.mp4` path on playmate.to that answers 404. A live file's `sx` is a three-segment `.txt` master playlist on a CDN host, as the resolver expects. | Current. The extraction matches JD2's and the live files. | No change: the registry's playback check marks the removed file unplayable (dead for 15 min). 5 of the 6 playmate links of the round titles play; the live suite's case is one of them now (`.cache/live/resolver-urls.json`). |
 
 **Reading.** Neither CDN refuses this network. Streamtape's page changed under the resolver (the decoys and the token alphabet); a removed playmate file is a file the hoster's own API does not admit, a single sample, and the playback check already catches it, so the resolver stays as it is.
+
+## One browser User-Agent (2026-10-10, step 44)
+
+The domain check, the health prober and the link validator sent the shared client's bot User-Agent; filemoon, the XFS hosters and doodstream a truncated browser UA without the Chrome token; generic DDL, rapidgator, ddownload, gofile, mediafire and streamtape none of their own. All send `DEFAULT_USER_AGENT` now. Proof: the live resolver cases of step 40 (`.cache/live/resolver-urls.json`, 18 resolvers, a live and a dead case each) on the dev container, once before and once after the change, minutes apart.
+
+| Run | Passed | Failed live cases |
+|---|---|---|
+| before | 31 of 36 | doodstream, dropload, supervideo, vidoza, voe |
+| after | 32 of 36 | doodstream, dropload, supervideo, vidoza |
+
+**Reading.** No resolver that passed before fails after, so every resolver keeps the browser UA. Of the changed resolvers the cases cover filemoon, streamtape and the XFS hoster vidhide (pass before and after), doodstream and the XFS hosters dropload and vidoza (fail before and after: the UA was not what blocked them; doodstream passed in step 40's run, dropload and vidoza failed there too). The DDL hosters (generic DDL, rapidgator, ddownload, gofile, mediafire) and the other 22 XFS hosters have no live case, because the round titles yield no link of theirs; their change is the header alone. voe passes after but was not changed: its failure before was the site's variance. Every dead case holds in both runs.

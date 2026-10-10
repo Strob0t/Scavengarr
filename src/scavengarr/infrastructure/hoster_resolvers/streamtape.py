@@ -20,6 +20,7 @@ import structlog
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
 from scavengarr.infrastructure.hoster_resolvers._domain import extract_domain
 from scavengarr.infrastructure.hoster_resolvers._verify import verify_video_url
+from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 
 log = structlog.get_logger(__name__)
 
@@ -118,6 +119,7 @@ class StreamtapeResolver:
                 url,
                 follow_redirects=True,
                 timeout=15,
+                headers={"User-Agent": DEFAULT_USER_AGENT},
             )
             if resp.status_code != 200:
                 log.warning(

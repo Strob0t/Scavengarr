@@ -5,6 +5,7 @@ from __future__ import annotations
 import httpx
 import respx
 
+from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 from scavengarr.infrastructure.scoring.health_prober import HealthProber
 
 _URL = "https://example.com"
@@ -242,3 +243,24 @@ class TestProbeAll:
             results = await prober.probe_all(plugins, concurrency=1)
 
         assert len(results) == 2
+
+
+class TestUserAgent:
+    """The probe sends a browser's User-Agent: a site behind Cloudflare
+    challenges or blocks the bot User-Agent of the shared client, which
+    would count the site as down."""
+
+    @respx.mock
+    async def test_head_sends_the_browser_user_agent(self) -> None:
+        route = respx.head(_URL).respond(200)
+        async with httpx.AsyncClient() as client:
+            await HealthProber(http_client=client).probe(_URL)
+        assert route.calls.last.request.headers["user-agent"] == DEFAULT_USER_AGENT
+
+    @respx.mock
+    async def test_the_get_fallback_sends_it_too(self) -> None:
+        respx.head(_URL).respond(405)
+        route = respx.get(_URL).respond(200, text="x")
+        async with httpx.AsyncClient() as client:
+            await HealthProber(http_client=client).probe(_URL)
+        assert route.calls.last.request.headers["user-agent"] == DEFAULT_USER_AGENT
