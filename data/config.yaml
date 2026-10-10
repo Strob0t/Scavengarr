@@ -96,7 +96,6 @@ scoring:
 # -- Stremio Addon ----------------------------------------------------
 stremio:
   # Language & ranking
-  preferred_language: "de"
   language_scores:
     "de": 1000
     "de-sub": 500
@@ -153,10 +152,7 @@ stremio:
 
   # Scored plugin selection (requires scoring.enabled: true)
   scoring_enabled: false
-  stremio_deadline_ms: 2000
   max_plugins_scored: 5
-  max_items_total: 50
-  max_items_per_plugin: 20
   exploration_probability: 0.15
 
 # -- Telemetry --------------------------------------------------------

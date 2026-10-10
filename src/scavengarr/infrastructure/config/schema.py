@@ -183,6 +183,7 @@ class CacheConfig(BaseModel):
     # Shared settings
     ttl_seconds: int = Field(
         default=3600,
+        ge=0,
         description="Default TTL for cache entries (seconds)",
     )
     search_ttl_seconds: int = Field(
@@ -208,14 +209,6 @@ class StremioConfig(BaseModel):
 
     All values configurable via YAML (stremio section) or ENV vars.
     """
-
-    preferred_language: str = Field(
-        default="de",
-        description=(
-            "Unused (kept so existing configs stay valid); the ranking uses "
-            "language_scores."
-        ),
-    )
 
     language_scores: dict[str, int] = Field(
         default={
@@ -412,24 +405,9 @@ class StremioConfig(BaseModel):
         default=False,
         description="Use scoring to limit plugin selection per request.",
     )
-    stremio_deadline_ms: int = Field(
-        default=2000,
-        description=(
-            "Unused (kept so existing configs stay valid); the overall budget "
-            "is stream_deadline_seconds."
-        ),
-    )
     max_plugins_scored: int = Field(
         default=5,
         description="Top-N plugins when scoring is active.",
-    )
-    max_items_total: int = Field(
-        default=50,
-        description="Unused (kept so existing configs stay valid).",
-    )
-    max_items_per_plugin: int = Field(
-        default=20,
-        description="Unused (kept so existing configs stay valid).",
     )
     exploration_probability: float = Field(
         default=0.15,
@@ -636,30 +614,7 @@ class AppConfig(BaseModel):
     # Cache (disk-only placeholder) (YAML section: cache.*)
     cache: CacheConfig = Field(default_factory=CacheConfig)
 
-    cache_dir: Path = Field(
-        default=Path("./.cache/scavengarr"),
-        validation_alias=AliasChoices(
-            "cache_dir",
-            AliasPath("cache", "dir"),
-        ),
-        description=(
-            "Unused duplicate of cache.directory (reads the same key; kept so "
-            "existing configs stay valid)."
-        ),
-    )
-    cache_ttl_seconds: int = Field(
-        default=3600,
-        validation_alias=AliasChoices(
-            "cache_ttl_seconds",
-            AliasPath("cache", "ttl_seconds"),
-        ),
-        description=(
-            "Unused duplicate of cache.ttl_seconds (reads the same key; kept so "
-            "existing configs stay valid)."
-        ),
-    )
-
-    @field_validator("plugin_dir", "cache_dir", mode="before")
+    @field_validator("plugin_dir", mode="before")
     @classmethod
     def _validate_paths(cls, v: Any) -> Path:
         return _normalize_path(v)
@@ -749,13 +704,6 @@ class AppConfig(BaseModel):
     def _validate_playwright_timeout(cls, v: int) -> int:
         if v <= 0:
             raise ValueError("playwright_timeout_ms must be > 0")
-        return v
-
-    @field_validator("cache_ttl_seconds")
-    @classmethod
-    def _validate_cache_ttl(cls, v: int) -> int:
-        if v < 0:
-            raise ValueError("cache_ttl_seconds must be >= 0")
         return v
 
     @model_validator(mode="after")

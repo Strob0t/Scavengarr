@@ -53,7 +53,7 @@ class TestDefaultsOnly:
         assert config.http_timeout_seconds == 30.0
         assert config.log_level == "INFO"
         assert config.log_format == "console"  # dev → console
-        assert config.cache_ttl_seconds == 3600
+        assert config.cache.ttl_seconds == 3600
 
     def test_default_user_agent_names_a_contact(self) -> None:
         """Wikidata (German titles without a TMDB key) answers 403 to a
@@ -102,7 +102,7 @@ class TestYamlOverrides:
         assert config.http_timeout_seconds == 15.0
         assert config.http_user_agent == "TestAgent/1.0"
         assert config.log_level == "DEBUG"
-        assert config.cache_ttl_seconds == 1800
+        assert config.cache.ttl_seconds == 1800
 
     def test_yaml_file_not_found_raises(self, tmp_path: Path) -> None:
         with pytest.raises(FileNotFoundError):
@@ -140,6 +140,13 @@ class TestYamlOverrides:
         config = load_config(config_path=path)
 
         assert not hasattr(config.stremio, "probe_at_stream_time")
+
+    def test_cache_ttl_must_not_be_negative(self, tmp_path: Path) -> None:
+        path = tmp_path / "ttl.yaml"
+        path.write_text(yaml.dump({"cache": {"ttl_seconds": -1}}))
+
+        with pytest.raises(ValueError, match="ttl_seconds"):
+            load_config(config_path=path)
 
     def test_crawljob_ttl_must_be_positive(self, tmp_path: Path) -> None:
         path = tmp_path / "ttl.yaml"
@@ -387,10 +394,7 @@ class TestStartupReport:
     def test_paths_are_strings(self, tmp_path: Path) -> None:
         config = self._load(tmp_path, {"cache": {"dir": "/srv/cache"}})
 
-        assert changed_values(config) == {
-            "cache.directory": "/srv/cache",
-            "cache_dir": "/srv/cache",
-        }
+        assert changed_values(config) == {"cache.directory": "/srv/cache"}
 
     def test_source_names_the_file(self, tmp_path: Path) -> None:
         config = self._load(tmp_path, {})
@@ -403,7 +407,13 @@ class TestStartupReport:
             {
                 "htttp": {"timeout_seconds": 1.0},  # misspelled section
                 "http": {"timeout_secs": 1.0, "rate_limit_rps": 2.0},
-                "stremio": {"probe_at_stream_time": True, "max_probe_count": 80},
+                "stremio": {
+                    "probe_at_stream_time": True,
+                    "max_probe_count": 80,
+                    # removed 2026-10-10, never read
+                    "preferred_language": "de",
+                    "max_items_total": 50,
+                },
                 "plugins": {"overrides": {"anything": {"whatever": 1}}},
                 "cache": {"dir": "/srv/cache"},  # CacheConfig.directory
                 "log_level": "INFO",  # flat key, mapped to logging.level
@@ -415,6 +425,8 @@ class TestStartupReport:
             "http.timeout_secs",
             "htttp",
             "scoring_enabled",
+            "stremio.max_items_total",
+            "stremio.preferred_language",
             "stremio.probe_at_stream_time",
         )
 
@@ -488,7 +500,7 @@ class TestSectionedEnv:
         config = load_config(config_path=yaml_config)
 
         assert config.http_timeout_resolve_seconds == 7.0
-        assert config.cache_ttl_seconds == 60  # the YAML said 1800
+        assert config.cache.ttl_seconds == 60  # the YAML said 1800
 
     def test_the_flat_alias_wins_and_the_conflict_is_kept(
         self, monkeypatch: pytest.MonkeyPatch
@@ -549,7 +561,7 @@ class TestSectionedEnv:
 
         sources = config.source.value_sources
         assert sources["app_name"] == "yaml"
-        assert sources["cache_ttl_seconds"] == "yaml"
+        assert sources["cache.ttl_seconds"] == "yaml"
         assert sources["stremio.plugin_timeout_seconds"] == "env"
         assert sources["http_timeout_seconds"] == "env"  # the YAML said 15
         assert sources["log_level"] == "cli"  # the YAML said DEBUG

@@ -349,7 +349,6 @@ Stremio settings live in `StremioConfig` (YAML section `stremio:`). See [Configu
 | `default_language_score` | 100 | Score for unknown languages |
 | `quality_multiplier` | 10 | Multiplier for the quality value |
 | `hoster_scores` | `supervideo`=5, `voe`=4, `filemoon`=3, `streamtape`=2, `doodstream`=1 | Hoster reliability bonus |
-| `preferred_language` | `de` | Currently unused (no effect) |
 
 ### Plugin Search
 

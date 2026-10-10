@@ -21,8 +21,11 @@ from scavengarr.infrastructure.config.schema import AppConfig
 _SRC = Path(__file__).resolve().parents[3] / "src" / "scavengarr"
 _CONFIG_PACKAGE = _SRC / "infrastructure" / "config"
 
-# Kept so existing configs stay valid; removal candidates
-_DECLARED_UNUSED = (
+# Settings that declare themselves unused: none since 2026-10-10, when the
+# six that did were removed (a user who still sets one reads it in the
+# startup line config_unknown_keys)
+_DECLARED_UNUSED: tuple[str, ...] = ()
+_REMOVED_IN_STEP_53 = (
     "cache_dir",
     "cache_ttl_seconds",
     "stremio.max_items_per_plugin",
@@ -89,6 +92,13 @@ def test_the_declared_unused_settings_are_known() -> None:
     )
 
     assert declared == sorted(_DECLARED_UNUSED)
+
+
+def test_the_settings_of_step_53_are_gone() -> None:
+    """Removed, not declared: the model accepts none of the six."""
+    leaves = {dotted for dotted, _, _ in _leaves(AppConfig)}
+
+    assert not leaves.intersection(_REMOVED_IN_STEP_53)
 
 
 def test_the_settings_of_step_51_are_read() -> None:

@@ -38,8 +38,9 @@ def test_every_setting_has_a_row() -> None:
     assert "SCAVENGARR_STREMIO_PLUGIN_TIMEOUT_SECONDS" in names
     assert "SCAVENGARR_VALIDATION_MAX_CONCURRENT" in names
     assert "SCAVENGARR_LOGGING_LEVEL" in names
-    # 75 section keys and 6 top-level keys
-    assert len(names) == 80
+    # The section and top-level keys the model has; four fewer since the
+    # unread stremio settings went (2026-10-10)
+    assert len(names) == 76
 
 
 def test_flat_aliases_are_named() -> None:

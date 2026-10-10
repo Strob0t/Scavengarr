@@ -170,14 +170,11 @@ Some keys also have an older flat name (`SCAVENGARR_LOG_LEVEL` for `logging.leve
 | `SCAVENGARR_STREMIO_MAX_CONCURRENT_PLAYWRIGHT` | int | `5` | Upper bound for parallel Playwright plugin searches on the shared browser. The actual concurrency is dynamically capped at min(pw_plugin_count, this value) per request. |
 | `SCAVENGARR_STREMIO_MAX_CONCURRENT_PLUGINS` | int | `5` | Max parallel plugin searches for stream resolution. |
 | `SCAVENGARR_STREMIO_MAX_CONCURRENT_PLUGINS_AUTO` | bool | `true` | Auto-tune max_concurrent_plugins based on host CPU and memory. When enabled, overrides max_concurrent_plugins at startup. |
-| `SCAVENGARR_STREMIO_MAX_ITEMS_PER_PLUGIN` | int | `20` | Unused (kept so existing configs stay valid). |
-| `SCAVENGARR_STREMIO_MAX_ITEMS_TOTAL` | int | `50` | Unused (kept so existing configs stay valid). |
 | `SCAVENGARR_STREMIO_MAX_PLUGINS_SCORED` | int | `5` | Top-N plugins when scoring is active. |
 | `SCAVENGARR_STREMIO_MAX_PROBE_COUNT` | int | `50` | Max streams to resolve at stream time (top-ranked first). |
 | `SCAVENGARR_STREMIO_MAX_RESULTS_PER_PLUGIN` | int | `100` | Max results per plugin in Stremio search. Limits pagination to reduce response time. Torznab uses the plugin default (1000). |
 | `SCAVENGARR_STREMIO_PLUGIN_HEALTH_INTERVAL_SECONDS` | float | `1800.0` | How often every Stremio plugin's site is checked (HEAD on its domains); searches skip plugins whose site did not answer (twice, 30 s apart), and those are checked again every 5 minutes. 0 turns the check off. |
 | `SCAVENGARR_STREMIO_PLUGIN_TIMEOUT_SECONDS` | float | `30.0` | Each plugin search, from the moment the plugin holds a concurrency slot; also the request's answer budget, counted from the request start (a stale search-cache entry's refresh: from its own start). The request stops waiting for the search then and answers with the results known so far; plugins still running are not cut, their results reach the search cache for the next request. |
-| `SCAVENGARR_STREMIO_PREFERRED_LANGUAGE` | str | `de` | Unused (kept so existing configs stay valid); the ranking uses language_scores. |
 | `SCAVENGARR_STREMIO_PROBE_CONCURRENCY` | int | `10` | Max parallel hoster resolutions at stream time. |
 | `SCAVENGARR_STREMIO_PROBE_STEALTH_TIMEOUT_SECONDS` | float | `15.0` | Timeout of a resolver's stream capture in the stealth browser (Patchright), in seconds: the embed page's navigation and Cloudflare challenge. The httpx plugins' Cloudflare fallback has its own budget. |
 | `SCAVENGARR_STREMIO_QUALITY_MULTIPLIER` | int | `10` | Multiplier for quality value in ranking score. |
@@ -185,7 +182,6 @@ Some keys also have an older flat name (`SCAVENGARR_LOG_LEVEL` for `logging.leve
 | `SCAVENGARR_STREMIO_SCORING_ENABLED` | bool | `false` | Use scoring to limit plugin selection per request. |
 | `SCAVENGARR_STREMIO_STREAM_DEADLINE_SECONDS` | float | `60.0` | Latest answer of a Stremio stream request, from the request start: resolution stops then and the answer has what is resolved. Earlier when resolve_target_count streams resolved, or when the search and every resolution are done. |
 | `SCAVENGARR_STREMIO_STREAM_LINK_TTL_SECONDS` | int | `604800` | How long the links behind /play and the HLS proxy are kept (seconds, default 7 days): Stremio plays a kept stream object later (autoplay, Continue Watching), and a link whose video URL is stale resolves again. |
-| `SCAVENGARR_STREMIO_STREMIO_DEADLINE_MS` | int | `2000` | Unused (kept so existing configs stay valid); the overall budget is stream_deadline_seconds. |
 | `SCAVENGARR_STREMIO_TITLE_EXTRA_WORDS_PENALTY` | float | `0.35` | Score penalty when the result adds words to the reference title ("Dark Matter" for "Dark"); a matching year makes up part of it. |
 | `SCAVENGARR_STREMIO_TITLE_MATCH_THRESHOLD` | float | `0.7` | Minimum title similarity score to keep a stream result. |
 | `SCAVENGARR_STREMIO_TITLE_SEQUEL_PENALTY` | float | `0.35` | Score penalty when result has sequel number that reference lacks. |
@@ -373,13 +369,15 @@ The loader recognizes the sections `plugins`, `http`, `playwright`, `logging`, `
 
 Other flat keys are dropped. Unknown keys are ignored, so a misspelled key keeps its default, but the startup log names them (`config_unknown_keys`, [below](#what-the-server-logs-at-startup)); only the `cache` section rejects unknown keys, and the app does not start.
 
-Every setting the model accepts is read somewhere in `src/` outside the config package, or its description says it is unused: `tests/unit/infrastructure/test_config_settings_read.py` fails CI for a setting that is loaded, validated and documented but read nowhere (`playwright.timeout_ms` and `stremio.probe_stealth_timeout_seconds` were such settings until 2026-10-10). The declared ones, kept so existing configs stay valid and candidates for removal: `stremio.preferred_language`, `stremio.stremio_deadline_ms`, `stremio.max_items_total`, `stremio.max_items_per_plugin`, and the flat `cache_dir` and `cache_ttl_seconds` fields of the model, duplicates of `cache.directory` and `cache.ttl_seconds` that read the same keys (the test names them, so a new declaration is a conscious decision).
+Every setting the model accepts is read somewhere in `src/` outside the config package: `tests/unit/infrastructure/test_config_settings_read.py` fails CI for a setting that is loaded, validated and documented but read nowhere (`playwright.timeout_ms` and `stremio.probe_stealth_timeout_seconds` were such settings until 2026-10-10), and a setting whose description declares it unused has to stand in the test's list, empty since the same day.
+
+**Removed settings** (2026-10-10): six settings that were loaded and documented but never read are gone from the model. A config that still sets one starts as before, and the startup line `config_unknown_keys` names the key (the nested ones; the flat `cache_*` keys stay aliases, below). `stremio.preferred_language`: the ranking reads `stremio.language_scores`, set the preferred language's score there. `stremio.stremio_deadline_ms`: the request budget is `stremio.stream_deadline_seconds`. `stremio.max_items_total` and `stremio.max_items_per_plugin`: nothing replaces them, a search's result count is bounded by the plugin's pagination. The model's flat `cache_dir` and `cache_ttl_seconds` attributes, duplicates of `cache.directory` and `cache.ttl_seconds`: a top-level `cache_dir` or `cache_ttl_seconds` key in the YAML, like `SCAVENGARR_CACHE_DIR` and `SCAVENGARR_CACHE_TTL_SECONDS`, keeps working as a flat alias of `cache.dir` or `cache.ttl_seconds` (the flat-key table above), so nothing changes for a config that uses them; the validation `ttl_seconds >= 0` moved to the `cache` section.
 
 ### What the Server Logs at Startup
 
 These lines tell what configuration a running server uses; in production `poetry run python scripts/prodctl.py logs --since 7d --grep config_ --width 0` reads them:
 
-- `config_effective` (INFO): `config_file`, the YAML file read (`null`: none, so the defaults and the environment only), `sources`, the layer each changed value came from (`yaml`, `env`, `cli`, or `defaults` for the built-in defaults of `defaults.py`; a value counts for the first layer that gave it its final value), and one field per setting that differs from its default after all layers, named by its dotted path in the configuration model: `stremio.max_concurrent_plugins`, `cache.search_ttl_seconds`; the keys of `http`, `playwright` and `logging` under their flat names from the table above (`http_timeout_seconds`, `log_level`), `cache.dir` as `cache.directory` and `cache_dir`. Secrets show as `***` (fields whose name contains `password`, `token`, `key` or `secret`, such as `tmdb_api_key`, and passwords in URLs); dict-typed fields (`plugins.overrides`, `stremio.language_scores`, `stremio.hoster_scores`) show their keys only. With `stremio.auto_tune_all` the next lines' `auto_tune_complete` replaces four concurrency values.
+- `config_effective` (INFO): `config_file`, the YAML file read (`null`: none, so the defaults and the environment only), `sources`, the layer each changed value came from (`yaml`, `env`, `cli`, or `defaults` for the built-in defaults of `defaults.py`; a value counts for the first layer that gave it its final value), and one field per setting that differs from its default after all layers, named by its dotted path in the configuration model: `stremio.max_concurrent_plugins`, `cache.search_ttl_seconds`; the keys of `http`, `playwright` and `logging` under their flat names from the table above (`http_timeout_seconds`, `log_level`), `cache.dir` as `cache.directory`. Secrets show as `***` (fields whose name contains `password`, `token`, `key` or `secret`, such as `tmdb_api_key`, and passwords in URLs); dict-typed fields (`plugins.overrides`, `stremio.language_scores`, `stremio.hoster_scores`) show their keys only. With `stremio.auto_tune_all` the next lines' `auto_tune_complete` replaces four concurrency values.
 - `config_unknown_keys` (WARNING): the dotted YAML paths that no setting accepts, such as a misspelled key or one a release removed; loading ignores them. Keys inside dict-typed fields are not checked.
 - `config_unknown_env` (WARNING): the `SCAVENGARR_<SECTION>_*` names that no key of the section has; loading ignores them. Other `SCAVENGARR_*` names are not checked (plugin credentials share the prefix).
 - `config_env_conflict` (WARNING, one per pair): a flat name and the sectioned name of one key set to different values; `used` names the flat one, which wins, `ignored` the other.
@@ -477,7 +475,6 @@ Controls the Stremio addon behavior: stream ranking, plugin concurrency, title m
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `stremio.preferred_language` | string | `de` | Currently unused (no effect); ranking uses `language_scores` |
 | `stremio.language_scores` | dict | `{de: 1000, de-sub: 500, en-sub: 200, en: 150}` | Language ranking scores (higher = preferred) |
 | `stremio.default_language_score` | int | `100` | Score for unknown/undetected languages |
 | `stremio.quality_multiplier` | int | `10` | Multiplier for quality value in ranking |
@@ -515,9 +512,6 @@ A dict you set (`language_scores`, `hoster_scores`) replaces the default dict; l
 | `stremio.scoring_enabled` | bool | `false` | Use scores to limit plugin selection (YAML-only) |
 | `stremio.max_plugins_scored` | int | `5` | Top-N plugins when scoring is active |
 | `stremio.exploration_probability` | float | `0.15` | Chance to include a random mid-score plugin |
-| `stremio.stremio_deadline_ms` | int | `2000` | Currently unused (no effect); the request budget is `stremio.stream_deadline_seconds` |
-| `stremio.max_items_total` | int | `50` | Currently unused (no effect) |
-| `stremio.max_items_per_plugin` | int | `20` | Currently unused (no effect) |
 
 See [Stremio Addon](./stremio-addon.md) for the full feature description and [Plugin Scoring & Probing](./plugin-scoring-and-probing.md) for the scoring system.
 

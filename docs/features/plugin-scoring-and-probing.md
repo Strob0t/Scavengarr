@@ -257,9 +257,6 @@ Scored selection is active when `stremio.scoring_enabled` is `true` **and** a sc
 | `scoring_enabled` | `false` | Use scores to limit plugin selection |
 | `max_plugins_scored` | `5` | Top-N plugins when scoring is active |
 | `exploration_probability` | `0.15` | Chance to add one random mid-score plugin |
-| `stremio_deadline_ms` | `2000` | Currently unused (no effect); see `stream_deadline_seconds` |
-| `max_items_total` | `50` | Currently unused (no effect) |
-| `max_items_per_plugin` | `20` | Currently unused (no effect) |
 
 Behavior (`PluginSelector.select()`):
 
@@ -360,9 +357,6 @@ Returns `503` with `{"error": "scoring_not_enabled"}` when scoring is not enable
 | Use scores | `scoring_enabled` | `false` | Enable scored plugin selection (requires `scoring.enabled`) |
 | Max plugins | `max_plugins_scored` | `5` | Top-N plugins per request |
 | Exploration | `exploration_probability` | `0.15` | Mid-score plugin inclusion chance |
-| Deadline | `stremio_deadline_ms` | `2000` | Currently unused (no effect); see `stream_deadline_seconds` |
-| Max items total | `max_items_total` | `50` | Currently unused (no effect) |
-| Max per plugin | `max_items_per_plugin` | `20` | Currently unused (no effect) |
 
 These keys have no dedicated environment variables.
 
