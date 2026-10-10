@@ -440,7 +440,7 @@ the one evidence for row 26's group 6 this round: an address-bound file
 played through `/proxy/<id>/file` from the dev container, 200 in 2.7 s;
 the log does not name the hoster.
 
-The quick round (`--no-playcheck`, 12:52 to 12:57 UTC), the first two
+The quick round (`--no-playcheck`, done 12:52 UTC, four minutes for the 19 titles), the first two
 titles still in the search cache from the hung run (`STALE`), the rest a
 `MISS`:
 
