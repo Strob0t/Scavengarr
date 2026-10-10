@@ -270,3 +270,28 @@ The domain check, the health prober and the link validator sent the shared clien
 | Row 47 | 20 | 35 of 40 | dropload, supervideo, vidoza, upns, rpmplay |
 
 The two new live cases fail the way the analysis predicts (`upns_file_offline`, `rpmplay_file_offline`: the files are deleted, the resolver answers `None`), their dead cases pass (an altered fragment id is 404 too), and no other case changed. The row's live proof, both cases passing, needs a moflix upload on these hosters that still exists: the next probe run before a live run takes a newer link by itself once moflix adds one.
+## cineby (2026-10-10, row 48)
+
+**Question.** cineby has had 0 results in every audit since 2026-10-07, and in the dev container its search host `db.videasy.net` resolves to a private address that the request guard refuses (`private_address_refused`, 14 of 14 in the audit of 2026-10-10). Does the host resolve publicly, does the search answer, and what is the site's current API host?
+
+**Setup.** Dev container, 11:00 to 11:45 UTC: the name through the system resolver and through two public DNS-over-HTTPS resolvers (Cloudflare, Google); the plugin's eight `_domains` through `scripts/probes/domains.py --plugins cineby`; the answering domains opened with curl and in a headful Patchright browser with every request host logged (`r48_site.py`: hosts and path shapes only); the series probe `scripts/probes/series_episodes.py --plugins cineby` before and after the change (14 requests: the round's 12 series plus Severance S01E05 and S02E05). Production: see the paragraph at the end.
+
+**The search host.** `db.videasy.net` does not exist: both public resolvers answer NXDOMAIN under a live `videasy.net` zone (Cloudflare name servers). The private address of the audit is the dev container's own making: its resolver carries the LAN's search domain, a name that fails gets that suffix appended, and the home router answers every name under its own domain with its LAN address. The request guard then refuses it, which is right: a private address is never fetched. The guard stays as it is.
+
+**The site.** `cineby.gd` and `cineby.app` answer 301 to `https://www.cineby.at/`, the site's current domain, and that domain's delegation is lame on 2026-10-10: its name servers refuse queries (Google: "Name servers refused query (lame delegation?)", Cloudflare: "No Reachable Authority at delegation cineby.at"), so a browser's load of the page times out and the site's current API host cannot be read from its own requests. The six other entries of the plugin's list are not the site: `cineby.xyz` is a parked advertising page (brand logos from a "searchpotato" bucket), `cineby.bond` and `cineby.watch` are landing pages that link to further cineby domains (`.site`, `.digital`, `.sbs`, `.media`), `cineby.site` answers a Cloudflare challenge, `cineby.today` and `cineby.digital` do not connect. The old `_verify_domain()` would have taken `cineby.xyz` (200) for the working site; cineby's `search()` never called it, which is why the plugin never reported unreachable.
+
+| Domain | DNS | HEAD / GET from the dev container | What it is |
+|---|---|---|---|
+| cineby.gd | yes | 301 → www.cineby.at | redirect to the site |
+| cineby.app | yes | 301 → www.cineby.at | redirect to the site |
+| cineby.at | lame delegation (SERVFAIL) | timeout | the site |
+| cineby.xyz | yes | 200 | parked advertising page |
+| cineby.bond | yes | 200 | landing page linking other cineby domains |
+| cineby.watch | yes | 200 | landing page |
+| cineby.site | yes | 200 / 403 challenge | unknown behind the challenge |
+| cineby.today | yes | connect timeout | dead |
+| cineby.digital | yes | connect error | dead |
+
+**The change.** The API host is the plugin's one dependency, so it is the plugin's domain now (`_domains = ["db.videasy.net"]`, `base_url` the API base): `search()` calls `_verify_domain()` first, which sends `HEAD` to the API host once per process, takes an answer of any status for reachable and a transport failure (the name does not resolve, no connection, a non-public address, a timeout) for `PluginUnreachableError` (`cineby_api_unreachable`), checked again by the next search; the health monitor probes `base_url`, so its verdict and the plugin's agree. The result links name the site's current domain (`_SITE_URL`, `https://www.cineby.at`); the parked and dead mirrors left the list. The plugin's host was not updated: without the site there is no current API host to read, and the next look is the page's own requests once `cineby.at` resolves again (the search box or `/search` of the real site, the `/3/search/multi` call's host).
+
+**Series probe, before and after.** Before: `| cineby | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |`, 14 requests at 0 s each, every one `private_address_refused` and `cineby_fetch_error`, counted as searches without results. After: `| cineby | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | PluginUnreachableError 14 |`, 14 `cineby_api_unreachable` lines with `error=PrivateAddressError`, no fetch. In a round the plugin is marked unreachable (`stremio_plugin_unreachable`, the record's `unreachable` count) and skipped until the health monitor finds the API host answering.

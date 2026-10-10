@@ -29,7 +29,7 @@ is unreachable.
 | `burningseries` | burningseries.ac | 2 | Downloads | httpx | de |
 | `byte` | byte.to | 0 | Downloads | httpx | de |
 | `cine` | cine.to | 0 | Downloads | httpx | de |
-| `cineby` | cineby.gd | 7 | Streams | httpx | en |
+| `cineby` | db.videasy.net | 0 | Streams | httpx | en |
 | `crawli` | crawli.net | 1 | Downloads | httpx | de |
 | `dataload` | www.data-load.me | 0 | Downloads | httpx | de |
 | `ddlspot` | www.ddlspot.com | 0 | Downloads | Playwright | de |

@@ -11,6 +11,11 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 
+from scavengarr.domain.plugins.base import PluginUnreachableError
+from scavengarr.infrastructure.common.private_address_guard import (
+    PrivateAddressError,
+)
+
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "cineby.py"
 
 
@@ -195,12 +200,10 @@ class TestPluginAttributes:
     def test_mode(self, cineby_mod):
         assert cineby_mod.plugin.mode == "httpx"
 
-    def test_domains(self, cineby_mod):
-        domains = cineby_mod.plugin._domains
-        assert "cineby.gd" in domains
-        assert "cineby.app" in domains
-        assert "cineby.xyz" in domains
-        assert len(domains) >= 8
+    def test_the_api_host_is_the_domain(self, cineby_mod):
+        # The search runs on the API host; the health monitor probes base_url
+        assert cineby_mod.plugin._domains == ["db.videasy.net"]
+        assert cineby_mod.plugin.base_url == "https://db.videasy.net"
 
     def test_categories(self, cineby_mod):
         cats = cineby_mod.plugin.categories
@@ -284,7 +287,7 @@ class TestBuildSearchResult:
 
         sr = p._build_search_result(entry, None)
 
-        assert sr.source_url == "https://www.cineby.gd/movie/414906"
+        assert sr.source_url == "https://www.cineby.at/movie/414906"
 
     def test_metadata_genres_from_search(self, cineby_mod):
         p = cineby_mod.CinebyPlugin()
@@ -417,7 +420,7 @@ class TestPluginSearch:
     def plugin(self, cineby_mod, mock_client):
         p = cineby_mod.CinebyPlugin()
         p._client = mock_client
-        p.base_url = "https://www.cineby.gd"
+        p.base_url = "https://db.videasy.net"
         return p
 
     @pytest.mark.asyncio
@@ -747,7 +750,7 @@ class TestPluginSearch:
 
         p = cineby_mod.CinebyPlugin()
         p._client = mock_client
-        p.base_url = "https://www.cineby.gd"
+        p.base_url = "https://db.videasy.net"
         mock_client.get = AsyncMock(side_effect=mock_get)
 
         results = await p.search("movies")
@@ -797,7 +800,7 @@ class TestPluginSearch:
 
         p = cineby_mod.CinebyPlugin()
         p._client = mock_client
-        p.base_url = "https://www.cineby.gd"
+        p.base_url = "https://db.videasy.net"
         mock_client.get = AsyncMock(side_effect=mock_get)
 
         results = await p.search("films")
@@ -852,3 +855,78 @@ class TestCleanup:
         p = cineby_mod.CinebyPlugin()
 
         await p.cleanup()  # Should not raise
+
+
+# ---------------------------------------------------------------------------
+# API host reachability (the plugin's domain check)
+# ---------------------------------------------------------------------------
+
+
+class TestApiReachability:
+    """``search()`` checks the API host first: a transport failure is
+    ``PluginUnreachableError``, an answer of any status is reachable."""
+
+    @pytest.fixture()
+    def plugin(self, cineby_mod):
+        p = cineby_mod.CinebyPlugin()
+        p._client = AsyncMock(spec=httpx.AsyncClient)
+        p._client.get = AsyncMock(
+            return_value=_make_json_response({"results": [], "total_pages": 1})
+        )
+        return p
+
+    @pytest.mark.asyncio
+    async def test_an_unresolvable_api_host_is_unreachable(self, plugin):
+        plugin._client.head = AsyncMock(
+            side_effect=httpx.ConnectError("[Errno -2] Name or service not known")
+        )
+        with pytest.raises(PluginUnreachableError):
+            await plugin.search("batman")
+        plugin._client.get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_a_refused_non_public_address_is_unreachable(self, plugin):
+        # The dev container's search domain maps a dead name to the router
+        plugin._client.head = AsyncMock(
+            side_effect=PrivateAddressError("refused a non-public address")
+        )
+        with pytest.raises(PluginUnreachableError):
+            await plugin.search("batman")
+
+    @pytest.mark.asyncio
+    async def test_a_timeout_is_unreachable(self, plugin):
+        plugin._client.head = AsyncMock(side_effect=httpx.ConnectTimeout("timed out"))
+        with pytest.raises(PluginUnreachableError):
+            await plugin.search("batman")
+
+    @pytest.mark.asyncio
+    async def test_an_error_answer_counts_as_reachable(self, plugin):
+        plugin._client.head = AsyncMock(return_value=MagicMock(status_code=404))
+        assert await plugin.search("batman") == []
+        head_call = plugin._client.head.call_args
+        assert head_call.args[0] == "https://db.videasy.net/"
+        assert head_call.kwargs["headers"]["User-Agent"] == plugin._user_agent
+        plugin._client.get.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_checked_once_per_process(self, plugin):
+        plugin._client.head = AsyncMock(return_value=MagicMock(status_code=200))
+        await plugin.search("batman")
+        await plugin.search("superman")
+        assert plugin._client.head.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_checked_again_after_unreachable(self, plugin):
+        plugin._client.head = AsyncMock(
+            side_effect=[httpx.ConnectError("down"), MagicMock(status_code=200)]
+        )
+        with pytest.raises(PluginUnreachableError):
+            await plugin.search("batman")
+        assert await plugin.search("batman") == []
+        assert plugin._client.head.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_an_empty_query_makes_no_request(self, plugin):
+        plugin._client.head = AsyncMock(side_effect=httpx.ConnectError("down"))
+        assert await plugin.search("") == []
+        plugin._client.head.assert_not_called()

@@ -12,8 +12,13 @@ Streaming via vidking.net embed player:
 - TV: https://www.vidking.net/embed/tv/{tmdb_id}/{season}/{episode}
 
 Movies and TV shows. No authentication required.
-Reachable alternative domains: cineby.gd, cineby.app, cineby.xyz,
-cineby.today, cineby.bond, cineby.site, cineby.watch, cineby.digital.
+
+The API host is the plugin's one dependency and so its domain: the
+reachability check (``_verify_domain``) and the health monitor's probe
+ask it, not the site. The site's own domain (``_SITE_URL``; cineby.gd and
+cineby.app redirect there, the other former mirrors are parked pages)
+only names the result links. Reading of 2026-10-10:
+``docs/plans/plugin-domains.md`` → cineby.
 """
 
 from __future__ import annotations
@@ -22,23 +27,19 @@ import asyncio
 from typing import Any
 from urllib.parse import quote_plus
 
-from scavengarr.domain.plugins.base import SearchResult
+import httpx
+
+from scavengarr.domain.plugins.base import PluginUnreachableError, SearchResult
+from scavengarr.infrastructure.plugins.constants import DEFAULT_DOMAIN_CHECK_TIMEOUT
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
 # Configurable settings
 # ---------------------------------------------------------------------------
-_DOMAINS = [
-    "cineby.gd",
-    "cineby.app",
-    "cineby.xyz",
-    "cineby.today",
-    "cineby.bond",
-    "cineby.site",
-    "cineby.watch",
-    "cineby.digital",
-]
-_API_BASE = "https://db.videasy.net"
+_API_HOST = "db.videasy.net"
+_DOMAINS = [_API_HOST]
+_API_BASE = f"https://{_API_HOST}"
+_SITE_URL = "https://www.cineby.at"
 _EMBED_BASE = "https://www.vidking.net"
 _PER_PAGE = 20
 _MAX_PAGES = 50  # 50 × 20 = 1000
@@ -111,6 +112,30 @@ class CinebyPlugin(HttpxPluginBase):
         2000: "Movies",
         5000: "TV",
     }
+
+    async def _verify_domain(self) -> None:
+        """``HEAD`` on the API host once per process: an answer of any status
+        is reachable, a transport failure (the name does not resolve, no
+        connection, a non-public address, a timeout) unreachable, checked
+        again by the next search. The base's check needs two domains and
+        takes an error page for a site; a lone API host is reachable when it
+        answers at all."""
+        if self._domain_verified:
+            return
+        client = await self._ensure_client()
+        try:
+            resp = await client.head(
+                f"{_API_BASE}/",
+                timeout=DEFAULT_DOMAIN_CHECK_TIMEOUT,
+                headers={"User-Agent": self._user_agent},
+            )
+        except httpx.TransportError as exc:
+            self._log.warning(
+                "cineby_api_unreachable", host=_API_HOST, error=type(exc).__name__
+            )
+            raise PluginUnreachableError(self.name) from exc
+        self._domain_verified = True
+        self._log.info("cineby_api_answers", host=_API_HOST, status=resp.status_code)
 
     async def _api_search(
         self,
@@ -212,7 +237,7 @@ class CinebyPlugin(HttpxPluginBase):
             embed_url = f"{_EMBED_BASE}/embed/movie/{tmdb_id}"
 
         # Source URL on cineby
-        source_url = f"https://www.{self._domains[0]}/{media_type}/{tmdb_id}"
+        source_url = f"{_SITE_URL}/{media_type}/{tmdb_id}"
 
         # Description
         description = entry.get("overview") or ""
@@ -303,7 +328,7 @@ class CinebyPlugin(HttpxPluginBase):
             else:
                 return []
 
-        await self._ensure_client()
+        await self._verify_domain()
 
         search_results = await self._api_search(query, media_type=media_type)
         if not search_results:
