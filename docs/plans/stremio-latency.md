@@ -421,6 +421,68 @@ nichts Neues (2022) dropped the 1930 and 1979 films, Dune: Part Two dropped
 Dune 2021 and 1984, One Piece (1999) dropped one result by year and one by
 IMDb id and kept 5 streams.
 
+### Tenth round (2026-10-10, production rebuilt 10:27 UTC from a `staging` ref before 20a48d2)
+
+The build's ref is not logged (`commit=unknown`); the anime check right after
+the rebuild answered `STALE` under the v2 search key, so the build is from
+before 20a48d2 (row 45) and 0421fa9 (row 30's item 6), and after 8ada4a2
+(step 19, the read-ahead); rows 43, 44 and 30's items 1 to 5 (pushed by
+10:05 UTC) are most likely in it. A first run with play checks (09:52 UTC)
+hit the rebuild and recorded 17 of 19 titles with 0.0 s and 0 streams, the
+eighth round's pattern; discarded. The second run with play checks (10:44
+UTC) hung from 12:28 UTC on a play check of a proxied file: the proxy
+answered the check's `Range: bytes=0-…` request with 200 and the whole file
+(`GET /api/v1/stremio/proxy/<id>/file status_code=200 duration_ms=2659`),
+the check's `client.get` buffered it, and 79.6 MB had arrived on one
+connection with bytes still flowing when the run was killed at 12:49 UTC
+(backlog row 58: the check reads only the bytes it judges). That answer is
+the one evidence for row 26's group 6 this round: an address-bound file
+played through `/proxy/<id>/file` from the dev container, 200 in 2.7 s;
+the log does not name the hoster.
+
+The quick round (`--no-playcheck`, 12:52 to 12:57 UTC), the first two
+titles still in the search cache from the hung run (`STALE`), the rest a
+`MISS`:
+
+| Title | First answer | Streams | X-Cache | Complete | Cached answer | Streams | Playable |
+|---|---|---|---|---|---|---|---|
+| Der Schuh des Manitu (`movie/tt0248408`) | 1.9 s | 5 | STALE | false | 0.10 s | 5 | – |
+| Lola rennt (`movie/tt0130827`) | 0.1 s | 6 | STALE | false | 0.10 s | 6 | – |
+| Good Bye, Lenin! (`movie/tt0301357`) | 24.7 s | 1 | MISS | true | 0.04 s | 1 | – |
+| Im Westen nichts Neues (`movie/tt1016150`) | 3.7 s | 5 | MISS | false | 0.04 s | 5 | – |
+| Oppenheimer (`movie/tt15398776`) | 7.3 s | 5 | MISS | false | 0.04 s | 5 | – |
+| Dune: Part Two (`movie/tt15239678`) | 23.9 s | 5 | MISS | false | 0.05 s | 5 | – |
+| Inception (`movie/tt1375666`) | 6.0 s | 5 | MISS | false | 0.05 s | 5 | – |
+| Interstellar (`movie/tt0816692`) | 9.4 s | 5 | MISS | false | 0.07 s | 5 | – |
+| Breaking Bad S01E01 (`series/tt0903747:1:1`) | 30.0 s | 2 | MISS | false | 0.04 s | 2 | – |
+| Dark S01E01 (`series/tt5753856:1:1`) | 30.0 s | 1 | MISS | false | 0.02 s | 1 | – |
+| Stranger Things S04E01 (`series/tt4574334:4:1`) | 21.1 s | 5 | MISS | true | 0.05 s | 5 | – |
+| Haus des Geldes S01E01 (`series/tt6468322:1:1`) | 30.0 s | 2 | MISS | false | 0.02 s | 2 | – |
+| The Last of Us S01E01 (`series/tt3581920:1:1`) | 3.7 s | 5 | MISS | false | 0.02 s | 5 | – |
+| One Piece S01E01 (`series/tt0388629:1:1`) | 4.2 s | 5 | MISS | false | 0.08 s | 5 | – |
+| Attack on Titan S01E01 (`series/tt2560140:1:1`) | 3.7 s | 5 | MISS | false | 0.04 s | 5 | – |
+| Demon Slayer S01E01 (`series/tt9335498:1:1`) | 3.6 s | 5 | MISS | false | 0.06 s | 5 | – |
+| Frieren S01E01 (`series/tt22248376:1:1`) | 8.3 s | 5 | MISS | false | 0.52 s | 5 | – |
+| Breaking Bad S01E02 (`series/tt0903747:1:2`) | 10.3 s | 1 | MISS | true | 0.07 s | 1 | – |
+| The Matrix (`movie/tt0133093`) | 5.8 s | 5 | MISS | false | 0.20 s | 5 | – |
+| **Median / total** (19 titles) | 7.3 s | 78 | 0 HIT | 3 of 19 complete | 0.05 s | 78 | – |
+
+Reading: 19 of 19 titles answer with streams (the ninth round: 16 of 19),
+the median first answer 7.3 s (9.3 s), 78 streams (63). The ninth round's
+three empty titles answer now: Breaking Bad S01E01 (2 streams) and S01E02
+(1), most likely row 30's item 2 (the metadata season with the title's
+episode, 540b9d6), and Dark S01E01 (1), where the identity gates had
+dropped every result on 2026-10-09, so a site's result passed them this
+time. 3 of 19 answers complete within the 30 s budget (10 of 19 in the
+ninth round) and three titles hit the budget with streams (Breaking Bad
+S01E01, Dark, Haus des Geldes): more searches run to the budget, which fits
+the domain check passing more sites with the browser User-Agent (row 44)
+and the challenge answers no longer retried (row 43), both most likely in
+this build; the partial answers complete in the background (step 21) and
+the cached answer carries them all (0.05 s median). Playable is not
+measured this round (row 58 first); the eleventh round after the next
+deploy runs with play checks again.
+
 ## AIOStreams
 
 Goal was an AIOStreams test user on `aiostreams.lan` with Scavengarr as addon, measured end to end. Not done: AIOStreams validates the addon manifest when a user is created or updated, and it can reach neither the dev instance (Docker NAT on the workstation) nor `scavengarr.lan` (502, backend down). Recommended user settings, from the AIOStreams v2.35.3 source (`packages/core/src/presets/custom.ts`, `packages/core/src/db/schemas.ts`):
