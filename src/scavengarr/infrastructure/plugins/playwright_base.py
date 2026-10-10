@@ -106,6 +106,9 @@ class PlaywrightPluginBase:
     # Covers an interactive Turnstile click; only spent while a challenge shows.
     _cf_timeout_ms: int = 30_000
     _networkidle_timeout_ms: int = 10_000
+    # The pages' default timeout (navigation and actions without an explicit
+    # one): ``playwright.timeout_ms``, set once in composition
+    _page_timeout_ms: int = 30_000
 
     # --- Request isolation ---
     # When True, search() is serialized with a lock instead of using
@@ -306,8 +309,16 @@ class PlaywrightPluginBase:
             options["user_agent"] = self._browser_user_agent
         return options
 
+    @staticmethod
+    def set_page_timeout(timeout_ms: int) -> None:
+        """The pages' default timeout, ``playwright.timeout_ms`` (wired in
+        composition): every page of every context created from then on."""
+        PlaywrightPluginBase._page_timeout_ms = timeout_ms
+
     async def _configure_context(self, ctx: BrowserContext) -> None:
         """Apply per-context settings shared by singleton and isolated contexts."""
+        ctx.set_default_timeout(self._page_timeout_ms)
+        ctx.set_default_navigation_timeout(self._page_timeout_ms)
         store = PlaywrightPluginBase._clearance_store
         if store is not None:
             await store.restore(ctx)
@@ -485,7 +496,7 @@ class PlaywrightPluginBase:
         wait_until: Literal[
             "commit", "domcontentloaded", "load", "networkidle"
         ] = "domcontentloaded",
-        timeout: int = 30_000,
+        timeout: int | None = None,
         wait_for_idle: bool = True,
         retry_backoff_s: tuple[float, ...] = (),
     ) -> str:
@@ -494,8 +505,11 @@ class PlaywrightPluginBase:
         Solves a Cloudflare challenge if one is shown, optionally waits for
         ``networkidle``.  A transient failure (429/502/503/504 or no
         response) is retried once per entry in *retry_backoff_s*, sleeping
-        that long first; other errors (e.g. 404) fail at once.
+        that long first; other errors (e.g. 404) fail at once. *timeout*
+        bounds the navigation, the pages' default without one.
         """
+        if timeout is None:
+            timeout = self._page_timeout_ms
         page = await self._new_page()
         try:
             for backoff in (*retry_backoff_s, None):

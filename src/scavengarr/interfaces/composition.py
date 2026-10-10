@@ -539,6 +539,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Solved Cloudflare/DDoS-Guard challenges survive restarts
     clearance_store = ClearanceStore(state.cache)
     PlaywrightPluginBase.set_clearance_store(clearance_store)
+    PlaywrightPluginBase.set_page_timeout(config.playwright_timeout_ms)
     # The stealth browser's pages: 2 at the start, then adapted to the waits
     # for a page, the CPU and the free memory, up to max_concurrent_playwright
     ceiling = config.stremio.max_concurrent_playwright

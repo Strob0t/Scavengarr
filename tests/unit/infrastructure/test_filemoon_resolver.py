@@ -390,6 +390,8 @@ class TestBrowserCapture:
         assert pool.capture_media.await_args.args[0] == (
             "https://filemoon.to/e/fwzwu9ny19jk"
         )
+        # The pool's own timeout (stremio.probe_stealth_timeout_seconds) applies
+        assert "timeout" not in pool.capture_media.await_args.kwargs
 
     @pytest.mark.asyncio
     async def test_mp4_stream_without_referer(self) -> None:

@@ -158,6 +158,9 @@ class TestCaptchaImages:
     ) -> None:
         plugin = animeloads_mod.AnimeLoadsPlugin()
         ctx = AsyncMock()
+        # The default-timeout setters are synchronous (playwright.timeout_ms)
+        ctx.set_default_timeout = MagicMock()
+        ctx.set_default_navigation_timeout = MagicMock()
 
         await plugin._configure_context(ctx)
 

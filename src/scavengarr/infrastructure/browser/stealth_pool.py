@@ -218,6 +218,9 @@ class StealthPool:
         self._browser_pool = browser_pool
         # Solved challenges survive restarts (cf_clearance, __ddg* cookies)
         self._clearance_store = clearance_store
+        # The capture timeout of the resolvers (navigation plus challenge):
+        # stremio.probe_stealth_timeout_seconds; the httpx plugins' fallback
+        # passes its own budget to the other operations
         self._timeout_ms = timeout_ms
         # Bounds the pages of all operations (headful pages are heavy)
         self._pages = pages or PageGate(limit=2)
@@ -399,7 +402,9 @@ class StealthPool:
                 await page.close()
         return self._user_agent
 
-    async def capture_media(self, url: str, *, timeout: float) -> CapturedMedia | None:
+    async def capture_media(
+        self, url: str, *, timeout: float | None = None
+    ) -> CapturedMedia | None:
         """Open *url*, start its player and return the stream URL it requests.
 
         For hosters whose stream URL exists only in the running player
@@ -407,8 +412,13 @@ class StealthPool:
         verify you're a human") or whose embed page sits behind Cloudflare.
         The page loads with styles (the context blocks them) so the click
         on the page centre hits the play button; ad popups are closed.
-        *timeout* bounds navigation and the Cloudflare challenge.
+        *timeout* bounds navigation and the Cloudflare challenge; without
+        one the pool's own applies (``stremio.probe_stealth_timeout_seconds``,
+        the resolvers' capture). The player clicks after it are bounded by
+        the pool's own waits.
         """
+        if timeout is None:
+            timeout = self._timeout_ms / 1000
         timeout_ms = int(timeout * 1000)
         async with (
             self._pages.page("capture", timeout=timeout),

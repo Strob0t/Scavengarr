@@ -19,10 +19,6 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger(__name__)
 
-# Navigation + Cloudflare budget; the player clicks after it are bounded by
-# StealthPool's own waits
-_CAPTURE_TIMEOUT_S = 15.0
-
 
 async def capture_stream(
     stealth_pool: StealthPool | None, embed_url: str, hoster: str
@@ -30,12 +26,14 @@ async def capture_stream(
     """Run the hoster's player in the stealth browser, take its stream request.
 
     Playback needs the Referer of the captured request (the player frame's
-    origin); the embed URL stands in when the request had none.
+    origin); the embed URL stands in when the request had none. The pool's
+    own timeout bounds navigation and the Cloudflare challenge
+    (``stremio.probe_stealth_timeout_seconds``).
     """
     if stealth_pool is None:
         log.info(f"{hoster}_no_browser", url=embed_url)
         return None
-    media = await stealth_pool.capture_media(embed_url, timeout=_CAPTURE_TIMEOUT_S)
+    media = await stealth_pool.capture_media(embed_url)
     if media is None:
         log.info(f"{hoster}_browser_no_stream", url=embed_url)
         return None

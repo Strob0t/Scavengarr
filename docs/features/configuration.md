@@ -136,7 +136,7 @@ Some keys also have an older flat name (`SCAVENGARR_LOG_LEVEL` for `logging.leve
 | `SCAVENGARR_PLAYWRIGHT_BROWSER_FALLBACK` | bool | `true` | Let httpx plugins load Cloudflare-challenged pages through the shared browser (at most 2 pages at a time). Disable on hosts without RAM headroom for the browser. |
 | `SCAVENGARR_PLAYWRIGHT_HEADLESS` | bool | `false` | Run the browser headless. Default false: headful when a display (DISPLAY, e.g. Xvfb) exists, needed to pass Cloudflare Turnstile; falls back to headless with a warning when there is no display. |
 | `SCAVENGARR_PLAYWRIGHT_SOLVER_URL` | str (optional) | (unset) | Base URL of an optional Byparr/FlareSolverr sidecar (e.g. http://byparr:8191). Loads Cloudflare-challenged pages when the own browser fails, or alone when browser_fallback is false. |
-| `SCAVENGARR_PLAYWRIGHT_TIMEOUT_MS` | int | `30000` | Playwright timeout in milliseconds. |
+| `SCAVENGARR_PLAYWRIGHT_TIMEOUT_MS` | int | `30000` | Default timeout of the Playwright plugins' pages in milliseconds: navigation and actions without an explicit one. The Cloudflare wait has its own 30 s. |
 
 #### `logging`
 
@@ -170,16 +170,16 @@ Some keys also have an older flat name (`SCAVENGARR_LOG_LEVEL` for `logging.leve
 | `SCAVENGARR_STREMIO_MAX_CONCURRENT_PLAYWRIGHT` | int | `5` | Upper bound for parallel Playwright plugin searches on the shared browser. The actual concurrency is dynamically capped at min(pw_plugin_count, this value) per request. |
 | `SCAVENGARR_STREMIO_MAX_CONCURRENT_PLUGINS` | int | `5` | Max parallel plugin searches for stream resolution. |
 | `SCAVENGARR_STREMIO_MAX_CONCURRENT_PLUGINS_AUTO` | bool | `true` | Auto-tune max_concurrent_plugins based on host CPU and memory. When enabled, overrides max_concurrent_plugins at startup. |
-| `SCAVENGARR_STREMIO_MAX_ITEMS_PER_PLUGIN` | int | `20` | Per-plugin result cap in scored mode. |
-| `SCAVENGARR_STREMIO_MAX_ITEMS_TOTAL` | int | `50` | Global result cap across all plugins. |
+| `SCAVENGARR_STREMIO_MAX_ITEMS_PER_PLUGIN` | int | `20` | Unused (kept so existing configs stay valid). |
+| `SCAVENGARR_STREMIO_MAX_ITEMS_TOTAL` | int | `50` | Unused (kept so existing configs stay valid). |
 | `SCAVENGARR_STREMIO_MAX_PLUGINS_SCORED` | int | `5` | Top-N plugins when scoring is active. |
 | `SCAVENGARR_STREMIO_MAX_PROBE_COUNT` | int | `50` | Max streams to resolve at stream time (top-ranked first). |
 | `SCAVENGARR_STREMIO_MAX_RESULTS_PER_PLUGIN` | int | `100` | Max results per plugin in Stremio search. Limits pagination to reduce response time. Torznab uses the plugin default (1000). |
 | `SCAVENGARR_STREMIO_PLUGIN_HEALTH_INTERVAL_SECONDS` | float | `1800.0` | How often every Stremio plugin's site is checked (HEAD on its domains); searches skip plugins whose site did not answer (twice, 30 s apart), and those are checked again every 5 minutes. 0 turns the check off. |
 | `SCAVENGARR_STREMIO_PLUGIN_TIMEOUT_SECONDS` | float | `30.0` | Each plugin search, from the moment the plugin holds a concurrency slot; also the request's answer budget, counted from the request start (a stale search-cache entry's refresh: from its own start). The request stops waiting for the search then and answers with the results known so far; plugins still running are not cut, their results reach the search cache for the next request. |
-| `SCAVENGARR_STREMIO_PREFERRED_LANGUAGE` | str | `de` | Preferred audio language code for stream ranking. |
+| `SCAVENGARR_STREMIO_PREFERRED_LANGUAGE` | str | `de` | Unused (kept so existing configs stay valid); the ranking uses language_scores. |
 | `SCAVENGARR_STREMIO_PROBE_CONCURRENCY` | int | `10` | Max parallel hoster resolutions at stream time. |
-| `SCAVENGARR_STREMIO_PROBE_STEALTH_TIMEOUT_SECONDS` | float | `15.0` | Page timeout of the stealth browser (Patchright) used by browser-based resolvers and the Cloudflare fallback, in seconds. |
+| `SCAVENGARR_STREMIO_PROBE_STEALTH_TIMEOUT_SECONDS` | float | `15.0` | Timeout of a resolver's stream capture in the stealth browser (Patchright), in seconds: the embed page's navigation and Cloudflare challenge. The httpx plugins' Cloudflare fallback has its own budget. |
 | `SCAVENGARR_STREMIO_QUALITY_MULTIPLIER` | int | `10` | Multiplier for quality value in ranking score. |
 | `SCAVENGARR_STREMIO_RESOLVE_TARGET_COUNT` | int | `5` | The answer goes out once this many hosters have a resolved video stream (resolutions still running are cancelled), even while plugins still search. 0: the answer waits until the search and every resolution are done (or the deadline). |
 | `SCAVENGARR_STREMIO_SCORING_ENABLED` | bool | `false` | Use scoring to limit plugin selection per request. |
@@ -373,6 +373,8 @@ The loader recognizes the sections `plugins`, `http`, `playwright`, `logging`, `
 
 Other flat keys are dropped. Unknown keys are ignored, so a misspelled key keeps its default, but the startup log names them (`config_unknown_keys`, [below](#what-the-server-logs-at-startup)); only the `cache` section rejects unknown keys, and the app does not start.
 
+Every setting the model accepts is read somewhere in `src/` outside the config package, or its description says it is unused: `tests/unit/infrastructure/test_config_settings_read.py` fails CI for a setting that is loaded, validated and documented but read nowhere (`playwright.timeout_ms` and `stremio.probe_stealth_timeout_seconds` were such settings until 2026-10-10). The declared ones, kept so existing configs stay valid and candidates for removal: `stremio.preferred_language`, `stremio.stremio_deadline_ms`, `stremio.max_items_total`, `stremio.max_items_per_plugin`, and the flat `cache_dir` and `cache_ttl_seconds` fields of the model, duplicates of `cache.directory` and `cache.ttl_seconds` that read the same keys (the test names them, so a new declaration is a conscious decision).
+
 ### What the Server Logs at Startup
 
 These lines tell what configuration a running server uses; in production `poetry run python scripts/prodctl.py logs --since 7d --grep config_ --width 0` reads them:
@@ -463,7 +465,7 @@ Controls the Playwright browser engine for JavaScript-heavy sites.
 | `playwright.headless` | bool | `false` | `false`: headful when a display exists (`DISPLAY`, e.g. Xvfb), otherwise headless with one `browser_headful_no_display` warning. `true`: always headless |
 | `playwright.browser_fallback` | bool | `true` | httpx plugins load pages that answer with a Cloudflare challenge through the shared browser (stealth context; its pages start at `min(stremio.max_concurrent_playwright, 2)` and follow the waits for a page, the CPU and the free memory, up to `stremio.max_concurrent_playwright`). `false`: no browser for httpx plugins; Cloudflare-protected httpx plugins (filmfans, kinoger, serienfans) then return nothing |
 | `playwright.solver_url` | string | unset | Base URL of an optional [Byparr](https://github.com/ThePhaseless/Byparr) or FlareSolverr sidecar (FlareSolverr v1 API, e.g. `http://byparr:8191`). Order: own browser (if `browser_fallback`) → solver. With `browser_fallback: false` the solver is used alone, e.g. on hosts without RAM for Chromium. Byparr is recommended: maintained, Firefox-based, no Xvfb needed; FlareSolverr's own README says its captcha solvers do not work |
-| `playwright.timeout_ms` | int | `30000` | Currently unused (no effect) |
+| `playwright.timeout_ms` | int | `30000` | Default timeout of the Playwright plugins' pages: every navigation (`page.goto`) and action without an explicit timeout, set on each browser context the base creates (`PlaywrightPluginBase.set_page_timeout()` in composition), and the navigation of `_fetch_page_html()` without one. The Cloudflare wait keeps its own 30 s, the `networkidle` wait its 10 s |
 
 **Validation:** `timeout_ms` must be greater than 0.
 
@@ -502,7 +504,7 @@ A dict you set (`language_scores`, `hoster_scores`) replaces the default dict; l
 | `stremio.probe_concurrency` | int | `10` | Max parallel hoster resolutions (auto-tuned at startup by default) |
 | `stremio.max_probe_count` | int | `50` | Max streams to resolve (top-ranked first) |
 | `stremio.resolve_target_count` | int | `5` | The answer goes out once this many hosters have a video, also while plugins search (0 = wait until the search and every resolution are done, or the deadline) |
-| `stremio.probe_stealth_timeout_seconds` | float | `15.0` | Page timeout of the stealth browser (Patchright): browser-based resolvers and the Cloudflare fallback |
+| `stremio.probe_stealth_timeout_seconds` | float | `15.0` | Timeout of a resolver's stream capture in the stealth browser (Patchright; SuperVideo, DoodStream, Filemoon, Vixeo and the XFS hosters): the embed page's navigation and Cloudflare challenge (`StealthPool.capture_media()` without a caller's timeout). The httpx plugins' Cloudflare fallback passes its own budget (30 s per page) |
 
 `stremio.probe_at_stream_time`, `probe_timeout_seconds`, `probe_stealth_enabled` and `probe_stealth_concurrency` were removed with the unused stream-time liveness probe; configs that still set them load (the keys are ignored).
 

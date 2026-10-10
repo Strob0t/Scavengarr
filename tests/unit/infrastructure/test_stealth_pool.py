@@ -894,6 +894,19 @@ class TestStealthPoolCaptureMedia:
             "https://filemoon.to/e/abc", timeout=10
         )
 
+    async def test_without_a_timeout_the_pools_own_applies(self) -> None:
+        """``stremio.probe_stealth_timeout_seconds`` reaches the pool as
+        ``timeout_ms`` and bounds a capture the caller gives no time (step 51)."""
+        shared_pool, _, context = _mock_pool_stack()
+        page = _player_page(on_load=["https://cdn.example/x.m3u8"])
+        context.new_page = AsyncMock(return_value=page)
+        pool = StealthPool(browser_pool=shared_pool, timeout_ms=7_000)
+
+        media = await pool.capture_media("https://filemoon.to/e/abc")
+
+        assert media is not None
+        assert page.goto.await_args.kwargs["timeout"] == 7_000
+
     async def test_autoplay_request_is_captured(self) -> None:
         page = _player_page(
             on_load=[

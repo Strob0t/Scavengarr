@@ -211,7 +211,10 @@ class StremioConfig(BaseModel):
 
     preferred_language: str = Field(
         default="de",
-        description="Preferred audio language code for stream ranking.",
+        description=(
+            "Unused (kept so existing configs stay valid); the ranking uses "
+            "language_scores."
+        ),
     )
 
     language_scores: dict[str, int] = Field(
@@ -388,8 +391,10 @@ class StremioConfig(BaseModel):
     probe_stealth_timeout_seconds: float = Field(
         default=15.0,
         description=(
-            "Page timeout of the stealth browser (Patchright) used by "
-            "browser-based resolvers and the Cloudflare fallback, in seconds."
+            "Timeout of a resolver's stream capture in the stealth browser "
+            "(Patchright), in seconds: the embed page's navigation and "
+            "Cloudflare challenge. The httpx plugins' Cloudflare fallback "
+            "has its own budget."
         ),
     )
     resolve_target_count: int = Field(
@@ -420,11 +425,11 @@ class StremioConfig(BaseModel):
     )
     max_items_total: int = Field(
         default=50,
-        description="Global result cap across all plugins.",
+        description="Unused (kept so existing configs stay valid).",
     )
     max_items_per_plugin: int = Field(
         default=20,
-        description="Per-plugin result cap in scored mode.",
+        description="Unused (kept so existing configs stay valid).",
     )
     exploration_probability: float = Field(
         default=0.15,
@@ -592,7 +597,11 @@ class AppConfig(BaseModel):
             "playwright_timeout_ms",
             AliasPath("playwright", "timeout_ms"),
         ),
-        description="Playwright timeout in milliseconds.",
+        description=(
+            "Default timeout of the Playwright plugins' pages in milliseconds: "
+            "navigation and actions without an explicit one. The Cloudflare "
+            "wait has its own 30 s."
+        ),
     )
 
     # Logging (YAML section: logging.*)
@@ -633,7 +642,10 @@ class AppConfig(BaseModel):
             "cache_dir",
             AliasPath("cache", "dir"),
         ),
-        description="Cache directory (disk).",
+        description=(
+            "Unused duplicate of cache.directory (reads the same key; kept so "
+            "existing configs stay valid)."
+        ),
     )
     cache_ttl_seconds: int = Field(
         default=3600,
@@ -641,7 +653,10 @@ class AppConfig(BaseModel):
             "cache_ttl_seconds",
             AliasPath("cache", "ttl_seconds"),
         ),
-        description="Cache TTL in seconds.",
+        description=(
+            "Unused duplicate of cache.ttl_seconds (reads the same key; kept so "
+            "existing configs stay valid)."
+        ),
     )
 
     @field_validator("plugin_dir", "cache_dir", mode="before")
