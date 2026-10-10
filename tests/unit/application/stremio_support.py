@@ -286,7 +286,12 @@ def cached_links(cache: AsyncMock) -> list[str]:
 
 
 class Resolutions:
-    """Resolver registry stand-in: resolve() caches, cached() peeks."""
+    """Resolver registry stand-in: resolve() caches, cached() peeks.
+
+    A resolution not in the store takes *delay* seconds, or waits at *gate*
+    until the test sets it (no wall clock: whatever the test does before
+    ``gate.set()`` happened while the resolution was still running).
+    """
 
     def __init__(
         self,
@@ -294,10 +299,12 @@ class Resolutions:
         alive: tuple[str, ...] = (),
         dead: tuple[str, ...] = (),
         delay: float = 0.0,
+        gate: asyncio.Event | None = None,
     ) -> None:
         self.store: dict[str, ResolvedStream | None] = {u: resolved(u) for u in alive}
         self.store.update(dict.fromkeys(dead))
         self.delay = delay
+        self.gate = gate
         self.calls: list[str] = []
         self.cancelled = asyncio.Event()
         self.running = 0
@@ -310,7 +317,10 @@ class Resolutions:
         self.running += 1
         self.most_at_once = max(self.most_at_once, self.running)
         try:
-            await asyncio.sleep(self.delay)
+            if self.gate is not None:
+                await self.gate.wait()
+            else:
+                await asyncio.sleep(self.delay)
         except asyncio.CancelledError:
             self.cancelled.set()
             raise

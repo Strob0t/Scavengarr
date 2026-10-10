@@ -703,14 +703,20 @@ class TestCachedAnswers:
     other links resolve in the background for the next request."""
 
     async def test_answers_at_once_with_the_cached_streams(self) -> None:
-        resolutions = Resolutions(alive=(VOE,), delay=0.5)
+        """The answer does not wait for the hoster without a cached stream:
+        its resolution still stands at the gate when the answer is out, and
+        finishes in the background once the gate opens."""
+        gate = asyncio.Event()
+        resolutions = Resolutions(alive=(VOE,), gate=gate)
         uc = from_cache([hoster_link(VOE), hoster_link(DOOD)], resolutions)
 
-        started = time.monotonic()
-        streams = await uc.execute(make_request(), base_url="http://localhost:8080")
+        streams = await asyncio.wait_for(
+            uc.execute(make_request(), base_url="http://localhost:8080"), timeout=5
+        )
 
-        assert time.monotonic() - started < 0.3
         assert [video(uc, s) for s in streams] == ["https://cdn.example/best.mp4"]
+        assert DOOD not in resolutions.store
+        gate.set()
         await eventually(lambda: DOOD in resolutions.store)
         assert resolutions.calls == [DOOD]
 
@@ -735,17 +741,20 @@ class TestCachedAnswers:
         of a hoster first: the cached answer dropped that hoster's stream
         (3 of 17 titles of the dev-server E2E run, 2026-10-05). It keeps the
         cached stream now; the new link resolves for the next request."""
-        resolutions = Resolutions(alive=(VOE_2,), delay=0.5)
+        gate = asyncio.Event()
+        resolutions = Resolutions(alive=(VOE_2,), gate=gate)
         uc = from_cache(
             [hoster_link(VOE), hoster_link(VOE_2, "Iron.Man.2008.German.720p.WEB")],
             resolutions,
         )
 
-        started = time.monotonic()
-        streams = await uc.execute(make_request(), base_url="http://localhost:8080")
+        streams = await asyncio.wait_for(
+            uc.execute(make_request(), base_url="http://localhost:8080"), timeout=5
+        )
 
-        assert time.monotonic() - started < 0.3
         assert [video(uc, s) for s in streams] == ["https://cdn.example/second.mp4"]
+        assert VOE not in resolutions.store
+        gate.set()
         await eventually(lambda: VOE in resolutions.store)
         assert resolutions.calls == [VOE]
 
