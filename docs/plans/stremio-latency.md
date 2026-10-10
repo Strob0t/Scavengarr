@@ -435,7 +435,10 @@ answered the check's `Range: bytes=0-…` request with 200 and the whole file
 (`GET /api/v1/stremio/proxy/<id>/file status_code=200 duration_ms=2659`),
 the check's `client.get` buffered it, and 79.6 MB had arrived on one
 connection with bytes still flowing when the run was killed at 12:49 UTC
-(backlog row 58: the check reads only the bytes it judges). That answer is
+(backlog row 58, done on staging the same day: the check streams every
+answer, reads only the bytes it judges and closes it, one 30 s deadline
+covers the whole check, and the verdict says `200 instead of 206`; the
+eleventh round with play checks is its proof). That answer is
 the one evidence for row 26's group 6 this round: an address-bound file
 played through `/proxy/<id>/file` from the dev container, 200 in 2.7 s;
 the log does not name the hoster.

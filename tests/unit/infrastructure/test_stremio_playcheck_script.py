@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import sys
+import time
+from collections.abc import AsyncIterator
 from pathlib import Path
 from types import ModuleType
 
@@ -90,3 +93,137 @@ class TestCheckStream:
         assert verdict == "OK mp4 3.00 GB, seek 206"
         assert route.calls[0].request.headers["Referer"] == "https://h/"
         assert route.calls[1].request.headers["Range"] == "bytes=1500000000-1500001023"
+
+
+class _Body(httpx.AsyncByteStream):
+    """A streamed body that never ends: *chunk* again and again, each after
+    *delay* seconds. Counts the bytes handed out and whether it was closed."""
+
+    def __init__(self, chunk: bytes, *, delay: float = 0.0) -> None:
+        self.chunk = chunk
+        self.delay = delay
+        self.sent = 0
+        self.closed = False
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        while True:
+            await asyncio.sleep(self.delay)  # 0: let the event loop cancel us
+            self.sent += len(self.chunk)
+            yield self.chunk
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+_TS_PACKET = b"\x47" + b"\x00" * 187
+_MP4_CHUNK = b"\x00\x00\x00\x20ftypisom" + b"\x00" * 1012
+
+
+class TestBoundedReads:
+    """The tenth round hung on a proxied file whose Range request got 200 and
+    the whole file: the check reads the bytes it judges and closes."""
+
+    async def test_a_full_body_to_a_range_request_costs_a_few_kib(self) -> None:
+        head = _Body(_MP4_CHUNK)
+        seek = _Body(b"\x00" * 1024)
+        with respx.mock:
+            respx.get("https://cdn.example/v.mp4").mock(
+                side_effect=[
+                    httpx.Response(
+                        200,
+                        headers={"content-length": "3000000000"},
+                        stream=head,
+                    ),
+                    httpx.Response(206, stream=seek),
+                ]
+            )
+            async with httpx.AsyncClient() as client:
+                verdict = await asyncio.wait_for(
+                    _mod.check_stream(client, {"url": "https://cdn.example/v.mp4"}),
+                    timeout=5,
+                )
+
+        assert verdict == "OK mp4 3.00 GB, head 200 instead of 206, seek 206"
+        assert head.sent <= 64 * 1024 and head.closed
+        assert seek.sent <= 64 * 1024 and seek.closed
+
+    async def test_a_seek_answered_with_200_fails(self) -> None:
+        with respx.mock:
+            respx.get("https://cdn.example/v.mp4").mock(
+                side_effect=[
+                    httpx.Response(
+                        206,
+                        content=_MP4_CHUNK,
+                        headers={"content-range": "bytes 0-2047/3000000000"},
+                    ),
+                    httpx.Response(200, stream=_Body(b"\x00" * 1024)),
+                ]
+            )
+            async with httpx.AsyncClient() as client:
+                verdict = await asyncio.wait_for(
+                    _mod.check_stream(client, {"url": "https://cdn.example/v.mp4"}),
+                    timeout=5,
+                )
+
+        assert verdict == "FAIL mp4 3.00 GB, seek 200 instead of 206"
+
+    async def test_hls_segments_answered_with_200_are_noted(self) -> None:
+        segments = [_Body(_TS_PACKET), _Body(_TS_PACKET)]
+        with respx.mock:
+            respx.get("https://cdn.example/v.m3u8").respond(
+                200,
+                text="#EXTM3U\n#EXTINF:4,\ns1.ts\n#EXTINF:4,\ns2.ts\n#EXTINF:4,\ns3.ts\n",
+            )
+            respx.get("https://cdn.example/s1.ts").mock(
+                return_value=httpx.Response(200, stream=segments[0])
+            )
+            respx.get("https://cdn.example/s2.ts").mock(
+                return_value=httpx.Response(200, stream=segments[1])
+            )
+            async with httpx.AsyncClient() as client:
+                verdict = await asyncio.wait_for(
+                    _mod.check_stream(client, {"url": "https://cdn.example/v.m3u8"}),
+                    timeout=5,
+                )
+
+        assert verdict == (
+            "OK hls 3 segments: mpegts, mpegts; 2 of 2 segments 200 instead of 206"
+        )
+        assert all(s.sent <= 64 * 1024 and s.closed for s in segments)
+
+    async def test_an_endless_playlist_answer_is_cut(self) -> None:
+        body = _Body(b"x" * 4096)
+        with respx.mock:
+            respx.get("https://cdn.example/v.m3u8").mock(
+                return_value=httpx.Response(200, stream=body)
+            )
+            async with httpx.AsyncClient() as client:
+                verdict = await asyncio.wait_for(
+                    _mod.check_stream(client, {"url": "https://cdn.example/v.m3u8"}),
+                    timeout=5,
+                )
+
+        assert verdict == "FAIL master 200"
+        assert body.sent <= 2 * 1024 * 1024 and body.closed
+
+    async def test_the_check_ends_at_its_deadline_on_a_slow_body(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(_mod, "_CHECK_TIMEOUT", 0.3)
+        body = _Body(_MP4_CHUNK, delay=10.0)
+        with respx.mock:
+            respx.get("https://cdn.example/v.mp4").mock(
+                return_value=httpx.Response(
+                    206, headers={"content-range": "bytes 0-2047/3000"}, stream=body
+                )
+            )
+            async with httpx.AsyncClient() as client:
+                started = time.monotonic()
+                verdict = await asyncio.wait_for(
+                    _mod.check_stream(client, {"url": "https://cdn.example/v.mp4"}),
+                    timeout=5,
+                )
+
+        assert verdict == "FAIL timeout after 0.3 s"
+        assert time.monotonic() - started < 2.0
+        assert body.closed

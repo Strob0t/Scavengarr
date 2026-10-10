@@ -11,6 +11,12 @@ middle (a seek). Prints a verdict per stream and per source
 (``HOSTER · plugin``). The playback check of the server reads only the start
 of a stream; this one follows it to the media bytes, from the machine it
 runs on (a stream bound to the resolving IP fails from elsewhere).
+
+Every answer is streamed and read only up to the bytes the judgement needs
+(a playlist up to ``_PLAYLIST_MAX``, media up to ``_HEAD``, a seek none),
+then closed: a CDN or the proxy that answers a Range request with 200 and
+the whole file costs a few KiB, and the verdict says ``200 instead of 206``.
+One deadline per check, ``_CHECK_TIMEOUT``, covers all its requests.
 """
 
 from __future__ import annotations
@@ -28,6 +34,31 @@ _PLAYER_UA = (
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
 _HEAD = 2048
+_PLAYLIST_MAX = 1024 * 1024
+# The whole check of one stream, headers and bodies of all its requests
+_CHECK_TIMEOUT = 30.0
+
+
+async def _fetch(
+    client: httpx.AsyncClient, url: str, headers: dict, limit: int
+) -> tuple[httpx.Response, bytes]:
+    """GET *url*; read at most *limit* body bytes (none for an error status)
+    and close the answer, so a body of any length costs *limit* bytes."""
+    async with client.stream("GET", url, headers=headers) as resp:
+        parts: list[bytes] = []
+        size = 0
+        if resp.status_code < 400 and limit > 0:
+            async for chunk in resp.aiter_bytes():
+                parts.append(chunk[: limit - size])
+                size += len(parts[-1])
+                if size >= limit:
+                    break
+        return resp, b"".join(parts)
+
+
+def _range_note(status: int) -> str:
+    """A Range request answered with 200 (the whole file) is a finding."""
+    return " instead of 206" if status == 200 else ""
 
 
 def media_kind(data: bytes) -> str:
@@ -52,59 +83,79 @@ def _uris(playlist: str) -> list[str]:
 
 
 async def _check_hls(client: httpx.AsyncClient, url: str, headers: dict) -> str:
-    resp = await client.get(url, headers=headers)
-    if resp.status_code >= 400 or not resp.text.startswith("#EXTM3U"):
+    resp, body = await _fetch(client, url, headers, _PLAYLIST_MAX)
+    text = body.decode("utf-8", "replace")
+    if resp.status_code >= 400 or not text.startswith("#EXTM3U"):
         return f"FAIL master {resp.status_code}"
-    if "#EXT-X-STREAM-INF" in resp.text:
-        resp = await client.get(
-            str(resp.url.join(_uris(resp.text)[0])), headers=headers
+    if "#EXT-X-STREAM-INF" in text:
+        resp, body = await _fetch(
+            client, str(resp.url.join(_uris(text)[0])), headers, _PLAYLIST_MAX
         )
-        if resp.status_code >= 400 or not resp.text.startswith("#EXTM3U"):
+        text = body.decode("utf-8", "replace")
+        if resp.status_code >= 400 or not text.startswith("#EXTM3U"):
             return f"FAIL variant {resp.status_code}"
-    segments = _uris(resp.text)
+    segments = _uris(text)
     kinds = []
+    full = 0
     for segment in segments[:2]:
-        seg = await client.get(
+        seg, data = await _fetch(
+            client,
             str(resp.url.join(segment)),
-            headers={**headers, "Range": f"bytes=0-{_HEAD - 1}"},
+            {**headers, "Range": f"bytes=0-{_HEAD - 1}"},
+            _HEAD,
         )
+        full += seg.status_code == 200
         kinds.append(
-            f"{seg.status_code}"
-            if seg.status_code >= 400
-            else media_kind(seg.content[:_HEAD])
+            f"{seg.status_code}" if seg.status_code >= 400 else media_kind(data)
         )
     ok = bool(kinds) and all(is_media(k) for k in kinds)
-    return f"{'OK' if ok else 'FAIL'} hls {len(segments)} segments: {', '.join(kinds)}"
+    note = f"; {full} of {len(kinds)} segments 200 instead of 206" if full else ""
+    return (
+        f"{'OK' if ok else 'FAIL'} hls {len(segments)} segments: {', '.join(kinds)}"
+        + note
+    )
 
 
 async def _check_file(client: httpx.AsyncClient, url: str, headers: dict) -> str:
-    resp = await client.get(url, headers={**headers, "Range": f"bytes=0-{_HEAD - 1}"})
+    resp, data = await _fetch(
+        client, url, {**headers, "Range": f"bytes=0-{_HEAD - 1}"}, _HEAD
+    )
     if resp.status_code >= 400:
         return f"FAIL {resp.status_code} {resp.headers.get('content-type')}"
-    kind = media_kind(resp.content[:_HEAD])
+    kind = media_kind(data)
     if not is_media(kind):
-        return f"FAIL {kind} {resp.content[:40]!r}"
+        return f"FAIL {kind} {data[:40]!r}"
+    head = ", head 200" + _range_note(200) if resp.status_code == 200 else ""
     total = resp.headers.get("content-range", "").rsplit("/", 1)[-1]
+    if head:  # the whole file: its length is the size
+        total = resp.headers.get("content-length", "")
     if not total.isdigit():
-        return f"OK {kind}, no seek (size unknown)"
+        return f"OK {kind}{head}, no seek (size unknown)"
     middle = int(total) // 2
-    seek = await client.get(
-        url, headers={**headers, "Range": f"bytes={middle}-{middle + 1023}"}
+    seek, _ = await _fetch(
+        client, url, {**headers, "Range": f"bytes={middle}-{middle + 1023}"}, 0
     )
     verdict = "OK" if seek.status_code == 206 else "FAIL"
-    return f"{verdict} {kind} {int(total) / 1e9:.2f} GB, seek {seek.status_code}"
+    return (
+        f"{verdict} {kind} {int(total) / 1e9:.2f} GB{head}"
+        f", seek {seek.status_code}{_range_note(seek.status_code)}"
+    )
 
 
 async def check_stream(client: httpx.AsyncClient, stream: dict) -> str:
+    """The verdict for one stream, within ``_CHECK_TIMEOUT`` as a whole."""
     url = stream.get("url") or ""
     hints = stream.get("behaviorHints") or {}
     headers = {"User-Agent": _PLAYER_UA}
     headers.update((hints.get("proxyHeaders") or {}).get("request") or {})
     is_hls = any(m in url for m in (".m3u8", "master.txt", "/stremio/proxy/"))
     try:
-        if is_hls:
-            return await _check_hls(client, url, headers)
-        return await _check_file(client, url, headers)
+        async with asyncio.timeout(_CHECK_TIMEOUT):
+            if is_hls:
+                return await _check_hls(client, url, headers)
+            return await _check_file(client, url, headers)
+    except TimeoutError:
+        return f"FAIL timeout after {_CHECK_TIMEOUT:g} s"
     except httpx.HTTPError as exc:
         return f"FAIL {type(exc).__name__}"
 

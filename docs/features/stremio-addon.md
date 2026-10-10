@@ -490,7 +490,7 @@ Plugins declare `languages: list[str]` (default `["de"]`). The use case groups p
 | `tests/e2e/test_stremio_endpoint.py` | Full HTTP flow (manifest, catalog, stream, play, HLS proxy, health; `kitsu:` ids through the addon's meta, respx) |
 | `tests/e2e/test_stremio_series_e2e.py` | Series season/episode filtering |
 | `tests/e2e/test_stremio_streamable_e2e.py` | Streamable link verification |
-| `tests/unit/infrastructure/test_stremio_playcheck_script.py` | `scripts/stremio_playcheck.py`, which fetches every stream of a running instance like a player (HLS to the first segments, files with a seek) |
+| `tests/unit/infrastructure/test_stremio_playcheck_script.py` | `scripts/stremio_playcheck.py`, which fetches every stream of a running instance like a player (HLS to the first segments, files with a seek); every answer is streamed and read only up to the bytes the judgement needs, one deadline covers the whole check, and a Range request answered with 200 shows as `200 instead of 206` (tests with an endless and a slow body) |
 
 ---
 

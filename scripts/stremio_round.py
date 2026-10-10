@@ -42,8 +42,9 @@ DEFAULT_IDS_FILE = Path(__file__).resolve().parents[1] / "docs/plans/round-title
 
 # A first answer waits for the plugins' search (deadline 60 s in production)
 _STREAM_TIMEOUT = 120.0
-# A play check fetches playlists and segments; a CDN slower than this fails it
-_CHECK_TIMEOUT = 30.0
+# Per connect, read and write of a play check's requests; the check as a
+# whole ends at stremio_playcheck's own deadline (_CHECK_TIMEOUT there)
+_HTTP_TIMEOUT = 30.0
 
 
 @dataclass(frozen=True)
@@ -181,7 +182,7 @@ async def run(args: argparse.Namespace) -> str:
     before = cpu_seconds(container) if container else None
     rows: list[Row] = []
     async with httpx.AsyncClient(
-        verify=not args.insecure, follow_redirects=True, timeout=_CHECK_TIMEOUT
+        verify=not args.insecure, follow_redirects=True, timeout=_HTTP_TIMEOUT
     ) as client:
         for sid, title in ids:
             row = await measure(
