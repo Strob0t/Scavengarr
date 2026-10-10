@@ -233,6 +233,34 @@ HTTP/2's framing (h2, hpack, hyperframe) runs in Python and costs more CPU on th
 
 The moflix noise was people in its search answer (fixed in e9b1ba1). What could come next, evaluated with research on Stremio clients, other addons, HTTP clients, Chromium and Cloudflare: `optimization-options.md`.
 
+## Playback under search load (2026-10-10, row 56)
+
+**Question.** Does a search slow a playback that runs through the proxy on the Pi? N12 of the ideas backlog proposed that the search runner lower its plugin and browser concurrency while a playback is active; the row asked for the evidence first.
+
+**Setup.** Production (the container started 10:27 UTC from the 09:15 rebuild of staging 8a1dc84), measured with `scripts/playback_under_load.py` from the dev container through the reverse proxy, as a LAN player reaches it. The stream: the strmup HLS link of Der Schuh des Manitu that the tenth round had resolved minutes before (`prodctl.py probe links`), one variant, segments of 8 s and 1.3 to 4.9 MB (about 3.1 Mbit/s of video). Each run plays 20 segments at the playback pace (160 s of video); the proxy's read-ahead follows it (19 hits of 20 in every run, the first segment is the cold fetch). The load: one stream request 10 s into the playback, which goes on until 30 s after the answer. CPU: `docker stats` through Portainer about every 5 s (26 to 30 samples per run). Server view: the `/metrics` deltas of the run. Runs 1 to 3 between about 12:50 and 13:02 UTC, run 4 from 13:05:24 to 13:08:06 UTC. Runs 2 and 3 overlapped the four stream requests of another session's smoke test of `prodctl.py check` (about 12:55 to 13:05 UTC: three series, one movie, answered in 0.1 to 3.9 s), so run 2's plugin searches are not its own title's alone; run 4 ran on an idle production.
+
+| Run | Request (`X-Cache`, answer, streams) | Segments (video) | Stalls | Headers p50 / p90 (ms) | Segment p50 / p90 / max (ms) | Mbit/s | CPU p50 / max (cores) |
+|---|---|---|---|---|---|---|---|
+| 1 idle | none | 20 (160 s) | 0 | 47 / 117 | 652 / 741 / 5201 | 30.3 | 0.00 / 0.27 |
+| 2 Oppenheimer | HIT, 0.0 s, 7 | 20 (160 s) | 0 | 67 / 148 | 637 / 1069 / 4177 | 26.5 | 0.14 / 3.12 |
+| 3 Dune: Part Two (control) | HIT, 0.1 s, 5 | 20 (160 s) | 0 | 57 / 112 | 660 / 828 / 5028 | 29.3 | 0.00 / 0.27 |
+| 4 Everything Everywhere All at Once | MISS, 4.0 s, 5 | 20 (160 s) | 0 | 37 / 51 | 473 / 732 / 2056 | 42.5 | 0.01 / 0.62 |
+
+| Run | `plugin_search` n / mean / p90 | Proxy segment stage n / mean / p90 | Read-ahead fetches n / mean | ok / hit / miss / failed | Loop lag p50 / p90 / max |
+|---|---|---|---|---|---|
+| 1 idle | 0 | 20 / 8 ms / ≤50 ms | 21 / 1.94 s | 21 / 19 / 1 / 0 | ≤5 / ≤5 / ≤5 ms |
+| 2 Oppenheimer | 54 / 2.4 s / ≤4 s | 20 / 14 ms / ≤50 ms | 21 / 1.94 s | 21 / 19 / 1 / 0 | ≤5 ms / ≤5 ms / ≤0.5 s |
+| 3 Dune: Part Two (control) | 2 / 15.3 s / over 15 s | 20 / 9 ms / ≤50 ms | 21 / 1.77 s | 21 / 19 / 1 / 0 | ≤5 / ≤5 / ≤10 ms |
+| 4 Everything Everywhere All at Once | 12 / 3.1 s / ≤7 s | 20 / 9 ms / ≤50 ms | 21 / 1.88 s | 21 / 19 / 1 / 0 | ≤5 / ≤5 / ≤50 ms |
+
+The quantiles of the server view are histogram bucket bounds; "max" is the highest bucket with an observation. Segment "max" of the player view is the first segment in every run, the cold fetch of 4.55 MB (2.1 to 5.2 s, the CDN's pace for a first request), the only segment near its duration; it is the start of a playback, and the loaded runs did not change it.
+
+**What the load was.** Oppenheimer and Dune: Part Two were cache hits with `X-Search-Complete: false`, so their load came as completion searches in the background, not as a waiting request. Run 2 saw 54 plugin searches (mean 2.4 s, p90 ≤4 s) and the container at 3.12 cores peak (the browser plugins), its own completion and the smoke test's four requests together: the heavy case. Run 3 saw two plugin searches of 15 s, a second near-idle control. Run 4 is the clean case: a miss on an idle production, the request waited for the plugins (12 plugin searches, mean 3.1 s, p90 ≤7 s; 0.62 cores peak) and answered at 4.0 s with 5 streams.
+
+**Reading.** The search does not slow the playback. Under the clean full search (run 4) the segments were as fast as idle (p50/p90 473/732 ms against 652/741 ms, headers 37/51 against 47/117 ms, loop lag ≤50 ms). Under the heavy burst (run 2) the playback paid about a third of a second at p90 (1.07 against 0.74 s), the slowest segment after the first took 2.64 s (headers after 0.39 s), the event loop lagged once between 0.25 and 0.5 s, and no segment came near its 8 s; the proxy's own segment stage stayed at 14 ms mean. The segments come from memory: the read-ahead had fetched them (19 hits of 20) while its CDN fetches took 1.8 to 1.9 s mean on their own, so the event loop's busy phases cost the player only the copy of a buffered segment. A player's buffer (Stremio keeps tens of seconds) hides a third of a second entirely. N12 is closed without a scheduling change: nothing in the runner's concurrency needs a playback signal.
+
+**Limits.** One machine on the server's network as the player (the dev container, through the reverse proxy); one hoster's HLS (strmup) with 8 s segments, where the read-ahead hits; the first segment's cold fetch excluded; two loaded runs, one of them clean; CPU from one-second `docker stats` samples every 5 s (peaks between samples are missed). What would change the picture: segments of 2 to 4 s (the same third of a second is a larger share), a playback the read-ahead does not cover (a player jumping, a CDN that answered 429 and switched the read-ahead off for ten minutes), and a file through `/proxy/<id>/file`, where every byte passes the event loop while it is busy (not measured: the instrument plays HLS). A user report of stutter during a search would start there, with a `--file` mode of the instrument.
+
 ## How to re-measure
 
 `scripts/stremio_profile.py` measures the baseline titles, or the ids given, against a running container. Per request it reports:
