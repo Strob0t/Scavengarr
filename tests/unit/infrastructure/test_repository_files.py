@@ -24,6 +24,7 @@ _EXECUTED_DIRECTLY = [
     "scripts/worktree_venv.sh",
     ".claude/hooks/block-dangerous.sh",
     ".claude/hooks/format-and-lint.sh",
+    ".claude/hooks/usage-guard.sh",
     ".claude/plugins/basedpyright-lsp/scripts/langserver.sh",
     ".devcontainer/setup.sh",
     ".devcontainer/sync-jdownloader.sh",
