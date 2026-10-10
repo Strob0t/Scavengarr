@@ -358,7 +358,7 @@ Stremio settings live in `StremioConfig` (YAML section `stremio:`). See [Configu
 | `max_concurrent_playwright` | 5 | Playwright slots of the global concurrency pool; also the most pages of the stealth browser |
 | `max_results_per_plugin` | 100 | Per-plugin result limit in Stremio searches |
 | `plugin_timeout_seconds` | 30 | Plugin search budget, counted from the request start (queueing for a slot included; a stale entry's refresh: from its own start); the answer does not wait for it |
-| `plugin_health_interval_seconds` | 1800 | Health check of every Stremio plugin's site; searches skip the unreachable ones, which are checked again every 5 minutes (`0` = off) |
+| `plugin_health_interval_seconds` | 1800 | Health check of every Stremio plugin's site; searches skip the unreachable ones, which are checked again 5 minutes after the check that found them down, then at doubling pauses up to the interval (`0` = off) |
 | `stream_deadline_seconds` | 60 | Latest answer, from the request start; resolution stops here |
 | `max_concurrent_plugins_auto` | `true` | Auto-tune `max_concurrent_plugins` (superseded by `auto_tune_all`) |
 | `auto_tune_all` | `true` | Auto-tune all concurrency parameters from container resources |
@@ -405,7 +405,7 @@ Defaults, with production's values (`data/config.yaml`) where they differ:
 | `http_retry_*` | 3 retries, backoff from 1 s to 30 s (2, 0.5 s, 10 s) | Retries of 429 and 503 answers | |
 | Keep-alive (fixed) | 60 s, 20 connections | Idle connections of the shared client | Saves TLS handshakes between requests |
 | Circuit breakers (fixed) | 5 failures, then 60 s doubling to 1 h | A plugin per category, a hoster resolver | Skipped while open; one half-open probe |
-| `stremio.plugin_health_interval_seconds` | 1800 s; unreachable ones every 5 min, the first check 60 s after the start; a site without an answer is tried again after 30 s | The plugin site checks | Unreachable plugins are skipped |
+| `stremio.plugin_health_interval_seconds` | 1800 s; an unreachable one again after 5 min, then 10, 20 and the interval (one check per interval for a dead site, back within one pause when it returns), the first check 60 s after the start; a site without an answer is tried again after 30 s | The plugin site checks | Unreachable plugins are skipped |
 | `stremio.stream_link_ttl_seconds` | 7 days | Stored links of `/play` and the HLS proxy | Older links answer 404 once they have also left the in-memory set of the latest 4096 links (a restart clears it); a video URL older than 1 h (fixed) resolves again at playback |
 | HLS proxy (fixed) | manifests cached 60 s and fetched within 15 s; segments within `http_timeout_seconds` | Manifest and segment requests | |
 | SSRF guard (fixed) | DNS answers cached 60 s | Checked addresses | |

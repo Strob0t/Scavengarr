@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import time
+from collections.abc import Callable
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -28,11 +30,20 @@ def _no_retry_pause(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(health_monitor, "_CONFIRM_S", 0.0)
 
 
+class _Clock:
+    def __init__(self, now: float = 0.0) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+
 def _monitor(
     client: httpx.AsyncClient,
     domains: dict[str, list[str]],
     interval_s: float = 1800.0,
     history: PluginHistoryPort = NO_PLUGIN_HISTORY,
+    clock: Callable[[], float] | None = None,
 ) -> PluginHealthMonitor:
     """Monitor of plugins named after their first domain."""
     plugins = {
@@ -47,6 +58,7 @@ def _monitor(
         names=sorted(plugins),
         interval_s=interval_s,
         history=history,
+        clock=clock or _Clock(),
     )
 
 
@@ -234,15 +246,87 @@ class TestSchedule:
     async def test_all_every_interval_the_unreachable_in_between(self) -> None:
         respx.head(_UP).respond(200)
         respx.head(_SITE).mock(side_effect=httpx.ConnectError("down"))
+        clock = _Clock(1000.0)
         async with httpx.AsyncClient() as client:
             monitor = _monitor(
-                client, {"up": ["up.test"], "site": ["site.test"]}, interval_s=1800
+                client,
+                {"up": ["up.test"], "site": ["site.test"]},
+                interval_s=1800,
+                clock=clock,
             )
             assert monitor._due(1000.0) == ["site", "up"]
             await monitor.check(["site", "up"])
 
+            # Due within the next half tick counts as due (a tick is 300 s)
+            assert monitor._due(1150.0) == []
+            assert monitor._due(1151.0) == ["site"]
             assert monitor._due(1300.0) == ["site"]
             assert monitor._due(2800.0) == ["site", "up"]
+
+    @respx.mock
+    async def test_the_recheck_pause_doubles_up_to_the_interval(self) -> None:
+        """5 min after the failed check, 10, 20, then the interval: a dead
+        site costs one check per interval, the full one."""
+        respx.head(_UP).respond(200)
+        respx.head(_SITE).mock(side_effect=httpx.ConnectError("down"))
+        clock = _Clock(0.0)
+        async with httpx.AsyncClient() as client:
+            monitor = _monitor(
+                client, {"up": ["up.test"], "site": ["site.test"]}, clock=clock
+            )
+            checks: list[float] = []
+            for clock.now in (0.0, 300.0, 600.0, 900.0, 1200.0, 1500.0, 1800.0):
+                due = monitor._due(clock.now)
+                if due:
+                    checks.append(clock.now)
+                    await monitor.check(due)
+            # The full check at 1800 capped the pause at the interval
+            for clock.now in (2100.0, 2400.0, 2700.0, 3000.0, 3300.0):
+                assert monitor._due(clock.now) == [], clock.now
+            clock.now = 3600.0
+            assert monitor._due(3600.0) == ["site", "up"]
+
+        assert checks == [0.0, 300.0, 900.0, 1800.0]
+
+    @respx.mock
+    async def test_an_answer_resets_the_pause(self) -> None:
+        respx.head(_UP).respond(200)
+        site = respx.head(_SITE).mock(side_effect=httpx.ConnectError("down"))
+        clock = _Clock(0.0)
+        async with httpx.AsyncClient() as client:
+            monitor = _monitor(
+                client, {"up": ["up.test"], "site": ["site.test"]}, clock=clock
+            )
+            await monitor.check(monitor._due(0.0))  # pause 300
+            clock.now = 300.0
+            await monitor.check(monitor._due(300.0))  # pause 600
+            site.side_effect = None
+            site.return_value = httpx.Response(200)
+            clock.now = 900.0
+            await monitor.check(monitor._due(900.0))
+            assert monitor.is_reachable("site")
+            assert monitor._due(1500.0) == []
+            # Down again at the next full check: the pause starts over
+            site.side_effect = httpx.ConnectError("down")
+            clock.now = 1800.0
+            assert monitor._due(1800.0) == ["site", "up"]
+            await monitor.check(["site", "up"])
+
+            assert monitor._due(1950.0) == []
+            assert monitor._due(2100.0) == ["site"]
+
+    @respx.mock
+    async def test_a_search_mark_is_rechecked_after_the_first_pause(self) -> None:
+        respx.head(_SITE).respond(200)
+        clock = _Clock(0.0)
+        async with httpx.AsyncClient() as client:
+            monitor = _monitor(client, {"site": ["site.test"]}, clock=clock)
+            await monitor.check(monitor._due(0.0))
+            clock.now = 1000.0
+            monitor.mark_unreachable("site")
+
+            assert monitor._due(1150.0) == []
+            assert monitor._due(1300.0) == ["site"]
 
     @respx.mock
     async def test_runs_until_cancelled(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -251,7 +335,9 @@ class TestSchedule:
         respx.head(_UP).respond(200)
         site = respx.head(_SITE).mock(side_effect=httpx.ConnectError("down"))
         async with httpx.AsyncClient() as client:
-            monitor = _monitor(client, {"up": ["up.test"], "site": ["site.test"]})
+            monitor = _monitor(
+                client, {"up": ["up.test"], "site": ["site.test"]}, clock=time.monotonic
+            )
             task = asyncio.create_task(monitor.run_forever())
             while site.call_count < 3:
                 await asyncio.sleep(0.01)

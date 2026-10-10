@@ -298,8 +298,8 @@ class StremioConfig(BaseModel):
         description=(
             "How often every Stremio plugin's site is checked (HEAD on its "
             "domains); searches skip plugins whose site did not answer (twice, "
-            "30 s apart), and those are checked again every 5 minutes. 0 turns "
-            "the check off."
+            "30 s apart), and those are checked again 5 minutes later, then at "
+            "doubling pauses up to this interval. 0 turns the check off."
         ),
     )
     stream_deadline_seconds: float = Field(

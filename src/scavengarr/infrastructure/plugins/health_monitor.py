@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Callable
 
 import structlog
 
@@ -25,8 +26,11 @@ from scavengarr.infrastructure.scoring.health_prober import HealthProber
 
 log = structlog.get_logger(__name__)
 
-# Unreachable sites are checked again this often; the first check waits
-# for the start's own load (first requests, browser warm-up)
+# An unreachable site is checked again this long after the check that
+# found it down, then at doubling pauses up to the full interval (a dead
+# site costs one check per interval, a site that comes back is reachable
+# again within one pause); the first check waits for the start's own load
+# (first requests, browser warm-up)
 _RETRY_S = 300.0
 _FIRST_CHECK_S = 60.0
 _CONCURRENCY = 5
@@ -52,9 +56,11 @@ def _answers(result: ProbeResult) -> bool:
 class PluginHealthMonitor:
     """Which plugins' sites answer.
 
-    Every plugin is checked every *interval_s*, an unreachable one every 5
-    minutes in between. A site that fails a check and its retry 30 s
-    later is marked unreachable, one answer brings it back. A check in
+    Every plugin is checked every *interval_s*, an unreachable one again 5
+    minutes after the check that found it down, then after 10, 20 and so
+    on up to *interval_s* (``_RETRY_S``, doubling). A site that fails a
+    check and its retry 30 s later is marked unreachable, one answer brings
+    it back and resets its pause. A check in
     which no site answers changes nothing: then the own network or DNS is
     down, not every site. Every other check's verdict goes into the
     plugins' long-term record (``checks``, ``unreachable``).
@@ -68,6 +74,7 @@ class PluginHealthMonitor:
         names: list[str],
         interval_s: float,
         history: PluginHistoryPort = NO_PLUGIN_HISTORY,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._prober = prober
         self._plugins = plugins
@@ -75,9 +82,13 @@ class PluginHealthMonitor:
         self._interval_s = interval_s
         # The plugins' long-term record: every check's verdict, per day
         self._history = history
+        self._clock = clock
         self._tick_s = min(_RETRY_S, interval_s)
         self._next_full = 0.0
         self._unreachable: set[str] = set()
+        # An unreachable plugin's current pause and the time of its next check
+        self._pause_s: dict[str, float] = {}
+        self._recheck_at: dict[str, float] = {}
 
     def is_reachable(self, name: str) -> bool:
         return name not in self._unreachable
@@ -88,6 +99,7 @@ class PluginHealthMonitor:
         if name in self._unreachable:
             return
         self._unreachable.add(name)
+        self._back_off(name, self._clock())
         log.warning("plugin_unreachable", plugin=name, source="search")
 
     async def run_forever(self) -> None:
@@ -95,7 +107,7 @@ class PluginHealthMonitor:
         await asyncio.sleep(_FIRST_CHECK_S)
         while True:
             try:
-                names = self._due(time.monotonic())
+                names = self._due(self._clock())
                 if names:
                     await self.check(names)
             except Exception:
@@ -104,11 +116,30 @@ class PluginHealthMonitor:
 
     def _due(self, now: float) -> list[str]:
         """The plugins to check at *now*: all once per interval, else the
-        unreachable ones."""
-        if now >= self._next_full:
+        unreachable ones whose pause is over.
+
+        The loop ticks every ``_tick_s``; a check due within the next half
+        tick runs at this one (a pause is a multiple of the tick, and a sleep
+        that wakes a moment early would otherwise push it a whole tick).
+        """
+        horizon = now + self._tick_s / 2
+        if self._next_full < horizon:
             self._next_full = now + self._interval_s
             return list(self._names)
-        return sorted(self._unreachable)
+        return sorted(
+            name
+            for name in self._unreachable
+            if self._recheck_at.get(name, 0.0) < horizon
+        )
+
+    def _back_off(self, name: str, now: float) -> None:
+        """Schedule the unreachable plugin's next check: ``_RETRY_S`` after
+        the first failed check, twice the last pause after every further
+        one, never more than the full interval."""
+        last = self._pause_s.get(name)
+        pause = _RETRY_S if last is None else last * 2
+        self._pause_s[name] = min(pause, self._interval_s)
+        self._recheck_at[name] = now + self._pause_s[name]
 
     async def check(self, names: list[str]) -> None:
         """Check the sites of *names* and record which ones answer.
@@ -138,16 +169,21 @@ class PluginHealthMonitor:
         if failed:
             await asyncio.sleep(_CONFIRM_S)
             up |= await _check_all(failed)
+        now = self._clock()
         for name, answers in up.items():
             self._history.count(name, "checks")
-            if not answers:
-                self._history.count(name, "unreachable")
-            if answers and name in self._unreachable:
-                self._unreachable.discard(name)
-                log.info("plugin_reachable", plugin=name)
-            elif not answers and name not in self._unreachable:
+            if answers:
+                if name in self._unreachable:
+                    self._unreachable.discard(name)
+                    self._pause_s.pop(name, None)
+                    self._recheck_at.pop(name, None)
+                    log.info("plugin_reachable", plugin=name)
+                continue
+            self._history.count(name, "unreachable")
+            if name not in self._unreachable:
                 self._unreachable.add(name)
                 log.warning("plugin_unreachable", plugin=name)
+            self._back_off(name, now)
 
     async def _site_answers(self, name: str) -> bool:
         """Whether one of the plugin's domains answers.
