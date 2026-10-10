@@ -486,6 +486,29 @@ the cached answer carries them all (0.05 s median). Playable is not
 measured this round (row 58 first); the eleventh round after the next
 deploy runs with play checks again.
 
+**Row 58's proof** (2026-10-10, 13:20 to 13:21 UTC, production idle, the
+same build as the tenth round): `stremio_round.py` with play checks from the
+dev container on three movie ids, the check code of 8fb64f6 (streamed
+answers, one 30 s deadline per check). The run ended after 95 s for the
+three titles and their 20 streams, no check hung and none reached its
+deadline (20 checks in under 95 s together, so under 5 s each on average);
+the tenth round's run with the old check had not ended after 2 h 16 min.
+The round table counts the verdicts (the per-stream verdicts, with any
+`200 instead of 206` finding, are the play check script's own output and
+were not requested separately to keep the production load at this run):
+
+| Title | First answer | Streams | X-Cache | Complete | Cached answer | Streams | Playable |
+|---|---|---|---|---|---|---|---|
+| Spirited Away (`movie/tt0248408`) | 0.1 s | 7 | STALE | false | 0.02 s | 7 | 3 of 7 |
+| Lola rennt (`movie/tt0130827`) | 2.1 s | 5 | STALE | false | 0.03 s | 5 | 1 of 5 |
+| The Matrix (`movie/tt0133093`) | 0.1 s | 8 | HIT | false | 0.04 s | 8 | 5 of 8 |
+| **Median / total** (3 titles) | 0.1 s | 20 | 1 HIT | 0 of 3 complete | 0.03 s | 20 | 9 of 20 |
+
+9 of 20 playable from the dev container is the tenth round's pattern
+(finding 15: address-bound and VPN-bound streams fail from a foreign
+address), not a regression of the check; the three answers came from the
+search cache (`STALE`, `HIT`), so no plugin search ran for this proof.
+
 ## AIOStreams
 
 Goal was an AIOStreams test user on `aiostreams.lan` with Scavengarr as addon, measured end to end. Not done: AIOStreams validates the addon manifest when a user is created or updated, and it can reach neither the dev instance (Docker NAT on the workstation) nor `scavengarr.lan` (502, backend down). Recommended user settings, from the AIOStreams v2.35.3 source (`packages/core/src/presets/custom.ts`, `packages/core/src/db/schemas.ts`):
