@@ -1,8 +1,8 @@
 """Season/episode filtering of search results for Stremio series requests.
 
-Uses guessit to parse release names; falls back to episode labels in
-``download_links`` (e.g. ``1x5`` from episode tabs) when the title has
-no parseable season/episode info.
+Uses guessit to parse release names, and the episode labels of the
+``download_links`` (``1x5`` from episode tabs, ``Folge 5``): they decide
+a result whose title names no episode and narrow one whose title does.
 """
 
 from __future__ import annotations
@@ -29,13 +29,19 @@ _EPISODE_LABEL_RE = re.compile(
     r")"
     r"(?:\D|$)"
 )
+# Episode words without a season: "Folge 5", "Episode 12", "Ep. 3", "E05"
+_EPISODE_WORD_RE = re.compile(
+    r"\b(?:episode|folge|ep\.?)\s*(\d{1,4})\b|\bE(\d{1,4})\b", re.IGNORECASE
+)
 
 
 def parse_episode_from_label(label: str) -> tuple[int | None, int | None]:
     """Extract (season, episode) from a download_link label.
 
-    Recognises patterns like ``1x5``, ``1x05``, ``2x10``,
-    ``S01E05``, ``s1e5``.
+    Recognises patterns like ``1x5``, ``1x05``, ``2x10``, ``S01E05``,
+    ``s1e5``, and episode words without a season (``Folge 5``,
+    ``Episode 12``, ``Ep. 3``, ``E05``: ``(None, 5)``).
+
     Returns ``(None, None)`` when no pattern is found.
     """
     m = _EPISODE_LABEL_RE.search(label)
@@ -44,6 +50,9 @@ def parse_episode_from_label(label: str) -> tuple[int | None, int | None]:
         season = m.group(1) if m.group(1) is not None else m.group(3)
         episode = m.group(2) if m.group(2) is not None else m.group(4)
         return int(season), int(episode)
+    word = _EPISODE_WORD_RE.search(label)
+    if word:
+        return None, int(word.group(1) or word.group(2))
     return None, None
 
 
@@ -109,16 +118,21 @@ def _numbers(r: SearchResult) -> tuple[set[int] | None, set[int] | None]:
 
 
 def _narrow_links(
-    r: SearchResult, season: int | None, episode: int | None
+    r: SearchResult,
+    season: int | None,
+    episode: int | None,
+    *,
+    title_names_episode: bool,
 ) -> SearchResult | None:
-    """Keep the links whose episode labels match. With an episode requested
-    a result without a labelled link is dropped (``None``): a show page
-    would pass with every episode otherwise; so is one whose labelled links
-    all name another episode. Without one (a season request) a result
-    without labelled links passes unchanged."""
+    """Keep the links whose episode labels match. A result whose labelled
+    links all name another episode is dropped (``None``). One without a
+    labelled link passes unchanged when its title names the episode or
+    none is requested (a season request); with an episode requested and
+    none in the title it is dropped: a show page would pass with every
+    episode otherwise."""
     kept = filter_links_by_episode(r.download_links or [], season, episode)
     if kept is None:
-        return None if episode is not None else r
+        return r if title_names_episode or episode is None else None
     if not kept:
         return None
     first_url = link_url(kept[0]) or r.download_link
@@ -136,11 +150,14 @@ def filter_by_episode(
     ``episode``), else from guessit on its title (``_numbers``). A result
     of another season or episode is dropped. A result without an episode
     number (a show page, a season page, a season pack) passes only through
-    the links labelled with the requested episode (``1x5``, ``S01E05``);
-    with an episode requested and no such link it is dropped, so a show
-    page cannot leak other episodes. A result with an episode but no
-    season passes for season 1 only. For a season request results without
-    episode information pass unchanged.
+    the links labelled with the requested episode (``1x5``, ``S01E05``,
+    ``Folge 5``); with an episode requested and no such link it is
+    dropped, so a show page cannot leak other episodes. A result whose
+    title names the episode keeps the links labelled with it or with no
+    episode, and is dropped when its labelled links all name other
+    episodes (a page titled after the episode but linking the season's).
+    A result with an episode but no season passes for season 1 only. For
+    a season request results without episode information pass unchanged.
     """
     if season is None and episode is None:
         return results
@@ -157,7 +174,7 @@ def filter_by_episode(
             continue
 
         if r_episode is None:
-            narrowed = _narrow_links(r, season, episode)
+            narrowed = _narrow_links(r, season, episode, title_names_episode=False)
             if narrowed is not None:
                 filtered.append(narrowed)
             continue
@@ -166,7 +183,10 @@ def filter_by_episode(
             # An episode number without a season names season 1
             continue
 
-        filtered.append(r)
+        # the title names the episode: its links of other episodes go
+        narrowed = _narrow_links(r, season, episode, title_names_episode=True)
+        if narrowed is not None:
+            filtered.append(narrowed)
 
     if len(filtered) < len(results):
         log.debug(

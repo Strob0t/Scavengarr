@@ -65,7 +65,8 @@ ROUND_TITLES = REPO / "docs" / "plans" / "round-titles.txt"
 EXTRA_IDS = ("series/tt11280740:1:5", "series/tt11280740:2:5")  # Severance
 SERIES = 5000
 
-# Episode words the filter's label pattern (1x5, S01E05) does not read
+# Episode words in link labels, read independently of the filter (which reads
+# them too since row 30 of the ideas backlog): an oracle for its regressions
 _LOOSE_EPISODE_RE = re.compile(
     r"\b(?:episode|folge|ep\.?)\s*(\d{1,4})\b|\bE(\d{1,4})\b", re.IGNORECASE
 )

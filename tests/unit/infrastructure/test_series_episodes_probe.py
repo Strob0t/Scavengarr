@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import importlib.util
 import sys
 from pathlib import Path
@@ -133,23 +134,28 @@ def test_classify_unlabelled_page_is_dropped() -> None:
     )
 
 
-def test_classify_leak_from_labels_the_filter_does_not_read() -> None:
-    """The title names the episode, so the links stay as they are; the
-    probe reads the loose labels the filter does not."""
+def test_classify_a_title_named_episode_is_narrowed_by_its_labels() -> None:
+    """The title names the episode and the links carry episode words: the
+    filter keeps the episode's link only (the leak class of the step 21
+    review, row 30); the record lists the page's labels."""
     page = _result("Dark.S01E01", ["Folge 1", "Folge 2"])
     rec = probe.classify("series/tt1:1:1", "p", page, 1, 1)
-    assert rec.outcome == "kept"
-    assert rec.right
-    assert rec.leaks == ["label 'Folge 2'"]
+    assert (rec.outcome, rec.right, rec.leaks) == ("narrowed", True, [])
+    assert (rec.links, rec.kept_links) == (2, 1)
     assert rec.labels == ["Folge 1", "Folge 2"]
 
 
-def test_classify_season_page_with_unread_labels_is_dropped() -> None:
-    """The filter reads ``1x2`` and ``S01E02`` labels only: a season page
-    with other labels has no link it can trust."""
+def test_classify_a_season_page_with_episode_words_is_narrowed() -> None:
+    """The filter reads ``Folge 2`` like ``1x2`` and ``S01E02``: a season
+    page with such labels keeps the episode's link."""
     page = _result("Dark Staffel 1", ["Folge 1", "Folge 2"])
     rec = probe.classify("series/tt1:1:1", "p", page, 1, 1)
-    assert (rec.outcome, rec.right, rec.leaks) == ("dropped", False, [])
+    assert (rec.outcome, rec.right, rec.leaks, rec.kept_links) == (
+        "narrowed",
+        True,
+        [],
+        1,
+    )
 
 
 def test_classify_right_episode_from_title() -> None:
@@ -168,18 +174,22 @@ def test_render_counts_per_plugin_and_lists_leaks() -> None:
     records = [
         probe.classify("series/tt1:1:1", "a", _result("Dark.S01E01"), 1, 1),
         probe.classify("series/tt1:1:1", "a", _result("Dark.S01E02"), 1, 1),
-        probe.classify(
-            "series/tt1:1:1",
-            "b",
-            _result("Dark.S01E01", ["Folge 1", "Folge 2"]),
-            1,
-            1,
+        # a leak as the oracle would report one (the filter lets none through)
+        dataclasses.replace(
+            probe.classify(
+                "series/tt1:1:1",
+                "b",
+                _result("Dark.S01E01", ["Folge 1", "Folge 2"]),
+                1,
+                1,
+            ),
+            leaks=["label 'Folge 2'"],
         ),
     ]
     failures = {"c": probe.Counter(timeout=2)}
     text = probe.render(records, failures, ["a", "b", "c"])
     assert "| a | 2 | 2 | 0 | 0 | 0 | 1 | 0 | 1 | 1 | 0 | 0 | 0 |" in text
-    assert "| b | 1 | 1 | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 1 | 0 | 0 |" in text
+    assert "| b | 1 | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 1 | 0 | 0 |" in text
     assert "| c | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | timeout 2 |" in text
     assert "| **total** | 3 |" in text
     assert "- b, series/tt1:1:1: 'Dark.S01E01' (label 'Folge 2')" in text
