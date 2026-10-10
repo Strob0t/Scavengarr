@@ -15,6 +15,7 @@ from scavengarr.domain.plugins.base import (
     PluginUnreachableError,
     SearchResult,
 )
+from scavengarr.domain.ports.plugin_history import ChallengeFlag, challenge_flag
 from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
@@ -514,6 +515,93 @@ class TestSafeFetchChallenge:
         events = [log["event"] for log in logs]
         assert events == ["test-plugin_http_error"]
         assert HttpxPluginBase._cf_blocked_until == {}
+
+
+class TestChallengeFlag:
+    """A challenge seen by ``_safe_fetch`` or ``_fetch_text`` marks the
+    running search's flag, which the search runner counts once (step 50);
+    an error page does not."""
+
+    _CHALLENGE = "<html><title>Just a moment...</title>challenge-platform</html>"
+
+    @respx.mock
+    async def test_safe_fetch_marks_the_flag(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(HttpxPluginBase, "_cf_blocked_until", {})
+        respx.get("https://example.com/api").respond(403, html=self._CHALLENGE)
+        plugin = _TestPlugin()
+        flag = ChallengeFlag()
+        token = challenge_flag.set(flag)
+        try:
+            async with httpx.AsyncClient() as client:
+                plugin._client = client
+                await plugin._safe_fetch("https://example.com/api")
+        finally:
+            challenge_flag.reset(token)
+
+        assert flag.seen is True
+
+    @respx.mock
+    async def test_fetch_text_marks_the_flag_without_a_fetcher(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(HttpxPluginBase, "_cf_blocked_until", {})
+        monkeypatch.setattr(HttpxPluginBase, "_browser_fetcher", None)
+        respx.get("https://example.com/page").respond(503, html=self._CHALLENGE)
+        plugin = _TestPlugin()
+        flag = ChallengeFlag()
+        token = challenge_flag.set(flag)
+        try:
+            async with httpx.AsyncClient() as client:
+                plugin._client = client
+                assert await plugin._fetch_text("https://example.com/page") is None
+        finally:
+            challenge_flag.reset(token)
+
+        assert flag.seen is True
+
+    @respx.mock
+    async def test_fetch_text_marks_the_flag_on_the_browser_fallback(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(HttpxPluginBase, "_cf_blocked_until", {})
+        fetcher = AsyncMock()
+        fetcher.fetch_text = AsyncMock(return_value="<html>solved</html>")
+        fetcher.session = AsyncMock(return_value=None)
+        monkeypatch.setattr(HttpxPluginBase, "_browser_fetcher", fetcher)
+        respx.get("https://example.com/page").respond(503, html=self._CHALLENGE)
+        plugin = _TestPlugin()
+        flag = ChallengeFlag()
+        token = challenge_flag.set(flag)
+        try:
+            async with httpx.AsyncClient() as client:
+                plugin._client = client
+                html = await plugin._fetch_text("https://example.com/page")
+        finally:
+            challenge_flag.reset(token)
+
+        assert html == "<html>solved</html>"
+        assert flag.seen is True
+
+    @respx.mock
+    async def test_an_error_page_leaves_the_flag(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(HttpxPluginBase, "_cf_blocked_until", {})
+        respx.get("https://example.com/api").respond(500, html="<html>Oops</html>")
+        plugin = _TestPlugin()
+        flag = ChallengeFlag()
+        token = challenge_flag.set(flag)
+        try:
+            async with httpx.AsyncClient() as client:
+                plugin._client = client
+                await plugin._safe_fetch("https://example.com/api")
+                await plugin._fetch_text("https://example.com/api")
+        finally:
+            challenge_flag.reset(token)
+
+        assert flag.seen is False
 
 
 # ---------------------------------------------------------------------------

@@ -14,10 +14,12 @@ from collections.abc import (
     Awaitable,
     Callable,
     Coroutine,
+    Generator,
     Iterable,
     Mapping,
     Sequence,
 )
+from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, Protocol
 
@@ -37,7 +39,9 @@ from scavengarr.domain.ports.browser_fetcher import PageClaim, page_claim
 from scavengarr.domain.ports.concurrency import ConcurrencyBudgetPort
 from scavengarr.domain.ports.plugin_history import (
     NO_PLUGIN_HISTORY,
+    ChallengeFlag,
     PluginHistoryPort,
+    challenge_flag,
 )
 from scavengarr.domain.ports.plugin_registry import PluginRegistryPort
 from scavengarr.domain.ports.plugin_score_store import PluginScoreStorePort
@@ -585,7 +589,10 @@ class PluginSearchRunner:
         dropped = 0
         results: list[SearchResult] = []
         self._history.count(name, "searches")
-        with self._telemetry.stage("plugin_search", plugin=name) as stage:
+        with (
+            self._counting_challenges(name),
+            self._telemetry.stage("plugin_search", plugin=name) as stage,
+        ):
             try:
                 token = self._max_results_var.set(self._max_results_per_plugin)
                 try:
@@ -648,6 +655,20 @@ class PluginSearchRunner:
             late=late,
         )
         return results, success, dropped
+
+    @contextmanager
+    def _counting_challenges(self, name: str) -> Generator[None]:
+        """A fresh challenge flag for *name*'s search: the plugin bases mark
+        it when a page shows a challenge, and ``challenges`` is counted once
+        when the search ends, with a timeout or a cancellation too."""
+        flag = ChallengeFlag()
+        token = challenge_flag.set(flag)
+        try:
+            yield
+        finally:
+            challenge_flag.reset(token)
+            if flag.seen:
+                self._history.count(name, "challenges")
 
     async def _filter_episodes(
         self,

@@ -15,6 +15,7 @@ from scavengarr.domain.plugins.base import (
     PluginUnreachableError,
     SearchResult,
 )
+from scavengarr.domain.ports.plugin_history import ChallengeFlag, challenge_flag
 from scavengarr.infrastructure.browser.hardening import (
     CHROMIUM_ARGS,
     block_heavy_resources,
@@ -887,6 +888,31 @@ class TestWaitForCloudflare:
 
     def test_default_timeout_covers_a_turnstile_click(self) -> None:
         assert _TestPlugin()._cf_timeout_ms == 30_000
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("title", "seen"), [("Just a moment...", True), ("Movies", False)]
+    )
+    async def test_a_challenge_page_marks_the_searchs_flag(
+        self, title: str, seen: bool
+    ) -> None:
+        """The search runner counts a search whose page showed a challenge
+        once (step 50); a plain page leaves the flag."""
+        plugin = _TestPlugin()
+        page = AsyncMock()
+        page.title = AsyncMock(return_value=title)
+        flag = ChallengeFlag()
+        token = challenge_flag.set(flag)
+        try:
+            with patch(
+                "scavengarr.infrastructure.plugins.playwright_base.solve_cloudflare",
+                AsyncMock(return_value=True),
+            ):
+                await plugin._wait_for_cloudflare(page)
+        finally:
+            challenge_flag.reset(token)
+
+        assert flag.seen is seen
 
 
 class TestClearanceStore:

@@ -16,6 +16,7 @@ from scavengarr.domain.entities.scoring import PluginScoreSnapshot
 from scavengarr.domain.entities.stremio import EpisodeRef
 from scavengarr.domain.plugins.base import PluginUnreachableError, SearchResult
 from scavengarr.domain.ports.browser_fetcher import PageClaim, page_claim
+from scavengarr.domain.ports.plugin_history import challenge_flag, mark_challenge
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.concurrency import ConcurrencyPool
 from scavengarr.infrastructure.telemetry import Telemetry
@@ -404,6 +405,49 @@ class TestPluginRecord:
         await _search(runner, ["a"], ["q"])
 
         assert ("a", "dropped", 1) in [c.args for c in history.count.call_args_list]
+
+    async def test_a_challenge_counts_once_per_search(self) -> None:
+        """Two pages of one search showed a challenge: one count (step 50)."""
+
+        async def _challenged(*_args: object, **_kwargs: object) -> list[SearchResult]:
+            mark_challenge()
+            mark_challenge()
+            return [_sr("https://a/1")]
+
+        plugin = _plugin([])
+        plugin.search = AsyncMock(side_effect=_challenged)
+        history = MagicMock(spec=["count"])
+
+        await _search(_runner(_registry({"a": plugin}), history=history), ["a"], ["q"])
+
+        counted = [c.args for c in history.count.call_args_list]
+        assert counted.count(("a", "challenges")) == 1
+        assert ("a", "results", 1) in counted
+
+    async def test_a_challenge_in_a_timed_out_search_is_counted(self) -> None:
+        async def _challenged_slow(
+            *_args: object, **_kwargs: object
+        ) -> list[SearchResult]:
+            mark_challenge()
+            await asyncio.sleep(10)
+            return []
+
+        plugin = _plugin([])
+        plugin.search = AsyncMock(side_effect=_challenged_slow)
+        history = MagicMock(spec=["count"])
+        runner = _runner(_registry({"a": plugin}), plugin_timeout=0.01, history=history)
+
+        await _search(runner, ["a"], ["q"])
+
+        assert [c.args for c in history.count.call_args_list] == [
+            ("a", "searches"),
+            ("a", "challenges"),
+            ("a", "timeouts"),
+        ]
+
+    async def test_a_mark_outside_a_search_counts_nothing(self) -> None:
+        assert challenge_flag.get() is None
+        mark_challenge()  # no search running: nothing to count
 
 
 class TestDispatch:

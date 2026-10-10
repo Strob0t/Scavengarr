@@ -142,6 +142,7 @@ _RECORD = {
                 "2026-10-07": {
                     "searches": 5,
                     "timeouts": 2,
+                    "challenges": 4,
                     "checks": 3,
                     "unreachable": 1,
                 },
@@ -240,6 +241,7 @@ class TestSections:
             2,
         )
         assert (kinoger["checks"], kinoger["unreachable"]) == (3, 1)
+        assert kinoger["challenges"] == 4
         assert kinoger["days_since_result"] == 1
         assert kinoger["unreachable_share"] == {"30": 0.1, "90": None, "180": None}
         # Its one day lies before the window
@@ -317,8 +319,17 @@ class TestRender:
             assert f"\n## {heading}\n" in text
         assert "| search | 1 | 13.40 s | 13.40 s | 5.0 | 0 |" in text
         assert "\nBy id scheme: tt 5, kitsu 1, tmdb 1\n" in text
-        assert "| kinoger | 15 | 3 | 2 | 0 | 3 | 1 | 1 d ago | 10%/–/– |" in text
+        assert "| kinoger | 15 | 3 | 2 | 0 | 4 | 3 | 1 | 1 d ago | 10%/–/– |" in text
+        assert "\nChallenged in the window: kinoger 4\n" in text
         assert "| voe | 93 | 1.2 s | stream 93 |" in text
+
+    def test_without_a_challenge_the_plugins_say_so(self) -> None:
+        record = json.loads(json.dumps(_RECORD))
+        del record["plugins"]["kinoger"]["days"]["2026-10-07"]["challenges"]
+
+        text = _mod.render(_digest(record=record))
+
+        assert "\nNo search met a challenge in the window.\n" in text
         assert "Not closed now: filemoon (hoster, open)" in text
         assert "Opened in the window: filemoon ×1" in text
         assert "2 at error and above" in text

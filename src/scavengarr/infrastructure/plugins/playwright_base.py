@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 
 from scavengarr.domain.entities.stremio import EpisodeRef
 from scavengarr.domain.plugins.base import PluginUnreachableError, SearchResult
+from scavengarr.domain.ports.plugin_history import mark_challenge
 from scavengarr.infrastructure.browser.clearance_store import ClearanceStore
 from scavengarr.infrastructure.browser.display import resolve_headless
 from scavengarr.infrastructure.browser.hardening import (
@@ -348,8 +349,11 @@ class PlaywrightPluginBase:
         """Solve a Cloudflare challenge on *page* (Turnstile click included).
 
         Returns ``True`` if the page is usable, ``False`` if the challenge
-        is still shown after ``_cf_timeout_ms``.
+        is still shown after ``_cf_timeout_ms``. A challenge shown goes into
+        the running search's record (counted once per search).
         """
+        if await is_challenge_page(page):
+            mark_challenge()
         solved = await solve_cloudflare(page, timeout_ms=self._cf_timeout_ms)
         if solved:
             await self._remember_clearance(page)

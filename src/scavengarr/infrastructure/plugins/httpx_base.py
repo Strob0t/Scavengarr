@@ -26,6 +26,7 @@ from scavengarr.domain.entities.stremio import EpisodeRef
 from scavengarr.domain.plugins.base import PluginUnreachableError, SearchResult
 from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort, BrowserSession
 from scavengarr.domain.ports.cache import CachePort
+from scavengarr.domain.ports.plugin_history import mark_challenge
 from scavengarr.infrastructure.browser.cloudflare import is_cloudflare_challenge
 from scavengarr.infrastructure.captcha.detect import (
     detect_challenge,
@@ -175,8 +176,11 @@ class HttpxPluginBase:
         return fetcher
 
     def _mark_cf_blocked(self, url: str) -> None:
+        """Remember *url*'s host as challenging (its pages go through the
+        browser), and the challenge in the running search's record."""
         host = urlparse(url).hostname or ""
         self._cf_blocked_until[host] = time.monotonic() + _CF_BLOCK_MEMO_S
+        mark_challenge()
 
     def __init__(self) -> None:
         self._client: httpx.AsyncClient | None = None
@@ -471,6 +475,8 @@ class HttpxPluginBase:
                 fetcher, str(resp.url), context=context, challenge=challenge
             )
 
+        if challenge is not None:
+            mark_challenge()
         self._log.warning(
             f"{self.name}_http_error",
             url=url,

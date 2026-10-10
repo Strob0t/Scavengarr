@@ -204,6 +204,7 @@ def plugins(record: Any, first_day: date) -> dict[str, Any]:
                 "results": counters["results"],
                 "timeouts": counters["timeouts"],
                 "dropped": counters["dropped"],
+                "challenges": counters["challenges"],
                 "checks": counters["checks"],
                 "unreachable": counters["unreachable"],
                 "last_result_day": last,
@@ -474,6 +475,7 @@ def render(data: dict[str, Any]) -> str:
                     "Results",
                     "Timeouts",
                     "Dropped",
+                    "Challenges",
                     "Checks",
                     "Unreachable",
                     "Last result",
@@ -486,6 +488,7 @@ def render(data: dict[str, Any]) -> str:
                         p["results"],
                         p["timeouts"],
                         p["dropped"],
+                        p["challenges"],
                         p["checks"],
                         p["unreachable"],
                         _last_result(p),
@@ -497,6 +500,15 @@ def render(data: dict[str, Any]) -> str:
                 ),
             )
         )
+        lines.append("")
+        challenged = [p for p in plugins_["plugins"] if p["challenges"]]
+        if challenged:
+            lines.append(
+                "Challenged in the window: "
+                + ", ".join(f"{p['plugin']} {p['challenges']}" for p in challenged)
+            )
+        else:
+            lines.append("No search met a challenge in the window.")
     lines.extend(["", "## Hosters", "", "Since the process start."])
     lines.append("")
     lines.extend(

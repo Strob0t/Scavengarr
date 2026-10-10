@@ -79,6 +79,17 @@ class TestCounters:
         }
         assert report["plugins"]["sto"]["days"] == {"2026-10-07": {"timeouts": 1}}
 
+    def test_challenges_are_a_counter(self) -> None:
+        """A search in which the site showed a challenge (step 50)."""
+        history = _history()
+
+        history.count("kinoger", "searches")
+        history.count("kinoger", "challenges")
+
+        assert history.report()["plugins"]["kinoger"]["days"] == {
+            "2026-10-07": {"searches": 1, "challenges": 1}
+        }
+
     def test_the_day_changes_at_midnight_utc(self) -> None:
         clock = _Clock(_NOON + 12 * 3600 - 1)
         history = _history(clock=clock)
