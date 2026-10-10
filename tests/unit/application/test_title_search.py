@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from scavengarr.application.stremio.search_cache import STALE_SECONDS, CachedSearch
+from scavengarr.application.stremio.title_search import answer_budget_s
 from scavengarr.application.use_cases.stremio_stream import StremioStreamUseCase
 from scavengarr.domain.entities.stremio import TitleMatchInfo
 from scavengarr.domain.plugins.base import SearchResult
@@ -46,6 +47,20 @@ def _of(plugin: str, link: str) -> SearchResult:
     result = hit(link)
     result.metadata["source_plugin"] = plugin
     return result
+
+
+class TestAnswerBudget:
+    """The answer budget is ``stremio.answer_budget_seconds`` when set, the
+    plugin timeout otherwise; a budget above the plugin timeout is the
+    plugin timeout (no plugin runs longer)."""
+
+    @pytest.mark.parametrize(
+        ("setting", "expected"), [(None, 30.0), (10.0, 10.0), (45.0, 30.0)]
+    )
+    def test_the_budget_from_the_settings(
+        self, setting: float | None, expected: float
+    ) -> None:
+        assert answer_budget_s(30.0, setting) == expected
 
 
 class TestSearchCache:
@@ -235,6 +250,33 @@ class TestSearchCache:
         assert time.monotonic() - started < 0.1
         assert [s.url for s in streams] == ["https://voe.sx/e/first"]
         await eventually(lambda: len(cached_links(cache)) == 2)
+
+    async def test_a_budget_below_the_plugin_timeout_answers_at_the_budget(
+        self,
+    ) -> None:
+        """``stremio.answer_budget_seconds`` below the plugin timeout: the
+        request answers at the budget with the fast plugin's result while
+        the slow one runs on to its own timeout; the entry at the budget
+        names it missing, the end entry is complete. (Nothing arrived by the
+        budget: nothing is stored then, an empty entry equals a miss.)"""
+        cache = memory_cache()
+        sites = {
+            "first": fake_site([hit("https://voe.sx/e/first")], delay=0.1),
+            "second": fake_site([hit("https://dood.to/e/second")], delay=1.0),
+        }
+        uc = cached_use_case(sites, cache, hard=2.0, answer_budget=0.2)
+
+        started = time.monotonic()
+        streams = await uc.execute(make_request())
+
+        assert 0.2 <= time.monotonic() - started < 0.9
+        assert [s.url for s in streams] == ["https://voe.sx/e/first"]
+        await eventually(lambda: len(cache.set.await_args_list) == 2, timeout=3.0)
+        entries = [c.args[1] for c in cache.set.await_args_list]
+        assert [(e.missing, len(e.results)) for e in entries] == [
+            (("second",), 1),
+            ((), 2),
+        ]
 
     async def test_a_plugin_past_the_timeout_is_cancelled(self) -> None:
         cache = memory_cache()

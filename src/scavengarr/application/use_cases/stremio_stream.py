@@ -53,7 +53,7 @@ from scavengarr.application.stremio.title_resolution import (
     TitleMatchConfig,
     TitleResolver,
 )
-from scavengarr.application.stremio.title_search import TitleSearch
+from scavengarr.application.stremio.title_search import TitleSearch, answer_budget_s
 from scavengarr.domain.entities.stremio import (
     EpisodeRef,
     RankedStream,
@@ -87,6 +87,7 @@ class _StremioConfig(TitleMatchConfig, PluginSelectionConfig, ResolveConfig, Pro
     """Configuration values consumed by StremioStreamUseCase."""
 
     plugin_timeout_seconds: float
+    answer_budget_seconds: float | None
     max_results_per_plugin: int
 
 
@@ -187,7 +188,9 @@ class StremioStreamUseCase:
             search_cache=SearchCache(cache, ttl_seconds=search_ttl_seconds),
             pool=pool,
             telemetry=telemetry,
-            plugin_timeout_s=config.plugin_timeout_seconds,
+            answer_budget_s=answer_budget_s(
+                config.plugin_timeout_seconds, config.answer_budget_seconds
+            ),
             spawn=self._spawn,
             resolve_late=self._resolve_late,
         )

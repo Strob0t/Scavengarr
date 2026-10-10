@@ -40,7 +40,7 @@ def test_every_setting_has_a_row() -> None:
     assert "SCAVENGARR_LOGGING_LEVEL" in names
     # The section and top-level keys the model has; four fewer since the
     # unread stremio settings went (2026-10-10)
-    assert len(names) == 76
+    assert len(names) == 77
 
 
 def test_flat_aliases_are_named() -> None:

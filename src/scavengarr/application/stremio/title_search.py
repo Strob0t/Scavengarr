@@ -59,6 +59,12 @@ Spawn = Callable[[Coroutine[Any, Any, None]], asyncio.Task[None]]
 ResolveLate = Callable[[str, SearchProgress], None]
 
 
+def answer_budget_s(plugin_timeout_s: float, setting: float | None) -> float:
+    """The answer budget: ``stremio.answer_budget_seconds`` when set, else the
+    plugin timeout; never above it (no plugin runs longer)."""
+    return plugin_timeout_s if setting is None else min(setting, plugin_timeout_s)
+
+
 class _Search(Protocol):
     """The search for one cache key; its answer budget counts from *started*."""
 
@@ -78,7 +84,7 @@ class TitleSearch:
         search_cache: SearchCache,
         pool: ConcurrencyPoolPort,
         telemetry: TelemetryPort,
-        plugin_timeout_s: float,
+        answer_budget_s: float,
         spawn: Spawn,
         resolve_late: ResolveLate,
     ) -> None:
@@ -87,7 +93,7 @@ class TitleSearch:
         self._search_cache = search_cache
         self._pool = pool
         self._telemetry = telemetry
-        self._plugin_timeout_s = plugin_timeout_s
+        self._answer_budget_s = answer_budget_s
         self._spawn = spawn
         self._resolve_late = resolve_late
         # Running searches per cache key (single-flight)
@@ -137,7 +143,7 @@ class TitleSearch:
             return self._shared_search(
                 key,
                 partial(search(lang_groups), started=started),
-                budget_ends=started + self._plugin_timeout_s,
+                budget_ends=started + self._answer_budget_s,
             )
         stale = self._search_cache.is_stale(entry)
         if stale:
@@ -250,16 +256,16 @@ class TitleSearch:
         """Search the plugins until they are done; store the matching results.
 
         Each plugin gets ``plugin_timeout_seconds`` from its own start; the
-        answer budget, ``plugin_timeout_seconds`` from *started* (the
-        request's start; a refresh's own, see ``_refresh``), only labels the
-        plugins that return after it.
+        answer budget (``answer_budget_seconds``, else the plugin timeout)
+        from *started* (the request's start; a refresh's own, see
+        ``_refresh``), only labels the plugins that return after it.
         Their title-matching results go into *progress* as they arrive: the
         answers do not wait for the search, they read it. The entry goes
         into the cache at the budget, naming the plugins still to come as
         missing, again after each of them, and at the end; the results
         arriving after the budget resolve in the background.
         """
-        budget_ends = started + self._plugin_timeout_s
+        budget_ends = started + self._answer_budget_s
         progress.budget_ends = budget_ends
         self._spawn(self._at_budget(key, progress, budget_ends))
         with self._telemetry.stage("stremio_phase", phase="search"):

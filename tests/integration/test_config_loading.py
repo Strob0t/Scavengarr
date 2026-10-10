@@ -141,6 +141,18 @@ class TestYamlOverrides:
 
         assert not hasattr(config.stremio, "probe_at_stream_time")
 
+    def test_the_answer_budget_is_unset_by_default_and_at_least_a_second(
+        self, tmp_path: Path
+    ) -> None:
+        assert load_config().stremio.answer_budget_seconds is None
+        path = tmp_path / "budget.yaml"
+        path.write_text(yaml.dump({"stremio": {"answer_budget_seconds": 10}}))
+        assert load_config(config_path=path).stremio.answer_budget_seconds == 10.0
+
+        path.write_text(yaml.dump({"stremio": {"answer_budget_seconds": 0.5}}))
+        with pytest.raises(ValueError, match="answer_budget_seconds"):
+            load_config(config_path=path)
+
     def test_cache_ttl_must_not_be_negative(self, tmp_path: Path) -> None:
         path = tmp_path / "ttl.yaml"
         path.write_text(yaml.dump({"cache": {"ttl_seconds": -1}}))

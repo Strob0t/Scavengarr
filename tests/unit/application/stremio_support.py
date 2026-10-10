@@ -246,6 +246,7 @@ def cached_use_case(
     *,
     ttl: int = SEARCH_TTL,
     hard: float = 1.0,
+    answer_budget: float | None = None,
     telemetry: TelemetryPort = NO_TELEMETRY,
     pool: ConcurrencyPool | None = None,
 ) -> StremioStreamUseCase:
@@ -259,13 +260,15 @@ def cached_use_case(
         sorted(sites) if p == "stream" else []
     )
     plugins.get.side_effect = sites.__getitem__
+    config = make_config(
+        plugin_timeout_seconds=hard, stream_deadline_seconds=hard + 1.0
+    )
+    # Past the setting's floor of 1 s, so a test budget can stay short
+    config.answer_budget_seconds = answer_budget
     return make_use_case(
         tmdb=tmdb,
         plugins=plugins,
-        config=make_config(
-            plugin_timeout_seconds=hard,
-            stream_deadline_seconds=hard + 1.0,
-        ),
+        config=config,
         cache=cache,
         search_ttl_seconds=ttl,
         telemetry=telemetry,

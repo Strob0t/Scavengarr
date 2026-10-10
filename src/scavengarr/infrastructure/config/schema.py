@@ -284,12 +284,21 @@ class StremioConfig(BaseModel):
         gt=0,
         description=(
             "Each plugin search, from the moment the plugin holds a "
-            "concurrency slot; also the request's answer budget, counted from "
-            "the request start (a stale search-cache entry's refresh: from "
-            "its own start). The request stops waiting for the search then "
-            "and answers with the results known so far; plugins still "
-            "running are not cut, their results reach the search cache for "
-            "the next request."
+            "concurrency slot; also the request's answer budget unless "
+            "answer_budget_seconds is set. A plugin past it is cut; its "
+            "earlier results stay."
+        ),
+    )
+    answer_budget_seconds: float | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "The request's answer budget, counted from the request start (a "
+            "stale search-cache entry's refresh: from its own start): the "
+            "request stops waiting for the search then and answers with the "
+            "results known so far; plugins still running are not cut, their "
+            "results reach the search cache for the next request. Unset: the "
+            "plugin timeout; a value above it counts as the plugin timeout."
         ),
     )
     plugin_health_interval_seconds: float = Field(
