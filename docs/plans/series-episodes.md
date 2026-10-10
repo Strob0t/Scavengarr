@@ -176,3 +176,36 @@ Placements:
 - **Demon Slayer S2E1** is placed by the title on both sites (Cinemeta's S2E1 is the Mugen Train arc's first episode, the sites' staffel-2/episode-1 too), and the `kitsu:` path answers the One Piece episode on both sites in 7 s with the translation.
 
 **Open.** The reference carries Cinemeta's English title only. Both sites' rows carry the German title, which is right where s.to's English column is wrong, and s.to's anime rows carry no English title at all; a German title in the reference (TMDB names episodes in German) would let the title rules place both s.to cases above. Not in this change; for the maintainer to decide.
+
+## After, row 30 (2026-10-10, dev container, `worktree-handoff-30` at 0421fa9 on `staging` 513f747)
+
+The same 12 requests after row 30 of the ideas backlog: the filter reads the link labels of a result whose title or metadata names the episode too (its links of other episodes go; a result whose labelled links all name other episodes is dropped) and reads episode words without a season (`Folge 5`, `Episode 5`, `Ep. 5`, `E05`) besides `1x5` and `S01E05`. `PYTHONPATH=src xvfb-run -a poetry run python -P scripts/probes/series_episodes.py --json <file>`; the probe's own label pattern reads the episode words independently of the filter, as an oracle for its regressions. Since step 35 the probe hands each request's episode reference to the plugins (`located`).
+
+| plugin | results | season_episode | episode | season | none | kept | narrowed | dropped | right | leaks | located | failed |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| aniworld | 4 | 4 | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 4 | 0 |
+| cineby | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| einschalten | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| filmpalast | 6 | 6 | 0 | 0 | 0 | 6 | 0 | 0 | 6 | 0 | 0 | 0 |
+| fireani | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| haschcon | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| hdfilme | 6 | 0 | 0 | 0 | 6 | 0 | 6 | 0 | 6 | 0 | 0 | 0 |
+| kinoger | 7 | 0 | 0 | 0 | 7 | 0 | 7 | 0 | 7 | 0 | 0 | 0 |
+| kinoking | 7 | 7 | 0 | 0 | 0 | 7 | 0 | 0 | 7 | 0 | 0 | timeout 5 |
+| kinox | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| megakino | 5 | 5 | 0 | 0 | 0 | 0 | 4 | 1 | 4 | 0 | 0 | 0 |
+| megakino_to | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | PluginUnreachableError 14 |
+| moflix | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| movie2k | 1 | 0 | 0 | 0 | 1 | 0 | 1 | 0 | 1 | 0 | 0 | 0 |
+| movie4k | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | PluginUnreachableError 14 |
+| sto | 10 | 10 | 0 | 0 | 0 | 10 | 0 | 0 | 10 | 0 | 2 | 0 |
+| streamcloud | 6 | 0 | 0 | 0 | 6 | 0 | 6 | 0 | 6 | 0 | 0 | 0 |
+| streamkiste | 6 | 0 | 0 | 0 | 6 | 0 | 6 | 0 | 6 | 0 | 0 | 0 |
+| **total** | 58 | 32 | 0 | 0 | 26 | 27 | 30 | 1 | 57 | 0 | 6 | 33 |
+
+- **Right episode:** 57 of 58 results (2026-10-07: 70 of 73); every result the filter let through is the right episode. **Leaks:** none, by the oracle. **Dropped:** 1, megakino's "Severance" page for S02E05: its metadata names season 1 (the title names none, step 28's rule) and its only label is `1x5 Voe`, the page the 2026-10-07 audit dropped too.
+- **The narrowing of a title-named episode** touched 4 megakino results, the only ones whose metadata names the episode and whose links carry labels (hdfilme, kinoger, movie2k, streamcloud and streamkiste name no episode and are decided by their labels as before; aniworld, filmpalast, kinoking and sto carry no labels): "Haus des Geldes - Staffel 1", "The Last of Us - Staffel 1", "The Last of Us - 1 Staffel" and "Severance" for S01E05, each with one link labelled with the requested episode, so no link was removed and nothing was dropped by the new rule (before the change the same results passed as kept, with the same link). The leak class of the step 21 review (a page titled after the episode but linking the season's) did not occur in these 12 requests; its proof is `TestTitleNamedEpisodes` in `tests/unit/infrastructure/test_episode_filter.py`.
+- **Episode words:** no site labelled a link with `Folge`, `Episode` or `E<n>` in this run (the labels are `1x5 dropload`, `1x1 Voe`, `1x1 Stream HD`, `1x1 vinovo.to` or empty), so the word pattern is proven by `TestEpisodeWords` only.
+- **Fewer results than on 2026-10-07** (58 against 73), none lost to the filter: fireani 0 (its search timed out in all 14 searches, `fireani_timeout`; before 4), kinoking 7 (5 timeouts; before 10 with 3), hdfilme, streamcloud and streamkiste 6 each (before 7), kinoger 7 (before 9), megakino 5 (before 6), movie2k 1 (before 2), sto 10 (before 11). The probe records only results that reached the filter; a site search that gave no hit or timed out leaves none. Per request 2 to 8 results: Dark 2 (kinoger, sto), Frieren 2 (aniworld, kinoking), One Piece, Demon Slayer and Haus des Geldes 3 each, both Severance requests 8.
+- **Unreachable sites:** megakino_to and movie4k in all 14 searches (`PluginUnreachableError`), as before. cineby's search API host resolves to a private address in the dev container, which the request guard refuses (`private_address_refused`, all 14 searches); whether production, which resolves through the VPN, sees the same was not measured.
+- **Located:** aniworld 4 of 4 (One Piece S1E1 by number; Attack on Titan, Demon Slayer and Frieren S1E1 by title), sto 2 (One Piece and Kimetsu no Yaiba S1E1); sto's other 8 results are its non-anime series.
