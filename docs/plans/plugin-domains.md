@@ -238,3 +238,16 @@ The domain check, the health prober and the link validator sent the shared clien
 | after | 32 of 36 | doodstream, dropload, supervideo, vidoza |
 
 **Reading.** No resolver that passed before fails after, so every resolver keeps the browser UA. Of the changed resolvers the cases cover filemoon, streamtape and the XFS hoster vidhide (pass before and after), doodstream and the XFS hosters dropload and vidoza (fail before and after: the UA was not what blocked them; doodstream passed in step 40's run, dropload and vidoza failed there too). The DDL hosters (generic DDL, rapidgator, ddownload, gofile, mediafire) and the other 22 XFS hosters have no live case, because the round titles yield no link of theirs; their change is the header alone. voe passes after but was not changed: its failure before was the site's variance. Every dead case holds in both runs.
+
+## HTML answers fail the CDN verification (2026-10-10, row 46)
+
+`verify_video_url()` (the XFS video path, VOE, Streamtape) counted any 200/206 as reachable, so a dead file that a CDN serves as an error page with 200 passed to the playback check, or with `stremio.verify_streams` off to Stremio. It rejects `text/html` now and asks a CDN that does not allow HEAD (405) for the first bytes, which must not be HTML either (5661f9e; `docs/features/hoster-resolvers.md` → CDN verification). Proof: the live resolver cases (`.cache/live/resolver-urls.json`, 18 resolvers, a live and a dead case each) on the dev container, once before and once after the change, minutes apart.
+
+| Run | Passed | Failed live cases |
+|---|---|---|
+| before | 33 of 36 | dropload, supervideo, vidoza |
+| after | 33 of 36 | dropload, supervideo, vidoza |
+
+**Reading.** No case changes: no resolver that passed before fails after, and every dead case holds in both runs; the three failures are the known ones (dropload's CDN refuses the connection from here, vidoza's host resolves to a private address here, supervideo below). The cases cover the changed paths through vidhide (XFS), voe and streamtape, which pass before and after: their CDNs answer the HEAD with a media type. The HTML rule itself rests on the unit tests (a CDN answering 200 `text/html`; HEAD 405, then a Range GET with an HTML body): no live link produced such an answer in these runs.
+
+**supervideo** does not flip, because the resolver never used the HEAD verification. Its page answers 403 (Cloudflare), the browser fallback captures the stream, and the registry's playback check (`needs_playback_check`) judges it: in this run the CDN (serversicuro) answered the check's Range GET with 429 (`playback_check_failed` with `reason="status 429"`, after four suite runs from this address within an hour), in step 40's run with an HTML page; the dead case is found offline by the browser (`stealth_capture_offline`). So supervideo's live case was never a false alive in the suite. Whether production handed out a supervideo stream that then failed in the player (the maintainer's second report) is a question for production's logs after the next deploy (`prodctl.py logs --grep supervideo`; production runs the playback check, `config_effective` names no `verify_streams` override, and the container's log, which starts at the rebuild of 10:27 UTC, held no supervideo resolution by 10:50 UTC).
