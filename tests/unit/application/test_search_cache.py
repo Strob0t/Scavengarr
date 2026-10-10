@@ -13,7 +13,7 @@ from scavengarr.application.stremio.search_cache import (
     merge,
     search_cache_key,
 )
-from scavengarr.domain.entities.stremio import StremioStreamRequest
+from scavengarr.domain.entities.stremio import EpisodeRef, StremioStreamRequest
 from scavengarr.domain.plugins.base import SearchResult
 
 
@@ -42,8 +42,35 @@ class TestSearchCacheKey:
             imdb_id="tt0903747", content_type="series", season=1, episode=2
         )
 
-        assert search_cache_key(movie) == "stremio:search:v2:movie:tt0816692:None:None"
-        assert search_cache_key(episode) == "stremio:search:v2:series:tt0903747:1:2"
+        assert (
+            search_cache_key(movie) == "stremio:search:v3:movie:tt0816692:None:None:-"
+        )
+        assert search_cache_key(episode) == "stremio:search:v3:series:tt0903747:1:2:-"
+
+    def test_the_reference_adds_the_absolute_number(self) -> None:
+        """A Kitsu request (its own number) and the IMDb request for the same
+        season and episode (the list's position) place the episode
+        differently on the anime sites: two entries, two searches."""
+        episode = StremioStreamRequest(
+            imdb_id="tt0388629", content_type="series", season=22, episode=4
+        )
+        by_position = EpisodeRef(season=22, episode=4, absolute=1088)
+        by_kitsu = EpisodeRef(season=22, episode=4, absolute=1089)
+        assert (
+            search_cache_key(episode, by_position)
+            == "stremio:search:v3:series:tt0388629:22:4:1088"
+        )
+        assert search_cache_key(episode, by_kitsu) != search_cache_key(
+            episode, by_position
+        )
+
+    def test_without_a_reference_the_key_is_stable(self) -> None:
+        episode = StremioStreamRequest(
+            imdb_id="tt0903747", content_type="series", season=1, episode=2
+        )
+        unnumbered = EpisodeRef(season=1, episode=2, title="Cat's in the Bag...")
+        assert search_cache_key(episode) == search_cache_key(episode, None)
+        assert search_cache_key(episode, unnumbered) == search_cache_key(episode)
 
     def test_a_tmdb_movie_and_series_with_one_number_are_two_entries(self) -> None:
         """TMDB numbers movies and series separately: tmdb:1399 is both."""

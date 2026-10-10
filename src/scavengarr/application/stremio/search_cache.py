@@ -14,7 +14,7 @@ from typing import Any
 
 import structlog
 
-from scavengarr.domain.entities.stremio import StremioStreamRequest
+from scavengarr.domain.entities.stremio import EpisodeRef, StremioStreamRequest
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.domain.ports.cache import CachePort
 
@@ -67,17 +67,26 @@ def merge(
     )
 
 
-def search_cache_key(request: StremioStreamRequest) -> str:
-    """One entry per title, season and episode.
+def search_cache_key(
+    request: StremioStreamRequest, episode_ref: EpisodeRef | None = None
+) -> str:
+    """One entry per title, season, episode and placement.
 
     The content type is part of it: TMDB numbers movies and series
-    separately, so ``tmdb:1399`` names a movie and a series. ``v2``:
-    the entries from before the episode reference (an anime episode
-    placed by its title or number) are not answered.
+    separately, so ``tmdb:1399`` names a movie and a series. The
+    reference's absolute number is part of it (``-`` without one): a
+    Kitsu request (its own episode number) and the IMDb request for the
+    same season and episode (the list's position) place the episode
+    differently on the anime sites, so they neither share an entry nor
+    join each other's running search (``title_search.py`` keys its
+    single-flight by this key). ``v3``: the entries from before are not
+    answered.
     """
+    absolute = episode_ref.absolute if episode_ref is not None else None
     return (
-        f"stremio:search:v2:{request.content_type}:{request.imdb_id}"
+        f"stremio:search:v3:{request.content_type}:{request.imdb_id}"
         f":{request.season}:{request.episode}"
+        f":{'-' if absolute is None else absolute}"
     )
 
 

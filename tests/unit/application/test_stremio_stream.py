@@ -469,7 +469,7 @@ class TestAnimeIds:
         )
         # The search is shared with the same episode asked by its IMDb id
         assert cache.get.await_args_list[0].args == (
-            "stremio:search:v2:series:tt2560140:3:15",
+            "stremio:search:v3:series:tt2560140:3:15:-",
         )
 
     async def test_an_untranslatable_id_answers_nothing(self) -> None:
@@ -619,6 +619,65 @@ class TestEpisodeReference:
             episode=4,
             episode_ref=EpisodeRef(season=22, episode=4, absolute=1089),
         )
+
+    @staticmethod
+    def _gated_plugin(gate: asyncio.Event) -> AsyncMock:
+        """A locating plugin whose search waits for *gate*."""
+
+        async def search(*_args: object, **_kwargs: object) -> list[object]:
+            await gate.wait()
+            return []
+
+        plugin = AsyncMock()
+        plugin.search = AsyncMock(side_effect=search)
+        plugin.isolated_search = plugin.search
+        plugin.locates_episodes = True
+        return plugin
+
+    async def test_a_kitsu_request_does_not_join_the_imdb_requests_search(
+        self,
+    ) -> None:
+        """Deploy check of 2026-10-10: kitsu:12:1089 joined the running search
+        of tt0388629:22:4 and inherited its placement (position 1088, one
+        off). The two place the episode differently, so they search apart."""
+        gate = asyncio.Event()
+        plugin = self._gated_plugin(gate)
+        translated = make_request(
+            imdb_id="tt0388629", content_type="series", season=5, episode=2
+        )
+        uc = self._use_case(plugin, meta=self._META, translated=translated)
+        by_position = make_request(
+            imdb_id="tt0388629", content_type="series", season=5, episode=2
+        )
+        by_kitsu = make_request(
+            imdb_id="kitsu:12", content_type="series", season=1, episode=63
+        )
+
+        both = asyncio.gather(uc.execute(by_position), uc.execute(by_kitsu))
+        await eventually(lambda: plugin.search.await_count == 2)
+        gate.set()
+        await both
+
+        refs = sorted(
+            call.kwargs["episode_ref"].absolute
+            for call in plugin.search.await_args_list
+        )
+        assert refs == [62, 63]
+
+    async def test_the_same_absolute_number_still_joins(self) -> None:
+        gate = asyncio.Event()
+        plugin = self._gated_plugin(gate)
+        uc = self._use_case(plugin, meta=self._META)
+        request = make_request(
+            imdb_id="tt0388629", content_type="series", season=5, episode=2
+        )
+
+        both = asyncio.gather(uc.execute(request), uc.execute(request))
+        await eventually(lambda: plugin.search.await_count == 1)
+        gate.set()
+        await both
+
+        assert plugin.search.await_count == 1
 
     async def test_the_reference_is_logged(self) -> None:
         plugin = self._plugin(locates=True)

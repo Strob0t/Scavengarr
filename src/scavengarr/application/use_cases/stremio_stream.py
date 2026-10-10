@@ -300,7 +300,7 @@ class StremioStreamUseCase:
             return _NO_ANSWER
 
         # 3. Search: one search per title, shared by its requests, cached
-        key = search_cache_key(request)
+        key = search_cache_key(request, episode_ref)
         progress, source = await self._title_search.progress(
             key,
             request,

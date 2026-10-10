@@ -60,7 +60,7 @@ class _Backend:
 
     async def set(self, key: str, value: Any, *, ttl: int | None = None) -> None:
         self.data[key] = pickle.dumps(value)
-        if key.startswith("stremio:search:v2:"):
+        if key.startswith("stremio:search:v3:"):
             self.search_stored.set()
 
     async def delete(self, key: str) -> bool:
