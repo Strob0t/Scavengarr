@@ -434,3 +434,10 @@ class TestWithoutLeaks:
             title="Severance S02E05", metadata={"season": "1", "episode": "4"}
         )
         assert filter_by_episode([r], season=2, episode=5) == [r]
+
+    def test_a_metadata_season_with_the_episode_from_the_title(self) -> None:
+        """A page that knows its season but not its episode: the season from
+        the metadata, the episode from the title."""
+        r = _make_search_result(title="Severance E05", metadata={"season": 2})
+        assert filter_by_episode([r], season=2, episode=5) == [r]
+        assert filter_by_episode([r], season=1, episode=5) == []
