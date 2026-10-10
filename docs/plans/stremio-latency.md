@@ -499,7 +499,7 @@ were not requested separately to keep the production load at this run):
 
 | Title | First answer | Streams | X-Cache | Complete | Cached answer | Streams | Playable |
 |---|---|---|---|---|---|---|---|
-| Spirited Away (`movie/tt0248408`) | 0.1 s | 7 | STALE | false | 0.02 s | 7 | 3 of 7 |
+| Der Schuh des Manitu (`movie/tt0248408`) | 0.1 s | 7 | STALE | false | 0.02 s | 7 | 3 of 7 |
 | Lola rennt (`movie/tt0130827`) | 2.1 s | 5 | STALE | false | 0.03 s | 5 | 1 of 5 |
 | The Matrix (`movie/tt0133093`) | 0.1 s | 8 | HIT | false | 0.04 s | 8 | 5 of 8 |
 | **Median / total** (3 titles) | 0.1 s | 20 | 1 HIT | 0 of 3 complete | 0.03 s | 20 | 9 of 20 |
