@@ -351,12 +351,14 @@ class StremioStreamUseCase:
                     "stremio_all_filtered",
                     imdb_id=request.imdb_id,
                     total=progress.total,
+                    dropped=progress.dropped,
                     search_done=progress.done,
                 )
             else:
                 log.info(
                     "stremio_search_no_results",
                     imdb_id=request.imdb_id,
+                    dropped=progress.dropped,
                     search_done=progress.done,
                 )
             stage.outcome = "empty"

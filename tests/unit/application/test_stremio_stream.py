@@ -358,8 +358,10 @@ class TestExecute:
         assert result == []
         assert mock_plugin.search.await_count == 10
 
-    async def test_slow_plugin_cancelled_by_timeout(self) -> None:
-        """A plugin exceeding plugin_timeout_seconds is cancelled."""
+    async def test_the_answer_does_not_wait_for_a_slow_plugin(self) -> None:
+        """The answer comes at the budget with the fast plugin's result;
+        the slow plugin's search is not waited for (it runs on to its own
+        timeout, see TestAnswerState)."""
         tmdb = AsyncMock()
         tmdb.get_title_and_year = AsyncMock(return_value=TitleMatchInfo(title="Movie"))
 
@@ -401,7 +403,7 @@ class TestExecute:
         )
         result = await uc.execute(make_request())
 
-        # Fast plugin result should be present, slow plugin timed out
+        # the fast plugin's result is in the answer, the slow plugin's not
         assert len(result) == 1
         assert result[0].url == "https://voe.sx/e/fast"
 
@@ -1074,3 +1076,61 @@ class TestTelemetry:
             "stremio_phase resolve",
         }
         assert len({s.context.trace_id for s in spans if s.context}) == 1
+
+
+class TestEmptyAnswerLogs:
+    """An empty answer's log line says what the episode filter dropped."""
+
+    @staticmethod
+    def _plugins(result: SearchResult) -> MagicMock:
+        plugin = AsyncMock()
+        plugin.search = AsyncMock(return_value=[result])
+        plugin.isolated_search = plugin.search
+        plugins = MagicMock()
+        plugins.get_languages.return_value = ["de"]
+        plugins.get_by_provides.side_effect = lambda p: ["sto"] if p == "stream" else []
+        plugins.get.return_value = plugin
+        return plugins
+
+    @staticmethod
+    def _tmdb(title: str) -> AsyncMock:
+        tmdb = AsyncMock()
+        tmdb.get_title_and_year = AsyncMock(return_value=TitleMatchInfo(title=title))
+        return tmdb
+
+    async def test_no_results_names_the_dropped_count(self) -> None:
+        """The plugin's only result is another episode: the filter drops it,
+        the answer is empty and the line says so."""
+        other_episode = make_search_result(
+            title="Breaking Bad S01E04", download_links=[{"url": "https://voe.sx/e/4"}]
+        )
+        uc = make_use_case(
+            tmdb=self._tmdb("Breaking Bad"), plugins=self._plugins(other_episode)
+        )
+
+        with capture_logs() as logs:
+            answer = await uc.execute(
+                make_request(content_type="series", season=1, episode=5)
+            )
+
+        assert answer == []
+        [line] = [e for e in logs if e["event"] == "stremio_search_no_results"]
+        assert line["dropped"] == 1
+
+    async def test_all_filtered_names_the_dropped_count(self) -> None:
+        """The title filter drops the only result: total 1, nothing dropped
+        by the episode filter."""
+        other_show = make_search_result(
+            title="Totally Different Show",
+            download_links=[{"url": "https://voe.sx/e/x"}],
+        )
+        uc = make_use_case(
+            tmdb=self._tmdb("Breaking Bad"), plugins=self._plugins(other_show)
+        )
+
+        with capture_logs() as logs:
+            answer = await uc.execute(make_request())
+
+        assert answer == []
+        [line] = [e for e in logs if e["event"] == "stremio_all_filtered"]
+        assert (line["total"], line["dropped"]) == (1, 0)
