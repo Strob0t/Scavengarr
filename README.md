@@ -103,7 +103,7 @@ flowchart LR
 ### Sources and hosters
 
 - 41 plugins for streaming, direct-download and anime sites, mostly German-language — see the [plugin list](docs/plugins.md)
-- 60 hoster resolvers (streaming hosters, direct-download hosters, XFS-based hosters)
+- 62 hoster resolvers (streaming hosters, direct-download hosters, XFS-based hosters)
 - Two engines: `httpx` for static pages and APIs, a real browser (Patchright/Playwright) for sites that need JavaScript
 - Mirror fallback: plugins try alternative domains when the primary one is down
 - Multi-language search: titles are looked up in each plugin's language

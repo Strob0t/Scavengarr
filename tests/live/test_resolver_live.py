@@ -5,7 +5,8 @@ One live case per resolver name in ``.cache/live/resolver-urls.json``
 ``scripts/probes/resolver_urls.py`` from the links the plugins find for the
 titles of ``docs/plans/round-titles.txt``; untracked, the module skips without
 it) and one dead case derived from it: the id in the URL's last path segment,
-before any trailing extension, with its last four characters reversed (its
+before any trailing extension (the fragment when the path has none: the UPN
+Share players, ``/#<id>``), with its last four characters reversed (its
 last six when four leave it unchanged). The altered id keeps the length and
 alphabet of the real one, so the hoster parses it as an id and answers not
 found or an error page, which the resolver reports as ``None``. An id of
@@ -80,24 +81,33 @@ _NETWORK_ERRORS: tuple[type[BaseException], ...] = (
 )
 
 
+def _altered(stem: str) -> str:
+    """*stem* with its last four characters reversed, the last six when four
+    leave it unchanged; digits only become zeros."""
+    if stem.isdigit():
+        return "0" * len(stem)
+    altered = stem
+    for n in (4, 6):
+        altered = stem[:-n] + stem[-n:][::-1]
+        if altered != stem:
+            break
+    return altered
+
+
 def dead_url(url: str) -> str:
-    """*url* with the id of its last path segment altered: the last four
-    characters reversed, the last six when four leave it unchanged; a
-    trailing extension (``.html``) stays."""
+    """*url* with the id of its last path segment altered (``_altered``); a
+    trailing extension (``.html``) stays. A URL without a path segment
+    carries its id in the fragment (``/#<id>``), which is altered instead."""
     parts = urlsplit(url)
+    if not parts.path.strip("/") and parts.fragment:
+        return urlunsplit(parts._replace(fragment=_altered(parts.fragment)))
     path = parts.path.rstrip("/")
     slash = parts.path[len(path) :]
     head, _, segment = path.rpartition("/")
     stem, dot, ext = segment.rpartition(".")
     if not dot or not ext.isalpha() or len(ext) > 5:
         stem, dot, ext = segment, "", ""
-    if stem.isdigit():
-        altered = "0" * len(stem)
-    else:
-        for n in (4, 6):
-            altered = stem[:-n] + stem[-n:][::-1]
-            if altered != stem:
-                break
+    altered = _altered(stem)
     return urlunsplit(parts._replace(path=f"{head}/{altered}{dot}{ext}{slash}"))
 
 

@@ -41,6 +41,14 @@ class TestDeadUrl:
             == "https://host.tld/d/abcd4321?x=1#p"
         )
 
+    def test_an_id_in_the_fragment_is_altered(self) -> None:
+        # The UPN Share players: no path segment, the id behind "#"
+        assert (
+            dead_url("https://moflix.upns.xyz/#n8wux6")
+            == "https://moflix.upns.xyz/#n86xuw"
+        )
+        assert dead_url("https://host.tld#abcd1234") == "https://host.tld#abcd4321"
+
     def test_a_palindromic_tail_reverses_six(self) -> None:
         # "abba" reversed is "abba": four characters would leave the id alone
         assert dead_url("https://host.tld/e/xyzabba") == "https://host.tld/e/xabbazy"
