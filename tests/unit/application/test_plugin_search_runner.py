@@ -856,7 +856,9 @@ class TestPluginHealth:
         assert [r.download_link for r in results] == ["https://a/1"]
         assert health.marked == ["down"]
         counted = [c.args for c in history.count.call_args_list]
-        assert ("down", "unreachable") in counted
+        assert ("down", "unreachable_searches") in counted
+        # Not a site check: the health monitor's share stays its own
+        assert ("down", "unreachable") not in counted
         events = [e for e in logs if e["event"] == "stremio_plugin_unreachable"]
         assert [e["plugin"] for e in events] == ["down"]
 

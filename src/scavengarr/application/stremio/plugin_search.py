@@ -617,7 +617,7 @@ class PluginSearchRunner:
                 log.warning("stremio_plugin_unreachable", plugin=name)
                 if self._plugin_health is not None:
                     self._plugin_health.mark_unreachable(name)
-                self._history.count(name, "unreachable")
+                self._history.count(name, "unreachable_searches")
                 stage.outcome = "unreachable"
                 results = []
             except Exception:

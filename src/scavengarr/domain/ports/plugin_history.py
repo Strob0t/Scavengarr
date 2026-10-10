@@ -20,6 +20,7 @@ PluginCounter = Literal[
     "challenges",
     "checks",
     "unreachable",
+    "unreachable_searches",
 ]
 
 

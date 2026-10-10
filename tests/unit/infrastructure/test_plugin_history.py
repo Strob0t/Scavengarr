@@ -115,6 +115,22 @@ class TestCounters:
         assert plugins["sto"]["last_result_day"] == "2026-10-07"
         assert plugins["kinox"]["last_result_day"] is None
 
+    def test_the_searches_marks_leave_the_share_alone(self) -> None:
+        clock = _Clock()
+        history = _history(clock=clock)
+        clock.now = _NOON
+        history.count("movie4k", "checks", 2)
+        history.count("movie4k", "unreachable", 1)
+        history.count("movie4k", "unreachable_searches", 5)
+
+        plugins = history.report()["plugins"]
+        assert plugins["movie4k"]["unreachable_share"]["30"] == 0.5
+        assert plugins["movie4k"]["days"]["2026-10-07"] == {
+            "checks": 2,
+            "unreachable": 1,
+            "unreachable_searches": 5,
+        }
+
     def test_the_unreachable_share_per_window(self) -> None:
         clock = _Clock()
         history = _history(clock=clock)

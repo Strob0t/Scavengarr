@@ -181,7 +181,10 @@ def requests(records: Iterable[Record]) -> dict[str, Any]:
 def plugins(record: Any, first_day: date) -> dict[str, Any]:
     """Per plugin, the record's counters of the days from *first_day* on,
     the last day with a result and the unreachable shares; sorted by
-    results, then searches."""
+    results, then searches. ``unreachable`` counts the site checks that
+    found the site down, ``unreachable_searches`` the searches that found
+    no domain (its own counter since 2026-10-10; earlier days hold those
+    marks in ``unreachable`` too)."""
     if not isinstance(record, dict) or not isinstance(record.get("plugins"), dict):
         return {"available": False, "plugins": []}
     today = date.fromisoformat(record["today"]) if "today" in record else None
@@ -207,6 +210,7 @@ def plugins(record: Any, first_day: date) -> dict[str, Any]:
                 "challenges": counters["challenges"],
                 "checks": counters["checks"],
                 "unreachable": counters["unreachable"],
+                "unreachable_searches": counters["unreachable_searches"],
                 "last_result_day": last,
                 "days_since_result": days_since,
                 "unreachable_share": {
@@ -398,6 +402,78 @@ def _share(value: float | None) -> str:
     return "–" if value is None else f"{value:.0%}"
 
 
+def _plugins_section(plugins_: dict[str, Any]) -> list[str]:
+    """The Plugins section below its heading: the record's table and the
+    lines on challenges and on marks above the checks."""
+    lines: list[str] = []
+    if not plugins_["available"]:
+        lines.append(
+            "The long-term record is not available (an older image, or the"
+            " route answered an error)."
+        )
+    else:
+        lines.append(
+            f"The record's days from {plugins_['first_day']} on; the last result"
+            " and the unreachable shares (30, 90, 180 days: the checks that found"
+            " the site down over all checks) from the whole record. Unreachable"
+            " counts the checks' failures and, after the slash, the searches that"
+            " found no domain (not checks)."
+        )
+        lines.append("")
+        lines.extend(
+            _table(
+                (
+                    "Plugin",
+                    "Searches",
+                    "Results",
+                    "Timeouts",
+                    "Dropped",
+                    "Challenges",
+                    "Checks",
+                    "Unreachable checks/searches",
+                    "Last result",
+                    "Unreachable 30/90/180 d",
+                ),
+                (
+                    (
+                        p["plugin"],
+                        p["searches"],
+                        p["results"],
+                        p["timeouts"],
+                        p["dropped"],
+                        p["challenges"],
+                        p["checks"],
+                        f"{p['unreachable']}/{p['unreachable_searches']}",
+                        _last_result(p),
+                        "/".join(
+                            _share(p["unreachable_share"][w]) for w in _RECORD_WINDOWS
+                        ),
+                    )
+                    for p in plugins_["plugins"]
+                ),
+            )
+        )
+        lines.append("")
+        challenged = [p for p in plugins_["plugins"] if p["challenges"]]
+        if challenged:
+            lines.append(
+                "Challenged in the window: "
+                + ", ".join(f"{p['plugin']} {p['challenges']}" for p in challenged)
+            )
+        else:
+            lines.append("No search met a challenge in the window.")
+        above = [p for p in plugins_["plugins"] if p["unreachable"] > p["checks"]]
+        if above:
+            lines.append(
+                "Unreachable marks above the checks (days recorded before the"
+                " searches' own counter, 2026-10-10, hold their marks too): "
+                + ", ".join(
+                    f"{p['plugin']} {p['unreachable']} of {p['checks']}" for p in above
+                )
+            )
+    return lines
+
+
 def render(data: dict[str, Any]) -> str:
     """The report as Markdown."""
     process_ = data["process"]
@@ -455,60 +531,7 @@ def render(data: dict[str, Any]) -> str:
         )
     )
     lines.extend(["", "## Plugins", ""])
-    plugins_ = data["plugins"]
-    if not plugins_["available"]:
-        lines.append(
-            "The long-term record is not available (an older image, or the"
-            " route answered an error)."
-        )
-    else:
-        lines.append(
-            f"The record's days from {plugins_['first_day']} on; the last result"
-            " and the unreachable shares (30, 90, 180 days) from the whole record."
-        )
-        lines.append("")
-        lines.extend(
-            _table(
-                (
-                    "Plugin",
-                    "Searches",
-                    "Results",
-                    "Timeouts",
-                    "Dropped",
-                    "Challenges",
-                    "Checks",
-                    "Unreachable",
-                    "Last result",
-                    "Unreachable 30/90/180 d",
-                ),
-                (
-                    (
-                        p["plugin"],
-                        p["searches"],
-                        p["results"],
-                        p["timeouts"],
-                        p["dropped"],
-                        p["challenges"],
-                        p["checks"],
-                        p["unreachable"],
-                        _last_result(p),
-                        "/".join(
-                            _share(p["unreachable_share"][w]) for w in _RECORD_WINDOWS
-                        ),
-                    )
-                    for p in plugins_["plugins"]
-                ),
-            )
-        )
-        lines.append("")
-        challenged = [p for p in plugins_["plugins"] if p["challenges"]]
-        if challenged:
-            lines.append(
-                "Challenged in the window: "
-                + ", ".join(f"{p['plugin']} {p['challenges']}" for p in challenged)
-            )
-        else:
-            lines.append("No search met a challenge in the window.")
+    lines.extend(_plugins_section(data["plugins"]))
     lines.extend(["", "## Hosters", "", "Since the process start."])
     lines.append("")
     lines.extend(
