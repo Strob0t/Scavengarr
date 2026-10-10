@@ -103,8 +103,9 @@ def select_lines(
     return lines[-limit:] if limit > 0 else lines, len(lines)
 
 
-def stats_line(name: str, sample: dict[str, Any]) -> str:
-    """CPU cores in use, memory without page cache, processes, network totals."""
+def cpu_cores(sample: dict[str, Any]) -> tuple[float, int]:
+    """The CPU cores a ``docker stats`` sample shows in use (the sample's
+    interval against its predecessor), and the cores online."""
     cpu = sample.get("cpu_stats", {})
     pre = sample.get("precpu_stats", {})
     used = _nested(cpu, "cpu_usage", "total_usage") - _nested(
@@ -114,7 +115,12 @@ def stats_line(name: str, sample: dict[str, Any]) -> str:
     cpus = cpu.get("online_cpus") or len(
         cpu.get("cpu_usage", {}).get("percpu_usage") or [1]
     )
-    cores = used / system * cpus if system > 0 else 0.0
+    return (used / system * cpus if system > 0 else 0.0), cpus
+
+
+def stats_line(name: str, sample: dict[str, Any]) -> str:
+    """CPU cores in use, memory without page cache, processes, network totals."""
+    cores, cpus = cpu_cores(sample)
     memory = sample.get("memory_stats", {})
     page_cache = memory.get("stats", {})
     resident = memory.get("usage", 0) - page_cache.get(
@@ -166,7 +172,7 @@ def _env(pairs: list[str]) -> dict[str, str]:
     return env
 
 
-def _portainer(container: str, timeout: float = 120) -> Portainer:
+def portainer_client(container: str, timeout: float = 120) -> Portainer:
     url, key = credentials()
     return Portainer(
         container, url, key, budget=RequestBudget(_BUDGET), timeout=timeout
@@ -176,7 +182,7 @@ def _portainer(container: str, timeout: float = 120) -> Portainer:
 def _fetch(container: str, *paths: str) -> dict[str, Any]:
     """The bodies of the app's own endpoints *paths*, fetched in one exec;
     a path that failed maps to ``{"error": ...}``."""
-    output, code = _portainer(container).run(["python", "-c", _FETCH, *paths])
+    output, code = portainer_client(container).run(["python", "-c", _FETCH, *paths])
     if code:
         raise SystemExit(
             mask(f"{' '.join(paths)} failed (exit {code}): {output.strip()[-300:]}")
@@ -192,20 +198,20 @@ def _fetch_one(container: str, path: str) -> str:
 
 
 def _ps(args: argparse.Namespace) -> int:
-    for row in _portainer("").containers():
+    for row in portainer_client("").containers():
         name = row["Names"][0].lstrip("/")
         print(mask(f"{name} | {row['State']} | {row['Status']}"))
     return 0
 
 
 def _stats(args: argparse.Namespace) -> int:
-    print(stats_line(args.container, _portainer(args.container).stats()))
+    print(stats_line(args.container, portainer_client(args.container).stats()))
     return 0
 
 
 def _logs(args: argparse.Namespace) -> int:
     since = int(time.time() - args.since)
-    text = _portainer(args.container).logs(since, timestamps=True)
+    text = portainer_client(args.container).logs(since, timestamps=True)
     lines, matched = select_lines(
         text, grep=args.grep, health=args.health, limit=args.limit
     )
@@ -238,7 +244,7 @@ def _probe(args: argparse.Namespace) -> int:
     source = probe_source(args.probe)
     env = _env(args.env)
     started = time.monotonic()
-    output, code = _portainer(args.container, args.timeout).run(
+    output, code = portainer_client(args.container, args.timeout).run(
         ["python", "-c", source, *args.args], env=env
     )
     print(mask(output), end="" if output.endswith("\n") else "\n")
@@ -250,7 +256,9 @@ def _digest(args: argparse.Namespace) -> int:
     """One report of the window: the log (one request), the metrics and
     the plugin record (one exec)."""
     now = time.time()
-    log_text = _portainer(args.container).logs(int(now - args.since), timestamps=True)
+    log_text = portainer_client(args.container).logs(
+        int(now - args.since), timestamps=True
+    )
     fetched = _fetch(args.container, "/metrics", "/api/v1/stats/plugins")
     metrics_text = fetched["/metrics"]
     if not isinstance(metrics_text, str):

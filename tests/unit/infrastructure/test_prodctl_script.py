@@ -278,3 +278,22 @@ class TestCommands:
 
         with pytest.raises(SystemExit, match="/metrics failed: refused"):
             _mod.main(["metrics"])
+
+
+class TestCpuCores:
+    def test_the_sample_interval_gives_the_cores_in_use(self) -> None:
+        sample = {
+            "cpu_stats": {
+                "cpu_usage": {"total_usage": 3_000},
+                "system_cpu_usage": 10_000,
+                "online_cpus": 4,
+            },
+            "precpu_stats": {
+                "cpu_usage": {"total_usage": 1_000},
+                "system_cpu_usage": 6_000,
+            },
+        }
+        assert _mod.cpu_cores(sample) == (2.0, 4)
+
+    def test_an_empty_sample_is_idle_on_one_core(self) -> None:
+        assert _mod.cpu_cores({}) == (0.0, 1)

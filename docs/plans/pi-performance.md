@@ -251,3 +251,13 @@ PORTAINER_URL=http://<pi-address>:9000 PORTAINER_API_KEY=… \
 ```
 
 On the Docker host, `--docker` uses the docker CLI instead of Portainer. A local server can be profiled with `py-spy record -r 100 -f raw -- python -m scavengarr.interfaces.cli …`. Compare runs only when they use the same titles and the same pass (cold or warm).
+`scripts/playback_under_load.py` measures a playback through the proxy while the server searches: a paced player (one segment per `EXTINF` duration, as a player with a full buffer asks) fetches a stored HLS stream's segments through `/api/v1/stremio/proxy/<id>/scavengarr.m3u8` and times each (headers, last byte; a segment slower than its own duration is a stall), `--search` ids are requested during the playback (the searches' wall time, streams and cache headers), `--portainer` samples the container's CPU about every 5 s, and the `/metrics` deltas of the run give the server's view (the proxy's segment stage, the read-ahead's fetches and outcomes, the plugin searches' durations, the event-loop lag; quantiles are histogram bucket bounds). It runs from a machine on the server's network (the dev container reaches production through its reverse proxy) and prints no URLs:
+
+```bash
+poetry run python scripts/playback_under_load.py --base https://scavengarr.lan --insecure \
+  --stream-id <id from prodctl.py probe links> --segments 20 --portainer --label idle
+poetry run python scripts/playback_under_load.py --base https://scavengarr.lan --insecure \
+  --stream-id <id> --segments 20 --portainer --label search --search movie/tt15398776
+```
+
+The rows are those of the tables under "Playback under search load"; compare runs of the same stream only (its segment length sets the pace), and run them while nothing else plays or searches.
