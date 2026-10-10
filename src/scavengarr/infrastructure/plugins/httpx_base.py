@@ -34,6 +34,7 @@ from scavengarr.infrastructure.captcha.detect import (
 
 from .categories import category_matches
 from .constants import (
+    ANSWERING_DOMAIN_RECHECK_S,
     DEFAULT_CLIENT_TIMEOUT,
     DEFAULT_DOMAIN_CHECK_TIMEOUT,
     DEFAULT_MAX_CONCURRENT,
@@ -54,7 +55,6 @@ _SESSION_TRUST_S = 5 * 60
 # A domain that only answered an error page or a challenge at the domain
 # check serves this long, then the check runs again; a transient 429, 403
 # or 404 at check time must not pin a domain for the process lifetime
-_ANSWERING_DOMAIN_RECHECK_S = 5 * 60
 
 
 def _forget_solve(solve: asyncio.Task[str | None]) -> None:
@@ -229,7 +229,7 @@ class HttpxPluginBase:
         lifetime; without one, the first that answers at all
         (``_site_answers``: an error page, or a Cloudflare challenge the
         plugin's browser fallback solves) serves the searches of the next
-        ``_ANSWERING_DOMAIN_RECHECK_S`` and is checked again then. Raises
+        ``ANSWERING_DOMAIN_RECHECK_S`` and is checked again then. Raises
         ``PluginUnreachableError`` when no domain answers; the next
         search checks again.
         """
@@ -273,12 +273,12 @@ class HttpxPluginBase:
     def _use_domain(self, domain: str, resp: httpx.Response, *, pinned: bool) -> None:
         """Take the domain's final URL after any redirects (e.g. a ``www.``
         prefix) as ``base_url``: for the process lifetime when *pinned* (the
-        domain works), else for ``_ANSWERING_DOMAIN_RECHECK_S`` (it only
+        domain works), else for ``ANSWERING_DOMAIN_RECHECK_S`` (it only
         answered an error page or a challenge)."""
         self.base_url = str(resp.url).rstrip("/")
         self._domain_verified = pinned
         self._domain_recheck_at = (
-            0.0 if pinned else time.monotonic() + _ANSWERING_DOMAIN_RECHECK_S
+            0.0 if pinned else time.monotonic() + ANSWERING_DOMAIN_RECHECK_S
         )
         self._log.info(
             f"{self.name}_domain_found", domain=domain, resolved=resp.url.host

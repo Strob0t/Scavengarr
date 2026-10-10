@@ -8,6 +8,7 @@ domain verification, and cleanup.
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable
 from contextvars import Token
 from typing import TYPE_CHECKING, Any, Literal
@@ -43,6 +44,7 @@ from scavengarr.infrastructure.browser.turnstile import (
 
 from .categories import category_matches
 from .constants import (
+    ANSWERING_DOMAIN_RECHECK_S,
     DEFAULT_DOMAIN_CHECK_TIMEOUT,
     DEFAULT_MAX_CONCURRENT,
     DEFAULT_MAX_RESULTS,
@@ -119,6 +121,8 @@ class PlaywrightPluginBase:
         self._context: BrowserContext | None = None
         self._page: Page | None = None
         self._domain_verified: bool = False
+        # Until when an answering-only domain serves without a new check
+        self._domain_recheck_at: float = 0.0
         self.base_url: str = f"https://{self._domains[0]}" if self._domains else ""
         self._log = structlog.get_logger(self.name or __name__)
         # Shared browser support: when set, _ensure_browser() calls
@@ -412,16 +416,25 @@ class PlaywrightPluginBase:
     async def _verify_domain(self) -> None:
         """Find a working domain by navigating in the browser.
 
-        A domain counts as reachable when it answers with status < 400 or
-        with a Cloudflare challenge that gets solved.  Otherwise the next
-        candidate is tried; none left raises ``PluginUnreachableError``,
-        and the next search checks again.
+        A domain that answers with status < 400, or with a Cloudflare
+        challenge that gets solved, works and stays for the process
+        lifetime. Otherwise the next candidate is tried; without a working
+        one, the first domain that answered with a plain error page (4xx
+        without a challenge: an error page is still the site, the httpx
+        base's rule) serves the searches of the next
+        ``ANSWERING_DOMAIN_RECHECK_S`` and is checked again then. A
+        challenge page the browser did not solve does not count: the
+        browser is the plugin's only way past it. None answering raises
+        ``PluginUnreachableError``, and the next search checks again.
         """
         if self._domain_verified or len(self._domains) <= 1:
             self._domain_verified = True
             return
+        if time.monotonic() < self._domain_recheck_at:
+            return
 
         page = await self._ensure_page()
+        answering: tuple[str, int] | None = None
         for domain in self._domains:
             url = f"https://{domain}/"
             try:
@@ -433,11 +446,26 @@ class PlaywrightPluginBase:
                 if resp and await self._passes_cloudflare(page, resp):
                     self.base_url = f"https://{domain}"
                     self._domain_verified = True
+                    self._domain_recheck_at = 0.0
                     self._log.info(f"{self.name}_domain_found", domain=domain)
                     return
+                if (
+                    answering is None
+                    and resp is not None
+                    and 400 <= resp.status < 500
+                    and not await is_challenge_page(page)
+                ):
+                    answering = (domain, resp.status)
             except Exception:  # noqa: BLE001
                 self._log.debug(f"{self.name}_domain_check_failed", domain=domain)
                 continue
+
+        if answering is not None:
+            domain, status = answering
+            self.base_url = f"https://{domain}"
+            self._domain_recheck_at = time.monotonic() + ANSWERING_DOMAIN_RECHECK_S
+            self._log.info(f"{self.name}_domain_answers", domain=domain, status=status)
+            return
 
         self._log.warning(f"{self.name}_no_domain_reachable")
         raise PluginUnreachableError(self.name)
@@ -533,6 +561,7 @@ class PlaywrightPluginBase:
             self._browser = None
             self._pw = None
         self._domain_verified = False
+        self._domain_recheck_at = 0.0
 
     # ------------------------------------------------------------------
     # Per-request isolation

@@ -610,6 +610,51 @@ class TestVerifyDomain:
         assert plugin._domain_verified is False
 
     @pytest.mark.asyncio
+    async def test_a_domain_that_only_answers_an_error_page_serves_unpinned(
+        self,
+    ) -> None:
+        """No domain answers below 400: the first that answers at all (404,
+        an error page is still the site) serves, unpinned, and is checked
+        again after the recheck time, as in the httpx base."""
+        plugin = _TestPlugin()
+        mock_page = AsyncMock()
+        mock_page.is_closed = MagicMock(return_value=False)
+        mock_page.title = AsyncMock(return_value="Not Found")
+        mock_page.goto = AsyncMock(return_value=MagicMock(status=404))
+        plugin._page = mock_page
+        plugin._context = AsyncMock()
+
+        await plugin._verify_domain()
+
+        assert plugin.base_url == "https://example.com"
+        assert plugin._domain_verified is False
+        assert mock_page.goto.await_count == 2  # both domains were tried
+        # within the recheck time the next search does not check again
+        await plugin._verify_domain()
+        assert mock_page.goto.await_count == 2
+        plugin._domain_recheck_at = 0.0
+        await plugin._verify_domain()
+        assert mock_page.goto.await_count == 4
+
+    @pytest.mark.asyncio
+    async def test_an_error_page_yields_to_a_working_domain(self) -> None:
+        plugin = _TestPlugin()
+        mock_page = AsyncMock()
+        mock_page.is_closed = MagicMock(return_value=False)
+        mock_page.title = AsyncMock(return_value="Not Found")
+        mock_page.goto = AsyncMock(
+            side_effect=[MagicMock(status=404), MagicMock(status=200)]
+        )
+        plugin._page = mock_page
+        plugin._context = AsyncMock()
+
+        await plugin._verify_domain()
+
+        assert plugin.base_url == "https://fallback.com"
+        assert plugin._domain_verified is True
+        assert plugin._domain_recheck_at == 0.0
+
+    @pytest.mark.asyncio
     async def test_skips_if_already_verified(self) -> None:
         plugin = _TestPlugin()
         plugin._domain_verified = True

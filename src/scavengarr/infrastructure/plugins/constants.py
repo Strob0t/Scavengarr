@@ -20,3 +20,6 @@ DEFAULT_MAX_CONCURRENT = 5
 DEFAULT_MAX_RESULTS = 1000
 DEFAULT_CLIENT_TIMEOUT = 15.0
 DEFAULT_DOMAIN_CHECK_TIMEOUT = 5.0
+# How long a domain that only answers an error page or a challenge (no
+# page below 400) serves before the domain check runs again
+ANSWERING_DOMAIN_RECHECK_S = 5 * 60

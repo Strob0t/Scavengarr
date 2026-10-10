@@ -98,19 +98,29 @@ async def _verify_domain(self) -> None:
     if self._domain_verified or len(self._domains) <= 1:
         self._domain_verified = True
         return
+    if time.monotonic() < self._domain_recheck_at:
+        return  # an answering-only domain serves until then
 
     page = await self._ensure_page()
+    answering = None
     for domain in self._domains:
         try:
             resp = await page.goto(
                 f"https://{domain}/", timeout=5_000, wait_until="domcontentloaded"
             )
             if resp and await self._passes_cloudflare(page, resp):
-                self.base_url = f"https://{domain}"
+                self.base_url = f"https://{domain}"  # works: stays
                 self._domain_verified = True
                 return
+            if answering is None and resp and 400 <= resp.status < 500 and not challenge:
+                answering = domain  # a plain error page is still the site
         except Exception:
             continue
+
+    if answering is not None:  # checked again after 300 s
+        self.base_url = f"https://{answering}"
+        self._domain_recheck_at = time.monotonic() + ANSWERING_DOMAIN_RECHECK_S
+        return
 
     self._log.warning(f"{self.name}_no_domain_reachable")
     raise PluginUnreachableError(self.name)
@@ -118,7 +128,7 @@ async def _verify_domain(self) -> None:
 
 Differences from the httpx fallback:
 - **Browser-based:** navigates the plugin's persistent page instead of sending HTTP requests
-- **Cloudflare-aware:** a domain counts when it answers below 400, or with a Cloudflare challenge page that is solved within `_cf_timeout_ms` (`_passes_cloudflare()`); an error status without a challenge fails
+- **Cloudflare-aware:** a domain works when it answers below 400, or with a Cloudflare challenge page that is solved within `_cf_timeout_ms` (`_passes_cloudflare()`). The httpx base's answering-only rule: without a working domain, the first that answered with a plain error page (4xx without a challenge) serves for `ANSWERING_DOMAIN_RECHECK_S` (300 s, `infrastructure/plugins/constants.py`, shared by both bases) and is checked again (`{name}_domain_answers`). A challenge page the browser did not solve does not count, unlike in the httpx base, whose browser fallback solves challenges per page: here the browser already failed
 - **No redirect tracking:** `base_url` is set to `https://{domain}`, not the final URL
 
 Plugins can override `_verify_domain()`. An override of `_wait_for_cloudflare()` must call the base implementation (Turnstile solver, clearance memo) and add its own condition after it (e.g. `page.wait_for_function()` for a cookie the site's app sets).
