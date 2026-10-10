@@ -280,6 +280,121 @@ class TestCommands:
             _mod.main(["metrics"])
 
 
+class TestCheck:
+    _ADDON = "https://addon.test/api/v1/stremio"
+    _CODES = {
+        "series/tt0388629:5:2": "S05E02",
+        "series/kitsu:12:1089": "S22E04",
+        "series/tt9335498:2:1": "S02E01",
+        "movie/tt0816692": "Interstellar.2014",
+    }
+
+    @staticmethod
+    def _stream(description: str) -> dict[str, str]:
+        return {"name": "Scavengarr\n1080p", "description": description, "url": "x"}
+
+    def _mock_production(self, *, healthy: bool = True) -> None:
+        status = "Up 2 hours (healthy)" if healthy else "Up 2 hours (unhealthy)"
+        # the same pattern as the fixture's route replaces it (ps lists ?all=1)
+        respx.get(f"{_DOCKER}/containers/json").respond(
+            json=[{"Names": ["/scavengarr"], "State": "running", "Status": status}]
+        )
+        respx.get(f"{_DOCKER}/containers/scavengarr/json").respond(
+            json={"State": {"StartedAt": "2026-10-06T11:09:00.123456789Z"}}
+        )
+        log = "\n".join(
+            [
+                _record(
+                    level="warning",
+                    event="config_unknown_keys",
+                    keys=["stremio.title_year_penalty"],
+                ),
+                _record(
+                    level="info",
+                    event="hoster_state_restored",
+                    resolutions=32,
+                    redirects=36,
+                    breakers=6,
+                ),
+                _record(
+                    level="info", event="plugin_history_restored", plugins=17, days=68
+                ),
+                _record(level="info", event="app_startup_complete", version="0.3.0"),
+                _record(
+                    level="info",
+                    event="http_request",
+                    request_id="r1",
+                    path="/api/v1/stremio/stream/series/tt0388629:5:2.json",
+                    client_host="10.0.0.9",
+                ),
+            ]
+        )
+        respx.get(f"{_DOCKER}/containers/scavengarr/logs").respond(
+            content=_frame(log + "\n")
+        )
+
+    def _mock_streams(self, codes: dict[str, str]) -> None:
+        for sid, code in codes.items():
+            respx.get(f"{self._ADDON}/stream/{sid}.json").respond(
+                json={"streams": [self._stream(f"Show.{code}\nVOE · site")]},
+                headers={"X-Request-ID": "r1"},
+            )
+
+    def test_a_clean_deploy_passes(
+        self,
+        portainer: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(_mod, "_SETTLE_S", 0.0)
+        self._mock_production()
+        self._mock_streams(self._CODES)
+
+        code = _mod.main(["check", "--base", self._ADDON, "--insecure"])
+
+        out = capsys.readouterr().out
+        assert code == 0, out
+        assert out.endswith("PASS: 9 checks, 0 failed, 1 warnings\n")
+        rows = [
+            "| container               | PASS   | running, Up 2 hours (healthy) |",
+            "| startup                 | PASS   | version 0.3.0 at 11:09:08 UTC |",
+            "| unknown keys            | WARN   | stremio.title_year_penalty |",
+            "| hoster_state_restored   | PASS   | resolutions 32, redirects 36,"
+            " breakers 6 |",
+            "| plugin_history_restored | PASS   | plugins 17, days 68 |",
+            "| series/tt0388629:5:2    | PASS   | 1 streams, all S05E02; logged;"
+            " no placement record (DEBUG), 0.0 s |",
+            "| movie/tt0816692         | PASS   | 1 streams in 0.0 s; logged |",
+        ]
+        for row in rows:
+            assert row in out, row
+        assert "10.0.0.9" not in out
+
+    def test_a_wrong_episode_or_an_unhealthy_container_fails(
+        self,
+        portainer: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(_mod, "_SETTLE_S", 0.0)
+        self._mock_production(healthy=False)
+        self._mock_streams({**self._CODES, "series/tt0388629:5:2": "S05E03"})
+
+        code = _mod.main(["check", "--base", self._ADDON])
+
+        out = capsys.readouterr().out
+        assert code == 1
+        assert (
+            "| container               | FAIL   | running, Up 2 hours (unhealthy) |"
+            in out
+        )
+        assert (
+            "| series/tt0388629:5:2    | FAIL   | 1 streams, none S05E02"
+            " (first: Show.S05E03); logged, 0.0 s |"
+        ) in out
+        assert out.endswith("FAIL: 9 checks, 2 failed, 1 warnings\n")
+
+
 class TestCpuCores:
     def test_the_sample_interval_gives_the_cores_in_use(self) -> None:
         sample = {

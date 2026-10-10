@@ -22,6 +22,13 @@ Usage (``poetry run python scripts/prodctl.py ...``):
                                          one Markdown report of the window:
                                          requests, plugins, hosters, breakers,
                                          log noise, errors (``digest.py``)
+    check --base URL [--insecure] [-c NAME] [--timeout S] [--deadline S]
+                                         the post-deploy check: the container,
+                                         the start's records, four stream
+                                         requests through the public addon URL
+                                         (``--base``, up to ``/api/v1/stremio``);
+                                         one table, exit 1 on a failed check
+                                         (``deploy_check.py``)
 
 Probes are Python files run with ``python -c`` inside the container: the
 read-only ones in ``scripts/probes/`` by name (``probe resources``), any other
@@ -38,7 +45,20 @@ import time
 from pathlib import Path
 from typing import Any
 
+import httpx
+from deploy_check import (
+    ANIME_IDS,
+    MOVIE_ID,
+    Answer,
+    container_check,
+    failed,
+    parse_time,
+    startup_checks,
+    stream_checks,
+)
+from deploy_check import render as render_checks
 from digest import digest as build_digest
+from digest import parse_records
 from digest import render as render_digest
 from portainer import Portainer, RequestBudget, credentials, mask
 
@@ -277,6 +297,68 @@ def _digest(args: argparse.Namespace) -> int:
     return 0
 
 
+# After the stream requests, their last log lines
+_SETTLE_S = 1.0
+
+
+def stream_answers(
+    base: str, ids: list[str], *, insecure: bool, timeout: float
+) -> list[Answer]:
+    """The four stream requests through the public addon URL, one after the
+    other (the deploy check measures each answer's time on its own)."""
+    answers: list[Answer] = []
+    with httpx.Client(verify=not insecure, timeout=timeout) as http:
+        for sid in ids:
+            started = time.monotonic()
+            try:
+                resp = http.get(f"{base}/stream/{sid}.json")
+            except httpx.HTTPError as exc:
+                answers.append(
+                    Answer(
+                        sid,
+                        None,
+                        seconds=time.monotonic() - started,
+                        error=type(exc).__name__,
+                    )
+                )
+                continue
+            seconds = time.monotonic() - started
+            streams: list[dict[str, Any]] = []
+            if resp.status_code == 200:
+                try:
+                    streams = list(resp.json().get("streams", []))
+                except (ValueError, AttributeError):
+                    streams = []
+            answers.append(
+                Answer(
+                    sid,
+                    resp.status_code,
+                    streams,
+                    seconds,
+                    resp.headers.get("X-Request-ID"),
+                )
+            )
+    return answers
+
+
+def _check(args: argparse.Namespace) -> int:
+    """The post-deploy check: two Portainer requests (the containers, the
+    log since the start) and four stream requests; read-only beyond those."""
+    client = portainer_client(args.container)
+    checks = [container_check(client.containers(), args.container)]
+    started_at = parse_time(client.inspect()["State"]["StartedAt"])
+    ids = [*(sid for sid, _ in ANIME_IDS), MOVIE_ID]
+    answers = stream_answers(
+        args.base.rstrip("/"), ids, insecure=args.insecure, timeout=args.timeout
+    )
+    time.sleep(_SETTLE_S)
+    records = parse_records(client.logs(int(started_at) - 1, timestamps=True))
+    checks += startup_checks(records, started_at)
+    checks += stream_checks(answers, records, deadline_s=args.deadline)
+    print(mask(render_checks(checks)))
+    return 1 if failed(checks) else 0
+
+
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(
         description=(__doc__ or "").splitlines()[0],
@@ -294,6 +376,9 @@ def parser() -> argparse.ArgumentParser:
     digest = commands.add_parser(
         "digest", help="one report: requests, plugins, hosters, breakers, errors"
     )
+    check = commands.add_parser(
+        "check", help="the post-deploy check: one table, exit 1 on a failure"
+    )
     for sub, handler in (
         (stats, _stats),
         (logs, _logs),
@@ -301,12 +386,26 @@ def parser() -> argparse.ArgumentParser:
         (state, _state),
         (probe, _probe),
         (digest, _digest),
+        (check, _check),
     ):
         sub.add_argument("-c", "--container", default="scavengarr")
         sub.set_defaults(handler=handler)
     logs.add_argument("--since", type=seconds, default=seconds("15m"))
     digest.add_argument("--since", type=seconds, default=seconds("24h"))
     digest.add_argument("--json", action="store_true", help="the data as JSON")
+    check.add_argument(
+        "--base", required=True, help="the public addon URL up to /api/v1/stremio"
+    )
+    check.add_argument("--insecure", action="store_true", help="skip TLS checks")
+    check.add_argument(
+        "--timeout", type=float, default=120, help="per stream request (seconds)"
+    )
+    check.add_argument(
+        "--deadline",
+        type=float,
+        default=60,
+        help="the movie answer's deadline (seconds, stream_deadline_seconds)",
+    )
     logs.add_argument("--fields", help="comma-separated JSON keys")
     logs.add_argument("--limit", type=int, default=60, help="last N lines")
     logs.add_argument("--health", action="store_true", help="keep health checks")
