@@ -509,6 +509,47 @@ were not requested separately to keep the production load at this run):
 address), not a regression of the check; the three answers came from the
 search cache (`STALE`, `HIT`), so no plugin search ran for this proof.
 
+**Row 60's measure** (2026-10-10, 13:30 to 13:45 UTC, the dev server in
+the dev container, `data/config.yaml`, a fresh cache per run, no play
+checks): the answer budget as its own setting, `stremio.answer_budget_seconds`
+(327e488), on the three series that answered at the 30 s budget in the
+tenth round. Each run: `stremio_round.py --no-playcheck` on the three ids
+(the first answer and the cached answer right after it), a second pass
+40 s later, a third 60 s after that. The setting at 10 s
+(`SCAVENGARR_STREMIO_ANSWER_BUDGET_SECONDS=10`):
+
+| Title | First answer | Streams | X-Cache | Complete | Cached answer | Streams | Playable |
+|---|---|---|---|---|---|---|---|
+| Breaking Bad S01E01 (`series/tt0903747:1:1`) | 13.7 s | 2 | MISS | false | 0.01 s | 2 | – |
+| Dark S01E01 (`series/tt5753856:1:1`) | 10.0 s | 0 | MISS | false | 0.00 s | 0 | – |
+| Haus des Geldes S01E01 (`series/tt6468322:1:1`) | 10.0 s | 2 | MISS | false | 0.01 s | 2 | – |
+| **Median / total** (3 titles) | 10.0 s | 4 | 0 HIT | 0 of 3 complete | 0.01 s | 4 | – |
+
+Second pass (40 s later): `HIT` for all three, 2, 1 and 2 streams, none
+complete yet (the plugins' own 30 s timeout and the completion search for
+the missing plugins were still running). Third pass (100 s after the
+first): `HIT`, 2, 1 and 2 streams, 3 of 3 complete. Breaking Bad's 13.7 s
+is the 10 s search budget plus the resolution of its two results; the
+other two answered at the budget to the tenth of a second.
+
+The same three at the default (the setting unset, the budget is the 30 s
+plugin timeout):
+
+| Title | First answer | Streams | X-Cache | Complete | Cached answer | Streams | Playable |
+|---|---|---|---|---|---|---|---|
+| Breaking Bad S01E01 (`series/tt0903747:1:1`) | 30.0 s | 2 | MISS | false | 0.01 s | 2 | – |
+| Dark S01E01 (`series/tt5753856:1:1`) | 30.0 s | 1 | MISS | false | 0.01 s | 1 | – |
+| Haus des Geldes S01E01 (`series/tt6468322:1:1`) | 30.0 s | 2 | MISS | false | 0.01 s | 2 | – |
+| **Median / total** (3 titles) | 30.0 s | 5 | 0 HIT | 0 of 3 complete | 0.01 s | 5 | – |
+
+Second pass: `HIT`, 2, 1 and 2 streams, none complete; third pass: 3 of 3
+complete, the same 5 streams. Reading: the 10 s budget cut the first
+answer from 30 s to 10 s for all three and cost one stream of five in the
+first answer (Dark's single stream arrived between 10 and 30 s); the
+cached answer carried every stream from the second pass on in both runs,
+and both were complete at the third. The production value is the
+maintainer's call: the row changed no default.
+
 ## AIOStreams
 
 Goal was an AIOStreams test user on `aiostreams.lan` with Scavengarr as addon, measured end to end. Not done: AIOStreams validates the addon manifest when a user is created or updated, and it can reach neither the dev instance (Docker NAT on the workstation) nor `scavengarr.lan` (502, backend down). Recommended user settings, from the AIOStreams v2.35.3 source (`packages/core/src/presets/custom.ts`, `packages/core/src/db/schemas.ts`):
