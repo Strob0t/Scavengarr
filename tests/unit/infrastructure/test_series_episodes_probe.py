@@ -321,3 +321,72 @@ def test_render_lists_the_references_and_placements() -> None:
 def test_render_without_references_or_placements_lists_none() -> None:
     text = probe.render([], {}, ["a"])
     assert "References:" not in text and "Placements:" not in text
+
+
+# Row 71: the links sto and aniworld share for an episode both place
+
+
+@pytest.mark.parametrize(
+    ("url", "file_id"),
+    [
+        ("https://voe.sx/e/abc123def", "abc123def"),
+        ("https://voe.sx/abc123def", "abc123def"),
+        ("https://dood.li/e/xyz789?ref=1", "xyz789"),
+        ("https://filemoon.sx/e/f1le1d/Some.Name.mp4", "f1le1d"),
+        ("https://vidoza.net/embed-abcdef123456.html", "abcdef123456"),
+        ("https://vidmoly.to/embed/w/abc", "abc"),
+        ("https://moflix.upns.xyz/#poj5tk", "poj5tk"),
+        ("https://streamtape.com/v/AbC/name.mp4", "AbC"),
+    ],
+)
+def test_file_identity(url: str, file_id: str) -> None:
+    assert probe.file_identity(url, "voe") == ("voe", file_id)
+
+
+def test_overlap_rows_count_per_hoster() -> None:
+    sto = {("voe", "a"), ("voe", "b"), ("doodstream", "d")}
+    aniworld = {("voe", "a"), ("filemoon", "f"), ("vidmoly", "v")}
+
+    assert probe.overlap_rows(sto, aniworld) == [
+        ("doodstream", 0, 1, 0),
+        ("filemoon", 0, 0, 1),
+        ("vidmoly", 0, 0, 1),
+        ("voe", 1, 1, 0),
+    ]
+
+
+def test_render_overlap_names_placements_and_counts() -> None:
+    entry = probe.Overlap(
+        request="series/tt0388629:1:1",
+        sto="staffel-1/episode-1 by title",
+        aniworld="staffel-1/episode-1 by number",
+        rows=[("filemoon", 0, 0, 1), ("voe", 1, 1, 0)],
+        unresolved={"aniworld": 1},
+    )
+    lines = probe.render_overlap([entry]).splitlines()
+
+    assert lines[0] == (
+        "| request | sto | aniworld | hoster | both | sto only | aniworld only |"
+    )
+    assert lines[2] == (
+        "| series/tt0388629:1:1 | staffel-1/episode-1 by title "
+        "| staffel-1/episode-1 by number | filemoon | 0 | 0 | 1 |"
+    )
+    assert lines[3] == "| | | | voe | 1 | 1 | 0 |"
+    assert "series/tt0388629:1:1: aniworld 1 links unresolved" in lines
+
+
+def test_render_overlap_of_an_episode_one_site_misses() -> None:
+    entry = probe.Overlap(
+        request="series/tt9335498:4:1",
+        sto="nothing",
+        aniworld="staffel-4/episode-1 by number",
+        rows=[("voe", 0, 0, 2)],
+        unresolved={},
+    )
+    lines = probe.render_overlap([entry]).splitlines()
+
+    assert lines[2] == (
+        "| series/tt9335498:4:1 | nothing | staffel-4/episode-1 by number "
+        "| voe | 0 | 0 | 2 |"
+    )

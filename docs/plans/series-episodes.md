@@ -209,3 +209,27 @@ The same 12 requests after row 30 of the ideas backlog: the filter reads the lin
 - **Fewer results than on 2026-10-07** (58 against 73), none lost to the filter: fireani 0 (its search timed out in all 14 searches, `fireani_timeout`; before 4), kinoking 7 (5 timeouts; before 10 with 3), hdfilme, streamcloud and streamkiste 6 each (before 7), kinoger 7 (before 9), megakino 5 (before 6), movie2k 1 (before 2), sto 10 (before 11). The probe records only results that reached the filter; a site search that gave no hit or timed out leaves none. Per request 2 to 8 results: Dark 2 (kinoger, sto), Frieren 2 (aniworld, kinoking), One Piece, Demon Slayer and Haus des Geldes 3 each, both Severance requests 8.
 - **Unreachable sites:** megakino_to and movie4k in all 14 searches (`PluginUnreachableError`), as before. cineby's search API host resolves to a private address in the dev container, which the request guard refuses (`private_address_refused`, all 14 searches); whether production, which resolves through the VPN, sees the same was not measured.
 - **Located:** aniworld 4 of 4 (One Piece S1E1 by number; Attack on Titan, Demon Slayer and Frieren S1E1 by title), sto 2 (One Piece and Kimetsu no Yaiba S1E1); sto's other 8 results are its non-anime series.
+
+## Row 71: does a German episode title add streams? (2026-10-11, dev container, `handoff-71` on `staging` ad74cd3)
+
+N21's question, measured before it is built. `PYTHONPATH=src xvfb-run -a poetry run python -P scripts/probes/series_episodes.py --plugins sto,aniworld <ids>`, read-only against the sites, 13:33 to 13:34 UTC. The ten requests are step 35's six plus Attack on Titan (`tt2560140`) and Frieren (`tt22248376`), each with S01E01 and the first episode of the last season Cinemeta lists (AoT season 4 of 4, Frieren season 2 of 2). With both sites among the plugins, the probe now compares the links of the kept results that show the episode: aniworld's `/redirect/<n>` links are followed as the registry follows them at play time (`_follow_redirects()`, three at a time), each link becomes its hoster and file id, and only counts per hoster are printed.
+
+| request | sto | aniworld | hoster | both | sto only | aniworld only |
+|---|---|---|---|---:|---:|---:|
+| One Piece 1:1 | staffel-1/episode-1 by number | staffel-1/episode-1 by number | byse, filemoon, playmogo, vidmoly, voe | 0 | voe 2 | 1, 2, 3, 3, 3 |
+| One Piece 5:2 | staffel-2/episode-1 by number | staffel-2/episode-1 by number | byse, filemoon, playmogo, vidmoly, voe | 0 | voe 2 | 1, 2, 3, 3, 3 |
+| One Piece 22:4 | staffel-21/episode-197 by number (one off) | staffel-22/episode-1 by number | byse, filemoon, playmogo, vidmoly, voe | 0 | voe 2 | 1, 2, 3, 3, 3 |
+| Demon Slayer 2:1 | staffel-2/episode-1 by title | staffel-2/episode-1 by title | byse, filemoon, playmogo, vidmoly, voe | 0 | voe 1 | 1, 2, 3, 3, 3 |
+| Demon Slayer 4:1 | nothing | staffel-3/episode-1 by title | byse, filemoon, playmogo, vidmoly, voe | 0 | 0 | 1, 2, 3, 3, 3 |
+| `kitsu:12:1089` | staffel-22/episode-1 by number | staffel-22/episode-1 by number | byse, filemoon, playmogo, vidmoly, voe | 0 | voe 2 | 1, 2, 3, 3, 3 |
+| Attack on Titan 1:1 | nothing | staffel-1/episode-1 by title | filemoon, playmogo, vidmoly, voe | 0 | 0 | 3, 3, 3, 3 |
+| Attack on Titan 4:1 | staffel-4/episode-1 by title | staffel-4/episode-1 by title | filemoon, playmogo, vidmoly, voe | 0 | voe 2 | 3, 3, 3, 3 |
+| Frieren 1:1 | nothing | staffel-1/episode-1 by title | byse, filemoon, playmogo, vidmoly, voe | 0 | 0 | 1, 2, 3, 3, 3 |
+| Frieren 2:1 | nothing | staffel-2/episode-1 by title | byse, playmogo, vidmoly, voe | 0 | 0 | 3, 3, 3, 3 |
+
+(byse is `bysezejataos.com`, filemoon `filemoon.to`, playmogo `playmogo.com`, vidmoly `vidmoly.biz`, voe `voe.sx`; the "aniworld only" counts follow the hoster column's order. No link stayed unresolved.)
+
+- **Placement:** aniworld placed all 10 episodes, 4 by number (One Piece, the kitsu id) and 6 by title. sto placed 6: 4 by number and 2 by title. One of its number placements is one off: for One Piece 22:4 it places staffel-21/episode-197, while aniworld places staffel-22/episode-1, step 35's known case. sto answered nothing for 4 requests (Demon Slayer 4:1, Attack on Titan 1:1, Frieren 1:1 and 2:1), and aniworld placed all four by title.
+- **Overlap:** sto links VOE only, 1 or 2 files per episode. aniworld links 4 or 5 hosters with 3 files each on most, VOE among them. The two sites share no file: the comparison was checked in-process for One Piece 1:1. All 14 links have the same form (`/e/<id>` or `/<name>-<id>.html`, 12-character ids), and the 14 ids are distinct. sto's VOE files are therefore other uploads of the episode, not missed matches.
+- **Verdict:** aniworld places every episode sto cannot place, and where both place one, sto adds no hoster, only 1 or 2 further VOE files next to aniworld's three. Under the decision rule N21 is shelved: a German episode title would let sto place the four episodes it misses, but aniworld already serves them with more hosters.
+- **Limits:** ten requests across four anime, one run, the sites' state at 13:33 UTC. Only sto and aniworld were asked. The overlap compares file ids, so a re-upload of the same video under a new id counts as a different file. The one-off number placement (One Piece 22:4) is a sto locate fault that a German title would not fix; it stays with step 35's rule (aniworld answers the request too). Whether sto places non-anime series that aniworld lacks was not asked: N21 is about anime episode titles.

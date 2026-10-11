@@ -18,6 +18,15 @@ counts and is translated first) goes to the plugins that locate episodes
 on their own season pages; the placement they answer (``site_season``,
 ``site_episode``, ``episode_located_by``) is listed per result.
 
+With sto and aniworld among the plugins, the links both give for the
+episode (the kept results that show it) are compared: aniworld's
+``/redirect/<n>`` links are followed the way the registry follows them at
+play time (``_follow_redirects()``, a few at a time), every link becomes
+its hoster and file id, and a table counts per request and hoster the files
+both sites list, sto alone and aniworld alone (row 71: does sto add streams
+where aniworld places the episode too?). The links stay in memory: the
+output names hosters and counts only.
+
 Without ids: the series of ``docs/plans/round-titles.txt`` plus Severance
 S01E05 and S02E05. Mirror groups are not collapsed: every member is asked.
 Read-only: it searches the sites and writes nothing but a temporary cache.
@@ -39,6 +48,7 @@ from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 import structlog
 
@@ -48,7 +58,12 @@ from scavengarr.application.stremio.queries import (
 )
 from scavengarr.application.stremio.title_resolution import TitleResolver
 from scavengarr.domain.entities.stremio import EpisodeRef, StremioStreamRequest
-from scavengarr.domain.plugins.base import SearchResult, locates_episodes, result_key
+from scavengarr.domain.plugins.base import (
+    SearchResult,
+    link_url,
+    locates_episodes,
+    result_key,
+)
 from scavengarr.infrastructure.config.load import load_config
 from scavengarr.infrastructure.plugins.constants import search_max_results
 from scavengarr.infrastructure.stremio.episode_filter import (
@@ -256,6 +271,78 @@ COLUMNS = (
 )
 
 
+# The two sites row 71 compares, and how many redirects are followed at once
+OVERLAP = ("sto", "aniworld")
+_REDIRECTS_AT_ONCE = 3
+# Path segments that name a hoster page's kind, not its file
+_PAGE_KINDS = {"e", "d", "v", "f", "w", "embed", "file", "play", "watch"}
+
+Identity = tuple[str, str]  # hoster, file id
+
+
+def file_identity(url: str, hoster: str) -> Identity:
+    """*url*'s file on *hoster*: the first path segment past the page kind
+    (``/e/<id>/<name>``, ``/embed-<id>.html``, ``/<id>.html``), else the
+    fragment (``/#<id>``)."""
+    parts = urlsplit(url)
+    segments = [s for s in parts.path.split("/") if s]
+    while segments and segments[0].lower() in _PAGE_KINDS:
+        segments.pop(0)
+    if not segments:
+        return hoster, parts.fragment
+    file_id = segments[0].removeprefix("embed-")
+    return hoster, file_id.removesuffix(".html")
+
+
+def overlap_rows(sto: set[Identity], aniworld: set[Identity]) -> list[tuple]:
+    """Per hoster: the files both list, sto alone, aniworld alone."""
+    hosters = sorted({h for h, _ in sto | aniworld})
+    return [
+        (
+            hoster,
+            sum(1 for i in sto & aniworld if i[0] == hoster),
+            sum(1 for i in sto - aniworld if i[0] == hoster),
+            sum(1 for i in aniworld - sto if i[0] == hoster),
+        )
+        for hoster in hosters
+    ]
+
+
+@dataclass
+class Overlap:
+    """One request's comparison: each site's placement and the files."""
+
+    request: str
+    sto: str
+    aniworld: str
+    rows: list[tuple] = field(default_factory=list)
+    unresolved: dict[str, int] = field(default_factory=dict)
+
+
+def render_overlap(entries: list[Overlap]) -> str:
+    """The overlap table (counts only) and the links no redirect resolved."""
+    lines = [
+        "| request | sto | aniworld | hoster | both | sto only | aniworld only |",
+        "|---|---|---|---|---:|---:|---:|",
+    ]
+    for entry in entries:
+        rows = entry.rows or [("–", 0, 0, 0)]
+        for n, (hoster, both, sto, ani) in enumerate(rows):
+            head = f"| {entry.request} | {entry.sto} | {entry.aniworld} |"
+            lines.append(
+                f"{head if n == 0 else '| | | |'} {hoster} | {both} | {sto} | {ani} |"
+            )
+    notes = [
+        f"{e.request}: {site} {count} links unresolved"
+        for e in entries
+        for site, count in sorted(e.unresolved.items())
+        if count
+    ]
+    if notes:
+        lines += ["", *notes]
+    return "\n".join(lines)
+
+
 def tally(records: Iterable[Record]) -> dict[str, Counter[str]]:
     """Per plugin: the counts of the table's columns."""
     table: dict[str, Counter[str]] = {}
@@ -363,9 +450,32 @@ async def _request(
     return translated, req.episode
 
 
+def _record(
+    sid: str,
+    name: str,
+    matched: list[SearchResult],
+    season: int,
+    episode: int,
+    records: list[Record],
+    kept_links: dict[tuple[str, str], list[str]],
+) -> None:
+    """Classify *matched*; keep the links of the results that show the
+    episode for the overlap (sto and aniworld only)."""
+    for result in matched:
+        record = classify(sid, name, result, season, episode)
+        records.append(record)
+        if name in OVERLAP and record.right:
+            _, kept = filter_outcome(result, season, episode)
+            kept_links.setdefault((sid, name), []).extend(
+                link_url(link) for link in (kept.download_links if kept else ())
+            )
+
+
 async def probe(
     state: AppState, sids: list[str], only: set[str] | None
-) -> tuple[list[Record], dict[str, Counter[str]], list[str], dict[str, str]]:
+) -> tuple[
+    list[Record], dict[str, Counter[str]], list[str], dict[str, str], list[Overlap]
+]:
     config = state.config.stremio
     assert state.tmdb_client is not None
     titles = TitleResolver(
@@ -381,6 +491,8 @@ async def probe(
     records: list[Record] = []
     failures: dict[str, Counter[str]] = {}
     references: dict[str, str] = {}
+    # (request, plugin) -> the links of the kept results that show the episode
+    kept_links: dict[tuple[str, str], list[str]] = {}
 
     async def one_plugin(
         sid: str,
@@ -408,7 +520,7 @@ async def probe(
                 found.setdefault(result_key(result), result)
         matched = await titles.matching(list(found.values()), ref)
         assert req.season is not None and req.episode is not None
-        records.extend(classify(sid, name, r, req.season, req.episode) for r in matched)
+        _record(sid, name, matched, req.season, req.episode, records, kept_links)
 
     for sid in sids:
         started = time.monotonic()
@@ -434,7 +546,65 @@ async def probe(
             f" {time.monotonic() - started:.0f} s",
             file=sys.stderr,
         )
-    return records, failures, names, references
+    overlaps = (
+        await compare(state, sids, records, kept_links)
+        if all(n in names for n in OVERLAP)
+        else []
+    )
+    return records, failures, names, references, overlaps
+
+
+def _site_placement(records: list[Record], sid: str, plugin: str) -> str:
+    """How *plugin* placed *sid*'s episode: its page and evidence, ``kept``
+    for a result that shows it without a placement, else ``nothing``."""
+    right = [r for r in records if r.request == sid and r.plugin == plugin and r.right]
+    placed = next((r.placement for r in right if r.placement), "")
+    return placed or ("kept" if right else "nothing")
+
+
+async def compare(
+    state: AppState,
+    sids: list[str],
+    records: list[Record],
+    kept_links: dict[tuple[str, str], list[str]],
+) -> list[Overlap]:
+    """Per request: sto's and aniworld's files of the episode, as hoster and
+    file id; a link on the site's own host is followed like the registry does."""
+    registry = state.hoster_resolver_registry
+    assert registry is not None
+    slots = asyncio.Semaphore(_REDIRECTS_AT_ONCE)
+
+    async def identity(url: str, site: str) -> Identity | None:
+        if urlsplit(url).hostname == site:
+            async with slots:
+                url = await registry._follow_redirects(url) or ""
+            if not url or urlsplit(url).hostname == site:
+                return None
+        host = (urlsplit(url).hostname or "").removeprefix("www.")
+        hoster = registry.canonical_hoster(host) or host
+        return file_identity(url, hoster)
+
+    entries = []
+    for sid in sids:
+        files: dict[str, set[Identity]] = {}
+        unresolved: dict[str, int] = {}
+        for name in OVERLAP:
+            plugin = state.plugins.get(name)
+            site = urlsplit(getattr(plugin, "base_url", "")).hostname or ""
+            links = list(dict.fromkeys(kept_links.get((sid, name), [])))
+            found = await asyncio.gather(*(identity(u, site) for u in links))
+            files[name] = {i for i in found if i is not None}
+            unresolved[name] = sum(i is None for i in found)
+        entries.append(
+            Overlap(
+                request=sid,
+                sto=_site_placement(records, sid, "sto"),
+                aniworld=_site_placement(records, sid, "aniworld"),
+                rows=overlap_rows(files["sto"], files["aniworld"]),
+                unresolved=unresolved,
+            )
+        )
+    return entries
 
 
 async def run(sids: list[str], only: set[str] | None) -> tuple[Any, ...]:
@@ -469,7 +639,7 @@ def main(argv: list[str] | None = None) -> int:
     only = set(args.plugins.split(",")) if args.plugins else None
     # the app logs to stdout; the table or JSON is the probe's only output
     with contextlib.redirect_stdout(sys.stderr):
-        records, failures, names, references = asyncio.run(run(sids, only))
+        records, failures, names, references, overlaps = asyncio.run(run(sids, only))
     if args.json:
         out = {
             "requests": sids,
@@ -480,6 +650,9 @@ def main(argv: list[str] | None = None) -> int:
         }
         args.json.write_text(json.dumps(out, indent=1, ensure_ascii=False))
     print(render(records, failures, names, references))
+    if overlaps:
+        print()
+        print(render_overlap(overlaps))
     return 0
 
 
