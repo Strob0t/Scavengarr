@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: Byse Videos Restricted to Their Owner's Sites Play Through the Watch Page
+- The Filemoon resolver asks Byse's details API before its browser starts and gave up on a 403 `embedding from this domain is not allowed` (`filemoon_unavailable`): the owner of such a video allows its player only on authorised sites, and the embed page `/e/<id>` shows "Embedding blocked on this site". The hoster's own watch page `/d/<id>` plays the video in a player frame of a second host, so the resolver now captures that page instead (`filemoon_embedding_blocked`). A 404 stays gone, and the embed page stays first where embedding is allowed (one frame less).
+- `StealthPool.capture_media(url, player=...)` clicks the centre of the named element (a CSS selector) instead of the page centre. The watch page shows its player in a frame below a header: the page centre lands in the frame above its play button (no stream after 18.7 s), the frame's centre starts the player and its manifest request about 1.8 s after the click. Without `player`, and while the element is not laid out, the page centre stays the target (the embed pages of the other capturing resolvers).
+- Result (row 65, 2026-10-11, `docs/plans/filmo-plugin.md` → After): filmo's Byse link for Interstellar resolves through the registry in the dev container in 5.6 s and plays (master 200, a 1280x720 variant, MPEG-TS segments). In production kinoking's Byse links meet the same 403, so other plugins gain as well.
+
 ### Fixed: The Build Identity Snippet Keeps .git Out of the Image
 - The snippet in `docs/features/configuration.md` → Build Identity, for a Dockerfile that fetches the source with BuildKit's git `ADD` (the Pi's build), kept the git directory (`--keep-git-dir=true`) for `docker/build_info.py` but left the runtime stage's `COPY --from=src / ./` in place, so the image would have carried `.git`. The `buildinfo` stage now writes `build_info.json` into the source and drops `.git`, and the runtime stage copies the source from there.
 

@@ -934,6 +934,50 @@ class TestStealthPoolCaptureMedia:
         assert page.mouse.click.await_count == 2
         page.mouse.click.assert_awaited_with(640, 360)
 
+    @staticmethod
+    def _locate(page: MagicMock, *, count: int, box: dict[str, float] | None) -> None:
+        """*page*'s locator finds *count* elements, the first laid out at *box*."""
+        element = MagicMock()
+        element.count = AsyncMock(return_value=count)
+        element.bounding_box = AsyncMock(return_value=box)
+        page.locator = MagicMock(return_value=MagicMock(first=element))
+
+    async def _capture_player(self, page: MagicMock, player: str) -> object:
+        shared_pool, _, context = _mock_pool_stack()
+        context.new_page = AsyncMock(return_value=page)
+        return await StealthPool(browser_pool=shared_pool).capture_media(
+            "https://byse.example/d/abc", timeout=10, player=player
+        )
+
+    async def test_a_player_frame_is_clicked_at_its_centre(self) -> None:
+        """A watch page shows its player in a frame below its header (Byse
+        ``/d/``): the click goes to the frame's centre, the page's centre
+        hits the empty top of the player."""
+        page = _player_page(on_click=[["https://cdn.example/hls/master.m3u8"]])
+        self._locate(
+            page, count=1, box={"x": 252, "y": 268, "width": 766, "height": 430}
+        )
+
+        media = await self._capture_player(page, ".video-page__player iframe")
+
+        assert media is not None
+        page.locator.assert_called_with(".video-page__player iframe")
+        page.mouse.click.assert_awaited_once_with(635, 483)
+
+    @pytest.mark.parametrize(
+        ("count", "box"), [(0, None), (1, None)], ids=["missing", "not laid out"]
+    )
+    async def test_without_the_player_element_the_page_centre_is_clicked(
+        self, count: int, box: dict[str, float] | None
+    ) -> None:
+        page = _player_page(on_click=[["https://cdn.example/hls/master.m3u8"]])
+        self._locate(page, count=count, box=box)
+
+        media = await self._capture_player(page, ".video-page__player iframe")
+
+        assert media is not None
+        page.mouse.click.assert_awaited_once_with(640, 360)
+
     async def test_video_element_request_without_extension_is_captured(
         self,
     ) -> None:

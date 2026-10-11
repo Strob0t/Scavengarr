@@ -6,6 +6,9 @@ Supports two page generations:
    fingerprint attestation plus a proof-of-work captcha, then an encrypted
    playback response. The stream request is captured from the stealth
    browser (``StealthPool.capture_media``) instead of replaying that flow.
+   A video whose owner allows embedding only on its own sites plays on the
+   hoster's watch page ``/d/<id>`` instead, in a player frame of a second
+   host; the details API tells which page to open.
 2. Legacy XFS: packed JavaScript (Dean Edwards packer) with a JWPlayer config,
    or a plain HLS URL in the page source.
 
@@ -58,6 +61,11 @@ _DOMAINS = frozenset(
 # Byse players under a second-level name another resolver claims: moflix hands
 # out moflix-stream.link (Byse) next to moflix-stream.click (VidHide)
 _HOSTS = frozenset({"moflix-stream.link"})
+
+# The Byse watch page /d/<id> shows its player in a frame below its header:
+# a click on the page centre lands in the frame above its play button, a
+# click on the frame's centre starts it
+_WATCH_PLAYER = ".video-page__player iframe"
 
 
 def _unpack_p_a_c_k(packed: str) -> str | None:
@@ -134,19 +142,29 @@ class FilemoonResolver:
             # Cloudflare / geo block: the browser may still get through
             log.info("filemoon_http_error", status=resp.status_code, url=embed_url)
 
-        if not await self._byse_video_available(embed_url):
+        page = await self._byse_page(embed_url)
+        if page is None:
             return None
-        return await capture_stream(self._stealth_pool, embed_url, "filemoon")
+        page_url, player = page
+        return await capture_stream(
+            self._stealth_pool, page_url, "filemoon", player=player
+        )
 
-    async def _byse_video_available(self, embed_url: str) -> bool:
-        """Ask the Byse details API before starting the browser.
+    async def _byse_page(self, embed_url: str) -> tuple[str, str | None] | None:
+        """The page the browser opens for a Byse video and the player element
+        it clicks there, by the details API.
 
-        404 (video gone) and 403 (embedding not allowed from this domain)
-        mean the player will not play; anything else is left to the browser.
+        A 404 means the video is gone (``None``, no browser). The API's own
+        403 ``embedding`` answer means the owner allows embedding only on
+        its own sites: the embed page shows "Embedding blocked on this
+        site", the hoster's watch page ``/d/<id>`` plays the video in a
+        player frame of its own (``_WATCH_PLAYER``). Anything else, a
+        Cloudflare 403 or no answer included, leaves it to the embed page
+        (one frame less; the page is the player, its centre is clicked).
         """
         match = re.match(r"(https?://[^/]+)/e/([A-Za-z0-9]+)", embed_url)
         if not match:
-            return True
+            return embed_url, None
         base, video_id = match.groups()
         api_url = f"{base}/api/videos/{video_id}/embed/details"
         try:
@@ -155,20 +173,20 @@ class FilemoonResolver:
             )
         except httpx.HTTPError:
             log.debug("filemoon_details_failed", url=api_url)
-            return True
-        # A Cloudflare 403 is no verdict on the video: only the API's own error
-        gone = resp.status_code == 404 or (
-            resp.status_code == 403 and "embedding" in resp.text
-        )
-        if gone:
+            return embed_url, None
+        if resp.status_code == 404:
             log.info(
                 "filemoon_unavailable",
                 url=embed_url,
                 status=resp.status_code,
                 reason=resp.text[:120],
             )
-            return False
-        return True
+            return None
+        # A Cloudflare 403 is no verdict on the video: only the API's own error
+        if resp.status_code == 403 and "embedding" in resp.text:
+            log.info("filemoon_embedding_blocked", url=embed_url)
+            return f"{base}/d/{video_id}", _WATCH_PLAYER
+        return embed_url, None
 
     def _try_packed_js(self, html: str) -> ResolvedStream | None:
         """Extract HLS URL from packed JavaScript blocks.

@@ -60,7 +60,8 @@ _NOT_MEDIA_RE = re.compile(r"thumbnail|sprite|preview", re.IGNORECASE)
 # capture_media(): wait this long for autoplay, then click the player up to
 # _MEDIA_PLAY_CLICKS times (on ad-funded hosters the first click often only
 # opens a popup), waiting _MEDIA_CLICK_WAIT_S after each click
-# click_through(): bound for the click itself, poll interval for the target
+# click_through(): bound for the click itself (capture_media()'s look-up of
+# the player it clicks too), poll interval for the target
 _CLICK_TIMEOUT_MS = 5_000
 _CLICK_POLL_MS = 300
 # ...and the time a submitted gate gets for its redirect, past the timeout:
@@ -171,17 +172,31 @@ async def _shows_offline_notice(page: Page) -> bool:
     return any(marker in lowered for marker in _PLAYER_OFFLINE_TEXT)
 
 
+async def _click_point(page: Page, player: str | None) -> tuple[float, float]:
+    """Where a click starts the player: the centre of the *player* element
+    when the page lays it out, else the page centre (an embed page is the
+    player)."""
+    box = None
+    if player:
+        element = page.locator(player).first
+        if await element.count():
+            box = await element.bounding_box(timeout=_CLICK_TIMEOUT_MS)
+    if box:
+        return box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+    size = page.viewport_size or {"width": 1280, "height": 720}
+    return size["width"] / 2, size["height"] / 2
+
+
 async def _start_player(
-    page: Page, found: asyncio.Future[CapturedMedia]
+    page: Page, found: asyncio.Future[CapturedMedia], player: str | None
 ) -> CapturedMedia | None:
-    """Wait for autoplay, then click the page centre (the player) until the
-    player requests its stream, says the file is gone (some players tell
-    only after the click) or the clicks are used up."""
+    """Wait for autoplay, then click the player (``_click_point``) until it
+    requests its stream, says the file is gone (some players tell only
+    after the click) or the clicks are used up."""
     waits = (_MEDIA_AUTOPLAY_WAIT_S, *(_MEDIA_CLICK_WAIT_S,) * _MEDIA_PLAY_CLICKS)
     for attempt, wait_s in enumerate(waits):
         if attempt:
-            size = page.viewport_size or {"width": 1280, "height": 720}
-            await page.mouse.click(size["width"] / 2, size["height"] / 2)
+            await page.mouse.click(*await _click_point(page, player))
         try:
             return await asyncio.wait_for(asyncio.shield(found), wait_s)
         except TimeoutError:
@@ -403,7 +418,7 @@ class StealthPool:
         return self._user_agent
 
     async def capture_media(
-        self, url: str, *, timeout: float | None = None
+        self, url: str, *, timeout: float | None = None, player: str | None = None
     ) -> CapturedMedia | None:
         """Open *url*, start its player and return the stream URL it requests.
 
@@ -412,6 +427,9 @@ class StealthPool:
         verify you're a human") or whose embed page sits behind Cloudflare.
         The page loads with styles (the context blocks them) so the click
         on the page centre hits the play button; ad popups are closed.
+        *player* (a CSS selector) names the element to click instead, on a
+        page that shows its player in a frame below a header (Filemoon's
+        watch page); the page centre stands in while it is not laid out.
         *timeout* bounds navigation and the Cloudflare challenge; without
         one the pool's own applies (``stremio.probe_stealth_timeout_seconds``,
         the resolvers' capture). The player clicks after it are bounded by
@@ -464,7 +482,7 @@ class StealthPool:
                     if await _shows_offline_notice(page):
                         log.info("stealth_capture_offline", url=url)
                         return None
-                media = await _start_player(page, found)
+                media = await _start_player(page, found, player)
                 log.debug("stealth_capture", url=url, found=media is not None)
                 return media
             except Exception:  # noqa: BLE001
