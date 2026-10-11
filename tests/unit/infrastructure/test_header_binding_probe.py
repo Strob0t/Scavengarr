@@ -176,8 +176,13 @@ class TestLink:
     def test_the_route_stremio_takes(
         self, is_hls: bool, address_bound: bool, route: str
     ) -> None:
-        link = probe.Link("dev", "voe", is_hls=is_hls, address_bound=address_bound)
+        link = probe.Link(
+            "dev", "voe", video_url=_URL, is_hls=is_hls, address_bound=address_bound
+        )
         assert link.route == route
+
+    def test_a_link_without_video_takes_no_route(self) -> None:
+        assert probe.Link("dev", "filemoon", note="not resolved").route == "–"
 
 
 def _dump_line(**fields: object) -> str:
@@ -347,9 +352,80 @@ class TestAsk:
         assert probe.verdict(answers) == "free"
 
 
+_M3U8 = "https://cdn.example/hls/master.m3u8?token=secret"
+_VARIANT = "https://cdn.example/hls/low/index.m3u8?t=1"
+_MASTER = (
+    "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000\nlow/index.m3u8?t=1\n"
+    "#EXT-X-STREAM-INF:BANDWIDTH=2000000\nhigh/index.m3u8\n"
+)
+_SEGMENTS = "#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXTINF:6,\nseg1.ts\n"
+_RANGED = (
+    "#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXTINF:6,\n#EXT-X-BYTERANGE:75232@0\n"
+    "video.ts\n#EXTINF:6,\n#EXT-X-BYTERANGE:82112\nvideo.ts\n"
+)
+
+
+class TestPlaylists:
+    def test_the_first_variant_of_a_master(self) -> None:
+        assert probe.first_variant(_MASTER) == "low/index.m3u8?t=1"
+
+    def test_a_media_playlist_has_no_variant(self) -> None:
+        assert probe.first_variant(_SEGMENTS) is None
+
+    @pytest.mark.parametrize(
+        ("playlist", "ranged"),
+        [
+            (_SEGMENTS, False),
+            (_RANGED, True),
+            ('#EXTM3U\n#EXT-X-MAP:URI="i.mp4",BYTERANGE="720@0"\n', True),
+            ('#EXTM3U\n#EXT-X-MAP:URI="i.mp4"\n#EXTINF:6,\ns1.m4s\n', False),
+        ],
+    )
+    def test_segments_or_their_init_section_by_byte_range(
+        self, playlist: str, ranged: bool
+    ) -> None:
+        assert probe.by_byte_range(playlist) is ranged
+
+
+class TestByteRanges:
+    _HLS = probe.Link("dev", "voe", video_url=_M3U8, headers=_REFERER, is_hls=True)
+
+    @respx.mock
+    def test_the_first_variant_is_read_like_the_proxy_reads_it(self) -> None:
+        master = respx.get(_M3U8).respond(200, text=_MASTER)
+        variant = respx.get(_VARIANT).respond(200, text=_RANGED)
+        assert asyncio.run(probe.byte_ranges(self._HLS)) == "yes"
+        for route in (master, variant):
+            sent = route.calls.last.request.headers
+            assert sent["Referer"] == _REFERER["Referer"]
+            assert sent["User-Agent"] == probe.DEFAULT_USER_AGENT
+            assert "Range" not in sent
+
+    @respx.mock
+    def test_a_media_playlist_is_read_itself(self) -> None:
+        respx.get(_M3U8).respond(200, text=_SEGMENTS)
+        assert asyncio.run(probe.byte_ranges(self._HLS)) == "no"
+
+    @respx.mock
+    def test_a_variant_without_playlist_names_its_answer(self) -> None:
+        respx.get(_M3U8).respond(200, text=_MASTER)
+        respx.get(_VARIANT).respond(403, content=_HTML)
+        assert asyncio.run(probe.byte_ranges(self._HLS)) == "variant 403"
+
+    @respx.mock
+    def test_a_master_without_answer_names_the_error(self) -> None:
+        respx.get(_M3U8).mock(side_effect=httpx.ConnectError("refused"))
+        answer = asyncio.run(probe.byte_ranges(self._HLS))
+        assert answer == "master ConnectError"
+
+
 def _result(
-    hoster: str, route: str, verdict_ok: dict[str, bool], source: str = "production"
-) -> tuple[Any, dict[str, Any]]:
+    hoster: str,
+    route: str,
+    verdict_ok: dict[str, bool],
+    source: str = "production",
+    ranges: str = "–",
+) -> Any:
     link = probe.Link(
         source,
         hoster,
@@ -359,53 +435,57 @@ def _result(
         is_hls=route == "proxy",
         address_bound=route == "file",
     )
-    return link, _answers(**verdict_ok)
+    return probe.Probed(link, _answers(**verdict_ok), ranges)
 
 
 class TestRender:
     def test_a_row_names_header_names_never_values_or_urls(self) -> None:
-        link, answers = _result(
+        probed = _result(
             "vidoza",
             "play",
             {"check": True, "bare": False, "player_UA": True, "check_UA": False},
         )
-        line = probe.row(link, answers)
+        line = probe.row(probed)
         assert line == (
             "| production | vidoza | A / B | play | cdn.example"
             " | Referer, User-Agent | 206 mp4 | 403 html | 206 mp4 | 403 html"
-            " | headers |"
+            " | headers | – |"
         )
         assert "secret" not in line and "hoster.example" not in line
 
     def test_a_link_without_video_names_why(self) -> None:
-        line = probe.row(probe.Link("dev", "filemoon", note="not resolved"), {})
-        assert line == (
-            "| dev | filemoon | – | play | – | – | – | – | – | – | not resolved |"
-        )
+        line = probe.row(probe.Probed(probe.Link("dev", "filemoon", note="gone")))
+        assert line == ("| dev | filemoon | – | – | – | – | – | – | – | – | gone | – |")
 
     def test_the_summary_names_the_bound_hosters_of_the_play_route(self) -> None:
         results = [
             _result("vidoza", "play", {"check": True, "bare": False}),
             _result("vidoza", "play", {"check": True, "bare": True}),
-            _result("voe", "proxy", {"check": True, "bare": False}),
+            _result("voe", "proxy", {"check": True, "bare": False}, ranges="yes"),
+            _result("voe", "proxy", {"check": True, "bare": True}, "dev", "no"),
             _result("mixdrop", "file", {"check": False, "bare": False}),
             _result("streamtape", "play", {"check": True, "bare": True}, "dev"),
-            (probe.Link("dev", "filemoon", note="not resolved"), {}),
+            probe.Probed(probe.Link("dev", "filemoon", note="not resolved")),
         ]
         text = probe.summary(results)
-        assert "| vidoza | play | production: free ×1, production: user-agent ×1 |" in (
-            text
+        assert (
+            "| vidoza | play | production: free ×1, production: user-agent ×1 | – |"
+            in text
         )
-        assert "| mixdrop | file | production: dead here ×1 |" in text
-        assert "| filemoon | play | dev: not resolved ×1 |" in text
-        assert text.endswith(
-            "Bound on the play route (what the player lacks there): vidoza"
+        assert (
+            "| voe | proxy | dev: free ×1, production: user-agent ×1 | no ×1, yes ×1 |"
+            in text
         )
+        assert "| mixdrop | file | production: dead here ×1 | – |" in text
+        assert "| filemoon | – | dev: not resolved ×1 | – |" in text
+        assert "(what the player lacks there): vidoza\n" in text
+        assert text.endswith("by byte range (EXT-X-BYTERANGE): voe")
 
     def test_render_puts_the_rows_over_the_summary(self) -> None:
         text = probe.render([_result("vidoza", "play", {"check": True, "bare": True})])
         assert text.startswith(probe.TABLE_HEAD)
-        assert text.endswith("(what the player lacks there): none")
+        assert "(what the player lacks there): none\n" in text
+        assert text.endswith("(EXT-X-BYTERANGE): none")
 
 
 class TestRun:
@@ -450,11 +530,11 @@ class TestRun:
         results = asyncio.run(
             probe.run(self._args(hosters="vidoza", urls=urls, pause=0.0))
         )
-        assert [(link.source, link.hoster) for link, _ in results] == [
+        assert [(p.link.source, p.link.hoster) for p in results] == [
             ("production", "vidoza"),
             ("dev", "vidoza"),
         ]
-        assert all(probe.verdict(answers) == "free" for _, answers in results)
+        assert all(p.outcome == "free" for p in results)
         assert seen["production"] == ("scavengarr", 3600.0, [])
         assert seen["dev"] == {"vidoza": "https://h/1"}
 
@@ -468,4 +548,27 @@ class TestRun:
         results = asyncio.run(
             probe.run(self._args(source="dev", urls=tmp_path / "none.json"))
         )
-        assert results == [(probe.Link("dev", "filemoon", note="not resolved"), {})]
+        assert results == [
+            probe.Probed(probe.Link("dev", "filemoon", note="not resolved"))
+        ]
+
+    @respx.mock
+    def test_only_playlists_are_read_for_byte_ranges(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        respx.get(_M3U8).respond(200, text=_SEGMENTS)
+        respx.get(_URL).respond(206, content=_MP4)
+
+        async def dev(asked: dict[str, str]) -> list[Any]:
+            return [
+                probe.Link("dev", "voe", video_url=_M3U8, is_hls=True),
+                probe.Link("dev", "streamtape", video_url=_URL),
+            ]
+
+        monkeypatch.setattr(probe, "dev_links", dev)
+        args = self._args(source="dev", urls=tmp_path / "none.json", pause=0.0)
+        results = asyncio.run(probe.run(args))
+        assert [(p.link.hoster, p.outcome, p.ranges) for p in results] == [
+            ("voe", "free", "no"),
+            ("streamtape", "free", "–"),
+        ]

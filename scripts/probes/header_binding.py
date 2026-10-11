@@ -28,6 +28,13 @@ network (bound to another address, expired or dead), ``no answer`` when it
 gets no answer. Media is an HLS playlist or the first bytes of MPEG-TS, MP4
 or Matroska (``media_kind()`` of ``scripts/stremio_playcheck.py``).
 
+When the check gets a playlist, the probe also reads the media playlist
+(a master's first variant) as the HLS proxy reads it (the check's headers,
+no range) and names whether it addresses its segments or its init section
+by byte range (``EXT-X-BYTERANGE``, ``EXT-X-MAP`` with ``BYTERANGE``):
+``yes``, ``no``, or which playlist gave no playlist. The proxy's segment
+route asks the CDN without the player's ``Range`` header.
+
 Sources: ``dev`` resolves the live suite's hoster links (``--urls``, written
 by ``scripts/probes/resolver_urls.py``) with the app's registry here, so a
 file bound to the resolving address plays from here and only header binding
@@ -51,7 +58,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 import structlog
@@ -75,6 +82,8 @@ from stremio_playcheck import (  # noqa: E402  # pyright: ignore[reportMissingIm
 REPO = Path(__file__).resolve().parents[2]
 URLS = REPO / ".cache" / "live" / "resolver-urls.json"
 SNIFF_BYTES = 2048
+# A media playlist's first 64 KiB: a byte range shows on its first segment
+PLAYLIST_BYTES = 65536
 FETCH_TIMEOUT = 10.0
 RESOLVE_TIMEOUT = 90.0
 # A player other than the app: Firefox, the browser of the reports
@@ -172,7 +181,10 @@ class Link:
     @property
     def route(self) -> str:
         """How Stremio reaches it: ``proxy`` (HLS), ``file`` (an
-        address-bound file's pass-through) or ``play`` (a redirect)."""
+        address-bound file's pass-through) or ``play`` (a redirect);
+        ``–`` without a video URL."""
+        if not self.video_url:
+            return "–"
         if self.is_hls:
             return "proxy"
         if self.address_bound:
@@ -279,6 +291,69 @@ async def ask(link: Link, pause: float) -> dict[str, Answer]:
     return answers
 
 
+async def read_playlist(url: str, headers: dict[str, str]) -> tuple[int, str]:
+    """The status and the first ``PLAYLIST_BYTES`` of *url* as text, asked as
+    the HLS proxy asks: *headers*, no range (a fresh client); the status 0
+    and the exception's name without an answer."""
+    try:
+        async with (
+            httpx.AsyncClient(follow_redirects=True, timeout=FETCH_TIMEOUT) as client,
+            client.stream("GET", url, headers=headers) as resp,
+        ):
+            body = b""
+            async for chunk in resp.aiter_bytes():
+                body += chunk
+                if len(body) >= PLAYLIST_BYTES:
+                    break
+            text = body[:PLAYLIST_BYTES].decode("utf-8", "replace")
+            return resp.status_code, text
+    except httpx.HTTPError as exc:
+        return 0, type(exc).__name__
+
+
+def first_variant(playlist: str) -> str | None:
+    """The URI of a master playlist's first variant (the line after its first
+    ``#EXT-X-STREAM-INF``); None for a media playlist."""
+    lines = (line.strip() for line in playlist.splitlines())
+    for line in lines:
+        if line.startswith("#EXT-X-STREAM-INF"):
+            return next((uri for uri in lines if uri and uri[0] != "#"), None)
+    return None
+
+
+def by_byte_range(playlist: str) -> bool:
+    """Whether a media playlist addresses its segments (``EXT-X-BYTERANGE``)
+    or its init section (``EXT-X-MAP`` with ``BYTERANGE``) by byte range."""
+    for line in playlist.splitlines():
+        tag = line.strip()
+        if tag.startswith("#EXT-X-BYTERANGE") or (
+            tag.startswith("#EXT-X-MAP") and "BYTERANGE=" in tag
+        ):
+            return True
+    return False
+
+
+def _is_playlist(status: int, text: str) -> bool:
+    return status in (200, 206) and text.lstrip().startswith("#EXTM3U")
+
+
+async def byte_ranges(link: Link) -> str:
+    """``yes`` when *link*'s media playlist (a master's first variant) uses
+    byte ranges, ``no`` when not; ``master`` or ``variant`` with its answer
+    when that playlist is none."""
+    headers = ways(link.headers)["check"]
+    status, text = await read_playlist(link.video_url, headers)
+    if not _is_playlist(status, text):
+        return f"master {status or text}"
+    variant = first_variant(text)
+    if variant is not None:
+        url = urljoin(link.video_url, variant)
+        status, text = await read_playlist(url, headers)
+        if not _is_playlist(status, text):
+            return f"variant {status or text}"
+    return "yes" if by_byte_range(text) else "no"
+
+
 def parse_dump(output: str) -> list[Link]:
     """The container's JSON lines as links, one per video URL (a pinned copy
     of a link repeats it); other lines (warnings) are skipped."""
@@ -379,77 +454,104 @@ def _cell(text: str, width: int = 40) -> str:
     return text.replace("|", "/")[:width] or "–"
 
 
-def result(link: Link, answers: dict[str, Answer]) -> str:
-    """The link's verdict, or why it has none."""
-    return verdict(answers) if answers else link.note or "not asked"
+@dataclass(frozen=True)
+class Probed:
+    """A link and what its CDN answered: per way of asking (nothing without
+    a video URL) and whether its media playlist uses byte ranges (``–`` for
+    a file)."""
+
+    link: Link
+    answers: dict[str, Answer] = field(default_factory=dict)
+    ranges: str = "–"
+
+    @property
+    def outcome(self) -> str:
+        """The link's verdict, or why it has none."""
+        if self.answers:
+            return verdict(self.answers)
+        return self.link.note or "not asked"
 
 
 TABLE_HEAD = (
     "| Source | Hoster | Title | Route | CDN | Stored headers | check | bare"
-    " | player UA | check UA | Verdict |\n"
-    "|---|---|---|---|---|---|---|---|---|---|---|"
+    " | player UA | check UA | Verdict | Byte ranges |\n"
+    "|---|---|---|---|---|---|---|---|---|---|---|---|"
 )
 
 
-def row(link: Link, answers: dict[str, Answer]) -> str:
+def row(probed: Probed) -> str:
     """One link's line: header names, never their values."""
+    link, answers = probed.link, probed.answers
     names = ", ".join(sorted(link.headers)) or "–"
     cells = " | ".join(str(answers[w]) if w in answers else "–" for w in WAYS)
     return (
         f"| {link.source} | {link.hoster} | {_cell(link.title)} | {link.route}"
         f" | {cdn(link.video_url) or '–'} | {_cell(names, 60)} | {cells}"
-        f" | {result(link, answers)} |"
+        f" | {probed.outcome} | {probed.ranges} |"
     )
 
 
-def summary(results: list[tuple[Link, dict[str, Answer]]]) -> str:
-    """The verdicts per hoster and route, and the hosters the bare player
-    cannot play on the ``play`` route: the report's candidates."""
-    counts: defaultdict[tuple[str, str], Counter[str]] = defaultdict(Counter)
-    for link, answers in results:
-        counts[(link.hoster, link.route)][
-            f"{link.source}: {result(link, answers)}"
-        ] += 1
-    lines = ["| Hoster | Route | Verdicts |", "|---|---|---|"]
-    for (hoster, route), verdicts in sorted(counts.items()):
-        listed = ", ".join(f"{v} ×{n}" for v, n in sorted(verdicts.items()))
-        lines.append(f"| {hoster} | {route} | {listed} |")
-    bound = sorted(
-        {
-            link.hoster
-            for link, answers in results
-            if answers and link.route == "play" and verdict(answers) not in UNBOUND
-        }
-    )
-    lines.append("")
-    lines.append(
+def _listed(counts: Counter[str]) -> str:
+    return ", ".join(f"{value} ×{n}" for value, n in sorted(counts.items()))
+
+
+def summary(results: list[Probed]) -> str:
+    """The verdicts and byte-range answers per hoster and route, the hosters
+    the bare player cannot play on the ``play`` route (the report's
+    candidates) and those with a media playlist by byte range."""
+    verdicts: defaultdict[tuple[str, str], Counter[str]] = defaultdict(Counter)
+    ranges: defaultdict[tuple[str, str], Counter[str]] = defaultdict(Counter)
+    for probed in results:
+        key = (probed.link.hoster, probed.link.route)
+        verdicts[key][f"{probed.link.source}: {probed.outcome}"] += 1
+        if probed.ranges != "–":
+            ranges[key][probed.ranges] += 1
+    lines = ["| Hoster | Route | Verdicts | Byte ranges |", "|---|---|---|---|"]
+    for key, counted in sorted(verdicts.items()):
+        ranged = _listed(ranges[key]) or "–"
+        lines.append(f"| {key[0]} | {key[1]} | {_listed(counted)} | {ranged} |")
+    bound = {
+        probed.link.hoster
+        for probed in results
+        if probed.answers
+        and probed.link.route == "play"
+        and probed.outcome not in UNBOUND
+    }
+    by_range = {probed.link.hoster for probed in results if probed.ranges == "yes"}
+    lines += [
+        "",
         "Bound on the play route (what the player lacks there): "
-        + (", ".join(bound) or "none")
-    )
+        + (", ".join(sorted(bound)) or "none"),
+        "Media playlists by byte range (EXT-X-BYTERANGE): "
+        + (", ".join(sorted(by_range)) or "none"),
+    ]
     return "\n".join(lines)
 
 
-def render(results: list[tuple[Link, dict[str, Answer]]]) -> str:
-    return "\n".join(
-        [TABLE_HEAD, *(row(link, answers) for link, answers in results)]
-    ) + ("\n\n" + summary(results))
+def render(results: list[Probed]) -> str:
+    rows = "\n".join([TABLE_HEAD, *(row(probed) for probed in results)])
+    return f"{rows}\n\n{summary(results)}"
 
 
-async def run(args: argparse.Namespace) -> list[tuple[Link, dict[str, Answer]]]:
-    """Each source's links, then each link asked every way."""
+async def run(args: argparse.Namespace) -> list[Probed]:
+    """Each source's links, then each link asked every way and, when the
+    check gets a playlist, its media playlist read for byte ranges."""
     only = set(args.hosters.split(",")) if args.hosters else None
-    results: list[tuple[Link, dict[str, Answer]]] = []
+    results: list[Probed] = []
 
     async def asked(links: list[Link]) -> None:
         for link in links:
             if only is not None and link.hoster not in only:
                 continue
             answers = await ask(link, args.pause) if link.video_url else {}
-            print(
-                f"  {link.source} {link.hoster}: {result(link, answers)}",
-                file=sys.stderr,
-            )
-            results.append((link, answers))
+            check = answers.get("check")
+            ranges = "–"
+            if check is not None and check.media and check.kind == "playlist":
+                await asyncio.sleep(args.pause)
+                ranges = await byte_ranges(link)
+            probed = Probed(link, answers, ranges)
+            print(f"  {link.source} {link.hoster}: {probed.outcome}", file=sys.stderr)
+            results.append(probed)
 
     if args.source in ("production", "both"):
         await asked(
