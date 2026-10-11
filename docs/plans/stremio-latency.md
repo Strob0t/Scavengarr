@@ -835,7 +835,7 @@ The twelfth round's Breaking Bad S01E01 got no stream from a stale entry whose o
 |---|---|---:|---:|---|
 | dad3051, 10-11 14:10 | 10-11 14:47 | 40 | 4 | the round's Breaking Bad S01E01 requests among them (2 streams 31 s later); the rest not read |
 | 2446f89, 10-11 14:48:57 | not read | | | its counter and logs went with the container at 16:31 |
-| 3a257fe, 10-11 16:31:37 | 10-11 16:43 | 6 | 0 | none to fill |
+| 3a257fe, 10-11 16:31:37 | 10-11 16:43 and 17:34 | 6 | 0 | none to fill (the same at both readings) |
 
 ## AIOStreams
 
