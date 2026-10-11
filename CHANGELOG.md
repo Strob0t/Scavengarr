@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: The Build Identity Snippet Keeps .git Out of the Image
+- The snippet in `docs/features/configuration.md` → Build Identity, for a Dockerfile that fetches the source with BuildKit's git `ADD` (the Pi's build), kept the git directory (`--keep-git-dir=true`) for `docker/build_info.py` but left the runtime stage's `COPY --from=src / ./` in place, so the image would have carried `.git`. The `buildinfo` stage now writes `build_info.json` into the source and drops `.git`, and the runtime stage copies the source from there.
+
 ### Added: The Codecs of the Round's Streams
 - `scripts/stremio_playcheck.py`'s verdict names a stream's codecs as `video/audio` (`OK mp4 2.10 GB h264/ac-3, seek 206`, `OK hls hevc/ec-3, 400 segments: mpegts, mpegts`; `?` for the one not read, `codecs unread` for neither), for row 59's hypothesis 2: a player without HEVC or AC-3/E-AC-3 decoding, a browser among them, refuses such a stream with "Format/Quelldatei wird nicht unterstützt". A file's codecs come from its MP4 `moov` (from the start of a faststart file in one read, else one read of its last 8 MiB; a `moov` beyond that stays unread) or an MPEG-TS head's PMT; an HLS stream's from the master's `CODECS` of the variant the check plays, else the `EXT-X-MAP` init segment of fMP4, else the first segment's PMT. Matroska is counted as unread. The reading lives in `scripts/media_codecs.py` (stdlib `struct` only); the codec read has 10 s of the check's 30 s and leaves the codecs unread when slow, never the stream failed. `scripts/stremio_round.py` adds a table of the streams per hoster and codec pair under the round table.
 

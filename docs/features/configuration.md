@@ -751,15 +751,18 @@ The startup line `app_startup_complete version=0.3.0 commit=a0cf586d1e2f built=2
 FROM scratch AS src
 ADD --keep-git-dir=true ${SCAVENGARR_REPO}#${SCAVENGARR_REF} /
 
+# The source with build_info.json and without .git
 FROM python:3.12-slim AS buildinfo
 COPY --from=src / /ctx
-RUN python /ctx/docker/build_info.py --git /ctx/.git --out /build_info.json
+RUN python /ctx/docker/build_info.py --git /ctx/.git \
+        --out /ctx/src/scavengarr/build_info.json && \
+    rm -rf /ctx/.git
 
-# in the runtime stage, after COPY --from=src / ./
-COPY --from=buildinfo /build_info.json src/scavengarr/build_info.json
+# in the runtime stage, in place of COPY --from=src / ./
+COPY --from=buildinfo /ctx/ ./
 ```
 
-The final copy may also stay out and the runtime stage run the script itself (`RUN python docker/build_info.py` after the source copy, with `--keep-git-dir=true` on the `ADD`); that keeps the whole `.git` in the image. Passing `SCAVENGARR_COMMIT` and `SCAVENGARR_BUILT` as build arguments from the compose file works too, when something on the host computes them.
+Stages that read single files of `src` (a dependency manifest, for one) keep reading them there. Only the runtime stage's source copy moves to `buildinfo`: `src` now holds `.git`, so copying it whole would put the git directory into the image. Running the script in the runtime stage instead (`RUN python docker/build_info.py` after the source copy) keeps the whole `.git` in the image too. Passing `SCAVENGARR_COMMIT` and `SCAVENGARR_BUILT` as build arguments from the compose file works too, when something on the host computes them.
 
 ### Minimal Production
 
