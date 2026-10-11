@@ -5,25 +5,33 @@ as the Anime Kitsu addon and Cinemeta listed it on 2026-10-11, reduced to
 the fields the comparison reads
 (``tests/fixtures/json/kitsu/meta_series_442.json``,
 ``tests/fixtures/json/cinemeta/meta_series_tt0249327.json``).
+
+The aniworld mode's placement, tally and report run on rows built here (Duel
+Monsters' S4E1 and Naruto Shippuden's #372 as aniworld listed them on
+2026-10-11), its index on the plugin with the captured One Piece pages of
+``tests/fixtures/html/aniworld/``.
 """
 
 from __future__ import annotations
 
+import gzip
 import importlib.util
 import json
 import sys
 from pathlib import Path
 from types import ModuleType
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
 import respx
 
-from scavengarr.domain.entities.stremio import EpisodeMeta, SeriesMeta
+from scavengarr.domain.entities.stremio import EpisodeMeta, EpisodeRef, SeriesMeta
 from scavengarr.infrastructure.anime import kitsu_addon
 from scavengarr.infrastructure.anime.id_lists import LIST_URL
 from scavengarr.infrastructure.anime.kitsu_addon import ADDON_URL, Placement
+from scavengarr.infrastructure.plugins.episode_index import EpisodeRow
 from scavengarr.infrastructure.stremio import cinemeta
 from scavengarr.infrastructure.stremio.cinemeta import CINEMETA_URL
 
@@ -200,3 +208,258 @@ class TestSeriesOffsets:
         async with httpx.AsyncClient() as http:
             offsets, note = await _mod.series_offsets(http, "1")
         assert (offsets, note) == (None, "the addon knows no such series")
+
+
+def _row(
+    season: int, episode: int, english: str, absolute: int | None = None
+) -> EpisodeRow:
+    return EpisodeRow(season, episode, f"Deutsch {season}-{episode}", english, absolute)
+
+
+def _ref(
+    title: str | None, absolute: int | None, season: int = 1, episode: int = 1
+) -> EpisodeRef:
+    return EpisodeRef(season=season, episode=episode, title=title, absolute=absolute)
+
+
+# Duel Monsters' S4E1 as aniworld listed it on 2026-10-11 (N26): the row with
+# the episode's number carries the dub's title
+_DUB_ROWS = [
+    _row(4, 1, "Pulse of a New Darkness", 145),
+    _row(4, 2, "Into the Fire", 146),
+    _row(4, 3, "Showdown in the Shadows", 147),
+]
+_DUB_REF = _ref("A New Evil (Part 1 of 2)", 145, season=4, episode=1)
+
+
+class TestPlace:
+    def test_a_title_confirms_the_exact_row(self) -> None:
+        index = [
+            _row(1, 1, "The Heart of the Cards", 1),
+            _row(1, 2, "Into the Fire", 2),
+        ]
+        verdict = _mod.place(index, _ref("The Heart of the Cards", 1))
+        assert (verdict.kind, verdict.row, verdict.confirmed) == (
+            "exact",
+            index[0],
+            True,
+        )
+        assert verdict.offset == 0
+
+    def test_without_a_title_the_number_alone_places_the_exact_row(self) -> None:
+        index = [_row(1, 1, "The Heart of the Cards", 1)]
+        verdict = _mod.place(index, _ref(None, 1))
+        assert (verdict.kind, verdict.confirmed) == ("exact", False)
+
+    def test_a_neighbour_the_title_confirms_has_its_offset(self) -> None:
+        index = [
+            _row(1, 1, "Something Else Entirely", 1),
+            _row(1, 2, "The Heart of the Cards", 2),
+        ]
+        verdict = _mod.place(index, _ref("The Heart of the Cards", 1))
+        assert (verdict.kind, verdict.offset, verdict.confirmed) == (
+            "neighbour",
+            1,
+            True,
+        )
+        assert verdict.exact == index[0]
+
+    def test_a_title_far_from_the_number_places_by_title(self) -> None:
+        index = [
+            _row(1, 1, "Something Else Entirely", 1),
+            _row(2, 1, "The Heart of the Cards", 30),
+        ]
+        verdict = _mod.place(index, _ref("The Heart of the Cards", 1))
+        assert (verdict.kind, verdict.row, verdict.offset) == ("title", index[1], 29)
+        assert verdict.exact == index[0]
+
+    def test_rows_without_numbers_place_by_title_alone(self) -> None:
+        index = [_row(1, 1, "Pikachu's Goodbye")]
+        verdict = _mod.place(index, _ref("Pikachu's Goodbye", 39))
+        assert (verdict.kind, verdict.exact, verdict.offset) == ("title", None, None)
+
+    def test_an_exact_row_with_a_dub_title_is_n26s_case(self) -> None:
+        verdict = _mod.place(_DUB_ROWS, _DUB_REF)
+        assert (verdict.kind, verdict.row, verdict.exact) == (
+            "unconfirmed",
+            None,
+            _DUB_ROWS[0],
+        )
+        assert verdict.exact_score == pytest.approx(0.53, abs=0.01)
+        # The best title match near the number is the exact row itself
+        assert verdict.near is not None
+        assert verdict.near[0] == _DUB_ROWS[0]
+
+    def test_a_tie_takes_the_earlier_row(self) -> None:
+        # Naruto Shippuden's #372 as aniworld listed it on 2026-10-11: the
+        # shorter title is a subset of the longer one, both score 1.00
+        index = [
+            _row(17, 10, "Hole", 371),
+            _row(17, 11, "Something to Fill the Hole", 372),
+        ]
+        verdict = _mod.place(index, _ref("Something to Fill the Hole", 372))
+        assert (verdict.kind, verdict.row, verdict.offset) == (
+            "neighbour",
+            index[0],
+            -1,
+        )
+        assert verdict.score == verdict.exact_score == 1.0
+        assert verdict.tie
+
+    def test_without_an_exact_row_nothing_is_placed(self) -> None:
+        verdict = _mod.place(
+            [_row(1, 1, "Into the Fire", 1)], _ref("Duel Identity", 50)
+        )
+        assert (verdict.kind, verdict.exact, verdict.exact_score) == (
+            "nothing",
+            None,
+            None,
+        )
+
+
+def _tallied() -> Any:
+    meta = SeriesMeta(
+        name="Series",
+        year=2000,
+        genres=("Animation",),
+        episodes=(
+            EpisodeMeta(0, 1, name="Special"),
+            EpisodeMeta(1, 0, name="Recap"),
+            EpisodeMeta(1, 1, name="The Heart of the Cards"),
+            EpisodeMeta(1, 2, name="A New Evil (Part 1 of 2)"),
+            EpisodeMeta(1, 3, name="Duel Identity"),
+        ),
+    )
+    index = [
+        _row(1, 1, "The Heart of the Cards", 1),
+        _row(1, 2, "Pulse of a New Darkness", 2),
+        _row(1, 3, "Something Else Entirely", 3),
+        _row(1, 4, "Duel Identity", 4),
+    ]
+    return _mod.tally("Series", "series", "tt1", index, meta, {(1, 2): 2})
+
+
+class TestTally:
+    def test_each_regular_episode_is_placed(self) -> None:
+        counts = _tallied()
+        # The special and the episode 0 entry have no position
+        assert (counts.rows, counts.numbered_rows, counts.episodes) == (4, 4, 3)
+        assert counts.kitsu == 1
+        assert dict(counts.kinds) == {"exact": 1, "unconfirmed": 1, "neighbour": 1}
+        assert dict(counts.offsets) == {1: 1}
+
+    def test_the_title_confirmed_placements_count_those_at_another_row(
+        self,
+    ) -> None:
+        counts = _tallied()
+        assert counts.confirmed == 2
+        assert [ref.episode for ref, _ in counts.elsewhere] == [3]
+
+    def test_n26s_cases_keep_the_reference(self) -> None:
+        counts = _tallied()
+        assert [(ref.episode, ref.absolute) for ref, _ in counts.unconfirmed] == [
+            (2, 2)
+        ]
+
+
+class TestSiteReport:
+    def test_the_row_names_counts_and_offsets(self) -> None:
+        assert _mod.site_row("tt1", _tallied()) == (
+            "| Series | tt1 | series | 4 | 4 | 3 | 1 | 1 | 1 (+1: 1) | 0 | 1 (1) | 0"
+            " | 2 | 1 (0) |"
+        )
+
+    def test_the_share_sums_the_series(self) -> None:
+        assert _mod.share_line([_tallied(), _tallied()]) == (
+            "Title-confirmed placements with an exact-number row: 4,"
+            " at another row: 2 (50.0 %), ties 0"
+        )
+
+    def test_a_case_names_the_reference_the_rows_and_the_scores(self) -> None:
+        line = _mod.case_line(_DUB_REF, _mod.place(_DUB_ROWS, _DUB_REF))
+        assert line == (
+            "S4E1 #145 'A New Evil (Part 1 of 2)': exact row S4E1"
+            " 'Pulse of a New Darkness' / 'Deutsch 4-1' 0.53;"
+            " best near #145 0.53"
+        )
+
+    def test_a_placement_elsewhere_names_the_row_it_took(self) -> None:
+        counts = _tallied()
+        ref, verdict = counts.elsewhere[0]
+        assert _mod.case_line(ref, verdict) == (
+            "S1E3 #3 'Duel Identity': neighbour S1E4 #4 'Duel Identity'"
+            " / 'Deutsch 1-4' 1.00;"
+            " exact row S1E3 'Something Else Entirely' / 'Deutsch 1-3' 0.44"
+        )
+
+    def test_five_cases_spread_over_the_series(self) -> None:
+        assert _mod.spread(list(range(12)), 5) == [0, 2, 4, 7, 9]
+        assert _mod.spread([1, 2], 5) == [1, 2]
+
+
+_PAGES = Path(__file__).parents[2] / "fixtures" / "html" / "aniworld"
+
+
+def _page(name: str) -> str:
+    return gzip.decompress((_PAGES / name).read_bytes()).decode()
+
+
+def _aniworld() -> Any:
+    spec = importlib.util.spec_from_file_location(
+        "aniworld_probe_plugin", _PROBES.parents[1] / "plugins" / "aniworld.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.AniworldPlugin()
+
+
+class TestSiteIndex:
+    async def test_the_first_relevant_hit_and_its_season_pages(self) -> None:
+        plugin = _aniworld()
+        plugin._ajax_search = AsyncMock(
+            return_value=[
+                {
+                    "title": "One Piece Film: Red",
+                    "link": "/anime/stream/one-piece-film",
+                },
+                {"title": "One Piece", "link": "/anime/stream/one-piece"},
+            ]
+        )
+        plugin._safe_fetch = AsyncMock(
+            return_value=MagicMock(text=_page("detail-one-piece.html.gz"))
+        )
+        season = _page("season-one-piece-staffel-2.html.gz")
+        plugin._season_html = AsyncMock(
+            side_effect=lambda url: (
+                season if url.endswith("/one-piece/staffel-2") else None
+            )
+        )
+        found = await _mod.site_index(plugin, "One Piece")
+        assert found is not None
+        slug, hits, rows = found
+        # The exact hit, as the plugin takes it (the film is another title)
+        assert (slug, hits) == ("one-piece", ["One Piece"])
+        # Each of the 23 season pages once
+        assert plugin._season_html.await_count == 23
+        assert (len(rows), rows[0].absolute, rows[-1].absolute) == (16, 62, 77)
+
+    async def test_a_slug_skips_the_search(self) -> None:
+        plugin = _aniworld()
+        plugin._ajax_search = AsyncMock()
+        plugin._safe_fetch = AsyncMock(
+            return_value=MagicMock(text=_page("detail-one-piece.html.gz"))
+        )
+        plugin._season_html = AsyncMock(return_value=None)
+        found = await _mod.site_index(plugin, "One Piece", slug="one-piece")
+        assert found is not None
+        assert found[:2] == ("one-piece", [])
+        plugin._ajax_search.assert_not_awaited()
+        assert plugin._safe_fetch.await_args.args[0] == (
+            "https://aniworld.to/anime/stream/one-piece"
+        )
+
+    async def test_a_search_without_hits_gives_no_index(self) -> None:
+        plugin = _aniworld()
+        plugin._ajax_search = AsyncMock(return_value=[])
+        assert await _mod.site_index(plugin, "Digimon Adventure") is None

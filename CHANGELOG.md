@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: The Anime Probe Places Episodes on aniworld's Index
+- `scripts/probes/anime_offsets.py --aniworld` (row 82) places each regular Cinemeta episode of a series on aniworld's episode index as the app does: the series the plugin's search gives (`--slug IMDB=SLUG` names the page instead), its season pages read once through the plugin's fetcher, the reference `TitleResolver.episode_ref()` builds with the app's Kitsu number, and `locate()`. Per series it counts the placements at the number's row, at a neighbour (with the offsets), by title, nowhere although the number's row has an English title (N26) and nowhere, the title-confirmed placements at another row (ties apart), and prints `--cases` of each kind. Default: Duel Monsters, Pokémon, Digimon Adventure, Dragon Ball Z and the long-runners. Read-only, names and counts only.
+- Measured (`docs/plans/series-episodes.md`, row 82, fourteen series): `locate()` gives nothing for 307 episodes whose number's row is there (N26), and the number's row was the episode in all 69 checked by eye. It takes another row than the number's in 191 of 4745 title-confirmed placements (101 ties, where `_best` keeps the earlier of equal scores); in 114 of the 115 checked that row is the wrong episode. The maintainer's options for N26 are in the plan doc; nothing in `src/` changes.
+
 ### Removed: Dead Code and Files
 - `infrastructure/common/converters.py` (`to_int`, uncalled since the YAML/scrapy removal) and its test; the unused hand-written `tests/fixtures/html/testsite/` pages and the `fixtures_dir` fixture; filmpalast's unread `search-the-last-of-us` page; `flake.nix` and `flake.lock` (an x86_64-only openspec shell nothing referenced; the dev container installs openspec through npm). The observability guide lists the `resources` and `links` probes among its examples.
 

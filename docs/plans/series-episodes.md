@@ -330,3 +330,52 @@ The metadata phase (`stremio_phase_seconds{phase="metadata"}`, read from `/metri
 | S22E06, everything cached | 0.004 s | 0.005 s; 1091 |
 
 Limits: one run each, the catalogs' and the sites' state of the day; sto's placement was read for two One Piece episodes. The first requests after a start go without the number until the list is in memory (S22E04 above). Before Mr. Fable's review, a request that came while another one fetched a record it needed went without the number too: the Fairy Tail run, its three series compared at once, numbered none of 4676's episodes. Concurrent requests now share the one fetch, and the same run numbers all 175 (16:05 UTC). Production follows the deploy.
+
+## Row 82: how far aniworld's exact-number row can be trusted (N26) (2026-10-11, dev container, `handoff-82` on `staging` 8a756c4)
+
+The maintainer's decision of 2026-10-11 (16:40 UTC): N26 is measured first. `PYTHONPATH=src poetry run python -P scripts/probes/anime_offsets.py --aniworld --slug tt0210418=digimon-digital-monsters --slug tt4644488=dragonball-super`, 17:20 UTC, read-only against Cinemeta, the Anime Kitsu addon, Fribb's list and aniworld. Per series the probe takes the series aniworld's search gives for Cinemeta's name (the plugin's closest relevant hit) and reads its season pages once, through the plugin's fetcher, into the index `episode_index()` builds. It builds every regular Cinemeta episode's reference as the app does for an IMDb request (`TitleResolver.episode_ref()` with row 76's Kitsu number where the look-up gives one) and places it with `locate()`. The outcomes: at the row with the reference's number (exact), at a row near it whose title wins (neighbour, with the offset), by the title alone (rules 2 and 3), nowhere although the number's row has an English title (N26), or nowhere.
+
+| Series | aniworld | Rows (numbered) | Episodes (Kitsu number) | Exact | Neighbour (offsets) | Title | N26 (number's row best) | Nothing | Title-confirmed | At another row (ties) |
+|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|
+| Yu-Gi-Oh! Duel Monsters (`tt0249327`) | yu-gi-oh | 236 (224) | 224 (0) | 40 | 33 (−5: 3, −4: 4, −3: 3, −2: 7, −1: 8, +1: 5, +3: 1, +5: 2) | 4 | 147 (18) | 0 | 77 | 37 (0) |
+| Pokémon (`tt0168366`) | pokmon | 1219 (0) | 1375 (276) | 0 | 0 | 1211 | 0 | 164 | 0 | 0 |
+| Digimon Adventure (`tt0210418`) | digimon-digital-monsters ¹ | 104 (0) | 253 (0) | 0 | 0 | 107 | 0 | 146 | 0 | 0 |
+| Dragon Ball Z (`tt0214341`) | dragonball-z | 291 (291) | 291 (0) | 291 | 0 | 0 | 0 | 0 | 291 | 0 |
+| One Piece (`tt0388629`) | one-piece | 1180 (1177) | 1179 (1179) | 1125 | 7 (−5: 1, −4: 1, −2: 1, −1: 3, +4: 1) | 3 | 44 (34) | 0 | 1127 | 7 (0) |
+| Detective Conan (`tt0131179`) | detektiv-conan | 1254 (1254) | 1217 (1217) | 1002 | 129 (−5: 5, −4: 2, −3: 2, −2: 10, −1: 92, ±0: 2, +1: 5, +2: 4, +3: 1, +4: 4, +5: 2) | 2 | 83 (29) | 1 | 1133 | 131 (92) |
+| Naruto: Shippuden (`tt0988824`) | naruto-shippuden | 500 (500) | 500 (500) | 488 | 4 (−3: 1, −2: 1, −1: 1, +1: 1) | 0 | 8 (4) | 0 | 492 | 4 (3) |
+| Naruto (`tt0409591`) | naruto | 220 (220) | 220 (220) | 198 | 2 (−5: 1, −2: 1) | 0 | 20 (13) | 0 | 200 | 2 (0) |
+| Bleach (`tt0434665`) | bleach | 414 (363) | 366 (366) | 360 | 1 (+1: 1) | 2 | 2 (2) | 1 | 361 | 1 (0) |
+| Boruto: Naruto Next Generations (`tt6342474`) | boruto-naruto-next-generations | 293 (292) | 293 (0) | 289 | 1 (−2: 1) | 2 | 1 (0) | 0 | 291 | 2 (0) |
+| Black Clover (`tt7441658`) | black-clover | 172 (168) | 183 (0) | 161 | 4 (−1: 4) | 12 | 2 (1) | 4 | 166 | 5 (4) |
+| Fairy Tail (`tt1528406`) | fairy-tail | 353 (328) | 328 (175) | 326 | 2 (−5: 1, −3: 1) | 0 | 0 | 0 | 328 | 2 (2) |
+| Hunter x Hunter (`tt2098220`) | hunter-x-hunter | 148 (148) | 148 (148) | 148 | 0 | 0 | 0 | 0 | 148 | 0 |
+| Dragon Ball Super (`tt4644488`) | dragonball-super ¹ | 131 (131) | 131 (131) | 131 | 0 | 0 | 0 | 0 | 131 | 0 |
+| All | | | 6708 | 4559 | 183 | 1343 | 307 (101) | 316 | 4745 | 191 (101) |
+
+¹ Cinemeta's name finds another series: for "Digimon Adventure" the closest hit is "Digimon Adventure 2020" (67 rows), for "Dragon Ball Super" the one-row "Dragon Ball Super: Beerus" (aniworld writes "Dragonball Super"). The table has the pages named with `--slug`. "Digimon: Digital Monsters" holds Adventure and 02 (104 rows); Cinemeta's list goes on with the later series. aniworld lists all fourteen series.
+
+Title-confirmed: the placements a title confirmed (rule 1 with a title, rules 2 and 3) where the site has a row with the reference's number. At another row: those whose row is not the number's, 191 of 4745 (4.0 %); ties: the number's row matches as well as the row taken.
+
+**N26's titles.** N26 calls aniworld's English title the dub's; it is the other way round. aniworld's Duel Monsters titles are mostly the translated Japanese ones ("Pulse of a New Darkness", #145), Cinemeta's are the 4Kids dub's ("A New Evil (Part 1 of 2)"); Wikipedia's list of the episodes gives both per number. aniworld's German titles translate the dub's, part numbers included ("Das Millenniumsduell (4)" for "Yugi vs. Pegasus: Match of the Millennium, Part 4"). In the long-runners both sides translate the same Japanese title in other words ("Magellan's Scheme! The Jailbreak is Obstructed" against "Magellan's Tricky Move! A Foiled Escape Plan!", 0.52). Dragon Ball Z has the dub's titles on both sides: all 291 confirmed.
+
+**The check by eye.**
+
+- N26's cases: the probe's five per series (30, fewer where a series has fewer) and 39 more, 69 in all (Duel Monsters 16, One Piece 10, Detective Conan 10, Naruto 20, Naruto: Shippuden 8, Bleach 2, Black Clover 2, Boruto 1). The number's row was the episode in all 69. Sources: Wikipedia's lists for Duel Monsters (12 cases) and Case Closed (5: the Funimation title against the translated Japanese one), aniworld's German titles for 4 more of Duel Monsters, the rest by reading the two titles side by side. Naruto: Shippuden's #53 by its neighbours: aniworld's English title is "Title", and rows 51 to 55 match Cinemeta's 51 to 55.
+- The placements at another row, the premise of the 4.0 %: all 90 that are no tie and 25 of the 101 ties. The number's row was the episode in 114 of the 115. The row `locate()` took was right once: Detective Conan S31E10 "The Black Organization's Scheme (Hunt)" (#1077). aniworld numbers it 1078: it counts "Police Academy Arc Wild Police Story CASE. Rei Furuya" as 1077 and lacks "(Landing)". So the 4.0 % is no share of wrong numbers: where a title could tell, it showed the number's row wrong in 1 of 4745 placements.
+- Why the titles mislead: `token_set_ratio` gives 1.00 when one title's words are a subset of the other's, so a part's number does not count ("Something to Fill the Hole" against "Hole", "Metropolitan Police Detective Love Story 2 (2)" against its "(1)"), and `_best` keeps the first of equal scores, the earlier row. Detective Conan's 92 ties are all a later part or chapter of a case placed on an earlier one (86 one row back, 5 two, 1 three). The other 90 take a row whose title shares words, at 0.60 to 1.00 (1.00 for a subset again: Boruto's "Family Day" on "A Day in the Life of the Uzumaki Family"): "Clash In The Coliseum (Part 2 of 6)" to "(Part 6 of 6)" all land on #129 "Coliseum in the Sky - Yugi vs Kaiba". Rule 3 put "The Final Face Off (Part 1 of 5)" to "(Part 4 of 5)" (#138 to #141) on the series' last four episodes, "The Final Duel: Part 1" to "Part 4" (#221 to #224).
+
+**The maintainer's options for N26:**
+
+| Option | The change in `locate()` | Placed, nothing now | Other placements | Wrong in the check |
+|---|---|---:|---|---|
+| The candidate | Rule 1: when no row near the number reaches 0.6, the number's row counts, before rules 2 and 3 | 307: Duel Monsters 147, Detective Conan 83, One Piece 44, Naruto 20, Naruto: Shippuden 8, Bleach 2, Black Clover 2, Boruto 1 | 8 title placements far from the number move to its row (Duel Monsters 4, Detective Conan 2, Boruto 1, Black Clover 1), all 8 wrong now | 0 of 69; the titles showed the number wrong in 1 of 4745 |
+| A narrower one | The same, only when the number's row is also the best title match near the number | 101: One Piece 34, Detective Conan 29, Duel Monsters 18, Naruto 13, Naruto: Shippuden 4, Bleach 2, Black Clover 1 | 2 of the 8 | 0 of 69: the check found no wrong row for it to keep out; 206 episodes stay without a row |
+| Nothing | — | 0 | — | The 307 episodes stay without an aniworld result |
+
+**Beyond N26** (the same function, a decision of its own): of the 191 placements at another row, the check covered 115, and 114 of them give the wrong episode today; the 76 ties not checked follow the same pattern (a later part on an earlier one).
+
+- Ties to the number's row (a neighbour wins only with a better title): the 101 ties move to the number's row, right in all 25 checked.
+- The number first (the number's row whenever the site shows the reference's number; the title only without one): the 191 move to the number's row (right in 114 of the 115 checked; Detective Conan's #1077 wrong), and N26's 307 are placed.
+
+Limits: one run, the catalogs' and aniworld's state of 2026-10-11 (the runs at 17:07 and 17:11 UTC gave the same counts for the same pages), the dev container, nothing in production. The probe searches with Cinemeta's name; the app searches with TMDB's titles, not measured here (¹). Pokémon and Digimon show no absolute numbers, so rule 1 never applies and N26 does not arise; their title placements were not checked (Digimon places 107 episodes on 104 rows, so at least three rows take two episodes). The 4554 placements a title confirmed at the number's row were not checked by eye: title and number agree there. Of the ties, 25 of 101 were checked. Duel Monsters, Boruto and Black Clover have no Kitsu number (row 76): their references use the position. aniworld's English titles of Detective Conan keep " [JP" of "[JP Episode N]" (the index cuts "Episode N]" only, so "jp" is a word of every Conan title), and Naruto: Shippuden's #53 is "Title".
