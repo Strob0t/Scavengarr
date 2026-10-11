@@ -70,3 +70,52 @@ The video's owner allows its player on authorised domains only, filmo.to among t
 - `/d/<id>`, the hoster's own watch page, embeds the player frame of a second host. That frame runs `access/challenge`, `access/attest`, `embed/captcha`, `embed/captcha/verify`, `embed/playback` and `embed/timeslider`, then fetches `master.m3u8`, a variant and `.ts` segments from a CDN with the frame host's Referer, without any filmo header.
 
 The Filemoon resolver turns every link into `/e/` and asks `embed/details` first, so it gives up on such a video (`filemoon_unavailable`) before its browser starts. Row 65 captures the `/d/` page in that case. JDownloader's plugin (`BysejikuarCom`) downloads through `/api/videos/<id>/downloads` (a countdown and reCAPTCHA) and has no stream path.
+
+## Filemoon on the Pi (Rows 65 and 78)
+
+`scripts/probes/capture_timing.py` on the Pi: the Filemoon resolver's capture in a Chromium of the probe's own beside the app's, production's navigation bound (10 s), two runs per link and three clicks per run at most. Two links of one player backend: a Byse link in its `/d/` form and the live resolver test's Filemoon link (`/e/`). Both pages frame the player of a second host, whose access flow is `access/challenge`, `access/attest`, `embed/captcha` and `embed/captcha/verify` (the first time in a browser profile), `embed/playback`, then jwplayer and its HLS provider, then `master.m3u8` from the CDN.
+
+### First run (2026-10-11, 14:14 to 14:17 UTC): no stream
+
+| Link | Run | Page start, load | Clicks at | Stream | Resolve |
+|---|---|---|---|---|---|
+| Byse `/d/` | 1 | 1.1, 0.8 s | 4.9, 10.7, 15.9 s | none | 21.2 s |
+| Byse `/d/` | 2 | 0.6, 0.7 s | 4.5, 9.8, 15.1 s | none | 20.4 s |
+| `/e/` | 1 | 1.1, 0.8 s | 5.1, 10.3, 15.4 s | none | 20.6 s |
+| `/e/` | 2 | 0.8, 0.6 s | 4.6, 9.8, 15.0 s | none | 20.2 s |
+
+The dev container captured both links in every run, in 1.3 to 6.1 s. Two causes were open: the VPN's egress or the arm64 browser build.
+
+### Diagnosis (14:54 to 14:59 UTC, `--diagnose`): the ad tag
+
+The same links and bounds, no stream again in 4 of 4 runs (resolve 19.9 to 25.2 s, three clicks each). Both machines run Chromium 153, build 8010 (the Chrome for Testing build 153.0.8010.12 that Patchright pins for x86_64 and arm64).
+
+- On the Pi the page and the player frame load their scripts and settings (every request 200, the player's `embed/settings` included). Then the frame loads an ad tag, `llvpn.com /tag.min.js`, and its follow-ups on two more ad domains. No request of the access flow follows, no jwplayer and no CDN request. No request failed, so the capture's own route cut nothing (it aborts media only).
+- After the clicks neither the page nor the player frame has a video element. MediaSource answers yes for H.264 (`avc1.42E01E`) and AAC (`mp4a.40.2`), and canPlayType answers "maybe" for HLS, as in the dev container.
+- In the dev container the network's resolver answers the three ad domains with `0.0.0.0`. The tag fails with `net::ERR_CONNECTION_REFUSED` in all four runs, and the access flow and the stream follow.
+
+The browser build is not the cause: the build is the same, its codec answers are the same, and the player never gets as far as media. The difference is the ad tag, which the Pi's VPN path serves and the dev network refuses. The limits at this point: 4 against 4 runs, so a correlation; the probe records outcomes, not bodies; popups were not counted yet.
+
+### The decisive test (Row 78, 15:12 to 15:15 UTC)
+
+`--block llvpn.com` aborts that one domain in the probe's browser, the dev container's state for it. One call without the block followed on the same minute's network.
+
+| Call | Run | Page start, load | Clicks at | Stream | Resolve | Access flow | Popups |
+|---|---|---|---|---|---|---|---|
+| Byse `/d/`, blocked | 1 | 1.7, 2.9 s | 7.9, 13.7, 19.4 s | none | 25.0 s | challenge to playback with the captcha, jwplayer and the HLS provider; no playlist | 0 |
+| Byse `/d/`, blocked | 2 | 0.8, 0.8 s | 4.6 s | 6.8 s | 6.8 s | challenge to playback, jwplayer, playlist | 0 |
+| `/e/`, blocked | 1 | 1.1, 0.7 s | 5.0, 10.0, 15.1 s | 17.8 s | 17.8 s | challenge to playback with the captcha, jwplayer, playlist | 0 |
+| `/e/`, blocked | 2 | 0.7, 0.8 s | 4.6 s | 6.9 s | 6.9 s | challenge to playback, jwplayer, playlist | 0 |
+| `/e/`, open | 1 | 1.1, 0.9 s | 5.4, 10.7, 15.8 s | none | 21.0 s | none (the ad tag and its follow-ups) | 3 |
+| `/e/`, open | 2 | 0.9, 0.7 s | 4.6, 9.8, 15.0 s | none | 20.2 s | none (the ad tag and its follow-ups) | 3 |
+
+The ad tag takes the clicks. Without the block every click opens a popup (three clicks, three popups, in both runs), so the player never gets a click and never starts its access flow. With the tag blocked no popup opens, the player runs its access flow in 4 of 4 runs and gives a stream in 3. The VPN matters only as the path that serves the ad tag.
+
+Limits:
+
+- 6 runs on the Pi within three minutes, two links, one player backend.
+- The first run in a fresh profile takes the captcha path. One such run captured at 17.8 s; the other loaded the player but asked for no playlist by 25.0 s. The second runs skip the captcha (6.8 and 6.9 s), inside production's resolve bound of 10 s; the first runs are not.
+- The app's stealth context outlives a probe call, so production should mostly meet the second case. That is not measured.
+- `llvpn.com` is the ad network's domain today; it can change.
+
+The fix keeps the ad tag out of the capture; its design follows this result (backlog row 78).
