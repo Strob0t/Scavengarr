@@ -129,11 +129,20 @@ def _site(url: str) -> str:
     return ".".join(host.split(".")[-2:])
 
 
+# Cloudflare's challenge platform: a Turnstile widget the page loads from it
+# must run, or the page never passes its challenge. By exact host, not the
+# site cloudflare.com: cdnjs.cloudflare.com serves any library
+_CHALLENGE_HOST = "challenges.cloudflare.com"
+
+
 def _foreign_script(resource_type: str, url: str, frame_urls: Iterable[str]) -> bool:
     """Whether a request is a script of a site that is neither the page's nor
     one of its frames' (a player's own scripts come from its page's or its
-    frame's site, an ad tag from the ad network's)."""
+    frame's site, an ad tag from the ad network's). Scripts of
+    ``_CHALLENGE_HOST`` always pass."""
     if resource_type != "script":
+        return False
+    if (urlparse(url).hostname or "").lower() == _CHALLENGE_HOST:
         return False
     return _site(url) not in {_site(frame_url) for frame_url in frame_urls}
 

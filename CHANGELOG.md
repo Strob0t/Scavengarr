@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: Filemoon Captures Let Cloudflare's Challenge Widget Run
+- The own-scripts rule of Filemoon's capture lets the scripts of `challenges.cloudflare.com` through (`_CHALLENGE_HOST` in `stealth_pool.py`, the exact host). Until now a Turnstile widget that the page loads from there counted as a foreign site's script and was aborted, so a Filemoon page showing the widget could not pass it. `cdnjs.cloudflare.com` and every other site's scripts stay foreign; the ad tag still aborts.
+- Not measured: no Filemoon page has shown the widget yet; unit tests cover the rule.
+
 ### Changed: An IMDb Anime Episode Carries Its Kitsu Number
 - An IMDb series request's episode gets its number in the one Kitsu entry that counts the series from its start, looked up alongside the titles (`AnimeIdResolverPort.kitsu_episode()`); the plugins that locate episodes (aniworld, sto) place it by that number, as the anime sites count. The candidates are Fribb's series entries without a TheTVDB season for the IMDb id (`AnimeIdLists.whole_series()`); the Anime Kitsu addon's record of each counts when it names the IMDb id and places its episode 1 at S1E1, and exactly one of their episodes must sit at the request's season and episode. A `kitsu:` request keeps its own number. One info line per number (`anime_kitsu_number`).
 - The look-up never waits for the id list: after a start the list loads in the background (one load at a time, ended at shutdown), so the first anime requests go without the number. A record missing from the cache or ending before the episode is asked for again at most once an hour per title, one fetch that concurrent requests share.

@@ -1102,6 +1102,29 @@ class TestOwnScriptsOnly:
         assert not _foreign_script("xhr", "https://rtmark.net/gid.js", _FRAMES)
         assert not _foreign_script("media", "https://cdn.example/x.mp4", _FRAMES)
 
+    def test_the_challenge_widget_is_no_foreign_script(self) -> None:
+        from scavengarr.infrastructure.browser.stealth_pool import _foreign_script
+
+        # A Turnstile widget the page itself loads must run, or the page
+        # never passes its challenge
+        assert not _foreign_script(
+            "script",
+            "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit",
+            _FRAMES,
+        )
+        # By exact host: cdnjs.cloudflare.com serves any library, and a
+        # look-alike host is no Cloudflare
+        assert _foreign_script(
+            "script",
+            "https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js",
+            _FRAMES,
+        )
+        assert _foreign_script(
+            "script", "https://challenges.cloudflare.com.llvpn.com/tag.js", _FRAMES
+        )
+        # The ad tag stays foreign
+        assert _foreign_script("script", "https://llvpn.com/tag.min.js", _FRAMES)
+
     async def test_a_foreign_script_is_aborted_as_the_clients_block(self) -> None:
         from scavengarr.infrastructure.browser.stealth_pool import (
             _allow_own_player_resources,
@@ -1122,6 +1145,13 @@ class TestOwnScriptsOnly:
         ("request_", "aborted"),
         [
             (_Request("https://n1mwq.org/player/x/jwplayer.js", "script"), False),
+            # The top page's Turnstile widget
+            (
+                _Request(
+                    "https://challenges.cloudflare.com/turnstile/v0/api.js", "script"
+                ),
+                False,
+            ),
             (_Request("https://llvpn.com/banner.css", "stylesheet"), False),
             # The media cut stays
             (_Request("https://cdn.example/x.mp4", "media"), True),
