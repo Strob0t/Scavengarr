@@ -550,6 +550,175 @@ cached answer carried every stream from the second pass on in both runs,
 and both were complete at the third. The production value is the
 maintainer's call: the row changed no default.
 
+### Eleventh round (2026-10-11, production rebuilt 10:58 UTC from `staging` f90ef65)
+
+**The deploy check** (row 57's live proof: `prodctl.py check --base https://scavengarr.lan/api/v1/stremio --insecure`, 10:59 UTC, one minute after the start):
+
+| Check                   | Result | Detail |
+|-------------------------|--------|--------|
+| container               | PASS   | running, Up About a minute (healthy) |
+| startup                 | PASS   | version 0.3.0 at 10:58:32 UTC |
+| unknown keys            | WARN   | stremio.max_items_per_plugin, stremio.max_items_total, stremio.preferred_language, stremio.stremio_deadline_ms, stremio.title_year_penalty |
+| hoster_state_restored   | PASS   | resolutions 0, redirects 0, breakers 5 |
+| plugin_history_restored | PASS   | plugins 17, days 85 |
+| series/tt0388629:5:2    | PASS   | 5 streams, all S05E02; logged; no placement record (DEBUG), 8.2 s |
+| series/kitsu:12:1089    | PASS   | 6 streams, all S22E04; logged; no placement record (DEBUG), 4.2 s |
+| series/tt9335498:2:1    | PASS   | 4 streams, all S02E01; logged; no placement record (DEBUG), 30.1 s |
+| movie/tt0816692         | PASS   | 5 streams in 9.7 s; logged |
+
+PASS: 9 checks, 0 failed, 1 warnings
+
+The restored hoster state is empty but sound: the snapshot was 21.6 h old
+(`age_s` 77853, written at 13:21 UTC the day before after the last
+resolution; nothing played overnight), so every resolution and redirect had
+expired, and the five breakers came back. The unknown keys are the four
+Stremio settings row 53 removed and `stremio.title_year_penalty`: the Pi's
+YAML still names them, and they do nothing. Row 45 is live:
+`series/tt0388629:22:4`, asked after the check's `series/kitsu:12:1089`,
+answered `MISS` with its own v3 entry (5 streams, all S22E04); on
+2026-10-10 the same pair shared one entry.
+
+**The round** (11:03 to 11:12 UTC, `stremio_round.py` with play checks on
+the 19 titles, the check code of row 58 and the `Findings` column of row
+61): 9 minutes, where the tenth round's run had not ended after 2 h 16 min.
+Every title but Interstellar (the deploy check's movie) was a cache miss:
+the build's search key is v3 (row 45), and the cache held v2 entries.
+
+| Title | First answer | Streams | X-Cache | Complete | Cached answer | Streams | Playable | Findings |
+|---|---|---|---|---|---|---|---|---|
+| Der Schuh des Manitu (`movie/tt0248408`) | 4.3 s | 5 | MISS | false | 0.07 s | 5 | 2 of 5 | DOODSTREAM, VINOVO, MIXDROP; 2× 200 instead of 206 |
+| Lola rennt (`movie/tt0130827`) | 17.3 s | 4 | MISS | true | 0.04 s | 4 | 1 of 4 | FSST, DOODSTREAM, MIXDROP; 1× 200 instead of 206 |
+| Good Bye, Lenin! (`movie/tt0301357`) | 3.2 s | 1 | MISS | true | 0.04 s | 1 | 0 of 1 | DOODSTREAM |
+| Im Westen nichts Neues (`movie/tt1016150`) | 4.1 s | 5 | MISS | false | 0.11 s | 5 | 2 of 5 | VINOVO, MIXDROP, DOODSTREAM; 2× 200 instead of 206 |
+| Oppenheimer (`movie/tt15398776`) | 13.7 s | 5 | MISS | false | 0.07 s | 5 | 2 of 5 | FSST, VINOVO, MIXDROP; 2× 200 instead of 206 |
+| Dune: Part Two (`movie/tt15239678`) | 30.3 s | 4 | MISS | false | 0.04 s | 4 | 3 of 4 | VINOVO; 3× 200 instead of 206 |
+| Inception (`movie/tt1375666`) | 28.8 s | 4 | MISS | true | 0.08 s | 4 | 3 of 4 | VINOVO; 3× 200 instead of 206 |
+| Interstellar (`movie/tt0816692`) | 0.1 s | 6 | HIT | false | 0.03 s | 6 | 4 of 6 | DOODSTREAM, VINOVO; 4× 200 instead of 206 |
+| Breaking Bad S01E01 (`series/tt0903747:1:1`) | 30.0 s | 2 | MISS | true | 0.04 s | 2 | 2 of 2 | 2× 200 instead of 206 |
+| Dark S01E01 (`series/tt5753856:1:1`) | 25.2 s | 1 | MISS | true | 0.04 s | 1 | 1 of 1 | 1× 200 instead of 206 |
+| Stranger Things S04E01 (`series/tt4574334:4:1`) | 22.2 s | 5 | MISS | false | 0.08 s | 5 | 5 of 5 | 5× 200 instead of 206 |
+| Haus des Geldes S01E01 (`series/tt6468322:1:1`) | 27.3 s | 2 | MISS | true | 0.07 s | 2 | 2 of 2 | 2× 200 instead of 206 |
+| The Last of Us S01E01 (`series/tt3581920:1:1`) | 5.3 s | 5 | MISS | false | 0.13 s | 5 | 3 of 5 | FIRESTREAM, VINOVO; 3× 200 instead of 206 |
+| One Piece S01E01 (`series/tt0388629:1:1`) | 10.1 s | 5 | MISS | false | 0.26 s | 5 | 4 of 5 | DOODSTREAM; 4× 200 instead of 206 |
+| Attack on Titan S01E01 (`series/tt2560140:1:1`) | 7.8 s | 5 | MISS | false | 0.07 s | 5 | 5 of 5 | 5× 200 instead of 206 |
+| Demon Slayer S01E01 (`series/tt9335498:1:1`) | 7.1 s | 5 | MISS | false | 0.16 s | 5 | 4 of 5 | DOODSTREAM; 4× 200 instead of 206 |
+| Frieren S01E01 (`series/tt22248376:1:1`) | 8.4 s | 5 | MISS | false | 0.62 s | 5 | 5 of 5 | 5× 200 instead of 206 |
+| Breaking Bad S01E02 (`series/tt0903747:1:2`) | 28.4 s | 0 | MISS | true | 0.06 s | 0 | 0 of 0 | – |
+| The Matrix (`movie/tt0133093`) | 30.5 s | 4 | MISS | false | 0.21 s | 4 | 3 of 4 | VINOVO; 3× 200 instead of 206 |
+| **Median / total** (19 titles) | 13.7 s | 73 | 1 HIT | 7 of 19 complete | 0.07 s | 73 | 51 of 73 | – |
+
+Titles without stream: 1 of 19 (first answer), 1 of 19 (cached answer); max first answer 30.5 s.
+
+**The play check misjudged the proxied files.** `check_stream()` in
+`scripts/stremio_playcheck.py` takes every URL with `/stremio/proxy/` for
+HLS, so the address-bound files (`/stremio/proxy/<id>/file`: DoodStream,
+MixDrop, Vinovo and FSST since step 26) went to the HLS branch, which asks
+for a master playlist and fails on a file: 21 of the 22 failing streams say
+`FAIL master 200`. The same branch caused the tenth round's hang: its
+playlist request carried no `Range` header and downloaded the whole file
+(row 58 bounded the read; the `Range: bytes=0-…` request named in row 58's
+text was a wrong inference, the request had none). The same script's file
+branch on the proxied files of three titles (11:18 UTC, the answers from the
+search cache): 9 of 9 play, and the seek answers 206:
+
+| Title | Hoster · plugin | Verdict (the file branch) |
+|---|---|---|
+| Der Schuh des Manitu (`movie/tt0248408`) | DOODSTREAM · einschalten | OK mp4 0.98 GB, seek 206 |
+| Der Schuh des Manitu | VINOVO · movie2k | OK mp4 0.96 GB, seek 206 |
+| Der Schuh des Manitu | MIXDROP · hdfilme | OK mp4 0.96 GB, seek 206 |
+| Lola rennt (`movie/tt0130827`) | FSST · kinoger | OK mp4 1.60 GB, seek 206 |
+| Lola rennt | DOODSTREAM · hdfilme | OK mp4 0.82 GB, seek 206 |
+| Lola rennt | MIXDROP · hdfilme | OK mp4 0.83 GB, seek 206 |
+| Oppenheimer (`movie/tt15398776`) | FSST · kinoger | OK mp4 2.25 GB, seek 206 |
+| Oppenheimer | VINOVO · movie2k | OK mp4 6.15 GB, seek 206 |
+| Oppenheimer | MIXDROP · hdfilme | OK mp4 1.99 GB, seek 206 |
+
+So the proxy forwards ranges, and the address-bound files play through it
+from the dev container. Judged by the file branch, the round's playable
+count is 72 of 73 (9 of the 21 checked, the other 12 inferred from the same
+hosters on the same path); the one real failure is FIRESTREAM on The Last of
+Us S01E01 (`timeout after 30 s`). The `200 instead of 206` counts of the HLS
+titles are segments answered 200 to the check's 2 KiB range, which is normal
+for HLS, where a player asks for whole segments (row 64 keeps the finding to
+files and byte-range playlists).
+
+**The digest** (`prodctl.py digest --since 2h`, 11:20 UTC; the metrics count
+since the restart, 17 minutes), plugins:
+
+| Plugin | Searches | Results | Timeouts | Dropped | Challenges | Checks | Unreachable checks/searches | Last result | Unreachable 30/90/180 d |
+|---|---|---|---|---|---|---|---|---|---|
+| hdfilme | 21 | 24 | 0 | 0 | 0 | 22 | 0/0 | today | 0%/0%/0% |
+| filmpalast | 27 | 22 | 0 | 0 | 0 | 22 | 0/0 | today | 0%/0%/0% |
+| kinoger | 28 | 18 | 7 | 0 | 1 | 22 | 0/0 | today | 0%/0%/0% |
+| einschalten | 27 | 18 | 0 | 0 | 0 | 22 | 0/0 | today | 0%/0%/0% |
+| fireani | 27 | 18 | 0 | 0 | 0 | 95 | 87/0 | today | 90%/90%/90% |
+| movie2k | 27 | 14 | 0 | 0 | 0 | 22 | 0/0 | today | 0%/0%/0% |
+| aniworld | 27 | 12 | 0 | 0 | 0 | 22 | 0/0 | today | 0%/0%/0% |
+| megakino | 27 | 12 | 0 | 0 | 0 | 22 | 0/0 | today | 0%/0%/0% |
+| kinoking | 26 | 8 | 8 | 0 | 0 | 25 | 3/0 | today | 26%/26%/26% |
+| sto | 27 | 5 | 2 | 0 | 0 | 23 | 1/0 | today | 1%/1%/1% |
+| streamkiste | 15 | 3 | 0 | 0 | 0 | 22 | 0/0 | today | 0%/0%/0% |
+| haschcon | 27 | 1 | 0 | 0 | 0 | 22 | 0/0 | today | 0%/0%/0% |
+| moflix | 27 | 0 | 0 | 0 | 0 | 22 | 0/0 | 1 d ago | 0%/0%/0% |
+| kinox | 21 | 0 | 0 | 0 | 0 | 22 | 0/0 | never | 62%/62%/62% |
+| movie4k | 4 | 0 | 0 | 0 | 0 | 127 | 127/4 | never | 100%/100%/100% |
+| streamcloud | 4 | 0 | 0 | 0 | 0 | 22 | 0/0 | never | 0%/0%/0% |
+| megakino_to | 2 | 0 | 0 | 0 | 0 | 127 | 127/2 | never | 100%/100%/100% |
+
+Challenged in the window: kinoger 1
+
+Hosters, since the start:
+
+| Resolver | Resolutions | Mean | Outcomes |
+|---|---|---|---|
+| doodstream | 67 | 0.6 s | cached 49, dead 30, stream 19, cut 16, check_error 2 |
+| voe | 51 | 1.1 s | cached 73, stream 36, dead 14, cut 1 |
+| vidmoly | 36 | 0.8 s | cached 21, stream 19, cut 15, dead 2 |
+| strmup | 11 | 0.6 s | stream 7, cached 7, cut 4 |
+| veev | 11 | 3.0 s | cached 6, check_error 5, dead 4, cut 2 |
+| firestream | 10 | 1.6 s | cached 7, stream 5, cut 4, unplayable 1 |
+| mixdrop | 9 | 0.4 s | cached 15, dead 5, stream 4 |
+| vinovo | 8 | 0.8 s | cached 13, stream 8 |
+| direct | 6 | 0.3 s | cached 11, dead 6 |
+| playmate | 5 | 4.5 s | cut 2, stream 2, cached 2, check_error 1 |
+| vidsonic | 5 | 1.8 s | cached 8, stream 5 |
+| fsst | 4 | 1.0 s | stream 4, cached 4 |
+| gxplayer | 4 | 0.5 s | cached 7, stream 4 |
+| vidoza | 2 | 0.6 s | dead 2, cached 2 |
+| dropload | 1 | 38.9 s | breaker_open 33, timeout 1 |
+| filemoon | 1 | 52.6 s | breaker_open 66, timeout 1 |
+| supervideo | 1 | 2.8 s | breaker_open 27, cached 2, unplayable 1 |
+| vidhide | 1 | 0.1 s | dead 1, cached 1 |
+| vixeo | 1 | 10.1 s | breaker_open 6, timeout 1 |
+
+Not closed now: dropload (hoster, open), filemoon (hoster, open), supervideo (hoster, open), vixeo (hoster, open), kinoking:5000 (plugin, open), kinox:2000 (plugin, half_open)
+Opened in the window: kinoking:5000 ×2, supervideo ×1, filemoon ×1, dropload ×1, vixeo ×1
+
+**Reading.**
+
+- **Streams.** 18 of 19 titles answer with streams (the tenth round: 19 of
+  19), 73 streams in all (78). Breaking Bad S01E02 has none this time: the
+  search completed and nothing matched, where the tenth round had one stream.
+  No record at error level in the two hours.
+- **Times.** The median first answer is 13.7 s (the tenth round 7.3 s, with
+  two titles from the cache; the ninth 9.3 s): the cold v3 cache made 18 of
+  19 titles misses. 7 of 19 answers were complete within the budget (3 of 19
+  in the tenth round), and six titles answered at or near the 30 s budget.
+- **Playable.** 72 of 73 judged as above. Row 26's group 6, the
+  address-bound files through `/proxy/<id>/file`, plays: 9 of 9 checked,
+  seekable.
+- **Hosters.** filemoon (a 52.6 s timeout), dropload (38.9 s), supervideo
+  and vixeo opened their breakers in the window. The filmo plugin's Byse
+  links (row 63) resolve through the Filemoon resolver.
+- **Counters.** One search met a challenge (kinoger), and no plugin's
+  results were dropped by the episode filter today: the numbers the
+  maintainer asked for before N20 and N21. Both windows are short, because
+  the challenge counter runs since this build.
+- **Dead sites.** movie4k and megakino_to have 127 checks today and fireani
+  95, against 22 for each live site. Nearly all of them come from the old
+  build before 10:58 UTC; row 54's backoff shows in their increase from now
+  on.
+
 ## AIOStreams
 
 Goal was an AIOStreams test user on `aiostreams.lan` with Scavengarr as addon, measured end to end. Not done: AIOStreams validates the addon manifest when a user is created or updated, and it can reach neither the dev instance (Docker NAT on the workstation) nor `scavengarr.lan` (502, backend down). Recommended user settings, from the AIOStreams v2.35.3 source (`packages/core/src/presets/custom.ts`, `packages/core/src/db/schemas.ts`):
