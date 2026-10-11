@@ -10,9 +10,10 @@ the stream link keys; ``--stream-id`` names one) is fetched from its CDN
 with the link's headers, as the HLS proxy does; the variant with the
 highest bandwidth gives the segments. Four runs download ``--segments``
 consecutive media segments each, from the middle of the title: one after
-another (one connection), with a read-ahead of two (three in flight), each
-segment in three byte ranges at once, and read-ahead two with three ranges
-each (up to nine in flight). ``--in-flight 3,4,5`` replaces the read-ahead
+another (one connection), with the HLS proxy's read-ahead of three (four in
+flight), each segment in three byte ranges at once, and read-ahead three
+with three ranges each (up to twelve in flight). ``--in-flight 3,4,5``
+replaces the read-ahead
 run with one run per count of segments in flight (whether a fourth and
 fifth connection still add throughput). The probe prints the master's
 variants, Mbit/s per run and its multiple of real time, the title's
@@ -68,7 +69,7 @@ from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 RANGES = 3
 FILE_LIMIT = 32 * 1048576  # bytes of a file per run
 FILE_STEP = 1048576  # bytes per range of a file
-READ_AHEAD = 2
+READ_AHEAD = 3  # segments ahead, as the HLS proxy (hls_proxy._AHEAD)
 CHUNK = 65536
 _STREAM_ID_RE = re.compile(r"/(?:proxy|play)/([^/?#]+)")
 _BANDWIDTH_RE = re.compile(r"BANDWIDTH=(\d+)")

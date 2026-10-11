@@ -138,7 +138,7 @@ class TestInFlight:
             ("read-ahead 3", 4, False),
             ("read-ahead 4", 5, False),
             ("3 ranges", 1, True),
-            ("read-ahead 2 × 3 ranges", 3, True),
+            ("read-ahead 3 × 3 ranges", 4, True),
         ]
 
     def test_without_counts_the_four_runs_stay(self) -> None:
@@ -146,9 +146,9 @@ class TestInFlight:
 
         assert [run.name for run in _mod.plan_runs(args.in_flight)] == [
             "one connection",
-            "read-ahead 2",
+            "read-ahead 3",
             "3 ranges",
-            "read-ahead 2 × 3 ranges",
+            "read-ahead 3 × 3 ranges",
         ]
 
     @respx.mock

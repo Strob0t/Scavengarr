@@ -118,7 +118,9 @@ async def _segment(
 
 
 class TestReadAhead:
-    async def test_the_next_two_segments_are_fetched_ahead_and_served(self) -> None:
+    async def test_the_next_three_segments_are_fetched_ahead_and_served(
+        self,
+    ) -> None:
         cdn = _Cdn()
         telemetry = Telemetry()
         read_ahead = SegmentReadAhead(telemetry=telemetry)
@@ -131,20 +133,21 @@ class TestReadAhead:
 
         assert first == _segment_body(_SEGMENTS[0])
         assert (second, content_type) == (_segment_body(_SEGMENTS[1]), "video/mp2t")
-        # seg-2 and seg-3 after the first request, seg-4 after the second
+        # seg-2 to seg-4 after the first request, seg-5 after the second
         assert [u.rsplit("/", 1)[-1] for u in cdn.requests] == [
             "seg-1.ts?t=abc",
             "seg-2.ts?t=abc",
             "seg-3.ts?t=abc",
             "seg-4.ts?t=abc",
+            "seg-5.ts?t=abc",
         ]
         assert (_count(telemetry, "miss"), _count(telemetry, "hit")) == (1, 1)
-        assert _count(telemetry, "ok") == 3
+        assert _count(telemetry, "ok") == 4
         assert (
             telemetry.registry.get_sample_value(
                 "scavengarr_hls_readahead_seconds_count", {}
             )
-            == 3
+            == 4
         )
 
     async def test_a_fetch_in_flight_is_awaited(self) -> None:
@@ -166,7 +169,7 @@ class TestReadAhead:
         assert body == _segment_body(_SEGMENTS[1])
         assert cdn.requested("seg-2.ts") == 1
 
-    async def test_at_most_two_segments_ahead(self) -> None:
+    async def test_at_most_three_segments_ahead(self) -> None:
         cdn = _Cdn()
         read_ahead = SegmentReadAhead()
         read_ahead.remember(_PLAYLIST, _SEGMENTS)
@@ -175,10 +178,10 @@ class TestReadAhead:
                 await _segment(client, read_ahead, url)
                 await _settle(read_ahead)
                 playback = read_ahead._playbacks[_PLAYLIST]
-                assert len(playback.ahead) <= 2
+                assert len(playback.ahead) <= 3
             await _settle(read_ahead)
 
-        # every segment fetched once, up to the two after the fourth
+        # every segment fetched once, up to the ones after the fourth
         assert sorted(cdn.requests) == sorted(_SEGMENTS)
 
     async def test_a_seek_drops_the_fetches_ahead(self) -> None:
@@ -199,7 +202,7 @@ class TestReadAhead:
 
         assert body == _segment_body(_SEGMENTS[1])
         assert cdn.requested("seg-2.ts") == 2
-        assert _count(telemetry, "dropped") == 3  # seg-2, seg-3, then seg-6
+        assert _count(telemetry, "dropped") == 4  # seg-2 to seg-4, then seg-6
 
     async def test_a_head_request_touches_nothing(self) -> None:
         cdn = _Cdn()
@@ -260,11 +263,11 @@ class TestBounds:
 
         assert body == _segment_body(_SEGMENTS[1], 10_000)
         assert cdn.requested("seg-2.ts") == 2
-        # seg-2 and seg-3 after the first request, seg-4 after the second:
+        # seg-2 to seg-4 after the first request, seg-5 after the second:
         # a declared size costs the headers only, the playback goes on
-        assert _count(telemetry, "too_large") == 3
+        assert _count(telemetry, "too_large") == 4
         assert _count(telemetry, "miss") == 2
-        assert cdn.requested("seg-4.ts") == 1
+        assert cdn.requested("seg-5.ts") == 1
 
     async def test_an_undeclared_body_over_the_cap_is_cut(self) -> None:
         cdn = _Cdn(size=10_000, declare_length=False)
@@ -277,9 +280,9 @@ class TestBounds:
             await _segment(client, read_ahead, _SEGMENTS[1])
             await _settle(read_ahead)
 
-        assert _count(telemetry, "too_large") == 2
+        assert _count(telemetry, "too_large") == 3
         # the cap's bytes were read for nothing: no further fetches ahead
-        assert cdn.requested("seg-4.ts") == 0
+        assert cdn.requested("seg-5.ts") == 0
 
     async def test_a_429_turns_read_ahead_off_for_the_host(self) -> None:
         cdn = _Cdn(statuses={"seg-2.ts": [429]})
@@ -303,10 +306,12 @@ class TestBounds:
         throttled = next(e for e in logs if e["event"] == "hls_readahead_throttled")
         assert throttled["cdn"] == "cdn"
         assert "http" not in str(throttled)
-        # seg-1, seg-2 (429), seg-3 ahead; then seg-2 by the player, nothing ahead
-        assert requests_while_off == 4
-        # on again after 10 minutes: seg-3 by the player, seg-4 and seg-5 ahead
-        assert cdn.requested("seg-4.ts") == 1 and cdn.requested("seg-5.ts") == 1
+        # seg-1, seg-2 (429), seg-3 and seg-4 ahead; then seg-2 by the player,
+        # nothing ahead
+        assert requests_while_off == 5
+        # on again after 10 minutes: seg-3 from memory, seg-5 and seg-6 ahead
+        assert cdn.requested("seg-4.ts") == 1
+        assert cdn.requested("seg-5.ts") == 1 and cdn.requested("seg-6.ts") == 1
 
     async def test_an_idle_playback_is_dropped(self) -> None:
         cdn = _Cdn()
@@ -322,7 +327,7 @@ class TestBounds:
             read_ahead.remember(f"{_CDN}other.m3u8", other)
 
         assert _PLAYLIST not in read_ahead._playbacks
-        assert _count(telemetry, "dropped") == 2
+        assert _count(telemetry, "dropped") == 3
         assert read_ahead._playlist_of.get(_SEGMENTS[0]) is None
 
     async def test_at_most_eight_playbacks(self) -> None:
@@ -391,7 +396,7 @@ class TestBounds:
 
         assert all(task.cancelled() for task in tasks)
         assert read_ahead._playbacks == {} and read_ahead._playlist_of == {}
-        assert _count(telemetry, "dropped") == 2
+        assert _count(telemetry, "dropped") == 3
 
 
 class TestListedSegments:

@@ -261,6 +261,36 @@ The quantiles of the server view are histogram bucket bounds; "max" is the highe
 
 **Limits.** One machine on the server's network as the player (the dev container, through the reverse proxy); one hoster's HLS (strmup) with 8 s segments, where the read-ahead hits; the first segment's cold fetch excluded; two loaded runs, one of them clean; CPU from one-second `docker stats` samples every 5 s (peaks between samples are missed). What would change the picture: segments of 2 to 4 s (the same third of a second is a larger share), a playback the read-ahead does not cover (a player jumping, a CDN that answered 429 and switched the read-ahead off for ten minutes), and a file through `/proxy/<id>/file`, where every byte passes the event loop while it is busy (not measured: the instrument plays HLS). A user report of stutter during a search would start there, with a `--file` mode of the instrument.
 
+## Read-ahead depth (2026-10-11, row 68)
+
+**Question.** Does the read-ahead keep enough segments in flight for FireStream's throughput from the Pi? The maintainer's 1080p FireStream playback in Stremio Web (2026-10-11, 11:33 to 11:58 UTC) had no audio dropout in 25 minutes and after a seek, but its picture stalled now and then. Production's numbers for it: one connection carried about 0.44 of real time, the three in flight (the player's request and two segments ahead) about 1.3, below N1's rule of 1.5 times the bitrate.
+
+**Before.** Production's read-ahead counters since the 10:58 UTC start, mostly that playback: 456 hits (from memory or awaited in flight), 111 misses, 123 dropped, 13 failed, 569 fetches in 8.45 s on average (`scavengarr_hls_readahead_seconds`). The player's answers through the proxy: p50 2.2 s, p90 9.6 s, max 27 s.
+
+**Measurement.** `prodctl.py probe hls_throughput -- --imdb movie/tt0816692 --hoster firestream --in-flight 3,4,5 --segments 10`, from the Pi at about 13:18 UTC (production on 69dcc83, nothing playing), one run of 183.8 s. The title: Interstellar on FireStream (CDN `firestream.to`), a media playlist with no variants (2561 segments of 4.0 s, the runs from segment 1250), bitrate 1.6 Mbit/s. No 429 and no failed request.
+
+| Run | Connections | Bytes | Time | Mbit/s | × real time | Ranges |
+|---|---|---|---|---|---|---|
+| one connection | 1 | 8.7 MiB | 84.2 s | 0.9 (0.1–2.0 per segment) | 0.55 | – |
+| read-ahead 2 | 3 | 7.1 MiB | 18.3 s | 3.2 | 2.04 | – |
+| read-ahead 3 | 4 | 7.9 MiB | 14.0 s | 4.8 | 3.01 | – |
+| read-ahead 4 | 5 | 6.9 MiB | 10.8 s | 5.4 | 3.39 | – |
+| 3 ranges | 3 | 7.4 MiB | 40.4 s | 1.5 (1.2–2.1 per segment) | 0.97 | 30 of 30 answered 206 |
+| read-ahead 2 × 3 ranges | 9 | 6.8 MiB | 11.7 s | 4.9 | 3.07 | 30 of 30 answered 206 |
+
+**Reading.**
+- The fourth connection adds about 1.0 times real time, the fifth only about 0.4. The sum flattens near 5 Mbit/s from the Pi, and nine connections carry no more (4.9): a cap of the VPN or the CDN. A stream above about 3.3 Mbit/s (5 / 1.5) therefore reaches 1.5 times real time at no depth.
+- FireStream lists no lower variants, so hls.js has nothing to step down to.
+- N1's rule, connections = ⌈1.5 × bitrate / one connection's rate⌉: this title needs ⌈1.5 × 1.6 / 0.9⌉ = 3 (read-ahead 2, the old depth), the maintainer's playback ⌈1.5 / 0.44⌉ = 4 (read-ahead 3).
+- One constant fits both measured FireStream playbacks: three segments ahead, four connections in flight. That is 3.01 times real time here and about 1.76 at 0.44 per connection there.
+- Filemoon's CDN (one connection 34 times real time from the dev container, 2026-10-11) needs no depth of its own: a deeper read-ahead costs it one more segment in memory. So the depth stays one constant, not one per playback from its fetch times.
+
+**Change.** `_AHEAD = 3` in `src/scavengarr/infrastructure/stremio/hls_proxy.py` (was 2). `_MAX_PLAYBACKS` (8) and `_MAX_AHEAD_BYTES` (16 MiB a segment) stay, so the worst case grows from 256 to 384 MiB (8 × 3 × 16 MiB; production used 407 MiB of 7.6 GiB). A 429 keeps its 10-minute pause. The probe's read-ahead runs follow the proxy's depth (`READ_AHEAD = 3`).
+
+**After.** Pending: the read-ahead metrics (`scavengarr_hls_readahead_seconds`, `_total{outcome}`) and the player's answer times during the maintainer's next 1080p FireStream playback after the rebuild, against the numbers above.
+
+**Limits.** One title and one run from the Pi, 10 segments per run; one connection's pace varied from 0.1 to 2.0 Mbit/s per segment. The maintainer's playback numbers come from production's logs and metrics, not from the probe.
+
 ## How to re-measure
 
 `scripts/stremio_profile.py` measures the baseline titles, or the ids given, against a running container. Per request it reports:

@@ -329,7 +329,7 @@ async def _pieces(
 # ---------------------------------------------------------------------------
 
 # Segments fetched ahead of the player per playback
-_AHEAD = 2
+_AHEAD = 3
 # Playbacks (media playlists the proxy rewrote) followed at once
 _MAX_PLAYBACKS = 8
 # A segment larger than this is left to the player's own request
