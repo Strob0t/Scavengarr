@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: The Throughput Probe Counts the Connections in Flight
+- `scripts/probes/hls_throughput.py --in-flight 3,4,5` replaces the read-ahead run with one run per count of segments in flight, for row 68: whether a fourth and a fifth connection still add throughput from the Pi (its VPN may cap the sum). Each run's row shows its multiple of real time (N1's rule asks 1.5) and its failed requests by status or error (`3 failed (429 ×2, ReadTimeout ×1)`), and the variant line lists the master's variants or says that the link is a media playlist, with no lower variant to step down to.
+- In the dev container FireStream's CDN answered every segment of filmpalast's link with 502 (the eleventh round saw the same), so the measurement runs from the Pi. The runs themselves were checked there on Filemoon's CDN.
+
 ### Fixed: Byse Videos Restricted to Their Owner's Sites Play Through the Watch Page
 - The Filemoon resolver asks Byse's details API before its browser starts and gave up on a 403 `embedding from this domain is not allowed` (`filemoon_unavailable`): the owner of such a video allows its player only on authorised sites, and the embed page `/e/<id>` shows "Embedding blocked on this site". The hoster's own watch page `/d/<id>` plays the video in a player frame of a second host, so the resolver now captures that page instead (`filemoon_embedding_blocked`). A 404 stays gone, and the embed page stays first where embedding is allowed (one frame less).
 - `StealthPool.capture_media(url, player=...)` clicks the centre of the named element (a CSS selector) instead of the page centre. The watch page shows its player in a frame below a header: the page centre lands in the frame above its play button (no stream after 18.7 s), the frame's centre starts the player and its manifest request about 1.8 s after the click. Without `player`, and while the element is not laid out, the page centre stays the target (the embed pages of the other capturing resolvers).

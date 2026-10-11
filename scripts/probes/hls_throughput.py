@@ -1,6 +1,7 @@
 """HLS throughput from the Pi: one connection, read-ahead, byte ranges, both.
 
     probe hls_throughput [--hoster firestream] [--segments 10]
+                         [--in-flight 3[,4,...]]
                          [--stream-id ID | --imdb [movie/|series/]ID]
     probe hls_throughput --file [ID] [--hoster mixdrop]
 
@@ -11,10 +12,14 @@ highest bandwidth gives the segments. Four runs download ``--segments``
 consecutive media segments each, from the middle of the title: one after
 another (one connection), with a read-ahead of two (three in flight), each
 segment in three byte ranges at once, and read-ahead two with three ranges
-each (up to nine in flight). The probe prints Mbit/s per run, the title's
-bitrate (segment bytes × 8 over their ``EXTINF`` durations) and whether
-the CDN honoured the ranges (``206`` with ``Content-Range``; once a range
-is answered with the whole segment, the range runs stop).
+each (up to nine in flight). ``--in-flight 3,4,5`` replaces the read-ahead
+run with one run per count of segments in flight (whether a fourth and
+fifth connection still add throughput). The probe prints the master's
+variants, Mbit/s per run and its multiple of real time, the title's
+bitrate (segment bytes × 8 over their ``EXTINF`` durations), the failed
+requests by status (a 429) or error, and whether the CDN honoured the
+ranges (``206`` with ``Content-Range``; once a range is answered with
+the whole segment, the range runs stop).
 
 With ``--imdb`` the probe first asks the app (``http://127.0.0.1:$PORT``)
 for the title's streams so that fresh links exist; that fills the app's
@@ -42,6 +47,8 @@ import os
 import re
 import sys
 import time
+from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
@@ -86,7 +93,20 @@ class Run:
     ranges: int = 0  # range answers
     honoured: int = 0  # of them 206 with Content-Range
     ignored: bool = False  # a range was answered 200 with the whole segment
-    failed: int = 0
+    errors: Counter[str] = field(default_factory=Counter)  # by status or kind
+
+    @property
+    def failed(self) -> int:
+        return self.errors.total()
+
+    def fail(self, exc: httpx.HTTPError) -> str:
+        """Count a failed request by its status (a 429) or its error."""
+        if isinstance(exc, httpx.HTTPStatusError):
+            label = str(exc.response.status_code)
+        else:
+            label = type(exc).__name__
+        self.errors[label] += 1
+        return label
 
     @property
     def connections(self) -> int:
@@ -108,6 +128,35 @@ def _mib(count: float) -> str:
 def cdn(url: str) -> str:
     host = urlsplit(url).hostname or ""
     return ".".join(host.split(".")[-2:])
+
+
+def _failed(run: Run) -> str:
+    """``, 3 failed (429 ×2, ReadTimeout ×1)`` for the time column."""
+    if not run.failed:
+        return ""
+    kinds = ", ".join(f"{label} ×{n}" for label, n in sorted(run.errors.items()))
+    return f", {run.failed} failed ({kinds})"
+
+
+def in_flight_counts(value: str) -> list[int]:
+    """``--in-flight 3,4,5``: the counts of segments in flight, each 2 or more."""
+    try:
+        counts = [int(part) for part in value.split(",")]
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a list of counts: {value!r}") from None
+    if any(count < 2 for count in counts):
+        raise argparse.ArgumentTypeError("a read-ahead keeps 2 or more in flight")
+    return counts
+
+
+def plan_runs(in_flight: Iterable[int]) -> list[Run]:
+    """One connection, a read-ahead run per count in flight, the range runs."""
+    return [
+        Run("one connection", 1),
+        *(Run(f"read-ahead {count - 1}", count) for count in in_flight),
+        Run(f"{RANGES} ranges", 1, ranged=True),
+        Run(f"read-ahead {READ_AHEAD} × {RANGES} ranges", READ_AHEAD + 1, True),
+    ]
 
 
 def _with_query(url: str, query: str) -> str:
@@ -137,6 +186,12 @@ def _variants(text: str, base: str) -> list[tuple[int, str, str]]:
             )
             attrs = ""
     return out
+
+
+def describe_variants(variants: list[tuple[int, str, str]]) -> str:
+    """``1920x1080 3.0, 1280x720 1.2 Mbit/s``: resolution and declared rate."""
+    listed = sorted(variants, reverse=True)
+    return ", ".join(f"{res} {bw / 1e6:.1f}" for bw, res, _ in listed) + " Mbit/s"
 
 
 def _segments(text: str, base: str, query: str) -> list[Segment]:
@@ -225,8 +280,7 @@ async def execute(fetcher: Fetcher, segments: list[Segment], run: Run) -> None:
                 else:
                     count = await fetcher.whole(segment.url)
             except httpx.HTTPError as exc:
-                run.failed += 1
-                print(f"  {run.name}: a segment failed: {type(exc).__name__}")
+                print(f"  {run.name}: a segment failed: {run.fail(exc)}")
                 return
             run.bytes += count
             run.duration += segment.duration
@@ -308,8 +362,7 @@ async def file_runs(
     try:
         await _file_ranges(http, url, headers, ranged, min(limit, one.bytes))
     except httpx.HTTPError as exc:
-        ranged.failed += 1
-        print(f"  {ranged.name}: a range failed: {type(exc).__name__}")
+        print(f"  {ranged.name}: a range failed: {ranged.fail(exc)}")
     ranged.seconds = time.monotonic() - started
     return one, ranged, size
 
@@ -324,10 +377,9 @@ def report_file(runs: list[Run], size: int) -> None:
             ranges = f"{run.honoured} of {run.ranges} answered 206 with the asked range"
             if run.ignored:
                 ranges += "; the CDN ignores ranges, the run stopped"
-        failed = f", {run.failed} failed" if run.failed else ""
         print(
             f"| {run.name} | {run.connections} | {_mib(run.bytes)}"
-            f" | {run.seconds:.1f} s{failed} | {run.mbit:.1f} | {ranges} |"
+            f" | {run.seconds:.1f} s{_failed(run)} | {run.mbit:.1f} | {ranges} |"
         )
     print(f"File size {_mib(size) if size else 'unknown'} (Content-Length).")
 
@@ -410,13 +462,16 @@ async def _segments_of(
     resp = await http.get(link.video_url, headers=headers)
     resp.raise_for_status()
     text, url = resp.text, str(resp.url)
-    variant = ""
+    variant = ", a media playlist (no variants to step down to)"
     if "#EXT-X-STREAM-INF" in text:
         variants = _variants(text, url)
         if not variants:
             sys.exit("the master playlist lists no variant")
         bandwidth, resolution, variant_url = max(variants)
-        variant = f", variant {resolution} (declared {bandwidth / 1e6:.1f} Mbit/s)"
+        variant = (
+            f", variant {resolution} (declared {bandwidth / 1e6:.1f} Mbit/s;"
+            f" the master lists {describe_variants(variants)})"
+        )
         resp = await http.get(_with_query(variant_url, query), headers=headers)
         resp.raise_for_status()
         text, url = resp.text, str(resp.url)
@@ -424,8 +479,12 @@ async def _segments_of(
 
 
 def _report(runs: list[Run]) -> None:
-    print("| run | connections | bytes | time | Mbit/s | ranges |")
-    print("|---|---|---|---|---|---|")
+    fetched = [run for run in runs if run.duration and not run.ignored]
+    bitrate = _mbit(
+        sum(run.bytes for run in fetched), sum(run.duration for run in fetched)
+    )
+    print("| run | connections | bytes | time | Mbit/s | × real time | ranges |")
+    print("|---|---|---|---|---|---|---|")
     for run in runs:
         if run.seconds == 0:
             continue
@@ -438,15 +497,12 @@ def _report(runs: list[Run]) -> None:
             ranges = f"{run.honoured} of {run.ranges} answered 206"
             if run.ignored:
                 ranges += "; one got the whole segment, the rest skipped"
-        failed = f", {run.failed} failed" if run.failed else ""
+        # The multiple of real time N1's rule asks 1.5 of
+        real = f"{run.mbit / bitrate:.2f}" if bitrate and not run.ignored else "–"
         print(
             f"| {run.name} | {run.connections} | {_mib(run.bytes)}"
-            f" | {run.seconds:.1f} s{failed} | {rate} | {ranges} |"
+            f" | {run.seconds:.1f} s{_failed(run)} | {rate} | {real} | {ranges} |"
         )
-    fetched = [run for run in runs if run.duration and not run.ignored]
-    bitrate = _mbit(
-        sum(run.bytes for run in fetched), sum(run.duration for run in fetched)
-    )
     one = runs[0].mbit
     needed = math.ceil(1.5 * bitrate / one) if one else 0
     print(
@@ -462,6 +518,13 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--hoster", default="firestream")
     parser.add_argument("--segments", type=int, default=10, help="per run")
+    parser.add_argument(
+        "--in-flight",
+        type=in_flight_counts,
+        default=[READ_AHEAD + 1],
+        metavar="N[,N...]",
+        help="one read-ahead run per count of segments in flight",
+    )
     parser.add_argument("--stream-id", help="a stored stream link's id")
     parser.add_argument(
         "--file",
@@ -513,22 +576,17 @@ async def main(argv: list[str]) -> None:
             report_file([one, ranged], size=size)
             return
         segments, variant = await _segments_of(http, link, headers)
-        per_run = min(args.segments, len(segments) // 4)
+        runs = plan_runs(args.in_flight)
+        per_run = min(args.segments, len(segments) // len(runs))
         if per_run == 0:
-            sys.exit(f"the playlist has {len(segments)} segments, 4 needed")
-        start = (len(segments) - 4 * per_run) // 2
-        chosen = segments[start : start + 4 * per_run]
+            sys.exit(f"the playlist has {len(segments)} segments, {len(runs)} needed")
+        start = (len(segments) - len(runs) * per_run) // 2
+        chosen = segments[start : start + len(runs) * per_run]
         mean = sum(segment.duration for segment in chosen) / len(chosen)
         print(
             f"{per_run} segments per run, {mean:.1f} s each (EXTINF), from segment"
             f" {start} of {len(segments)}{variant}"
         )
-        runs = [
-            Run("one connection", 1),
-            Run(f"read-ahead {READ_AHEAD}", READ_AHEAD + 1),
-            Run(f"{RANGES} ranges", 1, ranged=True),
-            Run(f"read-ahead {READ_AHEAD} × {RANGES} ranges", READ_AHEAD + 1, True),
-        ]
         fetcher = Fetcher(http, headers)
         ignored = False
         for index, run in enumerate(runs):

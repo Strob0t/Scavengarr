@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import sys
 from pathlib import Path
@@ -10,6 +11,8 @@ from types import ModuleType
 import httpx
 import pytest
 import respx
+
+from scavengarr.domain.entities.stremio import CachedStreamLink
 
 _PROBES = Path(__file__).resolve().parents[3] / "scripts" / "probes"
 
@@ -69,6 +72,108 @@ class TestPlaylists:
     def test_cdn_is_the_registered_domain(self) -> None:
         assert _mod.cdn("https://s3.cdn.example.io/a/b.ts?t=1") == "example.io"
 
+    def test_the_masters_variants_are_listed_highest_first(self) -> None:
+        """Row 68 asks whether a master lists lower variants (a player's
+        bandwidth estimate may hold the highest on a slow CDN)."""
+        variants = _mod._variants(_MASTER, "https://cdn.example/v/master.m3u8")
+
+        assert _mod.describe_variants(variants) == (
+            "1920x1080 3.0, 1280x720 1.2 Mbit/s"
+        )
+
+    @respx.mock
+    async def test_the_master_names_its_variants(self) -> None:
+        respx.get("https://cdn.example/v/master.m3u8").respond(200, text=_MASTER)
+        respx.get("https://cdn.example/v/1080p/index.m3u8").respond(200, text=_MEDIA)
+        link = CachedStreamLink(
+            "id",
+            "https://hoster.example/e/1",
+            video_url="https://cdn.example/v/master.m3u8",
+        )
+
+        async with httpx.AsyncClient() as http:
+            segments, variant = await _mod._segments_of(http, link, {})
+
+        assert len(segments) == 2
+        assert variant == (
+            ", variant 1920x1080 (declared 3.0 Mbit/s;"
+            " the master lists 1920x1080 3.0, 1280x720 1.2 Mbit/s)"
+        )
+
+    @respx.mock
+    async def test_a_media_playlist_says_it_has_no_variants(self) -> None:
+        """FireStream's links are media playlists: a player cannot step
+        down to a lower variant there."""
+        respx.get("https://cdn.example/v/index.m3u8").respond(200, text=_MEDIA)
+        link = CachedStreamLink(
+            "id",
+            "https://hoster.example/e/1",
+            video_url="https://cdn.example/v/index.m3u8",
+        )
+
+        async with httpx.AsyncClient() as http:
+            _, variant = await _mod._segments_of(http, link, {})
+
+        assert variant == ", a media playlist (no variants to step down to)"
+
+
+class TestInFlight:
+    """Row 68: whether a fourth and fifth segment in flight still add
+    throughput, one read-ahead run per count."""
+
+    def test_counts_are_read_from_a_list(self) -> None:
+        assert _mod.in_flight_counts("3,4, 5") == [3, 4, 5]
+
+    @pytest.mark.parametrize("value", ["1,3", "x", ""])
+    def test_a_count_below_two_or_no_number_is_refused(self, value: str) -> None:
+        with pytest.raises(argparse.ArgumentTypeError):
+            _mod.in_flight_counts(value)
+
+    def test_one_read_ahead_run_per_count(self) -> None:
+        runs = _mod.plan_runs([3, 4, 5])
+
+        assert [(run.name, run.in_flight, run.ranged) for run in runs] == [
+            ("one connection", 1, False),
+            ("read-ahead 2", 3, False),
+            ("read-ahead 3", 4, False),
+            ("read-ahead 4", 5, False),
+            ("3 ranges", 1, True),
+            ("read-ahead 2 × 3 ranges", 3, True),
+        ]
+
+    def test_without_counts_the_four_runs_stay(self) -> None:
+        args = _mod._parser().parse_args([])
+
+        assert [run.name for run in _mod.plan_runs(args.in_flight)] == [
+            "one connection",
+            "read-ahead 2",
+            "3 ranges",
+            "read-ahead 2 × 3 ranges",
+        ]
+
+    @respx.mock
+    async def test_a_refused_segment_counts_by_its_status(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A deeper read-ahead may draw 429s: the run names them."""
+        respx.get("https://cdn.example/s1.ts").respond(200, content=b"x" * 100)
+        respx.get("https://cdn.example/s2.ts").respond(429)
+        respx.get("https://cdn.example/s3.ts").mock(
+            side_effect=httpx.ReadTimeout("slow")
+        )
+        segments = [
+            _mod.Segment(f"https://cdn.example/s{n}.ts", 6.0) for n in (1, 2, 3)
+        ]
+        run = _mod.Run("read-ahead 3", 4)
+
+        async with httpx.AsyncClient() as http:
+            await _mod.execute(_mod.Fetcher(http, {}), segments, run)
+
+        assert run.bytes == 100
+        assert run.errors == {"429": 1, "ReadTimeout": 1}
+        assert run.failed == 2
+        assert "a segment failed: 429" in capsys.readouterr().out
+
 
 class TestReport:
     def test_connections_and_rate(self) -> None:
@@ -94,14 +199,28 @@ class TestReport:
 
         out = capsys.readouterr().out
         assert (
-            "| one connection | 1 | 7.2 MiB | 30.0 s | 2.0 (1.5–2.5 per segment) | – |"
-            in out
+            "| one connection | 1 | 7.2 MiB | 30.0 s | 2.0 (1.5–2.5 per segment)"
+            " | 0.67 | – |" in out
         )
-        assert "| read-ahead 2 | 3 | 7.2 MiB | 10.0 s | 6.0 | – |" in out
+        assert "| read-ahead 2 | 3 | 7.2 MiB | 10.0 s | 6.0 | 2.00 | – |" in out
+        # A range run answered with whole segments measures no real time
+        assert "| 3 ranges | 3 | 2.4 MiB | 5.0 s | 4.0 | – | 0 of 1" in out
         assert "0 of 1 answered 206; one got the whole segment" in out
         # 15 MB over 40 s of video: 3.0 Mbit/s; 1.5 × 3.0 / 2.0 = 2.25 → 3
         assert "Bitrate 3.0 Mbit/s" in out
         assert "= 3 connections." in out
+
+    def test_failures_are_named_in_the_row(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        run = _mod.Run("read-ahead 4", 5)
+        run.bytes, run.seconds, run.duration = 7_500_000, 10.0, 20.0
+        run.errors.update({"429": 2, "ReadTimeout": 1})
+
+        _mod._report([run])
+
+        out = capsys.readouterr().out
+        assert "| 10.0 s, 3 failed (429 ×2, ReadTimeout ×1) |" in out
 
 
 _FILE = "https://cdn.example/v/file.mp4"
