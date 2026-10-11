@@ -135,6 +135,38 @@ async def test_measure_collects_the_failing_verdicts_and_the_200_findings(
     assert all("https://" not in f for f in row.findings)
 
 
+@respx.mock
+async def test_measure_plays_proxied_files_and_whole_segments() -> None:
+    """The eleventh round's 21 ``FAIL master 200``: a proxied file is checked
+    as a file, and whole HLS segments answered 200 are no finding."""
+    file_url = f"{_BASE}/api/v1/stremio/proxy/ab12/file"
+    hls_url = f"{_BASE}/api/v1/stremio/proxy/cd34/scavengarr.m3u8"
+    respx.get(f"{_BASE}/api/v1/stremio/stream/movie/tt1.json").mock(
+        return_value=httpx.Response(
+            200,
+            json={"streams": [_stream(file_url, "DOOD"), _stream(hls_url, "FSST")]},
+        )
+    )
+    respx.get(file_url).mock(
+        side_effect=[
+            httpx.Response(
+                206,
+                content=b"\x00\x00\x00\x20ftypisom" + b"\x00" * 100,
+                headers={"content-range": "bytes 0-2047/3000000000"},
+            ),
+            httpx.Response(206, content=b"\x00" * 1024),
+        ]
+    )
+    respx.get(hls_url).respond(200, text="#EXTM3U\n#EXTINF:4,\nseg1.ts\n")
+    respx.get(f"{_BASE}/api/v1/stremio/proxy/cd34/seg1.ts").respond(
+        200, content=b"\x47" + b"\x00" * 187
+    )
+    async with httpx.AsyncClient() as client:
+        row = await _mod.measure(client, _BASE, "movie/tt1", "One", playcheck=True)
+
+    assert (row.playable, row.findings, row.full_bodies) == (2, (), 0)
+
+
 def test_findings_cell_names_the_hosters_and_the_200_count() -> None:
     assert _mod._findings(_row()) == "–"
     assert _mod._findings(_row(full_bodies=2)) == "2× 200 instead of 206"

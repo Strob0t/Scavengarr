@@ -642,6 +642,8 @@ titles are segments answered 200 to the check's 2 KiB range, which is normal
 for HLS, where a player asks for whole segments (row 64 keeps the finding to
 files and byte-range playlists).
 
+Row 64 (2026-10-11, Mr. Normal): the play check takes a URL whose path ends in `/file` for a file (`stream_kind()`; `.m3u8`, `master.txt` and the proxy's other paths stay HLS) and counts a segment answered 200 only under `EXT-X-BYTERANGE`, so this round reads 72 of 73 playable and its HLS titles carry no `200 instead of 206` finding; the live check of the three titles above waits for Mr. Fable's signal.
+
 **The digest** (`prodctl.py digest --since 2h`, 11:20 UTC; the metrics count
 since the restart, 17 minutes), plugins:
 

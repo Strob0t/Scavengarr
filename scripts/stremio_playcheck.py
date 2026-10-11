@@ -7,15 +7,18 @@ IDS are Stremio ids (``movie/tt15398776``, ``series/tt0903747:1:1``); without
 them the title set of ``stremio_measure.py`` is checked. Each stream is
 fetched with its ``proxyHeaders``: for HLS the master playlist, the first
 variant and its first two segments, for a file the first KiB and one in the
-middle (a seek). Prints a verdict per stream and per source
-(``HOSTER · plugin``). The playback check of the server reads only the start
-of a stream; this one follows it to the media bytes, from the machine it
-runs on (a stream bound to the resolving IP fails from elsewhere).
+middle (a seek); the proxy's address-bound files (``/proxy/<id>/file``) are
+files, its other paths HLS (``stream_kind()``). Prints a verdict per stream
+and per source (``HOSTER · plugin``). The playback check of the server reads
+only the start of a stream; this one follows it to the media bytes, from the
+machine it runs on (a stream bound to the resolving IP fails from elsewhere).
 
 Every answer is streamed and read only up to the bytes the judgement needs
 (a playlist up to ``_PLAYLIST_MAX``, media up to ``_HEAD``, a seek none),
 then closed: a CDN or the proxy that answers a Range request with 200 and
-the whole file costs a few KiB, and the verdict says ``200 instead of 206``.
+the whole file costs a few KiB, and the verdict says ``200 instead of 206``
+(for HLS segments only under ``EXT-X-BYTERANGE``: a player asks for whole
+segments otherwise).
 One deadline per check, ``_CHECK_TIMEOUT``, covers all its requests.
 """
 
@@ -25,6 +28,8 @@ import argparse
 import asyncio
 import time
 from collections import Counter
+from typing import Literal
+from urllib.parse import urlparse
 
 import httpx
 from stremio_measure import GROUPS, _source
@@ -82,6 +87,17 @@ def _uris(playlist: str) -> list[str]:
     return [ln for ln in playlist.splitlines() if ln and not ln.startswith("#")]
 
 
+def stream_kind(url: str) -> Literal["hls", "file"]:
+    """``file`` for the proxy's address-bound files (``/proxy/<id>/file``)
+    and plain files, ``hls`` for playlists and the proxy's other paths."""
+    path = urlparse(url).path
+    if path.endswith("/file"):
+        return "file"
+    if any(m in path for m in (".m3u8", "master.txt", "/stremio/proxy/")):
+        return "hls"
+    return "file"
+
+
 async def _check_hls(client: httpx.AsyncClient, url: str, headers: dict) -> str:
     resp, body = await _fetch(client, url, headers, _PLAYLIST_MAX)
     text = body.decode("utf-8", "replace")
@@ -95,6 +111,8 @@ async def _check_hls(client: httpx.AsyncClient, url: str, headers: dict) -> str:
         if resp.status_code >= 400 or not text.startswith("#EXTM3U"):
             return f"FAIL variant {resp.status_code}"
     segments = _uris(text)
+    # Without byte ranges a player fetches whole segments: a 200 is normal
+    byte_ranges = "#EXT-X-BYTERANGE" in text
     kinds = []
     full = 0
     for segment in segments[:2]:
@@ -104,7 +122,7 @@ async def _check_hls(client: httpx.AsyncClient, url: str, headers: dict) -> str:
             {**headers, "Range": f"bytes=0-{_HEAD - 1}"},
             _HEAD,
         )
-        full += seg.status_code == 200
+        full += byte_ranges and seg.status_code == 200
         kinds.append(
             f"{seg.status_code}" if seg.status_code >= 400 else media_kind(data)
         )
@@ -148,10 +166,9 @@ async def check_stream(client: httpx.AsyncClient, stream: dict) -> str:
     hints = stream.get("behaviorHints") or {}
     headers = {"User-Agent": _PLAYER_UA}
     headers.update((hints.get("proxyHeaders") or {}).get("request") or {})
-    is_hls = any(m in url for m in (".m3u8", "master.txt", "/stremio/proxy/"))
     try:
         async with asyncio.timeout(_CHECK_TIMEOUT):
-            if is_hls:
+            if stream_kind(url) == "hls":
                 return await _check_hls(client, url, headers)
             return await _check_file(client, url, headers)
     except TimeoutError:

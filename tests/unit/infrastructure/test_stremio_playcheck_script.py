@@ -95,6 +95,44 @@ class TestCheckStream:
         assert route.calls[1].request.headers["Range"] == "bytes=1500000000-1500001023"
 
 
+class TestStreamKind:
+    """The eleventh round failed 21 proxied files as ``FAIL master 200``:
+    every ``/stremio/proxy/`` URL went to the HLS check."""
+
+    @pytest.mark.parametrize(
+        ("url", "kind"),
+        [
+            ("https://scavengarr.lan/api/v1/stremio/proxy/ab12/file", "file"),
+            ("https://scavengarr.lan/api/v1/stremio/proxy/ab12/file?x=1", "file"),
+            ("https://scavengarr.lan/api/v1/stremio/proxy/ab12/scavengarr.m3u8", "hls"),
+            ("https://scavengarr.lan/api/v1/stremio/proxy/ab12/", "hls"),
+            ("https://cdn.example/hls/master.txt", "hls"),
+            ("https://cdn.example/v.m3u8?t=1", "hls"),
+            ("https://cdn.example/v.mp4", "file"),
+        ],
+    )
+    def test_kind_by_path(self, url: str, kind: str) -> None:
+        assert _mod.stream_kind(url) == kind
+
+    @respx.mock
+    async def test_a_proxied_file_is_checked_as_a_file(self) -> None:
+        url = "https://scavengarr.lan/api/v1/stremio/proxy/ab12/file"
+        respx.get(url).mock(
+            side_effect=[
+                httpx.Response(
+                    206,
+                    content=_MP4_CHUNK,
+                    headers={"content-range": "bytes 0-2047/3000000000"},
+                ),
+                httpx.Response(206, content=b"\x00" * 1024),
+            ]
+        )
+        async with httpx.AsyncClient() as client:
+            verdict = await _mod.check_stream(client, {"url": url})
+
+        assert verdict == "OK mp4 3.00 GB, seek 206"
+
+
 class _Body(httpx.AsyncByteStream):
     """A streamed body that never ends: *chunk* again and again, each after
     *delay* seconds. Counts the bytes handed out and whether it was closed."""
@@ -167,12 +205,18 @@ class TestBoundedReads:
 
         assert verdict == "FAIL mp4 3.00 GB, seek 200 instead of 206"
 
-    async def test_hls_segments_answered_with_200_are_noted(self) -> None:
+    async def test_byte_range_segments_answered_with_200_are_noted(self) -> None:
+        """A playlist with ``EXT-X-BYTERANGE`` makes the player ask for
+        ranges: a 200 is a finding there."""
         segments = [_Body(_TS_PACKET), _Body(_TS_PACKET)]
         with respx.mock:
             respx.get("https://cdn.example/v.m3u8").respond(
                 200,
-                text="#EXTM3U\n#EXTINF:4,\ns1.ts\n#EXTINF:4,\ns2.ts\n#EXTINF:4,\ns3.ts\n",
+                text=(
+                    "#EXTM3U\n#EXTINF:4,\n#EXT-X-BYTERANGE:1000@0\ns1.ts\n"
+                    "#EXTINF:4,\n#EXT-X-BYTERANGE:1000@1000\ns2.ts\n"
+                    "#EXTINF:4,\n#EXT-X-BYTERANGE:1000@2000\ns3.ts\n"
+                ),
             )
             respx.get("https://cdn.example/s1.ts").mock(
                 return_value=httpx.Response(200, stream=segments[0])
@@ -189,6 +233,29 @@ class TestBoundedReads:
         assert verdict == (
             "OK hls 3 segments: mpegts, mpegts; 2 of 2 segments 200 instead of 206"
         )
+        assert all(s.sent <= 64 * 1024 and s.closed for s in segments)
+
+    async def test_whole_segments_answered_with_200_are_normal(self) -> None:
+        """Without ``EXT-X-BYTERANGE`` a player asks for whole segments: a
+        200 there is no finding."""
+        segments = [_Body(_TS_PACKET), _Body(_TS_PACKET)]
+        with respx.mock:
+            respx.get("https://cdn.example/v.m3u8").respond(
+                200, text="#EXTM3U\n#EXTINF:4,\ns1.ts\n#EXTINF:4,\ns2.ts\n"
+            )
+            respx.get("https://cdn.example/s1.ts").mock(
+                return_value=httpx.Response(200, stream=segments[0])
+            )
+            respx.get("https://cdn.example/s2.ts").mock(
+                return_value=httpx.Response(200, stream=segments[1])
+            )
+            async with httpx.AsyncClient() as client:
+                verdict = await asyncio.wait_for(
+                    _mod.check_stream(client, {"url": "https://cdn.example/v.m3u8"}),
+                    timeout=5,
+                )
+
+        assert verdict == "OK hls 2 segments: mpegts, mpegts"
         assert all(s.sent <= 64 * 1024 and s.closed for s in segments)
 
     async def test_an_endless_playlist_answer_is_cut(self) -> None:
