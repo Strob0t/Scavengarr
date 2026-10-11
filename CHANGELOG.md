@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: Vixeo Captures Keep the Player's Ad Tag Out
+- The Vixeo resolver's capture runs the scripts of the page's and its frames' sites only (`own_scripts_only=True`, as Filemoon's since row 79). The rule itself is unchanged.
+- Why: on the Pi Vixeo's player loads an ad tag (`al5sm.com/tag.min.js`, the path of Filemoon's) that turns every click into a popup: no stream in 2 of 2 runs, 3 popups each; with that one domain blocked a stream in 2 of 2 (5.8 and 5.5 s, 0 popups; row 81). The dev container's resolver refuses the ad domains, which is why Vixeo always captured there.
+- In the dev container Vixeo still captures with the rule (2 of 2 at 3.9 s, 0 popups): every foreign script reads `blocked`, and the player, whose code is inline in its page, needs none of them. The Pi's proof follows the deploy.
+
 ### Fixed: Filemoon Captures Let Cloudflare's Challenge Widget Run
 - The own-scripts rule of Filemoon's capture lets the scripts of `challenges.cloudflare.com` through (`_CHALLENGE_HOST` in `stealth_pool.py`, the exact host). Until now a Turnstile widget that the page loads from there counted as a foreign site's script and was aborted, so a Filemoon page showing the widget could not pass it. `cdnjs.cloudflare.com` and every other site's scripts stay foreign; the ad tag still aborts.
 - Not measured: no Filemoon page has shown the widget yet; unit tests cover the rule.

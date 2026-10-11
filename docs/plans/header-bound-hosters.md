@@ -226,3 +226,14 @@ Reading:
 - **SuperVideo** is the CDN's, on both networks; no capture change helps it.
 
 Limits: one link per hoster, two runs per call in one profile (run 2 is the warm case), one afternoon. The stage lines come from one production request per hoster. SuperVideo's probe runs show no reason of their own for ending before a page.
+
+### Vixeo with the own-scripts rule (Row 83)
+
+Row 81's Pi reading made Vixeo opt into row 79's rule (`own_scripts_only=True` in `vixeo.py`, Mr. Fable's design; the rule unchanged, no domain list). The probe runs the resolver, so it applies the rule. Dev container, 2026-10-11 ~17:10 UTC, the same link, 2 runs:
+
+| Run | Captured | Clicks at | Stream at (CDN) | Popups | Scripts |
+|---:|---|---|---|---:|---|
+| 1 | yes | 3.9 s | 3.9 s (`vidsonic.net`) | 0 | all 11 foreign script sites `blocked` (`al5sm.com`'s tag, the other ad sites, the script host under `vidsonic.net`) |
+| 2 | yes | 3.9 s | 3.9 s (`vidsonic.net`) | 0 | the same |
+
+No regression against row 81's dev runs (4.3 and 4.1 s, the same sites refused by the resolver there). The player's code is inline in its page: the page loads no script of its own site, before or after, so no script the player needs comes from another site. The Pi's proof follows the deploy, as in row 79.

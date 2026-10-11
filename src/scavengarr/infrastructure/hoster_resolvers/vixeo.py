@@ -59,6 +59,10 @@ class VixeoResolver:
         if not file_id:
             log.info("vixeo_invalid_url", url=url)
             return None
+        # The player's ad tag turns every click into a popup (row 81)
         return await capture_stream(
-            self._stealth_pool, f"https://vixeo.io/e/{file_id}", "vixeo"
+            self._stealth_pool,
+            f"https://vixeo.io/e/{file_id}",
+            "vixeo",
+            own_scripts_only=True,
         )
