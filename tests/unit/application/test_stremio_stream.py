@@ -869,16 +869,20 @@ class TestAnswerState:
         assert (answer.source, answer.complete, answer.missing) == ("search", True, ())
 
     async def test_at_the_budget_with_a_plugin_still_searching(self) -> None:
+        """One slot: "second" starts when "first" ends, so it ends 0.1 s
+        after the budget at the earliest, inside its own timeout. The
+        process's first answer costs its imports (about 0.14 s, more on a
+        busy machine): "first" keeps 0.5 s of room for them."""
         cache = memory_cache()
         sites = {
             "first": fake_site([hit("https://voe.sx/e/first")], delay=0.3),
-            "second": fake_site([hit("https://dood.to/e/second")], delay=0.2),
+            "second": fake_site([hit("https://dood.to/e/second")], delay=0.6),
         }
         uc = answering_use_case(
             sites,
             cache,
             Resolutions(),
-            plugin_timeout_seconds=0.4,
+            plugin_timeout_seconds=0.8,
             stream_deadline_seconds=2.0,
             pool=ConcurrencyPool(httpx_slots=1, pw_slots=1),
         )
