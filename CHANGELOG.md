@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: The Capture Probe Blocks Domains and Counts Popups
+- `scripts/probes/capture_timing.py --block DOMAIN` (repeatable) aborts every request to the domain and its subdomains in the probe's browser: on the capture's page, ahead of the capture's own route, and in its context, for popups. Such a request reads `blocked` in the diagnosis, apart from the capture's cut of the media (`net::ERR_FAILED`) and the network's errors. `--diagnose` also counts the popups each run's page opened (the capture closes them).
+- Why: on the Pi the Filemoon player loads an ad tag (`llvpn.com /tag.min.js`) and then never starts its access flow, in 4 of 4 runs on two links (2026-10-11), while in the dev container the resolver answers the ad domains with `0.0.0.0` and the player plays in 4 of 4 runs. Both run Chromium 153, build 8010, with the same codec answers. `--block llvpn.com` gives the Pi the dev container's state for that one domain; the popup count tells an ad that takes the clicks from a player that waits for the ad.
+- In the dev container `--block llvpn.com` changes nothing: both links captured in both runs (1.4 to 5.3 s), the tag reads `blocked`, and no popup opened.
+
 ### Added: The Capture Probe Shows What the Player Asked For
 - `scripts/probes/capture_timing.py --diagnose` prints per run the requests of the capture's page by domain and path, the ids masked (`/api/videos/<id>/embed/playback`), each with its resource type and outcome: the status, `redirect`, the browser's error or `pending`. After the clicks it asks each frame whether it has a video element (with its MediaError code and network state) and what MediaSource and canPlayType answer for H.264, AAC and HLS. The launch line names the Chromium's major version and build. Images, fonts and stylesheets are summed up in one line, and only web requests count. The probe still prints no URL, no id and no token.
 - Why: on the Pi neither Filemoon link gave a stream in 4 of 4 runs (two links, three clicks each, about 20 s), while the dev container captures both in 1.3 to 6.1 s (2026-10-11). The diagnosis separates the egress from the browser build.

@@ -181,12 +181,21 @@ def test_the_capture_resolvers_by_name() -> None:
 def test_two_runs_by_default() -> None:
     args = _mod._parser().parse_args(["https://byse.example/e/abc"])
 
-    assert (args.hoster, args.runs, args.timeout, args.diagnose) == (
+    assert (args.hoster, args.runs, args.timeout, args.diagnose, args.block) == (
         "filemoon",
         2,
         None,
         False,
+        [],
     )
+
+
+def test_blocks_repeat() -> None:
+    args = _mod._parser().parse_args(
+        ["https://byse.example/e/abc", "--block", "llvpn.com", "--block", "rtmark.net"]
+    )
+
+    assert args.block == ["llvpn.com", "rtmark.net"]
 
 
 class _Page:
@@ -425,17 +434,139 @@ class TestDiagnosedPool:
             )
 
         assert len(page.handlers["request"]) == 1
+        assert len(page.handlers["popup"]) == 1
 
     def test_the_diagnosis_of_a_run(self) -> None:
         run = _mod.Run(0.0)
         run.requests.append(
             _mod.RequestNote("byse.example", "/d/<id>", "document", "200")
         )
+        run.popups = 2
         run.frames.append(_mod.FrameNote("byse.example", main=True))
 
         assert _mod.diagnosis_lines(1, run) == [
             "### Run 1: requests (domain, path with ids masked, type: outcome)",
             "- byse.example /d/<id> document: 200",
+            "popups opened: 2 (the capture closes them)",
             "frames after the clicks:",
             "- page byse.example: unreadable",
         ]
+
+
+class TestPopups:
+    def test_the_popups_of_a_page_are_counted(self) -> None:
+        page, run = _Page(), _mod.Run(0.0)
+        _mod.count_popups(page, run)
+
+        page.emit("popup", object())
+        page.emit("popup", object())
+
+        assert run.popups == 2
+
+
+class _Context:
+    """Stands in for a browser context: the routes set on it."""
+
+    def __init__(self) -> None:
+        self.routes: list[tuple[Callable[[str], bool], object]] = []
+
+    async def route(self, url: Callable[[str], bool], handler: object) -> None:
+        self.routes.append((url, handler))
+
+
+class _RoutedPage(_Page):
+    """A page with routes, in *context*."""
+
+    def __init__(self, context: _Context) -> None:
+        super().__init__()
+        self.context = context
+        self.routes: list[tuple[Callable[[str], bool], object]] = []
+
+    async def route(self, url: Callable[[str], bool], handler: object) -> None:
+        self.routes.append((url, handler))
+
+
+class _Route:
+    def __init__(self) -> None:
+        self.aborted: list[str | None] = []
+
+    async def abort(self, error_code: str | None = None) -> None:
+        self.aborted.append(error_code)
+
+
+class TestBlocks:
+    def test_a_domain_and_its_subdomains_match(self) -> None:
+        matches = _mod.blocked_by(["llvpn.com", "Rtmark.net."])
+
+        assert matches("https://llvpn.com/tag.min.js")
+        assert matches("https://cdn.LLVPN.com/tag.min.js")
+        assert matches("https://rtmark.net/gid.js")
+        assert not matches("https://notllvpn.com/tag.min.js")
+        assert not matches("https://llvpn.com.example/tag.min.js")
+        assert not matches("https://n1mwq.org/player/abc/bafsd.js")
+        assert not matches("data:text/plain,llvpn.com")
+
+    async def test_a_block_aborts_as_the_client(self) -> None:
+        route = _Route()
+
+        await _mod.block_request(route)
+
+        assert route.aborted == ["blockedbyclient"]
+
+    def test_a_blocked_request_reads_blocked(self) -> None:
+        page, run = _Page(), _mod.Run(0.0)
+        _mod.watch_requests(page, run)
+        tag = _Request(
+            "https://llvpn.com/tag.min.js",
+            "script",
+            failure="net::ERR_BLOCKED_BY_CLIENT.Inspector",
+        )
+        page.emit("request", tag)
+        page.emit("requestfailed", tag)
+
+        assert [n.outcome for n in run.requests] == ["blocked"]
+
+    async def test_each_page_and_its_context_get_the_blocks_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def navigate(*_args: object, **_kwargs: object) -> bool:
+            return True
+
+        monkeypatch.setattr(StealthPool, "_navigate", navigate)
+        pool = _mod.TimedStealthPool(browser_pool=MagicMock())
+        pool.blocked = ("llvpn.com",)
+        context = _Context()
+        first, second = _RoutedPage(context), _RoutedPage(context)
+
+        for page in (first, first, second):
+            await pool._navigate(
+                page, "https://byse.example/d/abc", wait_until="commit", timeout_ms=1
+            )
+
+        assert [len(first.routes), len(second.routes), len(context.routes)] == [
+            1,
+            1,
+            1,
+        ]
+        matches, handler = context.routes[0]
+        assert matches("https://cdn.llvpn.com/tag.min.js")
+        assert not matches("https://byse.example/d/abc")
+        assert handler is _mod.block_request
+        assert first.routes[0][1] is _mod.block_request
+
+    async def test_without_blocks_nothing_is_routed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def navigate(*_args: object, **_kwargs: object) -> bool:
+            return True
+
+        monkeypatch.setattr(StealthPool, "_navigate", navigate)
+        pool = _mod.TimedStealthPool(browser_pool=MagicMock())
+        context = _Context()
+        page = _RoutedPage(context)
+
+        await pool._navigate(
+            page, "https://byse.example/d/abc", wait_until="commit", timeout_ms=1
+        )
+
+        assert (page.routes, context.routes) == ([], [])

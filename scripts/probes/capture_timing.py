@@ -1,7 +1,7 @@
 """A browser-capture resolver's capture, timed in the container.
 
     probe capture_timing -- URL [--hoster filemoon] [--runs 2] [--timeout S]
-        [--diagnose]
+        [--diagnose] [--block DOMAIN ...]
 
 Resolves the hoster page *URL* (a link as the plugins store it) with the
 app's resolver for ``--hoster`` (one that captures in the stealth browser:
@@ -28,9 +28,13 @@ production's two bounds. ``--diagnose`` adds per run the page's requests
 resource type, and the status, ``redirect``, the browser's error or
 ``pending``) and, after the clicks, what each frame can play: its video
 element (MediaError code, network state) and the answers of MediaSource
-and canPlayType for H.264, AAC and HLS. Prints no URLs: domains, paths
-with ids masked and times only. Run it while nothing plays: its browser
-shares the Pi's CPU with the app.
+and canPlayType for H.264, AAC and HLS, and how many popups the page
+opened (the capture closes them). ``--block DOMAIN`` (repeatable) aborts
+every request to the domain and its subdomains in the probe's browser, as
+the client's block: such a request reads ``blocked``, apart from the
+capture's own cut of the media (``net::ERR_FAILED``) and the network's
+errors. Prints no URLs: domains, paths with ids masked and times only. Run
+it while nothing plays: its browser shares the Pi's CPU with the app.
 """
 
 from __future__ import annotations
@@ -92,6 +96,9 @@ _MAX_REQUEST_LINES = 40
 # ...the frames read after the clicks, the time each gets
 _MAX_FRAMES = 6
 _FRAME_READ_S = 3.0
+# --block: the browser's error for a request the probe aborted (Chromium
+# names it net::ERR_BLOCKED_BY_CLIENT.Inspector: the block came over DevTools)
+_BLOCKED_ERROR = "net::ERR_BLOCKED_BY_CLIENT"
 # Asked in each frame after the clicks: the player's video element (its
 # MediaError code and network state) and what the browser can play
 _FRAME_CHECK = """() => {
@@ -330,6 +337,7 @@ class Run:
     # --diagnose
     requests: list[RequestNote] = field(default_factory=list)
     frames: list[FrameNote] = field(default_factory=list)
+    popups: int = 0
 
 
 def watch_requests(page: Any, run: Run) -> None:
@@ -355,11 +363,38 @@ def watch_requests(page: Any, run: Run) -> None:
 
     def failed(request: Any) -> None:
         if (note := notes.get(request)) is not None:
-            note.outcome = request.failure or "failed"
+            failure = request.failure or "failed"
+            blocked = failure.startswith(_BLOCKED_ERROR)
+            note.outcome = "blocked" if blocked else failure
 
     page.on("request", requested)
     page.on("response", answered)
     page.on("requestfailed", failed)
+
+
+def count_popups(page: Any, run: Run) -> None:
+    """Count the popups *page* opens in *run* (the capture closes them)."""
+
+    def opened(_popup: Any) -> None:
+        run.popups += 1
+
+    page.on("popup", opened)
+
+
+def blocked_by(domains: Iterable[str]) -> Callable[[str], bool]:
+    """Whether a URL's host is one of *domains* or a subdomain of one."""
+    names = tuple(name.lower().strip(".") for name in domains)
+
+    def matches(url: str) -> bool:
+        host = (urlsplit(url).hostname or "").lower()
+        return any(host == name or host.endswith(f".{name}") for name in names)
+
+    return matches
+
+
+async def block_request(route: Any) -> None:
+    """Abort the request as the client's block (``net::ERR_BLOCKED_BY_CLIENT``)."""
+    await route.abort("blockedbyclient")
 
 
 async def frame_notes(page: Any) -> list[FrameNote]:
@@ -393,15 +428,17 @@ async def frame_notes(page: Any) -> list[FrameNote]:
 
 class TimedStealthPool(StealthPool):
     """The app's stealth pool, noting its page loads and captures in ``run``;
-    with ``diagnose`` each page's requests too (``watch_requests``, once
-    per page)."""
+    with ``diagnose`` each page's requests and popups too, and the requests
+    to the ``blocked`` domains aborted (once per page)."""
 
     run: Run | None = None
     diagnose: bool = False
+    blocked: tuple[str, ...] = ()
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._watched: list[Any] = []
+        self._routed: list[Any] = []  # the contexts with the blocks
 
     async def _navigate(
         self,
@@ -412,13 +449,9 @@ class TimedStealthPool(StealthPool):
         timeout_ms: int,
         done: Callable[[], bool] = lambda: False,
     ) -> bool:
-        if (
-            self.diagnose
-            and self.run is not None
-            and not any(watched is page for watched in self._watched)
-        ):
+        if not any(watched is page for watched in self._watched):
             self._watched.append(page)
-            watch_requests(page, self.run)
+            await self._prepare(page)
         started = time.monotonic()
         loaded = await super()._navigate(
             page, url, wait_until=wait_until, timeout_ms=timeout_ms, done=done
@@ -433,6 +466,21 @@ class TimedStealthPool(StealthPool):
                 )
             )
         return loaded
+
+    async def _prepare(self, page: Any) -> None:
+        if self.diagnose and self.run is not None:
+            watch_requests(page, self.run)
+            count_popups(page, self.run)
+        if not self.blocked:
+            return
+        matches = blocked_by(self.blocked)
+        # The capture's route on the page lets every request it does not cut
+        # through to the network, past the context's routes: the block goes
+        # on the page too, after the capture's route, so it runs first
+        await page.route(matches, block_request)
+        if not any(context is page.context for context in self._routed):
+            self._routed.append(page.context)
+            await page.context.route(matches, block_request)  # popups
 
     async def capture_media(
         self, url: str, *, timeout: float | None = None, player: str | None = None
@@ -551,6 +599,7 @@ def diagnosis_lines(number: int, run: Run) -> list[str]:
         f"### Run {number}: requests (domain, path with ids masked, type: outcome)"
     ]
     lines.extend(request_lines(run) or ["- none"])
+    lines.append(f"popups opened: {run.popups} (the capture closes them)")
     lines.append("frames after the clicks:")
     lines.extend([frame_line(note) for note in run.frames] or ["- none read"])
     return lines
@@ -585,6 +634,7 @@ async def probe(args: argparse.Namespace) -> int:
     browser = SharedBrowserPool(headless=config.playwright_headless)
     pool = TimedStealthPool(browser_pool=browser, timeout_ms=int(timeout * 1000))
     pool.diagnose = args.diagnose
+    pool.blocked = tuple(args.block)
     note_clicks(pool)
     note_frames(pool)
     http = build_http_client(config)
@@ -607,6 +657,8 @@ async def probe(args: argparse.Namespace) -> int:
             f"browser launch {time.monotonic() - started:.1f} s"
             f" (Chromium {version[0]}, build {build}, DISPLAY {display})"
         )
+        if pool.blocked:
+            print(f"blocked, with their subdomains: {', '.join(pool.blocked)}")
         print("| run | pages (path: start, load) | clicks at | stream at | resolve |")
         print("|---|---|---|---|---|")
         runs: list[Run] = []
@@ -654,6 +706,13 @@ def _parser() -> argparse.ArgumentParser:
         "--diagnose",
         action="store_true",
         help="print each run's requests and what its frames can play",
+    )
+    parser.add_argument(
+        "--block",
+        action="append",
+        default=[],
+        metavar="DOMAIN",
+        help="abort every request to DOMAIN and its subdomains (repeatable)",
     )
     return parser
 
