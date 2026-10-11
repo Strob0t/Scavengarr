@@ -12,9 +12,9 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** and **S
 |---|---|
 | Version | 0.3.0 |
 | Python | 3.12–3.14 (Docker image: 3.14) |
-| Plugins | 41 (35 httpx + 6 Playwright) |
+| Plugins | 42 (36 httpx + 6 Playwright) |
 | Hoster resolvers | 62 (27 individual + 10 generic DDL + 25 XFS) |
-| Tests | 5271 offline (5032 unit + 194 E2E + 45 integration) + 41 live (2026-10-06) |
+| Tests | 6485 offline (6204 unit + 214 E2E + 67 integration) + 42 live (2026-10-11) |
 | Architecture | Clean Architecture |
 
 ---
@@ -78,7 +78,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** and **S
 | [Next Steps](../plans/next-steps.md) | In progress: status snapshot of 2026-09-29 (live run, release, CI) and prioritized next steps, incl. the stremio.lan live test setup |
 | [Ideas Backlog](../plans/ideas-backlog.md) | Decided 2026-10-06, round 2 added 2026-10-07 (round tooling, checks in worktrees, docs path guard, plugin long-term record, configuration by environment, HLS read-ahead to discuss): snapshot of production and repository, six new findings (httpx log noise, discarded stream quality and size, hosters without a resolver, no build identity, kinox without yield, hand-made deployment), 16 evaluated ideas, the decisions, and the handoff to the implementing agent (order, working rules, task specifications; the larger items as OpenSpec changes `add-anime-ids`, `persist-resolver-state`, `add-container-image`, `add-stream-media-quality`) |
 | [Stremio Stream Split](../plans/stremio-stream-split.md) | Proposed 2026-10-06 (item I14): split the 942-line stream use case into phase collaborators under `application/stremio/` (title resolution, plugin selection, title search, resolve flow, answer assembly) in five behaviour-preserving commits; exclusive-access rule |
-| [Browser Page Budget](../plans/browser-page-budget.md) | Implemented 2026-10-06, to be measured in the seventh round: the stealth browser's pages by urgency (play, earliest deadline, background last), the wait kept out of the resolve timeout, and a page count that follows waits, CPU and memory; `browser_page` metrics |
+| [Browser Page Budget](../plans/browser-page-budget.md) | Implemented 2026-10-06, measured in the seventh round (2026-10-07: kinoger works again, the sixth round's 13 of 13 timeouts did not recur): the stealth browser's pages by urgency (play, earliest deadline, background last), the wait kept out of the resolve timeout, and a page count that follows waits, CPU and memory; `browser_page` metrics |
 
 ### Refactoring History
 

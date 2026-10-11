@@ -171,7 +171,7 @@ These resolvers confirm the embed URL is alive and return it unchanged.
 | XFS video URL verification | [x] Implemented | HEAD check filters IP-locked CDN tokens (e.g. LULUVID) |
 | Domain alias mapping | [x] Implemented | All `supported_domains` mapped (e.g., vidhide family) |
 | respx-based tests | [x] Implemented | All resolver tests use httpx-native HTTP mocking |
-| Live contract tests | [ ] Scaffold | Opt-in live/dead URL checks of the XFS resolvers (`tests/live/test_resolver_live.py`); no URLs filled in yet, so no case runs |
+| Live contract tests | [x] Implemented | Opt-in live checks of every resolver (`tests/live/test_resolver_live.py`): one hoster page per resolver from an untracked list that `scripts/probes/resolver_urls.py` builds; the module skips without it |
 | Live Stremio use case | [x] Implemented | Opt-in end-to-end run of the in-process app: stream list for a film and a series episode, then playlist + first segment of a stream like a player (`tests/live/test_stremio_e2e_live.py`) |
 
 **Detailed docs:** [Hoster Resolvers](./hoster-resolvers.md)
