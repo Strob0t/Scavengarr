@@ -135,3 +135,24 @@ Limits:
 - 2 of 72 streams unread: the failing FIRESTREAM (no segment came) and one DOODSTREAM file (the round prints no verdict for a playable stream, so its reason is not recorded: a `moov` beyond the last 8 MiB, a tail read not answered 206, or the codec read's 10 s).
 - HLS: the master's first variant only (the one the check plays); another variant or a separate audio rendition (`EXT-X-MEDIA`) can carry other codecs, which is hypothesis 3.
 - 19 titles, mostly German-dubbed films and series of the round; the maintainer's reported stream is not known to be among them. The device log (hypothesis 1) remains the way to name it.
+
+
+## The Five Hosters Without a Measurement (Row 67)
+
+Dropload, RPMPlay, SuperVideo, UPNS and Vidoza resolved no link in row 59's sets. On 2026-10-11, 12:30 to 12:52 UTC, from the dev container only (Mr. Normal, `handoff-67`), every link the stream plugins gave for the titles of `docs/plans/round-titles.txt` (`scripts/probes/resolver_urls.py`'s search, keeping all links of the five) was resolved with the app's registry (up to 15 distinct links per hoster). One to four pages per hoster were opened in a headful Patchright Chromium under `xvfb` and in playwright-mcp. Hosts and statuses only; no URL is recorded.
+
+| Hoster | Links (plugins) | Resolver | The page in a browser | Verdict |
+|---|---|---|---|---|
+| Dropload | 80 (hdfilme, streamcloud, streamkiste, kinoking) | finds the stream: past the captcha with the browser fallback, on `r1.dropcdn.io`; the registry's check then fails (`ConnectError`, `ConnectTimeout`) | the player loads (a 1 h 13 min video), and its media requests to `r1.dropcdn.io` fail (`ERR_ADDRESS_UNREACHABLE`) | **The CDN is unreachable from this network**: `r1.dropcdn.io` resolves to the same public address locally and over public DNS, and TCP 443 times out. The resolver is not broken. kinoking's one link on the old domain `dropload.io` is dead (TLS handshake reset; its id does not resolve on `dr0pstream.com`) |
+| SuperVideo | 61 (hdfilme, kinoking, streamcloud, streamkiste) | finds the stream: past Cloudflare's 403 with the browser fallback, on `hfsNNN.serversicuro.cc`; the CDN answers `429 Too many requests` (server Cowboy, no `Retry-After`), again after a 10-minute pause | the site's own player fails the same way: `This video file cannot be played (Error Code: 232011)`, its requests to the CDN fail; another page says `File is no longer available as it expired or has been deleted.` | **The CDN refuses this network (429)**, and some links are dead. The resolver is not broken |
+| UPNS | 13 (moflix) | `upns_file_offline` for 11, one timeout, one 429 | the player stays at "Loading..." (headful too); its `/api/v1/info` decrypts to `title: False, poster: False`, and `/api/v1/video` answers 404 `Video not found or deleted` (4 of 4 checked) | **Dead links**: the hoster says the files are deleted. The resolver stays (the maintainer's rule) |
+| RPMPlay | 13 (moflix) | `rpmplay_file_offline` for 10, three 429 | the same player and the same answers (4 of 4 checked) | **Dead links**. The resolver stays (the maintainer's rule) |
+| Vidoza | 3 (kinoking, movie2k) | `private_address_refused`: the LAN's DNS answers `0.0.0.0` for `vidoza.net` (a blocklist), and the app refuses a private address | at the public DNS address the front page answers 200 (`Vidoza \| free video hosting`), while all 3 files answer 404, as `/<id>.html` and as `/embed-<id>.html` | **Dead links**, and **the LAN's DNS blocks the hoster** |
+
+Live resolver tests of the five (`tests/live/test_resolver_live.py`, `-k` the five names): before (the links of 2026-10-10), `test_live_url_resolves` failed for all five and `test_dead_url_returns_none` passed for all five. After (each hoster's first fresh link), the same result. No resolver changed.
+
+For the maintainer (not resolver changes, so rows of their own if wanted):
+- **The LAN's DNS blocks hosts the app needs**: `vidoza.net` here, and `db.videasy.net`, the cineby plugin's API (`cineby_api_unreachable error=PrivateAddressError` in the same probe). Production runs on the same LAN; whether it uses the same resolver is not measured here.
+- **Two CDNs refuse this network**: `r1.dropcdn.io` (no TCP connection) and `serversicuro.cc` (429). Production probably leaves through the same public address, so its Dropload and SuperVideo streams likely fail the same way; not measured there, since this row stays off production.
+
+Limits: one afternoon, from one network; the Dropload and SuperVideo verdicts may differ from another address (a block by address cannot be told from an outage without a second vantage point). UPNS and RPMPlay: 8 of 26 links checked through the API by hand, the rest by the resolver's 404 reading; all came from moflix.
