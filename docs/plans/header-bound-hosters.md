@@ -198,3 +198,31 @@ The app's registry gave no stream for SuperVideo and Dropload in the same sessio
 - SuperVideo's 429 may come from this probe's own requests (about ten within 10 minutes); row 67 saw it after a 10-minute pause too.
 - The CDN checks are one GET each; the gate's redirect was not followed.
 - The dev container's resolver refuses the ad domains, so this column names what a page tried to load, not what it does when it gets it.
+
+### On the Pi (2026-10-11, 16:57 to 17:00 UTC)
+
+The same three links and the same probe in production's container (`scripts/prodctl.py probe capture_timing --diagnose --runs 2`), production's navigation bound of 10 s, each call after a `prodctl.py stats` pre-check (the app idle: CPU 0.00 to 0.01 of 4 cores, about 415 MiB), on Mr. Fable's signal; then two masked log reads for the stage. Production ran 3a257fe.
+
+| Hoster | Call | Run | Captured | Clicks at | Stream at (CDN) | Popups | Ad domains loaded |
+|---|---|---:|---|---|---|---:|---|
+| Vixeo | plain | 1 | no (the player asks for no media, network state 0) | 5.7, 10.8, 16.0 s | – | 3 | every one the dev container refuses loads: `al5sm.com` (`/tag.min.js`), `betteradsystem.com`, `mayhapmonisms.com`, `runative-syndicate.com`, `emcv4fcvxbefc7ve9wgfq.cfd`, the script host under `vidsonic.net`, then `adsco.re`, `255md.com`, `rtmark.net` |
+| Vixeo | plain | 2 | no | 5.8, 10.9, 16.1 s | – | 3 | the same |
+| Vixeo | `--block al5sm.com` | 1 | yes | 5.6 s | 5.8 s (`vidsonic.net`) | 0 | the same without `al5sm.com` (`blocked`) |
+| Vixeo | `--block al5sm.com` | 2 | yes | 5.0 s | 5.5 s (`vidsonic.net`) | 0 | the same |
+| SuperVideo | plain | 1 | no browser page: the resolver ended in 1.0 s before a capture | – | – | 0 | – |
+| SuperVideo | plain | 2 | no browser page (0.3 s) | – | – | 0 | – |
+| Dropload | plain | 1 | yes | 4.6, 10.5 s | 13.3 s (`dropcdn.io`) | 0 | `llvpn.com` (`/tag.min.js`), `ancillammmm.com`, `hubeamily.com` (`rtmark.net` requested, pending); the Turnstile widget from `challenges.cloudflare.com` passed |
+| Dropload | plain | 2 | yes | – | 2.2 s (`dropcdn.io`) | 0 | the same, no widget (run 1's pass) |
+
+The stage, from production's own half-open trials of 16:33 to 16:34 UTC (one request, `hdfilme`'s links; both breakers reopened for 3600 s):
+
+- **SuperVideo**: `hoster_resolve_unplayable` at 16:33:30: the resolver gave a stream and the registry's playback check failed. It stops at the CDN, as in the dev container (`serversicuro.cc`'s script gate and 429).
+- **Dropload**: `dropload_captcha_browser_fallback` at 16:33:29, `hoster_resolve_timeout` at 16:34:29. The capture needs 13.3 s cold here (the widget, two clicks), past the 10 s bound. Whether its CDN answers the Pi is not measured: the capture does not fetch the playlist, and the trial never got to the check.
+
+Reading:
+
+- **Vixeo is row 78's case in a second player**: its own tag (`al5sm.com/tag.min.js`, the path of Filemoon's `llvpn.com` tag) takes every click on the Pi, and blocking that one domain gives a stream in 2 of 2 runs with the other ad scripts still loaded. Row 79's own-scripts rule would block it too (`al5sm.com` is neither the page's site nor a frame's), so the fix candidate is Vixeo opting into the rule, a fix row for Mr. Fable to decide.
+- **Dropload's ad tag takes no click on the Pi** (0 popups in 2 runs with `llvpn.com` loaded): its time goes to the Turnstile widget. Row 80's exception keeps the widget passable if Dropload ever opts in.
+- **SuperVideo** is the CDN's, on both networks; no capture change helps it.
+
+Limits: one link per hoster, two runs per call in one profile (run 2 is the warm case), one afternoon. The stage lines come from one production request per hoster. SuperVideo's probe runs show no reason of their own for ending before a page.
