@@ -26,7 +26,7 @@ from scavengarr.domain.entities.stremio import EpisodeRef
 from scavengarr.domain.plugins.base import PluginUnreachableError, SearchResult
 from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort, BrowserSession
 from scavengarr.domain.ports.cache import CachePort
-from scavengarr.domain.ports.plugin_history import mark_challenge
+from scavengarr.domain.ports.plugin_history import mark_challenge, settle_challenge
 from scavengarr.infrastructure.browser.cloudflare import is_cloudflare_challenge
 from scavengarr.infrastructure.captcha.detect import (
     detect_challenge,
@@ -469,6 +469,8 @@ class HttpxPluginBase:
         challenge = detect_challenge(resp.status_code, resp.text, resp.headers)
         if challenge is not None:
             self._mark_cf_blocked(url)
+            # No browser tries this answer: the search did not get past it
+            settle_challenge(solved=False)
             self._log.warning(
                 f"{self.name}_challenge",
                 url=url,
@@ -544,6 +546,7 @@ class HttpxPluginBase:
 
         if challenge is not None:
             mark_challenge()
+            settle_challenge(solved=False)
         self._log.warning(
             f"{self.name}_http_error",
             url=url,
@@ -581,7 +584,9 @@ class HttpxPluginBase:
             self._log.info(
                 f"{self.name}_browser_session_rejected", url=url, context=context
             )
-            return await fetcher.fetch_text(url, timeout=_BROWSER_FETCH_TIMEOUT_S)
+            body = await fetcher.fetch_text(url, timeout=_BROWSER_FETCH_TIMEOUT_S)
+            settle_challenge(solved=body is not None)
+            return body
 
         self._log.info(
             f"{self.name}_browser_fallback",
@@ -592,7 +597,10 @@ class HttpxPluginBase:
         solve = asyncio.create_task(self._solve_and_adopt(fetcher, url))
         self._background_solves.add(solve)
         solve.add_done_callback(_forget_solve)
-        return await asyncio.shield(solve)
+        # A failed solve or a cut request leaves the challenge open: unsolved
+        body = await asyncio.shield(solve)
+        settle_challenge(solved=body is not None)
+        return body
 
     async def _solve_and_adopt(
         self, fetcher: BrowserFetcherPort, url: str

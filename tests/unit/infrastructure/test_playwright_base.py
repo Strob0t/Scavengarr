@@ -922,6 +922,26 @@ class TestWaitForCloudflare:
 
         assert flag.seen is seen
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("solved", [True, False])
+    async def test_the_challenge_is_settled_with_the_solve(self, solved: bool) -> None:
+        """Row 70: the flag learns whether the browser got past it."""
+        plugin = _TestPlugin()
+        page = AsyncMock()
+        page.title = AsyncMock(return_value="Just a moment...")
+        flag = ChallengeFlag()
+        token = challenge_flag.set(flag)
+        try:
+            with patch(
+                "scavengarr.infrastructure.plugins.playwright_base.solve_cloudflare",
+                AsyncMock(return_value=solved),
+            ):
+                await plugin._wait_for_cloudflare(page)
+        finally:
+            challenge_flag.reset(token)
+
+        assert flag.unsolved_search is not solved
+
 
 class TestClearanceStore:
     @pytest.fixture(autouse=True)

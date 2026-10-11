@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: The Challenge Counter Tells Solved From Unsolved
+- The plugin record counts `challenges_unsolved` per plugin and UTC day (row 70): a search with a challenge the plugin did not get past. That covers a browser fallback that returned no page or failed, an answer no browser tried, a Playwright solve that gave up, and a challenge still open when the search ended. The bases mark each challenge with `mark_challenge()` and settle it with `settle_challenge(solved=...)`; the runner counts once per search.
+- `GET /api/v1/stats/plugins` carries the counter in its days, and an older day without it reads 0. The digest's plugin table shows `challenges/unsolved` and a line with N20's rule over the record's last 7 days: a solver sidecar trial only for a plugin whose unsolved challenges exceed 5 % of its searches.
+
 ### Added: Plugins Read Their Sites' Official Domain Lists
 - A plugin can name its site's official list of addresses (`domain_list_url`) and a marker, the CSS selector of an element only the site itself shows (`domain_marker`). When no `_domains` entry answers, `HttpxPluginBase`'s domain check reads the list through the shared client and takes the first listed host beyond `_domains` that shows the marker: up to 20 hosts, no IP literals, cached 24 h (`<plugin>:domain_list:v1`), a failed read cached 1 h with one warning. The host is logged as `plugin_domain_list_host`, and the digest names it under Plugins.
 - filmo (`filmo.domains`), aniworld (`aniworld.domains`) and sto (`serien.domains`) read their lists. The survey of all 42 sites is in `docs/plans/plugin-domains.md` → Official domain lists. aniworld.cc and serienstream.cx serve their sites and are not in `_domains`; whether they go in is the maintainer's decision.

@@ -15,7 +15,7 @@ import math
 import re
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 # A metric sample: ``name{label="value",...} 1.0``
@@ -36,6 +36,10 @@ _SOURCE_EVENTS = {
 }
 _SOURCE_ORDER = ("search", "joined", "stale", "cache", "none")
 _RECORD_WINDOWS = ("30", "90", "180")
+# N20: a solver trial only above this share of unsolved challenges in a
+# plugin's searches over the record's last days
+_RULE_DAYS = 7
+_RULE_SHARE = 0.05
 _TOP_EVENTS = 5
 _TOP_ERRORS = 3
 _ERROR_LEVELS = frozenset({"error", "critical", "fatal"})
@@ -188,12 +192,17 @@ def plugins(record: Any, first_day: date) -> dict[str, Any]:
     if not isinstance(record, dict) or not isinstance(record.get("plugins"), dict):
         return {"available": False, "plugins": []}
     today = date.fromisoformat(record["today"]) if "today" in record else None
+    # N20's rule reads the record's last 7 days, whatever the window
+    rule_day = (today - timedelta(days=_RULE_DAYS - 1)).isoformat() if today else None
     rows: list[dict[str, Any]] = []
     for name, entry in record["plugins"].items():
         counters: Counter[str] = Counter()
+        week: Counter[str] = Counter()
         for day, day_counters in entry.get("days", {}).items():
             if day >= first_day.isoformat():
                 counters.update(day_counters)
+            if rule_day is not None and day >= rule_day:
+                week.update(day_counters)
         last = entry.get("last_result_day")
         days_since = (
             (today - date.fromisoformat(last)).days
@@ -208,6 +217,10 @@ def plugins(record: Any, first_day: date) -> dict[str, Any]:
                 "timeouts": counters["timeouts"],
                 "dropped": counters["dropped"],
                 "challenges": counters["challenges"],
+                # An older record without the counter reads 0
+                "challenges_unsolved": counters["challenges_unsolved"],
+                "searches_7d": week["searches"],
+                "unsolved_7d": week["challenges_unsolved"],
                 "checks": counters["checks"],
                 "unreachable": counters["unreachable"],
                 "unreachable_searches": counters["unreachable_searches"],
@@ -444,7 +457,7 @@ def _plugins_section(plugins_: dict[str, Any]) -> list[str]:
                     "Results",
                     "Timeouts",
                     "Dropped",
-                    "Challenges",
+                    "Challenges/unsolved",
                     "Checks",
                     "Unreachable checks/searches",
                     "Last result",
@@ -457,7 +470,7 @@ def _plugins_section(plugins_: dict[str, Any]) -> list[str]:
                         p["results"],
                         p["timeouts"],
                         p["dropped"],
-                        p["challenges"],
+                        f"{p['challenges']}/{p['challenges_unsolved']}",
                         p["checks"],
                         f"{p['unreachable']}/{p['unreachable_searches']}",
                         _last_result(p),
@@ -474,10 +487,15 @@ def _plugins_section(plugins_: dict[str, Any]) -> list[str]:
         if challenged:
             lines.append(
                 "Challenged in the window: "
-                + ", ".join(f"{p['plugin']} {p['challenges']}" for p in challenged)
+                + ", ".join(
+                    f"{p['plugin']} {p['challenges']}"
+                    f" ({p['challenges_unsolved']} unsolved)"
+                    for p in challenged
+                )
             )
         else:
             lines.append("No search met a challenge in the window.")
+        lines.append(_unsolved_rule(plugins_["plugins"]))
         above = [p for p in plugins_["plugins"] if p["unreachable"] > p["checks"]]
         if above:
             lines.append(
@@ -488,6 +506,26 @@ def _plugins_section(plugins_: dict[str, Any]) -> list[str]:
                 )
             )
     return lines
+
+
+def _unsolved_rule(rows: Sequence[dict[str, Any]]) -> str:
+    """N20's rule: a solver sidecar trial only for a plugin whose unsolved
+    challenges exceed 5 % of its searches over the last 7 days."""
+    unsolved = [p for p in rows if p["unsolved_7d"]]
+    if not unsolved:
+        return f"No unsolved challenge in the record's last {_RULE_DAYS} days."
+    parts = []
+    for p in unsolved:
+        share = p["unsolved_7d"] / p["searches_7d"] if p["searches_7d"] else 1.0
+        above = ", above 5 %" if share > _RULE_SHARE else ""
+        parts.append(
+            f"{p['plugin']} {p['unsolved_7d']} of {p['searches_7d']} searches"
+            f" ({share * 100:.1f} %{above})"
+        )
+    return (
+        f"Unsolved challenges over the record's last {_RULE_DAYS} days (N20: a"
+        " solver trial above 5 % of a plugin's searches): " + ", ".join(parts)
+    )
 
 
 def render(data: dict[str, Any]) -> str:

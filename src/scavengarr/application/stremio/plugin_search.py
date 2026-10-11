@@ -660,7 +660,8 @@ class PluginSearchRunner:
     def _counting_challenges(self, name: str) -> Generator[None]:
         """A fresh challenge flag for *name*'s search: the plugin bases mark
         it when a page shows a challenge, and ``challenges`` is counted once
-        when the search ends, with a timeout or a cancellation too."""
+        when the search ends, with a timeout or a cancellation too;
+        ``challenges_unsolved`` once when one was not got past."""
         flag = ChallengeFlag()
         token = challenge_flag.set(flag)
         try:
@@ -669,6 +670,8 @@ class PluginSearchRunner:
             challenge_flag.reset(token)
             if flag.seen:
                 self._history.count(name, "challenges")
+            if flag.unsolved_search:
+                self._history.count(name, "challenges_unsolved")
 
     async def _filter_episodes(
         self,

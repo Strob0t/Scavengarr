@@ -541,6 +541,8 @@ class TestChallengeFlag:
             challenge_flag.reset(token)
 
         assert flag.seen is True
+        # Nothing tried to get past it (row 70)
+        assert flag.unsolved_search is True
 
     @respx.mock
     async def test_fetch_text_marks_the_flag_without_a_fetcher(
@@ -560,6 +562,7 @@ class TestChallengeFlag:
             challenge_flag.reset(token)
 
         assert flag.seen is True
+        assert flag.unsolved_search is True
 
     @respx.mock
     async def test_fetch_text_marks_the_flag_on_the_browser_fallback(
@@ -583,6 +586,30 @@ class TestChallengeFlag:
 
         assert html == "<html>solved</html>"
         assert flag.seen is True
+        # The browser got past it (row 70)
+        assert flag.unsolved_search is False
+
+    @respx.mock
+    async def test_a_browser_fallback_without_the_page_is_unsolved(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(HttpxPluginBase, "_cf_blocked_until", {})
+        fetcher = AsyncMock()
+        fetcher.fetch_text = AsyncMock(return_value=None)
+        monkeypatch.setattr(HttpxPluginBase, "_browser_fetcher", fetcher)
+        respx.get("https://example.com/page").respond(503, html=self._CHALLENGE)
+        plugin = _TestPlugin()
+        flag = ChallengeFlag()
+        token = challenge_flag.set(flag)
+        try:
+            async with httpx.AsyncClient() as client:
+                plugin._client = client
+                assert await plugin._fetch_text("https://example.com/page") is None
+        finally:
+            challenge_flag.reset(token)
+
+        assert flag.seen is True
+        assert flag.unsolved_search is True
 
     @respx.mock
     async def test_an_error_page_leaves_the_flag(

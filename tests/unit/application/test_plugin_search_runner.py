@@ -16,7 +16,11 @@ from scavengarr.domain.entities.scoring import PluginScoreSnapshot
 from scavengarr.domain.entities.stremio import EpisodeRef
 from scavengarr.domain.plugins.base import PluginUnreachableError, SearchResult
 from scavengarr.domain.ports.browser_fetcher import PageClaim, page_claim
-from scavengarr.domain.ports.plugin_history import challenge_flag, mark_challenge
+from scavengarr.domain.ports.plugin_history import (
+    challenge_flag,
+    mark_challenge,
+    settle_challenge,
+)
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.concurrency import ConcurrencyPool
 from scavengarr.infrastructure.telemetry import Telemetry
@@ -439,11 +443,46 @@ class TestPluginRecord:
 
         await _search(runner, ["a"], ["q"])
 
+        # The challenge was still open when the search timed out: unsolved
         assert [c.args for c in history.count.call_args_list] == [
             ("a", "searches"),
             ("a", "challenges"),
+            ("a", "challenges_unsolved"),
             ("a", "timeouts"),
         ]
+
+    @pytest.mark.parametrize(
+        ("outcomes", "unsolved"),
+        [
+            ([True], False),
+            ([False], True),
+            ([True, False], True),
+            ([True, None], True),
+        ],
+        ids=["solved", "failed", "one-of-two-failed", "one-left-open"],
+    )
+    async def test_a_search_with_an_unsolved_challenge_counts_once(
+        self, outcomes: list[bool | None], unsolved: bool
+    ) -> None:
+        """Row 70: a search counts ``challenges_unsolved`` once when any of
+        its challenges failed or was still open at its end."""
+
+        async def _challenged(*_args: object, **_kwargs: object) -> list[SearchResult]:
+            for solved in outcomes:
+                mark_challenge()
+                if solved is not None:
+                    settle_challenge(solved=solved)
+            return []
+
+        plugin = _plugin([])
+        plugin.search = AsyncMock(side_effect=_challenged)
+        history = MagicMock(spec=["count"])
+
+        await _search(_runner(_registry({"a": plugin}), history=history), ["a"], ["q"])
+
+        counted = [c.args for c in history.count.call_args_list]
+        assert counted.count(("a", "challenges")) == 1
+        assert counted.count(("a", "challenges_unsolved")) == int(unsolved)
 
     async def test_a_mark_outside_a_search_counts_nothing(self) -> None:
         assert challenge_flag.get() is None

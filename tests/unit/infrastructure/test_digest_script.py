@@ -143,6 +143,7 @@ _RECORD = {
                     "searches": 5,
                     "timeouts": 2,
                     "challenges": 4,
+                    "challenges_unsolved": 1,
                     "checks": 3,
                     "unreachable": 1,
                     "unreachable_searches": 2,
@@ -247,6 +248,9 @@ class TestSections:
             kinoger["unreachable_searches"],
         ) == (3, 1, 2)
         assert kinoger["challenges"] == 4
+        assert kinoger["challenges_unsolved"] == 1
+        # N20's rule reads the record's last 7 days, not the digest's window
+        assert (kinoger["searches_7d"], kinoger["unsolved_7d"]) == (15, 1)
         assert kinoger["days_since_result"] == 1
         assert kinoger["unreachable_share"] == {"30": 0.1, "90": None, "180": None}
         # Its one day lies before the window
@@ -324,8 +328,10 @@ class TestRender:
             assert f"\n## {heading}\n" in text
         assert "| search | 1 | 13.40 s | 13.40 s | 5.0 | 0 |" in text
         assert "\nBy id scheme: tt 5, kitsu 1, tmdb 1\n" in text
-        assert "| kinoger | 15 | 3 | 2 | 0 | 4 | 3 | 1/2 | 1 d ago | 10%/–/– |" in text
-        assert "\nChallenged in the window: kinoger 4\n" in text
+        assert (
+            "| kinoger | 15 | 3 | 2 | 0 | 4/1 | 3 | 1/2 | 1 d ago | 10%/–/– |" in text
+        )
+        assert "\nChallenged in the window: kinoger 4 (1 unsolved)\n" in text
         assert "marks above the checks" not in text
         assert "| voe | 93 | 1.2 s | stream 93 |" in text
 
@@ -340,12 +346,34 @@ class TestRender:
 
         text = _mod.render(_digest(record=record))
 
-        assert "| movie4k | 0 | 0 | 0 | 0 | 0 | 372 | 375/0 | never |" in text
+        assert "| movie4k | 0 | 0 | 0 | 0 | 0/0 | 372 | 375/0 | never |" in text
         assert (
             "\nUnreachable marks above the checks (days recorded before the"
             " searches' own counter, 2026-10-10, hold their marks too):"
             " movie4k 375 of 372\n" in text
         )
+
+    def test_n20s_rule_over_seven_days(self) -> None:
+        """Row 70: a solver trial only for a plugin whose unsolved
+        challenges exceed 5 % of its searches over 7 days."""
+        text = _mod.render(_digest())
+
+        assert (
+            "\nUnsolved challenges over the record's last 7 days (N20: a solver"
+            " trial above 5 % of a plugin's searches): kinoger 1 of 15 searches"
+            " (6.7 %, above 5 %)\n"
+        ) in text
+
+    def test_an_older_record_reads_no_unsolved_challenge(self) -> None:
+        record = json.loads(json.dumps(_RECORD))
+        del record["plugins"]["kinoger"]["days"]["2026-10-07"]["challenges_unsolved"]
+
+        data = _digest(record=record)
+        text = _mod.render(data)
+
+        assert data["plugins"]["plugins"][0]["challenges_unsolved"] == 0
+        assert "| kinoger | 15 | 3 | 2 | 0 | 4/0 |" in text
+        assert "\nNo unsolved challenge in the record's last 7 days.\n" in text
 
     def test_without_a_challenge_the_plugins_say_so(self) -> None:
         record = json.loads(json.dumps(_RECORD))

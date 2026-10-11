@@ -90,6 +90,17 @@ class TestCounters:
             "2026-10-07": {"searches": 1, "challenges": 1}
         }
 
+    def test_unsolved_challenges_are_a_counter(self) -> None:
+        """A search with a challenge the browser did not get past (row 70)."""
+        history = _history()
+
+        history.count("kinoger", "challenges")
+        history.count("kinoger", "challenges_unsolved")
+
+        assert history.report()["plugins"]["kinoger"]["days"] == {
+            "2026-10-07": {"challenges": 1, "challenges_unsolved": 1}
+        }
+
     def test_the_day_changes_at_midnight_utc(self) -> None:
         clock = _Clock(_NOON + 12 * 3600 - 1)
         history = _history(clock=clock)
