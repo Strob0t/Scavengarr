@@ -26,6 +26,7 @@ async def capture_stream(
     hoster: str,
     *,
     player: str | None = None,
+    own_scripts_only: bool = False,
 ) -> ResolvedStream | None:
     """Run the hoster's player in the stealth browser, take its stream request.
 
@@ -34,11 +35,15 @@ async def capture_stream(
     own timeout bounds navigation and the Cloudflare challenge
     (``stremio.probe_stealth_timeout_seconds``). *player* names the element
     the browser clicks to start the player, the page centre without it.
+    *own_scripts_only* keeps the scripts of other sites than the page's and
+    its frames' out (an ad tag that takes the clicks).
     """
     if stealth_pool is None:
         log.info(f"{hoster}_no_browser", url=embed_url)
         return None
-    media = await stealth_pool.capture_media(embed_url, player=player)
+    media = await stealth_pool.capture_media(
+        embed_url, player=player, own_scripts_only=own_scripts_only
+    )
     if media is None:
         log.info(f"{hoster}_browser_no_stream", url=embed_url)
         return None

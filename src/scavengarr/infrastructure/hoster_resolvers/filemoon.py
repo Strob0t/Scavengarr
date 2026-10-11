@@ -146,8 +146,13 @@ class FilemoonResolver:
         if page is None:
             return None
         page_url, player = page
+        # The player frame's ad tag turns every click into a popup
         return await capture_stream(
-            self._stealth_pool, page_url, "filemoon", player=player
+            self._stealth_pool,
+            page_url,
+            "filemoon",
+            player=player,
+            own_scripts_only=True,
         )
 
     async def _byse_page(self, embed_url: str) -> tuple[str, str | None] | None:

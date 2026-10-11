@@ -398,6 +398,8 @@ class TestBrowserCapture:
         )
         # The pool's own timeout (stremio.probe_stealth_timeout_seconds) applies
         assert "timeout" not in pool.capture_media.await_args.kwargs
+        # The player frame's ad tag stays out (row 78)
+        assert pool.capture_media.await_args.kwargs["own_scripts_only"] is True
 
     @pytest.mark.asyncio
     async def test_mp4_stream_without_referer(self) -> None:
@@ -473,12 +475,19 @@ class _FakePool:
         self.media = media
         self.urls: list[str] = []
         self.players: list[str | None] = []
+        self.own_scripts: list[bool] = []
 
     async def capture_media(
-        self, url: str, *, timeout: float | None = None, player: str | None = None
+        self,
+        url: str,
+        *,
+        timeout: float | None = None,
+        player: str | None = None,
+        own_scripts_only: bool = False,
     ) -> CapturedMedia | None:
         self.urls.append(url)
         self.players.append(player)
+        self.own_scripts.append(own_scripts_only)
         return self.media
 
 
@@ -517,6 +526,7 @@ class TestByseDetailsGate:
         assert pool.urls == [f"{_BYSE}/e/{_BYSE_ID}"]
         # The embed page is the player: the page centre is clicked
         assert pool.players == [None]
+        assert pool.own_scripts == [True]
         assert result is not None
         assert result.video_url == self._MEDIA.url
         assert result.is_hls
@@ -534,6 +544,7 @@ class TestByseDetailsGate:
         assert pool.urls == [f"{_BYSE}/d/{_BYSE_ID}"]
         # The watch page shows its player in a frame below its header
         assert pool.players == [".video-page__player iframe"]
+        assert pool.own_scripts == [True]
         assert result is not None
         assert result.video_url == self._MEDIA.url
         # The player frame's request carries the Referer the CDN checks

@@ -118,4 +118,8 @@ Limits:
 - The app's stealth context outlives a probe call, so production should mostly meet the second case. That is not measured.
 - `llvpn.com` is the ad network's domain today; it can change.
 
-The fix keeps the ad tag out of the capture; its design follows this result (backlog row 78).
+### The fix (Row 79)
+
+Mr. Fable's design: a capture that opts in aborts, as the client's block, every script request whose site is neither the page's nor one of its frames'. Only the Filemoon resolver opts in, for its `/e/` pages and Byse's `/d/` watch pages; the other captures are measured on the Pi first. Not a domain list (the ad network can switch domains) and not a DNS blocklist on the VPN (the maintainer's configuration, and such lists also block hoster domains).
+
+In the dev container both link kinds capture with it (Byse 4.5 and 1.6 s, `/e/` 5.3 and 1.5 s), and the tag reads `blocked` from the capture's own route. The Pi's proof follows the deploy: production's Filemoon captures and the breaker over the following hours. The breaker is restored open; its first half-open trial runs in a fresh profile (the captcha path: 17.8 s, or no playlist by 25.0 s), past the 10 s resolve budget, so it may reopen for an hour before a warm trial (6.8 and 6.9 s in row 78).

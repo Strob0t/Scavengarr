@@ -482,10 +482,9 @@ class TimedStealthPool(StealthPool):
             self._routed.append(page.context)
             await page.context.route(matches, block_request)  # popups
 
-    async def capture_media(
-        self, url: str, *, timeout: float | None = None, player: str | None = None
-    ) -> CapturedMedia | None:
-        media = await super().capture_media(url, timeout=timeout, player=player)
+    async def capture_media(self, url: str, **kwargs: Any) -> CapturedMedia | None:
+        # The image's own parameters, whichever version runs the probe
+        media = await super().capture_media(url, **kwargs)
         if self.run is not None and media is not None:
             self.run.stream_at = time.monotonic() - self.run.started
             self.run.cdn = domain(media.url)

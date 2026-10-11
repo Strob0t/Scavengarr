@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: Filemoon Captures Keep the Player's Ad Tag Out
+- The Filemoon resolver's capture (its `/e/` pages and Byse's `/d/` watch pages) runs the scripts of the page's and its frames' sites only (`StealthPool.capture_media(own_scripts_only=True)`, through `capture_stream()`): a script of another site is aborted as the client's block and logged at debug level with its site (`stealth_capture_script_blocked`). The media cut stays, and the other captures are unchanged.
+- Why: on the Pi the Byse player's frame loads an ad tag (`llvpn.com`) that turns every click into a popup, so the player never starts its access flow: no stream in 10 of 10 runs (2026-10-11). With the tag blocked the player ran its access flow in 4 of 4 runs and gave a stream in 3 (row 78). The dev container's resolver refuses the ad domains, which is why it always captured.
+- In the dev container both link kinds still capture with the rule (Byse 4.5 and 1.6 s, `/e/` 5.3 and 1.5 s), and the tag reads `blocked`. The Pi's proof follows the deploy.
+
 ### Fixed: An Episode 0 Entry No Longer Moves an Anime's Episode Numbers
 - The episode reference's absolute number (`TitleResolver.episode_ref()`) counts only the entries of season 1 and up with episode 1 and up. Cinemeta lists some episode 0 entries in regular seasons (Yu-Gi-Oh! Duel Monsters' S2E0 and S4E0, Yu Yu Hakusho's and Tsubasa Chronicle's S1E0), and every later episode was numbered one or two above Kitsu and the sites (Duel Monsters' S2E1 was 51, the site's 50). An episode 0 entry of a regular season now has no position of its own, as a special has none; a `kitsu:` request's number is kept within 5 of the new position.
 - Measured (`docs/plans/series-episodes.md`, row 77): Duel Monsters 224 of 224 episodes now equal Kitsu's number (49 before), Yu Yu Hakusho 112 of 112 (0), Tsubasa Chronicle 26 of 26 (0); row 72's other ten long-running anime unchanged. aniworld numbers these series as Kitsu does. Each affected episode misses the search cache once, since the key carries the number.

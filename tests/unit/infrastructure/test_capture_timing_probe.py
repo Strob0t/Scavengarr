@@ -129,7 +129,9 @@ class TestTimedPool:
         pool = _mod.TimedStealthPool(browser_pool=MagicMock())
         pool.run = _mod.Run(time.monotonic())
 
-        await pool.capture_media("https://byse.example/d/abc", player="iframe")
+        await pool.capture_media(
+            "https://byse.example/d/abc", player="iframe", own_scripts_only=True
+        )
 
         assert pool.run.stream_at is not None
         assert pool.run.cdn == "example.com"

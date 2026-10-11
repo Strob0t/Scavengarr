@@ -6,9 +6,12 @@ import asyncio
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import structlog
+from patchright.async_api import Error as PlaywrightError
 
 from scavengarr.domain.ports.browser_fetcher import (
     BrowserSession,
@@ -1036,6 +1039,113 @@ class TestStealthPoolCaptureMedia:
             await _allow_player_resources(route)
             assert route.abort.await_count == int(aborted)
             assert route.continue_.await_count == int(not aborted)
+
+    async def test_a_capture_of_own_scripts_only_routes_them(self) -> None:
+        from scavengarr.infrastructure.browser.stealth_pool import (
+            _allow_own_player_resources,
+        )
+
+        shared_pool, _, context = _mock_pool_stack()
+        page = _player_page(on_load=["https://cdn.example/x.m3u8"])
+        context.new_page = AsyncMock(return_value=page)
+
+        await StealthPool(browser_pool=shared_pool).capture_media(
+            "https://filemoon.to/e/abc", timeout=10, own_scripts_only=True
+        )
+
+        page.route.assert_awaited_once_with("**/*", _allow_own_player_resources)
+
+
+# The Byse watch page and its player frame (row 78 on the Pi)
+_FRAMES = ("https://bysezejataos.com/d/abc", "https://n1mwq.org/xdk4/abc")
+
+
+class _Request:
+    """A route's request: its frame's page lists *frames*; ``None``: the
+    request has no frame (a service worker's)."""
+
+    def __init__(
+        self, url: str, resource_type: str, frames: tuple[str, ...] | None = _FRAMES
+    ) -> None:
+        self.url = url
+        self.resource_type = resource_type
+        self._frames = frames
+
+    @property
+    def frame(self) -> SimpleNamespace:
+        if self._frames is None:
+            raise PlaywrightError("no frame")
+        frames = [SimpleNamespace(url=url) for url in self._frames]
+        return SimpleNamespace(page=SimpleNamespace(frames=frames))
+
+
+class TestOwnScriptsOnly:
+    """A capture that opts in runs the scripts of the page's and its
+    frames' sites only: an ad tag in the player frame turns every click
+    into a popup (Filemoon on the Pi)."""
+
+    def test_a_script_of_another_site_is_foreign(self) -> None:
+        from scavengarr.infrastructure.browser.stealth_pool import _foreign_script
+
+        assert _foreign_script("script", "https://llvpn.com/tag.min.js", _FRAMES)
+        assert _foreign_script(
+            "script", "https://www.gstatic.com/cv/js/sender/v1/cast_sender.js", _FRAMES
+        )
+        # The page's and the player frame's own scripts, subdomains included
+        assert not _foreign_script(
+            "script", "https://n1mwq.org/player/x/jwplayer.js", _FRAMES
+        )
+        assert not _foreign_script(
+            "script", "https://cdn.bysezejataos.com/assets/index.js", _FRAMES
+        )
+        # Requests other than scripts are not its business
+        assert not _foreign_script("xhr", "https://rtmark.net/gid.js", _FRAMES)
+        assert not _foreign_script("media", "https://cdn.example/x.mp4", _FRAMES)
+
+    async def test_a_foreign_script_is_aborted_as_the_clients_block(self) -> None:
+        from scavengarr.infrastructure.browser.stealth_pool import (
+            _allow_own_player_resources,
+        )
+
+        route = AsyncMock()
+        route.request = _Request("https://llvpn.com/tag.min.js", "script")
+
+        with structlog.testing.capture_logs() as logs:
+            await _allow_own_player_resources(route)
+
+        route.abort.assert_awaited_once_with("blockedbyclient")
+        route.continue_.assert_not_awaited()
+        (event,) = [e for e in logs if e["event"] == "stealth_capture_script_blocked"]
+        assert event["domain"] == "llvpn.com"
+
+    @pytest.mark.parametrize(
+        ("request_", "aborted"),
+        [
+            (_Request("https://n1mwq.org/player/x/jwplayer.js", "script"), False),
+            (_Request("https://llvpn.com/banner.css", "stylesheet"), False),
+            # The media cut stays
+            (_Request("https://cdn.example/x.mp4", "media"), True),
+            # Without its frame the request passes as before
+            (_Request("https://llvpn.com/tag.min.js", "script", frames=None), False),
+        ],
+    )
+    async def test_everything_else_keeps_the_players_route(
+        self, request_: _Request, aborted: bool
+    ) -> None:
+        from scavengarr.infrastructure.browser.stealth_pool import (
+            _allow_own_player_resources,
+        )
+
+        route = AsyncMock()
+        route.request = request_
+
+        await _allow_own_player_resources(route)
+
+        if aborted:
+            route.abort.assert_awaited_once_with()
+        else:
+            route.abort.assert_not_awaited()
+        assert route.continue_.await_count == int(not aborted)
 
 
 @pytest.mark.usefixtures("_fast_capture")

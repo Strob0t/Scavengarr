@@ -12,13 +12,14 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 from urllib.parse import urlparse
 
 import structlog
 from patchright.async_api import Browser, BrowserContext, Page, Request, Route
+from patchright.async_api import Error as PlaywrightError
 
 from scavengarr.domain.ports.browser_fetcher import BrowserSession, ClickThrough
 from scavengarr.infrastructure.browser.hardening import block_heavy_resources
@@ -120,6 +121,41 @@ async def _allow_player_resources(route: Route) -> None:
         await route.abort()
     else:
         await route.continue_()
+
+
+def _site(url: str) -> str:
+    """The host's last two labels: ``n1mwq.org`` for ``a.n1mwq.org``."""
+    host = (urlparse(url).hostname or "").lower()
+    return ".".join(host.split(".")[-2:])
+
+
+def _foreign_script(resource_type: str, url: str, frame_urls: Iterable[str]) -> bool:
+    """Whether a request is a script of a site that is neither the page's nor
+    one of its frames' (a player's own scripts come from its page's or its
+    frame's site, an ad tag from the ad network's)."""
+    if resource_type != "script":
+        return False
+    return _site(url) not in {_site(frame_url) for frame_url in frame_urls}
+
+
+async def _allow_own_player_resources(route: Route) -> None:
+    """``_allow_player_resources`` for a capture that runs the page's own
+    scripts only: a script of another site than the page's and its frames'
+    is aborted as the client's block. Filemoon's player frame loads an ad
+    tag that turns every click into a popup, so the player never starts."""
+    request = route.request
+    if request.resource_type == "script":
+        try:
+            frame_urls = [frame.url for frame in request.frame.page.frames]
+        except PlaywrightError:
+            frame_urls = None  # a service worker's request: no frame to judge
+        if frame_urls is not None and _foreign_script(
+            request.resource_type, request.url, frame_urls
+        ):
+            log.debug("stealth_capture_script_blocked", domain=_site(request.url))
+            await route.abort("blockedbyclient")
+            return
+    await _allow_player_resources(route)
 
 
 async def _click_clear_of_layers(page: Page, selector: str) -> None:
@@ -418,7 +454,12 @@ class StealthPool:
         return self._user_agent
 
     async def capture_media(
-        self, url: str, *, timeout: float | None = None, player: str | None = None
+        self,
+        url: str,
+        *,
+        timeout: float | None = None,
+        player: str | None = None,
+        own_scripts_only: bool = False,
     ) -> CapturedMedia | None:
         """Open *url*, start its player and return the stream URL it requests.
 
@@ -433,7 +474,9 @@ class StealthPool:
         *timeout* bounds navigation and the Cloudflare challenge; without
         one the pool's own applies (``stremio.probe_stealth_timeout_seconds``,
         the resolvers' capture). The player clicks after it are bounded by
-        the pool's own waits.
+        the pool's own waits. *own_scripts_only* aborts the scripts of other
+        sites than the page's and its frames' (``_allow_own_player_resources``):
+        an ad tag that takes the clicks.
         """
         if timeout is None:
             timeout = self._timeout_ms / 1000
@@ -466,7 +509,12 @@ class StealthPool:
 
                 page.on("request", _on_request)
                 page.on("popup", _close_popup)
-                await page.route("**/*", _allow_player_resources)
+                await page.route(
+                    "**/*",
+                    _allow_own_player_resources
+                    if own_scripts_only
+                    else _allow_player_resources,
+                )
                 if not await self._navigate(
                     page,
                     url,
