@@ -333,3 +333,18 @@ The two new live cases fail the way the analysis predicts (`upns_file_offline`, 
 | sto | serienstream.to, serienstream.cx | both 200, marker | pinned serienstream.to |
 
 aniworld.cc and serienstream.cx serve their sites and were not in `_domains`. The maintainer said yes (row 74), and both now follow the first domain: with it dead (a `.invalid` host), the domain check pinned aniworld.cc and serienstream.cx (dev container, 2026-10-11). The marker appears on every captured page of the three sites except filmo's redirect interstitial (`test_the_marker_is_on_the_sites_own_pages`).
+
+## kinox keeps no hoster link (2026-10-11, row 73)
+
+**Question.** Production's digest of 14:01 UTC showed kinox with 52 searches on 2026-10-11, 0 results, and 29 checks, none of them unreachable. At 13:14 UTC (Interstellar) it logged `kinox_domain_found`, then `kinox_detail ... hosters=2`, then `kinox_no_hoster_links`. Is the mirror call failing, or `_resolve_own_links()`?
+
+**Finding** (dev container, `PYTHONPATH=src`, Interstellar, 14:05 to 14:14 UTC):
+- The domain check, search, detail page and mirror call all work. `www22.kinox.to` answers; the search finds `/Stream/Interstellar.html`; the detail page lists Vinovo and Dood.to.
+- Each `/aGET/Mirror/...` answers 200 with JSON (`HosterHome`, `HosterName`, `Replacement`, `Stream`). Its `Stream` holds an iframe on kinox's own `/redirect/<32-character hash>?t=<time>`, which `_fetch_mirror_url()` reads correctly.
+- The redirect never leaves the site. It answers 200 without a `Location`: without a `Referer`, a 1.2 KB "Please wait, checking your request..." page; opened from the movie page, a 31 to 40 KB page with a POST form. That page asks for a human captcha: "Captcha eingeben", "Schritt 1 von 3: Bitte klicke auf einen Hund" (three steps of image clicks, the prompt changing per load), with hidden honeypot fields (email, name, website and others).
+- So `_resolve_redirect()` finds no off-site target, `_resolve_own_links()` drops every link, and the plugin logs `kinox_no_hoster_links`.
+- Site analysis in a real browser (playwright-mcp) confirmed it: a click on the Vinovo hoster loads the player iframe on `/redirect/<hash>`, and it shows "Schritt 1 von 3: Bitte klicke auf ein Dreieck und einen Pfeil, um fortzufahren".
+
+**Decision.** No change to `plugins/kinox.py`. The site gives no hoster link without a human captcha, which is the row's stop rule. The CHANGELOG has listed it under KNOWN_ISSUES since 2026-10-01 (the same captcha). kinox stays enabled (the maintainer's rule), and its record keeps saying so: searches with 0 results, the site reachable.
+
+**Live proof.** The plugin smoke test (`poetry run pytest -m live -k kinox tests/live`) fails with "returned 0 results", as expected while the captcha stands. No pages were captured as fixtures, because there is no parser change to test.
