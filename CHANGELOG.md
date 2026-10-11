@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: A Probe Counts the Episode Offsets of Long-Running Anime
+- `scripts/probes/anime_offsets.py [--kitsu 12,210,...]` runs in the dev container and reads Cinemeta and the Anime Kitsu addon only (row 72). Per long-running anime, given as a Kitsu id (default: eleven long-runners whose Kitsu entry spans the series), it takes each Kitsu episode the addon maps to an IMDb season and episode (`imdbSeason`/`imdbEpisode`). It asks the app's episode reference (`TitleResolver.episode_ref()`) for the absolute number an IMDb request for that episode gets, and compares it with the Kitsu number. Per series it prints the episodes, the mapped ones, equal, off by +1, by −1 and by more, the mapped episodes Cinemeta lacks or lists in season 0, the unmapped ones, the regular Cinemeta entries no Kitsu episode maps to, and the first episode that is off. Names and counts only.
+- The run of 2026-10-11: nine of the eleven series number every listed episode as Kitsu does. One Piece is one low from S16E12 (Kitsu 591) on, 590 episodes, because IMDb lists no episode for Kitsu 590, the crossover special of 2013. Yu☆Gi☆Oh! Duel Monsters is one high from S2E1 and two high from S4E1, 175 of 224 episodes, because Cinemeta lists S2E0 and S4E0 among the regular seasons and the position counts them. The table and the limits are in `docs/plans/series-episodes.md` → Row 72. There is no fix yet: the numbers size the maintainer's options.
+
 ### Changed: aniworld.cc and serienstream.cx Join the Domains
 - aniworld's `_domains` are aniworld.to and aniworld.cc, and sto's are serienstream.to, serienstream.cx and its address (row 74, the maintainer's yes to row 69's finding). Both new hosts are on their sites' official lists, serve the site with its marker, and are named neither dead nor scam by JDownloader's SerienStreamTo.
 
