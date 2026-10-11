@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: The Request Carries An Episode Reference
-For a series request with a season and an episode, the use case SHALL build an `EpisodeRef` with the request's season and episode, the English title and release date of that episode from the Cinemeta list, and an absolute number: the episode's position among the list's regular seasons ordered by season and episode, or the Kitsu episode number of a `kitsu:` request when it lies within 5 of that position or the list lacks the episode.
+For a series request with a season and an episode, the use case SHALL build an `EpisodeRef` with the request's season and episode, the English title and release date of that episode from the Cinemeta list, and an absolute number: a Kitsu episode number when it lies within 5 of the episode's position or the list lacks the episode, else the position.
 
 #### Scenario: An IMDb request for One Piece S5E2
 - **WHEN** the request is `tt0388629:5:2` and Cinemeta lists 8, 22, 17 and 13 episodes for seasons 1 to 4
@@ -14,6 +14,20 @@ For a series request with a season and an episode, the use case SHALL build an `
 #### Scenario: A Kitsu entry that spans one season
 - **WHEN** the request came as the Kitsu entry of a second season, episode 3, and was translated to S2E3 of a series whose first season lists 25 episodes
 - **THEN** the reference's absolute number is 28, the position, not 3
+
+### Requirement: An IMDb Anime Request Carries The Kitsu Number
+For an IMDb series request the use case SHALL look up the episode's Kitsu number when one Kitsu entry counts the series from its start: Fribb's id list maps the IMDb id to a Kitsu entry without a season, and the Anime Kitsu addon's record of that entry places its episode 1 at S1E1 and the requested episode exactly once. A `kitsu:` request keeps its own number.
+
+#### Scenario: An IMDb request for a long-running anime
+- **WHEN** the request is `tt0388629:22:4`, and Fribb's list maps `tt0388629` to the Kitsu entry 12 without a season, whose addon record places episode 1 at S1E1 and episode 1089 at S22E4
+- **THEN** the reference's absolute number is 1089, Kitsu's (the position is 1088)
+
+### Requirement: The Position Skips Episode 0 Entries
+The position SHALL count the Cinemeta list's entries of season 1 and up with an episode number of 1 and up, ordered by season and episode; an episode 0 entry of a regular season SHALL have no position.
+
+#### Scenario: An episode 0 entry in a regular season
+- **WHEN** Cinemeta lists S2E0 of `tt0249327` before S2E1, after 49 episodes in season 1
+- **THEN** S2E1's position is 50, and S2E0 itself has no position
 
 ### Requirement: A Reference Needs A Title Or A Number
 A reference SHALL carry a title or an absolute number; without a Cinemeta meta, and for an episode the list lacks when no Kitsu number is given, there SHALL be no reference and the plugins SHALL be searched as today.
