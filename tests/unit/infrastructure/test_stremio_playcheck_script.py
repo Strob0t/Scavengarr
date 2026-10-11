@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import struct
 import sys
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from types import ModuleType
 
@@ -90,7 +91,7 @@ class TestCheckStream:
         async with httpx.AsyncClient() as client:
             verdict = await _mod.check_stream(client, stream)
 
-        assert verdict == "OK mp4 3.00 GB, seek 206"
+        assert verdict == "OK mp4 3.00 GB codecs unread, seek 206"
         assert route.calls[0].request.headers["Referer"] == "https://h/"
         assert route.calls[1].request.headers["Range"] == "bytes=1500000000-1500001023"
 
@@ -130,7 +131,7 @@ class TestStreamKind:
         async with httpx.AsyncClient() as client:
             verdict = await _mod.check_stream(client, {"url": url})
 
-        assert verdict == "OK mp4 3.00 GB, seek 206"
+        assert verdict == "OK mp4 3.00 GB codecs unread, seek 206"
 
 
 class _Body(httpx.AsyncByteStream):
@@ -181,7 +182,9 @@ class TestBoundedReads:
                     timeout=5,
                 )
 
-        assert verdict == "OK mp4 3.00 GB, head 200 instead of 206, seek 206"
+        assert (
+            verdict == "OK mp4 3.00 GB codecs unread, head 200 instead of 206, seek 206"
+        )
         assert head.sent <= 64 * 1024 and head.closed
         assert seek.sent <= 64 * 1024 and seek.closed
 
@@ -203,7 +206,7 @@ class TestBoundedReads:
                     timeout=5,
                 )
 
-        assert verdict == "FAIL mp4 3.00 GB, seek 200 instead of 206"
+        assert verdict == "FAIL mp4 3.00 GB codecs unread, seek 200 instead of 206"
 
     async def test_byte_range_segments_answered_with_200_are_noted(self) -> None:
         """A playlist with ``EXT-X-BYTERANGE`` makes the player ask for
@@ -231,7 +234,8 @@ class TestBoundedReads:
                 )
 
         assert verdict == (
-            "OK hls 3 segments: mpegts, mpegts; 2 of 2 segments 200 instead of 206"
+            "OK hls codecs unread, 3 segments: mpegts, mpegts; "
+            "2 of 2 segments 200 instead of 206"
         )
         assert all(s.sent <= 64 * 1024 and s.closed for s in segments)
 
@@ -255,7 +259,7 @@ class TestBoundedReads:
                     timeout=5,
                 )
 
-        assert verdict == "OK hls 2 segments: mpegts, mpegts"
+        assert verdict == "OK hls codecs unread, 2 segments: mpegts, mpegts"
         assert all(s.sent <= 64 * 1024 and s.closed for s in segments)
 
     async def test_an_endless_playlist_answer_is_cut(self) -> None:
@@ -294,3 +298,180 @@ class TestBoundedReads:
         assert verdict == "FAIL timeout after 0.3 s"
         assert time.monotonic() - started < 2.0
         assert body.closed
+
+
+def _box(kind: bytes, payload: bytes = b"") -> bytes:
+    return struct.pack(">I", 8 + len(payload)) + kind + payload
+
+
+def _trak(handler: bytes, entry: bytes, tables: int = 0) -> bytes:
+    stsd = _box(b"stsd", b"\0" * 4 + struct.pack(">I", 1) + _box(entry, b"\0" * 8))
+    hdlr = _box(b"hdlr", b"\0" * 8 + handler + b"\0" * 12)
+    stbl = _box(b"stbl", stsd + _box(b"stsz", b"\0" * tables))
+    return _box(b"trak", _box(b"mdia", hdlr + _box(b"minf", stbl)))
+
+
+_FTYP = _box(b"ftyp", b"isom\0\0\0\0isomiso2")
+_MOOV = _box(b"moov", _trak(b"vide", b"hvc1", 5000) + _trak(b"soun", b"ec-3"))
+_SIZE = 3_000_000_000
+
+
+def _ranged_file(
+    data: bytes, *, at_end: bool
+) -> Callable[[httpx.Request], httpx.Response]:
+    """A file of ``_SIZE`` bytes whose start (or end) is *data*, the rest
+    zeros; answers Range requests with 206."""
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        spec = request.headers["Range"].removeprefix("bytes=")
+        first, _, last = spec.partition("-")
+        if not first:  # a suffix: the last bytes (the test's 64 KiB of them)
+            start, stop = _SIZE - min(int(last), 64 * 1024), _SIZE
+        else:
+            start, stop = int(first), min(int(last) + 1, _SIZE)
+        offset = _SIZE - len(data) if at_end else 0
+        body = bytes(
+            data[i - offset] if offset <= i < offset + len(data) else 0
+            for i in range(start, min(stop, start + 64 * 1024))
+        )
+        return httpx.Response(
+            206,
+            content=body,
+            headers={"content-range": f"bytes {start}-{stop - 1}/{_SIZE}"},
+        )
+
+    return answer
+
+
+def _ts_packet(pid: int, section: bytes) -> bytes:
+    head = bytes([0x47, 0x40 | (pid >> 8), pid & 0xFF, 0x10, 0x00])
+    return (head + section).ljust(188, b"\xff")
+
+
+def _psi(table_id: int, body: bytes) -> bytes:
+    length = len(body) + 4
+    return bytes([table_id, 0xB0 | (length >> 8), length & 0xFF]) + body + b"\0" * 4
+
+
+_PAT = _ts_packet(0, _psi(0x00, b"\0\x01\xc1\0\0\0\x01\xe1\x00"))
+_PMT = _ts_packet(
+    0x100,
+    _psi(
+        0x02,
+        b"\0\x01\xc1\0\0\xe1\x01\xf0\x00"
+        + b"\x1b\xe1\x01\xf0\x00"  # H.264
+        + b"\x81\xe1\x02\xf0\x00",  # AC-3
+    ),
+)
+
+
+class TestCodecs:
+    """Row 66: the verdict names the codecs (row 59's hypothesis 2)."""
+
+    @respx.mock
+    async def test_a_faststart_file(self) -> None:
+        url = "https://cdn.example/v.mp4"
+        route = respx.get(url).mock(
+            side_effect=_ranged_file(_FTYP + _MOOV + _box(b"mdat"), at_end=False)
+        )
+        async with httpx.AsyncClient() as client:
+            verdict = await _mod.check_stream(client, {"url": url})
+
+        assert verdict == "OK mp4 3.00 GB hevc/ec-3, seek 206"
+        ranges = [c.request.headers["Range"] for c in route.calls]
+        assert ranges[1] == f"bytes=0-{len(_FTYP) + len(_MOOV) - 1}"
+
+    @respx.mock
+    async def test_a_moov_at_the_end_is_read_from_the_tail(self) -> None:
+        url = "https://cdn.example/v.mp4"
+        head = _FTYP + struct.pack(">I", 1) + b"mdat" + struct.pack(">Q", _SIZE)
+        tail = respx.get(url, headers={"Range": f"bytes=-{_mod._MOOV_MAX}"}).mock(
+            side_effect=_ranged_file(_MOOV, at_end=True)
+        )
+        respx.get(url).mock(side_effect=_ranged_file(head, at_end=False))
+        async with httpx.AsyncClient() as client:
+            verdict = await _mod.check_stream(client, {"url": url})
+
+        assert verdict == "OK mp4 3.00 GB hevc/ec-3, seek 206"
+        assert tail.call_count == 1
+
+    @respx.mock
+    async def test_matroska_is_counted_unread(self) -> None:
+        url = "https://cdn.example/v.mkv"
+        route = respx.get(url).mock(
+            side_effect=_ranged_file(b"\x1aE\xdf\xa3" + b"\0" * 100, at_end=False)
+        )
+        async with httpx.AsyncClient() as client:
+            verdict = await _mod.check_stream(client, {"url": url})
+
+        assert verdict == "OK mkv 3.00 GB codecs unread, seek 206"
+        assert route.call_count == 2  # the head and the seek, no codec read
+
+    @respx.mock
+    async def test_hls_codecs_from_the_master(self) -> None:
+        """The variant the check plays is the first one."""
+        respx.get("https://cdn.example/master.m3u8").respond(
+            200,
+            text=(
+                "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1,"
+                'CODECS="hvc1.2.4.L120.B0,ec-3"\nv.m3u8\n'
+                "#EXT-X-STREAM-INF:BANDWIDTH=2,"
+                'CODECS="avc1.64001f,mp4a.40.2"\nw.m3u8\n'
+            ),
+        )
+        respx.get("https://cdn.example/v.m3u8").respond(
+            200, text="#EXTM3U\n#EXTINF:4,\ns1.ts\n"
+        )
+        respx.get("https://cdn.example/s1.ts").respond(200, content=_TS_PACKET)
+        async with httpx.AsyncClient() as client:
+            verdict = await _mod.check_stream(
+                client, {"url": "https://cdn.example/master.m3u8"}
+            )
+
+        assert verdict == "OK hls hevc/ec-3, 1 segments: mpegts"
+
+    @respx.mock
+    async def test_hls_codecs_from_the_segments_pmt(self) -> None:
+        respx.get("https://cdn.example/v.m3u8").respond(
+            200, text="#EXTM3U\n#EXTINF:4,\ns1.ts\n"
+        )
+        respx.get("https://cdn.example/s1.ts").respond(200, content=_PAT + _PMT)
+        async with httpx.AsyncClient() as client:
+            verdict = await _mod.check_stream(
+                client, {"url": "https://cdn.example/v.m3u8"}
+            )
+
+        assert verdict == "OK hls h264/ac-3, 1 segments: mpegts"
+
+    @respx.mock
+    async def test_fmp4_codecs_from_the_init_segment(self) -> None:
+        respx.get("https://cdn.example/v.m3u8").respond(
+            200,
+            text='#EXTM3U\n#EXT-X-MAP:URI="init.mp4"\n#EXTINF:4,\ns1.m4s\n',
+        )
+        respx.get("https://cdn.example/init.mp4").respond(200, content=_FTYP + _MOOV)
+        respx.get("https://cdn.example/s1.m4s").respond(
+            200, content=_box(b"moof", b"\0" * 16)
+        )
+        async with httpx.AsyncClient() as client:
+            verdict = await _mod.check_stream(
+                client, {"url": "https://cdn.example/v.m3u8"}
+            )
+
+        assert verdict == "OK hls hevc/ec-3, 1 segments: mp4"
+
+    @pytest.mark.parametrize(
+        ("verdict", "codecs"),
+        [
+            ("OK mp4 3.00 GB hevc/ec-3, seek 206", "hevc/ec-3"),
+            ("OK mp4 3.00 GB h264/aac, head 200 instead of 206, seek 206", "h264/aac"),
+            ("OK mkv 3.00 GB codecs unread, seek 206", "codecs unread"),
+            ("OK mp4 h264/?, no seek (size unknown)", "h264/?"),
+            ("FAIL hls h264/aac, 3 segments: 502, 502", "h264/aac"),
+            ("FAIL html b'<html><body>a/b</body></html>'", None),
+            ("FAIL master 404", None),
+            ("FAIL timeout after 30 s", None),
+        ],
+    )
+    def test_verdict_codecs(self, verdict: str, codecs: str | None) -> None:
+        assert _mod.verdict_codecs(verdict) == codecs

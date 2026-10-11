@@ -16,7 +16,8 @@ the verdict's first 60 characters) and the number of Range requests the
 check saw answered with 200 instead of 206. Prints the round table of
 ``docs/plans/stremio-latency.md``: one row per id (its ``Findings`` column
 names the failing hosters and that count) and a summary row with medians
-and totals; ``--out`` appends it to a Markdown file.
+and totals, then a table of the streams per hoster and codec pair (the
+play check's ``video/audio``); ``--out`` appends it to a Markdown file.
 
 ``--portainer`` adds the CPU seconds the container's Python and Chromium
 processes used during the round (``stremio_profile.py``'s reading;
@@ -33,6 +34,7 @@ import asyncio
 import datetime
 import statistics
 import time
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -40,7 +42,7 @@ from typing import Any
 import httpx
 from portainer import Portainer, credentials
 from stremio_measure import _source
-from stremio_playcheck import check_stream
+from stremio_playcheck import check_stream, verdict_codecs
 from stremio_profile import cpu_seconds
 
 DEFAULT_IDS_FILE = Path(__file__).resolve().parents[1] / "docs/plans/round-titles.txt"
@@ -67,6 +69,7 @@ class Row:
     playable: int | None  # None without the play check
     findings: tuple[str, ...] = ()  # the failing streams, "hoster: verdict"
     full_bodies: int = 0  # Range requests answered 200 (the whole file)
+    codecs: tuple[str, ...] = ()  # per stream that read media, "hoster: pair"
 
 
 # Of a finding's verdict; the hoster's name comes first
@@ -132,6 +135,7 @@ async def measure(
     playable = None
     findings: list[str] = []
     full_bodies = 0
+    codecs: list[str] = []
     if playcheck:
         verdicts = [await check_stream(client, stream) for stream in streams]
         playable = sum(v.startswith("OK") for v in verdicts)
@@ -141,6 +145,11 @@ async def measure(
             if not verdict.startswith("OK")
         ]
         full_bodies = sum(_FULL_BODY in v for v in verdicts)
+        codecs = [
+            f"{_hoster(stream)}: {found}"
+            for stream, verdict in zip(streams, verdicts, strict=True)
+            if (found := verdict_codecs(verdict))
+        ]
     return Row(
         sid=sid,
         title=title,
@@ -153,6 +162,7 @@ async def measure(
         playable=playable,
         findings=tuple(findings),
         full_bodies=full_bodies,
+        codecs=tuple(codecs),
     )
 
 
@@ -207,7 +217,22 @@ def render(rows: list[Row], cpu: dict[str, float] | None = None) -> str:
             f"CPU of the container during the round: Python {cpu['python']:.1f} s, "
             f"Chromium {cpu['chrome']:.1f} s."
         )
+    lines.extend(_codec_table(rows))
     return "\n".join(lines) + "\n"
+
+
+def _codec_table(rows: list[Row]) -> list[str]:
+    """The streams per hoster and codec pair (row 59's hypothesis 2: a
+    player without HEVC or AC-3/E-AC-3 decoding refuses such a stream)."""
+    counts = Counter(
+        tuple(entry.split(": ", 1)) for row in rows for entry in row.codecs
+    )
+    if not counts:
+        return []
+    lines = ["", "| Hoster | Codecs | Streams |", "|---|---|---|"]
+    for (hoster, codecs), count in sorted(counts.items()):
+        lines.append(f"| {hoster} | {codecs} | {count} |")
+    return lines
 
 
 async def run(args: argparse.Namespace) -> str:

@@ -310,3 +310,53 @@ def test_main_appends_the_table_to_out(tmp_path: Path) -> None:
     assert text.startswith("# Rounds\n")
     assert "`scripts/stremio_round.py`" in text
     assert "| One (`movie/tt1`) |" in text
+
+
+@respx.mock
+async def test_measure_collects_the_codecs_per_hoster(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Row 66: every stream's codec pair under its hoster; a verdict that
+    read no media names none."""
+    streams = [
+        _stream("https://cdn.a/v.mp4", "VOE"),
+        _stream("https://cdn.b/v.mp4", "DOOD"),
+        _stream("https://cdn.c/v.mp4", "MIXDROP"),
+    ]
+    respx.get(f"{_BASE}/api/v1/stremio/stream/movie/tt1.json").mock(
+        return_value=httpx.Response(200, json={"streams": streams})
+    )
+    verdicts = {
+        "https://cdn.a/v.mp4": "OK hls h264/aac, 400 segments: mpegts, mpegts",
+        "https://cdn.b/v.mp4": "OK mp4 1.20 GB hevc/ec-3, seek 206",
+        "https://cdn.c/v.mp4": "FAIL timeout after 30 s",
+    }
+
+    async def fake_check(client: httpx.AsyncClient, stream: dict) -> str:
+        return verdicts[stream["url"]]
+
+    monkeypatch.setattr(_mod, "check_stream", fake_check)
+    async with httpx.AsyncClient() as client:
+        row = await _mod.measure(client, _BASE, "movie/tt1", "One", playcheck=True)
+
+    assert row.codecs == ("VOE: h264/aac", "DOOD: hevc/ec-3")
+
+
+def test_render_adds_the_codec_pairs_per_hoster() -> None:
+    rows = [
+        _row(codecs=("VOE: h264/aac", "DOOD: hevc/ec-3", "VOE: h264/aac")),
+        _row(sid="movie/tt2", codecs=("DOOD: codecs unread", "VOE: h264/aac")),
+    ]
+    lines = _mod.render(rows).splitlines()
+
+    start = lines.index("| Hoster | Codecs | Streams |")
+    assert lines[start + 1 : start + 5] == [
+        "|---|---|---|",
+        "| DOOD | codecs unread | 1 |",
+        "| DOOD | hevc/ec-3 | 1 |",
+        "| VOE | h264/aac | 3 |",
+    ]
+
+
+def test_render_without_codecs_has_no_codec_table() -> None:
+    assert "| Hoster | Codecs |" not in _mod.render([_row()])
