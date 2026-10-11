@@ -827,6 +827,16 @@ The 165 fetches took 947.8 s in all (5.7 s each on average, three in flight per 
 
 **The challenge counter (row 70), live.** The digest at 14:35 UTC: kinoger 10 challenges, 1 of them unsolved; moflix 5, none unsolved. N20's line reads `kinoger 1 of 188 searches (0.5 %)`, far below the 5 % rule; the 7-day reading is due on 2026-10-18.
 
+### N25: stale answers without a stream (2026-10-11 to 2026-10-18)
+
+The twelfth round's Breaking Bad S01E01 got no stream from a stale entry whose only link had died since, while the refresh it started found 2 within 31 s. The maintainer's decision of 2026-10-11 16:40 UTC: measure before a change (backlog N25). Before each deploy (the counter lives as long as its container), Mr. Fable reads production's `scavengarr_stremio_request_total` with `source="stale"` (all outcomes, and `outcome="empty"`), and for each empty answer its log line (`stremio_stream_response streams_returned=0 source=stale`) and whether the refresh filled the entry (the next answer for the same request with streams). After the week, the share decides between N25's candidate (such an answer waits for the refresh up to the answer budget) and nothing.
+
+| Container (commit, start UTC) | Read at (UTC) | Stale answers | Empty | Filled by the refresh |
+|---|---|---:|---:|---|
+| dad3051, 10-11 14:10 | 10-11 14:47 | 40 | 4 | the round's Breaking Bad S01E01 requests among them (2 streams 31 s later); the rest not read |
+| 2446f89, 10-11 14:48:57 | not read | | | its counter and logs went with the container at 16:31 |
+| 3a257fe, 10-11 16:31:37 | 10-11 16:43 | 6 | 0 | none to fill |
+
 ## AIOStreams
 
 Goal was an AIOStreams test user on `aiostreams.lan` with Scavengarr as addon, measured end to end. Not done: AIOStreams validates the addon manifest when a user is created or updated, and it can reach neither the dev instance (Docker NAT on the workstation) nor `scavengarr.lan` (502, backend down). Recommended user settings, from the AIOStreams v2.35.3 source (`packages/core/src/presets/custom.ts`, `packages/core/src/db/schemas.ts`):
