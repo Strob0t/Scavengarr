@@ -156,3 +156,45 @@ For the maintainer (not resolver changes, so rows of their own if wanted):
 - **Two CDNs refuse this network**: `r1.dropcdn.io` (no TCP connection) and `serversicuro.cc` (429). Production probably leaves through the same public address, so its Dropload and SuperVideo streams likely fail the same way; not measured there, since this row stays off production.
 
 Limits: one afternoon, from one network; the Dropload and SuperVideo verdicts may differ from another address (a block by address cannot be told from an outage without a second vantage point). UPNS and RPMPlay: 8 of 26 links checked through the API by hand, the rest by the resolver's 404 reading; all came from moflix.
+
+
+## The Other Capture Hosters (Row 81)
+
+At 15:31 UTC on 2026-10-11 production's open hoster breakers were Dropload, Filemoon, SuperVideo and Vixeo, all browser captures. Does row 78's ad tag, or another one, take their clicks too? The capture probe (`scripts/probes/capture_timing.py --diagnose`, 2 runs each, one profile per call) on the live suite's link of each hoster (`.cache/live/resolver-urls.json`), then each resolver alone and one GET of its stream (with the stored headers and bare) to name the stage where a run stops. Dev container only, 2026-10-11, 16:00 to 16:15 UTC (Mr. Normal, `handoff-81`); the Pi's run follows on Mr. Fable's signal.
+
+### Dev container
+
+| Hoster | Page | Run | Captured | Clicks at | Stream at (CDN) | Popups | After the clicks | Ad domains loaded and refused here |
+|---|---|---:|---|---|---|---:|---|---|
+| SuperVideo | `supervideo.cc` `/e/` | 1 | yes | – | 1.1 s (`serversicuro.cc`) | 0 | none needed: jwplayer, Cloudflare's script check on the page's own host (`/cdn-cgi/challenge-platform/`, 200), the playlist | `llvpn.com` (`/tag.min.js`), `stummelbeelbow.com`, `cloudflareinsights.com` |
+| SuperVideo | | 2 | yes | – | 0.5 s (`serversicuro.cc`) | 0 | the same | the same three |
+| Vixeo | `vixeo.io` `/e/` | 1 | yes | 4.3 s | 4.3 s (`vidsonic.net`) | 0 | the page's playlist, then the CDN's | 10 sites: `al5sm.com` (`/tag.min.js`), `betteradsystem.com`, `mayhapmonisms.com`, `woofbeginner.com`, `runative-syndicate.com`, `cloudfront.net`, `emcv4fcvxbefc7ve9wgfq.cfd`, `uwterphco.com`, `zutdhkwkm.com`, and a script host under `vidsonic.net` (`/js/`, ×2) while the CDN's own host answered; `8nrjifigyphw77n6pr.rest` pending |
+| Vixeo | | 2 | yes | 4.1 s | 4.1 s (`vidsonic.net`) | 0 | the same | the same |
+| Dropload | `dr0pstream.com` `/e/` | 1 | yes | 3.6, 8.7 s | 9.7 s (`dropcdn.io`) | 0 | a Turnstile widget from `challenges.cloudflare.com` (`api.js`, its challenge requests 200, one 401), then the playlist | `llvpn.com` (`/tag.min.js`), `ancillammmm.com`, `hubeamily.com` |
+| Dropload | | 2 | yes | – | 0.6 s (`dropcdn.io`) | 0 | no widget (the profile kept run 1's pass) | the same three |
+
+Every frame had a video element without an error; MediaSource plays H.264 and AAC.
+
+The stage after the capture (the resolver alone, then one GET of its stream):
+
+| Hoster | Resolver | CDN, stored headers | CDN, bare | Stage |
+|---|---|---|---|---|
+| SuperVideo | a stream on `hfs311.serversicuro.cc`, 1.2 s, header `Referer` | first 200 `text/html`, 615 bytes: a "Loading..." page whose script sends the client to the same playlist path with three more query keys (`ch`, `js`, `sid`); after about ten requests within 10 minutes `ConnectTimeout` | the same page, then `429` (17 bytes, server Cowboy, no `Retry-After`) | **the CDN**: a script gate in front of the playlist, and rate-limited |
+| Dropload | a stream on `ds1.dropcdn.io`, 4.6 s, header `Referer` | `ConnectTimeout` | `ConnectError` | **the CDN**: no connection from this network |
+| Vixeo | a stream on `sfy-01-fr.vidsonic.net`, 5.2 s, header `Referer` | 200 playlist | 200 playlist | none: free (as in row 66's table) |
+
+The app's registry gave no stream for SuperVideo and Dropload in the same session (`scripts/probes/header_binding.py --source dev`: "not resolved"): its playback check reaches the CDN after the capture and fails there.
+
+### Reading
+
+- **Row 78's ad tag is in two more players**: SuperVideo and Dropload load `llvpn.com/tag.min.js` as Filemoon does, and Vixeo loads a tag of the same path from `al5sm.com`. The dev container's resolver refuses all of them, so no click here was taken by an ad (0 popups in 6 runs). Whether they take the clicks on the Pi is the Pi's run.
+- **Two of the three stop at the CDN here, not at the capture**: SuperVideo's `serversicuro.cc` puts a script gate before its playlist (a player that runs no script gets HTML) and answers 429 after about ten requests; Dropload's `dropcdn.io` takes no connection (row 67 saw the same for `r1.dropcdn.io`, now `ds1`). An ad block cannot fix either of them.
+- **Dropload's page shows the Turnstile widget** from `challenges.cloudflare.com`, so if Dropload ever opts into the own-scripts rule, row 80's exception is the one that keeps it passable.
+- **Vixeo** captures and plays here: if its breaker is open on the Pi, the cause is there.
+
+### Limits
+
+- One link per hoster, one afternoon, one network; two runs in one profile, so run 2 is the warm case.
+- SuperVideo's 429 may come from this probe's own requests (about ten within 10 minutes); row 67 saw it after a 10-minute pause too.
+- The CDN checks are one GET each; the gate's redirect was not followed.
+- The dev container's resolver refuses the ad domains, so this column names what a page tried to load, not what it does when it gets it.
