@@ -38,9 +38,3 @@ def respx_mock() -> respx.MockRouter:
     """Explicit respx mock router for request interception."""
     with respx.mock(assert_all_called=False) as router:
         yield router
-
-
-@pytest.fixture()
-def fixtures_dir() -> Path:
-    """Path to HTML fixtures directory."""
-    return Path(__file__).parent.parent / "fixtures" / "html"

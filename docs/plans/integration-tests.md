@@ -57,7 +57,7 @@ def test_search_returns_valid_torznab_xml(client: TestClient) -> None:
 
 #### 2. Plugin Pipeline Integration (open)
 
-Tests that execute a full multi-stage Python plugin search against fixture HTML. Not implemented yet: the fixtures in `tests/fixtures/html/testsite/` and the `fixtures_dir` fixture in `tests/integration/conftest.py` exist but are unused.
+Tests that execute a full multi-stage Python plugin search against fixture HTML. Not implemented yet (the unused hand-written `testsite` pages and the `fixtures_dir` fixture were removed in row 85; the real pages below are the fixtures such a test would use).
 
 ```text
 Python plugin (HttpxPluginBase) search() → Stage 1 (fixture HTML) → Stage 2 (fixture HTML) → SearchResult[]
@@ -118,13 +118,8 @@ tests/
         search-oppenheimer.html.gz, detail-oppenheimer.html.gz, ...
         search-oppenheimer.json.gz, ...   # a JSON API's answers
                                 # real pages, parsed in tests/unit/infrastructure/test_real_pages.py
-      testsite/
-        search_results.html     # Stage 1 response (unused so far)
-        movie_detail.html       # Stage 2 response (unused so far)
-        movie_detail_2.html
-        empty_search.html
   integration/
-    conftest.py                 # http_client, diskcache, respx_mock, fixtures_dir
+    conftest.py                 # http_client, diskcache, respx_mock
     test_config_loading.py      # Category 5
     test_crawljob_lifecycle.py  # Category 3
     test_link_validation.py     # Category 4
@@ -150,11 +145,6 @@ def app_client() -> Iterator[TestClient]:
     app = create_app(test_config)
     with TestClient(app) as client:
         yield client
-
-@pytest.fixture
-def fixtures_dir() -> Path:
-    """Path to HTML fixtures directory."""
-    return Path(__file__).parent.parent / "fixtures" / "html"
 ```
 
 #### pytest markers
@@ -175,8 +165,8 @@ markers = [
 ### Phase 1: Infrastructure Setup
 
 - [x] Create `tests/integration/` directory structure
-- [ ] Create `tests/fixtures/` with initial HTML fixtures (files exist in `tests/fixtures/html/testsite/` but no test uses them)
-- [x] Add integration conftest with fixture loader (`fixtures_dir`; no app client — router tests use `TestClient` in `tests/e2e/`)
+- [x] Create `tests/fixtures/` with HTML fixtures (the real pages of `tests/fixtures/html/<plugin>/`)
+- [x] Add integration conftest (`http_client`, `diskcache`, `respx_mock`; no app client — router tests use `TestClient` in `tests/e2e/`)
 - [x] Add `integration` pytest marker
 - [x] Integration tests run in CI (`.github/workflows/ci.yml`, in the same pytest run as the unit tests)
 

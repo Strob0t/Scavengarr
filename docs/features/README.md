@@ -140,7 +140,7 @@ src/scavengarr/
     scoring/                 # EWMA scoring, health/search probers, scheduler
     config/                  # Pydantic schema, loader, defaults
     logging/                 # structlog setup
-    common/                  # Parsers, converters, rate limiter, retry transport
+    common/                  # Parsers, rate limiter, retry transport
     captcha/                 # Challenge detection, ALTCHA solver
     telemetry/               # Prometheus metrics, OpenTelemetry tracing, event-loop lag
     circuit_breaker.py       # Circuit breaker (plugins and hosters)

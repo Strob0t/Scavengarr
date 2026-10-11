@@ -63,7 +63,7 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 |---|---|---|
 | `infrastructure/anime/` | The anime catalogs' `kitsu:` ids translated into IMDb requests (the Anime Kitsu addon's meta, Fribb's anime-lists as the fallback) | `KitsuAddonClient`, `AnimeIdLists`, `KitsuAnimeIdResolver` |
 | `infrastructure/cache/` | `CachePort` backends | `create_cache()`, `DiskcacheAdapter`, `RedisAdapter` |
-| `infrastructure/common/` | Converters, parsers, outbound rate limiting, retry and the SSRF guard | `to_int`, `parse_size_to_bytes`, `TokenBucket`, `DomainRateLimiter`, `RetryTransport`, `PrivateAddressGuard` |
+| `infrastructure/common/` | Parsers, outbound rate limiting, retry and the SSRF guard | `parse_size_to_bytes`, `TokenBucket`, `DomainRateLimiter`, `RetryTransport`, `PrivateAddressGuard` |
 | `infrastructure/config/` | Layered configuration | `DEFAULT_CONFIG`, `AppConfig`, `CacheConfig`, `StremioConfig`, `ScoringConfig`, `PluginsConfig`, `PluginOverride`, `EnvOverrides`, `load_config()` |
 | `infrastructure/hoster_resolvers/` | Hoster URL resolution | `HosterResolverRegistry`, `HosterStateStore` (its state across restarts), `extract_domain`, `XFSResolver`/`XFSConfig`, `GenericDDLResolver`/`GenericDDLConfig`, dedicated `*Resolver` classes, `verify_video_url`, `check_playable` |
 | `infrastructure/browser/` | Browser process and Cloudflare handling | `SharedBrowserPool` (one Chromium), `StealthPool` (CF-bypass context on it), `PageGate` (its pages, by claim), `PageBudget` (their count), `ClearanceStore` (challenge cookies across restarts), `SolverFetcher`/`ChainedBrowserFetcher` (optional Byparr/FlareSolverr sidecar), `resolve_headless`, `is_cloudflare_challenge` |

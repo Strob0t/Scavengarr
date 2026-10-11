@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Removed: Dead Code and Files
+- `infrastructure/common/converters.py` (`to_int`, uncalled since the YAML/scrapy removal) and its test; the unused hand-written `tests/fixtures/html/testsite/` pages and the `fixtures_dir` fixture; filmpalast's unread `search-the-last-of-us` page; `flake.nix` and `flake.lock` (an x86_64-only openspec shell nothing referenced; the dev container installs openspec through npm). The observability guide lists the `resources` and `links` probes among its examples.
+
 ### Fixed: Vixeo Captures Keep the Player's Ad Tag Out
 - The Vixeo resolver's capture runs the scripts of the page's and its frames' sites only (`own_scripts_only=True`, as Filemoon's since row 79). The rule itself is unchanged.
 - Why: on the Pi Vixeo's player loads an ad tag (`al5sm.com/tag.min.js`, the path of Filemoon's) that turns every click into a popup: no stream in 2 of 2 runs, 3 popups each; with that one domain blocked a stream in 2 of 2 (5.8 and 5.5 s, 0 popups; row 81). The dev container's resolver refuses the ad domains, which is why Vixeo always captured there.

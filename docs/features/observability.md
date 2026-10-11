@@ -172,6 +172,8 @@ poetry run python scripts/prodctl.py metrics --grep plugin_search_seconds_count
 poetry run python scripts/prodctl.py state --keys circuit_breaker,event_loop
 poetry run python scripts/prodctl.py logs --since 1h --grep hoster_state_   # what a restart restored
 poetry run python scripts/prodctl.py probe tasks              # where the asyncio tasks wait
+poetry run python scripts/prodctl.py probe resources          # cgroup limits and pressure, memory, top processes
+poetry run python scripts/prodctl.py probe links              # stream links of the last hour: hoster, CDN, age
 poetry run python scripts/prodctl.py digest --since 24h       # one report of the window (--json: its data)
 poetry run python scripts/prodctl.py check --base https://scavengarr.example/api/v1/stremio --insecure  # after a deploy
 ```
