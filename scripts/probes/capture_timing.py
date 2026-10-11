@@ -602,9 +602,10 @@ async def probe(args: argparse.Namespace) -> int:
         # Major and build: the full version reads like an address to the masks
         version = chromium.version.split(".")
         build = version[2] if len(version) > 2 else "?"
+        display = os.environ.get("DISPLAY", "none")
         print(
             f"browser launch {time.monotonic() - started:.1f} s"
-            f" (Chromium {version[0]}, build {build}, DISPLAY {os.environ.get('DISPLAY', 'none')})"
+            f" (Chromium {version[0]}, build {build}, DISPLAY {display})"
         )
         print("| run | pages (path: start, load) | clicks at | stream at | resolve |")
         print("|---|---|---|---|---|")
