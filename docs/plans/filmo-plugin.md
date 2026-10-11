@@ -47,3 +47,20 @@ Row 63's live proof, 2026-10-11 (Mr. Normal, `handoff-63`):
 - The live smoke test (`tests/live/test_plugin_smoke.py`, `filmo` with "Interstellar") passed against filmo.to.
 - The plugin's search for Interstellar (category 2000) from the dev container: 1 result in 0.7 s (search page, detail page, 4 chips with 2 requests each), year 2014, three links: VOE `voe.sx` German 720p, Byse `bysezejataos.com` German 720p (the same file in both rows), VOE `voe.sx` English 720p. No `/n/` URL in the results.
 - `movie/tt0816692` on the dev server (`PYTHONPATH=src`, port 7981, cold cache): 200 in 2.9 s with 5 streams, two of them filmo's (`VOE · filmo`, German Dub and English Dub, 720p). Byse's link failed in the Filemoon resolver at once, no timeout: `filemoon_unavailable`, the hoster answers `embedding from this domain is not allowed for this video`. The video refuses embedding from the resolver's domain; not fixed in this row (the Filemoon resolver's owner decides; production's breaker for it opened on 2026-10-11 after a 52.6 s timeout, a different failure).
+
+## Byse (Row 65)
+
+Mr. Fable's probe of 2026-10-11, 11:41 to 11:45 UTC, on one fresh Byse link from the chain (Interstellar, the German row; host `bysezejataos.com`, the link in its `/d/` form). The Byse API, by request headers:
+
+| Request | No headers | filmo's Referer | filmo's Origin and Referer | The hoster's `/d/` Referer |
+|---|---|---|---|---|
+| `/api/videos/<id>/embed/details` | 403 `embedding from this domain is not allowed` | 403 | 200 | 403 |
+| `/api/videos/<id>/details` | 200 | 200 | 200 | 200 |
+| `/api/videos/<id>` | 200 | 200 | 200 | 200 |
+
+The video's owner allows its player on authorised domains only, filmo.to among them. In Patchright (headful under Xvfb):
+
+- `/e/<id>` shows "Embedding blocked on this site", also with the API requests routed with filmo's Origin.
+- `/d/<id>`, the hoster's own watch page, embeds the player frame of a second host. That frame runs `access/challenge`, `access/attest`, `embed/captcha`, `embed/captcha/verify`, `embed/playback` and `embed/timeslider`, then fetches `master.m3u8`, a variant and `.ts` segments from a CDN with the frame host's Referer, without any filmo header.
+
+The Filemoon resolver turns every link into `/e/` and asks `embed/details` first, so it gives up on such a video (`filemoon_unavailable`) before its browser starts. Row 65 captures the `/d/` page in that case. JDownloader's plugin (`BysejikuarCom`) downloads through `/api/videos/<id>/downloads` (a countdown and reCAPTCHA) and has no stream path.
