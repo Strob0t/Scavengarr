@@ -264,3 +264,26 @@ The maintainer's question of 2026-10-11 (13:54 UTC), measured before a fix. `PYT
   - The Kitsu number fix (the addon's mapping read backwards: the Kitsu episode of the request's IMDb episode) covers every mapped episode, so all 765 episodes that are off here (590 + 95 + 80). It cannot help the regular Cinemeta entries no Kitsu episode of the series maps to (Duel Monsters' S2E0 and S4E0, the later seasons of Black Clover and Fairy Tail); those keep the position.
   - A narrower candidate the table shows: a position that skips episode 0 entries would give Duel Monsters' 175 episodes their Kitsu number and change nothing else here (checked on the same metas). One Piece's −1 needs Kitsu's number: IMDb lacks the episode, so no count over Cinemeta's list can find it.
 - **Limits:** eleven series, one run, the catalogs' state at 14:24 UTC. The addon's mapping counts as the truth; that the sites number as Kitsu does was checked for One Piece only (row 71: sto and aniworld show Kitsu's 1089 for S22E04). The probe compares numbers, not placements: no site was asked, and whether a plugin serves the wrong episode also depends on its rows' titles. Most anime have a Kitsu entry per season, whose number counts that season alone; they are out of scope here (a `kitsu:` request of such an entry keeps the position when its number lies more than 5 from it, `_KITSU_SLACK`).
+
+## Row 77: the position skips episode 0 entries of regular seasons (2026-10-11, dev container, `handoff-77` on `staging` 8ad03c8)
+
+`TitleResolver.episode_ref()` counted the position among all entries of season 1 and up. Cinemeta lists some episode 0 entries in regular seasons (Duel Monsters' S2E0 "Opening" and S4E0, the Pyramid of Light film), so every later episode got a number one or two above Kitsu's and the sites'. The position now counts the entries with season 1 and up and episode 1 and up. An episode 0 entry of a regular season has no position, as a special has none: its reference keeps the title and air date, and the absolute number only when a `kitsu:` request names it. `_KITSU_SLACK` measures against the new position. The search cache's key carries the number, so each affected episode misses the cache once after the deploy.
+
+Row 72's probe again (`PYTHONPATH=src poetry run python -P scripts/probes/anime_offsets.py`, 2026-10-11 ~15:30 UTC): Duel Monsters' row is now 224 equal, 0 off (was 49 equal, 95 one high, 80 two high), and the other ten series give the same counts as in row 72's table.
+
+Which anime carry such entries: of the 898 IMDb ids behind the Anime Kitsu addon's popular, top-rated and airing catalogs (1000 entries each), the Cinemeta metas of three list an episode 0 in a regular season. Before and after, the probe's comparison per Kitsu entry with HEAD's and the new position:
+
+| Series | Kitsu | Episode 0 entries | Equal before | Equal after | Site's number of one affected episode |
+|---|---|---|---:|---:|---|
+| Yu☆Gi☆Oh! Duel Monsters (tt0249327) | 442 | S2E0, S4E0 | 49 of 224 (S2E1: 51, S4E1: 147) | 224 of 224 (S2E1: 50, S4E1: 145) | aniworld: S2E1 shows 50, S4E1 shows 145 (seasons 1..5 numbered 1–49, 50–97, 98–144, 145–184, 185–224); sto: rows without numbers, placed by title |
+| Yu Yu Hakusho (tt0185133) | 359 | S1E0 | 0 of 112 (all one high; S1E1: 2) | 112 of 112 (S1E1: 1) | aniworld: S1E1 shows 1 (seasons numbered 1–50, 51–112); sto: no such series |
+| Tsubasa Chronicle (tt0477543) | 154 | S1E0 | 0 of 26 (all one high; S1E1: 2) | 26 of 26 (S1E1: 1) | aniworld: rows without numbers, placed by title; sto: no such series |
+
+Tsubasa: Tokyo Revelations (`kitsu:2447`, three OVAs) maps to Cinemeta's season 3 of the same IMDb id: its own Kitsu entry counts from 1 (+53 before, +52 after), the case of row 72's Black Clover and Fairy Tail entries, out of scope here.
+
+`series_episodes` (`--plugins sto,aniworld`) for tt0249327:
+
+- S2E1, reference 50: aniworld places staffel-2/episode-1 by number (its row shows 50, the English title "The Mystery Duelist Part 1"); sto places staffel-2/episode-1 by title (its rows show no number). Both right.
+- S4E1, reference 145: sto places staffel-4/episode-1 by title. aniworld answers nothing. Its row 145 is the right one, but its English title is the dub's ("Pulse of a New Darkness" against Cinemeta's "A New Evil (Part 1 of 2)", 0.53 below the 0.6 a neighbour needs), and `locate()` trusts an exact number only for a row without a title. With the old 147 it found nothing either, so the change costs nothing here. The miss is `locate()`'s, not the position's: a follow-up candidate.
+
+Limits: one run, the catalogs' state at the time; the scan covers the addon's three catalogs and no full list (a series outside them with such entries is not counted). The sites' count was read on aniworld only; sto lists Duel Monsters without numbers and the other two not at all.

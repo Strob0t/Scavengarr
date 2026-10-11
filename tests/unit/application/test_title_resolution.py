@@ -7,6 +7,8 @@ and the worker-thread test drive the resolver itself.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -606,3 +608,77 @@ class TestEpisodeRef:
         request = make_request(imdb_id="tt1375666", content_type="movie")
 
         assert TitleResolver.episode_ref(request, _meta()) is None
+
+
+# ---------------------------------------------------------------------------
+# Row 77: the position skips the episode 0 entries of regular seasons
+# ---------------------------------------------------------------------------
+
+_FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "json" / "cinemeta"
+
+
+def _duel_monsters() -> SeriesMeta:
+    """Cinemeta's Yu-Gi-Oh! Duel Monsters (tt0249327, row 72's capture):
+    it lists S2E0 and S4E0 among the regular seasons."""
+    data = json.loads((_FIXTURES / "meta_series_tt0249327.json").read_text())
+    episodes = tuple(
+        EpisodeMeta(v["season"], v["episode"], v.get("name") or "", v.get("released"))
+        for v in data["meta"]["videos"]
+        if isinstance(v.get("season"), int) and isinstance(v.get("episode"), int)
+    )
+    return SeriesMeta(
+        name="Yu-Gi-Oh! Duel Monsters",
+        year=2000,
+        genres=("Animation",),
+        episodes=episodes,
+    )
+
+
+def _duel(season: int, episode: int) -> StremioStreamRequest:
+    return make_request(
+        imdb_id="tt0249327", content_type="series", season=season, episode=episode
+    )
+
+
+class TestEpisodeZeroOfARegularSeason:
+    @pytest.mark.parametrize(
+        ("season", "episode", "position"),
+        [(1, 49, 49), (2, 1, 50), (4, 1, 145)],
+        ids=["S1E49", "S2E1", "S4E1"],
+    )
+    def test_the_position_counts_episodes_from_one(
+        self, season: int, episode: int, position: int
+    ) -> None:
+        """S2E0 and S4E0 no longer push the later episodes up (51 and 147
+        before row 77): Kitsu and the sites count 50 and 145."""
+        ref = TitleResolver.episode_ref(_duel(season, episode), _duel_monsters())
+
+        assert ref is not None
+        assert ref.absolute == position
+
+    def test_an_episode_0_entry_has_no_position(self) -> None:
+        ref = TitleResolver.episode_ref(_duel(2, 0), _duel_monsters())
+
+        # The reference keeps the entry (the capture holds the numbers only,
+        # so no title here) and gets no position, as a special does
+        assert ref is not None
+        assert (ref.season, ref.episode, ref.absolute) == (2, 0, None)
+
+    def test_a_kitsu_number_names_an_episode_0_entry(self) -> None:
+        ref = TitleResolver.episode_ref(_duel(4, 0), _duel_monsters(), absolute=145)
+
+        assert ref is not None
+        assert ref.absolute == 145
+
+    @pytest.mark.parametrize(
+        ("given", "absolute"),
+        [(50, 50), (55, 55), (45, 45), (56, 50), (44, 50)],
+    )
+    def test_the_kitsu_slack_measures_from_the_new_position(
+        self, given: int, absolute: int
+    ) -> None:
+        # Position 50 now: 56 lies 6 off and gives way (with 51 it stayed)
+        ref = TitleResolver.episode_ref(_duel(2, 1), _duel_monsters(), absolute=given)
+
+        assert ref is not None
+        assert ref.absolute == absolute

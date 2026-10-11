@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: An Episode 0 Entry No Longer Moves an Anime's Episode Numbers
+- The episode reference's absolute number (`TitleResolver.episode_ref()`) counts only the entries of season 1 and up with episode 1 and up. Cinemeta lists some episode 0 entries in regular seasons (Yu-Gi-Oh! Duel Monsters' S2E0 and S4E0, Yu Yu Hakusho's and Tsubasa Chronicle's S1E0), and every later episode was numbered one or two above Kitsu and the sites (Duel Monsters' S2E1 was 51, the site's 50). An episode 0 entry of a regular season now has no position of its own, as a special has none; a `kitsu:` request's number is kept within 5 of the new position.
+- Measured (`docs/plans/series-episodes.md`, row 77): Duel Monsters 224 of 224 episodes now equal Kitsu's number (49 before), Yu Yu Hakusho 112 of 112 (0), Tsubasa Chronicle 26 of 26 (0); row 72's other ten long-running anime unchanged. aniworld numbers these series as Kitsu does. Each affected episode misses the search cache once, since the key carries the number.
+
 ### Added: The Capture Probe Blocks Domains and Counts Popups
 - `scripts/probes/capture_timing.py --block DOMAIN` (repeatable) aborts every request to the domain and its subdomains in the probe's browser: on the capture's page, ahead of the capture's own route, and in its context, for popups. Such a request reads `blocked` in the diagnosis, apart from the capture's cut of the media (`net::ERR_FAILED`) and the network's errors. `--diagnose` also counts the popups each run's page opened (the capture closes them).
 - Why: on the Pi the Filemoon player loads an ad tag (`llvpn.com /tag.min.js`) and then never starts its access flow, in 4 of 4 runs on two links (2026-10-11), while in the dev container the resolver answers the ad domains with `0.0.0.0` and the player plays in 4 of 4 runs. Both run Chromium 153, build 8010, with the same codec answers. `--block llvpn.com` gives the Pi the dev container's state for that one domain; the popup count tells an ad that takes the clicks from a player that waits for the ad.

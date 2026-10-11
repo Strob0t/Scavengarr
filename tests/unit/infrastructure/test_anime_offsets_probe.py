@@ -72,28 +72,29 @@ class TestCapturedPair:
             "Yu☆Gi☆Oh! Duel Monsters", record.imdb_id, record.episodes, meta
         )
 
-    def test_the_episode_0_entries_put_the_later_seasons_ahead(
-        self, offsets: Any
-    ) -> None:
-        # Cinemeta lists S2E0 and S4E0 among the regular seasons, and the
-        # position counts them: season 2 and 3 one high, season 4 and 5 two
+    def test_the_episode_0_entries_no_longer_count(self, offsets: Any) -> None:
+        # Cinemeta lists S2E0 and S4E0 among the regular seasons; until row
+        # 77 the position counted them (season 2 and 3 one high, season 4
+        # and 5 two: 49 equal, 95 one off, 80 more), now every episode is
+        # Kitsu's number
         assert (offsets.episodes, offsets.mapped) == (224, 224)
         assert (offsets.equal, offsets.plus_one, offsets.minus_one, offsets.more) == (
-            49,
-            95,
+            224,
             0,
-            80,
+            0,
+            0,
         )
         assert (offsets.not_listed, offsets.season_zero, offsets.unmapped) == (0, 0, 0)
         assert offsets.not_in_kitsu == 2
 
-    def test_the_first_episode_off_is_kitsu_50(self, offsets: Any) -> None:
-        assert offsets.first_off == (50, 2, 1, 1)
+    def test_no_episode_is_off(self, offsets: Any) -> None:
+        # Kitsu 50 (S2E1) was the first one off before row 77
+        assert offsets.first_off is None
 
     def test_the_row_names_counts_and_the_first_off(self, offsets: Any) -> None:
         assert _mod.report_row("442", offsets) == (
-            "| Yu☆Gi☆Oh! Duel Monsters | 442 | 224 | 224 | 49 | 95 | 0 | 80 | 0 | 0"
-            " | 0 | 2 | 50 (S2E1, +1) |"
+            "| Yu☆Gi☆Oh! Duel Monsters | 442 | 224 | 224 | 224 | 0 | 0 | 0 | 0 | 0"
+            " | 0 | 2 | – |"
         )
 
 
@@ -138,8 +139,8 @@ class TestSeriesOffsets:
         assert offsets is not None
         assert (offsets.name, offsets.equal, offsets.more) == (
             "Yu☆Gi☆Oh! Duel Monsters",
-            49,
-            80,
+            224,
+            0,
         )
 
     @respx.mock

@@ -156,15 +156,18 @@ class TitleResolver:
         """The episode *request* means, for plugins that locate episodes on
         the site's own numbering: the request's season and episode, the
         catalog entry's English title and release date, and the absolute
-        number: the entry's position among the regular seasons (season 1
-        and up) ordered by season and episode, or *absolute* (a ``kitsu:``
-        request's episode number) when it lies within ``_KITSU_SLACK`` of
+        number: the entry's position among the regular seasons' numbered
+        episodes (season 1 and up, episode 1 and up) ordered by season and
+        episode, or *absolute* (a ``kitsu:`` request's episode number)
+        when it lies within ``_KITSU_SLACK`` of
         that position or the list lacks the episode. A Kitsu entry that
         spans the series counts as the sites do and may be one off (One
         Piece: 1089 where the list says 1088); Kitsu has an entry per
         season for most anime, whose number counts that season alone and
         would place the episode in season 1, so a number far from the
-        position gives way to it. ``None`` without a record, for a request
+        position gives way to it. A special (season 0) and an episode 0
+        entry of a regular season have no position: their number is
+        *absolute* alone. ``None`` without a record, for a request
         without an episode, and for an episode the list lacks unless
         *absolute* names it: a reference with neither a title nor a number
         has nothing a plugin can locate by, and such an episode (the newest
@@ -178,9 +181,11 @@ class TitleResolver:
         )
         if entry is None and absolute is None:
             return None
-        if entry is not None and entry.season >= 1:
+        if entry is not None and entry.season >= 1 and entry.episode >= 1:
+            # An episode 0 entry of a regular season (Duel Monsters' S2E0)
+            # is no numbered episode: the sites and Kitsu count without it
             regular = sorted(
-                (e for e in meta.episodes if e.season >= 1),
+                (e for e in meta.episodes if e.season >= 1 and e.episode >= 1),
                 key=lambda e: (e.season, e.episode),
             )
             position = regular.index(entry) + 1
