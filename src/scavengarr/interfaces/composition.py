@@ -768,6 +768,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # half-open hoster probes use the browser, HTTP client and cache
         # closed below
         await state.stremio_stream_uc.aclose()
+        # The anime id list's background load
+        await state.anime_ids.aclose()
         await state.stremio_links.aclose()
         await state.hls_read_ahead.aclose()
         await state.hoster_resolver_registry.aclose()

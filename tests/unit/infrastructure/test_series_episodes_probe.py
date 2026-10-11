@@ -217,15 +217,25 @@ async def test_request_translates_a_kitsu_id_first() -> None:
     one_piece = probe.parse_id("series/tt0388629:1:1")
     translate = AsyncMock(return_value=one_piece)
     state = SimpleNamespace(anime_ids=SimpleNamespace(translate=translate))
+    numbering = SimpleNamespace(kitsu_episode=AsyncMock(return_value=62))
 
-    assert await probe._request(state, "series/kitsu:12:1089") == (one_piece, 1089)
+    assert await probe._request(state, "series/kitsu:12:1089", numbering) == (
+        one_piece,
+        1089,
+    )
     assert translate.await_args.args == (probe.parse_id("series/kitsu:12:1089"),)
+    numbering.kitsu_episode.assert_not_awaited()
 
+    # An IMDb id's episode gets the Kitsu number the app looks up
     laboon = probe.parse_id("series/tt0388629:5:2")
-    assert await probe._request(state, "series/tt0388629:5:2") == (laboon, None)
+    assert await probe._request(state, "series/tt0388629:5:2", numbering) == (
+        laboon,
+        62,
+    )
+    numbering.kitsu_episode.assert_awaited_once_with(laboon)
 
     translate.return_value = None
-    assert await probe._request(state, "series/kitsu:12:1089") is None
+    assert await probe._request(state, "series/kitsu:12:1089", numbering) is None
 
 
 def test_reference_line_names_the_catalog_entry() -> None:

@@ -14,9 +14,11 @@ whose title or link labels name another episode.
 
 A request's episode reference (the Cinemeta entry's title and the
 absolute number; ``series/kitsu:12:1089`` names the episode as Kitsu
-counts and is translated first) goes to the plugins that locate episodes
-on their own season pages; the placement they answer (``site_season``,
-``site_episode``, ``episode_located_by``) is listed per result.
+counts and is translated first, an IMDb id's episode gets the Kitsu number
+the app looks up, with the id list loaded first) goes to the plugins that
+locate episodes on their own season pages; the placement they answer
+(``site_season``, ``site_episode``, ``episode_located_by``) is listed per
+result.
 
 With sto and aniworld among the plugins, the links both give for the
 episode (the kept results that show it) are compared: aniworld's
@@ -64,6 +66,9 @@ from scavengarr.domain.plugins.base import (
     locates_episodes,
     result_key,
 )
+from scavengarr.infrastructure.anime.id_lists import AnimeIdLists
+from scavengarr.infrastructure.anime.kitsu_addon import KitsuAddonClient
+from scavengarr.infrastructure.anime.resolver import KitsuAnimeIdResolver
 from scavengarr.infrastructure.config.load import load_config
 from scavengarr.infrastructure.plugins.constants import search_max_results
 from scavengarr.infrastructure.stremio.episode_filter import (
@@ -435,15 +440,26 @@ def _plugin_names(state: AppState, only: set[str] | None) -> list[str]:
     return [n for n in names if not only or n in only]
 
 
+async def _numbering(state: AppState) -> KitsuAnimeIdResolver:
+    """The app's Kitsu numbering of IMDb requests with its id list loaded:
+    the app's own look-up never waits for the list, so its first requests
+    after a start go without."""
+    lists = AnimeIdLists(http_client=state.http_client, cache=state.cache)
+    await lists.entry(0)
+    addon = KitsuAddonClient(http_client=state.http_client, cache=state.cache)
+    return KitsuAnimeIdResolver(addon=addon, lists=lists)
+
+
 async def _request(
-    state: AppState, sid: str
+    state: AppState, sid: str, numbering: KitsuAnimeIdResolver
 ) -> tuple[StremioStreamRequest, int | None] | None:
     """The request *sid* means, as the use case handles it: a ``kitsu:`` id
-    is translated first and its episode number kept for the reference;
-    ``None`` when it has no translation."""
+    is translated first and its episode number kept for the reference, an
+    IMDb id's episode gets the Kitsu number *numbering* finds; ``None``
+    when it has no translation."""
     req = parse_id(sid)
     if not req.imdb_id.startswith("kitsu:"):
-        return req, None
+        return req, await numbering.kitsu_episode(req)
     translated = await state.anime_ids.translate(req)
     if translated is None:
         return None
@@ -522,9 +538,10 @@ async def probe(
         assert req.season is not None and req.episode is not None
         _record(sid, name, matched, req.season, req.episode, records, kept_links)
 
+    numbering = await _numbering(state)
     for sid in sids:
         started = time.monotonic()
-        request = await _request(state, sid)
+        request = await _request(state, sid, numbering)
         if request is None:
             references[sid] = "no translation"
             print(f"{sid}: no translation", file=sys.stderr)

@@ -287,3 +287,46 @@ Tsubasa: Tokyo Revelations (`kitsu:2447`, three OVAs) maps to Cinemeta's season 
 - S4E1, reference 145: sto places staffel-4/episode-1 by title. aniworld answers nothing. Its row 145 is the right one, but its English title is the dub's ("Pulse of a New Darkness" against Cinemeta's "A New Evil (Part 1 of 2)", 0.53 below the 0.6 a neighbour needs), and `locate()` trusts an exact number only for a row without a title. With the old 147 it found nothing either, so the change costs nothing here. The miss is `locate()`'s, not the position's: a follow-up candidate.
 
 Limits: one run, the catalogs' state at the time; the scan covers the addon's three catalogs and no full list (a series outside them with such entries is not counted). The sites' count was read on aniworld only; sto lists Duel Monsters without numbers and the other two not at all.
+
+## Row 76: an IMDb request carries the Kitsu number (2026-10-11, dev container, `handoff-76` on `staging` ac3b279)
+
+`AnimeIdResolverPort.kitsu_episode()` gives an IMDb series request's episode its number in the one Kitsu entry that counts the series from its start, and the episode reference takes it on a `kitsu:` request's terms (within 5 of the position, else the position). The candidates are the id list's series entries without a TheTVDB season for the IMDb id (`AnimeIdLists.whole_series()`); the addon's record of each (a missing one fetched once per title, the fetch shared by concurrent requests) counts when it names the IMDb id and places its episode 1 at S1E1, and exactly one of the counting records' episodes must sit at the request's season and episode. In the list of 2026-10-11 (7956 entries with both ids), 376 IMDb ids have such entries, and one has more than one: Fairy Tail (`tt1528406`: 4676, 8203, 13658).
+
+Row 72's probe through the app's look-up (`anime_offsets.py` now asks `kitsu_episode()` with the id list loaded first and counts the episodes it numbered; `--position` gives the numbering without it), 15:49 to 16:05 UTC:
+
+| Series | Kitsu | Numbered | Equal, position | Equal, with the number |
+|---|---|---:|---:|---:|
+| One Piece | 12 | 1179 | 589 (590 one low) | 1179 |
+| Detective Conan | 210 | 1217 | 1217 | 1217 |
+| Naruto: Shippuuden | 1555 | 500 | 500 | 500 |
+| Naruto | 11 | 220 | 220 | 220 |
+| BLEACH | 244 | 366 | 366 | 366 |
+| Boruto: Naruto Next Generations | 13051 | 0 | 293 | 293 |
+| Black Clover | 13209 | 0 | 170 | 170 |
+| Fairy Tail | 4676 | 175 | 175 | 175 |
+| Hunter x Hunter (2011) | 6448 | 148 | 148 | 148 |
+| Dragon Ball Super | 10879 | 131 | 131 | 131 |
+| Yu☆Gi☆Oh! Duel Monsters | 442 | 0 | 224 | 224 |
+
+(Numbered: the mapped episodes Cinemeta lists whose IMDb request got a Kitsu number. The episodes Cinemeta does not list stay out of the comparison, as in row 72: One Piece's 230, Detective Conan's 368. The other columns (episodes, mapped, not in Cinemeta, season 0, unmapped, not in Kitsu) match row 72's table.)
+
+- **Boruto** (`tt6342474`) and **Black Clover** (`tt7441658`): the list gives their entries TheTVDB season 1, so they are no candidates; their position equals Kitsu's number already.
+- **Duel Monsters:** the list names `tt0247902` for `kitsu:442`, the addon `tt0249327`, which Cinemeta uses: out of the look-up's reach. Its position is right since row 77.
+- **Fairy Tail:** `--kitsu 4676,8203,13658` numbers 4676's 175 episodes and none of the later series' episodes (8203: 102 episodes, 0 numbered, +175 from S5E1 on; 13658: 51, 0 numbered, +277 from S8E1 on, as with the position alone): their episode 1 is no S1E1, so their own count from 1 is never taken.
+
+`series_episodes` (`--plugins sto,aniworld`) for One Piece, before (the probe at ac3b279) and after:
+
+| Request | Reference | sto before | sto after | aniworld before and after |
+|---|---|---|---|---|
+| S22E04 | 1088 → 1089 | staffel-21/episode-197, "Ruffys Traum": the episode before | staffel-22/episode-1, "Der Beginn eines neuen Kapitels! Ruffys und Sabos Pfade!" (Cinemeta: "Entering a New Chapter! Luffy and Sabo's Paths!") | staffel-22/episode-1 |
+| S16E12 | 590 → 591 | nothing | staffel-15/episode-11, "Choppers Zorn! Die tyrannischen Experimente des Meisters!" (Cinemeta: "Chopper Enraged Master's Tyrannical Experiments") | staffel-15/episode-11 |
+
+The metadata phase (`stremio_phase_seconds{phase="metadata"}`, read from `/metrics` around each request): the dev server with a fresh diskcache, One Piece S22E04, S22E05 and S22E06 ten seconds apart, before at ac3b279.
+
+| Request | Before | After |
+|---|---:|---|
+| S22E04, nothing cached | 0.681 s | 0.696 s: the list not in memory yet, so no number; it loaded in the background |
+| S22E05, the titles cached | 0.003 s | 0.319 s: the addon's One Piece record fetched; 1090 |
+| S22E06, everything cached | 0.004 s | 0.005 s; 1091 |
+
+Limits: one run each, the catalogs' and the sites' state of the day; sto's placement was read for two One Piece episodes. The first requests after a start go without the number until the list is in memory (S22E04 above). Before Mr. Fable's review, a request that came while another one fetched a record it needed went without the number too: the Fairy Tail run, its three series compared at once, numbered none of 4676's episodes. Concurrent requests now share the one fetch, and the same run numbers all 175 (16:05 UTC). Production follows the deploy.

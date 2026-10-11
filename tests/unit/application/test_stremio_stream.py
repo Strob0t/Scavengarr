@@ -532,6 +532,7 @@ class TestEpisodeReference:
         *,
         meta: SeriesMeta | None,
         translated: StremioStreamRequest | None = None,
+        kitsu_number: int | None = None,
     ) -> StremioStreamUseCase:
         tmdb = AsyncMock()
         tmdb.get_title_and_year = AsyncMock(
@@ -549,12 +550,50 @@ class TestEpisodeReference:
         )
         anime_ids = AsyncMock()
         anime_ids.translate = AsyncMock(return_value=translated)
+        anime_ids.kitsu_episode = AsyncMock(return_value=kitsu_number)
         return make_use_case(
             tmdb=tmdb,
             plugins=plugins,
             series_meta=series_meta,
             anime_ids=anime_ids,
         )
+
+    async def test_an_imdb_request_gets_its_kitsu_number(self) -> None:
+        """One Piece's S22E4 is Kitsu's 1089, one past its position."""
+        plugin = self._plugin(locates=True)
+        uc = self._use_case(plugin, meta=self._META, kitsu_number=1089)
+        request = make_request(
+            imdb_id="tt0388629", content_type="series", season=22, episode=4
+        )
+
+        await uc.execute(request)
+
+        uc._anime_ids.kitsu_episode.assert_awaited_once_with(request)  # type: ignore[attr-defined]  # noqa: SLF001
+        plugin.search.assert_awaited_once_with(
+            "One Piece",
+            5000,
+            season=22,
+            episode=4,
+            episode_ref=EpisodeRef(season=22, episode=4, absolute=1089),
+        )
+
+    async def test_a_kitsu_request_is_not_numbered_again(self) -> None:
+        plugin = self._plugin(locates=True)
+        translated = make_request(
+            imdb_id="tt0388629", content_type="series", season=22, episode=4
+        )
+        uc = self._use_case(
+            plugin, meta=self._META, translated=translated, kitsu_number=7
+        )
+
+        await uc.execute(
+            make_request(
+                imdb_id="kitsu:12", content_type="series", season=1, episode=1089
+            )
+        )
+
+        uc._anime_ids.kitsu_episode.assert_not_awaited()  # type: ignore[attr-defined]  # noqa: SLF001
+        assert plugin.search.await_args.kwargs["episode_ref"].absolute == 1089
 
     async def test_a_locating_plugin_gets_the_reference(self) -> None:
         plugin = self._plugin(locates=True)

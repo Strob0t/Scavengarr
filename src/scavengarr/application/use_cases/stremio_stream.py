@@ -290,9 +290,13 @@ class StremioStreamUseCase:
         with self._telemetry.stage("stremio_phase", phase="metadata") as metadata:
             selected = await self._selector.select(all_names, category)
 
-            # 2. Titles: one per language the selected plugins search in
+            # 2. Titles: one per language the selected plugins search in,
+            # and the episode's Kitsu number alongside
             languages = self._titles.languages(selected)
-            title_infos, meta = await self._titles.title_infos(request, languages)
+            (title_infos, meta), absolute = await asyncio.gather(
+                self._titles.title_infos(request, languages),
+                self._kitsu_number(request, absolute),
+            )
             episode_ref = self._episode_ref(request, meta, absolute)
 
             primary_title_info = first_available_title(title_infos, languages)
@@ -406,6 +410,16 @@ class StremioStreamUseCase:
         )
         stage.outcome = "streams" if streams else "empty"
         return StreamAnswer(streams, source, complete, progress.missing)
+
+    async def _kitsu_number(
+        self, request: StremioStreamRequest, absolute: int | None
+    ) -> int | None:
+        """The episode's number as Kitsu counts it: a ``kitsu:`` request's
+        own (*absolute*), else the one the anime ids give an IMDb anime
+        episode (the anime sites count by it)."""
+        if absolute is not None:
+            return absolute
+        return await self._anime_ids.kitsu_episode(request)
 
     def _episode_ref(
         self,

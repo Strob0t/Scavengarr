@@ -6,6 +6,7 @@ titles (``tests/fixtures/json/kitsu/anime_list_excerpt.json``).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from pathlib import Path
@@ -35,6 +36,12 @@ def cache() -> AsyncMock:
 @pytest.fixture()
 def lists(cache: AsyncMock) -> AnimeIdLists:
     return AnimeIdLists(http_client=httpx.AsyncClient(), cache=cache)
+
+
+async def _loaded(lists: AnimeIdLists) -> None:
+    """Wait for the load ``whole_series()`` started in the background."""
+    if (task := lists._background) is not None:  # noqa: SLF001
+        await task
 
 
 class TestEntries:
@@ -147,3 +154,104 @@ class TestFailures:
         respx.get(LIST_URL).mock(side_effect=httpx.ReadTimeout)
 
         assert await lists.entry(41982) is None
+
+
+class TestWholeSeries:
+    """The reverse look-up for IMDb requests: per IMDb id the series entries
+    without a TVDB season, answered without waiting for the list."""
+
+    # One Piece's specials and movies share its IMDb id in the list
+    _RECORDS = [
+        *_LIST,
+        {
+            "kitsu_id": 2361,
+            "type": "OVA",
+            "imdb_id": ["tt0388629"],
+            "season": {"tvdb": 0},
+        },
+        {"kitsu_id": 5866, "type": "MOVIE", "imdb_id": ["tt0388629"]},
+    ]
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_a_list_not_loaded_answers_none_and_loads_in_the_background(
+        self, lists: AnimeIdLists
+    ) -> None:
+        route = respx.get(LIST_URL).respond(json=self._RECORDS)
+
+        assert lists.whole_series("tt0388629") is None
+        await _loaded(lists)
+
+        assert lists.whole_series("tt0388629") == [12]
+        assert route.call_count == 1
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_only_series_entries_without_a_season(
+        self, lists: AnimeIdLists
+    ) -> None:
+        respx.get(LIST_URL).respond(json=self._RECORDS)
+        await lists.entry(12)
+
+        assert lists.whole_series("tt0388629") == [12]
+        assert lists.whole_series("tt0131179") == [210]
+        # Season 3 of Attack on Titan counts that season alone
+        assert lists.whole_series("tt2560140") == []
+        # An id the list does not name: no anime
+        assert lists.whole_series("tt0903747") == []
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_one_load_at_a_time(self, lists: AnimeIdLists) -> None:
+        route = respx.get(LIST_URL).respond(json=self._RECORDS)
+
+        assert lists.whole_series("tt0388629") is None
+        assert lists.whole_series("tt0131179") is None
+        await _loaded(lists)
+
+        assert route.call_count == 1
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_a_failed_load_waits_its_hour(self, lists: AnimeIdLists) -> None:
+        route = respx.get(LIST_URL).respond(status_code=500)
+
+        assert lists.whole_series("tt0388629") is None
+        await _loaded(lists)
+        assert lists.whole_series("tt0388629") is None
+        await _loaded(lists)
+
+        assert route.call_count == 1
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_a_stale_list_answers_while_it_reloads(
+        self, lists: AnimeIdLists
+    ) -> None:
+        route = respx.get(LIST_URL).respond(json=self._RECORDS)
+        await lists.entry(12)
+        lists._expires_at = time.monotonic() - 1  # noqa: SLF001
+
+        assert lists.whole_series("tt0388629") == [12]
+        await _loaded(lists)
+
+        assert route.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_aclose_ends_a_load_still_running(self, cache: AsyncMock) -> None:
+        started = asyncio.Event()
+
+        async def never(_key: str) -> None:
+            started.set()
+            await asyncio.Event().wait()
+
+        cache.get.side_effect = never
+        lists = AnimeIdLists(http_client=httpx.AsyncClient(), cache=cache)
+        assert lists.whole_series("tt0388629") is None
+        await started.wait()
+        task = lists._background  # noqa: SLF001
+
+        await lists.aclose()
+
+        assert task is not None
+        assert task.cancelled()

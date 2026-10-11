@@ -19,3 +19,12 @@ class TestNullObject:
         )
 
         assert await NO_ANIME_IDS.translate(request) is None
+
+    @pytest.mark.asyncio
+    async def test_numbers_nothing_and_closes_quietly(self) -> None:
+        request = StremioStreamRequest(
+            imdb_id="tt0388629", content_type="series", season=22, episode=4
+        )
+
+        assert await NO_ANIME_IDS.kitsu_episode(request) is None
+        await NO_ANIME_IDS.aclose()

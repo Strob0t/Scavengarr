@@ -2,6 +2,8 @@
 
 Anime catalogs in Stremio hand out ``kitsu:<id>`` and ``kitsu:<id>:<episode>``
 with Kitsu's numbering; the pipeline searches by IMDb id, season and episode.
+The anime sites number a long-runner's episodes as Kitsu does, so an IMDb
+request's episode gets its Kitsu number too.
 """
 
 from __future__ import annotations
@@ -13,7 +15,8 @@ from scavengarr.domain.entities.stremio import StremioStreamRequest
 
 @runtime_checkable
 class AnimeIdResolverPort(Protocol):
-    """Translates a ``kitsu:`` stream request into a ``tt`` request."""
+    """Translates a ``kitsu:`` stream request into a ``tt`` request and
+    numbers an IMDb anime episode as Kitsu does."""
 
     async def translate(
         self, request: StremioStreamRequest
@@ -21,6 +24,18 @@ class AnimeIdResolverPort(Protocol):
         """The request with the IMDb id, content type, season and episode of
         *request*'s title as IMDb counts them; ``None`` when no source maps
         the id (the caller answers without streams)."""
+        ...
+
+    async def kitsu_episode(self, request: StremioStreamRequest) -> int | None:
+        """The number of an IMDb series request's episode in the one Kitsu
+        entry that counts the series from its start (One Piece's S21E109 is
+        1000); ``None`` for other requests, for a series no entry counts
+        whole and while the sources do not answer. Waits for no list
+        download."""
+        ...
+
+    async def aclose(self) -> None:
+        """End the background work still running (at shutdown)."""
         ...
 
 
@@ -31,6 +46,13 @@ class _NoAnimeIds:
         self, request: StremioStreamRequest
     ) -> StremioStreamRequest | None:
         del request
+        return None
+
+    async def kitsu_episode(self, request: StremioStreamRequest) -> int | None:
+        del request
+        return None
+
+    async def aclose(self) -> None:
         return None
 
 

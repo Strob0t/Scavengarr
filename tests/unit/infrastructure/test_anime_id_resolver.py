@@ -3,14 +3,19 @@ the addon's record first, the public list second, nothing third."""
 
 from __future__ import annotations
 
+import asyncio
+import json
+import time
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import structlog
 
-from scavengarr.domain.entities.stremio import StremioStreamRequest
+from scavengarr.domain.entities.stremio import StremioContentType, StremioStreamRequest
+from scavengarr.infrastructure.anime import kitsu_addon
 from scavengarr.infrastructure.anime.id_lists import ListEntry
 from scavengarr.infrastructure.anime.kitsu_addon import AddonRecord, Placement
 from scavengarr.infrastructure.anime.resolver import KitsuAnimeIdResolver
@@ -190,6 +195,265 @@ class TestListFallback:
         assert translated == StremioStreamRequest(
             imdb_id="tt5311514", content_type="movie"
         )
+
+
+_KITSU = Path(__file__).parents[2] / "fixtures" / "json" / "kitsu"
+
+
+def _addon_record(name: str) -> AddonRecord:
+    """The record the addon client keeps of a captured meta."""
+    return kitsu_addon._reduce(json.loads((_KITSU / name).read_text())["meta"])
+
+
+# Row 72's captures: Duel Monsters (tt0249327, 224 episodes) and an excerpt
+# of One Piece (tt0388629: episodes 1 and 1000)
+_DUEL = _addon_record("meta_series_442.json")
+_ONE_PIECE = _addon_record("meta_series_12.json")
+
+
+def _numbering(
+    whole_series: list[int] | None,
+    cached: Mapping[str, AddonRecord],
+    fetched: Mapping[str, AddonRecord] | None = None,
+) -> tuple[KitsuAnimeIdResolver, AsyncMock, MagicMock]:
+    """A resolver whose list names *whole_series* for every IMDb id and whose
+    addon has the *cached* records and gives the *fetched* ones."""
+    addon = AsyncMock()
+    addon.cached.side_effect = lambda _type, kitsu_id: cached.get(kitsu_id)
+    addon.fetch.side_effect = lambda _type, kitsu_id: (fetched or {}).get(kitsu_id)
+    lists = MagicMock()
+    lists.whole_series.return_value = whole_series
+    lists.aclose = AsyncMock()
+    return KitsuAnimeIdResolver(addon=addon, lists=lists), addon, lists
+
+
+def _imdb(
+    imdb_id: str = "tt0388629",
+    season: int | None = 21,
+    episode: int | None = 109,
+    content_type: StremioContentType = "series",
+) -> StremioStreamRequest:
+    return StremioStreamRequest(
+        imdb_id=imdb_id,
+        content_type=content_type,
+        season=season,
+        episode=episode,
+    )
+
+
+class TestKitsuEpisode:
+    """An IMDb series request's episode, numbered as the one Kitsu entry
+    that counts the series from its start numbers it."""
+
+    @pytest.mark.asyncio
+    async def test_the_kitsu_number_of_an_imdb_episode(self) -> None:
+        resolver, addon, lists = _numbering([12], {"12": _ONE_PIECE})
+
+        with structlog.testing.capture_logs() as logs:
+            number = await resolver.kitsu_episode(_imdb())
+
+        assert number == 1000
+        lists.whole_series.assert_called_once_with("tt0388629")
+        addon.cached.assert_awaited_once_with("series", "12")
+        addon.fetch.assert_not_awaited()
+        (event,) = _events(logs, "anime_kitsu_number")
+        assert (event["kitsu_id"], event["kitsu_episode"]) == ("12", 1000)
+        assert (event["season"], event["episode"]) == (21, 109)
+
+    @pytest.mark.asyncio
+    async def test_later_seasons_get_their_kitsu_numbers(
+        self,
+    ) -> None:
+        resolver, _, _ = _numbering([442], {"442": _DUEL})
+
+        assert await resolver.kitsu_episode(_imdb("tt0249327", 2, 1)) == 50
+        assert await resolver.kitsu_episode(_imdb("tt0249327", 4, 1)) == 145
+
+    @pytest.mark.asyncio
+    async def test_a_record_of_another_imdb_id_does_not_count(self) -> None:
+        """Fribb's list names Duel Monsters tt0247902, the addon tt0249327."""
+        resolver, _, _ = _numbering([442], {"442": _DUEL})
+
+        assert await resolver.kitsu_episode(_imdb("tt0247902", 2, 1)) is None
+
+    @pytest.mark.asyncio
+    async def test_an_uncached_record_is_fetched(self) -> None:
+        resolver, addon, _ = _numbering([12], {}, fetched={"12": _ONE_PIECE})
+
+        assert await resolver.kitsu_episode(_imdb()) == 1000
+        addon.fetch.assert_awaited_once_with("series", "12")
+
+    @pytest.mark.asyncio
+    async def test_the_addon_down_gives_none_and_is_asked_once_an_hour(
+        self,
+    ) -> None:
+        resolver, addon, _ = _numbering([12], {})
+
+        assert await resolver.kitsu_episode(_imdb()) is None
+        assert await resolver.kitsu_episode(_imdb()) is None
+        addon.fetch.assert_awaited_once_with("series", "12")
+
+    @pytest.mark.asyncio
+    async def test_concurrent_requests_share_one_fetch(self) -> None:
+        resolver, addon, _ = _numbering([12], {})
+        asked = 0
+        both_asked = asyncio.Event()
+
+        async def cached(_type: str, _kitsu_id: str) -> None:
+            nonlocal asked
+            asked += 1
+            if asked == 2:
+                both_asked.set()
+
+        async def fetch(_type: str, _kitsu_id: str) -> AddonRecord:
+            # Still in flight when the second request looks for the record
+            await both_asked.wait()
+            return _ONE_PIECE
+
+        addon.cached.side_effect = cached
+        addon.fetch.side_effect = fetch
+
+        numbers = await asyncio.gather(
+            resolver.kitsu_episode(_imdb()), resolver.kitsu_episode(_imdb())
+        )
+
+        assert numbers == [1000, 1000]
+        addon.fetch.assert_awaited_once_with("series", "12")
+        assert not resolver._fetching  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_a_failed_fetch_leaves_no_fetch_in_flight(self) -> None:
+        resolver, addon, _ = _numbering([12], {})
+
+        assert await resolver.kitsu_episode(_imdb()) is None
+
+        assert not resolver._fetching  # noqa: SLF001
+        resolver._fetched_at["12"] = time.monotonic() - 3601  # noqa: SLF001
+        addon.fetch.side_effect = None
+        addon.fetch.return_value = _ONE_PIECE
+        assert await resolver.kitsu_episode(_imdb()) == 1000
+
+    @pytest.mark.asyncio
+    async def test_an_episode_newer_than_the_record_refetches_once_an_hour(
+        self,
+    ) -> None:
+        newer = AddonRecord(
+            imdb_id="tt0388629",
+            content_type="series",
+            episodes={**_ONE_PIECE.episodes, 1089: Placement(22, 4, mapped=True)},
+        )
+        resolver, addon, _ = _numbering([12], {"12": _ONE_PIECE}, fetched={"12": newer})
+
+        assert await resolver.kitsu_episode(_imdb(season=22, episode=4)) == 1089
+        # Not mapped yet in the addon's newest record: asked again in an hour
+        assert await resolver.kitsu_episode(_imdb(season=22, episode=5)) is None
+        assert addon.fetch.await_count == 1
+
+        resolver._fetched_at["12"] = time.monotonic() - 3601  # noqa: SLF001
+        await resolver.kitsu_episode(_imdb(season=22, episode=5))
+        assert addon.fetch.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_an_episode_inside_the_record_asks_no_fetch(self) -> None:
+        resolver, addon, _ = _numbering([12], {"12": _ONE_PIECE})
+
+        assert await resolver.kitsu_episode(_imdb(season=10, episode=5)) is None
+        addon.fetch.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_only_an_entry_from_the_series_start_counts(self) -> None:
+        """Fairy Tail: three season-less entries; only 4676 starts at S1E1."""
+        whole = AddonRecord(
+            imdb_id="tt1528406",
+            content_type="series",
+            episodes={
+                1: Placement(1, 1, mapped=True),
+                175: Placement(5, 25, mapped=True),
+            },
+        )
+        later = AddonRecord(
+            imdb_id="tt1528406",
+            content_type="series",
+            episodes={
+                1: Placement(6, 1, mapped=True),
+                3: Placement(6, 3, mapped=True),
+            },
+        )
+        resolver, _, _ = _numbering([4676, 8203], {"4676": whole, "8203": later})
+
+        assert await resolver.kitsu_episode(_imdb("tt1528406", 5, 25)) == 175
+        assert await resolver.kitsu_episode(_imdb("tt1528406", 6, 3)) is None
+
+    @pytest.mark.asyncio
+    async def test_two_numbers_at_one_place_give_none(self) -> None:
+        double = AddonRecord(
+            imdb_id="tt0388629",
+            content_type="series",
+            episodes={
+                1: Placement(1, 1, mapped=True),
+                1000: Placement(21, 109, mapped=True),
+                1001: Placement(21, 109, mapped=True),
+            },
+        )
+        resolver, _, _ = _numbering([12], {"12": double})
+
+        assert await resolver.kitsu_episode(_imdb()) is None
+
+    @pytest.mark.asyncio
+    async def test_a_list_not_loaded_or_no_anime_asks_no_record(self) -> None:
+        for whole_series in (None, []):
+            resolver, addon, _ = _numbering(whole_series, {"12": _ONE_PIECE})
+
+            assert await resolver.kitsu_episode(_imdb()) is None
+            addon.cached.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "request_",
+        [
+            _imdb(content_type="movie", season=None, episode=None),
+            _imdb(episode=None),
+            _imdb(season=None),
+            StremioStreamRequest(
+                imdb_id="kitsu:12", content_type="series", season=1, episode=1000
+            ),
+        ],
+    )
+    async def test_only_an_imdb_series_episode_is_looked_up(
+        self, request_: StremioStreamRequest
+    ) -> None:
+        resolver, _, lists = _numbering([12], {"12": _ONE_PIECE})
+
+        assert await resolver.kitsu_episode(request_) is None
+        lists.whole_series.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_aclose_ends_the_lists_load(self) -> None:
+        resolver, _, lists = _numbering(None, {})
+
+        await resolver.aclose()
+
+        lists.aclose.assert_awaited_once_with()
+
+    @pytest.mark.asyncio
+    async def test_aclose_ends_a_fetch_still_running(self) -> None:
+        resolver, addon, _ = _numbering([12], {})
+        started = asyncio.Event()
+
+        async def never(_type: str, _kitsu_id: str) -> None:
+            started.set()
+            await asyncio.Event().wait()
+
+        addon.fetch.side_effect = never
+        request = asyncio.create_task(resolver.kitsu_episode(_imdb()))
+        await started.wait()
+        (fetch,) = resolver._fetching.values()  # noqa: SLF001
+
+        await resolver.aclose()
+
+        assert fetch.cancelled()
+        (outcome,) = await asyncio.gather(request, return_exceptions=True)
+        assert isinstance(outcome, asyncio.CancelledError)
 
 
 class TestNothingMaps:

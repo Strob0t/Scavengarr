@@ -22,6 +22,7 @@ import respx
 
 from scavengarr.domain.entities.stremio import EpisodeMeta, SeriesMeta
 from scavengarr.infrastructure.anime import kitsu_addon
+from scavengarr.infrastructure.anime.id_lists import LIST_URL
 from scavengarr.infrastructure.anime.kitsu_addon import ADDON_URL, Placement
 from scavengarr.infrastructure.stremio import cinemeta
 from scavengarr.infrastructure.stremio.cinemeta import CINEMETA_URL
@@ -93,8 +94,8 @@ class TestCapturedPair:
 
     def test_the_row_names_counts_and_the_first_off(self, offsets: Any) -> None:
         assert _mod.report_row("442", offsets) == (
-            "| Yu☆Gi☆Oh! Duel Monsters | 442 | 224 | 224 | 224 | 0 | 0 | 0 | 0 | 0"
-            " | 0 | 2 | – |"
+            "| Yu☆Gi☆Oh! Duel Monsters | 442 | 224 | 224 | 0 | 224 | 0 | 0 | 0 | 0"
+            " | 0 | 0 | 2 | – |"
         )
 
 
@@ -117,6 +118,26 @@ class TestCompare:
         # Kitsu 6's IMDb episode is not listed yet
         assert offsets.not_listed == 1
         assert offsets.first_off == (4, 2, 1, -1)
+
+    def test_the_kitsu_numbers_put_the_position_right(self) -> None:
+        # The same series with the app's Kitsu numbers: the episode IMDb
+        # lacks no longer shifts the rest
+        episodes = {
+            1: Placement(1, 1, mapped=True),
+            2: Placement(1, 2, mapped=True),
+            3: Placement(1, 3, mapped=False),
+            4: Placement(2, 1, mapped=True),
+            5: Placement(2, 2, mapped=True),
+        }
+        offsets = _mod.compare(
+            "Series",
+            "tt1",
+            episodes,
+            _meta((1, 1), (1, 2), (2, 1), (2, 2)),
+            {(1, 1): 1, (1, 2): 2, (2, 1): 4, (2, 2): 5},
+        )
+        assert (offsets.numbered, offsets.equal, offsets.minus_one) == (4, 4, 0)
+        assert offsets.first_off is None
 
     def test_an_episode_mapped_to_season_0_has_no_number(self) -> None:
         episodes = {1: Placement(1, 1, mapped=True), 2: Placement(0, 1, mapped=True)}
@@ -142,6 +163,27 @@ class TestSeriesOffsets:
             224,
             0,
         )
+
+    @respx.mock
+    async def test_the_app_numbers_through_the_list_and_the_addon(self) -> None:
+        # Fribb's list maps kitsu:442 to tt0247902; here to the addon's id
+        respx.get(LIST_URL).respond(
+            json=[{"kitsu_id": 442, "type": "TV", "imdb_id": ["tt0249327"]}]
+        )
+        respx.get(f"{ADDON_URL}/meta/series/kitsu:442.json").respond(json=_ADDON)
+        respx.get(f"{CINEMETA_URL}/meta/series/tt0249327.json").respond(json=_CINEMETA)
+        async with httpx.AsyncClient() as http:
+            resolver = await _mod.numbering(http)
+            assert resolver is not None
+            offsets, _ = await _mod.series_offsets(http, "442", resolver)
+        assert offsets is not None
+        assert (offsets.numbered, offsets.equal) == (224, 224)
+
+    @respx.mock
+    async def test_without_the_list_there_is_no_numbering(self) -> None:
+        respx.get(LIST_URL).respond(500)
+        async with httpx.AsyncClient() as http:
+            assert await _mod.numbering(http) is None
 
     @respx.mock
     async def test_a_kitsu_id_of_another_series_is_named(self) -> None:
