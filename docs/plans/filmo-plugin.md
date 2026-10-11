@@ -123,3 +123,18 @@ Limits:
 Mr. Fable's design: a capture that opts in aborts, as the client's block, every script request whose site is neither the page's nor one of its frames'. Only the Filemoon resolver opts in, for its `/e/` pages and Byse's `/d/` watch pages; the other captures are measured on the Pi first. Not a domain list (the ad network can switch domains) and not a DNS blocklist on the VPN (the maintainer's configuration, and such lists also block hoster domains).
 
 In the dev container both link kinds capture with it (Byse 4.5 and 1.6 s, `/e/` 5.3 and 1.5 s), and the tag reads `blocked` from the capture's own route. The Pi's proof follows the deploy: production's Filemoon captures and the breaker over the following hours. The breaker is restored open; its first half-open trial runs in a fresh profile (the captcha path: 17.8 s, or no playlist by 25.0 s), past the 10 s resolve budget, so it may reopen for an hour before a warm trial (6.8 and 6.9 s in row 78).
+
+The Pi's proof (2026-10-11, 16:37 to 16:39 UTC, production at 3a257fe): `capture_timing --diagnose` without `--block`, so only the app's rule aborts a request; two calls (Byse's `/d/`, then a regular `/e/` link) of two runs each in the probe's own browser, while the app's log shows no request or capture from 16:35:22 to 16:39 UTC.
+
+| Link | Run | Clicks at | Stream | Popups |
+|---|---|---|---|---|
+| Byse `/d/` | 1 | 5.4, 10.6, 15.9 s | 17.1 s | 0 |
+| Byse `/d/` | 2 | 4.4 s | 5.8 s | 0 |
+| `/e/` | 1 | 5.5, 10.6, 15.7 s | none by 20.8 s | 0 |
+| `/e/` | 2 | 4.7 s | 6.7 s | 0 |
+
+- In every run `llvpn.com` `/tag.min.js` reads `blocked`, the abort of the app's route, and no other script is aborted. The player's Chromecast sender (`gstatic.com`) is still pending when a capture ends, as in row 78's runs.
+- Three of four runs give a stream, as with row 78's probe block (three of four), against none of two with three popups per run without either.
+- Each call's first run takes the captcha path (`captcha`, `captcha/verify`) and three clicks: 17.1 s, or no stream by 20.8 s although every access request answered 200 (the player frame had no video element after the clicks). The second run skips the captcha and needs one click (5.8 and 6.7 s), inside the 10 s resolve budget.
+
+So the rule does on the Pi what the probe's block did. Production's breaker stays open until its own half-open trial; whether a trial lands on the captcha path is what the next captures show.
