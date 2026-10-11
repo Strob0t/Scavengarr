@@ -10,7 +10,8 @@ Scrapes s.to (German TV series streaming site) with:
   season pages (``locates_episodes``: the index of ``episode_index.py``)
 - Bounded concurrency for series and episode detail scraping
 
-Multi-domain support with automatic fallback (s.to, serienstream.to, 186.2.175.5).
+Multi-domain support with automatic fallback (serienstream.to, serienstream.cx,
+186.2.175.5; s.to is gone).
 TV-only site: all results use Torznab category 5000+.
 No authentication required.
 """
@@ -50,7 +51,7 @@ from scavengarr.infrastructure.plugins.relevance import (
 # Configurable settings
 # ---------------------------------------------------------------------------
 # s.to is gone (NXDOMAIN; dead in JDownloader's SerienStreamTo too)
-_DOMAINS = ["serienstream.to", "186.2.175.5"]
+_DOMAINS = ["serienstream.to", "serienstream.cx", "186.2.175.5"]
 _MAX_PAGES = 42  # 24 results/page → 42 pages for ~1000
 _RESULTS_PER_PAGE = 24
 # Hoster buttons of an episode page; each opens a /r?t= link-out
@@ -297,7 +298,7 @@ class StoPlugin(HttpxPluginBase):
     """Python plugin for s.to (SerienStream) using httpx.
 
     Supports multiple domains with automatic fallback:
-    s.to, serienstream.to, 186.2.175.5.
+    serienstream.to, serienstream.cx, 186.2.175.5.
     """
 
     name = "sto"

@@ -24,7 +24,7 @@ is unreachable.
 | Plugin | Website | Mirrors | Content | Engine | Languages |
 |---|---|---|---|---|---|
 | `animeloads` | www.anime-loads.org | 1 | Downloads | Playwright | de |
-| `aniworld` | aniworld.to | 0 | Streams | httpx | de |
+| `aniworld` | aniworld.to | 1 | Streams | httpx | de |
 | `boerse` | boerse.am | 4 | Downloads | Playwright | de |
 | `burningseries` | burningseries.ac | 2 | Downloads | httpx | de |
 | `byte` | byte.to | 0 | Downloads | httpx | de |
@@ -61,7 +61,7 @@ is unreachable.
 | `scnsrc` | www.scnsrc.me | 5 | Downloads | Playwright | en |
 | `serienfans` | serienfans.org | 0 | Downloads | httpx | de |
 | `serienjunkies` | serienjunkies.org | 0 | Downloads | httpx | de |
-| `sto` | serienstream.to | 1 | Streams | httpx | de |
+| `sto` | serienstream.to | 2 | Streams | httpx | de |
 | `streamcloud` | streamcloud.download | 1 | Streams | httpx | de |
 | `streamkiste` | streamkiste.bid | 5 | Streams | httpx | de |
 | `warezomen` | warezomen.com | 0 | Downloads | httpx | de |

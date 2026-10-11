@@ -223,8 +223,9 @@ class TestPluginAttributes:
         assert plugin.mode == "httpx"
 
     def test_domains_list(self) -> None:
-        # s.to is gone (NXDOMAIN, dead in JDownloader's SerienStreamTo)
-        assert _DOMAINS == ["serienstream.to", "186.2.175.5"]
+        # s.to is gone (NXDOMAIN, dead in JDownloader's SerienStreamTo);
+        # serienstream.cx is on the site's own list, serien.domains (row 74)
+        assert _DOMAINS == ["serienstream.to", "serienstream.cx", "186.2.175.5"]
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +260,7 @@ class TestDomainVerification:
 
         ok_resp = MagicMock()
         ok_resp.status_code = 200
-        ok_resp.url = httpx.URL("https://186.2.175.5/")
+        ok_resp.url = httpx.URL("https://serienstream.cx/")
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.head = AsyncMock(side_effect=[fail_resp, ok_resp])
@@ -268,6 +269,25 @@ class TestDomainVerification:
         await plugin._verify_domain()
 
         assert plugin._domain_verified is True
+        assert "serienstream.cx" in plugin.base_url
+
+    @pytest.mark.asyncio
+    async def test_the_address_comes_after_the_names(self) -> None:
+        plugin = _make_plugin()
+
+        fail_resp = MagicMock()
+        fail_resp.status_code = 503
+
+        ok_resp = MagicMock()
+        ok_resp.status_code = 200
+        ok_resp.url = httpx.URL("https://186.2.175.5/")
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.head = AsyncMock(side_effect=[fail_resp, fail_resp, ok_resp])
+        plugin._client = mock_client
+
+        await plugin._verify_domain()
+
         assert "186.2.175.5" in plugin.base_url
 
     @pytest.mark.asyncio

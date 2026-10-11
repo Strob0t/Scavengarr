@@ -10,7 +10,8 @@ Scrapes aniworld.to (German anime streaming site) with:
 - Category: always 5070 (Anime) since site is anime-only
 - Bounded concurrency for detail page scraping
 
-Domain: aniworld.to (aniworld.info is a scam copy with ad pages).
+Domains: aniworld.to, aniworld.cc (both on aniworld.domains; aniworld.info is a
+scam copy with ad pages).
 No authentication required.
 """
 
@@ -42,7 +43,7 @@ from scavengarr.infrastructure.plugins.relevance import (
 # Configurable settings
 # ---------------------------------------------------------------------------
 # aniworld.info is a scam copy with ad pages (JDownloader SerienStreamTo)
-_DOMAINS = ["aniworld.to"]
+_DOMAINS = ["aniworld.to", "aniworld.cc"]
 
 # ---------------------------------------------------------------------------
 # Constants

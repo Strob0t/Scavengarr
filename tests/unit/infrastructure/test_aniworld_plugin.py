@@ -554,10 +554,28 @@ class TestDomainVerification:
         # SerienStreamTo, 2026-09-09)
         assert "aniworld.info" not in _AniworldPlugin._domains
 
-    async def test_the_single_domain_is_checked_for_the_domain_list(self) -> None:
-        """aniworld.domains names the site's addresses (row 69): the one
-        domain is checked, so a dead one turns to the list (skipped here
-        without a cache) instead of failing in the search."""
+    def test_domains_list(self) -> None:
+        # aniworld.cc is on the site's own list, aniworld.domains (row 74)
+        assert _AniworldPlugin._domains == ["aniworld.to", "aniworld.cc"]
+        assert _AniworldPlugin.domain_list_url == "https://aniworld.domains/"
+
+    async def test_fallback_to_the_second_domain(self) -> None:
+        plugin = _make_plugin()
+        ok = MagicMock(spec=httpx.Response, history=[])
+        ok.status_code = 200
+        ok.url = httpx.URL("https://aniworld.cc/")
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.head = AsyncMock(
+            side_effect=[httpx.ConnectError("Connection failed"), ok]
+        )
+        plugin._client = mock_client
+
+        await plugin._verify_domain()
+
+        assert plugin.base_url == "https://aniworld.cc"
+
+    async def test_both_domains_dead_and_no_list_is_unreachable(self) -> None:
+        """Without a cache (here) the list is skipped: the search fails."""
         plugin = _make_plugin()
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.head = AsyncMock(
@@ -568,8 +586,7 @@ class TestDomainVerification:
         with pytest.raises(PluginUnreachableError):
             await plugin._verify_domain()
 
-        mock_client.head.assert_awaited_once()
-        assert plugin.domain_list_url == "https://aniworld.domains/"
+        assert mock_client.head.await_count == 2
 
     async def test_skips_if_already_verified(self) -> None:
         plugin = _make_plugin()

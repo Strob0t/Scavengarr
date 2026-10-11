@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: aniworld.cc and serienstream.cx Join the Domains
+- aniworld's `_domains` are aniworld.to and aniworld.cc, and sto's are serienstream.to, serienstream.cx and its address (row 74, the maintainer's yes to row 69's finding). Both new hosts are on their sites' official lists, serve the site with its marker, and are named neither dead nor scam by JDownloader's SerienStreamTo.
+
 ### Added: The Challenge Counter Tells Solved From Unsolved
 - The plugin record counts `challenges_unsolved` per plugin and UTC day (row 70): a search with a challenge the plugin did not get past. That covers a browser fallback that returned no page or failed, an answer no browser tried, a Playwright solve that gave up, and a challenge still open when the search ended. The bases mark each challenge with `mark_challenge()` and settle it with `settle_challenge(solved=...)`; the runner counts once per search.
 - `GET /api/v1/stats/plugins` carries the counter in its days, and an older day without it reads 0. The digest's plugin table shows `challenges/unsolved` and a line with N20's rule over the record's last 7 days: a solver sidecar trial only for a plugin whose unsolved challenges exceed 5 % of its searches.

@@ -332,4 +332,4 @@ The two new live cases fail the way the analysis predicts (`upns_file_offline`, 
 | aniworld | aniworld.to, aniworld.cc | both 200, marker | pinned aniworld.to |
 | sto | serienstream.to, serienstream.cx | both 200, marker | pinned serienstream.to |
 
-aniworld.cc and serienstream.cx serve their sites and are not in `_domains`. Whether they go in is the maintainer's decision; until then the lists cover them. The marker appears on every captured page of the three sites except filmo's redirect interstitial (`test_the_marker_is_on_the_sites_own_pages`).
+aniworld.cc and serienstream.cx serve their sites and were not in `_domains`. The maintainer said yes (row 74), and both now follow the first domain: with it dead (a `.invalid` host), the domain check pinned aniworld.cc and serienstream.cx (dev container, 2026-10-11). The marker appears on every captured page of the three sites except filmo's redirect interstitial (`test_the_marker_is_on_the_sites_own_pages`).
