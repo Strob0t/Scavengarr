@@ -291,6 +291,21 @@ def breakers(samples: Iterable[Sample], records: Iterable[Record]) -> dict[str, 
     }
 
 
+def domain_list_hosts(records: Iterable[Record]) -> list[dict[str, Any]]:
+    """The hosts plugins took from their sites' domain lists in the window
+    (``plugin_domain_list_host``): not in their ``_domains``, so the
+    maintainer decides whether they go there."""
+    uses: Counter[tuple[str, str]] = Counter(
+        (str(r.get("plugin", "")), str(r.get("host", "")))
+        for r in records
+        if r.get("event") == "plugin_domain_list_host"
+    )
+    return [
+        {"plugin": plugin, "host": host, "uses": count}
+        for (plugin, host), count in sorted(uses.items())
+    ]
+
+
 def noise(records: Sequence[Record]) -> list[dict[str, Any]]:
     """The most frequent events and their share of the records."""
     counts = Counter(str(r.get("event", "")) for r in records)
@@ -363,6 +378,7 @@ def digest(
         "process": process(samples, now),
         "requests": requests(records),
         "plugins": plugins(plugin_record, first_day),
+        "domain_lists": domain_list_hosts(records),
         "hosters": hosters(samples),
         "breakers": breakers(samples, records),
         "noise": noise(records),
@@ -532,6 +548,13 @@ def render(data: dict[str, Any]) -> str:
     )
     lines.extend(["", "## Plugins", ""])
     lines.extend(_plugins_section(data["plugins"]))
+    if data.get("domain_lists"):
+        lines.append(
+            "\nHosts from a domain list (not in `_domains`): "
+            + ", ".join(
+                f"{d['plugin']} {d['host']} ×{d['uses']}" for d in data["domain_lists"]
+            )
+        )
     lines.extend(["", "## Hosters", "", "Since the process start."])
     lines.append("")
     lines.extend(

@@ -43,6 +43,12 @@ from .constants import (
     DEFAULT_USER_AGENT,
     search_max_results,
 )
+from .domain_list import (
+    DOMAIN_LIST_FAILED_TTL_S,
+    DOMAIN_LIST_TTL_S,
+    read_domain_list,
+    serves_site,
+)
 
 # Browser fallback budget per page: covers a Turnstile click + redirect
 _BROWSER_FETCH_TIMEOUT_S = 30.0
@@ -129,6 +135,12 @@ class HttpxPluginBase:
         return self.languages[0]
 
     _domains: list[str] = []  # noqa: RUF012  # subclass overrides
+    # The site's official list of its addresses (``https://filmo.domains/``)
+    # and the CSS selector of an element only the site's own landing page
+    # shows (its link to that list): a listed host serves the site only
+    # with it, since parked and for-sale domains answer below 400 too
+    domain_list_url: str | None = None
+    domain_marker: str | None = None
     _max_concurrent: int = DEFAULT_MAX_CONCURRENT
     _max_results: int = DEFAULT_MAX_RESULTS
     _timeout: float = DEFAULT_CLIENT_TIMEOUT
@@ -233,11 +245,14 @@ class HttpxPluginBase:
         lifetime; without one, the first that answers at all
         (``_site_answers``: an error page, or a Cloudflare challenge the
         plugin's browser fallback solves) serves the searches of the next
-        ``ANSWERING_DOMAIN_RECHECK_S`` and is checked again then. Raises
-        ``PluginUnreachableError`` when no domain answers; the next
-        search checks again.
+        ``ANSWERING_DOMAIN_RECHECK_S`` and is checked again then. When no
+        domain answers, a host of the site's domain list that serves the
+        site (``_listed_domain``) is pinned like one. Raises
+        ``PluginUnreachableError`` when none answers; the next search
+        checks again.
         """
-        if self._domain_verified or len(self._domains) <= 1:
+        single = len(self._domains) <= 1 and not self.domain_list_url
+        if self._domain_verified or single:
             self._domain_verified = True
             return
         if time.monotonic() < self._domain_recheck_at:
@@ -271,8 +286,60 @@ class HttpxPluginBase:
             )
             self._use_domain(domain, resp, pinned=False)
             return
+        if await self._listed_domain(client):
+            return
         self._log.warning(f"{self.name}_no_domain_reachable")
         raise PluginUnreachableError(self.name)
+
+    async def _listed_domain(self, client: httpx.AsyncClient) -> bool:
+        """Pin the first host of the site's domain list beyond ``_domains``
+        whose landing page shows ``domain_marker``; ``False`` without one."""
+        if not self.domain_list_url or not self.domain_marker:
+            return False
+        own = {d.lower().removeprefix("www.") for d in self._domains}
+        for host in await self._domain_list(client):
+            if host.removeprefix("www.") in own:
+                continue
+            try:
+                resp = await client.get(
+                    f"https://{host}/",
+                    timeout=DEFAULT_DOMAIN_CHECK_TIMEOUT,
+                    headers={"User-Agent": self._user_agent},
+                )
+            except httpx.HTTPError:
+                self._log.debug(f"{self.name}_domain_check_failed", domain=host)
+                continue
+            if resp.status_code < 400 and await serves_site(
+                resp.text, self.domain_marker
+            ):
+                self._log.info("plugin_domain_list_host", plugin=self.name, host=host)
+                self._use_domain(host, resp, pinned=True)
+                return True
+        return False
+
+    async def _domain_list(self, client: httpx.AsyncClient) -> list[str]:
+        """The hosts of the site's domain list, read at most once a day
+        (an hour after a failed read) through the app's cache."""
+        cache = self._cache
+        if cache is None or not self.domain_list_url:
+            self._log.debug("plugin_domain_list_skipped", plugin=self.name)
+            return []
+        key = f"{self.name}:domain_list:v1"
+        cached = await cache.get(key)
+        if isinstance(cached, list):
+            return [str(h) for h in cached]
+        try:
+            hosts = await read_domain_list(
+                client, self.domain_list_url, self._user_agent
+            )
+        except (httpx.HTTPError, ValueError) as exc:
+            self._log.warning(
+                "plugin_domain_list_failed", plugin=self.name, error=str(exc)
+            )
+            await cache.set(key, [], ttl=DOMAIN_LIST_FAILED_TTL_S)
+            return []
+        await cache.set(key, hosts, ttl=DOMAIN_LIST_TTL_S)
+        return hosts
 
     def _use_domain(self, domain: str, resp: httpx.Response, *, pinned: bool) -> None:
         """Take the domain's final URL after any redirects (e.g. a ``www.``

@@ -303,6 +303,9 @@ class StoPlugin(HttpxPluginBase):
     name = "sto"
     provides = "stream"
     _domains = _DOMAINS
+    # The official list of the site's addresses; the site links it
+    domain_list_url = "https://serien.domains/"
+    domain_marker = 'a[href*="serien.domains"]'
 
     # A Stremio request's episode of an anime is located on the site's
     # season pages (the Staffeln are the site's own, not IMDb's seasons)

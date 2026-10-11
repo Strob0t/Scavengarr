@@ -13,6 +13,7 @@ import pytest
 from structlog.testing import capture_logs
 
 from scavengarr.domain.entities.stremio import EpisodeRef
+from scavengarr.domain.plugins.base import PluginUnreachableError
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "aniworld.py"
 
@@ -553,7 +554,10 @@ class TestDomainVerification:
         # SerienStreamTo, 2026-09-09)
         assert "aniworld.info" not in _AniworldPlugin._domains
 
-    async def test_a_single_domain_is_not_checked(self) -> None:
+    async def test_the_single_domain_is_checked_for_the_domain_list(self) -> None:
+        """aniworld.domains names the site's addresses (row 69): the one
+        domain is checked, so a dead one turns to the list (skipped here
+        without a cache) instead of failing in the search."""
         plugin = _make_plugin()
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.head = AsyncMock(
@@ -561,10 +565,11 @@ class TestDomainVerification:
         )
         plugin._client = mock_client
 
-        await plugin._verify_domain()
+        with pytest.raises(PluginUnreachableError):
+            await plugin._verify_domain()
 
-        assert plugin._domain_verified is True
-        mock_client.head.assert_not_called()
+        mock_client.head.assert_awaited_once()
+        assert plugin.domain_list_url == "https://aniworld.domains/"
 
     async def test_skips_if_already_verified(self) -> None:
         plugin = _make_plugin()

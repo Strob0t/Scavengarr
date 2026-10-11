@@ -377,3 +377,41 @@ class TestRender:
         assert "no metrics" in text
         assert "The long-term record is not available" in text
         assert "Every breaker is closed now." in text
+
+
+class TestDomainListHosts:
+    """The hosts a plugin took from its site's domain list (row 69): not in
+    its ``_domains``, so the maintainer decides whether they go there."""
+
+    _LIST_LOG = "\n".join(
+        [
+            _line(event="plugin_domain_list_host", plugin="filmo", host="filmo.cc"),
+            _line(event="plugin_domain_list_host", plugin="filmo", host="filmo.cc"),
+            _line(event="plugin_domain_list_host", plugin="sto", host="s.example"),
+        ]
+    )
+
+    def test_counts_per_plugin_and_host(self) -> None:
+        records = _mod.parse_records(self._LIST_LOG)
+
+        assert _mod.domain_list_hosts(records) == [
+            {"plugin": "filmo", "host": "filmo.cc", "uses": 2},
+            {"plugin": "sto", "host": "s.example", "uses": 1},
+        ]
+
+    def test_the_plugins_section_names_them(self) -> None:
+        data = _digest()
+        data["domain_lists"] = _mod.domain_list_hosts(
+            _mod.parse_records(self._LIST_LOG)
+        )
+
+        text = _mod.render(data)
+
+        assert (
+            "\nHosts from a domain list (not in `_domains`): "
+            "filmo filmo.cc ×2, sto s.example ×1\n"
+        ) in text
+
+    def test_no_line_without_one(self) -> None:
+        assert _digest()["domain_lists"] == []
+        assert "Hosts from a domain list" not in _mod.render(_digest())

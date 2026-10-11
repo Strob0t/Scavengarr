@@ -296,3 +296,40 @@ The two new live cases fail the way the analysis predicts (`upns_file_offline`, 
 
 **Series probe, before and after.** Before: `| cineby | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |`, 14 requests at 0 s each, every one `private_address_refused` and `cineby_fetch_error`, counted as searches without results. After: `| cineby | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | PluginUnreachableError 14 |`, 14 `cineby_api_unreachable` lines with `error=PrivateAddressError`, no fetch. In a round the plugin is marked unreachable (`stremio_plugin_unreachable`, the record's `unreachable` count) and skipped until the health monitor finds the API host answering.
 **Production (2026-10-10, 12:00 to 12:30 UTC, read-only through `scripts/prodctl.py`).** The plugin is disabled by config there: the 24 h log holds three cineby lines, all from the start at 10:27:28 UTC (`config_effective`, `plugin_loaded`, `plugin_disabled_by_config plugin=cineby`), no search, and the plugin record has no cineby entry (`probe domains --plugins cineby --history`: "cineby: no record"). The audits' zeros were the dev container's, never production's. The production container's resolver does not know the API host either: `db.videasy.net`, `www.cineby.at` and `cineby.at` fail with "No address associated with hostname" (a DNS-only probe file run by path, one `getaddrinfo` per name, outcomes without addresses), `videasy.net` and `cineby.gd` resolve to public addresses. That resolver has no search domain, so there is no private address and no guard refusal: after the deploy `_verify_domain()` meets a connect error instead and reports unreachable the same way. The deployed code's domains probe (still the eight former site domains) sees them as the dev container does, none of them the site: `cineby.gd` and `cineby.app` resolve and accept the connection but the `HEAD` and `GET` end in `ConnectError`, `cineby.xyz`, `cineby.bond` and `cineby.watch` answer 200 behind Cloudflare, `cineby.site` 200 and then 403 (the challenge), `cineby.today` fails at DNS, `cineby.digital` at the connection. The change alters production only once the maintainer enables the plugin there: then it reports unreachable instead of answering nothing.
+
+## Official domain lists (2026-10-11, row 69)
+
+**Question.** Which of the 42 plugins' sites publish an official list of their addresses (N24, the maintainer's decision of 2026-10-11: a site that publishes one is read and managed by its plugin)?
+
+**Survey.** Dev container only, nothing in production. Each plugin's first answering `_domains` entry was fetched with httpx (browser User-Agent), and its anchors were searched for a list link (`domain`, `adresse`, `mirror`, `alternativ`, a `<name>.domains` host). The 16 sites that answered 403 or a challenge page were read again in Patchright under xvfb, after the challenge cleared. Only landing pages were read; a list linked from a deeper page would be missed.
+
+| Plugin | Read | List |
+|---|---|---|
+| aniworld | httpx | `https://aniworld.domains/`: a Vite single-page app; its bundle names `[{name, url, description}]` entries: aniworld.to, aniworld.cc and a proxy IP literal |
+| filmo | httpx | `https://filmo.domains/`: a Vite single-page app; its bundle's `alternativeUrls: [{label, href}]` names filmo.to |
+| sto | httpx | `https://serien.domains/`: a Vite single-page app like aniworld's; it names serienstream.to, serienstream.cx and a proxy IP literal |
+| burningseries | httpx | none readable: the page text names `burningseries.domains`, which refused the connection |
+| hdfilme | httpx | none: an on-site page `hdfilme-alternative.html` names the current address, but it is on the site itself, and hdfilme.cafe already redirects to hdfilme.ceo |
+| kinox | httpx | none: an on-site page `Alternative.html` ("Backup Domains") names the mirrors that `_domains` already holds (kinox.to, kinos.to, kinoz.to) |
+| hdsource | httpx | none: a blog post about the site's domain block, no list |
+| cine, crawli, ddlspot, einschalten, filmpalast, fireani, haschcon, hdworld, kinoking, megakino, movie2k, nima4k, serienjunkies, streamcloud, streamkiste, warezomen | httpx | none |
+| animeloads, byte, dataload, ddlvalley, jjs, moflix, movieblog, myboerse, nox, scnlog, scnsrc | Patchright | none ("Mirror" and "Alternative" hits are release names and categories) |
+| boerse, filmfans, kinoger, mygully, serienfans | Patchright, challenge not cleared | unknown |
+| cineby, megakino_to, movie4k | no answer | unknown: megakino_to and movie4k are unreachable (step 29); cineby's API host resolves to a private address here (row 48) |
+
+**Mechanism.** `HttpxPluginBase` reads a site's list through `infrastructure/plugins/domain_list.py`. A plugin names `domain_list_url` and `domain_marker`, a CSS selector for an element that only the site's own landing page shows (here, its link to the list).
+- When no `_domains` entry answers (not even with an error page or a challenge), the domain check reads the list through the plugin's client, so the shared client's `PrivateAddressGuard` refuses LAN targets.
+- The list is read from its page and the scripts the page loads from the list's own host. A host counts when it appears as a `url:`/`href:` value or in an `<a href>`. IP literals are dropped, and at most 20 hosts are kept.
+- The hosts are cached as `<plugin>:domain_list:v1` for 24 hours. A list that fails to load or names no host is cached as `[]` for one hour, with one `plugin_domain_list_failed` warning. Without an injected cache the list is skipped.
+- Each listed host beyond `_domains` is fetched. The first one that answers below 400 and shows the marker is pinned like a `_domains` entry and logged as `plugin_domain_list_host` (plugin, host). The digest names it under Plugins, so the maintainer decides whether it goes into `_domains`.
+- The Playwright base is unchanged: no Playwright site publishes a list.
+
+**Live proof** (13:56 UTC, dev container, `PYTHONPATH=src`, the guarded client as the app builds it). Each list was read, each listed host fetched and checked for the marker, and then the domain check ran with `_domains` replaced by a dead `<plugin>-dead.invalid`.
+
+| Plugin | Listed | Verdicts | Check with dead `_domains` |
+|---|---|---|---|
+| filmo | filmo.to | filmo.to 200, marker | pinned filmo.to |
+| aniworld | aniworld.to, aniworld.cc | both 200, marker | pinned aniworld.to |
+| sto | serienstream.to, serienstream.cx | both 200, marker | pinned serienstream.to |
+
+aniworld.cc and serienstream.cx serve their sites and are not in `_domains`. Whether they go in is the maintainer's decision; until then the lists cover them. The marker appears on every captured page of the three sites except filmo's redirect interstitial (`test_the_marker_is_on_the_sites_own_pages`).

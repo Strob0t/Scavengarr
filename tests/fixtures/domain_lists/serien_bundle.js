@@ -1,0 +1,1 @@
+(()=>{const x=1;o=[{name:"SerienStream.to",url:"https://serienstream.to",description:"Hauptdomain SerienStream.to"},{name:"186.2.175.5",url:"http://186.2.175.5",description:"Proxy IP-Adresse von SerienStream"},{name:"SerienStream.cx",url:"https://serienstream.cx",description:"Alternative SerienStream / S.to"}];})();

@@ -1,0 +1,1 @@
+(()=>{const x=1;o=[{name:"AniWorld.to",url:"https://aniworld.to",description:"Offizieller AniWorld Link"},{name:"AniWorld.CC",url:"https://aniworld.cc",description:"Alternative AniWorld URL"},{name:"186.2.175.111",url:"http://186.2.175.111",description:"Proxy IP-Adresse von AniWorld"}];})();

@@ -178,6 +178,9 @@ class AniworldPlugin(HttpxPluginBase):
     provides = "stream"
 
     _domains = _DOMAINS
+    # The official list of the site's addresses; the site links it
+    domain_list_url = "https://aniworld.domains/"
+    domain_marker = 'a[href*="aniworld.domains"]'
 
     # A Stremio request's episode is located on the site's season pages
     # (the Staffeln are the site's own, not IMDb's seasons)

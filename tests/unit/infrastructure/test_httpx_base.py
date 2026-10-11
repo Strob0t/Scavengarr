@@ -874,3 +874,170 @@ class TestOwnLinkResolutionBound:
         assert len(resolved) == 10
         assert resolved[3].download_link == "https://hoster.example/3"
         assert peak == 2
+
+
+# ---------------------------------------------------------------------------
+# The site's official domain list (row 69)
+# ---------------------------------------------------------------------------
+
+
+class _ListedPlugin(HttpxPluginBase):
+    name = "listed"
+    provides = "stream"
+    _domains = ["site.example"]
+    domain_list_url = "https://list.example/"
+    domain_marker = 'a[href*="list.example"]'
+
+
+# The site's own page shows the link to its list; a parked domain does not
+_SITE_PAGE = '<footer><a href="https://list.example/">Domains</a></footer>'
+_PARKED_PAGE = "<h1>This domain is for sale</h1>"
+_LIST_PAGE = (
+    '<a href="https://site.example/">a</a>'
+    '<a href="https://parked.example/">b</a>'
+    '<a href="https://mirror.example/">c</a>'
+)
+_KEY = "listed:domain_list:v1"
+
+
+@pytest.fixture
+def list_cache(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
+    cache = AsyncMock()
+    cache.get = AsyncMock(return_value=None)
+    monkeypatch.setattr(HttpxPluginBase, "_cache", cache)
+    return cache
+
+
+class TestDomainList:
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_a_listed_host_that_serves_the_site_is_used(
+        self, list_cache: AsyncMock
+    ) -> None:
+        respx.head("https://site.example/").mock(side_effect=httpx.ConnectError("x"))
+        respx.get("https://list.example/").respond(200, text=_LIST_PAGE)
+        respx.get("https://parked.example/").respond(200, text=_PARKED_PAGE)
+        respx.get("https://mirror.example/").respond(200, text=_SITE_PAGE)
+        site_get = respx.get("https://site.example/")
+        plugin = _ListedPlugin()
+        plugin._client = httpx.AsyncClient()
+
+        with structlog.testing.capture_logs() as logs:
+            await plugin._verify_domain()
+
+        assert plugin.base_url == "https://mirror.example"
+        assert plugin._domain_verified is True
+        # A host of _domains is not tried twice
+        assert not site_get.called
+        list_cache.set.assert_awaited_once_with(
+            _KEY, ["site.example", "parked.example", "mirror.example"], ttl=86400
+        )
+        found = [e for e in logs if e["event"] == "plugin_domain_list_host"]
+        assert found == [
+            {
+                "event": "plugin_domain_list_host",
+                "plugin": "listed",
+                "host": "mirror.example",
+                "log_level": "info",
+            }
+        ]
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_the_list_is_read_once_a_day(self, list_cache: AsyncMock) -> None:
+        list_cache.get = AsyncMock(return_value=["mirror.example"])
+        respx.head("https://site.example/").mock(side_effect=httpx.ConnectError("x"))
+        list_route = respx.get("https://list.example/")
+        respx.get("https://mirror.example/").respond(200, text=_SITE_PAGE)
+        plugin = _ListedPlugin()
+        plugin._client = httpx.AsyncClient()
+
+        await plugin._verify_domain()
+
+        list_cache.get.assert_awaited_once_with(_KEY)
+        assert not list_route.called
+        assert plugin.base_url == "https://mirror.example"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_a_host_without_the_marker_is_refused(
+        self, list_cache: AsyncMock
+    ) -> None:
+        list_cache.get = AsyncMock(return_value=["parked.example"])
+        respx.head("https://site.example/").mock(side_effect=httpx.ConnectError("x"))
+        respx.get("https://parked.example/").respond(200, text=_PARKED_PAGE)
+        plugin = _ListedPlugin()
+        plugin._client = httpx.AsyncClient()
+
+        with pytest.raises(PluginUnreachableError):
+            await plugin._verify_domain()
+
+        assert plugin.base_url == "https://site.example"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_a_list_that_fails_leaves_the_domains_for_an_hour(
+        self, list_cache: AsyncMock
+    ) -> None:
+        respx.head("https://site.example/").mock(side_effect=httpx.ConnectError("x"))
+        respx.get("https://list.example/").respond(503)
+        plugin = _ListedPlugin()
+        plugin._client = httpx.AsyncClient()
+
+        with structlog.testing.capture_logs() as logs:
+            with pytest.raises(PluginUnreachableError):
+                await plugin._verify_domain()
+
+        list_cache.set.assert_awaited_once_with(_KEY, [], ttl=3600)
+        warnings = [e for e in logs if e["event"] == "plugin_domain_list_failed"]
+        assert len(warnings) == 1
+        assert warnings[0]["plugin"] == "listed"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_a_working_domain_never_reads_the_list(
+        self, list_cache: AsyncMock
+    ) -> None:
+        respx.head("https://site.example/").respond(200)
+        list_route = respx.get("https://list.example/")
+        plugin = _ListedPlugin()
+        plugin._client = httpx.AsyncClient()
+
+        await plugin._verify_domain()
+
+        assert plugin._domain_verified is True
+        assert not list_route.called
+        list_cache.get.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_an_answering_domain_never_reads_the_list(
+        self, list_cache: AsyncMock
+    ) -> None:
+        respx.head("https://site.example/").respond(
+            403, headers={"cf-mitigated": "challenge"}
+        )
+        list_route = respx.get("https://list.example/")
+        plugin = _ListedPlugin()
+        plugin._client = httpx.AsyncClient()
+
+        await plugin._verify_domain()
+
+        assert plugin.base_url == "https://site.example"
+        assert not list_route.called
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_without_a_cache_the_list_is_skipped(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(HttpxPluginBase, "_cache", None)
+        respx.head("https://site.example/").mock(side_effect=httpx.ConnectError("x"))
+        list_route = respx.get("https://list.example/")
+        plugin = _ListedPlugin()
+        plugin._client = httpx.AsyncClient()
+
+        with pytest.raises(PluginUnreachableError):
+            await plugin._verify_domain()
+
+        assert not list_route.called

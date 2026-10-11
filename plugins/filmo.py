@@ -155,6 +155,9 @@ class FilmoPlugin(HttpxPluginBase):
     languages = ["de", "en"]  # noqa: RUF012
 
     _domains = _DOMAINS
+    # The official list of the site's addresses; the site links it
+    domain_list_url = "https://filmo.domains/"
+    domain_marker = 'a[href*="filmo.domains"]'
 
     def _site_cookie(self, name: str) -> str | None:
         """The value of the site's cookie *name* in the HTTP client's jar."""
