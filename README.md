@@ -102,7 +102,7 @@ flowchart LR
 
 ### Sources and hosters
 
-- 41 plugins for streaming, direct-download and anime sites, mostly German-language — see the [plugin list](docs/plugins.md)
+- 42 plugins for streaming, direct-download and anime sites, mostly German-language — see the [plugin list](docs/plugins.md)
 - 62 hoster resolvers (streaming hosters, direct-download hosters, XFS-based hosters)
 - Two engines: `httpx` for static pages and APIs, a real browser (Patchright/Playwright) for sites that need JavaScript
 - Mirror fallback: plugins try alternative domains when the primary one is down
@@ -256,7 +256,7 @@ The answer does not wait for the whole search: it goes out once 5 streams resolv
 
 ## Supported sources
 
-Scavengarr ships 41 plugins: streaming sites (used by the Stremio addon), direct-download sites (served via Torznab) and anime sites, most of them German-language. Six of them use the browser engine, the rest plain HTTP.
+Scavengarr ships 42 plugins: streaming sites (used by the Stremio addon), direct-download sites (served via Torznab) and anime sites, most of them German-language. Six of them use the browser engine, the rest plain HTTP.
 
 The complete, generated list with domains, content type, engine and languages is in **[docs/plugins.md](docs/plugins.md)**. Sites change often. In Stremio searches, a plugin that keeps failing is skipped by the circuit breaker, and a site that does not answer by the health check, until it is back; Torznab requests still reach it.
 

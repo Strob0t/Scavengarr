@@ -38,6 +38,17 @@ def test_scrub_removes_the_csrf_token() -> None:
     assert _mod.scrub(html) == '<meta name="csrf-token" content="0">'
 
 
+def test_scrub_removes_link_payloads_and_tokens() -> None:
+    html = (
+        '<div data-provider-chip data-p="eyJpdiI6Ii81TWh4UnB3Zz09In0=">'
+        '<link rel="canonical" href="https://filmo.to/n/j6hZIreIx9Qa">'
+    )
+    assert _mod.scrub(html) == (
+        '<div data-provider-chip data-p="0">'
+        '<link rel="canonical" href="https://filmo.to/n/scrubbed">'
+    )
+
+
 def test_store_fixture_writes_scrubbed_gzip(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -42,4 +42,8 @@
 
 ## After
 
-(Row 63's live proof: the live test and the Stremio request on the dev server, with their numbers.)
+Row 63's live proof, 2026-10-11 (Mr. Normal, `handoff-63`):
+
+- The live smoke test (`tests/live/test_plugin_smoke.py`, `filmo` with "Interstellar") passed against filmo.to.
+- The plugin's search for Interstellar (category 2000) from the dev container: 1 result in 0.7 s (search page, detail page, 4 chips with 2 requests each), year 2014, three links: VOE `voe.sx` German 720p, Byse `bysezejataos.com` German 720p (the same file in both rows), VOE `voe.sx` English 720p. No `/n/` URL in the results.
+- `movie/tt0816692` on the dev server (`PYTHONPATH=src`, port 7981, cold cache): 200 in 2.9 s with 5 streams, two of them filmo's (`VOE · filmo`, German Dub and English Dub, 720p). Byse's link failed in the Filemoon resolver at once, no timeout: `filemoon_unavailable`, the hoster answers `embedding from this domain is not allowed for this video`. The video refuses embedding from the resolver's domain; not fixed in this row (the Filemoon resolver's owner decides; production's breaker for it opened on 2026-10-11 after a 52.6 s timeout, a different failure).

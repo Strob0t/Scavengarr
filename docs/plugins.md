@@ -19,7 +19,7 @@ JDownloader `.crawljob`) and are only served via Torznab. *Engine* is
 browser. *Mirrors* counts the extra domains tried when the primary one
 is unreachable.
 
-41 plugins: 18 with streams (used by the Stremio addon), 23 with direct downloads.
+42 plugins: 19 with streams (used by the Stremio addon), 23 with direct downloads.
 
 | Plugin | Website | Mirrors | Content | Engine | Languages |
 |---|---|---|---|---|---|
@@ -36,6 +36,7 @@ is unreachable.
 | `ddlvalley` | www.ddlvalley.me | 0 | Downloads | Playwright | en |
 | `einschalten` | einschalten.in | 0 | Streams | httpx | de |
 | `filmfans` | filmfans.org | 0 | Downloads | httpx | de |
+| `filmo` | filmo.to | 0 | Streams | httpx | de, en |
 | `filmpalast` | filmpalast.to | 0 | Streams | httpx | de |
 | `fireani` | fireani.me | 0 | Streams | httpx | de |
 | `haschcon` | haschcon.com | 0 | Streams | httpx | de |

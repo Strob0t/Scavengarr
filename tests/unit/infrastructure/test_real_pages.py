@@ -1049,3 +1049,39 @@ class TestMoflix:
         ]
         assert results[0].metadata["imdb_id"] == "tt15398776"
         assert not other_titles.called
+
+
+class TestFilmo:
+    """The search for Interstellar, its page and Byse's interstitial
+    (captured 2026-10-11; payloads and tokens scrubbed)."""
+
+    def test_search_keeps_the_film_of_the_loose_matches(self) -> None:
+        module = _plugin_module("filmo")
+        hits = _search_hits("filmo", "https://filmo.to", "search")
+
+        assert len(hits) == 6
+        kept = module.relevant_hits(hits, "Interstellar", lambda h: h["title"])
+        assert kept == [
+            {
+                "title": "Interstellar",
+                "detail_url": "https://filmo.to/movies/interstellar",
+            }
+        ]
+
+    def test_detail_page_lists_both_rows(self) -> None:
+        page = _detail("filmo", "https://filmo.to", "detail")
+
+        assert (page.title, page.year) == ("Interstellar", 2014)
+        assert page.genres == ["Abenteuer", "Drama", "Science Fiction"]
+        assert [(c.language, c.hoster, c.link_id, c.quality) for c in page.chips] == [
+            ("English", "VOE", "2723", "720p"),
+            ("English", "Byse", "10973", "720p"),
+            ("Deutsch", "VOE", "2723", "720p"),
+            ("Deutsch", "Byse", "10973", "720p"),
+        ]
+
+    def test_interstitial_names_byse(self) -> None:
+        link = _plugin_module("filmo").interstitial_link(_page("filmo", "interstitial"))
+
+        assert link is not None
+        assert link.startswith("https://bysezejataos.com/d/")

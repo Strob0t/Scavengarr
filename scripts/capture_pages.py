@@ -43,6 +43,10 @@ _SCRUB = [
     (re.compile(r'(<meta name="csrf-token" content=")[^"]+(")'), r"\g<1>0\g<2>"),
     # s.to's encrypted redirect tokens (/r?t=<laravel payload>)
     (re.compile(r"(/r\?t=)[A-Za-z0-9%=+/_-]{20,}"), r"\g<1>scrubbed"),
+    # filmo.to's encrypted link payloads (new per page view) and the
+    # one-time link tokens of /n/<token>
+    (re.compile(r'(data-p=")[^"]+(")'), r"\g<1>0\g<2>"),
+    (re.compile(r"(/n/)[A-Za-z0-9_-]{6,}"), r"\g<1>scrubbed"),
     # Cloudflare error pages: the Ray ID and the visitor's IP in the footer
     (re.compile(r"(Ray ID: <strong[^>]*>)[0-9a-f]+"), r"\g<1>0"),
     (re.compile(r'(cf-footer-ip">)[0-9a-f.:]+'), r"\g<1>0.0.0.0"),
