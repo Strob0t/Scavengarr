@@ -107,3 +107,31 @@ The header hypothesis explains the report for no measured hoster. What remains, 
 1. **The device log.** The maintainer can read it in Stremio's settings right after the message. The stream's address there names its route (`/play/<id>`, `/proxy/<id>/file` or the proxy's playlist), and the player's error separates a refused answer from an unsupported format. Only the maintainer can read it, and it decides between the next two hypotheses.
 2. **The player's codecs.** Every file the dev container got starts as MP4. The codecs inside (H.264 or HEVC video, AAC or AC-3/E-AC-3 audio) are unread, and a player without HEVC or AC-3 decoding, a browser among them, can refuse such a file. Measurable without a player: the MP4's `stsd` box (in the `moov`, at the start of a faststart file) and the HLS master's `CODECS` attribute.
 3. **The HLS variant beyond byte ranges.** fMP4 segments (`EXT-X-MAP`), HEVC variants or separate audio renditions (`EXT-X-MEDIA`), which some players do not support. The probe reads a master's first variant only.
+
+
+## The Codecs of the Round's Streams (Row 66)
+
+Hypothesis 2, measured: the round of `docs/plans/round-titles.txt` against production on 2026-10-11, 12:11:40 to 12:17:46 UTC (`scripts/stremio_round.py` from the dev container, each title once, in sequence; no playback through the proxy in the 5 minutes before, by production's log; Mr. Normal, row 66's play check at 0a6deac). Headline: 18 of 19 titles with streams (Breaking Bad S01E02 none), 72 streams, 71 playable; the one failure is FIRESTREAM on Der Schuh des Manitu (`FAIL hls codecs unread, 1272 segments: 502, 502`, the CDN's 502 as in row 64's proof). First answers: median 3.1 s, max 7.3 s (3 HIT, 15 STALE).
+
+| Hoster | Codecs | Streams |
+|---|---|---|
+| DOODSTREAM | codecs unread | 1 |
+| DOODSTREAM | h264/aac | 6 |
+| FIRESTREAM | codecs unread | 1 |
+| FIRESTREAM | h264/aac | 2 |
+| FSST | h264/aac | 5 |
+| GXPLAYER | h264/aac | 3 |
+| MIXDROP | h264/aac | 2 |
+| PLAYMATE | h264/aac | 1 |
+| STRMUP | h264/aac | 7 |
+| VIDMOLY | h264/aac | 10 |
+| VIDSONIC | h264/aac | 5 |
+| VINOVO | h264/aac | 6 |
+| VOE | h264/aac | 23 |
+
+**No hoster delivered HEVC, AC-3 or E-AC-3**: all 70 streams whose codecs were read are H.264 video with AAC audio, over all 11 hosters, files (DoodStream, FSST, MixDrop, Vinovo) and HLS (VOE, Vidmoly, STRMUP, Vidsonic, GXPlayer, FireStream, Playmate) alike. So for this sample hypothesis 2 does not explain "Format/Quelldatei wird nicht unterstützt": no stream of the round needs a decoder a browser lacks.
+
+Limits:
+- 2 of 72 streams unread: the failing FIRESTREAM (no segment came) and one DOODSTREAM file (the round prints no verdict for a playable stream, so its reason is not recorded: a `moov` beyond the last 8 MiB, a tail read not answered 206, or the codec read's 10 s).
+- HLS: the master's first variant only (the one the check plays); another variant or a separate audio rendition (`EXT-X-MEDIA`) can carry other codecs, which is hypothesis 3.
+- 19 titles, mostly German-dubbed films and series of the round; the maintainer's reported stream is not known to be among them. The device log (hypothesis 1) remains the way to name it.
