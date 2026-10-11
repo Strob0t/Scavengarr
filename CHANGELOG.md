@@ -7,7 +7,7 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 ## Unreleased (staging)
 
 ### Added: The Throughput Probe Counts the Connections in Flight
-- `scripts/probes/hls_throughput.py --in-flight 3,4,5` replaces the read-ahead run with one run per count of segments in flight, for row 68: whether a fourth and a fifth connection still add throughput from the Pi (its VPN may cap the sum). Each run's row shows its multiple of real time (N1's rule asks 1.5) and its failed requests by status or error (`3 failed (429 ×2, ReadTimeout ×1)`), and the variant line lists the master's variants or says that the link is a media playlist, with no lower variant to step down to.
+- `scripts/probes/hls_throughput.py --in-flight 3,4,5` replaces the read-ahead run with one run per count of segments in flight, for row 68: whether a fourth and a fifth connection still add throughput from the Pi (its VPN may cap the sum). Each run's row shows its multiple of real time (N1's rule asks 1.5) and its failed requests by status or error (`3 failed (429 ×2, ReadTimeout ×1)`), and the variant line lists the master's variants or says that the link is a media playlist, with no lower variant to step down to. A 429 ends the runs, since the Pi's address is its playbacks' too.
 - In the dev container FireStream's CDN answered every segment of filmpalast's link with 502 (the eleventh round saw the same), so the measurement runs from the Pi. The runs themselves were checked there on Filemoon's CDN.
 
 ### Fixed: Byse Videos Restricted to Their Owner's Sites Play Through the Watch Page

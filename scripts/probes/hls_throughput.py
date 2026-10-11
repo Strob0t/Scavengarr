@@ -19,7 +19,8 @@ variants, Mbit/s per run and its multiple of real time, the title's
 bitrate (segment bytes × 8 over their ``EXTINF`` durations), the failed
 requests by status (a 429) or error, and whether the CDN honoured the
 ranges (``206`` with ``Content-Range``; once a range is answered with
-the whole segment, the range runs stop).
+the whole segment, the range runs stop). A 429 ends the runs: the
+Pi's address is its playbacks' too.
 
 With ``--imdb`` the probe first asks the app (``http://127.0.0.1:$PORT``)
 for the title's streams so that fresh links exist; that fills the app's
@@ -98,6 +99,11 @@ class Run:
     @property
     def failed(self) -> int:
         return self.errors.total()
+
+    @property
+    def throttled(self) -> bool:
+        """The CDN answered 429: no more requests from this probe."""
+        return "429" in self.errors
 
     def fail(self, exc: httpx.HTTPError) -> str:
         """Count a failed request by its status (a 429) or its error."""
@@ -271,7 +277,7 @@ async def execute(fetcher: Fetcher, segments: list[Segment], run: Run) -> None:
 
     async def one(segment: Segment) -> None:
         async with gate:
-            if run.ignored:
+            if run.ignored or run.throttled:
                 return
             started = time.monotonic()
             try:
@@ -290,6 +296,24 @@ async def execute(fetcher: Fetcher, segments: list[Segment], run: Run) -> None:
     started = time.monotonic()
     await asyncio.gather(*(one(segment) for segment in segments))
     run.seconds = time.monotonic() - started
+
+
+async def run_all(
+    fetcher: Fetcher, segments: list[Segment], runs: list[Run], per_run: int
+) -> None:
+    """The runs in order, *per_run* of *segments* each. A CDN that ignores
+    ranges skips the range runs; a 429 ends the runs (the Pi's address is
+    the playbacks' too)."""
+    ignored = False
+    for index, run in enumerate(runs):
+        if run.ranged and ignored:
+            print(f"  {run.name}: skipped, the CDN ignores ranges")
+            continue
+        await execute(fetcher, segments[index * per_run : (index + 1) * per_run], run)
+        ignored = ignored or run.ignored
+        if run.throttled:
+            print("  the CDN answered 429: the remaining runs are skipped")
+            return
 
 
 def file_headers(link: CachedStreamLink) -> dict[str, str]:
@@ -587,14 +611,7 @@ async def main(argv: list[str]) -> None:
             f"{per_run} segments per run, {mean:.1f} s each (EXTINF), from segment"
             f" {start} of {len(segments)}{variant}"
         )
-        fetcher = Fetcher(http, headers)
-        ignored = False
-        for index, run in enumerate(runs):
-            if run.ranged and ignored:
-                print(f"  {run.name}: skipped, the CDN ignores ranges")
-                continue
-            await execute(fetcher, chosen[index * per_run : (index + 1) * per_run], run)
-            ignored = ignored or run.ignored
+        await run_all(Fetcher(http, headers), chosen, runs, per_run)
     _report(runs)
 
 

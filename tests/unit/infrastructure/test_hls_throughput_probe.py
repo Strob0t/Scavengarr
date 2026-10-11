@@ -157,8 +157,8 @@ class TestInFlight:
     ) -> None:
         """A deeper read-ahead may draw 429s: the run names them."""
         respx.get("https://cdn.example/s1.ts").respond(200, content=b"x" * 100)
-        respx.get("https://cdn.example/s2.ts").respond(429)
-        respx.get("https://cdn.example/s3.ts").mock(
+        respx.get("https://cdn.example/s3.ts").respond(429)
+        respx.get("https://cdn.example/s2.ts").mock(
             side_effect=httpx.ReadTimeout("slow")
         )
         segments = [
@@ -173,6 +173,49 @@ class TestInFlight:
         assert run.errors == {"429": 1, "ReadTimeout": 1}
         assert run.failed == 2
         assert "a segment failed: 429" in capsys.readouterr().out
+
+    @respx.mock
+    async def test_after_a_429_the_run_asks_no_more(self) -> None:
+        """A throttling CDN gets no further requests: the Pi's address
+        shares it with the playbacks."""
+        respx.get("https://cdn.example/s1.ts").respond(429)
+        later = respx.get(url__regex=r"https://cdn\.example/s[23]\.ts").respond(
+            200, content=b"x"
+        )
+        segments = [
+            _mod.Segment(f"https://cdn.example/s{n}.ts", 6.0) for n in (1, 2, 3)
+        ]
+        run = _mod.Run("one connection", 1)
+
+        async with httpx.AsyncClient() as http:
+            await _mod.execute(_mod.Fetcher(http, {}), segments, run)
+
+        assert run.errors == {"429": 1}
+        assert not later.called
+
+    @respx.mock
+    async def test_a_429_ends_the_remaining_runs(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        respx.get("https://cdn.example/s1.ts").respond(200, content=b"x" * 10)
+        respx.get("https://cdn.example/s2.ts").respond(429)
+        rest = respx.get(url__regex=r"https://cdn\.example/s[3-8]\.ts").respond(
+            200, content=b"x"
+        )
+        segments = [
+            _mod.Segment(f"https://cdn.example/s{n}.ts", 6.0) for n in range(1, 9)
+        ]
+        runs = _mod.plan_runs([3])
+
+        async with httpx.AsyncClient() as http:
+            await _mod.run_all(_mod.Fetcher(http, {}), segments, runs, per_run=2)
+
+        assert runs[0].errors == {"429": 1}
+        assert all(run.seconds == 0 for run in runs[1:])
+        assert not rest.called
+        assert "the CDN answered 429: the remaining runs are skipped" in (
+            capsys.readouterr().out
+        )
 
 
 class TestReport:
